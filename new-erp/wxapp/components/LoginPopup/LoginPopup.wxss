@@ -1,0 +1,37 @@
+/* 授权弹窗 */
+.top{
+    text-align: center;
+    margin-top: 20rpx;
+    height: 70rpx;
+    line-height: 70rpx;
+    font-weight: bold;
+    font-size: 35rpx;
+}
+.tips{
+    text-align: center;
+    font-size: 29rpx;
+    font-weight: lighter;
+    padding-top: 20rpx;
+}
+.input-class{
+    padding-top: 40rpx;
+}
+.input-class::after {
+    display: none;
+}
+.input-button-forget{
+    width: 140rpx;
+    background-color: #ffffff;
+    color: #a1a1a1;
+    border: none;
+}
+.input-button-login{
+    width: 140rpx;
+}
+.button-quick-login{
+    background-color: inherit;
+    position: static;
+    color:#f7862a;
+    width: 160rpx;
+    font-size: 27rpx;
+}

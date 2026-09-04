@@ -1,0 +1,20 @@
+<view class="container" style="height: {{pageHeight}};" >
+  <swiper class="banner" indicator-dots="true" autoplay="true" interval="3000" duration="1000">
+    <swiper-item wx:for="{{banner}}" wx:key="id">
+      <navigator url="{{item.path}}">
+        <image src="{{item.img}}" background-size="cover"></image>
+      </navigator>
+    </swiper-item>
+  </swiper>
+  <view style="margin-top: 10rpx;">
+  <van-notice-bar mode="link" text="技术是开发它的人的共同灵魂。" bind:click="toAllNotice"/>
+  </view>
+  <view>
+    <van-grid column-num="3" clickable>
+      <van-grid-item wx:if="{{item.show}}" wx:for="{{list}}" wx:key="index" data-index="{{index}}" icon="{{item.icon}}" text="{{item.name}}" bind:click="jumpUrl"/>
+    </van-grid>
+  </view>
+</view>
+
+<LoginPopup class="LoginPopup"></LoginPopup>
+<van-notify id="van-notify" />

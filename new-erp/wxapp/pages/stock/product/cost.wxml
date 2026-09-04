@@ -1,0 +1,84 @@
+<van-sticky>
+<van-search value="{{ value }}" placeholder="请输入搜索关键词" bind:change="searchField" bind:clear="searchCancel"/>
+</van-sticky>
+
+<view class="box1">
+  <view class="box-1">
+    <van-sidebar>
+      <van-sidebar-item
+        wx:for="{{accessoryArray}}" wx:key="id"
+        title="{{item.goodsname}}"
+        badge="{{ item.badge ? item.badge : '' }}"
+        data-idx="{{index}}" bind:click="accessoryClick"
+      />
+    </van-sidebar>
+  </view>
+  <scroll-view  scroll-y="true" style="height: 89%;" scroll-top="{{scrolltop}}">
+    <van-empty wx:if="{{!children || children.length == 0}}" description="暂无配件" />
+    <van-card
+      wx:for="{{children}}" wx:key="id"
+      centered="true"
+      lazy-load="true"
+      price="{{item.univalence?item.univalence:0}}"
+      thumb-mode="aspectFill"
+      tag="{{ item.badge ? item.badge : '' }}"
+      title="{{item.sku_name}}"
+      thumb="{{item.image?item.image:'/static/images/emp.jpg'}}"
+      custom-class="cardClass">
+      <view class="goods-btn" slot="footer">
+        <van-icon name="add" color="#e64340" size="50rpx" data-idx="{{index}}" bind:click="addCart" />
+      </view>
+    </van-card>
+  </scroll-view>
+</view>
+<van-submit-bar
+  price="{{ shippingCarInfo.price }}"
+  tip="{{ true }}"
+  button-text="提交核价单"
+  data-type="open"
+  bind:submit="onChangeSubPop"
+>
+<van-icon name="orders-o" size="40rpx" text="配件清单" info="{{shippingCarInfo.number}}" bind:click="showCartPop"/>
+</van-submit-bar>
+
+<!-- <van-goods-action>
+  <van-goods-action-icon icon="orders-o" text="配件清单" info="{{shippingCarInfo.number}}" bind:click="showCartPop"/>
+  <van-goods-action-button size="normal" color="#e64340" text="入库" type="warning" bind:click="addStock"/>
+  <van-goods-action-button size="normal" plain color="#e64340" text="出库" bind:click="outStock"/>
+</van-goods-action> -->
+<van-popup
+  show="{{ showCartPop }}"
+  position="bottom"
+  custom-style="bottom: 100rpx;max-height: 80%;"
+  bind:close="hideCartPop">
+  <view class="empty-box" bindtap="clearCart">
+    <van-icon name="delete" />
+     <view class="empty-1">清空列表</view>
+  </view>
+  <view wx:for="{{shippingCarInfo.items}}" wx:key="key" class="cart-goods-list">
+    <view class="l">
+      <view class="title">{{item.name}}</view>
+    </view>
+    <view class="r">
+      <view style="font-size: 30rpx;color: red;">￥{{item.univalence*item.nums}}</view>
+      <van-stepper value="{{item.nums}}" min="0" async-change disable-input data-idx="{{index}}" bind:change="cartStepChange"/>
+    </view>
+  </view>
+</van-popup>
+<van-popup show="{{ showSubPop }}" bind:close="onChangeSubPop" round data-type="close" custom-class="sub-list">
+  <van-row>
+    <van-col span="16" offset="8" custom-class="custom-topic">核价单基本信息</van-col>
+  </van-row>
+  <van-row>
+    <van-field
+      label="名称"
+      value="{{ costInfo.costName }}"
+      placeholder="请输入核价单名称"
+      bind:change="onchangeCost"
+    />
+  </van-row>
+  <van-row custom-class="custom-sub1">
+      <van-button type="info" color="linear-gradient(to right, #e05454, #e42424)" custom-class="custom-sub2" bind:click="onSubmit">提交</van-button>
+  </van-row>
+</van-popup>
+<van-notify id="van-notify" /> 

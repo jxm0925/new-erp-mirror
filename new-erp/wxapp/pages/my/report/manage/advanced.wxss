@@ -1,0 +1,58 @@
+page { background-color: #F4F6F9; padding-bottom: 160rpx; }
+.tab-content { padding-top: 20rpx; }
+
+/* 单元格分组间距与阴影 */
+.group-spacing { margin: 0 30rpx 24rpx !important; border-radius: 12rpx !important; overflow: hidden; box-shadow: 0 4rpx 16rpx rgba(0,0,0,0.02); }
+.cell-desc { font-size: 24rpx; color: #999; padding: 0 40rpx 20rpx; }
+
+/* 权限卡片 */
+.perm-card { background: #fff; margin: 0 30rpx 24rpx; border-radius: 12rpx; box-shadow: 0 4rpx 16rpx rgba(0,0,0,0.02); overflow: hidden; }
+.perm-header { display: flex; justify-content: space-between; align-items: center; padding: 24rpx 30rpx; background: #fafafa; border-bottom: 1rpx solid #eee; }
+.perm-title { font-size: 28rpx; font-weight: bold; color: #333; }
+.perm-delete { font-size: 26rpx; color: #ff4d4d; }
+.btn-add-perm { display: flex; align-items: center; justify-content: center; color: #ff4d4d; font-size: 28rpx; padding: 24rpx 0; margin: 30rpx; border-radius: 12rpx; border: 1rpx dashed #ff4d4d; background: #fff; }
+
+/* 底部操作栏 */
+.bottom-action { position: fixed; bottom: 0; left: 0; width: 100%; padding: 24rpx 30rpx calc(24rpx + env(safe-area-inset-bottom)); background: #fff; box-shadow: 0 -4rpx 16rpx rgba(0,0,0,0.04); box-sizing: border-box; z-index: 100; }
+.radius-btn { border-radius: 12rpx !important; font-weight: bold !important; font-size: 30rpx !important; }
+
+/* 选人弹窗样式 */
+.popup-header { display: flex; justify-content: space-between; align-items: center; padding: 30rpx; border-bottom: 1rpx solid #eee; background: #fff; }
+.popup-cancel { color: #999; font-size: 30rpx; }
+.popup-title { font-weight: bold; font-size: 32rpx; color: #333; }
+.popup-confirm { color: #ff4d4d; font-weight: bold; font-size: 30rpx; }
+.user-list-body { height: calc(100% - 100rpx); }
+
+/* 覆盖 Vant Picker 默认蓝色按钮为定制红 */
+.van-picker__confirm { color: #ff4d4d !important; }
+page { background-color: #F4F6F9; padding-bottom: 160rpx; }
+.tab-content { padding-top: 20rpx; }
+
+/* 单元格分组间距与阴影 */
+.group-spacing { margin: 0 30rpx 24rpx !important; border-radius: 12rpx !important; overflow: hidden; box-shadow: 0 4rpx 16rpx rgba(0,0,0,0.02); }
+.cell-desc { font-size: 24rpx; color: #999; padding: 0 40rpx 20rpx; }
+
+/* 💥 新增：未选部门时的占位符样式 💥 */
+.value-placeholder { color: #ccc !important; }
+.value-selected { color: #333 !important; font-weight: bold !important; }
+
+/* 权限卡片 */
+.perm-card { background: #fff; margin: 0 30rpx 24rpx; border-radius: 12rpx; box-shadow: 0 4rpx 16rpx rgba(0,0,0,0.02); overflow: hidden; }
+.perm-header { display: flex; justify-content: space-between; align-items: center; padding: 24rpx 30rpx; background: #fafafa; border-bottom: 1rpx solid #eee; }
+.perm-title { font-size: 28rpx; font-weight: bold; color: #333; }
+.perm-delete { font-size: 26rpx; color: #ff4d4d; }
+.btn-add-perm { display: flex; align-items: center; justify-content: center; color: #ff4d4d; font-size: 28rpx; padding: 24rpx 0; margin: 30rpx; border-radius: 12rpx; border: 1rpx dashed #ff4d4d; background: #fff; }
+
+/* 底部操作栏 */
+.bottom-action { position: fixed; bottom: 0; left: 0; width: 100%; padding: 24rpx 30rpx calc(24rpx + env(safe-area-inset-bottom)); background: #fff; box-shadow: 0 -4rpx 16rpx rgba(0,0,0,0.04); box-sizing: border-box; z-index: 100; }
+.radius-btn { border-radius: 12rpx !important; font-weight: bold !important; font-size: 30rpx !important; }
+
+/* 选人/部门弹窗通用样式 */
+.popup-header { display: flex; justify-content: space-between; align-items: center; padding: 30rpx; border-bottom: 1rpx solid #eee; background: #fff; }
+.popup-cancel { color: #999; font-size: 30rpx; }
+.popup-title { font-weight: bold; font-size: 32rpx; color: #333; }
+.popup-confirm { color: #ff4d4d; font-weight: bold; font-size: 30rpx; }
+.user-list-body { height: calc(100% - 100rpx); }
+
+/* 覆盖 Vant Picker 默认蓝色按钮为定制红 */
+.van-picker__confirm { color: #ff4d4d !important; }

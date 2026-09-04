@@ -1,0 +1,46 @@
+
+<!-- 用户名密码登录-->
+<!-- <page-meta page-style="{{ show ? 'overflow: hidden;' : '' }}" /> -->
+<van-popup
+  show="{{ show }}"
+  round
+  z-index="10000"
+  position="bottom"
+  custom-style="height: 35%;"
+  bind:close="closeTank"
+  root-portal="true"
+>
+    <van-row>
+        <van-col span="8"  custom-class="top">账号登录</van-col>
+    </van-row>
+    <van-cell-group inset>
+        <van-field
+            model:value="{{account}}"
+            label="用户名"
+            placeholder="请输入用户名"
+            custom-class="input-class"
+            error="{{account_error}}"
+            use-button-slot
+        >
+            <!-- <van-button custom-class="input-button-forget" slot="button" size="small" type="primary">
+                忘记密码
+            </van-button> -->
+        </van-field>
+        <van-field
+            model:value="{{ password }}"
+            label="密码"
+            type="password"
+            placeholder="请输入密码"
+            custom-class="input-class"
+            error="{{password_error}}"
+            use-button-slot
+        >
+        <van-button loading="{{loading}}" round custom-class="input-button-login" slot="button" size="small" type="primary" color="#ff6464" bind:click="submit">
+            登录
+        </van-button>
+        </van-field>
+    </van-cell-group>
+    <!-- <van-row>
+        <van-col span="24" custom-class="tips"><button class="button-quick-login">快捷登录</button></van-col>
+    </van-row> -->
+</van-popup>

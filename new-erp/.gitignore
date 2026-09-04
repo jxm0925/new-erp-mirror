@@ -1,0 +1,36 @@
+# Backend runtime and dependencies
+backend/.env
+backend/vendor/
+backend/node_modules/
+backend/storage/logs/
+backend/storage/framework/
+backend/bootstrap/cache/
+backend/public/build/
+backend/public/hot
+backend/.phpunit.result.cache
+backend/*.log
+backend/*.out.log
+backend/*.err.log
+backend/*.rar
+
+# Frontend dependencies, build products and local runtime output
+frontend/node_modules/
+frontend/dist/
+frontend/dist-*/
+frontend/*.log
+frontend/*.out.log
+frontend/*.err.log
+frontend/*.rar
+
+# Codex development evidence lives in D:\codex-introduce\new_erp
+backend/docs/
+design-qa.md
+backend/design-qa.md
+frontend/design-qa.md
+backend/SKILL.md
+
+# Local editor and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

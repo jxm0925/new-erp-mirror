@@ -1,0 +1,5 @@
+{
+  "usingComponents": {
+    "report-tabbar": "/components/report-tabbar/index"
+  }
+}

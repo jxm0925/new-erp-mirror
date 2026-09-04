@@ -1,0 +1,118 @@
+/* pages/stock/stockin/stockin.wxss */
+.btn {
+  margin-top: 32rpx;
+}
+page {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: #f5f5ff;
+}
+.box1{
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+.box1 .box-1{
+  height: 90%;
+  overflow-y: scroll;
+  width: 250rpx;
+}
+.drop-class{
+  border:none;
+  height: 1px;
+}
+.box1 .box-2{
+  height: 100%;
+  overflow-y: scroll;
+  width: 100%;
+}
+.cardClass{
+  border: 1px solid #ffffff;
+  margin-top: 10rpx;
+}
+.empty-box{
+  display: flex;
+  align-items: center;
+  padding-top: 15rpx;
+  padding-left: 20rpx;
+  padding-bottom: 15rpx;
+  background-color: #eeeeee;
+}
+.empty-box .empty-0{
+  height:30rpx;
+  width: 30rpx;
+}
+.empty-box .empty-1{
+  font-size:25rpx ;
+  margin-left: 10rpx;
+}
+.cart-goods-list {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 32rpx;
+}
+.cart-goods-list .r {
+  display: flex;
+  align-items: center;
+}
+.cart-goods-list .title{
+  font-size: 28rpx;
+  font-weight: bold;
+  width: 250rpx;
+}
+.cart-goods-list .content{
+  font-size: 24rpx;
+  color: #666;
+}
+.cart-goods-list .price{
+  font-size: 26rpx;
+  margin-right: 32rpx;
+}
+.setInput{
+  width: 100rpx !important;
+}
+.goods-step{
+  width: 100% !important;
+}
+.goods-upload{
+  float: left !important;
+  margin-top: 10rpx;
+}
+.custom-topic{
+  margin-top: 20rpx;
+  padding-bottom: 30rpx;
+  font-size: 35rpx;
+  font-weight: bold;
+}
+.custom-sub1{
+  padding-top: 30rpx;
+}
+.custom-sub2{
+  width: 100%;
+}
+.custom-sub3{
+  position: fixed;
+  bottom: 40rpx;
+  width: 100%;
+}
+.list-name{
+  font-size: 30rpx;
+}
+.list-amount{
+  color:#969799
+}
+.list{
+  margin-top: 30rpx;
+}
+.van-search-action{
+  padding: 0 8px;
+  color: #323233;
+  font-size: 14px;
+  line-height: 34px;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}

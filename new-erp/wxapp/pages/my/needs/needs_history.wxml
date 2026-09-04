@@ -1,0 +1,73 @@
+<view class="container">
+  <view class="header-section">
+    <view class="report-title-box">
+      <view class="report-title">{{customerName}}</view>
+    </view>
+    
+    <scroll-view scroll-x="true" class="version-scroll" enable-flex="true" scroll-with-animation="true" scroll-into-view="v-node-{{activeIndex}}">
+      <view class="timeline-track">
+        
+        <view 
+          id="v-node-{{index}}"
+          class="v-node {{activeIndex === index ? 'v-active' : ''}}" 
+          wx:for="{{historyList}}" 
+          wx:key="id" 
+          bindtap="switchVersion" 
+          data-index="{{index}}"
+        >
+          <view class="v-bubble" wx:if="{{index === 0}}">最新</view>
+          <view class="v-track-line">
+            <view class="v-line v-line-left" wx:if="{{index !== 0}}"></view>
+            <view class="v-line v-line-right" wx:if="{{index !== historyList.length - 1}}"></view>
+            <view class="v-dot"></view>
+          </view>
+          
+          <view class="v-info">
+            <text class="v-version">V {{item.version}}</text>
+            <text class="v-user">{{item.submitter_name}}</text>
+            <text class="v-time">{{item.create_date}}</text>
+          </view>
+
+        </view>
+
+      </view>
+    </scroll-view>
+  </view>
+
+  <view class="content-section">
+    <block wx:for="{{renderList}}" wx:key="index">
+      
+      <!-- 普通文本/数字 (上下结构) -->
+      <view class="field-item" wx:if="{{item.type === 'text' || item.type === 'textarea' || item.type === 'number'}}">
+        <view class="field-label">{{item.label}}</view>
+        <view class="field-value">{{item.value || '未填写'}}</view>
+      </view>
+      
+      <!-- 单选 (上下结构，蓝色加粗) -->
+      <view class="field-item" wx:elif="{{item.type === 'radio'}}">
+        <view class="field-label">{{item.label}}</view>
+        <view class="field-value" style="color: #1989fa; font-weight: bold;">{{item.value || '未选择'}}</view>
+      </view>
+
+      <view class="field-item" wx:elif="{{item.type === 'detail_list'}}">
+        <view class="field-label" style="color: #333; font-weight: bold; margin-bottom: 20rpx;">{{item.label}}</view>
+        
+        <view class="field-value" wx:if="{{!item.value || item.value.length === 0}}" style="color: #999;">无明细数据</view>
+        
+        <view class="simple-list" wx:else>
+          <view class="simple-row" wx:for="{{item.value}}" wx:for-item="row" wx:for-index="rIndex" wx:key="rIndex">
+            <text class="simple-index">{{rIndex + 1}}.</text>
+            <view class="simple-values">
+              <block wx:for="{{item.children}}" wx:for-item="child" wx:for-index="cIndex" wx:key="cIndex">
+                <text class="val-text">{{row['child_' + cIndex] || '未填写'}}</text>
+                <text wx:if="{{cIndex < item.children.length - 1}}" class="val-divider">  </text>
+              </block>
+            </view>
+          </view>
+        </view>
+      </view>
+
+    </block>
+  </view>
+
+</view>

@@ -1,0 +1,31 @@
+.production-page { padding: 24px 28px; background: #f7f9fb; min-height: calc(100vh - 54px); color: #27384e; }
+.page-heading { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 18px; }
+.page-heading h1 { margin: 3px 0 4px; font-size: 22px; color: #152941; }
+.page-heading p { margin: 0; color: #77869a; font-size: 13px; }
+.page-heading .eyebrow { color: #008b4b; font-weight: 600; }
+.filter-card, .table-card, .form-card { background: #fff; border: 1px solid #e5eaf0; border-radius: 5px; }
+.filter-card { padding: 19px 20px 14px; margin-bottom: 15px; }
+.filter-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 17px 30px; }
+.form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 17px 30px; }
+.filter-grid label > span { display: block; color: #526276; font-size: 12px; font-weight: 600; margin-bottom: 7px; }
+.filter-grid .el-input, .filter-grid .el-select { width: 100%; }
+.filter-actions, .form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+.result-count { color: #596b81; margin: 5px 0 11px; }
+.table-card { padding: 0 10px 11px; }
+.table-card ::v-deep .el-table th { background: #f8fafc; color: #42536a; }
+.table-card ::v-deep .el-table td { height: 58px; }
+.table-footer { display: flex; justify-content: space-between; align-items: center; padding-top: 13px; color: #67768a; }
+.form-card { padding: 24px; }
+.form-actions { border-top: 1px solid #edf0f3; padding-top: 18px; }
+.el-button--success { background: #008b4b; border-color: #008b4b; }
+
+@media (max-width: 1100px) {
+  .filter-grid, .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 767px) {
+  .production-page { padding: 16px 12px; }
+  .page-heading { height: auto !important; min-height: 118px; align-items: flex-start; flex-direction: column; justify-content: flex-start; gap: 12px; margin-bottom: 18px; }
+  .filter-grid, .form-grid { grid-template-columns: 1fr; }
+  .table-card { overflow: hidden; }
+}

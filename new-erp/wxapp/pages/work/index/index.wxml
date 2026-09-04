@@ -1,0 +1,227 @@
+<view class="container">
+    <van-sticky>
+        <view class="stastic-container">
+            <van-tabs active="{{ selected_status }}" bind:change="changeStatus">
+                <van-tab title="未确认"></van-tab>
+                <van-tab title="进行中"></van-tab>
+                <van-tab title="已完成"></van-tab>
+                <van-tab title="已取消"></van-tab>
+                <van-tab title="延迟工单"></van-tab>
+            </van-tabs>
+        </view>
+        
+        <van-row custom-class="search-box">
+            <van-col span="19">
+                <van-search value="{{ value }}" shape="round" bind:search="onSearch" bind:clear="searchCancle" placeholder="搜索客户名/订单号" />
+            </van-col>
+            <van-col span="5" bind:tap="showPop" data-type="search-box" style="text-align: center;line-height:54px;font-size: 15px;">
+                <van-icon name="wap-nav" />筛选
+                <!-- <van-button type="default"><van-icon name="wap-nav" />筛选</van-button> -->
+            </van-col>
+        </van-row>
+        <!-- <van-row>
+            <view style="display: block;">
+                <van-tag round style="float: left;margin-left: 20rpx;margin-top: 10rpx;" type="danger" size="medium" closeable>客户跟进状态：已经成交</van-tag>
+                <van-tag round style="float: left;margin-left: 20rpx;margin-top: 10rpx;" type="danger" size="medium" closeable>客户来源：老客户介绍</van-tag>
+                <van-tag round style="float: left;margin-left: 20rpx;margin-top: 10rpx;" type="danger" size="medium" closeable>下单时间：2025-04-21至2025-04-24</van-tag>
+            </view>
+        </van-row> -->
+
+        <!-- <van-dropdown-menu>
+            <van-dropdown-item value="{{ value1 }}" options="{{ typeOptions }}" bind:change="searchType"/>
+            <van-dropdown-item id="item" title="{{ '模糊搜索' }}">
+                <van-search value="{{ value }}" bind:search="onSearch" bind:clear="searchCancle" placeholder="请输入搜索关键词" />
+                <view style="padding: 5px 16px;">
+                </view>
+            </van-dropdown-item>
+        </van-dropdown-menu> -->
+    </van-sticky>
+    <!-- <van-empty wx:if="{{!orderList.length}}" description="描述文字" /> -->
+    <view class="order-container">
+        <scroll-view  style="width: 100%;height: {{scrollHeight}}px;"  scroll-y="true" scroll-top="{{scrolltop}}">
+            <!-- <van-empty wx:if="{{!goods || goods.length == 0}}" description="暂无商品" /> -->
+            <view>
+                <van-empty wx:if="{{!list.length}}" description="暂无工单" />
+
+                <van-cell-group inset custom-class="order-card" wx:for="{{list}}" wx:key="id">
+                    <van-cell bind:tap="goDetail" data-id="{{item.id}}" title-class="card-title" value-class="{{item.status=='accept'?'card-value-processing':'card-value-wait'}}" value="{{item.status=='accept'?item.work_status_text:item.status_text}}">
+                        <view slot="title">
+                            <view class="van-cell-text">{{item.type_text}}</view>
+                            <van-tag type="danger" wx:if="{{item.quickly}}">加急</van-tag>
+
+                            <van-tag style="margin-left:10rpx;" type="success" wx:if="{{item.customized}}">定制</van-tag>
+                            <van-tag style="margin-left:10rpx;" type="primary" wx:if="{{item.special_customized}}">特殊定制</van-tag>
+                            
+                            <van-tag style="margin-left:10rpx;" type="warning" wx:if="{{item.delay}}">延时</van-tag>
+                            
+                            <van-row>
+                                <van-col span="24" style="text-align: left;color: red;" wx:if="{{item.extra_money==2}}"><van-icon size="50rpx"/>有尾款！</van-col>
+                            </van-row>
+                        </view>
+                    </van-cell>
+                    
+                    <van-cell border="{{ false }}">
+                        <view data-id="{{item.id}}" bind:tap="goDetail" wx:if="{{item.type=='assemble' || item.type=='testing'}}">
+                            <van-row>
+                                <van-col span="24" style="text-align: left;"><van-icon name="orders-o" size="30rpx"/>单号：{{item.order_no}}({{item.platform.name}})</van-col>
+                            </van-row>
+                            <van-row>
+                                <van-col span="24" style="text-align: left;"><van-icon name="service-o" size="30rpx"/>销售：{{item.salesman}}</van-col>
+                            </van-row>
+                            <van-row>
+                                <van-col span="24" style="text-align: left;"><van-icon name="contact-o" size="30rpx"/>客户：{{item.o_accerpt}}</van-col>
+                            </van-row>
+                            <van-row>
+                                <van-col span="24" style="text-align: left;"><van-icon name="guide-o" size="30rpx"/>地址：{{item.address}}</van-col>
+                            </van-row>
+                            <van-divider dashed />
+                            <van-row>
+                                <van-col span="24" style="text-align: left;"><van-icon name="cart-o" size="30rpx"/>产品：{{item.product}}</van-col>
+                            </van-row>
+                            <van-divider dashed />
+                            <van-row>
+                                <van-col span="24" style="text-align: left;"><van-icon name="description-o" size="30rpx"/>备注：{{item.order_note}}</van-col>
+                            </van-row>
+                            <van-row>
+                                <van-col span="24" style="text-align: left;"><van-icon name="clock-o" size="30rpx"/>下单时间：{{item.create_date}}</van-col>
+                            </van-row>
+                        </view>
+                        <view data-id="{{item.id}}" bind:tap="goDetail" wx:if="{{item.type=='produce' || item.type=='sample'}}">
+                            <van-row>
+                                <van-col span="24" style="text-align: left;"><van-icon name="orders-o" size="30rpx"/>单号：{{item.works_no}}</van-col>
+                            </van-row>
+                            <van-row>
+                                <van-col span="24" style="text-align: left;"><van-icon name="service-o" size="30rpx"/>下单人：{{item.salesman}}</van-col>
+                            </van-row>
+                            <van-row>
+                                <van-col span="24" style="text-align: left;"><van-icon name="contact-o" size="30rpx"/>下单部组：{{item.depart_name}}</van-col>
+                            </van-row>
+                            <van-divider dashed />
+                            <van-row>
+                                <van-col span="24" style="text-align: left;"><van-icon name="cart-o" size="30rpx"/>产品：{{item.product}}</van-col>
+                            </van-row>
+                            <van-divider dashed />
+                            <van-row>
+                                <van-col span="24" style="text-align: left;"><van-icon name="description-o" size="30rpx"/>备注：{{item.order_note}}</van-col>
+                            </van-row>
+                            <van-row>
+                                <van-col span="24" style="text-align: left;"><van-icon name="clock-o" size="30rpx"/>下单时间：{{item.create_date}}</van-col>
+                            </van-row>
+                            <van-row>
+                                <van-col span="24" style="text-align: left;color: red;"><van-icon name="clock-o" size="30rpx"/>截止时间：{{item.end_date}}</van-col>
+                            </van-row>
+                        </view>
+                        
+                        <van-row custom-class="van-card-button">
+                            <van-col offset="16" span="8"  style="text-align: right;">
+                                <van-button data-id="{{item.id}}" bind:click="newOrder" round type="primary" size="small" color="linear-gradient(to right, #d81e06, #d81e06)">
+                                新工单入口
+                                </van-button>
+                            </van-col>
+                            <!-- <van-col span="8" bind:click="newOrder" style="text-align: right;">{{item.status=='wait'?'':'领料人：'+item.user}}</van-col>
+                            <van-col span="8" offset="{{item.status=='wait'?8:0}}">
+                                <van-button wx:if="{{item.status=='wait'}}" round type="primary" bind:click="picking" data-id="{{item.id}}" size="small" color="linear-gradient(to right, #d81e06, #d81e06)">
+                                    新工单入口
+                                </van-button>
+                            </van-col> -->
+                        </van-row>
+                    </van-cell>
+                </van-cell-group>
+            </view>
+            <view wx:if="{{list.length>2}}" class="loadmore">
+            <block wx:if="{{nomore}}">
+            <text>{{nomoreText}}</text>
+            </block>
+            <block wx:else>
+            <text class="iconfont icon-loading loading" space="nbsp"></text>
+            <text> {{loadmoreText}}</text>
+            </block>
+        </view>
+        </scroll-view>
+    </view>
+    <view class='loadingicon acea-row row-center-wrapper' wx:if="{{loading}}">
+        <text class='loading iconfont icon-jiazai' hidden='{{loading==false}}'></text>{{loadTitle}}
+     </view>
+    <button class="floating-button" bindtap="onFloatingButtonTap"><van-icon name="user-o" /></button>
+</view>
+<van-notify id="van-notify" />
+<van-popup
+  show="{{ show_search_box }}"
+  round
+  custom-style="height:50%"
+  bind:close="hidePop"
+  position="bottom"
+  data-type="search-box"
+>
+    <van-cell border="{{false}}">
+        <van-row>
+            <van-col span="24" style="color:#000;text-align: center;font-size: 35rpx;">筛选</van-col>
+        </van-row>
+    </van-cell>
+    <van-cell title="销售" value="{{ saler_text }}" data-type="search-saler" bind:click="showPop" is-link />
+    <van-cell title="选择日期" value="{{ date }}" data-type="search-date" bind:click="showPop" is-link />
+    <van-cell title="订单类型" value="{{ type_text }}" data-type="search-type" bind:click="showPop" is-link />
+    <van-field
+        model:value="{{ product_name }}"
+        placeholder="请输入产品名称"
+        label="产品名称"
+    />
+
+    <view style="position: fixed;bottom: 0;padding-bottom: env(safe-area-inset-bottom);margin:0 auto;right: 0;left: 0;">
+        <van-row custom-class="search-button">
+            <van-col span="12">
+                <van-button round type="default" custom-class="button-detail" bind:click="resetSearch">重置</van-button>
+            </van-col>
+            <van-col span="12">
+                <van-button round type="info" custom-class="button-detail" bind:click="confirmSearch">确定</van-button>
+            </van-col>
+        </van-row>
+    </view>
+</van-popup>
+
+<van-popup 
+  show="{{ show_saler_choose }}"
+  round
+  custom-style="height:50%"
+  bind:close="hidePop"
+  position="bottom"
+  data-type="search-saler">
+    <van-picker
+        show-toolbar
+        title="选择销售"
+        columns="{{ salerOptions }}"
+        data-type="search-saler"
+        bind:cancel="hidePop"
+        bind:confirm="onConfirm"
+    />
+</van-popup>
+<van-popup 
+  show="{{ show_date_choose }}"
+  round
+  custom-style="height:50%"
+  bind:close="hidePop"
+  position="bottom"
+  data-type="search-date">
+    <calendar
+        config="{{calendarConfig}}"
+        bind:afterTapDate="afterTapDate"
+    />
+
+</van-popup>
+
+<van-popup 
+  show="{{ show_type_choose }}"
+  round
+  custom-style="height:50%"
+  bind:close="hidePop"
+  position="bottom"
+  data-type="search-type">
+    <van-picker
+        show-toolbar
+        title="选择类型"
+        columns="{{ typeOptions }}"
+        data-type="search-type"
+        bind:cancel="hidePop"
+        bind:confirm="onConfirm"
+    />
+</van-popup>

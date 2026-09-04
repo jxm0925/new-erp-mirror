@@ -1,0 +1,21 @@
+<view class="container">
+    <van-empty wx:if="{{!suggestInfo.status}}" description="暂未处理" />
+
+<view wx:if="{{suggestInfo.status}}">
+  <van-cell-group custom-class="dialog-cell">
+
+    <scroll-view scroll-y="true" scroll-x="false" style="height:100%;">
+      <van-cell title="认领人" value="{{suggestInfo.director_name}}" />
+      <van-cell wx:if="{{suggestInfo.result!=5}}" title="落地等级" value="{{suggestInfo.result_text}}" />
+      <van-cell wx:if="{{suggestInfo.score}}" title="积分" value="{{suggestInfo.score}}"/>
+      <van-cell wx:if="{{suggestInfo.executor_ids}}" title="参与落地人" value="{{suggestInfo.executor}}" />
+      <van-cell title="结果反馈:"/>
+      <view style="display: block;width: 100%;font-size: 28rpx;color: #666666;line-height: 56rpx;">
+        <parser style="white-space:normal;" html="{{suggestInfo.result_content}}" />
+      
+      </view>
+    </scroll-view>
+  
+  </van-cell-group>
+</view>
+</view>

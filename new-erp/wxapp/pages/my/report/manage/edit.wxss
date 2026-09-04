@@ -1,0 +1,109 @@
+page { 
+  background-color: #F4F6F9; 
+  padding-bottom: calc(220rpx + env(safe-area-inset-bottom)); 
+}
+
+/* 💥 核心：全屏透明防滑遮罩 💥 */
+.drag-mask {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 99999; /* 必须比卡片还高，拦截一切触摸 */
+  background: transparent;
+}
+
+/* 头部卡片与通用标题 */
+.header-card { margin: 20rpx 0; background: #fff; }
+.icon-preview-wrap { display: flex; justify-content: flex-end; }
+.icon-preview { width: 48rpx; height: 48rpx; border-radius: 8rpx; display: flex; justify-content: center; align-items: center; }
+.icon-img { width: 32rpx; height: 32rpx; }
+.section-title { font-size: 26rpx; color: #999; padding: 20rpx 30rpx 10rpx; }
+.field-list { padding: 0 30rpx; }
+
+/* 拖拽引擎与字段卡片核心样式 */
+.drag-container { position: relative; width: 100%; transition: height 0.3s ease; }
+
+.field-card { 
+  background: #fff; 
+  border-radius: 12rpx; 
+  border: 1rpx solid #e8e8e8; 
+  position: absolute; left: 0; right: 0; 
+  height: 100px; 
+  box-sizing: border-box;
+  transition: top 0.2s ease;
+  display: flex;
+  flex-direction: column;
+}
+
+.field-card.dragging {
+  box-shadow: 0 8px 24px rgba(255, 77, 77, 0.15); border: 1px dashed #ff4d4d; opacity: 0.95; transition: none; z-index: 99;
+}
+
+.field-top { padding: 20rpx 30rpx 15rpx; display: flex; justify-content: space-between; align-items: flex-start; flex: 1; overflow: hidden; }
+.field-label-wrap { display: flex; flex: 1; padding-right: 20rpx; overflow: hidden; }
+.field-label { 
+  font-size: 28rpx; font-weight: bold; color: #333; line-height: 1.4;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; 
+}
+.required-mark { color: #ff4d4d; margin-left: 6rpx; font-weight: bold; flex-shrink: 0; }
+.field-placeholder { 
+  font-size: 24rpx; color: #ccc; line-height: 1.4; 
+  max-width: 140rpx; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0;
+}
+
+.field-bottom { padding: 10rpx 30rpx; display: flex; justify-content: space-between; align-items: center; height: 35px; }
+.field-type { display: flex; align-items: center; }
+.type-text { font-size: 24rpx; color: #999; margin-left: 10rpx; }
+.btn-setting { color: #ff4d4d; font-size: 24rpx; border: 1rpx solid #ff4d4d; padding: 4rpx 24rpx; border-radius: 6rpx; }
+
+/* 红色虚线添加按钮 */
+.btn-add-field { background: #fff; color: #ff4d4d; display: flex; justify-content: center; align-items: center; padding: 24rpx 0; border-radius: 8rpx; font-size: 28rpx; border: 2rpx dashed #ff4d4d; margin-top: 30rpx; }
+.add-icon { font-size: 36rpx; margin-right: 10rpx; font-weight: 300; }
+.btn-disable { text-align: center; color: #ff4d4d; font-size: 28rpx; padding: 30rpx 0; }
+
+/* 底部操作栏 */
+.bottom-action { position: fixed; bottom: 0; left: 0; width: 100%; display: flex; justify-content: space-between; align-items: center; padding: 24rpx 30rpx calc(24rpx + env(safe-area-inset-bottom)); background: #fff; box-shadow: 0 -4rpx 16rpx rgba(0,0,0,0.04); box-sizing: border-box; gap: 30rpx; z-index: 100; }
+.btn-wrap { flex: 1; }
+.radius-btn { border-radius: 12rpx !important; font-weight: bold !important; }
+
+/* ================= 下方弹窗样式完全保留 ================= */
+.popup-header, .full-popup-header { display: flex; justify-content: space-between; align-items: center; padding: 30rpx; background: #fff; border-bottom: 1rpx solid #eee; }
+.popup-cancel { color: #ff4d4d; font-size: 30rpx; }
+.popup-title { font-weight: bold; font-size: 32rpx; color: #333; }
+.popup-confirm { color: #ff4d4d; font-weight: bold; font-size: 30rpx; }
+.control-group-title { font-size: 24rpx; color: #999; padding: 20rpx 30rpx; }
+.control-item-wrap { background: #F8F9FA; width: 80rpx; height: 80rpx; display: flex; align-items: center; justify-content: center; border-radius: 12rpx; border: 1rpx solid #E5E5E5; }
+.control-name { font-size: 24rpx; color: #333; margin-top: 16rpx; }
+
+.full-popup-header { padding-top: 100rpx; }
+.field-config-body { height: calc(100vh - 180rpx); overflow-y: auto; padding-bottom: 60rpx; }
+.config-section-title { font-size: 24rpx; color: #999; padding: 30rpx 30rpx 10rpx; }
+.no-margin-inset { margin: 0 30rpx !important; border-radius: 8rpx !important; }
+
+.preview-box-wrap { margin: 0 30rpx; background: #fff; border-radius: 8rpx; position: relative; overflow: hidden; }
+.preview-ribbon { position: absolute; top: 12rpx; right: -36rpx; background: #b0b0b0; color: #fff; font-size: 20rpx; padding: 4rpx 40rpx; transform: rotate(45deg); z-index: 10; }
+.btn-delete-field { margin: 60rpx 30rpx; text-align: center; color: #ff4d4d; font-size: 30rpx; background: #fff; padding: 24rpx; border-radius: 8rpx; }
+
+.icon-picker-body { padding-bottom: 60rpx; height: calc(100% - 100rpx); }
+.color-grid { display: flex; flex-wrap: wrap; gap: 30rpx; padding: 10rpx 30rpx 30rpx; }
+.color-item { width: 64rpx; height: 64rpx; border-radius: 50%; display: flex; align-items: center; justify-content: center; border: 4rpx solid transparent; transition: all 0.2s; }
+.color-active { border-color: #333; transform: scale(1.1); box-shadow: 0 4rpx 10rpx rgba(0,0,0,0.2); }
+.icon-grid-item { width: 90rpx; height: 90rpx; display: flex; align-items: center; justify-content: center; border-radius: 16rpx; border: 4rpx solid transparent; box-sizing: border-box; }
+.icon-active { border-color: #ffffff; box-shadow: 0 0 0 4rpx #ff4d4d; }
+.icon-img-picker { width: 50rpx; height: 50rpx; }
+
+.flow-steps { padding: 0 30rpx; }
+.flow-step-card { background: #fff; border-radius: 12rpx; overflow: hidden; border: 1rpx solid #eee; }
+.step-header { display: flex; justify-content: space-between; align-items: center; padding: 20rpx 30rpx; background: #fafafa; border-bottom: 1rpx solid #eee; }
+.step-title { font-size: 26rpx; font-weight: bold; color: #333; }
+.flow-arrow { display: flex; justify-content: center; padding: 16rpx 0; }
+
+.detail-preview-box { background: #fafafa; padding-bottom: 20rpx; }
+.detail-title { font-size: 28rpx; color: #333; font-weight: bold; padding: 24rpx 30rpx; background: #fff; margin-bottom: 2rpx; }
+.detail-children { background: #fff; margin-bottom: 20rpx; }
+.detail-action-btn { 
+  display: flex; align-items: center; justify-content: center; color: #ff4d4d; font-size: 28rpx; 
+  background: #fff; padding: 24rpx 0; margin: 0 30rpx; border: 1rpx dashed #ff4d4d; border-radius: 8rpx;
+}

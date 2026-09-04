@@ -1,0 +1,47 @@
+<view class="container">
+  <view class="header-action">
+    <text class="section-title">表单管理</text>
+    <view class="create-btn" bindtap="goToEdit" data-id="">
+      <van-icon name="plus" size="14px" custom-style="margin-right: 4rpx;" />
+      <text>创建汇报表单</text>
+    </view>
+  </view>
+
+  <view class="list-card">
+    <van-cell-group inset custom-class="manage-group">
+      <block wx:for="{{templateList}}" wx:key="id">
+        <van-swipe-cell right-width="{{ 130 }}">
+          <van-cell center bind:click="goToEdit" data-id="{{item.id}}" custom-class="{{item.status === 'hidden' ? 'cell-disabled' : ''}}">
+            <view slot="title" class="cell-title-wrap">
+              <view class="icon-box" style="background-color: {{item.status === 'hidden' ? '#ccc' : item.bg_color}}">
+                <image class="icon-img" src="{{item.icon}}"></image>
+              </view>
+              <view class="text-box">
+                <text class="tpl-name">
+                  {{item.name}} 
+                  <text class="status-tag" wx:if="{{item.status === 'hidden'}}">已停用</text>
+                </text>
+                <text class="tpl-desc">包含 {{item.fieldCount}} 个字段 · 周期: {{item.periodName}}</text>
+              </view>
+            </view>
+            <van-icon slot="right-icon" name="arrow" color="#ccc" />
+          </van-cell>
+
+          <view slot="right" class="swipe-actions">
+            <view class="swipe-btn btn-warning" bindtap="toggleStatus" data-id="{{item.id}}" data-status="{{item.status}}">
+              {{item.status === 'hidden' ? '启用' : '停用'}}
+            </view>
+            <view class="swipe-btn btn-danger" bindtap="deleteTemplate" data-id="{{item.id}}">
+              删除
+            </view>
+          </view>
+        </van-swipe-cell>
+      </block>
+    </van-cell-group>
+
+    <van-empty wx:if="{{templateList.length === 0 && !isLoading}}" description="暂无表单模板，请新建" />
+    <view class="loading-text" wx:if="{{templateList.length > 0}}">{{hasMore ? '加载中...' : '没有更多了'}}</view>
+  </view>
+</view>
+
+<report-tabbar current="manage"></report-tabbar>

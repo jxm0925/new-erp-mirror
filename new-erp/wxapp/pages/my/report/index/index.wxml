@@ -1,0 +1,61 @@
+<view class="container">
+  <view class="header-banner">
+    
+    <view class="user-info">
+      <view class="user-left">
+        <view class="greeting-box">
+          <text class="greeting">{{greeting}}，{{userName}}</text>
+          <van-tag plain color="#fff" custom-class="role-tag">{{roleName}}</van-tag>
+        </view>
+        <text class="date-text">{{currentDate}}</text>
+      </view>
+
+      <view 
+        class="boss-stats-btn" 
+        wx:if="{{staffInfo.is_principal === 1 || staffInfo.is_super_admin === 1}}" 
+        bindtap="goGlobalStats"
+      >
+        <van-icon name="bar-chart-o" size="14px" custom-class="btn-icon" />
+        <text>团队统计</text>
+        <van-icon name="arrow" size="10px" color="#ff4d4d" custom-class="arrow-icon"/>
+      </view>
+    </view>
+    
+    <view class="stats-box">
+      <view class="stat-item" bindtap="jumpToList" data-tab="received">
+        <text class="stat-num">{{pendingCount}}</text>
+        <text class="stat-desc">待我查阅</text>
+      </view>
+      <view class="stat-line"></view>
+      <view class="stat-item" bindtap="jumpToList" data-tab="submitted">
+        <text class="stat-num">{{submittedCount}}</text>
+        <text class="stat-desc">我提交的</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="section-title">
+    <text class="title-text">常用汇报事项</text>
+  </view>
+
+  <view class="grid-card">
+    <van-grid column-num="3" border="{{ false }}" clickable wx:if="{{templateList.length > 0}}">
+      <van-grid-item 
+        wx:for="{{templateList}}" 
+        wx:key="id" 
+        use-slot 
+        bind:click="goToForm" 
+        data-id="{{item.id}}" 
+        data-name="{{item.name}}">
+        <view class="grid-icon-wrap" style="background-color: {{item.bg_color || '#ff4d4d'}}">
+          <image class="grid-img" src="{{item.icon || '/assets/icon_daily.png'}}"></image>
+        </view>
+        <text class="grid-text">{{item.name}}</text>
+      </van-grid-item>
+    </van-grid>
+
+    <van-empty wx:if="{{templateList.length === 0 && !isLoading}}" description="暂无启用的汇报表单" />
+  </view>
+</view>
+
+<report-tabbar current="index"></report-tabbar>

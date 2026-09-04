@@ -1,0 +1,6 @@
+{
+  "usingComponents": {
+    "report-tabbar": "/components/report-tabbar/index",
+    "calendar":"/components/calendar/index"
+  }
+}

@@ -1,0 +1,197 @@
+page {
+    background-color: #f2f4f7; 
+    padding-bottom: 60rpx;
+  }
+  
+  .container { display: flex; flex-direction: column; }
+  
+  /* ================= 💥 全新高质感横向时光轴 💥 ================= */
+  .header-section {
+    background: #fff;
+    padding: 40rpx 0 0;
+    margin-bottom: 24rpx; 
+    box-shadow: 0 4rpx 20rpx rgba(0,0,0,0.03);
+  }
+  
+  .report-title-box {
+    padding: 0 40rpx;
+    margin-bottom: 20rpx;
+  }
+  
+  .report-title {
+    font-size: 40rpx;
+    font-weight: 900;
+    color: #1f2329; /* 偏沉稳的商务黑 */
+    margin-bottom: 10rpx;
+    line-height: 1.4;
+  }
+  
+  .report-no {
+    font-size: 24rpx;
+    color: #8f959e;
+    line-height: 1;
+  }
+  
+  /* 隐藏横向滚动条，让界面更干净 */
+  .version-scroll {
+    width: 100%;
+    white-space: nowrap;
+  }
+  ::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+    color: transparent;
+  }
+  
+  /* 轨道整体内边距，给上方的气泡留足空间 */
+  .timeline-track {
+    display: flex;
+    padding: 50rpx 30rpx 40rpx; /* 顶部50rpx防止气泡被截断 */
+    align-items: flex-start;
+  }
+  
+  /* 单个节点容器 */
+  .v-node {
+    flex-shrink: 0;
+    width: 220rpx; /* 节点宽度，保证内容不拥挤 */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+    cursor: pointer;
+  }
+  
+  /* 💥 悬浮气泡标签 (点睛之笔) 💥 */
+  .v-bubble {
+    position: absolute;
+    top: -44rpx;
+    background: linear-gradient(135deg, #ff6b6b 0%, #ff4d4f 100%);
+    color: #fff;
+    font-size: 20rpx;
+    font-weight: bold;
+    padding: 4rpx 16rpx;
+    border-radius: 20rpx 20rpx 20rpx 0; /* 对话框水滴形 */
+    z-index: 10;
+    box-shadow: 0 4rpx 10rpx rgba(255, 77, 79, 0.25);
+    transform: translateX(-5rpx); /* 微调对齐圆点中心 */
+  }
+  
+  /* 💥 精准轨道与连线 💥 */
+  .v-track-line {
+    width: 100%;
+    height: 40rpx;
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: 20rpx;
+  }
+  
+  .v-line {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 4rpx;
+    background: #ebedf0;
+    z-index: 1;
+  }
+  
+  .v-line-left { left: 0; width: 50%; }
+  .v-line-right { right: 0; width: 50%; }
+  
+  /* 圆点样式：静止与发光态 */
+  .v-dot {
+    width: 20rpx;
+    height: 20rpx;
+    border-radius: 50%;
+    background: #c8c9cc;
+    border: 6rpx solid #fff;
+    z-index: 2;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    box-sizing: content-box;
+  }
+  
+  .v-active .v-dot {
+    width: 22rpx;
+    height: 22rpx;
+    background: #1989fa;
+    border-color: #fff;
+    /* 科技蓝发光光晕 */
+    box-shadow: 0 0 0 10rpx rgba(25, 137, 250, 0.15); 
+  }
+  
+  /* 💥 节点文字排版与缩放动效 💥 */
+  .v-info {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  
+  .v-version {
+    font-size: 30rpx;
+    font-weight: bold;
+    color: #8f959e; /* 未选中时为高级灰 */
+    margin-bottom: 10rpx;
+    transition: all 0.3s ease;
+  }
+  
+  .v-active .v-version {
+    font-size: 36rpx; /* 选中时文字变大，极其醒目 */
+    color: #1989fa; 
+  }
+  
+  .v-user {
+    font-size: 24rpx;
+    color: #bbbfc4;
+    margin-bottom: 4rpx;
+    transition: color 0.3s;
+  }
+  
+  .v-time {
+    font-size: 22rpx;
+    color: #c8c9cc;
+    font-family: DIN, sans-serif;
+    transition: color 0.3s;
+  }
+  
+  .v-active .v-user { color: #646566; font-weight: 500; }
+  .v-active .v-time { color: #8f959e; }
+  
+  
+  /* ================= 💥 动态快照详情区 (卡片化) 💥 ================= */
+  .content-section {
+    padding: 0 24rpx;
+  }
+  
+  .field-item {
+    background: #fff;
+    border-radius: 16rpx;
+    padding: 32rpx;
+    margin-bottom: 24rpx;
+    box-shadow: 0 4rpx 12rpx rgba(0,0,0,0.02);
+  }
+  
+  .field-label {
+    font-size: 26rpx;
+    color: #888;
+    margin-bottom: 16rpx;
+    line-height: 1.2;
+  }
+  
+  .field-value {
+    font-size: 30rpx;
+    color: #333;
+    line-height: 1.6;
+    white-space: pre-wrap; /* 保证文本换行生效 */
+    word-break: break-all;
+  }
+  
+  /* 极简明细列表样式 */
+  .simple-list { padding-top: 4rpx; }
+  .simple-row { display: flex; align-items: flex-start; margin-bottom: 16rpx; font-size: 30rpx; line-height: 1.6; }
+  .simple-row:last-child { margin-bottom: 0; }
+  .simple-index { color: #999; margin-right: 12rpx; font-family: DIN, sans-serif; font-weight: bold;}
+  .simple-values { flex: 1; word-break: break-all; }
+  .val-text { color: #333; }
+  .val-divider { display: inline-block; width: 16rpx; }

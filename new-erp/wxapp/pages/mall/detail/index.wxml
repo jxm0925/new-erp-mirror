@@ -1,0 +1,25 @@
+
+<view class="content">
+    <view style="margin-top: 20rpx;margin-bottom: 20rpx;">
+        <van-cell-group inset>
+            <van-card
+            price="{{info.score}}积分"
+            title="{{info.title}}"
+            desc="库存：{{info.stocks}}"
+            thumb="{{ info.image }}"
+            currency=""
+            />
+        </van-cell-group>
+    </view>
+
+    <view style="width: 92%;background-color: #fff;margin:auto;border-radius: 20rpx;">
+      <view style="padding: 10rpx;">
+        <parser style="white-space:normal;word-break: break-all;white-space: pre-warp" html="{{info.description}}" />
+      </view>
+    </view>
+    <van-goods-action>
+        <van-goods-action-button text="立即兑换" bind:click="onClickButton" />
+    </van-goods-action>
+</view>
+<van-dialog id="van-dialog" />
+<van-notify id="van-notify" />

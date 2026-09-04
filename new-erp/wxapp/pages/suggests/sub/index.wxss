@@ -1,0 +1,95 @@
+/* pages/suggests/sub/index.wxss */
+/* .banner {
+    padding-top: 10rpx;
+    width: 98%;
+    margin: 0 auto;
+    height: 417rpx;
+    border-radius: 30rpx!important;
+    overflow: hidden;
+    transform: translateY(0);
+  }
+  
+  .banner image {
+    width: 100%;
+    height: 417rpx;
+  } */
+  .top-image{
+      margin-top: 5rpx;
+  }
+  /* 禁止弹窗整体滚动，交由内部 scroll-view 处理 */
+.van-popup {
+  overflow: hidden !important;
+}
+
+/* 1. 头部样式 */
+.pop-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 16px 0; /* 顶部留白 */
+  background-color: #fff;
+  flex-shrink: 0; /* 防止被挤压 */
+}
+.pop-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: #323233;
+}
+.pop-close {
+  font-size: 22px;
+  color: #c8c9cc;
+  padding: 4px; /* 增加点击热区 */
+}
+
+/* 2. 搜索框区域 */
+.pop-search {
+  padding: 4px 0;
+  background-color: #fff;
+  flex-shrink: 0;
+}
+
+/* 3. 中间滚动区域 */
+.pop-content {
+  flex: 1; /* 占据所有剩余空间 */
+  height: 0; /* 配合 flex:1 使用，防止 overflow 失效 */
+  background-color: #fff;
+}
+
+/* 选中行高亮样式：极淡的蓝色背景 */
+.active-cell {
+  background-color: #f2f9ff !important;
+}
+
+/* 空状态样式 */
+.empty-state {
+  padding-top: 60px;
+  text-align: center;
+  color: #969799;
+  font-size: 14px;
+}
+.empty-state text {
+  display: block;
+  margin-top: 10px;
+}
+
+/* 4. 底部悬浮栏样式 */
+.pop-footer {
+  background-color: #fff;
+  padding: 12px 16px;
+  /* 适配全面屏底部安全区 */
+  border-top: 1px solid #f7f8fa;
+  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.05);
+  flex-shrink: 0;
+}
+/* 定义一个强制不换行的类 */
+.one-line-cut {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  
+  /* 关键：限制最大宽度，否则它会无限制撑开 */
+  /* 你可以根据实际情况调整，比如 60% 或 200px */
+  max-width: 200px; 
+  text-align: right; /* 保持右对齐 */
+  display: block; /* 确保占位生效 */
+}

@@ -1,0 +1,42 @@
+/* pages/orders/index/index.wxss */
+page ,.container{
+    width: 100%;
+    background-color: #f4f4f4;
+}
+.stastic-container{
+    background-color: #d81e06;
+    color: #ffffff;
+    flex-direction: column;
+    position: sticky;
+}
+.order-info{
+  padding: 30rpx;
+}
+.order-card{
+  padding-top: 30rpx;
+}
+.order-card-title{
+  width: 80%;
+  flex:3 !important
+}
+.order-card-value{
+  color: red !important;
+}
+.van-card-class{
+  background-color: #ffffff !important;
+}
+.van-card-goods{
+  background-color: #ffffff !important;
+  height: 130rpx;
+}
+.van-card-button{
+  border-top: 1px solid #f4f4f4;
+  padding-top: 10rpx;
+}
+.order-row{
+  text-align: left;
+  padding-top: 10rpx;
+}
+.col-saler{
+  float: left;
+}

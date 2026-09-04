@@ -1,0 +1,91 @@
+<view class="container">
+    <van-sticky>
+        <van-search
+            value="{{ value }}"
+            shape="round"
+            background="#d81e06"
+            placeholder="请输入搜索关键词"
+            bind:search="onSearch"
+            bind:cancel="searchCancel"
+        />
+        <view class="stastic-container">
+            <view class="order-info">订单总数：{{orderData.total_nums}}，总金额：￥{{orderData.total_amount}}</view>
+            <view class="order-info">待打印：{{orderData.unconfirmed_count}}，待发货：{{orderData.unshipped_count}}</view>
+            <van-dropdown-menu>
+                <van-dropdown-item value="{{ selected_status }}" options="{{ status }}" bind:change="changeStatus" />
+                <!-- <van-dropdown-item value="{{ selected_saler }}" options="{{ saler }}" binchange="changeSaler" /> -->
+            </van-dropdown-menu>
+        </view>
+    </van-sticky>
+    <van-empty wx:if="{{!orderList.length}}" description="描述文字" />
+
+    <view class="order-container">
+        <scroll-view  style="width: 100%;"  scroll-y="true" scroll-top="{{scrolltop}}">
+            <!-- <van-empty wx:if="{{!goods || goods.length == 0}}" description="暂无商品" /> -->
+            <view wx:for="{{orderList}}" bind:tap="goOrderDetail" wx:key="id" data-order_no="{{item.name}}">
+                <van-cell-group custom-class="order-card">
+                    <van-cell title-class="order-card-title" value-class="order-card-value" title="{{item.name}}" value="{{item.status==10?'待打印':item.status==20?'待发货':'已发货'}}"/>
+                    <van-cell>
+                        <van-row>
+                            <van-col span="24" style="text-align: left;">收货人：{{item.o_accerpt}}</van-col>
+                        </van-row>
+                        <van-row>
+                            <van-col span="24" style="text-align: left;">联系电话：{{item.o_mobile}}</van-col>
+                        </van-row>
+                        <van-row>
+                            <van-col span="24" style="text-align: left;">收货地址：{{item.area}}{{item.o_address}}</van-col>
+                        </van-row>
+                    </van-cell>
+                    <!-- <van-cell>
+                        <van-row custom-class="order-row">
+                            <van-col span="8">收货人：姜纤</van-col>
+                            <van-col span="16">手机号: 17865923231</van-col>
+                        </van-row>
+                        <van-row custom-class="order-row">
+                            <van-col span="24">收货地址：收货地址收货地址收货地址收货地址收货地址收货地址收货地址</van-col>
+                        </van-row>
+                        <van-row custom-class="order-row">
+                            <van-col span="24">顺丰快递（SF310051204210）</van-col>
+                        </van-row>
+                        <van-row custom-class="order-row">
+                            <van-col span="24">销售：姜纤</van-col>
+                        </van-row>
+                    </van-cell>  -->
+                    <view wx:for="{{item.ordergoods}}" wx:for-item="iitem" wx:key="index">
+                        <van-card
+                            wx:if="{{iitem.display_type=='line_note'}}"
+                            centered
+                            desc="{{iitem.name}}"
+                            title="【备注】"
+                            custom-class="van-card-class"
+                        />
+                        <van-card wx:else
+                            centered
+                            num="{{iitem.product_uom_qty}}"
+                            price="{{iitem.price_unit}}"
+                            title="{{iitem.name}}"
+                            custom-class="van-card-class"
+                        />
+                    
+                    </view>
+                    <van-cell>
+                        <van-row custom-class="van-card-button">
+                            <van-col span="8" style="text-align: left;">销售：{{item.saleman}}</van-col>
+                            <van-col span="16">
+                                {{item.order_time}}
+                            </van-col>
+                        </van-row>
+                        <van-row custom-class="van-card-button">
+                            <van-col span="8" style="text-align: left;">总价：<text style="color: red;font-weight: bold;">￥{{item.amount_untaxed}}</text></van-col>
+                            <van-col offset="8" span="8">
+                                <van-button round type="primary" size="small" color="linear-gradient(to right, #4bb0ff, #6149f6)">
+                                查看详情
+                                </van-button>
+                            </van-col>
+                        </van-row>
+                    </van-cell>
+                </van-cell-group>
+            </view>
+        </scroll-view>
+    </view>
+</view>

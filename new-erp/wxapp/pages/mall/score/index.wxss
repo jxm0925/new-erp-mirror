@@ -1,0 +1,96 @@
+/* pages/score/logs.wxss */
+
+.page {
+  background: #f6f7f9;
+  min-height: 100vh;
+}
+
+/* ===== 顶部资产卡片 ===== */
+.asset-card-wrap {
+  padding: 32rpx;
+}
+
+.asset-card {
+  background: #ffffff;
+  border-radius: 28rpx;
+  padding: 48rpx 40rpx;
+  box-shadow: 0 16rpx 40rpx rgba(0, 0, 0, 0.06);
+}
+
+.asset-title {
+  font-size: 26rpx;
+  color: #8a8a8a;
+}
+
+.asset-score {
+  font-size: 88rpx;
+  font-weight: 700;
+  margin: 20rpx 0 12rpx;
+  color: #111;
+  letter-spacing: 2rpx;
+}
+
+.asset-sub {
+  font-size: 24rpx;
+  color: #666;
+}
+
+.level {
+  margin-left: 8rpx;
+  font-weight: 500;
+  color: #111;
+}
+
+/* ===== 记录列表 ===== */
+.record-item {
+  display: flex;
+  align-items: center;
+  padding: 32rpx;
+  background: #ffffff;
+  margin-bottom: 1px;
+}
+
+.record-score {
+  width: 220rpx;
+  font-size: 42rpx;
+  font-weight: 600;
+  text-align: left;
+}
+
+.record-score.add {
+  color: #07c160;
+}
+
+.record-score.sub {
+  color: #ee0a24;
+}
+
+.record-content {
+  flex: 1;
+}
+
+.record-reason {
+  font-size: 30rpx;
+  color: #111;
+}
+
+.record-meta {
+  margin-top: 8rpx;
+  font-size: 24rpx;
+  color: #999;
+}
+.record-remark {
+  font-size: 26rpx;
+  color: #666;
+  margin-top: 8rpx;
+  line-height: 1.4;
+  /* 如果想让备注稍微有一点背景色区分，可以把下面两行注释解开 */
+  /* background-color: #f7f8fa; */
+  /* padding: 6rpx 12rpx; border-radius: 8rpx; */
+}
+
+.record-meta {
+  margin-top: 8rpx;
+  font-size: 24rpx;
+  color: #999;
+}

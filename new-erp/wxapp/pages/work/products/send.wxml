@@ -1,0 +1,117 @@
+<scroll-view  style="width: 100%;height: {{scrollHeight}}rpx;"  scroll-y="true" scroll-top="{{scrolltop}}">
+    <view class="order-details">
+        <view>
+        <van-cell size="large" title="{{orderInfo.o_accerpt}}  {{orderInfo.o_mobile}}" icon="location-o" label="{{orderInfo.address}}"/>
+        <view class='line'><image src='/static/images/line.jpg'></image></view>
+            <!-- <view class='address'  wx:if="{{ orderInfo.status!=10 }}">
+                <view style="font-size:16px;">出库单号</view>
+                <view class='out_nos' wx:for="{{orderInfo.out_nos}}" wx:key="index">
+                    <view  wx:if="{{ item[1] == 'cancel'}}" style="text-decoration:line-through; font-weight:bold; color:red; padding:10px 0;">{{item[0]}}</view>
+                    <view style="padding:10px 0; color:blue" wx:else>{{item[0]}}</view>
+                </view>
+                <view style="color:green; padding:10px 0;"> 点发货前要特别留意出库单号是否正确 </view>
+            </view> -->
+        </view>
+        <view style="margin-top: 10rpx;">
+            <van-cell-group>
+                <van-cell value-class="detail-label" title="订单明细"/>
+                <view  wx:for="{{orderInfo.ordergoods}}" wx:key="id">
+                    <van-cell wx:if="{{item.display_type == 'line_note'}}"
+                        center
+                        title="【备注】" 
+                        label="{{item.name}}"
+                        title-class="detail-title"
+                        label-class="detail-label-note"
+                    />
+                    <van-cell wx:else
+                        center
+                        title="{{item.name}}" 
+                        value="x{{item.product_uom_qty}}"
+                        label="￥{{item.price_unit}}"
+                        title-class="detail-title" 
+                        value-class="detail-value" 
+                        label-class="detail-label"
+                    />
+                </view>
+                <!-- <van-cell title-class="detail-sub-title" title="商品总额" value-class="detail-label" value="￥{{orderInfo.amount}}" /> -->
+                <van-cell title-class="detail-sub-title" title="订单编号" value="{{orderInfo.order_no}}" >
+                    <van-button type="default">默认按钮</van-button>
+                </van-cell>
+                <van-cell title-class="detail-sub-title" title="销售" value="{{orderInfo.sale.nickname}}" />
+                <van-cell title-class="detail-sub-title" title="下单时间" value="{{orderInfo.create_date}}" />
+                <!-- <van-cell title-class="detail-sub-title" label-class="remark-label" title="备注" label="内容" /> -->
+            </van-cell-group>
+        </view>
+        <view style="margin-top: 10rpx;">
+            <van-cell value-class="detail-label" title="发货选择"/>
+            
+            <van-cell>
+                <van-checkbox-group value="{{ result }}" bind:change="onChange">
+                    <van-checkbox wx:for="{{orderInfo.products}}" shape="square" custom-class="check-custom" left name="{{item.id}}" disabled="{{item.is_delivery}}">{{item.name}}</van-checkbox>
+                </van-checkbox-group>
+            </van-cell>
+            <van-cell-group>
+                <van-cell  label="{{delivery_show}}" is-link bind:click="showPopup" />
+                <van-popup
+                    show="{{ popShow }}"
+                    round
+                    z-index="10000"
+                    position="bottom"
+                    bind:click-overlay="onClose"
+                >
+                <van-picker item-height="33" show-toolbar columns="{{ columns }}" bind:cancel="onClose" bind:confirm="onConfirm" />
+                </van-popup>
+                
+                <van-popup
+                    show="{{ popShow }}"
+                    round
+                    z-index="10000"
+                    position="bottom"
+                    bind:click-overlay="onClose"
+                >
+                <van-picker item-height="33" show-toolbar columns="{{ columns }}" bind:cancel="onClose" bind:confirm="onConfirm" />
+                </van-popup>
+                <van-field
+                    label="快递单号"
+                    model:value="{{ send_no }}"
+                    placeholder="请扫描(填写)快递单号"
+                    clearable
+                    custom-class="name_class"
+                    use-button-slot
+                >
+                    <van-button slot="button" size="mini" color="#d81e06" bindtap="scan">
+                        扫描
+                    </van-button>
+                </van-field>
+                <van-field
+                    value="{{send.cost}}"
+                    clearable
+                    label="运费"
+                    type="digit"
+                    placeholder="请输入快递费用"
+                    border="{{ false }}"
+                    bind:input="inputCost"
+                />
+                <view style="padding-left:32rpx;background-color: #fff;">
+                <van-uploader
+                    accept="image"
+                    multiple
+                    upload-text="快递凭证"
+                    image-fit="aspectFill"
+                    file-list="{{ picsList }}"
+                    bind:after-read="afterPicRead"
+                    bind:delete="afterPicDel"
+                />
+                </view>
+            </van-cell-group>
+        </view>
+        <view style="margin-top: 10rpx;">
+            
+        </view>
+    </view>
+</scroll-view>
+<van-submit-bar wx:if="{{orderInfo.status=='2'}}"
+  button-text="发货"
+  bind:submit="send"
+/>
+<van-notify id="van-notify" />

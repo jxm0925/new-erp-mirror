@@ -1,0 +1,167 @@
+<view class="container">
+  
+  <view class="template-bar van-hairline--bottom">
+    <text class="label">汇报模板：</text>
+    <view class="dropdown-wrap">
+      <van-dropdown-menu active-color="#ff4d4d" wx:if="{{templateOptions.length > 0}}">
+        <van-dropdown-item value="{{ templateId }}" options="{{ templateOptions }}" bind:change="onTemplateChange" />
+      </van-dropdown-menu>
+    </view>
+  </view>
+
+  <view class="mode-tabs">
+    <van-tabs active="{{ currentMode }}" color="#ff4d4d" bind:change="onModeChange" line-width="60">
+      <van-tab title="按日统计" name="day"></van-tab>
+      <van-tab title="按月统计" name="month"></van-tab>
+    </van-tabs>
+  </view>
+
+  <view class="date-header van-hairline--bottom">
+    <view class="date-btn" bindtap="prevTime"><van-icon name="arrow-left" /></view>
+    
+    <view class="current-date" bindtap="showCalendar" wx:if="{{currentMode === 'day'}}">
+      <van-icon name="calendar-o" size="16px" custom-class="cal-icon"/>
+      <text>{{currentDate}}</text>
+    </view>
+
+    <picker mode="date" fields="month" value="{{currentMonth}}" bindchange="onMonthChange" wx:if="{{currentMode === 'month'}}">
+      <view class="current-date">
+        <van-icon name="calendar-o" size="16px" custom-class="cal-icon"/>
+        <text>{{currentMonth}}</text>
+        <van-icon name="arrow-down" size="12px" color="#999" style="margin-left: 10rpx;" />
+      </view>
+    </picker>
+
+    <view class="date-btn" bindtap="nextTime"><van-icon name="arrow" /></view>
+  </view>
+
+  <van-popup show="{{ show_date_choose }}" round custom-style="height:60%" bind:close="hidePop" position="bottom">
+      <calendar config="{{calendarConfig}}" bind:afterTapDate="afterTapDate" />
+  </van-popup>
+
+  <scroll-view scroll-y class="main-scroll">
+    <view class="dashboard-card">
+      <view class="chart-section">
+        <van-circle 
+          value="{{ submitRate }}" 
+          color="#ff4d4d" 
+          layer-color="#f5f5f5" 
+          stroke-width="8" 
+          size="110"
+          clockwise="{{ false }}"
+        >
+          <view class="circle-text-wrap">
+            <text class="circle-num">{{ submitRate }}%</text>
+            <text class="circle-lbl">提交率</text>
+          </view>
+        </van-circle>
+      </view>
+      
+      <view class="data-section">
+        <view class="data-item">
+          <text class="d-num">{{stats.total || 0}}</text>
+          <text class="d-lbl">{{currentMode === 'day' ? '应交人数' : '应交人次'}}</text>
+        </view>
+        <view class="data-item">
+          <text class="d-num success">{{stats.submitted_count || 0}}</text>
+          <text class="d-lbl">已提交</text>
+        </view>
+        <view class="data-item">
+          <text class="d-num danger">{{stats.unsubmitted_count || 0}}</text>
+          <text class="d-lbl">未提交</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="list-section">
+      <view class="section-title">
+        <view class="title-line"></view>
+        <text>提交明细</text>
+      </view>
+
+      <block wx:if="{{currentMode === 'day'}}">
+        <van-tabs active="{{ activeTab }}" color="#ff4d4d" animated swipeable>
+          
+          <van-tab title="未提交 ({{stats.unsubmitted_count}})" name="unsubmitted">
+            <van-empty wx:if="{{stats.unsubmitted.length === 0}}" description="全员均已提交" image="success" />
+            <view class="user-row" wx:for="{{stats.unsubmitted}}" wx:key="id">
+              <view class="user-info">
+                <view class="avatar-wrap">{{item.nickname[0]}}</view>
+                <view class="name-wrap">
+                  <text class="nickname">{{item.nickname}}</text>
+                  <text class="dept">{{item.dept_name}}</text>
+                </view>
+              </view>
+              <view class="status-tag danger">未提交</view>
+            </view>
+          </van-tab>
+
+          <van-tab title="已提交 ({{stats.submitted_count}})" name="submitted">
+            <van-empty wx:if="{{stats.submitted.length === 0}}" description="暂无人提交" />
+            <view class="user-row" wx:for="{{stats.submitted}}" wx:key="id">
+              <view class="user-info">
+                <view class="avatar-wrap success-bg">{{item.nickname[0]}}</view>
+                <view class="name-wrap">
+                  <text class="nickname">{{item.nickname}}</text>
+                  <text class="dept">{{item.dept_name}}</text>
+                </view>
+              </view>
+              <view class="status-time">{{item.submit_time}}</view>
+            </view>
+          </van-tab>
+
+        </van-tabs>
+      </block>
+
+      <block wx:if="{{currentMode === 'month'}}">
+        <van-empty wx:if="{{!monthList || monthList.length === 0}}" description="本月暂无数据" />
+        <view class="user-row" wx:for="{{monthList}}" wx:key="id">
+          <view class="user-info">
+            <view class="avatar-wrap {{item.miss_count === 0 ? 'success-bg' : 'warning-bg'}}">{{item.nickname[0]}}</view>
+            <view class="name-wrap">
+              <text class="nickname">{{item.nickname}}</text>
+              <text class="dept">{{item.dept_name}}</text>
+            </view>
+          </view>
+          
+          <view style="display: flex; align-items: center;">
+            <view class="month-stats">
+              <view class="m-stat-item"><text class="m-val success">{{item.submit_count}}</text>次已交</view>
+              <view class="m-stat-item" wx:if="{{item.miss_count > 0}}"><text class="m-val danger">{{item.miss_count}}</text>次缺交</view>
+              <view class="m-stat-item" wx:else><text class="m-val success">全勤</text></view>
+            </view>
+            <view class="detail-btn" bindtap="openUserDetail" data-user="{{item}}">
+              <van-icon name="notes-o" size="20px" color="#999" />
+              <text>明细</text>
+            </view>
+          </view>
+        </view>
+      </block>
+      
+      <view style="height: 60rpx;"></view>
+    </view>
+  </scroll-view>
+</view>
+<van-popup show="{{ showUserDetail }}" position="bottom" round custom-style="height: 65%; background: #F4F6F9;" bind:close="closeUserDetail">
+    
+    <view class="detail-popup-header">
+      <text class="detail-popup-title">{{selectedUserName}} · {{currentMonth}} 提交情况</text>
+      <van-icon name="cross" size="20px" color="#999" class="detail-close-icon" bindtap="closeUserDetail" />
+    </view>
+
+    <view class="detail-legend">
+      <view class="legend-item"><view class="legend-dot submitted"></view><text>已提交</text></view>
+      <view class="legend-item"><view class="legend-dot missed"></view><text>缺交</text></view>
+    </view>
+
+    <scroll-view scroll-y class="detail-scroll">
+      <view class="calendar-grid">
+        <view class="cal-day {{dayItem.status}}" wx:for="{{selectedUserDays}}" wx:key="day" wx:for-item="dayItem">
+          <text class="d-num">{{dayItem.day}}</text>
+          <van-icon name="{{dayItem.status === 'submitted' ? 'success' : 'cross'}}" class="d-icon" />
+        </view>
+      </view>
+      <view style="height: 60rpx;"></view>
+    </scroll-view>
+
+  </van-popup>

@@ -1,0 +1,198 @@
+<view class="container">
+  <view class="header-card">
+    <van-cell-group border="{{false}}">
+      <van-field value="{{ templateData.name }}" label="表单名称" placeholder="请输入表单名称" input-align="right" bind:change="onNameChange" />
+      <van-cell title="图标设置" is-link bind:click="openIconPicker">
+        <view class="icon-preview-wrap">
+          <view class="icon-preview" style="background-color: {{templateData.bg_color}}">
+            <image src="{{templateData.icon}}" class="icon-img" mode="aspectFit"></image>
+          </view>
+        </view>
+      </van-cell>
+      <van-cell title="高级设置" is-link value="审批流配置" bind:click="goToAdvanced" />
+    </van-cell-group>
+  </view>
+
+  <view class="section-title">字段设置 <text style="font-size: 20rpx; color: #ccc; margin-left: 10rpx;">(按住右侧图标拖拽排序)</text></view>
+  
+  <view class="field-list">
+    <view class="drag-container" style="height: {{formConfig.length * 115}}px;">
+      <block wx:for="{{formConfig}}" wx:key="uniqueId">
+        <view class="field-card {{dragIndex === index ? 'dragging' : ''}}" style="top: {{item.top}}px; z-index: {{dragIndex === index ? 99 : 1}};">
+          
+          <view class="field-top van-hairline--bottom">
+            <view class="field-label-wrap">
+              <text class="field-label">{{item.label}}</text>
+              <text class="required-mark" wx:if="{{item.required}}">*</text>
+            </view>
+            <text class="field-placeholder">{{item.placeholder || (item.type === 'image' ? '添加图片' : (item.type === 'detail_list' ? '动态明细' : '默认提示文案'))}}</text>
+          </view>
+          
+          <view class="field-bottom">
+            <view class="field-type">
+              <van-icon name="{{item.iconName}}" color="#999" size="14px" />
+              <text class="type-text">{{item.typeName}}</text>
+            </view>
+            <view style="display: flex; align-items: center; gap: 40rpx;">
+              <view class="btn-setting" bindtap="openFieldConfig" data-index="{{index}}">设置</view>
+              <view class="drag-handle" catchtouchstart="dragStart" catchtouchmove="dragMove" catchtouchend="dragEnd" data-index="{{index}}" style="padding: 10rpx;">
+                <van-icon name="sort" color="#b2b2b2" size="20px" />
+              </view>
+            </view>
+          </view>
+
+        </view>
+      </block>
+    </view>
+
+    <view class="btn-add-field" bindtap="openControlPicker">
+      <text class="add-icon">+</text> 添加字段
+    </view>
+    <view class="btn-disable">停用表单</view>
+  </view>
+
+  <view class="bottom-action">
+    <view class="btn-wrap">
+      <van-button block plain color="#ff4d4d" custom-class="radius-btn" bind:click="previewForm">预览</van-button>
+    </view>
+    <view class="btn-wrap">
+      <van-button block color="#ff4d4d" custom-class="radius-btn" bind:click="publishForm">发布</van-button>
+    </view>
+  </view>
+</view>
+
+<van-popup show="{{ showControlPicker }}" position="bottom" round custom-style="height: 45%;" bind:close="closeControlPicker">
+  <view class="popup-header">
+    <text class="popup-cancel" bindtap="closeControlPicker">关闭</text>
+    <text class="popup-title">表单控件</text>
+    <text style="width: 60rpx;"></text> 
+  </view>
+  <view class="control-grid">
+    <view class="control-group-title">基础控件</view>
+    <van-grid column-num="4" border="{{ false }}" clickable>
+      <van-grid-item use-slot wx:for="{{baseControls}}" wx:key="type" bind:click="addField" data-type="{{item.type}}">
+        <view class="control-item-wrap">
+          <van-icon name="{{item.icon}}" size="28px" color="#666" />
+        </view>
+        <text class="control-name">{{item.name}}</text>
+      </van-grid-item>
+    </van-grid>
+  </view>
+</van-popup>
+
+<van-popup show="{{ showFieldConfig }}" position="right" custom-style="width: 100%; height: 100%; background: #F4F6F9;" bind:close="closeFieldConfig">
+  <view class="full-popup-header">
+    <text class="popup-cancel" bindtap="closeFieldConfig">取消</text>
+    <text class="popup-title">设置控件</text>
+    <text class="popup-confirm" bindtap="saveFieldConfig">保存</text>
+  </view>
+  <scroll-view scroll-y class="field-config-body">
+    <view class="config-section-title">控件预览</view>
+    <view class="preview-box-wrap">
+      <view class="preview-ribbon">预览</view>
+      <van-field wx:if="{{editingField.type === 'text' || editingField.type === 'textarea'}}" value="" label="{{editingField.label}}" placeholder="{{editingField.placeholder}}" required="{{editingField.required}}" disabled />
+      <van-cell wx:if="{{editingField.type === 'image'}}" title="{{editingField.label}}" required="{{editingField.required}}" border="{{false}}">
+         <van-icon slot="right-icon" name="photograph" size="24px" color="#ccc"/>
+      </van-cell>
+      <view wx:if="{{editingField.type === 'rate'}}" style="background: #fff; padding: 24rpx 30rpx;">
+        <view style="font-size: 28rpx; color: #333; margin-bottom: 20rpx;">
+          {{editingField.label}} <text class="required-mark" wx:if="{{editingField.required}}">*</text>
+        </view>
+        <van-rate value="5" size="24" color="#ffd21e" void-icon="star" void-color="#eee" readonly />
+      </view>
+      <view class="detail-preview-box" wx:if="{{editingField.type === 'detail_list'}}">
+        <view class="detail-title">{{editingField.label}} <text class="required-mark" wx:if="{{editingField.required}}">*</text></view>
+        <view class="detail-children">
+          <van-field wx:for="{{editingField.children}}" wx:key="index" value="" label="{{item.label}}" placeholder="{{item.placeholder}}" required="{{item.required}}" disabled border="{{false}}" />
+        </view>
+        <view class="detail-action-btn">
+          <van-icon name="plus" size="14px" /> {{editingField.actionName}}
+        </view>
+      </view>
+    </view>
+    <view class="config-section-title">字段标题</view>
+    <van-cell-group inset custom-class="no-margin-inset">
+      <van-field value="{{editingField.label}}" data-key="label" bind:change="onFieldInput" placeholder="请输入内容" border="{{false}}" />
+    </van-cell-group>
+    
+    <block wx:if="{{editingField.type === 'text' || editingField.type === 'textarea'}}">
+      <view class="config-section-title">提示文字</view>
+      <van-cell-group inset custom-class="no-margin-inset">
+        <van-field value="{{editingField.placeholder}}" data-key="placeholder" bind:change="onFieldInput" placeholder="请输入内容" border="{{false}}" />
+      </van-cell-group>
+    </block>
+
+    <block wx:if="{{editingField.type === 'detail_list'}}">
+      <view class="config-section-title">动作名称</view>
+      <van-cell-group inset custom-class="no-margin-inset">
+        <van-field value="{{editingField.actionName}}" data-key="actionName" bind:change="onFieldInput" placeholder="请输入动作名称(如：新增明细)" border="{{false}}" />
+      </van-cell-group>
+
+      <view class="config-section-title">智能拉取上一次提交的数据</view>
+      <van-cell-group inset custom-class="no-margin-inset">
+        <van-field 
+          label="拉取目标" 
+          value="{{editingField.autoFill.sourceLabel}}" 
+          placeholder="历史字段名(如:明日计划) 留空不拉" 
+          data-key="autoFill.sourceLabel" 
+          bind:change="onFieldInput" 
+          input-align="right"
+          border="{{false}}"
+        />
+      </van-cell-group>
+    </block>
+
+    <block wx:if="{{editingField.type === 'textarea'}}">
+      <view class="config-section-title">限制字数</view>
+      <van-cell-group inset custom-class="no-margin-inset">
+        <van-field value="{{editingField.maxLength}}" data-key="maxLength" bind:change="onFieldInput" type="number" label="最多可输入" placeholder="输入字数" input-align="right" border="{{false}}" />
+      </van-cell-group>
+    </block>
+
+    <view class="config-section-title">其他设置</view>
+    <van-cell-group inset custom-class="no-margin-inset">
+      <van-cell wx:if="{{editingField.type === 'image'}}" title="只允许拍照" label="开启后只能拍照传图">
+        <van-switch checked="{{ editingField.onlyCamera }}" data-key="onlyCamera" bind:change="onSwitchChange" size="24px" active-color="#ff4d4d" />
+      </van-cell>
+      <van-cell title="必填">
+        <van-switch checked="{{ editingField.required }}" data-key="required" bind:change="onSwitchChange" size="24px" active-color="#ff4d4d" />
+      </van-cell>
+      <van-cell wx:if="{{editingField.type === 'text'}}" title="扫码" label="开启移动端扫描二维码或条形码">
+        <van-switch checked="{{ editingField.scan }}" data-key="scan" bind:change="onSwitchChange" size="24px" active-color="#ff4d4d" />
+      </van-cell>
+      <van-cell title="参与打印">
+        <van-switch checked="{{ editingField.print }}" data-key="print" bind:change="onSwitchChange" size="24px" active-color="#ff4d4d" />
+      </van-cell>
+    </van-cell-group>
+    <view class="btn-delete-field" bindtap="deleteCurrentField">删除该控件</view>
+  </scroll-view>
+</van-popup>
+
+<van-popup show="{{ showIconPicker }}" position="bottom" round custom-style="height: 55%;" bind:close="closeIconPicker">
+  <view class="popup-header">
+    <text class="popup-cancel" bindtap="closeIconPicker">取消</text>
+    <text class="popup-title">选择图标</text>
+    <text class="popup-confirm" bindtap="saveIconPicker">确定</text>
+  </view>
+  <scroll-view scroll-y class="icon-picker-body">
+    <view class="config-section-title">背景颜色</view>
+    <view class="color-grid">
+      <view wx:for="{{colorList}}" wx:key="*this" class="color-item {{tempColor === item ? 'color-active' : ''}}" style="background-color: {{item}};" bindtap="selectColor" data-color="{{item}}">
+        <van-icon wx:if="{{tempColor === item}}" name="success" color="#fff" size="16px" />
+      </view>
+    </view>
+    <view class="config-section-title">图标图库 (OSS)</view>
+    <van-grid column-num="5" border="{{ false }}" clickable>
+      <van-grid-item use-slot bind:click="uploadCustomIcon">
+        <view class="icon-grid-item">
+          <van-icon name="plus" size="28px" color="#ccc" />
+        </view>
+      </van-grid-item>
+      <van-grid-item use-slot wx:for="{{iconList}}" wx:key="*this" bind:click="selectIcon" data-icon="{{item}}">
+        <view class="icon-grid-item {{tempIcon === item ? 'icon-active' : ''}}" style="background-color: {{tempColor}};">
+          <image src="{{item}}" class="icon-img-picker" mode="aspectFit"></image>
+        </view>
+      </van-grid-item>
+    </van-grid>
+  </scroll-view>
+</van-popup>

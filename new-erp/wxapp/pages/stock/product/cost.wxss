@@ -1,0 +1,90 @@
+/* pages/stock/stockin/stockin.wxss */
+.btn {
+  margin-top: 32rpx;
+}
+page {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-color: #f5f5ff;
+}
+.box1{
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+.box1 .box-1{
+  height: 90%;
+  overflow-y: scroll;
+  width: 250rpx;
+}
+
+.box1 .box-2{
+  height: 100%;
+  overflow-y: scroll;
+  width: 100%;
+}
+.cardClass{
+  border: 1px solid #ffffff;
+  margin-top: 10rpx;
+}
+.empty-box{
+  display: flex;
+  align-items: center;
+  padding-top: 15rpx;
+  padding-left: 20rpx;
+  padding-bottom: 15rpx;
+  background-color: #eeeeee;
+}
+.empty-box .empty-0{
+  height:30rpx;
+  width: 30rpx;
+}
+.empty-box .empty-1{
+  font-size:25rpx ;
+  margin-left: 10rpx;
+}
+.cart-goods-list {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 32rpx;
+}
+.cart-goods-list .r {
+  display: flex;
+  align-items: center;
+}
+.cart-goods-list .title{
+  font-size: 28rpx;
+  font-weight: bold;
+}
+.cart-goods-list .content{
+  font-size: 24rpx;
+  color: #666;
+}
+.cart-goods-list .price{
+  font-size: 26rpx;
+  margin-right: 32rpx;
+}
+.hiddenButton{
+  background-color: #ffffff !important;
+  border: #ffffff !important;
+  width: 10px;
+}
+.sub-list{
+  width: 80%;
+  background-color: #f4f4f4;
+}
+.custom-topic{
+  margin-top: 20rpx;
+  padding-bottom: 30rpx;
+  font-size: 35rpx;
+  font-weight: bold;
+}
+.custom-sub1{
+  padding-top: 30rpx;
+}
+.custom-sub2{
+  width: 100%;
+}

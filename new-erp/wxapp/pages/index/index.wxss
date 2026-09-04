@@ -1,0 +1,19 @@
+page ,.container{
+  width: 100%;
+  height: 100%;
+  background-color: #f4f4f4;
+}
+.banner {
+  padding-top: 10rpx;
+  width: 98%;
+  margin: 0 auto;
+  height: 417rpx;
+  border-radius: 30rpx!important;
+  overflow: hidden;
+  transform: translateY(0);
+}
+
+.banner image {
+  width: 100%;
+  height: 417rpx;
+}

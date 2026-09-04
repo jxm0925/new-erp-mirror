@@ -1,0 +1,73 @@
+page { background-color: #F4F6F9; padding-bottom: 140rpx; }
+
+/* 头部 Banner 核心样式 */
+.header-banner {
+  margin: 30rpx;
+  padding: 40rpx 40rpx 0;
+  border-radius: 24rpx;
+  /* 咱们主色调的高级渐变用法 */
+  background: linear-gradient(135deg, #ff7a7a 0%, #ff4d4d 100%);
+  box-shadow: 0 16rpx 32rpx rgba(255, 77, 77, 0.2);
+  color: #fff;
+}
+
+/* 💥 修改区：让头部变左右排版 💥 */
+.user-info { 
+  display: flex; 
+  justify-content: space-between; 
+  align-items: flex-start; /* 顶部对齐 */
+  margin-bottom: 40rpx; 
+}
+.user-left { display: flex; flex-direction: column; }
+.greeting-box { display: flex; align-items: center; margin-bottom: 12rpx; }
+.greeting { font-size: 40rpx; font-weight: bold; margin-right: 20rpx; letter-spacing: 2rpx; }
+.role-tag { background: rgba(255,255,255,0.1) !important; border: 1rpx solid rgba(255,255,255,0.6) !important; }
+.date-text { font-size: 24rpx; opacity: 0.8; }
+
+/* 💥 老板专属统计按钮样式 💥 */
+.boss-stats-btn {
+  display: inline-flex;
+  align-items: center;
+  /* 红底上的白按钮，视觉极其高级 */
+  background: rgba(255, 255, 255, 0.95);
+  color: #ff4d4d;
+  padding: 10rpx 20rpx;
+  border-radius: 30rpx;
+  font-size: 24rpx;
+  font-weight: bold;
+  box-shadow: 0 4rpx 12rpx rgba(200, 0, 0, 0.2);
+  transition: all 0.2s;
+  margin-top: 6rpx; /* 微调与左边文字的高度居中感 */
+}
+
+.boss-stats-btn:active {
+  transform: scale(0.95);
+  opacity: 0.8;
+}
+
+.btn-icon { margin-right: 6rpx; }
+.arrow-icon { margin-left: 6rpx; opacity: 0.8; }
+
+/* 数据看板悬浮感设计 */
+.stats-box {
+  display: flex;
+  background: rgba(255, 255, 255, 0.15); /* 半透明背景 */
+  backdrop-filter: blur(10px); /* 毛玻璃效果 */
+  border-radius: 16rpx 16rpx 0 0;
+  padding: 30rpx 0;
+}
+
+.stat-item { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.stat-num { font-size: 44rpx; font-weight: bold; margin-bottom: 8rpx; font-family: DIN, sans-serif; }
+.stat-desc { font-size: 24rpx; opacity: 0.9; }
+.stat-line { width: 2rpx; background: rgba(255, 255, 255, 0.3); margin: 10rpx 0; }
+
+/* 九宫格标题和卡片 */
+.section-title { padding: 40rpx 30rpx 20rpx; }
+.title-text { font-size: 32rpx; font-weight: bold; color: #333; position: relative; padding-left: 20rpx; }
+.title-text::before { content: ''; position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 8rpx; height: 28rpx; background: #ff4d4d; border-radius: 4rpx; }
+
+.grid-card { margin: 0 30rpx; border-radius: 20rpx; overflow: hidden; background: #fff; box-shadow: 0 4rpx 20rpx rgba(0,0,0,0.03); }
+.grid-icon-wrap { width: 88rpx; height: 88rpx; border-radius: 24rpx; display: flex; align-items: center; justify-content: center; margin-bottom: 16rpx; }
+.grid-img { width: 44rpx; height: 44rpx; }
+.grid-text { font-size: 26rpx; color: #333; font-weight: 500; }

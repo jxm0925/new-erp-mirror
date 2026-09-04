@@ -1,0 +1,63 @@
+<!-- pages/score/logs.wxml -->
+<view class="page">
+
+<!-- 顶部资产卡片 -->
+<view class="asset-card-wrap">
+  <view class="asset-card">
+    <view class="asset-title">我的积分</view>
+    <view class="asset-score">{{ score?score:0 }}</view>
+    <!-- <view class="asset-sub">
+      当前等级 <text class="level">Lv.{{ level }}</text>
+    </view> -->
+  </view>
+</view>
+
+<!-- 筛选 Tabs -->
+<van-tabs
+  active="{{ activeTab }}"
+  bind:change="onTabChange"
+  color="#111"
+  line-width="30"
+  swipeable>
+
+  <van-tab title="全部" />
+  <van-tab title="获得" />
+  <van-tab title="扣减" />
+</van-tabs>
+
+<!-- 积分记录列表 -->
+<van-empty
+  wx:if="{{ recordList.length === 0 }}"
+  image="error"
+  description="当前暂无积分变动记录" />
+<van-list
+  wx:else
+  loading="{{ loading }}"
+  finished="{{ finished }}"
+  finished-text="没有更多记录了"
+  bind:load="onLoadMore">
+
+  <view
+    wx:for="{{ recordList }}"
+    wx:key="id"
+    class="record-item">
+
+    <view class="record-score {{ item.operate }}">
+      {{ item.operate === 'add' ? '+' : '' }}{{ item.score }}
+    </view>
+
+    <view class="record-content">
+      <view class="record-reason">{{ item.reason_text }}</view>
+      <view class="record-remark" wx:if="{{ item.remark }}">
+        备注：{{ item.remark }}
+      </view>
+      <view class="record-meta">
+        {{ item.create_date }} · {{ item.operator }}
+      </view>
+    </view>
+
+  </view>
+
+</van-list>
+
+</view>

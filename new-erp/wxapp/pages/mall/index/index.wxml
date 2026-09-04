@@ -1,0 +1,29 @@
+<view class="container">
+  <van-tabs nav-class="tab" title-active-color="#ee0a24" bind:change="changeTab">
+    <van-tab title="全部">
+    </van-tab>
+    <van-tab title="实物物品">
+    </van-tab>
+    <van-tab title="虚拟物品">
+    </van-tab>
+  </van-tabs>
+  <scroll-view style="width: 100%; height: 100%;margin-top: 20rpx;" bindscrolltolower="bindscrolltolower">
+    <grid-view type="masonry" cross-axis-count="{{crossAxisCount}}" cross-axis-gap="{{crossAxisGap}}" main-axis-gap="{{mainAxisGap}}">
+      <view wx:for="{{list}}" class="grid-box" wx:key="id" data-id="{{item.id}}" bind:tap="goDetail">
+        <image src="{{item.image}}" mode="aspectFit"></image>
+        <view class="content-box">
+          <text>{{item.title}}</text>
+          <view class="profile-text">
+            <view class="left">
+              <text style="color: red;font-size: 20rpx;">积分：{{item.score}}</text>
+            </view>
+            <view class="right">
+              <text style="font-size: 20rpx;">库存：{{item.un_store?'不限':item.stocks}}</text>
+            </view>
+          </view>
+        </view>
+      </view>
+    </grid-view>
+  </scroll-view>
+
+</view>

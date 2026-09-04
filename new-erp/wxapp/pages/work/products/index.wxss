@@ -1,0 +1,45 @@
+/* pages/work/products/index.wxss */
+.container {
+  background: #f5f5f5;
+  height: 100vh;
+}
+
+.col-class{
+    text-align: left;
+    color: #000;
+}
+.note-limit {
+  display: -webkit-box;
+  -webkit-line-clamp: 1; /* 显示两行 */
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 26rpx;
+  color: #555;
+}
+
+.note-full {
+  font-size: 26rpx;
+  color: #555;
+}
+
+.note-toggle {
+  color: #1989fa;
+  font-size: 24rpx;
+}
+
+
+.order-card{
+  padding-top: 30rpx;
+}
+.card-title{
+  width: 50%;
+  flex:1 !important;
+  font-weight: bolder;
+}
+
+.card-value-wait{
+  color: rgb(79, 197, 0) !important;
+}
+card-value-processing{
+  color: rgb(243, 151, 12) !important;
+}

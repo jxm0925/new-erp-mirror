@@ -1,0 +1,675 @@
+:root {
+  --nav: #081a2b;
+  --nav2: #0e243a;
+  --green: #008b4b;
+  --green-soft: #eaf7ef;
+  --line: #e2e6ea;
+  --muted: #737d87;
+  --red: #dc3d43;
+  --amber: #e88a16;
+  --canvas: #f5f7fa;
+  --sidebar-width: 192px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #app {
+  margin: 0;
+  min-height: 100%;
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  color: #1f2937;
+  background: var(--canvas);
+}
+
+button, input, textarea, select {
+  font: inherit;
+}
+
+#app {
+  display: flex;
+  min-height: 100vh;
+}
+
+/* ==========================================================================
+   全局统一侧边栏 (统一字号: 一级 14px, 二级 13px, 行高与间距一致)
+   ========================================================================== */
+.erp-sidebar {
+  position: fixed;
+  inset: 0 auto 0 0;
+  width: var(--sidebar-width);
+  background: linear-gradient(180deg, #071928 0%, #0b2236 100%);
+  color: #dbe3ea;
+  z-index: 10;
+  overflow: auto;
+  transition: width 0.24s cubic-bezier(0.22, 0.61, 0.36, 1);
+  box-shadow: 1px 0 6px rgba(0, 0, 0, 0.1);
+}
+
+.erp-brand {
+  height: 54px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 16px;
+  font-weight: 700;
+  color: #ffffff;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+.brand-logo-icon {
+  flex-shrink: 0;
+}
+
+.console-link {
+  height: 44px;
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #dbe3ea;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
+  border-left: 3px solid transparent;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.console-link:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  padding-left: 20px;
+}
+
+.console-link.router-link-active {
+  background: linear-gradient(90deg, #008b4b 0%, #00763f 100%);
+  color: #ffffff;
+  border-left-color: #20b56e;
+  font-weight: 600;
+}
+
+.menu-section {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.menu-title {
+  width: 100%;
+  height: 44px;
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  background: transparent;
+  color: #dbe3ea;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.menu-title:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  padding-left: 20px;
+}
+
+.menu-title span {
+  flex: 1;
+  white-space: nowrap;
+}
+
+.menu-title .menu-arrow {
+  margin-left: auto;
+  font-size: 11px;
+  color: #8c9ba8;
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.2s ease;
+}
+
+.menu-section:not(.open) .menu-arrow {
+  transform: rotate(180deg);
+}
+
+.menu-section.open .menu-title {
+  color: #ffffff;
+}
+
+.menu-section.open .menu-arrow {
+  color: #20b56e;
+}
+
+.menu-section.active .menu-title {
+  background: linear-gradient(90deg, #008b4b 0%, #00763f 100%);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.master-menu {
+  display: grid;
+  background: rgba(0, 0, 0, 0.22);
+  overflow-x: hidden;
+  overflow-y: auto;
+  box-shadow: inset 0 3px 6px rgba(0, 0, 0, 0.15);
+}
+
+.master-menu a {
+  height: 38px;
+  padding: 0 18px 0 34px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #b0c2d4;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 400;
+  border-left: 3px solid transparent;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.menu-subgroup{display:grid}.menu-subgroup>span{padding:8px 18px 5px 44px;color:#8ea0b2;font-size:11px;letter-spacing:.08em}.menu-subgroup>a{padding-left:30px!important}
+
+.sub-menu-icon {
+  font-size: 14px;
+  color: #7b93ab;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  flex-shrink: 0;
+}
+
+.sub-menu-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #6a7e93;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  flex-shrink: 0;
+}
+
+.master-menu a:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #ffffff;
+  padding-left: 38px;
+}
+
+.master-menu a:hover .sub-menu-icon {
+  color: #20b56e;
+  transform: scale(1.12);
+}
+
+.master-menu a:hover .sub-menu-dot {
+  background: #20b56e;
+  transform: scale(1.4);
+}
+
+.master-menu a.router-link-active {
+  background: #008b4b;
+  color: #ffffff;
+  font-weight: 500;
+  border-left-color: #20b56e;
+}
+
+.master-menu a.router-link-active .sub-menu-icon {
+  color: #ffffff;
+}
+
+.master-menu a.router-link-active .sub-menu-dot {
+  background: #ffffff;
+  transform: scale(1.3);
+}
+
+.collapse {
+  position: sticky;
+  bottom: 0;
+  margin-top: 20px;
+  width: 100%;
+  height: 44px;
+  padding: 0 18px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  background: #071928;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  color: #dbe3ea;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.collapse i {
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.collapse:hover {
+  background: #142e46;
+  color: #ffffff;
+  padding-left: 20px;
+}
+
+/* 侧边栏折叠态 */
+.sidebar-collapsed .erp-sidebar {
+  width: 64px;
+  overflow: hidden;
+}
+
+.sidebar-collapsed .erp-shell {
+  width: calc(100% - 64px);
+  margin-left: 64px;
+}
+
+.sidebar-collapsed .erp-brand {
+  justify-content: center;
+  padding: 0;
+}
+
+.sidebar-collapsed .erp-brand span,
+.sidebar-collapsed .console-link span,
+.sidebar-collapsed .menu-title span,
+.sidebar-collapsed .menu-title .menu-arrow,
+.sidebar-collapsed .master-menu,
+.sidebar-collapsed .collapse span {
+  display: none;
+}
+
+.sidebar-collapsed .console-link,
+.sidebar-collapsed .menu-title,
+.sidebar-collapsed .collapse {
+  justify-content: center;
+  padding: 0;
+}
+
+/* ==========================================================================
+   全局统一顶部栏 (Top Bar)
+   ========================================================================== */
+.erp-shell {
+  width: calc(100% - var(--sidebar-width));
+  min-width: 0;
+  margin-left: var(--sidebar-width);
+  overflow-x: hidden;
+  transition: width 0.24s cubic-bezier(0.22, 0.61, 0.36, 1), margin-left 0.24s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.erp-topbar {
+  height: 54px;
+  min-width: 0;
+  padding: 0 20px;
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(240px, 360px) minmax(200px, 1fr);
+  align-items: center;
+  gap: 16px;
+  background: #ffffff;
+  border-bottom: 1px solid var(--line);
+}
+
+.breadcrumb {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 500;
+  color: #374151;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.breadcrumb i {
+  margin-right: 8px;
+  color: #6b7280;
+  font-size: 16px;
+}
+
+.breadcrumb b {
+  margin: 0 6px;
+  color: #9ca3af;
+  font-weight: 400;
+}
+
+.top-actions {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  white-space: nowrap;
+}
+
+.top-actions > i {
+  font-size: 16px;
+  color: #4b5563;
+  cursor: pointer;
+}
+
+.top-actions > i:hover {
+  color: #111827;
+}
+
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #008b4b;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.top-actions strong {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: #1f2937;
+}
+
+.top-actions small {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 11px;
+}
+
+/* ==========================================================================
+   页面通用排版与组件
+   ========================================================================== */
+.master-page {
+  padding: 16px 20px;
+  min-height: calc(100vh - 54px);
+}
+
+.page-heading {
+  height: 46px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.page-heading h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.page-heading h1 small {
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.filter-bar {
+  min-height: 52px;
+  padding: 10px 14px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-bottom: 0;
+}
+
+.table-panel {
+  padding: 0 12px 12px;
+  background: #ffffff;
+  border: 1px solid var(--line);
+}
+
+.table-panel > .el-pagination {
+  padding-top: 12px;
+  text-align: right;
+}
+
+.el-table {
+  font-size: 13px;
+}
+
+.el-table th.el-table__cell {
+  height: 38px;
+  padding: 0;
+  background: #f8fafc;
+  color: #1f2937;
+  font-weight: 600;
+}
+
+.el-table td.el-table__cell {
+  padding: 6px 0;
+  color: #374151;
+}
+
+.el-button {
+  font-size: 13px;
+  border-radius: 4px;
+}
+
+.el-button--success {
+  background: var(--green);
+  border-color: var(--green);
+}
+
+.el-button--text {
+  padding: 2px 0;
+}
+
+.danger-link {
+  color: var(--red) !important;
+}
+
+.el-input__inner,
+.el-textarea__inner {
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+@media (max-width: 1100px) {
+  .erp-topbar {
+    grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+  }
+  .top-actions {
+    display: none;
+  }
+}
+
+/* WO-03 locked V2 shell: production pages use the compact, no-topbar canvas. */
+#app.production-route .erp-sidebar {
+  display: flex;
+  flex-direction: column;
+  width: 192px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: linear-gradient(180deg, #0c2237 0%, #0b2438 100%);
+  box-shadow: 3px 0 0 #0b2438;
+}
+
+#app.production-route .erp-brand { order: 0; height: 57px; padding: 0 16px; gap:12px; font-size:18px; }
+#app.production-route .brand-logo-icon { width:24px; height:24px; }
+#app.production-route .console-link { order: 1; height: 57px; padding: 0 18px; gap:12px; }
+#app.production-route .console-link > i,
+#app.production-route .menu-title > i:first-child { width:18px; font-size:18px; text-align:center; color:#f5f7fa; }
+#app.production-route .menu-section { flex: 0 0 auto; }
+#app.production-route .menu-section { border-bottom:0; }
+#app.production-route .menu-section[data-section-key="master"] { order: 2; }
+#app.production-route .menu-section[data-section-key="purchase"] { order: 3; }
+#app.production-route .menu-section[data-section-key="inventory"] { order: 4; }
+#app.production-route .menu-section[data-section-key="bom"] { order: 5; }
+#app.production-route .menu-section[data-section-key="sales"] { order: 6; }
+#app.production-route .menu-section[data-section-key="production"] { order: 7; }
+#app.production-route .menu-section[data-section-key="approval"] { order: 8; }
+#app.production-route .menu-section[data-section-key="finance"] { order: 9; }
+#app.production-route .menu-section[data-section-key="system"] { order: 10; }
+#app.production-route .collapse { position:static; flex:0 0 54px; order:11; margin-top:auto; height:54px; padding:0 18px; gap:12px; background:#0a1f31; }
+#app.production-route .collapse .collapse-tail { margin-left:auto; }
+#app.production-route .erp-topbar { display: none; }
+#app.production-route .erp-shell { width: calc(100% - 192px); margin-left: 192px; }
+#app.production-route .menu-title { height: 45px; padding: 0 18px; gap:12px; }
+#app.production-route .master-menu { background:rgba(0,0,0,.16); box-shadow:none; }
+#app.production-route .master-menu a { height: 38px; padding: 0 18px; gap:12px; }
+#app.production-route .master-menu a:hover { padding-left: 18px; }
+#app.production-route .console-link.router-link-active { background: transparent; border-left-color: transparent; }
+#app.production-route .erp-brand { border-bottom-color: transparent; }
+#app.production-route .erp-brand > span { transform: translateY(3px); }
+#app.production-route .menu-section.active .menu-title {
+  width:calc(100% - 16px);
+  margin:0 8px;
+  background:linear-gradient(90deg,#00603d 0%,#004f34 100%);
+  border-radius:2px;
+  padding-left:10px;
+  border-top:2px solid #0a1f31;
+  border-bottom:2px solid #0a1f31;
+}
+#app.production-route .master-menu a.router-link-active {
+  width:calc(100% - 18px);
+  margin:0 8px 0 10px;
+  background:#004b34;
+  border-left-color:#20b56e;
+  border-radius:2px;
+  padding-left:8px;
+  border-top:1px solid rgba(0,0,0,.16);
+  border-bottom:1px solid rgba(0,0,0,.16);
+}
+#app.production-route.sidebar-collapsed .erp-sidebar { width: 64px; }
+#app.production-route.sidebar-collapsed .erp-shell { width: calc(100% - 64px); margin-left: 64px; }
+
+/* On phone-sized browser canvases the fixed desktop sidebar leaves too little
+   room for production forms and tables. Keep the desktop shell unchanged and
+   reuse its established collapsed presentation only below the phone breakpoint. */
+@media (max-width: 767px) {
+  #app.production-route .erp-sidebar {
+    width: 64px;
+    overflow: hidden;
+  }
+
+  #app.production-route .erp-shell {
+    width: calc(100% - 64px);
+    margin-left: 64px;
+  }
+
+  #app.production-route .erp-brand {
+    justify-content: center;
+    padding: 0;
+  }
+
+  #app.production-route .erp-brand span,
+  #app.production-route .console-link span,
+  #app.production-route .menu-title span,
+  #app.production-route .menu-title .menu-arrow,
+  #app.production-route .master-menu,
+  #app.production-route .collapse span,
+  #app.production-route .collapse .collapse-tail {
+    display: none;
+  }
+
+  #app.production-route .console-link,
+  #app.production-route .menu-title,
+  #app.production-route .collapse {
+    justify-content: center;
+    padding: 0;
+  }
+
+  #app.production-route .menu-section.active .menu-title {
+    width: calc(100% - 12px);
+    margin: 0 6px;
+    padding: 0;
+  }
+
+  #app.production-route .erp-sidebar:hover,
+  #app.production-route .erp-sidebar:focus-within {
+    width: 192px;
+    overflow-y: auto;
+    box-shadow: 8px 0 18px rgba(7, 25, 40, 0.24);
+  }
+
+  #app.production-route .erp-sidebar:hover .erp-brand,
+  #app.production-route .erp-sidebar:focus-within .erp-brand {
+    justify-content: flex-start;
+    padding: 0 16px;
+  }
+
+  #app.production-route .erp-sidebar:hover .erp-brand span,
+  #app.production-route .erp-sidebar:hover .console-link span,
+  #app.production-route .erp-sidebar:hover .menu-title span,
+  #app.production-route .erp-sidebar:hover .menu-title .menu-arrow,
+  #app.production-route .erp-sidebar:hover .master-menu,
+  #app.production-route .erp-sidebar:hover .collapse span,
+  #app.production-route .erp-sidebar:hover .collapse .collapse-tail,
+  #app.production-route .erp-sidebar:focus-within .erp-brand span,
+  #app.production-route .erp-sidebar:focus-within .console-link span,
+  #app.production-route .erp-sidebar:focus-within .menu-title span,
+  #app.production-route .erp-sidebar:focus-within .menu-title .menu-arrow,
+  #app.production-route .erp-sidebar:focus-within .master-menu,
+  #app.production-route .erp-sidebar:focus-within .collapse span,
+  #app.production-route .erp-sidebar:focus-within .collapse .collapse-tail {
+    display: initial;
+  }
+
+  #app.production-route .erp-sidebar:hover .master-menu,
+  #app.production-route .erp-sidebar:focus-within .master-menu {
+    display: grid;
+  }
+
+  #app.production-route .erp-sidebar:hover .console-link,
+  #app.production-route .erp-sidebar:hover .menu-title,
+  #app.production-route .erp-sidebar:hover .collapse,
+  #app.production-route .erp-sidebar:focus-within .console-link,
+  #app.production-route .erp-sidebar:focus-within .menu-title,
+  #app.production-route .erp-sidebar:focus-within .collapse {
+    justify-content: flex-start;
+    padding: 0 18px;
+  }
+
+  #app.production-route .erp-sidebar:hover .menu-section.active .menu-title,
+  #app.production-route .erp-sidebar:focus-within .menu-section.active .menu-title {
+    width: calc(100% - 16px);
+    margin: 0 8px;
+    padding-left: 10px;
+  }
+
+  .el-drawer {
+    max-width: 100vw;
+  }
+}
+
+/* The same compact/off-canvas behavior is required by system pages used to
+   administer production permissions. Production rules above remain the visual
+   baseline; these selectors extend the behavior to every ERP route. */
+@media (max-width: 767px) {
+  #app .erp-sidebar { width: 64px !important; overflow: hidden; }
+  #app .erp-shell { width: calc(100% - 64px) !important; margin-left: 64px !important; }
+  #app .erp-sidebar .erp-brand { justify-content: center; padding: 0; }
+  #app .erp-sidebar .erp-brand span,
+  #app .erp-sidebar .console-link span,
+  #app .erp-sidebar .menu-title span,
+  #app .erp-sidebar .menu-title .menu-arrow,
+  #app .erp-sidebar .master-menu,
+  #app .erp-sidebar .collapse span,
+  #app .erp-sidebar .collapse .collapse-tail { display: none; }
+  #app .erp-sidebar .console-link,
+  #app .erp-sidebar .menu-title,
+  #app .erp-sidebar .collapse { justify-content: center; padding: 0; }
+  #app .erp-sidebar:hover,
+  #app .erp-sidebar:focus-within { width: 192px !important; overflow-y: auto; box-shadow: 8px 0 18px rgba(7, 25, 40, .24); }
+  #app .erp-sidebar:hover .erp-brand,
+  #app .erp-sidebar:focus-within .erp-brand { justify-content: flex-start; padding: 0 16px; }
+  #app .erp-sidebar:hover .erp-brand span,
+  #app .erp-sidebar:hover .console-link span,
+  #app .erp-sidebar:hover .menu-title span,
+  #app .erp-sidebar:hover .menu-title .menu-arrow,
+  #app .erp-sidebar:hover .collapse span,
+  #app .erp-sidebar:hover .collapse .collapse-tail,
+  #app .erp-sidebar:focus-within .erp-brand span,
+  #app .erp-sidebar:focus-within .console-link span,
+  #app .erp-sidebar:focus-within .menu-title span,
+  #app .erp-sidebar:focus-within .menu-title .menu-arrow,
+  #app .erp-sidebar:focus-within .collapse span,
+  #app .erp-sidebar:focus-within .collapse .collapse-tail { display: initial; }
+  #app .erp-sidebar:hover .master-menu,
+  #app .erp-sidebar:focus-within .master-menu { display: grid; }
+  #app .erp-sidebar:hover .console-link,
+  #app .erp-sidebar:hover .menu-title,
+  #app .erp-sidebar:hover .collapse,
+  #app .erp-sidebar:focus-within .console-link,
+  #app .erp-sidebar:focus-within .menu-title,
+  #app .erp-sidebar:focus-within .collapse { justify-content: flex-start; padding: 0 18px; }
+}

@@ -1,0 +1,173 @@
+<wxs module="fontSizer">
+  var getFontSize = function(text) {
+    if (!text) return '32rpx';
+    var len = text.length;
+    if (len <= 13) return '32rpx';
+    if (len <= 16) return '28rpx';
+    if (len <= 20) return '26rpx';
+    return '24rpx'; 
+  }
+  module.exports = { getFontSize: getFontSize };
+</wxs>
+
+<wxs module="starTool">
+  var getStars = function(label) {
+    if (!label) return [];
+    if (label.indexOf('重要且紧急') !== -1) return [1,2,3,4,5];
+    if (label.indexOf('重要不紧急') !== -1) return [1,2,3];
+    if (label.indexOf('紧急不重要') !== -1) return [1,2];
+    return [];
+  }
+  module.exports = { getStars: getStars };
+</wxs>
+
+<view class="container">
+  <van-notice-bar wx:if="{{deadlineText}}" color="#ff4d4d" background="#ffece8" left-icon="clock-o" text="请注意：本次汇报的截止时间为 {{deadlineText}}" />
+  <view class="banner-section" wx:if="{{banners && banners.length > 0}}">
+    <swiper class="report-banner" autoplay circular indicator-dots indicator-color="rgba(255,255,255,0.5)" indicator-active-color="#ffffff" interval="5000" duration="500">
+      <swiper-item wx:for="{{banners}}" wx:key="index"><image src="{{item.img}}" mode="aspectFill" class="banner-img"></image></swiper-item>
+    </swiper>
+  </view>
+
+  <view class="form-body">
+    <block wx:for="{{formConfig}}" wx:key="index" wx:for-index="pIndex" wx:for-item="item">
+      
+      <view wx:if="{{item.type === 'section_title'}}" class="section-main-title">
+        <view class="title-bar"></view><text>{{item.label}}</text>
+      </view>
+
+      <view class="form-card" wx:if="{{item.type === 'text' || item.type === 'textarea'}}">
+        <view class="field-label">
+          <text class="label-text" style="font-size: {{fontSizer.getFontSize(item.label)}}">{{item.label}}</text>
+          <text wx:if="{{item.required}}" class="text-danger">*</text>
+        </view>
+        <van-field value="{{formData['field_'+pIndex]}}" type="{{item.type}}" placeholder="{{item.placeholder}}" autosize="{{item.type === 'textarea' ? { maxHeight: 150, minHeight: 80 } : false}}" border="{{false}}" bind:input="onInputChange" data-index="{{pIndex}}" custom-style="padding: 10rpx 0;" />
+      </view>
+
+      <view class="form-card" wx:if="{{item.type === 'image'}}">
+        <view class="field-label">
+          <text class="label-text" style="font-size: {{fontSizer.getFontSize(item.label)}}">{{item.label}}</text>
+          <text wx:if="{{item.required}}" class="text-danger">*</text>
+        </view>
+        <view class="uploader-wrap">
+          <van-uploader file-list="{{ formData['field_'+pIndex] || [] }}" bind:after-read="afterRead" bind:delete="deleteImage" data-index="{{pIndex}}" max-count="9" />
+        </view>
+      </view>
+
+      <view class="form-card" wx:if="{{item.type === 'detail_list'}}">
+        <view class="field-label" style="display: flex; align-items: center; flex-wrap: wrap;">
+          <text class="label-text" style="font-size: {{fontSizer.getFontSize(item.label)}}">{{item.label}}</text>
+          <view wx:if="{{starTool.getStars(item.label).length > 0}}" style="display: flex; align-items: center; margin-left: 12rpx; flex-shrink: 0;">
+            <van-icon name="star" color="#ff4d4d" size="18px" wx:for="{{starTool.getStars(item.label)}}" wx:key="*this" style="margin-right: 4rpx;"/>
+          </view>
+          <text wx:if="{{item.required}}" class="text-danger">*</text>
+        </view>
+
+        <view class="simple-list-wrap">
+          <block wx:for="{{formData['field_'+pIndex]}}" wx:key="index" wx:for-index="dIndex" wx:for-item="row">
+            <view class="simple-row">
+              <text class="row-idx">{{dIndex + 1}}.</text>
+              <view class="row-content">
+                <block wx:for="{{item.children}}" wx:key="index" wx:for-index="cIndex" wx:for-item="child">
+                  
+                  <view style="width: 100%; padding: 20rpx 0; {{item.children.length > 1 && cIndex < item.children.length - 1 ? 'border-bottom: 1rpx dashed #eee;' : ''}}" wx:if="{{cIndex === 0 || row['child_0'] !== 'nothing'}}">
+                    
+                    <view style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12rpx;" wx:if="{{child.type !== 'time_list'}}">
+                      <text class="child-label" style="margin-bottom: 0;">{{item.children.length > 1 ? (child.label || child.placeholder) + '：' : ''}}</text>
+                      
+                      <view wx:if="{{cIndex === 0}}" bindtap="onToggleRowNone" data-pindex="{{pIndex}}" data-dindex="{{dIndex}}" style="background: {{row['child_0'] === 'nothing' ? '#ff4d4d' : '#f0f0f0'}}; color: {{row['child_0'] === 'nothing' ? '#fff' : '#666'}}; padding: 6rpx 16rpx; border-radius: 20rpx; font-size: 22rpx; font-weight: normal; transition: all 0.2s; flex-shrink: 0;">
+                        {{row['child_0'] === 'nothing' ? '取消' : '无'}}
+                      </view>
+                    </view>
+
+                    <textarea wx:if="{{!child.type || child.type === 'textarea' || child.type === 'text'}}" value="{{row['child_'+cIndex] === 'nothing' ? '无' : row['child_'+cIndex]}}" placeholder="{{child.placeholder}}" placeholder-style="color: #c8c9cc; font-size: 28rpx;" auto-height="true" maxlength="-1" disable-default-padding="true" bindinput="onDetailInputChange" data-pindex="{{pIndex}}" data-dindex="{{dIndex}}" data-cindex="{{cIndex}}" style="width: 100%; min-height: 44rpx; line-height: 1.5; font-size: 28rpx; color: {{row['child_0'] === 'nothing' ? '#ff4d4d' : '#333'}}; margin-top: 4rpx;" disabled="{{cIndex === 0 && row['child_0'] === 'nothing'}}" />
+                    
+                    <view wx:elif="{{child.type === 'radio'}}" class="custom-radio-group {{child.options.length > 4 ? 'opt-many' : 'opt-few'}}">
+                      <view wx:for="{{child.options}}" wx:key="*this" wx:for-item="opt" class="radio-btn {{row['child_'+cIndex] === opt ? 'active' : ''}}" bindtap="onCustomRadioClick" data-pindex="{{pIndex}}" data-dindex="{{dIndex}}" data-cindex="{{cIndex}}" data-val="{{opt}}">{{opt}}</view>
+                    </view>
+                    
+                    <view wx:elif="{{child.type === 'time_list'}}" class="inline-time-row">
+                      <text class="inline-time-label">{{child.label || child.placeholder}}</text>
+                      <view class="minute-input-wrap">
+                        <input type="number" class="minute-input" value="{{row['child_'+cIndex]}}" placeholder="" placeholder-style="color:#ccc; font-weight:normal;" bindinput="onDetailInputChange" data-pindex="{{pIndex}}" data-dindex="{{dIndex}}" data-cindex="{{cIndex}}" />
+                        <text class="minute-unit">分钟</text>
+                      </view>
+                    </view>
+
+                    <view wx:if="{{child.type === 'radio' && child.cascadeItem && row['child_'+cIndex] === child.cascadeItem.triggerValue}}" style="margin-top: 20rpx; background: #fafafa; padding: 20rpx; border-radius: 8rpx; border: 1rpx solid #eee;">
+                      <view style="font-size: 24rpx; color: #666; margin-bottom: 10rpx;">{{child.cascadeItem.label}}</view>
+                      <input type="text" value="{{row['cascade_'+cIndex]}}" placeholder="{{child.cascadeItem.placeholder}}" placeholder-style="color: #ccc; font-size: 26rpx;" bindinput="onCascadeInputChange" data-pindex="{{pIndex}}" data-dindex="{{dIndex}}" data-cindex="{{cIndex}}" style="font-size: 28rpx; color: #333; width: 100%;" />
+                    </view>
+
+                  </view>
+                </block>
+              </view>
+              <van-icon name="cross" class="row-del-icon" wx:if="{{formData['field_'+pIndex].length > 1}}" bindtap="removeDetailItem" data-pindex="{{pIndex}}" data-dindex="{{dIndex}}" />
+            </view>
+          </block> 
+          
+          <view class="simple-add-btn" bindtap="addDetailItem" data-pindex="{{pIndex}}" wx:if="{{formData['field_'+pIndex][0].child_0 !== 'nothing'}}">
+            <text class="add-text">+ {{item.actionName}}</text>
+          </view>
+        </view>
+      </view>
+
+      <view class="form-card" wx:if="{{item.type === 'rate'}}">
+        <view class="field-label"><text class="label-text" style="font-size: {{fontSizer.getFontSize(item.label)}}">{{item.label}}</text><text wx:if="{{item.required}}" class="text-danger">*</text></view>
+        <view style="padding: 20rpx 0; display: flex; align-items: center;">
+          <van-rate value="{{formData['field_'+pIndex] || 0}}" bind:change="onRateChange" data-index="{{pIndex}}" size="28" color="#ffd21e" void-icon="star" void-color="#eee" />
+          <text style="margin-left: 20rpx; font-size: 26rpx; color: #999;">{{formData['field_'+pIndex] ? formData['field_'+pIndex] + ' 分' : '请点击打分'}}</text>
+        </view>
+      </view>
+    </block>
+
+    <view class="form-card" wx:if="{{advancedConfig.rules && advancedConfig.rules.allowManualTarget}}">
+      <view class="field-label"><text class="label-text">汇报给</text><text class="text-danger">*</text></view>
+      <van-cell title="{{selectedTargetNames || '请选择汇报对象'}}" is-link bind:click="openTargetPopup" border="{{false}}" title-style="{{selectedTargetNames ? 'color: #333; font-weight: bold;' : 'color: #999;'}}" custom-style="padding: 10rpx 0; background-color: transparent;" />
+    </view>
+  </view>
+
+  <view class="bottom-action">
+    <van-button custom-class="draft-btn" plain color="#ff4d4d" bind:click="saveDraft">保存草稿</van-button>
+    <van-button custom-class="submit-btn" color="#ff4d4d" bind:click="submitReport">提交汇报</van-button>
+  </view>
+</view>
+
+<van-popup show="{{ showTargetPopup }}" position="bottom" custom-style="height: 75%; border-radius: 32rpx 32rpx 0 0;" bind:close="closeTargetPopup">
+  <view class="popup-header">
+    <text class="cancel-btn" bindtap="closeTargetPopup">取消</text>
+    <text class="popup-title">选择汇报对象</text>
+    <text class="confirm-btn" bindtap="confirmTarget">确定</text>
+  </view>
+  <van-search value="{{ searchKeyword }}" placeholder="请输入姓名搜索" bind:change="onSearchTarget" bind:clear="onClearSearch" shape="round" custom-class="popup-search" />
+  <scroll-view scroll-y class="user-list-scroll">
+    <van-checkbox-group value="{{ tempSelectedTargets }}" bind:change="onTargetChange">
+      <van-cell-group border="{{false}}">
+        <van-cell wx:for="{{filteredUserList}}" wx:key="id" title="{{item.name}}" label="{{item.role_name || '成员'}}" clickable data-name="{{item.id}}" bind:click="toggleTarget" custom-class="user-cell">
+          <van-checkbox slot="right-icon" name="{{item.id}}" checked-color="#ff4d4d" />
+        </van-cell>
+      </van-cell-group>
+    </van-checkbox-group>
+  </scroll-view>
+</van-popup>
+<!-- 
+<view class="float-history-btn" wx:if="{{historyList.length > 0}}" bindtap="openHistory"><van-icon name="underway-o" size="18px" /><text>上次内容</text></view>
+<van-popup show="{{ showHistory }}" position="bottom" bind:close="closeHistory" round custom-style="height: 65%; padding-bottom: env(safe-area-inset-bottom);">
+  <view class="y-popup-header van-hairline--bottom"><text class="y-title">上次提交的内容</text><van-icon name="cross" color="#999" size="20px" bindtap="closeHistory" /></view>
+  <scroll-view scroll-y class="y-scroll-view">
+    <block wx:for="{{historyList}}" wx:key="index">
+      <view class="y-item" wx:if="{{item.type === 'text' || item.type === 'textarea'}}"><view class="y-label">{{item.label}}</view><view class="y-value">{{item.value || '-'}}</view></view>
+      <view class="y-item" wx:elif="{{item.type === 'detail_list' && item.value && item.value.length > 0}}">
+        <view class="y-label">{{item.label}}</view>
+        <view class="y-simple-list">
+          <view class="y-simple-row" wx:for="{{item.value}}" wx:for-item="row" wx:for-index="rIndex" wx:key="index">
+            <text class="y-index">{{rIndex + 1}}.</text>
+            <view class="y-row-content">
+              <block wx:for="{{item.children}}" wx:for-item="child" wx:for-index="cIndex" wx:key="index"><text class="y-val-text">{{row['child_' + cIndex] === 'nothing' ? '无' : (row['child_' + cIndex] || '')}}{{child.type === 'time_list' && row['child_'+cIndex] && row['child_'+cIndex] !== 'nothing' ? '分钟' : ''}}</text><text wx:if="{{cIndex < item.children.length - 1}}" class="y-divider"> </text></block>
+            </view>
+          </view>
+        </view>
+      </view>
+    </block>
+  </scroll-view>
+</van-popup> -->

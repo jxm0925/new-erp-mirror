@@ -1,0 +1,54 @@
+<view class="container" style="height: 100vh; display: flex; flex-direction: column;">
+  
+  <view class="header-simple" style="padding: 30rpx 32rpx 10rpx; background: #fff; flex-shrink: 0;">
+    <text style="font-size: 36rpx; font-weight: 900; color: #333;">需求单档案库</text>
+  </view>
+
+  <view class="search-wrap" style="flex-shrink: 0;">
+    <van-search 
+      value="{{ keyword }}" 
+      placeholder="搜索客户或项目名称" 
+      shape="round" 
+      bind:change="onSearchChange" 
+      bind:search="onSearch" 
+      bind:clear="onClear" 
+    />
+  </view>
+
+  <scroll-view scroll-y class="list-container" bindscrolltolower="loadMore" wx:if="{{!loading}}" style="flex: 1; height: 0; padding-bottom: 40rpx; box-sizing: border-box;">
+    <block wx:if="{{list.length > 0}}">
+      <view class="customer-card" wx:for="{{list}}" wx:key="id" data-id="{{item.id}}" bindtap="goToHistory" data-name="{{item.customer_name}}">
+        <view class="card-top">
+          <view class="c-name">{{item.customer_name}}</view>
+          <van-tag type="primary" round custom-style="font-weight: bold;">最新 V{{item.version}}</van-tag>
+        </view>
+        
+        <view class="card-bottom">
+          <view class="info-item">
+            <van-icon name="user-circle-o" color="#999" size="28rpx"/>
+            <text class="info-text">跟进人: {{item.submitter_name}}</text>
+          </view>
+          <view class="info-item">
+            <van-icon name="clock-o" color="#999" size="28rpx"/>
+            <text class="info-text">最后迭代: {{item.update_date}}</text>
+          </view>
+        </view>
+
+        <van-icon name="arrow" class="card-arrow" color="#ccc" />
+      </view>
+
+      <view style="text-align: center; padding: 40rpx 0; color: #999; font-size: 24rpx;">
+        {{ list.length >= total ? '— 已经到底啦 —' : '上拉加载更多...' }}
+      </view>
+
+    </block>
+    
+    <van-empty wx:else description="暂无相关的客户需求档案" />
+  </scroll-view>
+
+  <!-- <view class="pill-add-btn" bindtap="goToAdd">
+    <van-icon name="plus" size="32rpx" style="margin-right: 8rpx;" />
+    <text>新建档案</text>
+  </view> -->
+
+</view>

@@ -1,0 +1,22 @@
+/* pages/suggests/manage/index.wxss */
+page ,.container{
+    width: 100%;
+    height: 102%;
+    background: #f4f4f4;
+}
+.loadmore {
+    height: 100rpx;
+    width: 100%;
+    line-height: 80rpx;
+    text-align: center;
+    margin-top: 0rpx;
+}
+
+.loadmore text {
+    color: #999;
+}
+.dialog{
+    background-color: #f4f4f4 !important;
+    height: 50%;
+    width: 80%;
+}

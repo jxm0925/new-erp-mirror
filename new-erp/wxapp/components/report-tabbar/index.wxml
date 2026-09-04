@@ -1,0 +1,16 @@
+<view class="tabbar-placeholder"></view>
+
+<view class="fake-tabbar">
+  <block wx:for="{{renderTabs}}" wx:key="id">
+    <view class="tab-item" hover-class="tab-hover" bindtap="switchTab" data-path="{{item.path}}">
+      
+      <image 
+        class="tab-icon" 
+        src="{{current === item.id ? item.selectedIconPath : item.iconPath}}" 
+        mode="aspectFit"
+      ></image>
+      
+      <text class="tab-text {{current === item.id ? 'active' : ''}}">{{item.name}}</text>
+    </view>
+  </block>
+</view>

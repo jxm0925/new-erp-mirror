@@ -1,0 +1,46 @@
+<!--pages/war/index/index.wxml-->
+<view>
+    <view style="background-color: #FFFFFF;" class="contaier">
+        <view class="top_bg">
+            <view class="one_box">
+                <view class="top3">
+                    <view class="num_two">
+                        <image class="top3_head"></image>
+                        <view class="top_name">李</view>
+                        <view class="top_sy">
+                            成都
+                            <label class="_span"></label>
+                        </view>
+                    </view>
+                </view>  
+                <view class="top3">
+                    <view class="num_one">
+                        <image class="top3_head"></image>
+                        <view class="top_name">李</view>
+                        <view class="top_sy">
+                            成都
+                            <label class="_span"></label>
+                        </view>
+                    </view>
+                </view>
+                <view class="top3">
+                    <view class="num_three">
+                        <image class="top3_head"></image>
+                        <view class="top_name">李</view>
+                        <view class="top_sy">
+                            成都
+                            <label class="_span"></label>
+                        </view>
+                    </view>
+                </view>
+            </view>
+        </view>
+        <view class="ranklist">
+            
+        </view>
+        
+        <view class="grouplist">
+            
+        </view>
+    </view>
+</view>

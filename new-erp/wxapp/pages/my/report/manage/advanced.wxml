@@ -1,0 +1,162 @@
+<view class="container">
+  <van-tabs active="{{ activeTab }}" color="#ff4d4d" title-active-color="#ff4d4d" bind:change="onTabChange" sticky>
+    
+    <van-tab title="规则设置" name="rules">
+      <view class="tab-content">
+        <van-cell-group custom-class="group-spacing" border="{{false}}">
+          <van-cell title="全公司所有人均可填写" label="关闭后，仅指定部门人员可见并填写">
+            <van-switch 
+              checked="{{ config.rules.isAllCompany !== false }}" 
+              bind:change="onSwitchChange" 
+              data-key="rules.isAllCompany" 
+              size="24px" 
+              active-color="#ff4d4d" 
+            />
+          </van-cell>
+          <van-cell 
+            wx:if="{{ config.rules.isAllCompany === false }}" 
+            title="指定可填写的部门" 
+            is-link 
+            value="{{ config.rules.allowedGroupNames || '请选择部门' }}" 
+            bind:click="openDeptPicker" 
+            title-style="color: #333;"
+            value-class="{{ config.rules.allowedGroupNames ? 'value-selected' : 'value-placeholder' }}"
+          />
+        </van-cell-group>
+
+        <van-cell-group custom-class="group-spacing" border="{{false}}">
+          <van-cell title="汇报人员" is-link value="{{config.rules.reporterNames}}" bind:click="openUserPicker" data-key="reporters" />
+          <van-cell title="模板管理员" is-link value="{{config.rules.adminNames}}" bind:click="openUserPicker" data-key="admins" />
+          <view class="cell-desc">模板管理员可以编辑模板并导出数据</view>
+        </van-cell-group>
+
+        <van-cell-group custom-class="group-spacing" border="{{false}}">
+          <van-cell title="汇报周期" is-link value="{{config.rules.periodName}}" bind:click="openPicker" data-type="period" />
+          <van-cell title="截止时间" is-link value="{{config.rules.deadline}}" bind:click="openDeadlinePicker" />
+          
+          <van-cell title="允许提交多份" center>
+            <van-switch checked="{{ config.rules.allowMultiple }}" bind:change="onSwitchChange" data-key="rules.allowMultiple" size="24px" active-color="#ff4d4d" />
+          </van-cell>
+          <van-cell title="允许修改结果" center>
+            <van-switch checked="{{ config.rules.allowModify }}" bind:change="onSwitchChange" data-key="rules.allowModify" size="24px" active-color="#ff4d4d" />
+          </van-cell>
+        </van-cell-group>
+
+        <van-cell-group custom-class="group-spacing" border="{{false}}">
+          <van-cell title="固定汇报对象" is-link value="{{config.rules.targetName}}" bind:click="openPicker" data-type="target" />
+          <van-cell wx:if="{{config.rules.targetValue === 'specific'}}" title="选择具体人员" is-link value="{{config.rules.targetUserNames || '请选择人员'}}" bind:click="openUserPicker" data-key="specificTarget" />
+          <view class="cell-desc">自动设置提交人的部门负责人为固定汇报对象</view>
+          
+          <van-cell title="手动设置汇报对象" center>
+            <van-switch checked="{{ config.rules.allowManualTarget }}" bind:change="onSwitchChange" data-key="rules.allowManualTarget" size="24px" active-color="#ff4d4d" />
+          </van-cell>
+        </van-cell-group>
+      </view>
+    </van-tab>
+
+    <van-tab title="提醒设置" name="reminders">
+      <view class="tab-content">
+        <van-cell-group custom-class="group-spacing" border="{{false}}">
+          <van-cell title="系统消息" center>
+            <van-switch checked="{{ config.reminders.system }}" bind:change="onSwitchChange" data-key="reminders.system" size="24px" active-color="#ff4d4d" />
+          </van-cell>
+          <van-cell title="邮箱提醒" center>
+            <van-switch checked="{{ config.reminders.email }}" bind:change="onSwitchChange" data-key="reminders.email" size="24px" active-color="#ff4d4d" />
+          </van-cell>
+          <van-cell title="短信提醒" center>
+            <van-switch checked="{{ config.reminders.sms }}" bind:change="onSwitchChange" data-key="reminders.sms" size="24px" active-color="#ff4d4d" />
+          </van-cell>
+        </van-cell-group>
+        <view class="cell-desc">在汇报截止时间前1小时对汇报人员进行提醒</view>
+      </view>
+    </van-tab>
+
+    <van-tab title="权限设置" name="permissions">
+      <view class="tab-content">
+        <block wx:for="{{config.permissions}}" wx:key="index">
+          <view class="perm-card">
+            <view class="perm-header">
+              <text class="perm-title">{{item.groupName}}</text>
+              <text class="perm-delete" bindtap="deletePerm" data-index="{{index}}" wx:if="{{index > 0}}">删除</text>
+            </view>
+            <van-cell title="权限成员" is-link value="{{item.memberNames}}" bind:click="openUserPicker" data-key="permissions" data-index="{{index}}" border="{{false}}" />
+            <van-cell title="管理范围" is-link value="{{item.scope}}" border="{{false}}" />
+            <van-cell title="操作权限" is-link value="{{item.actions}}" border="{{false}}" />
+          </view>
+        </block>
+
+        <view class="btn-add-perm" bindtap="addPermGroup">
+          <van-icon name="plus" size="14px" /> 添加权限组
+        </view>
+      </view>
+    </van-tab>
+  </van-tabs>
+
+  <view class="bottom-action">
+    <van-button block color="#ff4d4d" custom-class="radius-btn" bind:click="saveAdvanced">保存设置</van-button>
+  </view>
+</view>
+
+<van-popup show="{{ showPicker }}" position="bottom" bind:close="closePicker">
+  <van-picker show-toolbar title="{{ pickerTitle }}" columns="{{ pickerColumns }}" bind:cancel="closePicker" bind:confirm="onPickerConfirm" confirm-button-text="确定" cancel-button-text="取消" />
+</van-popup>
+
+<van-popup show="{{ showDeadlinePicker }}" position="bottom" bind:close="closeDeadlinePicker">
+  <van-picker show-toolbar title="设置截止时间" columns="{{ deadlineColumns }}" bind:cancel="closeDeadlinePicker" bind:confirm="onDeadlineConfirm" confirm-button-text="确定" cancel-button-text="取消" />
+</van-popup>
+
+<van-popup show="{{ showUserPicker }}" position="bottom" round custom-style="height: 65%;" bind:close="closeUserPicker">
+  <view class="popup-header">
+    <text class="popup-cancel" bindtap="closeUserPicker">取消</text>
+    <text class="popup-title">选择人员</text>
+    <text class="popup-confirm" bindtap="confirmUserSelection">确定</text>
+  </view>
+  <scroll-view scroll-y class="user-list-body">
+    <van-checkbox-group value="{{ tempSelectedUsers }}" bind:change="onUserCheck">
+      <van-cell-group border="{{false}}">
+        <van-cell wx:for="{{userList}}" wx:key="id" title="{{item.nickname}}" clickable data-name="{{item.id}}" bind:click="toggleCheckbox">
+          <van-checkbox slot="right-icon" name="{{item.id}}" checked-color="#ff4d4d" class="checkboxes-{{item.id}}" />
+        </van-cell>
+      </van-cell-group>
+    </van-checkbox-group>
+    <view style="height: 60rpx;"></view> 
+  </scroll-view>
+</van-popup>
+
+<van-popup show="{{ showDeptPicker }}" position="bottom" round custom-style="height: 75%;" bind:close="closeDeptPicker">
+  <view class="popup-header">
+    <text class="popup-cancel" bindtap="closeDeptPicker">取消</text>
+    <text class="popup-title">选择部门</text>
+    <text class="popup-confirm" bindtap="confirmDeptPicker">确定</text>
+  </view>
+  
+  <scroll-view scroll-y class="user-list-body">
+    <van-checkbox-group value="{{ tempSelectedDeptIds }}" bind:change="noop">
+      <van-cell-group border="{{false}}">
+        <block wx:for="{{ departmentList }}" wx:key="id">
+          
+          <van-cell 
+            clickable 
+            data-id="{{ item.id }}" 
+            bind:tap="toggleDept"
+            custom-style="padding-left: {{ 30 + item.level * 40 }}rpx; background-color: {{item.level === 0 ? '#fcfcfc' : '#fff'}};"
+          >
+            <view slot="title">
+              <text wx:if="{{item.level > 0}}" style="color: #ccc; margin-right: 8rpx;">├─</text>
+              <text style="color: {{item.level === 0 ? '#333' : '#666'}}; font-weight: {{item.level === 0 ? 'bold' : 'normal'}}">{{ item.name }}</text>
+            </view>
+            
+            <van-checkbox 
+              slot="right-icon" 
+              name="{{ item.id }}" 
+              checked-color="#ff4d4d" 
+              catch:tap="noop" 
+            />
+          </van-cell>
+
+        </block>
+      </van-cell-group>
+    </van-checkbox-group>
+    <view style="height: 60rpx;"></view> 
+  </scroll-view>
+</van-popup>

@@ -1,0 +1,249 @@
+<view class="container">
+    <van-sticky>
+        <van-cell-group inset>
+            <van-cell>
+                <van-row>
+                    <van-col span="8" class="col-class">工单号</van-col>
+                    <van-col span="16" class="col-class">{{info.order_no}}</van-col>
+                </van-row>
+            </van-cell>
+            <van-cell>
+                <van-row>
+                    <van-col span="8" class="col-class">状态</van-col>
+                    <van-col span="8" class="col-class">{{info.status_text}}</van-col>
+                    <van-col span="8" class="col-class">{{hours}}:{{minutes}}:{{seconds}}</van-col>
+                </van-row>
+            </van-cell>
+            <van-cell>
+                <van-row>
+                    <van-col span="8" class="col-class">工序</van-col>
+                    <van-col span="7" class="col-class">{{info.work_status_text}}</van-col>
+                    <view wx:if="{{info.step_status=='accept'}}">
+                        <van-col span="4"><van-button type="primary" size="mini" data-type="stage" bind:tap="showPop">工序完成</van-button></van-col>
+                        <van-col span="5"><van-button type="danger" size="mini" data-id="{{info.id}}" bind:tap="skipSteps">跳过工序</van-button></van-col>
+                    </view>
+                    <view wx:if="{{info.status=='accept' && info.step_status=='wait'}}">
+                        <van-col span="4"><van-button type="primary" size="mini" data-id="{{info.id}}" bind:tap="acceptSteps">接受工序</van-button></van-col>
+                        <van-col span="5"><van-button type="danger" size="mini" data-id="{{info.id}}" bind:tap="skipSteps">跳过工序</van-button></van-col>
+                    </view>
+                </van-row>
+            </van-cell>
+            <van-cell wx:if="{{info.status!='complete'}}">
+                <van-row>
+                    <van-col span="8" class="col-class">工序负责人</van-col>
+                    <van-col span="8" class="col-class">{{info.step_admin?info.step_admin_name:'等待接受'}}</van-col>
+                </van-row>
+            </van-cell>
+        </van-cell-group>
+    </van-sticky>
+
+    <van-tabs nav-class="tab" title-active-color="#ee0a24">
+        <van-tab title="工单描述">
+            <view style="margin-top: 20rpx;">
+                <scroll-view style="width: 100%;height: {{scrollHeight}}px;margin-top: 30rpx;"  scroll-y="true">
+                
+                    <van-cell-group inset>
+                    <van-cell size="large" title="{{info.o_accerpt}}  {{info.o_mobile}}" icon="location-o" label="{{info.address}}"/>
+                            <view class='line'><image src='/static/images/line.jpg'></image></view>
+                    <van-cell>
+                        <van-cell>
+                            <!-- 表头 -->
+                            <van-row class="table-header">
+                                <van-col span="16" style="text-align: center;" class="col-class">设备名称</van-col>
+                                <van-col span="4" style="text-align: center;" class="col-class">数量</van-col>
+                                <van-col span="4" style="text-align: center;" class="col-class">操作</van-col>
+                            </van-row>
+
+                            <!-- 表格内容 -->
+                            <van-row class="table-row">
+                                <van-col span="16" style="text-align: left;">{{info.product}}</van-col>
+                                <van-col span="4" style="text-align: center;">2</van-col>
+                                <van-col span="4" style="text-align: center;">
+                                    <van-button type="primary" size="mini" data-id="{{info.id}}" bind:tap="acceptSteps">入库</van-button>
+                                </van-col>
+                            </van-row>
+                            <van-divider dashed />
+                        </van-cell>
+                    </van-cell>
+                    <van-cell>
+                        <van-row>
+                            <van-col span="8" class="col-class">工单备注</van-col>
+                        </van-row>
+                        <van-row>
+                            <van-col span="24" style="text-align: left;">{{info.line_note?info.line_note:'无备注'}}</van-col>
+                        </van-row>
+                    </van-cell>
+                    <van-cell>
+                        <van-row>
+                            <van-col span="8" class="col-class">销售备注</van-col>
+                        </van-row>
+                        <van-row>
+                            <van-col span="24" style="text-align: left;">{{info.order_note?info.order_note:'无备注'}}</van-col>
+                        </van-row>
+                    </van-cell>
+                    <view wx:if="{{info.accept_id}}">
+                        <van-cell>
+                            <van-row>
+                                <van-col span="8" class="col-class">接单人</van-col>
+                                <van-col span="16" class="col-class">{{info.user}}</van-col>
+                            </van-row>
+                        </van-cell>
+                        <van-cell>
+                            <van-row>
+                                <van-col span="8" class="col-class">接单时间</van-col>
+                                <van-col span="16" class="col-class">{{info.accept_date}}</van-col>
+                            </van-row>
+                        </van-cell>
+                    </view>
+                    
+                </van-cell-group>
+                </scroll-view>
+            </view>
+        </van-tab>
+        <van-tab title="工单日志">
+            <view style="margin-top: 20rpx;">
+                <scroll-view style="width: 100%;height: {{scrollHeight}}px;"  scroll-y="true">
+                <van-cell-group inset>
+                    <view class="outerBox">
+                        <!-- 头部物流信息 -->
+                        <!-- <view class="navBox">
+                            <view class="navLeftBox">
+                                <view>
+                                    <image src="https://b.bdstatic.com/searchbox/icms/searchbox/img/zhongtonglogo.png"></image>
+                                </view>
+                                <view>中通快递</view>
+                                <view>78465464135654565</view>
+                            </view>
+                            <view class="navRightBox">
+                                <text>复制</text>
+                                <text>|</text>
+                                <text>电话</text>
+                            </view>
+                        </view> -->
+                        <!-- 主体内容 -->
+                        <view class="contantBox">
+                            <!-- 通过数组长度判断显示内容 >0显示物流信息-->
+                            <view wx:if="{{logs.length > 0}}">
+                                <view class="itemBox" wx:for="{{logs}}" wx:key="index">
+                                    <!-- 左边线条 -->
+                                    <view class="itemLeftBox">
+                                        <view class="lineBox">
+                                            <view class="topLineBox {{index == 0 ? '' : 'longLineBox'}}"></view>
+                                            <view class="bomLineBox {{index + 1 == dataList.length ? '' : 'longLineBox'}}"></view>
+                                        </view>
+                                        <image class="newestIconBox" src="/static/images/qySZi4.png" wx:if="{{index == 0}}"></image>
+                                        <view class="dotBox" wx:else="{{index > 0}}"></view>
+                                    </view>
+                                    <!-- 右边内容 -->
+                                    <view class="rightBigBox {{index == 0 ? '' : 'oldTxtBox'}} {{index + 1 == logs.length ? '' : 'borderBomBox'}}">
+                                        <view>{{item.content}}</view>
+                                        <view class="timeBox">{{item.create_date}}</view>
+                                        <van-grid wx:if="{{item.images.length}}" column-num="3" border="{{ false }}">
+                                            <van-grid-item use-slot wx:for="{{ item.images_arr }}" wx:for-item="items2" wx:key="id">
+                                            
+                                                <video
+                                                wx:if="{{items2.type=='video'}}"
+                                                style="width: 100%; height: 90px;"
+                                                src="{{items2.url}}"
+                                                ></video>
+                                                <image
+                                                wx:if="{{items2.type=='image'}}"
+                                                style="width: 100%; height: 90px;"
+                                                data-url="{{items2.url}}"
+                                                data-images_arr="{{item.images}}"
+                                                bindtap="previewImage"
+                                                src="{{items2.url}}"
+                                                ></image>
+                                            </van-grid-item>
+                                        </van-grid>
+                                    </view>
+                                </view>
+                            </view>
+                            <!-- 通过数组长度判断显示内容 除了大于0之外显示暂无物流信息-->
+                            <van-empty wx:else description="暂无工单日志信息" />
+                        </view>
+                    </view>
+                </van-cell-group> 
+                </scroll-view>
+            </view>
+        </van-tab>
+    </van-tabs>
+
+    <van-goods-action>
+        <van-goods-action-button wx:if="{{info.status=='wait'}}" custom-class="goods-button" size="normal" color="#e64340" text="接单" data-id="{{id}}" bind:click="accept"/>
+        <van-goods-action-button wx:if="{{info.status=='accept' && info.work_status=='testing'}}" custom-class="goods-button" size="normal" color="#e64340" text="入库" data-type="result" bind:click="showPop"/>
+    </van-goods-action> 
+</view>
+<van-popup
+  show="{{ show_stage }}"
+  round
+  custom-style="width:85%;"
+  bind:close="onCancel"
+  data-type="stage"
+>
+    <van-cell border="{{false}}">
+        <van-row>
+            <van-col span="24" style="color:#000;text-align: center;">{{info.work_status_text}}结果确认</van-col>
+        </van-row>
+    </van-cell>
+    <view wx:if="{{need_stage}}">
+        <van-cell title="{{info.work_status_text}}人" required value="{{choose_staff}}" is-link data-type="staff" bind:tap="showPop"/>
+        <van-field
+            label="工时"
+            required
+            model:value="{{ use_time }}"
+            placeholder="请输入工时"
+            input-align="right"
+            type="digit"
+        />
+    </view>
+    <van-cell title="反馈图片/视频" />
+    <van-grid column-num="3">
+        <van-uploader
+            accept="media"
+            multiple
+            upload-text="媒体文件"
+            image-fit="aspectFill"
+            file-list="{{ picsList }}"
+            bind:after-read="afterPicRead"
+            bind:delete="afterPicDel"
+            border="{{false}}"
+        />
+    
+    </van-grid>
+    <van-cell  border="{{ false }}">
+        <van-button custom-class="btn-class" type="danger" disabled="{{button_stage}}" bind:click="subStage">确认</van-button>
+    </van-cell>
+</van-popup>
+<van-popup
+  show="{{ show_staff }}"
+  round
+  position="bottom"
+  bind:close="onCancel"
+  data-type="staff"
+  custom-style="height:50%"
+>
+    <!-- <van-row>
+        <van-col span="12" style="margin: 0 auto;"><van-button type="default">默认按钮</van-button></van-col>
+        <van-col span="12"><van-button type="default">默认按钮</van-button></van-col>
+    </van-row> -->
+    <van-checkbox-group>
+        <van-cell-group>
+        <van-cell wx:for="{{workers}}"  wx:for-item="item" clickable wx:key="index" title="{{item.nickname}}" data-item = "{{item}}" data-index='{{index}}' data-type="excute" bind:tap="toggle" center>
+            <van-checkbox  slot="right-icon"value="{{ item.checked }}" name="{{index}}" />
+        </van-cell>
+        </van-cell-group>
+    </van-checkbox-group>
+    <!-- <van-picker
+        show-toolbar
+        title="请选择"
+        columns="{{ workers }}"
+        defaultIndex="{{default_worker}}"
+        value-key="nickname"
+        data-type="staff"
+        bind:cancel="onCancel"
+        bind:confirm="selectStageUser"
+    /> -->
+</van-popup>
+<van-dialog id="van-dialog" />
+<van-notify id="van-notify" />

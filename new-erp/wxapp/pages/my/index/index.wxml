@@ -1,0 +1,63 @@
+<view class="container" style="height: {{pageHeight}};" >
+    <view class="user-section">
+        <image class="bg" src="/static/images/bgImg.png"></image>
+        <view class="user-info-box" bindtap="closeTank">
+            <view class="portrait-box">
+                <image class="portrait" src='{{userInfo.avatar?userInfo.avatar:"/static/images/missing_face.png"}}'></image>
+            </view>
+            <view class="info-box">
+                <text class="username">{{userInfo.name?userInfo.name: '点击登录'}}</text>
+                <van-button wx:if="{{userInfo.is_login && !userInfo.user_id}}" style="margin-left: 20rpx;" type="danger" size="mini" bind:tap="loginPop">绑定账号</van-button>
+                <view>
+                <text class="points">积分：{{userInfo.is_login?score:0}}</text>
+                </view>
+            </view>
+        </view>
+    </view>
+    <!-- <van-cell wx:if="{{userInfo && !userInfo.mobile}}" icon-class="bind-phone-icon" title-class="bind-phone" title="点击绑定手机号获取更多信息">
+        <van-button type="primary" size="small" round color="linear-gradient(to right, #ff6464, #f92a2a)">去绑定</van-button>
+    </van-cell> -->
+    <van-cell-group inset>
+        <van-swipe-cell right-width="{{ 100 }}">
+            <view slot="right" class="van-swipe-cell__left"><van-button type="info" bind:click="suggestManage">改良委后台</van-button></view>
+            <van-cell
+                is-link
+                title="改良改善"
+                link-type="navigateTo"
+                url="/pages/suggests/index/index"
+                custom-class="func-area"
+            />
+        </van-swipe-cell>
+        <van-cell
+            is-link
+            title="积分记录"
+            link-type="navigateTo"
+            url="/pages/mall/score/index"
+            custom-class="func-area"
+        />
+        <view>
+            <van-grid clickable column-num="3">
+                <!-- <van-grid-item use-slot>
+                    <view class="points-class">0 个</view>
+                    <view class="points-text-class">积分</view>
+                </van-grid-item>
+                <van-grid-item use-slot>
+                    <view class="points-class">0 个</view>
+                    <view class="points-text-class">建议</view>
+                </van-grid-item> -->
+                <!-- <van-grid-item icon="/static/images/has_submit.png" url="/pages/suggests/index/index?active=0" text="已提交" />
+                <van-grid-item icon="/static/images/has_accept.png" url="/pages/suggests/index/index?active=1" text="已采纳" />
+                <van-grid-item icon="/static/images/not_accept.png" url="/pages/suggests/index/index?active=2" text="未采纳" /> -->
+            </van-grid>
+        </view>
+
+        <!-- <view style="padding-top: 20rpx;">
+            <van-cell icon="like-o" title="通知列表" is-link />
+            <van-cell icon="star-o" title="我的收藏" is-link />
+            <van-cell icon="setting-o" title="设置" is-link />
+        </view> -->
+    </van-cell-group>
+</view>
+<LoginPopup class="LoginPopup"></LoginPopup>
+
+<van-notify id="van-notify" />

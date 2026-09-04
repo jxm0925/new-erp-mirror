@@ -1,0 +1,5 @@
+/* pages/mall/detail/index.wxss */
+page ,.container{
+    width: 100%;
+    background-color: #f5f5f5;
+  }

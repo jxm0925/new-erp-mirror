@@ -1,0 +1,58 @@
+page ,.container{
+  width: 100%;
+  height: 100%;
+  background-color: #f4f4f4;
+}
+.container .user-section {
+  height: 200rpx;
+  position: relative;
+  padding: 100rpx 30rpx 0;
+}
+.user-section .bg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0.9;
+}
+
+.user-info-box{
+  height: 180rpx;
+  display:flex;
+  align-items:center;
+  position:relative;
+  z-index: 1;
+}
+
+.user-info-box .portrait{
+  width: 130rpx;
+  height: 130rpx;
+  border:5rpx solid #fff;
+  border-radius: 50%;
+}
+.user-info-box .username{
+  font-size: 30rpx;
+  color: #303133;
+  margin-left: 20rpx;
+}
+.points{
+  margin-left: 20rpx;
+  font-size: 24rpx;
+  color: #303133;
+}
+.bind-phone{
+  font-size: 24rpx;
+  margin-left: 30rpx;
+  color: #FF690D;
+}
+.points-class{
+  font-size: 26rpx;
+}
+.points-text-class{
+  font-size: 23rpx;
+  padding-top: 10rpx;
+}
+.func-area{
+  margin-top: 20rpx;
+}

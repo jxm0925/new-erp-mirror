@@ -1,0 +1,96 @@
+<view class="container">
+    <van-sticky>
+        <van-dropdown-menu>
+            <van-dropdown-item value="{{ value1 }}" options="{{ option1 }}" bind:change="changeStatus" />
+            <van-dropdown-item value="{{ value2 }}" options="{{ option2 }}" />
+        </van-dropdown-menu>
+    </van-sticky>
+    <van-empty wx:if="{{!list.length}}" description="还没有内容" />
+    <scroll-view scroll-y="true" scroll-top="{{scrollTop}}" style="height:{{scrollHeight}};">
+        <view  wx:if="{{list.length}}" style="margin-top: 10rpx;" wx:for="{{list}}" wx:key="id" data-id="{{item.id}}">
+            <van-cell-group inset>
+                <view data-id="{{item.id}}"  bind:tap="showInfo">
+                    <van-cell value-class="value-label" title="{{item.create_date}}" value="{{item.status_text}}"/>
+                    <van-cell>
+                        <van-row>
+                            <van-col span="24" style="text-align: left;">提案人：{{item.name}}</van-col>
+                        </van-row>
+                        <van-row>
+                            <van-col span="24" style="text-align: left;">提案内容：{{item.content}}</van-col>
+                        </van-row>
+                    </van-cell>
+                    <van-cell wx:if="{{item.media}}" >
+                    <van-grid column-num="3" border="{{ false }}">
+                        <van-grid-item content-class="grid-padding" use-slot wx:for="{{ item.media }}" wx:for-item="items" wx:key="index">
+                        <van-image fit="heightFix" width="100" height="100" src="{{items}}" />
+                        </van-grid-item>
+                    </van-grid>
+                    </van-cell>
+                </view>
+                <van-cell  wx:if="{{item.status!=0}}">
+                    <van-row>
+                        <van-col span="24" style="text-align: left;">认领人：{{item.director_name}}</van-col>
+                    </van-row>
+                </van-cell>
+                <van-cell>
+                <van-row>
+                <view>
+                    <view style="float: left;color: rgb(0, 173, 9);" wx:if="{{item.status==2}}">等级：{{item.result_text}}</view>
+                    <van-col wx:if="{{item.status==0}}" span="8" style="color: red;float: right;;"><van-button type="info" size="small" data-id="{{item.id}}" bind:tap="accept">认领</van-button></van-col>
+                    
+                    <van-col wx:if="{{item.status==1 && item.director==userInfo.user_id}}" span="8" style="color: red;float: right;;">
+                        <van-button type="info" size="small" data-id="{{item.id}}" bind:tap="result">结果</van-button>
+                    </van-col>
+                    <van-col wx:if="{{item.status==2}}" span="8" style="color: red;float: right;;">
+                        <van-button type="info" size="small" data-id="{{item.id}}" bind:tap="showInfo">详情</van-button>
+                    </van-col>
+                </view>
+                </van-row>
+            </van-cell>
+            </van-cell-group>
+        </view>
+        <view wx:if="{{list.length>2}}" class="loadmore">
+            <block wx:if="{{nomore}}">
+            <text>{{nomoreText}}</text>
+            </block>
+            <block wx:else>
+            <text class="iconfont icon-loading loading" space="nbsp"></text>
+            <text> {{loadmoreText}}</text>
+            </block>
+        </view>
+    </scroll-view>
+</view>
+<van-popup
+  use-slot
+  show="{{ infoModel }}"
+  bind:close="onClose"
+  custom-class="dialog"
+  round
+>
+  <van-empty wx:if="{{!suggestInfo.status}}" description="暂未处理" />
+
+  <view wx:if="{{suggestInfo.status}}">
+    <van-cell-group custom-class="dialog-cell">
+      <van-cell title="认领人" value="{{suggestInfo.director_name}}" />
+        <van-cell wx:if="{{suggestInfo.result!=5}}" title="落地等级" value="{{suggestInfo.result_text}}" />
+        <van-cell wx:if="{{suggestInfo.score}}" title="积分" value="{{suggestInfo.score}}"/>
+        <van-cell wx:if="{{suggestInfo.executor_ids}}" title="参与落地人" value="{{suggestInfo.executor}}" />
+        <van-cell title="结果反馈:" value="{{suggestInfo.result_content}}"/>
+        <van-grid column-num="3" border="{{ false }}">
+            <van-grid-item content-class="grid-padding" use-slot wx:for="{{ suggestInfo.after_images_arr }}" wx:for-item="items" wx:key="index">
+            <van-image 
+                fit="heightFix" 
+                width="100" 
+                height="100" 
+                src="{{items}}" 
+                data-url="{{items}}"
+                data-images_arr="{{suggestInfo.after_images_arr}}"
+                bindtap="previewImage"
+            />
+            </van-grid-item>
+        </van-grid>
+    </van-cell-group>
+  </view>
+</van-popup>
+<van-notify id="van-notify" />
+<van-dialog id="van-dialog" />

@@ -1,0 +1,115 @@
+<!--pages/suggests/manage/result.wxml-->
+<view class="container">
+    <van-sticky>
+        <van-cell>
+            <van-row>
+                <van-col span="8" class="col-class">提案人</van-col>
+                <van-col span="16" class="col-class">{{info.name}}</van-col>
+            </van-row>
+        </van-cell>
+        <van-cell>
+            <van-row>
+                <van-col span="8" class="col-class">提案时间</van-col>
+                <van-col span="8" class="col-class">2025-01-19</van-col>
+            </van-row>
+        </van-cell>
+    </van-sticky>
+    <view style="margin-top: 20rpx;">
+        <scroll-view style="width: 100%;height: {{scrollHeight}}px;margin-top: 30rpx;"  scroll-y="true">
+            <van-cell required label="{{type_name}}" is-link data-type="type" bind:click="showPopup" />
+            <van-popup
+                show="{{ typeShow }}"
+                round
+                position="bottom"
+                data-type="type"
+                bind:close="showPopup"
+                custom-style="height: 50%"
+            >
+            <van-picker
+                show-toolbar
+                title="落地级别"
+                columns="{{ type_columns }}"
+                bind:cancel="showPopup"
+                data-type="type"
+                bind:confirm="confirmType"
+                value-key="name"
+            />
+            </van-popup>
+            <view wx:if="{{can_excute}}">
+                <van-cell required label="{{sub_name}}" is-link data-type="sub" bind:click="showPopup" />
+                <van-popup
+                    show="{{ subShow }}"
+                    round
+                    position="bottom"
+                    data-type="sub"
+                    bind:close="showPopup"
+                    custom-style="height: 50%"
+                >
+                <van-checkbox-group>
+                    <van-cell-group>
+                    <van-cell wx:for="{{sub_columns}}"  wx:for-item="item" clickable wx:key="index" title="{{item.nickname}}" data-type="sub" data-item = "{{item}}" data-index='{{index}}' bind:tap="toggle" center>
+                        <van-checkbox  slot="right-icon" value="{{ item.checked }}" name="{{index}}" />
+                    </van-cell>
+                    </van-cell-group>
+                </van-checkbox-group>
+                </van-popup>
+                <van-field
+                    label="提案人积分"
+                    model:value="{{ sub_score }}"
+                    placeholder="请输入积分（不填写默认为0）"
+                    clearable
+                    type="digit"
+                    custom-class="name_class"
+                />
+                <van-cell required label="{{excute_name}}" is-link data-type="excute" bind:click="showPopup" />
+                <van-popup
+                    show="{{ excuteShow }}"
+                    round
+                    position="bottom"
+                    data-type="excute"
+                    bind:close="showPopup"
+                    custom-style="height:50%"
+                >
+                <van-checkbox-group>
+                    <van-cell-group>
+                    <van-cell wx:for="{{excute_columns}}"  wx:for-item="item" clickable wx:key="index" title="{{item.nickname}}" data-item = "{{item}}" data-index='{{index}}' data-type="excute" bind:tap="toggle" center>
+                        <van-checkbox  slot="right-icon" value="{{ item.checked }}" name="{{index}}" />
+                    </van-cell>
+                    </van-cell-group>
+                </van-checkbox-group>
+                </van-popup>
+                <van-field
+                label="落地人积分"
+                model:value="{{ excute_score }}"
+                placeholder="请输入积分（不填写默认为0）"
+                clearable
+                type="digit"
+                custom-class="name_class"
+                />
+            </view>
+
+            <van-field
+              required
+              model:value="{{ content }}"
+              placeholder="请填写反馈内容"
+              type="textarea"
+              autosize="{{ autosize }}"
+            />
+            <view style="padding-left:32rpx;background-color: #fff;">
+              <van-uploader
+                accept="media"
+                multiple
+                upload-text="图片/视频"
+                image-fit="aspectFill"
+                file-list="{{ picsList }}"
+                bind:after-read="afterPicRead"
+                bind:delete="afterPicDel"
+              />
+            </view>
+        </scroll-view>
+    </view>
+    <van-goods-action wx:if="{{info.status==1}}">
+        <van-goods-action-button custom-class="goods-button" size="normal" color="#e64340" text="提交" bind:click="submit"/>
+    </van-goods-action>
+</view>
+<van-notify id="van-notify" />

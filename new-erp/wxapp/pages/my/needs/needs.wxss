@@ -1,0 +1,201 @@
+page {
+  background-color: #f2f4f7; 
+  padding-bottom: 160rpx;
+}
+
+.form-body {
+  padding: 0 24rpx;
+}
+
+/* ========================================== */
+/* 💥 档案库入口卡片样式 💥 */
+/* ========================================== */
+.archive-entry-card {
+  background-color: #ffffff;
+  border-radius: 16rpx;
+  margin: 0 24rpx 24rpx;
+  box-shadow: 0 10rpx 30rpx rgba(25, 137, 250, 0.08); /* 柔和科技蓝阴影 */
+  overflow: hidden; 
+  transition: all 0.2s;
+}
+
+.archive-entry-card:active {
+  transform: scale(0.98);
+  box-shadow: 0 6rpx 20rpx rgba(25, 137, 250, 0.05);
+}
+
+.entry-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background-color: #e8f3ff; /* 高级灰蓝底色 */
+  padding: 20rpx 24rpx;
+  border-bottom: 1rpx solid #d0e7ff;
+}
+
+.left-section {
+  display: flex;
+  align-items: center;
+}
+
+.header-text {
+  font-size: 28rpx;
+  font-weight: bold;
+  color: #1989fa;
+  margin-left: 12rpx;
+}
+
+.entry-content {
+  padding: 32rpx;
+  display: flex;
+  flex-direction: column;
+}
+
+.main-info {
+  display: flex;
+  align-items: center;
+  margin-bottom: 16rpx;
+}
+
+.entry-icon {
+  margin-right: 20rpx;
+}
+
+.info-title {
+  font-size: 32rpx;
+  font-weight: 900;
+  color: #333333;
+}
+
+.info-tip {
+  font-size: 24rpx;
+  color: #999999;
+  line-height: 1.4;
+  margin-left: 68rpx; /* 图标对齐留白 */
+}
+
+/* ========================================== */
+/* 💥 动态表单卡片公共样式 💥 */
+/* ========================================== */
+.custom-card {
+  background-color: #ffffff;
+  border-radius: 16rpx;
+  margin-bottom: 24rpx;
+  box-shadow: 0 4rpx 12rpx rgba(0, 0, 0, 0.04); 
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  background-color: #f7f9fc; 
+  padding: 20rpx 24rpx;
+  border-bottom: 1rpx solid #f0f2f5;
+  border-radius: 16rpx 16rpx 0 0;
+}
+
+.card-title {
+  font-size: 28rpx;
+  font-weight: bold;
+  color: #333333;
+}
+
+.required-star {
+  color: #ff4d4d;
+  margin-left: 8rpx;
+  font-weight: bold;
+}
+
+/* 顶部搜索框 */
+.search-box {
+  display: flex;
+  align-items: center;
+  background: #f7f8fa;
+  border-radius: 12rpx;
+  padding: 10rpx 20rpx;
+  border: 2rpx solid #eef0f4;
+}
+
+/* 悬浮下拉框样式 */
+.dropdown-list {
+  position: absolute;
+  top: 100rpx; 
+  left: 24rpx;
+  right: 24rpx;
+  background: #ffffff;
+  border-radius: 12rpx;
+  box-shadow: 0 10rpx 30rpx rgba(0,0,0,0.1);
+  z-index: 999;
+  max-height: 400rpx;
+  overflow-y: auto;
+  border: 1rpx solid #eeeeee;
+}
+
+.dropdown-item {
+  padding: 24rpx 32rpx;
+  font-size: 28rpx;
+  color: #333;
+  border-bottom: 1rpx solid #f5f5f5;
+  display: flex;
+  align-items: center;
+}
+.dropdown-item:active { background: #f7f9fc; }
+
+/* ========================================== */
+/* 💥 极品 Tag 标签样式 (带 X 号) 💥 */
+/* ========================================== */
+.tag-group {
+  display: flex;
+  flex-wrap: wrap;
+  padding: 24rpx;
+  gap: 20rpx;
+}
+
+.tag-item {
+  display: flex;
+  align-items: center;
+  padding: 14rpx 32rpx;
+  background-color: #f5f7fa;
+  color: #666;
+  font-size: 26rpx;
+  border-radius: 40rpx; /* 药丸形状 */
+  border: 2rpx solid transparent;
+  transition: all 0.2s;
+}
+
+/* 选中的蓝色高亮状态 */
+.tag-active {
+  background-color: #e8f3ff;
+  color: #1989fa;
+  border-color: #1989fa;
+  font-weight: bold;
+}
+
+.tag-close-icon {
+  margin-left: 12rpx;
+  font-size: 24rpx;
+  color: #1989fa;
+  padding: 6rpx;
+}
+
+/* ========================================== */
+/* 底部悬浮按钮 */
+/* ========================================== */
+.bottom-action {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  padding: 20rpx 32rpx;
+  padding-bottom: env(safe-area-inset-bottom);
+  background: rgba(255,255,255,0.95);
+  backdrop-filter: blur(10px);
+  z-index: 100;
+  box-sizing: border-box;
+  border-top: 1rpx solid #eee;
+}
+
+.submit-btn {
+  width: 100%;
+  font-weight: bold;
+  box-shadow: 0 8rpx 24rpx rgba(25, 137, 250, 0.25);
+}

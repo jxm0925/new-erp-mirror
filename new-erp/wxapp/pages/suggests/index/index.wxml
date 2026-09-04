@@ -1,0 +1,75 @@
+<view class="container">
+    <van-tabs active="{{ active }}" bind:change="changeTags" sticky>
+        <view wx:if="{{list.length<=0}}">
+            <van-empty description="还没有内容" />
+        </view>
+        <van-tab title="{{item.title}}" wx:for="{{status_list}}" wx:key="index">
+          <scroll-view scroll-y="true" scroll-top="{{scrollTop}}" style="height:{{scrollHeight}};">
+            <view  wx:if="{{list.length}}" style="margin-top: 10rpx;" wx:for="{{list}}" wx:key="id" data-id="{{item.id}}">
+              <van-cell-group inset>
+                <view data-id="{{item.id}}"  bind:tap="showInfo">
+                  <van-cell value-class="value-label" title="{{item.create_date}}" value="{{item.status_text}}"/>
+                  <van-cell label="{{item.content}}">
+                  </van-cell>
+                  <van-cell wx:if="{{item.media}}" >
+                    <van-grid column-num="3" border="{{ false }}">
+                      <van-grid-item content-class="grid-padding" use-slot wx:for="{{ item.media }}" wx:for-item="items" wx:key="index">
+                        <van-image fit="heightFix" width="100" height="100" src="{{items}}" />
+                      </van-grid-item>
+                    </van-grid>
+                  </van-cell>
+                </view>
+                
+                <van-cell>
+                  <van-row>
+                    <view wx:if="{{item.status!=0}}">
+                      <van-col span="8">
+                        <view style="float: left;color: rgb(0, 173, 9);">等级：{{item.result_text}}</view>
+                      </van-col>
+                      <van-col span="8" style="color: red;">积分: {{item.score}}</van-col>
+                      <van-col span="8" style="color: red;"><van-button type="info" size="small" data-id="{{item.id}}" bind:tap="showInfo">详情</van-button></van-col>
+                    </view>
+                    <van-col offset="16" span="8" wx:else>
+                      <van-button type="danger" size="small" data-id="{{item.id}}" bind:click="del">删除</van-button>
+                    </van-col>
+                  </van-row>
+                </van-cell>
+              </van-cell-group>
+            </view>
+            <view wx:if="{{list.length>2}}" class="loadmore">
+              <block wx:if="{{nomore}}">
+                <text>{{nomoreText}}</text>
+              </block>
+              <block wx:else>
+                <text class="iconfont icon-loading loading" space="nbsp"></text>
+                <text> {{loadmoreText}}</text>
+              </block>
+            </view>
+          </scroll-view>
+        </van-tab>
+    </van-tabs>
+</view>
+<van-popup
+  use-slot
+  show="{{ infoModel }}"
+  bind:close="onClose"
+  custom-class="dialog"
+  round
+>
+  <van-empty wx:if="{{!suggestInfo.status}}" description="暂未处理" />
+
+  <view wx:if="{{suggestInfo.status}}">
+    <van-cell-group custom-class="dialog-cell">
+      <van-cell title="认领人" value="{{suggestInfo.director_name}}" />
+        <van-cell wx:if="{{suggestInfo.result!=5}}" title="落地等级" value="{{suggestInfo.result_text}}" />
+        <van-cell wx:if="{{suggestInfo.score}}" title="积分" value="{{suggestInfo.score}}"/>
+        <van-cell wx:if="{{suggestInfo.executor_ids}}" title="参与落地人" value="{{suggestInfo.executor}}" />
+        <van-cell title="结果反馈:"/>
+        <view style="display: block;width: 100%;font-size: 28rpx;color: #666666;line-height: 56rpx;">
+          <parser style="white-space:normal;word-break: break-all;white-space: pre-warp" html="{{suggestInfo.result_content}}" />
+        </view>
+    </van-cell-group>
+  </view>
+</van-popup>
+<van-notify id="van-notify" />
+<van-dialog id="van-dialog" />

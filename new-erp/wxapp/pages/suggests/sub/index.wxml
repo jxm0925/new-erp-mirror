@@ -1,0 +1,226 @@
+<van-tabs sticky>
+    <van-tab title="改良改善">
+        <van-image image-class="top-image" radius="20rpx" width="100%" fit="widthFix" src="https://jiantan-erp.oss-cn-qingdao.aliyuncs.com/uploads/20240523/22f6de8d8f475c625d0b867b99cab1a0.png" />
+
+        <!-- <swiper class="banner" autoplay="true" interval="3000" duration="1000">
+            <swiper-item>
+                <image src="https://jiantan-erp.oss-cn-qingdao.aliyuncs.com/uploads/20240523/22f6de8d8f475c625d0b867b99cab1a0.png" background-size="cover"></image>
+            </swiper-item>
+        </swiper> -->
+        <view>
+        <view style="color: red;text-align: center;font-weight: bold;font-size: large">创新源于建议，进步始于倾听</view>
+        <view style="color: red;text-align: center;font-weight: bold;font-size: large">用心传递幸福，造就百年企业</view>
+        </view>
+        <van-cell required label="{{type_name}}" is-link bind:click="changePopup" />
+        <van-popup
+            show="{{ typeShow }}"
+            round
+            position="bottom"
+            bind:click-overlay="changePopup"
+        >
+        <van-cascader
+            wx:if="{{ typeShow }}"
+            value="{{ cascaderValue }}"
+            title="请选择分类"
+            options="{{ typeArray }}"
+            active-color="#fd1919"
+            bind:close="changePopup"
+            bind:finish="onFinish"
+        />
+        </van-popup>
+        <van-cell required label="{{department_name}}" is-link  data-type="department" bind:click="changePopup" />
+
+        <van-popup
+            show="{{ departmentShow }}"
+            round
+            position="bottom"
+            data-type="department"
+            bind:click-overlay="changePopup"
+        >
+        <van-picker
+            show-toolbar
+            title="您的能量团"
+            columns="{{ departmentArray }}"
+            data-type="department"
+            bind:cancel="changePopup"
+            bind:confirm="onConfirm"
+            value-key="name"
+        />
+        </van-popup>
+        <van-cell 
+            title="提案人（不选为匿名）" 
+            is-link 
+            arrow-direction="down" 
+            data-type="person" 
+            bind:click="changePopup"
+            title-width="60%"
+            value="{{ selectNames ? selectNames : '请选择' }}"
+        >
+        </van-cell>
+
+        <van-popup
+            show="{{ personShow }}"
+            position="bottom"
+            data-type="person"
+            bind:close="changePopup"
+            round
+            custom-style="height: 80%; display: flex; flex-direction: column;"
+        >
+        <view class="pop-header">
+            <text class="pop-title">选择提案人</text>
+            <van-icon name="cross" class="pop-close" data-type="person" bind:click="changePopup" />
+        </view>
+
+        <view class="pop-search">
+            <van-search
+            value="{{ searchValue }}"
+            placeholder="请输入名字搜索"
+            shape="round"
+            bind:change="onSearchChange"
+            />
+        </view>
+
+        <scroll-view scroll-y class="pop-content">
+            <van-checkbox-group value="{{ result }}" bind:change="onCheckboxChange">
+            <van-cell-group border="{{ false }}">
+                <block wx:for="{{ displayList }}" wx:key="id">
+                <van-cell
+                    title="{{ item.name }}"
+                    clickable
+                    data-index="{{ index }}"
+                    bind:click="toggle"
+                    custom-class="{{ utils.includes(result, item.id) ? 'active-cell' : '' }}"
+                >
+                    <van-checkbox
+                    slot="right-icon"
+                    name="{{ item.id }}" 
+                    class="checkboxes-{{ index }}"
+                    checked-color="#f95656"
+                    />
+                </van-cell>
+                </block>
+            </van-cell-group>
+            
+            <view wx:if="{{ displayList.length === 0 }}" class="empty-state">
+                <van-icon name="search" size="48px" color="#dcdee0" />
+                <text>未找到该人员</text>
+            </view>
+            </van-checkbox-group>
+        </scroll-view>
+
+        <view class="pop-footer">
+            <van-button 
+            type="info" 
+            block 
+            round 
+            color="#f95656"
+            bind:click="onConfirmPeople"
+            >
+            确定选择 {{ result.length ? '(' + result.length + ')' : '' }}
+            </van-button>
+        </view>
+        </van-popup>
+
+        <wxs module="utils">
+        module.exports.includes = function(arr, item) {
+        return arr.indexOf(item) > -1;
+        }
+        </wxs>
+        <!-- <van-field
+            label="姓名"
+            model:value="{{ name }}"
+            placeholder="如何称呼您(姓名不填写为匿名)"
+            clearable
+            custom-class="name_class"
+        /> -->
+        <view style="padding-left:32rpx;margin-top:20rpx;background-color: #fff;">
+            <van-uploader
+            accept="image"
+            multiple
+            upload-text="图片"
+            image-fit="aspectFill"
+            file-list="{{ picsList }}"
+            bind:after-read="afterPicRead"
+            bind:delete="afterPicDel"
+            />
+        </view>
+        <van-field
+            required
+            model:value="{{ content }}"
+            placeholder="请留下您的宝贵建议或意见～"
+            type="textarea"
+            autosize="{{ autosize }}"
+        />
+        <view class="block-btn btn">
+            <van-button type="primary" block bind:click="bindSave" color="linear-gradient(to right, #f95656, #fd1919)">提交反馈</van-button>
+        </view>
+    </van-tab>
+    <van-tab title="感动故事">
+        <van-field
+            label="故事主题"
+            model:value="{{ storyTitle }}"
+            placeholder="请输入故事主题"
+            clearable
+            custom-class="name_class"
+        />
+        
+        <view style="padding-left:32rpx;margin-top:20rpx;background-color: #fff;">
+            <van-uploader
+                accept="video"
+                upload-text="视频"
+                max-count="1"
+                capture="albem"
+                image-fit="aspectFill"
+                file-list="{{ storyPicList }}"
+                bind:after-read="afterStoryRead"
+                bind:delete="afterStoryDel"
+            />
+        </view>
+        <van-submit-bar 
+            button-text="提交"
+            bind:submit="onClickButton"
+            tip="{{ true }}"
+        >
+            <!-- <view slot="tip">或者您也可以, 书写
+                <navigator style="display:inline;color:#1656e0;" url='/pages/suggests/sub/story' open-type="navigate">图文故事</navigator>
+            </view> -->
+        </van-submit-bar>
+    </van-tab>
+    <van-tab title="培训反馈">
+        <van-field
+            label="培训主题"
+            model:value="{{ trainTitle }}"
+            placeholder="请填写培训主题"
+            clearable
+            custom-class="name_class"
+        />
+        <van-field
+            label="我的收获"
+            required
+            model:value="{{ myHarvest }}"
+            placeholder="请写下您的收获感想（不小于100字）"
+            type="textarea"
+            autosize="{{ autosize }}"
+        />
+        <van-field
+            label="培训建议"
+            model:value="{{ trainSuggest }}"
+            placeholder="请留下您的宝贵建议或意见～"
+            type="textarea"
+            autosize="{{ autosize }}"
+        />
+        <van-submit-bar 
+            button-text="提交"
+            bind:submit="onClickTrain"
+            tip="{{ true }}"
+        >
+            <!-- <view slot="tip">或者您也可以, 书写
+                <navigator style="display:inline;color:#1656e0;" url='/pages/suggests/sub/story' open-type="navigate">图文故事</navigator>
+            </view> -->
+        </van-submit-bar>
+    </van-tab>
+</van-tabs>
+
+<van-notify id="van-notify" />
+
+<LoginPopup class="LoginPopup"></LoginPopup>
