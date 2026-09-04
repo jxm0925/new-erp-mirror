@@ -8,6 +8,7 @@
       <div class="heading-actions">
         <el-button @click="$router.back()">返回</el-button>
         <el-button v-if="workOrder.source && workOrder.source.demand_id" @click="openSource">查看生产需求</el-button>
+        <el-button v-if="canRematchRouting" type="warning" plain @click="rematchRouting">重新匹配工艺路线</el-button>
         <el-button v-if="canEdit" type="success" @click="save">保存</el-button>
         <el-button v-if="canSubmit" type="success" @click="submit">提交</el-button>
         <el-button v-if="canPublish" type="success" @click="publish">发布工单</el-button>
@@ -95,7 +96,7 @@
 </template>
 
 <script>
-import { getWorkOrder, updateWorkOrderDraft, submitWorkOrder, getWorkOrderReleaseGate, publishWorkOrder, listWorkOrderMaterialRequirements, returnWorkOrderToDraft, cancelWorkOrder } from '../../../api/erp/production'
+import { getWorkOrder, updateWorkOrderDraft, submitWorkOrder, getWorkOrderReleaseGate, publishWorkOrder, listWorkOrderMaterialRequirements, returnWorkOrderToDraft, cancelWorkOrder, rematchWorkOrderRouting } from '../../../api/erp/production'
 import { listUsers } from '../../../api/erp/rbac'
 
 export default {
@@ -106,6 +107,7 @@ export default {
     canSubmit() { return Boolean(this.workOrder.actions && this.workOrder.actions.submit) },
     canReturn() { return Boolean(this.workOrder.actions && this.workOrder.actions.return_draft) },
     canCancel() { return Boolean(this.workOrder.actions && this.workOrder.actions.cancel) },
+    canRematchRouting() { return Boolean(this.workOrder.actions && this.workOrder.actions.rematch_routing) },
     canViewGate() { return Boolean(this.workOrder.actions && this.workOrder.actions.view_release_gate) },
     canViewMaterials() { return Boolean(this.workOrder.actions && this.workOrder.actions.view_materials) },
     canPublish() { return this.workOrder.status === 'WAIT_RELEASE' && this.gate && this.gate.allowed && this.$can('production.work_order.publish') },
@@ -120,30 +122,44 @@ export default {
     }
   },
   created() { this.fetchUsers(); this.fetchWorkOrder() },
+  watch: {
+    '$route.params.id'(nextId, previousId) {
+      if (nextId === previousId) return
+      this.workOrder = {}
+      this.gate = null
+      this.materials = []
+      this.materialTotal = 0
+      this.materialPage = 1
+      this.fetchWorkOrder()
+    }
+  },
   methods: {
     async fetchWorkOrder() {
+      const requestedId = String(this.$route.params.id)
       this.loading = true
       try {
-        const response = await getWorkOrder(this.$route.params.id)
+        const response = await getWorkOrder(requestedId)
+        if (String(this.$route.params.id) !== requestedId) return
         this.workOrder = response.data.data || {}
         this.form = { target_qty: this.workOrder.target_qty, planned_date: this.workOrder.planned_date, production_batch: this.workOrder.production_batch, responsible_user_legacy_id: this.workOrder.responsible_user && this.workOrder.responsible_user.user_id, production_location_name: this.workOrder.production_location_name }
         const tasks = []
-        if (this.canViewGate && ['WAIT_RELEASE', 'RELEASED'].includes(this.workOrder.status)) tasks.push(this.fetchGate(false))
-        if (this.canViewMaterials && this.workOrder.status === 'RELEASED') tasks.push(this.fetchMaterials())
+        if (this.canViewGate && ['WAIT_RELEASE', 'RELEASED'].includes(this.workOrder.status)) tasks.push(this.fetchGate(false, this.workOrder.id))
+        if (this.canViewMaterials && this.workOrder.status === 'RELEASED') tasks.push(this.fetchMaterials(this.workOrder.id))
         await Promise.all(tasks)
-      } catch (error) { this.$message.error(error.userMessage || '工单加载失败') } finally { this.loading = false }
+      } catch (error) { if (String(this.$route.params.id) === requestedId) this.$message.error(error.userMessage || '工单加载失败') } finally { if (String(this.$route.params.id) === requestedId) this.loading = false }
     },
     async fetchUsers() { try { const response = await listUsers({ scope: 'production', status: 'normal', page: 1, per_page: 100 }); this.productionUsers = response.data.data || response.data || [] } catch (error) { this.productionUsers = [] } },
-    async fetchGate(showMessage) {
+    async fetchGate(showMessage, workOrderId = this.workOrder.id || this.$route.params.id) {
       this.gateLoading = true
       try {
-        const response = await getWorkOrderReleaseGate(this.workOrder.id || this.$route.params.id)
+        const response = await getWorkOrderReleaseGate(workOrderId)
+        if (String(this.$route.params.id) !== String(workOrderId)) return
         this.gate = response.data.data
         if (showMessage) this.$message[this.gate.allowed ? 'success' : 'warning'](this.gate.allowed ? '发布检查已通过' : '发布检查未通过，请处理阻断项')
-      } catch (error) { this.$message.error(error.userMessage || '发布检查失败') } finally { this.gateLoading = false }
+      } catch (error) { if (String(this.$route.params.id) === String(workOrderId)) this.$message.error(error.userMessage || '发布检查失败') } finally { if (String(this.$route.params.id) === String(workOrderId)) this.gateLoading = false }
     },
-    async fetchMaterials() {
-      try { const response = await listWorkOrderMaterialRequirements(this.workOrder.id, { page: this.materialPage, per_page: this.materialPerPage }); this.materials = response.data.data || []; this.materialTotal = response.data.total || 0 } catch (error) { this.materials = []; this.materialTotal = 0; this.$message.error(error.userMessage || '物料需求加载失败') }
+    async fetchMaterials(workOrderId = this.workOrder.id) {
+      try { const response = await listWorkOrderMaterialRequirements(workOrderId, { page: this.materialPage, per_page: this.materialPerPage }); if (String(this.$route.params.id) !== String(workOrderId)) return; this.materials = response.data.data || []; this.materialTotal = response.data.total || 0 } catch (error) { if (String(this.$route.params.id) !== String(workOrderId)) return; this.materials = []; this.materialTotal = 0; this.$message.error(error.userMessage || '物料需求加载失败') }
     },
     async save() { try { await updateWorkOrderDraft(this.workOrder.id, { ...this.form, client_command_id: this.command('edit'), expected_version: this.workOrder.business_version }); this.$message.success('工单草稿已保存'); this.fetchWorkOrder() } catch (error) { this.$message.error(error.userMessage || '保存失败') } },
     async submit() { try { await submitWorkOrder(this.workOrder.id, { client_command_id: this.command('submit'), expected_version: this.workOrder.business_version, reason: '提交工单草稿' }); this.$message.success('已提交，等待发布'); this.fetchWorkOrder() } catch (error) { this.$message.error(error.userMessage || '提交失败') } },
@@ -158,6 +174,20 @@ export default {
     },
     async returnDraft() { try { await returnWorkOrderToDraft(this.workOrder.id, { client_command_id: this.command('return'), expected_version: this.workOrder.business_version, reason: '退回草稿修改' }); this.$message.success('已退回草稿'); this.fetchWorkOrder() } catch (error) { this.$message.error(error.userMessage || '退回失败') } },
     async cancel() { try { await cancelWorkOrder(this.workOrder.id, { client_command_id: this.command('cancel'), expected_version: this.workOrder.business_version }); this.$message.success('工单已取消'); this.fetchWorkOrder() } catch (error) { this.$message.error(error.userMessage || '取消失败') } },
+    async rematchRouting() {
+      try {
+        const result = await this.$prompt('请输入重新匹配工艺路线的原因。系统将按产出物料匹配当前唯一默认生效路线并冻结快照。', '重新匹配工艺路线', { confirmButtonText: '确认匹配', cancelButtonText: '取消', inputPattern: /\S+/, inputErrorMessage: '重新匹配原因不能为空' })
+        await rematchWorkOrderRouting(this.workOrder.id, {
+          client_command_id: this.command('rematch-routing'),
+          expected_version: this.workOrder.business_version,
+          reason: result.value.trim()
+        })
+        this.$message.success('工艺路线已重新匹配并冻结')
+        await this.fetchWorkOrder()
+      } catch (error) {
+        if (error !== 'cancel' && error !== 'close') this.$message.error(error.userMessage || '重新匹配工艺路线失败')
+      }
+    },
     changeMaterialPage(page) { this.materialPage = page; this.fetchMaterials() },
     command(action) { return `wo04-${action}-${this.workOrder.id}-${Date.now()}` },
     openSource() { if (this.workOrder.source && this.workOrder.source.demand_id) this.$router.push(`/production/demands/${this.workOrder.source.demand_id}`) },
@@ -173,5 +203,6 @@ export default {
 
 <style scoped>
 .production-page{padding:24px 28px;background:#f7f9fb;min-height:calc(100vh - 54px);color:#27384e}.page-heading{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:18px}.page-heading h1{margin:3px 0 0;font-size:22px;color:#152941}.eyebrow{margin:0;color:#008b4b;font-weight:600}.title-line,.heading-actions{display:flex;align-items:center;gap:9px}.version{padding:4px 9px;color:#1677d2;background:#edf6ff;border-radius:4px;font-weight:600}.card,.trace-card{background:#fff;border:1px solid #e6ebf0;border-radius:5px;margin-bottom:14px;padding:17px 20px}.card h3,.trace-card h3{margin:0 0 15px;color:#1d3048;font-size:14px}.trace-row{display:flex;align-items:center;gap:18px}.trace-row>span{font-size:24px;color:#9aa8b7}.trace-row>div{flex:1;display:grid;grid-template-columns:34px 1fr;align-items:center;padding:10px 13px;border:1px solid #e7edf2;border-radius:4px}.trace-row i{grid-row:span 2;font-size:22px;color:#98a5b3}.trace-row small{color:#66758a;margin-top:4px}.trace-row .active-trace{border-color:#7bd5a4;background:#f2fbf6}.trace-row .active-trace i{color:#008b4b}.detail-grid{display:grid;grid-template-columns:minmax(0,3fr) minmax(280px,1fr);gap:14px}.detail-grid>main,.detail-grid>aside{min-width:0}.overview-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px 28px}.overview-grid p,.info-grid p{min-width:0;margin:0;display:flex;flex-direction:column;gap:6px}.overview-grid label,.info-grid label,.release-state label,.release-reason label{color:#8794a4;font-size:12px}.overview-grid strong,.info-grid strong{font-weight:500;color:#33455d}.overview-grid .el-input,.overview-grid .el-select,.overview-grid .el-date-editor{width:100%}.split-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.info-grid{display:grid;grid-template-columns:1.5fr 1.2fr;gap:18px}.info-grid.three{grid-template-columns:repeat(3,1fr)}.section-title{display:flex;align-items:center;justify-content:space-between}.section-title h3{margin-bottom:12px}.section-title span{color:#8a97a7;font-size:12px}.fact-tabs{border-bottom:1px solid #e8edf2;margin-bottom:14px}.fact-tabs button{border:0;background:transparent;color:#008b4b;border-bottom:2px solid #008b4b;padding:0 14px 10px;font-weight:600}.material-summary{display:flex;gap:10px;align-items:center;margin:4px 0 10px}.material-summary span{color:#7f8da0}.material-page{display:flex;justify-content:flex-end;margin-top:12px}.gate-card{margin-bottom:14px}.release-state{padding:4px 0 13px;border-bottom:1px solid #edf1f4}.release-state strong,.release-state small{display:block;margin-top:6px}.release-state small{color:#7f8da0}.gate-result{margin:14px 0;padding:11px;border-radius:4px;display:flex;align-items:center;gap:8px}.gate-result.passed{background:#effaf4;color:#069552}.gate-result.blocked{background:#fff7ed;color:#d97706}.gate-result small{margin-left:auto}.gate-list{list-style:none;margin:0;padding:0}.gate-list li{display:flex;gap:8px;padding:8px 0;border-bottom:1px solid #f0f3f5}.gate-list li.passed i{color:#08a25b}.gate-list li.blocked i{color:#dc3d43}.gate-list b,.gate-list small{display:block}.gate-list small{color:#8290a1;margin-top:3px;line-height:1.45}.permission-empty{padding:20px 0;color:#8b97a6;text-align:center}.release-reason{margin-top:14px;padding:11px;background:#f7fafc}.release-reason p{margin:5px 0 0;line-height:1.5}.timeline{display:flex;align-items:flex-start}.timeline-step{position:relative;display:flex;gap:10px;flex:1;color:#9aa5b2}.timeline-step:not(:last-child):after{content:'';position:absolute;left:38px;right:12px;top:10px;height:1px;background:#cfd8e3}.timeline-dot{position:relative;z-index:1;width:20px;height:20px;border-radius:50%;border:2px solid #bac5d0;background:#fff;display:flex;align-items:center;justify-content:center}.timeline-step.done{color:#087f48}.timeline-step.done .timeline-dot{background:#0aa15a;border-color:#0aa15a;color:#fff}.timeline-step.current .timeline-dot{box-shadow:0 0 0 4px #d9f5e6}.timeline-step strong,.timeline-step small{display:block}.timeline-step small{margin-top:5px;font-size:12px}@media(max-width:1200px){.detail-grid{grid-template-columns:1fr}.overview-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:1100px){.page-heading{align-items:flex-start;flex-direction:column;gap:12px}.heading-actions{width:100%;flex-wrap:wrap}}
 @media(max-width:767px){.production-page{padding:16px 12px}.page-heading{height:auto;min-height:120px;align-items:flex-start;flex-direction:column;justify-content:flex-start;gap:12px}.title-line{flex-wrap:wrap}.heading-actions{width:100%;flex-wrap:wrap}.trace-row{overflow-x:auto;padding-bottom:6px}.trace-row>div{flex:0 0 170px}.overview-grid{gap:16px}.split-grid{grid-template-columns:1fr}.info-grid,.info-grid.three{grid-template-columns:1fr 1fr}.timeline{min-width:430px}.timeline-card{overflow-x:auto}.card,.trace-card{padding:15px 14px}}
 </style>

@@ -138,6 +138,28 @@ class Phase6A2RoutingRecoveryTest extends TestCase
         $this->assertSame(3, $v3->version);
     }
 
+    public function test_case_c1_two_independent_mysql_processes_copy_one_route_family_without_conflict(): void
+    {
+        $fixture = $this->runCopyProbe(['setup']);
+        $this->assertTrue($fixture['ok'] ?? false, json_encode($fixture));
+        try {
+            $first = $this->startCopyProbe(['copy', $fixture['v1_id'], $fixture['owner_id'], $this->id('C1-A')]);
+            $second = $this->startCopyProbe(['copy', $fixture['v2_id'], $fixture['owner_id'], $this->id('C1-B')]);
+            $results = [$this->finishCopyProbe($first), $this->finishCopyProbe($second)];
+            $this->assertTrue($results[0]['ok'] ?? false, json_encode($results));
+            $this->assertTrue($results[1]['ok'] ?? false, json_encode($results));
+            $this->assertSame([3, 4], collect($results)->pluck('version')->sort()->values()->all());
+            $this->assertSame([1, 1], collect($results)->pluck('operation_count')->sort()->values()->all());
+
+            $facts = $this->runCopyProbe(['inspect', $fixture['routing_no']]);
+            $this->assertSame([1, 2, 3, 4], $facts['versions'] ?? null, json_encode($facts));
+            $this->assertSame(4, $facts['unique_versions'] ?? null, json_encode($facts));
+            $this->assertSame([1, 1, 1, 1], $facts['operation_counts'] ?? null, json_encode($facts));
+        } finally {
+            $this->runCopyProbe(['cleanup', $fixture['owner_id']]);
+        }
+    }
+
     private function base(): array
     {
         $legacyId = random_int(700000, 899999);
@@ -230,5 +252,33 @@ class Phase6A2RoutingRecoveryTest extends TestCase
     private function id(string $prefix): string
     {
         return $prefix.'-'.str_replace('.', '', uniqid('', true));
+    }
+
+    private function runCopyProbe(array $arguments): array
+    {
+        return $this->finishCopyProbe($this->startCopyProbe($arguments));
+    }
+
+    private function startCopyProbe(array $arguments): array
+    {
+        $command = escapeshellarg(PHP_BINARY).' '.escapeshellarg(base_path('tests/Support/production_routing_copy_probe.php'));
+        foreach ($arguments as $argument) $command .= ' '.escapeshellarg((string) $argument);
+        $pipes = [];
+        $process = proc_open($command, [1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes, base_path());
+        if (! is_resource($process)) $this->fail('无法启动 Phase 6A.2 独立 MySQL 并发进程。');
+        return [$process, $pipes];
+    }
+
+    private function finishCopyProbe(array $handle): array
+    {
+        [$process, $pipes] = $handle;
+        $stdout = stream_get_contents($pipes[1]);
+        $stderr = stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        proc_close($process);
+        $result = json_decode(trim($stdout), true);
+        if (! is_array($result)) $this->fail('Phase 6A.2 并发进程未返回 JSON：'.trim($stderr).' '.trim($stdout));
+        return $result;
     }
 }

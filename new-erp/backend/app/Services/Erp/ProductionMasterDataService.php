@@ -208,8 +208,22 @@ class ProductionMasterDataService
             // copy V1 and V2; they would hold different rows and race for the same version.
             ProductionRouting::where('routing_no', $candidate->routing_no)
                 ->orderBy('id')->lockForUpdate()->firstOrFail();
-            $source = ProductionRouting::with('operations')->findOrFail($id);
-            $nextVersion = (int) ProductionRouting::where('routing_no', $source->routing_no)->max('version') + 1;
+
+            // Test-only overlap widens the critical section so the independent-process
+            // regression proves that both callers really contend for this family mutex.
+            // It is inert outside the testing environment and never changes production timing.
+            $testDelayMs = app()->environment('testing') ? max(0, (int) env('PRODUCTION_ROUTING_COPY_TEST_DELAY_MS', 0)) : 0;
+            if ($testDelayMs > 0) usleep($testDelayMs * 1000);
+
+            // The identity lookup above may establish an old REPEATABLE READ snapshot.
+            // After the family mutex is acquired, both the selected source and the latest
+            // family member must therefore be locking/current reads. Replacing either with
+            // a plain find()/max() can make a waiting transaction miss the version just
+            // committed by the previous copier and race for the same unique version.
+            $source = ProductionRouting::with('operations')->lockForUpdate()->findOrFail($id);
+            $latest = ProductionRouting::where('routing_no', $source->routing_no)
+                ->orderByDesc('version')->lockForUpdate()->firstOrFail();
+            $nextVersion = (int) $latest->version + 1;
             $copy = ProductionRouting::create([
                 'routing_no' => $source->routing_no, 'routing_name' => $source->routing_name,
                 'output_item_id' => $source->output_item_id, 'product_id' => $source->product_id,
