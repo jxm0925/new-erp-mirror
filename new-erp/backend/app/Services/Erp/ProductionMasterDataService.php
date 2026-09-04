@@ -172,11 +172,23 @@ class ProductionMasterDataService
     {
         $this->authorize($permissions, $superAdmin, 'production.routing.default');
         return $this->command('default_routing', 'routing', $data + ['id' => $id], $user, function () use ($id, $data, $user): ProductionRouting {
-            $routing = ProductionRouting::lockForUpdate()->findOrFail($id);
+            $candidate = ProductionRouting::findOrFail($id);
+            // Lock the complete default scope before changing either side. Updating only
+            // the new default leaves the old version stale even though its business fact
+            // changed, allowing an old edit screen to overwrite newer routing state.
+            $family = ProductionRouting::where('output_item_id', $candidate->output_item_id)
+                ->orderBy('id')->lockForUpdate()->get();
+            $routing = $family->firstWhere('id', $id);
+            if (! $routing) throw ValidationException::withMessages(['id' => '工艺路线不存在。']);
             $this->version($routing, $data);
             if ($routing->status !== 'active') throw ValidationException::withMessages(['status' => '只有已生效工艺路线可以设为默认。']);
-            ProductionRouting::where('output_item_id', $routing->output_item_id)->where('id', '<>', $routing->id)
-                ->where('is_default', true)->update(['is_default' => false, 'default_scope_key' => null, 'updated_at' => now()]);
+            foreach ($family->where('id', '<>', $routing->id)->where('is_default', true) as $oldDefault) {
+                $oldDefault->is_default = false;
+                $oldDefault->default_scope_key = null;
+                $oldDefault->business_version = (int) $oldDefault->business_version + 1;
+                $oldDefault->updated_by_legacy_id = $this->userId($user);
+                $oldDefault->save();
+            }
             $routing->is_default = true;
             $routing->default_scope_key = $routing->output_item_id;
             $routing->business_version++;
@@ -190,8 +202,14 @@ class ProductionMasterDataService
     {
         $this->authorize($permissions, $superAdmin, 'production.routing.create');
         return $this->command('copy_routing', 'routing', $data + ['id' => $id], $user, function () use ($id, $user): ProductionRouting {
-            $source = ProductionRouting::with('operations')->lockForUpdate()->findOrFail($id);
-            $nextVersion = (int) ProductionRouting::where('routing_no', $source->routing_no)->lockForUpdate()->max('version') + 1;
+            $candidate = ProductionRouting::findOrFail($id);
+            // Every version in one routing family locks the same oldest row before MAX+1.
+            // Locking only the selected source is insufficient when concurrent requests
+            // copy V1 and V2; they would hold different rows and race for the same version.
+            ProductionRouting::where('routing_no', $candidate->routing_no)
+                ->orderBy('id')->lockForUpdate()->firstOrFail();
+            $source = ProductionRouting::with('operations')->findOrFail($id);
+            $nextVersion = (int) ProductionRouting::where('routing_no', $source->routing_no)->max('version') + 1;
             $copy = ProductionRouting::create([
                 'routing_no' => $source->routing_no, 'routing_name' => $source->routing_name,
                 'output_item_id' => $source->output_item_id, 'product_id' => $source->product_id,
@@ -221,17 +239,6 @@ class ProductionMasterDataService
             $routing->save();
             return $routing->fresh(['outputItem', 'product', 'sku', 'operations.operation']);
         });
-    }
-
-    public function options(array $permissions, bool $superAdmin): array
-    {
-        $this->authorize($permissions, $superAdmin, ['production.operation.view', 'production.routing.view', 'production.work_order.create']);
-        return [
-            'operations' => ProductionOperation::where('status', 'enabled')->orderBy('sort')->get(['id', 'operation_no', 'operation_name']),
-            'items' => Item::where('status', 'enabled')->where('is_production_item', true)->orderBy('item_name')->limit(500)->get(['id', 'item_code', 'item_name', 'spec']),
-            'products' => Product::where('status', 'enabled')->orderBy('product_name')->limit(500)->get(['id', 'product_code', 'product_name']),
-            'skus' => Sku::where('status', 'enabled')->orderBy('sku_name')->limit(500)->get(['id', 'sku_code', 'sku_name', 'product_id']),
-        ];
     }
 
     public function selector(string $type, array $filters, array $permissions, bool $superAdmin): LengthAwarePaginator

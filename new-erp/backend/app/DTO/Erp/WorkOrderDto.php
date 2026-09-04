@@ -118,6 +118,11 @@ final class WorkOrderDto
                 'edit' => $workOrder->status === 'DRAFT' && self::allowed($permissions, 'production.work_order.edit'),
                 'submit' => $workOrder->status === 'DRAFT' && self::allowed($permissions, 'production.work_order.submit'),
                 'return_draft' => $workOrder->status === 'WAIT_RELEASE' && self::allowed($permissions, 'production.work_order.edit'),
+                'rematch_routing' => ($workOrder->source_type ?: 'sales_order') === 'sales_order'
+                    && in_array((string) $workOrder->status, ['DRAFT', 'WAIT_RELEASE'], true)
+                    && ! $workOrder->production_routing_id
+                    && empty($workOrder->routing_snapshot)
+                    && self::allowed($permissions, 'production.work_order.edit'),
                 'publish' => $workOrder->status === 'WAIT_RELEASE'
                     && $workOrder->release_gate_status === 'passed'
                     && self::allowed($permissions, 'production.work_order.publish'),

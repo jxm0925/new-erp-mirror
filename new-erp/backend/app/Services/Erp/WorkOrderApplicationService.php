@@ -164,6 +164,53 @@ class WorkOrderApplicationService
         return $this->transition($id, $payload, $user, $permissions, $superAdmin, [self::WAIT_RELEASE], self::DRAFT, (string) ($payload['reason'] ?? '退回草稿'), 'return_draft');
     }
 
+    public function rematchRouting(int $id, array $payload, object $user, array $permissions, bool $superAdmin = false): WorkOrder
+    {
+        $this->assertPermission($permissions, 'production.work_order.edit', $superAdmin);
+
+        return $this->withCommand('rematch_routing', $id, $payload, $user, function () use ($id, $payload, $user, $permissions, $superAdmin): WorkOrder {
+            $workOrder = $this->lockWorkOrder($id);
+            $this->assertWorkOrderVisible($workOrder, $user, $permissions, $superAdmin);
+            $this->assertExpectedVersion($workOrder, $payload);
+            if ($workOrder->source_type !== 'sales_order' || ! in_array($workOrder->status, [self::DRAFT, self::WAIT_RELEASE], true)) {
+                $this->fail('routing_rematch_not_allowed', '只有草稿或待发布的销售来源工单可以重新匹配工艺路线。', 422);
+            }
+            if ($workOrder->production_routing_id || $workOrder->routing_snapshot) {
+                $this->fail('routing_already_frozen', '工单已经冻结工艺路线，禁止重新覆盖历史快照。', 409);
+            }
+            if (! $workOrder->output_item_id) {
+                $this->fail('output_item_missing', '工单缺少产出物料，不能重新匹配工艺路线。', 422);
+            }
+
+            $matches = ProductionRouting::with(['outputItem', 'product', 'sku', 'operations.operation'])
+                ->where('output_item_id', $workOrder->output_item_id)
+                ->where('status', 'active')->where('is_default', true)
+                ->lockForUpdate()->get();
+            if ($matches->isEmpty()) $this->fail('routing_not_found', '未找到该产出物料的默认生效工艺路线。', 422);
+            if ($matches->count() !== 1) $this->fail('routing_ambiguous', '该产出物料存在多条默认生效工艺路线，禁止自动选择。', 409);
+
+            $routing = $matches->first();
+            $version = (int) $workOrder->business_version;
+            $workOrder->production_routing_id = $routing->id;
+            $workOrder->routing_version_snapshot = $routing->version;
+            $workOrder->routing_snapshot = $this->productionMasterData->snapshot($routing);
+            $workOrder->business_version = $version + 1;
+            $workOrder->updated_by_legacy_id = $this->userId($user);
+            $workOrder->save();
+            $this->recordStatus(
+                $workOrder,
+                (string) $workOrder->status,
+                (string) $workOrder->status,
+                trim((string) $payload['reason']),
+                $version,
+                $version + 1,
+                $user,
+            );
+
+            return $workOrder->fresh(['demand.order', 'demand.line', 'statusLogs', 'routing.operations.operation']);
+        });
+    }
+
     public function publish(int $id, array $payload, object $user, array $permissions, bool $superAdmin = false): WorkOrder
     {
         $this->assertPermission($permissions, 'production.work_order.publish', $superAdmin);

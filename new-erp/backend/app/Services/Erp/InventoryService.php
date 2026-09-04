@@ -14,6 +14,7 @@ use App\Models\Erp\InventoryTransaction;
 use App\Models\Erp\InventoryTransactionItem;
 use App\Models\Erp\Item;
 use App\Models\Erp\Location;
+use App\Models\Erp\MaterialPickingTask;
 use App\Models\Erp\PurchaseReceipt;
 use App\Models\Erp\PurchaseReceiptItemAllocation;
 use App\Models\Erp\PurchaseReturn;
@@ -781,6 +782,120 @@ class InventoryService
                 'posting_status' => 'posted',
                 'message' => '销售发货库存出库过账成功',
                 'posted_at' => now(),
+            ]);
+            return $transaction->fresh(['items.item', 'items.warehouse', 'items.location']);
+        }, 5);
+    }
+
+    /**
+     * Confirmed production picking is the single outbound inventory fact for
+     * Phase 6B. Delivery and receipt only move custody/state and never deduct
+     * warehouse stock a second time.
+     */
+    public function postProductionMaterialPicking(MaterialPickingTask $task, object $operator): InventoryTransaction
+    {
+        return DB::transaction(function () use ($task, $operator): InventoryTransaction {
+            $task = MaterialPickingTask::query()->with(['lines.componentItem'])->lockForUpdate()->findOrFail($task->id);
+            $existing = InventoryTransaction::query()
+                ->where('transaction_type', 'production_material_picking_outbound')
+                ->where('source_type', 'material_picking_task')
+                ->where('source_id', $task->id)
+                ->first();
+            if ($existing) return $existing->fresh(['items.item', 'items.warehouse', 'items.location']);
+
+            $lines = $task->lines->filter(fn ($line) => (float) $line->actual_pick_qty > 0);
+            if ($lines->isEmpty()) {
+                throw ValidationException::withMessages(['lines' => '确认拣货至少需要一条大于 0 的实拣数量。']);
+            }
+            $transaction = InventoryTransaction::create([
+                'transaction_no' => $this->nextNo('ITX'),
+                'transaction_type' => 'production_material_picking_outbound',
+                'source_type' => 'material_picking_task',
+                'source_id' => $task->id,
+                'source_no' => $task->task_no,
+                'posting_status' => 'posted',
+                'warehouse_id' => $task->warehouse_id,
+                'transaction_date' => now()->toDateString(),
+                'posted_by' => (int) ($operator->legacy_id ?? $operator->id ?? 0),
+                'posted_at' => now(),
+                'remark' => '生产工单配料确认出库',
+            ]);
+
+            $seenSerialIds = [];
+            foreach ($lines as $line) {
+                $quantity = (float) $line->actual_pick_qty;
+                $balance = InventoryBalance::query()
+                    ->whereKey($line->inventory_balance_id)
+                    ->where('item_id', $line->component_item_id)
+                    ->where('warehouse_id', $line->warehouse_id)
+                    ->where('location_id', $line->location_id)
+                    ->where('batch_no', $line->batch_no)
+                    ->lockForUpdate()->first();
+                if (! $balance || (float) $balance->quantity_available + 0.00000001 < $quantity) {
+                    throw ValidationException::withMessages(['stock' => '所选真实库存批次可用数量不足，不能确认拣货。']);
+                }
+
+                $serialIds = array_values(array_unique(array_map('intval', (array) (($line->serial_snapshot ?? [])['inventory_serial_ids'] ?? []))));
+                $trackingMode = $line->componentItem?->serialTrackingMode() ?? 'none';
+                if ($trackingMode === 'required' && (abs($quantity - round($quantity)) > 0.00000001 || count($serialIds) !== (int) round($quantity))) {
+                    throw ValidationException::withMessages(['serial_ids' => '序列号管理物料必须逐件选择与实拣数量一致的真实可用序列号。']);
+                }
+                if ($trackingMode === 'none' && $serialIds !== []) {
+                    throw ValidationException::withMessages(['serial_ids' => '未启用序列号管理的物料不可提交序列号。']);
+                }
+                if (array_intersect($seenSerialIds, $serialIds) !== []) {
+                    throw ValidationException::withMessages(['serial_ids' => '同一序列号不能在一次配料确认中重复分配。']);
+                }
+                $seenSerialIds = array_merge($seenSerialIds, $serialIds);
+                $serials = $serialIds === [] ? collect() : InventorySerial::query()
+                    ->whereIn('id', $serialIds)
+                    ->where('inventory_balance_id', $balance->id)
+                    ->where('serial_status', 'available')
+                    ->lockForUpdate()->get();
+                if ($serials->count() !== count($serialIds)) {
+                    throw ValidationException::withMessages(['serial_ids' => '所选序列号不属于当前真实可用库存批次，或已被其他业务占用。']);
+                }
+
+                $unitCost = (float) $balance->average_unit_cost;
+                $this->applyInventoryChange($transaction, [
+                    'item_id' => $line->component_item_id,
+                    'warehouse_id' => $line->warehouse_id,
+                    'location_id' => $line->location_id,
+                    'batch_no' => $line->batch_no,
+                    'unit_id' => $line->unit_id,
+                    'change_qty' => -$quantity,
+                    'unit_cost' => $unitCost,
+                    'cost_amount' => -round($quantity * $unitCost, 4),
+                    'cost_source_type' => 'production_material_picking_fact',
+                    'source_type' => 'material_picking_task',
+                    'source_id' => $task->id,
+                    'source_item_id' => $line->id,
+                    'remark' => '生产配料出库 '.$task->task_no,
+                ]);
+                foreach ($serials as $serial) {
+                    $serial->update(['serial_status' => 'production_in_transit', 'outbound_at' => now()]);
+                    InventorySerialEvent::create([
+                        'inventory_serial_id' => $serial->id,
+                        'event_type' => 'production_material_picking_outbound',
+                        'document_type' => 'material_picking_task',
+                        'document_id' => $task->id,
+                        'document_no' => $task->task_no,
+                        'from_status' => 'available',
+                        'to_status' => 'production_in_transit',
+                        'warehouse_id' => $serial->warehouse_id,
+                        'location_id' => $serial->location_id,
+                        'batch_no' => $serial->batch_no,
+                        'event_payload' => ['picking_task_line_id' => $line->id],
+                        'occurred_at' => now(),
+                    ]);
+                }
+            }
+            InventoryPostingLog::create([
+                'source_type' => 'material_picking_task', 'source_id' => $task->id,
+                'source_no' => $task->task_no, 'transaction_type' => 'production_material_picking_outbound',
+                'transaction_id' => $transaction->id, 'posting_status' => 'posted',
+                'message' => '生产工单配料库存出库过账成功',
+                'posted_by' => (int) ($operator->legacy_id ?? $operator->id ?? 0), 'posted_at' => now(),
             ]);
             return $transaction->fresh(['items.item', 'items.warehouse', 'items.location']);
         }, 5);

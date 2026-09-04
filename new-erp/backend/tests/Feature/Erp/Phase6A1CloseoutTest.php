@@ -84,7 +84,7 @@ class Phase6A1CloseoutTest extends TestCase
         $copy = $master->setDefaultRouting($copy->id, ['client_command_id' => $this->id(), 'expected_version' => 2], $user, self::MASTER_PERMS, true);
         $this->assertTrue($copy->is_default);
         $this->assertFalse((bool) $route->fresh()->is_default); // CASE 14
-        $retired = $master->retireRouting($route->id, ['client_command_id' => $this->id(), 'expected_version' => $route->business_version], $user, self::MASTER_PERMS, true);
+        $retired = $master->retireRouting($route->id, ['client_command_id' => $this->id(), 'expected_version' => $route->fresh()->business_version], $user, self::MASTER_PERMS, true);
         $this->assertSame('retired', $retired->status);
         $this->assertDatabaseHas('erp_production_routings', ['id' => $route->id, 'routing_no' => $route->routing_no]); // CASE 15
     }

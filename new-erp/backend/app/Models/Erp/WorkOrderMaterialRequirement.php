@@ -15,6 +15,9 @@ class WorkOrderMaterialRequirement extends MasterModel
         'issued_qty' => 'decimal:8',
         'returned_qty' => 'decimal:8',
         'remaining_qty' => 'decimal:8',
+        'picked_qty' => 'decimal:8',
+        'delivered_qty' => 'decimal:8',
+        'received_qty' => 'decimal:8',
         'business_version' => 'integer',
     ];
 
@@ -27,4 +30,7 @@ class WorkOrderMaterialRequirement extends MasterModel
     {
         return $this->belongsTo(Item::class, 'component_item_id');
     }
+
+    public function pickingLines() { return $this->hasMany(MaterialPickingTaskLine::class, 'material_requirement_id'); }
+    public function deliveryLines() { return $this->hasMany(MaterialDeliveryLine::class, 'material_requirement_id'); }
 }

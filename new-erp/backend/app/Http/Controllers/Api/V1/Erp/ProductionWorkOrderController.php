@@ -102,6 +102,21 @@ class ProductionWorkOrderController extends Controller
         return response()->json(['message' => '工单已取消。', 'data' => WorkOrderResource::make($workOrder)->resolve($request)]);
     }
 
+    public function rematchRouting(Request $request, int $id, WorkOrderApplicationService $service)
+    {
+        $context = $this->context($request);
+        $payload = $request->validate([
+            'client_command_id' => ['required', 'string', 'max:120'],
+            'expected_version' => ['required', 'integer', 'min:1'],
+            'reason' => ['required', 'string', 'max:500'],
+            'production_routing_id' => ['prohibited'],
+            'output_item_id' => ['prohibited'],
+            'target_routing_operation_id' => ['prohibited'],
+        ]);
+        $workOrder = $service->rematchRouting($id, $payload, ...$context);
+        return response()->json(['message' => '工艺路线已重新匹配并冻结。', 'data' => WorkOrderResource::make($workOrder)->resolve($request)]);
+    }
+
     private function context(Request $request): array
     {
         $auth = app(AuthContextService::class);

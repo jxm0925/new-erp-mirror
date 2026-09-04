@@ -327,7 +327,6 @@ Route::prefix('v1/erp/sales')->group(function () {
 });
 
 Route::prefix('v1/erp/production')->group(function () {
-    Route::get('master-options', [ProductionMasterDataController::class, 'options']);
     Route::get('select-options/{type}', [ProductionMasterDataController::class, 'selector'])->whereIn('type', ['items', 'operations', 'products', 'skus', 'routings']);
     Route::get('operations', [ProductionMasterDataController::class, 'operations']);
     Route::post('operations', [ProductionMasterDataController::class, 'storeOperation']);
@@ -355,6 +354,7 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::post('work-orders/{id}/publish', [ProductionWorkOrderController::class, 'publish'])->whereNumber('id');
     Route::post('work-orders/{id}/return-draft', [ProductionWorkOrderController::class, 'returnToDraft'])->whereNumber('id');
     Route::post('work-orders/{id}/cancel', [ProductionWorkOrderController::class, 'cancel'])->whereNumber('id');
+    Route::post('work-orders/{id}/rematch-routing', [ProductionWorkOrderController::class, 'rematchRouting'])->whereNumber('id');
 });
 
 Route::prefix('v1/erp/user-directory')->group(function () {

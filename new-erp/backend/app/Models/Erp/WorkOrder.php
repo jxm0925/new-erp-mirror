@@ -45,6 +45,10 @@ class WorkOrder extends MasterModel
         return $this->hasMany(WorkOrderMaterialRequirement::class, 'work_order_id')->orderBy('line_no');
     }
 
+    public function materialPickingTasks() { return $this->hasMany(MaterialPickingTask::class, 'work_order_id'); }
+    public function materialDeliveries() { return $this->hasMany(MaterialDelivery::class, 'work_order_id'); }
+    public function materialReceipts() { return $this->hasMany(MaterialReceipt::class, 'work_order_id'); }
+
     public function commands()
     {
         return $this->hasMany(WorkOrderCommandLedger::class, 'aggregate_id')
