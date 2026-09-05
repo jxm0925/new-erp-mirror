@@ -42,5 +42,8 @@ export const activateProductionRouting = (id, data) => api.post(`/v1/erp/product
 export const setDefaultProductionRouting = (id, data) => api.post(`/v1/erp/production/routings/${id}/set-default`, data)
 export const copyProductionRouting = (id, data) => api.post(`/v1/erp/production/routings/${id}/copy-version`, data)
 export const retireProductionRouting = (id, data) => api.post(`/v1/erp/production/routings/${id}/retire`, data)
+export const getProductionExecutionMonitor = params => api.get('/v1/erp/production/execution-monitor', { params })
+export const getProductionUnit = id => api.get(`/v1/erp/production/units/${id}`)
+export const listProductionWorkOrderUnits = id => api.get(`/v1/erp/production/work-orders/${id}/units`)
 
 export default api

@@ -32,6 +32,7 @@ use App\Services\Erp\SalesOrderDraftService;
 use App\Services\Erp\SalesOrderAttachmentService;
 use App\Services\Erp\SalesOrderFundingGateService;
 use App\Services\Erp\SalesOrderEditImpactService;
+use App\Services\Erp\SalesOrderInventoryLockService;
 use App\Services\Erp\SkuItemMatcher;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -487,6 +488,7 @@ class SalesOrderController extends Controller
         // 第五阶段不创建工单；生产阶段接入真实工单表后只替换本投影来源。
         $order->setAttribute('work_order_tracking', $this->workOrderTrackingProjection($order));
         $order->setAttribute('funding_status', app(SalesOrderFundingGateService::class)->status($order));
+        $order->setAttribute('fulfillment_quantities', app(SalesOrderInventoryLockService::class)->projection($order));
         return response()->json($order);
     }
 
@@ -561,6 +563,26 @@ class SalesOrderController extends Controller
         $order = SalesOrder::with(['lines.product', 'lines.sku', 'lines.item', 'fulfillments'])->findOrFail($id);
         $this->abortUnlessOrderVisible($request, $order);
         return response()->json(app(\App\Services\Erp\SalesOrderFulfillmentApplicationService::class)->preview($order->id));
+    }
+
+    public function lockInventory(Request $request, int $id, SalesOrderInventoryLockService $service)
+    {
+        $this->abortUnlessPermission($request, 'sales_order.inventory_lock');
+        $order = SalesOrder::findOrFail($id);
+        $this->abortUnlessOrderVisible($request, $order);
+        $payload = $request->validate([
+            'client_command_id' => 'required|string|max:120',
+            'expected_version' => 'required|integer|min:1',
+        ]);
+        $auth = app(AuthContextService::class);
+        $user = $auth->currentUser($request);
+        $result = $service->lock($id, $payload, $user, $auth->permissionCodes($user));
+        return response()->json([
+            'message' => $result['created_fulfillment_count'] > 0
+                ? '销售订单库存已正式锁定，待生产数量已重新计算。'
+                : '当前没有新增可锁定库存，系统未重复占用。',
+            'data' => $result,
+        ]);
     }
 
     public function confirmProduction(Request $request, int $id, \App\Services\Erp\SalesOrderFulfillmentApplicationService $service)
@@ -1161,6 +1183,9 @@ class SalesOrderController extends Controller
             'production_confirmation' => $order->order_status === 'confirmed'
                 && in_array($order->production_confirm_status, ['pending', 'blocked'], true)
                 && in_array('sales_order.production_confirm', $codes, true),
+            'lock_inventory' => $order->order_status === 'confirmed'
+                && $order->shipment_status !== 'shipped'
+                && in_array('sales_order.inventory_lock', $codes, true),
             'cancel' => $order->order_status !== 'cancelled'
                 && $order->shipment_status === 'not_shipped'
                 && in_array('sales_order.cancel', $codes, true),

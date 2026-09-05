@@ -1,0 +1,15 @@
+<view class="queue-page">
+  <view class="intro"><strong>{{title}}</strong><text wx:if="{{type==='pool'}}">自主接单采用原子抢占，接单不等于齐套或开工。</text><text wx:elif="{{type==='handover'}}">工序交接只确认实物责任，不代替生产质检。</text><text wx:elif="{{type==='receipts'}}">配送签收只记录责任交接，不等于物料齐套。</text></view>
+  <view wx:if="{{loading}}" class="state"><van-loading color="#d81e06">正在加载</van-loading></view>
+  <view wx:elif="{{type==='trace' && trace}}" class="trace-card"><view wx:for="{{trace}}" wx:key="id"><text>{{item.type || item.serial_no || item.unit_no}}</text><text>{{item.status || item.event || '-'}}</text></view></view>
+  <view wx:elif="{{!rows.length}}" class="state"><van-empty description="当前没有待处理记录" /></view>
+
+  <view wx:if="{{type==='pool' || type==='collaboration' || type==='kitting'}}" class="card" wx:for="{{rows}}" wx:key="id" data-id="{{item.id}}" bindtap="openTask">
+    <view class="head"><strong>{{item.task_no}}</strong><text>{{item.statusLabel}}</text></view><view class="product">{{item.productName}}</view><view class="meta"><text>工单 {{item.workOrderNo}}</text><text>工序 {{item.sequence_no_snapshot}} - {{item.operation_name_snapshot}}</text><text>{{item.unitLabel}}</text></view>
+    <button wx:if="{{type==='pool'}}" class="primary" data-id="{{item.id}}" catchtap="claim" loading="{{busy}}">自主接单</button><button wx:else class="outline">查看任务详情</button>
+  </view>
+
+  <view wx:if="{{type==='receipts'}}" class="card" wx:for="{{rows}}" wx:key="id"><view class="head"><strong>{{item.delivery_no}}</strong><text>待收料</text></view><view class="meta"><text>工单 {{item.work_order.work_order_no}}</text><text>配送类型 {{item.delivery_type}}</text><text>送达时间 {{item.delivered_at || '-'}}</text></view><view class="notice">请进入配送详情逐行核对实送、实收、拒收数量及序列号。</view></view>
+
+  <view wx:if="{{type==='handover'}}" class="card" wx:for="{{rows}}" wx:key="id"><view class="head"><strong>{{item.handover_no}}</strong><text>待接收</text></view><view class="meta"><text>任务 {{item.task_no}}</text><text>产出记录 #{{item.output_record_id}}</text><text>交出时间 {{item.handed_over_at}}</text></view><view class="actions"><button class="outline" data-id="{{item.id}}" bindtap="rejectHandover">拒收</button><button class="primary" data-id="{{item.id}}" bindtap="acceptHandover" loading="{{busy}}">确认接收</button></view></view>
+</view>

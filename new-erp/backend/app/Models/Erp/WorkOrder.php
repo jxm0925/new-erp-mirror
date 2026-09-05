@@ -14,6 +14,8 @@ class WorkOrder extends MasterModel
         'bom_snapshot' => 'array',
         'routing_snapshot' => 'array',
         'routing_version_snapshot' => 'integer',
+        'serial_policy_snapshot' => 'array',
+        'collaboration_enabled' => 'boolean',
         'release_gate_checked_at' => 'datetime',
         'released_at' => 'datetime',
         'submitted_at' => 'datetime',
@@ -48,6 +50,9 @@ class WorkOrder extends MasterModel
     public function materialPickingTasks() { return $this->hasMany(MaterialPickingTask::class, 'work_order_id'); }
     public function materialDeliveries() { return $this->hasMany(MaterialDelivery::class, 'work_order_id'); }
     public function materialReceipts() { return $this->hasMany(MaterialReceipt::class, 'work_order_id'); }
+    public function productionUnits() { return $this->hasMany(ProductionUnit::class, 'work_order_id')->orderBy('sequence_no'); }
+    public function productionTasks() { return $this->hasMany(ProductionTask::class, 'work_order_id'); }
+    public function quantityOperations() { return $this->hasMany(ProductionQuantityOperation::class, 'work_order_id')->orderBy('sequence_no_snapshot'); }
 
     public function commands()
     {

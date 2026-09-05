@@ -1,0 +1,11 @@
+<view class="todos-page">
+  <view class="today-card"><view><text>现场待办</text><strong>{{groups[0].count + groups[1].count + groups[2].count + groups[3].count}}</strong></view><van-icon name="todo-list-o" size="80rpx" color="#fff" /></view>
+  <view class="tip">接单、收料、交接、齐套是四类独立业务事实，请按现场实际逐项处理。</view>
+  <view wx:if="{{loading}}" class="state"><van-loading color="#d81e06">同步待办</van-loading></view>
+  <view wx:if="{{!loading}}" class="todo-card" wx:for="{{groups}}" wx:key="key" data-key="{{item.key}}" bindtap="open">
+    <view class="icon"><van-icon name="{{item.icon}}" size="48rpx" color="#d81e06" /></view>
+    <view class="body"><strong>{{item.title}}</strong><text>{{item.description}}</text></view>
+    <view class="count">{{item.count}}</view><van-icon name="arrow" color="#a0a4ac" />
+  </view>
+  <view wx:if="{{!loading && !erpToken}}" class="login-hint">请先在“我的”登录 ERP 后同步真实待办。</view>
+</view>

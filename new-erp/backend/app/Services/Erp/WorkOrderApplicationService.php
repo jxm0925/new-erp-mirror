@@ -37,6 +37,7 @@ class WorkOrderApplicationService
         private readonly ErpUserProjectionService $userProjections,
         private readonly ReleaseGateApplicationService $releaseGate,
         private readonly ProductionMasterDataService $productionMasterData,
+        private readonly ProductionExecutionFoundationService $productionExecution,
     ) {
     }
 
@@ -229,6 +230,8 @@ class WorkOrderApplicationService
             }
 
             $bom = $this->releaseGate->loadMatchedBom($gate);
+            $executionPolicy = $this->productionExecution->policySnapshot($workOrder);
+            $this->productionExecution->assertReleaseQuantity($workOrder, $executionPolicy);
             if ($workOrder->materialRequirements()->exists()) {
                 $this->fail('material_requirements_exist', '该工单已存在正式物料需求，禁止重复展开。', 409);
             }
@@ -257,6 +260,8 @@ class WorkOrderApplicationService
             $workOrder->release_reason = trim((string) ($payload['reason'] ?? ''));
             $workOrder->updated_by_legacy_id = $this->userId($user);
             $workOrder->save();
+
+            $this->productionExecution->initializePublished($workOrder, $executionPolicy);
 
             $this->recordStatus($workOrder, self::WAIT_RELEASE, self::RELEASED, $workOrder->release_reason, $version, $version + 1, $user);
 

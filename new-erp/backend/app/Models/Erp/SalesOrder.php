@@ -35,6 +35,8 @@ class SalesOrder extends MasterModel
         'funding_policy_snapshot' => 'array',
         'payment_terms_snapshot' => 'array',
         'channel_ordered_at' => 'datetime:Y-m-d H:i:s',
+        'business_version' => 'integer',
+        'inventory_locked_at' => 'datetime',
     ];
 
     public function lines() { return $this->hasMany(SalesOrderLine::class); }

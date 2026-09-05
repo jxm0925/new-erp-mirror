@@ -8,14 +8,17 @@ use App\Models\Erp\ProductionDemand;
 use App\Models\Erp\WorkOrder;
 use App\Models\Erp\WorkOrderMaterialRequirement;
 use App\Models\Erp\WorkOrderReleaseGateCheck;
+use App\Models\Erp\Item;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class ReleaseGateApplicationService
 {
     public function __construct(
         private readonly BomMatcher $bomMatcher,
         private readonly ProductionDataScopeResolver $scopeResolver,
+        private readonly ProductionExecutionFoundationService $productionExecution,
     ) {
     }
 
@@ -60,18 +63,25 @@ class ReleaseGateApplicationService
                 ->lockForUpdate()
                 ->find((int) $match['bom_id']);
         }
+        $outputItem = $workOrder->output_item_id ? Item::query()->find($workOrder->output_item_id) : null;
+        $executionMode = (string) ($outputItem?->production_execution_mode ?: 'unit');
+        $unitQuantityValid = $executionMode !== 'unit' || $this->isPositiveIntegerDecimal((string) $workOrder->target_base_qty);
+        $supplyCoverage = $this->materialSupplyCoverage($workOrder, $bom);
 
         $checks = [
             $this->check('work_order_state', $workOrder->status === WorkOrderApplicationService::WAIT_RELEASE, 'state_not_wait_release', '工单必须处于待发布状态。', ['status' => $workOrder->status]),
             $this->check($demand ? 'demand_active' : 'source_valid', $demand ? ((bool) $demand->is_active && ! in_array((string) $demand->requirement_status, ['cancelled', 'closed', 'superseded'], true)) : in_array((string) $workOrder->source_type, ['production_plan', 'trial', 'stock_prebuild'], true), $demand ? 'demand_inactive' : 'source_invalid', $demand ? '来源生产需求必须有效且未关闭。' : '工单来源必须有效。', ['source_type' => $workOrder->source_type, 'demand_status' => $demand?->requirement_status]),
             $this->check('routing_snapshot', is_array($workOrder->routing_snapshot) && ! empty($workOrder->routing_snapshot['operations']), 'routing_snapshot_missing', '未找到该产出物料的默认生效工艺路线，工单不能发布。', ['routing_id' => $workOrder->production_routing_id, 'routing_version' => $workOrder->routing_version_snapshot]),
             $this->check('quantity', (float) $workOrder->target_qty > 0 && (float) $workOrder->target_base_qty > 0, 'quantity_invalid', '工单计划数量和基准数量必须大于 0。', ['target_qty' => (float) $workOrder->target_qty, 'target_base_qty' => (float) $workOrder->target_base_qty]),
-            $this->check('responsible_user', ! empty($workOrder->responsible_user_legacy_id), 'responsible_user_missing', '发布前必须指定生产负责人。', []),
+            $this->check('responsible_user', ! $workOrder->responsible_user_legacy_id || DB::table('erp_legacy_admin_users')->where('legacy_id', $workOrder->responsible_user_legacy_id)->where('status', 'normal')->exists(), 'responsible_user_invalid', '工单既定负责人不存在或已停用；未指定时将由首个正式接单人担任。', []),
             $this->check('production_location', trim((string) $workOrder->production_location_name) !== '', 'production_location_missing', '发布前必须填写生产地点/车间。', []),
             $this->check('bom_match', $bom !== null && ($match['status'] ?? null) === 'matched', 'bom_not_matched', (string) ($match['block_reason'] ?? '未匹配到唯一有效 BOM。'), ['match_status' => $match['status'] ?? null, 'candidates' => $match['candidates'] ?? []]),
             $this->check('bom_effective', $this->bomEffective($bom), 'bom_not_effective', 'BOM 必须已审核、启用且处于生效期。', $bom ? ['bom_id' => $bom->id, 'status' => $bom->status, 'audit_status' => $bom->audit_status, 'effective_date' => optional($bom->effective_date)->format('Y-m-d'), 'expire_date' => optional($bom->expire_date)->format('Y-m-d')] : []),
             $this->check('bom_complete', $this->bomComplete($bom), 'bom_incomplete', 'BOM 必须至少包含一条用量或固定用量大于 0 的有效物料行。', ['line_count' => $bom?->items?->count() ?? 0]),
             $this->check('custom_documents', $this->customDocumentsReady($line), 'custom_documents_missing', '特殊定制订单行发布前必须具备图纸或技术附件。', ['special_customized' => (bool) ($line->is_special_customized ?? false)]),
+            $this->check('production_execution_mode', in_array($executionMode, ['unit', 'quantity'], true), 'production_execution_mode_invalid', '产出物料必须配置有效的生产执行模式。', ['production_execution_mode' => $executionMode]),
+            $this->check('production_unit_quantity', $unitQuantityValid, 'production_unit_quantity_not_integer', "逐件生产物料的工单基准数量必须为整数，当前基准数量为 {$workOrder->target_base_qty}，请检查订单数量或单位换算。", ['production_execution_mode' => $executionMode, 'target_base_qty' => (string) $workOrder->target_base_qty]),
+            $this->check('material_supply_rules', $supplyCoverage['valid'], 'material_supply_rule_incomplete', '工艺路线没有完整配置 BOM 物料的目标工序和供应规则。', $supplyCoverage),
         ];
 
         $allowed = collect($checks)->every(fn (array $check): bool => $check['status'] === 'passed');
@@ -267,6 +277,50 @@ class ReleaseGateApplicationService
     {
         if (! $line || ! $line->is_special_customized) return true;
         return ! empty($line->drawing_snapshot) || ! empty($line->technical_attachment_snapshot);
+    }
+
+    private function materialSupplyCoverage(WorkOrder $workOrder, ?Bom $bom): array
+    {
+        if (! Schema::hasTable('erp_routing_operation_material_supply_rules')) {
+            return ['valid' => false, 'missing_component_item_ids' => [], 'invalid_component_item_ids' => [],
+                'schema_missing' => true];
+        }
+        $operationRows = collect((array) data_get($workOrder->routing_snapshot, 'operations', []))->sortBy('sequence')->values();
+        if ($workOrder->source_type === 'stock_prebuild' && $workOrder->target_routing_operation_id) {
+            $target = $operationRows->firstWhere('routing_operation_id', (int) $workOrder->target_routing_operation_id);
+            if ($target) $operationRows = $operationRows->where('sequence', '<=', (int) $target['sequence'])->values();
+        }
+        $operationIds = $operationRows->pluck('routing_operation_id')->filter()->map(fn ($id) => (int) $id)->values();
+        if (! $bom || $operationIds->isEmpty()) return ['valid' => false, 'missing_component_item_ids' => [], 'invalid_component_item_ids' => []];
+
+        $rules = $operationRows->flatMap(fn (array $operation) => collect((array) ($operation['material_supply_rules'] ?? []))
+            ->map(fn (array $rule) => (object) $rule))
+            ->filter(fn (object $rule): bool => $operationIds->contains((int) ($rule->target_routing_operation_id ?? 0)))
+            ->groupBy('component_item_id');
+        $missing = [];
+        $invalid = [];
+        foreach ($bom->items as $line) {
+            $rows = $rules->get($line->component_item_id, collect());
+            if ($rows->isEmpty()) {
+                $missing[] = (int) $line->component_item_id;
+                continue;
+            }
+            $ratio = (float) $rows->sum('required_qty_ratio');
+            if (abs($ratio - 1.0) > 0.000001) $invalid[] = (int) $line->component_item_id;
+        }
+
+        return [
+            'valid' => $missing === [] && $invalid === [],
+            'missing_component_item_ids' => array_values(array_unique($missing)),
+            'invalid_component_item_ids' => array_values(array_unique($invalid)),
+        ];
+    }
+
+    private function isPositiveIntegerDecimal(string $quantity): bool
+    {
+        $normalized = trim($quantity);
+        if (! preg_match('/^\d+(?:\.0+)?$/', $normalized)) return false;
+        return (float) $normalized > 0;
     }
 
     private function assertVisible(WorkOrder $workOrder, object $user, array $permissions, bool $superAdmin): void

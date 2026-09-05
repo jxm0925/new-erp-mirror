@@ -14,6 +14,18 @@
             </view>
         </view>
     </view>
+    <view class="erp-auth-card">
+        <view class="erp-auth-title"><text>ERP 生产执行</text><text class="erp-state {{erpUser?'online':''}}">{{erpUser ? '已登录' : '未登录'}}</text></view>
+        <view wx:if="{{erpUser}}" class="erp-user-row">
+            <view><strong>{{erpUser.nickname || erpUser.username}}</strong><text>生产任务使用独立 ERP Bearer 登录态</text></view>
+            <button class="erp-outline" loading="{{erpBusy}}" bindtap="erpLogout">退出</button>
+        </view>
+        <view wx:else class="erp-login-form">
+            <input placeholder="ERP 用户名" data-field="erpUsername" value="{{erpUsername}}" bindinput="erpInput" />
+            <input placeholder="ERP 密码" password data-field="erpPassword" value="{{erpPassword}}" bindinput="erpInput" />
+            <button loading="{{erpBusy}}" bindtap="erpLogin">登录 ERP</button>
+        </view>
+    </view>
     <!-- <van-cell wx:if="{{userInfo && !userInfo.mobile}}" icon-class="bind-phone-icon" title-class="bind-phone" title="点击绑定手机号获取更多信息">
         <van-button type="primary" size="small" round color="linear-gradient(to right, #ff6464, #f92a2a)">去绑定</van-button>
     </van-cell> -->

@@ -65,7 +65,7 @@ class SalesShipmentFlowTest extends TestCase
         ]);
     }
 
-    public function test_cancelling_a_draft_shipment_releases_only_its_allocated_reservation(): void
+    public function test_cancelling_a_draft_shipment_restores_its_allocation_to_the_sales_order_lock(): void
     {
         [$order, $fulfillment, $balance] = $this->fixture();
         $service = app(SalesShipmentApplicationService::class);
@@ -75,12 +75,12 @@ class SalesShipmentFlowTest extends TestCase
 
         $service->cancel($shipment, '客户暂缓收货', '测试操作员');
 
-        $this->assertSame(7.0, (float) InventoryReservation::where('source_order_id', $order->id)
+        $this->assertSame(10.0, (float) InventoryReservation::where('source_order_id', $order->id)
             ->where('reservation_status', 'active')->value('reserved_qty'));
-        $this->assertSame(7.0, (float) $balance->fresh()->quantity_locked);
-        // The original 10-unit order lock remains for 7 units; cancelling only
-        // this 3-unit shipment correctly restores 3 units to available inventory.
-        $this->assertSame(3.0, (float) $balance->fresh()->quantity_available);
+        $this->assertSame(10.0, (float) $balance->fresh()->quantity_locked);
+        // Cancelling the shipment changes only the child shipment allocation.
+        // The sales order itself still needs all 10 units, so none may become available.
+        $this->assertSame(0.0, (float) $balance->fresh()->quantity_available);
     }
 
     private function fixture(): array

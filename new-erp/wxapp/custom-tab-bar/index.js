@@ -7,37 +7,31 @@ Component({
       "pagePath": "pages/index/index",
       "icon":"home-o",
       "value":"home",
-      "text": "首页"
+      "text": "工作台"
     },{
-      "pagePath": "scan",
-      "icon": "scan",
-      "value":"scan",
-      "text": "扫一扫"
+      "pagePath": "pages/production/tasks/index",
+      "icon":"orders-o",
+      "value":"tasks",
+      "text": "任务"
+    },{
+      "pagePath": "pages/production/todos/index",
+      "icon": "todo-list-o",
+      "value":"todos",
+      "text": "待办"
     },{
       "pagePath": "pages/my/index/index",
       "icon":"user-o",
       "value":"my",
-      "text": "个人中心"
+      "text": "我的"
     }]
 	},
   /**
    * 组件的方法列表
    */
   methods: {
-    onChange(event) {
-      if(this.data.list[event.detail].pagePath == 'scan'){
-        wx.scanCode({
-            success: (res) => {
-                //处理扫码结果
-                wx.navigateTo({url: '/pages/orders/detail/index?order_no=' + res.result})
-            }
-        })
-        console.log('开启扫一扫');
-      }else{
-        wx.switchTab({
-          url: '/'+this.data.list[event.detail].pagePath,
-        })
-      }
+    select(event) {
+      const index = Number(event.currentTarget.dataset.index)
+      wx.switchTab({ url: '/'+this.data.list[index].pagePath })
     },
   }
 })

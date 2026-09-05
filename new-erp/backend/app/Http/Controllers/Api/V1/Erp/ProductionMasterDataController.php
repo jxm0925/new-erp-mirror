@@ -27,11 +27,11 @@ class ProductionMasterDataController extends Controller
 
     private function context(Request $request): array { $auth = app(AuthContextService::class); $user = $this->user($request); return [$auth->permissionCodes($user), $auth->isSuperAdmin($user)]; }
     private function user(Request $request): object { $user = app(AuthContextService::class)->currentUser($request); abort_unless($user, 401, '请先登录 ERP。'); return $user; }
-    private function filters(Request $request): array { return $request->validate(['keyword' => 'nullable|string|max:160', 'status' => 'nullable|string|max:20', 'output_item_id' => 'nullable|integer|min:1', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']); }
+    private function filters(Request $request): array { return $request->validate(['keyword' => 'nullable|string|max:160', 'status' => 'nullable|string|max:20', 'reference_status' => 'nullable|in:referenced,unreferenced', 'output_item_id' => 'nullable|integer|min:1', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1']); }
     private function stateData(Request $request): array { return $request->validate(['client_command_id' => 'required|string|max:120', 'expected_version' => 'required|integer|min:1']); }
     private function operationData(Request $request, bool $editing): array { return $request->validate([
         'client_command_id' => 'required|string|max:120', 'creation_session_id' => $editing ? 'prohibited' : 'required|uuid', 'reservation_token' => $editing ? 'prohibited' : 'required|uuid',
-        'operation_name' => ($editing ? 'sometimes' : 'required').'|string|max:160', 'status' => ($editing ? 'prohibited' : 'nullable').'|in:enabled,disabled',
+        'operation_name' => ($editing ? 'sometimes' : 'required').'|string|max:160', 'status' => ($editing ? 'sometimes' : 'nullable').'|in:enabled,disabled',
         'sort' => 'nullable|integer|min:0|max:999999', 'description' => 'nullable|string|max:2000', 'expected_version' => $editing ? 'required|integer|min:1' : 'prohibited',
     ]); }
     private function routingData(Request $request, bool $editing): array { return $request->validate([
@@ -40,6 +40,18 @@ class ProductionMasterDataController extends Controller
         'product_id' => 'nullable|integer|exists:erp_products,id', 'sku_id' => 'nullable|integer|exists:erp_skus,id', 'version' => 'prohibited', 'remark' => 'nullable|string|max:2000',
         'operations' => ($editing ? 'sometimes' : 'required').'|array|min:1', 'operations.*.operation_id' => 'required|integer|exists:erp_production_operations,id',
         'operations.*.sequence' => 'required|integer|min:1|max:999999', 'operations.*.parameters' => 'nullable|array', 'operations.*.is_key_operation' => 'nullable|boolean', 'operations.*.remark' => 'nullable|string|max:500',
+        'operations.*.standard_minutes' => 'nullable|numeric|min:0|max:999999',
+        'operations.*.setup_standard_minutes' => 'nullable|numeric|min:0|max:999999',
+        'operations.*.unit_standard_minutes' => 'nullable|numeric|min:0|max:999999',
+        'operations.*.output_item_id' => 'nullable|integer|exists:erp_items,id',
+        'operations.*.output_mode' => 'nullable|in:flow_only,warehouse_optional,warehouse_required', 'operations.*.quality_mode' => 'nullable|in:none,required',
+        'operations.*.allow_continue_without_warehouse' => 'nullable|boolean', 'operations.*.material_supply_rules' => 'nullable|array',
+        'operations.*.material_supply_rules.*.component_item_id' => 'required|integer|exists:erp_items,id',
+        'operations.*.material_supply_rules.*.target_sequence' => 'required|integer|min:1|max:999999',
+        'operations.*.material_supply_rules.*.required_qty_ratio' => 'nullable|numeric|gt:0|max:1',
+        'operations.*.material_supply_rules.*.supply_mode' => 'required|in:dedicated_delivery,workstation_stock,no_per_order_delivery',
+        'operations.*.material_supply_rules.*.requires_delivery' => 'nullable|boolean', 'operations.*.material_supply_rules.*.participates_in_kitting' => 'nullable|boolean',
+        'operations.*.material_supply_rules.*.allow_partial_delivery' => 'nullable|boolean', 'operations.*.material_supply_rules.*.delivery_location_type' => 'nullable|in:operation_station,production_line,workshop',
         'expected_version' => $editing ? 'required|integer|min:1' : 'prohibited',
     ]); }
 }

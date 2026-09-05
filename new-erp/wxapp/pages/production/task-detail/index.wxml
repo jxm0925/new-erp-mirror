@@ -1,0 +1,29 @@
+<view class="detail-page" wx:if="{{!loading && task}}">
+  <view class="task-summary">
+    <view class="summary-head"><text class="status">{{task.status}}</text><text>{{task.task_no}}</text></view>
+    <view class="product">{{task.productName}}</view>
+    <view class="summary-grid"><view><text>工单号</text><strong>{{task.workOrderNo}}</strong></view><view><text>工序节点</text><strong>{{task.sequence_no_snapshot}} - {{task.operation_name_snapshot}}</strong></view><view><text>执行模式</text><strong>{{task.execution_mode === 'unit' ? '逐件生产' : '数量生产'}}</strong></view><view><text>接单时间</text><strong>{{task.claimedText}}</strong></view></view>
+    <button class="primary" wx:if="{{task.status==='WAIT_CLAIM'}}" loading="{{busy}}" bindtap="claim">自主接单</button>
+  </view>
+
+  <view class="target-card" wx:for="{{targets}}" wx:key="target_id">
+    <view class="target-head"><strong>{{item.production_unit_no || ('数量执行 #' + item.target_id)}}</strong><text>{{item.statusLabel}}</text></view>
+    <view class="time-grid"><view><text>接单</text><strong>{{item.claimedText}}</strong></view><view><text>齐套</text><strong>{{item.kittingText}}</strong></view><view><text>开工</text><strong>{{item.startedText}}</strong></view><view><text>完工</text><strong>{{item.completedText}}</strong></view></view>
+    <view class="labor">有效加工工时 <strong>{{item.laborText}}</strong></view>
+    <view class="materials" wx:if="{{item.kitting_required}}">
+      <view class="sub-title">物料齐套</view>
+      <view class="material" wx:for="{{materials[item.target_id]}}" wx:for-item="material" wx:key="id"><view><text>{{material.component_item_name}}</text><text class="source">{{material.source_facts.supply_mode === 'workstation_stock' ? '工位常备料' : (material.source_facts.supply_mode === 'dedicated_delivery' ? '生产配送' : '其他正式来源')}}</text></view><text>需 {{material.required_base_qty}}</text><text class="{{material.shortage_base_qty>0?'shortage':'ready'}}">{{material.shortage_base_qty>0 ? ('缺 ' + material.shortage_base_qty) : '已满足'}}</text></view>
+    </view>
+    <view class="quantity" wx:if="{{item.target_type==='quantity_operation' && (item.status==='IN_PROGRESS' || item.status==='PAUSED')}}"><text>本次完成数量</text><input type="digit" value="{{item.quantityValue}}" data-id="{{item.target_id}}" bindinput="onQuantity" /></view>
+    <view class="actions">
+      <button wx:if="{{item.kitting_required && (item.status==='CLAIMED' || item.status==='WAIT_MATERIAL')}}" class="primary" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="confirmKitting">已齐套并开工</button>
+      <button wx:if="{{item.status==='WAIT_HANDOVER'}}" class="outline" bindtap="openHandover">接收工序交接</button>
+      <button wx:if="{{!item.kitting_required && item.status==='READY'}}" class="primary" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="start">开始加工</button>
+      <button wx:if="{{item.status==='IN_PROGRESS'}}" class="outline" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="pause">暂停</button>
+      <button wx:if="{{item.status==='PAUSED'}}" class="primary" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="resume">继续</button>
+      <button wx:if="{{item.status==='IN_PROGRESS' || item.status==='PAUSED'}}" class="primary" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="complete">完成工序</button>
+    </view>
+  </view>
+</view>
+<view wx:elif="{{loading}}" class="loading"><van-loading color="#d81e06">加载任务详情</van-loading></view>
+<view wx:else class="loading"><van-empty description="任务不存在或无权查看" /></view>

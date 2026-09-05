@@ -19,16 +19,52 @@ class ProductionMasterDataService
     public function operations(array $filters, array $permissions, bool $superAdmin): LengthAwarePaginator
     {
         $this->authorize($permissions, $superAdmin, 'production.operation.view');
+        $activeRoutingCount = DB::table('erp_production_routing_operations as operation_route')
+            ->join('erp_production_routings as active_route', 'active_route.id', '=', 'operation_route.routing_id')
+            ->whereColumn('operation_route.operation_id', 'erp_production_operations.id')
+            ->where('active_route.status', 'active')
+            ->selectRaw('COUNT(DISTINCT operation_route.routing_id)');
+
         return ProductionOperation::query()
+            ->addSelect(['active_routing_count' => $activeRoutingCount])
             ->when($filters['keyword'] ?? null, fn ($q, $v) => $q->where(fn ($x) => $x->where('operation_no', 'like', "%{$v}%")->orWhere('operation_name', 'like', "%{$v}%")))
             ->when($filters['status'] ?? null, fn ($q, $v) => $q->where('status', $v))
-            ->orderBy('sort')->orderBy('id')->paginate((int) ($filters['per_page'] ?? 20));
+            ->when(($filters['reference_status'] ?? null) === 'referenced', fn ($q) => $q->whereExists(
+                DB::table('erp_production_routing_operations as reference_operation')
+                    ->join('erp_production_routings as reference_route', 'reference_route.id', '=', 'reference_operation.routing_id')
+                    ->whereColumn('reference_operation.operation_id', 'erp_production_operations.id')
+                    ->where('reference_route.status', 'active')
+                    ->selectRaw('1')
+            ))
+            ->when(($filters['reference_status'] ?? null) === 'unreferenced', fn ($q) => $q->whereNotExists(
+                DB::table('erp_production_routing_operations as reference_operation')
+                    ->join('erp_production_routings as reference_route', 'reference_route.id', '=', 'reference_operation.routing_id')
+                    ->whereColumn('reference_operation.operation_id', 'erp_production_operations.id')
+                    ->where('reference_route.status', 'active')
+                    ->selectRaw('1')
+            ))
+            ->orderBy('sort')->orderBy('id')->paginate(min(20, max(1, (int) ($filters['per_page'] ?? 20))));
     }
 
     public function operation(int $id, array $permissions, bool $superAdmin): ProductionOperation
     {
         $this->authorize($permissions, $superAdmin, 'production.operation.view');
-        return ProductionOperation::findOrFail($id);
+        $operation = ProductionOperation::findOrFail($id);
+        $activeRoutings = ProductionRouting::query()
+            ->with('outputItem')
+            ->where('status', 'active')
+            ->whereHas('operations', fn ($query) => $query->where('operation_id', $id))
+            ->orderBy('routing_no')->orderByDesc('version')
+            ->get(['id', 'routing_no', 'routing_name', 'version', 'output_item_id', 'is_default']);
+
+        $operation->setAttribute('active_routing_count', $activeRoutings->count());
+        $operation->setAttribute('active_routings', $activeRoutings);
+        $canToggle = $superAdmin || in_array('production.operation.toggle', $permissions, true);
+        $operation->setAttribute('status_editable', $canToggle && $activeRoutings->isEmpty());
+        $operation->setAttribute('status_lock_reason', ! $activeRoutings->isEmpty()
+            ? "已被 {$activeRoutings->count()} 条生效路线引用，状态不可修改"
+            : ($canToggle ? null : '无工序启停权限，状态不可修改'));
+        return $operation;
     }
 
     public function createOperation(array $data, object $user, array $permissions, bool $superAdmin): ProductionOperation
@@ -54,9 +90,16 @@ class ProductionMasterDataService
     public function updateOperation(int $id, array $data, object $user, array $permissions, bool $superAdmin): ProductionOperation
     {
         $this->authorize($permissions, $superAdmin, 'production.operation.edit');
-        return $this->command('update_operation', 'operation', $data + ['id' => $id], $user, function () use ($id, $data, $user): ProductionOperation {
+        return $this->command('update_operation', 'operation', $data + ['id' => $id], $user, function () use ($id, $data, $user, $permissions, $superAdmin): ProductionOperation {
             $operation = ProductionOperation::lockForUpdate()->findOrFail($id);
             $this->version($operation, $data);
+            if (array_key_exists('status', $data) && $data['status'] !== $operation->status) {
+                $this->authorize($permissions, $superAdmin, 'production.operation.toggle');
+                if ($this->hasActiveRoutingReference($id)) {
+                    throw ValidationException::withMessages(['status' => '工序已被生效工艺路线使用，状态不可修改。']);
+                }
+                $operation->status = $data['status'];
+            }
             $operation->fill(array_filter([
                 'operation_name' => isset($data['operation_name']) ? trim($data['operation_name']) : null,
                 'sort' => $data['sort'] ?? null,
@@ -231,8 +274,25 @@ class ProductionMasterDataService
                 'is_default' => false, 'remark' => $source->remark, 'business_version' => 1,
                 'created_by_legacy_id' => $this->userId($user), 'updated_by_legacy_id' => $this->userId($user),
             ]);
+            $copiedBySequence = collect();
             foreach ($source->operations as $row) {
-                $copy->operations()->create($row->only(['operation_id', 'sequence', 'parameters', 'is_key_operation', 'remark']));
+                $newRow = $copy->operations()->create($row->only([
+                    'operation_id', 'sequence', 'parameters', 'is_key_operation', 'remark', 'standard_minutes',
+                    'setup_standard_minutes', 'unit_standard_minutes',
+                    'output_item_id', 'output_mode', 'quality_mode', 'allow_continue_without_warehouse',
+                ]));
+                $copiedBySequence->put((int) $row->sequence, $newRow);
+            }
+            foreach ($source->operations as $row) {
+                $newRow = $copiedBySequence->get((int) $row->sequence);
+                foreach ($row->materialSupplyRules as $rule) {
+                    $targetSequence = optional($source->operations->firstWhere('id', $rule->target_routing_operation_id))->sequence;
+                    $newTarget = $copiedBySequence->get((int) $targetSequence);
+                    if ($newTarget) $newRow->materialSupplyRules()->create($rule->only([
+                        'component_item_id', 'required_qty_ratio', 'supply_mode', 'requires_delivery',
+                        'participates_in_kitting', 'allow_partial_delivery', 'delivery_location_type', 'business_version',
+                    ]) + ['target_routing_operation_id' => $newTarget->id]);
+                }
             }
             return $copy->load(['outputItem', 'product', 'sku', 'operations.operation']);
         });
@@ -279,7 +339,7 @@ class ProductionMasterDataService
 
     public function snapshot(ProductionRouting $routing): array
     {
-        $routing->loadMissing(['outputItem', 'product', 'sku', 'operations.operation']);
+        $routing->loadMissing(['outputItem', 'product', 'sku', 'operations.operation', 'operations.outputItem', 'operations.materialSupplyRules']);
         return [
             'routing_id' => (int) $routing->id, 'routing_no' => $routing->routing_no,
             'routing_name' => $routing->routing_name, 'version' => (int) $routing->version,
@@ -290,6 +350,28 @@ class ProductionMasterDataService
                 'operation_no' => $row->operation?->operation_no, 'operation_name' => $row->operation?->operation_name,
                 'sequence' => (int) $row->sequence, 'parameters' => $row->parameters,
                 'is_key_operation' => (bool) $row->is_key_operation, 'remark' => $row->remark,
+                'standard_minutes' => $row->standard_minutes === null ? null : (float) $row->standard_minutes,
+                'setup_standard_minutes' => (float) ($row->setup_standard_minutes ?? 0),
+                'unit_standard_minutes' => $row->unit_standard_minutes === null
+                    ? ($row->standard_minutes === null ? null : (float) $row->standard_minutes)
+                    : (float) $row->unit_standard_minutes,
+                'output_item_id' => $row->output_item_id ? (int) $row->output_item_id : null,
+                'output_item_code' => $row->outputItem?->item_code,
+                'output_item_name' => $row->outputItem?->item_name,
+                'output_mode' => $row->output_mode ?: 'flow_only',
+                'quality_mode' => $row->quality_mode ?: 'none',
+                'allow_continue_without_warehouse' => (bool) $row->allow_continue_without_warehouse,
+                'material_supply_rules' => $row->materialSupplyRules->map(fn ($rule) => [
+                    'rule_id' => (int) $rule->id,
+                    'component_item_id' => (int) $rule->component_item_id,
+                    'target_routing_operation_id' => (int) $rule->target_routing_operation_id,
+                    'required_qty_ratio' => (float) $rule->required_qty_ratio,
+                    'supply_mode' => $rule->supply_mode,
+                    'requires_delivery' => (bool) $rule->requires_delivery,
+                    'participates_in_kitting' => (bool) $rule->participates_in_kitting,
+                    'allow_partial_delivery' => (bool) $rule->allow_partial_delivery,
+                    'delivery_location_type' => $rule->delivery_location_type,
+                ])->values()->all(),
             ])->values()->all(),
         ];
     }
@@ -301,8 +383,40 @@ class ProductionMasterDataService
         $enabled = ProductionOperation::whereIn('id', collect($rows)->pluck('operation_id'))->where('status', 'enabled')->count();
         if ($enabled !== count(array_unique(collect($rows)->pluck('operation_id')->all()))) throw ValidationException::withMessages(['operations' => '存在无效或已停用的工序。']);
         $routing->operations()->delete();
+        $createdBySequence = collect();
         foreach (collect($rows)->sortBy('sequence')->values() as $row) {
-            $routing->operations()->create(collect($row)->only(['operation_id', 'sequence', 'parameters', 'is_key_operation', 'remark'])->all());
+            $created = $routing->operations()->create(collect($row)->only([
+                'operation_id', 'sequence', 'parameters', 'is_key_operation', 'remark', 'standard_minutes',
+                'setup_standard_minutes', 'unit_standard_minutes',
+                'output_item_id', 'output_mode', 'quality_mode', 'allow_continue_without_warehouse',
+            ])->all() + [
+                'output_mode' => $row['output_mode'] ?? 'flow_only',
+                'quality_mode' => $row['quality_mode'] ?? 'none',
+                'allow_continue_without_warehouse' => (bool) ($row['allow_continue_without_warehouse'] ?? true),
+            ]);
+            $createdBySequence->put((int) $row['sequence'], $created);
+        }
+        foreach ($rows as $row) {
+            $source = $createdBySequence->get((int) $row['sequence']);
+            foreach (($row['material_supply_rules'] ?? []) as $rule) {
+                $target = $createdBySequence->get((int) $rule['target_sequence']);
+                if (! $target) throw ValidationException::withMessages(['operations' => '物料供应规则的目标工序顺序不属于当前路线。']);
+                $requiresDelivery = ($rule['supply_mode'] ?? null) === 'dedicated_delivery';
+                if (array_key_exists('requires_delivery', $rule) && (bool) $rule['requires_delivery'] !== $requiresDelivery) {
+                    throw ValidationException::withMessages(['operations' => '是否配送必须与物料供应方式保持一致。']);
+                }
+                $source->materialSupplyRules()->create([
+                    'component_item_id' => $rule['component_item_id'],
+                    'target_routing_operation_id' => $target->id,
+                    'required_qty_ratio' => $rule['required_qty_ratio'] ?? 1,
+                    'supply_mode' => $rule['supply_mode'],
+                    'requires_delivery' => $requiresDelivery,
+                    'participates_in_kitting' => (bool) ($rule['participates_in_kitting'] ?? true),
+                    'allow_partial_delivery' => (bool) ($rule['allow_partial_delivery'] ?? false),
+                    'delivery_location_type' => $rule['delivery_location_type'] ?? 'operation_station',
+                    'business_version' => 1,
+                ]);
+            }
         }
     }
 
@@ -357,6 +471,15 @@ class ProductionMasterDataService
     private function version($model, array $data): void
     {
         if ((int) ($data['expected_version'] ?? 0) !== (int) $model->business_version) throw ValidationException::withMessages(['expected_version' => '数据版本已变化，请刷新后重试。']);
+    }
+
+    private function hasActiveRoutingReference(int $operationId): bool
+    {
+        return DB::table('erp_production_routing_operations as ro')
+            ->join('erp_production_routings as r', 'r.id', '=', 'ro.routing_id')
+            ->where('ro.operation_id', $operationId)
+            ->where('r.status', 'active')
+            ->exists();
     }
 
     private function authorize(array $permissions, bool $superAdmin, string|array $required): void

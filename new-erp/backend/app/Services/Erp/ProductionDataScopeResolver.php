@@ -119,4 +119,21 @@ final class ProductionDataScopeResolver
         $this->applyWorkOrderScope($query, $scope);
         return $query->exists();
     }
+
+    public function applyProductionTaskScope(Builder $query, array $scope, int $userId): void
+    {
+        if (($scope['mode'] ?? 'deny') === 'all') return;
+        if (($scope['mode'] ?? 'deny') === 'deny') {
+            $query->whereRaw('1 = 0');
+            return;
+        }
+
+        $userIds = (array) ($scope['user_ids'] ?? [$userId]);
+        $query->where(function (Builder $task) use ($userIds, $userId): void {
+            $task->whereNull('assignee_user_legacy_id')
+                ->orWhereIn('assignee_user_legacy_id', $userIds)
+                ->orWhereHas('collaborators', fn (Builder $collaborator) => $collaborator
+                    ->where('employee_legacy_id', $userId)->whereNull('left_at'));
+        });
+    }
 }

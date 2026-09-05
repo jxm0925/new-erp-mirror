@@ -24,6 +24,9 @@ class ItemIntegratedFormApplicationService
             $itemPayload['is_stock_item'] = (bool) $policyPayload['is_stock_managed'];
             $itemPayload['serial_tracking_mode'] = $policyPayload['serial_tracking_mode'];
             $itemPayload['is_serial_managed'] = $policyPayload['serial_tracking_mode'] !== 'none';
+            $itemPayload['production_execution_mode'] = $policyPayload['production_execution_mode'] ?? 'unit';
+            $itemPayload['serial_generation_stage'] = $policyPayload['serial_generation_stage'] ?? 'before_finished_goods_posting';
+            $itemPayload['serial_generation_routing_operation_id'] = $policyPayload['serial_generation_routing_operation_id'] ?? null;
             if ($policyPayload['serial_tracking_mode'] === 'none') $itemPayload['serial_number_prefix'] = null;
             if ($activate) $itemPayload['status'] = 'enabled';
 

@@ -1,6 +1,10 @@
 {
   "pages": [
     "pages/index/index",
+    "pages/production/tasks/index",
+    "pages/production/todos/index",
+    "pages/production/queue/index",
+    "pages/production/task-detail/index",
     "pages/logs/logs",
     "pages/my/index/index",
     "pages/suggests/index/index",
@@ -111,11 +115,19 @@
     "list": [
       {
         "pagePath": "pages/index/index",
-        "text": "首页"
+        "text": "工作台"
+      },
+      {
+        "pagePath": "pages/production/tasks/index",
+        "text": "任务"
+      },
+      {
+        "pagePath": "pages/production/todos/index",
+        "text": "待办"
       },
       {
         "pagePath": "pages/my/index/index",
-        "text": "个人中心"
+        "text": "我的"
       }
     ]
   },

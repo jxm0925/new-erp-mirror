@@ -1,20 +1,47 @@
-<view class="container" style="height: {{pageHeight}};" >
-  <swiper class="banner" indicator-dots="true" autoplay="true" interval="3000" duration="1000">
-    <swiper-item wx:for="{{banner}}" wx:key="id">
-      <navigator url="{{item.path}}">
-        <image src="{{item.img}}" background-size="cover"></image>
-      </navigator>
-    </swiper-item>
-  </swiper>
-  <view style="margin-top: 10rpx;">
-  <van-notice-bar mode="link" text="技术是开发它的人的共同灵魂。" bind:click="toAllNotice"/>
+<view class="workbench">
+  <view class="safe-top" style="height: {{statusBarHeight}}px"></view>
+  <view class="page-title" style="height: {{navBarHeight}}px">
+    <text>生产工作台</text>
+    <view class="scan-entry" style="right: {{navRight}}px" bindtap="scan"><van-icon name="scan" size="46rpx" /></view>
   </view>
-  <view>
-    <van-grid column-num="3" clickable>
-      <van-grid-item wx:if="{{item.show}}" wx:for="{{list}}" wx:key="index" data-index="{{index}}" icon="{{item.icon}}" text="{{item.name}}" bind:click="jumpUrl"/>
-    </van-grid>
-  </view>
-</view>
 
-<LoginPopup class="LoginPopup"></LoginPopup>
+  <view class="hero-card">
+    <view class="hero-caption">今日执行 <van-icon name="info-o" size="28rpx" /></view>
+    <view class="hero-user">{{userName}}</view>
+    <view class="hero-stats">
+      <view><text>进行中</text><strong>{{stats.running}}</strong></view>
+      <view><text>待处理</text><strong>{{stats.pending}}</strong></view>
+      <view><text>今日完成</text><strong>{{stats.completed}}</strong></view>
+    </view>
+  </view>
+
+  <view class="entry-grid">
+    <view class="entry-card" wx:for="{{entries}}" wx:key="key" data-entry="{{item}}" bindtap="openEntry">
+      <view class="badge {{item.tone}}" wx:if="{{badges[item.key]}}">{{badges[item.key] > 99 ? '99+' : badges[item.key]}}</view>
+      <van-icon name="{{item.icon}}" size="55rpx" color="#d81e06" />
+      <text>{{item.label}}</text>
+    </view>
+  </view>
+
+  <view class="section-title">当前任务</view>
+  <view wx:if="{{loading}}" class="state-box"><van-loading color="#d81e06">正在同步生产任务</van-loading></view>
+  <view wx:elif="{{unauthenticated}}" class="state-box"><van-empty description="请先登录 ERP 后查看生产任务" /></view>
+  <view wx:elif="{{!currentTasks.length}}" class="state-box compact"><van-empty description="当前没有待处理任务" /></view>
+  <view class="task-card" wx:for="{{currentTasks}}" wx:key="id" data-id="{{item.id}}" bindtap="openTask">
+    <view class="task-head"><strong>任务 {{item.task_no}}</strong><text class="task-status {{item.statusClass}}">{{item.statusLabel}}</text></view>
+    <view class="task-row"><text>工序</text><strong>{{item.operationLabel}}</strong></view>
+    <view class="task-row"><text>产品</text><strong>{{item.productName}}</strong></view>
+    <view class="task-row"><text>生产单元</text><strong>{{item.unitNo}}</strong></view>
+    <view class="task-row"><text>有效工时</text><strong>{{item.laborText}}</strong></view>
+    <view class="task-action">{{item.targetStatus === 'WAIT_MATERIAL' ? '查看齐套' : '进入作业'}}</view>
+  </view>
+
+  <view class="section-title more-title">更多应用</view>
+  <view class="more-apps">
+    <view data-key="suggest" bindtap="openMore"><van-icon name="chart-trending-o" color="#d81e06" /><text>改良改善</text><van-icon name="arrow" color="#909399" /></view>
+    <view data-key="report" bindtap="openMore"><van-icon name="records" color="#d81e06" /><text>汇报中心</text><van-icon name="arrow" color="#909399" /></view>
+    <view data-key="mall" bindtap="openMore"><van-icon name="gift-o" color="#d81e06" /><text>积分商城</text><van-icon name="arrow" color="#909399" /></view>
+  </view>
+  <view class="bottom-space"></view>
+</view>
 <van-notify id="van-notify" />

@@ -1,0 +1,28 @@
+<view class="tasks-page">
+  <view class="summary">
+    <view><text>今日任务总数</text><strong>{{stats.total}}<small>条</small></strong></view>
+    <view><text>进行中</text><strong class="red">{{stats.running}}<small>条</small></strong></view>
+    <view><text>待开始</text><strong>{{stats.waiting}}<small>条</small></strong></view>
+    <view><text>已完成</text><strong>{{stats.completed}}<small>条</small></strong></view>
+    <view class="scan-box" bindtap="scan"><van-icon name="scan" size="48rpx" color="#d81e06" /><text>扫码进入工单</text></view>
+  </view>
+  <view class="sync"><view></view><text>网络正常</text><text>最近同步 刚刚</text></view>
+  <view class="filter-card">
+    <view class="tabs">
+      <text class="{{active==='all'?'active':''}}" data-value="all" bindtap="setTab">全部</text>
+      <text class="{{active==='running'?'active':''}}" data-value="running" bindtap="setTab">进行中</text>
+      <text class="{{active==='waiting'?'active':''}}" data-value="waiting" bindtap="setTab">待开始</text>
+      <text class="{{active==='completed'?'active':''}}" data-value="completed" bindtap="setTab">已完成</text>
+    </view>
+    <view class="search"><van-icon name="search" color="#9da1aa" /><input placeholder="搜索任务号 / 工单号 / 产品" value="{{keyword}}" bindinput="onSearch" /></view>
+  </view>
+  <view wx:if="{{loading}}" class="state"><van-loading color="#d81e06">加载中</van-loading></view>
+  <view wx:elif="{{!filteredRows.length}}" class="state"><van-empty description="暂无符合条件的任务" /></view>
+  <view class="task-item" wx:for="{{filteredRows}}" wx:key="id" data-id="{{item.id}}" bindtap="openTask">
+    <view class="line1"><strong>{{item.task_no}}</strong><text class="tag">{{item.statusLabel}}</text><text class="timer" wx:if="{{item.targetStatus==='IN_PROGRESS'}}">当前计时 ●</text></view>
+    <view class="product">{{item.productName}}</view>
+    <view class="metrics"><view><text>计划数量</text><strong>{{item.planned}} {{item.unitName}}</strong></view><view><text>已完成</text><strong class="red">{{item.completed}} {{item.unitName}}</strong></view><view><text>工序</text><strong>{{item.operation}}</strong></view><view class="action">进入作业</view></view>
+    <view class="foot"><text>齐套状态 {{item.kitting}}</text><text>负责人 当前用户</text><van-icon name="arrow" /></view>
+  </view>
+  <view class="bottom-space"></view>
+</view>

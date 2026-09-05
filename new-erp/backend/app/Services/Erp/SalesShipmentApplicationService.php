@@ -48,14 +48,20 @@ class SalesShipmentApplicationService
                 $fulfillment = SalesOrderFulfillment::query()
                     ->where('sales_order_id', $order->id)
                     ->where('id', $row['sales_order_fulfillment_id'] ?? 0)
-                    ->where('fulfillment_type', 'inventory')
+                    ->whereIn('fulfillment_type', ['inventory', 'production'])
                     ->where('demand_status', 'confirmed')
                     ->lockForUpdate()->firstOrFail();
                 $parent = InventoryReservation::query()
                     ->where('source_type', InventoryReservation::SOURCE_SALES_ORDER)
                     ->where('source_order_id', $order->id)
                     ->where('source_order_line_id', $fulfillment->sales_order_line_id)
-                    ->where('inventory_balance_id', $fulfillment->inventory_balance_id)
+                    ->where(function ($query) use ($fulfillment): void {
+                        $query->where('sales_order_fulfillment_id', $fulfillment->id)
+                            ->orWhere(function ($legacy) use ($fulfillment): void {
+                                $legacy->whereNull('sales_order_fulfillment_id')
+                                    ->where('inventory_balance_id', $fulfillment->inventory_balance_id);
+                            });
+                    })
                     ->where('reservation_status', 'active')
                     ->lockForUpdate()->firstOrFail();
                 $baseQty = round((float) ($row['base_qty'] ?? $parent->reserved_qty), 8);
@@ -147,7 +153,7 @@ class SalesShipmentApplicationService
             if (!in_array($shipment->shipment_status, ['draft', 'pending_outbound'], true)) {
                 throw ValidationException::withMessages(['shipment' => '已出库或已发运的发货单不能取消，应进入销售退货/红冲流程。']);
             }
-            $this->reservations->releaseShipmentReservation($shipment->lines->pluck('inventory_reservation_id')->filter()->all(), $reason);
+            $this->reservations->restoreShipmentReservationToOrder($shipment->lines->pluck('inventory_reservation_id')->filter()->all(), '发货单取消，恢复原销售订单库存锁定：'.$reason);
             $before = $shipment->shipment_status;
             $shipment->update(['shipment_status' => 'cancelled', 'cancelled_at' => now(), 'cancel_reason' => $reason]);
             $shipment->lines()->update(['line_status' => 'cancelled']);

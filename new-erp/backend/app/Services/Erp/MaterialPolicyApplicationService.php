@@ -12,7 +12,8 @@ class MaterialPolicyApplicationService
     private const SNAPSHOT_KEYS = [
         'template_code', 'is_stock_managed', 'inventory_management_mode',
         'requires_custodian', 'is_returnable', 'requires_capitalization',
-        'serial_tracking_mode', 'post_purchase_action',
+        'serial_tracking_mode', 'production_execution_mode', 'serial_generation_stage',
+        'serial_generation_routing_operation_id', 'post_purchase_action',
         'consumption_confirmation_mode', 'future_route', 'future_bearer_type',
     ];
 
@@ -20,7 +21,7 @@ class MaterialPolicyApplicationService
     {
         return DB::transaction(function () use ($item, $attributes, $operatorLegacyId) {
             $lockedItem = Item::query()->lockForUpdate()->findOrFail($item->id);
-            $this->assertConsistent($attributes);
+            $this->assertConsistent($attributes, $lockedItem);
 
             $draft = ItemMaterialPolicy::query()
                 ->where('item_id', $lockedItem->id)->where('status', 'draft')
@@ -44,7 +45,7 @@ class MaterialPolicyApplicationService
     {
         return DB::transaction(function () use ($item, $attributes, $operatorLegacyId) {
             $lockedItem = Item::query()->lockForUpdate()->findOrFail($item->id);
-            $this->assertConsistent($attributes);
+            $this->assertConsistent($attributes, $lockedItem);
 
             $current = ItemMaterialPolicy::query()
                 ->where('item_id', $lockedItem->id)->where('status', 'active')
@@ -105,14 +106,33 @@ class MaterialPolicyApplicationService
             'is_stock_item' => $policy->is_stock_managed,
             'is_serial_managed' => $policy->serial_tracking_mode !== 'none',
             'serial_tracking_mode' => $policy->serial_tracking_mode,
+            'production_execution_mode' => $policy->production_execution_mode ?: 'unit',
+            'serial_generation_stage' => $policy->serial_generation_stage ?: 'before_finished_goods_posting',
+            'serial_generation_routing_operation_id' => $policy->serial_generation_routing_operation_id,
         ]);
     }
 
-    private function assertConsistent(array $attributes): void
+    private function assertConsistent(array &$attributes, Item $item): void
     {
         $stockManaged = (bool) $attributes['is_stock_managed'];
         $route = (string) $attributes['future_route'];
         $action = (string) $attributes['post_purchase_action'];
+        $executionMode = (string) ($attributes['production_execution_mode'] ?? 'unit');
+        $serialStage = (string) ($attributes['serial_generation_stage'] ?? 'before_finished_goods_posting');
+
+        abort_unless(in_array($executionMode, ['unit', 'quantity'], true), 422, '生产执行模式只能选择逐件生产或按数量生产。');
+        abort_unless(in_array($serialStage, ['production_unit_created', 'routing_operation_completed', 'before_finished_goods_posting'], true), 422, '设备编号生成节点无效。');
+        if ($serialStage === 'routing_operation_completed') {
+            $routingOperationId = (int) ($attributes['serial_generation_routing_operation_id'] ?? 0);
+            $belongsToItem = $routingOperationId > 0 && DB::table('erp_production_routing_operations as ro')
+                ->join('erp_production_routings as r', 'r.id', '=', 'ro.routing_id')
+                ->where('ro.id', $routingOperationId)
+                ->where('r.output_item_id', $item->id)
+                ->exists();
+            abort_unless($belongsToItem, 422, '指定的设备编号生成工序不属于该产出物料的工艺路线。');
+        } else {
+            $attributes['serial_generation_routing_operation_id'] = null;
+        }
 
         abort_if($stockManaged && !in_array($route, ['inventory', 'expense'], true), 422, '库存管理物资当前只能选择库存或库存后领用费用意图。');
         abort_if(!$stockManaged && $route === 'inventory', 422, '非库存管理物资不能选择库存处理意图。');

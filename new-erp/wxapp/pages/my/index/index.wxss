@@ -56,3 +56,12 @@ page ,.container{
 .func-area{
   margin-top: 20rpx;
 }
+.erp-auth-card{margin:20rpx 24rpx;padding:24rpx;background:#fff;border-radius:16rpx;box-shadow:0 6rpx 22rpx rgba(30,40,60,.05);position:relative;z-index:2}
+.erp-auth-title{display:flex;justify-content:space-between;align-items:center;font-size:28rpx;font-weight:600}
+.erp-state{font-size:22rpx;color:#909399;font-weight:400}.erp-state.online{color:#20a53a}
+.erp-login-form{display:grid;grid-template-columns:1fr 1fr 150rpx;gap:12rpx;margin-top:20rpx}
+.erp-login-form input{height:66rpx;border:1rpx solid #dfe2e7;border-radius:8rpx;padding:0 14rpx;font-size:23rpx;box-sizing:border-box}
+.erp-login-form button,.erp-outline{height:66rpx;line-height:66rpx;padding:0;border-radius:8rpx;font-size:23rpx}
+.erp-login-form button{background:#d81e06;color:#fff}.erp-login-form button::after,.erp-outline::after{border:0}
+.erp-user-row{display:flex;align-items:center;margin-top:18rpx}.erp-user-row>view{display:flex;flex-direction:column;gap:5rpx;flex:1}.erp-user-row text{font-size:21rpx;color:#8a9099}
+.erp-outline{width:130rpx;color:#d81e06;background:#fff;border:1rpx solid #d81e06}

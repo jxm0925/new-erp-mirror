@@ -42,6 +42,7 @@ class RbacBootstrapService
             ['production.base', '生产基础', 'menu', 'production', null, null, 'el-icon-setting', 803],
             ['production.operation', '工序管理', 'menu', 'production.base', '/production/operations', 'ProductionOperationList', 'el-icon-set-up', 804],
             ['production.routing', '工艺路线', 'menu', 'production.base', '/production/routings', 'ProductionRoutingList', 'el-icon-guide', 805],
+            ['production.labor_rule', '工时分配规则', 'menu', 'production.base', '/production/labor-allocation-rules', 'ProductionLaborAllocationRules', 'el-icon-timer', 806],
 
             // 1. 主数据中心 二级菜单
             ['master.product', '产品管理', 'menu', 'master', '/master/products', 'ProductList', 'el-icon-goods', 101],
@@ -202,6 +203,48 @@ class RbacBootstrapService
             ['production.work_order.gate.view', '查看工单发布检查', 'button', 'production.work_order', null, null, 'el-icon-mouse', 6],
             ['production.work_order.publish', '发布工单', 'button', 'production.work_order', null, null, 'el-icon-mouse', 7],
             ['production.material.view', '查看工单用料需求', 'button', 'production.work_order', null, null, 'el-icon-mouse', 8],
+            ['production.material_requirement.view', '查看正式物料需求', 'button', 'production.work_order', null, null, 'el-icon-mouse', 9],
+            ['production.material_picking.view', '查看配料任务', 'button', 'production.work_order', null, null, 'el-icon-mouse', 10],
+            ['production.material_picking.create', '创建配料任务', 'button', 'production.work_order', null, null, 'el-icon-mouse', 11],
+            ['production.material_picking.assign', '分配拣货人', 'button', 'production.work_order', null, null, 'el-icon-mouse', 12],
+            ['production.material_picking.pick', '确认生产配料', 'button', 'production.work_order', null, null, 'el-icon-mouse', 13],
+            ['production.material_picking.cancel', '取消未执行配料任务', 'button', 'production.work_order', null, null, 'el-icon-mouse', 14],
+            ['production.material_delivery.view', '查看配送任务', 'button', 'production.work_order', null, null, 'el-icon-mouse', 15],
+            ['production.material_delivery.create', '创建配送单', 'button', 'production.work_order', null, null, 'el-icon-mouse', 16],
+            ['production.material_delivery.dispatch', '发出配送单', 'button', 'production.work_order', null, null, 'el-icon-mouse', 17],
+            ['production.material_delivery.confirm', '确认配送送达', 'button', 'production.work_order', null, null, 'el-icon-mouse', 18],
+            ['production.material_receipt.view', '查看收料记录', 'button', 'production.work_order', null, null, 'el-icon-mouse', 19],
+            ['production.material_receipt.confirm', '确认生产收料', 'button', 'production.work_order', null, null, 'el-icon-mouse', 20],
+            ['production.task.view', '查看生产任务', 'button', 'production.work_order', null, null, 'el-icon-mouse', 21],
+            ['production.task.claim', '自主接单', 'button', 'production.work_order', null, null, 'el-icon-mouse', 22],
+            ['production.task.start', '开始工序', 'button', 'production.work_order', null, null, 'el-icon-mouse', 23],
+            ['production.task.pause', '暂停或继续工序', 'button', 'production.work_order', null, null, 'el-icon-mouse', 24],
+            ['production.task.resume', '继续工序', 'button', 'production.work_order', null, null, 'el-icon-mouse', 24],
+            ['production.task.complete', '完成工序', 'button', 'production.work_order', null, null, 'el-icon-mouse', 25],
+            ['production.task.collaborate', '生产任务协同', 'button', 'production.work_order', null, null, 'el-icon-mouse', 26],
+            ['production.delivery.view', '查看生产配送', 'button', 'production.work_order', null, null, 'el-icon-mouse', 27],
+            ['production.delivery.dispatch', '确认配送发出', 'button', 'production.work_order', null, null, 'el-icon-mouse', 28],
+            ['production.delivery.receive', '生产配送签收或拒收', 'button', 'production.work_order', null, null, 'el-icon-mouse', 29],
+            ['production.kitting.view', '查看物料齐套', 'button', 'production.work_order', null, null, 'el-icon-mouse', 30],
+            ['production.kitting.confirm', '确认物料齐套', 'button', 'production.work_order', null, null, 'el-icon-mouse', 31],
+            ['production.handover.view', '查看工序交接', 'button', 'production.work_order', null, null, 'el-icon-mouse', 32],
+            ['production.handover.receive', '接收工序产出', 'button', 'production.work_order', null, null, 'el-icon-mouse', 33],
+            ['production.handover.reject', '拒收工序产出', 'button', 'production.work_order', null, null, 'el-icon-mouse', 34],
+            ['production.unit.view', '查看生产单元', 'button', 'production.work_order', null, null, 'el-icon-mouse', 35],
+            ['production.output.create', '登记工序产出', 'button', 'production.work_order', null, null, 'el-icon-mouse', 36],
+            ['production.output.quality', '生产入库质检', 'button', 'production.work_order', null, null, 'el-icon-mouse', 37],
+            ['production.output.warehouse', '生产产出入库', 'button', 'production.work_order', null, null, 'el-icon-mouse', 38],
+            ['production.output.issue', '生产半成品发料', 'button', 'production.work_order', null, null, 'el-icon-mouse', 39],
+            ['production.output.receive', '生产半成品接收', 'button', 'production.work_order', null, null, 'el-icon-mouse', 40],
+            ['production.material_supplement.request', '申请生产补料', 'button', 'production.work_order', null, null, 'el-icon-mouse', 39],
+            ['production.material_supplement.approve', '审批生产补料', 'button', 'production.work_order', null, null, 'el-icon-mouse', 40],
+            ['production.material_return.create', '发起生产退料', 'button', 'production.work_order', null, null, 'el-icon-mouse', 41],
+            ['production.material_return.receive', '仓库接收生产退料', 'button', 'production.work_order', null, null, 'el-icon-mouse', 42],
+            ['production.material_return.quality', '检验生产退料', 'button', 'production.work_order', null, null, 'el-icon-mouse', 43],
+            ['production.trace.view', '查看逐件生产追溯', 'button', 'production.work_order', null, null, 'el-icon-mouse', 44],
+            ['production.assignment.recommend', '查看派单推荐', 'button', 'production.work_order', null, null, 'el-icon-mouse', 45],
+            ['production.assignment.auto', '自动派单', 'button', 'production.work_order', null, null, 'el-icon-mouse', 46],
+            ['production.assignment.override', '改派生产任务', 'button', 'production.work_order', null, null, 'el-icon-mouse', 47],
             ['production.operation.view', '查看工序', 'button', 'production.operation', null, null, 'el-icon-mouse', 1],
             ['production.operation.create', '新增工序', 'button', 'production.operation', null, null, 'el-icon-mouse', 2],
             ['production.operation.edit', '编辑工序', 'button', 'production.operation', null, null, 'el-icon-mouse', 3],
@@ -211,6 +254,9 @@ class RbacBootstrapService
             ['production.routing.edit', '编辑工艺路线', 'button', 'production.routing', null, null, 'el-icon-mouse', 3],
             ['production.routing.activate', '生效工艺路线', 'button', 'production.routing', null, null, 'el-icon-mouse', 4],
             ['production.routing.default', '设置默认工艺路线', 'button', 'production.routing', null, null, 'el-icon-mouse', 5],
+            ['production.labor_rule.view', '查看工时分配规则', 'button', 'production.labor_rule', null, null, 'el-icon-mouse', 1],
+            ['production.labor_rule.manage', '维护工时分配规则版本', 'button', 'production.labor_rule', null, null, 'el-icon-mouse', 2],
+            ['production.labor_stats.view', '查看生产工时统计', 'button', 'production.work_order', null, null, 'el-icon-mouse', 48],
 
             ['sales_order.view', '销售订单查看', 'button', 'sales.order', null, null, 'el-icon-mouse', 1],
             ['sales_order.create', '销售订单新建', 'button', 'sales.order', null, null, 'el-icon-mouse', 2],
@@ -219,6 +265,7 @@ class RbacBootstrapService
             ['sales_order.submit_confirmation', '销售订单提交确认', 'button', 'sales.order', null, null, 'el-icon-mouse', 5],
             ['sales_order.formal_confirm', '销售订单正式确认', 'button', 'sales.order', null, null, 'el-icon-mouse', 6],
             ['sales_order.production_confirm', '销售订单生产确认', 'button', 'sales.order', null, null, 'el-icon-mouse', 7],
+            ['sales_order.inventory_lock', '销售订单锁库存', 'button', 'sales.order', null, null, 'el-icon-mouse', 71],
             ['sales_order.cancel', '销售订单取消', 'button', 'sales.order', null, null, 'el-icon-mouse', 8],
             ['sales_order.change', '销售订单变更', 'button', 'sales.order', null, null, 'el-icon-mouse', 9],
             ['sales_order.change.submit', '提交销售订单变更审核', 'button', 'sales.order', null, null, 'el-icon-mouse', 91],
@@ -432,35 +479,77 @@ class RbacBootstrapService
             DB::table('erp_rbac_role_permissions')->insert($records);
         }
         $this->ensureProductionRolePermissions();
+        $this->ensureSalesInventoryLockPermission();
+    }
+
+    private function ensureSalesInventoryLockPermission(): void
+    {
+        $permissionId = DB::table('erp_rbac_permissions')->where('code', 'sales_order.inventory_lock')->value('id');
+        if (! $permissionId) return;
+        foreach (['admin', 'sales_manager', 'sales_user'] as $roleCode) {
+            $roleId = DB::table('erp_rbac_roles')->where('code', $roleCode)->value('id');
+            if (! $roleId) continue;
+            DB::table('erp_rbac_role_permissions')->insertOrIgnore([
+                'role_id' => $roleId,
+                'permission_id' => $permissionId,
+            ]);
+        }
     }
 
     private function ensureProductionRolePermissions(): void
     {
         $permissionIds = DB::table('erp_rbac_permissions')
             ->whereIn('code', [
-                'production.base', 'production.operation', 'production.routing',
+                'production.base', 'production.operation', 'production.routing', 'production.labor_rule',
                 'production.demand.view', 'production.work_order.view', 'production.work_order.create',
                 'production.work_order.edit', 'production.work_order.submit', 'production.work_order.cancel',
                 'production.work_order.gate.view', 'production.work_order.publish', 'production.material.view',
+                'production.material_requirement.view', 'production.material_picking.view', 'production.material_picking.create',
+                'production.material_picking.assign', 'production.material_picking.pick', 'production.material_picking.cancel',
+                'production.material_delivery.view', 'production.material_delivery.create', 'production.material_delivery.dispatch',
+                'production.material_delivery.confirm', 'production.material_receipt.view', 'production.material_receipt.confirm',
+                'production.task.view', 'production.task.claim', 'production.task.start', 'production.task.pause', 'production.task.resume', 'production.task.complete', 'production.task.collaborate',
+                'production.delivery.view', 'production.delivery.dispatch', 'production.delivery.receive',
+                'production.kitting.view', 'production.kitting.confirm', 'production.handover.view', 'production.handover.receive', 'production.handover.reject',
+                'production.unit.view', 'production.output.create', 'production.output.quality', 'production.output.warehouse', 'production.output.issue', 'production.output.receive',
+                'production.material_supplement.request', 'production.material_supplement.approve',
+                'production.material_return.create', 'production.material_return.receive', 'production.material_return.quality',
+                'production.trace.view', 'production.assignment.recommend', 'production.assignment.auto', 'production.assignment.override',
                 'production.operation.view', 'production.operation.create', 'production.operation.edit', 'production.operation.toggle',
                 'production.routing.view', 'production.routing.create', 'production.routing.edit', 'production.routing.activate', 'production.routing.default',
+                'production.labor_rule.view', 'production.labor_rule.manage',
+                'production.labor_stats.view',
             ])
             ->pluck('id', 'code');
         if ($permissionIds->isEmpty()) return;
 
         $matrix = [
+            'admin' => array_keys($permissionIds->all()),
             'production_manager' => array_keys($permissionIds->all()),
             'production_operator' => [
-                'production.base', 'production.operation', 'production.routing',
+                'production.base', 'production.operation', 'production.routing', 'production.labor_rule',
                 'production.demand.view', 'production.work_order.view',
                 'production.work_order.gate.view', 'production.material.view',
-                'production.operation.view', 'production.routing.view',
+                'production.material_requirement.view', 'production.material_picking.view', 'production.material_delivery.view',
+                'production.material_receipt.view',
+                'production.task.view', 'production.task.claim', 'production.task.start', 'production.task.pause', 'production.task.resume', 'production.task.complete', 'production.task.collaborate',
+                'production.delivery.view', 'production.delivery.receive', 'production.kitting.view', 'production.kitting.confirm',
+                'production.handover.view', 'production.handover.receive', 'production.handover.reject', 'production.unit.view',
+                'production.output.create', 'production.output.receive', 'production.material_supplement.request', 'production.material_return.create', 'production.trace.view',
+                'production.operation.view', 'production.routing.view', 'production.labor_rule.view',
+                'production.labor_stats.view',
             ],
             'department_principal' => [
-                'production.base', 'production.operation', 'production.routing',
+                'production.base', 'production.operation', 'production.routing', 'production.labor_rule',
                 'production.demand.view', 'production.work_order.view',
                 'production.work_order.gate.view', 'production.work_order.publish', 'production.material.view',
-                'production.operation.view', 'production.routing.view',
+                'production.material_requirement.view', 'production.material_picking.view', 'production.material_delivery.view',
+                'production.material_receipt.view',
+                'production.task.view', 'production.delivery.view', 'production.kitting.view', 'production.handover.view',
+                'production.unit.view', 'production.output.quality', 'production.output.warehouse', 'production.output.issue',
+                'production.material_supplement.approve', 'production.material_return.receive', 'production.material_return.quality', 'production.trace.view',
+                'production.operation.view', 'production.routing.view', 'production.labor_rule.view', 'production.labor_rule.manage',
+                'production.labor_stats.view',
             ],
         ];
         foreach ($matrix as $roleCode => $codes) {

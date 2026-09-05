@@ -67,6 +67,16 @@ class Phase6AProductionMasterTest extends TestCase
         $second = $service->setDefaultRouting($second->id, ['client_command_id' => $this->id('route2-default'), 'expected_version' => 2], $user, self::MASTER_PERMISSIONS, true);
         $this->assertTrue($second->is_default);
         $this->assertFalse((bool) $route->fresh()->is_default); // CASE 8
+
+        $referenced = $service->operations(['reference_status' => 'referenced', 'per_page' => 100], self::MASTER_PERMISSIONS, true);
+        $this->assertSame(20, $referenced->perPage());
+        $this->assertContains($cut->id, $referenced->getCollection()->pluck('id')->all());
+        $this->assertNotContains($standalone->id, $referenced->getCollection()->pluck('id')->all());
+        $this->assertGreaterThanOrEqual(1, (int) $referenced->getCollection()->firstWhere('id', $cut->id)->active_routing_count);
+
+        $detail = $service->operation($cut->id, self::MASTER_PERMISSIONS, true);
+        $this->assertSame(2, (int) $detail->active_routing_count);
+        $this->assertCount(2, $detail->active_routings);
     }
 
     public function test_cases_11_to_16_stock_prebuild_validation_snapshot_state_and_idempotency(): void
@@ -128,6 +138,62 @@ class Phase6AProductionMasterTest extends TestCase
         $column = collect(DB::getSchemaBuilder()->getColumns('erp_work_orders'))->firstWhere('name', 'production_demand_id');
         $this->assertTrue((bool) ($column['nullable'] ?? false));
         $this->assertSame(0, DB::table('erp_work_orders')->whereNotNull('production_demand_id')->where('source_type', '<>', 'sales_order')->count());
+    }
+
+    public function test_operation_status_radio_rules_are_enforced_by_the_domain_service(): void
+    {
+        [$user, $item] = $this->fixture();
+        $service = app(ProductionMasterDataService::class);
+
+        $session = $this->uuid();
+        $reservation = app(DocumentNumberService::class)->reserve('operation', $session, $user->legacy_id, '/production/operations#create');
+        $disabled = $service->createOperation([
+            'client_command_id' => $this->id('operation-disabled'), 'creation_session_id' => $session,
+            'reservation_token' => $reservation->reservation_token, 'operation_name' => '初始停用工序',
+            'sort' => 40, 'status' => 'disabled',
+        ], $user, self::MASTER_PERMISSIONS, false);
+        $this->assertSame('disabled', $disabled->status);
+
+        $disabled = $service->updateOperation($disabled->id, [
+            'client_command_id' => $this->id('operation-enable-in-edit'), 'expected_version' => 1, 'status' => 'enabled',
+        ], $user, self::MASTER_PERMISSIONS, false);
+        $this->assertSame('enabled', $disabled->status);
+        $this->assertTrue((bool) $service->operation($disabled->id, self::MASTER_PERMISSIONS, false)->status_editable);
+
+        $editOnly = ['production.operation.view', 'production.operation.edit'];
+        $permissionDetail = $service->operation($disabled->id, $editOnly, false);
+        $this->assertFalse((bool) $permissionDetail->status_editable);
+        $this->assertSame('无工序启停权限，状态不可修改', $permissionDetail->status_lock_reason);
+        try {
+            $service->updateOperation($disabled->id, [
+                'client_command_id' => $this->id('operation-disable-without-toggle'),
+                'expected_version' => 2, 'status' => 'disabled',
+            ], $user, $editOnly, false);
+            $this->fail('缺少工序启停权限时不得通过编辑接口修改状态。');
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpException $exception) {
+            $this->assertSame(403, $exception->getStatusCode());
+        }
+
+        $referenced = $this->createOperation($service, $user, '生效路线引用工序', 50);
+        $routing = $this->createRouting($service, $user, $item, [$referenced->id]);
+        $service->activateRouting($routing->id, [
+            'client_command_id' => $this->id('route-active-for-status'), 'expected_version' => 1,
+        ], $user, self::MASTER_PERMISSIONS, false);
+
+        $detail = $service->operation($referenced->id, self::MASTER_PERMISSIONS, false);
+        $this->assertFalse((bool) $detail->status_editable);
+        $this->assertSame('已被 1 条生效路线引用，状态不可修改', $detail->status_lock_reason);
+
+        try {
+            $service->updateOperation($referenced->id, [
+                'client_command_id' => $this->id('operation-disable-referenced-in-edit'),
+                'expected_version' => 1, 'status' => 'disabled',
+            ], $user, self::MASTER_PERMISSIONS, false);
+            $this->fail('被生效路线引用的工序不得通过编辑接口修改状态。');
+        } catch (ValidationException $exception) {
+            $this->assertSame('工序已被生效工艺路线使用，状态不可修改。', $exception->errors()['status'][0]);
+        }
+        $this->assertSame('enabled', $referenced->fresh()->status);
     }
 
     private function fixture(): array

@@ -901,6 +901,133 @@ class InventoryService
         }, 5);
     }
 
+    /** Post a real production output receipt; output creation and QA never change stock. */
+    public function postProductionOutputReceipt(object $output, array $posting, object $operator): InventoryTransaction
+    {
+        return DB::transaction(function () use ($output, $posting, $operator): InventoryTransaction {
+            $existing = InventoryTransaction::query()->where('transaction_type', 'production_output_receipt')
+                ->where('source_type', 'production_output_record')->where('source_id', $output->id)->first();
+            if ($existing) return $existing;
+            $warehouseId = (int) ($posting['warehouse_id'] ?? 0); $locationId = (int) ($posting['location_id'] ?? 0);
+            $batchNo = trim((string) ($posting['batch_no'] ?? ''));
+            if ($warehouseId < 1 || $locationId < 1 || $batchNo === '') throw ValidationException::withMessages(['posting' => '生产入库必须指定仓库、库位和批次号。']);
+            $transaction = InventoryTransaction::create(['transaction_no' => $this->nextNo('ITX'),
+                'transaction_type' => 'production_output_receipt', 'source_type' => 'production_output_record',
+                'source_id' => $output->id, 'source_no' => $output->output_no, 'posting_status' => 'posted',
+                'warehouse_id' => $warehouseId, 'location_id' => $locationId, 'transaction_date' => now()->toDateString(),
+                'posted_by' => (int) ($operator->legacy_id ?? $operator->id ?? 0), 'posted_at' => now(), 'remark' => '生产工序产出正式入库']);
+            $this->applyInventoryChange($transaction, ['item_id' => $output->output_item_id, 'warehouse_id' => $warehouseId,
+                'location_id' => $locationId, 'batch_no' => $batchNo, 'unit_id' => Item::findOrFail($output->output_item_id)->unit_id,
+                'change_qty' => (float) $output->output_base_qty, 'unit_cost' => (float) ($posting['unit_cost'] ?? 0),
+                'cost_source_type' => 'production_output_fact', 'source_type' => 'production_output_record',
+                'source_id' => $output->id, 'remark' => '生产产出入库 '.$output->output_no]);
+            InventoryPostingLog::create(['source_type' => 'production_output_record', 'source_id' => $output->id,
+                'source_no' => $output->output_no, 'transaction_type' => 'production_output_receipt',
+                'transaction_id' => $transaction->id, 'posting_status' => 'posted', 'message' => '生产产出库存入库过账成功',
+                'posted_by' => (int) ($operator->legacy_id ?? $operator->id ?? 0), 'posted_at' => now()]);
+            return $transaction->fresh(['items']);
+        }, 5);
+    }
+
+    public function postProductionMaterialReturnReceipt(object $return, iterable $lines, object $operator, bool $quarantine): InventoryTransaction
+    {
+        return DB::transaction(function () use ($return, $lines, $operator, $quarantine): InventoryTransaction {
+            $type = $quarantine ? 'production_material_quality_return_quarantine' : 'production_material_return_receipt';
+            $existing = InventoryTransaction::where('transaction_type', $type)->where('source_type', 'production_material_return')->where('source_id', $return->id)->first();
+            if ($existing) return $existing;
+            $first = collect($lines)->first();
+            $transaction = InventoryTransaction::create(['transaction_no' => $this->nextNo('ITX'), 'transaction_type' => $type,
+                'source_type' => 'production_material_return', 'source_id' => $return->id, 'source_no' => $return->return_no,
+                'posting_status' => 'posted', 'warehouse_id' => $first->warehouse_id ?? null, 'location_id' => $first->location_id ?? null,
+                'transaction_date' => now()->toDateString(), 'posted_by' => (int) ($operator->legacy_id ?? $operator->id ?? 0),
+                'posted_at' => now(), 'remark' => $quarantine ? '生产质量退料进入隔离库存' : '生产正常退料入可用库存']);
+            foreach ($lines as $line) {
+                $this->applyInventoryChange($transaction, ['item_id' => $line->component_item_id, 'warehouse_id' => $line->warehouse_id,
+                    'location_id' => $line->location_id, 'batch_no' => $line->batch_no ?: 'PROD-RETURN-'.$return->id,
+                    'unit_id' => Item::findOrFail($line->component_item_id)->unit_id, 'change_qty' => (float) $line->return_base_qty,
+                    'unit_cost' => 0, 'cost_source_type' => 'production_material_return_fact', 'source_type' => 'production_material_return',
+                    'source_id' => $return->id, 'source_item_id' => $line->id, 'remark' => '生产退料 '.$return->return_no]);
+                if ($quarantine) {
+                    $balance = InventoryBalance::where('item_id', $line->component_item_id)->where('warehouse_id', $line->warehouse_id)
+                        ->where('location_id', $line->location_id)->where('batch_no', $line->batch_no ?: 'PROD-RETURN-'.$return->id)->lockForUpdate()->firstOrFail();
+                    $balance->quantity_pending = (float) $balance->quantity_pending + (float) $line->return_base_qty;
+                    $balance->quantity_available = $this->availability->calculate((float) $balance->quantity_on_hand, (float) $balance->quantity_locked,
+                        (float) $balance->quantity_defective, (float) $balance->quantity_pending); $balance->save();
+                    $location = InventoryLocationBalance::where('item_id', $line->component_item_id)->where('warehouse_id', $line->warehouse_id)
+                        ->where('location_id', $line->location_id)->lockForUpdate()->firstOrFail();
+                    $location->quantity_pending = (float) $location->quantity_pending + (float) $line->return_base_qty;
+                    $location->quantity_available = $this->availability->calculate((float) $location->quantity_on_hand, (float) $location->quantity_locked,
+                        (float) $location->quantity_defective, (float) $location->quantity_pending); $location->save();
+                }
+            }
+            return $transaction->fresh(['items']);
+        }, 5);
+    }
+
+    public function releaseProductionMaterialReturnQuarantine(object $return, iterable $lines, object $operator): InventoryTransaction
+    {
+        return DB::transaction(function () use ($return, $lines, $operator): InventoryTransaction {
+            $existing = InventoryTransaction::where('transaction_type', 'production_material_return_quality_release')
+                ->where('source_type', 'production_material_return')->where('source_id', $return->id)->first();
+            if ($existing) return $existing;
+            $first = collect($lines)->first();
+            $transaction = InventoryTransaction::create(['transaction_no' => $this->nextNo('ITX'), 'transaction_type' => 'production_material_return_quality_release',
+                'source_type' => 'production_material_return', 'source_id' => $return->id, 'source_no' => $return->return_no,
+                'posting_status' => 'posted', 'warehouse_id' => $first->warehouse_id ?? null, 'location_id' => $first->location_id ?? null,
+                'transaction_date' => now()->toDateString(), 'posted_by' => (int) ($operator->legacy_id ?? $operator->id ?? 0), 'posted_at' => now(),
+                'remark' => '生产质量退料检验合格，解除隔离']);
+            foreach ($lines as $line) {
+                $batch = $line->batch_no ?: 'PROD-RETURN-'.$return->id; $qty = (float) $line->return_base_qty;
+                $balance = InventoryBalance::where('item_id', $line->component_item_id)->where('warehouse_id', $line->warehouse_id)
+                    ->where('location_id', $line->location_id)->where('batch_no', $batch)->lockForUpdate()->firstOrFail();
+                if ((float) $balance->quantity_pending + 0.00000001 < $qty) throw ValidationException::withMessages(['stock' => '隔离库存数量不足，不能解除。']);
+                $balance->quantity_pending = (float) $balance->quantity_pending - $qty;
+                $balance->quantity_available = $this->availability->calculate((float) $balance->quantity_on_hand, (float) $balance->quantity_locked,
+                    (float) $balance->quantity_defective, (float) $balance->quantity_pending); $balance->save();
+                $location = InventoryLocationBalance::where('item_id', $line->component_item_id)->where('warehouse_id', $line->warehouse_id)
+                    ->where('location_id', $line->location_id)->lockForUpdate()->firstOrFail();
+                $location->quantity_pending = max(0, (float) $location->quantity_pending - $qty);
+                $location->quantity_available = $this->availability->calculate((float) $location->quantity_on_hand, (float) $location->quantity_locked,
+                    (float) $location->quantity_defective, (float) $location->quantity_pending); $location->save();
+                InventoryTransactionItem::create(['transaction_id' => $transaction->id, 'transaction_no' => $transaction->transaction_no,
+                    'item_id' => $line->component_item_id, 'item_code' => Item::find($line->component_item_id)?->item_code,
+                    'item_name' => Item::find($line->component_item_id)?->item_name, 'warehouse_id' => $line->warehouse_id,
+                    'location_id' => $line->location_id, 'batch_no' => $batch, 'unit_id' => Item::find($line->component_item_id)?->unit_id,
+                    'change_qty' => 0, 'unit_cost' => $balance->average_unit_cost, 'cost_amount' => 0,
+                    'balance_after_qty' => $balance->quantity_on_hand, 'source_type' => 'production_material_return', 'source_id' => $return->id,
+                    'source_item_id' => $line->id, 'remark' => '质量退料解除隔离，库存数量不重复增加']);
+            }
+            return $transaction->fresh(['items']);
+        }, 5);
+    }
+
+    public function postProductionInternalIssue(object $issue, iterable $lines, object $operator): InventoryTransaction
+    {
+        return DB::transaction(function () use ($issue, $lines, $operator): InventoryTransaction {
+            $existing = InventoryTransaction::where('transaction_type', 'production_internal_issue_outbound')
+                ->where('source_type', 'production_internal_issue')->where('source_id', $issue->id)->first();
+            if ($existing) return $existing;
+            $first = collect($lines)->first();
+            $transaction = InventoryTransaction::create(['transaction_no' => $this->nextNo('ITX'), 'transaction_type' => 'production_internal_issue_outbound',
+                'source_type' => 'production_internal_issue', 'source_id' => $issue->id, 'source_no' => $issue->issue_no,
+                'posting_status' => 'posted', 'warehouse_id' => $first->warehouse_id ?? null, 'location_id' => $first->location_id ?? null,
+                'transaction_date' => now()->toDateString(), 'posted_by' => (int) ($operator->legacy_id ?? $operator->id ?? 0),
+                'posted_at' => now(), 'remark' => '生产半成品内部领用正式出库']);
+            foreach ($lines as $line) {
+                $balance = InventoryBalance::query()->whereKey($line->inventory_balance_id)->lockForUpdate()->first();
+                if (! $balance || (float) $balance->quantity_available + 0.00000001 < (float) $line->issue_base_qty)
+                    throw ValidationException::withMessages(['stock' => '绑定的半成品库存不足，不能确认内部领用。']);
+                $this->applyInventoryChange($transaction, ['item_id' => $line->item_id, 'warehouse_id' => $line->warehouse_id,
+                    'location_id' => $line->location_id, 'batch_no' => $line->batch_no, 'unit_id' => $balance->unit_id,
+                    'change_qty' => -(float) $line->issue_base_qty, 'unit_cost' => $balance->average_unit_cost,
+                    'cost_amount' => -(float) $line->issue_base_qty * (float) $balance->average_unit_cost,
+                    'cost_source_type' => 'production_internal_issue_fact', 'source_type' => 'production_internal_issue',
+                    'source_id' => $issue->id, 'source_item_id' => $line->id, 'remark' => '生产内部领用 '.$issue->issue_no]);
+            }
+            return $transaction->fresh(['items']);
+        }, 5);
+    }
+
     private function applyInventoryChange(InventoryTransaction $transaction, array $line): InventoryTransactionItem
     {
         $item = Item::findOrFail($line['item_id']);

@@ -24,6 +24,7 @@ class SalesOrderLine extends MasterModel
         'fulfillment_factor_snapshot' => 'decimal:8',
         'undetermined_qty' => 'decimal:8',
         'item_base_required_qty' => 'decimal:8',
+        'production_replenished_qty' => 'decimal:8',
     ];
 
     public function order() { return $this->belongsTo(SalesOrder::class, 'sales_order_id'); }

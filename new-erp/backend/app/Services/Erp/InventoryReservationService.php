@@ -43,6 +43,7 @@ class InventoryReservationService
                     'source_type' => InventoryReservation::SOURCE_SALES_ORDER,
                     'source_order_id' => $order->id,
                     'source_order_line_id' => $fulfillment->sales_order_line_id,
+                    'sales_order_fulfillment_id' => $fulfillment->id,
                     'item_id' => $fulfillment->item_id,
                     'inventory_balance_id' => $fulfillment->inventory_balance_id,
                     'warehouse_id' => $fulfillment->warehouse_id,
@@ -72,6 +73,58 @@ class InventoryReservationService
                 $created[] = $reservation;
             }
             return $created;
+        });
+    }
+
+    public function reserveProductionReplenishment(
+        int $salesOrderId,
+        int $salesOrderLineId,
+        int $fulfillmentId,
+        int $inventoryBalanceId,
+        float $baseQty,
+        int $outputRecordId,
+        ?int $inventorySerialId = null,
+    ): InventoryReservation {
+        return DB::transaction(function () use ($salesOrderId, $salesOrderLineId, $fulfillmentId, $inventoryBalanceId, $baseQty, $outputRecordId, $inventorySerialId): InventoryReservation {
+            $key = "sales_order:{$salesOrderId}:production_output:{$outputRecordId}";
+            $existing = InventoryReservation::query()->where('idempotency_key', $key)->lockForUpdate()->first();
+            if ($existing) return $existing;
+            $balance = InventoryBalance::query()->whereKey($inventoryBalanceId)->lockForUpdate()->first();
+            if (! $balance || $baseQty <= 0 || $this->availability->availableForOutbound($balance) + 0.00000001 < $baseQty) {
+                throw new \RuntimeException('生产回补库存不足，不能锁回来源销售订单');
+            }
+            $reservation = InventoryReservation::create([
+                'source_type' => InventoryReservation::SOURCE_SALES_ORDER,
+                'source_order_id' => $salesOrderId,
+                'source_order_line_id' => $salesOrderLineId,
+                'sales_order_fulfillment_id' => $fulfillmentId,
+                'item_id' => $balance->item_id,
+                'inventory_balance_id' => $balance->id,
+                'warehouse_id' => $balance->warehouse_id,
+                'location_id' => $balance->location_id,
+                'batch_no' => $balance->batch_no,
+                'reserved_qty' => $baseQty,
+                'reservation_status' => 'active',
+                'reserved_at' => now(),
+                'idempotency_key' => $key,
+                'reservation_snapshot' => [
+                    'reservation_origin' => 'production_replenishment',
+                    'production_output_record_id' => $outputRecordId,
+                    'fulfillment_id' => $fulfillmentId,
+                    'inventory_serial_id' => $inventorySerialId,
+                    'balance_table' => 'erp_inventory_balances',
+                    'available_before_qty' => $this->availability->availableForOutbound($balance),
+                ],
+            ]);
+            $locked = (float) $balance->quantity_locked + $baseQty;
+            $balance->update([
+                'quantity_locked' => $locked,
+                'quantity_available' => $this->availableAfterLock($balance, $locked),
+                'last_transaction_at' => now(),
+            ]);
+            $this->refreshAlert($balance, 'sales_order_production_replenishment');
+            $this->changeLocationLock($balance, $baseQty);
+            return $reservation;
         });
     }
 
@@ -155,15 +208,38 @@ class InventoryReservationService
         });
     }
 
-    public function releaseShipmentReservation(array $reservationIds, string $reason): int
+    public function restoreShipmentReservationToOrder(array $reservationIds, string $reason): int
     {
         return DB::transaction(function () use ($reservationIds, $reason) {
             $reservations = InventoryReservation::whereIn('id', $reservationIds)
                 ->where('reservation_status', 'converted_to_shipment')
                 ->lockForUpdate()->get();
-            foreach ($reservations as $reservation) $this->releaseBalance($reservation);
-            return InventoryReservation::whereIn('id', $reservations->pluck('id'))
-                ->update(['reservation_status' => 'released', 'released_at' => now(), 'release_reason' => $reason]);
+            foreach ($reservations as $reservation) {
+                $snapshot = (array) $reservation->reservation_snapshot;
+                $parentId = (int) ($snapshot['shipment_parent_reservation_id'] ?? 0);
+                if ($parentId > 0 && $parentId !== (int) $reservation->id) {
+                    $parent = InventoryReservation::query()->whereKey($parentId)->lockForUpdate()->first();
+                    if ($parent && $parent->reservation_status === 'active') {
+                        $parent->reserved_qty = round((float) $parent->reserved_qty + (float) $reservation->reserved_qty, 8);
+                        $parent->save();
+                        $reservation->update([
+                            'reservation_status' => 'returned_to_order',
+                            'released_at' => now(),
+                            'release_reason' => $reason,
+                        ]);
+                        continue;
+                    }
+                }
+                unset($snapshot['shipment_no']);
+                $snapshot['restored_from_cancelled_shipment_at'] = now()->toDateTimeString();
+                $reservation->update([
+                    'reservation_status' => 'active',
+                    'released_at' => null,
+                    'release_reason' => null,
+                    'reservation_snapshot' => $snapshot,
+                ]);
+            }
+            return $reservations->count();
         });
     }
 

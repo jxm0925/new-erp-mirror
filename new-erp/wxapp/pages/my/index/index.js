@@ -1,6 +1,7 @@
 // pages/my/index/index.js
 var util = require('../../../utils/util.js');
 var api = require('../../../config/api.js');
+var erpAuth = require('../../../services/erp-auth.js');
 Page({
 
   /**
@@ -10,7 +11,11 @@ Page({
     userInfo:{
       is_login:0
     },
-    score:0
+    score:0,
+    erpUser:null,
+    erpUsername:'',
+    erpPassword:'',
+    erpBusy:false
   },
 
   /**
@@ -31,7 +36,8 @@ Page({
   onShow() {
     var userInfo = wx.getStorageSync('userInfo');
     this.setData({
-        userInfo:userInfo
+        userInfo:userInfo,
+        erpUser:wx.getStorageSync('erp_user') || null
     });
     console.log(userInfo)
     if(userInfo.is_login){
@@ -39,7 +45,7 @@ Page({
     }
     if(typeof this.getTabBar === "function" && this.getTabBar()){
       this.getTabBar().setData({
-        active:2
+        active:3
       })
     }
   },
@@ -107,5 +113,27 @@ Page({
     wx.navigateTo({
       url: '/pages/suggests/manage/index',
     })
+  },
+  erpInput(event){
+    this.setData({ [event.currentTarget.dataset.field]: event.detail.value });
+  },
+  erpLogin(){
+    if(this.data.erpBusy) return;
+    if(!this.data.erpUsername.trim() || !this.data.erpPassword){
+      Notify({ type: 'warning', message: '请输入 ERP 用户名和密码' });
+      return;
+    }
+    this.setData({erpBusy:true});
+    erpAuth.login(this.data.erpUsername.trim(), this.data.erpPassword).then((result)=>{
+      this.setData({erpUser:result.user || {},erpPassword:''});
+      Notify({ type: 'success', message: 'ERP 登录成功' });
+    }).catch((error)=>Notify({ type: 'danger', message:error.message })).finally(()=>this.setData({erpBusy:false}));
+  },
+  erpLogout(){
+    this.setData({erpBusy:true});
+    erpAuth.logout().then(()=>{
+      this.setData({erpUser:null,erpPassword:''});
+      Notify({ type: 'success', message: '已退出 ERP' });
+    }).finally(()=>this.setData({erpBusy:false}));
   }
 })

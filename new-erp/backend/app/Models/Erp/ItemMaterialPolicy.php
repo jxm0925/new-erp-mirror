@@ -12,6 +12,7 @@ class ItemMaterialPolicy extends MasterModel
         'is_returnable' => 'boolean',
         'requires_capitalization' => 'boolean',
         'parameter_snapshot' => 'array',
+        'serial_generation_routing_operation_id' => 'integer',
         'effective_at' => 'datetime',
         'expired_at' => 'datetime',
     ];

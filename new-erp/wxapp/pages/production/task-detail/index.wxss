@@ -1,0 +1,28 @@
+page { background: #f5f6f8; color: #1d2129; }
+.detail-page { padding: 20rpx; }
+.task-summary,.target-card { background: #fff; border-radius: 18rpx; padding: 24rpx; margin-bottom: 18rpx; }
+.summary-head,.target-head { display: flex; align-items: center; justify-content: space-between; color: #6f7580; font-size: 24rpx; }
+.summary-head .status { color: #d81e06; padding: 5rpx 12rpx; background: #fff0ef; border-radius: 5rpx; }
+.product { font-size: 34rpx; font-weight: 700; margin: 22rpx 0; }
+.summary-grid,.time-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 20rpx; border-top: 1rpx solid #eceef1; padding-top: 20rpx; }
+.summary-grid view,.time-grid view { display: flex; flex-direction: column; gap: 7rpx; }
+.summary-grid text,.time-grid text { color: #8a9099; font-size: 21rpx; }
+.summary-grid strong,.time-grid strong { font-size: 23rpx; font-weight: 500; }
+.target-head strong { color: #1d2129; font-size: 28rpx; }
+.target-head text { color: #d81e06; }
+.time-grid { margin-top: 22rpx; }
+.labor { margin-top: 20rpx; padding: 18rpx 0; border-top: 1rpx solid #eceef1; border-bottom: 1rpx solid #eceef1; font-size: 24rpx; }
+.labor strong { float: right; color: #d81e06; }
+.sub-title { margin: 20rpx 0 10rpx; font-weight: 600; }
+.material { display: grid; grid-template-columns: 1fr 130rpx 120rpx; min-height: 54rpx; align-items: center; font-size: 22rpx; border-bottom: 1rpx solid #f0f1f3; }
+.material > view { display: flex; flex-direction: column; padding: 8rpx 0; }
+.material .source { color: #8a9099; font-size: 19rpx; margin-top: 4rpx; }
+.material text:nth-child(2),.material text:nth-child(3) { text-align: right; }
+.shortage { color: #f26722; }.ready { color: #20a53a; }
+.quantity { display: flex; align-items: center; margin-top: 20rpx; font-size: 24rpx; }
+.quantity input { margin-left: auto; width: 200rpx; height: 62rpx; border: 1rpx solid #dcdfe5; border-radius: 8rpx; padding: 0 16rpx; box-sizing: border-box; text-align: right; }
+.actions { display: flex; gap: 14rpx; margin-top: 20rpx; }
+button.primary,button.outline { flex: 1; height: 72rpx; line-height: 72rpx; padding: 0; border-radius: 9rpx; font-size: 26rpx; }
+button.primary { color: #fff; background: #d81e06; } button.primary::after { border: 0; }
+button.outline { color: #d81e06; background: #fff; border: 1rpx solid #d81e06; } button.outline::after { border: 0; }
+.loading { min-height: 65vh; display: flex; align-items: center; justify-content: center; }

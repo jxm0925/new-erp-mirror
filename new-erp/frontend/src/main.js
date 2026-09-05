@@ -59,6 +59,7 @@ import ProductionOperationList from './views/erp/production/ProductionOperationL
 import ProductionOperationForm from './views/erp/production/ProductionOperationForm.vue'
 import ProductionRoutingList from './views/erp/production/ProductionRoutingList.vue'
 import ProductionRoutingForm from './views/erp/production/ProductionRoutingForm.vue'
+import ProductionExecutionMonitor from './views/erp/production/ProductionExecutionMonitor.vue'
 import ApprovalWorkbench from './views/erp/approval/ApprovalWorkbench.vue'
 import ApprovalTaskDetail from './views/erp/approval/ApprovalTaskDetail.vue'
 import ApprovalFlowList from './views/erp/approval/ApprovalFlowList.vue'
@@ -186,13 +187,14 @@ const router = new VueRouter({
     { path: '/production/work-orders/create', component: WorkOrderForm, meta: { permission: 'production.work_order.create' } },
     { path: '/production/work-orders/:id', component: WorkOrderDetail, meta: { permission: 'production.work_order.view' } },
     { path: '/production/operations', component: ProductionOperationList, meta: { permission: 'production.operation.view' } },
-    { path: '/production/operations/new', component: ProductionOperationForm, meta: { permission: 'production.operation.create' } },
-    { path: '/production/operations/:id/edit', component: ProductionOperationForm, meta: { permission: 'production.operation.edit' } },
+    { path: '/production/operations/new', redirect: { path: '/production/operations', query: { create: '1' } }, meta: { permission: 'production.operation.create' } },
+    { path: '/production/operations/:id/edit', redirect: to => ({ path: '/production/operations', query: { edit: to.params.id } }), meta: { permission: 'production.operation.edit' } },
     { path: '/production/operations/:id', component: ProductionOperationForm, meta: { permission: 'production.operation.view' } },
     { path: '/production/routings', component: ProductionRoutingList, meta: { permission: 'production.routing.view' } },
     { path: '/production/routings/new', component: ProductionRoutingForm, meta: { permission: 'production.routing.create' } },
     { path: '/production/routings/:id/edit', component: ProductionRoutingForm, meta: { permission: 'production.routing.edit' } },
     { path: '/production/routings/:id', component: ProductionRoutingForm, meta: { permission: 'production.routing.view' } },
+    { path: '/production/execution-monitor', component: ProductionExecutionMonitor, meta: { permission: 'production.unit.view' } },
     { path: '/approvals', redirect: '/approvals/tasks' },
     { path: '/approvals/tasks', component: ApprovalWorkbench, meta: { permission: 'approval.task.view' } },
     { path: '/approvals/processed', redirect: { path: '/approvals/tasks', query: { scope: 'processed' } } },

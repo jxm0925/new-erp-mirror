@@ -123,6 +123,7 @@ export default {
         { name: '工序管理', path: '/production/operations', icon: 'el-icon-set-up', permission: 'production.operation' },
         { name: '工艺路线', path: '/production/routings', icon: 'el-icon-guide', permission: 'production.routing' }
       ] },
+      { name: '生产执行监管', path: '/production/execution-monitor', icon: 'el-icon-monitor', permission: 'production.unit.view' },
       { name: '生产需求', path: '/production/demands', icon: 'el-icon-document', permission: 'production.demand' },
       { name: '工单管理', path: '/production/work-orders', icon: 'el-icon-s-order', permission: 'production.work_order' }
     ],
