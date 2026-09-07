@@ -53,8 +53,11 @@ class SalesReturnFlowTest extends TestCase
         ], 1, '测试管理员');
         $this->assertSame('partial_received', $first->salesReturn->return_status);
         $service->postReceipt($first->id, 1, '测试管理员');
-        $this->assertSame(1.0, (float) InventoryBalance::firstOrFail()->quantity_on_hand);
-        $this->assertSame(12.0, (float) InventoryBalance::firstOrFail()->average_unit_cost);
+        $returnBalance = InventoryBalance::query()->where('item_id', $line->item_id)
+            ->where('warehouse_id', $warehouse->id)->where('location_id', $location->id)
+            ->where('batch_no', 'SR-BATCH-001')->firstOrFail();
+        $this->assertSame(1.0, (float) $returnBalance->quantity_on_hand);
+        $this->assertSame(12.0, (float) $returnBalance->average_unit_cost);
 
         $second = $service->receive([
             'sales_return_id' => $salesReturn->id,
@@ -73,8 +76,9 @@ class SalesReturnFlowTest extends TestCase
         $service->postReceipt($second->id, 1, '测试管理员');
 
         $this->assertSame('completed', $salesReturn->fresh()->return_status);
-        $this->assertSame(3.0, (float) InventoryBalance::firstOrFail()->quantity_on_hand);
-        $this->assertSame(36.0, (float) InventoryBalance::firstOrFail()->inventory_value);
+        $returnBalance->refresh();
+        $this->assertSame(3.0, (float) $returnBalance->quantity_on_hand);
+        $this->assertSame(36.0, (float) $returnBalance->inventory_value);
         $this->assertDatabaseHas('erp_inventory_transactions', [
             'source_type' => 'sales_return_receipt',
             'source_id' => $first->id,

@@ -9,6 +9,12 @@ use Illuminate\Support\Facades\DB;
 
 class LegacySsoService
 {
+    private const ACTIVE_STATUSES = ['normal', 'active'];
+
+    public function __construct(private readonly RbacUserRoleOwnershipService $roleOwnership)
+    {
+    }
+
     /** Consume a signed legacy ERP ticket and project its identity locally. */
     public function consume(string $ticket, ?string $requestIp = null): int
     {
@@ -38,6 +44,8 @@ class LegacySsoService
             $groups = $hasGroups ? $identity['auth_groups'] : [];
             $now = now();
             $existingUser = DB::table('erp_legacy_admin_users')->where('legacy_id', $legacyId)->first();
+            $wasPrincipal = DB::table('erp_department_users')->where('user_legacy_id', $legacyId)->where('is_principal', true)->exists();
+            $previousRoleCandidate = $this->previousProjectedRole($existingUser, $wasPrincipal);
             $existingPayload = json_decode(($existingUser->legacy_payload ?? null) ?: '{}', true) ?: [];
             $projectedPayload = array_merge($existingPayload, [
                 'source_system' => 'fastadmin',
@@ -76,6 +84,8 @@ class LegacySsoService
             if ($hasDepartments) {
                 $this->syncDepartments($legacyId, $departments, $now);
             }
+
+            $this->roleOwnership->syncSsoRole($legacyId, $this->roleFromPayload($identity), $previousRoleCandidate);
 
             return $legacyId;
         });
@@ -121,8 +131,9 @@ class LegacySsoService
         if ($issuedAt > $now + 30 || $expiresAt <= $now || $expiresAt <= $issuedAt || $expiresAt - $issuedAt > $ttl + 30) {
             throw new ErpSsoException('单点登录票据已过期，请重新登录。');
         }
-        if (in_array((string) ($identity['status'] ?? ''), ['hidden', 'disabled'], true)) {
-            throw new ErpSsoException('该账号已停用，不能登录。', 403);
+        $status = strtolower(trim((string) ($payload['status'] ?? '')));
+        if (! in_array($status, self::ACTIVE_STATUSES, true)) {
+            throw new ErpSsoException('该账号状态不允许登录。', 403);
         }
 
         return $payload;
@@ -185,5 +196,39 @@ class LegacySsoService
     {
         $value = trim((string) $value);
         return $value === '' ? null : $value;
+    }
+
+    private function roleFromPayload(array $identity): string
+    {
+        $groups = is_array($identity['auth_groups'] ?? null) ? $identity['auth_groups'] : [];
+        $groupNames = array_values(array_filter(array_map(fn ($row) => trim((string) ($row['name'] ?? '')), $groups)));
+        $groupText = implode(' ', $groupNames);
+        $departments = is_array($identity['departments'] ?? null) ? $identity['departments'] : [];
+        $isPrincipal = collect($departments)->contains(fn ($row) => (bool) ($row['is_principal'] ?? false));
+
+        return match (true) {
+            ($identity['username'] ?? '') === 'admin',
+            in_array('Admin group', $groupNames, true),
+            (bool) ($identity['is_super_admin'] ?? false) => 'admin',
+            str_contains($groupText, '销售负责人') || str_contains(strtolower($groupText), 'sales manager') => 'sales_manager',
+            $isPrincipal => 'department_principal',
+            (bool) ($identity['is_sales'] ?? false) => 'sales_user',
+            default => 'production_operator',
+        };
+    }
+
+    private function previousProjectedRole(?object $user, bool $wasPrincipal): ?string
+    {
+        if (! $user) return null;
+        $legacyPayload = json_decode(($user->legacy_payload ?? null) ?: '{}', true) ?: [];
+        if (($legacyPayload['source_system'] ?? null) !== 'fastadmin') return null;
+
+        return $this->roleFromPayload([
+            'username' => $user->username,
+            'auth_groups' => array_map(fn ($name) => ['name' => $name], json_decode($user->auth_group_names ?: '[]', true) ?: []),
+            'departments' => $wasPrincipal ? [['is_principal' => true]] : [],
+            'is_sales' => (bool) $user->is_sales,
+            'is_super_admin' => (bool) ($legacyPayload['is_super_admin'] ?? false),
+        ]);
     }
 }

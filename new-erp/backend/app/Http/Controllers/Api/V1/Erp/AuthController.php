@@ -35,16 +35,15 @@ class AuthController extends Controller
             'ticket' => 'required|string|max:16384',
         ]);
 
+        $rbac->bootstrap();
         try {
-            $legacyId = $sso->consume($data['ticket'], $request->ip());
+            return DB::transaction(function () use ($sso, $data, $request, $authContext) {
+                $legacyId = $sso->consume($data['ticket'], $request->ip());
+                return $this->issueSession($legacyId, $authContext);
+            }, 5);
         } catch (ErpSsoException $exception) {
             abort($exception->httpStatus(), $exception->getMessage());
         }
-
-        $rbac->bootstrap();
-        $this->ensureUserRole($legacyId);
-
-        return $this->issueSession($legacyId, $authContext);
     }
 
     public function me(Request $request, AuthContextService $auth, RbacBootstrapService $rbac)
@@ -102,6 +101,7 @@ class AuthController extends Controller
     {
         $user = DB::table('erp_legacy_admin_users')->where('legacy_id', $legacyId)->first();
         abort_if(!$user, 409, '新 ERP 未找到当前登录身份。');
+        abort_unless($authContext->isActiveUser($user), 403, '该账号已停用，不能登录。');
 
         $plainToken = Str::random(64);
         DB::table('erp_auth_tokens')->insert([

@@ -5,6 +5,7 @@ namespace Tests\Feature\Erp;
 use App\Models\Erp\ItemCategory;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\DocumentNumberService;
+use Database\Seeders\ErpRbacSeeder;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -99,8 +100,7 @@ class ItemCategoryPermissionClosureTest extends TestCase
             'permission_id' => $legacyId,
         ]);
 
-        $migration = require database_path('migrations/2026_08_03_100000_unify_item_category_manage_permission.php');
-        $migration->up();
+        (new ErpRbacSeeder())->run();
 
         $manageId = DB::table('erp_rbac_permissions')->where('code', 'item_category.manage')->value('id');
         $this->assertNotNull($manageId);

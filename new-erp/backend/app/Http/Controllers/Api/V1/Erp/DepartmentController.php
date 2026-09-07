@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Erp;
 use App\Http\Controllers\Controller;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\RbacBootstrapService;
+use App\Services\Erp\RbacUserRoleOwnershipService;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
@@ -102,7 +103,7 @@ class DepartmentController extends Controller
         ]);
     }
 
-    public function savePrincipals(Request $request, int $legacyId, RbacBootstrapService $rbac)
+    public function savePrincipals(Request $request, int $legacyId, RbacBootstrapService $rbac, RbacUserRoleOwnershipService $ownership)
     {
         $this->authorizePermission($request, 'system.department.set_principal');
         $data = $request->validate([
@@ -112,7 +113,9 @@ class DepartmentController extends Controller
         $rbac->bootstrap();
         $principalIds = array_map('intval', $data['principal_ids'] ?? []);
 
-        DB::transaction(function () use ($legacyId, $principalIds): void {
+        DB::transaction(function () use ($legacyId, $principalIds, $ownership): void {
+            $previousIds = DB::table('erp_department_users')->where('department_legacy_id', $legacyId)->where('is_principal', true)
+                ->lockForUpdate()->pluck('user_legacy_id')->map(fn ($id) => (int) $id)->all();
             DB::table('erp_department_users')->where('department_legacy_id', $legacyId)->update(['is_principal' => false, 'updated_at' => now()]);
             $roleId = DB::table('erp_rbac_roles')->where('code', 'department_principal')->value('id');
             foreach (array_unique($principalIds) as $userId) {
@@ -120,7 +123,10 @@ class DepartmentController extends Controller
                     ['department_legacy_id' => $legacyId, 'user_legacy_id' => $userId],
                     ['is_principal' => true, 'updated_at' => now(), 'created_at' => now()]
                 );
-                if ($roleId) DB::table('erp_rbac_user_roles')->updateOrInsert(['user_legacy_id' => $userId, 'role_id' => $roleId]);
+            }
+            if ($roleId) foreach (array_unique(array_merge($previousIds, $principalIds)) as $userId) {
+                $stillPrincipal = DB::table('erp_department_users')->where('user_legacy_id', $userId)->where('is_principal', true)->exists();
+                $stillPrincipal ? $ownership->addDepartmentRole($userId, (int) $roleId) : $ownership->removeDepartmentRole($userId, (int) $roleId);
             }
         });
 

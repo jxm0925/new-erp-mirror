@@ -67,6 +67,15 @@ class ErpAdministratorSeeder extends Seeder
                 'role_id' => $adminRoleId,
             ]);
         }
+        if (Schema::hasTable('erp_rbac_user_role_sources')) {
+            DB::table('erp_rbac_user_role_sources')->insertOrIgnore([
+                'user_legacy_id' => $legacyId,
+                'role_id' => $adminRoleId,
+                'assignment_source' => 'manual',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
 
         if (Schema::hasTable('erp_rbac_role_permissions')) {
             foreach (DB::table('erp_rbac_permissions')->pluck('id') as $permissionId) {
@@ -78,4 +87,3 @@ class ErpAdministratorSeeder extends Seeder
         }
     }
 }
-

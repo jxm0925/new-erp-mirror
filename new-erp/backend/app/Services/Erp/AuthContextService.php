@@ -19,6 +19,14 @@ class AuthContextService
                 })
                 ->first();
             if ($row) {
+                $active = DB::table('erp_legacy_admin_users')
+                    ->where('legacy_id', $row->user_legacy_id)
+                    ->whereIn(DB::raw('LOWER(status)'), ['normal', 'active'])
+                    ->exists();
+                if (! $active) {
+                    DB::table('erp_auth_tokens')->where('id', $row->id)->delete();
+                    return null;
+                }
                 DB::table('erp_auth_tokens')->where('id', $row->id)->update(['last_used_at' => now()]);
                 return (int) $row->user_legacy_id;
             }
@@ -56,7 +64,14 @@ class AuthContextService
     public function currentUser(Request $request): ?object
     {
         $legacyId = $this->currentLegacyId($request);
-        return $legacyId ? DB::table('erp_legacy_admin_users')->where('legacy_id', $legacyId)->first() : null;
+        if (! $legacyId) return null;
+        $user = DB::table('erp_legacy_admin_users')->where('legacy_id', $legacyId)->first();
+        return $user && $this->isActiveUser($user) ? $user : null;
+    }
+
+    public function isActiveUser(object $user): bool
+    {
+        return in_array(strtolower(trim((string) ($user->status ?? ''))), ['normal', 'active'], true);
     }
 
     public function isSuperAdmin(object $user): bool

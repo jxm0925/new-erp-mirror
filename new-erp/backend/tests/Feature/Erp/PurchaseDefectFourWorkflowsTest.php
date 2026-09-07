@@ -38,7 +38,9 @@ class PurchaseDefectFourWorkflowsTest extends TestCase
 
     public function test_exchange_repair_concession_and_scrap_close_quantity_amount_and_inventory(): void
     {
-        [$receipt, $line] = $this->receiptFixture('confirmed');
+        [$receipt, $line, $warehouse, $location] = $this->receiptFixture('confirmed');
+        $inventoryQtyBefore = (float) InventoryBalance::sum('quantity_on_hand');
+        $inventoryValueBefore = (float) InventoryBalance::sum('inventory_value');
         $service = app(PurchaseDefectApplicationService::class);
 
         $exchange = $service->create($this->payload($line, 'exchange'), 1, '测试管理员');
@@ -145,8 +147,8 @@ class PurchaseDefectFourWorkflowsTest extends TestCase
         ]);
 
         app(InventoryService::class)->postPurchaseReceipt($receipt->id);
-        $this->assertSame(4.0, (float) InventoryBalance::sum('quantity_on_hand'));
-        $this->assertSame(400.0, (float) InventoryBalance::sum('inventory_value'));
+        $this->assertSame(4.0, (float) InventoryBalance::sum('quantity_on_hand') - $inventoryQtyBefore);
+        $this->assertSame(400.0, (float) InventoryBalance::sum('inventory_value') - $inventoryValueBefore);
 
         $this->assertDatabaseHas('erp_purchase_exchange_logs', [
             'exchange_order_id' => $exchangeOrder->id,

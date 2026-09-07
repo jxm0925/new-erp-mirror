@@ -83,12 +83,13 @@ class ProductionHandoverService
             $this->fail('handover_material_requirement_invalid', '工序交接绑定的目标物料需求无效，禁止接收。', 409);
         }
         $outputQty = (float) (DB::table('erp_production_output_records')->where('id', $handover->output_record_id)->value('output_base_qty') ?? 0);
-        $shortage = max(0, (float) $requirement->required_base_qty - (float) $requirement->satisfied_base_qty);
+        $netSatisfied = max(0, (float) $requirement->satisfied_base_qty - (float) $requirement->returned_base_qty);
+        $shortage = max(0, (float) $requirement->required_base_qty - $netSatisfied);
         $accepted = min($outputQty, $shortage);
         if ($accepted <= 0) return 0;
         DB::table('erp_production_target_material_requirements')->where('id', $requirement->id)->update([
             'satisfied_base_qty' => (float) $requirement->satisfied_base_qty + $accepted,
-            'status' => $accepted + (float) $requirement->satisfied_base_qty + 0.00000001 >= (float) $requirement->required_base_qty ? 'SATISFIED' : 'PARTIAL',
+            'status' => $accepted + $netSatisfied + 0.00000001 >= (float) $requirement->required_base_qty ? 'SATISFIED' : 'PARTIAL',
             'business_version' => (int) $requirement->business_version + 1, 'updated_at' => now(),
         ]);
         return $accepted;

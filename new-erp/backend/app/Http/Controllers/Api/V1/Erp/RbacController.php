@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Erp;
 use App\Http\Controllers\Controller;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\RbacBootstrapService;
+use App\Services\Erp\RbacUserRoleOwnershipService;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
@@ -159,7 +160,7 @@ class RbacController extends Controller
         return $this->paginated($query->paginate($this->perPage($request)));
     }
 
-    public function saveRoleUsers(Request $request)
+    public function saveRoleUsers(Request $request, RbacUserRoleOwnershipService $ownership)
     {
         $this->authorizePermission($request, 'system.role.save_permissions');
         $data = $request->validate([
@@ -167,11 +168,12 @@ class RbacController extends Controller
             'user_ids' => 'nullable|array',
             'user_ids.*' => 'integer',
         ]);
-        DB::transaction(function () use ($data): void {
-            DB::table('erp_rbac_user_roles')->where('role_id', $data['role_id'])->delete();
-            foreach (array_unique(array_map('intval', $data['user_ids'] ?? [])) as $userId) {
-                DB::table('erp_rbac_user_roles')->insert(['role_id' => $data['role_id'], 'user_legacy_id' => $userId]);
-            }
+        DB::transaction(function () use ($data, $ownership): void {
+            $roleId = (int) $data['role_id'];
+            $selected = array_values(array_unique(array_map('intval', $data['user_ids'] ?? [])));
+            $existing = DB::table('erp_rbac_user_roles')->where('role_id', $roleId)->lockForUpdate()->pluck('user_legacy_id')->map(fn ($id) => (int) $id)->all();
+            foreach (array_diff($existing, $selected) as $userId) $ownership->removeManualRole($userId, $roleId);
+            foreach ($selected as $userId) $ownership->addManualRole($userId, $roleId);
         });
         return response()->json(['message' => '角色用户已保存']);
     }

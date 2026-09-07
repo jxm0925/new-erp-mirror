@@ -424,10 +424,15 @@ final class ProductionMaterialExecutionService
                             ->where('material_requirement_id', $line->material_requirement_id)
                             ->lockForUpdate()->first();
                         if ($targetRequirement) {
-                            $satisfied = min((float) $targetRequirement->required_base_qty, (float) $targetRequirement->satisfied_base_qty + $accepted);
+                            // Keep accepted and returned as separate monotonic facts. Net onsite
+                            // availability is derived as accepted minus warehouse-received returns;
+                            // capping accepted at required would make later replenishment unable to
+                            // restore kitting after a return.
+                            $satisfied = (float) $targetRequirement->satisfied_base_qty + $accepted;
+                            $netSatisfied = max(0, $satisfied - (float) $targetRequirement->returned_base_qty);
                             DB::table('erp_production_target_material_requirements')->where('id', $targetRequirement->id)->update([
                                 'satisfied_base_qty' => $satisfied,
-                                'status' => $satisfied + 0.00000001 >= (float) $targetRequirement->required_base_qty ? 'SATISFIED' : 'PARTIALLY_SATISFIED',
+                                'status' => $netSatisfied + 0.00000001 >= (float) $targetRequirement->required_base_qty ? 'SATISFIED' : 'PARTIALLY_SATISFIED',
                                 'business_version' => (int) $targetRequirement->business_version + 1,
                                 'updated_at' => now(),
                             ]);

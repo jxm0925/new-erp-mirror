@@ -29,7 +29,7 @@ class ProductionMaterialExecutionTest extends TestCase
         'production.material_picking.view', 'production.material_picking.create', 'production.material_picking.assign', 'production.material_picking.pick', 'production.material_picking.cancel',
         'production.material_delivery.view', 'production.material_delivery.create', 'production.material_delivery.dispatch', 'production.material_delivery.confirm',
         'production.material_receipt.view', 'production.material_receipt.confirm',
-        'production.kitting.view',
+        'production.kitting.view', 'production.kitting.confirm',
         'production.material_supplement.request', 'production.material_supplement.approve',
         'production.material_return.create', 'production.material_return.receive', 'production.material_return.quality',
     ];
@@ -170,12 +170,19 @@ class ProductionMaterialExecutionTest extends TestCase
         $normalReceived = $service->receive($normal['id'], ['client_command_id' => $this->id('normal-receive'), 'expected_version' => 1], $user, self::PERMISSIONS);
         $this->assertSame('COMPLETED', $normalReceived['status']);
         $this->assertSame(17.0, (float) $balance->fresh()->quantity_available);
+        $afterNormal = app(ProductionKittingService::class)->requirements($task->id, 'quantity_operation', $workOrder->test_target_id, $user, self::PERMISSIONS);
+        $this->assertSame(5.0, $afterNormal[0]['gross_received_base_qty']);
+        $this->assertSame(2.0, $afterNormal[0]['returned_base_qty']);
+        $this->assertSame(3.0, $afterNormal[0]['satisfied_base_qty']);
 
         $quality = $service->create(['client_command_id' => $this->id('quality-return'), 'expected_version' => 1,
             'task_id' => $task->id, 'target_type' => 'quantity_operation', 'target_id' => $workOrder->test_target_id,
             'return_type' => 'quality_return', 'reason' => '物料外观异常', 'lines' => [array_merge($line, ['return_base_qty' => 1])]], $user, self::PERMISSIONS);
         $qualityReceived = $service->receive($quality['id'], ['client_command_id' => $this->id('quality-receive'), 'expected_version' => 1], $user, self::PERMISSIONS);
         $this->assertSame('WAIT_QUALITY', $qualityReceived['status']);
+        $afterQualityWarehouseReceipt = app(ProductionKittingService::class)->requirements($task->id, 'quantity_operation', $workOrder->test_target_id, $user, self::PERMISSIONS);
+        $this->assertSame(3.0, $afterQualityWarehouseReceipt[0]['returned_base_qty']);
+        $this->assertSame(2.0, $afterQualityWarehouseReceipt[0]['satisfied_base_qty']);
         $quarantined = $balance->fresh();
         $this->assertSame(1.0, (float) $quarantined->quantity_pending);
         $this->assertSame(17.0, (float) $quarantined->quantity_available);
@@ -184,6 +191,60 @@ class ProductionMaterialExecutionTest extends TestCase
         $this->assertSame('COMPLETED', $released['status']);
         $this->assertSame(0.0, (float) $balance->fresh()->quantity_pending);
         $this->assertSame(18.0, (float) $balance->fresh()->quantity_available);
+    }
+
+    public function test_return_reduces_kitting_net_and_replenishment_restores_readiness_without_replay_double_count(): void
+    {
+        [$user, $workOrder, $requirement, $balance] = $this->fixture();
+        $task = DB::table('erp_production_tasks')->where('work_order_id', $workOrder->id)->first();
+        $targetRequirement = DB::table('erp_production_target_material_requirements')
+            ->where('target_type', 'quantity_operation')->where('target_id', $workOrder->test_target_id)->first();
+        DB::table('erp_production_target_material_requirements')->where('id', $targetRequirement->id)->update(['required_base_qty' => 5]);
+
+        $this->deliverQuantity($user, $workOrder, $requirement, $balance, 5, 'net-initial');
+        $kitting = app(ProductionKittingService::class);
+        $received = $kitting->requirements($task->id, 'quantity_operation', $workOrder->test_target_id, $user, self::PERMISSIONS);
+        $this->assertSame(5.0, $received[0]['satisfied_base_qty']);
+        $this->assertSame(5.0, $received[0]['return_sources'][0]['returnable_base_qty']);
+
+        $returns = app(ProductionMaterialReturnService::class);
+        $created = $returns->create([
+            'client_command_id' => $this->id('net-return-create'), 'expected_version' => 1,
+            'task_id' => $task->id, 'target_type' => 'quantity_operation', 'target_id' => $workOrder->test_target_id,
+            'return_type' => 'normal_return', 'reason' => '退回未使用物料',
+            'lines' => [[
+                'material_requirement_id' => $requirement->id, 'warehouse_id' => $balance->warehouse_id,
+                'location_id' => $balance->location_id, 'batch_no' => $balance->batch_no, 'return_base_qty' => 2,
+            ]],
+        ], $user, self::PERMISSIONS);
+        $receivePayload = ['client_command_id' => $this->id('net-return-receive'), 'expected_version' => 1];
+        $firstReceipt = $returns->receive($created['id'], $receivePayload, $user, self::PERMISSIONS);
+        $replayReceipt = $returns->receive($created['id'], $receivePayload, $user, self::PERMISSIONS);
+        $this->assertEquals($firstReceipt, $replayReceipt);
+
+        $short = $kitting->requirements($task->id, 'quantity_operation', $workOrder->test_target_id, $user, self::PERMISSIONS);
+        $this->assertSame(5.0, $short[0]['gross_received_base_qty']);
+        $this->assertSame(2.0, $short[0]['returned_base_qty']);
+        $this->assertSame(3.0, $short[0]['satisfied_base_qty']);
+        $this->assertSame(2.0, $short[0]['shortage_base_qty']);
+        $this->assertSame(2.0, (float) DB::table('erp_production_target_material_requirements')->where('id', $targetRequirement->id)->value('returned_base_qty'));
+        $this->expectDomain('materials_not_ready', fn () => $kitting->confirm(
+            $task->id, 'quantity_operation', $workOrder->test_target_id,
+            ['client_command_id' => $this->id('net-confirm-short'), 'expected_version' => 1],
+            $user, self::PERMISSIONS
+        ));
+
+        $this->deliverQuantity($user, $workOrder, $requirement, $balance, 2, 'net-replenishment');
+        $ready = $kitting->requirements($task->id, 'quantity_operation', $workOrder->test_target_id, $user, self::PERMISSIONS);
+        $this->assertSame(7.0, $ready[0]['gross_received_base_qty']);
+        $this->assertSame(5.0, $ready[0]['satisfied_base_qty']);
+        $this->assertEquals(0.0, $ready[0]['shortage_base_qty']);
+        $confirmation = $kitting->confirm(
+            $task->id, 'quantity_operation', $workOrder->test_target_id,
+            ['client_command_id' => $this->id('net-confirm-ready'), 'expected_version' => 1],
+            $user, self::PERMISSIONS
+        );
+        $this->assertSame('CONFIRMED', $confirmation['status']);
     }
 
     private function fixture(): array
@@ -241,6 +302,43 @@ class ProductionMaterialExecutionTest extends TestCase
         return ['material_requirement_id' => $requirement->id, 'material_supply_rule_snapshot_id' => $workOrder->test_supply_id,
             'production_target_type' => 'quantity_operation', 'production_target_id' => $workOrder->test_target_id,
             'inventory_balance_id' => $balance->id, 'planned_pick_qty' => $qty];
+    }
+
+    private function deliverQuantity(object $user, WorkOrder $workOrder, WorkOrderMaterialRequirement $requirement, InventoryBalance $balance, float $qty, string $prefix): void
+    {
+        $service = app(ProductionMaterialExecutionService::class);
+        $pick = $service->createPickingTask([
+            'client_command_id' => $this->id($prefix.'-pick'), 'work_order_id' => $workOrder->id,
+            'expected_version' => 1, 'warehouse_id' => $balance->warehouse_id,
+            'lines' => [$this->pickLine($workOrder, $requirement, $balance, $qty)],
+        ], $user, self::PERMISSIONS, true);
+        $assigned = $service->assignPickingTask($pick->id, [
+            'client_command_id' => $this->id($prefix.'-assign'), 'expected_version' => 1,
+            'assigned_picker_legacy_id' => $user->legacy_id,
+        ], $user, self::PERMISSIONS, true);
+        $picking = $service->startPickingTask($pick->id, [
+            'client_command_id' => $this->id($prefix.'-start'), 'expected_version' => $assigned->business_version,
+        ], $user, self::PERMISSIONS, true);
+        $picked = $service->confirmPickingTask($pick->id, [
+            'client_command_id' => $this->id($prefix.'-confirm'), 'expected_version' => $picking->business_version,
+            'lines' => [['picking_task_line_id' => $pick->lines->first()->id, 'actual_pick_qty' => $qty]],
+        ], $user, self::PERMISSIONS, true);
+        $delivery = $service->createDelivery([
+            'client_command_id' => $this->id($prefix.'-delivery'), 'picking_task_id' => $pick->id,
+            'expected_version' => $picked->business_version,
+            'lines' => [['picking_task_line_id' => $pick->lines->first()->id, 'delivery_qty' => $qty]],
+        ], $user, self::PERMISSIONS, true);
+        $inTransit = $service->dispatchDelivery($delivery->id, [
+            'client_command_id' => $this->id($prefix.'-dispatch'), 'expected_version' => 1,
+            'delivery_user_legacy_id' => $user->legacy_id,
+        ], $user, self::PERMISSIONS, true);
+        $delivered = $service->deliverDelivery($delivery->id, [
+            'client_command_id' => $this->id($prefix.'-deliver'), 'expected_version' => $inTransit->business_version,
+        ], $user, self::PERMISSIONS, true);
+        $service->receiveDelivery($delivery->id, [
+            'client_command_id' => $this->id($prefix.'-receive'), 'expected_version' => $delivered->business_version,
+            'lines' => [['delivery_line_id' => $delivered->lines->first()->id, 'accepted_qty' => $qty, 'rejected_qty' => 0]],
+        ], $user, self::PERMISSIONS, true);
     }
 
     private function id(string $prefix): string { return $prefix.'-'.uniqid(); }

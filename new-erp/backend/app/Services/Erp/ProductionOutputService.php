@@ -171,7 +171,7 @@ class ProductionOutputService
     {
         $ids = DB::table('erp_production_target_material_requirements')
             ->where('target_type', $targetType)->where('target_id', $targetId)->where('component_item_id', $itemId)
-            ->whereColumn('satisfied_base_qty', '<', 'required_base_qty')->pluck('id');
+            ->whereRaw('GREATEST(0, satisfied_base_qty - returned_base_qty) < required_base_qty')->pluck('id');
         if ($ids->count() > 1) $this->fail('target_material_requirement_ambiguous', '下一工序存在多条相同物料需求，无法确定半成品领用对应项。', 409);
         return $ids->isEmpty() ? null : (int) $ids->first();
     }

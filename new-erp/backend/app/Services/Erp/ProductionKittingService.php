@@ -119,7 +119,7 @@ class ProductionKittingService
             ->leftJoin('erp_production_workstation_stock_confirmations as workstation', 'workstation.target_material_requirement_id', '=', 'requirement.id')
             ->select([
                 'requirement.id', 'requirement.material_requirement_id', 'requirement.material_supply_rule_snapshot_id', 'requirement.component_item_id',
-                'requirement.required_base_qty', 'requirement.satisfied_base_qty',
+                'requirement.required_base_qty', 'requirement.satisfied_base_qty', 'requirement.returned_base_qty',
                 'work_requirement.received_qty as work_order_received_qty',
                 'supply.supply_mode_snapshot', 'item.item_code', 'item.item_name',
                 'workstation.workstation_snapshot', 'workstation.onsite_available_base_qty_snapshot',
@@ -152,7 +152,9 @@ class ProductionKittingService
 
         return $rows->map(function ($row) use ($returnSources, $activeReturns): array {
                 $required = (float) $row->required_base_qty;
-                $received = (float) $row->satisfied_base_qty;
+                $grossReceived = (float) $row->satisfied_base_qty;
+                $returned = (float) $row->returned_base_qty;
+                $received = max(0, $grossReceived - $returned);
                 $mode = $row->supply_mode_snapshot === 'line_side_stock' ? 'workstation_stock' : $row->supply_mode_snapshot;
                 $sourceFacts = ['supply_mode' => $mode];
                 if ($mode === 'workstation_stock' && $row->workstation_snapshot !== null) {
@@ -185,7 +187,8 @@ class ProductionKittingService
                     'material_supply_rule_snapshot_id' => (int) $row->material_supply_rule_snapshot_id,
                     'component_item_id' => (int) $row->component_item_id, 'component_item_code' => $row->item_code,
                     'component_item_name' => $row->item_name, 'required_base_qty' => $required,
-                    'satisfied_base_qty' => $received, 'shortage_base_qty' => max(0, $required - $received),
+                    'satisfied_base_qty' => $received, 'gross_received_base_qty' => $grossReceived,
+                    'returned_base_qty' => $returned, 'shortage_base_qty' => max(0, $required - $received),
                     'work_order_received_base_qty' => (float) $row->work_order_received_qty,
                     'return_sources' => $sources,
                     'required' => ['component_item_id' => (int) $row->component_item_id, 'base_qty' => $required],
@@ -237,7 +240,7 @@ class ProductionKittingService
                 'business_version' => 1, 'created_at' => $now, 'updated_at' => $now,
             ]);
             DB::table('erp_production_target_material_requirements')->where('id', $requirement->id)->update([
-                'satisfied_base_qty' => $required, 'status' => 'SATISFIED',
+                'satisfied_base_qty' => (float) $requirement->returned_base_qty + $required, 'status' => 'SATISFIED',
                 'business_version' => (int) $requirement->business_version + 1, 'updated_at' => $now,
             ]);
         }

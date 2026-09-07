@@ -14,7 +14,12 @@ class ErpAdministratorSeederTest extends TestCase
 
     public function test_seeded_administrator_can_log_in_without_the_legacy_database(): void
     {
+        $previousPassword = getenv('ERP_SEED_ADMIN_PASSWORD');
+        putenv('ERP_SEED_ADMIN_PASSWORD=123456');
+        $_ENV['ERP_SEED_ADMIN_PASSWORD'] = '123456';
+        $_SERVER['ERP_SEED_ADMIN_PASSWORD'] = '123456';
         $adminIds = DB::table('erp_legacy_admin_users')->where('username', 'admin')->pluck('legacy_id');
+        DB::table('erp_rbac_user_role_sources')->whereIn('user_legacy_id', $adminIds)->delete();
         DB::table('erp_rbac_user_roles')->whereIn('user_legacy_id', $adminIds)->delete();
         DB::table('erp_legacy_admin_users')->whereIn('legacy_id', $adminIds)->delete();
 
@@ -39,5 +44,14 @@ class ErpAdministratorSeederTest extends TestCase
         ])->assertOk()
             ->assertJsonPath('user.username', 'admin')
             ->assertJsonStructure(['token', 'permissions']);
+
+        if ($previousPassword === false) {
+            putenv('ERP_SEED_ADMIN_PASSWORD');
+            unset($_ENV['ERP_SEED_ADMIN_PASSWORD'], $_SERVER['ERP_SEED_ADMIN_PASSWORD']);
+        } else {
+            putenv('ERP_SEED_ADMIN_PASSWORD='.$previousPassword);
+            $_ENV['ERP_SEED_ADMIN_PASSWORD'] = $previousPassword;
+            $_SERVER['ERP_SEED_ADMIN_PASSWORD'] = $previousPassword;
+        }
     }
 }

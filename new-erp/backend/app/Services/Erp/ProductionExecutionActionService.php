@@ -220,7 +220,7 @@ class ProductionExecutionActionService
         if ($needsHandover) {
             $requirementIds = DB::table('erp_production_target_material_requirements')
                 ->where('target_type', $nextType)->where('target_id', $next->id)->where('component_item_id', $output->output_item_id)
-                ->whereColumn('satisfied_base_qty', '<', 'required_base_qty')->pluck('id');
+                ->whereRaw('GREATEST(0, satisfied_base_qty - returned_base_qty) < required_base_qty')->pluck('id');
             if ($requirementIds->count() > 1) $this->fail('target_material_requirement_ambiguous', '下一工序存在多条相同物料需求，无法确定工序交接对应项。', 409);
             DB::table('erp_production_operation_handovers')->insert([
             'handover_no' => $this->numbers->next('production_handover', 'PHO'), 'work_order_id' => $workOrderId,

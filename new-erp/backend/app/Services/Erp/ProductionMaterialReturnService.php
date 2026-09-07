@@ -70,8 +70,32 @@ class ProductionMaterialReturnService
             if ($return->status !== 'SUBMITTED') $this->fail('material_return_already_received', '该生产退料已由仓库处理。', 409);
             $lines = DB::table('erp_production_material_return_lines')->where('return_id', $id)->lockForUpdate()->get();
             $transaction = $this->inventory->postProductionMaterialReturnReceipt($return, $lines, $user, $return->return_type === 'quality_return');
-            foreach ($lines as $line) { $requirement = WorkOrderMaterialRequirement::lockForUpdate()->findOrFail($line->material_requirement_id);
-                $requirement->returned_qty = (float) $requirement->returned_qty + (float) $line->return_base_qty; $requirement->business_version++; $requirement->save(); }
+            foreach ($lines as $line) {
+                $requirement = WorkOrderMaterialRequirement::lockForUpdate()->findOrFail($line->material_requirement_id);
+                $requirement->returned_qty = (float) $requirement->returned_qty + (float) $line->return_base_qty;
+                $requirement->business_version++;
+                $requirement->save();
+
+                // A warehouse receipt (including a quality return entering quarantine)
+                // means the material has physically left this production target. Record
+                // that monotonic return fact once here; kitting derives net onsite stock
+                // from accepted minus returned and command replay cannot double-increment it.
+                $targetRequirement = DB::table('erp_production_target_material_requirements')
+                    ->where('target_type', $return->target_type)
+                    ->where('target_id', $return->target_id)
+                    ->where('material_requirement_id', $line->material_requirement_id)
+                    ->lockForUpdate()
+                    ->first();
+                if (! $targetRequirement) $this->fail('material_requirement_target_invalid', '退料明细不属于当前生产目标。');
+                $returned = (float) $targetRequirement->returned_base_qty + (float) $line->return_base_qty;
+                $netSatisfied = max(0, (float) $targetRequirement->satisfied_base_qty - $returned);
+                DB::table('erp_production_target_material_requirements')->where('id', $targetRequirement->id)->update([
+                    'returned_base_qty' => $returned,
+                    'status' => $netSatisfied + 0.00000001 >= (float) $targetRequirement->required_base_qty ? 'SATISFIED' : ($netSatisfied > 0 ? 'PARTIALLY_SATISFIED' : 'OPEN'),
+                    'business_version' => (int) $targetRequirement->business_version + 1,
+                    'updated_at' => now(),
+                ]);
+            }
             $status = $return->return_type === 'quality_return' ? 'WAIT_QUALITY' : 'COMPLETED';
             DB::table('erp_production_material_returns')->where('id', $id)->update(['status' => $status,
                 'warehouse_received_by_legacy_id' => $this->userId($user), 'warehouse_received_at' => now(),

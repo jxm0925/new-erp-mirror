@@ -85,7 +85,7 @@ class UnitConversionBusinessScenariosTest extends TestCase
             'sales_order_line_id' => $line->id, 'fulfillment_type' => 'inventory',
             'sales_qty' => 10, 'fulfillment_qty' => 25, 'item_base_qty' => 25,
         ]);
-        $this->assertDatabaseCount('erp_sales_order_production_requirements', 0);
+        $this->assertSame(0, DB::table('erp_sales_order_production_requirements')->where('sales_order_id', $order->id)->count());
         $this->assertSame('pending', $order->fresh()->fulfillment_status);
     }
 
@@ -143,7 +143,7 @@ class UnitConversionBusinessScenariosTest extends TestCase
         $decisions = [$this->decision($first, 2, production: 2), $this->decision($second, 2, production: 2)];
         $this->confirm($order, $decisions);
         $this->assertSame('blocked', $order->fresh()->production_confirm_status);
-        $this->assertDatabaseCount('erp_sales_order_production_requirements', 2);
+        $this->assertSame(2, DB::table('erp_sales_order_production_requirements')->where('sales_order_id', $order->id)->count());
         $firstDemandId = DB::table('erp_sales_order_production_requirements')
             ->where('sales_order_line_id', $first->id)->where('is_active', true)->value('id');
         DB::table('erp_work_orders')->insert([
@@ -154,7 +154,7 @@ class UnitConversionBusinessScenariosTest extends TestCase
 
         $this->confirm($order->fresh(), $decisions);
 
-        $this->assertDatabaseCount('erp_sales_order_production_requirements', 3);
+        $this->assertSame(3, DB::table('erp_sales_order_production_requirements')->where('sales_order_id', $order->id)->count());
         $this->assertSame(2, DB::table('erp_sales_order_production_requirements')
             ->where('sales_order_id', $order->id)->where('is_active', true)->count());
         $this->assertSame(1, DB::table('erp_sales_order_production_requirements')
@@ -280,7 +280,7 @@ class UnitConversionBusinessScenariosTest extends TestCase
             'sales_order_line_id' => $line->id, 'fulfillment_type' => 'service',
             'sales_qty' => 3, 'item_id' => null, 'item_base_qty' => null,
         ]);
-        $this->assertDatabaseCount('erp_sales_order_production_requirements', 0);
+        $this->assertSame(0, DB::table('erp_sales_order_production_requirements')->where('sales_order_id', $order->id)->count());
     }
 
     public function test_05_no_delivery_line_never_enters_inventory_or_production(): void
@@ -292,7 +292,7 @@ class UnitConversionBusinessScenariosTest extends TestCase
             'sales_order_line_id' => $line->id, 'fulfillment_type' => 'no_delivery',
             'sales_qty' => 2, 'item_id' => null, 'item_base_qty' => null,
         ]);
-        $this->assertDatabaseCount('erp_sales_order_production_requirements', 0);
+        $this->assertSame(0, DB::table('erp_sales_order_production_requirements')->where('sales_order_id', $order->id)->count());
     }
 
     public function test_06_same_sku_different_configuration_remains_two_independent_lines(): void
@@ -324,7 +324,7 @@ class UnitConversionBusinessScenariosTest extends TestCase
             $this->assertArrayHasKey('attachments', $exception->errors());
         }
         $this->assertDatabaseCount('erp_sales_order_fulfillments', 0);
-        $this->assertDatabaseCount('erp_sales_order_production_requirements', 0);
+        $this->assertSame(0, DB::table('erp_sales_order_production_requirements')->where('sales_order_id', $order->id)->count());
     }
 
     public function test_08_special_custom_with_drawing_can_create_production_requirement(): void
@@ -639,7 +639,7 @@ class UnitConversionBusinessScenariosTest extends TestCase
             'reserved_qty' => 4,
             'reservation_status' => 'active',
         ]);
-        $balance = InventoryBalance::firstOrFail();
+        $balance = InventoryBalance::query()->where('item_id', $line->item_id)->firstOrFail();
         $this->assertSame(4.0, (float) $balance->quantity_on_hand);
         $this->assertSame(4.0, (float) $balance->quantity_locked);
         $this->assertSame(0.0, (float) $balance->quantity_available);
