@@ -2,9 +2,12 @@
   "pages": [
     "pages/index/index",
     "pages/production/tasks/index",
+    "pages/production/workbench/index",
     "pages/production/todos/index",
     "pages/production/queue/index",
+    "pages/production/delivery-detail/index",
     "pages/production/task-detail/index",
+    "pages/production/material-actions/index",
     "pages/logs/logs",
     "pages/my/index/index",
     "pages/suggests/index/index",
@@ -12,10 +15,6 @@
     "pages/suggests/info/index",
     "pages/suggests/manage/index",
     "pages/suggests/manage/result",
-    "pages/work/index/index",
-    "pages/work/detail/index",
-    "pages/work/my/index",
-    "pages/work/send/index",
     "pages/mall/index/index",
     "pages/mall/detail/index",
     "pages/mall/score/index",
@@ -27,9 +26,6 @@
     "pages/stock/product/cost",
     "pages/suggests/sub/story",
     "pages/war/index/index",
-    "pages/work/products/index",
-    "pages/work/products/detail",
-    "pages/work/products/send",
     "pages/my/report/index/index",
     "pages/my/report/list/list",
     "pages/my/report/form/form",
@@ -115,15 +111,15 @@
     "list": [
       {
         "pagePath": "pages/index/index",
-        "text": "工作台"
+        "text": "首页"
       },
       {
         "pagePath": "pages/production/tasks/index",
-        "text": "任务"
+        "text": "工单"
       },
       {
-        "pagePath": "pages/production/todos/index",
-        "text": "待办"
+        "pagePath": "pages/mall/index/index",
+        "text": "商城"
       },
       {
         "pagePath": "pages/my/index/index",

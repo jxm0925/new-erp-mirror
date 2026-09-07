@@ -1,0 +1,10 @@
+{
+  "navigationBarTitleText": "物料处理",
+  "navigationBarBackgroundColor": "#ffffff",
+  "navigationBarTextStyle": "black",
+  "usingComponents": {
+    "van-empty": "@vant/weapp/empty/index",
+    "van-loading": "@vant/weapp/loading/index",
+    "van-icon": "@vant/weapp/icon/index"
+  }
+}

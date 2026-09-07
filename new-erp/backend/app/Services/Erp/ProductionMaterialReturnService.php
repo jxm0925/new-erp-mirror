@@ -28,10 +28,28 @@ class ProductionMaterialReturnService
             foreach ($lines as $line) {
                 $requirement = WorkOrderMaterialRequirement::query()->lockForUpdate()->find((int) $line['material_requirement_id']);
                 if (! $requirement || (int) $requirement->work_order_id !== (int) $task->work_order_id) $this->fail('material_requirement_invalid', '退料明细不属于当前工单。');
+                $belongsToTarget = DB::table('erp_production_target_material_requirements')
+                    ->where('target_type', $payload['target_type'])->where('target_id', $payload['target_id'])
+                    ->where('material_requirement_id', $requirement->id)->exists();
+                if (! $belongsToTarget) $this->fail('material_requirement_target_invalid', '退料明细不属于当前生产目标。');
                 $qty = (float) $line['return_base_qty'];
-                $already = (float) DB::table('erp_production_material_return_lines as line')->join('erp_production_material_returns as header', 'header.id', '=', 'line.return_id')
-                    ->where('line.material_requirement_id', $requirement->id)->whereIn('header.status', ['SUBMITTED', 'WAIT_QUALITY', 'COMPLETED'])->sum('line.return_base_qty');
-                if ($qty <= 0 || $qty + $already > (float) $requirement->received_qty + 0.00000001) $this->fail('return_quantity_exceeds_received', '签收后退料数量不能超过该需求已签收且尚未退回的数量。');
+                $batchNo = (string) ($line['batch_no'] ?? '');
+                $sourceReceived = (float) DB::table('erp_material_receipt_lines as receipt_line')
+                    ->join('erp_material_delivery_lines as delivery_line', 'delivery_line.id', '=', 'receipt_line.delivery_line_id')
+                    ->join('erp_material_deliveries as delivery', 'delivery.id', '=', 'delivery_line.delivery_id')
+                    ->join('erp_material_picking_task_lines as pick_line', 'pick_line.id', '=', 'delivery_line.picking_task_line_id')
+                    ->where('delivery_line.material_requirement_id', $requirement->id)
+                    ->where('delivery.production_target_type', $payload['target_type'])->where('delivery.production_target_id', $payload['target_id'])
+                    ->where('pick_line.warehouse_id', (int) $line['warehouse_id'])->where('pick_line.location_id', (int) $line['location_id'])
+                    ->whereRaw('COALESCE(delivery_line.batch_no, \'\') = ?', [$batchNo])->sum('receipt_line.accepted_qty');
+                $already = (float) DB::table('erp_production_material_return_lines as return_line')
+                    ->join('erp_production_material_returns as material_return', 'material_return.id', '=', 'return_line.return_id')
+                    ->where('return_line.material_requirement_id', $requirement->id)
+                    ->where('material_return.target_type', $payload['target_type'])->where('material_return.target_id', $payload['target_id'])
+                    ->where('return_line.warehouse_id', (int) $line['warehouse_id'])->where('return_line.location_id', (int) $line['location_id'])
+                    ->whereRaw('COALESCE(return_line.batch_no, \'\') = ?', [$batchNo])
+                    ->whereIn('material_return.status', ['SUBMITTED', 'WAIT_QUALITY', 'COMPLETED', 'QUARANTINED'])->sum('return_line.return_base_qty');
+                if ($qty <= 0 || $qty + $already > $sourceReceived + 0.00000001) $this->fail('return_quantity_exceeds_received', '退料数量不能超过当前生产目标在该仓库、库位和批次已签收且尚未退回的数量。');
                 DB::table('erp_production_material_return_lines')->insert(['return_id' => $id, 'material_requirement_id' => $requirement->id,
                     'component_item_id' => $requirement->component_item_id, 'warehouse_id' => $line['warehouse_id'], 'location_id' => $line['location_id'],
                     'batch_no' => $line['batch_no'] ?? null, 'serial_snapshot' => isset($line['serial_ids']) ? json_encode(['inventory_serial_ids' => $line['serial_ids']]) : null,

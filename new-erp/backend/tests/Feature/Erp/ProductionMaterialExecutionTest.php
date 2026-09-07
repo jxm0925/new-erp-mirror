@@ -13,6 +13,7 @@ use App\Models\Erp\Warehouse;
 use App\Models\Erp\WorkOrder;
 use App\Models\Erp\WorkOrderMaterialRequirement;
 use App\Services\Erp\ProductionMaterialExecutionService;
+use App\Services\Erp\ProductionKittingService;
 use App\Services\Erp\ProductionMaterialReturnService;
 use App\Services\Erp\ProductionMaterialSupplementService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
@@ -28,6 +29,7 @@ class ProductionMaterialExecutionTest extends TestCase
         'production.material_picking.view', 'production.material_picking.create', 'production.material_picking.assign', 'production.material_picking.pick', 'production.material_picking.cancel',
         'production.material_delivery.view', 'production.material_delivery.create', 'production.material_delivery.dispatch', 'production.material_delivery.confirm',
         'production.material_receipt.view', 'production.material_receipt.confirm',
+        'production.kitting.view',
         'production.material_supplement.request', 'production.material_supplement.approve',
         'production.material_return.create', 'production.material_return.receive', 'production.material_return.quality',
     ];
@@ -133,18 +135,41 @@ class ProductionMaterialExecutionTest extends TestCase
     public function test_normal_and_quality_returns_have_distinct_available_and_quarantine_inventory_facts(): void
     {
         [$user, $workOrder, $requirement, $balance] = $this->fixture();
-        $requirement->update(['received_qty' => 5]);
         $task = DB::table('erp_production_tasks')->where('work_order_id', $workOrder->id)->first();
+        $materialExecution = app(ProductionMaterialExecutionService::class);
+        $pick = $materialExecution->createPickingTask([
+            'client_command_id' => $this->id('return-pick'), 'work_order_id' => $workOrder->id,
+            'expected_version' => 1, 'warehouse_id' => $balance->warehouse_id,
+            'lines' => [$this->pickLine($workOrder, $requirement, $balance, 5)],
+        ], $user, self::PERMISSIONS, true);
+        $assigned = $materialExecution->assignPickingTask($pick->id, ['client_command_id' => $this->id('return-assign'), 'expected_version' => 1, 'assigned_picker_legacy_id' => $user->legacy_id], $user, self::PERMISSIONS, true);
+        $picking = $materialExecution->startPickingTask($pick->id, ['client_command_id' => $this->id('return-start'), 'expected_version' => $assigned->business_version], $user, self::PERMISSIONS, true);
+        $picked = $materialExecution->confirmPickingTask($pick->id, ['client_command_id' => $this->id('return-confirm'), 'expected_version' => $picking->business_version, 'lines' => [['picking_task_line_id' => $pick->lines->first()->id, 'actual_pick_qty' => 5]]], $user, self::PERMISSIONS, true);
+        $delivery = $materialExecution->createDelivery(['client_command_id' => $this->id('return-delivery'), 'picking_task_id' => $pick->id, 'expected_version' => $picked->business_version, 'lines' => [['picking_task_line_id' => $pick->lines->first()->id, 'delivery_qty' => 5]]], $user, self::PERMISSIONS, true);
+        $inTransit = $materialExecution->dispatchDelivery($delivery->id, ['client_command_id' => $this->id('return-dispatch'), 'expected_version' => 1, 'delivery_user_legacy_id' => $user->legacy_id], $user, self::PERMISSIONS, true);
+        $delivered = $materialExecution->deliverDelivery($delivery->id, ['client_command_id' => $this->id('return-deliver'), 'expected_version' => $inTransit->business_version], $user, self::PERMISSIONS, true);
+        $materialExecution->receiveDelivery($delivery->id, ['client_command_id' => $this->id('return-receive'), 'expected_version' => $delivered->business_version, 'lines' => [['delivery_line_id' => $delivered->lines->first()->id, 'accepted_qty' => 5, 'rejected_qty' => 0]]], $user, self::PERMISSIONS, true);
+
+        $mobileRequirements = app(ProductionKittingService::class)->requirements($task->id, 'quantity_operation', $workOrder->test_target_id, $user, self::PERMISSIONS);
+        $this->assertSame($requirement->id, $mobileRequirements[0]['material_requirement_id']);
+        $this->assertSame($balance->warehouse_id, $mobileRequirements[0]['return_sources'][0]['warehouse_id']);
+        $this->assertSame(5.0, $mobileRequirements[0]['return_sources'][0]['returnable_base_qty']);
+
         $service = app(ProductionMaterialReturnService::class);
         $line = ['material_requirement_id' => $requirement->id, 'warehouse_id' => $balance->warehouse_id,
             'location_id' => $balance->location_id, 'batch_no' => $balance->batch_no, 'return_base_qty' => 2];
+        $this->expectDomain('return_quantity_exceeds_received', fn () => $service->create([
+            'client_command_id' => $this->id('wrong-return-source'), 'expected_version' => 1,
+            'task_id' => $task->id, 'target_type' => 'quantity_operation', 'target_id' => $workOrder->test_target_id,
+            'return_type' => 'normal_return', 'reason' => '伪造批次', 'lines' => [array_merge($line, ['batch_no' => 'NOT-RECEIVED'])],
+        ], $user, self::PERMISSIONS));
 
         $normal = $service->create(['client_command_id' => $this->id('normal-return'), 'expected_version' => 1,
             'task_id' => $task->id, 'target_type' => 'quantity_operation', 'target_id' => $workOrder->test_target_id,
             'return_type' => 'normal_return', 'reason' => '正常未用退回', 'lines' => [$line]], $user, self::PERMISSIONS);
         $normalReceived = $service->receive($normal['id'], ['client_command_id' => $this->id('normal-receive'), 'expected_version' => 1], $user, self::PERMISSIONS);
         $this->assertSame('COMPLETED', $normalReceived['status']);
-        $this->assertSame(22.0, (float) $balance->fresh()->quantity_available);
+        $this->assertSame(17.0, (float) $balance->fresh()->quantity_available);
 
         $quality = $service->create(['client_command_id' => $this->id('quality-return'), 'expected_version' => 1,
             'task_id' => $task->id, 'target_type' => 'quantity_operation', 'target_id' => $workOrder->test_target_id,
@@ -153,12 +178,12 @@ class ProductionMaterialExecutionTest extends TestCase
         $this->assertSame('WAIT_QUALITY', $qualityReceived['status']);
         $quarantined = $balance->fresh();
         $this->assertSame(1.0, (float) $quarantined->quantity_pending);
-        $this->assertSame(22.0, (float) $quarantined->quantity_available);
+        $this->assertSame(17.0, (float) $quarantined->quantity_available);
         $released = $service->quality($quality['id'], ['client_command_id' => $this->id('quality-pass'),
             'expected_version' => 2, 'passed' => true, 'reason' => '检验合格'], $user, self::PERMISSIONS);
         $this->assertSame('COMPLETED', $released['status']);
         $this->assertSame(0.0, (float) $balance->fresh()->quantity_pending);
-        $this->assertSame(23.0, (float) $balance->fresh()->quantity_available);
+        $this->assertSame(18.0, (float) $balance->fresh()->quantity_available);
     }
 
     private function fixture(): array

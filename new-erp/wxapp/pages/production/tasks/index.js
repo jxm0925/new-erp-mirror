@@ -30,11 +30,11 @@ Page({
   load() {
     if (!wx.getStorageSync('erp_token')) {
       this.setData({ loading: false, rows: [], filteredRows: [] });
-      wx.showToast({ title: '请先在“我的”登录 ERP', icon: 'none' });
+      wx.showToast({ title: '请先登录统一账号', icon: 'none' });
       return Promise.resolve();
     }
     this.setData({ loading: true });
-    return production.myTasks({ page: 1, per_page: 100 }).then((response) => {
+    return production.myTasks({ page: 1, per_page: 20 }).then((response) => {
       const rows = (response.data || []).map(view);
       this.setData({ rows, stats: {
         total: rows.length,

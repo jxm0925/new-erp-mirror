@@ -20,7 +20,7 @@ Page({
   load() {
     if (!wx.getStorageSync('erp_token')) {
       this.setData({ loading: false, task: null });
-      wx.showToast({ title: '请先在“我的”登录 ERP', icon: 'none' });
+      wx.showToast({ title: '请先登录统一账号', icon: 'none' });
       return Promise.resolve();
     }
     this.setData({ loading: true });
@@ -93,6 +93,13 @@ Page({
   },
   onQuantity(event) { const id = Number(event.currentTarget.dataset.id); this.setData({ targets: this.data.targets.map((row) => row.target_id === id ? Object.assign({}, row, { quantityValue: event.detail.value }) : row) }); },
   openHandover() { wx.navigateTo({ url: '/pages/production/queue/index?type=handover' }); },
+  openMaterialActions(event) {
+    const target = this.findTarget(event);
+    if (!target) return;
+    wx.navigateTo({
+      url: `/pages/production/material-actions/index?taskId=${this.data.id}&targetType=${target.target_type}&targetId=${target.target_id}`,
+    });
+  },
   findTarget(event) { return this.data.targets.find((row) => row.target_id === Number(event.currentTarget.dataset.id)); },
   run(factory, message) {
     if (this.data.busy) return;

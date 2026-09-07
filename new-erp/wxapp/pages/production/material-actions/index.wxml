@@ -1,0 +1,92 @@
+<view class="material-page" wx:if="{{!loading && task && target}}">
+  <view class="context-card">
+    <view class="context-row"><text>工单号</text><strong>{{task.work_order.work_order_no}}</strong></view>
+    <view class="context-row"><text>生产单元</text><strong>{{target.production_unit_no || ('数量执行 #' + target.target_id)}}</strong></view>
+    <view class="context-row"><text>当前工序</text><strong>{{task.sequence_no_snapshot}} - {{task.operation_name_snapshot}}</strong></view>
+  </view>
+
+  <view class="material-tabs">
+    <view class="material-tab {{activeTab==='supplement'?'active':''}}" data-tab="supplement" bindtap="switchTab">补料</view>
+    <view class="material-tab {{activeTab==='return'?'active':''}}" data-tab="return" bindtap="switchTab">退料</view>
+  </view>
+
+  <view class="form-card" wx:if="{{activeTab==='supplement'}}">
+    <view class="form-row">
+      <text class="form-label">补料类型</text>
+      <picker class="form-control" range="{{supplementTypes}}"><view class="picker-value">生产过程追加<van-icon name="arrow-down" /></view></picker>
+    </view>
+    <view class="form-row radio-row">
+      <text class="form-label">阻断生产</text>
+      <view class="radio-options">
+        <view class="radio-option" data-value="true" bindtap="setBlocking"><text class="radio {{blocking?'checked':''}}"></text>是</view>
+        <view class="radio-option" data-value="false" bindtap="setBlocking"><text class="radio {{!blocking?'checked':''}}"></text>否</view>
+      </view>
+    </view>
+    <view class="form-row">
+      <text class="form-label">追加原因</text>
+      <picker class="form-control" range="{{supplementReasons}}" value="{{supplementReasonIndex}}" bindchange="onSupplementReason"><view class="picker-value">{{supplementReasons[supplementReasonIndex]}}<van-icon name="arrow-down" /></view></picker>
+    </view>
+
+    <view class="section-title">补料明细</view>
+    <view class="supplement-table">
+      <view class="table-head"><text>物料 <i>*</i></text><text>追加数量 <i>*</i></text><text></text></view>
+      <view class="table-line" wx:for="{{supplementLines}}" wx:key="index">
+        <text class="line-no">{{index + 1}}</text>
+        <picker class="material-picker" range="{{supplementOptions}}" range-key="label" value="{{item.requirementIndex}}" data-index="{{index}}" bindchange="onSupplementMaterial">
+          <view class="line-input {{item.materialLabel?'has-value':''}}">{{item.materialLabel || '请选择物料编码/名称'}}</view>
+        </picker>
+        <input class="qty-input" type="digit" placeholder="请输入追加数量" value="{{item.additional_base_qty}}" data-index="{{index}}" bindinput="onSupplementQty" />
+        <van-icon class="delete" name="delete-o" data-index="{{index}}" bindtap="removeSupplementLine" />
+      </view>
+    </view>
+    <button class="add-line" bindtap="addSupplementLine"><text>＋</text> 添加明细</button>
+    <view class="notice orange"><van-icon name="warning-o" /><text>追加补料会形成独立需求，不修改原标准需求</text></view>
+    <button class="submit" loading="{{busy}}" bindtap="submitSupplement">提交补料申请</button>
+  </view>
+
+  <view class="return-form" wx:if="{{activeTab==='return'}}">
+    <view class="return-block" wx:for="{{returnLines}}" wx:key="index">
+      <view class="form-row radio-row">
+        <text class="form-label">退料类型</text>
+        <view class="radio-options">
+          <view class="radio-option" data-value="normal_return" bindtap="setReturnType"><text class="radio {{returnType==='normal_return'?'checked':''}}"></text>正常退料</view>
+          <view class="radio-option" data-value="quality_return" bindtap="setReturnType"><text class="radio {{returnType==='quality_return'?'checked':''}}"></text>质量退料</view>
+        </view>
+      </view>
+      <view class="form-row required-row">
+        <text class="form-label">退料原因</text>
+        <picker class="form-control" range="{{returnReasons}}" value="{{returnReasonIndex}}" data-index="{{index}}" bindchange="onReturnReason"><view class="picker-value muted-{{returnReasonIndex<0}}">{{returnReasonIndex<0?'请选择':returnReasons[returnReasonIndex]}}<van-icon name="arrow" /></view></picker>
+      </view>
+      <view class="form-row">
+        <text class="form-label">物料</text>
+        <picker class="form-control" range="{{returnOptions}}" range-key="label" value="{{item.requirementIndex}}" data-index="{{index}}" bindchange="onReturnMaterial"><view class="picker-value muted-{{!item.materialLabel}}">{{item.materialLabel || '请选择'}}<van-icon name="arrow" /></view></picker>
+      </view>
+      <view class="form-row"><text class="form-label">已签收数量</text><view class="form-control readonly">{{item.received_base_qty}}</view></view>
+      <view class="form-row"><text class="form-label">可退数量</text><view class="form-control readonly">{{item.returnable_base_qty}}</view></view>
+      <view class="form-row required-row"><text class="form-label">退料数量</text><input class="form-control input-control" type="digit" placeholder="请输入" value="{{item.return_base_qty}}" data-index="{{index}}" bindinput="onReturnQty" /></view>
+      <view class="form-row">
+        <text class="form-label">退料仓库</text>
+        <picker class="form-control" range="{{item.warehouseOptions}}" range-key="label" value="{{item.warehouseIndex}}" data-index="{{index}}" bindchange="onReturnWarehouse"><view class="picker-value muted-{{!item.warehouseLabel}}">{{item.warehouseLabel || '请选择'}}<van-icon name="arrow" /></view></picker>
+      </view>
+      <view class="form-row">
+        <text class="form-label">退料库位</text>
+        <picker class="form-control" range="{{item.locationOptions}}" range-key="label" value="{{item.locationIndex}}" data-index="{{index}}" bindchange="onReturnLocation"><view class="picker-value muted-{{!item.locationLabel}}">{{item.locationLabel || '请选择'}}<van-icon name="arrow" /></view></picker>
+      </view>
+      <view class="form-row"><text class="form-label">批次号</text><input class="form-control input-control" placeholder="请输入" value="{{item.batch_no}}" data-index="{{index}}" bindinput="onReturnBatch" /></view>
+      <van-icon wx:if="{{returnLines.length>1}}" class="return-delete" name="delete-o" data-index="{{index}}" bindtap="removeReturnLine" />
+    </view>
+    <button class="add-line return-add" bindtap="addReturnLine"><text>＋</text> 添加明细</button>
+    <view class="notice red"><van-icon name="info" /><text>签收后的退回才是生产退料；配送现场未接收请使用拒收</text></view>
+    <button class="submit" loading="{{busy}}" bindtap="submitReturn">提交生产退料</button>
+  </view>
+
+  <view class="bottom-nav">
+    <view class="nav-item" data-url="/pages/index/index" bindtap="switchRoot"><van-icon name="wap-home-o" /><text>首页</text></view>
+    <view class="nav-item active" data-url="/pages/production/workbench/index" bindtap="switchRoot"><van-icon name="orders-o" /><text>工单</text></view>
+    <view class="nav-item" data-url="/pages/mall/index/index" bindtap="switchRoot"><van-icon name="gift-o" /><text>商城</text></view>
+    <view class="nav-item" data-url="/pages/my/index/index" bindtap="switchRoot"><van-icon name="manager-o" /><text>我的</text></view>
+  </view>
+</view>
+
+<view wx:elif="{{loading}}" class="loading"><van-loading color="#d81e06">加载物料处理</van-loading></view>
+<view wx:else class="loading"><van-empty description="任务不存在、尚未接单或无权操作" /></view>

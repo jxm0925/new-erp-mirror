@@ -16,16 +16,9 @@
           "scene": null
         },
         {
-          "name": "pages/work/products/index",
-          "pathName": "pages/work/products/index",
-          "query": "id=6029",
-          "launchMode": "default",
-          "scene": null
-        },
-        {
-          "name": "pages/work/detail/index",
-          "pathName": "pages/work/detail/index",
-          "query": "id=5984",
+          "name": "生产工作台",
+          "pathName": "pages/production/workbench/index",
+          "query": "",
           "launchMode": "default",
           "scene": null
         },
@@ -51,16 +44,16 @@
           "scene": null
         },
         {
-          "name": "pages/work/index/index",
-          "pathName": "pages/work/index/index",
-          "query": "",
+          "name": "物料配送",
+          "pathName": "pages/production/queue/index",
+          "query": "type=deliveries",
           "launchMode": "default",
           "scene": null
         },
         {
-          "name": "pages/work/detail/index",
-          "pathName": "pages/work/detail/index",
-          "query": "id=1070",
+          "name": "物料签收",
+          "pathName": "pages/production/queue/index",
+          "query": "type=receipts",
           "launchMode": "default",
           "scene": null
         }

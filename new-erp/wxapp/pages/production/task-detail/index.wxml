@@ -16,6 +16,7 @@
     </view>
     <view class="quantity" wx:if="{{item.target_type==='quantity_operation' && (item.status==='IN_PROGRESS' || item.status==='PAUSED')}}"><text>本次完成数量</text><input type="digit" value="{{item.quantityValue}}" data-id="{{item.target_id}}" bindinput="onQuantity" /></view>
     <view class="actions">
+      <button wx:if="{{task.assignee_user_legacy_id===userId && item.status!=='COMPLETED' && item.status!=='CANCELLED'}}" class="outline" data-id="{{item.target_id}}" bindtap="openMaterialActions">物料处理</button>
       <button wx:if="{{item.kitting_required && (item.status==='CLAIMED' || item.status==='WAIT_MATERIAL')}}" class="primary" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="confirmKitting">已齐套并开工</button>
       <button wx:if="{{item.status==='WAIT_HANDOVER'}}" class="outline" bindtap="openHandover">接收工序交接</button>
       <button wx:if="{{!item.kitting_required && item.status==='READY'}}" class="primary" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="start">开始加工</button>

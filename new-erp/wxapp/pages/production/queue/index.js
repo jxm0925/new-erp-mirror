@@ -1,6 +1,6 @@
 const production = require('../../../services/production');
 
-const TITLES = { pool: '待接任务', collaboration: '我的协同', receipts: '待收料', handover: '待交接', kitting: '待齐套', trace: '扫码追溯' };
+const TITLES = { pool: '待接任务', collaboration: '我的协同', deliveries: '物料配送', receipts: '物料签收', handover: '待交接', kitting: '待齐套', trace: '扫码追溯' };
 const STATUS = { WAIT_CLAIM: '待接单', CLAIMED: '已接单', WAIT_MATERIAL: '待齐套', WAIT_HANDOVER: '待交接', READY: '待开工', IN_PROGRESS: '加工中', PAUSED: '已暂停', DELIVERED: '待收料' };
 
 Page({
@@ -15,16 +15,20 @@ Page({
   load() {
     if (!wx.getStorageSync('erp_token')) {
       this.setData({ loading: false, rows: [] });
-      wx.showToast({ title: '请先在“我的”登录 ERP', icon: 'none' });
+      wx.showToast({ title: '请先登录统一账号', icon: 'none' });
       return Promise.resolve();
     }
     this.setData({ loading: true });
     let promise;
-    if (this.data.type === 'pool') promise = production.taskPool({ page: 1, per_page: 50 });
-    else if (this.data.type === 'collaboration') promise = production.collaborations({ page: 1, per_page: 50 });
-    else if (this.data.type === 'kitting') promise = production.myTasks({ page: 1, per_page: 100 });
-    else if (this.data.type === 'receipts') promise = production.deliveries({ status: 'DELIVERED', page: 1, per_page: 50 });
-    else if (this.data.type === 'handover') promise = production.pendingHandovers({ page: 1, per_page: 50 });
+    if (this.data.type === 'pool') promise = production.taskPool({ page: 1, per_page: 20 });
+    else if (this.data.type === 'collaboration') promise = production.collaborations({ page: 1, per_page: 20 });
+    else if (this.data.type === 'kitting') promise = production.myTasks({ page: 1, per_page: 20 });
+    else if (this.data.type === 'deliveries') promise = Promise.all([
+      production.deliveries({ status: 'READY', page: 1, per_page: 20 }),
+      production.deliveries({ status: 'IN_TRANSIT', page: 1, per_page: 20 })
+    ]).then(([ready, transit]) => ({ data: [...(ready.data || []), ...(transit.data || [])], total: (ready.total || 0) + (transit.total || 0) }));
+    else if (this.data.type === 'receipts') promise = production.deliveries({ status: 'DELIVERED', page: 1, per_page: 20 });
+    else if (this.data.type === 'handover') promise = production.pendingHandovers({ page: 1, per_page: 20 });
     else promise = production.trace(this.data.keyword);
 
     return promise.then((response) => {
@@ -45,6 +49,7 @@ Page({
     }).catch((error) => { this.setData({ rows: [], loading: false }); wx.showToast({ title: error.message, icon: 'none' }); });
   },
   openTask(event) { wx.navigateTo({ url: `/pages/production/task-detail/index?id=${event.currentTarget.dataset.id}` }); },
+  openDelivery(event) { wx.navigateTo({ url: `/pages/production/delivery-detail/index?id=${event.currentTarget.dataset.id}&mode=${this.data.type === 'receipts' ? 'receipt' : 'delivery'}` }); },
   claim(event) {
     if (this.data.busy) return;
     const task = this.data.rows.find((row) => row.id === Number(event.currentTarget.dataset.id));

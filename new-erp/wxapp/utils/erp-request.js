@@ -23,7 +23,7 @@ function normalizeError(response, fallbackMessage) {
 
 function request(options) {
   const opts = options || {};
-  const token = wx.getStorageSync(ERP_TOKEN_KEY);
+  const token = opts.authToken !== undefined ? opts.authToken : wx.getStorageSync(ERP_TOKEN_KEY);
   const headers = Object.assign({
     'Content-Type': 'application/json',
     Accept: 'application/json',

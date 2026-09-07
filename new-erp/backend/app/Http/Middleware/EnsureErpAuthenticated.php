@@ -17,7 +17,9 @@ class EnsureErpAuthenticated
     {
         // Login must remain public; all other ERP API calls require a valid token
         // (or a signed internal request accepted by AuthContextService).
-        if ($request->isMethod('OPTIONS') || ($request->is('api/v1/erp/auth/login') && $request->isMethod('POST'))) {
+        $isPublicAuthExchange = $request->isMethod('POST')
+            && ($request->is('api/v1/erp/auth/login') || $request->is('api/v1/erp/auth/sso'));
+        if ($request->isMethod('OPTIONS') || $isPublicAuthExchange) {
             return $next($request);
         }
 

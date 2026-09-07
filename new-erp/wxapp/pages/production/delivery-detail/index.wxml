@@ -1,0 +1,28 @@
+<view class="detail-page">
+  <view wx:if="{{loading}}" class="state"><van-loading color="#d81e06">正在加载</van-loading></view>
+  <view wx:elif="{{!delivery}}" class="state"><van-empty description="配送单不存在" /></view>
+  <block wx:else>
+    <view class="summary-card">
+      <view><text>配送单号</text><strong>{{delivery.delivery_no}}</strong></view>
+      <view><text>状态</text><strong class="red">{{delivery.statusLabel}}</strong></view>
+      <view><text>工单号</text><strong>{{delivery.work_order.work_order_no}}</strong></view>
+      <view><text>配送员</text><strong>{{delivery.deliveryUserLabel}}</strong></view>
+      <view><text>目标工序</text><strong>{{delivery.target_operation_code_snapshot || '-'}} - {{delivery.target_operation_name_snapshot || '-'}}</strong></view>
+      <view><text>送达时间</text><strong>{{delivery.delivered_at || '-'}}</strong></view>
+    </view>
+
+    <view class="line-card" wx:for="{{lines}}" wx:key="id">
+      <view class="line-head"><view><strong>{{item.itemCode}}</strong><text>{{item.itemName}}</text></view><text>{{delivery.status==='RECEIVED'?'已签收':(item.remaining < item.delivery_qty?'部分签收':'待签收')}}</text></view>
+      <view class="quantity-row"><view><text>实送数量</text><strong>{{item.delivery_qty}}</strong></view><view><text>已签收</text><strong>{{item.received_qty}}</strong></view><view><text>剩余数量</text><strong class="red">{{item.remaining}}</strong></view></view>
+      <block wx:if="{{mode==='receipt' && delivery.status==='DELIVERED' && item.remaining>0}}">
+        <view class="field-row"><text>本次签收</text><input type="digit" value="{{item.acceptedInput}}" data-index="{{index}}" bindinput="updateAccepted" /><text>{{item.unit_name_snapshot}}</text></view>
+        <view class="field-row"><text>本次拒收</text><input type="digit" value="{{item.rejectedInput}}" data-index="{{index}}" bindinput="updateRejected" /><text>{{item.unit_name_snapshot}}</text></view>
+        <view class="field-row" wx:if="{{item.rejectedInput>0}}"><text>拒收原因</text><input value="{{item.rejectReason}}" data-index="{{index}}" bindinput="updateReason" placeholder="请输入拒收原因" /></view>
+      </block>
+    </view>
+
+    <view class="bottom-actions" wx:if="{{mode==='delivery' && delivery.status==='READY'}}"><button class="primary" bindtap="dispatch" loading="{{busy}}">确认发出</button></view>
+    <view class="bottom-actions" wx:elif="{{mode==='delivery' && delivery.status==='IN_TRANSIT'}}"><button class="primary" bindtap="markDelivered" loading="{{busy}}">确认送达</button></view>
+    <view class="bottom-actions dual" wx:elif="{{mode==='receipt' && delivery.status==='DELIVERED'}}"><button class="outline" bindtap="acceptAll">全部签收</button><button class="primary" bindtap="confirmReceipt" loading="{{busy}}">确认签收</button></view>
+  </block>
+</view>

@@ -424,6 +424,7 @@ Route::prefix('v1/erp/user-directory')->group(function () {
 
 Route::prefix('v1/erp/auth')->group(function () {
     Route::post('login', [AuthController::class, 'login']);
+    Route::post('sso', [AuthController::class, 'sso']);
     Route::get('me', [AuthController::class, 'me']);
     Route::post('logout', [AuthController::class, 'logout']);
 });

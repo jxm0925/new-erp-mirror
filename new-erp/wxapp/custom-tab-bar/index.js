@@ -7,17 +7,17 @@ Component({
       "pagePath": "pages/index/index",
       "icon":"home-o",
       "value":"home",
-      "text": "工作台"
+      "text": "首页"
     },{
       "pagePath": "pages/production/tasks/index",
       "icon":"orders-o",
-      "value":"tasks",
-      "text": "任务"
+      "value":"work",
+      "text": "工单"
     },{
-      "pagePath": "pages/production/todos/index",
-      "icon": "todo-list-o",
-      "value":"todos",
-      "text": "待办"
+      "pagePath": "pages/mall/index/index",
+      "icon": "gift-o",
+      "value":"mall",
+      "text": "商城"
     },{
       "pagePath": "pages/my/index/index",
       "icon":"user-o",

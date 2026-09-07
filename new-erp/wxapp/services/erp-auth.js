@@ -1,16 +1,18 @@
 const erpRequest = require('../utils/erp-request');
 
-function login(username, password) {
+function sso(ticket) {
   return erpRequest.request({
-    path: 'auth/login',
+    path: 'auth/sso',
     method: 'POST',
-    data: { username, password },
-  }).then((result) => {
-    wx.setStorageSync(erpRequest.ERP_TOKEN_KEY, result.token);
-    wx.setStorageSync('erp_user', result.user || {});
-    wx.setStorageSync('erp_permissions', result.permissions || []);
-    return result;
+    data: { ticket },
   });
+}
+
+function persistSession(result) {
+  wx.setStorageSync(erpRequest.ERP_TOKEN_KEY, result.token);
+  wx.setStorageSync('erp_user', result.user || {});
+  wx.setStorageSync('erp_permissions', result.permissions || []);
+  return result;
 }
 
 function me(options) {
@@ -27,4 +29,11 @@ function logout() {
     });
 }
 
-module.exports = { login, me, logout };
+function logoutAll() {
+  return logout().then(() => {
+    wx.removeStorageSync('token');
+    wx.removeStorageSync('userInfo');
+  });
+}
+
+module.exports = { sso, persistSession, me, logout, logoutAll };

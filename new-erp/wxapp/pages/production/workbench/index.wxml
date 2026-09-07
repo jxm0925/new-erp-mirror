@@ -1,0 +1,39 @@
+<view class="workbench-page">
+  <view wx:if="{{!authenticated}}" class="login-card">
+    <van-icon name="manager-o" size="82rpx" color="#d81e06" />
+    <strong>请登录统一账号</strong>
+    <button bindtap="openLogin">立即登录</button>
+  </view>
+
+  <block wx:else>
+    <view class="today-card">
+      <view class="today-title">今日执行</view>
+      <view class="user-name">{{userName}}</view>
+      <view class="stat-row">
+        <view><text>进行中</text><strong>{{stats.running}}</strong></view>
+        <view><text>待处理</text><strong>{{stats.pending}}</strong></view>
+        <view><text>已完成</text><strong>{{stats.completed}}</strong></view>
+      </view>
+    </view>
+
+    <view class="shortcut-grid">
+      <view class="shortcut-card" wx:for="{{shortcuts}}" wx:key="key" data-key="{{item.key}}" bindtap="openShortcut">
+        <view class="badge" wx:if="{{item.count}}">{{item.count}}</view>
+        <van-icon name="{{item.icon}}" size="58rpx" color="#d81e06" />
+        <text>{{item.title}}</text>
+      </view>
+    </view>
+
+    <view class="section-title">当前任务</view>
+    <view wx:if="{{loading}}" class="state"><van-loading color="#d81e06">正在同步</van-loading></view>
+    <view wx:elif="{{!currentTasks.length}}" class="state"><van-empty description="暂无当前任务" /></view>
+    <view class="task-card" wx:for="{{currentTasks}}" wx:key="id" data-id="{{item.id}}" bindtap="openTask">
+      <view class="task-head"><strong>任务 {{item.task_no}}</strong><text>{{item.statusLabel}}</text></view>
+      <view class="task-line"><text>工序</text><strong>{{item.operationLabel}}</strong></view>
+      <view class="task-line"><text>产品</text><strong>{{item.productName}}</strong></view>
+      <view class="task-line"><text>单元编号</text><strong>{{item.unitNo}}</strong></view>
+      <button>{{item.targetStatus==='PAUSED'?'继续加工':(item.targetStatus==='WAIT_MATERIAL'?'查看齐套':'进入作业')}}</button>
+    </view>
+  </block>
+</view>
+<LoginPopup class="LoginPopup"></LoginPopup>

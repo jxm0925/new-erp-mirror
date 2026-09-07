@@ -110,20 +110,47 @@ class ProductionKittingService
 
     private function materialRows(string $targetType, int $targetId)
     {
-        return DB::table('erp_production_target_material_requirements as requirement')
+        $rows = DB::table('erp_production_target_material_requirements as requirement')
             ->join('erp_work_order_material_supply_rules as supply', 'supply.id', '=', 'requirement.material_supply_rule_snapshot_id')
+            ->join('erp_work_order_material_requirements as work_requirement', 'work_requirement.id', '=', 'requirement.material_requirement_id')
             ->join('erp_items as item', 'item.id', '=', 'requirement.component_item_id')
             ->where('requirement.target_type', $targetType)->where('requirement.target_id', $targetId)
             ->where('supply.participates_in_kitting_snapshot', true)
             ->leftJoin('erp_production_workstation_stock_confirmations as workstation', 'workstation.target_material_requirement_id', '=', 'requirement.id')
             ->select([
-                'requirement.id', 'requirement.material_supply_rule_snapshot_id', 'requirement.component_item_id',
+                'requirement.id', 'requirement.material_requirement_id', 'requirement.material_supply_rule_snapshot_id', 'requirement.component_item_id',
                 'requirement.required_base_qty', 'requirement.satisfied_base_qty',
+                'work_requirement.received_qty as work_order_received_qty',
                 'supply.supply_mode_snapshot', 'item.item_code', 'item.item_name',
                 'workstation.workstation_snapshot', 'workstation.onsite_available_base_qty_snapshot',
                 'workstation.confirmed_base_qty', 'workstation.confirmed_by_legacy_id', 'workstation.confirmed_at',
             ])
-            ->orderBy('requirement.id')->get()->map(function ($row): array {
+            ->orderBy('requirement.id')->get();
+
+        $requirementIds = $rows->pluck('material_requirement_id')->map(fn ($id) => (int) $id)->unique()->values();
+        $returnSources = DB::table('erp_material_receipt_lines as receipt_line')
+            ->join('erp_material_delivery_lines as delivery_line', 'delivery_line.id', '=', 'receipt_line.delivery_line_id')
+            ->join('erp_material_deliveries as delivery', 'delivery.id', '=', 'delivery_line.delivery_id')
+            ->join('erp_material_picking_task_lines as pick_line', 'pick_line.id', '=', 'delivery_line.picking_task_line_id')
+            ->join('erp_warehouses as warehouse', 'warehouse.id', '=', 'pick_line.warehouse_id')
+            ->join('erp_locations as location', 'location.id', '=', 'pick_line.location_id')
+            ->whereIn('delivery_line.material_requirement_id', $requirementIds)
+            ->where('delivery.production_target_type', $targetType)->where('delivery.production_target_id', $targetId)
+            ->where('receipt_line.accepted_qty', '>', 0)
+            ->selectRaw('delivery_line.material_requirement_id, pick_line.warehouse_id, pick_line.location_id, delivery_line.batch_no, warehouse.warehouse_code, warehouse.warehouse_name, location.location_code, location.location_name, SUM(receipt_line.accepted_qty) as received_base_qty')
+            ->groupBy('delivery_line.material_requirement_id', 'pick_line.warehouse_id', 'pick_line.location_id', 'delivery_line.batch_no', 'warehouse.warehouse_code', 'warehouse.warehouse_name', 'location.location_code', 'location.location_name')
+            ->get()->groupBy(fn ($row) => (int) $row->material_requirement_id);
+
+        $activeReturns = DB::table('erp_production_material_return_lines as return_line')
+            ->join('erp_production_material_returns as material_return', 'material_return.id', '=', 'return_line.return_id')
+            ->whereIn('return_line.material_requirement_id', $requirementIds)
+            ->where('material_return.target_type', $targetType)->where('material_return.target_id', $targetId)
+            ->whereIn('material_return.status', ['SUBMITTED', 'WAIT_QUALITY', 'COMPLETED', 'QUARANTINED'])
+            ->selectRaw('return_line.material_requirement_id, return_line.warehouse_id, return_line.location_id, COALESCE(return_line.batch_no, \'\') as normalized_batch_no, SUM(return_line.return_base_qty) as returned_base_qty')
+            ->groupBy('return_line.material_requirement_id', 'return_line.warehouse_id', 'return_line.location_id', DB::raw('COALESCE(return_line.batch_no, \'\')'))
+            ->get()->keyBy(fn ($row) => implode('|', [(int) $row->material_requirement_id, (int) $row->warehouse_id, (int) $row->location_id, (string) $row->normalized_batch_no]));
+
+        return $rows->map(function ($row) use ($returnSources, $activeReturns): array {
                 $required = (float) $row->required_base_qty;
                 $received = (float) $row->satisfied_base_qty;
                 $mode = $row->supply_mode_snapshot === 'line_side_stock' ? 'workstation_stock' : $row->supply_mode_snapshot;
@@ -137,11 +164,30 @@ class ProductionKittingService
                         'confirmed_at' => $row->confirmed_at,
                     ];
                 }
+                $sources = collect($returnSources->get((int) $row->material_requirement_id, collect()))->map(function ($source) use ($activeReturns, $row): array {
+                    $key = implode('|', [(int) $row->material_requirement_id, (int) $source->warehouse_id, (int) $source->location_id, (string) ($source->batch_no ?? '')]);
+                    $sourceReceived = (float) $source->received_base_qty;
+                    $sourceReturned = (float) optional($activeReturns->get($key))->returned_base_qty;
+                    return [
+                        'warehouse_id' => (int) $source->warehouse_id,
+                        'warehouse_code' => $source->warehouse_code,
+                        'warehouse_name' => $source->warehouse_name,
+                        'location_id' => (int) $source->location_id,
+                        'location_code' => $source->location_code,
+                        'location_name' => $source->location_name,
+                        'batch_no' => $source->batch_no,
+                        'received_base_qty' => $sourceReceived,
+                        'returnable_base_qty' => max(0, $sourceReceived - $sourceReturned),
+                    ];
+                })->filter(fn (array $source): bool => $source['returnable_base_qty'] > 0.00000001)->values()->all();
                 return [
-                    'id' => (int) $row->id, 'material_supply_rule_snapshot_id' => (int) $row->material_supply_rule_snapshot_id,
+                    'id' => (int) $row->id, 'material_requirement_id' => (int) $row->material_requirement_id,
+                    'material_supply_rule_snapshot_id' => (int) $row->material_supply_rule_snapshot_id,
                     'component_item_id' => (int) $row->component_item_id, 'component_item_code' => $row->item_code,
                     'component_item_name' => $row->item_name, 'required_base_qty' => $required,
                     'satisfied_base_qty' => $received, 'shortage_base_qty' => max(0, $required - $received),
+                    'work_order_received_base_qty' => (float) $row->work_order_received_qty,
+                    'return_sources' => $sources,
                     'required' => ['component_item_id' => (int) $row->component_item_id, 'base_qty' => $required],
                     'received' => ['component_item_id' => (int) $row->component_item_id, 'base_qty' => $received],
                     'source_facts' => $sourceFacts,

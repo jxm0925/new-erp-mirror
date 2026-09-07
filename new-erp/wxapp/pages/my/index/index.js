@@ -2,6 +2,7 @@
 var util = require('../../../utils/util.js');
 var api = require('../../../config/api.js');
 var erpAuth = require('../../../services/erp-auth.js');
+import Notify from '@vant/weapp/notify/notify';
 Page({
 
   /**
@@ -12,10 +13,9 @@ Page({
       is_login:0
     },
     score:0,
+    unifiedLoggedIn:false,
     erpUser:null,
-    erpUsername:'',
-    erpPassword:'',
-    erpBusy:false
+    logoutBusy:false
   },
 
   /**
@@ -37,7 +37,8 @@ Page({
     var userInfo = wx.getStorageSync('userInfo');
     this.setData({
         userInfo:userInfo,
-        erpUser:wx.getStorageSync('erp_user') || null
+        erpUser:wx.getStorageSync('erp_user') || null,
+        unifiedLoggedIn:Boolean(wx.getStorageSync('token') && wx.getStorageSync('erp_token'))
     });
     console.log(userInfo)
     if(userInfo.is_login){
@@ -114,26 +115,12 @@ Page({
       url: '/pages/suggests/manage/index',
     })
   },
-  erpInput(event){
-    this.setData({ [event.currentTarget.dataset.field]: event.detail.value });
-  },
-  erpLogin(){
-    if(this.data.erpBusy) return;
-    if(!this.data.erpUsername.trim() || !this.data.erpPassword){
-      Notify({ type: 'warning', message: '请输入 ERP 用户名和密码' });
-      return;
-    }
-    this.setData({erpBusy:true});
-    erpAuth.login(this.data.erpUsername.trim(), this.data.erpPassword).then((result)=>{
-      this.setData({erpUser:result.user || {},erpPassword:''});
-      Notify({ type: 'success', message: 'ERP 登录成功' });
-    }).catch((error)=>Notify({ type: 'danger', message:error.message })).finally(()=>this.setData({erpBusy:false}));
-  },
-  erpLogout(){
-    this.setData({erpBusy:true});
-    erpAuth.logout().then(()=>{
-      this.setData({erpUser:null,erpPassword:''});
-      Notify({ type: 'success', message: '已退出 ERP' });
-    }).finally(()=>this.setData({erpBusy:false}));
+  logoutAll(){
+    if(this.data.logoutBusy) return;
+    this.setData({logoutBusy:true});
+    erpAuth.logoutAll().then(()=>{
+      this.setData({userInfo:{is_login:0},erpUser:null,unifiedLoggedIn:false,score:0});
+      Notify({ type: 'success', message: '已退出统一账号' });
+    }).finally(()=>this.setData({logoutBusy:false}));
   }
 })

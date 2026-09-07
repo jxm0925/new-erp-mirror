@@ -2,8 +2,10 @@
 
 namespace App\Http\Controllers\Api\V1\Erp;
 
+use App\Exceptions\ErpSsoException;
 use App\Http\Controllers\Controller;
 use App\Services\Erp\AuthContextService;
+use App\Services\Erp\LegacySsoService;
 use App\Services\Erp\RbacBootstrapService;
 use App\Services\ErpAuthService;
 use Illuminate\Http\Request;
@@ -24,26 +26,25 @@ class AuthController extends Controller
         $rbac->bootstrap();
         $this->ensureUserRole((int) $admin['id']);
 
-        $plainToken = Str::random(64);
-        DB::table('erp_auth_tokens')->insert([
-            'user_legacy_id' => (int) $admin['id'],
-            'token_hash' => hash('sha256', $plainToken),
-            'expires_at' => now()->addDays(7),
-            'created_at' => now(),
-            'updated_at' => now(),
+        return $this->issueSession((int) $admin['id'], app(AuthContextService::class));
+    }
+
+    public function sso(Request $request, LegacySsoService $sso, RbacBootstrapService $rbac, AuthContextService $authContext)
+    {
+        $data = $request->validate([
+            'ticket' => 'required|string|max:16384',
         ]);
 
-        $authContext = app(AuthContextService::class);
-        $user = DB::table('erp_legacy_admin_users')->where('legacy_id', (int) $admin['id'])->first();
-        abort_if(!$user, 409, '新系统未找到该管理员快照，请先手动同步旧系统管理员数据');
-        return response()->json([
-            'token' => $plainToken,
-            'user' => $user,
-            'data_scope' => $authContext->dataScope($user),
-            'permissions' => $authContext->permissionCodes($user),
-            'is_super_admin' => $authContext->isSuperAdmin($user),
-            'is_department_principal' => $authContext->isDepartmentPrincipal($user),
-        ]);
+        try {
+            $legacyId = $sso->consume($data['ticket'], $request->ip());
+        } catch (ErpSsoException $exception) {
+            abort($exception->httpStatus(), $exception->getMessage());
+        }
+
+        $rbac->bootstrap();
+        $this->ensureUserRole($legacyId);
+
+        return $this->issueSession($legacyId, $authContext);
     }
 
     public function me(Request $request, AuthContextService $auth, RbacBootstrapService $rbac)
@@ -75,20 +76,49 @@ class AuthController extends Controller
         if (!$user) return;
 
         $groups = json_decode($user->auth_group_names ?: '[]', true) ?: [];
+        $legacyPayload = json_decode($user->legacy_payload ?: '{}', true) ?: [];
         $groupText = implode(' ', $groups);
         $isPrincipal = DB::table('erp_department_users')->where('user_legacy_id', $legacyId)->where('is_principal', true)->exists();
         $roleCode = match (true) {
-            ($user->username ?? '') === 'admin', in_array('Admin group', $groups, true) => 'admin',
+            ($user->username ?? '') === 'admin',
+            in_array('Admin group', $groups, true),
+            (bool) ($legacyPayload['is_super_admin'] ?? false) => 'admin',
             str_contains($groupText, '销售负责人') || str_contains(strtolower($groupText), 'sales manager') => 'sales_manager',
             $isPrincipal => 'department_principal',
             (bool) ($user->is_sales ?? false) => 'sales_user',
-            default => null,
+            // Same policy as training's default local role: a valid active
+            // source identity receives only the least-privileged execution role.
+            // Creating/releasing work orders still depends on explicit RBAC.
+            default => 'production_operator',
         };
-        if (!$roleCode) return;
 
         $roleId = DB::table('erp_rbac_roles')->where('code', $roleCode)->value('id');
         if ($roleId) {
             DB::table('erp_rbac_user_roles')->updateOrInsert(['user_legacy_id' => $legacyId, 'role_id' => $roleId]);
         }
+    }
+
+    private function issueSession(int $legacyId, AuthContextService $authContext)
+    {
+        $user = DB::table('erp_legacy_admin_users')->where('legacy_id', $legacyId)->first();
+        abort_if(!$user, 409, '新 ERP 未找到当前登录身份。');
+
+        $plainToken = Str::random(64);
+        DB::table('erp_auth_tokens')->insert([
+            'user_legacy_id' => $legacyId,
+            'token_hash' => hash('sha256', $plainToken),
+            'expires_at' => now()->addDays(7),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return response()->json([
+            'token' => $plainToken,
+            'user' => $user,
+            'data_scope' => $authContext->dataScope($user),
+            'permissions' => $authContext->permissionCodes($user),
+            'is_super_admin' => $authContext->isSuperAdmin($user),
+            'is_department_principal' => $authContext->isDepartmentPrincipal($user),
+        ]);
     }
 }

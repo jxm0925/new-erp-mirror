@@ -56,6 +56,7 @@ page ,.container{
 .func-area{
   margin-top: 20rpx;
 }
+.account-caption{position:absolute;left:30rpx;top:60rpx;z-index:2;font-size:22rpx;color:#6f3a34}
 .erp-auth-card{margin:20rpx 24rpx;padding:24rpx;background:#fff;border-radius:16rpx;box-shadow:0 6rpx 22rpx rgba(30,40,60,.05);position:relative;z-index:2}
 .erp-auth-title{display:flex;justify-content:space-between;align-items:center;font-size:28rpx;font-weight:600}
 .erp-state{font-size:22rpx;color:#909399;font-weight:400}.erp-state.online{color:#20a53a}

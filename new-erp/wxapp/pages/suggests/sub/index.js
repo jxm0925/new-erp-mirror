@@ -48,32 +48,14 @@ Page({
    */
   onLoad(options) {
     this.getOptions();
-    if(!wx.getStorageSync('token')){
-      wx.login({
-        success: (res) => {
-          if(res.code){
-            util.request(api.WechatLogin,{code:res.code}).then(function(res){
-                console.log(res);
-                var userInfo = res.data.staff_info;
-                userInfo.is_login = 1;
-                try{
-                  wx.setStorageSync('userInfo', userInfo)
-                  wx.setStorageSync('token', res.data.token)
-                }catch(e){
-                   Notify({ type: 'danger', message: '保存用户信息失败' });
-                }
-                util.refreshPage()
-            })
-          }
-        },
-      })
-    }
   },
   /**
    * 生命周期函数--监听页面初次渲染完成
    */
   onReady() {
-
+    if(!wx.getStorageSync('token') || !wx.getStorageSync('erp_token')){
+      util.BadgePopup();
+    }
   },
 
   /**
