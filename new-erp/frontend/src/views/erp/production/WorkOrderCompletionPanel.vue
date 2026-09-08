@@ -7,7 +7,7 @@
           <section class="completion-card">
             <h3>完工事实 <small>（只读）</small></h3>
             <dl class="fact-list">
-              <dt>Completion 号</dt><dd>{{ completion.completion_no }}</dd>
+              <dt>完工单号</dt><dd>{{ completion.completion_no }}</dd>
               <dt>完工提交人</dt><dd>{{ completion.submitted_by_name || `用户 ${completion.submitted_by_legacy_id}` }}</dd>
               <dt>提交时间</dt><dd>{{ completion.submitted_at || '-' }}</dd>
             </dl>
@@ -30,8 +30,8 @@
           </section>
           <section class="completion-note">
             <b>说明：</b>
-            <p>1. PC 端申报人员执行成品入库；微信端仅记录完工事实，不显示入库相关操作。</p>
-            <p>2. Completion（完工事实）与 Finished Goods Receipt（成品入库）严格分离。</p>
+            <p>1. 电脑端申报人员执行成品入库；微信端仅记录完工事实，不显示入库相关操作。</p>
+            <p>2. 完工事实与成品入库严格分离。</p>
             <p>3. 每次入库均生成来源唯一键与入库单号，库存过账可追溯。</p>
           </section>
         </div>
@@ -47,7 +47,7 @@
             <p class="muted">说明：进度仅基于良品数量，不包含不良品。</p>
           </section>
           <section class="completion-card receipt-card">
-            <h3>入库记录 <small>（Finished Goods Receipt）</small></h3>
+            <h3>成品入库记录</h3>
             <el-table :data="completion.receipts || []" border size="small" empty-text="暂无成品入库记录">
               <el-table-column type="index" label="序号" width="55" />
               <el-table-column prop="receipt_no" label="入库单号" min-width="150" />
@@ -71,7 +71,7 @@
             <label>仓库 <em>*</em><el-select v-model="form.warehouse_id" filterable placeholder="请选择仓库" @change="warehouseChanged"><el-option v-for="row in warehouses" :key="row.id" :label="row.warehouse_name" :value="row.id" /></el-select></label>
             <label>库位 <em>*</em><el-select v-model="form.location_id" filterable placeholder="请选择库位" @change="invalidateCommand"><el-option v-for="row in filteredLocations" :key="row.id" :label="row.location_name" :value="row.id" /></el-select></label>
             <label>批次 <em>*</em><el-input v-model.trim="form.batch_no" maxlength="80" @input="invalidateCommand" /></label>
-            <div class="command-box"><span>幂等 Command ID</span><code>{{ commandId || '提交时生成' }}</code><span>版本 V{{ selectedLine && selectedLine.output_business_version || '-' }}</span></div>
+            <div class="command-box"><span>幂等命令号</span><code>{{ commandId || '提交时生成' }}</code><span>版本 {{ selectedLine && selectedLine.output_business_version || '-' }}</span></div>
             <el-alert v-if="form.posted_base_qty > lineRemaining" title="超额入库阻断：请修改入库数量。" type="error" :closable="false" show-icon />
             <el-button type="success" :loading="submitting" :disabled="!canSubmit" @click="submitReceipt">确认过账</el-button>
             <p class="irreversible">过账后将生成入库单并更新库存，操作不可逆。</p>

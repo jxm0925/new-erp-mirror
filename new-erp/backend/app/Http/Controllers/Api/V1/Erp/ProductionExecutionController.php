@@ -37,7 +37,7 @@ class ProductionExecutionController extends Controller
             'workstation_stock_confirmations.*.workstation' => 'nullable|string|max:160',
         ]);
         [$user, $permissions] = $this->context($request);
-        return response()->json(['message' => '齐套确认成功，已开始加工并启动负责人实际工时。', 'data' => $service->confirm($taskId, $targetType, $targetId, $payload, $user, $permissions)]);
+        return response()->json(['message' => '齐套确认成功，当前目标已就绪。', 'data' => $service->confirm($taskId, $targetType, $targetId, $payload, $user, $permissions)]);
     }
 
     public function start(Request $request, int $taskId, string $targetType, int $targetId, ProductionExecutionActionService $service)

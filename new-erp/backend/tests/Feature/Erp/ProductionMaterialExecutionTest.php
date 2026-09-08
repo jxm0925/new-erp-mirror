@@ -35,6 +35,40 @@ class ProductionMaterialExecutionTest extends TestCase
         'production.material_return.create', 'production.material_return.receive', 'production.material_return.quality',
     ];
 
+    public function test_warehouse_creates_picking_task_from_system_preparation_demand_without_retyping_production_requirement(): void
+    {
+        [$user, $workOrder, $requirement, $balance] = $this->fixture();
+        $service = app(ProductionMaterialExecutionService::class);
+        $demand = DB::table('erp_production_target_material_requirements')
+            ->where('work_order_id', $workOrder->id)->first();
+        DB::table('erp_production_target_material_requirements')->where('id', $demand->id)->update(['status' => 'WAIT_PREPARE']);
+
+        $page = $service->paginatePreparationDemands(['work_order_id' => $workOrder->id], $user, self::PERMISSIONS, true);
+        $this->assertSame(1, $page->total());
+        $this->assertSame($demand->id, (int) $page->items()[0]->id);
+        $this->assertSame('WAIT_PREPARE', $page->items()[0]->status);
+
+        $task = $service->createPickingTask([
+            'client_command_id' => $this->id('from-system-demand'),
+            'work_order_id' => $workOrder->id,
+            'expected_version' => 1,
+            'warehouse_id' => $balance->warehouse_id,
+            'lines' => [[
+                'target_material_requirement_id' => $demand->id,
+                'inventory_balance_id' => $balance->id,
+                'planned_pick_qty' => 10,
+            ]],
+        ], $user, self::PERMISSIONS, true);
+
+        $line = $task->lines->first();
+        $this->assertSame($requirement->id, (int) $line->material_requirement_id);
+        $this->assertSame((int) $demand->material_supply_rule_snapshot_id, (int) $line->material_supply_rule_snapshot_id);
+        $this->assertSame($demand->target_type, $line->production_target_type);
+        $this->assertSame((int) $demand->target_id, (int) $line->production_target_id);
+        $this->assertSame('PREPARING', DB::table('erp_production_target_material_requirements')->where('id', $demand->id)->value('status'));
+        $this->assertSame(0, $service->paginatePreparationDemands(['work_order_id' => $workOrder->id], $user, self::PERMISSIONS, true)->total());
+    }
+
     public function test_material_selector_filters_before_pagination_and_preserves_target_scope(): void
     {
         [$user, $workOrder, $requirement] = $this->fixture();

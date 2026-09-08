@@ -77,7 +77,7 @@ class SalesToProductionFullFlowTest extends TestCase
             'decision' => 'approve',
         ], $user, ['production.completion.review', 'production.work_order.view.all'], true);
         $this->assertSame('APPROVED', $completion['status']);
-        $this->assertSame('COMPLETED', $released->fresh()->status);
+        $this->assertSame('RELEASED', $released->fresh()->status);
         $output->refresh();
         $this->assertSame('WAIT_WAREHOUSE', $output->status);
 
@@ -86,6 +86,7 @@ class SalesToProductionFullFlowTest extends TestCase
             'warehouse_id' => $f['warehouse']->id, 'location_id' => $f['location']->id,
             'batch_no' => 'FULL-PROD-'.$f['suffix'], 'unit_cost' => 15,
         ], $user, ['production.output.warehouse']);
+        $this->assertSame('COMPLETED', $released->fresh()->status);
         $this->assertNotNull($posted['sales_order_reservation_id']);
         $this->assertNotNull($posted['finished_goods_receipt_id']);
         $this->assertSame(10.0, (float) $f['line']->fresh()->inventory_fulfilled_qty + (float) $f['line']->fresh()->production_required_qty);

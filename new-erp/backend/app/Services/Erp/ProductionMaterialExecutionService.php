@@ -36,6 +36,61 @@ final class ProductionMaterialExecutionService
         return $query->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 20))));
     }
 
+    public function paginatePreparationDemands(array $filters, object $user, array $permissions, bool $superAdmin): LengthAwarePaginator
+    {
+        $this->permission($permissions, 'production.material_requirement.view');
+        $scope = $this->scopeResolver->resolve($user, 'production.material_requirement.view', $permissions, $superAdmin);
+        $visibleWorkOrders = WorkOrder::query()->select('id');
+        $this->scopeResolver->applyWorkOrderScope($visibleWorkOrders, $scope);
+
+        $allocatedSql = "COALESCE((SELECT SUM(CASE WHEN task.status IN ('WAIT_PICK', 'PICKING') THEN line.planned_pick_qty ELSE GREATEST(line.actual_pick_qty - line.received_qty, 0) END) FROM erp_material_picking_task_lines line JOIN erp_material_picking_tasks task ON task.id = line.task_id WHERE line.production_target_type = demand.target_type AND line.production_target_id = demand.target_id AND line.material_supply_rule_snapshot_id = demand.material_supply_rule_snapshot_id AND task.status != 'CANCELLED'), 0)";
+        $remainingSql = "GREATEST(demand.required_base_qty - GREATEST(demand.satisfied_base_qty - demand.returned_base_qty, 0) - {$allocatedSql}, 0)";
+
+        $query = DB::table('erp_production_target_material_requirements as demand')
+            ->join('erp_work_order_material_supply_rules as supply', 'supply.id', '=', 'demand.material_supply_rule_snapshot_id')
+            ->join('erp_work_order_material_requirements as requirement', 'requirement.id', '=', 'demand.material_requirement_id')
+            ->join('erp_work_orders as work_order', 'work_order.id', '=', 'demand.work_order_id')
+            ->join('erp_items as item', 'item.id', '=', 'demand.component_item_id')
+            ->whereIn('demand.work_order_id', $visibleWorkOrders)
+            ->where('supply.supply_mode_snapshot', 'dedicated_delivery')
+            ->where('supply.requires_delivery_snapshot', true)
+            ->orderBy('demand.id')
+            ->select([
+                'demand.id', 'demand.work_order_id', 'work_order.work_order_no',
+                'supply.target_routing_operation_id_snapshot as target_routing_operation_id',
+                'supply.target_operation_code_snapshot as target_operation_code',
+                'supply.target_operation_name_snapshot as target_operation_name',
+                'demand.target_type as production_target_type', 'demand.target_id as production_target_id',
+                'demand.material_requirement_id', 'demand.component_item_id',
+                'item.item_code', 'item.item_name', 'item.spec',
+                'demand.required_base_qty as required_qty', 'demand.satisfied_base_qty',
+                'demand.returned_base_qty', 'requirement.base_unit_name_snapshot as unit_name',
+                'demand.status', 'demand.business_version', 'demand.created_at', 'demand.updated_at',
+            ])
+            ->selectRaw("{$remainingSql} as remaining_to_prepare");
+
+        if (! empty($filters['status'])) {
+            $query->where('demand.status', (string) $filters['status']);
+        } else {
+            $query->whereRaw("{$remainingSql} > 0.00000001");
+        }
+        if (! empty($filters['work_order_id'])) $query->where('demand.work_order_id', (int) $filters['work_order_id']);
+        if (! empty($filters['target_routing_operation_id'])) {
+            $query->where('supply.target_routing_operation_id_snapshot', (int) $filters['target_routing_operation_id']);
+        }
+        if (trim((string) ($filters['keyword'] ?? '')) !== '') {
+            $keyword = '%'.trim((string) $filters['keyword']).'%';
+            $query->where(function ($nested) use ($keyword): void {
+                $nested->where('work_order.work_order_no', 'like', $keyword)
+                    ->orWhere('item.item_code', 'like', $keyword)
+                    ->orWhere('item.item_name', 'like', $keyword)
+                    ->orWhere('item.spec', 'like', $keyword);
+            });
+        }
+
+        return $query->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 20))));
+    }
+
     public function showPickingTask(int $id, object $user, array $permissions, bool $superAdmin): MaterialPickingTask
     {
         $this->permission($permissions, 'production.material_picking.view');
@@ -61,7 +116,7 @@ final class ProductionMaterialExecutionService
                     $this->fail('production_location_missing', '工单缺少生产地点，不能创建配送任务。');
                 }
                 $warehouseId = (int) ($payload['warehouse_id'] ?? 0);
-                $rows = collect($payload['lines'] ?? []);
+                $rows = $this->resolvePickingRows(collect($payload['lines'] ?? []), $workOrder);
                 if ($warehouseId <= 0 || $rows->isEmpty()) $this->fail('validation_error', '仓库和配料明细不能为空。');
                 if ($rows->pluck('material_requirement_id')->duplicates()->isNotEmpty()) {
                     $this->fail('duplicate_requirement', '同一配料任务内一个物料需求只能出现一次。');
@@ -115,6 +170,12 @@ final class ProductionMaterialExecutionService
                     if ($planned > $remaining + 0.00000001) {
                         $this->fail('pick_quantity_exceeded', '计划配料量超过该正式需求的剩余可配数量。', 422, ['remaining_to_pick' => max(0, $remaining)]);
                     }
+                    $targetRemaining = $this->targetRemainingToPrepare($targetRequirement);
+                    if ($planned > $targetRemaining + 0.00000001) {
+                        $this->fail('target_prepare_quantity_exceeded', '计划配料量超过该系统待准备需求的剩余数量。', 422, [
+                            'remaining_to_prepare' => max(0, $targetRemaining),
+                        ]);
+                    }
                     $serialIds = array_values(array_unique(array_map('intval', (array) ($row['serial_ids'] ?? []))));
                     MaterialPickingTaskLine::create([
                         'task_id' => $task->id, 'material_requirement_id' => $requirement->id,
@@ -133,6 +194,7 @@ final class ProductionMaterialExecutionService
                         'serial_snapshot' => $serialIds === [] ? null : ['inventory_serial_ids' => $serialIds],
                         'status' => 'WAIT_PICK', 'business_version' => 1,
                     ]);
+                    $this->refreshPreparationStatus((int) $targetRequirement->id);
                 }
                 $this->event('picking_task', $task->id, 'create', null, 'WAIT_PICK', 0, 1, null, $payload['remark'] ?? null, $user);
                 return $task->fresh($this->pickingRelations());
@@ -443,6 +505,7 @@ final class ProductionMaterialExecutionService
                                 'business_version' => (int) $targetRequirement->business_version + 1,
                                 'updated_at' => now(),
                             ]);
+                            $this->refreshPreparationStatus((int) $targetRequirement->id);
                         }
                     }
                     $this->updateReceivedSerials($acceptedSerials, 'production_received', $receipt, $line);
@@ -546,6 +609,16 @@ final class ProductionMaterialExecutionService
             $before = $task->status; $beforeVersion = (int) $task->business_version;
             $mutate($task);
             $task->status = $to; $task->business_version++; $task->updated_by_legacy_id = $this->userId($user); $task->save();
+            if ($action === 'cancel') {
+                foreach ($task->lines as $line) {
+                    $targetRequirementId = DB::table('erp_production_target_material_requirements')
+                        ->where('target_type', $line->production_target_type)
+                        ->where('target_id', $line->production_target_id)
+                        ->where('material_supply_rule_snapshot_id', $line->material_supply_rule_snapshot_id)
+                        ->value('id');
+                    if ($targetRequirementId) $this->refreshPreparationStatus((int) $targetRequirementId);
+                }
+            }
             $this->event('picking_task', $task->id, $action, $before, $to, $beforeVersion, $task->business_version, null, $payload['reason'] ?? null, $user);
             return $task->fresh($this->pickingRelations());
         });
@@ -677,6 +750,79 @@ final class ProductionMaterialExecutionService
         $number = (float) $text;
         if ($allowZero ? $number < 0 : $number <= 0) $this->fail('quantity_invalid', "{$field} 数量不合法。");
         return $number;
+    }
+
+    private function resolvePickingRows($rows, WorkOrder $workOrder)
+    {
+        return $rows->map(function ($row) use ($workOrder): array {
+            $row = (array) $row;
+            $demandId = (int) ($row['target_material_requirement_id'] ?? 0);
+            if ($demandId <= 0) return $row;
+
+            $demand = DB::table('erp_production_target_material_requirements as demand')
+                ->join('erp_work_order_material_supply_rules as supply', 'supply.id', '=', 'demand.material_supply_rule_snapshot_id')
+                ->where('demand.id', $demandId)
+                ->where('demand.work_order_id', $workOrder->id)
+                ->lockForUpdate()
+                ->select('demand.*', 'supply.supply_mode_snapshot', 'supply.requires_delivery_snapshot')
+                ->first();
+            if (! $demand) $this->fail('preparation_demand_invalid', '系统待准备需求不存在或不属于当前工单。');
+            if ($demand->supply_mode_snapshot !== 'dedicated_delivery' || ! $demand->requires_delivery_snapshot) {
+                $this->fail('per_order_delivery_not_required', '工位常备或无需逐单配送的物料不能生成逐单配料配送任务。');
+            }
+            if ($demand->status === 'SATISFIED') $this->fail('preparation_demand_satisfied', '该系统待准备需求已满足，无需重复配料。');
+
+            $derived = [
+                'material_requirement_id' => (int) $demand->material_requirement_id,
+                'material_supply_rule_snapshot_id' => (int) $demand->material_supply_rule_snapshot_id,
+                'production_target_type' => (string) $demand->target_type,
+                'production_target_id' => (int) $demand->target_id,
+            ];
+            foreach ($derived as $key => $value) {
+                if (array_key_exists($key, $row) && (string) $row[$key] !== (string) $value) {
+                    $this->fail('preparation_demand_mismatch', '配料明细与系统待准备需求不一致，禁止覆盖系统生产需求。');
+                }
+            }
+            return array_merge($row, $derived);
+        });
+    }
+
+    private function targetRemainingToPrepare(object $targetRequirement): float
+    {
+        $netSatisfied = max(0, (float) $targetRequirement->satisfied_base_qty - (float) $targetRequirement->returned_base_qty);
+        $allocated = DB::table('erp_material_picking_task_lines as line')
+            ->join('erp_material_picking_tasks as task', 'task.id', '=', 'line.task_id')
+            ->where('line.production_target_type', $targetRequirement->target_type)
+            ->where('line.production_target_id', $targetRequirement->target_id)
+            ->where('line.material_supply_rule_snapshot_id', $targetRequirement->material_supply_rule_snapshot_id)
+            ->where('task.status', '!=', 'CANCELLED')
+            ->get(['task.status as task_status', 'line.planned_pick_qty', 'line.actual_pick_qty', 'line.received_qty'])
+            ->sum(fn ($line): float => in_array($line->task_status, ['WAIT_PICK', 'PICKING'], true)
+                ? (float) $line->planned_pick_qty
+                : max(0, (float) $line->actual_pick_qty - (float) $line->received_qty));
+        return max(0, (float) $targetRequirement->required_base_qty - $netSatisfied - $allocated);
+    }
+
+    private function refreshPreparationStatus(int $targetRequirementId): void
+    {
+        $demand = DB::table('erp_production_target_material_requirements')->where('id', $targetRequirementId)->lockForUpdate()->first();
+        if (! $demand) return;
+        $netSatisfied = max(0, (float) $demand->satisfied_base_qty - (float) $demand->returned_base_qty);
+        $remaining = $this->targetRemainingToPrepare($demand);
+        $required = (float) $demand->required_base_qty;
+        $status = $netSatisfied + 0.00000001 >= $required
+            ? 'SATISFIED'
+            : ($remaining <= 0.00000001
+                ? 'PREPARING'
+                : ($remaining + $netSatisfied + 0.00000001 < $required
+                    ? 'PARTIAL_PREPARING'
+                    : ($netSatisfied > 0 ? 'PARTIALLY_SATISFIED' : 'WAIT_PREPARE')));
+        if ($status === $demand->status) return;
+        DB::table('erp_production_target_material_requirements')->where('id', $demand->id)->update([
+            'status' => $status,
+            'business_version' => (int) $demand->business_version + 1,
+            'updated_at' => now(),
+        ]);
     }
 
     private function sortPayload(array $payload): array

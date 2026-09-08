@@ -418,6 +418,7 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::get('internal-issues/{id}', [ProductionInternalIssueController::class, 'show'])->whereNumber('id');
     Route::post('internal-issues/{id}/dispatch', [ProductionInternalIssueController::class, 'dispatch'])->whereNumber('id');
     Route::post('internal-issues/{id}/receive', [ProductionInternalIssueController::class, 'receive'])->whereNumber('id');
+    Route::get('material-preparation-demands', [ProductionMaterialExecutionController::class, 'preparationDemands']);
     Route::get('material-picking-tasks', [ProductionMaterialExecutionController::class, 'pickingTasks']);
     Route::post('material-picking-tasks', [ProductionMaterialExecutionController::class, 'createPickingTask']);
     Route::get('material-picking-tasks/{id}', [ProductionMaterialExecutionController::class, 'showPickingTask'])->whereNumber('id');

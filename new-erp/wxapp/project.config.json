@@ -3,7 +3,12 @@
   "libVersion": "trial",
   "packOptions": {
     "ignore": [],
-    "include": []
+    "include": [
+      {
+        "value": "pages/production/**",
+        "type": "glob"
+      }
+    ]
   },
   "setting": {
     "coverView": true,
@@ -19,6 +24,7 @@
       "outputPath": ""
     },
     "condition": false,
+    "ignoreDevUnusedFiles": false,
     "ignoreUploadUnusedFiles": false
   },
   "condition": {},

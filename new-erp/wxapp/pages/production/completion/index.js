@@ -121,7 +121,7 @@ Page({
       this.setData({ submitting: false, showConfirm: false, clientCommandId: '' });
       wx.showModal({
         title: '完工已提交',
-        content: `完工单号：${result.completion_no || '-'}\n状态：等待 PC 管理人员审核`,
+        content: `完工单号：${result.completion_no || '-'}\n状态：等待电脑端管理人员审核`,
         showCancel: false,
         success: () => wx.navigateBack(),
       });

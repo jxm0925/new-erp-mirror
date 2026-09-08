@@ -315,7 +315,7 @@ Page({
       this.run(() => production.confirmKitting(this.data.id, t.target_type, t.target_id, {
         expected_version: t.business_version,
         workstation_stock_confirmations: confirmations,
-      }), '已齐套并开工');
+      }), '齐套确认成功');
     }).catch(() => null);
   },
 

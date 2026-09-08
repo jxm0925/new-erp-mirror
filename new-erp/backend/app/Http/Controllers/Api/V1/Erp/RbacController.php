@@ -145,6 +145,10 @@ class RbacController extends Controller
 
         $query = DB::table('erp_rbac_user_roles as ur')
             ->join('erp_legacy_admin_users as u', 'ur.user_legacy_id', '=', 'u.legacy_id')
+            ->leftJoin('erp_rbac_user_role_sources as source', function ($join): void {
+                $join->on('source.user_legacy_id', '=', 'ur.user_legacy_id')
+                    ->on('source.role_id', '=', 'ur.role_id');
+            })
             ->where('ur.role_id', $roleId)
             ->when($request->filled('keyword'), function ($q) use ($request) {
                 $keyword = trim((string) $request->input('keyword'));
@@ -155,9 +159,19 @@ class RbacController extends Controller
                 });
             })
             ->orderBy('u.legacy_id')
-            ->select(['u.legacy_id as id', 'u.nickname', 'u.username', 'u.status']);
+            ->groupBy('u.legacy_id', 'u.nickname', 'u.username', 'u.status')
+            ->select(['u.legacy_id as id', 'u.legacy_id as user_id', 'u.nickname', 'u.username', 'u.status'])
+            ->selectRaw("GROUP_CONCAT(DISTINCT source.assignment_source ORDER BY source.assignment_source SEPARATOR ',') as source_list")
+            ->selectRaw("MAX(CASE WHEN source.assignment_source = 'manual' THEN 1 ELSE 0 END) as is_manual");
 
-        return $this->paginated($query->paginate($this->perPage($request)));
+        $paginator = $query->paginate($this->perPage($request));
+        $paginator->through(function (object $row): object {
+            $row->sources = $row->source_list ? explode(',', $row->source_list) : [];
+            $row->is_manual = (bool) $row->is_manual;
+            unset($row->source_list);
+            return $row;
+        });
+        return $this->paginated($paginator);
     }
 
     public function saveRoleUsers(Request $request, RbacUserRoleOwnershipService $ownership)
@@ -171,9 +185,13 @@ class RbacController extends Controller
         DB::transaction(function () use ($data, $ownership): void {
             $roleId = (int) $data['role_id'];
             $selected = array_values(array_unique(array_map('intval', $data['user_ids'] ?? [])));
-            $existing = DB::table('erp_rbac_user_roles')->where('role_id', $roleId)->lockForUpdate()->pluck('user_legacy_id')->map(fn ($id) => (int) $id)->all();
+            // user_ids 表达页面上的手工勾选集合，只能与 manual 所有权比较。
+            // 有效角色并集还可能由 SSO、部门或系统来源持有，绝不能在保存时认领成 manual。
+            $existing = DB::table('erp_rbac_user_role_sources')->where('role_id', $roleId)
+                ->where('assignment_source', RbacUserRoleOwnershipService::SOURCE_MANUAL)
+                ->lockForUpdate()->pluck('user_legacy_id')->map(fn ($id) => (int) $id)->all();
             foreach (array_diff($existing, $selected) as $userId) $ownership->removeManualRole($userId, $roleId);
-            foreach ($selected as $userId) $ownership->addManualRole($userId, $roleId);
+            foreach (array_diff($selected, $existing) as $userId) $ownership->addManualRole($userId, $roleId);
         });
         return response()->json(['message' => '角色用户已保存']);
     }

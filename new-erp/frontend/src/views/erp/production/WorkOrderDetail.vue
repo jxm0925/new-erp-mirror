@@ -3,7 +3,7 @@
     <div class="page-heading">
       <div>
         <p class="eyebrow">生产管理 / 工单管理 / 工单详情</p>
-        <div class="title-line"><h1>{{ workOrder.work_order_no || '工单详情' }}</h1><el-tag :type="statusType(workOrder.status)">{{ statusText(workOrder.status) }}</el-tag><span class="version">v{{ workOrder.business_version || 1 }}</span></div>
+        <div class="title-line"><h1>{{ workOrder.work_order_no || '工单详情' }}</h1><el-tag :type="statusType(workOrder.status)">{{ statusText(workOrder.status) }}</el-tag><span class="version">版本 {{ workOrder.business_version || 1 }}</span></div>
       </div>
       <div class="heading-actions">
         <el-button @click="$router.back()">返回</el-button>
@@ -122,7 +122,7 @@ export default {
     canViewGate() { return Boolean(this.workOrder.actions && this.workOrder.actions.view_release_gate) },
     canViewMaterials() { return Boolean(this.workOrder.actions && this.workOrder.actions.view_materials) },
     canPublish() { return this.workOrder.status === 'WAIT_RELEASE' && this.gate && this.gate.allowed && this.$can('production.work_order.publish') },
-    canViewCompletion() { return ['IN_PROGRESS', 'COMPLETED'].includes(this.workOrder.status) && this.$can('production.completion.view') },
+    canViewCompletion() { return ['RELEASED', 'IN_PROGRESS', 'COMPLETED'].includes(this.workOrder.status) && this.$can('production.completion.view') },
     bomLabel() { const bom = this.workOrder.release && this.workOrder.release.bom; return bom ? `${bom.bom_no || 'BOM'} ${bom.version || ''}`.trim() : '发布后锁定' },
     routeLabel() { const r=this.workOrder.routing||{}; return r.id ? `${r.no||''} ${r.name||''} V${r.version||'-'}`.trim() : '未配置' },
     targetRouteOperationLabel() { const n=(this.workOrder.routing||{}).target_routing_operation; return n ? `${n.sequence} - ${n.operation_name||''}` : '-' },

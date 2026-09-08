@@ -297,7 +297,9 @@ class ProductionExecutionFoundationService
                 'satisfied_base_qty' => 0,
                 'consumed_base_qty' => 0,
                 'returned_base_qty' => 0,
-                'status' => 'OPEN',
+                'status' => $row->supply_mode_snapshot === 'dedicated_delivery' && (bool) $row->requires_delivery_snapshot
+                    ? 'WAIT_PREPARE'
+                    : 'OPEN',
                 'business_version' => 1,
                 'created_at' => now(),
                 'updated_at' => now(),

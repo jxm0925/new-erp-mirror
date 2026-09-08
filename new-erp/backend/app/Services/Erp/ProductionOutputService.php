@@ -19,6 +19,7 @@ class ProductionOutputService
         private readonly InventoryService $inventory,
         private readonly InventoryReservationService $reservations,
         private readonly WorkOrderCompletionService $completions,
+        private readonly WorkOrderCompletionReadinessService $completionReadiness,
     ) {}
 
     public function inspect(int $outputId, array $payload, object $user, array $permissions): array
@@ -136,6 +137,10 @@ class ProductionOutputService
                 : null;
             if ($salesReservationId) DB::table('erp_production_output_warehouse_postings')->where('id', $postingId)
                 ->update(['sales_order_reservation_id' => $salesReservationId, 'updated_at' => now()]);
+            if ($terminal) {
+                $workOrder = WorkOrder::query()->lockForUpdate()->find($output->work_order_id);
+                if ($workOrder) $this->completionReadiness->refresh($workOrder, $user, '成品正式入库后满足最终完成条件', $receiptId);
+            }
             return ['posting_id' => $postingId, 'inventory_transaction_id' => (int) $transaction->id,
                 'output_status' => $outputStatus, 'output_business_version' => (int) $output->business_version,
                 'internal_issue_task_id' => $issueId, 'sales_order_reservation_id' => $salesReservationId,

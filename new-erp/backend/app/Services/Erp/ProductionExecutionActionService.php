@@ -21,15 +21,19 @@ class ProductionExecutionActionService
     public function start(int $taskId, string $type, int $targetId, array $payload, object $user, array $permissions): array
     {
         $this->permission($permissions, 'production.task.start');
-        return $this->mutate('start_target', $taskId, $type, $targetId, $payload, $user, function ($task, $target, int $userId): array {
-            if ($target->status !== 'REWORK' && $target->kitting_required && (int) $task->assignee_user_legacy_id === $userId) {
-                $this->fail('kitting_starts_processing', '该工序需要齐套，负责人点击“已齐套”时会直接开始加工，无需再次点击开始。', 409);
+        return $this->mutate('start_target', $taskId, $type, $targetId, $payload, $user, function ($task, $target, int $userId) use ($type): array {
+            if ($target->status !== 'REWORK' && $target->kitting_required && ! $target->kitting_confirmed_at) {
+                $this->fail('kitting_not_confirmed', '该工序尚未完成齐套确认，不能开始加工。', 409);
             }
             if (! in_array($target->status, ['READY', 'IN_PROGRESS', 'REWORK'], true)) $this->fail('target_not_ready', '生产目标尚未完成接单、收料/交接、齐套或返工判定，不能开始。', 409);
             $now = now();
             $target->fill(['status' => 'IN_PROGRESS', 'started_at' => $target->started_at ?: $now,
                 'paused_at' => null, 'business_version' => (int) $target->business_version + 1])->save();
             $this->startSession($task, $target, $userId, $now);
+            $task->targets()->where('target_type', $type)->where('target_id', $target->id)->update(['status_snapshot' => 'IN_PROGRESS']);
+            if ($task->status !== 'IN_PROGRESS') {
+                $task->update(['status' => 'IN_PROGRESS', 'business_version' => (int) $task->business_version + 1]);
+            }
             return $this->projection($task, $target);
         });
     }

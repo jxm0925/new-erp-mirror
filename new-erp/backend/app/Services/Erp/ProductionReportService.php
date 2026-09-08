@@ -88,7 +88,14 @@ final class ProductionReportService
             $target->completed_base_qty = (float) $target->completed_base_qty + $qualified;
             $target->unqualified_base_qty = (float) $target->unqualified_base_qty + $unqualified;
             $target->scrapped_base_qty = (float) $target->scrapped_base_qty + $scrapped;
-            $target->remaining_base_qty = max(0, (float) $target->remaining_base_qty - $reported);
+            $processedRemaining = max(0, (float) $target->remaining_base_qty - $reported);
+            $remainingRequiredQualified = (float) max(0, (float) $target->planned_base_qty - (float) $target->completed_base_qty);
+            // remaining_base_qty 是下一次允许报工的数量，不是有效完成量。
+            // 当一轮加工量已报满但含不良或报废时，按合格缺口重新开放补做量；
+            // 否则加工总量会错误地把不良、报废凑进工单目标。
+            $target->remaining_base_qty = $processedRemaining <= 0.00000001
+                ? $remainingRequiredQualified
+                : $processedRemaining;
             if ($endedLabor) {
                 $otherActive = ProductionLaborSession::query()->where('target_type', 'quantity_operation')
                     ->where('target_id', $target->id)->where('status', 'ACTIVE')->exists();
@@ -109,7 +116,11 @@ final class ProductionReportService
                 'target_business_version' => (int) $target->business_version,
                 'qualified_base_qty' => $qualified, 'unqualified_base_qty' => $unqualified,
                 'scrapped_base_qty' => $scrapped, 'remaining_base_qty' => (float) $target->remaining_base_qty,
-                'ready_for_completion' => (float) $target->remaining_base_qty <= 0.00000001,
+                'processed_base_qty' => (float) $target->completed_base_qty + (float) $target->unqualified_base_qty + (float) $target->scrapped_base_qty,
+                'accepted_completed_base_qty' => (float) $target->completed_base_qty,
+                'remaining_required_qualified_base_qty' => $remainingRequiredQualified,
+                'ready_for_completion' => (float) $target->remaining_base_qty <= 0.00000001
+                    && $remainingRequiredQualified <= 0.00000001,
                 'ended_reporter_labor' => $endedLabor,
             ];
             DB::table('erp_production_execution_events')->insert([

@@ -5,7 +5,6 @@ namespace App\Services\Erp;
 use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Models\Erp\ProductionExecutionCommand;
 use App\Models\Erp\ProductionKittingConfirmation;
-use App\Models\Erp\ProductionLaborSession;
 use App\Models\Erp\ProductionQuantityOperation;
 use App\Models\Erp\ProductionTask;
 use App\Models\Erp\ProductionUnitOperation;
@@ -182,18 +181,18 @@ class ProductionKittingService
                 ->where('task_id', $task->id)->where('target_type', $targetType)->where('target_id', $targetId)
                 ->update(['kitting_confirmation_id' => $confirmation->id, 'updated_at' => now()]);
 
-            $now = $confirmation->confirmed_at;
             $target->kitting_confirmed_at = $confirmation->confirmed_at;
             $target->kitting_confirmed_by_legacy_id = $this->userId($user);
-            $target->started_at = $target->started_at ?: $now;
-            $target->paused_at = null;
-            $target->status = 'IN_PROGRESS';
+            // 齐套确认只证明物料前置条件已经满足，不能替代员工明确开工。
+            // 若在这里写 started_at 或启动工时，会把仓储到料时间错误记成实际加工时间。
+            $target->status = 'READY';
             $target->business_version = (int) $target->business_version + 1;
             $target->save();
-            $this->startOwnerLaborSession($task, $targetType, $targetId, $this->userId($user), $now);
-            $task->targets()->where('target_type', $targetType)->where('target_id', $targetId)->update(['status_snapshot' => 'IN_PROGRESS']);
-            if ($task->status !== 'IN_PROGRESS') {
-                $task->update(['status' => 'IN_PROGRESS', 'business_version' => (int) $task->business_version + 1]);
+            $task->targets()->where('target_type', $targetType)->where('target_id', $targetId)->update(['status_snapshot' => 'READY']);
+            // A task may aggregate many unit targets. Kitting a later unit must not
+            // downgrade an already running/paused/settling task back to READY.
+            if (! in_array($task->status, ['READY', 'IN_PROGRESS', 'PAUSED', 'WAIT_QUALITY', 'WAIT_WAREHOUSE', 'COMPLETED', 'CANCELLED'], true)) {
+                $task->update(['status' => 'READY', 'business_version' => (int) $task->business_version + 1]);
             }
 
             $result = ['id' => (int) $confirmation->id, 'confirmation_no' => $confirmation->confirmation_no,
@@ -341,20 +340,6 @@ class ProductionKittingService
                 'business_version' => (int) $requirement->business_version + 1, 'updated_at' => $now,
             ]);
         }
-    }
-
-    private function startOwnerLaborSession(ProductionTask $task, string $targetType, int $targetId, int $userId, $now): void
-    {
-        if (ProductionLaborSession::query()->where('task_id', $task->id)->where('target_type', $targetType)
-            ->where('target_id', $targetId)->where('employee_legacy_id', $userId)->where('status', 'ACTIVE')->exists()) {
-            $this->fail('labor_session_active', '当前负责人已有进行中的加工计时。', 409);
-        }
-        ProductionLaborSession::create([
-            'task_id' => $task->id, 'target_type' => $targetType, 'target_id' => $targetId,
-            'employee_legacy_id' => $userId, 'role' => 'owner', 'status' => 'ACTIVE',
-            'started_at' => $now, 'actual_labor_minutes' => 0,
-            'responsibility_weight_snapshot' => 1, 'credited_labor_minutes' => 0,
-        ]);
     }
 
     private function taskTarget(int $taskId, string $targetType, int $targetId, bool $lock = false): array

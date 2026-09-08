@@ -2,5 +2,6 @@
   "navigationBarTitleText": "提交报工",
   "navigationBarBackgroundColor": "#ffffff",
   "navigationBarTextStyle": "black",
-  "enablePullDownRefresh": false
+  "enablePullDownRefresh": false,
+  "usingComponents": {}
 }

@@ -10,6 +10,19 @@ use Illuminate\Http\Request;
 
 class ProductionMaterialExecutionController extends Controller
 {
+    public function preparationDemands(Request $request, ProductionMaterialExecutionService $service)
+    {
+        $filters = $request->validate([
+            'status' => ['nullable', 'string', 'max:40'],
+            'work_order_id' => ['nullable', 'integer', 'min:1'],
+            'target_routing_operation_id' => ['nullable', 'integer', 'min:1'],
+            'keyword' => ['nullable', 'string', 'max:160'],
+            'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ]);
+        return response()->json($service->paginatePreparationDemands($filters, ...$this->context($request)));
+    }
+
     public function pickingTasks(Request $request, ProductionMaterialExecutionService $service)
     {
         return response()->json($service->paginatePickingTasks($this->filters($request, true), ...$this->context($request)));
@@ -158,10 +171,11 @@ class ProductionMaterialExecutionController extends Controller
             'planned_delivery_at' => ['nullable', 'date'],
             'remark' => ['nullable', 'string', 'max:2000'],
             'lines' => ['required', 'array', 'min:1'],
-            'lines.*.material_requirement_id' => ['required', 'integer', 'min:1'],
-            'lines.*.material_supply_rule_snapshot_id' => ['required', 'integer', 'min:1'],
-            'lines.*.production_target_type' => ['required', 'in:unit_operation,quantity_operation'],
-            'lines.*.production_target_id' => ['required', 'integer', 'min:1'],
+            'lines.*.target_material_requirement_id' => ['required_without:lines.*.material_requirement_id', 'integer', 'min:1'],
+            'lines.*.material_requirement_id' => ['required_without:lines.*.target_material_requirement_id', 'integer', 'min:1'],
+            'lines.*.material_supply_rule_snapshot_id' => ['required_without:lines.*.target_material_requirement_id', 'integer', 'min:1'],
+            'lines.*.production_target_type' => ['required_without:lines.*.target_material_requirement_id', 'in:unit_operation,quantity_operation'],
+            'lines.*.production_target_id' => ['required_without:lines.*.target_material_requirement_id', 'integer', 'min:1'],
             'lines.*.inventory_balance_id' => ['required', 'integer', 'min:1'],
             'lines.*.planned_pick_qty' => ['required', 'numeric', 'gt:0'],
             'lines.*.serial_ids' => ['nullable', 'array'],

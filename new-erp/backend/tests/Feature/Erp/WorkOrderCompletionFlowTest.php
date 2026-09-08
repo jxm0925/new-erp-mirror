@@ -68,10 +68,10 @@ class WorkOrderCompletionFlowTest extends TestCase
             'client_command_id' => (string) Str::uuid(), 'expected_version' => 1, 'decision' => 'approve',
         ], $user, ['production.completion.review'], true);
         $this->assertSame('APPROVED', $approved['status']);
-        $this->assertSame('COMPLETED', $f['workOrder']->fresh()->status);
+        $this->assertSame('IN_PROGRESS', $f['workOrder']->fresh()->status);
         $this->assertSame('WAIT_WAREHOUSE', $f['output']->fresh()->status);
-        $this->assertDatabaseHas('erp_work_order_status_logs', [
-            'work_order_id' => $f['workOrder']->id, 'before_status' => 'IN_PROGRESS', 'after_status' => 'COMPLETED',
+        $this->assertDatabaseMissing('erp_work_order_status_logs', [
+            'work_order_id' => $f['workOrder']->id, 'after_status' => 'COMPLETED',
         ]);
 
         $output = $f['output']->fresh();
@@ -84,6 +84,7 @@ class WorkOrderCompletionFlowTest extends TestCase
             $user, ['production.output.warehouse']);
         $this->assertSame('WAIT_WAREHOUSE', $posted['output_status']);
         $this->assertSame(3.0, $posted['remaining_receivable_base_qty']);
+        $this->assertSame('IN_PROGRESS', $f['workOrder']->fresh()->status);
         $this->assertEquals($posted, app(ProductionOutputService::class)->warehouse($output->id,
             $firstPostingPayload, $user, ['production.output.warehouse']));
         $this->expectDomain('finished_goods_receipt_quantity_invalid', fn () => app(ProductionOutputService::class)->warehouse(
@@ -100,6 +101,10 @@ class WorkOrderCompletionFlowTest extends TestCase
         ], $user, ['production.output.warehouse']);
         $this->assertSame('WAREHOUSED', $finalPosting['output_status']);
         $this->assertSame(0.0, $finalPosting['remaining_receivable_base_qty']);
+        $this->assertSame('COMPLETED', $f['workOrder']->fresh()->status);
+        $this->assertDatabaseHas('erp_work_order_status_logs', [
+            'work_order_id' => $f['workOrder']->id, 'before_status' => 'IN_PROGRESS', 'after_status' => 'COMPLETED',
+        ]);
         $this->assertDatabaseHas('erp_work_order_finished_goods_receipts', [
             'id' => $posted['finished_goods_receipt_id'], 'completion_id' => $resubmitted['completion_id'],
             'output_record_id' => $output->id, 'inventory_transaction_id' => $posted['inventory_transaction_id'],
@@ -115,7 +120,7 @@ class WorkOrderCompletionFlowTest extends TestCase
         $this->assertSame(2, $page['total']);
     }
 
-    public function test_unit_mode_requires_all_terminal_units_to_be_approved_before_work_order_completion(): void
+    public function test_unit_mode_requires_all_terminal_units_to_be_approved_and_warehoused_before_work_order_completion(): void
     {
         $f = $this->unitFixture();
         $service = app(WorkOrderCompletionService::class);
@@ -130,6 +135,12 @@ class WorkOrderCompletionFlowTest extends TestCase
         ], $user, ['production.completion.review'], true);
         $this->assertSame('IN_PROGRESS', $f['workOrder']->fresh()->status);
         $this->assertSame('WAIT_WAREHOUSE', $f['outputs'][0]->fresh()->status);
+        app(ProductionOutputService::class)->warehouse($f['outputs'][0]->id, [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => 3,
+            'warehouse_id' => $f['warehouse']->id, 'location_id' => $f['location']->id,
+            'batch_no' => $this->code('UNIT1'), 'posted_base_qty' => 1,
+        ], $user, ['production.output.warehouse']);
+        $this->assertSame('IN_PROGRESS', $f['workOrder']->fresh()->status);
 
         $second = $service->submit($f['workOrder']->id, [
             'client_command_id' => (string) Str::uuid(), 'expected_version' => 2,
@@ -138,6 +149,12 @@ class WorkOrderCompletionFlowTest extends TestCase
         $service->review($second['completion_id'], [
             'client_command_id' => (string) Str::uuid(), 'expected_version' => 1, 'decision' => 'approve',
         ], $user, ['production.completion.review'], true);
+        $this->assertSame('IN_PROGRESS', $f['workOrder']->fresh()->status);
+        app(ProductionOutputService::class)->warehouse($f['outputs'][1]->id, [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => 3,
+            'warehouse_id' => $f['warehouse']->id, 'location_id' => $f['location']->id,
+            'batch_no' => $this->code('UNIT2'), 'posted_base_qty' => 1,
+        ], $user, ['production.output.warehouse']);
         $this->assertSame('COMPLETED', $f['workOrder']->fresh()->status);
         $this->assertSame(2.0, (float) DB::table('erp_work_order_completions')
             ->where('work_order_id', $f['workOrder']->id)->where('status', 'APPROVED')->sum('submitted_base_qty'));

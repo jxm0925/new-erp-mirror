@@ -60,19 +60,64 @@ class ProductionReportFlowTest extends TestCase
             'client_command_id' => (string) Str::uuid(), 'expected_version' => 2,
             'qualified_base_qty' => 6, 'unqualified_base_qty' => 0, 'end_labor' => true,
         ], $fixture['user'], ['production.report.create']);
-        $this->assertTrue($second['ready_for_completion']);
+        $this->assertFalse($second['ready_for_completion']);
+        $this->assertSame(1.0, $second['remaining_base_qty']);
+        $this->assertSame(9.0, $second['accepted_completed_base_qty']);
+        $this->assertSame(1.0, $second['remaining_required_qualified_base_qty']);
         $this->assertTrue($second['ended_reporter_labor']);
         $this->assertSame('PAUSED', $second['target_status']);
         $this->assertSame('ENDED', $fixture['session']->fresh()->status);
 
+        $third = $service->report($fixture['task']->id, 'quantity_operation', $fixture['target']->id, [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => 3,
+            'qualified_base_qty' => 1, 'unqualified_base_qty' => 0, 'scrapped_base_qty' => 0,
+        ], $fixture['user'], ['production.report.create']);
+        $this->assertTrue($third['ready_for_completion']);
+        $this->assertSame(0.0, $third['remaining_required_qualified_base_qty']);
+
         $completed = app(ProductionExecutionActionService::class)->complete(
             $fixture['task']->id, 'quantity_operation', $fixture['target']->id,
-            ['client_command_id' => (string) Str::uuid(), 'expected_version' => 3, 'disposition' => 'direct_handover'],
+            ['client_command_id' => (string) Str::uuid(), 'expected_version' => 4, 'disposition' => 'direct_handover'],
             $fixture['user'], ['production.task.complete']
         );
         $this->assertSame('COMPLETED', $completed['target_status']);
-        $this->assertSame(9.0, (float) DB::table('erp_production_output_records')->where('id', $completed['output_record_id'])->value('output_base_qty'));
-        $this->assertSame(2, DB::table('erp_production_reports')->where('target_id', $fixture['target']->id)->count());
+        $this->assertSame(10.0, (float) DB::table('erp_production_output_records')->where('id', $completed['output_record_id'])->value('output_base_qty'));
+        $this->assertSame(3, DB::table('erp_production_reports')->where('target_id', $fixture['target']->id)->count());
+    }
+
+    public function test_processed_quantity_does_not_replace_missing_qualified_output(): void
+    {
+        $fixture = $this->fixture();
+        $fixture['workOrder']->update(['target_qty' => 20, 'target_base_qty' => 20]);
+        $fixture['target']->update(['planned_base_qty' => 20, 'remaining_base_qty' => 20]);
+        $service = app(ProductionReportService::class);
+
+        $first = $service->report($fixture['task']->id, 'quantity_operation', $fixture['target']->id, [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => 1,
+            'qualified_base_qty' => 18, 'unqualified_base_qty' => 1, 'scrapped_base_qty' => 1,
+            'defect_reason' => '一件不良待返工，一件确认报废',
+        ], $fixture['user'], ['production.report.create']);
+
+        $this->assertSame(20.0, $first['processed_base_qty']);
+        $this->assertSame(18.0, $first['accepted_completed_base_qty']);
+        $this->assertSame(2.0, $first['remaining_required_qualified_base_qty']);
+        $this->assertSame(2.0, $first['remaining_base_qty']);
+        $this->assertFalse($first['ready_for_completion']);
+        $this->assertDatabaseHas('erp_production_reports', [
+            'id' => $first['report_id'], 'qualified_base_qty' => 18,
+            'unqualified_base_qty' => 1, 'scrapped_base_qty' => 1,
+        ]);
+
+        $second = $service->report($fixture['task']->id, 'quantity_operation', $fixture['target']->id, [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => 2,
+            'qualified_base_qty' => 2, 'unqualified_base_qty' => 0, 'scrapped_base_qty' => 0,
+        ], $fixture['user'], ['production.report.create']);
+        $this->assertSame(22.0, $second['processed_base_qty']);
+        $this->assertSame(20.0, $second['accepted_completed_base_qty']);
+        $this->assertSame(0.0, $second['remaining_required_qualified_base_qty']);
+        $this->assertTrue($second['ready_for_completion']);
+        $this->assertSame(1.0, (float) $fixture['target']->fresh()->unqualified_base_qty);
+        $this->assertSame(1.0, (float) $fixture['target']->fresh()->scrapped_base_qty);
     }
 
     public function test_legacy_full_quantity_completion_creates_report_fact_but_partial_completion_rolls_back(): void

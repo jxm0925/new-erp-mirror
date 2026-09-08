@@ -13,6 +13,7 @@ final class WorkOrderCompletionService
     public function __construct(
         private readonly DocumentNumberService $numbers,
         private readonly ProductionDataScopeResolver $scopeResolver,
+        private readonly WorkOrderCompletionReadinessService $readiness,
     ) {}
 
     public function preflight(int $workOrderId, object $user, array $permissions, bool $superAdmin = false): array
@@ -147,7 +148,9 @@ final class WorkOrderCompletionService
                     }
                     $output->update(['status' => $next, 'business_version' => (int) $output->business_version + 1]);
                 }
-                if ($decision === 'approve') $this->refreshWorkOrderStatus($workOrder, $user, $completionId, $now);
+                if ($decision === 'approve') {
+                    $this->readiness->refresh($workOrder, $user, '完工审核通过并满足最终完成条件', $completionId, $now);
+                }
                 return $this->completionProjection(DB::table('erp_work_order_completions')->where('id', $completionId)->first());
             });
     }
@@ -211,21 +214,6 @@ final class WorkOrderCompletionService
                 'base_unit_name' => $workOrder->base_unit_name_snapshot ?: $workOrder->target_unit_name_snapshot],
             'passed' => collect($checks)->every(fn (array $check) => $check['passed']),
             'checks' => $checks, 'terminal_outputs' => $terminalOutputs];
-    }
-
-    private function refreshWorkOrderStatus(WorkOrder $workOrder, object $user, int $completionId, $now): void
-    {
-        $approved = (float) DB::table('erp_work_order_completions')->where('work_order_id', $workOrder->id)->where('status', 'APPROVED')->sum('submitted_base_qty');
-        if ($approved + 0.00000001 < (float) $workOrder->target_base_qty) return;
-        $beforeStatus = (string) $workOrder->status; $beforeVersion = (int) $workOrder->business_version;
-        $workOrder->status = 'COMPLETED'; $workOrder->business_version = $beforeVersion + 1; $workOrder->save();
-        DB::table('erp_work_order_status_logs')->insert([
-            'work_order_id' => $workOrder->id, 'before_status' => $beforeStatus, 'after_status' => 'COMPLETED',
-            'reason' => '完工事实审核通过', 'operator_legacy_id' => $this->userId($user),
-            'organization_code' => $workOrder->organization_code, 'before_version' => $beforeVersion,
-            'after_version' => (int) $workOrder->business_version,
-            'occurred_at' => $now, 'created_at' => $now,
-        ]);
     }
 
     private function completionProjection(object $row, bool $relations = false, array $permissions = []): array
