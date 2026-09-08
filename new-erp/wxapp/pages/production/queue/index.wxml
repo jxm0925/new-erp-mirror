@@ -1,7 +1,7 @@
 <view class="queue-page">
   <view wx:if="{{loading}}" class="state"><van-loading color="#d81e06">正在加载</van-loading></view>
   <view wx:elif="{{type==='trace' && trace}}" class="trace-card"><view wx:for="{{trace}}" wx:key="id"><text>{{item.type || item.serial_no || item.unit_no}}</text><text>{{item.status || item.event || '-'}}</text></view></view>
-  <view wx:elif="{{!rows.length}}" class="state"><van-empty description="当前没有待处理记录" /></view>
+  <view wx:elif="{{loaded && !rows.length}}" class="state"><van-empty description="当前没有待处理记录" /></view>
 
   <view wx:if="{{type==='pool' || type==='collaboration' || type==='kitting'}}" class="card" wx:for="{{rows}}" wx:key="id" data-id="{{item.id}}" bindtap="openTask">
     <view class="head"><strong>{{item.task_no}}</strong><text>{{item.statusLabel}}</text></view><view class="product">{{item.productName}}</view><view class="meta"><text>工单 {{item.workOrderNo}}</text><text>工序 {{item.sequence_no_snapshot}} - {{item.operation_name_snapshot}}</text><text>{{item.unitLabel}}</text></view>
@@ -16,4 +16,23 @@
   </view>
 
   <view wx:if="{{type==='handover'}}" class="card" wx:for="{{rows}}" wx:key="id"><view class="head"><strong>{{item.handover_no}}</strong><text>待接收</text></view><view class="meta"><text>任务 {{item.task_no}}</text><text>产出记录 #{{item.output_record_id}}</text><text>交出时间 {{item.handed_over_at}}</text></view><view class="actions"><button class="outline" data-id="{{item.id}}" bindtap="rejectHandover">拒收</button><button class="primary" data-id="{{item.id}}" bindtap="acceptHandover" loading="{{busy}}">确认接收</button></view></view>
+
+  <view wx:if="{{type==='picking'}}" class="card" wx:for="{{rows}}" wx:key="id">
+    <view class="head"><strong>{{item.recordNo}}</strong><text>{{item.statusLabel}}</text></view><view class="product">{{item.productName}}</view>
+    <view class="meta"><text>工单 {{item.workOrderNo}}</text><text>仓库 {{item.warehouse.warehouse_name || '-'}}</text><text>拣货人 {{item.assigned_picker_legacy_id || '未分配'}}</text></view>
+    <view class="actions"><button wx:if="{{item.status==='WAIT_PICK' && !item.assigned_picker_legacy_id}}" class="outline" data-id="{{item.id}}" bindtap="assignPicking">分配给我</button><button wx:if="{{item.status==='WAIT_PICK' && item.assigned_picker_legacy_id}}" class="primary" data-id="{{item.id}}" bindtap="startPicking">开始拣货</button><button wx:if="{{item.status==='PICKING'}}" class="primary" data-id="{{item.id}}" bindtap="confirmPicking">按计划确认实拣</button></view>
+  </view>
+
+  <view wx:if="{{type==='outputs_quality' || type==='outputs_warehouse' || type==='internal_dispatch' || type==='internal_receive' || type==='supplements' || type==='return_receive' || type==='return_quality'}}" class="card" wx:for="{{rows}}" wx:key="id">
+    <view class="head"><strong>{{item.recordNo}}</strong><text>{{item.statusLabel}}</text></view><view class="product">{{item.productName}}</view>
+    <view class="meta"><text>工单 {{item.workOrderNo}}</text><text wx:if="{{item.operationLabel!=='-'}}">工序 {{item.operationLabel}}</text><text wx:if="{{item.output_base_qty}}">数量 {{item.output_base_qty}}</text><text wx:if="{{item.reason}}">原因 {{item.reason}}</text></view>
+    <view class="actions" wx:if="{{type==='outputs_quality'}}"><button class="outline" data-id="{{item.id}}" data-result="failed" bindtap="inspectOutput" disabled="{{!item.allowed_actions.quality_inspect}}">不合格</button><button class="primary" data-id="{{item.id}}" data-result="passed" bindtap="inspectOutput" disabled="{{!item.allowed_actions.quality_inspect}}">{{item.allowed_actions.quality_inspect?'质检通过':'无质检权限'}}</button></view>
+    <view class="actions" wx:if="{{type==='outputs_warehouse'}}"><button class="primary" data-id="{{item.id}}" bindtap="warehouseOutput" disabled="{{!item.allowed_actions.warehouse}}">{{item.allowed_actions.warehouse?'选择仓库并入库':'无入库权限'}}</button></view>
+    <view class="actions" wx:if="{{type==='internal_dispatch'}}"><button class="primary" data-id="{{item.id}}" bindtap="dispatchInternal" disabled="{{!item.allowed_actions.dispatch}}">{{item.allowed_actions.dispatch?'确认发出半成品':'无发料权限'}}</button></view>
+    <view class="actions" wx:if="{{type==='internal_receive'}}"><button class="primary" data-id="{{item.id}}" bindtap="receiveInternal" disabled="{{!item.allowed_actions.receive}}">{{item.allowed_actions.receive?'确认接收':'仅指定负责人可接收'}}</button></view>
+    <view class="actions" wx:if="{{type==='supplements'}}"><button class="outline" data-id="{{item.id}}" data-approved="false" bindtap="decideSupplement" disabled="{{!item.allowed_actions.decide}}">拒绝</button><button class="primary" data-id="{{item.id}}" data-approved="true" bindtap="decideSupplement" disabled="{{!item.allowed_actions.decide}}">{{item.allowed_actions.decide?'批准':'无审批权限'}}</button></view>
+    <view class="actions" wx:if="{{type==='return_receive'}}"><button class="primary" data-id="{{item.id}}" bindtap="receiveReturn" disabled="{{!item.allowed_actions.receive}}">{{item.allowed_actions.receive?'确认仓库收货':'无收货权限'}}</button></view>
+    <view class="actions" wx:if="{{type==='return_quality'}}"><button class="outline" data-id="{{item.id}}" data-passed="false" bindtap="qualityReturn" disabled="{{!item.allowed_actions.quality}}">隔离</button><button class="primary" data-id="{{item.id}}" data-passed="true" bindtap="qualityReturn" disabled="{{!item.allowed_actions.quality}}">{{item.allowed_actions.quality?'检验通过':'无质检权限'}}</button></view>
+  </view>
+  <view wx:if="{{loadingMore}}" class="state"><van-loading color="#d81e06" /></view>
 </view>

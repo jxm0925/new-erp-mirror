@@ -32,9 +32,9 @@
       <view class="table-head"><text>物料 <i>*</i></text><text>追加数量 <i>*</i></text><text></text></view>
       <view class="table-line" wx:for="{{supplementLines}}" wx:key="index">
         <text class="line-no">{{index + 1}}</text>
-        <picker class="material-picker" range="{{supplementOptions}}" range-key="label" value="{{item.requirementIndex}}" data-index="{{index}}" bindchange="onSupplementMaterial">
+        <view class="material-picker" bindtap="openMaterialSelector">
           <view class="line-input {{item.materialLabel?'has-value':''}}">{{item.materialLabel || '请选择物料编码/名称'}}</view>
-        </picker>
+        </view>
         <input class="qty-input" type="digit" placeholder="请输入追加数量" value="{{item.additional_base_qty}}" data-index="{{index}}" bindinput="onSupplementQty" />
         <van-icon class="delete" name="delete-o" data-index="{{index}}" bindtap="removeSupplementLine" />
       </view>
@@ -59,20 +59,20 @@
       </view>
       <view class="form-row">
         <text class="form-label">物料</text>
-        <picker class="form-control" range="{{returnOptions}}" range-key="label" value="{{item.requirementIndex}}" data-index="{{index}}" bindchange="onReturnMaterial"><view class="picker-value muted-{{!item.materialLabel}}">{{item.materialLabel || '请选择'}}<van-icon name="arrow" /></view></picker>
+        <view class="form-control" bindtap="openMaterialSelector"><view class="picker-value muted-{{!item.materialLabel}}">{{item.materialLabel || '请选择'}}<van-icon name="arrow" /></view></view>
       </view>
       <view class="form-row"><text class="form-label">已签收数量</text><view class="form-control readonly">{{item.received_base_qty}}</view></view>
       <view class="form-row"><text class="form-label">可退数量</text><view class="form-control readonly">{{item.returnable_base_qty}}</view></view>
       <view class="form-row required-row"><text class="form-label">退料数量</text><input class="form-control input-control" type="digit" placeholder="请输入" value="{{item.return_base_qty}}" data-index="{{index}}" bindinput="onReturnQty" /></view>
       <view class="form-row">
         <text class="form-label">退料仓库</text>
-        <picker class="form-control" range="{{item.warehouseOptions}}" range-key="label" value="{{item.warehouseIndex}}" data-index="{{index}}" bindchange="onReturnWarehouse"><view class="picker-value muted-{{!item.warehouseLabel}}">{{item.warehouseLabel || '请选择'}}<van-icon name="arrow" /></view></picker>
+        <view class="form-control readonly">{{item.warehouseLabel || '-'}}</view>
       </view>
       <view class="form-row">
         <text class="form-label">退料库位</text>
-        <picker class="form-control" range="{{item.locationOptions}}" range-key="label" value="{{item.locationIndex}}" data-index="{{index}}" bindchange="onReturnLocation"><view class="picker-value muted-{{!item.locationLabel}}">{{item.locationLabel || '请选择'}}<van-icon name="arrow" /></view></picker>
+        <view class="form-control readonly">{{item.locationLabel || '-'}}</view>
       </view>
-      <view class="form-row"><text class="form-label">批次号</text><input class="form-control input-control" placeholder="请输入" value="{{item.batch_no}}" data-index="{{index}}" bindinput="onReturnBatch" /></view>
+      <view class="form-row"><text class="form-label">批次号</text><view class="form-control readonly">{{item.batch_no || '-'}}</view></view>
       <van-icon wx:if="{{returnLines.length>1}}" class="return-delete" name="delete-o" data-index="{{index}}" bindtap="removeReturnLine" />
     </view>
     <button class="add-line return-add" bindtap="addReturnLine"><text>＋</text> 添加明细</button>
@@ -90,3 +90,5 @@
 
 <view wx:elif="{{loading}}" class="loading"><van-loading color="#d81e06">加载物料处理</van-loading></view>
 <view wx:else class="loading"><van-empty description="任务不存在、尚未接单或无权操作" /></view>
+<import src="../../../components/material-selector/index.wxml" />
+<template is="material-selector" data="{{...selector, mode: activeTab}}" />

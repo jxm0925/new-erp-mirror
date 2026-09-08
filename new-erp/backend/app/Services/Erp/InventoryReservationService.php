@@ -84,9 +84,13 @@ class InventoryReservationService
         float $baseQty,
         int $outputRecordId,
         ?int $inventorySerialId = null,
+        ?int $finishedGoodsReceiptId = null,
     ): InventoryReservation {
-        return DB::transaction(function () use ($salesOrderId, $salesOrderLineId, $fulfillmentId, $inventoryBalanceId, $baseQty, $outputRecordId, $inventorySerialId): InventoryReservation {
-            $key = "sales_order:{$salesOrderId}:production_output:{$outputRecordId}";
+        return DB::transaction(function () use ($salesOrderId, $salesOrderLineId, $fulfillmentId, $inventoryBalanceId, $baseQty, $outputRecordId, $inventorySerialId, $finishedGoodsReceiptId): InventoryReservation {
+            $sourceKey = $finishedGoodsReceiptId
+                ? "finished_goods_receipt:{$finishedGoodsReceiptId}"
+                : "production_output:{$outputRecordId}";
+            $key = "sales_order:{$salesOrderId}:{$sourceKey}";
             $existing = InventoryReservation::query()->where('idempotency_key', $key)->lockForUpdate()->first();
             if ($existing) return $existing;
             $balance = InventoryBalance::query()->whereKey($inventoryBalanceId)->lockForUpdate()->first();
@@ -110,6 +114,7 @@ class InventoryReservationService
                 'reservation_snapshot' => [
                     'reservation_origin' => 'production_replenishment',
                     'production_output_record_id' => $outputRecordId,
+                    'finished_goods_receipt_id' => $finishedGoodsReceiptId,
                     'fulfillment_id' => $fulfillmentId,
                     'inventory_serial_id' => $inventorySerialId,
                     'balance_table' => 'erp_inventory_balances',

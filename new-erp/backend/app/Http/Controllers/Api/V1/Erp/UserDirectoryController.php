@@ -31,6 +31,7 @@ class UserDirectoryController extends Controller
 
         $result = $service->users([
             'scope' => $scope,
+            'capability' => $scope === 'production' && $request->input('capability') === 'collaborate' ? 'collaborate' : null,
             'status' => $request->input('status', 'normal'),
             'department_name' => $request->input('department_name'),
             'group_name' => $request->input('group_name'),

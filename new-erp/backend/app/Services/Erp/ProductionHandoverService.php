@@ -60,8 +60,7 @@ class ProductionHandoverService
                 DB::table('erp_production_operation_handovers')->where('id', $id)->update(['status' => 'REJECTED', 'reject_reason' => $reason,
                     'expected_receiver_legacy_id' => $this->userId($user), 'received_by_legacy_id' => $this->userId($user), 'received_at' => $now,
                     'business_version' => (int) $handover->business_version + 1, 'updated_at' => $now]);
-                $source = $this->target($handover->source_target_type, (int) $handover->source_target_id, true);
-                $source->status = 'REWORK'; $source->business_version = (int) $source->business_version + 1; $source->save();
+                $this->reopenSourceForRework($handover, $reason, $user);
                 $target->status = 'WAIT_HANDOVER';
             }
             $target->business_version = (int) $target->business_version + 1; $target->save();
@@ -72,6 +71,58 @@ class ProductionHandoverService
                 'status' => 'succeeded', 'processing_finished_at' => now()]);
             return $result;
         }, 5);
+    }
+
+    private function reopenSourceForRework(object $handover, string $reason, object $user): void
+    {
+        $source = $this->target($handover->source_target_type, (int) $handover->source_target_id, true);
+        $output = DB::table('erp_production_output_records')->where('id', $handover->output_record_id)->lockForUpdate()->first();
+        if (! $output) $this->fail('handover_output_missing', '交接关联的生产产出不存在，禁止丢失返工数量。', 409);
+
+        $beforeStatus = (string) $source->status;
+        $beforeVersion = (int) $source->business_version;
+        if ($handover->source_target_type === 'quantity_operation') {
+            $source->completed_base_qty = max(0, (float) $source->completed_base_qty - (float) $output->output_base_qty);
+            $source->remaining_base_qty = (float) $source->remaining_base_qty + (float) $output->output_base_qty;
+        }
+        $source->status = 'REWORK';
+        $source->completed_at = null;
+        $source->business_version = $beforeVersion + 1;
+        $source->save();
+
+        DB::table('erp_production_output_records')->where('id', $output->id)->update([
+            'status' => 'HANDOVER_REJECTED',
+            'business_version' => (int) $output->business_version + 1,
+            'updated_at' => now(),
+        ]);
+        DB::table('erp_production_execution_events')->insert([
+            'aggregate_type' => $handover->source_target_type,
+            'aggregate_id' => $source->id,
+            'action' => 'handover_rework',
+            'before_status' => $beforeStatus,
+            'after_status' => 'REWORK',
+            'before_version' => $beforeVersion,
+            'after_version' => (int) $source->business_version,
+            'fact_snapshot' => json_encode([
+                'handover_id' => (int) $handover->id,
+                'output_record_id' => (int) $output->id,
+                'rework_base_qty' => (float) $output->output_base_qty,
+                'reason' => $reason,
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            'operator_legacy_id' => $this->userId($user),
+            'operator_name' => $user->nickname ?? $user->username ?? null,
+            'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $sourceLink = DB::table('erp_production_task_targets')->where('target_type', $handover->source_target_type)
+            ->where('target_id', $source->id)->lockForUpdate()->first();
+        if (! $sourceLink) $this->fail('source_task_not_found', '上游生产任务不存在，无法进入返工。', 409);
+        DB::table('erp_production_task_targets')->where('id', $sourceLink->id)->update([
+            'status_snapshot' => 'REWORK', 'updated_at' => now(),
+        ]);
+        DB::table('erp_production_tasks')->where('id', $sourceLink->task_id)->update([
+            'status' => 'REWORK', 'business_version' => DB::raw('business_version + 1'), 'updated_at' => now(),
+        ]);
     }
 
     private function acceptTargetMaterial(object $handover): ?float

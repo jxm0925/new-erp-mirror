@@ -12,8 +12,8 @@
     </view>
 
     <view class="line-card" wx:for="{{lines}}" wx:key="id">
-      <view class="line-head"><view><strong>{{item.itemCode}}</strong><text>{{item.itemName}}</text></view><text>{{delivery.status==='RECEIVED'?'已签收':(item.remaining < item.delivery_qty?'部分签收':'待签收')}}</text></view>
-      <view class="quantity-row"><view><text>实送数量</text><strong>{{item.delivery_qty}}</strong></view><view><text>已签收</text><strong>{{item.received_qty}}</strong></view><view><text>剩余数量</text><strong class="red">{{item.remaining}}</strong></view></view>
+      <view class="line-head"><view><strong>{{item.targetLabel}}</strong><text>{{item.itemName}}</text></view><text class="{{item.receiptTone}}">{{item.receiptStatus}}</text></view>
+      <view class="quantity-row"><view class="batch"><text>批次</text><strong>{{item.batch_no || '-'}}</strong></view><view><text>实送数量</text><strong>{{item.deliveryQtyText}}</strong></view><view><text>已签收</text><strong>{{item.receivedQtyText}}</strong></view><view><text>剩余数量</text><strong class="red">{{item.remaining}}</strong></view></view>
       <block wx:if="{{mode==='receipt' && delivery.status==='DELIVERED' && item.remaining>0}}">
         <view class="field-row"><text>本次签收</text><input type="digit" value="{{item.acceptedInput}}" data-index="{{index}}" bindinput="updateAccepted" /><text>{{item.unit_name_snapshot}}</text></view>
         <view class="field-row"><text>本次拒收</text><input type="digit" value="{{item.rejectedInput}}" data-index="{{index}}" bindinput="updateRejected" /><text>{{item.unit_name_snapshot}}</text></view>

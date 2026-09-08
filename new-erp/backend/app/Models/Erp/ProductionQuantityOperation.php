@@ -8,6 +8,7 @@ class ProductionQuantityOperation extends MasterModel
     protected $casts = [
         'planned_base_qty' => 'decimal:8',
         'completed_base_qty' => 'decimal:8',
+        'unqualified_base_qty' => 'decimal:8',
         'scrapped_base_qty' => 'decimal:8',
         'remaining_base_qty' => 'decimal:8',
         'sequence_no_snapshot' => 'integer',

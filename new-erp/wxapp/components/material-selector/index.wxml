@@ -1,0 +1,39 @@
+<template name="material-selector">
+<view wx:if="{{visible}}" class="selector-mask" catchtouchmove="selector_stop" bindtap="selector_close">
+  <view class="selector-dialog" catchtap="selector_stop" aria-role="dialog" aria-label="选择物料">
+    <view class="selector-header"><text>选择物料</text><view class="close" bindtap="selector_close" aria-label="关闭"><van-icon name="cross" size="22" /></view></view>
+    <view class="search-bar"><view class="search-input"><van-icon name="search" /><input value="{{keyword}}" bindinput="selector_onKeyword" bindconfirm="selector_search" confirm-type="search" placeholder="搜索编码、名称、规格" /></view><button bindtap="selector_search">搜索</button></view>
+    <view class="selector-body">
+      <scroll-view class="categories" scroll-y>
+        <view class="category {{categoryId===''?'active':''}}" data-id="" bindtap="selector_chooseCategory">全部分类</view>
+        <view wx:for="{{categoryRows}}" wx:key="id" class="category {{categoryId==item.id?'active':''}}" data-id="{{item.id}}" bindtap="selector_chooseCategory">
+          <text style="padding-left:{{item.indent}}rpx">{{item.name}}</text><van-icon wx:if="{{item.hasChildren}}" name="{{item.expanded?'arrow-down':'arrow'}}" data-id="{{item.id}}" catchtap="selector_toggleCategory" />
+        </view>
+        <view class="category {{categoryId===0?'active':''}}" data-id="{{0}}" bindtap="selector_chooseCategory">未分类</view>
+      </scroll-view>
+      <scroll-view class="results" scroll-y scroll-top="{{0}}">
+        <view wx:if="{{loading}}" class="state"><van-loading color="#d81e06" /></view>
+        <view wx:elif="{{error}}" class="state"><text>{{error}}</text><button bindtap="selector_retry">重试</button></view>
+        <view wx:elif="{{!rows.length}}" class="state">{{showSelected?'尚未选择物料':'没有符合条件的物料'}}</view>
+        <block wx:else>
+        <view wx:for="{{rows}}" wx:key="key" class="result-row" data-key="{{item.key}}" bindtap="selector_toggleRow">
+          <view data-key="{{item.key}}" catchtap="selector_toggleRow"><van-checkbox value="{{item.checked}}" shape="square" checked-color="#d81e06" /></view>
+          <view class="result-info"><text class="code">{{item.code}}</text><text>{{item.name}}</text><view class="spec"><text>{{item.spec || item.model || '-'}}</text><text>{{item.unit_name}}</text></view>
+            <text wx:if="{{mode==='return'}}" class="source">{{item.warehouse_name}} / {{item.location_name}} / {{item.batch_no || '无批次'}} · 可退 {{item.returnableText}}</text>
+          </view>
+        </view>
+        </block>
+      </scroll-view>
+    </view>
+    <view class="pagination"><text>共 {{total}} 项</text><button disabled="{{loading || page<=1}}" bindtap="selector_previous">上一页</button><text>{{page}} / {{lastPage}}</text><button disabled="{{loading || page>=lastPage}}" bindtap="selector_next">下一页</button></view>
+    <scroll-view wx:if="{{showSelected}}" class="selected-panel" scroll-y>
+      <view class="selected-panel-title">已选物料明细（{{selectedCount}}）</view>
+      <view wx:for="{{selectedRows}}" wx:key="key" class="selected-row">
+        <view><text class="selected-code">{{item.code}}</text><text>{{item.name}}</text><text class="selected-spec">{{item.spec || item.model || '-'}} · {{item.unit_name || '-'}}</text></view>
+        <button data-key="{{item.key}}" bindtap="selector_removeSelected">移除</button>
+      </view>
+    </scroll-view>
+    <view class="selector-footer"><view class="selection-summary" bindtap="selector_toggleSelected"><text>已选 <text class="red">{{selectedCount}}</text> 项</text><text class="selected-link">{{showSelected?'收起明细':'查看已选明细'}}<van-icon name="{{showSelected?'arrow-down':'arrow-up'}}" /></text></view><button class="confirm" bindtap="selector_confirm">确认选择（{{selectedCount}}）</button></view>
+  </view>
+</view>
+</template>

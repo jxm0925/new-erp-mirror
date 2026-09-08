@@ -30,6 +30,7 @@ final class ProductionMaterialExecutionService
         $query = MaterialPickingTask::query()->with(['workOrder.outputItem', 'warehouse'])->orderByDesc('id');
         $this->applyWorkOrderRelationScope($query, 'workOrder', $user, 'production.material_picking.view', $permissions, $superAdmin);
         if (! empty($filters['status'])) $query->where('status', $filters['status']);
+        if (($filters['status_group'] ?? null) === 'active') $query->whereIn('status', ['WAIT_PICK', 'PICKING']);
         if (! empty($filters['warehouse_id'])) $query->where('warehouse_id', (int) $filters['warehouse_id']);
         if (! empty($filters['work_order_id'])) $query->where('work_order_id', (int) $filters['work_order_id']);
         return $query->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 20))));
@@ -221,6 +222,7 @@ final class ProductionMaterialExecutionService
         $this->permission($permissions, 'production.material_delivery.view');
         $query = MaterialDelivery::query()->with(['workOrder.outputItem', 'pickingTask'])->orderByDesc('id');
         $this->applyWorkOrderRelationScope($query, 'workOrder', $user, 'production.material_delivery.view', $permissions, $superAdmin);
+        if (($filters['status_group'] ?? null) === 'pending_dispatch') $query->whereIn('status', ['READY', 'IN_TRANSIT']);
         if (! empty($filters['status'])) $query->where('status', $filters['status']);
         if (! empty($filters['work_order_id'])) $query->where('work_order_id', (int) $filters['work_order_id']);
         return $query->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 20))));
@@ -232,6 +234,11 @@ final class ProductionMaterialExecutionService
         $delivery = MaterialDelivery::with($this->deliveryRelations())->find($id);
         if (! $delivery) $this->fail('not_found', '配送单不存在。', 404);
         $this->visible($delivery->workOrder, $user, 'production.material_delivery.view', $permissions, $superAdmin);
+        $person = DB::table('erp_legacy_admin_users')->where('legacy_id', $delivery->delivery_user_legacy_id)->first(['nickname', 'username']);
+        $delivery->setAttribute('delivery_user_name', $person?->nickname ?: $person?->username);
+        $unit = $delivery->production_target_type === 'unit_operation'
+            ? \App\Models\Erp\ProductionUnitOperation::with('productionUnit')->find($delivery->production_target_id)?->productionUnit : null;
+        $delivery->setAttribute('production_unit_no', $unit?->unit_no);
         return $delivery;
     }
 
@@ -450,12 +457,48 @@ final class ProductionMaterialExecutionService
                 $delivery->updated_by_legacy_id = $this->userId($user);
                 $delivery->save();
                 $task = $delivery->pickingTask()->lockForUpdate()->first();
-                $allSettled = $task->deliveries()->where('status', '<>', 'RECEIVED')->doesntExist();
-                $task->status = $allSettled ? 'RECEIVED' : 'PARTIALLY_RECEIVED';
+                $allDeliveriesSettled = $task->deliveries()->where('status', '<>', 'RECEIVED')->doesntExist();
+                $allPickedMaterialReceived = $task->lines()->get()->every(
+                    fn (MaterialPickingTaskLine $line) => (float) $line->received_qty + 0.00000001 >= (float) $line->actual_pick_qty
+                );
+                // A rejected delivery line is settled for that delivery, but the picked
+                // material is still outstanding until a redelivery is actually accepted.
+                // Completing the picking task on delivery status alone would make the
+                // redelivery route unreachable because createDelivery intentionally only
+                // accepts an unfinished picking task.
+                $task->status = $allDeliveriesSettled && $allPickedMaterialReceived ? 'RECEIVED' : 'PARTIALLY_RECEIVED';
                 $task->business_version++; $task->updated_by_legacy_id = $this->userId($user); $task->save();
                 $this->event('delivery', $delivery->id, 'receive', 'DELIVERED', $delivery->status, $beforeVersion, $delivery->business_version, $snapshot, $payload['remark'] ?? null, $user);
                 return $receipt->fresh(['lines.deliveryLine', 'delivery', 'workOrder']);
             });
+    }
+
+    public function cancelDelivery(int $id, array $payload, object $user, array $permissions, bool $superAdmin): MaterialDelivery
+    {
+        $this->permission($permissions, 'production.material_delivery.cancel');
+        return $this->deliveryTransition($id, $payload, $user, $permissions, $superAdmin, 'READY', 'CANCELLED', 'cancel', function (MaterialDelivery $delivery) use ($payload, $user): void {
+            if (trim((string) ($payload['reason'] ?? '')) === '') $this->fail('reason_required', '取消配送单必须填写原因。');
+
+            $task = $delivery->pickingTask;
+            $otherStatuses = $task->deliveries()->whereKeyNot($delivery->id)->where('status', '<>', 'CANCELLED')->pluck('status');
+            $lines = $task->lines()->lockForUpdate()->get();
+            $allPickedMaterialReceived = $lines->every(
+                fn (MaterialPickingTaskLine $line) => (float) $line->received_qty + 0.00000001 >= (float) $line->actual_pick_qty
+            );
+            $hasReceivedMaterial = $lines->contains(fn (MaterialPickingTaskLine $line) => (float) $line->received_qty > 0.00000001);
+
+            $task->status = match (true) {
+                $otherStatuses->contains('IN_TRANSIT') => 'DELIVERING',
+                $otherStatuses->contains('DELIVERED') => 'DELIVERED',
+                $otherStatuses->contains('READY') => 'WAIT_DELIVERY',
+                $otherStatuses->isNotEmpty() && $allPickedMaterialReceived => 'RECEIVED',
+                $hasReceivedMaterial => 'PARTIALLY_RECEIVED',
+                default => 'PICKED',
+            };
+            $task->business_version++;
+            $task->updated_by_legacy_id = $this->userId($user);
+            $task->save();
+        });
     }
 
     public function showReceipt(int $id, object $user, array $permissions, bool $superAdmin): MaterialReceipt

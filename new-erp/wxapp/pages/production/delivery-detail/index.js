@@ -5,6 +5,10 @@ const STATUS_LABELS = {
 };
 
 function number(value) { return Number(value || 0); }
+function quantityText(value) {
+  const raw = String(value == null || value === '' ? '0' : value);
+  return raw.includes('.') ? raw.replace(/0+$/, '').replace(/\.$/, '') : raw;
+}
 
 Page({
   data: { id: 0, mode: 'delivery', loading: true, busy: false, delivery: null, lines: [] },
@@ -22,13 +26,18 @@ Page({
     return production.delivery(this.data.id).then((response) => {
       const delivery = response.data || response;
       delivery.statusLabel = STATUS_LABELS[delivery.status] || delivery.status || '-';
-      delivery.deliveryUserLabel = delivery.delivery_user_legacy_id ? `#${delivery.delivery_user_legacy_id}` : '-';
+      delivery.deliveryUserLabel = delivery.delivery_user_name || '-';
       const lines = (delivery.lines || []).map((line) => {
         const remaining = Math.max(0, number(line.delivery_qty) - number(line.received_qty) - number(line.rejected_qty));
         const requirement = line.requirement || {};
         return Object.assign({}, line, {
+          deliveryQtyText: quantityText(line.delivery_qty),
+          receivedQtyText: quantityText(line.received_qty),
           itemCode: requirement.component_item_code_snapshot || '-',
           itemName: requirement.component_item_name_snapshot || '-',
+          targetLabel: delivery.production_unit_no || requirement.component_item_code_snapshot || '-',
+          receiptStatus: number(line.rejected_qty) > 0 ? (number(line.rejected_qty) >= number(line.delivery_qty) ? '已拒收' : '部分拒收') : (number(line.received_qty) >= number(line.delivery_qty) ? '已签收' : (number(line.received_qty) > 0 ? '部分签收' : '待签收')),
+          receiptTone: number(line.rejected_qty) > 0 ? 'rejected' : (number(line.received_qty) > 0 ? 'accepted' : ''),
           remaining,
           acceptedInput: remaining,
           rejectedInput: 0,

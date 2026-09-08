@@ -929,6 +929,42 @@ class InventoryService
         }, 5);
     }
 
+    /**
+     * A terminal output can be received in several PC postings.  The immutable
+     * FinishedGoodsReceipt id, rather than the output id, is therefore the
+     * inventory source identity and makes every partial posting independently
+     * traceable and idempotent.
+     */
+    public function postFinishedGoodsReceipt(object $receipt, object $output, array $posting, object $operator): InventoryTransaction
+    {
+        return DB::transaction(function () use ($receipt, $output, $posting, $operator): InventoryTransaction {
+            $existing = InventoryTransaction::query()->where('transaction_type', 'finished_goods_receipt')
+                ->where('source_type', 'work_order_finished_goods_receipt')->where('source_id', $receipt->id)->first();
+            if ($existing) return $existing;
+            $warehouseId = (int) ($posting['warehouse_id'] ?? 0); $locationId = (int) ($posting['location_id'] ?? 0);
+            $batchNo = trim((string) ($posting['batch_no'] ?? '')); $quantity = (float) $receipt->posted_base_qty;
+            if ($warehouseId < 1 || $locationId < 1 || $batchNo === '' || $quantity <= 0) {
+                throw ValidationException::withMessages(['posting' => '成品入库必须指定正数数量、仓库、库位和批次号。']);
+            }
+            $transaction = InventoryTransaction::create(['transaction_no' => $this->nextNo('ITX'),
+                'transaction_type' => 'finished_goods_receipt', 'source_type' => 'work_order_finished_goods_receipt',
+                'source_id' => $receipt->id, 'source_no' => $receipt->receipt_no, 'posting_status' => 'posted',
+                'warehouse_id' => $warehouseId, 'location_id' => $locationId, 'transaction_date' => now()->toDateString(),
+                'posted_by' => (int) ($operator->legacy_id ?? $operator->id ?? 0), 'posted_at' => now(),
+                'remark' => '工单成品入库']);
+            $this->applyInventoryChange($transaction, ['item_id' => $output->output_item_id, 'warehouse_id' => $warehouseId,
+                'location_id' => $locationId, 'batch_no' => $batchNo, 'unit_id' => Item::findOrFail($output->output_item_id)->unit_id,
+                'change_qty' => $quantity, 'unit_cost' => (float) ($posting['unit_cost'] ?? 0),
+                'cost_source_type' => 'finished_goods_receipt', 'source_type' => 'work_order_finished_goods_receipt',
+                'source_id' => $receipt->id, 'remark' => '成品入库 '.$receipt->receipt_no]);
+            InventoryPostingLog::create(['source_type' => 'work_order_finished_goods_receipt', 'source_id' => $receipt->id,
+                'source_no' => $receipt->receipt_no, 'transaction_type' => 'finished_goods_receipt',
+                'transaction_id' => $transaction->id, 'posting_status' => 'posted', 'message' => '工单成品库存入库过账成功',
+                'posted_by' => (int) ($operator->legacy_id ?? $operator->id ?? 0), 'posted_at' => now()]);
+            return $transaction->fresh(['items']);
+        }, 5);
+    }
+
     public function postProductionMaterialReturnReceipt(object $return, iterable $lines, object $operator, bool $quarantine): InventoryTransaction
     {
         return DB::transaction(function () use ($return, $lines, $operator, $quarantine): InventoryTransaction {

@@ -23,6 +23,103 @@ class ProductionKittingService
         return $this->materialRows($targetType, $targetId)->values()->all();
     }
 
+    /** Search before pagination; never load the entire target BOM into a selector. */
+    public function materialOptions(int $taskId, string $targetType, int $targetId, array $filters, object $user, array $permissions): array
+    {
+        $mode = $filters['mode'] ?? 'supplement';
+        $this->permission($permissions, $mode === 'return' ? 'production.material_return.create' : 'production.material_supplement.request');
+        [$task] = $this->taskTarget($taskId, $targetType, $targetId);
+        $this->responsible($task, $user);
+        $query = DB::table('erp_production_target_material_requirements as target_requirement')
+            ->join('erp_work_order_material_requirements as requirement', 'requirement.id', '=', 'target_requirement.material_requirement_id')
+            ->join('erp_items as item', 'item.id', '=', 'target_requirement.component_item_id')
+            ->where('target_requirement.target_type', $targetType)->where('target_requirement.target_id', $targetId)
+            ->where('target_requirement.work_order_id', $task->work_order_id);
+
+        if ($mode === 'return') {
+            // A selectable return is an actual receipt source, not just an item. Subtract
+            // active return reservations per warehouse/location/batch before counting pages.
+            $received = DB::table('erp_material_receipt_lines as receipt_line')
+                ->join('erp_material_delivery_lines as delivery_line', 'delivery_line.id', '=', 'receipt_line.delivery_line_id')
+                ->join('erp_material_deliveries as delivery', 'delivery.id', '=', 'delivery_line.delivery_id')
+                ->join('erp_material_picking_task_lines as pick_line', 'pick_line.id', '=', 'delivery_line.picking_task_line_id')
+                ->where('delivery.production_target_type', $targetType)->where('delivery.production_target_id', $targetId)
+                ->where('receipt_line.accepted_qty', '>', 0)
+                ->selectRaw("delivery_line.material_requirement_id, pick_line.warehouse_id, pick_line.location_id, COALESCE(delivery_line.batch_no, '') as batch_no, SUM(receipt_line.accepted_qty) as received_base_qty")
+                ->groupBy('delivery_line.material_requirement_id', 'pick_line.warehouse_id', 'pick_line.location_id', DB::raw("COALESCE(delivery_line.batch_no, '')"));
+            $returned = DB::table('erp_production_material_return_lines as return_line')
+                ->join('erp_production_material_returns as material_return', 'material_return.id', '=', 'return_line.return_id')
+                ->where('material_return.target_type', $targetType)->where('material_return.target_id', $targetId)
+                ->whereIn('material_return.status', ['SUBMITTED', 'WAIT_QUALITY', 'COMPLETED', 'QUARANTINED'])
+                ->selectRaw("return_line.material_requirement_id, return_line.warehouse_id, return_line.location_id, COALESCE(return_line.batch_no, '') as batch_no, SUM(return_line.return_base_qty) as returned_base_qty")
+                ->groupBy('return_line.material_requirement_id', 'return_line.warehouse_id', 'return_line.location_id', DB::raw("COALESCE(return_line.batch_no, '')"));
+            $query->joinSub($received, 'receipt_source', fn ($join) => $join->on('receipt_source.material_requirement_id', '=', 'requirement.id'))
+                ->leftJoinSub($returned, 'return_source', function ($join) {
+                    $join->on('return_source.material_requirement_id', '=', 'receipt_source.material_requirement_id')
+                        ->on('return_source.warehouse_id', '=', 'receipt_source.warehouse_id')
+                        ->on('return_source.location_id', '=', 'receipt_source.location_id')
+                        ->on('return_source.batch_no', '=', 'receipt_source.batch_no');
+                })
+                ->join('erp_warehouses as warehouse', 'warehouse.id', '=', 'receipt_source.warehouse_id')
+                ->join('erp_locations as location', 'location.id', '=', 'receipt_source.location_id')
+                ->whereRaw('receipt_source.received_base_qty - COALESCE(return_source.returned_base_qty, 0) > 0.00000001');
+        } else {
+            // One selectable material even if several frozen supply rules reference it.
+            $query->whereIn('target_requirement.id', DB::table('erp_production_target_material_requirements')
+                ->where('target_type', $targetType)->where('target_id', $targetId)->where('requirement_kind', 'standard')
+                ->selectRaw('MIN(id)')->groupBy('component_item_id'));
+        }
+
+        // Classification is small explicit tree metadata, never a full material list.
+        $categories = DB::table('erp_item_categories')->orderBy('sort_order')->orderBy('id')->get(['id', 'parent_id', 'category_name']);
+        $availableIds = (clone $query)->distinct()->pluck('item.category_id')->filter()->map(fn ($id) => (int) $id)->all();
+        $categoryMap = $categories->keyBy('id');
+        $visibleIds = array_fill_keys($availableIds, true);
+        foreach ($availableIds as $id) {
+            $visited = [];
+            while ($id && ! isset($visited[$id]) && isset($categoryMap[$id])) {
+                $visited[$id] = true; $visibleIds[$id] = true;
+                $id = (int) $categoryMap[$id]->parent_id;
+            }
+        }
+        if (isset($filters['category_id']) && $filters['category_id'] !== '') {
+            $categoryId = (int) $filters['category_id'];
+            if ($categoryId === 0) $query->whereNull('item.category_id');
+            else {
+                $ids = [$categoryId];
+                do {
+                    $newIds = $categories->filter(fn ($row) => in_array((int) $row->parent_id, $ids, true) && ! in_array((int) $row->id, $ids, true))->pluck('id')->map(fn ($id) => (int) $id)->all();
+                    $ids = array_merge($ids, $newIds);
+                } while ($newIds !== []);
+                $query->whereIn('item.category_id', $ids);
+            }
+        }
+        $keyword = trim((string) ($filters['keyword'] ?? ''));
+        if ($keyword !== '') {
+            $like = '%'.addcslashes($keyword, '\\%_').'%';
+            $query->where(fn ($search) => $search->where('item.item_code', 'like', $like)->orWhere('item.item_name', 'like', $like)->orWhere('item.spec', 'like', $like)->orWhere('item.model', 'like', $like));
+        }
+        $query->select(['target_requirement.id', 'requirement.id as material_requirement_id', 'item.id as component_item_id',
+            'item.item_code as code', 'item.item_name as name', 'item.spec', 'item.model', 'item.category_id', 'requirement.unit_name_snapshot as unit_name']);
+        if ($mode === 'return') {
+            $query->addSelect(['receipt_source.warehouse_id', 'receipt_source.location_id', 'receipt_source.batch_no', 'receipt_source.received_base_qty',
+                'warehouse.warehouse_name', 'location.location_name'])
+                ->selectRaw('receipt_source.received_base_qty - COALESCE(return_source.returned_base_qty, 0) as returnable_base_qty');
+        }
+        $query->orderBy('target_requirement.id');
+        if ($mode === 'return') $query->orderBy('receipt_source.warehouse_id')->orderBy('receipt_source.location_id')->orderBy('receipt_source.batch_no');
+        $page = $query->paginate(min(20, max(1, (int) ($filters['per_page'] ?? 20))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
+        $rows = collect($page->items())->map(function ($row) use ($mode) {
+            $data = (array) $row;
+            $data['key'] = $mode === 'return'
+                ? 'r:'.$row->material_requirement_id.':'.$row->warehouse_id.':'.$row->location_id.':'.base64_encode($row->batch_no)
+                : 's:'.$row->component_item_id;
+            return $data;
+        })->all();
+        return ['data' => $rows, 'current_page' => $page->currentPage(), 'last_page' => $page->lastPage(), 'total' => $page->total(), 'per_page' => $page->perPage(),
+            'categories' => $categories->filter(fn ($row) => isset($visibleIds[$row->id]))->values()->all()];
+    }
+
     public function confirm(int $taskId, string $targetType, int $targetId, array $payload, object $user, array $permissions): array
     {
         $this->permission($permissions, 'production.kitting.confirm');

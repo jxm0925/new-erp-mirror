@@ -31,6 +31,18 @@ class ErpUserDirectoryService
                     ->where('p.enabled', true)
                     ->where('p.code', 'production.work_order.view');
             });
+            if (($filters['capability'] ?? null) === 'collaborate') {
+                $query->whereExists(function ($collaborator): void {
+                    $collaborator->selectRaw('1')
+                        ->from('erp_rbac_user_roles as ur')
+                        ->join('erp_rbac_roles as r', 'r.id', '=', 'ur.role_id')
+                        ->join('erp_rbac_role_permissions as rp', 'rp.role_id', '=', 'r.id')
+                        ->join('erp_rbac_permissions as p', 'p.id', '=', 'rp.permission_id')
+                        ->whereColumn('ur.user_legacy_id', 'erp_legacy_admin_users.legacy_id')
+                        ->where('r.enabled', true)->where('p.enabled', true)
+                        ->where('p.code', 'production.task.collaborate');
+                });
+            }
         }
         if (!empty($filters['department_name'])) $query->where('department_names', 'like', '%' . $filters['department_name'] . '%');
         if (!empty($filters['group_name'])) {

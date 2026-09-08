@@ -1,30 +1,312 @@
 <view class="detail-page" wx:if="{{!loading && task}}">
-  <view class="task-summary">
-    <view class="summary-head"><text class="status">{{task.status}}</text><text>{{task.task_no}}</text></view>
-    <view class="product">{{task.productName}}</view>
-    <view class="summary-grid"><view><text>工单号</text><strong>{{task.workOrderNo}}</strong></view><view><text>工序节点</text><strong>{{task.sequence_no_snapshot}} - {{task.operation_name_snapshot}}</strong></view><view><text>执行模式</text><strong>{{task.execution_mode === 'unit' ? '逐件生产' : '数量生产'}}</strong></view><view><text>接单时间</text><strong>{{task.claimedText}}</strong></view></view>
-    <button class="primary" wx:if="{{task.status==='WAIT_CLAIM'}}" loading="{{busy}}" bindtap="claim">自主接单</button>
+  <!-- Compact Red Brand Hero Header -->
+  <view class="header-bg">
+    <view class="header-top">
+      <view class="header-tag">{{task.sequence_no_snapshot}} · {{task.operation_name_snapshot}}</view>
+      <view class="header-no" data-text="{{task.workOrderNo}}" bindtap="copyText">{{task.workOrderNo}}</view>
+    </view>
+    <view class="header-title">{{task.productName}}</view>
+    <view class="header-sub">
+      <text class="spec-text">{{task.productSpec}}</text>
+      <text class="dot-sep">·</text>
+      <text class="task-no-text" data-text="{{task.task_no}}" bindtap="copyText">任务号: {{task.task_no}}</text>
+    </view>
   </view>
 
-  <view class="target-card" wx:for="{{targets}}" wx:key="target_id">
-    <view class="target-head"><strong>{{item.production_unit_no || ('数量执行 #' + item.target_id)}}</strong><text>{{item.statusLabel}}</text></view>
-    <view class="time-grid"><view><text>接单</text><strong>{{item.claimedText}}</strong></view><view><text>齐套</text><strong>{{item.kittingText}}</strong></view><view><text>开工</text><strong>{{item.startedText}}</strong></view><view><text>完工</text><strong>{{item.completedText}}</strong></view></view>
-    <view class="labor">有效加工工时 <strong>{{item.laborText}}</strong></view>
-    <view class="materials" wx:if="{{item.kitting_required}}">
-      <view class="sub-title">物料齐套</view>
-      <view class="material" wx:for="{{materials[item.target_id]}}" wx:for-item="material" wx:key="id"><view><text>{{material.component_item_name}}</text><text class="source">{{material.source_facts.supply_mode === 'workstation_stock' ? '工位常备料' : (material.source_facts.supply_mode === 'dedicated_delivery' ? '生产配送' : '其他正式来源')}}</text></view><text>需 {{material.required_base_qty}}</text><text class="{{material.shortage_base_qty>0?'shortage':'ready'}}">{{material.shortage_base_qty>0 ? ('缺 ' + material.shortage_base_qty) : '已满足'}}</text></view>
+  <!-- Main Content Container -->
+  <view class="page-scroll">
+
+    <!-- Targets Loop -->
+    <block wx:for="{{targets}}" wx:key="target_id">
+
+      <!-- Hero Card: Workstation Unit, Compact Live Timer & 4-Step Stepper -->
+      <view class="hero-card">
+        <view class="hero-head">
+          <view class="unit-badge" wx:if="{{item.target_type === 'unit_operation'}}">
+            <text class="unit-tag">台车</text>
+            <text class="unit-no">{{item.production_unit_no || ('单元 #' + item.target_id)}}</text>
+          </view>
+          <view class="unit-badge" wx:else>
+            <text class="unit-tag">批量</text>
+            <text class="unit-no">计划 {{item.planned_base_qty}} 件</text>
+          </view>
+
+          <view class="hero-head-right">
+            <text class="unit-sn" wx:if="{{item.device_serial_no}}" data-text="{{item.device_serial_no}}" bindtap="copyText">{{item.device_serial_no}}</text>
+            <text class="unit-sn" wx:elif="{{item.target_type === 'quantity_operation'}}">余 {{item.remaining_base_qty}} 件</text>
+            <view class="status-badge-sm" style="color: {{item.statusConfig.color}}; background: {{item.statusConfig.bg}};">
+              <text class="status-dot" style="background: {{item.statusConfig.color}};"></text>
+              <text>{{item.statusLabel}}</text>
+            </view>
+          </view>
+        </view>
+
+        <!-- Compact Inline Timer Row -->
+        <view class="hero-timer-row">
+          <view class="timer-left">
+            <text class="timer-tag">有效加工时长</text>
+            <text class="timer-val">{{item.timerDisplay}}</text>
+            <text class="timer-sub">(工时: {{item.laborText}})</text>
+          </view>
+          <view class="hero-actions">
+            <button wx:if="{{item.status === 'IN_PROGRESS'}}" class="btn-pause-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="pause">暂停加工</button>
+            <button wx:elif="{{item.status === 'PAUSED'}}" class="btn-resume-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="resume">继续加工</button>
+            <button wx:elif="{{item.status === 'READY' || item.status === 'REWORK'}}" class="btn-start-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="start">{{item.status === 'REWORK' ? '开始返工' : '开始加工'}}</button>
+            <button wx:elif="{{item.kitting_required && (item.status === 'CLAIMED' || item.status === 'WAIT_MATERIAL')}}" class="btn-kitting-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="confirmKitting">核对齐套</button>
+          </view>
+        </view>
+
+        <!-- Compact 4-Step Process Rhythm Stepper -->
+        <view class="stepper-wrap">
+          <view class="stepper-header">
+            <view class="stepper-title">工序作业节拍</view>
+            <view class="stepper-hint">当前阶段: {{item.statusLabel}}</view>
+          </view>
+          <view class="stepper">
+            <view class="step-line">
+              <view class="step-line-fill" style="width: {{item.pipeline.activeStep === 1 ? '16%' : (item.pipeline.activeStep === 2 ? '48%' : (item.pipeline.activeStep === 3 ? '80%' : '100%'))}};"></view>
+            </view>
+            <view class="step-node">
+              <view class="step-circle {{item.pipeline.hasClaimed ? 'done' : (item.pipeline.activeStep === 1 ? 'active' : 'pending')}}">
+                {{item.pipeline.hasClaimed ? '✓' : '1'}}
+              </view>
+              <view class="step-text">接单</view>
+              <view class="step-time">{{item.claimedClock}}</view>
+            </view>
+            <view class="step-node">
+              <view class="step-circle {{item.pipeline.hasKitted ? 'done' : (item.pipeline.activeStep === 2 ? 'active' : 'pending')}}">
+                {{item.pipeline.hasKitted ? '✓' : '2'}}
+              </view>
+              <view class="step-text">齐套</view>
+              <view class="step-time">{{item.kittingClock}}</view>
+            </view>
+            <view class="step-node">
+              <view class="step-circle {{item.pipeline.isCompleted ? 'done' : (item.pipeline.activeStep === 3 ? 'active' : 'pending')}}">
+                {{item.pipeline.isCompleted ? '✓' : '3'}}
+              </view>
+              <view class="step-text" style="{{item.pipeline.activeStep === 3 ? 'color:#d81e06;font-weight:700;' : ''}}">加工中</view>
+              <view class="step-time">{{item.startedClock}}</view>
+            </view>
+            <view class="step-node">
+              <view class="step-circle {{item.pipeline.isCompleted ? 'done' : 'pending'}}">
+                {{item.pipeline.isCompleted ? '✓' : '4'}}
+              </view>
+              <view class="step-text">完工</view>
+              <view class="step-time">{{item.completedClock}}</view>
+            </view>
+          </view>
+        </view>
+
+        <view class="quantity-input-box" wx:if="{{item.target_type === 'quantity_operation' && (item.status === 'IN_PROGRESS' || item.status === 'PAUSED')}}">
+          <view class="qty-label">累计已报 {{item.reported_base_qty || 0}} / 计划 {{item.planned_base_qty}}，剩余可报 {{item.remaining_base_qty}}</view>
+        </view>
+      </view>
+
+      <!-- BOM Materials Checklist Card -->
+      <view class="card" wx:if="{{item.kitting_required}}">
+        <view class="card-title">
+          <view class="card-title-left">工序齐套物料清单</view>
+          <view class="card-title-right">
+            <text class="card-title-badge" style="margin-right: 6px;">{{item.materialStatusText || '加载中'}}</text>
+            <text class="card-link" data-id="{{item.target_id}}" bindtap="openMaterialActions">物料处理 ></text>
+          </view>
+        </view>
+
+        <view class="materials-list" wx:if="{{materials[item.target_id] && materials[item.target_id].length > 0}}">
+          <view class="mat-row" wx:for="{{materials[item.target_id]}}" wx:for-item="material" wx:key="id">
+            <view class="mat-check {{material.isShortage ? 'shortage' : 'ok'}}">
+              {{material.isShortage ? '!' : '✓'}}
+            </view>
+            <view class="mat-detail">
+              <view class="mat-name">{{material.component_item_name}}</view>
+              <view class="mat-tagline">
+                <text class="tag-pill {{material.modeTagClass}}">{{material.modeText}}</text>
+                <text class="mat-hint">{{material.isShortage ? '需补料' : '已就绪'}}</text>
+              </view>
+            </view>
+            <view class="mat-right">
+              <view class="mat-qty-val">需 {{material.required_base_qty}}</view>
+              <view class="mat-status-tag {{material.isShortage ? 'warn' : 'ok'}}">{{material.shortageText}}</view>
+            </view>
+          </view>
+        </view>
+        <view wx:else class="mat-empty-hint">暂无物料需求或无需配送齐套</view>
+      </view>
+
+      <!-- Card 3: Output & Downstream (Strictly matching design mockup) -->
+      <view class="card">
+        <view class="card-title">
+          <view class="card-title-left">产出规则与交接流向</view>
+        </view>
+        <view class="output-grid">
+          <view class="output-cell">
+            <view class="cell-lbl">质量控制要求</view>
+            <view class="cell-val">{{item.qualityLabel}}</view>
+          </view>
+          <view class="output-cell">
+            <view class="cell-lbl">下游工位流向</view>
+            <view class="cell-val">{{item.outputLabel}}</view>
+          </view>
+        </view>
+        <view class="output-record-banner" wx:if="{{item.output_record}}">
+          <text class="record-title">正式产出单: </text>
+          <text class="record-no" data-text="{{item.output_record.output_no}}" bindtap="copyText">{{item.output_record.output_no}}</text>
+          <text class="record-status">({{item.outputStatusLabel}})</text>
+        </view>
+      </view>
+
+    </block>
+
+    <!-- Card 4: Personnel Card (Full Width Single Row, Responsive Multi-User Design) -->
+    <view class="card">
+      <view class="card-title">
+        <view class="card-title-left">现场作业人员 ({{totalWorkersCount}}人)</view>
+        <view wx:if="{{task.assignee_user_legacy_id === userId && task.work_order.collaboration_enabled}}" class="btn-add-collab-head" bindtap="openAddCollaborator">+ 添加协同</view>
+      </view>
+      <view class="personnel-list">
+        <view class="person-item" wx:for="{{workersList}}" wx:key="id">
+          <view class="person-left">
+            <view class="person-avatar {{item.roleClass}}">{{item.avatar}}</view>
+            <view class="person-info-box">
+              <view class="person-name-row">
+                <text class="person-name-text">{{item.name}}</text>
+                <text class="role-tag-owner" wx:if="{{item.isOwner}}">{{item.roleTag}}</text>
+                <text class="role-tag-collab" wx:else>{{item.roleTag}}</text>
+              </view>
+              <view class="person-meta">{{item.meta}}</view>
+            </view>
+          </view>
+          <view class="person-right">
+            <view class="person-labor">{{item.laborText}}</view>
+          </view>
+        </view>
+      </view>
     </view>
-    <view class="quantity" wx:if="{{item.target_type==='quantity_operation' && (item.status==='IN_PROGRESS' || item.status==='PAUSED')}}"><text>本次完成数量</text><input type="digit" value="{{item.quantityValue}}" data-id="{{item.target_id}}" bindinput="onQuantity" /></view>
-    <view class="actions">
-      <button wx:if="{{task.assignee_user_legacy_id===userId && item.status!=='COMPLETED' && item.status!=='CANCELLED'}}" class="outline" data-id="{{item.target_id}}" bindtap="openMaterialActions">物料处理</button>
-      <button wx:if="{{item.kitting_required && (item.status==='CLAIMED' || item.status==='WAIT_MATERIAL')}}" class="primary" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="confirmKitting">已齐套并开工</button>
-      <button wx:if="{{item.status==='WAIT_HANDOVER'}}" class="outline" bindtap="openHandover">接收工序交接</button>
-      <button wx:if="{{!item.kitting_required && item.status==='READY'}}" class="primary" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="start">开始加工</button>
-      <button wx:if="{{item.status==='IN_PROGRESS'}}" class="outline" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="pause">暂停</button>
-      <button wx:if="{{item.status==='PAUSED'}}" class="primary" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="resume">继续</button>
-      <button wx:if="{{item.status==='IN_PROGRESS' || item.status==='PAUSED'}}" class="primary" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="complete">完成工序</button>
-    </view>
+
   </view>
+
+  <!-- Bottom Fixed Action Dock -->
+  <view class="bottom-dock">
+    <button class="btn-outline" wx:if="{{task.assignee_user_legacy_id === userId && targets[0].status !== 'COMPLETED' && targets[0].status !== 'CANCELLED'}}" data-id="{{targets[0].target_id}}" bindtap="openMaterialActions">物料处理</button>
+
+    <!-- State Driven CTA Buttons -->
+    <block wx:if="{{task.status === 'WAIT_CLAIM'}}">
+      <button class="btn-primary" loading="{{busy}}" bindtap="claim">自主接单</button>
+    </block>
+    <block wx:elif="{{targets[0].kitting_required && (targets[0].status === 'CLAIMED' || targets[0].status === 'WAIT_MATERIAL')}}">
+      <button class="btn-primary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="confirmKitting">确认齐套并开工</button>
+    </block>
+    <block wx:elif="{{targets[0].status === 'WAIT_HANDOVER'}}">
+      <button class="btn-primary" bindtap="openHandover">接收工序交接</button>
+    </block>
+    <block wx:elif="{{targets[0].status === 'REWORK'}}">
+      <button class="btn-primary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="start">开始返工</button>
+    </block>
+    <block wx:elif="{{!targets[0].kitting_required && targets[0].status === 'READY'}}">
+      <button class="btn-primary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="start">开始加工</button>
+    </block>
+    <block wx:elif="{{targets[0].status === 'IN_PROGRESS'}}">
+      <button class="btn-secondary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="pause">暂停</button>
+      <button wx:if="{{targets[0].target_type === 'quantity_operation' && !targets[0].readyForCompletion}}" class="btn-primary" data-id="{{targets[0].target_id}}" bindtap="openReport">提交报工</button>
+      <button wx:else class="btn-primary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="complete">完成工序并产出</button>
+    </block>
+    <block wx:elif="{{targets[0].status === 'PAUSED'}}">
+      <button class="btn-primary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="resume">继续加工</button>
+      <button wx:if="{{targets[0].target_type === 'quantity_operation' && !targets[0].readyForCompletion}}" class="btn-secondary" data-id="{{targets[0].target_id}}" bindtap="openReport">提交报工</button>
+      <button wx:else class="btn-secondary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="complete">完成工序</button>
+    </block>
+    <block wx:elif="{{targets[0].status === 'WAIT_QUALITY' || targets[0].status === 'WAIT_WAREHOUSE'}}">
+      <button class="btn-primary" data-id="{{targets[0].target_id}}" bindtap="openOutputAction">{{targets[0].status === 'WAIT_QUALITY' ? '进入产出质检' : '进入产出入库'}}</button>
+    </block>
+    <block wx:elif="{{targets[0].status === 'COMPLETED'}}">
+      <button wx:if="{{targets[0].output_record && targets[0].output_record.status === 'WAIT_COMPLETION'}}" class="btn-primary" bindtap="openCompletion">提交工单完工</button>
+      <button wx:elif="{{targets[0].output_record && targets[0].output_record.status === 'PENDING_COMPLETION_REVIEW'}}" class="btn-disabled" disabled>完工已提交，等待 PC 审核</button>
+      <button wx:else class="btn-disabled" disabled>本工序已完工</button>
+    </block>
+    <block wx:else>
+      <button class="btn-primary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="start">开始作业</button>
+    </block>
+  </view>
+
+  <!-- Collaborator Selection Modal (Popup) using Vant Weapp -->
+  <van-popup
+    show="{{ showCollabModal }}"
+    position="bottom"
+    round
+    closeable
+    bind:close="closeCollabModal"
+    custom-style="max-height: 80%; display: flex; flex-direction: column;"
+  >
+    <view class="modal-head">
+      <view class="modal-title-box">
+        <view class="modal-title">添加协同作业人员</view>
+        <view class="modal-sub">工序: {{task.sequence_no_snapshot}} · {{task.operation_name_snapshot}} ({{task.task_no}})</view>
+      </view>
+    </view>
+
+    <!-- Search Box with van-search -->
+    <van-search
+      value="{{ collabSearchKeyword }}"
+      placeholder="搜索班组成员姓名或工号..."
+      shape="round"
+      bind:change="onCollabSearch"
+      bind:clear="onCollabClear"
+    />
+
+    <!-- Candidate Group Title -->
+    <view class="group-title">
+      <text>可协同生产人员</text>
+      <text class="group-count">共 {{collabCandidates.length}} 人可选</text>
+    </view>
+
+    <!-- Candidate List with Vant Checkbox Group & Cells -->
+    <scroll-view scroll-y class="candidate-list">
+      <van-checkbox-group value="{{ selectedCollabIds }}" bind:change="onCheckboxChange">
+        <van-cell-group border="{{ false }}">
+          <block wx:for="{{ collabCandidates }}" wx:key="id">
+            <van-cell
+              clickable="{{ !item.alreadyJoined }}"
+              data-id="{{ item.id }}"
+              bind:click="toggleCollabSelect"
+              custom-class="cand-cell {{ item.alreadyJoined ? 'is-joined' : '' }}"
+            >
+              <view slot="title" class="cand-left">
+                <view class="cand-avatar {{ item.alreadyJoined ? 'joined' : '' }}">{{ item.name[0] }}</view>
+                <view class="cand-info">
+                  <view class="cand-name">
+                    <text>{{ item.name }}</text>
+                    <text class="cand-no">人员ID {{ item.empNo }}</text>
+                    <van-tag wx:if="{{ item.alreadyJoined }}" type="default" size="medium">已在协同</van-tag>
+                  </view>
+                  <view class="cand-dept">{{ item.dept }}</view>
+                </view>
+              </view>
+              <van-checkbox
+                slot="right-icon"
+                name="{{ item.id }}"
+                disabled="{{ item.alreadyJoined }}"
+                checked-color="#d81e06"
+              />
+            </van-cell>
+          </block>
+        </van-cell-group>
+      </van-checkbox-group>
+    </scroll-view>
+
+    <!-- Modal Footer -->
+    <view class="modal-foot">
+      <view class="foot-info">已选择 <text class="foot-num">{{ selectedCollabIds.length }}</text> 人</view>
+      <view class="foot-btns">
+        <van-button custom-class="btn-modal-cancel" round bind:click="closeCollabModal">取消</van-button>
+        <van-button custom-class="btn-modal-confirm" round type="danger" color="#d81e06" loading="{{ busy }}" bind:click="submitAddCollaborators">确认加入协同</van-button>
+      </view>
+    </view>
+  </van-popup>
 </view>
-<view wx:elif="{{loading}}" class="loading"><van-loading color="#d81e06">加载任务详情</van-loading></view>
-<view wx:else class="loading"><van-empty description="任务不存在或无权查看" /></view>
+
+<view wx:elif="{{loading}}" class="loading-state">
+  <van-loading color="#d81e06" size="28px" vertical>加载工序任务数据...</van-loading>
+</view>
+<view wx:else class="empty-state">
+  <van-empty description="任务不存在或不在您的管辖数据范围内" />
+</view>

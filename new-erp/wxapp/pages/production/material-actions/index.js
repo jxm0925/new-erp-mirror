@@ -1,4 +1,5 @@
 const production = require('../../../services/production');
+const materialSelector = require('../../../components/material-selector/controller');
 
 const SUPPLEMENT_REASONS = ['返工追加', '损耗超标', '物料损坏', '工艺异常', '临时追加'];
 const RETURN_REASONS = ['生产余料退回', '用料调整', '物料异常', '工序取消', '其他'];
@@ -16,20 +17,10 @@ function blankReturnLine() {
   };
 }
 
-function uniqueBy(rows, keyBuilder) {
-  const found = {};
-  return rows.filter((row) => {
-    const key = keyBuilder(row);
-    if (found[key]) return false;
-    found[key] = true;
-    return true;
-  });
-}
-
-Page({
+Page(Object.assign({}, materialSelector.pageMethods, {
   data: {
     taskId: 0, targetType: '', targetId: 0, loading: true, busy: false, task: null, target: null,
-    activeTab: 'supplement', requirements: [], supplementOptions: [], returnOptions: [],
+    activeTab: 'supplement',
     supplementTypes: ['生产过程追加'],
     supplementReasons: SUPPLEMENT_REASONS, supplementReasonIndex: 0, blocking: true,
     supplementLines: [blankSupplementLine()], returnType: 'normal_return',
@@ -51,147 +42,64 @@ Page({
       return;
     }
     this.setData({ loading: true });
-    Promise.all([
-      production.task(this.data.taskId),
-      production.kittingRequirements(this.data.taskId, this.data.targetType, this.data.targetId),
-    ]).then(([taskResponse, requirementResponse]) => {
+    production.task(this.data.taskId).then((taskResponse) => {
       const task = taskResponse.data || {};
       const target = (task.target_details || []).find((row) => row.target_type === this.data.targetType && Number(row.target_id) === this.data.targetId);
       if (!target) throw new Error('任务中不存在当前生产目标');
-      const requirements = (requirementResponse.data || []).map((row) => Object.assign({}, row, {
-        materialLabel: `${row.component_item_code || ''} ${row.component_item_name || ''}`.trim(),
-      }));
-      const supplementOptions = requirements.filter((row) => row.material_requirement_id).map((row) => ({
-        value: row.component_item_id, label: row.materialLabel, requirement: row,
-      }));
-      const returnOptions = requirements.filter((row) => (row.return_sources || []).length).map((row) => ({
-        value: row.material_requirement_id, label: row.materialLabel, requirement: row,
-      }));
-      this.setData({ task, target, requirements, supplementOptions, returnOptions, loading: false });
+      this.setData({ task, target, loading: false });
     }).catch((error) => {
       this.setData({ loading: false });
       wx.showToast({ title: error.message, icon: 'none', duration: 2600 });
     });
   },
 
+  onUnload() {
+    if (this.selectorController) this.selectorController.requestSequence += 1;
+  },
   switchTab(event) { this.setData({ activeTab: event.currentTarget.dataset.tab }); },
   setBlocking(event) { this.setData({ blocking: event.currentTarget.dataset.value === 'true' }); },
   setReturnType(event) { this.setData({ returnType: event.currentTarget.dataset.value }); },
   onSupplementReason(event) { this.setData({ supplementReasonIndex: Number(event.detail.value) }); },
   onReturnReason(event) { this.setData({ returnReasonIndex: Number(event.detail.value) }); },
 
-  onSupplementMaterial(event) {
-    const lineIndex = Number(event.currentTarget.dataset.index);
-    const requirementIndex = Number(event.detail.value);
-    const option = this.data.supplementOptions[requirementIndex];
-    const lines = this.data.supplementLines.slice();
-    lines[lineIndex] = Object.assign({}, lines[lineIndex], {
-      requirementIndex, component_item_id: option.value, materialLabel: option.label,
-    });
-    this.setData({ supplementLines: lines });
+  openMaterialSelector() {
+    const rows = this.data.activeTab === 'return' ? this.data.returnLines : this.data.supplementLines;
+    if (!this.selectorController) this.selectorController = materialSelector.create(this);
+    this.selectorController.properties = { taskId: this.data.taskId, targetType: this.data.targetType, targetId: this.data.targetId, mode: this.data.activeTab };
+    this.selectorController.open(rows.map((row) => row.selection).filter(Boolean));
+  },
+  onMaterialsSelected(event) {
+    const selected = event.detail.rows;
+    if (event.detail.mode === 'supplement') {
+      const previous = new Map(this.data.supplementLines.filter((row) => row.selection).map((row) => [row.selection.key, row]));
+      const lines = selected.map((row) => Object.assign({}, previous.get(row.key) || blankSupplementLine(), {
+        selection: row, component_item_id: row.component_item_id, materialLabel: `${row.code} ${row.name}`,
+      }));
+      this.setData({ supplementLines: lines.length ? lines : [blankSupplementLine()] });
+    } else {
+      const previous = new Map(this.data.returnLines.filter((row) => row.selection).map((row) => [row.selection.key, row]));
+      const lines = selected.map((row) => Object.assign({}, previous.get(row.key) || blankReturnLine(), {
+        selection: row, material_requirement_id: row.material_requirement_id, materialLabel: `${row.code} ${row.name}`,
+        warehouse_id: row.warehouse_id, warehouseLabel: row.warehouse_name,
+        location_id: row.location_id, locationLabel: row.location_name, batch_no: row.batch_no,
+        received_base_qty: Number(row.received_base_qty), returnable_base_qty: Number(row.returnable_base_qty),
+      }));
+      this.setData({ returnLines: lines.length ? lines : [blankReturnLine()] });
+    }
   },
   onSupplementQty(event) {
     const index = Number(event.currentTarget.dataset.index);
     this.setData({ [`supplementLines[${index}].additional_base_qty`]: event.detail.value });
   },
-  addSupplementLine() { this.setData({ supplementLines: this.data.supplementLines.concat([blankSupplementLine()]) }); },
+  addSupplementLine() { this.openMaterialSelector(); },
   removeSupplementLine(event) {
     if (this.data.supplementLines.length === 1) return wx.showToast({ title: '至少保留一条补料明细', icon: 'none' });
     const index = Number(event.currentTarget.dataset.index);
     this.setData({ supplementLines: this.data.supplementLines.filter((_, rowIndex) => rowIndex !== index) });
   },
 
-  onReturnMaterial(event) {
-    const lineIndex = Number(event.currentTarget.dataset.index);
-    const requirementIndex = Number(event.detail.value);
-    const option = this.data.returnOptions[requirementIndex];
-    if (!option) return;
-    const sources = option.requirement.return_sources || [];
-    const warehouseOptions = uniqueBy(sources, (row) => row.warehouse_id).map((row) => ({
-      value: row.warehouse_id, label: `${row.warehouse_code || ''} ${row.warehouse_name || ''}`.trim(),
-    }));
-    const onlyWarehouse = warehouseOptions.length === 1 ? warehouseOptions[0] : null;
-    const warehouseSources = onlyWarehouse
-      ? sources.filter((row) => Number(row.warehouse_id) === Number(onlyWarehouse.value))
-      : [];
-    const locationOptions = uniqueBy(warehouseSources, (row) => row.location_id).map((row) => ({
-      value: row.location_id, label: `${row.location_code || ''} ${row.location_name || ''}`.trim(),
-    }));
-    const onlyLocation = locationOptions.length === 1 ? locationOptions[0] : null;
-    const locationSources = onlyLocation
-      ? warehouseSources.filter((row) => Number(row.location_id) === Number(onlyLocation.value))
-      : [];
-    const onlySource = locationSources.length === 1 ? locationSources[0] : null;
-    const lines = this.data.returnLines.slice();
-    lines[lineIndex] = Object.assign(blankReturnLine(), {
-      requirementIndex, material_requirement_id: option.value, materialLabel: option.label,
-      received_base_qty: Number(option.requirement.work_order_received_base_qty || 0), warehouseOptions,
-      warehouseIndex: onlyWarehouse ? 0 : -1,
-      warehouse_id: onlyWarehouse ? onlyWarehouse.value : 0,
-      warehouseLabel: onlyWarehouse ? onlyWarehouse.label : '',
-      locationOptions,
-      locationIndex: onlyLocation ? 0 : -1,
-      location_id: onlyLocation ? onlyLocation.value : 0,
-      locationLabel: onlyLocation ? onlyLocation.label : '',
-      batch_no: onlySource ? (onlySource.batch_no || '') : '',
-      returnable_base_qty: onlySource
-        ? Number(onlySource.returnable_base_qty || 0)
-        : locationSources.reduce((sum, row) => sum + Number(row.returnable_base_qty || 0), 0),
-    });
-    this.setData({ returnLines: lines });
-  },
-  onReturnWarehouse(event) {
-    const lineIndex = Number(event.currentTarget.dataset.index);
-    const warehouseIndex = Number(event.detail.value);
-    const line = this.data.returnLines[lineIndex];
-    const option = line && line.warehouseOptions[warehouseIndex];
-    const returnOption = line && this.data.returnOptions[line.requirementIndex];
-    if (!line || !option || !returnOption) return;
-    const requirement = returnOption.requirement;
-    const sources = (requirement.return_sources || []).filter((row) => Number(row.warehouse_id) === Number(option.value));
-    const locationOptions = uniqueBy(sources, (row) => row.location_id).map((row) => ({
-      value: row.location_id, label: `${row.location_code || ''} ${row.location_name || ''}`.trim(),
-    }));
-    this.setData({
-      [`returnLines[${lineIndex}].warehouseIndex`]: warehouseIndex,
-      [`returnLines[${lineIndex}].warehouse_id`]: option.value,
-      [`returnLines[${lineIndex}].warehouseLabel`]: option.label,
-      [`returnLines[${lineIndex}].locationIndex`]: -1,
-      [`returnLines[${lineIndex}].location_id`]: 0,
-      [`returnLines[${lineIndex}].locationLabel`]: '',
-      [`returnLines[${lineIndex}].locationOptions`]: locationOptions,
-      [`returnLines[${lineIndex}].batch_no`]: '',
-      [`returnLines[${lineIndex}].returnable_base_qty`]: 0,
-    });
-  },
-  onReturnLocation(event) {
-    const lineIndex = Number(event.currentTarget.dataset.index);
-    const locationIndex = Number(event.detail.value);
-    const line = this.data.returnLines[lineIndex];
-    const option = line && line.locationOptions[locationIndex];
-    const returnOption = line && this.data.returnOptions[line.requirementIndex];
-    if (!line || !option || !returnOption) return;
-    const requirement = returnOption.requirement;
-    const sources = (requirement.return_sources || []).filter((row) => Number(row.warehouse_id) === Number(line.warehouse_id) && Number(row.location_id) === Number(option.value));
-    const onlySource = sources.length === 1 ? sources[0] : null;
-    this.setData({
-      [`returnLines[${lineIndex}].locationIndex`]: locationIndex,
-      [`returnLines[${lineIndex}].location_id`]: option.value,
-      [`returnLines[${lineIndex}].locationLabel`]: option.label,
-      [`returnLines[${lineIndex}].batch_no`]: onlySource ? (onlySource.batch_no || '') : '',
-      [`returnLines[${lineIndex}].returnable_base_qty`]: onlySource ? Number(onlySource.returnable_base_qty || 0) : sources.reduce((sum, row) => sum + Number(row.returnable_base_qty || 0), 0),
-    });
-  },
-  onReturnBatch(event) {
-    const index = Number(event.currentTarget.dataset.index);
-    const value = event.detail.value;
-    const line = this.data.returnLines[index];
-    const option = this.data.returnOptions[line.requirementIndex];
-    const source = option && (option.requirement.return_sources || []).find((row) => Number(row.warehouse_id) === Number(line.warehouse_id) && Number(row.location_id) === Number(line.location_id) && String(row.batch_no || '') === String(value || ''));
-    this.setData({ [`returnLines[${index}].batch_no`]: value, [`returnLines[${index}].returnable_base_qty`]: source ? Number(source.returnable_base_qty || 0) : 0 });
-  },
   onReturnQty(event) { this.setData({ [`returnLines[${Number(event.currentTarget.dataset.index)}].return_base_qty`]: event.detail.value }); },
-  addReturnLine() { this.setData({ returnLines: this.data.returnLines.concat([blankReturnLine()]) }); },
+  addReturnLine() { this.openMaterialSelector(); },
   removeReturnLine(event) {
     if (this.data.returnLines.length === 1) return wx.showToast({ title: '至少保留一条退料明细', icon: 'none' });
     const index = Number(event.currentTarget.dataset.index);
@@ -237,4 +145,4 @@ Page({
     if (url === '/pages/production/workbench/index') return wx.redirectTo({ url });
     wx.switchTab({ url });
   },
-});
+}));

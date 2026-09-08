@@ -1,0 +1,52 @@
+<view class="page" wx:if="{{!loading && task && target}}">
+  <view class="card summary">
+    <view class="title-row"><text class="section-title">工单摘要</text><text class="order-no">{{task.work_order.work_order_no}}</text></view>
+    <view class="metrics">
+      <view class="metric"><text>计划数量</text><text class="metric-value">{{plannedQty}} {{unitName}}</text></view>
+      <view class="metric"><text>累计已报</text><text class="metric-value">{{reportedQty}} {{unitName}}</text></view>
+      <view class="metric"><text>剩余可报</text><text class="metric-value">{{remainingQty}} {{unitName}}</text></view>
+    </view>
+  </view>
+
+  <view class="card station">
+    <text class="section-title">工序 / 工位</text>
+    <text class="station-name">{{task.operation_name_snapshot || target.operation_name_snapshot || '-'}}</text>
+  </view>
+
+  <view class="card total-card">
+    <text class="section-title">本次报工数量</text>
+    <view class="counter"><button data-delta="-1" bindtap="changeTotal">−</button><view><text class="big-number">{{reportQty}}</text><text class="unit">{{unitName}}</text></view><button data-delta="1" bindtap="changeTotal">＋</button></view>
+    <text class="range">可报范围：1 ～ {{remainingQty}} {{unitName}}</text>
+  </view>
+
+  <view class="card">
+    <view class="title-row"><text class="section-title">良品 / 不良品</text><text class="muted">合计：{{reportQty}} {{unitName}}</text></view>
+    <view class="kind-grid">
+      <view class="kind"><text>良品数</text><text class="kind-value">{{qualifiedQty}} {{unitName}}</text><view><button data-kind="qualified" data-delta="-1" bindtap="changeKind">−</button><button data-kind="qualified" data-delta="1" bindtap="changeKind">＋</button></view></view>
+      <view class="kind"><text>不良数</text><text class="kind-value">{{unqualifiedQty}} {{unitName}}</text><view><button data-kind="unqualified" data-delta="-1" bindtap="changeKind">−</button><button data-kind="unqualified" data-delta="1" bindtap="changeKind">＋</button></view></view>
+    </view>
+  </view>
+
+  <view class="card fields">
+    <view class="field"><text>不良原因 <text class="field-hint">（不良数 &gt; 0 时必填）</text></text><input value="{{defectReason}}" bindinput="onDefectReason" placeholder="请输入不良原因" /></view>
+  </view>
+
+  <view class="card labor"><text class="section-title">关联工时</text><text class="labor-time">◷ {{laborText}}</text><switch color="#d81e06" checked="{{endLabor}}" bindchange="onEndLabor" /><text>报工后结束本次工时</text></view>
+  <view class="card preview"><text class="section-title">提交后预览</text><view><text>累计已报</text><text class="preview-value">{{reportedQty + reportQty}} / {{plannedQty}} {{unitName}}</text></view><view><text>剩余可报</text><text class="preview-value red">{{remainingQty - reportQty}} {{unitName}}</text></view></view>
+  <button class="submit-btn" bindtap="confirmReport">确认报工</button>
+</view>
+
+<view class="loading" wx:if="{{loading}}">报工信息加载中...</view>
+
+<view class="overlay" wx:if="{{showConfirm}}" bindtap="closeConfirm">
+  <view class="sheet" catchtap="noop">
+    <view class="handle"></view><view class="sheet-title">确认本次报工</view>
+    <view class="confirm-row"><text>工单</text><text>{{task.work_order.work_order_no}}</text></view>
+    <view class="confirm-row"><text>工序 / 工位</text><text>{{task.operation_name_snapshot}}</text></view>
+    <view class="confirm-row"><text>本次报工数量</text><text>{{reportQty}} {{unitName}}</text></view>
+    <view class="confirm-row"><text>良品</text><text>{{qualifiedQty}} {{unitName}}</text></view>
+    <view class="confirm-row"><text>不良品</text><text>{{unqualifiedQty}} {{unitName}}</text></view>
+    <view class="warning">提交后将形成正式报工事实，无法直接撤回</view>
+    <view class="sheet-actions"><button bindtap="closeConfirm">返回修改</button><button class="confirm-btn" loading="{{submitting}}" bindtap="submit">确认提交</button></view>
+  </view>
+</view>

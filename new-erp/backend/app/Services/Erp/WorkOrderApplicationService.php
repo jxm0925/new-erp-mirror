@@ -686,7 +686,7 @@ class WorkOrderApplicationService
         $line = $demand->line ?: $demand->load('line')->line;
         $targetUnitId = $line?->unit_id;
         $baseUnitId = $demand->base_unit_id;
-        $baseFactor = (float) ($line?->item_base_required_qty ?: 0);
+        $baseFactor = (float) (($demand->item_base_required_qty ?: 0) ?: ($line?->item_base_required_qty ?: 0));
         $productionQty = (float) ($demand->production_qty ?: 0);
         $targetBaseQty = $productionQty > 0 && $baseFactor > 0 ? $quantity * $baseFactor / $productionQty : $quantity;
         $outputItemId = (int) (($demand->item_id ?: $line?->item_id) ?? 0);
@@ -736,7 +736,11 @@ class WorkOrderApplicationService
     private function targetBaseQuantity(ProductionDemand $demand, float $quantity): float
     {
         $line = $demand->line ?: $demand->load('line')->line;
-        $factor = (float) ($line?->item_base_required_qty ?: 0);
+        // A demand can represent only the production remainder after part of the
+        // sales line was fulfilled from stock.  Using the full order-line base
+        // quantity here would expand a 6-piece production remainder back to the
+        // original 10 pieces and overproduce.
+        $factor = (float) (($demand->item_base_required_qty ?: 0) ?: ($line?->item_base_required_qty ?: 0));
         return $factor > 0 && (float) $demand->production_qty > 0
             ? $quantity * $factor / (float) $demand->production_qty
             : $quantity;

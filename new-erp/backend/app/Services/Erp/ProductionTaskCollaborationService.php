@@ -14,6 +14,58 @@ class ProductionTaskCollaborationService
     public function leave(int $taskId, array $payload, object $user, array $permissions): array
     { $this->permission($permissions); return $this->change($taskId, $payload, $user, false); }
 
+    public function add(int $taskId, array $payload, object $user, array $permissions): array
+    {
+        $this->permission($permissions);
+        $employeeIds = array_values(array_unique(array_map('intval', $payload['employee_legacy_ids'] ?? [])));
+        sort($employeeIds);
+        if ($employeeIds === []) $this->fail('collaborators_required', '请至少选择一位协同人员。');
+        $commandId = trim((string) ($payload['client_command_id'] ?? ''));
+        $hash = hash('sha256', json_encode([$taskId, (int) ($payload['expected_version'] ?? 0), $employeeIds], JSON_UNESCAPED_UNICODE));
+
+        return DB::transaction(function () use ($taskId, $payload, $user, $employeeIds, $commandId, $hash): array {
+            $existing = ProductionExecutionCommand::query()->where('client_command_id', $commandId)->lockForUpdate()->first();
+            if ($existing) return $this->replay($existing, 'add_task_collaborators', $hash);
+            $ledger = ProductionExecutionCommand::create(['client_command_id' => $commandId, 'command_type' => 'add_task_collaborators',
+                'aggregate_type' => 'production_task', 'aggregate_id' => $taskId, 'request_hash' => $hash, 'status' => 'processing',
+                'initiated_by_legacy_id' => $this->userId($user), 'processing_started_at' => now()]);
+            $task = ProductionTask::query()->with('workOrder')->lockForUpdate()->find($taskId);
+            if (! $task) $this->fail('task_not_found', '生产任务不存在。', 404);
+            if ((int) $task->business_version !== (int) ($payload['expected_version'] ?? 0)) $this->fail('version_conflict', '任务版本已变化，请刷新后重试。', 409);
+            if (! $task->workOrder?->collaboration_enabled) $this->fail('collaboration_not_enabled', '该工单未开启协同生产。', 409);
+            if (! $task->assignee_user_legacy_id || $task->status === 'WAIT_CLAIM') $this->fail('task_not_claimed', '生产任务尚未接单，不能添加协同。', 409);
+            if ((int) $task->assignee_user_legacy_id !== $this->userId($user)) $this->fail('task_owner_required', '只有任务负责人可以添加协同人员。', 403);
+            if (in_array($this->userId($user), $employeeIds, true)) $this->fail('task_owner_not_collaborator', '任务负责人不能重复添加为协同人员。');
+
+            $validIds = DB::table('erp_legacy_admin_users as u')->whereIn('u.legacy_id', $employeeIds)->where('u.status', 'normal')
+                ->whereExists(function ($permission): void {
+                    $permission->selectRaw('1')->from('erp_rbac_user_roles as ur')
+                        ->join('erp_rbac_roles as r', 'r.id', '=', 'ur.role_id')
+                        ->join('erp_rbac_role_permissions as rp', 'rp.role_id', '=', 'r.id')
+                        ->join('erp_rbac_permissions as p', 'p.id', '=', 'rp.permission_id')
+                        ->whereColumn('ur.user_legacy_id', 'u.legacy_id')->where('r.enabled', true)->where('p.enabled', true)
+                        ->where('p.code', 'production.task.collaborate');
+                })->pluck('u.legacy_id')->map(fn ($id) => (int) $id)->all();
+            if (count($validIds) !== count($employeeIds)) $this->fail('collaborator_invalid', '所选人员中存在停用账号或缺少生产协同权限的人员。');
+
+            $activeIds = $task->collaborators()->whereIn('employee_legacy_id', $employeeIds)->whereNull('left_at')
+                ->pluck('employee_legacy_id')->map(fn ($id) => (int) $id)->all();
+            $addedIds = array_values(array_diff($employeeIds, $activeIds));
+            $now = now();
+            foreach ($addedIds as $employeeId) {
+                $task->collaborators()->create(['employee_legacy_id' => $employeeId, 'role' => 'collaborator',
+                    'responsibility_weight' => 0, 'joined_at' => $now, 'business_version' => 1]);
+            }
+            if ($addedIds !== []) $task->update(['business_version' => (int) $task->business_version + 1]);
+            $result = ['task_id' => (int) $task->id, 'added_employee_legacy_ids' => $addedIds,
+                'existing_employee_legacy_ids' => $activeIds, 'task_business_version' => (int) $task->business_version,
+                'occurred_at' => $now->toISOString()];
+            $ledger->update(['result_type' => 'production_task', 'result_id' => $taskId, 'response_snapshot' => $result,
+                'status' => 'succeeded', 'processing_finished_at' => now()]);
+            return $result;
+        }, 5);
+    }
+
     private function change(int $taskId, array $payload, object $user, bool $join): array
     {
         $commandType = $join ? 'join_task_collaboration' : 'leave_task_collaboration';

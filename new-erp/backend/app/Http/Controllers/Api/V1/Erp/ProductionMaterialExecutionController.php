@@ -114,6 +114,14 @@ class ProductionMaterialExecutionController extends Controller
         return response()->json(['message' => '收料已确认。', 'data' => $receipt], 201);
     }
 
+    public function cancelDelivery(Request $request, int $id, ProductionMaterialExecutionService $service)
+    {
+        $delivery = $service->cancelDelivery($id, $this->transitionPayload($request, [
+            'reason' => ['required', 'string', 'max:500'],
+        ]), ...$this->context($request));
+        return response()->json(['message' => '待发出配送单已取消。', 'data' => $delivery]);
+    }
+
     public function showReceipt(Request $request, int $id, ProductionMaterialExecutionService $service)
     {
         return response()->json(['data' => $service->showReceipt($id, ...$this->context($request))]);
@@ -166,6 +174,8 @@ class ProductionMaterialExecutionController extends Controller
         return $request->validate([
             'status' => ['nullable', 'string', 'max:40'],
             'warehouse_id' => [$picking ? 'nullable' : 'prohibited', 'integer', 'min:1'],
+            'status_group' => ['nullable', 'in:'.($picking ? 'active' : 'pending_dispatch')],
+            'page' => ['nullable', 'integer', 'min:1'],
             'work_order_id' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);

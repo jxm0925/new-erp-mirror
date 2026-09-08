@@ -1,4 +1,4 @@
-const DEFAULT_ERP_API_BASE_URL = 'http://127.0.0.1:8012/api/v1/erp/';
+const DEFAULT_ERP_API_BASE_URL = 'http://127.0.0.1:8011/api/v1/erp/';
 
 function normalizeBaseUrl(value) {
   const baseUrl = String(value || DEFAULT_ERP_API_BASE_URL).trim();

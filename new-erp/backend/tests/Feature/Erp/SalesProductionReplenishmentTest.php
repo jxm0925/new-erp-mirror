@@ -17,6 +17,7 @@ use App\Models\Erp\Warehouse;
 use App\Models\Erp\WorkOrder;
 use App\Services\Erp\ProductionOutputService;
 use App\Services\Erp\SalesShipmentApplicationService;
+use App\Services\Erp\WorkOrderCompletionService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -64,7 +65,7 @@ class SalesProductionReplenishmentTest extends TestCase
         ]);
         $target = ProductionQuantityOperation::create([
             'work_order_id' => $workOrder->id, 'operation_code_snapshot' => 'FINAL', 'operation_name_snapshot' => '成品完工',
-            'sequence_no_snapshot' => 10, 'status' => 'WAIT_WAREHOUSE', 'planned_base_qty' => 6,
+            'sequence_no_snapshot' => 10, 'status' => 'COMPLETED', 'planned_base_qty' => 6,
             'completed_base_qty' => 6, 'scrapped_base_qty' => 0, 'remaining_base_qty' => 0,
             'output_item_id_snapshot' => $item->id, 'output_mode_snapshot' => 'warehouse_required',
             'quality_mode_snapshot' => 'none', 'business_version' => 1,
@@ -74,15 +75,33 @@ class SalesProductionReplenishmentTest extends TestCase
             'source_target_type' => 'quantity_operation', 'source_target_id' => $target->id,
             'output_item_id' => $item->id, 'output_base_qty' => 6,
             'output_mode_snapshot' => 'warehouse_required', 'quality_mode_snapshot' => 'none',
-            'status' => 'CREATED', 'created_by_legacy_id' => 10001, 'produced_at' => now(), 'business_version' => 1,
+            'status' => 'WAIT_COMPLETION', 'created_by_legacy_id' => 10001, 'produced_at' => now(), 'business_version' => 1,
         ]);
         $user = (object) ['legacy_id' => 10001, 'username' => 'warehouse-tester', 'nickname' => '仓库测试员'];
-
-        $result = app(ProductionOutputService::class)->warehouse($output->id, [
+        $completions = app(WorkOrderCompletionService::class);
+        $completion = $completions->submit($workOrder->id, [
             'client_command_id' => (string) Str::uuid(), 'expected_version' => 1,
+            'output_record_ids' => [$output->id],
+        ], $user, ['production.completion.create', 'production.work_order.view.all'], true);
+        $completions->review($completion['completion_id'], [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => 1, 'decision' => 'approve',
+        ], $user, ['production.completion.review', 'production.work_order.view.all'], true);
+        $output->refresh();
+
+        $firstResult = app(ProductionOutputService::class)->warehouse($output->id, [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => $output->business_version,
             'warehouse_id' => $warehouse->id, 'location_id' => $location->id,
-            'batch_no' => 'PROD-'.$suffix, 'unit_cost' => 20,
+            'batch_no' => 'PROD-'.$suffix, 'posted_base_qty' => 2, 'unit_cost' => 20,
         ], $user, ['production.output.warehouse']);
+        $this->assertSame('WAIT_WAREHOUSE', $firstResult['output_status']);
+        $this->assertSame(2.0, (float) $line->fresh()->production_replenished_qty);
+        $output->refresh();
+        $result = app(ProductionOutputService::class)->warehouse($output->id, [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => $output->business_version,
+            'warehouse_id' => $warehouse->id, 'location_id' => $location->id,
+            'batch_no' => 'PROD-'.$suffix, 'posted_base_qty' => 4, 'unit_cost' => 20,
+        ], $user, ['production.output.warehouse']);
+        $this->assertSame('WAREHOUSED', $result['output_status']);
 
         $balance = InventoryBalance::query()->where('item_id', $item->id)->where('batch_no', 'PROD-'.$suffix)->firstOrFail();
         $reservation = InventoryReservation::findOrFail($result['sales_order_reservation_id']);
@@ -94,7 +113,11 @@ class SalesProductionReplenishmentTest extends TestCase
         $this->assertSame($fulfillment->id, (int) $reservation->sales_order_fulfillment_id);
         $this->assertSame('production_replenishment', data_get($reservation->reservation_snapshot, 'reservation_origin'));
         $this->assertSame(6.0, (float) $line->fresh()->production_replenished_qty);
-        $this->assertSame($reservation->id, (int) DB::table('erp_production_output_warehouse_postings')->where('output_record_id', $output->id)->value('sales_order_reservation_id'));
+        $this->assertSame(2, InventoryReservation::query()->where('source_order_id', $order->id)
+            ->where('source_order_line_id', $line->id)->count());
+        $this->assertSame(2, DB::table('erp_work_order_finished_goods_receipts')->where('output_record_id', $output->id)->count());
+        $this->assertSame($reservation->id, (int) DB::table('erp_production_output_warehouse_postings')->where('output_record_id', $output->id)->orderByDesc('id')->value('sales_order_reservation_id'));
+        $this->assertSame($result['finished_goods_receipt_id'], (int) DB::table('erp_work_order_finished_goods_receipts')->where('output_record_id', $output->id)->orderByDesc('id')->value('id'));
 
         $shipments = app(SalesShipmentApplicationService::class);
         $shipment = $shipments->create($order->id, [

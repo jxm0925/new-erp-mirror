@@ -15,6 +15,7 @@ Do not change layout without approval.
         <el-button v-if="order.allowed_actions && order.allowed_actions.edit" size="small" @click="$router.push(`/sales/orders/${order.id}/edit`)">编辑订单</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.submit_confirmation" size="small" type="success" @click="doConfirm">确认前检查</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.formal_confirm" size="small" type="success" @click="doFormalConfirm">正式确认</el-button>
+        <el-button v-if="order.allowed_actions && order.allowed_actions.lock_inventory" class="inventory-lock-button" size="small" type="danger" @click="openInventoryLock">锁库存</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.production_confirmation" size="small" type="primary" @click="$router.push(`/sales/orders/${order.id}/production-confirmation`)">订单生产确认</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.delete_draft" size="small" type="danger" plain @click="deleteDraft">删除草稿</el-button>
       </div>
@@ -23,6 +24,21 @@ Do not change layout without approval.
     <el-alert v-if="order.order_status === 'confirmed' && order.change_eligibility && !order.change_eligibility.allowed" class="change-block-alert" type="warning" :closable="false" show-icon :title="`当前订单不能原地变更：${order.change_eligibility.reason}`" />
     <el-alert v-if="$route.query.changed" class="change-success-alert" type="success" :closable="false" show-icon title="订单已变更，请重新执行履约规划或订单生产确认。" />
     <el-alert v-if="order.pending_change_candidate" class="change-success-alert" type="warning" :closable="false" show-icon :title="`存在待审核 Candidate V${order.pending_change_candidate.candidate_version}：正式订单、库存预留和履约事实尚未变化。`" />
+
+    <el-dialog title="确认锁定库存" :visible.sync="inventoryLockVisible" width="430px" :close-on-click-modal="false">
+      <el-alert type="info" :closable="false" show-icon title="系统将按当前可用库存、仓库、库位和批次进行正式占用，不会重复锁定。" />
+      <div class="inventory-lock-summary">
+        <div><span>当前已锁</span><b class="green">{{ numberText(lockTotals.locked_inventory_qty) }}</b></div>
+        <div><span>生产缺口</span><b class="orange">{{ numberText(lockTotals.pending_production_qty) }}</b></div>
+      </div>
+      <el-table :data="lockLines" border size="mini" max-height="260">
+        <el-table-column prop="line_no" label="行" width="48" align="center" />
+        <el-table-column label="订单数量" min-width="86" align="right"><template slot-scope="{row}">{{ numberText(row.order_qty) }}</template></el-table-column>
+        <el-table-column label="已锁库存" min-width="86" align="right"><template slot-scope="{row}"><b class="green">{{ numberText(row.locked_inventory_qty) }}</b></template></el-table-column>
+        <el-table-column label="生产缺口" min-width="86" align="right"><template slot-scope="{row}"><b class="orange">{{ numberText(row.pending_production_qty) }}</b></template></el-table-column>
+      </el-table>
+      <span slot="footer"><el-button @click="inventoryLockVisible=false">取消</el-button><el-button type="danger" :loading="inventoryLockBusy" @click="confirmInventoryLock">确认锁库存</el-button></span>
+    </el-dialog>
 
     <div class="summary-strip">
       <div><span>订单号</span><b>{{ order.sales_order_no || '-' }}</b></div>
@@ -259,7 +275,7 @@ Do not change layout without approval.
 </template>
 
 <script>
-import { confirmSalesOrder, formalConfirmSalesOrder, deleteSalesOrderAttachment, deleteSalesOrderDraft, downloadSalesOrderAttachment, getSalesOrder, listSalesOrderChanges } from '@/api/erp/sales'
+import { confirmSalesOrder, formalConfirmSalesOrder, deleteSalesOrderAttachment, deleteSalesOrderDraft, downloadSalesOrderAttachment, getSalesOrder, listSalesOrderChanges, lockSalesOrderInventory } from '@/api/erp/sales'
 import SalesOrderAttachmentPreviewDialog from '@/components/sales/SalesOrderAttachmentPreviewDialog.vue'
 import { statusTag, statusText } from '@/utils/erpStatus'
 
@@ -274,7 +290,9 @@ export default {
     selectedChange: null,
     changeDetailVisible: false,
     selectedCandidate: null,
-    candidateDetailVisible: false
+    candidateDetailVisible: false,
+    inventoryLockVisible: false,
+    inventoryLockBusy: false
   }),
   computed: {
     shippingCarrierName() {
@@ -289,7 +307,10 @@ export default {
     currentVersion() { return Math.max(1, ...(this.order.versions || []).map(item => Number(item.version_no || 0))) },
     orderApprovalSteps() { const task=this.order.approval_task||{}; const steps=[{key:'submit',name:'发起提交',state:'done'},...(task.nodes||[]).map(n=>({key:n.node_key,name:n.node_name,state:n.node_status==='APPROVED'?'done':n.node_status==='PENDING'?'active':n.node_status==='REJECTED'?'failed':'wait'})),{key:'finish',name:'审核完成',state:task.task_status==='APPROVED'?'done':task.task_status==='REJECTED'?'failed':'wait'}]; return steps },
     orderApprovalCurrent() { const task=this.order.approval_task||{}; const node=(task.nodes||[]).find(n=>n.node_status==='PENDING'); return node ? node.node_name : (task.task_status==='APPROVED'?'审核完成':task.task_status==='REJECTED'?'已驳回':'—') },
-    candidateHistory() { return [...(this.order.change_candidates || [])].sort((a, b) => Number(b.candidate_version || 0) - Number(a.candidate_version || 0)) }
+    candidateHistory() { return [...(this.order.change_candidates || [])].sort((a, b) => Number(b.candidate_version || 0) - Number(a.candidate_version || 0)) },
+    fulfillmentQuantities() { return this.order.fulfillment_quantities || { totals: {}, lines: [] } },
+    lockTotals() { return this.fulfillmentQuantities.totals || {} },
+    lockLines() { return this.fulfillmentQuantities.lines || [] }
   },
   async created() {
     await this.load()
@@ -329,6 +350,22 @@ export default {
       await formalConfirmSalesOrder(this.order.id)
       this.$message.success('订单已正式确认，履约换算快照已锁定')
       await this.load()
+    },
+    openInventoryLock() { this.inventoryLockVisible = true },
+    async confirmInventoryLock() {
+      if (this.inventoryLockBusy) return
+      this.inventoryLockBusy = true
+      try {
+        const commandId = `sales-inventory-lock-${this.order.id}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+        const response = await lockSalesOrderInventory(this.order.id, {
+          client_command_id: commandId,
+          expected_version: Number(this.order.business_version)
+        })
+        const result = response.data && response.data.data ? response.data.data : response.data
+        this.inventoryLockVisible = false
+        this.$message.success(Number(result.created_fulfillment_count || 0) > 0 ? '库存已正式锁定，生产缺口已重新计算' : '没有新增可锁库存，未重复占用')
+        await this.load()
+      } finally { this.inventoryLockBusy = false }
     },
     async deleteDraft() {
       await this.$confirm('删除后草稿及其订单行将不能恢复，附件绑定会保留审计记录。确认删除？', '删除销售订单草稿', { type: 'warning' })
@@ -374,6 +411,7 @@ export default {
     money(v) {
       return Number(v || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     },
+    numberText(v) { return Number(v || 0).toLocaleString('zh-CN', { maximumFractionDigits: 8 }) },
     date(v) {
       return v ? String(v).replace('T', ' ').slice(0, 16) : '-'
     },
@@ -524,6 +562,11 @@ export default {
 .crumb{color:#607085;margin-bottom:2px;font-size:12px}
 .detail-toolbar h1{margin:0;font-size:19px}
 .detail-toolbar>div:last-child{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.inventory-lock-button{background:#dc1f16;border-color:#dc1f16}
+.inventory-lock-summary{display:grid;grid-template-columns:1fr 1fr;margin:16px 0;border:1px solid #edf0f4;border-radius:4px}
+.inventory-lock-summary>div{padding:14px;text-align:center}.inventory-lock-summary>div+div{border-left:1px solid #edf0f4}
+.inventory-lock-summary span,.inventory-lock-summary b{display:block}.inventory-lock-summary span{color:#64748b;font-size:12px}.inventory-lock-summary b{margin-top:7px;font-size:22px}
+.green{color:#098a4e}.orange{color:#ef6c00}
 .summary-strip{display:grid;grid-template-columns:1.12fr 1.05fr 1.45fr 1.05fr .95fr 1.05fr .9fr 1fr 1fr;background:#fff;border:1px solid #e4e9f0;border-radius:5px;margin-bottom:10px}
 .summary-strip div{min-width:0;padding:10px 8px;border-right:1px solid #eef2f6}
 .summary-strip div:last-child{border-right:0}

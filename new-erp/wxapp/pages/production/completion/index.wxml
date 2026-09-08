@@ -1,0 +1,70 @@
+<view class="page" wx:if="{{!loading && preflight}}">
+  <view class="card product-card">
+    <image wx:if="{{product.image}}" class="product-image" src="{{product.image}}" mode="aspectFit" />
+    <view class="product-main {{product.image ? '' : 'full'}}">
+      <view class="product-name">{{product.name || '生产成品'}}</view>
+      <text class="custom-tag" wx:if="{{product.sku}}">{{product.sku}}</text>
+      <view class="product-spec" wx:if="{{product.specification}}">规格：{{product.specification}}</view>
+    </view>
+    <view class="order-lines">
+      <view><text>工单号</text><text>{{preflight.work_order_no}}</text></view>
+      <view><text>计划日期</text><text>{{preflight.plan.planned_date || '-'}}</text></view>
+    </view>
+    <view class="metrics">
+      <view><text>计划数量</text><strong>{{plannedQty}}</strong><small>{{unitName}}</small></view>
+      <view><text>累计报工</text><strong>{{reportedQty}}</strong><small>{{unitName}}</small></view>
+      <view><text>待完工</text><strong>{{completionQty}}</strong><small>{{unitName}}</small></view>
+    </view>
+  </view>
+
+  <view class="card checks-card">
+    <view class="card-title"><text>完工前检查 <small>（共 {{checks.length}} 项）</small></text><text class="pass-count {{preflight.passed ? '' : 'blocked'}}">{{preflight.passed ? checks.length + ' 项通过' : '存在阻断'}}</text></view>
+    <view class="check-row" wx:for="{{checks}}" wx:key="key">
+      <text class="check-icon {{item.passed ? '' : 'blocked'}}">{{item.passed ? '✓' : '!'}}</text>
+      <text class="check-label">{{item.label}}</text>
+      <text class="check-result {{item.passed ? '' : 'blocked'}}">{{item.resultText}}</text>
+    </view>
+  </view>
+
+  <view class="card completion-card">
+    <view class="card-title">完工信息</view>
+    <view class="form-row counter-row">
+      <text>完工数量 <text class="required">*</text></text>
+      <view class="counter">
+        <button class="minus" disabled="{{!unitMode || selectedCount <= 1}}" data-delta="-1" bindtap="changeCompletion">−</button>
+        <view><strong>{{completionQty}}</strong><small>{{unitName}}</small></view>
+        <button disabled="{{!unitMode || selectedCount >= maxCount}}" data-delta="1" bindtap="changeCompletion">＋</button>
+      </view>
+    </view>
+    <view class="form-row"><text>良品数量</text><text class="row-value">{{qualifiedQty}} {{unitName}}</text></view>
+    <view class="form-row"><text>不良数量</text><text class="row-value">{{defectiveQty}} {{unitName}}</text></view>
+    <view class="form-row input-row" wx:if="{{defectiveQty > 0}}"><text>不良原因</text><input value="{{defectReason}}" bindinput="onDefectReason" placeholder="请输入不良原因" /></view>
+    <view class="form-row input-row"><text>完工备注</text><input value="{{remark}}" bindinput="onRemark" maxlength="2000" placeholder="请输入完工说明" /></view>
+  </view>
+
+  <view class="card key-note">
+    <view class="card-title">关键说明 <text class="info-icon">i</text></view>
+    <text>完工提交只形成完工事实，不会直接成品入库；PC 管理人员审核后办理一次或多次入库。</text>
+  </view>
+
+  <button class="submit-btn" disabled="{{!preflight.passed || !selectedOutputs.length}}" bindtap="openConfirm">提交完工</button>
+  <view class="rules"><text>规则说明</text><text>• 重复提交：返回原结果。</text><text>• 弱网/超时：结果未知时使用原命令重试。</text><text>• 提交后：等待 PC 管理人员审核。</text></view>
+</view>
+
+<view class="loading" wx:if="{{loading}}">完工信息加载中...</view>
+
+<view class="overlay" wx:if="{{showConfirm}}" bindtap="closeConfirm">
+  <view class="sheet" catchtap="noop">
+    <view class="handle"></view>
+    <view class="sheet-title">确认提交完工</view>
+    <view class="confirm-row"><text>工单</text><text>{{preflight.work_order_no}}</text></view>
+    <view class="confirm-row"><text>完工数量</text><text>{{completionQty}} {{unitName}}</text></view>
+    <view class="confirm-row"><text>良品</text><text>{{qualifiedQty}} {{unitName}}</text></view>
+    <view class="confirm-row"><text>不良品</text><text>{{defectiveQty}} {{unitName}}</text></view>
+    <view class="confirm-row"><text>不良原因</text><text>{{defectReason || '-'}}</text></view>
+    <view class="confirm-row"><text>未结束检查</text><text>{{preflight.passed ? '0 项' : '存在阻断'}}</text></view>
+    <view class="confirm-row"><text>余料退回</text><text>{{preflight.passed ? '已确认' : '待处理'}}</text></view>
+    <view class="warning">提交后形成正式完工事实，仍需 PC 管理人员审核后办理成品入库。</view>
+    <view class="sheet-actions"><button bindtap="closeConfirm">返回修改</button><button class="confirm-btn" loading="{{submitting}}" bindtap="submit">确认提交</button></view>
+  </view>
+</view>

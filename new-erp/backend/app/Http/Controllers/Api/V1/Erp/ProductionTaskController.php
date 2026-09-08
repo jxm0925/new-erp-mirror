@@ -19,8 +19,14 @@ class ProductionTaskController extends Controller
             'view' => 'nullable|in:pool,mine,owned,collaboration,all', 'status' => 'nullable|string|max:30',
             'work_order_id' => 'nullable|integer|min:1', 'page' => 'nullable|integer|min:1',
             'per_page' => 'nullable|integer|min:1|max:100',
+            'keyword' => 'nullable|string|max:120',
+            'execution_filter' => 'nullable|in:all,running,waiting,completed,kitting,current',
+            'include_stats' => 'nullable|boolean',
         ]);
-        return response()->json($service->paginate($filters, ...$this->context($request)));
+        $context = $this->context($request);
+        $result = $service->paginate($filters, ...$context)->toArray();
+        if ($request->boolean('include_stats')) $result['stats'] = $service->summary($filters, ...$context);
+        return response()->json($result);
     }
 
     public function show(Request $request, int $id, ProductionTaskQueryService $service)
@@ -51,6 +57,17 @@ class ProductionTaskController extends Controller
 
     public function leave(Request $request, int $id, ProductionTaskCollaborationService $service)
     { return $this->collaboration($request, $id, $service, false); }
+
+    public function addCollaborators(Request $request, int $id, ProductionTaskCollaborationService $service)
+    {
+        $payload = $request->validate([
+            'client_command_id' => 'required|string|max:120', 'expected_version' => 'required|integer|min:1',
+            'employee_legacy_ids' => 'required|array|min:1|max:20',
+            'employee_legacy_ids.*' => 'required|integer|min:1|distinct',
+        ]);
+        [$user, $permissions] = $this->writeContext($request);
+        return response()->json(['message' => '协同人员已添加。', 'data' => $service->add($id, $payload, $user, $permissions)]);
+    }
 
     private function collaboration(Request $request, int $id, ProductionTaskCollaborationService $service, bool $join)
     {

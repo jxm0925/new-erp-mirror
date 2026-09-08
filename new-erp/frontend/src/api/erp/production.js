@@ -45,5 +45,8 @@ export const retireProductionRouting = (id, data) => api.post(`/v1/erp/productio
 export const getProductionExecutionMonitor = params => api.get('/v1/erp/production/execution-monitor', { params })
 export const getProductionUnit = id => api.get(`/v1/erp/production/units/${id}`)
 export const listProductionWorkOrderUnits = id => api.get(`/v1/erp/production/work-orders/${id}/units`)
+export const listWorkOrderCompletions = (id, params) => api.get(`/v1/erp/production/work-orders/${id}/completions`, { params })
+export const reviewWorkOrderCompletion = (id, data) => api.post(`/v1/erp/production/completions/${id}/review`, data)
+export const warehouseProductionOutput = (id, data) => api.post(`/v1/erp/production/outputs/${id}/warehouse`, data)
 
 export default api

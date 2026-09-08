@@ -22,10 +22,10 @@ class ProductionExecutionActionService
     {
         $this->permission($permissions, 'production.task.start');
         return $this->mutate('start_target', $taskId, $type, $targetId, $payload, $user, function ($task, $target, int $userId): array {
-            if ($target->kitting_required && (int) $task->assignee_user_legacy_id === $userId) {
+            if ($target->status !== 'REWORK' && $target->kitting_required && (int) $task->assignee_user_legacy_id === $userId) {
                 $this->fail('kitting_starts_processing', '该工序需要齐套，负责人点击“已齐套”时会直接开始加工，无需再次点击开始。', 409);
             }
-            if (! in_array($target->status, ['READY', 'IN_PROGRESS'], true)) $this->fail('target_not_ready', '生产目标尚未完成接单、收料/交接和齐套，不能开始。', 409);
+            if (! in_array($target->status, ['READY', 'IN_PROGRESS', 'REWORK'], true)) $this->fail('target_not_ready', '生产目标尚未完成接单、收料/交接、齐套或返工判定，不能开始。', 409);
             $now = now();
             $target->fill(['status' => 'IN_PROGRESS', 'started_at' => $target->started_at ?: $now,
                 'paused_at' => null, 'business_version' => (int) $target->business_version + 1])->save();
@@ -73,18 +73,19 @@ class ProductionExecutionActionService
             if (ProductionLaborSession::query()->where('target_type', $type)->where('target_id', $target->id)->where('status', 'ACTIVE')->exists())
                 $this->fail('collaborator_labor_active', '仍有协作者处于加工计时中，必须先结束全部协同计时。', 409);
             $this->laborAllocation->allocate($task, $type, (int) $target->id);
-            if ($type === 'quantity_operation') $this->completeQuantity($target, $payload);
+            if ($type === 'quantity_operation') $this->completeQuantity($task, $target, $payload, $userId, $now);
 
-            $output = $this->createOutput($type, $target, $userId, $payload, $now);
+            $terminal = $this->isTerminalTarget($type, $target, (int) $task->work_order_id);
+            $output = $this->createOutput($type, $target, $userId, $payload, $now, $terminal);
             $warehouseChosen = $target->output_mode_snapshot === 'warehouse_required'
                 || ($target->output_mode_snapshot === 'warehouse_optional' && ($payload['disposition'] ?? null) === 'warehouse');
             $nextStatus = $target->quality_mode_snapshot !== 'none' ? 'WAIT_QUALITY'
-                : ($warehouseChosen ? 'WAIT_WAREHOUSE' : 'COMPLETED');
+                : ($terminal ? 'COMPLETED' : ($warehouseChosen ? 'WAIT_WAREHOUSE' : 'COMPLETED'));
             $target->fill(['status' => $nextStatus, 'completed_at' => $now, 'paused_at' => null,
                 'business_version' => (int) $target->business_version + 1])->save();
             $task->targets()->where('target_type', $type)->where('target_id', $target->id)->update(['status_snapshot' => $nextStatus]);
             $this->refreshTask($task);
-            if ($nextStatus === 'COMPLETED') $this->advanceNext($type, $target, $task->work_order_id, $userId, $output);
+            if ($nextStatus === 'COMPLETED' && ! $terminal) $this->advanceNext($type, $target, $task->work_order_id, $userId, $output);
             return $this->projection($task->fresh(), $target, $output);
         });
     }
@@ -166,33 +167,86 @@ class ProductionExecutionActionService
         $target->actual_labor_minutes = (float) $target->actual_labor_minutes + $minutes;
     }
 
-    private function completeQuantity(ProductionQuantityOperation $target, array $payload): void
+    private function completeQuantity(ProductionTask $task, ProductionQuantityOperation $target, array $payload, int $userId, $now): void
     {
         $completed = (float) ($payload['completed_base_qty'] ?? 0); $scrapped = (float) ($payload['scrapped_base_qty'] ?? 0);
-        if ($completed < 0 || $scrapped < 0 || $completed + $scrapped <= 0) $this->fail('completion_quantity_invalid', '完成量与报废量必须为非负数且合计大于 0。');
-        if ($completed + $scrapped > (float) $target->remaining_base_qty + 0.00000001) $this->fail('completion_quantity_exceeds_remaining', '完成量与报废量不能超过剩余数量。');
-        $target->completed_base_qty = (float) $target->completed_base_qty + $completed;
-        $target->scrapped_base_qty = (float) $target->scrapped_base_qty + $scrapped;
-        $target->remaining_base_qty = max(0, (float) $target->remaining_base_qty - $completed - $scrapped);
-        if ((float) $target->remaining_base_qty > 0.00000001) $this->fail('quantity_target_not_fully_reported', '本次完成后仍有剩余数量，请使用报工接口分批推进，不能直接结束工序。');
+        if ($completed < 0 || $scrapped < 0) $this->fail('completion_quantity_invalid', '完成量与报废量必须为非负数。');
+        $inlineReported = $completed + $scrapped;
+        if ($inlineReported > (float) $target->remaining_base_qty + 0.00000001) {
+            $this->fail('completion_quantity_exceeds_remaining', '完成量与报废量不能超过剩余可报数量。');
+        }
+        if ($inlineReported > 0) {
+            $defectReason = trim((string) ($payload['defect_reason'] ?? ''));
+            if ($scrapped > 0 && $defectReason === '') $this->fail('defect_reason_required', '存在报废数量时必须填写原因。');
+            $target->completed_base_qty = (float) $target->completed_base_qty + $completed;
+            $target->scrapped_base_qty = (float) $target->scrapped_base_qty + $scrapped;
+            $target->remaining_base_qty = max(0, (float) $target->remaining_base_qty - $inlineReported);
+            DB::table('erp_production_reports')->insert([
+                'report_no' => $this->numbers->next('production_report', 'PRP'),
+                'client_command_id' => (string) $payload['client_command_id'],
+                'work_order_id' => $task->work_order_id, 'task_id' => $task->id,
+                'target_type' => 'quantity_operation', 'target_id' => $target->id,
+                'base_unit_id' => DB::table('erp_work_orders')->where('id', $task->work_order_id)->value('base_unit_id'),
+                'qualified_base_qty' => $completed, 'unqualified_base_qty' => 0, 'scrapped_base_qty' => $scrapped,
+                'defect_reason' => $defectReason ?: null, 'remark' => $payload['remark'] ?? null,
+                'attachment_snapshot' => empty($payload['attachments']) ? null : json_encode(array_values($payload['attachments']), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+                'ended_reporter_labor' => true, 'reported_by_legacy_id' => $userId,
+                'organization_code' => $task->organization_code, 'reported_at' => $now,
+                'business_version' => 1, 'created_at' => $now, 'updated_at' => $now,
+            ]);
+        }
+        if ((float) $target->remaining_base_qty > 0.00000001) {
+            $this->fail('reports_not_complete', '仍有未报工数量，请先提交分批报工，全部报完后才能完工。', 409, [
+                'remaining_base_qty' => (float) $target->remaining_base_qty,
+            ]);
+        }
+        if ((float) $target->completed_base_qty <= 0.00000001) {
+            $this->fail('qualified_output_required', '没有可形成工序产出的良品数量，不能提交完工。', 409);
+        }
     }
 
-    private function createOutput(string $type, object $target, int $userId, array $payload, $now): object
+    private function createOutput(string $type, object $target, int $userId, array $payload, $now, bool $terminal): object
     {
         $qty = $type === 'unit_operation' ? 1 : (float) $target->completed_base_qty;
         $unitId = $type === 'unit_operation' ? (int) $target->production_unit_id : null;
         $existing = DB::table('erp_production_output_records')->where('source_target_type', $type)->where('source_target_id', $target->id)->first();
-        if ($existing) return $existing;
+        if ($existing) {
+            if (! in_array($existing->status, ['QUALITY_FAILED', 'HANDOVER_REJECTED'], true)) return $existing;
+            $status = $target->quality_mode_snapshot !== 'none' ? 'WAIT_QUALITY'
+                : ($terminal ? 'WAIT_COMPLETION'
+                    : (($target->output_mode_snapshot === 'warehouse_required' || ($payload['disposition'] ?? null) === 'warehouse') ? 'WAIT_WAREHOUSE' : 'CREATED'));
+            DB::table('erp_production_output_records')->where('id', $existing->id)->update([
+                'output_base_qty' => $qty,
+                'status' => $status,
+                'disposition' => $payload['disposition'] ?? null,
+                'created_by_legacy_id' => $userId,
+                'produced_at' => $now,
+                'business_version' => (int) $existing->business_version + 1,
+                'updated_at' => $now,
+            ]);
+            return DB::table('erp_production_output_records')->where('id', $existing->id)->first();
+        }
         $id = DB::table('erp_production_output_records')->insertGetId([
                 'output_no' => $this->numbers->next('production_output', 'POU'), 'work_order_id' => $target->work_order_id,
                 'source_target_type' => $type, 'source_target_id' => $target->id, 'production_unit_id' => $unitId,
                 'output_item_id' => $target->output_item_id_snapshot ?: DB::table('erp_work_orders')->where('id', $target->work_order_id)->value('output_item_id'),
                 'output_base_qty' => $qty, 'output_mode_snapshot' => $target->output_mode_snapshot,
-                'quality_mode_snapshot' => $target->quality_mode_snapshot, 'status' => $target->quality_mode_snapshot !== 'none' ? 'WAIT_QUALITY' : (($target->output_mode_snapshot === 'warehouse_required' || ($payload['disposition'] ?? null) === 'warehouse') ? 'WAIT_WAREHOUSE' : 'CREATED'),
+                'quality_mode_snapshot' => $target->quality_mode_snapshot, 'status' => $target->quality_mode_snapshot !== 'none' ? 'WAIT_QUALITY'
+                    : ($terminal ? 'WAIT_COMPLETION'
+                        : (($target->output_mode_snapshot === 'warehouse_required' || ($payload['disposition'] ?? null) === 'warehouse') ? 'WAIT_WAREHOUSE' : 'CREATED')),
                 'disposition' => $payload['disposition'] ?? null, 'created_by_legacy_id' => $userId, 'produced_at' => $now,
                 'business_version' => 1, 'created_at' => $now, 'updated_at' => $now,
             ]);
         return DB::table('erp_production_output_records')->where('id', $id)->first();
+    }
+
+    private function isTerminalTarget(string $type, object $target, int $workOrderId): bool
+    {
+        $query = $type === 'unit_operation'
+            ? ProductionUnitOperation::query()->where('production_unit_id', $target->production_unit_id)
+            : ProductionQuantityOperation::query()->where('work_order_id', $workOrderId);
+
+        return ! $query->where('sequence_no_snapshot', '>', $target->sequence_no_snapshot)->exists();
     }
 
     private function advanceNext(string $type, object $target, int $workOrderId, int $userId, object $output): void

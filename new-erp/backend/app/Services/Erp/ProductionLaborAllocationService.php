@@ -19,7 +19,6 @@ class ProductionLaborAllocationService
                 throw new WorkOrderDomainException('labor_sessions_incomplete', '全部人员的真实加工计时结束后才能计算责任工时。', 409);
             }
             $actualTotal = (float) $sessions->sum('actual_labor_minutes');
-            if ($actualTotal <= 0.00000001) throw new WorkOrderDomainException('actual_labor_empty', '真实实际工时为空，不能计算责任工时。', 409);
 
             $rule = (array) $task->labor_allocation_rule_snapshot;
             $ownerRatio = (float) ($rule['owner_ratio'] ?? 0.6);
@@ -33,9 +32,9 @@ class ProductionLaborAllocationService
             foreach ($byEmployee as $employeeId => $employeeSessions) {
                 $employeeActual = (float) $employeeSessions->sum('actual_labor_minutes');
                 $isOwner = (int) $employeeId === $ownerId;
-                $employeeCredit = $isOwner
+                $employeeCredit = $actualTotal <= 0.00000001 ? 0 : ($isOwner
                     ? $actualTotal * $ownerRatio
-                    : ($collaboratorActual > 0 ? $actualTotal * $collaboratorRatio * $employeeActual / $collaboratorActual : 0);
+                    : ($collaboratorActual > 0 ? $actualTotal * $collaboratorRatio * $employeeActual / $collaboratorActual : 0));
                 foreach ($employeeSessions as $session) {
                     $sessionCredit = $employeeActual > 0 ? $employeeCredit * (float) $session->actual_labor_minutes / $employeeActual : 0;
                     $session->update([
