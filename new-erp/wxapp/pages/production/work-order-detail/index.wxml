@@ -1,0 +1,160 @@
+<view class="page-container">
+  <view wx:if="{{ loading }}" class="loading-state">
+    <van-loading type="spinner" color="#d81e06" vertical>加载工单详情中...</van-loading>
+  </view>
+
+  <block wx:else>
+    <!-- Product Overview Card (with integrated top breadcrumb) -->
+    <view class="card product-card">
+      <!-- Breadcrumb Header -->
+      <view class="crumb-nav">
+        <text class="crumb-link font-num" bindtap="navBackToMaster">{{ masterOrderNo }}</text>
+        <text class="crumb-sep">></text>
+        <text class="crumb-active font-num">{{ workOrder.work_order_no }}</text>
+      </view>
+
+      <view class="product-top">
+        <image class="product-img" src="{{ workOrder.product_image || '/static/images/work_order.png' }}" mode="aspectFit" />
+        <view class="product-info">
+          <view class="product-title">{{ workOrder.product_name }}</view>
+          <view class="product-spec">产品型号：<text class="font-num">{{ workOrder.product_model }}</text></view>
+          <view class="product-qty">订单数量：<text class="font-num font-bold">{{ workOrder.target_qty }}</text> {{ workOrder.unit_name }}</view>
+        </view>
+      </view>
+
+      <view class="metric-divider"></view>
+
+      <!-- 6 Metrics Row (Labels on Top, Numbers on Bottom, with dividers) -->
+      <view class="metrics-grid">
+        <view class="metric-col">
+          <view class="metric-label">计划</view>
+          <view class="metric-val text-dark">
+            <text class="val-num font-num">{{ metrics.planned }}</text>
+            <text class="val-unit"> {{ workOrder.unit_name }}</text>
+          </view>
+        </view>
+        <view class="col-divider"></view>
+        <view class="metric-col">
+          <view class="metric-label">完成</view>
+          <view class="metric-val text-green">
+            <text class="val-num font-num">{{ metrics.completed }}</text>
+            <text class="val-unit"> {{ workOrder.unit_name }}</text>
+          </view>
+        </view>
+        <view class="col-divider"></view>
+        <view class="metric-col">
+          <view class="metric-label">在制</view>
+          <view class="metric-val text-blue">
+            <text class="val-num font-num">{{ metrics.in_progress }}</text>
+            <text class="val-unit"> {{ workOrder.unit_name }}</text>
+          </view>
+        </view>
+        <view class="col-divider"></view>
+        <view class="metric-col">
+          <view class="metric-label">待生产</view>
+          <view class="metric-val text-orange">
+            <text class="val-num font-num">{{ metrics.waiting }}</text>
+            <text class="val-unit"> {{ workOrder.unit_name }}</text>
+          </view>
+        </view>
+        <view class="col-divider"></view>
+        <view class="metric-col">
+          <view class="metric-label">异常</view>
+          <view class="metric-val text-red">
+            <text class="val-num font-num">{{ metrics.exception }}</text>
+            <text class="val-unit"> {{ workOrder.unit_name }}</text>
+          </view>
+        </view>
+        <view class="col-divider"></view>
+        <view class="metric-col">
+          <view class="metric-label">工序完成</view>
+          <view class="metric-val text-dark">
+            <text class="val-num font-num">{{ metrics.tasks_completed }}/{{ metrics.tasks_total }}</text>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- Section Header: 生产单元 (6) & 筛选 -->
+    <view class="section-bar">
+      <view class="section-title">
+        生产单元 <text class="count-num font-num">({{ filteredUnits.length }})</text>
+      </view>
+      <view class="filter-action {{ currentFilter !== 'all' ? 'filter-active' : '' }}" bindtap="openFilterPicker">
+        <van-icon name="filter-o" size="14px" color="{{ currentFilter !== 'all' ? '#d81e06' : '#1f2329' }}" />
+        <text class="filter-text">{{ activeFilterLabel || '筛选' }}</text>
+      </view>
+    </view>
+
+    <!-- Production Unit (PU) Cards List -->
+    <view class="pu-list">
+      <block wx:for="{{ filteredUnits }}" wx:key="id">
+        <view class="card pu-card" bindtap="openUnit" data-unit="{{ item }}">
+          <!-- PU Header Row -->
+          <view class="pu-row-header">
+            <view class="pu-identity">
+              <text class="pu-code font-num">{{ item.unit_no }}</text>
+              <text class="status-pill {{ item.statusClass }}">{{ item.statusLabel }}</text>
+            </view>
+            <view class="pu-link" catchtap="openUnit" data-unit="{{ item }}">
+              <text>查看工序任务</text>
+              <van-icon name="arrow" size="12px" color="#909399" />
+            </view>
+          </view>
+
+          <!-- PU Operation Row -->
+          <view class="pu-op-row">
+            <text class="pu-label">当前工序</text>
+            <text class="pu-op-name">{{ item.current_operation_name }}</text>
+            <text class="pu-op-seq" wx:if="{{ item.seq_text }}">（{{ item.seq_text }}）</text>
+          </view>
+
+          <!-- PU 3-Column Attributes Grid -->
+          <view class="pu-meta-grid">
+            <view class="meta-col">
+              <view class="col-label">当前工序任务</view>
+              <view class="col-val pt-code font-num">{{ item.current_pt_no || '—' }}</view>
+            </view>
+            <view class="meta-col">
+              <view class="col-label">物料齐套</view>
+              <view class="col-val">
+                <text wx:if="{{ item.kittingLabel && item.kittingLabel !== '—' }}" class="tag-badge {{ item.kittingClass }}">{{ item.kittingLabel }}</text>
+                <text wx:else class="text-placeholder">—</text>
+              </view>
+            </view>
+            <view class="meta-col">
+              <view class="col-label">生产单元状态</view>
+              <view class="col-val">
+                <text wx:if="{{ item.handoverLabel && item.handoverLabel !== '—' }}" class="tag-badge {{ item.handoverClass }}">{{ item.handoverLabel }}</text>
+                <text wx:else class="text-placeholder">—</text>
+              </view>
+            </view>
+          </view>
+        </view>
+      </block>
+
+      <view wx:if="{{ !filteredUnits.length }}" class="empty-state">
+        <text>暂无符合筛选条件的生产单元</text>
+      </view>
+    </view>
+  </block>
+
+  <!-- Filter Modal / Bottom Sheet -->
+  <view wx:if="{{ showFilterModal }}" class="modal-mask" bindtap="closeFilterPicker">
+    <view class="modal-sheet" catchtap="stopBubble">
+      <view class="sheet-header">
+        <text class="sheet-title">筛选生产单元</text>
+        <view class="sheet-close" bindtap="closeFilterPicker">
+          <van-icon name="cross" size="18px" color="#909399" />
+        </view>
+      </view>
+      <view class="filter-options">
+        <block wx:for="{{ filterOptions }}" wx:key="key">
+          <view class="filter-chip {{ currentFilter === item.key ? 'filter-chip-active' : '' }}" bindtap="applyFilter" data-key="{{ item.key }}" data-label="{{ item.label }}">
+            {{ item.label }}
+          </view>
+        </block>
+      </view>
+    </view>
+  </view>
+</view>

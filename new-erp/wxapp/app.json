@@ -2,6 +2,9 @@
   "pages": [
     "pages/index/index",
     "pages/production/tasks/index",
+    "pages/production/master-detail/index",
+    "pages/production/work-order-detail/index",
+    "pages/production/unit-detail/index",
     "pages/production/my-tasks/index",
     "pages/production/workbench/index",
     "pages/production/todos/index",

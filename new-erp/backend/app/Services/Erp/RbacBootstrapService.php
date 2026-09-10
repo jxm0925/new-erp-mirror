@@ -280,6 +280,8 @@ class RbacBootstrapService
             ['sales_order.change.approve_finance', '审核销售订单财务变更', 'button', 'sales.order', null, null, 'el-icon-mouse', 93],
             ['sales_order.change.approve_fulfillment', '审核销售订单履约变更', 'button', 'sales.order', null, null, 'el-icon-mouse', 94],
             ['sales_order.upload_attachment', '销售订单附件上传', 'button', 'sales.order', null, null, 'el-icon-mouse', 10],
+            ['sales_order.view_attachment', '查看销售订单附件', 'button', 'sales.order', null, null, 'el-icon-view', 101],
+            ['sales_order.delete_attachment', '删除销售订单附件', 'button', 'sales.order', null, null, 'el-icon-delete', 102],
             ['sales_order.shipment.view', '查看销售发货单', 'button', 'sales.order', null, null, 'el-icon-mouse', 11],
             ['sales_order.shipment.create', '创建销售发货单', 'button', 'sales.order', null, null, 'el-icon-mouse', 12],
             ['sales_order.shipment.confirm', '确认销售发货单', 'button', 'sales.order', null, null, 'el-icon-mouse', 13],
@@ -489,6 +491,24 @@ class RbacBootstrapService
         }
         $this->ensureProductionRolePermissions();
         $this->ensureSalesInventoryLockPermission();
+        $this->ensureSalesAttachmentPermissions();
+    }
+
+    private function ensureSalesAttachmentPermissions(): void
+    {
+        $permissionIds = DB::table('erp_rbac_permissions')->whereIn('code', [
+            'sales_order.upload_attachment', 'sales_order.view_attachment', 'sales_order.delete_attachment',
+        ])->pluck('id', 'code');
+        foreach (['admin', 'sales_manager', 'sales_user'] as $roleCode) {
+            $roleId = DB::table('erp_rbac_roles')->where('code', $roleCode)->value('id');
+            if (! $roleId) continue;
+            foreach ($permissionIds as $permissionId) {
+                DB::table('erp_rbac_role_permissions')->insertOrIgnore([
+                    'role_id' => $roleId,
+                    'permission_id' => $permissionId,
+                ]);
+            }
+        }
     }
 
     private function ensureSalesInventoryLockPermission(): void

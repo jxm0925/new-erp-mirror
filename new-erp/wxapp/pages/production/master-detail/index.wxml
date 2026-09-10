@@ -1,0 +1,648 @@
+<view class="page">
+  <!-- 顶部沉浸式红底 Hero 与自定义导航 -->
+  <view class="hero">
+    <!-- 状态栏占位，避开手机刘海/灵动岛/时间电量栏 -->
+    <view style="height: {{statusBarHeight}}px;"></view>
+    <!-- 导航栏：返回键、居中标题、以及为微信原生胶囊预留的防遮挡区域 -->
+    <view class="nav" style="height: {{navBarHeight}}px;">
+      <view class="nav-left" bindtap="back">
+        <van-icon name="arrow-left" color="#ffffff" size="44rpx" />
+      </view>
+      <text class="nav-title">主生产工单详情</text>
+      <view class="nav-right" style="width: {{capsuleWidth + 12}}px;"></view>
+    </view>
+    <scroll-view class="tabs" scroll-x="true" show-scrollbar="false">
+      <view
+        wx:for="{{tabs}}"
+        wx:key="key"
+        class="tab {{activeTab === item.key ? 'active' : ''}}"
+        data-key="{{item.key}}"
+        bindtap="setTab"
+      >
+        <text>{{item.text}}</text>
+        <view class="tab-indicator" wx:if="{{activeTab === item.key}}"></view>
+      </view>
+    </scroll-view>
+  </view>
+
+  <view wx:if="{{loading}}" class="state">
+    <van-loading color="#d81e06" size="48rpx" vertical>加载中...</van-loading>
+  </view>
+
+  <block wx:else>
+    <!-- Tab 1: 概览 (设计图 1) -->
+    <view wx:if="{{activeTab === 'overview'}}" class="body">
+      <!-- 订单与生产状态 -->
+      <view class="card">
+        <view class="card-head">
+          <view class="head-left">
+            <view class="icon-wrap-red">
+              <van-icon name="description" size="34rpx" color="#ffffff" />
+            </view>
+            <text class="card-title">订单与生产状态</text>
+          </view>
+          <view class="status-pill" style="color: {{master.statusColor}}; background: {{master.statusBg}}">
+            {{master.statusLabel}}
+          </view>
+        </view>
+
+        <view class="info-grid">
+          <view class="info-item">
+            <text class="info-label">主生产工单号</text>
+            <text class="info-value">{{master.master_order_no}}</text>
+          </view>
+          <view class="info-item">
+            <text class="info-label">销售订单号</text>
+            <text class="info-value">{{master.sales_order_no_snapshot}}</text>
+          </view>
+          <view class="info-item">
+            <text class="info-label">客户名称</text>
+            <text class="info-value">{{master.customerName}}</text>
+          </view>
+          <view class="info-item">
+            <text class="info-label">产品名称</text>
+            <text class="info-value">{{master.productName}}</text>
+          </view>
+        </view>
+
+        <!-- 5项指标 -->
+        <view class="stats-row">
+          <view class="stat-col">
+            <text class="stat-label">需生产</text>
+            <text class="stat-num color-black">{{master.plannedQty}}</text>
+          </view>
+          <view class="stat-col">
+            <text class="stat-label">已完成</text>
+            <text class="stat-num color-green">{{master.completedQty}}</text>
+          </view>
+          <view class="stat-col">
+            <text class="stat-label">在制</text>
+            <text class="stat-num color-blue">{{master.inProgressQty}}</text>
+          </view>
+          <view class="stat-col">
+            <text class="stat-label">待生产</text>
+            <text class="stat-num color-orange">{{master.waitingQty}}</text>
+          </view>
+          <view class="stat-col">
+            <text class="stat-label">异常</text>
+            <text class="stat-num color-red">{{master.exceptionQty}}</text>
+          </view>
+        </view>
+
+        <!-- 工序完成进度与交期 -->
+        <view class="progress-due-row">
+          <view class="progress-block">
+            <view class="progress-desc">
+              <text>工序完成</text>
+              <text class="progress-count">{{master.taskCompleted}} / {{master.taskTotal}} · {{master.taskRatio}}%</text>
+            </view>
+            <view class="progress-bar-wrap">
+              <view class="progress-bar-track">
+                <view class="progress-bar-fill" style="width: {{master.taskRatio}}%"></view>
+              </view>
+              <text class="progress-percent-text">{{master.taskRatio}}%</text>
+            </view>
+          </view>
+          <view class="due-block">
+            <text class="due-label">交期</text>
+            <view class="due-val">
+              <van-icon name="calendar-o" size="28rpx" color="#7a8291" />
+              <text>{{master.deliveryDate}}</text>
+            </view>
+          </view>
+        </view>
+
+        <!-- 4大条件微卡片 -->
+        <view class="condition-grid">
+          <view class="cond-item">
+            <view class="cond-icon-box">
+              <van-icon name="bag-o" size="36rpx" color="#5a6578" />
+            </view>
+            <view class="cond-content">
+              <text class="cond-title">备料</text>
+              <view class="cond-status-text">
+                <text class="cond-num">{{master.deliveryDelivered}}/{{master.deliveryTotal}}</text>
+                <text class="cond-tag-green">已签收</text>
+              </view>
+            </view>
+          </view>
+
+          <view class="cond-item">
+            <view class="cond-icon-box">
+              <van-icon name="orders-o" size="36rpx" color="#5a6578" />
+            </view>
+            <view class="cond-content">
+              <text class="cond-title">齐套</text>
+              <view class="cond-status-text">
+                <text class="cond-num">{{master.kittingConfirmed}}/{{master.kittingTotal}}</text>
+              </view>
+            </view>
+          </view>
+
+          <view class="cond-item">
+            <view class="cond-icon-box">
+              <van-icon name="gold-coin-o" size="36rpx" color="#5a6578" />
+            </view>
+            <view class="cond-content">
+              <text class="cond-title">生产资金</text>
+              <view class="cond-status-text">
+                <van-icon name="{{master.productionSatisfied ? 'checked' : 'lock'}}" size="28rpx" color="{{master.productionSatisfied ? '#00a870' : '#d81e06'}}" />
+                <text class="{{master.productionSatisfied ? 'cond-tag-green' : 'cond-tag-red'}}">{{master.productionSatisfied ? '已满足' : '未满足'}}</text>
+              </view>
+            </view>
+          </view>
+
+          <view class="cond-item">
+            <view class="cond-icon-box">
+              <van-icon name="lock" size="36rpx" color="#d81e06" />
+            </view>
+            <view class="cond-content">
+              <text class="cond-title">发货资金</text>
+              <view class="cond-status-text">
+                <text class="{{master.shipmentSatisfied ? 'cond-tag-green' : 'cond-tag-red'}}">{{master.shipmentSatisfied ? '已满足' : master.shipmentBlockReason}}</text>
+              </view>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <!-- 当前关注 -->
+      <view class="card">
+        <view class="card-head clickable">
+          <view class="head-left">
+            <view class="icon-wrap-red-circle">
+              <text>!</text>
+            </view>
+            <text class="card-title">当前关注</text>
+          </view>
+          <van-icon name="arrow" size="30rpx" color="#99a0ad" />
+        </view>
+
+        <view class="alert-pills-row">
+          <view class="alert-pill alert-red" data-type="exception" bindtap="alertAction">
+            <van-icon name="setting-o" size="34rpx" color="#d81e06" />
+            <text class="alert-strong">{{master.exceptionQty}}</text>
+            <text class="alert-text">个工序异常</text>
+            <van-icon name="arrow" size="24rpx" color="#d81e06" />
+          </view>
+
+          <view class="alert-pill alert-orange" data-type="kitting" bindtap="alertAction">
+            <van-icon name="box" size="34rpx" color="#ed6a0c" />
+            <text class="alert-strong">{{master.deliveryTab.waitingKittingOps}}</text>
+            <text class="alert-text">个工序待齐套</text>
+            <van-icon name="arrow" size="24rpx" color="#ed6a0c" />
+          </view>
+
+          <view class="alert-pill alert-red" data-type="funding" bindtap="alertAction">
+            <view class="money-icon-circle">¥</view>
+            <text class="alert-text">{{master.shipmentSatisfied ? '发货资金已满足' : master.shipmentBlockReason}}</text>
+            <van-icon name="arrow" size="24rpx" color="#d81e06" />
+          </view>
+        </view>
+      </view>
+
+      <!-- 备注 -->
+      <view class="card">
+        <view class="card-head clickable" data-key="notes" bindtap="setTab">
+          <view class="head-left">
+            <view class="icon-wrap-gray">
+              <van-icon name="notes-o" size="32rpx" color="#ffffff" />
+            </view>
+            <text class="card-title">备注</text>
+          </view>
+          <van-icon name="arrow" size="30rpx" color="#99a0ad" />
+        </view>
+        <view class="remark-bubble-box">
+          <text>{{master.orderRemark}}</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- Tab 2: 生产执行 (对应最新设计图) -->
+    <view wx:elif="{{activeTab === 'execution'}}" class="body">
+      <!-- 顶部统计横幅 -->
+      <view class="exec-summary-bar">
+        <view class="icon-wrap-red-square">
+          <van-icon name="description" size="30rpx" color="#ffffff" />
+        </view>
+        <text class="exec-summary-text">生产工单 <text class="text-red font-num">{{master.workOrders.length}}</text> 张 · 需生产 <text class="text-red font-num">{{master.plannedQty}}</text> {{master.plannedUnitName}}</text>
+      </view>
+
+      <!-- 辖下生产工单卡片列表 -->
+      <view
+        wx:for="{{master.workOrders}}"
+        wx:key="id"
+        class="card wo-card"
+        data-id="{{item.id}}"
+        bindtap="openWorkOrder"
+      >
+        <!-- 头部单号与状态胶囊 -->
+        <view class="wo-head-row">
+          <text class="wo-no font-num">{{item.work_order_no}}</text>
+          <view class="status-pill status-pill-green">{{item.status}}</view>
+        </view>
+
+        <!-- 产品名称 -->
+        <text class="wo-product-title">{{item.productName}}</text>
+
+        <!-- 4 数量指标等宽网格（带细浅灰色垂直分割线） -->
+        <view class="wo-metrics-grid">
+          <view class="wo-metric-col">
+            <text class="metric-top-label">计划数量</text>
+            <view class="metric-bottom-val text-dark">
+              <text class="metric-num-bold font-num">{{item.plannedQty}}</text>
+              <text class="metric-unit-text"> {{item.unitName}}</text>
+            </view>
+          </view>
+          <view class="wo-grid-vdivider"></view>
+          <view class="wo-metric-col">
+            <text class="metric-top-label">完成</text>
+            <view class="metric-bottom-val text-green">
+              <text class="metric-num-bold font-num">{{item.completedQty}}</text>
+              <text class="metric-unit-text"> {{item.unitName}}</text>
+            </view>
+          </view>
+          <view class="wo-metric-col">
+            <text class="metric-top-label">在制</text>
+            <view class="metric-bottom-val text-blue">
+              <text class="metric-num-bold font-num">{{item.inProgressQty}}</text>
+              <text class="metric-unit-text"> {{item.unitName}}</text>
+            </view>
+          </view>
+          <view class="wo-metric-col">
+            <text class="metric-top-label">待生产</text>
+            <view class="metric-bottom-val text-orange">
+              <text class="metric-num-bold font-num">{{item.waitingQty}}</text>
+              <text class="metric-unit-text"> {{item.unitName}}</text>
+            </view>
+          </view>
+        </view>
+
+        <!-- 进度条与异常数量栅格（两列，右侧带竖分割线） -->
+        <view class="wo-progress-row">
+          <view class="wo-progress-left">
+            <view class="progress-label-row">
+              <text class="progress-title-text">工序完成</text>
+              <text class="progress-count-text font-num">{{item.taskCompleted}} / {{item.taskTotal}}</text>
+            </view>
+            <view class="wo-bar-container">
+              <view class="wo-bar-track">
+                <view class="wo-bar-fill" style="width: {{item.taskRatio}}%"></view>
+              </view>
+              <text class="wo-bar-percent font-num">{{item.taskRatio}}%</text>
+            </view>
+          </view>
+          <view class="wo-grid-vdivider"></view>
+          <view class="wo-exception-right">
+            <text class="exception-top-label">异常数量</text>
+            <view class="exception-bottom-val text-red">
+              <text class="exception-num-bold font-num">{{item.exceptionQty}}</text>
+              <text class="exception-unit-text"> {{item.unitName}}</text>
+            </view>
+          </view>
+        </view>
+
+        <!-- 底部查看生产单元操作条 -->
+        <view class="wo-bottom-action">
+          <view class="action-left-box">
+            <van-icon name="description" size="34rpx" color="#1a1d24" />
+            <text class="action-text-title">查看生产单元</text>
+          </view>
+          <van-icon name="arrow" size="28rpx" color="#909399" />
+        </view>
+      </view>
+
+      <!-- 底部提示条 -->
+      <view class="exec-hint-bar">
+        <van-icon name="info" size="30rpx" color="#1989fa" class="hint-icon" />
+        <text class="hint-text">点击工单查看生产单元，再进入工序任务。</text>
+      </view>
+    </view>
+
+    <!-- Tab 3: 备料配送 (对应最新设计图) -->
+    <view wx:elif="{{activeTab === 'delivery'}}" class="body">
+      <!-- 1. 5 项指标卡片 -->
+      <view class="card del-metrics-card">
+        <view class="del-metrics-row">
+          <!-- 1. 总需求 -->
+          <view class="del-metric-col">
+            <view class="del-icon-circle bg-gray">
+              <van-icon name="notes-o" size="36rpx" color="#ffffff" />
+            </view>
+            <view class="del-metric-num">
+              <text class="num-bold">{{master.deliveryTab.totalRequired}}</text>
+              <text class="num-unit"> 项</text>
+            </view>
+            <text class="del-metric-label">总需求</text>
+          </view>
+
+          <!-- 2. 已备料 -->
+          <view class="del-metric-col">
+            <view class="del-icon-circle bg-green">
+              <van-icon name="bag-o" size="36rpx" color="#ffffff" />
+            </view>
+            <view class="del-metric-num">
+              <text class="num-bold">{{master.deliveryTab.prepared}}</text>
+              <text class="num-unit"> 项</text>
+            </view>
+            <text class="del-metric-label">已备料</text>
+          </view>
+
+          <!-- 3. 已配送 -->
+          <view class="del-metric-col">
+            <view class="del-icon-circle bg-blue">
+              <van-icon name="logistics" size="36rpx" color="#ffffff" />
+            </view>
+            <view class="del-metric-num">
+              <text class="num-bold">{{master.deliveryTab.delivered}}</text>
+              <text class="num-unit"> 项</text>
+            </view>
+            <text class="del-metric-label">已配送</text>
+          </view>
+
+          <!-- 4. 已签收 -->
+          <view class="del-metric-col">
+            <view class="del-icon-circle bg-purple">
+              <van-icon name="passed" size="36rpx" color="#ffffff" />
+            </view>
+            <view class="del-metric-num">
+              <text class="num-bold">{{master.deliveryTab.received}}</text>
+              <text class="num-unit"> 项</text>
+            </view>
+            <text class="del-metric-label">已签收</text>
+          </view>
+
+          <!-- 5. 待齐套 -->
+          <view class="del-metric-col">
+            <view class="del-icon-circle bg-orange">
+              <van-icon name="setting-o" size="36rpx" color="#ffffff" />
+            </view>
+            <view class="del-metric-num">
+              <text class="num-bold">{{master.deliveryTab.waitingKittingOps}}</text>
+              <text class="num-unit"> 道工序</text>
+            </view>
+            <text class="del-metric-label">待齐套</text>
+          </view>
+        </view>
+
+        <!-- 底部提示语：配送签收 ≠ 齐套 -->
+        <view class="del-notice-bar">
+          <van-icon name="info-o" size="28rpx" color="#7a8ba5" />
+          <text class="del-notice-text">配送签收 ≠ 齐套</text>
+        </view>
+      </view>
+
+      <!-- 2. 当前待处理 -->
+      <view class="card">
+        <view class="card-head clickable" bindtap="openDeliveryAlerts">
+          <view class="head-left">
+            <view class="icon-wrap-red-circle">
+              <text>!</text>
+            </view>
+            <text class="card-title">当前待处理</text>
+          </view>
+          <view class="head-right-link">
+            <text>{{master.deliveryTab.pendingAlerts.length}} 条待处理</text>
+            <van-icon name="arrow" size="26rpx" color="#909399" />
+          </view>
+        </view>
+
+        <view class="pending-alerts-list">
+          <view wx:for="{{master.deliveryTab.pendingAlerts}}" wx:key="id" class="pending-alert-box">
+            <van-icon name="warning" size="32rpx" color="#ee0a24" class="pending-alert-icon" />
+            <text class="pending-alert-text">{{item.text}}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 3. 当前配送 -->
+      <view class="card">
+        <view class="card-head clickable" bindtap="openActiveDelivery" data-item="{{master.deliveryTab.activeDeliveries[0]}}">
+          <view class="head-left">
+            <van-icon name="logistics" size="36rpx" color="#1989fa" />
+            <text class="card-title" style="margin-left: 14rpx;">当前配送</text>
+          </view>
+          <van-icon name="arrow" size="28rpx" color="#909399" />
+        </view>
+
+        <view wx:for="{{master.deliveryTab.activeDeliveries}}" wx:key="id" class="del-wave-box" bindtap="openActiveDelivery" data-item="{{item}}">
+          <view class="wave-row-top">
+            <text class="wave-no">{{item.wave_no}}</text>
+            <view class="wave-right-meta">
+              <text class="wave-summary">{{item.summary_text}}</text>
+              <view class="status-pill status-pill-blue">{{item.status}}</view>
+              <van-icon name="arrow" size="24rpx" color="#909399" />
+            </view>
+          </view>
+          <view class="wave-row-bottom">
+            <text class="wave-dest-label">送往 </text>
+            <text class="wave-dest-name">{{item.destination}}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 4. 待配送 -->
+      <view class="card">
+        <view class="card-head clickable" bindtap="openUpcomingDelivery" data-item="{{master.deliveryTab.upcomingDeliveries[0]}}">
+          <view class="head-left">
+            <van-icon name="box" size="36rpx" color="#f59a23" />
+            <text class="card-title" style="margin-left: 14rpx;">待配送</text>
+          </view>
+          <van-icon name="arrow" size="28rpx" color="#909399" />
+        </view>
+
+        <view wx:for="{{master.deliveryTab.upcomingDeliveries}}" wx:key="id" class="upcoming-del-box" bindtap="openUpcomingDelivery" data-item="{{item}}">
+          <view class="upcoming-row-top">
+            <text class="upcoming-stage">{{item.stage_name}}</text>
+            <view class="upcoming-time-link">
+              <text>{{item.expected_release_text}}</text>
+              <van-icon name="arrow" size="24rpx" color="#909399" />
+            </view>
+          </view>
+          <view class="upcoming-row-bottom">
+            <text class="upcoming-materials">{{item.material_count_text}}</text>
+          </view>
+        </view>
+      </view>
+
+      <!-- 5. 异常与历史 -->
+      <view class="card history-card clickable" bindtap="openDeliveryHistory">
+        <view class="history-left">
+          <view class="history-icon-box">
+            <van-icon name="clock-o" size="38rpx" color="#5a6578" />
+          </view>
+          <view class="history-texts">
+            <text class="history-title">异常与历史</text>
+            <text class="history-sub">查看配送异常、历史记录及处理情况</text>
+          </view>
+        </view>
+        <van-icon name="arrow" size="28rpx" color="#909399" />
+      </view>
+    </view>
+
+    <!-- Tab 4: 回款发货 (设计图 5) -->
+    <view wx:elif="{{activeTab === 'funding'}}" class="body">
+      <view class="group-title">资金与发货</view>
+      <view class="card">
+        <view class="gate-row border-bottom">
+          <view class="gate-left">
+            <text class="gate-name">生产资金</text>
+            <text class="gate-desc">{{master.productionSatisfied ? '已达到生产门槛' : '尚未达到生产门槛'}}</text>
+          </view>
+          <view class="gate-right">
+            <van-icon name="{{master.productionSatisfied ? 'checked' : 'lock'}}" size="38rpx" color="{{master.productionSatisfied ? '#00a870' : '#d81e06'}}" />
+            <text class="{{master.productionSatisfied ? 'gate-status-green' : 'gate-status-red'}}">{{master.productionSatisfied ? '已满足' : '未满足'}}</text>
+            <van-icon name="arrow" size="26rpx" color="#c0c4cc" />
+          </view>
+        </view>
+
+        <view class="gate-row">
+          <view class="gate-left">
+            <text class="gate-name">发货资金</text>
+            <text class="gate-desc">{{master.shipmentGateDescription}}</text>
+          </view>
+          <view class="gate-right">
+            <van-icon name="{{master.shipmentSatisfied ? 'checked' : 'lock'}}" size="36rpx" color="{{master.shipmentSatisfied ? '#00a870' : '#d81e06'}}" />
+            <text class="{{master.shipmentSatisfied ? 'gate-status-green' : 'gate-status-red'}}">{{master.shipmentSatisfied ? '已满足' : master.shipmentBlockReason}}</text>
+            <van-icon name="arrow" size="26rpx" color="#c0c4cc" />
+          </view>
+        </view>
+      </view>
+
+      <view class="group-title-row">
+        <text class="group-title">收款</text>
+        <view class="link-right" bindtap="viewReceivableDetail">
+          <text>查看收款明细</text>
+          <van-icon name="arrow" size="24rpx" color="#1989fa" />
+        </view>
+      </view>
+
+      <view class="card">
+        <view class="payment-stats-grid">
+          <view class="pay-col">
+            <text class="pay-label">应收</text>
+            <text class="pay-num color-black">{{master.contractAmountText}}</text>
+          </view>
+          <view class="pay-col">
+            <text class="pay-label">已收</text>
+            <text class="pay-num color-green">{{master.receivedAmountText}}</text>
+          </view>
+          <view class="pay-col">
+            <text class="pay-label">尚欠</text>
+            <text class="pay-num color-red">{{master.outstandingAmountText}}</text>
+          </view>
+        </view>
+      </view>
+
+      <view class="group-title">发货</view>
+      <view class="card">
+        <view class="shipment-progress-row">
+          <view class="ship-left">
+            <text class="ship-label">已发</text>
+            <text class="ship-count"><strong>{{master.shippedQty}}</strong> / {{master.shippedTotal}}</text>
+          </view>
+          <view class="progress-bar-wrap" style="flex: 1; margin: 0 20rpx;">
+            <view class="progress-bar-track">
+              <view class="progress-bar-fill" style="width: {{master.shippedRatio}}%"></view>
+            </view>
+          </view>
+          <text class="ship-percent">{{master.shippedRatio}}%</text>
+        </view>
+
+        <!-- 当前不可发货警告 -->
+        <view wx:if="{{!master.shipmentSatisfied}}" class="shipment-alert-box">
+          <view class="alert-icon-wrap">
+            <van-icon name="warning" size="36rpx" color="#ee0a24" />
+          </view>
+          <view class="alert-content">
+            <text class="alert-title">当前不可发货</text>
+            <text class="alert-reason">原因：{{master.shipmentBlockReason}}</text>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- Tab 5: 备注附件 (设计图 4) -->
+    <view wx:else class="body">
+      <!-- 重要备注 -->
+      <view class="card important-remark-card">
+        <view class="important-head">
+          <view class="important-icon">!</view>
+          <text class="important-title">重要备注</text>
+        </view>
+        <text class="important-text">{{master.orderRemark}}</text>
+      </view>
+
+      <!-- 附件 -->
+      <view class="card">
+        <view class="card-head">
+          <view class="head-left">
+            <van-icon name="attach" size="36rpx" color="#333333" />
+            <text class="card-title">附件</text>
+          </view>
+        </view>
+
+        <view class="attachment-list">
+          <view
+            wx:for="{{master.attachments}}"
+            wx:key="id"
+            class="attachment-item"
+          >
+            <view class="attach-icon-box {{item.icon === 'pdf' ? 'attach-pdf' : 'attach-img'}}">
+              <text wx:if="{{item.icon === 'pdf'}}" class="attach-ext">PDF</text>
+              <van-icon wx:else name="photo" size="48rpx" color="#ffffff" />
+            </view>
+
+            <view class="attach-info">
+              <text class="attach-name">{{item.name}}</text>
+              <text class="attach-meta">{{item.type}} · {{item.size}}</text>
+              <view class="attach-uploader">
+                <van-icon name="contact" size="24rpx" color="#858991" />
+                <text>{{item.uploader}} · {{item.time}}</text>
+              </view>
+            </view>
+
+            <view class="attach-btn" data-item="{{item}}" bindtap="previewAttachment">
+              <text>预览</text>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <!-- 备注记录 -->
+      <view class="card">
+        <view class="card-head">
+          <view class="head-left">
+            <van-icon name="chat-o" size="36rpx" color="#333333" />
+            <text class="card-title">备注记录</text>
+          </view>
+        </view>
+
+        <view class="timeline-container">
+          <view
+            wx:for="{{master.remarkLogs}}"
+            wx:key="id"
+            class="timeline-item"
+          >
+            <view class="timeline-dot-axis">
+              <view class="timeline-dot"></view>
+              <view class="timeline-line" wx:if="{{index !== master.remarkLogs.length - 1}}"></view>
+            </view>
+            <view class="timeline-body">
+              <view class="timeline-meta">
+                <text class="timeline-time">{{item.time}}</text>
+                <text class="timeline-author">{{item.author}}</text>
+              </view>
+              <view class="timeline-tag-row">
+                <text class="tag-sales-order">{{item.sourceTag}}</text>
+              </view>
+              <view class="timeline-bubble">
+                <text>{{item.content}}</text>
+              </view>
+            </view>
+          </view>
+        </view>
+      </view>
+    </view>
+  </block>
+</view>

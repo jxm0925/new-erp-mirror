@@ -318,7 +318,41 @@ class WorkOrderWo04ReleaseTest extends TestCase
             ->assertOk()->assertJsonPath('total', 2)
             ->assertJsonCount(1, 'data');
         $this->withToken($token)->getJson('/api/v1/erp/production/master-orders/'.$masterId.'/units?per_page=1')
-            ->assertOk()->assertJsonPath('total', 10);
+            ->assertOk()->assertJsonPath('total', 10)
+            ->assertJsonPath('data.0.serial.status', 'NOT_APPLICABLE');
+
+        // A legacy unit snapshot used the unfortunate device_no name even though
+        // it stores the ProductionSerial SN.  The MWO contract must expose that
+        // fact as serial and must not manufacture an equipment identity.
+        $firstUnit = DB::table('erp_production_units')->where('work_order_id', $first->id)->orderBy('sequence_no')->first();
+        DB::table('erp_work_orders')->where('id', $first->id)->update([
+            'serial_policy_snapshot' => json_encode([
+                'serial_tracking_mode' => 'required',
+                'serial_generation_stage' => 'before_finished_goods_posting',
+            ], JSON_UNESCAPED_UNICODE),
+        ]);
+        $serialNo = 'SN-MWO-'.$masterId.'-'.strtoupper(substr(uniqid(), -6));
+        $serialId = DB::table('erp_production_serials')->insertGetId([
+            'serial_no' => $serialNo, 'item_id' => $first->output_item_id,
+            'serial_type' => 'finished_device', 'generation_stage' => 'before_finished_goods_posting',
+            'status' => 'generated', 'source_type' => 'production_unit', 'source_id' => $firstUnit->id,
+            'generated_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('erp_production_units')->where('id', $firstUnit->id)->update([
+            'device_serial_id' => $serialId,
+            'device_no_snapshot' => $serialNo,
+        ]);
+        $unitPayload = $this->withToken($token)->getJson('/api/v1/erp/production/master-orders/'.$masterId.'/units?per_page=1')
+            ->assertOk()->assertJsonPath('data.0.unit_no', $firstUnit->unit_no)
+            ->assertJsonPath('data.0.serial.serial_no', $serialNo)
+            ->assertJsonPath('data.0.serial.status', 'GENERATED')
+            ->assertJsonPath('data.0.equipment_identity.status', 'NOT_APPLICABLE')
+            ->json('data.0');
+        $this->assertArrayNotHasKey('device_no', $unitPayload);
+        $this->assertArrayNotHasKey('device_no_snapshot', $unitPayload);
+        $this->withToken($token)->getJson('/api/v1/erp/production/master-orders/'.$masterId.'/units?per_page=1&page=2')
+            ->assertOk()->assertJsonPath('data.0.serial.status', 'PENDING_GENERATION')
+            ->assertJsonPath('data.0.serial.label', '待生成');
         $this->withToken($token)->getJson('/api/v1/erp/production/preparation-orders?per_page=1&production_master_order_id='.$masterId)
             ->assertOk()->assertJsonPath('total', 1)
             ->assertJsonPath('data.0.id', $preparation->id)
@@ -356,6 +390,239 @@ class WorkOrderWo04ReleaseTest extends TestCase
             ->assertJsonPath('data.0.shipment_status', 'blocked')
             ->assertJsonPath('data.0.blocker_count', 1)
             ->assertJsonPath('data.0.blockers.0.type', 'production_funding');
+    }
+
+    public function test_terminal_unit_output_generates_the_configured_production_serial_before_inventory_posting(): void
+    {
+        [$user, $demand] = $this->fixture(7542);
+        $item = Item::findOrFail($demand->item_id);
+        $workOrder = \App\Models\Erp\WorkOrder::create([
+            'work_order_no' => 'WO04-SN-'.strtoupper(substr(uniqid(), -8)), 'source_type' => 'stock_prebuild',
+            'output_item_id' => $item->id, 'target_qty' => 1, 'target_base_qty' => 1,
+            'target_unit_id' => $item->unit_id, 'base_unit_id' => $item->unit_id,
+            'production_execution_mode_snapshot' => 'unit',
+            'serial_policy_snapshot' => [
+                'serial_tracking_mode' => 'required', 'serial_number_prefix' => 'FGSN',
+                'serial_generation_stage' => 'before_finished_goods_posting',
+            ],
+            'status' => 'IN_PROGRESS', 'responsible_user_legacy_id' => $user->legacy_id, 'business_version' => 1,
+        ]);
+        $unitId = DB::table('erp_production_units')->insertGetId([
+            'unit_no' => 'PU-SN-'.strtoupper(substr(uniqid(), -8)), 'work_order_id' => $workOrder->id,
+            'sequence_no' => 1, 'output_item_id' => $item->id, 'status' => 'PROCESSING',
+            'routing_snapshot' => json_encode(['operations' => []]), 'business_version' => 1,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $operationId = DB::table('erp_production_unit_operations')->insertGetId([
+            'production_unit_id' => $unitId, 'work_order_id' => $workOrder->id,
+            'operation_code_snapshot' => 'FG-END', 'operation_name_snapshot' => '成品完工',
+            'sequence_no_snapshot' => 1, 'status' => 'PAUSED', 'responsible_user_legacy_id' => $user->legacy_id,
+            'output_item_id_snapshot' => $item->id, 'output_mode_snapshot' => 'warehouse_required',
+            'quality_mode_snapshot' => 'none', 'business_version' => 1, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $taskId = DB::table('erp_production_tasks')->insertGetId([
+            'task_no' => 'PT-SN-'.strtoupper(substr(uniqid(), -8)), 'work_order_id' => $workOrder->id,
+            'production_unit_id' => $unitId, 'production_unit_operation_id' => $operationId,
+            'execution_mode' => 'unit', 'operation_code_snapshot' => 'FG-END', 'operation_name_snapshot' => '成品完工',
+            'sequence_no_snapshot' => 1, 'status' => 'PAUSED', 'assignee_user_legacy_id' => $user->legacy_id,
+            'business_version' => 1, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('erp_production_task_targets')->insert([
+            'task_id' => $taskId, 'target_type' => 'unit_operation', 'target_id' => $operationId,
+            'status_snapshot' => 'PAUSED', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('erp_production_labor_sessions')->insert([
+            'task_id' => $taskId, 'target_type' => 'unit_operation', 'target_id' => $operationId,
+            'employee_legacy_id' => $user->legacy_id, 'role' => 'owner', 'status' => 'ENDED',
+            'started_at' => now()->subMinutes(1), 'ended_at' => now(), 'actual_labor_minutes' => 1,
+            'responsibility_weight_snapshot' => 1, 'credited_labor_minutes' => 0,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $completed = app(ProductionExecutionActionService::class)->complete($taskId, 'unit_operation', $operationId, [
+            'client_command_id' => 'wo04-sn-complete-'.uniqid(), 'expected_version' => 1, 'disposition' => 'warehouse',
+        ], $user, ['production.task.complete']);
+        $output = DB::table('erp_production_output_records')->find($completed['output_record_id']);
+        $serial = DB::table('erp_production_serials')->find($output->serial_id);
+        $unit = DB::table('erp_production_units')->find($unitId);
+        $this->assertNotNull($serial);
+        $this->assertSame($serial->serial_no, $output->serial_no_snapshot);
+        $this->assertSame($serial->serial_no, $unit->device_no_snapshot);
+        $this->assertSame((int) $serial->id, (int) $unit->device_serial_id);
+        $this->assertSame('before_finished_goods_posting', $serial->generation_stage);
+    }
+
+    public function test_mwo_wo_and_pu_detail_contracts_use_one_execution_fact_chain(): void
+    {
+        [$user, $demand] = $this->fixture(7544);
+        $this->grantRole($user->legacy_id, ['sales_order.view_attachment', 'production.unit.view', 'production.trace.view']);
+        DB::table('erp_sales_orders')->where('id', $demand->sales_order_id)->update([
+            'remark' => '接口验收订单备注',
+            'updated_at' => now(),
+        ]);
+        $service = app(WorkOrderApplicationService::class);
+        $draft = $service->createDraft([
+            'client_command_id' => 'mwo-detail-contract-create',
+            'production_demand_id' => $demand->id,
+            'expected_demand_version' => 1,
+            'target_qty' => 6,
+            'planned_date' => '2026-09-20',
+            'production_location_name' => '接口验收车间',
+        ], $user, self::PERMISSIONS);
+        $waiting = $service->submit($draft->id, [
+            'client_command_id' => 'mwo-detail-contract-submit', 'expected_version' => 1, 'reason' => '接口验收',
+        ], $user, self::PERMISSIONS);
+        $released = $service->publish($waiting->id, [
+            'client_command_id' => 'mwo-detail-contract-publish', 'expected_version' => 2, 'reason' => '接口验收',
+        ], $user, self::PERMISSIONS);
+
+        $units = DB::table('erp_production_units')->where('work_order_id', $released->id)->orderBy('sequence_no')->get();
+        $operations = DB::table('erp_production_unit_operations')->where('work_order_id', $released->id)
+            ->orderBy('production_unit_id')->get()->keyBy('production_unit_id');
+        $tasks = DB::table('erp_production_tasks')->where('work_order_id', $released->id)
+            ->orderBy('production_unit_id')->get()->keyBy('production_unit_id');
+        foreach ($units->take(4) as $unit) {
+            DB::table('erp_production_units')->where('id', $unit->id)->update(['status' => 'COMPLETED']);
+            DB::table('erp_production_unit_operations')->where('id', $operations[$unit->id]->id)->update([
+                'status' => 'COMPLETED', 'started_at' => now()->subMinutes(45), 'completed_at' => now()->subMinutes(10),
+                'actual_labor_minutes' => 35,
+            ]);
+            DB::table('erp_production_tasks')->where('id', $tasks[$unit->id]->id)->update(['status' => 'COMPLETED']);
+        }
+        $activeUnit = $units[4];
+        $activeOperation = $operations[$activeUnit->id];
+        $activeTask = $tasks[$activeUnit->id];
+        DB::table('erp_production_units')->where('id', $activeUnit->id)->update(['status' => 'PROCESSING']);
+        DB::table('erp_production_unit_operations')->where('id', $activeOperation->id)->update([
+            'status' => 'IN_PROGRESS', 'started_at' => now()->subMinutes(23), 'responsible_user_legacy_id' => $user->legacy_id,
+        ]);
+        DB::table('erp_production_tasks')->where('id', $activeTask->id)->update([
+            'status' => 'IN_PROGRESS', 'assignee_user_legacy_id' => $user->legacy_id,
+        ]);
+        DB::table('erp_production_labor_sessions')->insert([
+            'task_id' => $activeTask->id, 'target_type' => 'unit_operation', 'target_id' => $activeOperation->id,
+            'employee_legacy_id' => $user->legacy_id, 'role' => 'owner', 'status' => 'ACTIVE',
+            'started_at' => now()->subMinutes(23), 'actual_labor_minutes' => 0,
+            'responsibility_weight_snapshot' => 1, 'credited_labor_minutes' => 0,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('erp_sales_order_lines')->where('id', $demand->sales_order_line_id)->update(['shipped_qty' => 4]);
+        DB::table('erp_sales_order_attachments')->insert([
+            'sales_order_id' => $demand->sales_order_id, 'attachment_scope' => 'order', 'attachment_type' => 'design_drawing',
+            'original_name' => '接口验收图纸.pdf', 'stored_name' => 'mwo-contract.pdf', 'storage_disk' => 'local',
+            'storage_path' => 'acceptance/mwo-contract.pdf', 'mime_type' => 'application/pdf', 'file_size' => 2048,
+            'uploaded_by_legacy_id' => $user->legacy_id, 'uploaded_by' => $user->nickname, 'uploaded_at' => now(),
+            'status' => 'active', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('erp_sales_order_logs')->insert([
+            'sales_order_id' => $demand->sales_order_id, 'order_no_snapshot' => $demand->order->sales_order_no,
+            'action' => 'order_remark_update', 'operator' => $user->nickname, 'content' => '生产排程已同步给车间',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $masterId = (int) $released->production_master_order_id;
+        $token = $this->token($user->legacy_id);
+        $this->withToken($token)->getJson('/api/v1/erp/production/master-orders/'.$masterId)
+            ->assertOk()
+            ->assertJsonPath('data.quantity_summary.planned_qty', 6)
+            ->assertJsonPath('data.quantity_summary.completed_qty', 4)
+            ->assertJsonPath('data.quantity_summary.in_progress_qty', 1)
+            ->assertJsonPath('data.quantity_summary.waiting_qty', 1)
+            ->assertJsonPath('data.production_task_progress.completed', 4)
+            ->assertJsonPath('data.production_task_progress.total', 6)
+            ->assertJsonPath('data.shipment.total_qty', 10)
+            ->assertJsonPath('data.shipment.shipped_qty', 4)
+            ->assertJsonPath('data.attachments.0.name', '接口验收图纸.pdf')
+            ->assertJsonPath('data.attachments.0.can_preview', true)
+            ->assertJsonPath('data.remarks.0.content', '接口验收订单备注')
+            ->assertJsonPath('data.remarks.1.content', '生产排程已同步给车间')
+            ->assertJsonPath('data.delivery_overview.total_required_line_count', 1)
+            ->assertJsonPath('data.delivery_overview.pending_alerts.0.type', 'WAIT_CONFIGURATION');
+        $this->withToken($token)->getJson('/api/v1/erp/production/master-orders/'.$masterId.'/work-orders?per_page=20')
+            ->assertOk()
+            ->assertJsonPath('data.0.quantity_summary.completed_qty', 4)
+            ->assertJsonPath('data.0.quantity_summary.in_progress_qty', 1)
+            ->assertJsonPath('data.0.quantity_summary.waiting_qty', 1)
+            ->assertJsonPath('data.0.production_task_progress.completed', 4);
+        $this->withToken($token)->getJson('/api/v1/erp/production/work-orders/'.$released->id)
+            ->assertOk()
+            ->assertJsonPath('data.execution_summary.quantity.completed_qty', 4)
+            ->assertJsonPath('data.execution_summary.tasks.total', 6);
+        $this->withToken($token)->getJson('/api/v1/erp/production/units/'.$activeUnit->id)
+            ->assertOk()
+            ->assertJsonPath('data.execution.current_task.owner.display_name', $user->nickname)
+            ->assertJsonPath('data.execution.current_task.owner_active_labor', true)
+            ->assertJsonPath('data.operations.0.status', 'IN_PROGRESS')
+            ->assertJsonPath('data.operations.0.task.task_no', $activeTask->task_no);
+
+        $restricted = $this->createUser(7545, 'mwo-no-attachment');
+        $this->grantRole($restricted->legacy_id, ['production.work_order.view']);
+        $this->withToken($this->token($restricted->legacy_id))->getJson('/api/v1/erp/production/master-orders/'.$masterId)
+            ->assertOk()->assertJsonPath('data.attachment_access.can_view', false)->assertJsonCount(0, 'data.attachments');
+    }
+
+    public function test_unit_creation_freezes_independent_equipment_policy_without_conflating_equipment_and_sn(): void
+    {
+        [$user, $demand] = $this->fixture(7543);
+        Item::query()->whereKey($demand->item_id)->update([
+            'serial_tracking_mode' => 'required', 'is_serial_managed' => true,
+            'serial_number_prefix' => 'SNID', 'serial_generation_stage' => 'production_unit_created',
+            'equipment_identity_requirement' => 'required',
+        ]);
+        $service = app(WorkOrderApplicationService::class);
+        $draft = $service->createDraft([
+            'client_command_id' => 'wo04-identity-create', 'production_demand_id' => $demand->id,
+            'expected_demand_version' => 1, 'target_qty' => 2, 'planned_date' => '2026-09-20',
+            'production_location_name' => '身份编号车间',
+        ], $user, self::PERMISSIONS);
+        $waiting = $service->submit($draft->id, [
+            'client_command_id' => 'wo04-identity-submit', 'expected_version' => 1, 'reason' => '验证独立身份',
+        ], $user, self::PERMISSIONS);
+        $released = $service->publish($waiting->id, [
+            'client_command_id' => 'wo04-identity-publish', 'expected_version' => 2, 'reason' => '验证独立身份',
+        ], $user, self::PERMISSIONS);
+        $units = DB::table('erp_production_units')->where('work_order_id', $released->id)->orderBy('sequence_no')->get();
+        $this->assertCount(2, $units);
+        $this->assertCount(2, $units->pluck('unit_no')->unique());
+        $serials = DB::table('erp_production_serials')->whereIn('id', $units->pluck('device_serial_id'))->get()->keyBy('id');
+        $this->assertCount(2, $serials);
+        $identities = DB::table('erp_production_unit_equipment_identities')->whereIn('production_unit_id', $units->pluck('id'))->get()->keyBy('production_unit_id');
+        $this->assertSame('PENDING_GENERATION', $identities[$units[0]->id]->status);
+        $equipmentNo = 'EQ-'.strtoupper(substr(uniqid(), -10));
+        DB::table('erp_production_unit_equipment_identities')->where('production_unit_id', $units[0]->id)->update([
+            'status' => 'BOUND', 'equipment_no' => $equipmentNo, 'source_type' => 'equipment_register',
+            'source_id' => 1, 'bound_by_legacy_id' => $user->legacy_id, 'bound_at' => now(),
+        ]);
+        $masterId = (int) $released->production_master_order_id;
+        $payload = $this->withToken($this->token($user->legacy_id))
+            ->getJson('/api/v1/erp/production/master-orders/'.$masterId.'/units?per_page=1')
+            ->assertOk()
+            ->assertJsonPath('data.0.serial.status', 'GENERATED')
+            ->assertJsonPath('data.0.equipment_identity.status', 'BOUND')
+            ->assertJsonPath('data.0.equipment_identity.equipment_no', $equipmentNo)
+            ->json('data.0');
+        $this->assertNotSame($payload['serial']['serial_no'], $payload['equipment_identity']['equipment_no']);
+
+        $operation = DB::table('erp_production_unit_operations')->where('production_unit_id', $units[0]->id)->orderBy('sequence_no_snapshot')->first();
+        $task = DB::table('erp_production_tasks')->where('production_unit_operation_id', $operation->id)->first();
+        DB::table('erp_production_unit_operations')->where('id', $operation->id)->update(['status' => 'IN_PROGRESS']);
+        DB::table('erp_production_tasks')->where('id', $task->id)->update(['status' => 'IN_PROGRESS', 'assignee_user_legacy_id' => null]);
+        $this->withToken($this->token($user->legacy_id))
+            ->getJson('/api/v1/erp/production/master-orders/'.$masterId.'/units?per_page=1')
+            ->assertOk()->assertJsonPath('data.0.execution.current_task.execution_integrity.valid', false)
+            ->assertJsonPath('data.0.execution.current_task.execution_integrity.reason_code', 'in_progress_owner_labor_missing');
+        DB::table('erp_production_tasks')->where('id', $task->id)->update(['assignee_user_legacy_id' => $user->legacy_id]);
+        DB::table('erp_production_labor_sessions')->insert([
+            'task_id' => $task->id, 'target_type' => 'unit_operation', 'target_id' => $operation->id,
+            'employee_legacy_id' => $user->legacy_id, 'role' => 'owner', 'status' => 'ACTIVE',
+            'started_at' => now(), 'actual_labor_minutes' => 0, 'responsibility_weight_snapshot' => 1,
+            'credited_labor_minutes' => 0, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $this->withToken($this->token($user->legacy_id))
+            ->getJson('/api/v1/erp/production/master-orders/'.$masterId.'/units?per_page=1')
+            ->assertOk()->assertJsonPath('data.0.execution.current_task.owner.display_name', $user->nickname)
+            ->assertJsonPath('data.0.execution.current_task.owner_active_labor', true)
+            ->assertJsonPath('data.0.execution.current_task.execution_integrity.valid', true);
     }
 
     public function test_workstation_stock_does_not_enter_per_order_preparation_queue(): void

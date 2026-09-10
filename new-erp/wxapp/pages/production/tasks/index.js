@@ -74,7 +74,7 @@ function masterView(row) {
     statusTone: status.tone,
     sourceNo: row.sales_order_no_snapshot || '—',
     customerName: customer.customer_name || '—',
-    salespersonName: row.salesperson_name_snapshot || '—',
+    salespersonName: (row.salesperson || {}).display_name || row.salesperson_name_snapshot || '—',
     productLines: (row.product_summary || []).map(product => Object.assign({}, product, { displayText: productText(product) })),
     workOrderCountText: `${Number(row.work_order_count || 0)} 张生产工单`,
     plannedText: comparable ? numberText(quantity.planned_qty) : '多单位',
@@ -85,7 +85,7 @@ function masterView(row) {
     progressText: `${Number(taskProgress.completed || 0)} / ${Number(taskProgress.total || 0)} · ${progressPct}%`,
     deliveryText: delivery.text,
     deliveryTone: delivery.tone,
-    kittingText: kittingText(row.kitting || {}),
+    kittingText: (row.kitting || {}).progress_label || kittingText(row.kitting || {}),
     fundingText: fundingText(row),
     remarkText: row.order_remark_snapshot || '—',
     blockers,
@@ -243,6 +243,10 @@ Page({
     const key = String(event.currentTarget.dataset.key || '');
     const row = this.data.rows.find(item => `${item.kind}:${item.id}` === key);
     if (!row) return;
+    if (row.kind === 'master') {
+      wx.navigateTo({ url: `/pages/production/master-detail/index?id=${row.id}` });
+      return;
+    }
     const blockerText = (row.blockers || []).map(item => `• ${item.label || item.shortLabel}`).join('\n');
     const detailText = row.kind === 'master'
       ? `${row.workOrderCountText}\nPT 进度 ${row.progressText}\n备料配送 ${row.deliveryText}\n齐套状态 ${row.kittingText}\n${row.fundingText}`

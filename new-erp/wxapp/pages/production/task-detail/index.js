@@ -88,7 +88,7 @@ function targetView(row) {
 
   return Object.assign({}, row, {
     statusConfig: conf,
-    statusLabel: conf.label,
+    statusLabel: row.status_label || conf.label || '状态异常，请刷新',
     claimedText: stamp(row.claimed_at),
     kittingText: stamp(row.kitting_confirmed_at),
     startedText: stamp(row.started_at),

@@ -1,18 +1,13 @@
 const production = require('../../../services/production');
 const util = require('../../../utils/util');
 
-const STATUS_LABELS = {
-  WAIT_CLAIM: '待接单', CLAIMED: '已接单', WAIT_MATERIAL: '待齐套', WAIT_HANDOVER: '待交接',
-  READY: '待开工', IN_PROGRESS: '进行中', PAUSED: '已暂停', WAIT_QUALITY: '待质检',
-  WAIT_WAREHOUSE: '待入库', REWORK: '返工', COMPLETED: '已完成'
-};
-
 function taskView(task, target) {
   const workOrder = task.work_order || {};
   const item = workOrder.output_item || {};
   return Object.assign({}, task, {
     targetStatus: target.status || task.status,
-    statusLabel: STATUS_LABELS[target.status || task.status] || target.status || task.status || '-',
+    // The task query service owns state labels and action eligibility; workbench only renders its projection.
+    statusLabel: target.status_label || '状态异常，请刷新',
     workOrderNo: workOrder.work_order_no || '-',
     productName: item.item_name || item.name || workOrder.output_item_name_snapshot || '-',
     operationLabel: `${task.sequence_no_snapshot || '-'} - ${task.operation_name_snapshot || '-'}`,
@@ -42,7 +37,7 @@ Page({
     loaded: false,
     authenticated: false,
     userName: '',
-    userDisplayName: '当前操作员',
+    userDisplayName: '—',
     stats: { running: '—', pending: '—', completed: '—' },
     shortcuts: [
       { key: 'orders', title: '生产工单', icon: 'orders-o', count: null },
@@ -67,7 +62,7 @@ Page({
       return Promise.resolve();
     }
     const erpUser = wx.getStorageSync('erp_user') || {};
-    const name = erpUser.nickname || erpUser.username || '当前操作员';
+    const name = erpUser.nickname || erpUser.username || '—';
     const depts = parseDepartmentNames(erpUser);
     const userDisplayName = depts.length ? `${name} · ${depts[0]}` : name;
 

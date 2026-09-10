@@ -11,7 +11,14 @@ use Illuminate\Http\Request;
 class ProductionUnitTraceController extends Controller
 {
     public function workOrderUnits(Request $request, int $id, ProductionUnitTraceService $service)
-    { return response()->json(['data' => $service->units($id, ...$this->context($request))]); }
+    {
+        $filters = $request->validate([
+            'status' => 'nullable|string|max:30',
+            'page' => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:1|max:50',
+        ]);
+        return response()->json($service->units($id, $filters, ...$this->context($request)));
+    }
     public function unit(Request $request, int $id, ProductionUnitTraceService $service)
     { return response()->json(['data' => $service->unit($id, ...$this->context($request))]); }
     public function trace(Request $request, ProductionUnitTraceService $service)

@@ -1,0 +1,119 @@
+<view class="page-container">
+  <!-- Top Breadcrumb Navigation -->
+  <view class="breadcrumb-bar">
+    <text class="crumb-text font-num" bindtap="navBackToMaster">{{ masterOrderNo }}</text>
+    <text class="crumb-separator">></text>
+    <text class="crumb-text font-num" bindtap="navBackToWorkOrder">{{ workOrderNo }}</text>
+    <text class="crumb-separator">></text>
+    <text class="crumb-text crumb-active font-num">{{ unit.unit_no }}</text>
+  </view>
+
+  <view wx:if="{{ loading }}" class="loading-state">
+    <van-loading type="spinner" color="#d81e06" vertical>加载单元详情中...</van-loading>
+  </view>
+
+  <block wx:else>
+    <!-- PU Summary Card (Redesigned: Clean Workpiece Specs + 3-Column Status Strip) -->
+    <view class="card pu-hero-card">
+      <!-- Header: Unit No + Status -->
+      <view class="hero-header">
+        <view class="hero-identity">
+          <text class="hero-code font-num">{{ unit.unit_no }}</text>
+        </view>
+        <text class="status-pill {{ unit.statusClass }}">{{ unit.statusLabel }}</text>
+      </view>
+
+      <!-- Primary Workpiece Details -->
+      <view class="hero-info-section">
+        <view class="info-row">
+          <text class="info-label">产品</text>
+          <text class="info-val font-bold ellipsis">{{ unit.product_name }}</text>
+        </view>
+        <view class="info-row">
+          <text class="info-label">当前工序</text>
+          <text class="info-val font-bold ellipsis text-highlight">{{ unit.current_operation_name }}</text>
+        </view>
+        <view class="info-row">
+          <text class="info-label">当前PT</text>
+          <text class="info-val font-num pt-num">{{ unit.current_pt_no }}</text>
+        </view>
+      </view>
+
+      <view class="hero-divider"></view>
+
+      <!-- 3-Column Balanced Status Strip (Eliminates the messy floating badges) -->
+      <view class="hero-status-strip">
+        <view class="strip-col">
+          <view class="strip-label">配料状态</view>
+          <view class="strip-val">
+            <text class="tag-badge {{ unit.kittingClass }}">{{ unit.kittingLabel }}</text>
+          </view>
+        </view>
+        <view class="strip-divider"></view>
+        <view class="strip-col">
+          <view class="strip-label">前序交接</view>
+          <view class="strip-val">
+            <text class="tag-badge {{ unit.handoverClass }}">{{ unit.handoverLabel }}</text>
+          </view>
+        </view>
+        <view class="strip-divider"></view>
+        <view class="strip-col">
+          <view class="strip-label">负责人</view>
+          <view class="strip-val">
+            <text class="text-assignee ellipsis">{{ unit.assignee_name || '—' }}</text>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- Section Title: 工序任务 -->
+    <view class="section-bar">
+      <view class="section-title">工序任务</view>
+    </view>
+
+    <!-- Process Tasks Timeline Card (1:1 with Design Mockup) -->
+    <view class="card timeline-card">
+      <block wx:for="{{ unit.operations }}" wx:key="id">
+        <view class="timeline-step">
+          <!-- Left Stem / Track -->
+          <view class="step-stem">
+            <view class="step-circle font-num {{ item.stepCircleClass }}">
+              {{ item.sequence }}
+            </view>
+            <view wx:if="{{ index < unit.operations.length - 1 }}" class="step-line {{ item.stepLineClass }}"></view>
+          </view>
+
+          <!-- Right Content Box -->
+          <view class="step-content">
+            <!-- Header: Operation Name + Status Pill -->
+            <view class="step-header">
+              <text class="step-name">{{ item.operation_name }}</text>
+              <text class="status-pill {{ item.statusPillClass }}">{{ item.statusLabel }}</text>
+            </view>
+
+            <!-- Subheader: PT Code + Duration -->
+            <view class="step-sub">
+              <text class="step-pt-code font-num">{{ item.task_no }}</text>
+              <view class="step-duration" wx:if="{{ item.durationText }}">
+                <text class="dur-label">{{ item.durationLabel }}</text>
+                <text class="dur-value font-num font-bold">{{ item.durationText }}</text>
+              </view>
+            </view>
+
+            <!-- Inner Gray Details Card: 1:1 Design with Row 1 & Row 2 Vertical Layout -->
+            <view class="step-inner-box">
+              <view class="time-item">
+                <text class="time-label">{{ item.time1Label }}</text>
+                <text class="time-val font-num">{{ item.time1Value }}</text>
+              </view>
+              <view class="time-item">
+                <text class="time-label">{{ item.time2Label }}</text>
+                <text class="time-val font-num">{{ item.time2Value }}</text>
+              </view>
+            </view>
+          </view>
+        </view>
+      </block>
+    </view>
+  </block>
+</view>

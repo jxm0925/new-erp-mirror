@@ -8,10 +8,40 @@ function command(path, data, commandPrefix) {
   return erpRequest.write(path, data, { commandPrefix });
 }
 
+function previewSalesOrderAttachment(id, attachment) {
+  const url = erpRequest.buildUrl(`sales/orders/attachments/${id}/preview`);
+  const token = wx.getStorageSync(erpRequest.ERP_TOKEN_KEY);
+  return new Promise((resolve, reject) => {
+    wx.downloadFile({
+      url,
+      header: token ? { Authorization: `Bearer ${token}` } : {},
+      success(response) {
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          reject(new Error('附件下载失败'));
+          return;
+        }
+        const mime = String((attachment && attachment.mime_type) || '').toLowerCase();
+        if (mime.startsWith('image/')) {
+          wx.previewImage({ urls: [response.tempFilePath], current: response.tempFilePath, success: resolve, fail: reject });
+        } else {
+          wx.openDocument({ filePath: response.tempFilePath, showMenu: true, success: resolve, fail: reject });
+        }
+      },
+      fail: reject,
+    });
+  });
+}
+
 module.exports = {
   newCommandId: prefix => erpRequest.createClientCommandId(prefix),
   masterOrders: (query) => get('production/master-orders', query || {}),
+  masterOrder: (id) => get(`production/master-orders/${id}`),
+  masterOrderWorkOrders: (id, query) => get(`production/master-orders/${id}/work-orders`, query || {}),
+  masterOrderUnits: (id, query) => get(`production/master-orders/${id}/units`, query || {}),
+  masterOrderFundingStatus: (id) => get(`production/master-orders/${id}/funding-status`),
+  previewSalesOrderAttachment,
   workOrders: (query) => get('production/work-orders', query || {}),
+  workOrder: (id) => get(`production/work-orders/${id}`),
   taskPool: (query) => get('production/tasks', Object.assign({ view: 'pool' }, query || {})),
   myTasks: (query) => get('production/tasks', Object.assign({ view: 'owned' }, query || {})),
   collaborations: (query) => get('production/tasks', Object.assign({ view: 'collaboration' }, query || {})),
@@ -63,6 +93,13 @@ module.exports = {
   deliverDelivery: (id, data) => command(`production/material-deliveries/${id}/deliver`, data, 'deliver'),
   receiveDelivery: (id, data) => command(`production/material-deliveries/${id}/receive`, data, 'receive'),
   cancelDelivery: (id, data) => command(`production/material-deliveries/${id}/cancel`, data, 'delivery-cancel'),
+  deliveryWaves: (query) => get('production/delivery-waves', query || {}),
+  createDeliveryWave: (data) => command('production/delivery-waves', data, 'delivery-wave'),
+  configureDeliveryTrigger: (id, data) => command(`production/preparation-lines/${id}/delivery-trigger`, data, 'delivery-trigger'),
+  manualReleaseDelivery: (id, data) => command(`production/preparation-lines/${id}/manual-release-delivery`, data, 'delivery-manual-release'),
+  claimDeliveryTask: (id, data) => command(`production/delivery-tasks/${id}/pool-claim`, data, 'delivery-task-claim'),
+  assignDeliveryTask: (id, data) => command(`production/delivery-tasks/${id}/dispatcher-assign`, data, 'delivery-task-assign'),
+  transitionDeliveryTask: (id, data) => command(`production/delivery-tasks/${id}/transition`, data, 'delivery-task-transition'),
   pendingHandovers: (query) => get('production/handovers/pending', query),
   acceptHandover: (id, data) => command(`production/handovers/${id}/accept`, data, 'handover-accept'),
   rejectHandover: (id, data) => command(`production/handovers/${id}/reject`, data, 'handover-reject'),

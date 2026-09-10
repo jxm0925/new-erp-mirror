@@ -1,7 +1,5 @@
 const production = require('../../../services/production');
 
-const STATUS_LABELS = { WAIT_PREVIOUS: '待前工序', WAIT_CLAIM: '待接单', CLAIMED: '已接单', WAIT_MATERIAL: '待齐套', WAIT_HANDOVER: '待交接', READY: '待开工', IN_PROGRESS: '进行中', PAUSED: '已暂停', WAIT_QUALITY: '待质检', WAIT_WAREHOUSE: '待入库', REWORK: '返工', COMPLETED: '已完成', CANCELLED: '已取消' };
-
 function targetOf(task) {
   const targets = task.target_details || [];
   return targets.find(row => row.status === 'IN_PROGRESS') || targets.find(row => row.status === 'PAUSED') || targets.find(row => !['COMPLETED', 'CANCELLED'].includes(row.status)) || targets.find(row => row.status === 'COMPLETED') || targets[0] || {};
@@ -13,13 +11,14 @@ function view(task) {
   const completed = (task.target_details || []).reduce((sum, row) => sum + Number(row.completed_base_qty || 0), 0);
   return Object.assign({}, task, {
     targetStatus: target.status || task.status,
-    statusLabel: STATUS_LABELS[target.status || task.status] || '状态待更新',
+    // Status semantics originate from the query service; mobile must not maintain a second state translation table.
+    statusLabel: target.status_label || '状态异常，请刷新',
     productName: item.item_name || item.name || '-',
     workOrderNo: (task.work_order && task.work_order.work_order_no) || '-',
     planned, completed,
     unitName: task.execution_mode === 'unit' ? '台' : '',
     operation: `${task.sequence_no_snapshot || '-'} - ${task.operation_name_snapshot || '-'}`,
-    kitting: target.kitting_confirmed_at ? '已齐套' : (target.status === 'WAIT_MATERIAL' ? '缺料' : '待确认'),
+    kitting: target.kitting_confirmed_at ? '已齐套' : (target.reason_message || '待确认'),
   });
 }
 

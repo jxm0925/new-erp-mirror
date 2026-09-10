@@ -1,21 +1,5 @@
 const production = require('../../../services/production');
 
-const STATUS_LABELS = {
-  WAIT_PREVIOUS: '待前工序',
-  WAIT_CLAIM: '待接单',
-  CLAIMED: '已接单',
-  WAIT_MATERIAL: '待齐套',
-  WAIT_HANDOVER: '待交接',
-  READY: '待开工',
-  IN_PROGRESS: '进行中',
-  PAUSED: '已暂停',
-  WAIT_QUALITY: '待质检',
-  WAIT_WAREHOUSE: '待入库',
-  REWORK: '返工',
-  COMPLETED: '已完成',
-  CANCELLED: '已取消',
-};
-
 function formatElapsed(startedAt, now) {
   if (!startedAt) return '00:00:00';
   const start = new Date(startedAt).getTime();
@@ -42,7 +26,7 @@ function targetOf(task) {
 
 function enrichTaskView(task, now) {
   const target = targetOf(task);
-  const targetStatus = target.status || task.status || 'READY';
+  const targetStatus = target.status || task.status || 'UNKNOWN';
   const item = (task.work_order && task.work_order.output_item) || {};
   const planned = (task.target_details || []).reduce((sum, row) => sum + Number(row.planned_base_qty || 0), 0) || Number(task.planned_qty || 1);
   const completed = (task.target_details || []).reduce((sum, row) => sum + Number(row.completed_base_qty || 0), 0) || Number(task.completed_qty || 0);
@@ -51,20 +35,20 @@ function enrichTaskView(task, now) {
 
   // 工序编号与名称
   const seq = task.sequence_no_snapshot || '010';
-  const opName = task.operation_name_snapshot || '加工作业';
+  const opName = task.operation_name_snapshot || '—';
   const operationSnapshot = `${seq} · ${opName}`;
 
   // 状态分类与徽章文案
   let statusCategory = 'waiting';
-  let statusTagText = STATUS_LABELS[targetStatus] || '待处理';
+  let statusTagText = target.status_label || '状态异常，请刷新';
 
   if (targetStatus === 'IN_PROGRESS') {
     statusCategory = 'running';
     statusTagText = '加工中 ' + formatElapsed(target.started_at, now);
   } else if (targetStatus === 'WAIT_MATERIAL') {
     statusCategory = 'kitting';
-    statusTagText = '待齐套 (需领料)';
-  } else if (targetStatus === 'READY' || targetStatus === 'CLAIMED') {
+    statusTagText = target.status_label || '待齐套';
+  } else if (targetStatus === 'READY') {
     statusCategory = 'ready';
     statusTagText = '待开工';
   } else if (targetStatus === 'COMPLETED') {
@@ -88,7 +72,7 @@ function enrichTaskView(task, now) {
     kittingText = '全部齐套';
     kittingClass = 'col-success';
   } else if (targetStatus === 'WAIT_MATERIAL') {
-    kittingText = '常备料待盘点 (缺)';
+    kittingText = target.reason_message || '物料条件待满足';
     kittingClass = 'col-warning';
   } else if (target.kitting_required === false) {
     kittingText = '无需配料';
@@ -118,24 +102,27 @@ function enrichTaskView(task, now) {
   }
 
   // 作业人员信息
-  const currentUserName = wx.getStorageSync('erp_user_name') || '李师傅';
-  const operatorName = (task.assignee_user && (task.assignee_user.name || task.assignee_user.username)) || currentUserName;
-  const avatarChar = (operatorName || '我').slice(0, 1);
+  const operatorName = (task.assignee_user && (task.assignee_user.name || task.assignee_user.nickname || task.assignee_user.username)) || '—';
+  const avatarChar = operatorName.slice(0, 1) || '—';
   const collabCount = (task.collaborators && task.collaborators.length) || 0;
-  const workerDesc = collabCount > 0 ? `${operatorName} (责任人) · 协同 ${collabCount}人` : `${operatorName} (独立作业)`;
+  const workerDesc = collabCount > 0 ? `负责人 ${operatorName} · 协同 ${collabCount}人` : `负责人 ${operatorName}`;
 
   // 状态感知 CTA 按钮
-  let ctaText = '继续作业 ➔';
-  let ctaClass = 'cta-danger';
-  if (targetStatus === 'IN_PROGRESS') {
+  const actions = target.allowed_actions || {};
+  let ctaText = '查看状态 ➔';
+  let ctaClass = 'cta-outline';
+  if (actions.confirm_kitting) {
+    ctaText = '确认齐套并开工 ➔';
+    ctaClass = 'cta-warning';
+  } else if (actions.accept_handover) {
+    ctaText = '处理工序交接 ➔';
+    ctaClass = 'cta-primary';
+  } else if (actions.start) {
+    ctaText = '开始加工 ➔';
+    ctaClass = 'cta-primary';
+  } else if (targetStatus === 'IN_PROGRESS') {
     ctaText = '继续作业 ➔';
     ctaClass = 'cta-danger';
-  } else if (targetStatus === 'WAIT_MATERIAL') {
-    ctaText = '物料核对 ➔';
-    ctaClass = 'cta-warning';
-  } else if (targetStatus === 'READY' || targetStatus === 'CLAIMED' || targetStatus === 'WAIT_PREVIOUS') {
-    ctaText = '开工加工 ➔';
-    ctaClass = 'cta-primary';
   } else if (targetStatus === 'COMPLETED') {
     ctaText = '查看详情 ➔';
     ctaClass = 'cta-outline';
@@ -149,7 +136,7 @@ function enrichTaskView(task, now) {
     statusCategory,
     statusTagText,
     operationSnapshot,
-    productName: item.item_name || item.name || '定制加工产品',
+    productName: item.item_name || item.name || '—',
     workOrderNo: (task.work_order && task.work_order.work_order_no) || '-',
     itemSpecification: item.specification || item.specs || item.model || '',
     planned,
@@ -193,7 +180,8 @@ Page({
     if (options && options.execution_filter) {
       this.setData({ active: options.execution_filter });
     }
-    const teamName = wx.getStorageSync('erp_team_name') || '电子装配一组';
+    const erpUser = wx.getStorageSync('erp_user') || {};
+    const teamName = Array.isArray(erpUser.department_names) ? (erpUser.department_names[0] || '') : '';
     this.setData({ teamName });
   },
 

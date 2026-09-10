@@ -525,6 +525,7 @@ class MasterDataController extends Controller
                 'is_batch_managed' => 'boolean', 'is_serial_managed' => 'boolean',
                 'serial_tracking_mode' => 'nullable|in:none,optional,required',
                 'serial_number_prefix' => 'nullable|string|max:30|regex:/^[A-Za-z0-9_-]+$/',
+                'equipment_identity_requirement' => 'nullable|in:not_applicable,required',
                 'is_custom_item' => 'boolean',
                 'base_item_id' => 'nullable|exists:erp_items,id',
                 'custom_scope' => 'nullable|in:none,order,customer,reusable',

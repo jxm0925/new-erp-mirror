@@ -4,7 +4,7 @@
     <view class="header-top-bar">
       <view class="header-title-group">
         <text class="header-title">我的生产任务</text>
-        <view class="team-badge">{{teamName || '车间生产执行组'}}</view>
+        <view wx:if="{{teamName}}" class="team-badge">{{teamName}}</view>
       </view>
     </view>
 
@@ -74,13 +74,9 @@
     </view>
   </view>
 
-  <!-- 网络与同步状态条 -->
+  <!-- 只呈现本次真实请求成功后的同步时间，不虚构网络或离线缓存状态。 -->
   <view class="sync-status-bar" wx:if="{{loaded}}">
-    <view class="sync-left">
-      <view class="pulse-indicator"></view>
-      <text class="sync-text">车间网络正常 · 离线缓存已开启</text>
-    </view>
-    <text class="sync-time">最近同步 {{syncedAt}}</text>
+    <text class="sync-time">本次成功同步 {{syncedAt}}</text>
   </view>
 
   <!-- 任务列表容器 -->

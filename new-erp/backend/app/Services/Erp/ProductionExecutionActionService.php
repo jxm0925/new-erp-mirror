@@ -6,6 +6,7 @@ use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Models\Erp\ProductionExecutionCommand;
 use App\Models\Erp\ProductionLaborSession;
 use App\Models\Erp\ProductionQuantityOperation;
+use App\Models\Erp\ProductionSerial;
 use App\Models\Erp\ProductionTask;
 use App\Models\Erp\ProductionUnitOperation;
 use Illuminate\Database\QueryException;
@@ -231,15 +232,13 @@ class ProductionExecutionActionService
             ]);
             return DB::table('erp_production_output_records')->where('id', $existing->id)->first();
         }
-        $workOrder = DB::table('erp_work_orders')->where('id', $target->work_order_id)->first(['source_type', 'output_item_id']);
+        $workOrder = DB::table('erp_work_orders')->where('id', $target->work_order_id)
+            ->first(['source_type', 'output_item_id', 'serial_policy_snapshot']);
         $outputItemId = (int) ($target->output_item_id_snapshot ?: ($workOrder?->source_type === 'stock_prebuild' ? 0 : $workOrder?->output_item_id));
         if (! $outputItemId) {
             $this->fail('production_output_item_required', '当前工序缺少正式产出物料，禁止回退为生产工单最终成品。', 409);
         }
-        $productionSerial = $unitId ? DB::table('erp_production_units as unit')
-            ->leftJoin('erp_production_serials as serial', 'serial.id', '=', 'unit.device_serial_id')
-            ->where('unit.id', $unitId)->where('serial.item_id', $outputItemId)
-            ->first(['serial.id', 'serial.serial_no']) : null;
+        $productionSerial = $this->serialForOutput($unitId, $target, $workOrder, $outputItemId, $terminal);
         $id = DB::table('erp_production_output_records')->insertGetId([
                 'output_no' => $this->numbers->next('production_output', 'POU'), 'work_order_id' => $target->work_order_id,
                 'source_target_type' => $type, 'source_target_id' => $target->id, 'production_unit_id' => $unitId,
@@ -253,6 +252,52 @@ class ProductionExecutionActionService
                 'business_version' => 1, 'created_at' => $now, 'updated_at' => $now,
             ]);
         return DB::table('erp_production_output_records')->where('id', $id)->first();
+    }
+
+    /**
+     * The production serial is the authoritative SN for a unit.  Generation at
+     * the final configured operation must happen before writing the output record:
+     * otherwise warehouse posting would create an unrelated InventorySerial and
+     * permanently break the PU -> SN -> output -> inventory lineage.
+     */
+    private function serialForOutput(?int $unitId, object $target, ?object $workOrder, int $outputItemId, bool $terminal): ?object
+    {
+        if (! $unitId || ! $workOrder || (int) $workOrder->output_item_id !== $outputItemId) return null;
+        $unit = DB::table('erp_production_units')->where('id', $unitId)->lockForUpdate()->first(['id', 'device_serial_id']);
+        if (! $unit) return null;
+        $existing = $unit->device_serial_id
+            ? DB::table('erp_production_serials')->where('id', $unit->device_serial_id)->where('item_id', $outputItemId)
+                ->first(['id', 'serial_no'])
+            : null;
+        if ($existing) return $existing;
+
+        $policy = json_decode((string) ($workOrder->serial_policy_snapshot ?? ''), true) ?: [];
+        if (($policy['serial_tracking_mode'] ?? 'none') === 'none') return null;
+        $stage = (string) ($policy['serial_generation_stage'] ?? 'before_finished_goods_posting');
+        $due = ($stage === 'before_finished_goods_posting' && $terminal)
+            || ($stage === 'routing_operation_completed'
+                && (int) ($policy['serial_generation_routing_operation_id'] ?? 0) === (int) ($target->routing_operation_id_snapshot ?? 0));
+        if (! $due) return null;
+
+        $prefix = trim((string) ($policy['serial_number_prefix'] ?? '')) ?: 'SN';
+        $serial = ProductionSerial::create([
+            'serial_no' => $this->numbers->next('production_serial_'.$outputItemId, $prefix),
+            'item_id' => $outputItemId,
+            'serial_type' => 'finished_device',
+            'generation_stage' => $stage,
+            'status' => 'generated',
+            'source_type' => 'production_unit',
+            'source_id' => $unitId,
+            'generated_at' => now(),
+        ]);
+        DB::table('erp_production_units')->where('id', $unitId)->update([
+            'device_serial_id' => $serial->id,
+            // This legacy column is a compatibility snapshot of the SN only. It
+            // must never be displayed or documented as an equipment number.
+            'device_no_snapshot' => $serial->serial_no,
+            'updated_at' => now(),
+        ]);
+        return (object) ['id' => $serial->id, 'serial_no' => $serial->serial_no];
     }
 
     /** Persist material ancestry when a target turns its received input into a new output. */

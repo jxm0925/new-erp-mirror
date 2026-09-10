@@ -1,0 +1,10 @@
+{
+  "navigationBarTitleText": "生产工单详情",
+  "navigationBarBackgroundColor": "#d81e06",
+  "navigationBarTextStyle": "white",
+  "enablePullDownRefresh": true,
+  "usingComponents": {
+    "van-icon": "@vant/weapp/icon/index",
+    "van-loading": "@vant/weapp/loading/index"
+  }
+}

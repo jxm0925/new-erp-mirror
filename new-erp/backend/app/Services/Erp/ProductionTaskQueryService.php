@@ -21,9 +21,10 @@ class ProductionTaskQueryService
     public function paginate(array $filters, object $user, array $permissions, bool $superAdmin): LengthAwarePaginator
     {
         $query = $this->filteredQuery($filters, $user, $permissions, $superAdmin);
-        $page = $query->with(['workOrder.outputItem', 'targets'])->orderByDesc('id')
+        $page = $query->with(['workOrder.outputItem', 'workOrder.productionMasterOrder', 'targets', 'collaborators', 'laborSessions'])->orderByDesc('id')
             ->paginate(min(20, max(1, (int) ($filters['per_page'] ?? 20))));
-        $this->enrichTargets(collect($page->items()), $permissions);
+        $this->enrichTargets(collect($page->items()), $permissions, $user);
+        collect($page->items())->each(fn (ProductionTask $task) => $this->enrichPeople($task));
         return $page;
     }
 
@@ -115,12 +116,12 @@ class ProductionTaskQueryService
     public function show(int $id, object $user, array $permissions, bool $superAdmin): ProductionTask
     {
         $this->permission($permissions, 'production.task.view');
-        $query = ProductionTask::query()->with(['workOrder.outputItem', 'targets', 'collaborators', 'laborSessions'])->whereKey($id);
+        $query = ProductionTask::query()->with(['workOrder.outputItem', 'workOrder.productionMasterOrder', 'targets', 'collaborators', 'laborSessions'])->whereKey($id);
         $scope = $this->scopeResolver->resolve($user, 'production.task.view', $permissions, $superAdmin);
         $this->scopeResolver->applyProductionTaskScope($query, $scope, (int) $user->legacy_id);
         $task = $query->first();
         if (! $task) throw new WorkOrderDomainException('task_not_found', '生产任务不存在或不在当前数据范围内。', 404);
-        $this->enrichTargets(collect([$task]), $permissions);
+        $this->enrichTargets(collect([$task]), $permissions, $user);
         $this->enrichPeople($task);
         return $task;
     }
@@ -143,13 +144,13 @@ class ProductionTaskQueryService
      * client nevertheless needs the target version and timestamps in the same
      * response; resolving them here also avoids an N+1 request per production unit.
      */
-    private function enrichTargets(Collection $tasks, array $permissions): void
+    private function enrichTargets(Collection $tasks, array $permissions, object $user): void
     {
         $links = $tasks->flatMap(fn (ProductionTask $task) => $task->targets);
         $unitIds = $links->where('target_type', 'unit_operation')->pluck('target_id')->map(fn ($id) => (int) $id)->unique()->values();
         $quantityIds = $links->where('target_type', 'quantity_operation')->pluck('target_id')->map(fn ($id) => (int) $id)->unique()->values();
 
-        $units = ProductionUnitOperation::query()->with('productionUnit')
+        $units = ProductionUnitOperation::query()->with('productionUnit.deviceSerial')
             ->whereIn('id', $unitIds)->get()->keyBy('id');
         $quantities = ProductionQuantityOperation::query()->whereIn('id', $quantityIds)->get()->keyBy('id');
         $outputs = DB::table('erp_production_output_records')
@@ -160,7 +161,7 @@ class ProductionTaskQueryService
             ->keyBy(fn ($row) => $row->source_target_type.':'.$row->source_target_id);
 
         foreach ($tasks as $task) {
-            $details = $task->targets->map(function ($link) use ($units, $quantities, $outputs, $permissions): array {
+            $details = $task->targets->map(function ($link) use ($task, $units, $quantities, $outputs, $permissions, $user): array {
                 $target = $link->target_type === 'unit_operation'
                     ? $units->get((int) $link->target_id)
                     : $quantities->get((int) $link->target_id);
@@ -172,14 +173,42 @@ class ProductionTaskQueryService
                     'warehouse' => $output->status === 'WAIT_WAREHOUSE' && in_array('production.output.warehouse', $permissions, true),
                 ] : ['quality_inspect' => false, 'warehouse' => false];
 
+                $status = (string) $target->status;
+                $ownerActiveLabor = $task->laborSessions->first(fn ($session) => $session->status === 'ACTIVE'
+                    && $session->role === 'owner' && (int) $session->employee_legacy_id === (int) $task->assignee_user_legacy_id);
+                $executionIntegrity = $status === 'IN_PROGRESS'
+                    ? ((int) $task->assignee_user_legacy_id > 0 && $ownerActiveLabor
+                        ? ['valid' => true, 'reason_code' => null, 'message' => null]
+                        : ['valid' => false, 'reason_code' => 'in_progress_owner_labor_missing', 'message' => '加工中的工序任务缺少负责人或负责人进行中工时。'])
+                    : ['valid' => true, 'reason_code' => null, 'message' => null];
+                $isOwner = (int) $task->assignee_user_legacy_id === (int) ($user->legacy_id ?? $user->id ?? 0);
+                $has = fn (string $permission): bool => in_array($permission, $permissions, true);
+                $allowedActions = [
+                    // A kitting confirmation is a formal start command for the owner; it is not a second READY step.
+                    'confirm_kitting' => $isOwner && (bool) $target->kitting_required
+                        && in_array($status, ['CLAIMED', 'WAIT_MATERIAL', 'WAIT_HANDOVER'], true)
+                        && $has('production.kitting.confirm'),
+                    'start' => $isOwner && ! (bool) $target->kitting_required
+                        && in_array($status, ['READY', 'REWORK'], true) && $has('production.task.start'),
+                    'pause' => $isOwner && $status === 'IN_PROGRESS' && $has('production.task.pause'),
+                    'resume' => $isOwner && $status === 'PAUSED' && $has('production.task.resume'),
+                    'complete' => $isOwner && in_array($status, ['IN_PROGRESS', 'PAUSED'], true) && $has('production.task.complete'),
+                    'accept_handover' => $isOwner && $status === 'WAIT_HANDOVER' && $has('production.handover.receive'),
+                ];
+
                 return [
                     'target_type' => $link->target_type,
                     'target_id' => (int) $target->id,
                     'status' => $target->status,
+                    'status_label' => $this->statusLabel($status),
+                    'reason_code' => $this->reasonCode($status),
+                    'reason_message' => $this->reasonMessage($status),
+                    'allowed_actions' => $allowedActions,
                     'business_version' => (int) $target->business_version,
                     'production_unit_id' => $link->target_type === 'unit_operation' ? (int) $target->production_unit_id : null,
                     'production_unit_no' => $link->target_type === 'unit_operation' ? $target->productionUnit?->unit_no : null,
-                    'device_serial_no' => $link->target_type === 'unit_operation' ? $target->productionUnit?->device_no_snapshot : null,
+                    'serial_no' => $link->target_type === 'unit_operation' ? $target->productionUnit?->deviceSerial?->serial_no : null,
+                    'execution_integrity' => $executionIntegrity,
                     'planned_base_qty' => $link->target_type === 'quantity_operation' ? (float) $target->planned_base_qty : 1,
                     'completed_base_qty' => $link->target_type === 'quantity_operation' ? (float) $target->completed_base_qty : ($target->status === 'COMPLETED' ? 1 : 0),
                     'unqualified_base_qty' => $link->target_type === 'quantity_operation' ? (float) $target->unqualified_base_qty : 0,
@@ -210,7 +239,69 @@ class ProductionTaskQueryService
                 ];
             })->values()->all();
             $task->setAttribute('target_details', $details);
+            $task->setAttribute('production_context', $this->productionContext($task));
+            $task->setAttribute('allowed_actions', [
+                'claim' => (int) ($task->assignee_user_legacy_id ?? 0) === 0
+                    && $task->status === 'WAIT_CLAIM'
+                    && in_array('production.task.claim', $permissions, true),
+            ]);
         }
+    }
+
+    /** One service-side vocabulary prevents wxapp and PC from inventing divergent interpretations of a PT state. */
+    private function statusLabel(string $status): string
+    {
+        return match ($status) {
+            'WAIT_PREVIOUS', 'WAIT_PREDECESSOR' => '待前工序可交接',
+            'WAIT_CLAIM' => '待接单', 'CLAIMED' => '已接单',
+            'WAIT_MATERIAL' => '待齐套', 'WAIT_HANDOVER' => '待交接确认',
+            'READY' => '待开工', 'IN_PROGRESS' => '进行中', 'PAUSED' => '已暂停',
+            'WAIT_QUALITY' => '待质检', 'WAIT_WAREHOUSE' => '待入库',
+            'REWORK' => '返工', 'COMPLETED' => '已完成', 'CANCELLED' => '已取消',
+            default => '状态异常',
+        };
+    }
+
+    private function reasonCode(string $status): ?string
+    {
+        return match ($status) {
+            'WAIT_PREVIOUS', 'WAIT_PREDECESSOR' => 'predecessor_not_handover_ready',
+            'WAIT_MATERIAL' => 'kitting_conditions_unmet',
+            'WAIT_HANDOVER' => 'handover_confirmation_required',
+            default => null,
+        };
+    }
+
+    private function reasonMessage(string $status): ?string
+    {
+        return match ($status) {
+            'WAIT_PREVIOUS', 'WAIT_PREDECESSOR' => '上一工序尚未形成正式可交接事实。',
+            'WAIT_MATERIAL' => '物料条件待满足；可能来自配送、交接、内部领用或工位常备料。',
+            'WAIT_HANDOVER' => '已接单，等待负责人确认上一工序交接。',
+            default => null,
+        };
+    }
+
+    private function productionContext(ProductionTask $task): array
+    {
+        $workOrder = $task->workOrder;
+        $master = $workOrder?->productionMasterOrder;
+        return [
+            'master_order_id' => $master?->id ? (int) $master->id : null,
+            'master_order_no' => $master?->master_order_no,
+            'sales_order_id' => $master?->sales_order_id ? (int) $master->sales_order_id : null,
+            'sales_order_no' => $master?->sales_order_no_snapshot,
+            'work_order_id' => $workOrder?->id ? (int) $workOrder->id : null,
+            'work_order_no' => $workOrder?->work_order_no,
+            'task_id' => (int) $task->id,
+            'task_no' => $task->task_no,
+            'product' => $workOrder?->outputItem ? [
+                'item_id' => (int) $workOrder->outputItem->id,
+                'item_code' => $workOrder->outputItem->item_code,
+                'item_name' => $workOrder->outputItem->item_name,
+                'spec' => $workOrder->outputItem->spec,
+            ] : null,
+        ];
     }
 
     private function permission(array $permissions, string $code): void

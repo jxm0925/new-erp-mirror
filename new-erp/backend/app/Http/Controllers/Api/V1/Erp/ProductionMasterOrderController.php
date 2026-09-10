@@ -42,6 +42,7 @@ final class ProductionMasterOrderController extends Controller
     private function filters(Request $request): array
     {
         return $request->validate(['keyword' => 'nullable|string|max:160', 'status' => 'nullable|in:IN_PROGRESS,WAIT_CONDITION,EXCEPTION,COMPLETED',
+            'work_order_id' => 'nullable|integer|min:1',
             'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50']);
     }
 

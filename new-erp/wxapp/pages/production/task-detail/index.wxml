@@ -49,10 +49,10 @@
             <text class="timer-sub">(工时: {{item.laborText}})</text>
           </view>
           <view class="hero-actions">
-            <button wx:if="{{item.status === 'IN_PROGRESS'}}" class="btn-pause-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="pause">暂停加工</button>
-            <button wx:elif="{{item.status === 'PAUSED'}}" class="btn-resume-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="resume">继续加工</button>
-            <button wx:elif="{{item.status === 'READY' || item.status === 'REWORK'}}" class="btn-start-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="start">{{item.status === 'REWORK' ? '开始返工' : '开始加工'}}</button>
-            <button wx:elif="{{item.kitting_required && (item.status === 'CLAIMED' || item.status === 'WAIT_MATERIAL')}}" class="btn-kitting-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="confirmKitting">核对齐套</button>
+            <button wx:if="{{item.allowed_actions.pause}}" class="btn-pause-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="pause">暂停加工</button>
+            <button wx:elif="{{item.allowed_actions.resume}}" class="btn-resume-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="resume">继续加工</button>
+            <button wx:elif="{{item.allowed_actions.start}}" class="btn-start-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="start">{{item.status === 'REWORK' ? '开始返工' : '开始加工'}}</button>
+            <button wx:elif="{{item.allowed_actions.confirm_kitting}}" class="btn-kitting-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="confirmKitting">确认齐套并开工</button>
           </view>
         </view>
 
@@ -190,27 +190,27 @@
     <button class="btn-outline" wx:if="{{task.assignee_user_legacy_id === userId && targets[0].status !== 'COMPLETED' && targets[0].status !== 'CANCELLED'}}" data-id="{{targets[0].target_id}}" bindtap="openMaterialActions">物料处理</button>
 
     <!-- State Driven CTA Buttons -->
-    <block wx:if="{{task.status === 'WAIT_CLAIM'}}">
+    <block wx:if="{{task.allowed_actions.claim}}">
       <button class="btn-primary" loading="{{busy}}" bindtap="claim">自主接单</button>
     </block>
-    <block wx:elif="{{targets[0].kitting_required && (targets[0].status === 'CLAIMED' || targets[0].status === 'WAIT_MATERIAL')}}">
+    <block wx:elif="{{targets[0].allowed_actions.confirm_kitting}}">
       <button class="btn-primary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="confirmKitting">确认齐套并开工</button>
     </block>
-    <block wx:elif="{{targets[0].status === 'WAIT_HANDOVER'}}">
+    <block wx:elif="{{targets[0].allowed_actions.accept_handover}}">
       <button class="btn-primary" bindtap="openHandover">接收工序交接</button>
     </block>
-    <block wx:elif="{{targets[0].status === 'REWORK'}}">
+    <block wx:elif="{{targets[0].allowed_actions.start && targets[0].status === 'REWORK'}}">
       <button class="btn-primary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="start">开始返工</button>
     </block>
-    <block wx:elif="{{!targets[0].kitting_required && targets[0].status === 'READY'}}">
+    <block wx:elif="{{targets[0].allowed_actions.start}}">
       <button class="btn-primary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="start">开始加工</button>
     </block>
-    <block wx:elif="{{targets[0].status === 'IN_PROGRESS'}}">
+    <block wx:elif="{{targets[0].allowed_actions.pause}}">
       <button class="btn-secondary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="pause">暂停</button>
       <button wx:if="{{targets[0].target_type === 'quantity_operation' && !targets[0].readyForCompletion}}" class="btn-primary" data-id="{{targets[0].target_id}}" bindtap="openReport">提交报工</button>
       <button wx:else class="btn-primary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="complete">完成工序并产出</button>
     </block>
-    <block wx:elif="{{targets[0].status === 'PAUSED'}}">
+    <block wx:elif="{{targets[0].allowed_actions.resume}}">
       <button class="btn-primary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="resume">继续加工</button>
       <button wx:if="{{targets[0].target_type === 'quantity_operation' && !targets[0].readyForCompletion}}" class="btn-secondary" data-id="{{targets[0].target_id}}" bindtap="openReport">提交报工</button>
       <button wx:else class="btn-secondary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="complete">完成工序</button>

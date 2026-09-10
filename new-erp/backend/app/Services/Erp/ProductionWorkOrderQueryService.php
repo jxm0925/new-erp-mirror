@@ -17,6 +17,7 @@ final class ProductionWorkOrderQueryService
     public function __construct(
         private readonly ProductionDataScopeResolver $scopeResolver,
         private readonly ErpUserProjectionService $userProjections,
+        private readonly ProductionExecutionReadProjectionService $executionProjections,
     ) {}
 
     public function demands(array $filters, object $user, array $permissions, bool $superAdmin = false): LengthAwarePaginator
@@ -139,6 +140,10 @@ final class ProductionWorkOrderQueryService
         if (! $workOrder) throw new WorkOrderDomainException('not_found', 'Work order not found.', 404);
         $this->assertWorkOrderVisible($workOrder, $user, $permissions, $superAdmin);
         $workOrder->setAttribute('field_audit_summary', $this->fieldAuditSummary($workOrder));
+        $workOrder->setAttribute(
+            'execution_summary',
+            $this->executionProjections->summaries(collect([$workOrder]))[(int) $workOrder->id] ?? null,
+        );
         $this->attachWorkOrderUserProjections(collect([$workOrder]));
         return $workOrder;
     }

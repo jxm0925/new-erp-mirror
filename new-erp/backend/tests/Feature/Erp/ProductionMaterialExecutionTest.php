@@ -138,24 +138,48 @@ class ProductionMaterialExecutionTest extends TestCase
             'client_command_id' => $this->id('dw-create'),
             'production_preparation_order_id' => $preparation->id,
             'tasks' => [
-                ['delivery_id' => $first->id, 'assignment_mode' => 'pool_claim', 'zone_pool_code' => 'ZONE-A'],
-                ['delivery_id' => $second->id, 'assignment_mode' => 'dispatcher_assign', 'delivery_user_legacy_id' => $dispatcherUserId],
+                ['assignment_mode' => 'pool_claim', 'zone_pool_code' => 'ZONE-A', 'lines' => [[
+                    'material_delivery_line_id' => $first->lines->first()->id, 'allocated_qty' => 2,
+                    'serial_snapshot' => ['inventory_serial_ids' => array_slice($serialIds, 0, 2)],
+                ]]],
+                ['assignment_mode' => 'dispatcher_assign', 'delivery_user_legacy_id' => $dispatcherUserId, 'lines' => [[
+                    'material_delivery_line_id' => $second->lines->first()->id, 'allocated_qty' => 4,
+                    'serial_snapshot' => ['inventory_serial_ids' => array_slice($serialIds, 2)],
+                ]]],
             ],
         ], $user, self::PERMISSIONS, true);
         $this->assertCount(2, $wave->deliveryTasks);
-        $this->assertEqualsCanonicalizing([2.0, 4.0], $wave->deliveryTasks->map(fn ($delivery) => (float) $delivery->lines->sum('delivery_qty'))->all());
-        $this->assertEqualsCanonicalizing($serialIds, $wave->deliveryTasks->flatMap(fn ($delivery) => $delivery->lines->flatMap(fn ($line) => $line->serial_snapshot['inventory_serial_ids'] ?? []))->all());
-        $this->assertSame('pool_claim', $first->fresh()->assignment_mode);
-        $this->assertSame('dispatcher_assign', $second->fresh()->assignment_mode);
-        $this->assertSame($dispatcherUserId, (int) $second->fresh()->delivery_user_legacy_id);
+        $this->assertEqualsCanonicalizing([2.0, 4.0], $wave->deliveryTasks->map(fn ($task) => (float) $task->lines->sum('allocated_qty'))->all());
+        $this->assertEqualsCanonicalizing($serialIds, $wave->deliveryTasks->flatMap(fn ($task) => $task->lines->flatMap(fn ($line) => $line->serial_snapshot['inventory_serial_ids'] ?? []))->all());
+        // DT assignment is independent of the PD documents and cannot silently rewrite their receiver facts.
+        $this->assertNull($first->fresh()->delivery_user_legacy_id);
+        $this->assertNull($second->fresh()->delivery_user_legacy_id);
 
         $waveService = app(ProductionDeliveryWaveService::class);
-        $first = $waveService->poolClaim($first->id, ['expected_version' => $first->fresh()->business_version], $user, self::PERMISSIONS, true);
-        $this->assertSame($user->legacy_id, (int) $first->delivery_user_legacy_id);
+        $poolTask = $wave->deliveryTasks->firstWhere('assignment_mode', 'pool_claim');
+        $poolTask = $waveService->poolClaim($poolTask->id, ['expected_version' => $poolTask->business_version], $user, self::PERMISSIONS, true);
+        $this->assertSame('CLAIMED', $poolTask->status);
+        $this->assertSame($user->legacy_id, (int) $poolTask->assignments->first()->assignee_legacy_id);
+        foreach (['PICKED_UP', 'DELIVERING', 'DONE'] as $status) {
+            $poolTask = $waveService->transitionTask($poolTask->id, [
+                'expected_version' => $poolTask->business_version, 'status' => $status,
+            ], $user, self::PERMISSIONS, true);
+        }
+        $this->assertSame('DONE', $poolTask->status);
+        // Courier completion is not a production receipt and must leave the PD in its pre-receipt state.
+        $this->assertSame('READY', $first->fresh()->status);
+        $this->expectDomain('delivery_allocation_exceeded', fn () => $waveService->create([
+            'client_command_id' => $this->id('dw-over-allocate'), 'production_preparation_order_id' => $preparation->id,
+            'tasks' => [['assignment_mode' => 'pool_claim', 'zone_pool_code' => 'ZONE-A', 'lines' => [[
+                'material_delivery_line_id' => $first->lines->first()->id, 'allocated_qty' => 1,
+            ]]]],
+        ], $user, self::PERMISSIONS, true), 409);
 
         foreach ([$first->fresh(), $second->fresh()] as $delivery) {
             $delivery = $material->dispatchDelivery($delivery->id, [
                 'client_command_id' => $this->id('dt-dispatch-'.$delivery->id), 'expected_version' => $delivery->business_version,
+                // PD handoff retains an explicit courier fact; it is not inferred from a DT assignment.
+                'delivery_user_legacy_id' => $user->legacy_id,
             ], $user, self::PERMISSIONS, true);
             $delivery = $material->deliverDelivery($delivery->id, [
                 'client_command_id' => $this->id('dt-deliver-'.$delivery->id), 'expected_version' => $delivery->business_version,
@@ -192,6 +216,68 @@ class ProductionMaterialExecutionTest extends TestCase
         $this->assertSame('COMPLETED', $source['workOrder']->fresh()->status);
         $this->assertSame(2.0, (float) DB::table('erp_production_target_material_requirements')
             ->where('id', $source['targetRequirementId'])->value('satisfied_base_qty'));
+    }
+
+    /** CASE H: one PD remains one receipt source even when three couriers split its line. */
+    public function test_one_pd_line_splits_30_30_40_into_three_delivery_tasks_without_duplication(): void
+    {
+        [$user, $workOrder, $requirement, $balance] = $this->fixture();
+        $salesOrder = SalesOrder::create(['sales_order_no' => $this->id('split-so'), 'customer_name' => 'DT 拆分客户', 'order_status' => 'confirmed', 'confirm_status' => 'confirmed', 'production_confirm_status' => 'confirmed']);
+        $masterId = DB::table('erp_production_master_orders')->insertGetId([
+            'master_order_no' => $this->id('MWO'), 'sales_order_id' => $salesOrder->id, 'active_sales_order_id' => $salesOrder->id,
+            'sales_order_no_snapshot' => $salesOrder->sales_order_no, 'customer_snapshot' => json_encode(['name' => 'DT 拆分客户'], JSON_UNESCAPED_UNICODE),
+            'status' => 'WAIT_CONDITION', 'business_version' => 1, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('erp_work_orders')->where('id', $workOrder->id)->update(['production_master_order_id' => $masterId]);
+        $workOrder->setAttribute('production_master_order_id', $masterId);
+        $preparation = app(ProductionPreparationOrderService::class)->syncFromPublishedWorkOrder($workOrder->fresh('materialRequirements'), $user);
+        $requirement->update(['required_qty' => 100, 'base_required_qty' => 100, 'remaining_qty' => 100]);
+        DB::table('erp_production_target_material_requirements')->where('work_order_id', $workOrder->id)->update(['required_base_qty' => 100]);
+        $balance->update(['quantity_on_hand' => 200, 'quantity_available' => 200]);
+
+        $material = app(ProductionMaterialExecutionService::class);
+        $pick = $material->createPickingTask(['client_command_id' => $this->id('split-pick'), 'work_order_id' => $workOrder->id, 'expected_version' => 1,
+            'warehouse_id' => $balance->warehouse_id, 'lines' => [$this->pickLine($workOrder, $requirement, $balance, 100)]], $user, self::PERMISSIONS, true);
+        $pick = $material->assignPickingTask($pick->id, ['client_command_id' => $this->id('split-assign'), 'expected_version' => $pick->business_version, 'assigned_picker_legacy_id' => $user->legacy_id], $user, self::PERMISSIONS, true);
+        $pick = $material->startPickingTask($pick->id, ['client_command_id' => $this->id('split-start'), 'expected_version' => $pick->business_version], $user, self::PERMISSIONS, true);
+        $pick = $material->confirmPickingTask($pick->id, ['client_command_id' => $this->id('split-confirm'), 'expected_version' => $pick->business_version,
+            'lines' => [['picking_task_line_id' => $pick->lines->first()->id, 'actual_pick_qty' => 100]]], $user, self::PERMISSIONS, true);
+        $pd = $material->createDelivery(['client_command_id' => $this->id('split-pd'), 'picking_task_id' => $pick->id, 'expected_version' => $pick->business_version,
+            'lines' => [['picking_task_line_id' => $pick->lines->first()->id, 'delivery_qty' => 100]]], $user, self::PERMISSIONS, true);
+        $courierA = $user->legacy_id + 1; $courierB = $user->legacy_id + 2;
+        foreach ([$courierA, $courierB] as $courier) DB::table('erp_legacy_admin_users')->insert(['legacy_id' => $courier, 'username' => $this->id('split-courier'), 'nickname' => '配送员', 'status' => 'normal', 'auth_group_names' => '[]', 'created_at' => now(), 'updated_at' => now()]);
+
+        $service = app(ProductionDeliveryWaveService::class);
+        $wave = $service->create(['client_command_id' => $this->id('split-wave'), 'production_preparation_order_id' => $preparation->id, 'tasks' => [
+            ['assignment_mode' => 'pool_claim', 'zone_pool_code' => 'ZONE-A', 'lines' => [['material_delivery_line_id' => $pd->lines->first()->id, 'allocated_qty' => 30]]],
+            ['assignment_mode' => 'dispatcher_assign', 'delivery_user_legacy_id' => $courierA, 'lines' => [['material_delivery_line_id' => $pd->lines->first()->id, 'allocated_qty' => 30]]],
+            ['assignment_mode' => 'dispatcher_assign', 'delivery_user_legacy_id' => $courierB, 'lines' => [['material_delivery_line_id' => $pd->lines->first()->id, 'allocated_qty' => 40]]],
+        ]], $user, self::PERMISSIONS, true);
+        $this->assertSame(1, DB::table('erp_material_deliveries')->where('id', $pd->id)->count());
+        $this->assertEqualsCanonicalizing([30.0, 30.0, 40.0], $wave->deliveryTasks->map(fn ($task) => (float) $task->lines->sum('allocated_qty'))->all());
+        $this->assertSame(100.0, (float) $wave->deliveryTasks->flatMap->lines->sum('allocated_qty'));
+        $this->expectDomain('delivery_allocation_exceeded', fn () => $service->create(['client_command_id' => $this->id('split-over'), 'production_preparation_order_id' => $preparation->id,
+            'tasks' => [['assignment_mode' => 'pool_claim', 'zone_pool_code' => 'ZONE-A', 'lines' => [['material_delivery_line_id' => $pd->lines->first()->id, 'allocated_qty' => 1]]]]], $user, self::PERMISSIONS, true), 409);
+    }
+
+    /** CASE K: no hidden 60-minute default; a dispatcher override is an auditable fact. */
+    public function test_first_operation_delivery_trigger_requires_configuration_and_records_manual_override(): void
+    {
+        [$user, $workOrder] = $this->fixture();
+        $salesOrder = SalesOrder::create(['sales_order_no' => $this->id('trigger-so'), 'customer_name' => '触发条件客户', 'order_status' => 'confirmed', 'confirm_status' => 'confirmed', 'production_confirm_status' => 'confirmed']);
+        $masterId = DB::table('erp_production_master_orders')->insertGetId(['master_order_no' => $this->id('MWO'), 'sales_order_id' => $salesOrder->id, 'active_sales_order_id' => $salesOrder->id, 'sales_order_no_snapshot' => $salesOrder->sales_order_no, 'customer_snapshot' => json_encode(['name' => '触发条件客户'], JSON_UNESCAPED_UNICODE), 'status' => 'WAIT_CONDITION', 'business_version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('erp_work_orders')->where('id', $workOrder->id)->update(['production_master_order_id' => $masterId]);
+        $workOrder->setAttribute('production_master_order_id', $masterId);
+        $line = app(ProductionPreparationOrderService::class)->syncFromPublishedWorkOrder($workOrder->fresh('materialRequirements'), $user)->lines->first();
+        $this->assertSame('WAIT_CONFIGURATION', $line->delivery_trigger_status);
+        $this->assertNull($line->delivery_lead_minutes);
+        $trigger = app(\App\Services\Erp\ProductionDeliveryTriggerService::class);
+        $configured = $trigger->configure($line->id, ['expected_version' => $line->business_version, 'planned_start_at' => now()->addDay()->toDateTimeString(), 'delivery_lead_minutes' => 90], $user, self::PERMISSIONS, true);
+        $this->assertSame('WAIT_SCHEDULE', $configured->delivery_trigger_status);
+        $released = $trigger->manualRelease($line->id, ['expected_version' => $configured->business_version, 'reason' => '客户要求提前送达'], $user, self::PERMISSIONS, true);
+        $this->assertSame('RELEASED', $released->delivery_trigger_status);
+        $this->assertSame('manual_override', $released->delivery_release_source);
+        $this->assertSame($user->legacy_id, (int) $released->delivery_released_by_legacy_id);
     }
 
     public function test_reserved_stock_prebuild_warehouse_receipt_is_not_common_available_and_only_target_issue_can_consume_it(): void
@@ -804,7 +890,8 @@ class ProductionMaterialExecutionTest extends TestCase
     private function fixture(): array
     {
         $suffix = strtoupper(substr(uniqid(), -8));
-        $user = (object) ['legacy_id' => 980000 + random_int(1, 9999), 'username' => 'phase6b-'.$suffix, 'nickname' => 'Phase6B 验收用户'];
+        // The test database is intentionally retained for evidence inspection; avoid a small random ID range colliding with a prior fixture.
+        $user = (object) ['legacy_id' => random_int(100000000, 999999999), 'username' => 'phase6b-'.$suffix, 'nickname' => 'Phase6B 验收用户'];
         DB::table('erp_legacy_admin_users')->insert(['legacy_id' => $user->legacy_id, 'username' => $user->username, 'nickname' => $user->nickname, 'status' => 'normal', 'auth_group_names' => '[]', 'created_at' => now(), 'updated_at' => now()]);
         $unit = Unit::create(['unit_code' => 'P6B-U-'.$suffix, 'unit_name' => '件', 'unit_type' => 'quantity', 'decimal_places' => 4, 'is_base' => true, 'status' => 'enabled']);
         $output = Item::create(['item_code' => 'P6B-FG-'.$suffix, 'item_name' => 'Phase6B 成品', 'item_type' => 'finished_good', 'unit_id' => $unit->id, 'is_stock_item' => true, 'status' => 'enabled']);

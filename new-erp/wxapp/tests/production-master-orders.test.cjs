@@ -7,6 +7,7 @@ const vm = require('node:vm');
 function mount(production) {
   let page;
   const modals = [];
+  const navigations = [];
   const source = fs.readFileSync(path.join(__dirname, '../pages/production/tasks/index.js'), 'utf8');
   vm.runInNewContext(source, {
     Page: value => { page = value; },
@@ -18,7 +19,7 @@ function mount(production) {
       showToast() {},
       showModal: value => modals.push(value),
       scanCode() {},
-      navigateTo() {},
+      navigateTo: value => navigations.push(value),
       stopPullDownRefresh() {},
     },
     clearTimeout() {},
@@ -28,6 +29,7 @@ function mount(production) {
   page.data = JSON.parse(JSON.stringify(page.data));
   page.setData = function (value) { Object.assign(this.data, value); };
   page.__modals = modals;
+  page.__navigations = navigations;
   return page;
 }
 
@@ -79,8 +81,7 @@ test('sales source renders server MWO semantics without summing incompatible con
   assert.equal(row.compact, false);
 
   page.openRow({ currentTarget: { dataset: { key: 'master:10' } } });
-  assert.match(page.__modals[0].content, /PT 进度 12 \/ 27/);
-  assert.match(page.__modals[0].content, /备料配送 部分到位/);
+  assert.equal(page.__navigations[0].url, '/pages/production/master-detail/index?id=10');
 });
 
 test('blocked master and independent source tabs use real server filters and summaries', async () => {

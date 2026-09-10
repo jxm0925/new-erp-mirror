@@ -9,5 +9,5 @@ class MaterialDeliveryWave extends MasterModel
 
     public function preparationOrder() { return $this->belongsTo(ProductionPreparationOrder::class, 'production_preparation_order_id'); }
     public function masterOrder() { return $this->belongsTo(ProductionMasterOrder::class, 'production_master_order_id'); }
-    public function deliveryTasks() { return $this->hasMany(MaterialDelivery::class, 'delivery_wave_id'); }
+    public function deliveryTasks() { return $this->hasMany(MaterialDeliveryTask::class, 'delivery_wave_id'); }
 }

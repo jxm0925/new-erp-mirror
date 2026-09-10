@@ -1,0 +1,29 @@
+/** 全局字体与排版还原规范 **/
+page, view, text, input, button {
+  box-sizing: border-box;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "PingFang SC", "Hiragino Sans GB", "Helvetica Neue", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* 数字、序列号、比率、日期专用字体：高保真还原设计图中的 DIN/SF Pro 现代工整西文与等宽数字 */
+.font-num,
+.num-bold,
+.val-num,
+.stat-num,
+.metric-val,
+.pu-code,
+.wo-no,
+.pt-code,
+.hero-code,
+.dw-no,
+.metric-num-bold,
+.exception-num-bold,
+.progress-count-text,
+.wo-bar-percent {
+  font-family: "DIN Alternate", -apple-system, "SF Pro Display", "Helvetica Neue", "PingFang SC", sans-serif;
+  font-feature-settings: "tnum";
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}

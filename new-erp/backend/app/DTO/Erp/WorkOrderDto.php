@@ -85,6 +85,7 @@ final class WorkOrderDto
             'production_batch' => $workOrder->production_batch,
             'production_location_name' => $workOrder->production_location_name,
             'status' => $workOrder->status,
+            'execution_summary' => $workOrder->getAttribute('execution_summary'),
             'business_version' => (int) $workOrder->business_version,
             'release' => [
                 'gate_status' => $workOrder->release_gate_status,

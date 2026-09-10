@@ -42,6 +42,7 @@ class ProductionExecutionFoundationService
             'serial_generation_stage' => $stage,
             'serial_generation_routing_operation_id' => $item->serial_generation_routing_operation_id
                 ?: $item->activeMaterialPolicy?->serial_generation_routing_operation_id,
+            'equipment_identity_requirement' => (string) ($item->equipment_identity_requirement ?: 'not_applicable'),
         ];
     }
 
@@ -103,6 +104,7 @@ class ProductionExecutionFoundationService
                 $serial = $this->createSerial($workOrder, $unit, $policy);
                 $unit->update(['device_serial_id' => $serial->id, 'device_no_snapshot' => $serial->serial_no]);
             }
+            $this->createEquipmentIdentity($unit, $policy);
 
             foreach ($operations as $index => $operation) {
                 $targetStatus = $index === 0 ? 'WAIT_CLAIM' : 'WAIT_PREDECESSOR';
@@ -277,6 +279,18 @@ class ProductionExecutionFoundationService
             'source_type' => 'production_unit',
             'source_id' => $unit->id,
             'generated_at' => now(),
+        ]);
+    }
+
+    private function createEquipmentIdentity(ProductionUnit $unit, array $policy): void
+    {
+        $required = ($policy['equipment_identity_requirement'] ?? 'not_applicable') === 'required';
+        DB::table('erp_production_unit_equipment_identities')->insert([
+            'production_unit_id' => $unit->id,
+            'status' => $required ? 'PENDING_GENERATION' : 'NOT_APPLICABLE',
+            'business_version' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
         ]);
     }
 
