@@ -1,22 +1,633 @@
 /* pages/suggests/manage/index.wxss */
-page ,.container{
-    width: 100%;
-    height: 102%;
-    background: #f4f4f4;
-}
-.loadmore {
-    height: 100rpx;
-    width: 100%;
-    line-height: 80rpx;
-    text-align: center;
-    margin-top: 0rpx;
+
+page {
+  background-color: #f7f8fa;
+  color: #323233;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  box-sizing: border-box;
 }
 
-.loadmore text {
-    color: #999;
+/* 全局与响应式盒模型约束 */
+.manage-page,
+.manage-page view,
+.manage-page text,
+.manage-page image,
+.manage-page input,
+.manage-page button {
+  box-sizing: border-box;
 }
-.dialog{
-    background-color: #f4f4f4 !important;
-    height: 50%;
-    width: 80%;
+
+.manage-page {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: calc(50rpx + env(safe-area-inset-bottom));
 }
+
+/* ================= 顶部管理工作台 Header Banner ================= */
+.header-banner {
+  background: linear-gradient(135deg, #d81e06 0%, #b81604 100%);
+  padding: 24rpx 28rpx 30rpx;
+  color: #ffffff;
+  position: relative;
+  overflow: hidden;
+}
+
+.header-banner::after {
+  content: '';
+  position: absolute;
+  right: -40rpx;
+  bottom: -60rpx;
+  width: 220rpx;
+  height: 220rpx;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0) 70%);
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.banner-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: 16rpx;
+}
+
+.title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 14rpx;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.banner-title {
+  font-size: 38rpx;
+  font-weight: 700;
+  color: #ffffff;
+  letter-spacing: 1rpx;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.role-badge-tag {
+  font-weight: 500 !important;
+  font-size: 22rpx !important;
+  flex-shrink: 0 !important;
+}
+
+.user-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8rpx;
+  background: rgba(255, 255, 255, 0.16);
+  padding: 6rpx 18rpx;
+  border-radius: 24rpx;
+  max-width: 260rpx;
+  flex-shrink: 0;
+}
+
+.user-name {
+  font-size: 24rpx;
+  color: #ffffff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 搜索栏利用 van-search */
+.search-wrap {
+  margin-top: 20rpx;
+}
+
+.vant-search-bar {
+  padding: 0 !important;
+}
+
+.vant-search-bar .van-search__content {
+  background-color: #ffffff !important;
+  box-shadow: 0 4rpx 16rpx rgba(0, 0, 0, 0.08);
+  border-radius: 36rpx !important;
+}
+
+/* ================= 状态流转 Tabs ================= */
+.tabs-wrapper {
+  background: #ffffff;
+  box-shadow: 0 2rpx 10rpx rgba(0, 0, 0, 0.04);
+  border-bottom: 1rpx solid #ebedf0;
+}
+
+/* ================= 提案卡片列表 ================= */
+.list-container {
+  flex: 1 1 auto;
+  padding: 20rpx 24rpx;
+}
+
+.suggest-card {
+  background: #ffffff;
+  border-radius: 20rpx;
+  margin-bottom: 24rpx;
+  box-shadow: 0 4rpx 18rpx rgba(0, 0, 0, 0.03);
+  border: 1rpx solid #ebedf0;
+  overflow: hidden;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.suggest-card:active {
+  background-color: #fafbfc;
+}
+
+/* 卡片头部 */
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24rpx 24rpx 18rpx;
+  border-bottom: 1rpx solid #f7f8fa;
+  gap: 16rpx;
+  min-width: 0;
+}
+
+.proposer-meta {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.avatar-circle {
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #ff7875 0%, #d81e06 100%);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28rpx;
+  font-weight: 600;
+  flex-shrink: 0;
+  box-shadow: 0 2rpx 8rpx rgba(216, 30, 6, 0.2);
+}
+
+.proposer-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.proposer-name-row {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  min-width: 0;
+}
+
+.proposer-name {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #323233;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.create-time-row {
+  display: flex;
+  align-items: center;
+  gap: 6rpx;
+}
+
+.create-time {
+  font-size: 22rpx;
+  color: #969799;
+}
+
+.card-status-tag {
+  flex-shrink: 0 !important;
+  font-weight: 600 !important;
+}
+
+/* 卡片主体 */
+.card-body {
+  padding: 20rpx 24rpx;
+  min-width: 0;
+}
+
+.proposal-content {
+  margin-bottom: 16rpx;
+}
+
+.proposal-text {
+  font-size: 28rpx;
+  color: #323233;
+  line-height: 1.6;
+  word-break: break-all;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* 附件照片展示 */
+.media-gallery {
+  margin-top: 14rpx;
+  margin-bottom: 16rpx;
+}
+
+.single-image-box {
+  width: 100%;
+  max-width: 440rpx;
+  height: 280rpx;
+  border-radius: 14rpx;
+  overflow: hidden;
+  background-color: #f2f3f5;
+}
+
+.single-img {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.card-photo-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12rpx;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.card-photo-item {
+  position: relative;
+  width: 100%;
+  height: 180rpx;
+  border-radius: 12rpx;
+  overflow: hidden;
+  background-color: #f2f3f5;
+}
+
+.card-photo-img {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* 进展展板 */
+.progress-box {
+  background: #f7f8fa;
+  border-radius: 14rpx;
+  padding: 16rpx 20rpx;
+  margin-top: 16rpx;
+  border: 1rpx solid #ebedf0;
+  display: flex;
+  flex-direction: column;
+  gap: 10rpx;
+}
+
+.progress-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.director-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8rpx;
+}
+
+.director-label {
+  font-size: 24rpx;
+  color: #646566;
+}
+
+.director-name {
+  font-size: 24rpx;
+  font-weight: 600;
+  color: #323233;
+}
+
+.result-highlight-row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  flex-wrap: wrap;
+}
+
+.score-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6rpx;
+  background: #fffbe6;
+  border: 1rpx solid #ffe58f;
+  border-radius: 8rpx;
+  padding: 4rpx 14rpx;
+}
+
+.score-value {
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #d46b08;
+}
+
+.feedback-snippet {
+  font-size: 24rpx;
+  color: #646566;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.snippet-label {
+  color: #969799;
+}
+
+/* 卡片底部操作栏 */
+.card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18rpx 24rpx;
+  border-top: 1rpx solid #f2f3f5;
+  gap: 16rpx;
+  min-width: 0;
+}
+
+.footer-left {
+  display: flex;
+  align-items: center;
+  gap: 6rpx;
+  cursor: pointer;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.detail-link {
+  font-size: 24rpx;
+  color: #969799;
+}
+
+.footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  flex-shrink: 0;
+}
+
+/* ================= 空状态与触底加载 ================= */
+.empty-wrap {
+  padding: 80rpx 40rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.list-load-status {
+  padding: 24rpx 0 10rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.loading-box {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.loading-text {
+  font-size: 24rpx;
+  color: #969799;
+}
+
+.nomore-box {
+  text-align: center;
+}
+
+.nomore-text {
+  font-size: 24rpx;
+  color: #c8c9cc;
+}
+
+/* ================= 底部抽屉式详情 Sheet (严格防超出边界) ================= */
+.sheet-container {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background-color: #f7f8fa;
+}
+
+/* 抽屉头部，保留 80rpx 右内边距避开绝对定位的关闭图标 */
+.sheet-header {
+  flex-shrink: 0;
+  padding: 28rpx 80rpx 24rpx 32rpx;
+  background-color: #ffffff;
+  border-bottom: 1rpx solid #ebedf0;
+  position: relative;
+}
+
+.sheet-header-left {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.sheet-title {
+  font-size: 32rpx;
+  font-weight: 700;
+  color: #323233;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+/* 抽屉滚动区域：显式声明 flex: 1; height: 0; min-height: 0; 彻底消除撑爆边界问题 */
+.sheet-scroll-body {
+  flex: 1 1 0;
+  height: 0;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 20rpx 0 30rpx;
+}
+
+.detail-loading-box {
+  padding: 100rpx 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 步骤条卡片 */
+.steps-card {
+  margin: 10rpx 24rpx 24rpx;
+  background: #ffffff;
+  border-radius: 20rpx;
+  padding: 24rpx 16rpx 20rpx;
+  box-shadow: 0 4rpx 14rpx rgba(0, 0, 0, 0.02);
+  border: 1rpx solid #ebedf0;
+  overflow: hidden;
+}
+
+.steps-card .van-step--horizontal .van-step__title {
+  font-size: 24rpx !important;
+  color: #646566;
+  white-space: nowrap;
+}
+
+/* 阶段动态解读条 */
+.phase-info-box {
+  margin: 20rpx 10rpx 6rpx;
+  border-radius: 12rpx;
+  padding: 16rpx 20rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+}
+
+.phase-box-0 {
+  background-color: #fffbe6;
+  border: 1rpx solid #ffe58f;
+  color: #d46b08;
+}
+
+.phase-box-1 {
+  background-color: #e6f7ff;
+  border: 1rpx solid #91d5ff;
+  color: #096dd9;
+}
+
+.phase-box-2 {
+  background-color: #f9f0ff;
+  border: 1rpx solid #d3adf7;
+  color: #531dab;
+}
+
+.phase-box-3 {
+  background-color: #f6ffed;
+  border: 1rpx solid #b7eb8f;
+  color: #389e0d;
+}
+
+.phase-header {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+}
+
+.phase-status-title {
+  font-size: 26rpx;
+  font-weight: 700;
+}
+
+.phase-status-desc {
+  font-size: 24rpx;
+  line-height: 1.5;
+  word-break: break-all;
+  opacity: 0.92;
+}
+
+.sheet-group {
+  margin-bottom: 24rpx !important;
+}
+
+.font-bold-val {
+  font-weight: 600 !important;
+  color: #323233 !important;
+}
+
+.text-blue-val {
+  color: #1989fa !important;
+  font-weight: 600 !important;
+}
+
+.text-gray-val {
+  color: #969799 !important;
+}
+
+.score-highlight {
+  color: #ee0a24;
+  font-weight: 700;
+  font-size: 28rpx;
+}
+
+/* 抽屉内照片网格 */
+.cell-media-container {
+  padding: 20rpx 32rpx;
+  background-color: #ffffff;
+  border-top: 1rpx solid #ebedf0;
+}
+
+.media-sub-title {
+  font-size: 24rpx;
+  color: #646566;
+  margin-bottom: 16rpx;
+  font-weight: 500;
+}
+
+.detail-photo-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12rpx;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.detail-photo-item {
+  position: relative;
+  width: 100%;
+  height: 170rpx;
+  border-radius: 12rpx;
+  overflow: hidden;
+  background-color: #f2f3f5;
+}
+
+.detail-photo-img {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.empty-result-hint {
+  padding: 20rpx 32rpx;
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  color: #969799;
+  font-size: 24rpx;
+  background: #ffffff;
+}
+
+/* 抽屉底部操作栏：固定不被撑爆，按钮自适应 */
+.sheet-footer {
+  flex-shrink: 0;
+  padding: 20rpx 32rpx calc(24rpx + env(safe-area-inset-bottom));
+  background: #ffffff;
+  border-top: 1rpx solid #ebedf0;
+  display: flex;
+  gap: 20rpx;
+}
+
+.sheet-btn-action {
+  flex: 1 1 0 !important;
+}
+
+.sheet-btn-close {
+  flex: 1 1 0 !important;
+  color: #646566 !important;
+  background: #f4f4f5 !important;
+  border-color: #ebedf0 !important;
+}
+
+.sheet-btn-close:active {
+  background: #e9e9eb !important;
+}

@@ -34,7 +34,12 @@ class SalesProductionReplenishmentTest extends TestCase
         $warehouse = Warehouse::create(['warehouse_code' => 'WH-'.$suffix, 'warehouse_name' => '成品仓', 'status' => 'enabled']);
         $location = Location::create(['warehouse_id' => $warehouse->id, 'location_code' => 'LOC-'.$suffix, 'location_name' => '成品库位', 'status' => 'enabled']);
         $item = Item::create(['item_code' => 'FG-'.$suffix, 'item_name' => '销售来源成品', 'item_type' => 'finished_good', 'unit_id' => $unit->id, 'is_stock_item' => true, 'is_production_item' => true, 'status' => 'enabled']);
-        $order = SalesOrder::create(['sales_order_no' => 'SO-'.$suffix, 'customer_name' => '生产回补客户', 'order_status' => 'confirmed', 'confirm_status' => 'confirmed', 'production_confirm_status' => 'confirmed', 'business_version' => 1]);
+        $order = SalesOrder::create([
+            'sales_order_no' => 'SO-'.$suffix, 'customer_name' => '生产回补客户',
+            'order_status' => 'confirmed', 'confirm_status' => 'confirmed', 'production_confirm_status' => 'confirmed',
+            'funding_policy_snapshot' => ['policy_type' => 'full_prepay', 'shipment_requires_full_payment' => true],
+            'business_version' => 1,
+        ]);
         $line = SalesOrderLine::create([
             'sales_order_id' => $order->id, 'line_no' => 1, 'line_type' => 'physical', 'item_id' => $item->id,
             'item_name' => $item->item_name, 'order_qty' => 6, 'unit_id' => $unit->id, 'unit_name_snapshot' => '件',

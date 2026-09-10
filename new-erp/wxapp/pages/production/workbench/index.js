@@ -45,6 +45,7 @@ Page({
     userDisplayName: '当前操作员',
     stats: { running: '—', pending: '—', completed: '—' },
     shortcuts: [
+      { key: 'orders', title: '生产工单', icon: 'orders-o', count: null },
       { key: 'pool', title: '待接任务', icon: 'records', count: 0 },
       { key: 'tasks', title: '我的任务', icon: 'notes-o', count: 0 },
       { key: 'collaboration', title: '我的协同', icon: 'friends-o', count: 0 },
@@ -87,18 +88,20 @@ Page({
     const read = (permission, request) => can(permission) ? request() : Promise.resolve(null);
 
     return Promise.all([
+      read('production.work_order.view', () => production.masterOrders({ page: 1, per_page: 1 })),
       read('production.task.view', () => production.taskPool({ page: 1, per_page: 20 })),
       read('production.task.view', () => production.myTasks({ page: 1, per_page: 20, execution_filter: 'current', include_stats: 1 })),
       read('production.task.view', () => production.collaborations({ page: 1, per_page: 20 })),
       read('production.material_delivery.view', () => production.deliveries({ status: 'DELIVERED', page: 1, per_page: 20 })),
       read('production.handover.view', () => production.pendingHandovers({ page: 1, per_page: 20 }))
-    ]).then(([pool, owned, collaboration, receipts, handovers]) => {
+    ]).then(([orders, pool, owned, collaboration, receipts, handovers]) => {
       if (sequence !== this.requestSequence) return;
       const tasks = ((owned && owned.data) || []).reduce((rows, task) => rows.concat((task.target_details || [])
         .filter(target => ['IN_PROGRESS', 'PAUSED', 'WAIT_MATERIAL', 'READY'].includes(target.status)).map(target => taskView(task, target))), []).slice(0, 3);
       const stats = owned && owned.stats;
       const total = response => response ? response.total : null;
       const counts = {
+        orders: total(orders),
         pool: total(pool),
         tasks: stats ? stats.total : null,
         collaboration: total(collaboration),
@@ -134,6 +137,7 @@ Page({
 
   openShortcut(event) {
     const key = event.currentTarget.dataset.key;
+    if (key === 'orders') return wx.navigateTo({ url: '/pages/production/tasks/index' });
     if (key === 'tasks') return wx.navigateTo({ url: '/pages/production/my-tasks/index' });
     wx.navigateTo({ url: `/pages/production/queue/index?type=${key}` });
   },

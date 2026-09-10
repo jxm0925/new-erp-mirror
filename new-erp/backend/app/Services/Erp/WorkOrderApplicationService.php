@@ -4,9 +4,11 @@ namespace App\Services\Erp;
 
 use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Models\Erp\ProductionDemand;
+use App\Models\Erp\SalesOrderProductionRequirement;
 use App\Models\Erp\Item;
 use App\Models\Erp\ProductionRouting;
 use App\Models\Erp\ProductionRoutingOperation;
+use App\Models\Erp\ProductionUnit;
 use App\Models\Erp\WorkOrder;
 use App\Models\Erp\WorkOrderCommandLedger;
 use App\Models\Erp\WorkOrderStatusLog;
@@ -38,6 +40,8 @@ class WorkOrderApplicationService
         private readonly ReleaseGateApplicationService $releaseGate,
         private readonly ProductionMasterDataService $productionMasterData,
         private readonly ProductionExecutionFoundationService $productionExecution,
+        private readonly ProductionMasterOrderApplicationService $masterOrders,
+        private readonly ProductionPreparationOrderService $preparationOrders,
     ) {
     }
 
@@ -92,7 +96,13 @@ class WorkOrderApplicationService
             return $this->createIndependentDraft($payload, $user, $permissions, $superAdmin);
         }
         return $this->withCommand('create_draft', null, $payload, $user, function () use ($payload, $user, $permissions, $superAdmin): WorkOrder {
-            $demand = $this->lockDemand((int) $payload['production_demand_id']);
+            $demandId = (int) $payload['production_demand_id'];
+            $salesOrderId = (int) ProductionDemand::query()->whereKey($demandId)->value('sales_order_id');
+            if ($salesOrderId <= 0) $this->fail('not_found', '生产需求不存在。', 404);
+            // Lock order before demand. Sales confirmation uses the same order ->
+            // demand ordering, preventing lazy MWO creation from deadlocking it.
+            $masterOrder = $this->masterOrders->ensureForSalesOrder($salesOrderId, $user);
+            $demand = $this->lockDemand($demandId);
             $this->assertDemandReady($demand);
             $this->assertDemandVisible($demand, $user, $permissions, $superAdmin);
             $this->assertExpectedDemandVersion($demand, $payload);
@@ -103,11 +113,48 @@ class WorkOrderApplicationService
             $this->assertAvailableQuantity($demand, $quantity);
             $this->assertResponsibleUser($payload['responsible_user_legacy_id'] ?? null, $user, $permissions, $superAdmin);
 
-            $workOrder = WorkOrder::create($this->workOrderAttributes($demand, $payload, $quantity, $user));
+            $workOrder = WorkOrder::create($this->workOrderAttributes($demand, $payload, $quantity, $user, $masterOrder->id));
             $this->recordStatus($workOrder, null, self::DRAFT, '创建草稿', 0, 1, $user);
             $this->refreshDemandProjection($demand);
             return $workOrder->fresh(['demand.order', 'demand.line', 'statusLogs']);
         });
+    }
+
+    /**
+     * Creates the sales-confirmation WO without borrowing a production user's
+     * permissions. The caller must already hold the locked sales-order workflow
+     * transaction; this method only materializes the confirmed production need.
+     */
+    public function ensureAutomaticSalesDraft(SalesOrderProductionRequirement $demand, object $operator): WorkOrder
+    {
+        $demand = ProductionDemand::query()->whereKey($demand->id)->lockForUpdate()->firstOrFail();
+        $existing = WorkOrder::query()
+            ->where('production_demand_id', $demand->id)
+            ->whereIn('status', self::ALLOCATING_STATUSES)
+            ->lockForUpdate()
+            ->first();
+        if ($existing) return $existing;
+
+        $quantity = (float) $demand->production_qty;
+        $this->assertPositiveQuantity($quantity);
+        $masterOrder = $this->masterOrders->ensureForSalesOrder((int) $demand->sales_order_id, $operator);
+        $payload = [
+            'client_command_id' => 'sales-confirmation:demand:'.$demand->id.':v'.($demand->requirement_version ?: 1),
+            'planned_date' => optional($demand->required_delivery_date)->format('Y-m-d'),
+            'production_batch' => null,
+            'responsible_user_legacy_id' => null,
+            'production_location_name' => null,
+        ];
+        $attributes = $this->workOrderAttributes($demand, $payload, $quantity, $operator, $masterOrder->id);
+        $attributes['status'] = self::WAIT_RELEASE;
+        $workOrder = WorkOrder::create($attributes);
+        $this->recordStatus($workOrder, null, self::WAIT_RELEASE, '销售订单确认后自动建立待发布生产工单', 0, 1, $operator);
+        $this->refreshDemandProjection($demand);
+
+        // Persist every missing condition immediately. The WO remains visible in
+        // WAIT_RELEASE and the condition projection—not its lifecycle—is blocked.
+        $this->releaseGate->evaluateLocked($workOrder, $operator, true);
+        return $workOrder->fresh(['demand.order', 'demand.line', 'statusLogs', 'releaseGateChecks']);
     }
 
     public function updateDraft(int $id, array $payload, object $user, array $permissions, bool $superAdmin = false): WorkOrder
@@ -262,6 +309,7 @@ class WorkOrderApplicationService
             $workOrder->save();
 
             $this->productionExecution->initializePublished($workOrder, $executionPolicy);
+            $this->preparationOrders->syncFromPublishedWorkOrder($workOrder->fresh('materialRequirements'), $user);
 
             $this->recordStatus($workOrder, self::WAIT_RELEASE, self::RELEASED, $workOrder->release_reason, $version, $version + 1, $user);
 
@@ -536,6 +584,40 @@ class WorkOrderApplicationService
             $targetNodeId = isset($payload['target_routing_operation_id']) ? (int) $payload['target_routing_operation_id'] : null;
             $targetNode = $targetNodeId ? $routing->operations->firstWhere('id', $targetNodeId) : null;
             if (! $targetNode) $this->fail($targetNodeId ? 'target_routing_operation_invalid' : 'target_routing_operation_required', $targetNodeId ? '目标路线工序不属于当前工艺路线。' : '备货工单必须选择当前路线中的目标工序节点。', 422);
+            $purpose = (string) ($payload['stocking_purpose'] ?? '');
+            if (! in_array($purpose, ['common_inventory', 'reserved_for_work_order'], true)) {
+                $this->fail('stocking_purpose_required', '备货生产单必须选择公共库存备货或指定生产工单预备。', 422);
+            }
+            if (! $targetNode->output_item_id) {
+                $this->fail('stock_prebuild_output_item_required', '备货生产目标工序必须配置正式产出物料，禁止使用整张生产工单最终成品物料代替。', 422);
+            }
+            $reservedWorkOrder = null;
+            if ($purpose === 'reserved_for_work_order') {
+                $reservedWorkOrderId = (int) ($payload['reserved_for_work_order_id'] ?? 0);
+                $reservedTargetId = (int) ($payload['reserved_for_target_operation_id'] ?? 0);
+                if (! $reservedWorkOrderId || ! $reservedTargetId) {
+                    $this->fail('stock_prebuild_reserved_target_required', '指定生产工单预备必须选择目标生产工单和下一目标工序。', 422);
+                }
+                $reservedWorkOrder = WorkOrder::query()->whereKey($reservedWorkOrderId)->lockForUpdate()->first();
+                if (! $reservedWorkOrder || in_array($reservedWorkOrder->status, [self::COMPLETED, self::CANCELLED], true)) {
+                    $this->fail('stock_prebuild_reserved_work_order_invalid', '指定的目标生产工单不存在、已完成或已取消。', 422);
+                }
+                $reservedTarget = ProductionRoutingOperation::query()->whereKey($reservedTargetId)->first();
+                if (! $reservedTarget || (int) $reservedTarget->routing_id !== (int) $reservedWorkOrder->production_routing_id) {
+                    $this->fail('stock_prebuild_reserved_operation_invalid', '指定的下一目标工序不属于目标生产工单冻结路线。', 422);
+                }
+                if (! empty($payload['reserved_for_production_unit_id']) && ! ProductionUnit::query()
+                    ->whereKey((int) $payload['reserved_for_production_unit_id'])
+                    ->where('work_order_id', $reservedWorkOrderId)->exists()) {
+                    $this->fail('stock_prebuild_reserved_unit_invalid', '指定生产单元不属于目标生产工单。', 422);
+                }
+                if ($reservedWorkOrder->production_execution_mode_snapshot === 'unit'
+                    && empty($payload['reserved_for_production_unit_id'])) {
+                    $this->fail('stock_prebuild_reserved_unit_required', '逐件目标工单必须指定具体生产单元，禁止将保留产出变成整单通用库存。', 422);
+                }
+            } elseif (! empty($payload['reserved_for_work_order_id']) || ! empty($payload['reserved_for_production_unit_id']) || ! empty($payload['reserved_for_target_operation_id'])) {
+                $this->fail('stock_prebuild_common_inventory_target_forbidden', '公共库存备货不能绑定指定生产工单、生产单元或目标工序。', 422);
+            }
 
             $number = isset($payload['reservation_token'])
                 ? $this->documentNumbers->reservedNumber($payload['reservation_token'], 'work_order', $this->userId($user), $payload['creation_session_id'] ?? null)
@@ -548,6 +630,13 @@ class WorkOrderApplicationService
                 'source_id' => null,
                 'source_no_snapshot' => $this->documentNumbers->next('stock_prebuild'),
                 'source_title_snapshot' => '系统备货',
+                'stocking_purpose' => $purpose,
+                'reserved_for_work_order_id' => $reservedWorkOrder?->id,
+                'reserved_for_production_unit_id' => $payload['reserved_for_production_unit_id'] ?? null,
+                'reserved_for_target_operation_id' => $payload['reserved_for_target_operation_id'] ?? null,
+                'configured_output_mode_snapshot' => (string) $targetNode->output_mode,
+                'effective_output_mode_snapshot' => $purpose === 'common_inventory' ? 'warehouse_required' : (string) $targetNode->output_mode,
+                'effective_output_item_id_snapshot' => (int) $targetNode->output_item_id,
                 'production_demand_id' => null,
                 'output_item_id' => $item->id,
                 'production_routing_id' => $routing->id,
@@ -599,6 +688,7 @@ class WorkOrderApplicationService
         $targetNodeId = array_key_exists('target_routing_operation_id', $payload) ? (int) $payload['target_routing_operation_id'] : (int) $workOrder->target_routing_operation_id;
         $targetNode = $routing->operations->firstWhere('id', $targetNodeId);
         if (! $targetNode) $this->fail('target_routing_operation_invalid', '目标路线工序不属于当前工艺路线。', 422);
+        if (! $targetNode->output_item_id) $this->fail('stock_prebuild_output_item_required', '备货生产目标工序必须配置正式产出物料。', 422);
         $before = $this->editableSnapshot($workOrder);
         $workOrder->fill(collect($payload)->only(['planned_date', 'production_batch', 'responsible_user_legacy_id', 'production_location_name'])->all());
         $workOrder->target_qty = $quantity;
@@ -608,6 +698,10 @@ class WorkOrderApplicationService
         $workOrder->routing_snapshot = $this->productionMasterData->snapshot($routing);
         $workOrder->target_operation_id = $targetNode->operation_id;
         $workOrder->target_routing_operation_id = $targetNodeId;
+        $workOrder->configured_output_mode_snapshot = (string) $targetNode->output_mode;
+        $workOrder->effective_output_mode_snapshot = $workOrder->stocking_purpose === 'common_inventory'
+            ? 'warehouse_required' : (string) $targetNode->output_mode;
+        $workOrder->effective_output_item_id_snapshot = (int) $targetNode->output_item_id;
         $workOrder->business_version++;
         $workOrder->updated_by_legacy_id = $this->userId($user);
         $workOrder->save();
@@ -681,7 +775,7 @@ class WorkOrderApplicationService
         $demand->save();
     }
 
-    private function workOrderAttributes(ProductionDemand $demand, array $payload, float $quantity, object $user): array
+    private function workOrderAttributes(ProductionDemand $demand, array $payload, float $quantity, object $user, int $masterOrderId): array
     {
         $line = $demand->line ?: $demand->load('line')->line;
         $targetUnitId = $line?->unit_id;
@@ -690,8 +784,14 @@ class WorkOrderApplicationService
         $productionQty = (float) ($demand->production_qty ?: 0);
         $targetBaseQty = $productionQty > 0 && $baseFactor > 0 ? $quantity * $baseFactor / $productionQty : $quantity;
         $outputItemId = (int) (($demand->item_id ?: $line?->item_id) ?? 0);
-        $routing = $outputItemId > 0 ? ProductionRouting::with(['outputItem', 'product', 'sku', 'operations.operation'])
-            ->where('output_item_id', $outputItemId)->where('status', 'active')->where('is_default', true)->lockForUpdate()->first() : null;
+        $routingMatches = $outputItemId > 0 ? ProductionRouting::with(['outputItem', 'product', 'sku', 'operations.operation'])
+            ->where('output_item_id', $outputItemId)->where('status', 'active')->where('is_default', true)->lockForUpdate()->get() : collect();
+        // A missing or ambiguous route is a visible release condition, not a
+        // reason to invent/freeze one of several candidates.
+        $routing = $routingMatches->count() === 1 ? $routingMatches->first() : null;
+        $matchedBomId = $demand->bom_id && DB::table('erp_boms')->where('id', $demand->bom_id)->exists()
+            ? (int) $demand->bom_id
+            : null;
         return array_merge([
             'work_order_no' => $this->documentNumbers->next('work_order'),
             'source_type' => 'sales_order',
@@ -699,6 +799,7 @@ class WorkOrderApplicationService
             'source_no_snapshot' => $demand->order?->sales_order_no,
             'source_title_snapshot' => $demand->requirement_no,
             'production_demand_id' => $demand->id,
+            'production_master_order_id' => $masterOrderId,
             'output_item_id' => $outputItemId ?: null,
             'production_routing_id' => $routing?->id,
             'routing_version_snapshot' => $routing?->version,
@@ -710,9 +811,9 @@ class WorkOrderApplicationService
             'target_base_qty' => $targetBaseQty,
             'base_unit_id' => $baseUnitId,
             'base_unit_name_snapshot' => $demand->base_unit_name_snapshot,
-            'bom_id' => $demand->bom_id,
-            'bom_version_id' => $demand->bom_version_id,
-            'bom_version' => $demand->bom_version,
+            'bom_id' => $matchedBomId,
+            'bom_version_id' => $matchedBomId,
+            'bom_version' => $matchedBomId ? $demand->bom_version : null,
             'status' => self::DRAFT,
             'business_version' => 1,
             'organization_code' => $this->trustedOrganization($user, $demand),

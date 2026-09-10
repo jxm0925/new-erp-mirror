@@ -92,7 +92,6 @@ class UnitConversionBusinessScenariosTest extends TestCase
     public function test_02_mixed_inventory_and_production_preserves_both_quantity_dialects(): void
     {
         [$order, $line] = $this->physicalOrder(10, 2.5, 10);
-        $workOrderFootprint = $this->workOrderFootprint();
         $this->confirm($order, [$this->decision($line, 10, inventory: 4, production: 6)]);
 
         $this->assertDatabaseHas('erp_sales_order_fulfillments', [
@@ -105,7 +104,7 @@ class UnitConversionBusinessScenariosTest extends TestCase
         ]);
         $this->assertDatabaseHas('erp_sales_order_production_requirements', [
             'sales_order_line_id' => $line->id, 'production_qty' => 6,
-            'item_base_required_qty' => 15, 'is_ready_for_work_order' => false,
+            'item_base_required_qty' => 15, 'is_ready_for_work_order' => true,
         ]);
         $this->assertSame('confirmed', $order->fresh()->production_confirm_status);
         $this->assertSame('pending', $order->fresh()->fulfillment_status);
@@ -115,23 +114,35 @@ class UnitConversionBusinessScenariosTest extends TestCase
             'sales_order_line_id' => $line->id,
             'fulfillment_type' => 'undetermined',
         ]);
-        $this->assertSame($workOrderFootprint, $this->workOrderFootprint());
+        $demandId = (int) DB::table('erp_sales_order_production_requirements')
+            ->where('sales_order_line_id', $line->id)->where('is_active', true)->value('id');
+        $workOrder = DB::table('erp_work_orders')->where('production_demand_id', $demandId)->first();
+        $this->assertNotNull($workOrder);
+        $this->assertSame('WAIT_RELEASE', $workOrder->status);
+        $this->assertNotNull($workOrder->production_master_order_id);
+        $this->assertSame(15.0, (float) $workOrder->target_base_qty);
     }
 
-    public function test_03_all_production_creates_requirement_contract_but_no_work_order(): void
+    public function test_03_all_production_creates_requirement_contract_and_visible_work_order(): void
     {
         [$order, $line] = $this->physicalOrder(10, 2.5, 0);
-        $before = $this->workOrderFootprint();
         $this->confirm($order, [$this->decision($line, 10, production: 10)]);
 
         $this->assertDatabaseHas('erp_sales_order_production_requirements', [
             'sales_order_line_id' => $line->id, 'production_qty' => 10,
             'item_base_required_qty' => 25, 'requirement_status' => 'ready',
         ]);
-        $this->assertSame($before, $this->workOrderFootprint());
+        $demandId = (int) DB::table('erp_sales_order_production_requirements')
+            ->where('sales_order_line_id', $line->id)->where('is_active', true)->value('id');
+        $workOrder = DB::table('erp_work_orders')->where('production_demand_id', $demandId)->first();
+        $this->assertNotNull($workOrder);
+        $this->assertSame('WAIT_RELEASE', $workOrder->status);
+        $this->assertSame(25.0, (float) $workOrder->target_base_qty);
+        $this->assertSame(15, DB::table('erp_work_order_release_gate_checks')->where('work_order_id', $workOrder->id)->count());
+        $this->assertSame(1, DB::table('erp_production_master_orders')->where('sales_order_id', $order->id)->count());
     }
 
-    public function test_04_mixed_blocked_retry_supersedes_ready_requirement_without_duplicate_active_demand(): void
+    public function test_04_mixed_blocked_confirmation_keeps_each_demand_visible_and_replay_idempotent(): void
     {
         $this->mixedFulfillmentRetryScenario = true;
         [$order, $first] = $this->physicalOrder(2, 1, 0);
@@ -144,26 +155,21 @@ class UnitConversionBusinessScenariosTest extends TestCase
         $this->confirm($order, $decisions);
         $this->assertSame('blocked', $order->fresh()->production_confirm_status);
         $this->assertSame(2, DB::table('erp_sales_order_production_requirements')->where('sales_order_id', $order->id)->count());
-        $firstDemandId = DB::table('erp_sales_order_production_requirements')
-            ->where('sales_order_line_id', $first->id)->where('is_active', true)->value('id');
-        DB::table('erp_work_orders')->insert([
-            'work_order_no' => 'QA-MIXED-RETRY-WO', 'production_demand_id' => $firstDemandId,
-            'target_qty' => 2, 'target_base_qty' => 2, 'status' => 'DRAFT', 'business_version' => 1,
-            'created_at' => now(), 'updated_at' => now(),
-        ]);
-
-        $this->confirm($order->fresh(), $decisions);
-
-        $this->assertSame(3, DB::table('erp_sales_order_production_requirements')->where('sales_order_id', $order->id)->count());
         $this->assertSame(2, DB::table('erp_sales_order_production_requirements')
             ->where('sales_order_id', $order->id)->where('is_active', true)->count());
-        $this->assertSame(1, DB::table('erp_sales_order_production_requirements')
-            ->where('sales_order_line_id', $first->id)->where('is_active', true)->count());
-        $this->assertSame(1, DB::table('erp_sales_order_production_requirements')
-            ->where('sales_order_line_id', $second->id)->where('is_active', true)->count());
-        $this->assertSame(1, DB::table('erp_sales_order_production_requirements')
-            ->where('sales_order_line_id', $first->id)->where('requirement_status', 'ready')->where('is_active', true)->count());
-        $this->assertDatabaseHas('erp_work_orders', ['production_demand_id' => $firstDemandId]);
+        $masterId = (int) DB::table('erp_production_master_orders')->where('sales_order_id', $order->id)->value('id');
+        $this->assertGreaterThan(0, $masterId);
+        $this->assertSame(2, DB::table('erp_work_orders')->where('production_master_order_id', $masterId)->count());
+
+        app(SalesOrderFulfillmentApplicationService::class)->confirmOrderAndFulfill(
+            $order->id,
+            '单位换算最终验收',
+            (object) ['nickname' => '单位换算最终验收'],
+        );
+
+        $this->assertSame(2, DB::table('erp_sales_order_production_requirements')->where('sales_order_id', $order->id)->count());
+        $this->assertSame(2, DB::table('erp_work_orders')->where('production_master_order_id', $masterId)->count());
+        $this->assertSame(1, DB::table('erp_production_master_orders')->where('sales_order_id', $order->id)->count());
     }
 
     public function test_04b_retry_converges_unreferenced_duplicate_active_demand_to_referenced_lineage(): void
@@ -205,6 +211,7 @@ class UnitConversionBusinessScenariosTest extends TestCase
         $this->confirm($order, [$this->decision($line, 2, production: 2)]);
         $demandId = (int) DB::table('erp_sales_order_production_requirements')
             ->where('sales_order_line_id', $line->id)->where('is_active', true)->value('id');
+        DB::table('erp_work_orders')->where('production_demand_id', $demandId)->update(['production_demand_id' => null]);
         DB::table('erp_sales_order_production_requirements')->where('id', $demandId)->update([
             'requirement_status' => 'consumed', 'consumed_qty' => 1, 'remaining_qty' => 1,
         ]);
@@ -229,6 +236,7 @@ class UnitConversionBusinessScenariosTest extends TestCase
         $this->confirm($order, [$this->decision($line, 2, production: 2)]);
         $demandId = (int) DB::table('erp_sales_order_production_requirements')
             ->where('sales_order_line_id', $line->id)->where('is_active', true)->value('id');
+        DB::table('erp_work_orders')->where('production_demand_id', $demandId)->update(['production_demand_id' => null]);
         DB::table('erp_sales_order_production_requirements')->where('id', $demandId)->update([
             'requirement_status' => 'partially_consumed', 'consumed_qty' => 1, 'remaining_qty' => 1,
         ]);
@@ -253,6 +261,7 @@ class UnitConversionBusinessScenariosTest extends TestCase
         $this->confirm($order, [$this->decision($line, 2, production: 2)]);
         $demandId = (int) DB::table('erp_sales_order_production_requirements')
             ->where('sales_order_line_id', $line->id)->where('is_active', true)->value('id');
+        DB::table('erp_work_orders')->where('production_demand_id', $demandId)->update(['production_demand_id' => null]);
         DB::table('erp_sales_order_production_requirements')->where('id', $demandId)->update([
             'requirement_status' => 'closed', 'consumed_qty' => 1, 'closed_qty' => 1, 'remaining_qty' => 0,
         ]);
@@ -312,19 +321,24 @@ class UnitConversionBusinessScenariosTest extends TestCase
         $this->assertDatabaseHas('erp_sales_order_fulfillments', ['sales_order_line_id' => $second->id, 'sales_qty' => 2]);
     }
 
-    public function test_07_special_custom_missing_drawing_blocks_and_rolls_back(): void
+    public function test_07_special_custom_missing_drawing_keeps_visible_work_order_blocked_at_release(): void
     {
         [$order, $line] = $this->physicalOrder(1, 1, 0);
         $line->update(['is_special_customized' => true]);
 
-        try {
-            $this->confirm($order, [$this->decision($line, 1, production: 1)]);
-            $this->fail('Special custom line without a drawing must be blocked.');
-        } catch (ValidationException $exception) {
-            $this->assertArrayHasKey('attachments', $exception->errors());
-        }
-        $this->assertDatabaseCount('erp_sales_order_fulfillments', 0);
-        $this->assertSame(0, DB::table('erp_sales_order_production_requirements')->where('sales_order_id', $order->id)->count());
+        $confirmed = $this->confirm($order, [$this->decision($line, 1, production: 1)]);
+
+        $this->assertSame('blocked', $confirmed->production_confirm_status);
+        $demandId = (int) DB::table('erp_sales_order_production_requirements')
+            ->where('sales_order_id', $order->id)->where('sales_order_line_id', $line->id)->value('id');
+        $workOrderId = (int) DB::table('erp_work_orders')->where('production_demand_id', $demandId)->value('id');
+        $this->assertGreaterThan(0, $workOrderId);
+        $this->assertDatabaseHas('erp_work_order_release_gate_checks', [
+            'work_order_id' => $workOrderId,
+            'check_key' => 'custom_documents',
+            'status' => 'blocked',
+            'reason_code' => 'custom_documents_missing',
+        ]);
     }
 
     public function test_08_special_custom_with_drawing_can_create_production_requirement(): void

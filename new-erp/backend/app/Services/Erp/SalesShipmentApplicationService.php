@@ -124,8 +124,10 @@ class SalesShipmentApplicationService
     public function confirm(SalesShipment $shipment, string $operator): SalesShipment
     {
         return DB::transaction(function () use ($shipment, $operator): SalesShipment {
+            $orderId = (int) SalesShipment::query()->whereKey($shipment->id)->value('sales_order_id');
+            $order = SalesOrder::query()->whereKey($orderId)->lockForUpdate()->firstOrFail();
             $shipment = SalesShipment::query()->lockForUpdate()->findOrFail($shipment->id);
-            $this->fundingGates->assertCanShip($shipment->sales_order_id);
+            $this->fundingGates->assertCanShip($order);
             if ($shipment->shipment_status !== 'draft') throw ValidationException::withMessages(['shipment' => '只有草稿发货单可以确认。']);
             $shipment->update(['shipment_status' => 'pending_outbound', 'confirmed_at' => now(), 'confirmed_by' => $operator]);
             $shipment->lines()->update(['line_status' => 'pending_outbound']);
@@ -137,8 +139,10 @@ class SalesShipmentApplicationService
     public function postOutbound(SalesShipment $shipment, string $operator): SalesShipment
     {
         return DB::transaction(function () use ($shipment, $operator): SalesShipment {
+            $orderId = (int) SalesShipment::query()->whereKey($shipment->id)->value('sales_order_id');
+            $order = SalesOrder::query()->whereKey($orderId)->lockForUpdate()->firstOrFail();
             $shipment = SalesShipment::query()->lockForUpdate()->findOrFail($shipment->id);
-            $this->fundingGates->assertCanShip($shipment->sales_order_id);
+            $this->fundingGates->assertCanShip($order);
             if ($shipment->shipment_status !== 'pending_outbound') throw ValidationException::withMessages(['shipment' => '当前发货单不处于待出库状态。']);
             $transaction = $this->inventory->postSalesShipment($shipment, $operator);
             $shipment->refresh();

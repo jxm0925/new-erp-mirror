@@ -2,7 +2,7 @@
 
 namespace Tests\Feature\Erp;
 
-use App\Models\Erp\{Bom, BomItem, InventoryBalance, InventoryBatch, Item, Location, Product, ProductionDemand, ProductionOutputRecord, ProductionTask, SalesOrder, SalesOrderFulfillment, SalesOrderLine, Sku, Unit, Warehouse};
+use App\Models\Erp\{Bom, BomItem, InventoryBalance, InventoryBatch, Item, Location, Product, ProductionDemand, ProductionOutputRecord, ProductionTask, SalesOrder, SalesOrderFulfillment, SalesOrderLine, Sku, SkuItemRelation, Unit, Warehouse};
 use App\Services\Erp\{ProductionExecutionActionService, ProductionOutputService, ProductionTaskAssignmentService, RbacBootstrapService, SalesOrderFulfillmentApplicationService, SalesOrderInventoryLockService, SalesShipmentApplicationService, WorkOrderApplicationService, WorkOrderCompletionService};
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
@@ -14,10 +14,123 @@ class SalesToProductionFullFlowTest extends TestCase
 {
     use DatabaseTransactions;
 
+    public function test_formal_sales_confirmation_locks_stock_and_creates_visible_mwo_and_wo_idempotently(): void
+    {
+        $f = $this->fixture();
+        $user = (object) ['legacy_id' => 9901, 'username' => 'full-flow', 'nickname' => '全流程测试员'];
+        $f['order']->update([
+            'order_status' => 'draft',
+            'confirm_status' => 'pending_confirmation',
+            'production_confirm_status' => 'pending',
+            'carrier_id' => 1,
+            'total_amount' => 100,
+            'final_receivable_amount' => 100,
+            'funding_policy_snapshot' => null,
+        ]);
+
+        $service = app(SalesOrderFulfillmentApplicationService::class);
+        $confirmed = $service->confirmOrderAndFulfill($f['order']->id, $user->nickname, $user);
+        $this->assertSame('confirmed', $confirmed->order_status);
+        $this->assertSame('confirmed', $confirmed->production_confirm_status);
+        $this->assertSame(4.0, (float) $confirmed->fulfillments->where('fulfillment_type', 'inventory')->sum('sales_qty'));
+        $this->assertSame(6.0, (float) $confirmed->fulfillments->where('fulfillment_type', 'production')->sum('sales_qty'));
+
+        $master = DB::table('erp_production_master_orders')->where('sales_order_id', $f['order']->id)->first();
+        $this->assertNotNull($master);
+        $workOrder = DB::table('erp_work_orders')->where('production_master_order_id', $master->id)->first();
+        $this->assertNotNull($workOrder);
+        $this->assertSame('WAIT_RELEASE', $workOrder->status);
+        $this->assertSame(6.0, (float) $workOrder->target_base_qty);
+        $this->assertDatabaseHas('erp_work_order_release_gate_checks', [
+            'work_order_id' => $workOrder->id,
+            'check_key' => 'production_funding',
+            'status' => 'blocked',
+            'reason_code' => 'production_funding_blocked',
+        ]);
+        $this->assertDatabaseHas('erp_work_order_release_gate_checks', [
+            'work_order_id' => $workOrder->id,
+            'check_key' => 'production_location',
+            'status' => 'blocked',
+        ]);
+        $this->assertSame(4.0, (float) InventoryBalance::query()->whereKey($f['balance']->id)->value('quantity_locked'));
+
+        $replayed = $service->confirmOrderAndFulfill($f['order']->id, $user->nickname, $user);
+        $this->assertSame($confirmed->id, $replayed->id);
+        $this->assertSame(1, DB::table('erp_production_master_orders')->where('sales_order_id', $f['order']->id)->count());
+        $this->assertSame(1, DB::table('erp_work_orders')->where('production_master_order_id', $master->id)->count());
+        $this->assertSame(2, DB::table('erp_sales_order_fulfillments')->where('sales_order_id', $f['order']->id)->count());
+    }
+
+    public function test_zero_price_physical_gift_formally_confirms_and_keeps_physical_fulfillment(): void
+    {
+        $f = $this->fixture();
+        $user = (object) ['legacy_id' => 9901, 'username' => 'full-flow', 'nickname' => '全流程测试员'];
+        $f['order']->update([
+            'order_status' => 'draft',
+            'confirm_status' => 'pending_confirmation',
+            'production_confirm_status' => 'pending',
+            'carrier_id' => 1,
+            'total_amount' => 0,
+            'final_receivable_amount' => 0,
+            'funding_policy_snapshot' => ['policy_type' => 'installment_contract', 'production_threshold_type' => 'amount', 'production_threshold_value' => '0'],
+        ]);
+        app(\App\Services\Erp\SalesOrderLineService::class)->sync($f['order'], [[
+            'id' => $f['line']->id,
+            'product_id' => $f['product']->id,
+            'sku_id' => $f['sku']->id,
+            'order_qty' => 10,
+            'unit_price' => 0,
+            'commercial_role' => 'gift',
+        ]], [], null, $user->nickname);
+
+        $this->withToken($this->token($user->legacy_id))
+            ->postJson('/api/v1/erp/sales/orders/'.$f['order']->id.'/formal-confirm')
+            ->assertOk()
+            ->assertJsonPath('message', '订单已确认，系统已按实时库存锁定履约并建立所需生产层级。')
+            ->assertJsonPath('data.lines.0.commercial_role', 'gift');
+        $confirmed = SalesOrder::query()->with('fulfillments')->findOrFail($f['order']->id);
+
+        $this->assertSame('confirmed', $confirmed->order_status);
+        $this->assertSame('gift', $f['line']->fresh()->commercial_role);
+        $this->assertSame(4.0, (float) $confirmed->fulfillments->where('fulfillment_type', 'inventory')->sum('sales_qty'));
+        $this->assertSame(6.0, (float) $confirmed->fulfillments->where('fulfillment_type', 'production')->sum('sales_qty'));
+        $this->assertSame(['gift'], $confirmed->fulfillments->pluck('match_snapshot.commercial_role')->unique()->values()->all());
+        $this->assertDatabaseHas('erp_work_orders', [
+            'production_demand_id' => DB::table('erp_sales_order_production_requirements')
+                ->where('sales_order_id', $f['order']->id)->value('id'),
+            'status' => 'WAIT_RELEASE',
+        ]);
+    }
+
+    public function test_zero_price_normal_sale_still_cannot_formally_confirm(): void
+    {
+        $f = $this->fixture();
+        $f['order']->update([
+            'order_status' => 'draft',
+            'confirm_status' => 'pending_confirmation',
+            'production_confirm_status' => 'pending',
+            'carrier_id' => 1,
+        ]);
+        $f['line']->update(['commercial_role' => 'sale', 'unit_price' => 0, 'amount' => 0]);
+
+        $this->withToken($this->token(9901))
+            ->postJson('/api/v1/erp/sales/orders/'.$f['order']->id.'/formal-confirm')
+            ->assertStatus(422);
+        $this->assertSame('draft', $f['order']->fresh()->order_status);
+    }
+
     public function test_partial_stock_order_runs_through_demand_work_order_execution_warehouse_reservation_and_shipment(): void
     {
         $f = $this->fixture();
         $user = (object) ['legacy_id' => 9901, 'username' => 'full-flow', 'nickname' => '全流程测试员'];
+        $f['line']->update([
+            'commercial_role' => 'gift',
+            'unit_price' => 0,
+            'amount' => 0,
+            'amount_excl_tax' => 0,
+            'tax_amount' => 0,
+            'amount_incl_tax' => 0,
+        ]);
 
         $locked = app(SalesOrderInventoryLockService::class)->lock($f['order']->id, [
             'client_command_id' => (string) Str::uuid(), 'expected_version' => 1,
@@ -34,15 +147,20 @@ class SalesToProductionFullFlowTest extends TestCase
         $this->assertSame('ready', $demand->requirement_status);
 
         $workOrders = app(WorkOrderApplicationService::class);
-        $draft = $workOrders->createDraft([
-            'client_command_id' => (string) Str::uuid(), 'source_type' => 'sales_order',
-            'production_demand_id' => $demand->id, 'expected_demand_version' => $demand->business_version,
-            'target_qty' => 6, 'planned_date' => now()->addDay()->toDateString(),
-            'responsible_user_legacy_id' => $user->legacy_id, 'production_location_name' => '全流程装配区',
-        ], $user, ['production.work_order.create'], true);
-        $waiting = $workOrders->submit($draft->id, ['client_command_id' => (string) Str::uuid(), 'expected_version' => 1, 'reason' => '全流程发布'], $user,
+        $automatic = \App\Models\Erp\WorkOrder::query()->where('production_demand_id', $demand->id)->firstOrFail();
+        $this->assertSame('WAIT_RELEASE', $automatic->status);
+        $this->assertNotNull($automatic->production_master_order_id);
+        $draft = $workOrders->returnToDraft($automatic->id, [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => 1, 'reason' => '补充生产排程条件',
+        ], $user, ['production.work_order.edit'], true);
+        $draft = $workOrders->updateDraft($draft->id, [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => 2,
+            'planned_date' => now()->addDay()->toDateString(), 'responsible_user_legacy_id' => $user->legacy_id,
+            'production_location_name' => '全流程装配区', 'reason' => '补齐自动工单生产条件',
+        ], $user, ['production.work_order.edit'], true);
+        $waiting = $workOrders->submit($draft->id, ['client_command_id' => (string) Str::uuid(), 'expected_version' => 3, 'reason' => '全流程发布'], $user,
             ['production.work_order.submit'], true);
-        $released = $workOrders->publish($waiting->id, ['client_command_id' => (string) Str::uuid(), 'expected_version' => 2, 'reason' => '全流程发布'], $user,
+        $released = $workOrders->publish($waiting->id, ['client_command_id' => (string) Str::uuid(), 'expected_version' => 4, 'reason' => '全流程发布'], $user,
             ['production.work_order.publish', 'production.work_order.gate.view', 'production.material.view'], true);
         $this->assertSame('RELEASED', $released->status);
 
@@ -104,6 +222,7 @@ class SalesToProductionFullFlowTest extends TestCase
         $this->assertSame(0.0, (float) InventoryBalance::query()->where('item_id', $f['item']->id)->sum('quantity_on_hand'));
         $this->assertSame(0.0, (float) InventoryBalance::query()->where('item_id', $f['item']->id)->sum('quantity_locked'));
         $this->assertSame(10.0, (float) $f['line']->fresh()->shipped_qty);
+        $this->assertSame('gift', $f['line']->fresh()->commercial_role);
     }
 
     private function fixture(): array
@@ -112,8 +231,12 @@ class SalesToProductionFullFlowTest extends TestCase
         DB::table('erp_legacy_admin_users')->insert(['legacy_id' => 9901, 'username' => 'flow-'.$suffix, 'nickname' => '全流程测试员',
             'status' => 'normal', 'auth_group_names' => '[]', 'created_at' => now(), 'updated_at' => now()]);
         app(RbacBootstrapService::class)->bootstrap(true);
-        DB::table('erp_rbac_user_roles')->insertOrIgnore(['user_legacy_id' => 9901,
-            'role_id' => DB::table('erp_rbac_roles')->where('code', 'production_manager')->value('id')]);
+        $roleId = DB::table('erp_rbac_roles')->where('code', 'production_manager')->value('id');
+        DB::table('erp_rbac_user_roles')->insertOrIgnore(['user_legacy_id' => 9901, 'role_id' => $roleId]);
+        DB::table('erp_rbac_role_permissions')->insertOrIgnore([
+            'role_id' => $roleId,
+            'permission_id' => DB::table('erp_rbac_permissions')->where('code', 'sales_order.formal_confirm')->value('id'),
+        ]);
         $unit = Unit::create(['unit_code' => 'EA-'.$suffix, 'unit_name' => '件', 'unit_type' => 'quantity', 'decimal_places' => 0, 'is_base' => true, 'status' => 'enabled']);
         $product = Product::create(['product_code' => 'P-'.$suffix, 'product_name' => '全流程产品', 'product_type' => 'standard', 'status' => 'enabled']);
         $sku = Sku::create(['product_id' => $product->id, 'sales_unit_id' => $unit->id, 'sku_code' => 'S-'.$suffix, 'sku_name' => '全流程规格', 'order_line_type' => 'physical', 'fulfillment_type' => 'physical', 'status' => 'enabled']);
@@ -124,8 +247,13 @@ class SalesToProductionFullFlowTest extends TestCase
         $warehouse = Warehouse::create(['warehouse_code' => 'WH-'.$suffix, 'warehouse_name' => '全流程成品仓', 'status' => 'enabled']);
         $location = Location::create(['warehouse_id' => $warehouse->id, 'location_code' => 'LOC-'.$suffix, 'location_name' => '全流程成品库位', 'status' => 'enabled']);
         InventoryBatch::create(['item_id' => $item->id, 'batch_no' => 'OPEN-'.$suffix, 'warehouse_id' => $warehouse->id, 'location_id' => $location->id, 'status' => 'enabled']);
-        InventoryBalance::create(['item_id' => $item->id, 'warehouse_id' => $warehouse->id, 'location_id' => $location->id, 'batch_no' => 'OPEN-'.$suffix,
+        $balance = InventoryBalance::create(['item_id' => $item->id, 'warehouse_id' => $warehouse->id, 'location_id' => $location->id, 'batch_no' => 'OPEN-'.$suffix,
             'unit_id' => $unit->id, 'quantity_on_hand' => 4, 'quantity_locked' => 0, 'quantity_available' => 4, 'quantity_defective' => 0, 'quantity_pending' => 0]);
+        SkuItemRelation::create([
+            'sku_id' => $sku->id, 'item_id' => $item->id, 'relation_type' => 'primary',
+            'qty' => 1, 'unit_id' => $unit->id, 'is_primary' => true,
+            'status' => 'active', 'effective_at' => now()->subDay(),
+        ]);
         $bom = Bom::create(['bom_no' => 'BOM-'.$suffix, 'bom_name' => '全流程 BOM', 'product_id' => $product->id, 'sku_id' => $sku->id,
             'output_item_id' => $item->id, 'bom_type' => 'standard', 'version' => 'V1.0', 'is_default' => true,
             'status' => 'active', 'audit_status' => 'approved', 'effective_date' => now()->subDay()->toDateString()]);
@@ -148,6 +276,7 @@ class SalesToProductionFullFlowTest extends TestCase
         $order = SalesOrder::create(['sales_order_no' => 'SO-'.$suffix, 'customer_name' => '全流程客户', 'order_status' => 'confirmed',
             'confirm_status' => 'confirmed', 'production_confirm_status' => 'pending', 'shipment_status' => 'not_shipped',
             'sales_user_legacy_id' => 9901, 'created_by_legacy_id' => 9901, 'total_amount' => 0, 'final_receivable_amount' => 0,
+            'funding_policy_snapshot' => ['policy_type' => 'full_prepay', 'shipment_requires_full_payment' => true],
             'business_version' => 1]);
         $line = SalesOrderLine::create(['sales_order_id' => $order->id, 'line_no' => 1, 'line_uuid' => 'L-'.$suffix, 'line_type' => 'physical',
             'product_id' => $product->id, 'product_name' => $product->product_name, 'sku_id' => $sku->id, 'sku_name' => $sku->sku_name,
@@ -155,6 +284,19 @@ class SalesToProductionFullFlowTest extends TestCase
             'unit_id' => $unit->id, 'unit_code_snapshot' => $unit->unit_code, 'unit_name_snapshot' => $unit->unit_name,
             'unit_price' => 10, 'amount' => 100, 'fulfillment_factor_snapshot' => 1, 'item_base_unit_id' => $unit->id,
             'item_base_unit_name_snapshot' => $unit->unit_name, 'item_base_required_qty' => 10, 'is_special_customized' => false]);
-        return compact('suffix', 'unit', 'product', 'sku', 'item', 'warehouse', 'location', 'order', 'line');
+        return compact('suffix', 'unit', 'product', 'sku', 'item', 'warehouse', 'location', 'balance', 'order', 'line');
+    }
+
+    private function token(int $userId): string
+    {
+        $token = 'sales-full-flow-token-'.uniqid();
+        DB::table('erp_auth_tokens')->insert([
+            'user_legacy_id' => $userId,
+            'token_hash' => hash('sha256', $token),
+            'expires_at' => now()->addHour(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        return $token;
     }
 }

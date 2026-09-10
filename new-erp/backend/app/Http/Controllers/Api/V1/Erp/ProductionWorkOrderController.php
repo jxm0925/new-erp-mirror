@@ -31,7 +31,10 @@ class ProductionWorkOrderController extends Controller
     public function workOrders(Request $request, ProductionWorkOrderQueryService $service)
     {
         $context = $this->context($request);
-        return response()->json($this->presentPaginator($service->workOrders($this->filters($request), ...$context), $request, WorkOrderResource::class));
+        $filters = $this->filters($request);
+        $response = $this->presentPaginator($service->workOrders($filters, ...$context), $request, WorkOrderResource::class);
+        if ($request->boolean('include_summary')) $response['summary'] = $service->workOrderSummary($filters, ...$context);
+        return response()->json($response);
     }
 
     public function showWorkOrder(Request $request, int $id, ProductionWorkOrderQueryService $service)
@@ -143,6 +146,10 @@ class ProductionWorkOrderController extends Controller
             'production_routing_id' => [$editing ? 'sometimes' : 'nullable', 'integer', 'exists:erp_production_routings,id'],
             'target_operation_id' => ['prohibited'],
             'target_routing_operation_id' => [$editing ? 'sometimes' : 'nullable', 'integer', 'exists:erp_production_routing_operations,id'],
+            'stocking_purpose' => [$editing ? 'prohibited' : 'nullable', 'in:common_inventory,reserved_for_work_order'],
+            'reserved_for_work_order_id' => [$editing ? 'prohibited' : 'nullable', 'integer', 'exists:erp_work_orders,id'],
+            'reserved_for_production_unit_id' => [$editing ? 'prohibited' : 'nullable', 'integer', 'exists:erp_production_units,id'],
+            'reserved_for_target_operation_id' => [$editing ? 'prohibited' : 'nullable', 'integer', 'exists:erp_production_routing_operations,id'],
             'creation_session_id' => ['nullable', 'uuid'],
             'reservation_token' => ['nullable', 'uuid'],
             'target_qty' => [$editing ? 'sometimes' : 'required', 'numeric', 'gt:0'],
@@ -164,7 +171,7 @@ class ProductionWorkOrderController extends Controller
             if (empty($data['production_demand_id']) || empty($data['expected_demand_version'])) throw ValidationException::withMessages(['production_demand_id' => '销售订单来源工单必须关联真实生产需求。']);
             foreach (['output_item_id', 'production_routing_id', 'target_routing_operation_id'] as $field) if (array_key_exists($field, $data)) throw ValidationException::withMessages([$field => '销售订单来源工单的物料和工艺路线必须由系统推导。']);
         } elseif ($source === 'stock_prebuild') {
-            foreach (['output_item_id', 'production_routing_id', 'target_routing_operation_id', 'creation_session_id', 'reservation_token'] as $field) if (empty($data[$field])) throw ValidationException::withMessages([$field => '备货工单必须完整选择产出物料、工艺路线和目标路线工序。']);
+            foreach (['output_item_id', 'production_routing_id', 'target_routing_operation_id', 'stocking_purpose', 'creation_session_id', 'reservation_token'] as $field) if (empty($data[$field])) throw ValidationException::withMessages([$field => '备货生产单必须完整选择产出物料、工艺路线、目标路线工序和备货用途。']);
         }
         return $data;
     }
@@ -183,7 +190,10 @@ class ProductionWorkOrderController extends Controller
         return $request->validate([
             'keyword' => ['nullable', 'string', 'max:160'],
             'status' => ['nullable', 'string', 'max:40'],
+            'display_status' => ['nullable', 'in:IN_PROGRESS,WAIT_CONDITION,EXCEPTION,COMPLETED'],
             'source_type' => ['nullable', 'in:sales_order,production_plan,trial,stock_prebuild'],
+            'source_group' => ['nullable', 'in:stock_prebuild,other'],
+            'stocking_purpose' => ['nullable', 'in:common_inventory,reserved_for_work_order'],
             'sales_order_id' => ['nullable', 'integer', 'min:1'],
             'sales_order_no' => ['nullable', 'string', 'max:120'],
             'production_demand_id' => ['nullable', 'integer', 'min:1'],
@@ -199,6 +209,7 @@ class ProductionWorkOrderController extends Controller
             'quantity_max' => ['nullable', 'numeric', 'min:0'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer'],
+            'include_summary' => ['nullable', 'boolean'],
         ]);
     }
 

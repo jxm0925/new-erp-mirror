@@ -81,7 +81,7 @@ class ProductionTaskQueryService
     private function applyExecutionFilter(Builder $query, string $filter): void
     {
         $running = ['IN_PROGRESS', 'PAUSED'];
-        $waiting = ['WAIT_PREVIOUS', 'WAIT_CLAIM', 'CLAIMED', 'WAIT_MATERIAL', 'WAIT_HANDOVER', 'READY', 'WAIT_QUALITY', 'WAIT_WAREHOUSE', 'REWORK'];
+        $waiting = ['WAIT_PREVIOUS', 'WAIT_PREDECESSOR', 'WAIT_CLAIM', 'CLAIMED', 'WAIT_MATERIAL', 'WAIT_HANDOVER', 'READY', 'WAIT_QUALITY', 'WAIT_WAREHOUSE', 'REWORK'];
         if ($filter === 'running') $this->whereTargetState($query, $running);
         if ($filter === 'waiting') {
             $this->whereTargetState($query, $waiting);

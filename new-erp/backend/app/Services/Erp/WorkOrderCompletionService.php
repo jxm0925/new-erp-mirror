@@ -14,6 +14,7 @@ final class WorkOrderCompletionService
         private readonly DocumentNumberService $numbers,
         private readonly ProductionDataScopeResolver $scopeResolver,
         private readonly WorkOrderCompletionReadinessService $readiness,
+        private readonly ProductionStockPrebuildService $stockPrebuild,
     ) {}
 
     public function preflight(int $workOrderId, object $user, array $permissions, bool $superAdmin = false): array
@@ -147,6 +148,9 @@ final class WorkOrderCompletionService
                         $next = $warehouse ? 'WAIT_WAREHOUSE' : 'COMPLETED';
                     }
                     $output->update(['status' => $next, 'business_version' => (int) $output->business_version + 1]);
+                    if ($decision === 'approve') {
+                        $this->stockPrebuild->routeApprovedDirectOutput($workOrder, $output->fresh(), $user);
+                    }
                 }
                 if ($decision === 'approve') {
                     $this->readiness->refresh($workOrder, $user, '完工审核通过并满足最终完成条件', $completionId, $now);

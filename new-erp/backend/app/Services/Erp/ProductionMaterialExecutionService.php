@@ -381,12 +381,31 @@ final class ProductionMaterialExecutionService
                         $this->fail('delivery_quantity_exceeded', '配送数量不能超过该配料行尚未分配的已拣数量。');
                     }
                     }
+                    $serialIds = array_values(array_unique(array_map('intval', (array) ($row['serial_ids'] ?? []))));
+                    $availableSerialIds = array_values(array_map('intval', (array) (($pickLine->serial_snapshot ?? [])['inventory_serial_ids'] ?? [])));
+                    if ($serialIds && array_diff($serialIds, $availableSerialIds)) {
+                        $this->fail('delivery_serial_invalid', '配送任务行的序列号切片必须来自该正式配料行。');
+                    }
+                    $allocatedSerialIds = MaterialDeliveryLine::query()
+                        ->where('picking_task_line_id', $pickLine->id)
+                        ->whereHas('delivery', fn ($query) => $query->where('status', '<>', 'CANCELLED'))
+                        ->get()->flatMap(fn (MaterialDeliveryLine $line) => (array) (($line->serial_snapshot ?? [])['inventory_serial_ids'] ?? []))
+                        ->map(fn ($id) => (int) $id)->unique()->all();
+                    if (array_intersect($serialIds, $allocatedSerialIds)) {
+                        $this->fail('delivery_serial_already_allocated', '同一序列号不能切片给多个配送执行任务。', 409);
+                    }
+                    if ($pickLine->serial_control_type !== 'none') {
+                        if (count($serialIds) !== (int) $quantity || abs($quantity - (int) $quantity) > 0.00000001) {
+                            $this->fail('delivery_serial_quantity_mismatch', '序列管理物料的配送数量必须与本任务序列号切片数量一致。');
+                        }
+                    }
                     MaterialDeliveryLine::create([
                         'delivery_id' => $delivery->id, 'material_requirement_id' => $pickLine->material_requirement_id,
                         'picking_task_line_id' => $pickLine->id, 'component_item_id' => $pickLine->component_item_id,
                         'delivery_qty' => $quantity, 'received_qty' => 0, 'rejected_qty' => 0,
                         'unit_id' => $pickLine->unit_id, 'unit_name_snapshot' => $pickLine->unit_name_snapshot,
-                        'batch_no' => $pickLine->batch_no, 'serial_snapshot' => $pickLine->serial_snapshot,
+                        'batch_no' => $pickLine->batch_no,
+                        'serial_snapshot' => $serialIds === [] ? null : ['inventory_serial_ids' => $serialIds],
                     ]);
                 }
                 $this->event('delivery', $delivery->id, 'create', null, 'READY', 0, 1, null, $payload['remark'] ?? null, $user);

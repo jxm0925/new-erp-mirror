@@ -82,7 +82,6 @@
 
   <view class="bottom-nav">
     <view class="nav-item" data-url="/pages/index/index" bindtap="switchRoot"><van-icon name="wap-home-o" /><text>首页</text></view>
-    <view class="nav-item active" data-url="/pages/production/workbench/index" bindtap="switchRoot"><van-icon name="orders-o" /><text>工单</text></view>
     <view class="nav-item" data-url="/pages/mall/index/index" bindtap="switchRoot"><van-icon name="gift-o" /><text>商城</text></view>
     <view class="nav-item" data-url="/pages/my/index/index" bindtap="switchRoot"><van-icon name="manager-o" /><text>我的</text></view>
   </view>

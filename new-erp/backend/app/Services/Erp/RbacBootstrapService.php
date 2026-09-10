@@ -264,6 +264,8 @@ class RbacBootstrapService
             ['production.labor_stats.view', '查看生产工时统计', 'button', 'production.work_order', null, null, 'el-icon-mouse', 48],
 
             ['sales_order.view', '销售订单查看', 'button', 'sales.order', null, null, 'el-icon-mouse', 1],
+            ['sales_order.amount.view', '查看销售与回款金额', 'button', 'sales.order', null, null, 'el-icon-view', 11],
+            ['sales_order.funding_policy.manage', '维护销售付款策略', 'button', 'sales.order', null, null, 'el-icon-setting', 12],
             ['sales_order.create', '销售订单新建', 'button', 'sales.order', null, null, 'el-icon-mouse', 2],
             ['sales_order.edit_draft', '销售订单编辑', 'button', 'sales.order', null, null, 'el-icon-mouse', 3],
             ['sales_order.delete_draft', '销售订单删除', 'button', 'sales.order', null, null, 'el-icon-mouse', 4],
@@ -334,6 +336,8 @@ class RbacBootstrapService
 
             ['finance.account.view', '查看资金账户', 'button', 'finance.account', null, null, 'el-icon-mouse', 1],
             ['finance.account.manage', '维护资金账户', 'button', 'finance.account', null, null, 'el-icon-mouse', 2],
+            ['finance.payment_method.view', '查看付款方式主数据', 'button', 'finance.account', null, null, 'el-icon-view', 3],
+            ['finance.payment_method.manage', '维护付款方式主数据', 'button', 'finance.account', null, null, 'el-icon-edit', 4],
             ['finance.account.valuation', '查看账户估值与流水', 'button', 'finance.account_valuation', null, null, 'el-icon-mouse', 1],
 
             ['finance.exchange-rate.view', '查看估值汇率历史', 'button', 'finance.account_valuation', null, null, 'el-icon-mouse', 2],

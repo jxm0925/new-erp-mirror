@@ -4,6 +4,7 @@ export const listFinanceAccounts = params => api.get('/v1/erp/finance/accounts',
 export const createFinanceAccount = data => api.post('/v1/erp/finance/accounts', data)
 export const updateFinanceAccount = (id, data) => api.put(`/v1/erp/finance/accounts/${id}`, data)
 export const setFinanceAccountStatus = (id, status) => api.post(`/v1/erp/finance/accounts/${id}/status`, { status })
+export const listPaymentMethods = params => api.get('/v1/erp/finance/payment-methods', { params })
 export const listFinanceCurrencies = params => api.get('/v1/erp/finance/currencies', { params })
 export const listExchangeRateHistory = params => api.get('/v1/erp/finance/exchange-rate-history', { params })
 export const createExchangeRate = data => api.post('/v1/erp/finance/exchange-rates', data)

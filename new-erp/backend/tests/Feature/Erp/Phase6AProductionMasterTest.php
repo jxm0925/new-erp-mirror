@@ -7,6 +7,7 @@ use App\Models\Erp\ProductionRouting;
 use App\Models\Erp\Unit;
 use App\Services\Erp\DocumentNumberService;
 use App\Services\Erp\ProductionMasterDataService;
+use App\Services\Erp\ProductionWorkOrderQueryService;
 use App\Services\Erp\WorkOrderApplicationService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
@@ -95,14 +96,52 @@ class Phase6AProductionMasterTest extends TestCase
         $payload = [
             'client_command_id' => $this->id('wo-stock'), 'creation_session_id' => $session, 'reservation_token' => $reservation->reservation_token,
             'source_type' => 'stock_prebuild',
+            'stocking_purpose' => 'common_inventory',
             'output_item_id' => $item->id, 'production_routing_id' => $route->id, 'target_routing_operation_id' => $route->operations->last()->id,
             'target_qty' => 12, 'planned_date' => '2026-09-10', 'production_batch' => 'SP-01',
         ];
         $service = app(WorkOrderApplicationService::class);
         $workOrder = $service->createDraft($payload, $user, self::WORK_ORDER_PERMISSIONS, true);
         $this->assertSame('stock_prebuild', $workOrder->source_type); // CASE 11
+        $this->assertSame('common_inventory', $workOrder->stocking_purpose);
+        $this->assertSame('flow_only', $workOrder->configured_output_mode_snapshot);
+        $this->assertSame('warehouse_required', $workOrder->effective_output_mode_snapshot);
+        $this->assertSame($item->id, (int) $workOrder->effective_output_item_id_snapshot);
         $this->assertSame($assembly->id, (int) $workOrder->target_operation_id); // CASE 12
         $this->assertSame($reservation->document_no, $workOrder->work_order_no);
+
+        $query = app(ProductionWorkOrderQueryService::class);
+        $stockPage = $query->workOrders([
+            'source_group' => 'stock_prebuild',
+            'keyword' => $workOrder->work_order_no,
+            'page' => 1,
+            'per_page' => 10,
+        ], $user, self::WORK_ORDER_PERMISSIONS, true);
+        $this->assertSame(1, $stockPage->total());
+        $this->assertSame($workOrder->id, $stockPage->items()[0]->id);
+        $stockSummary = $query->workOrderSummary([
+            'source_group' => 'stock_prebuild',
+            'keyword' => $workOrder->work_order_no,
+        ], $user, self::WORK_ORDER_PERMISSIONS, true);
+        $this->assertSame(1, $stockSummary['total']);
+        $this->assertSame(1, $stockSummary['wait_condition']);
+        $this->assertSame(0, $query->workOrders([
+            'source_group' => 'other',
+            'keyword' => $workOrder->work_order_no,
+        ], $user, self::WORK_ORDER_PERMISSIONS, true)->total());
+
+        DB::table('erp_production_routing_operations')->where('id', $route->operations->last()->id)->update(['output_item_id' => null]);
+        $missingItemSession = $this->uuid();
+        $missingItemReservation = $numbers->reserve('work_order', $missingItemSession, $user->legacy_id, '/production/work-orders/create');
+        try {
+            $service->createDraft([...$payload, 'client_command_id' => $this->id('wo-missing-target-item'),
+                'creation_session_id' => $missingItemSession, 'reservation_token' => $missingItemReservation->reservation_token],
+                $user, self::WORK_ORDER_PERMISSIONS, true);
+            $this->fail('备货目标工序缺少正式产出物料时必须阻断。');
+        } catch (\App\Exceptions\Erp\WorkOrderDomainException $exception) {
+            $this->assertSame('stock_prebuild_output_item_required', $exception->errorCode);
+        }
+        DB::table('erp_production_routing_operations')->where('id', $route->operations->last()->id)->update(['output_item_id' => $item->id]);
 
         $badSession = $this->uuid();
         $badReservation = $numbers->reserve('work_order', $badSession, $user->legacy_id, '/production/work-orders/create');
@@ -222,7 +261,11 @@ class Phase6AProductionMasterTest extends TestCase
         return $service->createRouting([
             'client_command_id' => $this->id('routing'), 'creation_session_id' => $session, 'reservation_token' => $reservation->reservation_token,
             'routing_name' => "标准制造路线 V{$version}", 'output_item_id' => $item->id, 'version' => $version,
-            'operations' => collect($operationIds)->values()->map(fn ($id, $index) => ['operation_id' => $id, 'sequence' => ($index + 1) * 10, 'is_key_operation' => $index === count($operationIds) - 1])->all(),
+            'operations' => collect($operationIds)->values()->map(fn ($id, $index) => [
+                'operation_id' => $id, 'sequence' => ($index + 1) * 10,
+                'is_key_operation' => $index === count($operationIds) - 1,
+                'output_item_id' => $item->id, 'output_mode' => 'flow_only',
+            ])->all(),
         ], $user, self::MASTER_PERMISSIONS, true);
     }
 

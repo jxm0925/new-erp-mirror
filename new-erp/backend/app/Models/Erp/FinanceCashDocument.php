@@ -15,8 +15,10 @@ class FinanceCashDocument extends MasterModel
         'exchange_rate_date' => 'date:Y-m-d',
         'confirmed_at' => 'datetime',
         'voided_at' => 'datetime',
+        'payment_method_snapshot' => 'array',
     ];
     public function account() { return $this->belongsTo(FinanceAccount::class, 'finance_account_id'); }
+    public function paymentMethod() { return $this->belongsTo(PaymentMethod::class); }
     public function allocations() { return $this->hasMany(FinanceAllocation::class, 'cash_document_id'); }
     public function attachments() { return $this->hasMany(FinanceAttachment::class, 'document_id')->where('document_type', 'cash_document')->where('status', 'active'); }
     public function logs() { return $this->hasMany(FinanceOperationLog::class, 'document_id')->where('document_type', 'cash_document')->latest('id'); }

@@ -116,8 +116,8 @@ class Phase6A1CloseoutTest extends TestCase
     {
         $op = DB::table('erp_production_operations')->insertGetId(['operation_no'=>$this->id(),'operation_name'=>'组装','status'=>'enabled','sort'=>10,'business_version'=>1,'created_at'=>now(),'updated_at'=>now()]);
         $id = DB::table('erp_production_routings')->insertGetId(['routing_no'=>$this->id(),'routing_name'=>'标准路线','output_item_id'=>$item->id,'version'=>1,'status'=>'active','is_default'=>$default,'default_scope_key'=>$default?$item->id:null,'business_version'=>1,'created_at'=>now(),'updated_at'=>now()]);
-        DB::table('erp_production_routing_operations')->insert(['routing_id'=>$id,'operation_id'=>$op,'sequence'=>10,'is_key_operation'=>false,'created_at'=>now(),'updated_at'=>now()]);
-        if ($duplicate) DB::table('erp_production_routing_operations')->insert(['routing_id'=>$id,'operation_id'=>$op,'sequence'=>30,'is_key_operation'=>true,'created_at'=>now(),'updated_at'=>now()]);
+        DB::table('erp_production_routing_operations')->insert(['routing_id'=>$id,'operation_id'=>$op,'sequence'=>10,'is_key_operation'=>false,'output_item_id'=>$item->id,'output_mode'=>'flow_only','created_at'=>now(),'updated_at'=>now()]);
+        if ($duplicate) DB::table('erp_production_routing_operations')->insert(['routing_id'=>$id,'operation_id'=>$op,'sequence'=>30,'is_key_operation'=>true,'output_item_id'=>$item->id,'output_mode'=>'flow_only','created_at'=>now(),'updated_at'=>now()]);
         return ProductionRouting::with(['outputItem','operations.operation'])->findOrFail($id);
     }
 
@@ -129,7 +129,7 @@ class Phase6A1CloseoutTest extends TestCase
     }
 
     private function salesPayload(ProductionDemand $demand): array { return ['client_command_id'=>$this->id(),'source_type'=>'sales_order','production_demand_id'=>$demand->id,'expected_demand_version'=>$demand->business_version,'target_qty'=>1]; }
-    private function stockPayload(object $user, Item $item, ProductionRouting $route, int $nodeId): array { $session=(string)Str::uuid(); $reservation=app(DocumentNumberService::class)->reserve('work_order',$session,$user->legacy_id,'/production/work-orders/create'); return ['client_command_id'=>$this->id(),'source_type'=>'stock_prebuild','creation_session_id'=>$session,'reservation_token'=>$reservation->reservation_token,'output_item_id'=>$item->id,'production_routing_id'=>$route->id,'target_routing_operation_id'=>$nodeId,'target_qty'=>1]; }
+    private function stockPayload(object $user, Item $item, ProductionRouting $route, int $nodeId): array { $session=(string)Str::uuid(); $reservation=app(DocumentNumberService::class)->reserve('work_order',$session,$user->legacy_id,'/production/work-orders/create'); return ['client_command_id'=>$this->id(),'source_type'=>'stock_prebuild','stocking_purpose'=>'common_inventory','creation_session_id'=>$session,'reservation_token'=>$reservation->reservation_token,'output_item_id'=>$item->id,'production_routing_id'=>$route->id,'target_routing_operation_id'=>$nodeId,'target_qty'=>1]; }
     private function expectDomain(string $code, callable $callback): void { try { $callback(); $this->fail("应拒绝：{$code}"); } catch (WorkOrderDomainException $e) { $this->assertSame($code, $e->errorCode); } }
     private function id(): string { return 'P6A1-'.str_replace('.', '', uniqid('', true)); }
 }

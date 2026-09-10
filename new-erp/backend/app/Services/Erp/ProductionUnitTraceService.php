@@ -28,9 +28,20 @@ class ProductionUnitTraceService
         if (! $unit) $this->fail('trace_not_found', '未找到该编号对应的生产链路。', 404);
         $this->visible($unit->work_order_id, $user, $permissions, $superAdmin, 'production.trace.view');
         $operationIds = $unit->operations()->pluck('id');
+        $outputIds = DB::table('erp_production_output_records')->where('production_unit_id', $unit->id)->pluck('id');
         return $this->projection($unit) + ['operations' => $this->timeline($unit),
             'outputs' => DB::table('erp_production_output_records')->where('production_unit_id', $unit->id)->orderBy('produced_at')->get()->map(fn ($row) => (array) $row)->all(),
-            'handovers' => DB::table('erp_production_operation_handovers')->where('work_order_id', $unit->work_order_id)->whereIn('source_target_id', $operationIds)->orderBy('handed_over_at')->get()->map(fn ($row) => (array) $row)->all()];
+            'handovers' => DB::table('erp_production_operation_handovers')->where('work_order_id', $unit->work_order_id)->whereIn('source_target_id', $operationIds)->orderBy('handed_over_at')->get()->map(fn ($row) => (array) $row)->all(),
+            'lineage' => DB::table('erp_production_output_lineage_links as lineage')
+                ->join('erp_production_output_records as parent', 'parent.id', '=', 'lineage.parent_output_record_id')
+                ->join('erp_production_output_records as child', 'child.id', '=', 'lineage.child_output_record_id')
+                ->where(function ($query) use ($outputIds): void {
+                    $query->whereIn('lineage.parent_output_record_id', $outputIds)
+                        ->orWhereIn('lineage.child_output_record_id', $outputIds);
+                })->orderBy('lineage.id')->get([
+                    'lineage.*', 'parent.output_no as parent_output_no', 'parent.serial_no_snapshot as parent_serial_no',
+                    'child.output_no as child_output_no', 'child.serial_no_snapshot as child_serial_no',
+                ])->map(fn ($row) => (array) $row)->all()];
     }
 
     private function timeline(ProductionUnit $unit): array

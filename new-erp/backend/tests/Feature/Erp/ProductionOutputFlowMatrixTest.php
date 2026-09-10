@@ -250,15 +250,30 @@ class ProductionOutputFlowMatrixTest extends TestCase
         $next = null;
         if ($withNext) {
             $next = ProductionQuantityOperation::create(['work_order_id' => $workOrder->id, 'operation_code_snapshot' => 'OP2', 'operation_name_snapshot' => '后工序',
-                'sequence_no_snapshot' => 2, 'status' => 'WAIT_PREVIOUS', 'planned_base_qty' => 2, 'completed_base_qty' => 0,
+                'sequence_no_snapshot' => 2, 'status' => 'WAIT_PREDECESSOR', 'planned_base_qty' => 2, 'completed_base_qty' => 0,
                 'remaining_base_qty' => 2, 'output_item_id_snapshot' => $item->id, 'output_mode_snapshot' => 'flow_only',
                 'quality_mode_snapshot' => 'none', 'kitting_required' => false, 'business_version' => 1]);
-            if ($claimedNext) {
-                $task = ProductionTask::create(['task_no' => $this->code('TASK'), 'work_order_id' => $workOrder->id, 'execution_mode' => 'quantity',
-                    'operation_code_snapshot' => 'OP2', 'operation_name_snapshot' => '后工序', 'sequence_no_snapshot' => 2,
-                    'status' => 'CLAIMED', 'assignee_user_legacy_id' => 8801, 'business_version' => 1]);
-                ProductionTaskTarget::create(['task_id' => $task->id, 'target_type' => 'quantity_operation', 'target_id' => $next->id, 'status_snapshot' => 'WAIT_PREVIOUS']);
-            }
+            // v3 creates every PT during publish. Even focused output-flow fixtures
+            // must model that invariant; output completion may activate this row but
+            // must never manufacture a successor task at runtime.
+            $task = ProductionTask::create([
+                'task_no' => $this->code('TASK'),
+                'work_order_id' => $workOrder->id,
+                'production_quantity_operation_id' => $next->id,
+                'execution_mode' => 'quantity',
+                'operation_code_snapshot' => 'OP2',
+                'operation_name_snapshot' => '后工序',
+                'sequence_no_snapshot' => 2,
+                'status' => $claimedNext ? 'CLAIMED' : 'WAIT_PREDECESSOR',
+                'assignee_user_legacy_id' => $claimedNext ? 8801 : null,
+                'business_version' => 1,
+            ]);
+            ProductionTaskTarget::create([
+                'task_id' => $task->id,
+                'target_type' => 'quantity_operation',
+                'target_id' => $next->id,
+                'status_snapshot' => 'WAIT_PREDECESSOR',
+            ]);
         }
         return compact('unit', 'item', 'workOrder', 'source', 'output', 'next');
     }

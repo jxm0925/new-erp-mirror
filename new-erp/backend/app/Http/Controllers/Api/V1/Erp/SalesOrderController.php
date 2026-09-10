@@ -20,6 +20,7 @@ use App\Models\Erp\SalesCustomerAddress;
 use App\Models\Erp\SalesCustomerContact;
 use App\Models\Erp\SalesChannel;
 use App\Models\Erp\SalesFundingPolicy;
+use App\Models\Erp\PaymentMethod;
 use App\Models\Erp\Sku;
 use App\Models\Erp\SkuItemRelation;
 use App\Models\Erp\Unit;
@@ -358,9 +359,11 @@ class SalesOrderController extends Controller
         if ($request->filled('production_confirm_status')) $query->where('production_confirm_status', $request->input('production_confirm_status'));
 
         $page = $query->paginate($this->perPage($request));
-        $page->getCollection()->transform(function (SalesOrder $order) use ($request) {
+        $canViewAmounts = $this->canViewAmounts($request);
+        $page->getCollection()->transform(function (SalesOrder $order) use ($request, $canViewAmounts) {
             $order->setAttribute('allowed_actions', $this->orderAllowedActions($request, $order));
             $this->decorateFulfillmentComposition($order);
+            if (! $canViewAmounts) $this->hideOrderAmounts($order);
             return $order;
         });
         return response()->json($page);
@@ -370,11 +373,12 @@ class SalesOrderController extends Controller
     {
         $this->abortUnlessPermission($request, 'sales_order.view');
         return response()->json([
-            'pay_types' => DB::table('erp_sales_order_pay_types')
-                ->where('enabled', true)
+            'pay_types' => PaymentMethod::query()
+                ->where('status', 'enabled')
+                ->where('available_for_sales', true)
                 ->orderBy('sort')
-                ->orderBy('legacy_id')
-                ->get(['legacy_id as id', 'name', 'trade_type']),
+                ->orderBy('id')
+                ->get(['id', 'method_code as code', 'method_name as name']),
             'platforms' => DB::table('erp_sales_order_trade_platforms')
                 ->where('enabled', true)
                 ->orderBy('parent_legacy_id')
@@ -400,7 +404,7 @@ class SalesOrderController extends Controller
             'funding_policies' => SalesFundingPolicy::query()
                 ->where('status', 'enabled')
                 ->orderBy('id')
-                ->get(['id', 'policy_code', 'policy_name', 'policy_type', 'production_threshold_type', 'production_threshold_value']),
+                ->get(['id', 'policy_code', 'policy_name', 'policy_type', 'production_threshold_type', 'production_threshold_value', 'shipment_requires_full_payment']),
         ]);
     }
 
@@ -487,9 +491,18 @@ class SalesOrderController extends Controller
         });
         // 第五阶段不创建工单；生产阶段接入真实工单表后只替换本投影来源。
         $order->setAttribute('work_order_tracking', $this->workOrderTrackingProjection($order));
-        $order->setAttribute('funding_status', app(SalesOrderFundingGateService::class)->status($order));
+        $auth = app(AuthContextService::class);
+        $user = $auth->currentUser($request);
+        $permissions = $user ? $auth->permissionCodes($user) : [];
+        $superAdmin = $user ? $auth->isSuperAdmin($user) : false;
+        $order->setAttribute('funding_status', app(SalesOrderFundingGateService::class)
+            ->statusForPermissions($order, $permissions, $superAdmin));
         $order->setAttribute('fulfillment_quantities', app(SalesOrderInventoryLockService::class)->projection($order));
-        return response()->json($order);
+        $payload = $order->toArray();
+        if (! $superAdmin && ! in_array('sales_order.amount.view', $permissions, true)) {
+            $payload = $this->redactSensitiveAmounts($payload);
+        }
+        return response()->json($payload);
     }
 
     public function update(Request $request, int $id)
@@ -538,21 +551,33 @@ class SalesOrderController extends Controller
         $this->abortUnlessPermission($request, 'sales_order.formal_confirm');
         $order = SalesOrder::with(['lines.sku', 'lines.item'])->findOrFail($id);
         $this->abortUnlessOrderVisible($request, $order);
-        abort_if($order->confirm_status !== 'pending_confirmation', 422, '请先完成确认前检查');
-        abort_if($order->order_status !== 'draft', 422, '只有草稿状态的销售订单可以提交确认');
+        $isReplay = $order->order_status === 'confirmed'
+            && in_array($order->production_confirm_status, ['confirmed', 'blocked'], true);
+        abort_if(!$isReplay && $order->confirm_status !== 'pending_confirmation', 422, '请先完成确认前检查');
+        abort_if(!$isReplay && $order->order_status !== 'draft', 422, '只有草稿状态的销售订单可以提交确认');
         abort_if($order->order_status === 'cancelled', 422, '已取消订单不能确认');
         abort_if($order->lines->isEmpty(), 422, '销售订单至少需要一行明细');
-        abort_if(blank($order->carrier_id), 422, '提交确认前必须先选择快递！');
-        foreach ($order->lines as $line) {
-            abort_if((float) $line->unit_price <= 0, 422, '提交确认前，订单行销售单价必须大于 0');
-            $this->assertLineOrderAttributes($line);
-            abort_if($line->is_special_customized && !$this->hasLineTechnicalAttachment($line), 422, '特殊定制订单行必须上传设计图纸或技术附件后才能提交确认');
+        if (!$isReplay) {
+            abort_if(blank($order->carrier_id), 422, '提交确认前必须先选择快递！');
+            foreach ($order->lines as $line) {
+                $price = (float) $line->unit_price;
+                abort_if(
+                    $line->commercial_role === 'gift' ? abs($price) >= 0.00000001 : $price <= 0,
+                    422,
+                    $line->commercial_role === 'gift'
+                        ? '提交确认前，赠品行销售单价必须为 0'
+                        : '提交确认前，正常销售行销售单价必须大于 0'
+                );
+                $this->assertLineOrderAttributes($line);
+            }
         }
 
+        $operator = app(AuthContextService::class)->currentUser($request);
+        abort_unless($operator, 401, '请先登录 ERP');
         $confirmed = app(\App\Services\Erp\SalesOrderFulfillmentApplicationService::class)
-            ->confirmOrder($order->id, $this->operatorName($request));
+            ->confirmOrderAndFulfill($order->id, $this->operatorName($request), $operator);
         return response()->json([
-            'message' => '订单已确认并锁定履约换算快照；请进入订单生产确认生成履约需求。',
+            'message' => '订单已确认，系统已按实时库存锁定履约并建立所需生产层级。',
             'data' => $confirmed,
         ]);
     }
@@ -612,9 +637,11 @@ class SalesOrderController extends Controller
             $payload['remark'] ?? null,
             $this->operatorName($request),
             $payload['adjustment_reason'] ?? null,
+            false,
+            app(AuthContextService::class)->currentUser($request),
         );
         return response()->json([
-            'message' => '订单生产确认已提交，库存占用、履约需求和生产需求契约已生成；未创建工单或工序任务。',
+            'message' => '订单生产确认已提交，库存占用、履约需求、主生产工单和待发布生产工单已生成。',
             'data' => $confirmed,
         ]);
     }
@@ -836,6 +863,7 @@ class SalesOrderController extends Controller
             'platform2' => 'nullable|string|max:80',
             'sales_channel_id' => 'nullable|integer|exists:erp_sales_channels,id',
             'funding_policy_id' => 'nullable|integer|exists:erp_sales_funding_policies,id',
+            'payment_method_id' => 'nullable|integer|exists:erp_payment_methods,id',
             'transaction_mode' => ['nullable', Rule::in(['cash_sale', 'contract', 'online_prepay'])],
             'external_order_no' => 'nullable|string|max:160',
             'channel_ordered_at' => 'nullable|date',
@@ -913,6 +941,7 @@ class SalesOrderController extends Controller
             'lines.*.item_name' => 'nullable|string|max:160',
             'lines.*.legacy_goods_type' => 'nullable|string|max:30',
             'lines.*.line_type' => ['nullable', Rule::in(['physical', 'service', 'no_delivery', 'fee', 'auxiliary'])],
+            'lines.*.commercial_role' => ['nullable', Rule::in(['sale', 'gift'])],
             'lines.*.order_qty' => 'required|numeric|min:0.0001',
             'lines.*.unit_id' => 'nullable|exists:erp_units,id',
             'lines.*.unit_price' => 'nullable|numeric|min:0',
@@ -1360,6 +1389,36 @@ class SalesOrderController extends Controller
         abort_unless($query->exists(), 403, '无权访问该销售订单');
     }
 
+    private function canViewAmounts(Request $request): bool
+    {
+        $auth = app(AuthContextService::class);
+        $user = $auth->currentUser($request);
+        return (bool) $user && ($auth->isSuperAdmin($user)
+            || in_array('sales_order.amount.view', $auth->permissionCodes($user), true));
+    }
+
+    private function hideOrderAmounts(SalesOrder $order): void
+    {
+        $order->makeHidden([
+            'total_amount', 'final_receivable_amount', 'cost_amount',
+            'actual_sales_cost_amount', 'freight_amount', 'carrier_fee',
+        ]);
+    }
+
+    private function redactSensitiveAmounts(array $payload): array
+    {
+        $redacted = [];
+        foreach ($payload as $key => $value) {
+            $name = is_string($key) ? strtolower($key) : '';
+            if ($name !== '' && (preg_match('/(^|_)(amount|price|cost)(_|$)/', $name)
+                || in_array($name, ['receipt_ratio', 'production_threshold_value'], true))) {
+                continue;
+            }
+            $redacted[$key] = is_array($value) ? $this->redactSensitiveAmounts($value) : $value;
+        }
+        return $redacted;
+    }
+
     private function attachCurrentOperator(array $payload, Request $request): array
     {
         $legacyAdminId = $this->currentLegacyAdminId($request);
@@ -1494,6 +1553,7 @@ class SalesOrderController extends Controller
         $qty = (float) $line['order_qty'];
         $price = (float) ($line['unit_price'] ?? 0);
         $lineType = $this->normalizeLineType(null, $line['legacy_goods_type'] ?? null, $sku, $product);
+        $commercialRole = $line['commercial_role'] ?? $existing?->commercial_role ?? 'sale';
         $lineUuid = $line['line_uuid'] ?? $existing?->line_uuid ?? (string) \Illuminate\Support\Str::uuid();
 
         return [
@@ -1515,6 +1575,7 @@ class SalesOrderController extends Controller
             'item_name' => $item?->item_name,
             'legacy_goods_type' => $line['legacy_goods_type'] ?? null,
             'line_type' => $lineType,
+            'commercial_role' => $commercialRole,
             'order_qty' => $qty,
             'unit_id' => $unit?->id,
             'unit_name_snapshot' => $unit?->unit_name,

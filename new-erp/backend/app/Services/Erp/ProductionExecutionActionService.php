@@ -81,6 +81,7 @@ class ProductionExecutionActionService
 
             $terminal = $this->isTerminalTarget($type, $target, (int) $task->work_order_id);
             $output = $this->createOutput($type, $target, $userId, $payload, $now, $terminal);
+            $this->syncInputLineage($type, (int) $target->id, (int) $output->id);
             $warehouseChosen = $target->output_mode_snapshot === 'warehouse_required'
                 || ($target->output_mode_snapshot === 'warehouse_optional' && ($payload['disposition'] ?? null) === 'warehouse');
             $nextStatus = $target->quality_mode_snapshot !== 'none' ? 'WAIT_QUALITY'
@@ -230,18 +231,54 @@ class ProductionExecutionActionService
             ]);
             return DB::table('erp_production_output_records')->where('id', $existing->id)->first();
         }
+        $workOrder = DB::table('erp_work_orders')->where('id', $target->work_order_id)->first(['source_type', 'output_item_id']);
+        $outputItemId = (int) ($target->output_item_id_snapshot ?: ($workOrder?->source_type === 'stock_prebuild' ? 0 : $workOrder?->output_item_id));
+        if (! $outputItemId) {
+            $this->fail('production_output_item_required', '当前工序缺少正式产出物料，禁止回退为生产工单最终成品。', 409);
+        }
+        $productionSerial = $unitId ? DB::table('erp_production_units as unit')
+            ->leftJoin('erp_production_serials as serial', 'serial.id', '=', 'unit.device_serial_id')
+            ->where('unit.id', $unitId)->where('serial.item_id', $outputItemId)
+            ->first(['serial.id', 'serial.serial_no']) : null;
         $id = DB::table('erp_production_output_records')->insertGetId([
                 'output_no' => $this->numbers->next('production_output', 'POU'), 'work_order_id' => $target->work_order_id,
                 'source_target_type' => $type, 'source_target_id' => $target->id, 'production_unit_id' => $unitId,
-                'output_item_id' => $target->output_item_id_snapshot ?: DB::table('erp_work_orders')->where('id', $target->work_order_id)->value('output_item_id'),
-                'output_base_qty' => $qty, 'output_mode_snapshot' => $target->output_mode_snapshot,
-                'quality_mode_snapshot' => $target->quality_mode_snapshot, 'status' => $target->quality_mode_snapshot !== 'none' ? 'WAIT_QUALITY'
+                'output_item_id' => $outputItemId,
+                 'output_base_qty' => $qty, 'output_mode_snapshot' => $target->output_mode_snapshot,
+                 'quality_mode_snapshot' => $target->quality_mode_snapshot, 'status' => $target->quality_mode_snapshot !== 'none' ? 'WAIT_QUALITY'
                     : ($terminal ? 'WAIT_COMPLETION'
                         : (($target->output_mode_snapshot === 'warehouse_required' || ($payload['disposition'] ?? null) === 'warehouse') ? 'WAIT_WAREHOUSE' : 'CREATED')),
-                'disposition' => $payload['disposition'] ?? null, 'created_by_legacy_id' => $userId, 'produced_at' => $now,
+                 'serial_id' => $productionSerial?->id, 'serial_no_snapshot' => $productionSerial?->serial_no,
+                 'disposition' => $payload['disposition'] ?? null, 'created_by_legacy_id' => $userId, 'produced_at' => $now,
                 'business_version' => 1, 'created_at' => $now, 'updated_at' => $now,
             ]);
         return DB::table('erp_production_output_records')->where('id', $id)->first();
+    }
+
+    /** Persist material ancestry when a target turns its received input into a new output. */
+    private function syncInputLineage(string $targetType, int $targetId, int $childOutputId): void
+    {
+        $parents = DB::table('erp_production_operation_handovers')
+            ->where('target_target_type', $targetType)->where('target_target_id', $targetId)
+            ->where('status', 'RECEIVED')->whereNotNull('output_record_id')
+            ->pluck('output_record_id')->map(fn ($id) => ['id' => (int) $id, 'type' => 'direct_handover']);
+        $issued = DB::table('erp_production_internal_issue_tasks as issue')
+            ->join('erp_production_internal_issue_lines as line', 'line.issue_task_id', '=', 'issue.id')
+            ->where('issue.target_type', $targetType)->where('issue.target_id', $targetId)
+            ->where('issue.status', 'RECEIVED')->whereNotNull('line.output_record_id')
+            ->pluck('line.output_record_id')->map(fn ($id) => ['id' => (int) $id, 'type' => 'internal_issue']);
+        foreach ($parents->concat($issued)->unique('id') as $parent) {
+            if ($parent['id'] === $childOutputId) continue;
+            DB::table('erp_production_output_lineage_links')->insertOrIgnore([
+                'parent_output_record_id' => $parent['id'],
+                'child_output_record_id' => $childOutputId,
+                'relation_type' => $parent['type'],
+                'parent_inventory_serial_id' => DB::table('erp_production_output_records')->where('id', $parent['id'])->value('inventory_serial_id'),
+                'child_inventory_serial_id' => DB::table('erp_production_output_records')->where('id', $childOutputId)->value('inventory_serial_id'),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
     }
 
     private function isTerminalTarget(string $type, object $target, int $workOrderId): bool

@@ -19,6 +19,7 @@ class ReleaseGateApplicationService
         private readonly BomMatcher $bomMatcher,
         private readonly ProductionDataScopeResolver $scopeResolver,
         private readonly ProductionExecutionFoundationService $productionExecution,
+        private readonly SalesOrderFundingGateService $fundingGates,
     ) {
     }
 
@@ -67,9 +68,35 @@ class ReleaseGateApplicationService
         $executionMode = (string) ($outputItem?->production_execution_mode ?: 'unit');
         $unitQuantityValid = $executionMode !== 'unit' || $this->isPositiveIntegerDecimal((string) $workOrder->target_base_qty);
         $supplyCoverage = $this->materialSupplyCoverage($workOrder, $bom);
+        $funding = $demand?->order ? $this->fundingGates->status($demand->order) : null;
 
         $checks = [
             $this->check('work_order_state', $workOrder->status === WorkOrderApplicationService::WAIT_RELEASE, 'state_not_wait_release', '工单必须处于待发布状态。', ['status' => $workOrder->status]),
+            $this->check(
+                'production_funding',
+                $funding === null || (bool) ($funding['production_funds_satisfied'] ?? false),
+                'production_funding_blocked',
+                '来源销售订单当前有效净收款未达到生产资金门槛。',
+                ['funding_status' => $funding['production_funding_status'] ?? 'not_required'],
+            ),
+            $this->check(
+                'stock_prebuild_output',
+                $workOrder->source_type !== 'stock_prebuild' || (
+                    in_array((string) $workOrder->stocking_purpose, ['common_inventory', 'reserved_for_work_order'], true)
+                    && (int) $workOrder->effective_output_item_id_snapshot > 0
+                    && in_array((string) $workOrder->configured_output_mode_snapshot, ['flow_only', 'warehouse_optional', 'warehouse_required'], true)
+                    && in_array((string) $workOrder->effective_output_mode_snapshot, ['flow_only', 'warehouse_optional', 'warehouse_required'], true)
+                    && ($workOrder->stocking_purpose !== 'common_inventory' || $workOrder->effective_output_mode_snapshot === 'warehouse_required')
+                ),
+                'stock_prebuild_output_item_required',
+                '备货生产目标工序必须冻结正式产出物料和有效产出模式；公共库存备货必须正式入库。',
+                [
+                    'stocking_purpose' => $workOrder->stocking_purpose,
+                    'configured_output_mode' => $workOrder->configured_output_mode_snapshot,
+                    'effective_output_mode' => $workOrder->effective_output_mode_snapshot,
+                    'effective_output_item_id' => $workOrder->effective_output_item_id_snapshot,
+                ],
+            ),
             $this->check($demand ? 'demand_active' : 'source_valid', $demand ? ((bool) $demand->is_active && ! in_array((string) $demand->requirement_status, ['cancelled', 'closed', 'superseded'], true)) : in_array((string) $workOrder->source_type, ['production_plan', 'trial', 'stock_prebuild'], true), $demand ? 'demand_inactive' : 'source_invalid', $demand ? '来源生产需求必须有效且未关闭。' : '工单来源必须有效。', ['source_type' => $workOrder->source_type, 'demand_status' => $demand?->requirement_status]),
             $this->check('routing_snapshot', is_array($workOrder->routing_snapshot) && ! empty($workOrder->routing_snapshot['operations']), 'routing_snapshot_missing', '未找到该产出物料的默认生效工艺路线，工单不能发布。', ['routing_id' => $workOrder->production_routing_id, 'routing_version' => $workOrder->routing_version_snapshot]),
             $this->check('quantity', (float) $workOrder->target_qty > 0 && (float) $workOrder->target_base_qty > 0, 'quantity_invalid', '工单计划数量和基准数量必须大于 0。', ['target_qty' => (float) $workOrder->target_qty, 'target_base_qty' => (float) $workOrder->target_base_qty]),

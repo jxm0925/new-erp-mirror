@@ -24,7 +24,45 @@ class SalesOrderFulfillmentApplicationService
         private readonly InventoryAvailabilityService $inventoryAvailability,
         private readonly InventoryReservationService $inventoryReservations,
         private readonly SalesOrderFundingGateService $fundingGates,
+        private readonly SalesOrderSnapshotService $snapshots,
+        private readonly WorkOrderApplicationService $workOrders,
     ) {}
+
+    public function confirmOrderAndFulfill(int $orderId, string $operatorName, object $operator): SalesOrder
+    {
+        return DB::transaction(function () use ($orderId, $operatorName, $operator): SalesOrder {
+            $current = SalesOrder::query()->with('fulfillments')->whereKey($orderId)->lockForUpdate()->firstOrFail();
+            if ($current->order_status === 'confirmed'
+                && in_array($current->production_confirm_status, ['confirmed', 'blocked'], true)
+                && $current->fulfillments->where('demand_status', 'confirmed')->isNotEmpty()) {
+                return $current->fresh(['lines', 'fulfillments', 'productionRequirements', 'activeProductionMasterOrder.workOrders']);
+            }
+            if ($current->order_status === 'draft') {
+                $this->confirmOrder($orderId, $operatorName);
+            } elseif ($current->order_status !== 'confirmed') {
+                throw ValidationException::withMessages(['order_status' => '当前销售订单状态不能执行正式确认。']);
+            }
+            $preview = $this->preview($orderId);
+            $decisions = collect($preview['lines'])->map(fn (array $line): array => [
+                'sales_order_line_id' => $line['sales_order_line_id'],
+                'confirm_qty' => $line['confirm_qty'],
+                'inventory_qty' => $line['system_suggested_inventory_qty'],
+                'production_qty' => $line['system_suggested_production_qty'],
+                'service_qty' => $line['service_qty'],
+                'no_delivery_qty' => $line['no_delivery_qty'],
+            ])->all();
+
+            return $this->confirmProduction(
+                $orderId,
+                $decisions,
+                '销售订单正式确认后由系统实时锁定库存并建立生产层级。',
+                $operatorName,
+                null,
+                true,
+                $operator,
+            );
+        }, 5);
+    }
 
     public function confirmOrder(int $orderId, string $operatorName): SalesOrder
     {
@@ -41,12 +79,19 @@ class SalesOrderFulfillmentApplicationService
                 throw ValidationException::withMessages(['carrier_id' => '提交确认前必须选择快递。']);
             }
 
+            // Drafts may remain open while finance masters change. Formal
+            // confirmation revalidates and freezes the selected records while
+            // this order row is locked, so later master edits cannot rewrite history.
+            $order = $this->snapshots->freezeFinancialTermsForConfirmation($order);
+            $order->load(['lines.sku.salesUnit.standardUnit', 'lines.item.unit.standardUnit']);
+
             foreach ($order->lines as $line) {
-                if ((float) $line->unit_price <= 0) {
+                $price = (float) $line->unit_price;
+                if ($line->commercial_role === 'gift' ? abs($price) >= 0.00000001 : $price <= 0) {
+                    if ($line->commercial_role === 'gift') {
+                        throw ValidationException::withMessages(['unit_price' => '赠品行销售单价必须为 0。']);
+                    }
                     throw ValidationException::withMessages(['unit_price' => "第 {$line->line_no} 行销售单价必须大于 0。"]);
-                }
-                if ($line->is_special_customized && !$this->hasTechnicalAttachment($line)) {
-                    throw ValidationException::withMessages(['attachments' => "第 {$line->line_no} 行为特殊定制，必须上传设计图纸或技术附件。"]);
                 }
                 $requirement = $this->conversions->calculateSalesRequirement($line->sku, $line->order_qty, true);
                 $item = $requirement['item'];
@@ -222,11 +267,21 @@ class SalesOrderFulfillmentApplicationService
         ];
     }
 
-    public function confirmProduction(int $orderId, array $decisions, ?string $remark, string $operatorName, ?string $adjustmentReason = null): SalesOrder
+    public function confirmProduction(
+        int $orderId,
+        array $decisions,
+        ?string $remark,
+        string $operatorName,
+        ?string $adjustmentReason = null,
+        bool $automatic = false,
+        ?object $operator = null,
+    ): SalesOrder
     {
-        return DB::transaction(function () use ($orderId, $decisions, $remark, $operatorName, $adjustmentReason) {
+        return DB::transaction(function () use ($orderId, $decisions, $remark, $operatorName, $adjustmentReason, $automatic, $operator) {
             $order = SalesOrder::with(['lines.product', 'lines.sku', 'lines.item'])->lockForUpdate()->findOrFail($orderId);
-            $this->fundingGates->assertCanStartProduction($order);
+            // Funding is a production-release/start gate, not a sales-order
+            // planning gate. The production hierarchy must remain visible while
+            // funds are short so the exact condition can be monitored and fixed.
             if ($order->order_status !== 'confirmed') {
                 throw ValidationException::withMessages(['order_status' => '销售订单确认后才能进行订单生产确认。']);
             }
@@ -362,10 +417,11 @@ class SalesOrderFulfillmentApplicationService
                             'production_requirement_status' => $type === 'production'
                                 ? ($prepared[$line->id]['lineBlocked'] ? 'blocked' : ($blocked ? 'pending' : 'confirmed'))
                                 : 'not_required',
-                            'demand_status' => $blocked ? 'pending' : 'confirmed',
+                            'demand_status' => 'confirmed',
                             'match_snapshot' => [
                                 'source' => 'order_production_confirmation',
                                 'snapshot_locked' => true,
+                                'commercial_role' => $line->commercial_role ?: 'sale',
                                 'sales_qty' => $allocatedSalesQty,
                                 'fulfillment_factor' => $this->isPhysicalLine($line) ? $this->fulfillmentFactor($line) : null,
                                 'item_base_qty' => $allocation ? $allocatedBaseQty : $itemBaseQuantity,
@@ -397,9 +453,6 @@ class SalesOrderFulfillmentApplicationService
                 ]);
 
                 if ($quantities['production_qty'] > 0) {
-                    if ($line->is_special_customized && !$this->hasTechnicalAttachment($line)) {
-                        throw ValidationException::withMessages(['attachments' => "第 {$line->line_no} 行为特殊定制，补齐设计图纸或技术附件后才能确认生产履约。"]);
-                    }
                     $bom = $prepared[$line->id]['bom'] ?? [];
                     $status = ($bom['status'] ?? null) === 'matched' ? 'ready' : 'blocked';
                     $productionBaseQty = $this->salesToBaseQuantity($line, $quantities['production_qty']);
@@ -473,6 +526,10 @@ class SalesOrderFulfillmentApplicationService
                                 'business_version' => (int) ($candidate->business_version ?: 1) + 1,
                             ]);
                         }
+                        $this->workOrders->ensureAutomaticSalesDraft(
+                            $existing,
+                            $operator ?? (object) ['nickname' => $operatorName],
+                        );
                         continue;
                     }
                     if ($referenced->count() > 1) {
@@ -489,6 +546,10 @@ class SalesOrderFulfillmentApplicationService
                             'business_version' => (int) ($candidate->business_version ?: 1) + 1,
                         ]);
                     }
+                    $this->workOrders->ensureAutomaticSalesDraft(
+                        $newDemand,
+                        $operator ?? (object) ['nickname' => $operatorName],
+                    );
                 }
             }
 
@@ -526,17 +587,17 @@ class SalesOrderFulfillmentApplicationService
                 return max(0, $effectiveQty - $confirmedSalesQty);
             });
             $productionConfirmStatus = $blocked ? 'blocked' : ($remainingAfterConfirmation > 0.00000001 ? 'pending' : 'confirmed');
-            if (!$blocked) {
-                $this->inventoryReservations->reserveForSalesOrder($order->fresh('fulfillments'));
-            }
+            $this->inventoryReservations->reserveForSalesOrder($order->fresh('fulfillments'));
             $order->update([
                 // Production confirmation allocates the fulfillment plan only. Actual
                 // fulfillment starts when downstream execution posts a real result.
                 'fulfillment_status' => 'pending',
                 'production_confirm_status' => $productionConfirmStatus,
             ]);
-            $this->log($order, 'production_confirm', 'pending', $productionConfirmStatus, '订单生产确认已保存销售数量与Item基本数量双口径履约需求；未创建工单、工序任务或排程。', $operatorName);
-            return $order->fresh(['lines', 'fulfillments', 'productionRequirements']);
+            $this->log($order, 'production_confirm', 'pending', $productionConfirmStatus, $automatic
+                ? '销售订单已按实时库存自动锁定履约，并建立唯一主生产工单与所需待发布生产工单。'
+                : '订单生产确认已保存双口径履约需求，并建立唯一主生产工单与所需待发布生产工单。', $operatorName);
+            return $order->fresh(['lines', 'fulfillments', 'productionRequirements', 'activeProductionMasterOrder.workOrders']);
         });
     }
 

@@ -74,7 +74,7 @@ Do not change layout without approval.
               </div>
               <span></span>
               <label class="required">付款方式</label>
-              <el-select v-model="form.pay_type" size="small" placeholder="请选择付款方式" clearable>
+              <el-select v-model="form.payment_method_id" size="small" placeholder="请选择付款方式" clearable>
                 <el-option v-for="item in payTypeOptions" :key="item.id" :label="item.name" :value="String(item.id)" />
               </el-select>
               <span></span>
@@ -561,7 +561,7 @@ export default {
       platform: '',
       platform2: '',
       platform_buyer_id: '',
-      pay_type: '',
+      payment_method_id: '',
       sales_user_legacy_id: '',
       created_by_legacy_id: '',
       order_time: '',
@@ -630,7 +630,7 @@ export default {
         this.form.customer_name &&
         this.form.sales_user_legacy_id &&
         this.form.platform &&
-        this.form.pay_type &&
+        this.form.payment_method_id &&
         this.form.lines.length &&
         this.form.lines.every(line => line.product_id && line.sku_id && Number(line.unit_price || 0) > 0)
       )
@@ -695,7 +695,7 @@ export default {
         platform: '',
         platform2: '',
         platform_buyer_id: '',
-        pay_type: '',
+        payment_method_id: '',
         sales_user_legacy_id: '',
         created_by_legacy_id: '',
         order_time: '',
@@ -750,7 +750,7 @@ export default {
         platform2: data.platform2 ? String(data.platform2) : '',
         platform_buyer_id: data.platform_buyer_id || '',
         customer_kind: data.customer_kind || (data.customer_snapshot && data.customer_snapshot.customer_kind) || 'individual',
-        pay_type: data.pay_type ? String(data.pay_type) : '',
+        payment_method_id: data.payment_method_id ? String(data.payment_method_id) : '',
         sales_user_legacy_id: data.sales_user_legacy_id ? String(data.sales_user_legacy_id) : '',
         created_by_legacy_id: data.created_by_legacy_id ? String(data.created_by_legacy_id) : '',
         is_share: Boolean(data.is_share),
@@ -1339,7 +1339,7 @@ export default {
       if (!this.form.customer_id) return this.$message.error('请通过客户选择框选择客户')
       if (!this.form.sales_user_legacy_id) return this.$message.error('请选择销售人员')
       if (!this.form.platform) return this.$message.error('请选择成交平台')
-      if (!this.form.pay_type) return this.$message.error('请选择付款方式')
+      if (!this.form.payment_method_id) return this.$message.error('请选择付款方式')
       if (this.form.lines.some(line => !line.sku_id)) return this.$message.error('订单行必须通过全局搜索选择SKU')
       if (this.form.lines.some(line => !line.product_id)) return this.$message.error('所选SKU缺少所属Product，请维护SKU主数据后重试')
       if (andConfirm && !this.form.carrier_id) return this.$message.error('提交确认前必须先选择快递')

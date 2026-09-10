@@ -20,6 +20,7 @@ class ProductionOutputService
         private readonly InventoryReservationService $reservations,
         private readonly WorkOrderCompletionService $completions,
         private readonly WorkOrderCompletionReadinessService $completionReadiness,
+        private readonly ProductionStockPrebuildService $stockPrebuild,
     ) {}
 
     public function inspect(int $outputId, array $payload, object $user, array $permissions): array
@@ -127,6 +128,10 @@ class ProductionOutputService
                 $this->syncSourceTarget($output, 'COMPLETED');
                 $this->ensureNextTask($output, false, $this->userId($user));
             }
+            $workOrder = WorkOrder::query()->lockForUpdate()->find($output->work_order_id);
+            $inventorySerialId = $workOrder
+                ? $this->stockPrebuild->registerOutputSerial($workOrder, $output, $payload, $user)
+                : null;
             $issueId = $terminal ? null : $this->createInternalIssue($output, $payload, $transaction);
             if ($terminal) DB::table('erp_work_order_finished_goods_receipts')->where('id', $receiptId)->update([
                 'output_warehouse_posting_id' => $postingId, 'inventory_transaction_id' => $transaction->id,
@@ -137,13 +142,18 @@ class ProductionOutputService
                 : null;
             if ($salesReservationId) DB::table('erp_production_output_warehouse_postings')->where('id', $postingId)
                 ->update(['sales_order_reservation_id' => $salesReservationId, 'updated_at' => now()]);
+            $productionReservation = $terminal && $workOrder && $receiptId
+                ? $this->stockPrebuild->reserveWarehouseOutput($workOrder, $output, $receiptId, $payload, $quantity, $user)
+                : ['reservation_id' => null, 'internal_issue_task_id' => null];
+            if ($productionReservation['internal_issue_task_id']) $issueId = $productionReservation['internal_issue_task_id'];
             if ($terminal) {
-                $workOrder = WorkOrder::query()->lockForUpdate()->find($output->work_order_id);
                 if ($workOrder) $this->completionReadiness->refresh($workOrder, $user, '成品正式入库后满足最终完成条件', $receiptId);
             }
             return ['posting_id' => $postingId, 'inventory_transaction_id' => (int) $transaction->id,
                 'output_status' => $outputStatus, 'output_business_version' => (int) $output->business_version,
                 'internal_issue_task_id' => $issueId, 'sales_order_reservation_id' => $salesReservationId,
+                'production_inventory_reservation_id' => $productionReservation['reservation_id'],
+                'inventory_serial_id' => $inventorySerialId,
                 'finished_goods_receipt_id' => $receiptId, 'finished_goods_receipt_no' => $receiptNo,
                 'posted_base_qty' => $quantity, 'remaining_receivable_base_qty' => $remainingAfter];
         });
@@ -250,17 +260,19 @@ class ProductionOutputService
         $output->source_target_type === 'unit_operation' ? $query->where('production_unit_id', $source->production_unit_id) : $query->where('work_order_id', $source->work_order_id);
         $next = $query->orderBy('sequence_no_snapshot')->lockForUpdate()->first();
         if (! $next) return;
-        $existing = DB::table('erp_production_task_targets')->where('target_type', $output->source_target_type)->where('target_id', $next->id)->exists();
-        if (! $existing) {
-            $next->status = 'WAIT_CLAIM'; $next->business_version = (int) $next->business_version + 1; $next->save();
-            $mode = $output->source_target_type === 'unit_operation' ? 'unit' : 'quantity';
-            $task = \App\Models\Erp\ProductionTask::query()->where('work_order_id', $output->work_order_id)->where('execution_mode', $mode)
-                ->where('routing_operation_id_snapshot', $next->routing_operation_id_snapshot)->where('status', 'WAIT_CLAIM')->whereNull('assignee_user_legacy_id')->lockForUpdate()->first();
-            if (! $task) $task = \App\Models\Erp\ProductionTask::create(['task_no' => $this->numbers->next('production_task', 'PT'),
-                'work_order_id' => $output->work_order_id, 'execution_mode' => $mode, 'routing_operation_id_snapshot' => $next->routing_operation_id_snapshot,
-                'operation_code_snapshot' => $next->operation_code_snapshot, 'operation_name_snapshot' => $next->operation_name_snapshot,
-                'sequence_no_snapshot' => $next->sequence_no_snapshot, 'status' => 'WAIT_CLAIM', 'business_version' => 1]);
-            $task->targets()->create(['target_type' => $output->source_target_type, 'target_id' => $next->id, 'status_snapshot' => 'WAIT_CLAIM']);
+        $link = DB::table('erp_production_task_targets')->where('target_type', $output->source_target_type)
+            ->where('target_id', $next->id)->lockForUpdate()->first();
+        if (! $link) $this->fail('successor_task_missing', '下一工序缺少发布时生成的独立工序任务，禁止运行时补造任务。', 409);
+        $task = \App\Models\Erp\ProductionTask::query()->lockForUpdate()->findOrFail($link->task_id);
+        if (in_array($next->status, ['WAIT_PREVIOUS', 'WAIT_PREDECESSOR'], true)) {
+            $next->status = 'WAIT_CLAIM';
+            $next->business_version = (int) $next->business_version + 1;
+            $next->save();
+            DB::table('erp_production_task_targets')->where('id', $link->id)
+                ->update(['status_snapshot' => 'WAIT_CLAIM', 'updated_at' => now()]);
+            if (! $task->assignee_user_legacy_id) {
+                $task->update(['status' => 'WAIT_CLAIM', 'business_version' => (int) $task->business_version + 1]);
+            }
         }
         if ($handover) {
             $existingHandover = DB::table('erp_production_operation_handovers')

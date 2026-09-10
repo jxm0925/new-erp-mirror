@@ -1,4 +1,6 @@
 {
   "usingComponents": {},
-  "navigationBarTitleText": "改良委后台"
+  "navigationBarTitleText": "改良委工作台",
+  "enablePullDownRefresh": true,
+  "backgroundTextStyle": "dark"
 }

@@ -7,10 +7,13 @@ use App\Models\Erp\SalesCustomerAddress;
 use App\Models\Erp\SalesCustomerContact;
 use App\Models\Erp\SalesChannel;
 use App\Models\Erp\SalesFundingPolicy;
+use App\Models\Erp\SalesOrder;
 use Illuminate\Support\Facades\DB;
 
 class SalesOrderSnapshotService
 {
+    public function __construct(private readonly PaymentMethodApplicationService $paymentMethods) {}
+
     public function lock(array $payload): array
     {
         $customer = $this->resolveAndUpsertCustomer($payload);
@@ -70,6 +73,9 @@ class SalesOrderSnapshotService
                 ->where('status', 'enabled')
                 ->where('policy_code', $channel->default_funding_policy_code)
                 ->firstOrFail();
+        $paymentMethodValue = $payload['payment_method_id'] ?? $payload['pay_type'] ?? null;
+        abort_if(blank($paymentMethodValue), 422, '请选择正式付款方式');
+        $paymentMethod = $this->paymentMethods->resolveForSales($paymentMethodValue);
         $externalOrderNo = trim((string) ($payload['external_order_no'] ?? '')) ?: null;
         abort_if($channel->requires_external_order_no && !$externalOrderNo, 422, '当前成交渠道必须填写外部订单号');
         $payload['sales_channel_id'] = $channel->id;
@@ -89,6 +95,11 @@ class SalesOrderSnapshotService
             'production_threshold_value' => (string) $policy->production_threshold_value,
             'shipment_requires_full_payment' => (bool) $policy->shipment_requires_full_payment,
         ];
+        $payload['payment_method_id'] = $paymentMethod->id;
+        $payload['payment_method_snapshot'] = $this->paymentMethods->snapshot($paymentMethod);
+        // pay_type is retained as the compact display/search field, but its
+        // value is now the stable code from the same formal master used by finance.
+        $payload['pay_type'] = $paymentMethod->method_code;
         $payload['payment_terms_snapshot'] = is_array($payload['payment_terms_snapshot'] ?? null)
             ? $payload['payment_terms_snapshot']
             : ['policy_code' => $policy->policy_code, 'policy_name' => $policy->policy_name];
@@ -110,6 +121,34 @@ class SalesOrderSnapshotService
         );
 
         return $payload;
+    }
+
+    /** Freeze the currently selected master records again at formal confirmation. */
+    public function freezeFinancialTermsForConfirmation(SalesOrder $order): SalesOrder
+    {
+        $updates = [];
+        if ($order->payment_method_id) {
+            $method = $this->paymentMethods->resolveForSales((int) $order->payment_method_id);
+            $updates['payment_method_snapshot'] = $this->paymentMethods->snapshot($method);
+            $updates['pay_type'] = $method->method_code;
+        }
+        if ($order->funding_policy_id) {
+            $policy = SalesFundingPolicy::query()->where('status', 'enabled')->findOrFail($order->funding_policy_id);
+            $updates['funding_policy_snapshot'] = [
+                'id' => $policy->id,
+                'policy_code' => $policy->policy_code,
+                'policy_name' => $policy->policy_name,
+                'policy_type' => $policy->policy_type,
+                'production_threshold_type' => $policy->production_threshold_type,
+                'production_threshold_value' => (string) $policy->production_threshold_value,
+                'shipment_requires_full_payment' => (bool) $policy->shipment_requires_full_payment,
+                'receivable_amount' => (string) ($order->final_receivable_amount ?: $order->total_amount),
+                'frozen_at' => now()->toISOString(),
+            ];
+            $updates['payment_terms_snapshot'] = $updates['funding_policy_snapshot'];
+        }
+        if ($updates !== []) $order->update($updates);
+        return $order->fresh();
     }
 
     /**

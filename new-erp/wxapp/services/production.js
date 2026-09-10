@@ -10,6 +10,8 @@ function command(path, data, commandPrefix) {
 
 module.exports = {
   newCommandId: prefix => erpRequest.createClientCommandId(prefix),
+  masterOrders: (query) => get('production/master-orders', query || {}),
+  workOrders: (query) => get('production/work-orders', query || {}),
   taskPool: (query) => get('production/tasks', Object.assign({ view: 'pool' }, query || {})),
   myTasks: (query) => get('production/tasks', Object.assign({ view: 'owned' }, query || {})),
   collaborations: (query) => get('production/tasks', Object.assign({ view: 'collaboration' }, query || {})),

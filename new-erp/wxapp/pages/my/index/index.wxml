@@ -1,7 +1,6 @@
 <view class="container" style="height: {{pageHeight}};" >
     <view class="user-section">
         <image class="bg" src="/static/images/bgImg.png"></image>
-        <view class="account-caption">统一账号 · 改良改善 / 日报 / 商城 / 工单</view>
         <view class="user-info-box" bindtap="closeTank">
             <view class="portrait-box">
                 <image class="portrait" src='{{userInfo.avatar?userInfo.avatar:"/static/images/missing_face.png"}}'></image>
@@ -13,17 +12,6 @@
                 <text class="points">积分：{{userInfo.is_login?score:0}}</text>
                 </view>
             </view>
-        </view>
-    </view>
-    <view class="erp-auth-card">
-        <view class="erp-auth-title"><text>统一登录状态</text><text class="erp-state {{unifiedLoggedIn?'online':''}}">{{unifiedLoggedIn ? '全部已登录' : '未完成登录'}}</text></view>
-        <view wx:if="{{unifiedLoggedIn}}" class="erp-user-row">
-            <view><strong>{{erpUser.nickname || erpUser.username || userInfo.name}}</strong><text>当前账号可同时使用旧业务与新版生产工单</text></view>
-            <button class="erp-outline" loading="{{logoutBusy}}" bindtap="logoutAll">退出</button>
-        </view>
-        <view wx:else class="erp-user-row">
-            <view><strong>登录一次，全系统通用</strong><text>若已有旧登录，请重新登录一次完成统一认证</text></view>
-            <button class="erp-outline" bindtap="loginPop">登录</button>
         </view>
     </view>
     <!-- <van-cell wx:if="{{userInfo && !userInfo.mobile}}" icon-class="bind-phone-icon" title-class="bind-phone" title="点击绑定手机号获取更多信息">

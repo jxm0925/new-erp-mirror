@@ -25,6 +25,9 @@ use App\Http\Controllers\Api\V1\Erp\PurchaseExchangeController;
 use App\Http\Controllers\Api\V1\Erp\PurchaseReturnController;
 use App\Http\Controllers\Api\V1\Erp\PurchaseSupplierRecommendationController;
 use App\Http\Controllers\Api\V1\Erp\ProductionWorkOrderController;
+use App\Http\Controllers\Api\V1\Erp\ProductionMasterOrderController;
+use App\Http\Controllers\Api\V1\Erp\ProductionPreparationOrderController;
+use App\Http\Controllers\Api\V1\Erp\ProductionDeliveryWaveController;
 use App\Http\Controllers\Api\V1\Erp\WorkOrderCompletionController;
 use App\Http\Controllers\Api\V1\Erp\ProductionMasterDataController;
 use App\Http\Controllers\Api\V1\Erp\ProductionMaterialExecutionController;
@@ -178,6 +181,14 @@ Route::prefix('v1/erp/document-numbers')->group(function () {
 });
 
 Route::prefix('v1/erp/finance')->group(function () {
+    Route::get('payment-methods', [FinanceController::class, 'paymentMethods']);
+    Route::post('payment-methods', [FinanceController::class, 'storePaymentMethod']);
+    Route::put('payment-methods/{id}', [FinanceController::class, 'updatePaymentMethod'])->whereNumber('id');
+    Route::post('payment-methods/{id}/status', [FinanceController::class, 'paymentMethodStatus'])->whereNumber('id');
+    Route::get('funding-policies', [FinanceController::class, 'fundingPolicies']);
+    Route::post('funding-policies', [FinanceController::class, 'storeFundingPolicy']);
+    Route::put('funding-policies/{id}', [FinanceController::class, 'updateFundingPolicy'])->whereNumber('id');
+    Route::post('funding-policies/{id}/status', [FinanceController::class, 'fundingPolicyStatus'])->whereNumber('id');
     Route::get('accounts', [FinanceController::class, 'accounts']);
     Route::get('currencies', [FinanceController::class, 'currencies']);
     Route::post('currencies', [FinanceController::class, 'storeCurrency']);
@@ -363,6 +374,17 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::post('routings/{id}/copy-version', [ProductionMasterDataController::class, 'copyRouting'])->whereNumber('id');
     Route::post('routings/{id}/retire', [ProductionMasterDataController::class, 'retireRouting'])->whereNumber('id');
     Route::get('demands', [ProductionWorkOrderController::class, 'demands']);
+    Route::get('master-orders', [ProductionMasterOrderController::class, 'index']);
+    Route::get('master-orders/{id}', [ProductionMasterOrderController::class, 'show'])->whereNumber('id');
+    Route::get('master-orders/{id}/work-orders', [ProductionMasterOrderController::class, 'workOrders'])->whereNumber('id');
+    Route::get('master-orders/{id}/units', [ProductionMasterOrderController::class, 'units'])->whereNumber('id');
+    Route::get('master-orders/{id}/funding-status', [ProductionMasterOrderController::class, 'fundingStatus'])->whereNumber('id');
+    Route::get('preparation-orders', [ProductionPreparationOrderController::class, 'index']);
+    Route::get('preparation-orders/{id}', [ProductionPreparationOrderController::class, 'show'])->whereNumber('id');
+    Route::get('delivery-waves', [ProductionDeliveryWaveController::class, 'index']);
+    Route::post('delivery-waves', [ProductionDeliveryWaveController::class, 'store']);
+    Route::post('delivery-tasks/{id}/pool-claim', [ProductionDeliveryWaveController::class, 'poolClaim'])->whereNumber('id');
+    Route::post('delivery-tasks/{id}/dispatcher-assign', [ProductionDeliveryWaveController::class, 'dispatcherAssign'])->whereNumber('id');
     Route::get('demands/{id}', [ProductionWorkOrderController::class, 'demand'])->whereNumber('id');
     Route::get('work-orders', [ProductionWorkOrderController::class, 'workOrders']);
     Route::post('work-orders', [ProductionWorkOrderController::class, 'store']);

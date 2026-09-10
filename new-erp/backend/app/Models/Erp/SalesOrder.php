@@ -34,6 +34,7 @@ class SalesOrder extends MasterModel
         'shipping_address_snapshot' => 'array',
         'funding_policy_snapshot' => 'array',
         'payment_terms_snapshot' => 'array',
+        'payment_method_snapshot' => 'array',
         'channel_ordered_at' => 'datetime:Y-m-d H:i:s',
         'business_version' => 'integer',
         'inventory_locked_at' => 'datetime',
@@ -51,4 +52,6 @@ class SalesOrder extends MasterModel
     public function changeCandidates() { return $this->hasMany(SalesOrderChangeCandidate::class, 'sales_order_id'); }
     public function salesChannel() { return $this->belongsTo(SalesChannel::class); }
     public function fundingPolicy() { return $this->belongsTo(SalesFundingPolicy::class); }
+    public function paymentMethod() { return $this->belongsTo(PaymentMethod::class); }
+    public function activeProductionMasterOrder() { return $this->hasOne(ProductionMasterOrder::class, 'active_sales_order_id'); }
 }

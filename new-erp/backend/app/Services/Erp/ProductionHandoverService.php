@@ -7,10 +7,13 @@ use App\Models\Erp\ProductionExecutionCommand;
 use App\Models\Erp\ProductionQuantityOperation;
 use App\Models\Erp\ProductionTask;
 use App\Models\Erp\ProductionUnitOperation;
+use App\Models\Erp\WorkOrder;
 use Illuminate\Support\Facades\DB;
 
 class ProductionHandoverService
 {
+    public function __construct(private readonly WorkOrderCompletionReadinessService $completionReadiness) {}
+
     public function pending(object $user, array $permissions): array
     {
         $this->permission($permissions, 'production.handover.view');
@@ -65,6 +68,12 @@ class ProductionHandoverService
             }
             $target->business_version = (int) $target->business_version + 1; $target->save();
             $task->targets()->where('target_type', $handover->target_target_type)->where('target_id', $handover->target_target_id)->update(['status_snapshot' => $target->status]);
+            if ($accept) {
+                $sourceWorkOrder = WorkOrder::query()->lockForUpdate()->find($handover->work_order_id);
+                if ($sourceWorkOrder?->source_type === 'stock_prebuild') {
+                    $this->completionReadiness->refresh($sourceWorkOrder, $user, '指定工单备货产出已正式交接', $id);
+                }
+            }
             $result = ['id' => $id, 'status' => $accept ? 'RECEIVED' : 'REJECTED', 'target_status' => $target->status,
                 'target_business_version' => (int) $target->business_version, 'handled_at' => $now->toISOString()];
             $ledger->update(['result_type' => 'operation_handover', 'result_id' => $id, 'response_snapshot' => $result,

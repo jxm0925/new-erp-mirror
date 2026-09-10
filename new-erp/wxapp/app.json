@@ -11,6 +11,8 @@
     "pages/production/report/index",
     "pages/production/completion/index",
     "pages/production/material-actions/index",
+    "pages/orders/index/index",
+    "pages/orders/detail/index",
     "pages/logs/logs",
     "pages/my/index/index",
     "pages/suggests/index/index",
@@ -115,10 +117,6 @@
       {
         "pagePath": "pages/index/index",
         "text": "首页"
-      },
-      {
-        "pagePath": "pages/production/tasks/index",
-        "text": "工单"
       },
       {
         "pagePath": "pages/mall/index/index",

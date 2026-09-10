@@ -75,13 +75,13 @@
             ><el-input v-model.trim="doc.platform_fee_amount" :disabled="!canEdit"><template slot="append">{{ doc.currency || '—' }}</template></el-input><small>手续费独立记录，不会把收/付款事实金额改为净额。</small></el-form-item
           ><el-form-item label="手续费类型"
             ><el-select v-model="doc.platform_fee_type" :disabled="!canEdit"><el-option label="平台手续费" value="platform"/><el-option label="银行手续费" value="bank"/><el-option label="其他费用" value="other"/></el-select></el-form-item
-          ><el-form-item :label="title + '方式'" prop="payment_method"
-            ><el-select v-model="doc.payment_method" :disabled="!canEdit"
+          ><el-form-item :label="title + '方式'" prop="payment_method_id"
+            ><el-select v-model="doc.payment_method_id" :disabled="!canEdit"
               ><el-option
                 v-for="m in methods"
-                :key="m"
-                :label="m"
-                :value="m" /></el-select></el-form-item
+                :key="m.id"
+                :label="m.method_name"
+                :value="m.id" /></el-select></el-form-item
           ><el-form-item label="外部参考号"
             ><el-input
               v-model.trim="doc.external_reference_no"
@@ -283,6 +283,7 @@
 <script>
 import {
   listFinanceAccounts,
+  listPaymentMethods,
   getCashDocument,
   createCashDocument,
   updateCashDocument,
@@ -313,7 +314,8 @@ const blank = () => ({
   amount: "",
   platform_fee_amount: "0",
   platform_fee_type: "platform",
-  payment_method: "银行转账",
+  payment_method_id: null,
+  payment_method: "",
   external_reference_no: "",
   remark: "",
   status: "draft",
@@ -336,7 +338,7 @@ export default {
     previewVisible: false,
     previewUrl: "",
     previewImage: false,
-    methods: ["银行转账", "现金", "支付宝", "微信支付", "其他"],
+    methods: [],
     rules: {
       business_date: [
         { required: true, message: "请选择日期", trigger: "change" },
@@ -358,7 +360,7 @@ export default {
           trigger: "blur",
         },
       ],
-      payment_method: [
+      payment_method_id: [
         { required: true, message: "请选择方式", trigger: "change" },
       ],
     },
@@ -471,12 +473,17 @@ export default {
     async init() {
       this.loading = true;
       try {
-        const a = await listFinanceAccounts({
-          status: "enabled",
-          page: 1,
-          per_page: 100,
-        });
+        const [a, m] = await Promise.all([
+          listFinanceAccounts({ status: "enabled", page: 1, per_page: 100 }),
+          listPaymentMethods({
+            status: "enabled",
+            usage: this.direction,
+            page: 1,
+            per_page: 100,
+          }),
+        ]);
         this.accounts = a.data.data || [];
+        this.methods = m.data.data || [];
         if (this.id) {
           const r = await getCashDocument(this.id);
           this.doc = { ...blank(), ...r.data.data };
@@ -485,6 +492,7 @@ export default {
           this.doc = blank();
           this.doc.party_type =
             this.direction === "receipt" ? "customer" : "supplier";
+          this.doc.payment_method_id = this.methods.length ? this.methods[0].id : null;
           this.reservation = await reserveForCreatePage(
             this.direction === "receipt"
               ? "finance_receipt"

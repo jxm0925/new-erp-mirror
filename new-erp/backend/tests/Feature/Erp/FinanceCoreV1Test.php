@@ -213,6 +213,7 @@ class FinanceCoreV1Test extends TestCase
             'sales_order_no' => uniqid('SO-FIN-'), 'customer_id' => $customer->id, 'customer_name' => $customer->customer_name,
             'customer_name_snapshot' => $customer->customer_name, 'order_status' => 'confirmed', 'confirm_status' => 'confirmed',
             'total_amount' => $amount, 'currency' => 'CNY',
+            'funding_policy_snapshot' => ['policy_type' => 'full_prepay', 'shipment_requires_full_payment' => true],
         ]);
         return [$customer, $order];
     }

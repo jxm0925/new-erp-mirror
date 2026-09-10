@@ -27,10 +27,16 @@ class WorkOrder extends MasterModel
         return $this->belongsTo(ProductionDemand::class, 'production_demand_id');
     }
 
+    public function productionMasterOrder() { return $this->belongsTo(ProductionMasterOrder::class, 'production_master_order_id'); }
+
     public function outputItem() { return $this->belongsTo(Item::class, 'output_item_id'); }
     public function routing() { return $this->belongsTo(ProductionRouting::class, 'production_routing_id'); }
     public function targetOperation() { return $this->belongsTo(ProductionOperation::class, 'target_operation_id'); }
     public function targetRoutingOperation() { return $this->belongsTo(ProductionRoutingOperation::class, 'target_routing_operation_id'); }
+    public function reservedForWorkOrder() { return $this->belongsTo(self::class, 'reserved_for_work_order_id'); }
+    public function reservedForProductionUnit() { return $this->belongsTo(ProductionUnit::class, 'reserved_for_production_unit_id'); }
+    public function reservedForTargetOperation() { return $this->belongsTo(ProductionRoutingOperation::class, 'reserved_for_target_operation_id'); }
+    public function effectiveOutputItem() { return $this->belongsTo(Item::class, 'effective_output_item_id_snapshot'); }
 
     public function statusLogs()
     {

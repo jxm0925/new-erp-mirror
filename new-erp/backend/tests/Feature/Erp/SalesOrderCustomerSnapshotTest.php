@@ -5,6 +5,7 @@ namespace Tests\Feature\Erp;
 use App\Models\Erp\SalesChannel;
 use App\Models\Erp\SalesCustomer;
 use App\Models\Erp\SalesFundingPolicy;
+use App\Models\Erp\PaymentMethod;
 use App\Services\Erp\SalesOrderSnapshotService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Tests\TestCase;
@@ -17,6 +18,11 @@ class SalesOrderCustomerSnapshotTest extends TestCase
     {
         $this->ensureChannelFoundation();
         $service = app(SalesOrderSnapshotService::class);
+        $paymentMethod = PaymentMethod::query()->firstOrCreate(
+            ['method_code' => 'SNAPSHOT_TEST'],
+            ['method_name' => '快照测试付款方式', 'available_for_sales' => true,
+                'available_for_receipt' => false, 'available_for_payment' => false, 'status' => 'enabled']
+        );
 
         $first = $service->lock([
             'customer_name' => '平台买家初始昵称',
@@ -28,6 +34,7 @@ class SalesOrderCustomerSnapshotTest extends TestCase
             'contact_phone' => '17000000001',
             'full_address' => '山东省青岛市市南区测试路 1 号',
             'carrier_id' => null,
+            'payment_method_id' => $paymentMethod->id,
         ]);
         $customerId = (int) $first['customer_id'];
         $this->assertDatabaseHas('erp_sales_customers', [
@@ -50,6 +57,7 @@ class SalesOrderCustomerSnapshotTest extends TestCase
             'contact_phone' => '17000000002',
             'full_address' => '山东省青岛市崂山区测试路 2 号',
             'carrier_id' => null,
+            'payment_method_id' => $paymentMethod->id,
         ]);
 
         $this->assertSame($customerId, (int) $second['customer_id']);

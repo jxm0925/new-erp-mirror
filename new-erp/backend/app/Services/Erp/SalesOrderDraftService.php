@@ -121,7 +121,7 @@ class SalesOrderDraftService
         abort_if(blank($order->default_carrier_id ?: $order->carrier_id), 422, '提交确认前必须选择快递');
 
         foreach ($order->lines as $line) {
-            abort_if((float) $line->unit_price <= 0, 422, "订单行 {$line->line_no} 的销售单价必须大于 0");
+            abort_if(! $this->priceIsValid($line), 422, $this->priceValidationMessage($line));
             $sku = $line->sku;
             abort_if(!$sku, 422, "订单行 {$line->line_no} 的 SKU 已不存在");
             abort_if(
@@ -196,7 +196,7 @@ class SalesOrderDraftService
         $add('ORDER_LINES_REQUIRED', $order->lines->isNotEmpty(), '订单明细已填写', '订单至少需要一行明细', 'lines');
         foreach ($order->lines as $line) {
             $prefix = "LINE_{$line->line_no}_";
-            $add($prefix.'UNIT_PRICE', (float) $line->unit_price > 0, "第 {$line->line_no} 行销售单价有效", "第 {$line->line_no} 行销售单价必须大于 0", "lines.{$line->line_no}.unit_price");
+            $add($prefix.'UNIT_PRICE', $this->priceIsValid($line), "第 {$line->line_no} 行销售单价符合商业角色要求", $this->priceValidationMessage($line), "lines.{$line->line_no}.unit_price");
             $sku = $line->sku;
             $add($prefix.'SKU_EXISTS', (bool) $sku, "第 {$line->line_no} 行 SKU 有效", "第 {$line->line_no} 行 SKU 无效或已停用", "lines.{$line->line_no}.sku_id");
             if (!$sku) continue;
@@ -228,7 +228,7 @@ class SalesOrderDraftService
         abort_if(blank($order->default_carrier_id ?: $order->carrier_id), 422, 'Default carrier is required before confirmation.');
 
         foreach ($order->lines as $line) {
-            abort_if((float) $line->unit_price <= 0, 422, "Order line {$line->line_no} must have a positive unit price.");
+            abort_if(! $this->priceIsValid($line), 422, $this->priceValidationMessage($line));
             $sku = $line->sku;
             abort_if(!$sku, 422, "Order line {$line->line_no} SKU no longer exists.");
             abort_if($sku->electric_mode === 'required' && blank($line->electric), 422, "Order line {$line->line_no} requires electric voltage.");
@@ -239,6 +239,21 @@ class SalesOrderDraftService
             abort_if($sku->special_custom_agreement_required && !$types->contains('technical_agreement'), 422, "Order line {$line->line_no} is missing a special-custom technical agreement.");
             abort_if($sku->special_custom_description_required && blank($line->customization_description), 422, "Order line {$line->line_no} is missing a special-custom description.");
         }
+    }
+
+    private function priceIsValid($line): bool
+    {
+        $price = (float) $line->unit_price;
+        return $line->commercial_role === 'gift'
+            ? abs($price) < 0.00000001
+            : $price > 0;
+    }
+
+    private function priceValidationMessage($line): string
+    {
+        return $line->commercial_role === 'gift'
+            ? "订单行 {$line->line_no} 为赠品，销售单价必须为 0"
+            : "订单行 {$line->line_no} 为正常销售，销售单价必须大于 0";
     }
 
     private function split(array $payload): array

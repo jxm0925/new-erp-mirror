@@ -16,6 +16,7 @@ class FinanceBusinessSourceResolver
 {
     public function __construct(
         private readonly PurchaseSettlementSourceApplicationService $purchaseSettlementSources,
+        private readonly SalesFinanceSettlementService $salesSettlements,
     ) {
     }
 
@@ -37,7 +38,7 @@ class FinanceBusinessSourceResolver
     {
         $order = SalesOrder::query()->lockForUpdate()->findOrFail($id);
         if (!$order->customer_id) throw ValidationException::withMessages(['source_document_id' => '销售订单尚未绑定客户。']);
-        $amount = Money::normalize((string) $order->total_amount);
+        $amount = $this->salesSettlements->receivableAmount($order);
         if ($type === FinanceConstants::SOURCE_SALES_ORDER_REFUND) {
             $amount = Money::normalize((string) FinanceAllocation::query()
                 ->where('source_business_type', FinanceConstants::SOURCE_SALES_ORDER)

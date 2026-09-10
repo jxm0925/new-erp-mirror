@@ -80,8 +80,6 @@ class ProductionExecutionFoundationService
     {
         $count = (int) ((string) $workOrder->target_base_qty);
         if ($count < 1) $this->fail('production_unit_quantity_invalid', '逐件生产工单至少需要一个生产单元。');
-        $firstTargets = [];
-
         for ($sequence = 1; $sequence <= $count; $sequence++) {
             $unit = ProductionUnit::create([
                 'unit_no' => $this->numbers->next('production_unit', 'PU'),
@@ -107,27 +105,26 @@ class ProductionExecutionFoundationService
             }
 
             foreach ($operations as $index => $operation) {
+                $targetStatus = $index === 0 ? 'WAIT_CLAIM' : 'WAIT_PREDECESSOR';
                 $target = $unit->operations()->create($this->operationAttributes(
                     $workOrder,
                     $operation,
-                    $index === 0 ? 'WAIT_CLAIM' : 'WAIT_PREVIOUS',
+                    $targetStatus,
                 ));
                 $this->createTargetMaterialRequirements($workOrder, 'unit_operation', $target->id, $operation['routing_operation_id'], $sequence);
-                if ($index === 0) $firstTargets[] = ['target_type' => 'unit_operation', 'target_id' => $target->id, 'status_snapshot' => 'WAIT_CLAIM'];
+                $this->createTask($workOrder, 'unit', $operation, 'unit_operation', $target, $targetStatus);
             }
         }
-
-        $this->createTask($workOrder, 'unit', $operations->first(), $firstTargets);
     }
 
     private function createQuantityExecution(WorkOrder $workOrder, Collection $operations): void
     {
-        $firstTarget = null;
         foreach ($operations as $index => $operation) {
+            $targetStatus = $index === 0 ? 'WAIT_CLAIM' : 'WAIT_PREDECESSOR';
             $target = ProductionQuantityOperation::create($this->operationAttributes(
                 $workOrder,
                 $operation,
-                $index === 0 ? 'WAIT_CLAIM' : 'WAIT_PREVIOUS',
+                $targetStatus,
             ) + [
                 'planned_base_qty' => $workOrder->target_base_qty,
                 'completed_base_qty' => 0,
@@ -135,30 +132,36 @@ class ProductionExecutionFoundationService
                 'remaining_base_qty' => $workOrder->target_base_qty,
             ]);
             $this->createTargetMaterialRequirements($workOrder, 'quantity_operation', $target->id, $operation['routing_operation_id']);
-            if ($index === 0) $firstTarget = ['target_type' => 'quantity_operation', 'target_id' => $target->id, 'status_snapshot' => 'WAIT_CLAIM'];
+            $this->createTask($workOrder, 'quantity', $operation, 'quantity_operation', $target, $targetStatus);
         }
-        $this->createTask($workOrder, 'quantity', $operations->first(), [$firstTarget]);
     }
 
-    private function createTask(WorkOrder $workOrder, string $mode, array $operation, array $targets): void
+    private function createTask(WorkOrder $workOrder, string $mode, array $operation, string $targetType, object $target, string $status): void
     {
         $laborRule = $this->laborRules->activeSnapshot();
         $task = ProductionTask::create([
             'task_no' => $this->numbers->next('production_task', 'PT'),
             'work_order_id' => $workOrder->id,
+            'production_unit_id' => $mode === 'unit' ? $target->production_unit_id : null,
+            'production_unit_operation_id' => $mode === 'unit' ? $target->id : null,
+            'production_quantity_operation_id' => $mode === 'quantity' ? $target->id : null,
             'execution_mode' => $mode,
             'routing_operation_id_snapshot' => $operation['routing_operation_id'],
             'operation_code_snapshot' => $operation['operation_code'],
             'operation_name_snapshot' => $operation['operation_name'],
             'sequence_no_snapshot' => $operation['sequence'],
-            'status' => 'WAIT_CLAIM',
+            'status' => $status,
             'labor_allocation_rule_id' => $laborRule['id'],
             'labor_allocation_rule_version' => $laborRule['version_no'],
             'labor_allocation_rule_snapshot' => $laborRule,
             'business_version' => 1,
             'organization_code' => $workOrder->organization_code,
         ]);
-        $task->targets()->createMany($targets);
+        $task->targets()->create([
+            'target_type' => $targetType,
+            'target_id' => $target->id,
+            'status_snapshot' => $status,
+        ]);
     }
 
     private function operationAttributes(WorkOrder $workOrder, array $operation, string $status): array
@@ -174,6 +177,8 @@ class ProductionExecutionFoundationService
         $unit = $operation['unit_standard_minutes'] === null ? null : (float) $operation['unit_standard_minutes'];
         $quantity = $mode === 'unit' ? 1.0 : (float) $workOrder->target_base_qty;
         $standard = $unit === null ? null : ($mode === 'unit' ? $unit : $setup + $unit * $quantity);
+        $isStockPrebuildTarget = $workOrder->source_type === 'stock_prebuild'
+            && (int) $workOrder->target_routing_operation_id === (int) $operation['routing_operation_id'];
         return [
             'work_order_id' => $workOrder->id,
             'routing_operation_id_snapshot' => $operation['routing_operation_id'],
@@ -188,8 +193,12 @@ class ProductionExecutionFoundationService
             'standard_quantity_snapshot' => $quantity,
             'standard_time_formula_snapshot' => $mode === 'unit' ? 'unit_standard' : 'setup_plus_unit_times_qty',
             'kitting_required' => $kittingRequired,
-            'output_item_id_snapshot' => $operation['output_item_id'],
-            'output_mode_snapshot' => $operation['output_mode'],
+            // 备货生产做到中间工序时，目标工序自己的正式产出 Item 和本单有效去向是唯一依据。
+            // 禁止回退到整条路线最终成品，否则会制造错误库存和错误谱系。
+            'output_item_id_snapshot' => $isStockPrebuildTarget
+                ? ($workOrder->effective_output_item_id_snapshot ?? $operation['output_item_id']) : $operation['output_item_id'],
+            'output_mode_snapshot' => $isStockPrebuildTarget
+                ? ($workOrder->effective_output_mode_snapshot ?? $operation['output_mode']) : $operation['output_mode'],
             'quality_mode_snapshot' => $operation['quality_mode'],
             'allow_continue_without_warehouse_snapshot' => $operation['allow_continue_without_warehouse'],
             'business_version' => 1,

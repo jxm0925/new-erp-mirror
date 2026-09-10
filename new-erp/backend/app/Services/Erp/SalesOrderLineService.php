@@ -85,6 +85,8 @@ class SalesOrderLineService
         abort_if((int) $sku->product_id !== (int) $product->id, 422, 'SKU 不属于当前 Product');
 
         $lineType = $this->lineType($sku, $product, $line['legacy_goods_type'] ?? null);
+        $commercialRole = $line['commercial_role'] ?? $existing?->commercial_role ?? 'sale';
+        abort_if(! in_array($commercialRole, ['sale', 'gift'], true), 422, '订单行商业角色不合法');
         $qty = round((float) $line['order_qty'], 4);
         $match = $this->matcher->match(['product_id' => $product->id, 'sku_id' => $sku->id]);
         if ($lineType === 'physical') {
@@ -154,6 +156,7 @@ class SalesOrderLineService
             'item_name' => $item?->item_name,
             'legacy_goods_type' => $line['legacy_goods_type'] ?? null,
             'line_type' => $lineType,
+            'commercial_role' => $commercialRole,
             'order_qty' => $qty,
             'unit_id' => $sku->salesUnit->id,
             'unit_name_snapshot' => $sku->salesUnit->unit_name,
@@ -191,6 +194,7 @@ class SalesOrderLineService
                 'special_custom_description_required', 'delivery_inspection_required', 'image',
             ]),
             'commercial_snapshot' => [
+                'commercial_role' => $commercialRole,
                 'unit_price' => $price,
                 'price_tax_mode' => $priceTaxMode,
                 'discount_rate' => $discountRate,

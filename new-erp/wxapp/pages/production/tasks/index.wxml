@@ -1,29 +1,124 @@
-<view class="tasks-page">
-  <view class="summary">
-    <view><text>今日任务总数</text><strong>{{stats.total}}<small>条</small></strong></view>
-    <view><text>进行中</text><strong class="red">{{stats.running}}<small>条</small></strong></view>
-    <view><text>待开始</text><strong>{{stats.waiting}}<small>条</small></strong></view>
-    <view><text>已完成</text><strong>{{stats.completed}}<small>条</small></strong></view>
-    <view class="scan-box" bindtap="scan"><van-icon name="scan" size="48rpx" color="#d81e06" /><text>扫码进入工单</text></view>
-  </view>
-  <view class="sync" wx:if="{{loaded}}"><view></view><text>网络正常</text><text>最近同步 {{syncedAt}}</text></view>
-  <view class="filter-card">
-    <view class="tabs">
-      <text class="{{active==='all'?'active':''}}" data-value="all" bindtap="setTab">全部</text>
-      <text class="{{active==='running'?'active':''}}" data-value="running" bindtap="setTab">进行中</text>
-      <text class="{{active==='waiting'?'active':''}}" data-value="waiting" bindtap="setTab">待开始</text>
-      <text class="{{active==='completed'?'active':''}}" data-value="completed" bindtap="setTab">已完成</text>
+<view class="orders-page">
+  <view class="hero">
+    <view style="height: {{statusBarHeight}}px;"></view>
+    <view class="custom-nav" style="height: {{navBarHeight}}px;">
+      <view class="nav-back" bindtap="goBack" aria-label="返回首页">
+        <van-icon name="arrow-left" size="42rpx" color="#ffffff" />
+      </view>
+      <text class="nav-title">生产工单</text>
+      <view class="scan-entry" style="right: {{scanRight}}px;" bindtap="scan" aria-label="扫码追溯">
+        <van-icon name="scan" size="46rpx" color="#ffffff" />
+      </view>
     </view>
-    <view class="search"><van-icon name="search" color="#9da1aa" /><input placeholder="搜索任务号 / 工单号 / 产品" value="{{keyword}}" bindinput="onSearch" /></view>
+    <view class="summary-card">
+      <view class="summary-item">
+        <text>主工单</text>
+        <strong>{{summary.total}}</strong>
+      </view>
+      <view class="summary-item">
+        <text>生产中</text>
+        <strong>{{summary.in_progress}}</strong>
+      </view>
+      <view class="summary-item">
+        <text>待条件</text>
+        <strong>{{summary.wait_condition}}</strong>
+      </view>
+      <view class="summary-item last">
+        <text>异常</text>
+        <strong>{{summary.exception}}</strong>
+      </view>
+    </view>
   </view>
-  <view wx:if="{{loading}}" class="state"><van-loading color="#d81e06">加载中</van-loading></view>
-  <view wx:elif="{{loaded && !filteredRows.length}}" class="state"><van-empty description="暂无符合条件的任务" /></view>
-  <view class="task-item" wx:for="{{filteredRows}}" wx:key="id" data-id="{{item.id}}" bindtap="openTask">
-    <view class="line1"><strong>{{item.task_no}}</strong><text class="tag">{{item.statusLabel}}</text><text class="timer" wx:if="{{item.targetStatus==='IN_PROGRESS'}}">当前计时 ●</text></view>
-    <view class="product">{{item.productName}}</view>
-    <view class="metrics"><view><text>计划数量</text><strong>{{item.planned}} {{item.unitName}}</strong></view><view><text>已完成</text><strong class="red">{{item.completed}} {{item.unitName}}</strong></view><view><text>工序</text><strong>{{item.operation}}</strong></view><view class="action">进入作业</view></view>
-    <view class="foot"><text>齐套状态 {{item.kitting}}</text><text>负责人 当前用户</text><van-icon name="arrow" /></view>
+
+  <view class="filter-panel">
+    <view class="source-tabs">
+      <view class="source-tab {{source==='sales'?'active':''}}" data-source="sales" bindtap="setSource">销售生产</view>
+      <view class="source-tab {{source==='stock'?'active':''}}" data-source="stock" bindtap="setSource">备货生产</view>
+      <view class="source-tab {{source==='other'?'active':''}}" data-source="other" bindtap="setSource">其他生产</view>
+    </view>
+    <view class="search-box">
+      <van-icon name="search" size="38rpx" color="#111827" />
+      <input value="{{keyword}}" placeholder="{{source==='sales'?'搜索主生产单 / 销售订单 / 客户':'搜索生产工单 / 来源 / 产品'}}" bindinput="onSearch" />
+      <van-icon wx:if="{{keyword}}" name="clear" size="30rpx" color="#9aa1ad" bindtap="clearSearch" />
+    </view>
+    <view class="status-row">
+      <view class="status-chip {{activeStatus===''?'active':''}}" data-status="" bindtap="setStatus">全部</view>
+      <view class="status-chip {{activeStatus==='IN_PROGRESS'?'active':''}}" data-status="IN_PROGRESS" bindtap="setStatus">生产中</view>
+      <view class="status-chip {{activeStatus==='WAIT_CONDITION'?'active':''}}" data-status="WAIT_CONDITION" bindtap="setStatus">待条件</view>
+      <view class="status-chip {{activeStatus==='EXCEPTION'?'active':''}}" data-status="EXCEPTION" bindtap="setStatus">异常</view>
+      <view class="status-chip {{activeStatus==='COMPLETED'?'active':''}}" data-status="COMPLETED" bindtap="setStatus">已完成</view>
+    </view>
   </view>
+
+  <view wx:if="{{loading}}" class="state-box"><van-loading color="#ea160c">加载中</van-loading></view>
+  <view wx:elif="{{loaded && !rows.length}}" class="state-box"><van-empty description="暂无符合条件的生产工单" /></view>
+
+  <view class="order-card {{item.compact?'compact':''}}" wx:for="{{rows}}" wx:key="id">
+    <view class="card-head">
+      <view class="document-pill">{{item.documentLabel}}</view>
+      <strong class="document-no">{{item.number}}</strong>
+      <text class="status-tag {{item.statusTone}}">{{item.statusLabel}}</text>
+    </view>
+
+    <view class="info-row">
+      <text class="info-label">{{item.kind==='master'?'销售订单':'来源单据'}}</text>
+      <text class="info-value">{{item.sourceNo}}</text>
+    </view>
+    <view class="info-row" wx:if="{{item.customerName}}">
+      <text class="info-label">客户</text>
+      <text class="info-value">{{item.customerName}}</text>
+    </view>
+    <view class="info-row" wx:if="{{item.salespersonName}}">
+      <text class="info-label">销售员</text>
+      <text class="info-value">{{item.salespersonName}}</text>
+    </view>
+    <view class="info-row products-row">
+      <text class="info-label">产品清单</text>
+      <view class="info-value product-list">
+        <text wx:for="{{item.productLines}}" wx:for-item="product" wx:key="index">{{product.displayText}}</text>
+        <text class="wo-count">{{item.workOrderCountText}}</text>
+      </view>
+    </view>
+
+    <block wx:if="{{!item.compact}}">
+      <view class="quantity-grid">
+        <view><text>计划</text><strong>{{item.plannedText}}</strong></view>
+        <view><text>已完成</text><strong class="success">{{item.completedText}}</strong></view>
+        <view><text>在制</text><strong class="running-value">{{item.inProgressText}}</strong></view>
+        <view class="last"><text>异常</text><strong class="danger">{{item.exceptionText}}</strong></view>
+      </view>
+      <view class="progress-head"><text>工序进度</text><strong>{{item.progressText}}</strong></view>
+      <view class="progress-track"><view style="width: {{item.progressPct}}"></view></view>
+      <view class="info-row lower-row">
+        <text class="info-label">交期</text>
+        <text class="info-value">{{item.required_delivery_date_snapshot || item.planned_date || '—'}}</text>
+      </view>
+      <view class="info-row">
+        <text class="info-label">备料配送</text>
+        <text class="info-value delivery-{{item.deliveryTone}}">{{item.deliveryText}}</text>
+      </view>
+      <view class="info-row">
+        <text class="info-label">回款发货</text>
+        <text class="info-value">{{item.fundingText}}</text>
+      </view>
+      <view class="info-row">
+        <text class="info-label">备注</text>
+        <text class="info-value">{{item.remarkText}}</text>
+      </view>
+    </block>
+
+    <view class="info-row blocker-row" wx:else>
+      <text class="info-label">阻断原因</text>
+      <view class="blocker-list">
+        <text wx:for="{{item.blockers}}" wx:for-item="blocker" wx:key="reason_code">{{blocker.shortLabel}}</text>
+      </view>
+    </view>
+
+    <view class="card-action {{item.compact?'outline':''}}" data-key="{{item.kind}}:{{item.id}}" bindtap="openRow">
+      <text>{{item.actionText}}</text><van-icon name="arrow" size="34rpx" color="{{item.compact?'#e30e07':'#ffffff'}}" />
+    </view>
+  </view>
+
+  <view wx:if="{{loadingMore}}" class="more-loading"><van-loading color="#ea160c" /></view>
   <view class="bottom-space"></view>
-  <view wx:if="{{loadingMore}}" class="state"><van-loading color="#d81e06" /></view>
 </view>

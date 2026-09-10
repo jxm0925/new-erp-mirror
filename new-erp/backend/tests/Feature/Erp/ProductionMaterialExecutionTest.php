@@ -12,10 +12,18 @@ use App\Models\Erp\Unit;
 use App\Models\Erp\Warehouse;
 use App\Models\Erp\WorkOrder;
 use App\Models\Erp\WorkOrderMaterialRequirement;
+use App\Models\Erp\SalesOrder;
+use App\Services\Erp\ProductionPreparationOrderService;
+use App\Services\Erp\ProductionDeliveryWaveService;
 use App\Services\Erp\ProductionMaterialExecutionService;
 use App\Services\Erp\ProductionKittingService;
 use App\Services\Erp\ProductionMaterialReturnService;
 use App\Services\Erp\ProductionMaterialSupplementService;
+use App\Services\Erp\ProductionHandoverService;
+use App\Services\Erp\ProductionInternalIssueService;
+use App\Services\Erp\ProductionOutputService;
+use App\Services\Erp\ProductionExecutionActionService;
+use App\Services\Erp\WorkOrderCompletionService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -67,6 +75,240 @@ class ProductionMaterialExecutionTest extends TestCase
         $this->assertSame((int) $demand->target_id, (int) $line->production_target_id);
         $this->assertSame('PREPARING', DB::table('erp_production_target_material_requirements')->where('id', $demand->id)->value('status'));
         $this->assertSame(0, $service->paginatePreparationDemands(['work_order_id' => $workOrder->id], $user, self::PERMISSIONS, true)->total());
+    }
+
+    public function test_delivery_wave_slices_quantity_and_serials_between_pool_claim_and_dispatcher_tasks_with_separate_receipts(): void
+    {
+        [$user, $workOrder, $requirement, $balance] = $this->fixture();
+        $salesOrder = SalesOrder::create([
+            'sales_order_no' => $this->id('dw-so'), 'customer_name' => '配送波次客户',
+            'order_status' => 'confirmed', 'confirm_status' => 'confirmed', 'production_confirm_status' => 'confirmed',
+        ]);
+        $masterId = DB::table('erp_production_master_orders')->insertGetId([
+            'master_order_no' => $this->id('MWO'), 'sales_order_id' => $salesOrder->id, 'active_sales_order_id' => $salesOrder->id,
+            'sales_order_no_snapshot' => $salesOrder->sales_order_no, 'customer_snapshot' => json_encode(['name' => '配送波次客户'], JSON_UNESCAPED_UNICODE),
+            'status' => 'WAIT_CONDITION', 'business_version' => 1, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('erp_work_orders')->where('id', $workOrder->id)->update(['production_master_order_id' => $masterId, 'updated_at' => now()]);
+        $workOrder->setAttribute('production_master_order_id', $masterId);
+        $preparation = app(ProductionPreparationOrderService::class)->syncFromPublishedWorkOrder($workOrder->fresh('materialRequirements'), $user);
+
+        $material = app(ProductionMaterialExecutionService::class);
+        $pick = $material->createPickingTask([
+            'client_command_id' => $this->id('dw-pick'), 'work_order_id' => $workOrder->id,
+            'expected_version' => 1, 'warehouse_id' => $balance->warehouse_id,
+            'lines' => [$this->pickLine($workOrder, $requirement, $balance, 6)],
+        ], $user, self::PERMISSIONS, true);
+        $pick = $material->assignPickingTask($pick->id, [
+            'client_command_id' => $this->id('dw-pick-assign'), 'expected_version' => 1, 'assigned_picker_legacy_id' => $user->legacy_id,
+        ], $user, self::PERMISSIONS, true);
+        $pick = $material->startPickingTask($pick->id, [
+            'client_command_id' => $this->id('dw-pick-start'), 'expected_version' => $pick->business_version,
+        ], $user, self::PERMISSIONS, true);
+        $pick = $material->confirmPickingTask($pick->id, [
+            'client_command_id' => $this->id('dw-pick-confirm'), 'expected_version' => $pick->business_version,
+            'lines' => [['picking_task_line_id' => $pick->lines->first()->id, 'actual_pick_qty' => 6]],
+        ], $user, self::PERMISSIONS, true);
+        $pickLine = $pick->lines->first();
+        $serialIds = [910001, 910002, 910003, 910004, 910005, 910006];
+        $pickLine->update(['serial_control_type' => 'unit_serial', 'serial_snapshot' => ['inventory_serial_ids' => $serialIds]]);
+
+        $first = $material->createDelivery([
+            'client_command_id' => $this->id('dt-first'), 'picking_task_id' => $pick->id,
+            'expected_version' => $pick->business_version,
+            'lines' => [['picking_task_line_id' => $pickLine->id, 'delivery_qty' => 2, 'serial_ids' => array_slice($serialIds, 0, 2)]],
+        ], $user, self::PERMISSIONS, true);
+        $this->expectDomain('delivery_serial_already_allocated', fn () => $material->createDelivery([
+            'client_command_id' => $this->id('dt-duplicate-serial'), 'picking_task_id' => $pick->id,
+            'expected_version' => $pick->fresh()->business_version,
+            'lines' => [['picking_task_line_id' => $pickLine->id, 'delivery_qty' => 1, 'serial_ids' => [$serialIds[0]]]],
+        ], $user, self::PERMISSIONS, true), 409);
+        $second = $material->createDelivery([
+            'client_command_id' => $this->id('dt-second'), 'picking_task_id' => $pick->id,
+            'expected_version' => $pick->fresh()->business_version,
+            'lines' => [['picking_task_line_id' => $pickLine->id, 'delivery_qty' => 4, 'serial_ids' => array_slice($serialIds, 2)]],
+        ], $user, self::PERMISSIONS, true);
+        $dispatcherUserId = $user->legacy_id + 1;
+        DB::table('erp_legacy_admin_users')->insert([
+            'legacy_id' => $dispatcherUserId, 'username' => $this->id('courier'), 'nickname' => '调度配送员',
+            'status' => 'normal', 'auth_group_names' => '[]', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $wave = app(ProductionDeliveryWaveService::class)->create([
+            'client_command_id' => $this->id('dw-create'),
+            'production_preparation_order_id' => $preparation->id,
+            'tasks' => [
+                ['delivery_id' => $first->id, 'assignment_mode' => 'pool_claim', 'zone_pool_code' => 'ZONE-A'],
+                ['delivery_id' => $second->id, 'assignment_mode' => 'dispatcher_assign', 'delivery_user_legacy_id' => $dispatcherUserId],
+            ],
+        ], $user, self::PERMISSIONS, true);
+        $this->assertCount(2, $wave->deliveryTasks);
+        $this->assertEqualsCanonicalizing([2.0, 4.0], $wave->deliveryTasks->map(fn ($delivery) => (float) $delivery->lines->sum('delivery_qty'))->all());
+        $this->assertEqualsCanonicalizing($serialIds, $wave->deliveryTasks->flatMap(fn ($delivery) => $delivery->lines->flatMap(fn ($line) => $line->serial_snapshot['inventory_serial_ids'] ?? []))->all());
+        $this->assertSame('pool_claim', $first->fresh()->assignment_mode);
+        $this->assertSame('dispatcher_assign', $second->fresh()->assignment_mode);
+        $this->assertSame($dispatcherUserId, (int) $second->fresh()->delivery_user_legacy_id);
+
+        $waveService = app(ProductionDeliveryWaveService::class);
+        $first = $waveService->poolClaim($first->id, ['expected_version' => $first->fresh()->business_version], $user, self::PERMISSIONS, true);
+        $this->assertSame($user->legacy_id, (int) $first->delivery_user_legacy_id);
+
+        foreach ([$first->fresh(), $second->fresh()] as $delivery) {
+            $delivery = $material->dispatchDelivery($delivery->id, [
+                'client_command_id' => $this->id('dt-dispatch-'.$delivery->id), 'expected_version' => $delivery->business_version,
+            ], $user, self::PERMISSIONS, true);
+            $delivery = $material->deliverDelivery($delivery->id, [
+                'client_command_id' => $this->id('dt-deliver-'.$delivery->id), 'expected_version' => $delivery->business_version,
+            ], $user, self::PERMISSIONS, true);
+            $material->receiveDelivery($delivery->id, [
+                'client_command_id' => $this->id('dt-receive-'.$delivery->id), 'expected_version' => $delivery->business_version,
+                'lines' => $delivery->lines->map(fn ($line) => [
+                    'delivery_line_id' => $line->id, 'accepted_qty' => (float) $line->delivery_qty, 'rejected_qty' => 0,
+                ])->all(),
+            ], $user, self::PERMISSIONS, true);
+        }
+        $this->assertSame(2, DB::table('erp_material_receipts')->whereIn('delivery_id', [$first->id, $second->id])->count());
+    }
+
+    public function test_reserved_stock_prebuild_direct_handover_completes_only_after_target_owner_accepts(): void
+    {
+        [$user, $targetWorkOrder, $requirement] = $this->fixture();
+        $source = $this->reservedSource($user, $targetWorkOrder, $requirement, 'flow_only');
+        $completion = app(WorkOrderCompletionService::class)->submit($source['workOrder']->id, [
+            'client_command_id' => $this->id('direct-completion'), 'expected_version' => 1,
+            'output_record_ids' => [$source['output']->id],
+        ], $user, ['production.completion.create'], true);
+        app(WorkOrderCompletionService::class)->review($completion['completion_id'], [
+            'client_command_id' => $this->id('direct-review'), 'expected_version' => 1, 'decision' => 'approve',
+        ], $user, ['production.completion.review'], true);
+
+        $handover = DB::table('erp_production_operation_handovers')->where('output_record_id', $source['output']->id)->first();
+        $this->assertNotNull($handover);
+        $this->assertSame('HANDED_OVER', $source['output']->fresh()->status);
+        $this->assertNotSame('COMPLETED', $source['workOrder']->fresh()->status);
+        app(ProductionHandoverService::class)->accept($handover->id, [
+            'client_command_id' => $this->id('direct-accept'), 'expected_version' => 1,
+        ], $user, ['production.handover.receive']);
+        $this->assertSame('COMPLETED', $source['workOrder']->fresh()->status);
+        $this->assertSame(2.0, (float) DB::table('erp_production_target_material_requirements')
+            ->where('id', $source['targetRequirementId'])->value('satisfied_base_qty'));
+    }
+
+    public function test_reserved_stock_prebuild_warehouse_receipt_is_not_common_available_and_only_target_issue_can_consume_it(): void
+    {
+        [$user, $targetWorkOrder, $requirement, $balance] = $this->fixture();
+        $source = $this->reservedSource($user, $targetWorkOrder, $requirement, 'warehouse_required');
+        $completion = app(WorkOrderCompletionService::class)->submit($source['workOrder']->id, [
+            'client_command_id' => $this->id('reserved-completion'), 'expected_version' => 1,
+            'output_record_ids' => [$source['output']->id],
+        ], $user, ['production.completion.create'], true);
+        app(WorkOrderCompletionService::class)->review($completion['completion_id'], [
+            'client_command_id' => $this->id('reserved-review'), 'expected_version' => 1, 'decision' => 'approve',
+        ], $user, ['production.completion.review'], true);
+        $beforeAvailable = (float) $balance->fresh()->quantity_available;
+        $posted = app(ProductionOutputService::class)->warehouse($source['output']->id, [
+            'client_command_id' => $this->id('reserved-warehouse'), 'expected_version' => 3,
+            'warehouse_id' => $balance->warehouse_id, 'location_id' => $balance->location_id,
+            'batch_no' => $balance->batch_no, 'posted_base_qty' => 2,
+        ], $user, ['production.output.warehouse']);
+
+        $this->assertNotNull($posted['production_inventory_reservation_id']);
+        $this->assertNotNull($posted['internal_issue_task_id']);
+        $this->assertSame($beforeAvailable, (float) $balance->fresh()->quantity_available,
+            '保留入库只增加在库与锁定量，不得增加通用可用量');
+        $this->assertSame(2.0, (float) $balance->fresh()->quantity_locked);
+        $this->assertSame('COMPLETED', $source['workOrder']->fresh()->status);
+        $issue = DB::table('erp_production_internal_issue_tasks')->where('id', $posted['internal_issue_task_id'])->first();
+        app(ProductionInternalIssueService::class)->dispatch($issue->id, [
+            'client_command_id' => $this->id('reserved-dispatch'), 'expected_version' => 1,
+        ], $user, ['production.output.issue']);
+        app(ProductionInternalIssueService::class)->receive($issue->id, [
+            'client_command_id' => $this->id('reserved-receive'), 'expected_version' => 2,
+        ], $user, ['production.output.receive']);
+        $this->assertSame(0.0, (float) $balance->fresh()->quantity_locked);
+        $this->assertSame($beforeAvailable, (float) $balance->fresh()->quantity_available);
+        $this->assertDatabaseHas('erp_production_inventory_reservations', [
+            'id' => $posted['production_inventory_reservation_id'], 'status' => 'CONSUMED',
+        ]);
+    }
+
+    public function test_common_inventory_stock_prebuild_only_completes_after_real_available_inventory_receipt(): void
+    {
+        [$user, $targetWorkOrder, $requirement, $balance] = $this->fixture();
+        $source = $this->reservedSource($user, $targetWorkOrder, $requirement, 'warehouse_required');
+        $source['workOrder']->update([
+            'stocking_purpose' => 'common_inventory', 'reserved_for_work_order_id' => null,
+            'reserved_for_production_unit_id' => null, 'reserved_for_target_operation_id' => null,
+        ]);
+        $completion = app(WorkOrderCompletionService::class)->submit($source['workOrder']->id, [
+            'client_command_id' => $this->id('common-completion'), 'expected_version' => 1,
+            'output_record_ids' => [$source['output']->id],
+        ], $user, ['production.completion.create'], true);
+        app(WorkOrderCompletionService::class)->review($completion['completion_id'], [
+            'client_command_id' => $this->id('common-review'), 'expected_version' => 1, 'decision' => 'approve',
+        ], $user, ['production.completion.review'], true);
+        $this->assertNotSame('COMPLETED', $source['workOrder']->fresh()->status);
+        $beforeAvailable = (float) $balance->fresh()->quantity_available;
+        $posted = app(ProductionOutputService::class)->warehouse($source['output']->id, [
+            'client_command_id' => $this->id('common-warehouse'), 'expected_version' => 3,
+            'warehouse_id' => $balance->warehouse_id, 'location_id' => $balance->location_id,
+            'batch_no' => $balance->batch_no, 'posted_base_qty' => 2,
+        ], $user, ['production.output.warehouse']);
+        $this->assertNull($posted['production_inventory_reservation_id']);
+        $this->assertSame($beforeAvailable + 2, (float) $balance->fresh()->quantity_available);
+        $this->assertSame('COMPLETED', $source['workOrder']->fresh()->status);
+    }
+
+    public function test_reserved_serialized_prebuild_output_keeps_parent_to_final_output_lineage(): void
+    {
+        [$user, $targetWorkOrder, $requirement, $balance] = $this->fixture();
+        Item::query()->whereKey($requirement->component_item_id)->update([
+            'is_serial_managed' => true, 'serial_tracking_mode' => 'required', 'serial_number_prefix' => 'SEMI',
+        ]);
+        DB::table('erp_production_quantity_operations')->where('id', $targetWorkOrder->test_target_id)->update([
+            'planned_base_qty' => 1, 'completed_base_qty' => 0, 'remaining_base_qty' => 1,
+            'kitting_required' => false, 'output_item_id_snapshot' => $targetWorkOrder->output_item_id,
+            'output_mode_snapshot' => 'warehouse_required', 'updated_at' => now(),
+        ]);
+        $source = $this->reservedSource($user, $targetWorkOrder, $requirement, 'warehouse_required', 1);
+        $completion = app(WorkOrderCompletionService::class)->submit($source['workOrder']->id, [
+            'client_command_id' => $this->id('serial-completion'), 'expected_version' => 1,
+            'output_record_ids' => [$source['output']->id],
+        ], $user, ['production.completion.create'], true);
+        app(WorkOrderCompletionService::class)->review($completion['completion_id'], [
+            'client_command_id' => $this->id('serial-review'), 'expected_version' => 1, 'decision' => 'approve',
+        ], $user, ['production.completion.review'], true);
+        $posted = app(ProductionOutputService::class)->warehouse($source['output']->id, [
+            'client_command_id' => $this->id('serial-warehouse'), 'expected_version' => 3,
+            'warehouse_id' => $balance->warehouse_id, 'location_id' => $balance->location_id,
+            'batch_no' => $balance->batch_no, 'posted_base_qty' => 1,
+        ], $user, ['production.output.warehouse']);
+        $parentSerialId = $source['output']->fresh()->inventory_serial_id;
+        $this->assertNotNull($parentSerialId);
+        $this->assertDatabaseHas('erp_inventory_serials', ['id' => $parentSerialId, 'serial_status' => 'continuation_reserved']);
+
+        $issue = DB::table('erp_production_internal_issue_tasks')->where('id', $posted['internal_issue_task_id'])->first();
+        app(ProductionInternalIssueService::class)->dispatch($issue->id, [
+            'client_command_id' => $this->id('serial-dispatch'), 'expected_version' => 1,
+        ], $user, ['production.output.issue']);
+        $received = app(ProductionInternalIssueService::class)->receive($issue->id, [
+            'client_command_id' => $this->id('serial-receive'), 'expected_version' => 2,
+        ], $user, ['production.output.receive']);
+        $task = DB::table('erp_production_tasks')->where('id', $issue->target_task_id)->first();
+        $execution = app(ProductionExecutionActionService::class);
+        $started = $execution->start($task->id, 'quantity_operation', $issue->target_id, [
+            'client_command_id' => $this->id('serial-target-start'), 'expected_version' => $received['target_business_version'],
+        ], $user, ['production.task.start']);
+        $completed = $execution->complete($task->id, 'quantity_operation', $issue->target_id, [
+            'client_command_id' => $this->id('serial-target-complete'), 'expected_version' => $started['target_business_version'],
+            'completed_base_qty' => 1, 'scrapped_base_qty' => 0,
+        ], $user, ['production.task.complete']);
+        $this->assertDatabaseHas('erp_production_output_lineage_links', [
+            'parent_output_record_id' => $source['output']->id,
+            'child_output_record_id' => $completed['output_record_id'],
+            'parent_inventory_serial_id' => $parentSerialId,
+            'relation_type' => 'internal_issue',
+        ]);
     }
 
     public function test_material_selector_filters_before_pagination_and_preserves_target_scope(): void
@@ -607,6 +849,41 @@ class ProductionMaterialExecutionTest extends TestCase
         $workOrder->setAttribute('test_supply_id', $supplyId);
         $workOrder->setAttribute('test_target_id', $targetId);
         return [$user, $workOrder, $requirement, $balance];
+    }
+
+    private function reservedSource(object $user, WorkOrder $targetWorkOrder, WorkOrderMaterialRequirement $requirement, string $outputMode, float $quantity = 2): array
+    {
+        $suffix = strtoupper(substr(uniqid(), -8));
+        $target = DB::table('erp_production_quantity_operations')->where('id', $targetWorkOrder->test_target_id)->first();
+        $targetRequirementId = (int) DB::table('erp_production_target_material_requirements')
+            ->where('target_type', 'quantity_operation')->where('target_id', $target->id)
+            ->where('component_item_id', $requirement->component_item_id)->value('id');
+        $workOrder = WorkOrder::create([
+            'work_order_no' => 'SPB-WO-'.$suffix, 'source_type' => 'stock_prebuild',
+            'stocking_purpose' => 'reserved_for_work_order', 'reserved_for_work_order_id' => $targetWorkOrder->id,
+            'reserved_for_target_operation_id' => $target->routing_operation_id_snapshot,
+            'configured_output_mode_snapshot' => $outputMode, 'effective_output_mode_snapshot' => $outputMode,
+            'effective_output_item_id_snapshot' => $requirement->component_item_id,
+            'output_item_id' => $requirement->component_item_id, 'target_qty' => $quantity, 'target_base_qty' => $quantity,
+            'target_unit_id' => $requirement->unit_id, 'base_unit_id' => $requirement->base_unit_id,
+            'production_execution_mode_snapshot' => 'quantity', 'status' => 'IN_PROGRESS',
+            'responsible_user_legacy_id' => $user->legacy_id, 'business_version' => 1,
+        ]);
+        $sourceTargetId = DB::table('erp_production_quantity_operations')->insertGetId([
+            'work_order_id' => $workOrder->id, 'operation_code_snapshot' => 'SPB-FINAL',
+            'operation_name_snapshot' => '备货目标工序', 'sequence_no_snapshot' => 1, 'status' => 'COMPLETED',
+            'planned_base_qty' => $quantity, 'completed_base_qty' => $quantity, 'scrapped_base_qty' => 0, 'remaining_base_qty' => 0,
+            'output_item_id_snapshot' => $requirement->component_item_id, 'output_mode_snapshot' => $outputMode,
+            'quality_mode_snapshot' => 'none', 'business_version' => 1, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $output = \App\Models\Erp\ProductionOutputRecord::create([
+            'output_no' => 'SPB-OUT-'.$suffix, 'work_order_id' => $workOrder->id,
+            'source_target_type' => 'quantity_operation', 'source_target_id' => $sourceTargetId,
+            'output_item_id' => $requirement->component_item_id, 'output_base_qty' => $quantity,
+            'output_mode_snapshot' => $outputMode, 'quality_mode_snapshot' => 'none', 'status' => 'WAIT_COMPLETION',
+            'created_by_legacy_id' => $user->legacy_id, 'produced_at' => now(), 'business_version' => 1,
+        ]);
+        return compact('workOrder', 'output', 'targetRequirementId');
     }
 
     private function pickLine(WorkOrder $workOrder, WorkOrderMaterialRequirement $requirement, InventoryBalance $balance, float $qty): array

@@ -19,6 +19,7 @@ class FinanceCashDocumentApplicationService
         private readonly FinancePartyResolver $parties,
         private readonly FinanceExchangeRateService $rates,
         private readonly FinanceAccountLedgerService $ledger,
+        private readonly PaymentMethodApplicationService $paymentMethods,
     ) {}
 
     public function create(string $direction, array $data, ?int $operatorId, ?string $operatorName): FinanceCashDocument
@@ -26,6 +27,10 @@ class FinanceCashDocumentApplicationService
         if (!in_array($direction, FinanceConstants::directions(), true)) throw ValidationException::withMessages(['direction' => '资金方向无效。']);
         return DB::transaction(function () use ($direction, $data, $operatorId, $operatorName): FinanceCashDocument {
             $account = FinanceAccount::query()->whereKey($data['finance_account_id'])->where('status', 'enabled')->lockForUpdate()->firstOrFail();
+            $paymentMethod = $this->paymentMethods->resolveForFinance(
+                $data['payment_method_id'] ?? $data['payment_method'],
+                $direction
+            );
             $party = $this->parties->resolve($data['party_type'], (int) $data['party_id']);
             $amount = Money::normalize((string) $data['amount']);
             $currency = $this->rates->assertEnabledCurrency($data['currency'] ?? 'CNY')->currency_code;
@@ -58,7 +63,10 @@ class FinanceCashDocumentApplicationService
                 'platform_fee_base_amount' => $feeAccount ? $this->rates->convert($fee, $exchange['rate']) : '0.0000',
                 'platform_fee_type' => $feeAccount ? ($data['platform_fee_type'] ?? 'platform') : null,
                 'base_amount' => $baseAmount,
-                'payment_method' => $data['payment_method'], 'external_reference_no' => $data['external_reference_no'] ?? null,
+                'payment_method' => $paymentMethod->method_code,
+                'payment_method_id' => $paymentMethod->id,
+                'payment_method_snapshot' => $this->paymentMethods->snapshot($paymentMethod),
+                'external_reference_no' => $data['external_reference_no'] ?? null,
                 'operator_id' => $operatorId, 'operator_name_snapshot' => $operatorName,
                 'remark' => $data['remark'] ?? null, 'status' => FinanceConstants::STATUS_DRAFT,
                 'idempotency_key' => $data['idempotency_key'] ?? null,
@@ -74,7 +82,16 @@ class FinanceCashDocumentApplicationService
         return DB::transaction(function () use ($id, $data, $operatorId, $operatorName): FinanceCashDocument {
             $document = FinanceCashDocument::query()->lockForUpdate()->findOrFail($id);
             if ($document->status !== FinanceConstants::STATUS_DRAFT) throw ValidationException::withMessages(['status' => '只有草稿资金单可以编辑。']);
-            $changes = collect($data)->only(['business_date', 'finance_account_id', 'amount', 'payment_method', 'external_reference_no', 'remark', 'platform_fee_amount', 'platform_fee_account_id', 'platform_fee_type'])->all();
+            $changes = collect($data)->only(['business_date', 'finance_account_id', 'amount', 'external_reference_no', 'remark', 'platform_fee_amount', 'platform_fee_account_id', 'platform_fee_type'])->all();
+            if (array_key_exists('payment_method_id', $data) || array_key_exists('payment_method', $data)) {
+                $method = $this->paymentMethods->resolveForFinance(
+                    $data['payment_method_id'] ?? $data['payment_method'],
+                    $document->direction
+                );
+                $changes['payment_method'] = $method->method_code;
+                $changes['payment_method_id'] = $method->id;
+                $changes['payment_method_snapshot'] = $this->paymentMethods->snapshot($method);
+            }
             if (isset($changes['amount'])) {
                 $changes['amount'] = Money::normalize((string) $changes['amount']);
                 if (Money::compare($changes['amount'], '0') <= 0) throw ValidationException::withMessages(['amount' => '收付金额必须大于 0。']);
@@ -121,6 +138,10 @@ class FinanceCashDocumentApplicationService
             $document = FinanceCashDocument::query()->with('account')->lockForUpdate()->findOrFail($id);
             if ($document->status !== FinanceConstants::STATUS_DRAFT) throw ValidationException::withMessages(['status' => '只有草稿资金单可以确认。']);
             if ($document->account?->status !== 'enabled') throw ValidationException::withMessages(['finance_account_id' => '资金账户已停用。']);
+            $method = $this->paymentMethods->resolveForFinance(
+                $document->payment_method_id ?: $document->payment_method,
+                $document->direction
+            );
             // The draft rate is only a preview. Confirmation fixes the final
             // historical snapshot so later rate changes cannot recalculate it.
             $exchange = $this->rates->businessSnapshot((string) $document->currency, $document->business_date->toDateString());
@@ -130,6 +151,9 @@ class FinanceCashDocumentApplicationService
                 'business_exchange_rate' => $exchange['rate'], 'exchange_rate_date' => $exchange['rate_date'],
                 'exchange_rate_source' => $exchange['rate_source'], 'base_amount' => $baseAmount,
                 'status' => FinanceConstants::STATUS_CONFIRMED, 'confirmed_by' => $operatorId, 'confirmed_at' => now(), 'lock_version' => DB::raw('lock_version + 1'),
+                'payment_method' => $method->method_code,
+                'payment_method_id' => $method->id,
+                'payment_method_snapshot' => [...$this->paymentMethods->snapshot($method), 'frozen_at' => now()->toISOString()],
             ]);
             $this->ledger->append([
                 'finance_account_id' => $document->finance_account_id, 'movement_type' => 'cash_document', 'source_type' => 'cash_document', 'source_id' => $document->id,

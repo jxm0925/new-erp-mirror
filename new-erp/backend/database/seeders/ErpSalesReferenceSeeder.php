@@ -10,6 +10,26 @@ class ErpSalesReferenceSeeder extends Seeder
 {
     public function run(): void
     {
+        if (Schema::hasTable('erp_payment_methods')) {
+            foreach ([
+                ['BANK_TRANSFER', '银行转账', true, true, true, 10],
+                ['CASH', '现金', true, true, true, 20],
+                ['ALIPAY', '支付宝', true, true, true, 30],
+                ['WECHAT_PAY', '微信支付', true, true, true, 40],
+                ['PLATFORM', '平台收付', true, true, true, 50],
+                ['OTHER', '其他', true, true, true, 90],
+            ] as [$code, $name, $sales, $receipt, $payment, $sort]) {
+                $this->upsert('erp_payment_methods', ['method_code' => $code], [
+                    'method_name' => $name,
+                    'available_for_sales' => $sales,
+                    'available_for_receipt' => $receipt,
+                    'available_for_payment' => $payment,
+                    'status' => 'enabled',
+                    'sort' => $sort,
+                ]);
+            }
+        }
+
         if (Schema::hasTable('erp_sales_funding_policies')) {
             $this->upsert('erp_sales_funding_policies', ['policy_code' => 'FULL_PREPAY'], [
                 'policy_name' => '全额预付',
@@ -76,4 +96,3 @@ class ErpSalesReferenceSeeder extends Seeder
         DB::table($table)->updateOrInsert($key, $payload);
     }
 }
-

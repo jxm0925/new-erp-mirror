@@ -14,6 +14,7 @@ use App\Models\Erp\FinanceExchangeRate;
 use App\Models\Erp\FinanceAccountTransfer;
 use App\Models\Erp\FinanceInvoice;
 use App\Models\Erp\FinanceInvoiceAllocation;
+use App\Models\Erp\PaymentMethod;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\CounterpartyBalanceService;
 use App\Services\Erp\FinanceAccountApplicationService;
@@ -29,6 +30,8 @@ use App\Services\Erp\FinanceCurrencyApplicationService;
 use App\Services\Erp\FinanceExchangeRateApplicationService;
 use App\Services\Erp\FinanceAccountTransferApplicationService;
 use App\Services\Erp\FinanceAccountLedgerService;
+use App\Services\Erp\PaymentMethodApplicationService;
+use App\Services\Erp\SalesFundingPolicyApplicationService;
 use App\Services\Erp\FinanceExchangeRateService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -38,6 +41,83 @@ use Illuminate\Validation\ValidationException;
 
 class FinanceController extends Controller
 {
+    public function paymentMethods(Request $request)
+    {
+        $this->authorizeAnyPermission($request, [
+            'finance.payment_method.view', 'finance.payment_method.manage',
+            'finance.receipt.view', 'finance.receipt.create',
+            'finance.payment.view', 'finance.payment.create',
+        ]);
+        $data = $request->validate([
+            'status' => 'nullable|in:enabled,disabled',
+            'usage' => 'nullable|in:sales,receipt,payment',
+            'keyword' => 'nullable|string|max:120',
+            'page' => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:1|max:100',
+        ]);
+        $query = PaymentMethod::query()->orderBy('sort')->orderBy('id');
+        if (! empty($data['status'])) $query->where('status', $data['status']);
+        if (! empty($data['usage'])) $query->where('available_for_'.$data['usage'], true);
+        if ($keyword = trim((string) ($data['keyword'] ?? ''))) {
+            $query->where(fn ($q) => $q->where('method_code', 'like', "%{$keyword}%")
+                ->orWhere('method_name', 'like', "%{$keyword}%"));
+        }
+        return response()->json($query->paginate($this->perPage($request)));
+    }
+
+    public function storePaymentMethod(Request $request, PaymentMethodApplicationService $service)
+    {
+        $user = $this->authorizePermission($request, 'finance.payment_method.manage');
+        return response()->json(['data' => $service->create($this->validatePaymentMethod($request, true), $user->legacy_id)], 201);
+    }
+
+    public function updatePaymentMethod(Request $request, int $id, PaymentMethodApplicationService $service)
+    {
+        $user = $this->authorizePermission($request, 'finance.payment_method.manage');
+        return response()->json(['data' => $service->update($id, $this->validatePaymentMethod($request, false), $user->legacy_id)]);
+    }
+
+    public function paymentMethodStatus(Request $request, int $id, PaymentMethodApplicationService $service)
+    {
+        $user = $this->authorizePermission($request, 'finance.payment_method.manage');
+        $data = $request->validate(['status' => 'required|in:enabled,disabled', 'expected_version' => 'required|integer|min:1']);
+        return response()->json(['data' => $service->setStatus($id, $data['status'], $data['expected_version'], $user->legacy_id)]);
+    }
+
+    public function fundingPolicies(Request $request)
+    {
+        $this->authorizeAnyPermission($request, [
+            'sales_order.view', 'sales_order.funding_policy.manage',
+            'finance.receipt.view', 'finance.payment.view',
+        ]);
+        $data = $request->validate(['status' => 'nullable|in:enabled,disabled', 'keyword' => 'nullable|string|max:120', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
+        $query = \App\Models\Erp\SalesFundingPolicy::query()->orderBy('id');
+        if (! empty($data['status'])) $query->where('status', $data['status']);
+        if ($keyword = trim((string) ($data['keyword'] ?? ''))) {
+            $query->where(fn ($q) => $q->where('policy_code', 'like', "%{$keyword}%")->orWhere('policy_name', 'like', "%{$keyword}%"));
+        }
+        return response()->json($query->paginate($this->perPage($request)));
+    }
+
+    public function storeFundingPolicy(Request $request, SalesFundingPolicyApplicationService $service)
+    {
+        $user = $this->authorizePermission($request, 'sales_order.funding_policy.manage');
+        return response()->json(['data' => $service->create($this->validateFundingPolicy($request, true), $user->legacy_id)], 201);
+    }
+
+    public function updateFundingPolicy(Request $request, int $id, SalesFundingPolicyApplicationService $service)
+    {
+        $user = $this->authorizePermission($request, 'sales_order.funding_policy.manage');
+        return response()->json(['data' => $service->update($id, $this->validateFundingPolicy($request, false), $user->legacy_id)]);
+    }
+
+    public function fundingPolicyStatus(Request $request, int $id, SalesFundingPolicyApplicationService $service)
+    {
+        $user = $this->authorizePermission($request, 'sales_order.funding_policy.manage');
+        $data = $request->validate(['status' => 'required|in:enabled,disabled', 'expected_version' => 'required|integer|min:1']);
+        return response()->json(['data' => $service->setStatus($id, $data['status'], $data['expected_version'], $user->legacy_id)]);
+    }
+
     public function currencies(Request $request)
     {
         $this->authorizePermission($request, 'finance.view');
@@ -309,7 +389,8 @@ class FinanceController extends Controller
             'party_type' => 'required|in:customer,supplier', 'party_id' => 'required|integer|min:1',
             'business_date' => 'required|date', 'finance_account_id' => 'required|integer|exists:erp_finance_accounts,id',
             'currency' => 'required|string|max:10', 'amount' => ['required', 'regex:/^\d+(\.\d{1,4})?$/'],
-            'payment_method' => 'required|string|max:50', 'external_reference_no' => 'nullable|string|max:160',
+            'payment_method_id' => 'required_without:payment_method|integer|exists:erp_payment_methods,id',
+            'payment_method' => 'required_without:payment_method_id|string|max:60', 'external_reference_no' => 'nullable|string|max:160',
             'platform_fee_amount' => ['nullable', 'regex:/^\d+(\.\d{1,4})?$/'], 'platform_fee_account_id' => 'nullable|integer|exists:erp_finance_accounts,id', 'platform_fee_type' => 'nullable|in:platform,bank,other',
             'remark' => 'nullable|string|max:1000', 'idempotency_key' => 'nullable|string|max:100',
         ]);
@@ -321,7 +402,7 @@ class FinanceController extends Controller
         $document = FinanceCashDocument::findOrFail($id);
         $permission = $document->direction === FinanceConstants::DIRECTION_RECEIPT ? 'finance.receipt.create' : 'finance.payment.create';
         $user = $this->authorizePermission($request, $permission);
-        $data = $request->validate(['business_date' => 'sometimes|date', 'finance_account_id' => 'sometimes|integer|exists:erp_finance_accounts,id', 'amount' => ['sometimes', 'regex:/^\d+(\.\d{1,4})?$/'], 'payment_method' => 'sometimes|string|max:50', 'external_reference_no' => 'nullable|string|max:160', 'platform_fee_amount' => ['nullable', 'regex:/^\d+(\.\d{1,4})?$/'], 'platform_fee_account_id' => 'nullable|integer|exists:erp_finance_accounts,id', 'platform_fee_type' => 'nullable|in:platform,bank,other', 'remark' => 'nullable|string|max:1000']);
+        $data = $request->validate(['business_date' => 'sometimes|date', 'finance_account_id' => 'sometimes|integer|exists:erp_finance_accounts,id', 'amount' => ['sometimes', 'regex:/^\d+(\.\d{1,4})?$/'], 'payment_method_id' => 'sometimes|integer|exists:erp_payment_methods,id', 'payment_method' => 'sometimes|string|max:60', 'external_reference_no' => 'nullable|string|max:160', 'platform_fee_amount' => ['nullable', 'regex:/^\d+(\.\d{1,4})?$/'], 'platform_fee_account_id' => 'nullable|integer|exists:erp_finance_accounts,id', 'platform_fee_type' => 'nullable|in:platform,bank,other', 'remark' => 'nullable|string|max:1000']);
         return response()->json(['data' => $service->updateDraft($id, $data, $user->legacy_id, $this->operatorName($user))]);
     }
 
@@ -675,6 +756,44 @@ class FinanceController extends Controller
         abort_unless($user, 401, '请先登录。');
         abort_unless($auth->isSuperAdmin($user) || in_array($permission, $auth->permissionCodes($user), true), 403, '无按钮权限：'.$permission);
         return $user;
+    }
+
+    private function authorizeAnyPermission(Request $request, array $permissions): object
+    {
+        $auth = app(AuthContextService::class); $user = $auth->currentUser($request);
+        abort_unless($user, 401, '请先登录。');
+        abort_unless($auth->isSuperAdmin($user) || array_intersect($permissions, $auth->permissionCodes($user)), 403, '当前用户没有查看付款方式的权限。');
+        return $user;
+    }
+
+    private function validatePaymentMethod(Request $request, bool $creating): array
+    {
+        return $request->validate([
+            'method_code' => $creating ? 'required|string|max:60|alpha_dash:ascii|unique:erp_payment_methods,method_code' : 'prohibited',
+            'method_name' => ($creating ? 'required' : 'sometimes|required').'|string|max:120',
+            'expected_version' => $creating ? 'prohibited' : 'required|integer|min:1',
+            'available_for_sales' => ($creating ? 'required' : 'sometimes').'|boolean',
+            'available_for_receipt' => ($creating ? 'required' : 'sometimes').'|boolean',
+            'available_for_payment' => ($creating ? 'required' : 'sometimes').'|boolean',
+            'status' => 'nullable|in:enabled,disabled',
+            'sort' => 'nullable|integer|min:0|max:9999',
+            'remark' => 'nullable|string|max:1000',
+        ]);
+    }
+
+    private function validateFundingPolicy(Request $request, bool $creating): array
+    {
+        return $request->validate([
+            'policy_code' => $creating ? 'required|string|max:60|alpha_dash:ascii|unique:erp_sales_funding_policies,policy_code' : 'prohibited',
+            'policy_name' => ($creating ? 'required' : 'sometimes|required').'|string|max:120',
+            'policy_type' => ($creating ? 'required' : 'sometimes|required').'|in:full_prepay,deposit_production,installment_contract,custom_threshold',
+            'production_threshold_type' => ($creating ? 'required' : 'sometimes|required').'|in:amount,ratio',
+            'production_threshold_value' => ($creating ? 'required' : 'sometimes|required').'|numeric|min:0',
+            'shipment_requires_full_payment' => ($creating ? 'required' : 'sometimes|required').'|accepted',
+            'status' => 'nullable|in:enabled,disabled',
+            'remark' => 'nullable|string|max:1000',
+            'expected_version' => $creating ? 'prohibited' : 'required|integer|min:1',
+        ]);
     }
 
     private function operatorName(object $user): string { return (string) ($user->nickname ?: $user->username ?: '系统'); }

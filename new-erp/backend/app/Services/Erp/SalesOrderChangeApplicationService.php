@@ -162,7 +162,14 @@ class SalesOrderChangeApplicationService
         $mode = $row['price_tax_mode'] ?? $line->price_tax_mode ?? 'tax_inclusive';
 
         if ($qty <= 0) throw ValidationException::withMessages(['lines.'.$line->id.'.order_qty' => '变更后的订单数量必须大于 0；删除订单行需走独立变更审批。']);
-        if ($price <= 0) throw ValidationException::withMessages(['lines.'.$line->id.'.unit_price' => '变更后的销售单价必须大于 0。']);
+        $gift = $line->commercial_role === 'gift';
+        if (($gift && abs($price) >= 0.00000001) || (! $gift && $price <= 0)) {
+            throw ValidationException::withMessages([
+                'lines.'.$line->id.'.unit_price' => $gift
+                    ? '赠品行变更后的销售单价必须为 0。'
+                    : '正常销售行变更后的销售单价必须大于 0。',
+            ]);
+        }
         if ($discount < 0 || $discount > 1) throw ValidationException::withMessages(['lines.'.$line->id.'.discount_rate' => '折扣率必须在 0 到 1 之间。']);
         if ($tax < 0 || $tax > 1) throw ValidationException::withMessages(['lines.'.$line->id.'.tax_rate' => '税率不合法。']);
         if (!in_array($mode, ['tax_inclusive', 'tax_exclusive'], true)) throw ValidationException::withMessages(['lines.'.$line->id.'.price_tax_mode' => '含税方式不合法。']);

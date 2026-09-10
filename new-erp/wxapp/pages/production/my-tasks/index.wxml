@@ -1,1 +1,181 @@
-<include src="../tasks/index.wxml" />
+<view class="my-tasks-page">
+  <!-- 顶部红底区域：标题、班组与汇总指标看板 -->
+  <view class="header-banner">
+    <view class="header-top-bar">
+      <view class="header-title-group">
+        <text class="header-title">我的生产任务</text>
+        <view class="team-badge">{{teamName || '车间生产执行组'}}</view>
+      </view>
+    </view>
+
+    <!-- 4大统计指标与扫码找单 -->
+    <view class="summary-board">
+      <view class="metrics-row">
+        <view class="metric-item">
+          <text class="metric-num">{{stats.total !== undefined ? stats.total : '—'}}</text>
+          <text class="metric-lbl">今日总任务</text>
+        </view>
+        <view class="metric-divider"></view>
+        <view class="metric-item metric-highlight">
+          <text class="metric-num highlight">{{stats.running !== undefined ? stats.running : '—'}}</text>
+          <text class="metric-lbl">进行中</text>
+        </view>
+        <view class="metric-divider"></view>
+        <view class="metric-item">
+          <text class="metric-num">{{stats.waiting !== undefined ? stats.waiting : '—'}}</text>
+          <text class="metric-lbl">待开始</text>
+        </view>
+        <view class="metric-divider"></view>
+        <view class="metric-item">
+          <text class="metric-num">{{stats.completed !== undefined ? stats.completed : '—'}}</text>
+          <text class="metric-lbl">今日已完工</text>
+        </view>
+      </view>
+
+      <view class="scan-button" bindtap="scan">
+        <view class="scan-icon-wrap">
+          <van-icon name="photograph" size="36rpx" color="#d81e06" />
+        </view>
+        <text class="scan-text">扫码找单</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 白色浮层筛选栏：Tab 分段与圆角搜索框 -->
+  <view class="filter-sticky-card">
+    <view class="tab-segment">
+      <view class="tab-item {{active === 'all' ? 'tab-active' : ''}}" data-value="all" bindtap="setTab">
+        <text class="tab-label">全部</text>
+        <text class="tab-badge {{active === 'all' ? 'badge-active' : ''}}">{{stats.total !== undefined ? stats.total : 0}}</text>
+        <view class="tab-indicator" wx:if="{{active === 'all'}}"></view>
+      </view>
+      <view class="tab-item {{active === 'running' ? 'tab-active' : ''}}" data-value="running" bindtap="setTab">
+        <text class="tab-label">进行中</text>
+        <text class="tab-badge {{active === 'running' ? 'badge-active' : ''}}">{{stats.running !== undefined ? stats.running : 0}}</text>
+        <view class="tab-indicator" wx:if="{{active === 'running'}}"></view>
+      </view>
+      <view class="tab-item {{active === 'waiting' ? 'tab-active' : ''}}" data-value="waiting" bindtap="setTab">
+        <text class="tab-label">待开始</text>
+        <text class="tab-badge {{active === 'waiting' ? 'badge-active' : ''}}">{{stats.waiting !== undefined ? stats.waiting : 0}}</text>
+        <view class="tab-indicator" wx:if="{{active === 'waiting'}}"></view>
+      </view>
+      <view class="tab-item {{active === 'completed' ? 'tab-active' : ''}}" data-value="completed" bindtap="setTab">
+        <text class="tab-label">已完工</text>
+        <text class="tab-badge {{active === 'completed' ? 'badge-active' : ''}}">{{stats.completed !== undefined ? stats.completed : 0}}</text>
+        <view class="tab-indicator" wx:if="{{active === 'completed'}}"></view>
+      </view>
+    </view>
+
+    <!-- 搜索输入框 -->
+    <view class="search-box">
+      <van-icon name="search" size="32rpx" color="#9ca3af" />
+      <input class="search-input" placeholder="搜索任务号 / 工单号 / 产品型号..." value="{{keyword}}" bindinput="onSearch" confirm-type="search" />
+      <van-icon wx:if="{{keyword}}" name="clear" size="30rpx" color="#c4c7cc" bindtap="clearSearch" />
+    </view>
+  </view>
+
+  <!-- 网络与同步状态条 -->
+  <view class="sync-status-bar" wx:if="{{loaded}}">
+    <view class="sync-left">
+      <view class="pulse-indicator"></view>
+      <text class="sync-text">车间网络正常 · 离线缓存已开启</text>
+    </view>
+    <text class="sync-time">最近同步 {{syncedAt}}</text>
+  </view>
+
+  <!-- 任务列表容器 -->
+  <view class="tasks-container">
+    <!-- 加载中 -->
+    <view wx:if="{{loading}}" class="state-container">
+      <van-loading color="#d81e06" size="48rpx" vertical>正在加载生产任务...</van-loading>
+    </view>
+
+    <!-- 空状态 -->
+    <view wx:elif="{{loaded && (!filteredRows || !filteredRows.length)}}" class="state-container">
+      <van-empty description="暂无符合条件的生产任务" image="search" />
+    </view>
+
+    <!-- 任务卡片列表 -->
+    <block wx:else>
+      <view class="task-card" wx:for="{{filteredRows}}" wx:key="id" data-id="{{item.id}}" bindtap="openTask">
+        <!-- 卡片第1行：工序号+名称、任务单号、状态标签（带计时/呼吸灯） -->
+        <view class="card-header-row">
+          <view class="card-header-left">
+            <view class="process-pill">{{item.operationSnapshot}}</view>
+            <text class="task-no-text">{{item.task_no}}</text>
+          </view>
+
+          <!-- 状态徽章 -->
+          <view class="card-status-pill status-{{item.statusCategory}}">
+            <view class="status-pulse-dot" wx:if="{{item.targetStatus === 'IN_PROGRESS'}}"></view>
+            <text class="status-text">{{item.statusTagText}}</text>
+          </view>
+        </view>
+
+        <!-- 卡片第2行：产品名称 -->
+        <view class="product-title-row">
+          <text class="product-title">{{item.productName}}</text>
+        </view>
+
+        <!-- 卡片第3行：工单号与物料规格 -->
+        <view class="specs-row">
+          <text class="work-order-chip">{{item.workOrderNo}}</text>
+          <text class="specs-text" wx:if="{{item.itemSpecification}}">{{item.itemSpecification}}</text>
+        </view>
+
+        <!-- 卡片第4行：进度条与数量 -->
+        <view class="progress-section">
+          <view class="progress-info-row">
+            <text class="progress-label">工序加工进度 ({{item.progressPct}}%)</text>
+            <view class="progress-count-wrap">
+              <text class="count-desc">已完成 </text>
+              <text class="count-highlight">{{item.completed}}</text>
+              <text class="count-total"> / {{item.planned}} {{item.unitName || '件'}}</text>
+            </view>
+          </view>
+          <view class="progress-track">
+            <view class="progress-fill" style="width: {{item.progressPct}}%;"></view>
+          </view>
+        </view>
+
+        <!-- 卡片第5行：3列微指标网格 (齐套状态、执行单元/批次、当前节拍/质检) -->
+        <view class="micro-metrics-grid">
+          <view class="grid-col">
+            <text class="col-lbl">齐套状态</text>
+            <text class="col-val {{item.kittingClass}}">{{item.kittingText}}</text>
+          </view>
+          <view class="grid-col">
+            <text class="col-lbl">{{item.executionMode === 'unit' ? '执行单元' : '执行模式'}}</text>
+            <text class="col-val">{{item.unitText}}</text>
+          </view>
+          <view class="grid-col">
+            <text class="col-lbl">当前节拍</text>
+            <text class="col-val">{{item.rhythmText}}</text>
+          </view>
+        </view>
+
+        <!-- 卡片第6行：操作人信息与状态感知 CTA 按钮 -->
+        <view class="card-footer-row">
+          <view class="worker-group">
+            <view class="avatar-circle">{{item.avatarChar}}</view>
+            <text class="worker-text">{{item.workerDesc}}</text>
+          </view>
+          <view class="cta-button {{item.ctaClass}}" data-id="{{item.id}}" catchtap="openTask">
+            <text>{{item.ctaText}}</text>
+          </view>
+        </view>
+      </view>
+    </block>
+
+    <!-- 触底加载更多 -->
+    <view wx:if="{{loadingMore}}" class="loading-more-wrap">
+      <van-loading size="32rpx" color="#d81e06">正在加载更多任务...</van-loading>
+    </view>
+    <view wx:elif="{{loaded && filteredRows.length >= total && total > 0}}" class="list-end-tip">
+      <text>— 已加载全部任务 (共 {{total}} 项) —</text>
+    </view>
+
+    <!-- 底部安全留白 -->
+    <view class="bottom-safe-space"></view>
+  </view>
+</view>

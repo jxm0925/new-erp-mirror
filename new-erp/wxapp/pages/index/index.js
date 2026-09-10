@@ -25,24 +25,20 @@ Page({
         icon:"/static/images/work_order.png",
         name:"工单"
       }]
-    // },{
-    //   url:"",
-    //   icon:"/static/images/work_order.png",
-    //   name:"工单"
-    // },{
-    //   url:"",
-    //   icon:"/static/images/score.png",
-    //   name:"评分"
-    // 
   },
   onLoad: function () {
     this.getIndexData();
   },
-  onShow:function(){
+  onShow: function () {
     var userInfo = wx.getStorageSync('userInfo');
     this.setData({
-        userInfo:userInfo
+      userInfo: userInfo
     });
+    if (typeof this.getTabBar === 'function' && this.getTabBar()) {
+      this.getTabBar().setData({
+        active: 0
+      });
+    }
   },
   onReady: function () {
     
@@ -87,7 +83,7 @@ Page({
           })
           break;
       case 2:
-          wx.navigateTo({
+          wx.switchTab({
               url: '/pages/mall/index/index',
           })
           break;

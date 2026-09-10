@@ -21,9 +21,11 @@ final class WorkOrderCompletionReadinessService
             ->join('erp_production_output_records as output', 'output.id', '=', 'line.output_record_id')
             ->where('completion.work_order_id', $workOrder->id)
             ->where('completion.status', 'APPROVED')
-            ->get(['line.id', 'line.qualified_base_qty', 'output.output_mode_snapshot', 'output.disposition', 'output.status as output_status']);
+            ->get(['line.id', 'line.output_record_id', 'line.qualified_base_qty', 'output.output_mode_snapshot', 'output.disposition', 'output.status as output_status']);
 
-        $warehouseRequired = $workOrder->source_type === 'stock_prebuild'
+        $reservedStockPrebuild = $workOrder->source_type === 'stock_prebuild'
+            && $workOrder->stocking_purpose === 'reserved_for_work_order';
+        $warehouseRequired = ($workOrder->source_type === 'stock_prebuild' && ! $reservedStockPrebuild)
             || $approvedLines->contains(fn (object $line): bool => $line->output_mode_snapshot === 'warehouse_required'
                 || ($line->output_mode_snapshot === 'warehouse_optional' && $line->disposition === 'warehouse'));
         $warehousePosted = (float) DB::table('erp_work_order_finished_goods_receipts')
@@ -32,11 +34,18 @@ final class WorkOrderCompletionReadinessService
             ->whereNotNull('inventory_transaction_id')
             ->sum('posted_base_qty');
 
-        $warehouseLinesReady = $approvedLines->every(function (object $line) use ($workOrder): bool {
-            $requiresWarehouse = $workOrder->source_type === 'stock_prebuild'
+        $warehouseLinesReady = $approvedLines->every(function (object $line) use ($workOrder, $reservedStockPrebuild): bool {
+            $requiresWarehouse = ($workOrder->source_type === 'stock_prebuild' && ! $reservedStockPrebuild)
                 || $line->output_mode_snapshot === 'warehouse_required'
                 || ($line->output_mode_snapshot === 'warehouse_optional' && $line->disposition === 'warehouse');
-            if (! $requiresWarehouse) return in_array($line->output_status, ['COMPLETED', 'WAREHOUSED'], true);
+            if (! $requiresWarehouse) {
+                if ($reservedStockPrebuild) {
+                    return $line->output_status === 'HANDED_OVER'
+                        && DB::table('erp_production_operation_handovers')->where('output_record_id', $line->output_record_id)
+                            ->where('status', 'RECEIVED')->exists();
+                }
+                return in_array($line->output_status, ['COMPLETED', 'WAREHOUSED'], true);
+            }
             $posted = (float) DB::table('erp_work_order_finished_goods_receipts')
                 ->where('completion_line_id', $line->id)->where('status', 'POSTED')
                 ->whereNotNull('inventory_transaction_id')->sum('posted_base_qty');

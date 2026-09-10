@@ -35,6 +35,9 @@ return new class extends Migration
             $table->boolean('shipment_requires_full_payment')->default(true);
             $table->string('status', 20)->default('enabled')->index();
             $table->text('remark')->nullable();
+            $table->unsignedBigInteger('created_by')->nullable();
+            $table->unsignedBigInteger('updated_by')->nullable();
+            $table->unsignedInteger('business_version')->default(1);
             $table->timestamps();
         });
 
@@ -82,4 +85,3 @@ return new class extends Migration
         Schema::dropIfExists('erp_sales_funding_policies');
     }
 };
-

@@ -62,8 +62,8 @@ class WorkOrderWo04ReleaseTest extends TestCase
         $this->assertSame('passed', $gate['status']);
         $this->assertFalse($gate['immutable']);
         $this->assertSame($bom->id, $gate['bom']['bom_id']);
-        $this->assertCount(13, $gate['checks']);
-        $this->assertSame(13, DB::table('erp_work_order_release_gate_checks')
+        $this->assertCount(15, $gate['checks']);
+        $this->assertSame(15, DB::table('erp_work_order_release_gate_checks')
             ->where('work_order_id', $waiting->id)
             ->count());
 
@@ -153,8 +153,209 @@ class WorkOrderWo04ReleaseTest extends TestCase
         $this->assertSame(20, DB::table('erp_production_units')->where('work_order_id', $released->id)->count());
         $this->assertSame(range(1, 20), DB::table('erp_production_units')->where('work_order_id', $released->id)->orderBy('sequence_no')->pluck('sequence_no')->map(fn ($value) => (int) $value)->all());
         $this->assertSame(20, DB::table('erp_production_unit_operations')->where('work_order_id', $released->id)->count());
-        $this->assertSame(1, DB::table('erp_production_tasks')->where('work_order_id', $released->id)->count());
+        $this->assertSame(20, DB::table('erp_production_tasks')->where('work_order_id', $released->id)->count());
         $this->assertSame(20, DB::table('erp_production_task_targets')->whereIn('task_id', DB::table('erp_production_tasks')->where('work_order_id', $released->id)->pluck('id'))->count());
+        $this->assertSame(20, DB::table('erp_production_tasks')->where('work_order_id', $released->id)
+            ->whereNotNull('production_unit_id')->whereNotNull('production_unit_operation_id')->count());
+    }
+
+    public function test_unit_mode_ten_by_three_creates_thirty_independent_tasks_at_publish(): void
+    {
+        [$user, $demand] = $this->fixture(7540);
+        $routingId = DB::table('erp_production_routings')->where('output_item_id', $demand->item_id)->value('id');
+        foreach ([20 => '加工', 30 => '包装'] as $sequence => $name) {
+            $operationId = DB::table('erp_production_operations')->insertGetId([
+                'operation_no' => 'WO04-OP-'.$sequence.'-'.strtoupper(substr(uniqid(), -6)),
+                'operation_name' => 'WO04 '.$name,
+                'status' => 'enabled',
+                'sort' => $sequence,
+                'business_version' => 1,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            DB::table('erp_production_routing_operations')->insert([
+                'routing_id' => $routingId,
+                'operation_id' => $operationId,
+                'sequence' => $sequence,
+                'is_key_operation' => $sequence === 30,
+                'output_item_id' => $demand->item_id,
+                'output_mode' => $sequence === 30 ? 'warehouse_required' : 'flow_only',
+                'quality_mode' => 'none',
+                'allow_continue_without_warehouse' => true,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        $service = app(WorkOrderApplicationService::class);
+        $draft = $service->createDraft([
+            'client_command_id' => 'phase6b-unit-10x3-create',
+            'production_demand_id' => $demand->id,
+            'expected_demand_version' => 1,
+            'target_qty' => 10,
+            'planned_date' => '2026-09-18',
+            'production_location_name' => '逐件三工序车间',
+        ], $user, self::PERMISSIONS);
+        $waiting = $service->submit($draft->id, [
+            'client_command_id' => 'phase6b-unit-10x3-submit',
+            'expected_version' => 1,
+            'reason' => '逐件三工序验证',
+        ], $user, self::PERMISSIONS);
+        $released = $service->publish($waiting->id, [
+            'client_command_id' => 'phase6b-unit-10x3-publish',
+            'expected_version' => 2,
+            'reason' => '逐件三工序验证',
+        ], $user, self::PERMISSIONS);
+
+        $tasks = DB::table('erp_production_tasks')->where('work_order_id', $released->id)->get();
+        $this->assertCount(30, $tasks);
+        $this->assertSame(10, $tasks->where('status', 'WAIT_CLAIM')->count());
+        $this->assertSame(20, $tasks->where('status', 'WAIT_PREDECESSOR')->count());
+        $this->assertSame(30, $tasks->pluck('production_unit_operation_id')->filter()->unique()->count());
+        $this->assertSame(30, DB::table('erp_production_task_targets')->whereIn('task_id', $tasks->pluck('id'))->count());
+    }
+
+    public function test_sales_work_orders_share_one_master_order_and_hierarchy_endpoints_are_paginated(): void
+    {
+        [$user, $demand] = $this->fixture(7541);
+        $service = app(WorkOrderApplicationService::class);
+        $first = $service->createDraft([
+            'client_command_id' => 'phase6b-mwo-first',
+            'production_demand_id' => $demand->id,
+            'expected_demand_version' => 1,
+            'target_qty' => 4,
+            'planned_date' => '2026-09-18',
+            'production_location_name' => '主生产工单车间',
+        ], $user, self::PERMISSIONS);
+        $second = $service->createDraft([
+            'client_command_id' => 'phase6b-mwo-second',
+            'production_demand_id' => $demand->id,
+            'expected_demand_version' => 2,
+            'target_qty' => 6,
+            'planned_date' => '2026-09-19',
+            'production_location_name' => '主生产工单车间',
+        ], $user, self::PERMISSIONS);
+
+        $this->assertNotNull($first->production_master_order_id);
+        $this->assertSame((int) $first->production_master_order_id, (int) $second->production_master_order_id);
+        $this->assertSame(1, DB::table('erp_production_master_orders')
+            ->where('sales_order_id', $demand->sales_order_id)->count());
+
+        $first = $service->submit($first->id, [
+            'client_command_id' => 'phase6b-pb-first-submit', 'expected_version' => 1, 'reason' => '生成订单备料单',
+        ], $user, self::PERMISSIONS);
+        $first = $service->publish($first->id, [
+            'client_command_id' => 'phase6b-pb-first-publish', 'expected_version' => 2, 'reason' => '生成订单备料单',
+        ], $user, self::PERMISSIONS);
+        $second = $service->submit($second->id, [
+            'client_command_id' => 'phase6b-pb-second-submit', 'expected_version' => 1, 'reason' => '合并订单备料单',
+        ], $user, self::PERMISSIONS);
+        $second = $service->publish($second->id, [
+            'client_command_id' => 'phase6b-pb-second-publish', 'expected_version' => 2, 'reason' => '合并订单备料单',
+        ], $user, self::PERMISSIONS);
+
+        $preparation = DB::table('erp_production_preparation_orders')
+            ->where('production_master_order_id', $first->production_master_order_id)->first();
+        $this->assertNotNull($preparation);
+        $this->assertSame('WAIT_PREPARE', $preparation->status);
+        $this->assertSame(1, DB::table('erp_production_preparation_orders')
+            ->where('production_master_order_id', $first->production_master_order_id)->count());
+        $formalRequirementIds = DB::table('erp_work_order_material_requirements')
+            ->whereIn('work_order_id', [$first->id, $second->id])->pluck('id')->map(fn ($id) => (int) $id)->sort()->values()->all();
+        $preparationRequirementIds = DB::table('erp_production_preparation_order_lines')
+            ->where('preparation_order_id', $preparation->id)->pluck('material_requirement_id')->map(fn ($id) => (int) $id)->sort()->values()->all();
+        $this->assertSame($formalRequirementIds, $preparationRequirementIds);
+        $this->assertEqualsCanonicalizing([$first->id, $second->id], DB::table('erp_production_preparation_order_lines')
+            ->where('preparation_order_id', $preparation->id)->pluck('work_order_id')->map(fn ($id) => (int) $id)->unique()->all());
+
+        $token = $this->token($user->legacy_id);
+        $masterId = (int) $first->production_master_order_id;
+        $masterNo = DB::table('erp_production_master_orders')->where('id', $masterId)->value('master_order_no');
+        $masterList = $this->withToken($token)->getJson('/api/v1/erp/production/master-orders?per_page=1&keyword='.urlencode($masterNo));
+        $masterList
+            ->assertOk()->assertJsonPath('total', 1)
+            ->assertJsonPath('data.0.id', $masterId)
+            ->assertJsonPath('data.0.display_status', 'WAIT_CONDITION')
+            ->assertJsonPath('data.0.work_order_count', 2)
+            ->assertJsonPath('data.0.product_summary.0.work_order_count', 2)
+            ->assertJsonPath('data.0.product_summary.0.planned_qty', 10)
+            ->assertJsonPath('data.0.quantity_summary.comparable', true)
+            ->assertJsonPath('data.0.quantity_summary.planned_qty', 10)
+            ->assertJsonPath('data.0.total_unit_qty', 10)
+            ->assertJsonPath('data.0.production_task_progress.total', 10)
+            ->assertJsonPath('data.0.production_task_progress.completed', 0)
+            ->assertJsonPath('data.0.delivery.status', 'WAIT_PREPARE')
+            ->assertJsonPath('data.0.delivery.total_line_count', 2)
+            ->assertJsonPath('data.0.delivery.received_line_count', 0)
+            ->assertJsonPath('data.0.kitting.required_target_count', 10)
+            ->assertJsonPath('data.0.kitting.confirmed_target_count', 0)
+            ->assertJsonPath('data.0.funding_status', 'passed')
+            ->assertJsonPath('data.0.shipment_status', 'passed')
+            ->assertJsonPath('data.0.blocker_count', 0);
+        $summary = $masterList->json('summary');
+        $this->assertGreaterThanOrEqual(1, $summary['total']);
+        $this->assertSame($summary['total'], $summary['in_progress'] + $summary['wait_condition'] + $summary['exception'] + $summary['completed']);
+        $this->withToken($token)->getJson('/api/v1/erp/production/master-orders?status=WAIT_CONDITION&per_page=1&keyword='.urlencode($masterNo))
+            ->assertOk()->assertJsonPath('total', 1)
+            ->assertJsonPath('data.0.id', $masterId);
+
+        $restricted = $this->createUser(7591, 'mwo-self-scope');
+        $outsider = $this->createUser(7592, 'mwo-hidden-owner');
+        $this->grantRole($restricted->legacy_id, ['production.work_order.view'], 'self');
+        DB::table('erp_work_orders')->where('id', $first->id)->update(['responsible_user_legacy_id' => $restricted->legacy_id]);
+        DB::table('erp_work_orders')->where('id', $second->id)->update(['responsible_user_legacy_id' => $outsider->legacy_id]);
+        $this->withToken($this->token($restricted->legacy_id))
+            ->getJson('/api/v1/erp/production/master-orders?per_page=1&keyword='.urlencode($masterNo))
+            ->assertOk()
+            ->assertJsonPath('total', 1)
+            ->assertJsonPath('data.0.work_order_count', 1)
+            ->assertJsonPath('data.0.total_unit_qty', 4)
+            ->assertJsonPath('data.0.product_summary.0.work_order_count', 1);
+        $this->withToken($token)->getJson('/api/v1/erp/production/master-orders/'.$masterId)
+            ->assertOk()->assertJsonPath('data.id', $masterId)
+            ->assertJsonPath('data.work_order_count', 2);
+        $this->withToken($token)->getJson('/api/v1/erp/production/master-orders/'.$masterId.'/work-orders?per_page=1')
+            ->assertOk()->assertJsonPath('total', 2)
+            ->assertJsonCount(1, 'data');
+        $this->withToken($token)->getJson('/api/v1/erp/production/master-orders/'.$masterId.'/units?per_page=1')
+            ->assertOk()->assertJsonPath('total', 10);
+        $this->withToken($token)->getJson('/api/v1/erp/production/preparation-orders?per_page=1&production_master_order_id='.$masterId)
+            ->assertOk()->assertJsonPath('total', 1)
+            ->assertJsonPath('data.0.id', $preparation->id)
+            ->assertJsonCount(2, 'data.0.lines');
+        $this->withToken($token)->getJson('/api/v1/erp/production/preparation-orders/'.$preparation->id)
+            ->assertOk()->assertJsonPath('data.id', $preparation->id)
+            ->assertJsonCount(2, 'data.lines');
+
+        $mixedUnit = Unit::create([
+            'unit_code' => 'WO04-MIX-'.strtoupper(substr(uniqid(), -6)),
+            'unit_name' => '米',
+            'unit_type' => 'length',
+            'decimal_places' => 4,
+            'is_base' => true,
+            'status' => 'enabled',
+        ]);
+        DB::table('erp_work_orders')->where('id', $second->id)->update([
+            'base_unit_id' => $mixedUnit->id,
+            'base_unit_name_snapshot' => $mixedUnit->unit_name,
+        ]);
+        $this->withToken($token)->getJson('/api/v1/erp/production/master-orders?per_page=1&keyword='.urlencode($masterNo))
+            ->assertOk()
+            ->assertJsonPath('data.0.quantity_summary.comparable', false)
+            ->assertJsonPath('data.0.quantity_summary.display_mode', 'multiple_units')
+            ->assertJsonPath('data.0.total_unit_qty', null)
+            ->assertJsonCount(2, 'data.0.quantity_summary.groups');
+
+        DB::table('erp_sales_orders')->where('id', $demand->sales_order_id)->update([
+            'total_amount' => 100,
+            'final_receivable_amount' => 100,
+        ]);
+        $this->withToken($token)->getJson('/api/v1/erp/production/master-orders?per_page=1&keyword='.urlencode($masterNo))
+            ->assertOk()
+            ->assertJsonPath('data.0.funding_status', 'blocked')
+            ->assertJsonPath('data.0.shipment_status', 'blocked')
+            ->assertJsonPath('data.0.blocker_count', 1)
+            ->assertJsonPath('data.0.blockers.0.type', 'production_funding');
     }
 
     public function test_workstation_stock_does_not_enter_per_order_preparation_queue(): void
@@ -234,7 +435,7 @@ class WorkOrderWo04ReleaseTest extends TestCase
         $this->assertSame('quantity', DB::table('erp_work_orders')->where('id', $released->id)->value('production_execution_mode_snapshot'));
     }
 
-    public function test_required_kitting_becomes_ready_and_only_explicit_start_begins_owner_labor(): void
+    public function test_required_kitting_immediately_starts_owner_labor_and_is_idempotent(): void
     {
         [$user, $demand] = $this->fixture(7533);
         $service = app(WorkOrderApplicationService::class);
@@ -245,9 +446,11 @@ class WorkOrderWo04ReleaseTest extends TestCase
             'reason' => '执行事实验证'], $user, self::PERMISSIONS);
         $released = $service->publish($waiting->id, ['client_command_id' => 'phase6b-facts-publish', 'expected_version' => 2,
             'reason' => '执行事实验证'], $user, self::PERMISSIONS);
-        $task = DB::table('erp_production_tasks')->where('work_order_id', $released->id)->first();
+        $tasks = DB::table('erp_production_tasks')->where('work_order_id', $released->id)->orderBy('id')->get();
+        $task = $tasks->first();
+        $secondTask = $tasks->skip(1)->first();
         $link = DB::table('erp_production_task_targets')->where('task_id', $task->id)->first();
-        $secondLink = DB::table('erp_production_task_targets')->where('task_id', $task->id)->where('id', '!=', $link->id)->first();
+        $secondLink = DB::table('erp_production_task_targets')->where('task_id', $secondTask->id)->first();
 
         $claimed = app(ProductionTaskAssignmentService::class)->claim($task->id,
             ['client_command_id' => 'phase6b-facts-claim', 'expected_version' => 1], $user, ['production.task.claim']);
@@ -270,31 +473,34 @@ class WorkOrderWo04ReleaseTest extends TestCase
                     'onsite_available_base_qty' => (float) $materialRequirement->required_base_qty + 2,
                     'workstation' => '总装一号工位',
                 ]]], $user, ['production.kitting.confirm']);
-        $this->assertSame('READY', $kitting['target_status']);
-        $ready = DB::table('erp_production_unit_operations')->where('id', $target->id)->first();
-        $this->assertNotNull($ready->kitting_confirmed_at);
-        $this->assertNull($ready->started_at);
-        $this->assertSame('READY', DB::table('erp_production_task_targets')->where('task_id', $task->id)->where('target_id', $target->id)->value('status_snapshot'));
-        $this->assertSame(0, DB::table('erp_production_labor_sessions')->where('target_id', $target->id)->where('status', 'ACTIVE')->count());
+        $this->assertSame('IN_PROGRESS', $kitting['target_status']);
+        $started = DB::table('erp_production_unit_operations')->where('id', $target->id)->first();
+        $this->assertNotNull($started->kitting_confirmed_at);
+        $this->assertNotNull($started->started_at);
+        $this->assertEquals($started->kitting_confirmed_at, $started->started_at);
+        $this->assertSame('IN_PROGRESS', DB::table('erp_production_task_targets')->where('task_id', $task->id)->where('target_id', $target->id)->value('status_snapshot'));
+        $this->assertSame(1, DB::table('erp_production_labor_sessions')->where('target_id', $target->id)->where('status', 'ACTIVE')->count());
         $fact = DB::table('erp_production_workstation_stock_confirmations')->where('target_material_requirement_id', $materialRequirement->id)->first();
         $this->assertSame('总装一号工位', $fact->workstation_snapshot);
         $this->assertSame((float) $materialRequirement->required_base_qty + 2, (float) $fact->onsite_available_base_qty_snapshot);
 
-        DB::table('erp_production_unit_operations')->where('id', $target->id)->update(['kitting_confirmed_at' => now()->subMinute()]);
-        $ownerStarted = app(ProductionExecutionActionService::class)->start($task->id, 'unit_operation', $target->id,
-            ['client_command_id' => 'phase6b-facts-owner-start', 'expected_version' => 3],
-            $user, ['production.task.start']);
-        $this->assertSame('IN_PROGRESS', $ownerStarted['target_status']);
-        $started = DB::table('erp_production_unit_operations')->where('id', $target->id)->first();
-        $this->assertNotNull($started->started_at);
-        $this->assertNotEquals($started->kitting_confirmed_at, $started->started_at);
+        $replayed = app(ProductionKittingService::class)->confirm($task->id, 'unit_operation', $target->id,
+            ['client_command_id' => 'phase6b-facts-kitting', 'expected_version' => 2,
+                'workstation_stock_confirmations' => [[
+                    'requirement_id' => $materialRequirement->id,
+                    'onsite_available_base_qty' => (float) $materialRequirement->required_base_qty + 2,
+                    'workstation' => '总装一号工位',
+                ]]], $user, ['production.kitting.confirm']);
+        $this->assertSame($kitting['id'], $replayed['id']);
         $this->assertSame(1, DB::table('erp_production_labor_sessions')->where('target_id', $target->id)->where('status', 'ACTIVE')->count());
 
         $secondRequirement = DB::table('erp_production_target_material_requirements')
             ->where('target_type', 'unit_operation')->where('target_id', $secondLink->target_id)->first();
         DB::table('erp_work_order_material_supply_rules')->where('id', $secondRequirement->material_supply_rule_snapshot_id)
             ->update(['supply_mode_snapshot' => 'workstation_stock', 'requires_delivery_snapshot' => false, 'updated_at' => now()]);
-        app(ProductionKittingService::class)->confirm($task->id, 'unit_operation', $secondLink->target_id,
+        app(ProductionTaskAssignmentService::class)->claim($secondTask->id,
+            ['client_command_id' => 'phase6b-facts-second-claim', 'expected_version' => 1], $user, ['production.task.claim']);
+        app(ProductionKittingService::class)->confirm($secondTask->id, 'unit_operation', $secondLink->target_id,
             ['client_command_id' => 'phase6b-facts-second-kitting', 'expected_version' => 2,
                 'workstation_stock_confirmations' => [[
                     'requirement_id' => $secondRequirement->id,
@@ -302,8 +508,8 @@ class WorkOrderWo04ReleaseTest extends TestCase
                     'workstation' => '总装二号工位',
                 ]]], $user, ['production.kitting.confirm']);
         $this->assertSame('IN_PROGRESS', DB::table('erp_production_tasks')->where('id', $task->id)->value('status'),
-            '同任务的后续目标确认齐套时，不得把已加工任务降回 READY');
-        $this->assertSame('READY', DB::table('erp_production_task_targets')->where('id', $secondLink->id)->value('status_snapshot'));
+            '另一逐件任务确认齐套时，不得影响已加工任务状态');
+        $this->assertSame('IN_PROGRESS', DB::table('erp_production_task_targets')->where('id', $secondLink->id)->value('status_snapshot'));
 
         $collaboratorId = $user->legacy_id + 100000;
         DB::table('erp_legacy_admin_users')->insert(['legacy_id' => $collaboratorId, 'username' => 'phase6b-collaborator-'.$collaboratorId,
@@ -311,22 +517,22 @@ class WorkOrderWo04ReleaseTest extends TestCase
         DB::table('erp_work_orders')->where('id', $released->id)->update(['collaboration_enabled' => true, 'updated_at' => now()]);
         $collaborator = DB::table('erp_legacy_admin_users')->where('legacy_id', $collaboratorId)->first();
         app(ProductionTaskCollaborationService::class)->join($task->id,
-            ['client_command_id' => 'phase6b-facts-collaborator-join', 'expected_version' => 4],
+            ['client_command_id' => 'phase6b-facts-collaborator-join', 'expected_version' => 3],
             $collaborator, ['production.task.collaborate']);
         $this->assertSame(1, DB::table('erp_production_labor_sessions')->where('target_id', $target->id)->where('status', 'ACTIVE')->count(),
             '加入协同不得自动给协作者启动计时');
         $collaboratorStarted = app(ProductionExecutionActionService::class)->start($task->id, 'unit_operation', $target->id,
-            ['client_command_id' => 'phase6b-facts-collaborator-start', 'expected_version' => 4],
+            ['client_command_id' => 'phase6b-facts-collaborator-start', 'expected_version' => 3],
             $collaborator, ['production.task.start']);
         $this->assertSame('IN_PROGRESS', $collaboratorStarted['target_status']);
         $this->assertSame(2, DB::table('erp_production_labor_sessions')->where('target_id', $target->id)->where('status', 'ACTIVE')->count());
         app(ProductionExecutionActionService::class)->pause($task->id, 'unit_operation', $target->id,
-            ['client_command_id' => 'phase6b-facts-collaborator-pause', 'expected_version' => 5],
+            ['client_command_id' => 'phase6b-facts-collaborator-pause', 'expected_version' => 4],
             $collaborator, ['production.task.pause']);
         $this->assertSame(1, DB::table('erp_production_labor_sessions')->where('target_id', $target->id)->where('status', 'ACTIVE')->count());
         try {
             app(ProductionExecutionActionService::class)->start($task->id, 'unit_operation', $target->id,
-                ['client_command_id' => 'phase6b-facts-duplicate-start', 'expected_version' => 6],
+                ['client_command_id' => 'phase6b-facts-duplicate-start', 'expected_version' => 5],
                 $user, ['production.task.start']);
             $this->fail('需要齐套的工序不得重复点击开始加工。');
         } catch (WorkOrderDomainException $exception) {
@@ -334,7 +540,7 @@ class WorkOrderWo04ReleaseTest extends TestCase
             $this->assertSame(409, $exception->status);
         }
         $completed = app(ProductionExecutionActionService::class)->complete($task->id, 'unit_operation', $target->id,
-            ['client_command_id' => 'phase6b-facts-complete', 'expected_version' => 6], $user, ['production.task.complete']);
+            ['client_command_id' => 'phase6b-facts-complete', 'expected_version' => 5], $user, ['production.task.complete']);
         $this->assertSame('COMPLETED', $completed['target_status']);
         $this->assertNotNull($completed['output_record_id']);
         $this->assertSame(0, DB::table('erp_production_labor_sessions')->where('target_id', $target->id)->where('status', 'ACTIVE')->count());
@@ -716,6 +922,10 @@ class WorkOrderWo04ReleaseTest extends TestCase
             'created_by_legacy_id' => $userId,
             'total_amount' => 0,
             'final_receivable_amount' => 0,
+            'funding_policy_snapshot' => [
+                'policy_type' => 'full_prepay',
+                'shipment_requires_full_payment' => true,
+            ],
             'required_delivery_date' => '2026-09-20',
         ]);
         $line = SalesOrderLine::create([
@@ -803,13 +1013,13 @@ class WorkOrderWo04ReleaseTest extends TestCase
         return [$user, $demand, $bom];
     }
 
-    private function grantRole(int $userId, array $permissions): void
+    private function grantRole(int $userId, array $permissions, string $dataScope = 'all'): void
     {
         $suffix = strtoupper(substr(uniqid(), -8));
         $roleId = DB::table('erp_rbac_roles')->insertGetId([
             'code' => 'wo04_role_'.$suffix,
             'name' => 'WO04 测试角色',
-            'data_scope' => 'all',
+            'data_scope' => $dataScope,
             'enabled' => true,
             'created_at' => now(),
             'updated_at' => now(),

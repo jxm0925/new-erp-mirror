@@ -101,11 +101,12 @@ class WorkOrderWo03ReadContractTest extends TestCase
         $this->grantPermissionsRole($user->legacy_id, 'wo03_creator_all', self::PERMISSIONS, 'all');
         $token = $this->token($user->legacy_id);
 
-        $this->withToken($token)->getJson('/api/v1/erp/production/demands?date_from=2026-09-10&date_to=2026-09-10&delivery_date_from=2026-09-20&delivery_date_to=2026-09-20')
+        $query = '/api/v1/erp/production/demands?customer=DATE-CUSTOMER';
+        $this->withToken($token)->getJson($query.'&date_from=2026-09-10&date_to=2026-09-10&delivery_date_from=2026-09-20&delivery_date_to=2026-09-20')
             ->assertOk()->assertJsonPath('total', 1);
-        $this->withToken($token)->getJson('/api/v1/erp/production/demands?date_from=2026-09-20&date_to=2026-09-20&delivery_date_from=2026-09-20&delivery_date_to=2026-09-20')
+        $this->withToken($token)->getJson($query.'&date_from=2026-09-20&date_to=2026-09-20&delivery_date_from=2026-09-20&delivery_date_to=2026-09-20')
             ->assertOk()->assertJsonPath('total', 0);
-        $this->withToken($token)->getJson('/api/v1/erp/production/demands?date_from=2026-09-10&date_to=2026-09-10&delivery_date_from=2026-09-10&delivery_date_to=2026-09-10')
+        $this->withToken($token)->getJson($query.'&date_from=2026-09-10&date_to=2026-09-10&delivery_date_from=2026-09-10&delivery_date_to=2026-09-10')
             ->assertOk()->assertJsonPath('total', 0);
         $this->withToken($token)->getJson('/api/v1/erp/production/demands?delivery_date_from=not-a-date')
             ->assertStatus(422)->assertJsonPath('error_code', 'validation_error')->assertJsonStructure(['errors', 'details']);
@@ -186,7 +187,7 @@ class WorkOrderWo03ReadContractTest extends TestCase
     public function test_real_http_sales_confirmation_to_demand_to_draft_work_order_e2e(): void
     {
         $this->mock(BomMatcher::class, function (MockInterface $mock): void {
-            $mock->shouldReceive('match')->once()->andReturn([
+            $mock->shouldReceive('match')->andReturn([
                 'status' => 'matched', 'block_reason' => null, 'bom_id' => null, 'bom_version_id' => null,
                 'bom_version' => null, 'bom_snapshot' => null, 'candidates' => [],
             ]);
@@ -252,12 +253,20 @@ class WorkOrderWo03ReadContractTest extends TestCase
         $demandId = (int) DB::table('erp_sales_order_production_requirements')->where('sales_order_id', $order->id)->value('id');
         $this->assertGreaterThan(0, $demandId);
         $this->withToken($token)->getJson('/api/v1/erp/production/demands/'.$demandId)->assertOk()->assertJsonPath('data.sales_order.order_no', 'WO03-E2E-SO');
-        $created = $this->withToken($token)->postJson('/api/v1/erp/production/work-orders', [
-            'client_command_id' => 'wo03-e2e-create', 'production_demand_id' => $demandId,
-            'expected_demand_version' => 1, 'target_qty' => 5,
+        $workOrder = DB::table('erp_work_orders')->where('production_demand_id', $demandId)->first();
+        $this->assertNotNull($workOrder);
+        $this->assertSame('WAIT_RELEASE', $workOrder->status);
+        $this->assertNotNull($workOrder->production_master_order_id);
+        $this->assertDatabaseHas('erp_production_master_orders', [
+            'id' => $workOrder->production_master_order_id,
+            'sales_order_id' => $order->id,
+            'active_sales_order_id' => $order->id,
         ]);
-        $created->assertCreated()->assertJsonMissingPath('data.organization_code');
-        $this->assertDatabaseHas('erp_work_orders', ['id' => $created->json('data.id'), 'production_demand_id' => $demandId, 'status' => 'DRAFT']);
+        $this->assertDatabaseHas('erp_work_order_release_gate_checks', [
+            'work_order_id' => $workOrder->id,
+            'check_key' => 'routing_snapshot',
+            'status' => 'blocked',
+        ]);
     }
 
     public function test_p1_gate_people_semantics_and_full_draft_edit_are_real(): void

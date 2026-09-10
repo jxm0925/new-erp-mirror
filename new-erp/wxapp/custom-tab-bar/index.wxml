@@ -1,6 +1,19 @@
 <view class="tabbar">
-  <view class="tab-item {{active===index?'active':''}}" wx:for="{{list}}" wx:key="value" data-index="{{index}}" bindtap="select">
-    <van-icon name="{{item.icon}}" size="44rpx" color="{{active===index?'#d81e06':'#858991'}}" />
-    <text>{{item.text}}</text>
+  <view
+    class="tab-item {{active === index ? 'active' : ''}}"
+    wx:for="{{list}}"
+    wx:key="pagePath"
+    data-index="{{index}}"
+    bindtap="select"
+    hover-class="tab-item-hover"
+    hover-stay-time="100"
+  >
+    <van-icon
+      name="{{item.icon}}"
+      size="46rpx"
+      color="{{active === index ? '#d81e06' : '#858991'}}"
+      custom-class="tab-icon"
+    />
+    <text class="tab-text">{{item.text}}</text>
   </view>
 </view>

@@ -5,6 +5,7 @@ namespace App\Services\Erp;
 use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Models\Erp\ProductionExecutionCommand;
 use App\Models\Erp\ProductionKittingConfirmation;
+use App\Models\Erp\ProductionLaborSession;
 use App\Models\Erp\ProductionQuantityOperation;
 use App\Models\Erp\ProductionTask;
 use App\Models\Erp\ProductionUnitOperation;
@@ -183,21 +184,35 @@ class ProductionKittingService
 
             $target->kitting_confirmed_at = $confirmation->confirmed_at;
             $target->kitting_confirmed_by_legacy_id = $this->userId($user);
-            // 齐套确认只证明物料前置条件已经满足，不能替代员工明确开工。
-            // 若在这里写 started_at 或启动工时，会把仓储到料时间错误记成实际加工时间。
-            $target->status = 'READY';
+            // 对需要齐套的工序，负责人亲自确认齐套就是接受现场输入并开始实际加工的业务动作。
+            // 此处必须与齐套事实共用同一事务，避免出现“已齐套但未开始计时”的半完成状态。
+            $target->started_at = $target->started_at ?: $confirmation->confirmed_at;
+            $target->paused_at = null;
+            $target->status = 'IN_PROGRESS';
             $target->business_version = (int) $target->business_version + 1;
             $target->save();
-            $task->targets()->where('target_type', $targetType)->where('target_id', $targetId)->update(['status_snapshot' => 'READY']);
-            // A task may aggregate many unit targets. Kitting a later unit must not
-            // downgrade an already running/paused/settling task back to READY.
-            if (! in_array($task->status, ['READY', 'IN_PROGRESS', 'PAUSED', 'WAIT_QUALITY', 'WAIT_WAREHOUSE', 'COMPLETED', 'CANCELLED'], true)) {
-                $task->update(['status' => 'READY', 'business_version' => (int) $task->business_version + 1]);
+            $task->targets()->where('target_type', $targetType)->where('target_id', $targetId)->update(['status_snapshot' => 'IN_PROGRESS']);
+            if ($task->status !== 'IN_PROGRESS') {
+                $task->update(['status' => 'IN_PROGRESS', 'business_version' => (int) $task->business_version + 1]);
             }
+            ProductionLaborSession::create([
+                'task_id' => $task->id,
+                'target_type' => $targetType,
+                'target_id' => $targetId,
+                'employee_legacy_id' => $this->userId($user),
+                'role' => 'owner',
+                'status' => 'ACTIVE',
+                'started_at' => $confirmation->confirmed_at,
+                'actual_labor_minutes' => 0,
+                'responsibility_weight_snapshot' => 1,
+                'credited_labor_minutes' => 0,
+            ]);
 
             $result = ['id' => (int) $confirmation->id, 'confirmation_no' => $confirmation->confirmation_no,
                 'status' => $confirmation->status, 'target_status' => $target->status,
-                'target_business_version' => (int) $target->business_version, 'confirmed_at' => $confirmation->confirmed_at->toISOString()];
+                'target_business_version' => (int) $target->business_version,
+                'confirmed_at' => $confirmation->confirmed_at->toISOString(),
+                'started_at' => $target->started_at->toISOString()];
             $ledger->update(['result_type' => 'kitting_confirmation', 'result_id' => $confirmation->id,
                 'response_snapshot' => $result, 'status' => 'succeeded', 'processing_finished_at' => now()]);
             return $result;

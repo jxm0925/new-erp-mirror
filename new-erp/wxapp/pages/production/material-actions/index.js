@@ -142,7 +142,6 @@ Page(Object.assign({}, materialSelector.pageMethods, {
   },
   switchRoot(event) {
     const url = event.currentTarget.dataset.url;
-    if (url === '/pages/production/workbench/index') return wx.redirectTo({ url });
     wx.switchTab({ url });
   },
 }));

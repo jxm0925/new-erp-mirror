@@ -12,7 +12,7 @@ class SalesFinanceSettlementService
     public function status(int|SalesOrder $order): array
     {
         $order = $order instanceof SalesOrder ? $order : SalesOrder::query()->findOrFail($order);
-        $contract = Money::normalize((string) $order->total_amount);
+        $contract = $this->receivableAmount($order);
         $received = $this->allocated(FinanceConstants::SOURCE_SALES_ORDER, $order->id, FinanceConstants::DIRECTION_RECEIPT);
         $refunded = $this->allocated(FinanceConstants::SOURCE_SALES_ORDER_REFUND, $order->id, FinanceConstants::DIRECTION_PAYMENT);
         $net = Money::maxZero(Money::sub($received, $refunded));
@@ -42,6 +42,19 @@ class SalesFinanceSettlementService
     public function assertCanShip(int|SalesOrder $order): void
     {
         if (!$this->status($order)['shipment_funds_satisfied']) throw new \DomainException('销售订单净收款未达到应收金额，不能发货。');
+    }
+
+    public function receivableAmount(SalesOrder $order): string
+    {
+        $frozen = data_get($order->funding_policy_snapshot, 'receivable_amount');
+        if ($frozen !== null && $frozen !== '') return Money::normalize((string) $frozen);
+        $total = Money::normalize((string) ($order->total_amount ?? 0));
+        $final = $order->final_receivable_amount;
+        if ($final !== null && $final !== '') {
+            $normalizedFinal = Money::normalize((string) $final);
+            if (Money::compare($normalizedFinal, '0') > 0 || Money::compare($total, '0') === 0) return $normalizedFinal;
+        }
+        return $total;
     }
 
     private function allocated(string $sourceType, int $sourceId, string $direction): string

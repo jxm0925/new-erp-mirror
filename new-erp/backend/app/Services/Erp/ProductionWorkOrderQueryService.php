@@ -91,6 +91,36 @@ final class ProductionWorkOrderQueryService
         return $paginator;
     }
 
+    /** Return mutually exclusive status counts for the wxapp source tabs. */
+    public function workOrderSummary(array $filters, object $user, array $permissions, bool $superAdmin = false): array
+    {
+        $this->assertPermission($permissions, 'production.work_order.view', $superAdmin);
+        $query = WorkOrder::query()->select('erp_work_orders.*');
+        $this->scopeResolver->applyWorkOrderScope(
+            $query,
+            $this->scopeResolver->resolve($user, 'production.work_order.view', $permissions, $superAdmin),
+        );
+        $summaryFilters = $filters;
+        unset($summaryFilters['status'], $summaryFilters['display_status'], $summaryFilters['page'], $summaryFilters['per_page'], $summaryFilters['include_summary']);
+        $this->applyWorkOrderFilters($query, $summaryFilters);
+
+        $exception = clone $query;
+        $this->applyWorkOrderException($exception);
+        $inProgress = clone $query;
+        $this->applyWorkOrderException($inProgress, true);
+        $waitCondition = clone $query;
+        $this->applyWorkOrderException($waitCondition, true);
+        $completed = clone $query;
+        $this->applyWorkOrderException($completed, true);
+        $counts = [
+            'in_progress' => $inProgress->where('status', 'IN_PROGRESS')->count(),
+            'wait_condition' => $waitCondition->whereIn('status', ['DRAFT', 'WAIT_RELEASE', 'RELEASED'])->count(),
+            'exception' => $exception->count(),
+            'completed' => $completed->whereIn('status', ['COMPLETED', 'CLOSED'])->count(),
+        ];
+        return ['total' => array_sum($counts), ...$counts];
+    }
+
     public function workOrder(int $id, object $user, array $permissions, bool $superAdmin = false): WorkOrder
     {
         $this->assertPermission($permissions, 'production.work_order.view', $superAdmin);
@@ -133,8 +163,30 @@ final class ProductionWorkOrderQueryService
     private function applyWorkOrderFilters(Builder $query, array $filters): void
     {
         if ($this->value($filters, 'status')) $query->where('status', $this->value($filters, 'status'));
+        if ($this->value($filters, 'display_status')) {
+            $displayStatus = $this->value($filters, 'display_status');
+            if ($displayStatus === 'EXCEPTION') {
+                $this->applyWorkOrderException($query);
+            } elseif ($displayStatus === 'IN_PROGRESS') {
+                $this->applyWorkOrderException($query, true);
+                $query->where('status', 'IN_PROGRESS');
+            } elseif ($displayStatus === 'COMPLETED') {
+                $this->applyWorkOrderException($query, true);
+                $query->whereIn('status', ['COMPLETED', 'CLOSED']);
+            } else {
+                $this->applyWorkOrderException($query, true);
+                $query->whereIn('status', ['DRAFT', 'WAIT_RELEASE', 'RELEASED']);
+            }
+        }
         if ($this->value($filters, 'production_demand_id')) $query->where('production_demand_id', (int) $this->value($filters, 'production_demand_id'));
-        if ($this->value($filters, 'source_type')) $query->where('source_type', $this->value($filters, 'source_type'));
+        if ($this->value($filters, 'source_type')) {
+            $query->where('source_type', $this->value($filters, 'source_type'));
+        } elseif ($this->value($filters, 'source_group') === 'stock_prebuild') {
+            $query->where('source_type', 'stock_prebuild');
+        } elseif ($this->value($filters, 'source_group') === 'other') {
+            $query->whereIn('source_type', ['production_plan', 'trial']);
+        }
+        if ($this->value($filters, 'stocking_purpose')) $query->where('stocking_purpose', $this->value($filters, 'stocking_purpose'));
         if ($this->value($filters, 'production_location_name')) $query->where('production_location_name', 'like', '%'.$this->value($filters, 'production_location_name').'%');
         if ($this->value($filters, 'responsible_user_legacy_id')) $query->where('responsible_user_legacy_id', (int) $this->value($filters, 'responsible_user_legacy_id'));
         if ($this->value($filters, 'customer')) $query->whereHas('demand.order', fn ($q) => $q->where('customer_name', 'like', '%'.$this->value($filters, 'customer').'%')->orWhereRaw("JSON_SEARCH(customer_snapshot, 'one', ?) IS NOT NULL", [$this->value($filters, 'customer')]));
@@ -154,6 +206,23 @@ final class ProductionWorkOrderQueryService
                 ->orWhereHas('demand', fn ($d) => $d->where('requirement_no', 'like', $like))
                 ->orWhereHas('demand.order', fn ($o) => $o->where('sales_order_no', 'like', $like)->orWhereRaw("JSON_SEARCH(customer_snapshot, 'one', ?) IS NOT NULL", [$keyword]))
                 ->orWhereHas('demand.line', fn ($l) => $l->where('product_name', 'like', $like)->orWhere('sku_name', 'like', $like));
+        });
+    }
+
+    private function applyWorkOrderException(Builder $query, bool $negate = false): void
+    {
+        $operationIds = DB::table('erp_production_unit_operations')
+            ->select('work_order_id')
+            ->whereIn('status', ['REWORK', 'QUALITY_FAILED', 'HANDOVER_REJECTED'])
+            ->union(DB::table('erp_production_quantity_operations')
+                ->select('work_order_id')
+                ->whereIn('status', ['REWORK', 'QUALITY_FAILED', 'HANDOVER_REJECTED']));
+        if ($negate) {
+            $query->where('status', '!=', 'CANCELLED')->whereNotIn('erp_work_orders.id', $operationIds);
+            return;
+        }
+        $query->where(function (Builder $exception) use ($operationIds): void {
+            $exception->where('status', 'CANCELLED')->orWhereIn('erp_work_orders.id', $operationIds);
         });
     }
 

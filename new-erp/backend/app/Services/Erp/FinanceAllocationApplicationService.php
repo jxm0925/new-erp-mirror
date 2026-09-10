@@ -7,6 +7,7 @@ use App\Domain\Finance\Money;
 use App\Models\Erp\FinanceAllocation;
 use App\Models\Erp\FinanceCashDocument;
 use App\Models\Erp\FinanceOperationLog;
+use App\Models\Erp\SalesOrder;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -16,12 +17,17 @@ class FinanceAllocationApplicationService
     public function __construct(
         private readonly FinanceBusinessSourceResolver $sources,
         private readonly PurchaseSettlementSourceApplicationService $purchaseSettlementSources,
+        private readonly SalesOrderFundingGateService $fundingGates,
     ) {}
 
     public function allocate(int $cashDocumentId, array $rows, ?int $operatorId, ?string $operatorName): array
     {
         try {
             return DB::transaction(function () use ($cashDocumentId, $rows, $operatorId, $operatorName): array {
+                // Sales shipment takes the sales-order lock first. Funding
+                // mutations must use the same order -> cash document ->
+                // allocation order or refund/outbound races can deadlock.
+                $salesOrderIds = $this->lockSalesOrders($rows);
                 $document = FinanceCashDocument::query()->lockForUpdate()->findOrFail($cashDocumentId);
                 if ($document->status !== FinanceConstants::STATUS_CONFIRMED) throw ValidationException::withMessages(['status' => '只有已确认资金单可以核销。']);
                 $allocatedBefore = $this->activeTotalForDocument($document->id);
@@ -59,6 +65,9 @@ class FinanceAllocationApplicationService
                     'fact_snapshot' => ['allocation_ids' => collect($created)->pluck('id')->all(), 'remaining_amount' => $remainingFunds],
                     'operator_id' => $operatorId, 'operator_name' => $operatorName, 'content' => '新增资金核销事实',
                 ]);
+                foreach ($salesOrderIds as $salesOrderId) {
+                    $this->fundingGates->refreshProjection(SalesOrder::query()->findOrFail($salesOrderId));
+                }
                 return ['allocations' => $created, 'remaining_amount' => $remainingFunds];
             }, 5);
         } catch (QueryException $exception) {
@@ -72,8 +81,13 @@ class FinanceAllocationApplicationService
     public function reverse(int $allocationId, string $reason, ?int $operatorId, ?string $operatorName): FinanceAllocation
     {
         return DB::transaction(function () use ($allocationId, $reason, $operatorId, $operatorName): FinanceAllocation {
+            $identity = FinanceAllocation::query()->findOrFail($allocationId, [
+                'id', 'cash_document_id', 'source_business_type', 'source_document_id',
+            ]);
+            $salesOrderId = $this->salesOrderId($identity->source_business_type, (int) $identity->source_document_id);
+            if ($salesOrderId) SalesOrder::query()->whereKey($salesOrderId)->lockForUpdate()->firstOrFail();
+            FinanceCashDocument::query()->whereKey($identity->cash_document_id)->lockForUpdate()->firstOrFail();
             $allocation = FinanceAllocation::query()->lockForUpdate()->findOrFail($allocationId);
-            FinanceCashDocument::query()->whereKey($allocation->cash_document_id)->lockForUpdate()->firstOrFail();
             if ($allocation->status !== FinanceConstants::ALLOCATION_ACTIVE) throw ValidationException::withMessages(['status' => '只有有效核销可以撤销。']);
             if (trim($reason) === '') throw ValidationException::withMessages(['reversal_reason' => '撤销核销必须填写原因。']);
             $allocation->update(['status' => FinanceConstants::ALLOCATION_REVERSED, 'reversed_by' => $operatorId, 'reversed_at' => now(), 'reversal_reason' => $reason]);
@@ -95,6 +109,9 @@ class FinanceAllocationApplicationService
             ]);
             if ($allocation->source_business_type === FinanceConstants::SOURCE_PURCHASE_SETTLEMENT_SOURCE) {
                 $this->purchaseSettlementSources->refresh((int) $allocation->source_document_id, $operatorId, $operatorName);
+            }
+            if ($salesOrderId) {
+                $this->fundingGates->refreshProjection(SalesOrder::query()->findOrFail($salesOrderId));
             }
             return $reversal;
         }, 5);
@@ -118,5 +135,26 @@ class FinanceAllocationApplicationService
             || ($direction === FinanceConstants::DIRECTION_PAYMENT && !in_array($source, $paymentSources, true))) {
             throw ValidationException::withMessages(['source_business_type' => '资金方向与业务来源不匹配。']);
         }
+    }
+
+    private function lockSalesOrders(array $rows): array
+    {
+        $ids = collect($rows)
+            ->filter(fn (array $row): bool => $this->salesOrderId(
+                (string) ($row['source_business_type'] ?? ''),
+                (int) ($row['source_document_id'] ?? 0)
+            ) !== null)
+            ->map(fn (array $row): int => (int) $row['source_document_id'])
+            ->unique()->sort()->values()->all();
+        if ($ids !== []) SalesOrder::query()->whereIn('id', $ids)->orderBy('id')->lockForUpdate()->get();
+        return $ids;
+    }
+
+    private function salesOrderId(string $sourceType, int $sourceId): ?int
+    {
+        return in_array($sourceType, [
+            FinanceConstants::SOURCE_SALES_ORDER,
+            FinanceConstants::SOURCE_SALES_ORDER_REFUND,
+        ], true) ? $sourceId : null;
     }
 }
