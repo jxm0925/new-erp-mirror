@@ -31,21 +31,25 @@ class ProductionExecutionController extends Controller
         $payload = $request->validate([
             'client_command_id' => 'required|string|max:120',
             'expected_version' => 'required|integer|min:1',
+            'switch_active_labor' => 'nullable|boolean',
+            'expected_active_labor_session_id' => 'nullable|integer|min:1|required_if:switch_active_labor,true',
             'workstation_stock_confirmations' => 'nullable|array',
             'workstation_stock_confirmations.*.requirement_id' => 'required|integer|min:1',
             'workstation_stock_confirmations.*.onsite_available_base_qty' => 'required|numeric|min:0',
             'workstation_stock_confirmations.*.workstation' => 'nullable|string|max:160',
         ]);
         [$user, $permissions] = $this->context($request);
-        return response()->json(['message' => '齐套确认成功，当前目标已就绪。', 'data' => $service->confirm($taskId, $targetType, $targetId, $payload, $user, $permissions)]);
+        return response()->json(['message' => '齐套确认成功，已正式开工并启动本人工时。', 'data' => $service->confirm($taskId, $targetType, $targetId, $payload, $user, $permissions)]);
     }
 
     public function start(Request $request, int $taskId, string $targetType, int $targetId, ProductionExecutionActionService $service)
     { return $this->action($request, $taskId, $targetType, $targetId, $service, 'start', '已开始加工并启动工时计时。'); }
+    public function restartRework(Request $request, int $taskId, string $targetType, int $targetId, ProductionExecutionActionService $service)
+    { return $this->action($request, $taskId, $targetType, $targetId, $service, 'restartRework', '返工已重新开始并启动工时计时。'); }
     public function pause(Request $request, int $taskId, string $targetType, int $targetId, ProductionExecutionActionService $service)
-    { return $this->action($request, $taskId, $targetType, $targetId, $service, 'pause', '已暂停加工并停止本次工时计时。'); }
+    { return $this->action($request, $taskId, $targetType, $targetId, $service, 'pause', '已停止本人的工时计时，工序状态已按运行方式重新判断。'); }
     public function resume(Request $request, int $taskId, string $targetType, int $targetId, ProductionExecutionActionService $service)
-    { return $this->action($request, $taskId, $targetType, $targetId, $service, 'resume', '已继续加工并重新启动工时计时。'); }
+    { return $this->action($request, $taskId, $targetType, $targetId, $service, 'resume', '已恢复本人的实际作业计时。'); }
     public function report(Request $request, int $taskId, string $targetType, int $targetId, ProductionReportService $service)
     {
         $payload = $request->validate([
@@ -72,7 +76,8 @@ class ProductionExecutionController extends Controller
 
     private function action(Request $request, int $taskId, string $targetType, int $targetId, ProductionExecutionActionService $service, string $method, string $message)
     {
-        $payload = $request->validate(['client_command_id' => 'required|string|max:120', 'expected_version' => 'required|integer|min:1']);
+        $payload = $request->validate(['client_command_id' => 'required|string|max:120', 'expected_version' => 'required|integer|min:1',
+            'switch_active_labor' => 'nullable|boolean', 'expected_active_labor_session_id' => 'nullable|integer|min:1|required_if:switch_active_labor,true']);
         [$user, $permissions] = $this->context($request);
         return response()->json(['message' => $message, 'data' => $service->{$method}($taskId, $targetType, $targetId, $payload, $user, $permissions)]);
     }

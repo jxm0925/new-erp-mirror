@@ -86,6 +86,9 @@ final class ProductionUnitTraceService
             $ownerId = (int) ($task->assignee_user_legacy_id ?? 0);
             $ownerActive = $task && $ownerId > 0 && DB::table('erp_production_labor_sessions')->where('task_id', $task->id)
                 ->where('employee_legacy_id', $ownerId)->where('role', 'owner')->where('status', 'ACTIVE')->exists();
+            $hasActiveLabor = $task && DB::table('erp_production_labor_sessions')->where('task_id', $task->id)
+                ->where('target_type', 'unit_operation')->where('target_id', $operation->id)->where('status', 'ACTIVE')->exists();
+            $workMode = $operation->work_mode_snapshot ?: 'manual';
             $expectedEnd = null;
             if ($operation->started_at && $operation->standard_minutes_snapshot !== null && $operation->status !== 'COMPLETED') {
                 $expectedEnd = $operation->started_at->copy()->addMinutes((int) ceil((float) $operation->standard_minutes_snapshot));
@@ -107,6 +110,7 @@ final class ProductionUnitTraceService
                 'elapsed_seconds' => $elapsedSeconds,
                 'standard_minutes' => $operation->standard_minutes_snapshot !== null ? (float) $operation->standard_minutes_snapshot : null,
                 'actual_labor_minutes' => (float) $operation->actual_labor_minutes,
+                'work_mode_snapshot' => $workMode,
                 'task' => [
                     'id' => $task?->id ? (int) $task->id : null,
                     'task_no' => $task?->task_no,
@@ -114,8 +118,8 @@ final class ProductionUnitTraceService
                     'owner' => $people[$ownerId] ?? null,
                     'owner_active_labor' => $ownerActive,
                     'execution_integrity' => [
-                        'valid' => $operation->status !== 'IN_PROGRESS' || ($ownerId > 0 && $ownerActive),
-                        'reason_code' => $operation->status === 'IN_PROGRESS' && ! ($ownerId > 0 && $ownerActive) ? 'in_progress_owner_labor_missing' : null,
+                        'valid' => $operation->status !== 'IN_PROGRESS' || ($ownerId > 0 && ($workMode === 'automatic' || $hasActiveLabor)),
+                        'reason_code' => $operation->status === 'IN_PROGRESS' && ! ($ownerId > 0 && ($workMode === 'automatic' || $hasActiveLabor)) ? 'in_progress_labor_missing' : null,
                     ],
                 ],
                 'labor_sessions' => DB::table('erp_production_labor_sessions')->where('target_type', 'unit_operation')->where('target_id', $operation->id)->orderBy('started_at')->get()->map(fn ($row) => (array) $row)->all(),
@@ -173,6 +177,9 @@ final class ProductionUnitTraceService
         $ownerId = (int) ($task->assignee_user_legacy_id ?? 0);
         $ownerActive = $task && $ownerId > 0 && DB::table('erp_production_labor_sessions')->where('task_id', $task->id)
             ->where('employee_legacy_id', $ownerId)->where('role', 'owner')->where('status', 'ACTIVE')->exists();
+        $hasActiveLabor = $task && DB::table('erp_production_labor_sessions')->where('task_id', $task->id)
+            ->where('target_type', 'unit_operation')->where('target_id', $current->id)->where('status', 'ACTIVE')->exists();
+        $workMode = $current->work_mode_snapshot ?: 'manual';
         $handover = DB::table('erp_production_operation_handovers')->where('target_target_type', 'unit_operation')
             ->where('target_target_id', $current->id)->orderByDesc('id')->first();
         $handoverStatus = (int) $current->sequence_no_snapshot === 1 ? 'NOT_REQUIRED'
@@ -186,14 +193,14 @@ final class ProductionUnitTraceService
             'current_operation' => [
                 'id' => (int) $current->id, 'code' => $current->operation_code_snapshot, 'name' => $current->operation_name_snapshot,
                 'sequence' => (int) $current->sequence_no_snapshot, 'total' => $operations->count(), 'status' => $current->status,
-                'label' => $this->operationStatusLabel((string) $current->status),
+                'label' => $this->operationStatusLabel((string) $current->status), 'work_mode_snapshot' => $workMode,
             ],
             'current_task' => [
                 'id' => $task?->id ? (int) $task->id : null, 'task_no' => $task?->task_no, 'status' => $task?->status,
                 'owner' => $this->users->one($ownerId), 'owner_active_labor' => $ownerActive,
                 'execution_integrity' => [
-                    'valid' => $current->status !== 'IN_PROGRESS' || ($ownerId > 0 && $ownerActive),
-                    'reason_code' => $current->status === 'IN_PROGRESS' && ! ($ownerId > 0 && $ownerActive) ? 'in_progress_owner_labor_missing' : null,
+                    'valid' => $current->status !== 'IN_PROGRESS' || ($ownerId > 0 && ($workMode === 'automatic' || $hasActiveLabor)),
+                    'reason_code' => $current->status === 'IN_PROGRESS' && ! ($ownerId > 0 && ($workMode === 'automatic' || $hasActiveLabor)) ? 'in_progress_labor_missing' : null,
                 ],
             ],
             'kitting' => ['status' => $kittingStatus, 'label' => [

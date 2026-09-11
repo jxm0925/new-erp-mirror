@@ -4,15 +4,28 @@ namespace App\Services\Erp;
 
 use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Models\Erp\ProductionExecutionCommand;
+use App\Models\Erp\ProductionQuantityOperation;
 use App\Models\Erp\ProductionTask;
+use App\Models\Erp\ProductionUnitOperation;
 use Illuminate\Support\Facades\DB;
 
 class ProductionTaskCollaborationService
 {
+    public function __construct(
+        private readonly ProductionLaborSessionService $laborSessions,
+        private readonly ProductionOperationWorkModeService $workModes,
+    ) {}
+
     public function join(int $taskId, array $payload, object $user, array $permissions): array
     { $this->permission($permissions); return $this->change($taskId, $payload, $user, true); }
     public function leave(int $taskId, array $payload, object $user, array $permissions): array
     { $this->permission($permissions); return $this->change($taskId, $payload, $user, false); }
+
+    public function startLabor(int $taskId, string $targetType, int $targetId, array $payload, object $user, array $permissions): array
+    { $this->permission($permissions); return $this->laborChange($taskId, $targetType, $targetId, $payload, $user, true); }
+
+    public function pauseLabor(int $taskId, string $targetType, int $targetId, array $payload, object $user, array $permissions): array
+    { $this->permission($permissions); return $this->laborChange($taskId, $targetType, $targetId, $payload, $user, false); }
 
     public function add(int $taskId, array $payload, object $user, array $permissions): array
     {
@@ -91,8 +104,7 @@ class ProductionTaskCollaborationService
                     'responsibility_weight' => 0, 'joined_at' => $now, 'business_version' => 1]);
             } else {
                 if (! $active) $this->fail('collaborator_not_joined', '当前人员不在该协同任务中。', 409);
-                if ($task->laborSessions()->where('employee_legacy_id', $userId)->where('status', 'ACTIVE')->exists())
-                    $this->fail('active_labor_session_exists', '当前人员仍有进行中的加工计时，必须先暂停或完成。', 409);
+                $this->laborSessions->endActiveForTask($task, $userId, 'collaborator_left', $now);
                 $active->update(['left_at' => $now, 'business_version' => (int) $active->business_version + 1]);
             }
             $task->update(['business_version' => (int) $task->business_version + 1]);
@@ -103,6 +115,52 @@ class ProductionTaskCollaborationService
                 'status' => 'succeeded', 'processing_finished_at' => now()]);
             return $result;
         }, 5);
+    }
+
+    private function laborChange(int $taskId, string $targetType, int $targetId, array $payload, object $user, bool $start): array
+    {
+        $commandType = $start ? 'start_collaborator_labor' : 'pause_collaborator_labor';
+        $commandId = trim((string) ($payload['client_command_id'] ?? ''));
+        $hash = hash('sha256', json_encode([$taskId, $targetType, $targetId, (int) ($payload['expected_version'] ?? 0)], JSON_UNESCAPED_UNICODE));
+        return DB::transaction(function () use ($taskId, $targetType, $targetId, $payload, $user, $start, $commandType, $commandId, $hash): array {
+            $existing = ProductionExecutionCommand::query()->where('client_command_id', $commandId)->lockForUpdate()->first();
+            if ($existing) return $this->replay($existing, $commandType, $hash);
+            $ledger = ProductionExecutionCommand::create(['client_command_id' => $commandId, 'command_type' => $commandType,
+                'aggregate_type' => $targetType, 'aggregate_id' => $targetId, 'request_hash' => $hash, 'status' => 'processing',
+                'initiated_by_legacy_id' => $this->userId($user), 'processing_started_at' => now()]);
+            $task = ProductionTask::query()->with(['workOrder', 'targets'])->lockForUpdate()->find($taskId);
+            if (! $task || ! $task->targets->contains(fn ($row) => $row->target_type === $targetType && (int) $row->target_id === $targetId)) $this->fail('task_target_not_found', '任务中不存在该生产执行目标。', 404);
+            if (! $task->workOrder?->collaboration_enabled) $this->fail('collaboration_not_enabled', '该工单未开启协同生产。', 409);
+            $userId = $this->userId($user);
+            $collaborator = $task->collaborators()->where('employee_legacy_id', $userId)->where('role', 'collaborator')->whereNull('left_at')->lockForUpdate()->first();
+            if (! $collaborator) $this->fail('collaborator_not_joined', '当前人员不在该协同任务中。', 403);
+            $target = $this->target($targetType, $targetId);
+            if ((int) $target->business_version !== (int) ($payload['expected_version'] ?? 0)) $this->fail('version_conflict', '生产目标版本已变化，请刷新后重试。', 409);
+            $now = now();
+            if ($start) {
+                if (! in_array($target->status, ['IN_PROGRESS', 'PAUSED'], true)) $this->fail('target_not_started', '负责人尚未正式开工，协作者不能启动计时。', 409);
+                $this->laborSessions->start($task, $target, $targetType, $userId, 'collaborator', (float) $collaborator->responsibility_weight, $now, $payload);
+                $this->workModes->recalculate($task, $target, $targetType, $now);
+            } else {
+                if (! in_array($target->status, ['IN_PROGRESS', 'PAUSED'], true)) $this->fail('target_not_in_progress', '当前生产目标不在可暂停协同计时的状态。', 409);
+                $this->laborSessions->end($task, $target, $targetType, $userId, 'collaborator_paused', $now);
+            }
+            $result = ['task_id' => (int) $task->id, 'target_type' => $targetType, 'target_id' => (int) $target->id,
+                'target_status' => $target->status, 'target_business_version' => (int) $target->business_version,
+                'labor_status' => $start ? 'ACTIVE' : 'ENDED', 'occurred_at' => $now->toISOString()];
+            $ledger->update(['result_type' => $targetType, 'result_id' => $targetId, 'response_snapshot' => $result,
+                'status' => 'succeeded', 'processing_finished_at' => now()]);
+            return $result;
+        }, 5);
+    }
+
+    private function target(string $type, int $id): object
+    {
+        $model = $type === 'unit_operation' ? ProductionUnitOperation::class : ($type === 'quantity_operation' ? ProductionQuantityOperation::class : null);
+        if (! $model) $this->fail('task_target_invalid', '生产执行目标类型无效。');
+        $target = $model::query()->lockForUpdate()->find($id);
+        if (! $target) $this->fail('task_target_not_found', '生产执行目标不存在。', 404);
+        return $target;
     }
     private function replay(ProductionExecutionCommand $command, string $type, string $hash): array
     { if ($command->command_type !== $type || $command->request_hash !== $hash) $this->fail('command_conflict', '该 client_command_id 已用于不同请求。', 409); if ($command->status !== 'succeeded') $this->fail('command_processing', '相同命令正在处理中，请稍后重试。', 409); return $command->response_snapshot; }

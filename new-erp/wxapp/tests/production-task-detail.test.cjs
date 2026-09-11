@@ -72,9 +72,11 @@ test('owner loads real directory candidates and submits selected ids', async () 
 });
 
 test('rework remains an explicit start action in the current design', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../pages/production/task-detail/index.js'), 'utf8');
   const template = fs.readFileSync(path.join(__dirname, '../pages/production/task-detail/index.wxml'), 'utf8');
-  assert.match(template, /status === 'REWORK'/);
+  assert.match(template, /allowed_actions\.start_rework/);
   assert.match(template, />开始返工</);
+  assert.match(source, /production\.restartRework/);
 });
 
 test('quantity work reports before the independent completion action', () => {
@@ -83,4 +85,13 @@ test('quantity work reports before the independent completion action', () => {
   assert.match(source, /pages\/production\/report\/index\?taskId=/);
   assert.match(template, /bindtap="openReport">提交报工/);
   assert.match(template, /readyForCompletion/);
+});
+
+test('task timer uses the authenticated employees labor projection', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../pages/production/task-detail/index.js'), 'utf8');
+  const template = fs.readFileSync(path.join(__dirname, '../pages/production/task-detail/index.wxml'), 'utf8');
+  assert.match(source, /const myLabor = row\.my_labor \|\| null/);
+  assert.match(source, /myLabor\.accumulated_seconds/);
+  assert.match(source, /myLaborActive/);
+  assert.match(template, /我的实际作业时长/);
 });

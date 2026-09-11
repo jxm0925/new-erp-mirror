@@ -69,6 +69,12 @@ class ProductionTaskController extends Controller
         return response()->json(['message' => '协同人员已添加。', 'data' => $service->add($id, $payload, $user, $permissions)]);
     }
 
+    public function startCollaboratorLabor(Request $request, int $taskId, string $targetType, int $targetId, ProductionTaskCollaborationService $service)
+    { return $this->collaboratorLabor($request, $taskId, $targetType, $targetId, $service, true); }
+
+    public function pauseCollaboratorLabor(Request $request, int $taskId, string $targetType, int $targetId, ProductionTaskCollaborationService $service)
+    { return $this->collaboratorLabor($request, $taskId, $targetType, $targetId, $service, false); }
+
     private function collaboration(Request $request, int $id, ProductionTaskCollaborationService $service, bool $join)
     {
         $payload = $request->validate(['client_command_id' => 'required|string|max:120', 'expected_version' => 'required|integer|min:1',
@@ -76,6 +82,17 @@ class ProductionTaskController extends Controller
         [$user, $permissions] = $this->writeContext($request);
         $result = $join ? $service->join($id, $payload, $user, $permissions) : $service->leave($id, $payload, $user, $permissions);
         return response()->json(['message' => $join ? '已加入生产协同。' : '已退出生产协同。', 'data' => $result]);
+    }
+
+    private function collaboratorLabor(Request $request, int $taskId, string $targetType, int $targetId, ProductionTaskCollaborationService $service, bool $start)
+    {
+        $payload = $request->validate(['client_command_id' => 'required|string|max:120', 'expected_version' => 'required|integer|min:1',
+            'switch_active_labor' => 'nullable|boolean', 'expected_active_labor_session_id' => 'nullable|integer|min:1|required_if:switch_active_labor,true']);
+        [$user, $permissions] = $this->writeContext($request);
+        $result = $start
+            ? $service->startLabor($taskId, $targetType, $targetId, $payload, $user, $permissions)
+            : $service->pauseLabor($taskId, $targetType, $targetId, $payload, $user, $permissions);
+        return response()->json(['message' => $start ? '协同计时已开始。' : '协同计时已暂停。', 'data' => $result]);
     }
 
     private function context(Request $request): array

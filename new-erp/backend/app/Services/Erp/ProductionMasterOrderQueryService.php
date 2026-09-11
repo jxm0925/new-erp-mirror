@@ -238,6 +238,9 @@ final class ProductionMasterOrderQueryService
         $taskIds = $tasks->pluck('id')->map(fn ($id) => (int) $id)->all();
         $activeOwners = DB::table('erp_production_labor_sessions')->whereIn('task_id', $taskIds)
             ->where('role', 'owner')->where('status', 'ACTIVE')->pluck('employee_legacy_id', 'task_id');
+        $activeLaborCounts = DB::table('erp_production_labor_sessions')->whereIn('task_id', $taskIds)
+            ->where('status', 'ACTIVE')->selectRaw('task_id, COUNT(*) AS active_count')->groupBy('task_id')
+            ->pluck('active_count', 'task_id');
         $handovers = DB::table('erp_production_operation_handovers')->where('target_target_type', 'unit_operation')
             ->whereIn('target_target_id', $operationIds)->orderByDesc('id')->get()
             ->unique('target_target_id')->keyBy('target_target_id');
@@ -256,11 +259,14 @@ final class ProductionMasterOrderQueryService
             if (! $current) { $result[(int) $unit->id] = null; continue; }
             $task = $tasks[(int) $current->id] ?? null;
             $ownerId = (int) ($task->assignee_user_legacy_id ?? 0);
+            $workMode = $current->work_mode_snapshot ?: 'manual';
+            $activeLaborCount = (int) ($activeLaborCounts[(int) ($task->id ?? 0)] ?? 0);
+            $hasActiveLabor = $activeLaborCount > 0;
             $inProgressIntegrity = $current->status !== 'IN_PROGRESS'
                 ? ['valid' => true, 'reason_code' => null]
-                : ($ownerId > 0 && (int) ($activeOwners[(int) ($task->id ?? 0)] ?? 0) === $ownerId
+                : ($ownerId > 0 && ($workMode === 'automatic' || $hasActiveLabor)
                     ? ['valid' => true, 'reason_code' => null]
-                    : ['valid' => false, 'reason_code' => 'in_progress_owner_labor_missing']);
+                    : ['valid' => false, 'reason_code' => 'in_progress_labor_missing']);
             $handover = $handovers[(int) $current->id] ?? null;
             $handoverStatus = (int) $current->sequence_no_snapshot === 1 ? 'NOT_REQUIRED'
                 : ($handover?->status === 'RECEIVED' ? 'RECEIVED'
@@ -274,10 +280,12 @@ final class ProductionMasterOrderQueryService
                 'unit_status' => ['status' => $unit->status, 'label' => $this->unitStatusLabel((string) $unit->status)],
                 'current_operation' => ['id' => (int) $current->id, 'code' => $current->operation_code_snapshot,
                     'name' => $current->operation_name_snapshot, 'sequence' => (int) $current->sequence_no_snapshot,
-                    'total' => $rows->count(), 'status' => $current->status, 'label' => $this->operationStatusLabel((string) $current->status)],
+                    'total' => $rows->count(), 'status' => $current->status, 'label' => $this->operationStatusLabel((string) $current->status),
+                    'work_mode_snapshot' => $workMode],
                 'current_task' => ['id' => $task?->id ? (int) $task->id : null, 'task_no' => $task?->task_no,
                     'status' => $task?->status, 'owner' => $people[$ownerId] ?? null,
                     'owner_active_labor' => (int) ($activeOwners[(int) ($task->id ?? 0)] ?? 0) === $ownerId,
+                    'active_labor_count' => $activeLaborCount,
                     'execution_integrity' => $inProgressIntegrity],
                 'kitting' => ['status' => $kittingStatus, 'label' => ['NOT_REQUIRED' => '不需要', 'CONFIRMED' => '已齐套', 'PARTIAL' => '部分满足', 'NOT_CONFIRMED' => '未齐套'][$kittingStatus]],
                 'previous_handover' => ['status' => $handoverStatus, 'label' => ['NOT_REQUIRED' => '不需要', 'RECEIVED' => '已接收', 'WAIT_RECEIVE' => '待接收', 'EXCEPTION' => '异常'][$handoverStatus]],

@@ -58,7 +58,7 @@ class ProductionOutputFlowMatrixTest extends TestCase
         $this->assertDatabaseMissing('erp_production_operation_handovers', ['output_record_id' => $failedFixture['output']->id]);
 
         $execution = app(ProductionExecutionActionService::class);
-        $started = $execution->start($reworkTask->id, 'quantity_operation', $failedFixture['source']->id, [
+        $started = $execution->restartRework($reworkTask->id, 'quantity_operation', $failedFixture['source']->id, [
             'client_command_id' => (string) Str::uuid(), 'expected_version' => 2,
         ], $user, ['production.task.start']);
         $recompleted = $execution->complete($reworkTask->id, 'quantity_operation', $failedFixture['source']->id, [
@@ -158,7 +158,7 @@ class ProductionOutputFlowMatrixTest extends TestCase
         ]);
 
         $execution = app(ProductionExecutionActionService::class);
-        $started = $execution->start($sourceTask->id, 'quantity_operation', $fixture['source']->id, [
+        $started = $execution->restartRework($sourceTask->id, 'quantity_operation', $fixture['source']->id, [
             'client_command_id' => (string) Str::uuid(),
             'expected_version' => $fixture['source']->fresh()->business_version,
         ], $user, ['production.task.start']);

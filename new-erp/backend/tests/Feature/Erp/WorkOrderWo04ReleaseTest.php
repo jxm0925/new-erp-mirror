@@ -163,6 +163,8 @@ class WorkOrderWo04ReleaseTest extends TestCase
     {
         [$user, $demand] = $this->fixture(7540);
         $routingId = DB::table('erp_production_routings')->where('output_item_id', $demand->item_id)->value('id');
+        DB::table('erp_production_routing_operations')->where('routing_id', $routingId)->where('sequence', 10)
+            ->update(['work_mode' => 'automatic', 'updated_at' => now()]);
         foreach ([20 => '加工', 30 => '包装'] as $sequence => $name) {
             $operationId = DB::table('erp_production_operations')->insertGetId([
                 'operation_no' => 'WO04-OP-'.$sequence.'-'.strtoupper(substr(uniqid(), -6)),
@@ -213,6 +215,15 @@ class WorkOrderWo04ReleaseTest extends TestCase
         $this->assertSame(20, $tasks->where('status', 'WAIT_PREDECESSOR')->count());
         $this->assertSame(30, $tasks->pluck('production_unit_operation_id')->filter()->unique()->count());
         $this->assertSame(30, DB::table('erp_production_task_targets')->whereIn('task_id', $tasks->pluck('id'))->count());
+        $this->assertSame(10, DB::table('erp_production_unit_operations')->where('work_order_id', $released->id)
+            ->where('sequence_no_snapshot', 10)->where('work_mode_snapshot', 'automatic')->count());
+        $this->assertSame(20, DB::table('erp_production_unit_operations')->where('work_order_id', $released->id)
+            ->whereIn('sequence_no_snapshot', [20, 30])->where('work_mode_snapshot', 'manual')->count());
+        DB::table('erp_production_routing_operations')->where('routing_id', $routingId)->where('sequence', 10)
+            ->update(['work_mode' => 'manual', 'updated_at' => now()]);
+        $this->assertSame(10, DB::table('erp_production_unit_operations')->where('work_order_id', $released->id)
+            ->where('sequence_no_snapshot', 10)->where('work_mode_snapshot', 'automatic')->count(),
+            '发布后修改路线运行方式不得改变已冻结的工序快照');
     }
 
     public function test_sales_work_orders_share_one_master_order_and_hierarchy_endpoints_are_paginated(): void
@@ -610,7 +621,7 @@ class WorkOrderWo04ReleaseTest extends TestCase
         $this->withToken($this->token($user->legacy_id))
             ->getJson('/api/v1/erp/production/master-orders/'.$masterId.'/units?per_page=1')
             ->assertOk()->assertJsonPath('data.0.execution.current_task.execution_integrity.valid', false)
-            ->assertJsonPath('data.0.execution.current_task.execution_integrity.reason_code', 'in_progress_owner_labor_missing');
+            ->assertJsonPath('data.0.execution.current_task.execution_integrity.reason_code', 'in_progress_labor_missing');
         DB::table('erp_production_tasks')->where('id', $task->id)->update(['assignee_user_legacy_id' => $user->legacy_id]);
         DB::table('erp_production_labor_sessions')->insert([
             'task_id' => $task->id, 'target_type' => 'unit_operation', 'target_id' => $operation->id,
@@ -733,6 +744,47 @@ class WorkOrderWo04ReleaseTest extends TestCase
         DB::table('erp_work_order_material_supply_rules')->where('id', $materialRequirement->material_supply_rule_snapshot_id)
             ->update(['supply_mode_snapshot' => 'workstation_stock', 'requires_delivery_snapshot' => false, 'updated_at' => now()]);
 
+        $beforeCheck = app(\App\Services\Erp\ProductionTaskQueryService::class)->show(
+            $task->id, $user, ['production.task.view', 'production.kitting.confirm'], true
+        )->target_details[0];
+        $this->assertSame('onsite_confirmation_required', $beforeCheck['readiness']['reason_code']);
+        $this->assertTrue($beforeCheck['allowed_actions']['confirm_kitting']);
+        $this->assertSame('confirm_kitting_and_start', $beforeCheck['primary_action']['code']);
+        try {
+            app(ProductionExecutionActionService::class)->start($task->id, 'unit_operation', $target->id,
+                ['client_command_id' => 'phase6b-facts-wait-material-ordinary-start', 'expected_version' => 2],
+                $user, ['production.task.start']);
+            $this->fail('WAIT_MATERIAL 不得通过普通 start 开工。');
+        } catch (WorkOrderDomainException $exception) {
+            $this->assertSame('target_not_ready', $exception->errorCode);
+        }
+
+        try {
+            app(ProductionKittingService::class)->confirm($task->id, 'unit_operation', $target->id,
+                ['client_command_id' => 'phase6b-facts-kitting-insufficient', 'expected_version' => 2,
+                    'workstation_stock_confirmations' => [[
+                        'requirement_id' => $materialRequirement->id,
+                        'onsite_available_base_qty' => max(0, (float) $materialRequirement->required_base_qty - 1),
+                        'workstation' => '总装一号工位',
+                    ]]], $user, ['production.kitting.confirm']);
+            $this->fail('工位常备料不足必须阻断齐套确认。');
+        } catch (WorkOrderDomainException $exception) {
+            $this->assertSame('workstation_stock_insufficient', $exception->errorCode);
+        }
+        $this->assertDatabaseHas('erp_production_workstation_stock_confirmations', [
+            'target_material_requirement_id' => $materialRequirement->id,
+            'attempt_no' => 1,
+            'result' => 'INSUFFICIENT',
+            'client_command_id' => 'phase6b-facts-kitting-insufficient',
+        ]);
+        $this->assertSame('WAIT_MATERIAL', DB::table('erp_production_unit_operations')->where('id', $target->id)->value('status'));
+        $afterShortage = app(\App\Services\Erp\ProductionTaskQueryService::class)->show(
+            $task->id, $user, ['production.task.view', 'production.kitting.confirm'], true
+        )->target_details[0];
+        $this->assertSame('workstation_stock_insufficient', $afterShortage['readiness']['reason_code']);
+        $this->assertTrue($afterShortage['allowed_actions']['confirm_kitting']);
+        $this->assertSame(1.0, (float) $afterShortage['readiness']['shortages'][0]['shortage_base_qty']);
+
         $kitting = app(ProductionKittingService::class)->confirm($task->id, 'unit_operation', $target->id,
             ['client_command_id' => 'phase6b-facts-kitting', 'expected_version' => 2,
                 'workstation_stock_confirmations' => [[
@@ -747,7 +799,9 @@ class WorkOrderWo04ReleaseTest extends TestCase
         $this->assertEquals($started->kitting_confirmed_at, $started->started_at);
         $this->assertSame('IN_PROGRESS', DB::table('erp_production_task_targets')->where('task_id', $task->id)->where('target_id', $target->id)->value('status_snapshot'));
         $this->assertSame(1, DB::table('erp_production_labor_sessions')->where('target_id', $target->id)->where('status', 'ACTIVE')->count());
-        $fact = DB::table('erp_production_workstation_stock_confirmations')->where('target_material_requirement_id', $materialRequirement->id)->first();
+        $fact = DB::table('erp_production_workstation_stock_confirmations')->where('target_material_requirement_id', $materialRequirement->id)->orderByDesc('id')->first();
+        $this->assertSame(2, (int) $fact->attempt_no);
+        $this->assertSame('SUFFICIENT', $fact->result);
         $this->assertSame('总装一号工位', $fact->workstation_snapshot);
         $this->assertSame((float) $materialRequirement->required_base_qty + 2, (float) $fact->onsite_available_base_qty_snapshot);
 
@@ -760,54 +814,125 @@ class WorkOrderWo04ReleaseTest extends TestCase
                 ]]], $user, ['production.kitting.confirm']);
         $this->assertSame($kitting['id'], $replayed['id']);
         $this->assertSame(1, DB::table('erp_production_labor_sessions')->where('target_id', $target->id)->where('status', 'ACTIVE')->count());
+        $this->assertSame(2, DB::table('erp_production_workstation_stock_confirmations')->where('target_material_requirement_id', $materialRequirement->id)->count());
 
         $secondRequirement = DB::table('erp_production_target_material_requirements')
             ->where('target_type', 'unit_operation')->where('target_id', $secondLink->target_id)->first();
         DB::table('erp_work_order_material_supply_rules')->where('id', $secondRequirement->material_supply_rule_snapshot_id)
             ->update(['supply_mode_snapshot' => 'workstation_stock', 'requires_delivery_snapshot' => false, 'updated_at' => now()]);
+        DB::table('erp_production_unit_operations')->where('id', $secondLink->target_id)
+            ->update(['work_mode_snapshot' => 'automatic', 'updated_at' => now()]);
         app(ProductionTaskAssignmentService::class)->claim($secondTask->id,
             ['client_command_id' => 'phase6b-facts-second-claim', 'expected_version' => 1], $user, ['production.task.claim']);
+        $oldSessionId = (int) DB::table('erp_production_labor_sessions')->where('employee_legacy_id', $user->legacy_id)
+            ->where('status', 'ACTIVE')->value('id');
+        try {
+            app(ProductionKittingService::class)->confirm($secondTask->id, 'unit_operation', $secondLink->target_id,
+                ['client_command_id' => 'phase6b-facts-second-kitting', 'expected_version' => 2,
+                    'workstation_stock_confirmations' => [[
+                        'requirement_id' => $secondRequirement->id,
+                        'onsite_available_base_qty' => (float) $secondRequirement->required_base_qty,
+                        'workstation' => '总装二号工位',
+                    ]]], $user, ['production.kitting.confirm']);
+            $this->fail('跨任务启动必须先返回切换确认上下文。');
+        } catch (WorkOrderDomainException $exception) {
+            $this->assertSame('labor_switch_confirmation_required', $exception->errorCode);
+            $this->assertSame($oldSessionId, $exception->details['active_labor_session_id']);
+            $this->assertSame((int) $task->id, $exception->details['current_task']['id']);
+            $this->assertSame(
+                DB::table('erp_production_units')->where('id', $target->production_unit_id)->value('unit_no'),
+                $exception->details['current_task']['production_unit_no']
+            );
+        }
         app(ProductionKittingService::class)->confirm($secondTask->id, 'unit_operation', $secondLink->target_id,
             ['client_command_id' => 'phase6b-facts-second-kitting', 'expected_version' => 2,
+                'switch_active_labor' => true, 'expected_active_labor_session_id' => $oldSessionId,
                 'workstation_stock_confirmations' => [[
                     'requirement_id' => $secondRequirement->id,
                     'onsite_available_base_qty' => (float) $secondRequirement->required_base_qty,
                     'workstation' => '总装二号工位',
                 ]]], $user, ['production.kitting.confirm']);
-        $this->assertSame('IN_PROGRESS', DB::table('erp_production_tasks')->where('id', $task->id)->value('status'),
-            '另一逐件任务确认齐套时，不得影响已加工任务状态');
+        $this->assertSame('PAUSED', DB::table('erp_production_tasks')->where('id', $task->id)->value('status'),
+            '负责人切换到另一任务时，原人工工序没有其他活动工时就必须暂停');
+        $this->assertSame('task_switched', DB::table('erp_production_labor_sessions')->where('target_id', $target->id)->where('status', 'ENDED')->value('end_reason'));
         $this->assertSame('IN_PROGRESS', DB::table('erp_production_task_targets')->where('id', $secondLink->id)->value('status_snapshot'));
+        app(ProductionExecutionActionService::class)->pause($secondTask->id, 'unit_operation', $secondLink->target_id,
+            ['client_command_id' => 'phase6b-facts-automatic-owner-pause', 'expected_version' => 3],
+            $user, ['production.task.pause']);
+        $this->assertSame('IN_PROGRESS', DB::table('erp_production_unit_operations')->where('id', $secondLink->target_id)->value('status'),
+            '自动工序停止个人计时后仍保持运行中');
+        $this->assertSame(0, DB::table('erp_production_labor_sessions')->where('target_id', $secondLink->target_id)->where('status', 'ACTIVE')->count());
 
         $collaboratorId = $user->legacy_id + 100000;
         DB::table('erp_legacy_admin_users')->insert(['legacy_id' => $collaboratorId, 'username' => 'phase6b-collaborator-'.$collaboratorId,
             'nickname' => '协作者', 'status' => 'normal', 'auth_group_names' => '[]', 'created_at' => now(), 'updated_at' => now()]);
         DB::table('erp_work_orders')->where('id', $released->id)->update(['collaboration_enabled' => true, 'updated_at' => now()]);
         $collaborator = DB::table('erp_legacy_admin_users')->where('legacy_id', $collaboratorId)->first();
+        $this->grantRole($user->legacy_id, ['production.task.view', 'production.task.resume', 'production.task.pause']);
+        $this->grantRole($collaboratorId, ['production.task.view', 'production.task.collaborate', 'production.task.resume']);
+        $ownerToken = $this->token($user->legacy_id);
+        $collaboratorToken = $this->token($collaboratorId);
         app(ProductionTaskCollaborationService::class)->join($task->id,
-            ['client_command_id' => 'phase6b-facts-collaborator-join', 'expected_version' => 3],
+            ['client_command_id' => 'phase6b-facts-collaborator-join', 'expected_version' => 4],
             $collaborator, ['production.task.collaborate']);
-        $this->assertSame(1, DB::table('erp_production_labor_sessions')->where('target_id', $target->id)->where('status', 'ACTIVE')->count(),
+        $this->assertSame(0, DB::table('erp_production_labor_sessions')->where('target_id', $target->id)->where('status', 'ACTIVE')->count(),
             '加入协同不得自动给协作者启动计时');
-        $collaboratorStarted = app(ProductionExecutionActionService::class)->start($task->id, 'unit_operation', $target->id,
-            ['client_command_id' => 'phase6b-facts-collaborator-start', 'expected_version' => 3],
-            $collaborator, ['production.task.start']);
+        $collaboratorStarted = app(ProductionTaskCollaborationService::class)->startLabor($task->id, 'unit_operation', $target->id,
+            ['client_command_id' => 'phase6b-facts-collaborator-start', 'expected_version' => 4],
+            $collaborator, ['production.task.collaborate']);
         $this->assertSame('IN_PROGRESS', $collaboratorStarted['target_status']);
-        $this->assertSame(2, DB::table('erp_production_labor_sessions')->where('target_id', $target->id)->where('status', 'ACTIVE')->count());
-        app(ProductionExecutionActionService::class)->pause($task->id, 'unit_operation', $target->id,
-            ['client_command_id' => 'phase6b-facts-collaborator-pause', 'expected_version' => 4],
-            $collaborator, ['production.task.pause']);
         $this->assertSame(1, DB::table('erp_production_labor_sessions')->where('target_id', $target->id)->where('status', 'ACTIVE')->count());
         try {
+            DB::table('erp_production_labor_sessions')->insert([
+                'task_id' => $secondTask->id, 'target_type' => 'unit_operation', 'target_id' => $secondLink->target_id,
+                'employee_legacy_id' => $collaboratorId, 'role' => 'owner', 'status' => 'ACTIVE',
+                'started_at' => now(), 'actual_labor_minutes' => 0, 'responsibility_weight_snapshot' => 1,
+                'credited_labor_minutes' => 0, 'created_at' => now(), 'updated_at' => now(),
+            ]);
+            $this->fail('同一员工不得因角色不同而形成第二条 ACTIVE 工时。');
+        } catch (\Illuminate\Database\QueryException $exception) {
+            $this->assertSame(1062, (int) ($exception->errorInfo[1] ?? 0));
+        }
+
+        $targetPath = '/api/v1/erp/production/tasks/'.$task->id.'/targets/unit_operation/'.$target->id;
+        $this->withToken($collaboratorToken)->postJson($targetPath.'/resume', [
+            'client_command_id' => 'phase6b-facts-collaborator-owner-route-denied', 'expected_version' => 5,
+        ])->assertStatus(403)->assertJsonPath('error_code', 'task_owner_required');
+        $this->withToken($ownerToken)->postJson($targetPath.'/resume', [
+            'client_command_id' => 'phase6b-facts-owner-resume-with-helper', 'expected_version' => 5,
+        ])->assertOk()->assertJsonPath('data.target_status', 'IN_PROGRESS');
+        $this->assertSame(2, DB::table('erp_production_labor_sessions')->where('target_id', $target->id)->where('status', 'ACTIVE')->count(),
+            '普通人工工序允许负责人和协作者同时实际作业');
+        $ownerProjection = app(\App\Services\Erp\ProductionTaskQueryService::class)->show(
+            $task->id, $user, ['production.task.view', 'production.task.pause', 'production.task.resume'], true
+        )->target_details[0];
+        $this->assertSame('owner', $ownerProjection['my_role']);
+        $this->assertSame('manual', $ownerProjection['operation_runtime']['work_mode']);
+        $this->assertSame(2, $ownerProjection['operation_runtime']['active_labor_count']);
+        $this->assertSame('ACTIVE', $ownerProjection['my_labor']['status']);
+        $this->assertNotNull($ownerProjection['my_labor']['session_id']);
+        $this->withToken($collaboratorToken)->postJson($targetPath.'/collaborator-labor/pause', [
+            'client_command_id' => 'phase6b-facts-collaborator-pause', 'expected_version' => 6,
+        ])->assertOk()->assertJsonPath('data.target_status', 'IN_PROGRESS');
+        $this->assertSame(1, DB::table('erp_production_labor_sessions')->where('target_id', $target->id)->where('status', 'ACTIVE')->count());
+        $this->assertSame('IN_PROGRESS', DB::table('erp_production_unit_operations')->where('id', $target->id)->value('status'),
+            '协作者暂停时负责人仍在作业，人工工序必须保持加工中');
+        $this->withToken($ownerToken)->postJson($targetPath.'/pause', [
+            'client_command_id' => 'phase6b-facts-owner-pause-after-helper', 'expected_version' => 7,
+        ])->assertOk()->assertJsonPath('data.target_status', 'PAUSED');
+        $this->assertSame(0, DB::table('erp_production_labor_sessions')->where('target_id', $target->id)->where('status', 'ACTIVE')->count());
+        $this->assertSame('PAUSED', DB::table('erp_production_unit_operations')->where('id', $target->id)->value('status'));
+        try {
             app(ProductionExecutionActionService::class)->start($task->id, 'unit_operation', $target->id,
-                ['client_command_id' => 'phase6b-facts-duplicate-start', 'expected_version' => 5],
+                ['client_command_id' => 'phase6b-facts-duplicate-start', 'expected_version' => 8],
                 $user, ['production.task.start']);
             $this->fail('需要齐套的工序不得重复点击开始加工。');
         } catch (WorkOrderDomainException $exception) {
-            $this->assertSame('labor_session_active', $exception->errorCode);
+            $this->assertSame('target_not_ready', $exception->errorCode);
             $this->assertSame(409, $exception->status);
         }
         $completed = app(ProductionExecutionActionService::class)->complete($task->id, 'unit_operation', $target->id,
-            ['client_command_id' => 'phase6b-facts-complete', 'expected_version' => 5], $user, ['production.task.complete']);
+            ['client_command_id' => 'phase6b-facts-complete', 'expected_version' => 8], $user, ['production.task.complete']);
         $this->assertSame('COMPLETED', $completed['target_status']);
         $this->assertNotNull($completed['output_record_id']);
         $this->assertSame(0, DB::table('erp_production_labor_sessions')->where('target_id', $target->id)->where('status', 'ACTIVE')->count());

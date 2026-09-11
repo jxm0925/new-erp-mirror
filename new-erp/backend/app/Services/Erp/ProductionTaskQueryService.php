@@ -16,6 +16,8 @@ class ProductionTaskQueryService
     public function __construct(
         private readonly ProductionDataScopeResolver $scopeResolver,
         private readonly ErpUserProjectionService $users,
+        private readonly ProductionTargetReadinessService $readiness,
+        private readonly ProductionTaskActionProjectionService $actions,
     ) {}
 
     public function paginate(array $filters, object $user, array $permissions, bool $superAdmin): LengthAwarePaginator
@@ -146,6 +148,7 @@ class ProductionTaskQueryService
      */
     private function enrichTargets(Collection $tasks, array $permissions, object $user): void
     {
+        $serverNow = now();
         $links = $tasks->flatMap(fn (ProductionTask $task) => $task->targets);
         $unitIds = $links->where('target_type', 'unit_operation')->pluck('target_id')->map(fn ($id) => (int) $id)->unique()->values();
         $quantityIds = $links->where('target_type', 'quantity_operation')->pluck('target_id')->map(fn ($id) => (int) $id)->unique()->values();
@@ -161,7 +164,7 @@ class ProductionTaskQueryService
             ->keyBy(fn ($row) => $row->source_target_type.':'.$row->source_target_id);
 
         foreach ($tasks as $task) {
-            $details = $task->targets->map(function ($link) use ($task, $units, $quantities, $outputs, $permissions, $user): array {
+            $details = $task->targets->map(function ($link) use ($task, $units, $quantities, $outputs, $permissions, $user, $serverNow): array {
                 $target = $link->target_type === 'unit_operation'
                     ? $units->get((int) $link->target_id)
                     : $quantities->get((int) $link->target_id);
@@ -174,27 +177,22 @@ class ProductionTaskQueryService
                 ] : ['quality_inspect' => false, 'warehouse' => false];
 
                 $status = (string) $target->status;
-                $ownerActiveLabor = $task->laborSessions->first(fn ($session) => $session->status === 'ACTIVE'
-                    && $session->role === 'owner' && (int) $session->employee_legacy_id === (int) $task->assignee_user_legacy_id);
+                $activeLabor = $task->laborSessions->filter(fn ($session) => $session->status === 'ACTIVE'
+                    && $session->target_type === $link->target_type && (int) $session->target_id === (int) $target->id);
+                $workMode = $target->work_mode_snapshot ?: 'manual';
                 $executionIntegrity = $status === 'IN_PROGRESS'
-                    ? ((int) $task->assignee_user_legacy_id > 0 && $ownerActiveLabor
+                    ? ((int) $task->assignee_user_legacy_id > 0 && ($workMode === 'automatic' || $activeLabor->isNotEmpty())
                         ? ['valid' => true, 'reason_code' => null, 'message' => null]
-                        : ['valid' => false, 'reason_code' => 'in_progress_owner_labor_missing', 'message' => '加工中的工序任务缺少负责人或负责人进行中工时。'])
+                        : ['valid' => false, 'reason_code' => 'in_progress_labor_missing', 'message' => '人工工序处于加工中，但没有任何负责人或协作者的进行中工时。'])
                     : ['valid' => true, 'reason_code' => null, 'message' => null];
-                $isOwner = (int) $task->assignee_user_legacy_id === (int) ($user->legacy_id ?? $user->id ?? 0);
-                $has = fn (string $permission): bool => in_array($permission, $permissions, true);
-                $allowedActions = [
-                    // A kitting confirmation is a formal start command for the owner; it is not a second READY step.
-                    'confirm_kitting' => $isOwner && (bool) $target->kitting_required
-                        && in_array($status, ['CLAIMED', 'WAIT_MATERIAL', 'WAIT_HANDOVER'], true)
-                        && $has('production.kitting.confirm'),
-                    'start' => $isOwner && ! (bool) $target->kitting_required
-                        && in_array($status, ['READY', 'REWORK'], true) && $has('production.task.start'),
-                    'pause' => $isOwner && $status === 'IN_PROGRESS' && $has('production.task.pause'),
-                    'resume' => $isOwner && $status === 'PAUSED' && $has('production.task.resume'),
-                    'complete' => $isOwner && in_array($status, ['IN_PROGRESS', 'PAUSED'], true) && $has('production.task.complete'),
-                    'accept_handover' => $isOwner && $status === 'WAIT_HANDOVER' && $has('production.handover.receive'),
-                ];
+                $readiness = $this->readiness->project($link->target_type, $target);
+                $actionProjection = $this->actions->project($task, $target, $user, $permissions, $activeLabor, $readiness);
+                $userId = (int) ($user->legacy_id ?? $user->id ?? 0);
+                $mySessions = $task->laborSessions->filter(fn ($session) => $session->target_type === $link->target_type
+                    && (int) $session->target_id === (int) $target->id && (int) $session->employee_legacy_id === $userId);
+                $myActiveSession = $mySessions->firstWhere('status', 'ACTIVE');
+                $myAccumulatedSeconds = (int) round($mySessions->sum(fn ($session) => (float) $session->actual_labor_minutes * 60));
+                if ($myActiveSession) $myAccumulatedSeconds += max(0, $myActiveSession->started_at->diffInSeconds($serverNow));
 
                 return [
                     'target_type' => $link->target_type,
@@ -203,7 +201,10 @@ class ProductionTaskQueryService
                     'status_label' => $this->statusLabel($status),
                     'reason_code' => $this->reasonCode($status),
                     'reason_message' => $this->reasonMessage($status),
-                    'allowed_actions' => $allowedActions,
+                    'my_role' => $actionProjection['my_role'],
+                    'allowed_actions' => $actionProjection['allowed_actions'],
+                    'primary_action' => $actionProjection['primary_action'],
+                    'secondary_actions' => $actionProjection['secondary_actions'],
                     'business_version' => (int) $target->business_version,
                     'production_unit_id' => $link->target_type === 'unit_operation' ? (int) $target->production_unit_id : null,
                     'production_unit_no' => $link->target_type === 'unit_operation' ? $target->productionUnit?->unit_no : null,
@@ -218,6 +219,22 @@ class ProductionTaskQueryService
                         : ($target->status === 'COMPLETED' ? 1 : 0),
                     'remaining_base_qty' => $link->target_type === 'quantity_operation' ? (float) $target->remaining_base_qty : ($target->status === 'COMPLETED' ? 0 : 1),
                     'actual_labor_minutes' => (float) $target->actual_labor_minutes,
+                    'work_mode_snapshot' => $workMode,
+                    'active_labor_count' => $activeLabor->count(),
+                    'operation_runtime' => [
+                        'work_mode' => $workMode,
+                        'status' => $status,
+                        'started_at' => optional($target->started_at)->toISOString(),
+                        'active_labor_count' => $activeLabor->count(),
+                    ],
+                    'my_labor' => [
+                        'session_id' => $myActiveSession?->id ? (int) $myActiveSession->id : null,
+                        'status' => $myActiveSession ? 'ACTIVE' : 'INACTIVE',
+                        'accumulated_seconds' => $myAccumulatedSeconds,
+                        'started_at' => optional($myActiveSession?->started_at)->toISOString(),
+                    ],
+                    'readiness' => $readiness,
+                    'server_now' => $serverNow->toISOString(),
                     'kitting_required' => (bool) $target->kitting_required,
                     'output_mode_snapshot' => $target->output_mode_snapshot,
                     'quality_mode_snapshot' => $target->quality_mode_snapshot,
@@ -240,6 +257,9 @@ class ProductionTaskQueryService
             })->values()->all();
             $task->setAttribute('target_details', $details);
             $task->setAttribute('production_context', $this->productionContext($task));
+            $roles = collect($details)->pluck('my_role')->unique()->values();
+            $task->setAttribute('my_role', $roles->contains('owner') ? 'owner' : ($roles->contains('collaborator') ? 'collaborator' : 'viewer'));
+            $task->setAttribute('server_now', $serverNow->toISOString());
             $task->setAttribute('allowed_actions', [
                 'claim' => (int) ($task->assignee_user_legacy_id ?? 0) === 0
                     && $task->status === 'WAIT_CLAIM'

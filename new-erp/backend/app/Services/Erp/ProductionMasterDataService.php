@@ -279,7 +279,7 @@ class ProductionMasterDataService
                 $newRow = $copy->operations()->create($row->only([
                     'operation_id', 'sequence', 'parameters', 'is_key_operation', 'remark', 'standard_minutes',
                     'setup_standard_minutes', 'unit_standard_minutes',
-                    'output_item_id', 'output_mode', 'quality_mode', 'allow_continue_without_warehouse',
+                    'output_item_id', 'output_mode', 'quality_mode', 'work_mode', 'allow_continue_without_warehouse',
                 ]));
                 $copiedBySequence->put((int) $row->sequence, $newRow);
             }
@@ -360,6 +360,7 @@ class ProductionMasterDataService
                 'output_item_name' => $row->outputItem?->item_name,
                 'output_mode' => $row->output_mode ?: 'flow_only',
                 'quality_mode' => $row->quality_mode ?: 'none',
+                'work_mode' => $row->work_mode ?: 'manual',
                 'allow_continue_without_warehouse' => (bool) $row->allow_continue_without_warehouse,
                 'material_supply_rules' => $row->materialSupplyRules->map(fn ($rule) => [
                     'rule_id' => (int) $rule->id,
@@ -388,10 +389,11 @@ class ProductionMasterDataService
             $created = $routing->operations()->create(collect($row)->only([
                 'operation_id', 'sequence', 'parameters', 'is_key_operation', 'remark', 'standard_minutes',
                 'setup_standard_minutes', 'unit_standard_minutes',
-                'output_item_id', 'output_mode', 'quality_mode', 'allow_continue_without_warehouse',
+                'output_item_id', 'output_mode', 'quality_mode', 'work_mode', 'allow_continue_without_warehouse',
             ])->all() + [
                 'output_mode' => $row['output_mode'] ?? 'flow_only',
                 'quality_mode' => $row['quality_mode'] ?? 'none',
+                'work_mode' => $row['work_mode'] ?? 'manual',
                 'allow_continue_without_warehouse' => (bool) ($row['allow_continue_without_warehouse'] ?? true),
             ]);
             $createdBySequence->put((int) $row['sequence'], $created);

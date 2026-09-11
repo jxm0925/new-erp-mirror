@@ -44,15 +44,18 @@
         <!-- Compact Inline Timer Row -->
         <view class="hero-timer-row">
           <view class="timer-left">
-            <text class="timer-tag">有效加工时长</text>
+            <text class="timer-tag">我的实际作业时长</text>
             <text class="timer-val">{{item.timerDisplay}}</text>
-            <text class="timer-sub">(工时: {{item.laborText}})</text>
+            <text class="timer-sub">(本人工时: {{item.laborText}})</text>
           </view>
           <view class="hero-actions">
-            <button wx:if="{{item.allowed_actions.pause}}" class="btn-pause-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="pause">暂停加工</button>
-            <button wx:elif="{{item.allowed_actions.resume}}" class="btn-resume-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="resume">继续加工</button>
-            <button wx:elif="{{item.allowed_actions.start}}" class="btn-start-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="start">{{item.status === 'REWORK' ? '开始返工' : '开始加工'}}</button>
+            <button wx:if="{{item.allowed_actions.pause}}" class="btn-pause-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="pause">暂停我的作业</button>
+            <button wx:elif="{{item.allowed_actions.resume}}" class="btn-resume-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="resume">恢复我的作业</button>
+            <button wx:elif="{{item.allowed_actions.start_rework}}" class="btn-start-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="start">开始返工</button>
+            <button wx:elif="{{item.allowed_actions.start}}" class="btn-start-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="start">开始加工</button>
             <button wx:elif="{{item.allowed_actions.confirm_kitting}}" class="btn-kitting-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="confirmKitting">确认齐套并开工</button>
+            <button wx:elif="{{item.allowed_actions.start_collaborator_labor}}" class="btn-start-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="startCollaboratorLabor">开始协同计时</button>
+            <button wx:elif="{{item.allowed_actions.pause_collaborator_labor}}" class="btn-pause-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="pauseCollaboratorLabor">暂停协同计时</button>
           </view>
         </view>
 
@@ -199,21 +202,27 @@
     <block wx:elif="{{targets[0].allowed_actions.accept_handover}}">
       <button class="btn-primary" bindtap="openHandover">接收工序交接</button>
     </block>
-    <block wx:elif="{{targets[0].allowed_actions.start && targets[0].status === 'REWORK'}}">
+    <block wx:elif="{{targets[0].allowed_actions.start_rework}}">
       <button class="btn-primary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="start">开始返工</button>
     </block>
     <block wx:elif="{{targets[0].allowed_actions.start}}">
       <button class="btn-primary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="start">开始加工</button>
     </block>
     <block wx:elif="{{targets[0].allowed_actions.pause}}">
-      <button class="btn-secondary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="pause">暂停</button>
+      <button class="btn-secondary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="pause">暂停我的作业</button>
       <button wx:if="{{targets[0].target_type === 'quantity_operation' && !targets[0].readyForCompletion}}" class="btn-primary" data-id="{{targets[0].target_id}}" bindtap="openReport">提交报工</button>
       <button wx:else class="btn-primary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="complete">完成工序并产出</button>
     </block>
     <block wx:elif="{{targets[0].allowed_actions.resume}}">
-      <button class="btn-primary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="resume">继续加工</button>
+      <button class="btn-primary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="resume">恢复我的作业</button>
       <button wx:if="{{targets[0].target_type === 'quantity_operation' && !targets[0].readyForCompletion}}" class="btn-secondary" data-id="{{targets[0].target_id}}" bindtap="openReport">提交报工</button>
       <button wx:else class="btn-secondary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="complete">完成工序</button>
+    </block>
+    <block wx:elif="{{targets[0].allowed_actions.start_collaborator_labor}}">
+      <button class="btn-primary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="startCollaboratorLabor">开始协同计时</button>
+    </block>
+    <block wx:elif="{{targets[0].allowed_actions.pause_collaborator_labor}}">
+      <button class="btn-outline" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="pauseCollaboratorLabor">暂停协同计时</button>
     </block>
     <block wx:elif="{{targets[0].status === 'WAIT_QUALITY' || targets[0].status === 'WAIT_WAREHOUSE'}}">
       <button class="btn-primary" data-id="{{targets[0].target_id}}" bindtap="openOutputAction">{{targets[0].status === 'WAIT_QUALITY' ? '进入产出质检' : '进入产出入库'}}</button>

@@ -11,7 +11,10 @@ use Illuminate\Support\Facades\DB;
 
 final class ProductionReportService
 {
-    public function __construct(private readonly DocumentNumberService $numbers) {}
+    public function __construct(
+        private readonly DocumentNumberService $numbers,
+        private readonly ProductionLaborSessionService $laborSessions,
+    ) {}
 
     public function report(int $taskId, string $targetType, int $targetId, array $payload, object $user, array $permissions): array
     {
@@ -65,10 +68,11 @@ final class ProductionReportService
 
             $now = now();
             $beforeStatus = (string) $target->status;
+            $beforeVersion = (int) $target->business_version;
             $endedLabor = false;
             $laborSnapshot = $this->laborSnapshot($task, $target, $this->userId($user));
             if ((bool) ($payload['end_labor'] ?? false)) {
-                $endedLabor = $this->endReporterLabor($task, $target, $this->userId($user), $now);
+                $endedLabor = $this->laborSessions->end($task, $target, 'quantity_operation', $this->userId($user), 'report_submitted', $now, true, true, false) !== null;
             }
             $reportId = DB::table('erp_production_reports')->insertGetId([
                 'report_no' => $this->numbers->next('production_report', 'PRP'),
@@ -96,14 +100,7 @@ final class ProductionReportService
             $target->remaining_base_qty = $processedRemaining <= 0.00000001
                 ? $remainingRequiredQualified
                 : $processedRemaining;
-            if ($endedLabor) {
-                $otherActive = ProductionLaborSession::query()->where('target_type', 'quantity_operation')
-                    ->where('target_id', $target->id)->where('status', 'ACTIVE')->exists();
-                $target->status = $otherActive ? 'IN_PROGRESS' : 'PAUSED';
-                $target->paused_at = $otherActive ? null : $now;
-            }
-            $beforeVersion = (int) $target->business_version;
-            $target->business_version = $beforeVersion + 1;
+            $target->business_version = (int) $target->business_version + 1;
             $target->save();
             $task->targets()->where('target_type', 'quantity_operation')->where('target_id', $target->id)
                 ->update(['status_snapshot' => $target->status, 'updated_at' => $now]);
@@ -150,17 +147,6 @@ final class ProductionReportService
                 'ended_at' => optional($session->ended_at)->toISOString(),
                 'actual_labor_minutes' => (float) $session->actual_labor_minutes,
             ])->all();
-    }
-
-    private function endReporterLabor(ProductionTask $task, ProductionQuantityOperation $target, int $userId, $now): bool
-    {
-        $session = ProductionLaborSession::query()->where('task_id', $task->id)->where('target_type', 'quantity_operation')
-            ->where('target_id', $target->id)->where('employee_legacy_id', $userId)->where('status', 'ACTIVE')->lockForUpdate()->first();
-        if (! $session) $this->fail('labor_session_missing', '未找到当前报工人的进行中加工计时。', 409);
-        $minutes = max(0, $session->started_at->diffInSeconds($now) / 60);
-        $session->update(['status' => 'ENDED', 'ended_at' => $now, 'actual_labor_minutes' => $minutes, 'credited_labor_minutes' => 0]);
-        $target->actual_labor_minutes = (float) $target->actual_labor_minutes + $minutes;
-        return true;
     }
 
     private function participant(ProductionTask $task, object $user): void

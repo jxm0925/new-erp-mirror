@@ -69,9 +69,9 @@ function stampClock(value) {
 function targetView(row) {
   const conf = STATUS_CONFIG[row.status] || { label: row.status, theme: 'gray', color: '#8f959e', bg: '#f2f3f5' };
   const laborMinutes = Number(row.actual_labor_minutes || 0);
-
-  let initialElapsedSec = Math.round(laborMinutes * 60);
-  if (row.status === 'IN_PROGRESS' && row.started_at) {
+  const myLabor = row.my_labor || null;
+  let initialElapsedSec = myLabor ? Number(myLabor.accumulated_seconds || 0) : Math.round(laborMinutes * 60);
+  if (!myLabor && row.status === 'IN_PROGRESS' && row.started_at) {
     const startTs = new Date(row.started_at).getTime();
     if (Number.isFinite(startTs) && startTs > 0) {
       const diffSec = Math.floor((Date.now() - startTs) / 1000);
@@ -97,7 +97,8 @@ function targetView(row) {
     kittingClock: stampClock(row.kitting_confirmed_at),
     startedClock: stampClock(row.started_at),
     completedClock: stampClock(row.completed_at),
-    laborText: `${laborMinutes.toFixed(1)}分`,
+    laborText: `${(initialElapsedSec / 60).toFixed(1)}分`,
+    myLaborActive: Boolean(myLabor && myLabor.status === 'ACTIVE'),
     elapsedSeconds: initialElapsedSec,
     timerDisplay: formatDuration(initialElapsedSec),
     readyForCompletion: row.target_type !== 'quantity_operation' || Number(row.remaining_base_qty || 0) <= 0,
@@ -173,13 +174,13 @@ Page({
 
   startTimer() {
     this.stopTimer();
-    const hasRunning = this.data.targets.some((t) => t.status === 'IN_PROGRESS');
+    const hasRunning = this.data.targets.some((t) => t.myLaborActive || (!t.my_labor && t.status === 'IN_PROGRESS'));
     if (!hasRunning) return;
 
     this.timerId = setInterval(() => {
       let changed = false;
       const updated = this.data.targets.map((t) => {
-        if (t.status === 'IN_PROGRESS') {
+        if (t.myLaborActive || (!t.my_labor && t.status === 'IN_PROGRESS')) {
           changed = true;
           const nextSec = (t.elapsedSeconds || 0) + 1;
           return Object.assign({}, t, {
@@ -312,10 +313,12 @@ Page({
       (row) => row.source_facts && row.source_facts.supply_mode === 'workstation_stock'
     );
     this.collectWorkstationStock(workstationRows, 0, []).then((confirmations) => {
-      this.run(() => production.confirmKitting(this.data.id, t.target_type, t.target_id, {
+      const clientCommandId = production.newCommandId('kitting');
+      this.runWithLaborSwitch((switchPayload) => production.confirmKitting(this.data.id, t.target_type, t.target_id, Object.assign({
+        client_command_id: clientCommandId,
         expected_version: t.business_version,
         workstation_stock_confirmations: confirmations,
-      }), '齐套确认成功');
+      }, switchPayload)), '齐套确认成功');
     }).catch(() => null);
   },
 
@@ -331,9 +334,9 @@ Page({
         success: (modal) => {
           if (!modal.confirm) return reject(new Error('cancelled'));
           const quantity = Number(modal.content);
-          if (!Number.isFinite(quantity) || quantity < Number(row.required_base_qty)) {
-            wx.showToast({ title: '现场数量不足，无法确认齐套', icon: 'none' });
-            return reject(new Error('insufficient'));
+          if (!Number.isFinite(quantity) || quantity < 0) {
+            wx.showToast({ title: '请输入有效的现场数量', icon: 'none' });
+            return reject(new Error('invalid'));
           }
           resolve(this.collectWorkstationStock(rows, index + 1, result.concat([{
             requirement_id: row.id,
@@ -348,9 +351,12 @@ Page({
   start(event) {
     const t = this.findTarget(event);
     if (!t) return;
-    this.run(() => production.start(this.data.id, t.target_type, t.target_id, {
+    const clientCommandId = production.newCommandId(t.status === 'REWORK' ? 'rework-start' : 'start');
+    const action = t.status === 'REWORK' ? production.restartRework : production.start;
+    this.runWithLaborSwitch((switchPayload) => action(this.data.id, t.target_type, t.target_id, Object.assign({
+      client_command_id: clientCommandId,
       expected_version: t.business_version,
-    }), '已开始加工');
+    }, switchPayload)), t.status === 'REWORK' ? '已开始返工' : '已开始加工');
   },
 
   pause(event) {
@@ -358,15 +364,34 @@ Page({
     if (!t) return;
     this.run(() => production.pause(this.data.id, t.target_type, t.target_id, {
       expected_version: t.business_version,
-    }), '已暂停加工');
+    }), '已暂停我的作业');
   },
 
   resume(event) {
     const t = this.findTarget(event);
     if (!t) return;
-    this.run(() => production.resume(this.data.id, t.target_type, t.target_id, {
+    const clientCommandId = production.newCommandId('resume');
+    this.runWithLaborSwitch((switchPayload) => production.resume(this.data.id, t.target_type, t.target_id, Object.assign({
+      client_command_id: clientCommandId,
       expected_version: t.business_version,
-    }), '已继续加工');
+    }, switchPayload)), '已恢复我的作业');
+  },
+
+  startCollaboratorLabor(event) {
+    const t = this.findTarget(event);
+    if (!t) return;
+    const clientCommandId = production.newCommandId('collaborator-labor-start');
+    this.runWithLaborSwitch((switchPayload) => production.startCollaboratorLabor(this.data.id, t.target_type, t.target_id, Object.assign({
+      client_command_id: clientCommandId, expected_version: t.business_version,
+    }, switchPayload)), '协同计时已开始');
+  },
+
+  pauseCollaboratorLabor(event) {
+    const t = this.findTarget(event);
+    if (!t) return;
+    this.run(() => production.pauseCollaboratorLabor(this.data.id, t.target_type, t.target_id, {
+      expected_version: t.business_version,
+    }), '协同计时已暂停');
   },
 
   complete(event) {
@@ -542,5 +567,40 @@ Page({
     }).finally(() => {
       this.setData({ busy: false });
     });
+  },
+
+  runWithLaborSwitch(factory, message) {
+    if (this.data.busy) return;
+    this.setData({ busy: true });
+    const execute = (switchPayload) => factory(switchPayload || {}).catch((error) => {
+      if (error.errorCode !== 'labor_switch_confirmation_required') throw error;
+      const details = error.details || {};
+      const current = details.current_task || {};
+      return new Promise((resolve, reject) => wx.showModal({
+        title: '切换生产任务',
+        content: `当前正在 ${current.task_no || '另一任务'}${current.production_unit_no ? ` / ${current.production_unit_no}` : ''} / ${current.operation_name || '当前工序'} 计时。切换后将结束原个人工时并开始本任务，是否继续？`,
+        confirmText: '切换任务',
+        cancelText: '暂不切换',
+        success: modal => modal.confirm ? resolve() : reject(Object.assign(new Error('cancelled'), { cancelled: true })),
+        fail: reject,
+      })).then(() => execute({
+        switch_active_labor: true,
+        expected_active_labor_session_id: details.active_labor_session_id,
+      }));
+    });
+    execute().then(() => {
+      wx.showToast({ title: message, icon: 'success' });
+      return this.load();
+    }).catch((error) => {
+      if (!error.cancelled) {
+        let text = error.message || '操作失败';
+        const shortages = error.details && error.details.shortages;
+        if (error.errorCode === 'workstation_stock_insufficient' && shortages && shortages.length) {
+          text = `现场不足，缺 ${Number(shortages[0].shortage_base_qty || 0)}`;
+        }
+        wx.showToast({ title: text, icon: 'none', duration: 3000 });
+      }
+      return this.load();
+    }).finally(() => this.setData({ busy: false }));
   },
 });

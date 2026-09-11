@@ -17,20 +17,21 @@ class ProductionExecutionActionService
     public function __construct(
         private readonly DocumentNumberService $numbers,
         private readonly ProductionLaborAllocationService $laborAllocation,
+        private readonly ProductionLaborSessionService $laborSessions,
+        private readonly ProductionOperationWorkModeService $workModes,
     ) {}
 
     public function start(int $taskId, string $type, int $targetId, array $payload, object $user, array $permissions): array
     {
         $this->permission($permissions, 'production.task.start');
-        return $this->mutate('start_target', $taskId, $type, $targetId, $payload, $user, function ($task, $target, int $userId) use ($type): array {
-            if ($target->status !== 'REWORK' && $target->kitting_required && ! $target->kitting_confirmed_at) {
-                $this->fail('kitting_not_confirmed', '该工序尚未完成齐套确认，不能开始加工。', 409);
-            }
-            if (! in_array($target->status, ['READY', 'IN_PROGRESS', 'REWORK'], true)) $this->fail('target_not_ready', '生产目标尚未完成接单、收料/交接、齐套或返工判定，不能开始。', 409);
+        return $this->mutate('start_target', $taskId, $type, $targetId, $payload, $user, function ($task, $target, int $userId) use ($type, $payload): array {
+            if ($target->status !== 'READY') $this->fail('target_not_ready', '只有已完成前置条件并处于待开工状态的生产目标可以开工。', 409);
+            if ($target->kitting_required) $this->fail('ordinary_start_not_allowed', '该工序需要齐套确认，必须通过齐套确认命令正式开工。', 409);
+            if ($target->started_at) $this->fail('operation_already_started_use_resume', '该工序已经正式开工，请使用恢复我的作业。', 409);
             $now = now();
             $target->fill(['status' => 'IN_PROGRESS', 'started_at' => $target->started_at ?: $now,
                 'paused_at' => null, 'business_version' => (int) $target->business_version + 1])->save();
-            $this->startSession($task, $target, $userId, $now);
+            $this->laborSessions->start($task, $target, $type, $userId, 'owner', 1, $now, $payload);
             $task->targets()->where('target_type', $type)->where('target_id', $target->id)->update(['status_snapshot' => 'IN_PROGRESS']);
             if ($task->status !== 'IN_PROGRESS') {
                 $task->update(['status' => 'IN_PROGRESS', 'business_version' => (int) $task->business_version + 1]);
@@ -39,17 +40,28 @@ class ProductionExecutionActionService
         });
     }
 
+    public function restartRework(int $taskId, string $type, int $targetId, array $payload, object $user, array $permissions): array
+    {
+        $this->permission($permissions, 'production.task.start');
+        return $this->mutate('start_rework_target', $taskId, $type, $targetId, $payload, $user, function ($task, $target, int $userId) use ($type, $payload): array {
+            if ($target->status !== 'REWORK') $this->fail('target_not_rework', '只有已判定返工的生产目标可以重新开工。', 409);
+            $now = now();
+            $target->fill(['status' => 'IN_PROGRESS', 'started_at' => $target->started_at ?: $now, 'completed_at' => null,
+                'paused_at' => null, 'business_version' => (int) $target->business_version + 1])->save();
+            $this->laborSessions->start($task, $target, $type, $userId, 'owner', 1, $now, $payload);
+            $task->targets()->where('target_type', $type)->where('target_id', $target->id)->update(['status_snapshot' => 'IN_PROGRESS']);
+            if ($task->status !== 'IN_PROGRESS') $task->update(['status' => 'IN_PROGRESS', 'business_version' => (int) $task->business_version + 1]);
+            return $this->projection($task, $target);
+        });
+    }
+
     public function pause(int $taskId, string $type, int $targetId, array $payload, object $user, array $permissions): array
     {
         $this->permission($permissions, 'production.task.pause');
-        return $this->mutate('pause_target', $taskId, $type, $targetId, $payload, $user, function ($task, $target, int $userId): array {
+        return $this->mutate('pause_target', $taskId, $type, $targetId, $payload, $user, function ($task, $target, int $userId) use ($type): array {
             if ($target->status !== 'IN_PROGRESS') $this->fail('target_not_in_progress', '只有加工中的生产目标可以暂停。', 409);
             $now = now();
-            $this->endSession($task, $target, $userId, $now);
-            $otherActive = ProductionLaborSession::query()->where('target_type', $target instanceof ProductionUnitOperation ? 'unit_operation' : 'quantity_operation')
-                ->where('target_id', $target->id)->where('status', 'ACTIVE')->exists();
-            $target->fill(['status' => $otherActive ? 'IN_PROGRESS' : 'PAUSED', 'paused_at' => $otherActive ? null : $now,
-                'business_version' => (int) $target->business_version + 1])->save();
+            $this->laborSessions->end($task, $target, $type, $userId, 'owner_paused', $now);
             return $this->projection($task, $target);
         });
     }
@@ -57,12 +69,13 @@ class ProductionExecutionActionService
     public function resume(int $taskId, string $type, int $targetId, array $payload, object $user, array $permissions): array
     {
         $this->permission($permissions, 'production.task.resume');
-        return $this->mutate('resume_target', $taskId, $type, $targetId, $payload, $user, function ($task, $target, int $userId): array {
-            if (! in_array($target->status, ['PAUSED', 'IN_PROGRESS'], true)) $this->fail('target_not_paused', '只有已暂停或协同加工中的生产目标可以继续。', 409);
+        return $this->mutate('resume_target', $taskId, $type, $targetId, $payload, $user, function ($task, $target, int $userId) use ($type, $payload): array {
+            if (! in_array($target->status, ['IN_PROGRESS', 'PAUSED'], true) || ! $target->started_at) {
+                $this->fail('target_not_resumable', '只有已经正式开工且本人当前未计时的生产目标可以恢复作业。', 409);
+            }
             $now = now();
-            $target->fill(['status' => 'IN_PROGRESS', 'paused_at' => null,
-                'business_version' => (int) $target->business_version + 1])->save();
-            $this->startSession($task, $target, $userId, $now);
+            $this->laborSessions->start($task, $target, $type, $userId, 'owner', 1, $now, $payload);
+            $this->workModes->recalculate($task, $target, $type, $now);
             return $this->projection($task, $target);
         });
     }
@@ -71,10 +84,9 @@ class ProductionExecutionActionService
     {
         $this->permission($permissions, 'production.task.complete');
         return $this->mutate('complete_target', $taskId, $type, $targetId, $payload, $user, function ($task, $target, int $userId) use ($type, $payload): array {
-            if ((int) $task->assignee_user_legacy_id !== $userId) $this->fail('task_owner_required', '只有任务负责人可以最终完成生产目标。', 403);
             if (! in_array($target->status, ['IN_PROGRESS', 'PAUSED'], true)) $this->fail('target_not_in_progress', '只有加工中或已暂停的生产目标可以完成。', 409);
             $now = now();
-            if ($target->status === 'IN_PROGRESS') $this->endSession($task, $target, $userId, $now);
+            $this->laborSessions->end($task, $target, $type, $userId, 'target_completed', $now, false, false);
             if (ProductionLaborSession::query()->where('target_type', $type)->where('target_id', $target->id)->where('status', 'ACTIVE')->exists())
                 $this->fail('collaborator_labor_active', '仍有协作者处于加工计时中，必须先结束全部协同计时。', 409);
             $this->laborAllocation->allocate($task, $type, (int) $target->id);
@@ -111,7 +123,7 @@ class ProductionExecutionActionService
                     'aggregate_type' => $type, 'aggregate_id' => $targetId, 'request_hash' => $hash, 'status' => 'processing',
                     'initiated_by_legacy_id' => $this->userId($user), 'processing_started_at' => now()]);
                 [$task, $target] = $this->lockedTarget($taskId, $type, $targetId);
-                $this->responsible($task, $user);
+                $this->owner($task, $user);
                 if ((int) $target->business_version !== (int) ($payload['expected_version'] ?? 0)) {
                     $this->fail('version_conflict', '生产目标版本已变化，请刷新后重试。', 409, ['current_version' => (int) $target->business_version]);
                 }
@@ -145,32 +157,6 @@ class ProductionExecutionActionService
         $target = $model::query()->lockForUpdate()->find($targetId);
         if (! $target) $this->fail('task_target_not_found', '生产执行目标不存在。', 404);
         return [$task, $target];
-    }
-
-    private function startSession(ProductionTask $task, object $target, int $userId, $now): void
-    {
-        if (ProductionLaborSession::query()->where('target_type', $target instanceof ProductionUnitOperation ? 'unit_operation' : 'quantity_operation')
-            ->where('target_id', $target->id)->where('employee_legacy_id', $userId)->where('status', 'ACTIVE')->exists())
-            $this->fail('labor_session_active', '当前人员已有进行中的加工计时。', 409);
-        $collaborator = $task->collaborators()->where('employee_legacy_id', $userId)->whereNull('left_at')->first();
-        $role = (int) $task->assignee_user_legacy_id === $userId ? 'owner' : 'collaborator';
-        $weight = $role === 'owner' ? 1 : (float) ($collaborator?->responsibility_weight ?? 0);
-        ProductionLaborSession::create(['task_id' => $task->id,
-            'target_type' => $target instanceof ProductionUnitOperation ? 'unit_operation' : 'quantity_operation',
-            'target_id' => $target->id, 'employee_legacy_id' => $userId, 'role' => $role, 'status' => 'ACTIVE',
-            'started_at' => $now, 'actual_labor_minutes' => 0, 'responsibility_weight_snapshot' => $weight, 'credited_labor_minutes' => 0]);
-    }
-
-    private function endSession(ProductionTask $task, object $target, int $userId, $now): void
-    {
-        $type = $target instanceof ProductionUnitOperation ? 'unit_operation' : 'quantity_operation';
-        $session = ProductionLaborSession::query()->where('task_id', $task->id)->where('target_type', $type)
-            ->where('target_id', $target->id)->where('employee_legacy_id', $userId)->where('status', 'ACTIVE')->lockForUpdate()->first();
-        if (! $session) $this->fail('labor_session_missing', '未找到当前人员的进行中加工计时。', 409);
-        $minutes = max(0, $session->started_at->diffInSeconds($now) / 60);
-        $session->update(['status' => 'ENDED', 'ended_at' => $now, 'actual_labor_minutes' => $minutes,
-            'credited_labor_minutes' => 0]);
-        $target->actual_labor_minutes = (float) $target->actual_labor_minutes + $minutes;
     }
 
     private function completeQuantity(ProductionTask $task, ProductionQuantityOperation $target, array $payload, int $userId, $now): void
@@ -348,15 +334,15 @@ class ProductionExecutionActionService
         // WAIT_HANDOVER/WAIT_MATERIAL; handover must never silently claim a task.
         $next->status = 'WAIT_CLAIM';
         $next->business_version = (int) $next->business_version + 1; $next->save();
-        $mode = $type === 'unit_operation' ? 'unit' : 'quantity';
-        $task = ProductionTask::query()->where('work_order_id', $workOrderId)->where('execution_mode', $mode)
-            ->where('routing_operation_id_snapshot', $next->routing_operation_id_snapshot)->where('status', 'WAIT_CLAIM')
-            ->whereNull('assignee_user_legacy_id')->lockForUpdate()->first();
-        if (! $task) $task = ProductionTask::create(['task_no' => $this->numbers->next('production_task', 'PT'), 'work_order_id' => $workOrderId,
-            'execution_mode' => $mode, 'routing_operation_id_snapshot' => $next->routing_operation_id_snapshot,
-            'operation_code_snapshot' => $next->operation_code_snapshot, 'operation_name_snapshot' => $next->operation_name_snapshot,
-            'sequence_no_snapshot' => $next->sequence_no_snapshot, 'status' => 'WAIT_CLAIM', 'business_version' => 1]);
-        $task->targets()->create(['target_type' => $nextType, 'target_id' => $next->id, 'status_snapshot' => $next->status]);
+        $targetColumn = $type === 'unit_operation' ? 'production_unit_operation_id' : 'production_quantity_operation_id';
+        $task = ProductionTask::query()->where($targetColumn, $next->id)->lockForUpdate()->first();
+        if (! $task) $this->fail('next_task_missing', '下一工序缺少发布时创建的唯一生产任务，禁止运行时补建。', 409);
+        if ($task->status !== 'WAIT_CLAIM') {
+            $task->update(['status' => 'WAIT_CLAIM', 'business_version' => (int) $task->business_version + 1]);
+        }
+        $updated = $task->targets()->where('target_type', $nextType)->where('target_id', $next->id)
+            ->update(['status_snapshot' => 'WAIT_CLAIM', 'updated_at' => now()]);
+        if ($updated !== 1) $this->fail('next_task_target_invalid', '下一工序生产任务与执行目标的唯一绑定已损坏。', 409);
         if ($needsHandover) {
             $requirementIds = DB::table('erp_production_target_material_requirements')
                 ->where('target_type', $nextType)->where('target_id', $next->id)->where('component_item_id', $output->output_item_id)
@@ -397,12 +383,11 @@ class ProductionExecutionActionService
         if ($command->status !== 'succeeded' || ! is_array($command->response_snapshot)) $this->fail('command_processing', '相同命令正在处理中，请稍后重试。', 409);
         return $command->response_snapshot;
     }
-    private function responsible(ProductionTask $task, object $user): void
+    private function owner(ProductionTask $task, object $user): void
     {
         $userId = $this->userId($user);
         if ((int) $task->assignee_user_legacy_id === $userId) return;
-        if ($task->collaborators()->where('employee_legacy_id', $userId)->whereNull('left_at')->exists()) return;
-        $this->fail('task_participant_required', '只有任务负责人或当前协作者可以推进该生产目标。', 403);
+        $this->fail('task_owner_required', '只有任务负责人可以推进该生产目标。', 403);
     }
     private function permission(array $permissions, string $code): void { if (! in_array($code, $permissions, true)) $this->fail('permission_denied', '当前用户没有执行该操作的权限。', 403, ['permission' => $code]); }
     private function userId(object $user): int { return (int) ($user->legacy_id ?? $user->id ?? 0); }

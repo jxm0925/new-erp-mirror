@@ -202,6 +202,7 @@ class ProductionExecutionFoundationService
             'output_mode_snapshot' => $isStockPrebuildTarget
                 ? ($workOrder->effective_output_mode_snapshot ?? $operation['output_mode']) : $operation['output_mode'],
             'quality_mode_snapshot' => $operation['quality_mode'],
+            'work_mode_snapshot' => $operation['work_mode'],
             'allow_continue_without_warehouse_snapshot' => $operation['allow_continue_without_warehouse'],
             'business_version' => 1,
         ];
@@ -222,6 +223,7 @@ class ProductionExecutionFoundationService
                 'output_item_id' => $row['output_item_id'] ?? null,
                 'output_mode' => $row['output_mode'] ?? 'flow_only',
                 'quality_mode' => $row['quality_mode'] ?? 'none',
+                'work_mode' => $row['work_mode'] ?? 'manual',
                 'allow_continue_without_warehouse' => (bool) ($row['allow_continue_without_warehouse'] ?? true),
             ])->filter(fn (array $row): bool => $row['routing_operation_id'] > 0 && $row['sequence'] > 0)
             ->sortBy('sequence')->values();

@@ -412,11 +412,14 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::post('tasks/{id}/collaborators/join', [ProductionTaskController::class, 'join'])->whereNumber('id');
     Route::post('tasks/{id}/collaborators/leave', [ProductionTaskController::class, 'leave'])->whereNumber('id');
     Route::post('tasks/{id}/collaborators', [ProductionTaskController::class, 'addCollaborators'])->whereNumber('id');
+    Route::post('tasks/{taskId}/targets/{targetType}/{targetId}/collaborator-labor/start', [ProductionTaskController::class, 'startCollaboratorLabor'])->whereNumber(['taskId', 'targetId']);
+    Route::post('tasks/{taskId}/targets/{targetType}/{targetId}/collaborator-labor/pause', [ProductionTaskController::class, 'pauseCollaboratorLabor'])->whereNumber(['taskId', 'targetId']);
     Route::post('tasks/{id}/auto-assign', [ProductionTaskController::class, 'autoAssign'])->whereNumber('id');
     Route::get('tasks/{taskId}/targets/{targetType}/{targetId}/kitting-requirements', [ProductionExecutionController::class, 'requirements'])->whereNumber(['taskId', 'targetId']);
     Route::get('tasks/{taskId}/targets/{targetType}/{targetId}/material-options', [ProductionExecutionController::class, 'materialOptions'])->whereNumber(['taskId', 'targetId']);
     Route::post('tasks/{taskId}/targets/{targetType}/{targetId}/confirm-kitting', [ProductionExecutionController::class, 'confirmKitting'])->whereNumber(['taskId', 'targetId']);
     Route::post('tasks/{taskId}/targets/{targetType}/{targetId}/start', [ProductionExecutionController::class, 'start'])->whereNumber(['taskId', 'targetId']);
+    Route::post('tasks/{taskId}/targets/{targetType}/{targetId}/rework/start', [ProductionExecutionController::class, 'restartRework'])->whereNumber(['taskId', 'targetId']);
     Route::post('tasks/{taskId}/targets/{targetType}/{targetId}/pause', [ProductionExecutionController::class, 'pause'])->whereNumber(['taskId', 'targetId']);
     Route::post('tasks/{taskId}/targets/{targetType}/{targetId}/resume', [ProductionExecutionController::class, 'resume'])->whereNumber(['taskId', 'targetId']);
     Route::post('tasks/{taskId}/targets/{targetType}/{targetId}/report', [ProductionExecutionController::class, 'report'])->whereNumber(['taskId', 'targetId']);

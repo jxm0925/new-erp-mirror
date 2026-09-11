@@ -45,6 +45,7 @@ class ProductionMasterDataController extends Controller
         'operations.*.unit_standard_minutes' => 'nullable|numeric|min:0|max:999999',
         'operations.*.output_item_id' => 'nullable|integer|exists:erp_items,id',
         'operations.*.output_mode' => 'nullable|in:flow_only,warehouse_optional,warehouse_required', 'operations.*.quality_mode' => 'nullable|in:none,required',
+        'operations.*.work_mode' => 'nullable|in:manual,automatic',
         'operations.*.allow_continue_without_warehouse' => 'nullable|boolean', 'operations.*.material_supply_rules' => 'nullable|array',
         'operations.*.material_supply_rules.*.component_item_id' => 'required|integer|exists:erp_items,id',
         'operations.*.material_supply_rules.*.target_sequence' => 'required|integer|min:1|max:999999',
