@@ -152,7 +152,7 @@ class InventoryReservationService
         });
     }
 
-    public function adjustReservation(SalesOrder $order, string $reason = '订单履约数量变更'): array
+    public function adjustReservation(SalesOrder $order, string $reason = '订单备货数量变更'): array
     {
         return DB::transaction(function () use ($order, $reason) {
             $this->releaseForSalesOrder($order, $reason);

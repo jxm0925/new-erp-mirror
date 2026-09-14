@@ -15,7 +15,9 @@
   box-sizing: border-box;
 }
 
-html, body, #app {
+html,
+body,
+#app {
   margin: 0;
   min-height: 100%;
   font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
@@ -23,7 +25,10 @@ html, body, #app {
   background: var(--canvas);
 }
 
-button, input, textarea, select {
+button,
+input,
+textarea,
+select {
   font: inherit;
 }
 
@@ -170,7 +175,21 @@ button, input, textarea, select {
   border-left: 3px solid transparent;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
-.menu-subgroup{display:grid}.menu-subgroup>span{padding:8px 18px 5px 44px;color:#8ea0b2;font-size:11px;letter-spacing:.08em}.menu-subgroup>a{padding-left:30px!important}
+
+.menu-subgroup {
+  display: grid
+}
+
+.menu-subgroup>span {
+  padding: 8px 18px 5px 44px;
+  color: #8ea0b2;
+  font-size: 11px;
+  letter-spacing: .08em
+}
+
+.menu-subgroup>a {
+  padding-left: 30px !important
+}
 
 .sub-menu-icon {
   font-size: 14px;
@@ -335,13 +354,13 @@ button, input, textarea, select {
   white-space: nowrap;
 }
 
-.top-actions > i {
+.top-actions>i {
   font-size: 16px;
   color: #4b5563;
   cursor: pointer;
 }
 
-.top-actions > i:hover {
+.top-actions>i:hover {
   color: #111827;
 }
 
@@ -417,7 +436,7 @@ button, input, textarea, select {
   border: 1px solid var(--line);
 }
 
-.table-panel > .el-pagination {
+.table-panel>.el-pagination {
   padding-top: 12px;
   text-align: right;
 }
@@ -467,6 +486,7 @@ button, input, textarea, select {
   .erp-topbar {
     grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
   }
+
   .top-actions {
     display: none;
   }
@@ -483,54 +503,165 @@ button, input, textarea, select {
   box-shadow: 3px 0 0 #0b2438;
 }
 
-#app.production-route .erp-brand { order: 0; height: 57px; padding: 0 16px; gap:12px; font-size:18px; }
-#app.production-route .brand-logo-icon { width:24px; height:24px; }
-#app.production-route .console-link { order: 1; height: 57px; padding: 0 18px; gap:12px; }
-#app.production-route .console-link > i,
-#app.production-route .menu-title > i:first-child { width:18px; font-size:18px; text-align:center; color:#f5f7fa; }
-#app.production-route .menu-section { flex: 0 0 auto; }
-#app.production-route .menu-section { border-bottom:0; }
-#app.production-route .menu-section[data-section-key="master"] { order: 2; }
-#app.production-route .menu-section[data-section-key="purchase"] { order: 3; }
-#app.production-route .menu-section[data-section-key="inventory"] { order: 4; }
-#app.production-route .menu-section[data-section-key="bom"] { order: 5; }
-#app.production-route .menu-section[data-section-key="sales"] { order: 6; }
-#app.production-route .menu-section[data-section-key="production"] { order: 7; }
-#app.production-route .menu-section[data-section-key="approval"] { order: 8; }
-#app.production-route .menu-section[data-section-key="finance"] { order: 9; }
-#app.production-route .menu-section[data-section-key="system"] { order: 10; }
-#app.production-route .collapse { position:static; flex:0 0 54px; order:11; margin-top:auto; height:54px; padding:0 18px; gap:12px; background:#0a1f31; }
-#app.production-route .collapse .collapse-tail { margin-left:auto; }
-#app.production-route .erp-topbar { display: none; }
-#app.production-route .erp-shell { width: calc(100% - 192px); margin-left: 192px; }
-#app.production-route .menu-title { height: 45px; padding: 0 18px; gap:12px; }
-#app.production-route .master-menu { background:rgba(0,0,0,.16); box-shadow:none; }
-#app.production-route .master-menu a { height: 38px; padding: 0 18px; gap:12px; }
-#app.production-route .master-menu a:hover { padding-left: 18px; }
-#app.production-route .console-link.router-link-active { background: transparent; border-left-color: transparent; }
-#app.production-route .erp-brand { border-bottom-color: transparent; }
-#app.production-route .erp-brand > span { transform: translateY(3px); }
+#app.production-route .erp-brand {
+  order: 0;
+  height: 57px;
+  padding: 0 16px;
+  gap: 12px;
+  font-size: 18px;
+}
+
+#app.production-route .brand-logo-icon {
+  width: 24px;
+  height: 24px;
+}
+
+#app.production-route .console-link {
+  order: 1;
+  height: 57px;
+  padding: 0 18px;
+  gap: 12px;
+}
+
+#app.production-route .console-link>i,
+#app.production-route .menu-title>i:first-child {
+  width: 18px;
+  font-size: 18px;
+  text-align: center;
+  color: #f5f7fa;
+}
+
+#app.production-route .menu-section {
+  flex: 0 0 auto;
+}
+
+#app.production-route .menu-section {
+  border-bottom: 0;
+}
+
+#app.production-route .menu-section[data-section-key="production"] {
+  order: 2;
+}
+
+#app.production-route .menu-section[data-section-key="master"] {
+  order: 3;
+}
+
+#app.production-route .menu-section[data-section-key="purchase"] {
+  order: 4;
+}
+
+#app.production-route .menu-section[data-section-key="inventory"] {
+  order: 5;
+}
+
+#app.production-route .menu-section[data-section-key="bom"] {
+  order: 6;
+}
+
+#app.production-route .menu-section[data-section-key="sales"] {
+  order: 7;
+}
+
+#app.production-route .menu-section[data-section-key="approval"] {
+  order: 8;
+}
+
+#app.production-route .menu-section[data-section-key="finance"] {
+  order: 9;
+}
+
+#app.production-route .menu-section[data-section-key="system"] {
+  order: 10;
+}
+
+#app.production-route .collapse {
+  position: static;
+  flex: 0 0 54px;
+  order: 11;
+  margin-top: auto;
+  height: 54px;
+  padding: 0 18px;
+  gap: 12px;
+  background: #0a1f31;
+}
+
+#app.production-route .collapse .collapse-tail {
+  margin-left: auto;
+}
+
+#app.production-route .erp-topbar {
+  display: none;
+}
+
+#app.production-route .erp-shell {
+  width: calc(100% - 192px);
+  margin-left: 192px;
+}
+
+#app.production-route .menu-title {
+  height: 45px;
+  padding: 0 18px;
+  gap: 12px;
+}
+
+#app.production-route .master-menu {
+  background: rgba(0, 0, 0, .16);
+  box-shadow: none;
+}
+
+#app.production-route .master-menu a {
+  height: 38px;
+  padding: 0 18px;
+  gap: 12px;
+}
+
+#app.production-route .master-menu a:hover {
+  padding-left: 18px;
+}
+
+#app.production-route .console-link.router-link-active {
+  background: transparent;
+  border-left-color: transparent;
+}
+
+#app.production-route .erp-brand {
+  border-bottom-color: transparent;
+}
+
+#app.production-route .erp-brand>span {
+  transform: translateY(3px);
+}
+
 #app.production-route .menu-section.active .menu-title {
-  width:calc(100% - 16px);
-  margin:0 8px;
-  background:linear-gradient(90deg,#00603d 0%,#004f34 100%);
-  border-radius:2px;
-  padding-left:10px;
-  border-top:2px solid #0a1f31;
-  border-bottom:2px solid #0a1f31;
+  width: calc(100% - 16px);
+  margin: 0 8px;
+  background: linear-gradient(90deg, #00603d 0%, #004f34 100%);
+  border-radius: 2px;
+  padding-left: 10px;
+  border-top: 2px solid #0a1f31;
+  border-bottom: 2px solid #0a1f31;
 }
+
 #app.production-route .master-menu a.router-link-active {
-  width:calc(100% - 18px);
-  margin:0 8px 0 10px;
-  background:#004b34;
-  border-left-color:#20b56e;
-  border-radius:2px;
-  padding-left:8px;
-  border-top:1px solid rgba(0,0,0,.16);
-  border-bottom:1px solid rgba(0,0,0,.16);
+  width: calc(100% - 18px);
+  margin: 0 8px 0 10px;
+  background: #004b34;
+  border-left-color: #20b56e;
+  border-radius: 2px;
+  padding-left: 8px;
+  border-top: 1px solid rgba(0, 0, 0, .16);
+  border-bottom: 1px solid rgba(0, 0, 0, .16);
 }
-#app.production-route.sidebar-collapsed .erp-sidebar { width: 64px; }
-#app.production-route.sidebar-collapsed .erp-shell { width: calc(100% - 64px); margin-left: 64px; }
+
+#app.production-route.sidebar-collapsed .erp-sidebar {
+  width: 64px;
+}
+
+#app.production-route.sidebar-collapsed .erp-shell {
+  width: calc(100% - 64px);
+  margin-left: 64px;
+}
 
 /* On phone-sized browser canvases the fixed desktop sidebar leaves too little
    room for production forms and tables. Keep the desktop shell unchanged and
@@ -635,23 +766,51 @@ button, input, textarea, select {
    administer production permissions. Production rules above remain the visual
    baseline; these selectors extend the behavior to every ERP route. */
 @media (max-width: 767px) {
-  #app .erp-sidebar { width: 64px !important; overflow: hidden; }
-  #app .erp-shell { width: calc(100% - 64px) !important; margin-left: 64px !important; }
-  #app .erp-sidebar .erp-brand { justify-content: center; padding: 0; }
+  #app .erp-sidebar {
+    width: 64px !important;
+    overflow: hidden;
+  }
+
+  #app .erp-shell {
+    width: calc(100% - 64px) !important;
+    margin-left: 64px !important;
+  }
+
+  #app .erp-sidebar .erp-brand {
+    justify-content: center;
+    padding: 0;
+  }
+
   #app .erp-sidebar .erp-brand span,
   #app .erp-sidebar .console-link span,
   #app .erp-sidebar .menu-title span,
   #app .erp-sidebar .menu-title .menu-arrow,
   #app .erp-sidebar .master-menu,
   #app .erp-sidebar .collapse span,
-  #app .erp-sidebar .collapse .collapse-tail { display: none; }
+  #app .erp-sidebar .collapse .collapse-tail {
+    display: none;
+  }
+
   #app .erp-sidebar .console-link,
   #app .erp-sidebar .menu-title,
-  #app .erp-sidebar .collapse { justify-content: center; padding: 0; }
+  #app .erp-sidebar .collapse {
+    justify-content: center;
+    padding: 0;
+  }
+
   #app .erp-sidebar:hover,
-  #app .erp-sidebar:focus-within { width: 192px !important; overflow-y: auto; box-shadow: 8px 0 18px rgba(7, 25, 40, .24); }
+  #app .erp-sidebar:focus-within {
+    width: 192px !important;
+    overflow-y: auto;
+    box-shadow: 8px 0 18px rgba(7, 25, 40, .24);
+  }
+
   #app .erp-sidebar:hover .erp-brand,
-  #app .erp-sidebar:focus-within .erp-brand { justify-content: flex-start; padding: 0 16px; }
+  #app .erp-sidebar:focus-within .erp-brand {
+    justify-content: flex-start;
+    padding: 0 16px;
+  }
+
   #app .erp-sidebar:hover .erp-brand span,
   #app .erp-sidebar:hover .console-link span,
   #app .erp-sidebar:hover .menu-title span,
@@ -663,13 +822,22 @@ button, input, textarea, select {
   #app .erp-sidebar:focus-within .menu-title span,
   #app .erp-sidebar:focus-within .menu-title .menu-arrow,
   #app .erp-sidebar:focus-within .collapse span,
-  #app .erp-sidebar:focus-within .collapse .collapse-tail { display: initial; }
+  #app .erp-sidebar:focus-within .collapse .collapse-tail {
+    display: initial;
+  }
+
   #app .erp-sidebar:hover .master-menu,
-  #app .erp-sidebar:focus-within .master-menu { display: grid; }
+  #app .erp-sidebar:focus-within .master-menu {
+    display: grid;
+  }
+
   #app .erp-sidebar:hover .console-link,
   #app .erp-sidebar:hover .menu-title,
   #app .erp-sidebar:hover .collapse,
   #app .erp-sidebar:focus-within .console-link,
   #app .erp-sidebar:focus-within .menu-title,
-  #app .erp-sidebar:focus-within .collapse { justify-content: flex-start; padding: 0 18px; }
+  #app .erp-sidebar:focus-within .collapse {
+    justify-content: flex-start;
+    padding: 0 18px;
+  }
 }

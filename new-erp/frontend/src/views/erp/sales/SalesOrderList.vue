@@ -10,7 +10,7 @@ Do not change layout without approval.
         <div>
           <div class="sub-breadcrumb">销售管理 / 销售订单</div>
           <h1>销售订单</h1>
-          <p>集中查看销售订单草稿与确认前检查结果；本阶段不产生履约、库存、生产或发货单据。</p>
+          <p>集中查看销售订单草稿与确认前检查结果；本阶段不产生备货、库存、生产或发货单据。</p>
         </div>
         <div class="heading-actions">
           <el-button v-if="$can('sales_order.create')" size="small" type="success" icon="el-icon-plus" @click="$router.push('/sales/orders/create')">新增订单</el-button>
@@ -33,10 +33,10 @@ Do not change layout without approval.
           <el-option label="已关闭" value="closed" />
           <el-option label="已取消" value="cancelled" />
         </el-select>
-        <el-select v-model="query.fulfillment_status" clearable size="small" placeholder="履约状态">
-          <el-option label="待履约" value="pending" />
-          <el-option label="部分履约" value="partial" />
-          <el-option label="已履约" value="fulfilled" />
+        <el-select v-model="query.fulfillment_status" clearable size="small" placeholder="交付状态">
+          <el-option label="待交付" value="pending" />
+          <el-option label="部分交付" value="partial" />
+          <el-option label="已交付" value="fulfilled" />
           <el-option label="已取消" value="cancelled" />
         </el-select>
         <el-select v-model="query.production_confirm_status" clearable size="small" placeholder="生产确认">
@@ -86,7 +86,7 @@ Do not change layout without approval.
             <el-table-column label="订单状态" width="88">
               <template slot-scope="{row}"><el-tag size="mini" :type="statusTag(row.order_status)">{{ statusText(row.order_status) }}</el-tag></template>
             </el-table-column>
-            <el-table-column label="履约状态" width="104">
+            <el-table-column label="交付状态" width="104">
               <template slot-scope="{row}"><el-tag size="mini" :type="fulfillmentStatusTag(row.fulfillment_status)">{{ fulfillmentStatusText(row.fulfillment_status) }}</el-tag><small v-if="row.fulfillment_composition_label" class="muted">{{ row.fulfillment_composition_label }}</small></template>
             </el-table-column>
             <el-table-column label="生产确认" width="88">
@@ -183,9 +183,9 @@ export default {
         { label: '全部订单', value: all, icon: 'el-icon-s-order', type: 'green' },
         { label: '待提交确认', value: draft, icon: 'el-icon-edit-outline', type: 'orange' },
         { label: '待生产确认', value: pending, icon: 'el-icon-cpu', type: 'blue' },
-        { label: '待履约', value: pendingFulfillment, icon: 'el-icon-box', type: 'purple' },
-        { label: '部分履约', value: partialFulfillment, icon: 'el-icon-s-operation', type: 'cyan' },
-        { label: '已履约', value: fulfilled, icon: 'el-icon-set-up', type: 'green' },
+        { label: '待交付', value: pendingFulfillment, icon: 'el-icon-box', type: 'purple' },
+        { label: '部分交付', value: partialFulfillment, icon: 'el-icon-s-operation', type: 'cyan' },
+        { label: '已交付', value: fulfilled, icon: 'el-icon-set-up', type: 'green' },
         { label: '异常订单', value: exception, icon: 'el-icon-warning-outline', type: 'red' }
       ]
     },
@@ -194,9 +194,9 @@ export default {
         { label: '全部', value: '', count: this.total },
         { label: '待提交确认', value: 'draft', count: this.rows.filter(r => r.order_status === 'draft').length },
         { label: '待生产确认', value: 'pending-production', count: this.rows.filter(r => r.production_confirm_status === 'pending').length },
-        { label: '待履约', value: 'pending', count: this.rows.filter(r => r.fulfillment_status === 'pending').length },
-        { label: '部分履约', value: 'partial', count: this.rows.filter(r => r.fulfillment_status === 'partial').length },
-        { label: '已履约', value: 'fulfilled', count: this.rows.filter(r => r.fulfillment_status === 'fulfilled').length }
+        { label: '待交付', value: 'pending', count: this.rows.filter(r => r.fulfillment_status === 'pending').length },
+        { label: '部分交付', value: 'partial', count: this.rows.filter(r => r.fulfillment_status === 'partial').length },
+        { label: '已交付', value: 'fulfilled', count: this.rows.filter(r => r.fulfillment_status === 'fulfilled').length }
       ]
     }
   },
@@ -268,7 +268,7 @@ export default {
     },
     statusText,
     statusTag,
-    fulfillmentStatusText(value) { return ({ pending: '待履约', partial: '部分履约', fulfilled: '已履约', cancelled: '已取消' })[value] || value || '-' },
+    fulfillmentStatusText(value) { return ({ pending: '待交付', partial: '部分交付', fulfilled: '已交付', cancelled: '已取消' })[value] || value || '-' },
     fulfillmentStatusTag(value) { return ({ pending: 'warning', partial: 'warning', fulfilled: 'success', cancelled: 'danger' })[value] || 'info' },
     dateOnly(v) {
       return v ? String(v).slice(0, 10) : '-'

@@ -254,7 +254,7 @@ class SalesOrderEditClosureV1Test extends TestCase
         $this->assertSame([], $impact['required_approval_types']);
         $this->assertSame('本次修改未触发业务审核条件。', $impact['approval_reasons']['business']['description']);
         $this->assertSame('本次修改未触发财务审核条件。', $impact['approval_reasons']['finance']['description']);
-        $this->assertSame('本次修改未触发库存/交付履约复核条件。', $impact['approval_reasons']['fulfillment']['description']);
+        $this->assertSame('本次修改未触发库存与交付复核条件。', $impact['approval_reasons']['fulfillment']['description']);
     }
 
     public function test_price_change_returns_only_real_business_approval_reason(): void
@@ -268,7 +268,7 @@ class SalesOrderEditClosureV1Test extends TestCase
         $this->assertSame(['business'], $impact['required_approval_types']);
         $this->assertStringContainsString('销售单价发生调整', $impact['approval_reasons']['business']['description']);
         $this->assertSame('本次修改未触发财务审核条件。', $impact['approval_reasons']['finance']['description']);
-        $this->assertSame('本次修改未触发库存/交付履约复核条件。', $impact['approval_reasons']['fulfillment']['description']);
+        $this->assertSame('本次修改未触发库存与交付复核条件。', $impact['approval_reasons']['fulfillment']['description']);
     }
 
     public function test_payment_rule_change_returns_finance_and_fulfillment_reasons(): void
@@ -295,7 +295,7 @@ class SalesOrderEditClosureV1Test extends TestCase
 
         $this->assertFalse($impact['requires_approval']);
         $this->assertSame(['INFO'], $impact['diffs'][0]['impact_types']);
-        $this->assertSame('本次修改未触发库存/交付履约复核条件。', $impact['approval_reasons']['fulfillment']['description']);
+        $this->assertSame('本次修改未触发库存与交付复核条件。', $impact['approval_reasons']['fulfillment']['description']);
     }
 
     public function test_delivery_change_with_operational_facts_returns_fulfillment_reason(): void
@@ -307,7 +307,7 @@ class SalesOrderEditClosureV1Test extends TestCase
         );
 
         $this->assertSame(['fulfillment'], $impact['required_approval_types']);
-        $this->assertStringContainsString('现有库存或交付履约计划', $impact['approval_reasons']['fulfillment']['description']);
+        $this->assertStringContainsString('现有库存、生产或交付计划', $impact['approval_reasons']['fulfillment']['description']);
     }
 
     public function test_sku_change_returns_business_and_fulfillment_reasons_without_fake_work_order_claim(): void
@@ -327,7 +327,7 @@ class SalesOrderEditClosureV1Test extends TestCase
 
         $this->assertEqualsCanonicalizing(['business', 'fulfillment'], $impact['required_approval_types']);
         $this->assertStringContainsString('SKU 身份发生变化', $impact['approval_reasons']['business']['description']);
-        $this->assertStringContainsString('库存和交付履约', $impact['approval_reasons']['fulfillment']['description']);
+        $this->assertStringContainsString('库存、生产和交付安排', $impact['approval_reasons']['fulfillment']['description']);
         $this->assertStringNotContainsString('工单', json_encode($impact['approval_reasons'], JSON_UNESCAPED_UNICODE));
     }
 

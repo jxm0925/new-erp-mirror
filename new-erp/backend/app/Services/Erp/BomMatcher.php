@@ -23,14 +23,20 @@ class BomMatcher
                 $q->whereNull('expire_date')->orWhere('expire_date', '>=', now()->toDateString());
             });
 
-        $matches = $query->where(function ($q) use ($productId, $skuId) {
-            $q->where(function ($exact) use ($productId, $skuId) {
-                if ($productId) $exact->where('product_id', $productId);
-                if ($skuId) $exact->where('sku_id', $skuId);
-            })->orWhere(function ($itemOnly) {
+        $matches = $query
+            ->when($productId === null && $skuId === null, function ($itemOnly) {
                 $itemOnly->whereNull('product_id')->whereNull('sku_id');
+            }, function ($matchedScope) use ($productId, $skuId) {
+                $matchedScope->where(function ($q) use ($productId, $skuId) {
+                    $q->where(function ($exact) use ($productId, $skuId) {
+                        if ($productId) $exact->where('product_id', $productId);
+                        if ($skuId) $exact->where('sku_id', $skuId);
+                    })->orWhere(function ($itemOnly) {
+                        $itemOnly->whereNull('product_id')->whereNull('sku_id');
+                    });
+                });
             });
-        })->orderByDesc('is_default')->orderByDesc('id')->get();
+        $matches = $matches->orderByDesc('is_default')->orderByDesc('id')->get();
 
         if ($matches->isEmpty()) return $this->blocked('missing', '未找到已审核且有效的 BOM');
         if ($matches->count() > 1 && $matches->where('is_default', true)->count() !== 1) {

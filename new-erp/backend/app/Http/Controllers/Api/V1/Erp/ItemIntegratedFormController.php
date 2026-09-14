@@ -45,10 +45,9 @@ class ItemIntegratedFormController extends Controller
 
     private function validated(Request $request, ?int $id = null): array
     {
-        $item = $request->validate(['item' => 'required|array'])['item'];
-        $policy = $request->validate(['policy' => 'required|array'])['policy'];
         $activate = $request->boolean('activate');
         $itemRules = [
+            'item' => 'required|array',
             'item.item_code' => ['required', 'string', 'max:120', Rule::unique('erp_items', 'item_code')->ignore($id)],
             'item.item_name' => 'required|string|max:160',
             'item.item_type' => 'required|in:finished_product,semi_finished,raw_material,packaging,service,office_consumable',
@@ -64,6 +63,7 @@ class ItemIntegratedFormController extends Controller
             'item.reservation_token' => 'nullable|uuid', 'item.creation_session_id' => 'nullable|uuid',
         ];
         $policyRules = [
+            'policy' => 'required|array',
             'policy.template_code' => 'nullable|string|max:60', 'policy.is_stock_managed' => 'required|boolean',
             'policy.inventory_management_mode' => 'required|in:standard,none', 'policy.requires_custodian' => 'required|boolean',
             'policy.is_returnable' => 'required|boolean', 'policy.requires_capitalization' => 'required|boolean',
@@ -77,7 +77,9 @@ class ItemIntegratedFormController extends Controller
             'policy.future_bearer_type' => 'required|in:company,department,employee,work_order,sales_order',
             'policy.change_reason' => 'nullable|string|max:200', 'policy.remark' => 'nullable|string|max:200',
         ];
-        $request->validate($itemRules + $policyRules);
+        $validated = $request->validate($itemRules + $policyRules);
+        $item = $validated['item'];
+        $policy = $validated['policy'];
 
         $category = ItemCategory::query()->whereKey($item['category_id'])->where('category_type', 'item')->where('status', 'enabled')->first();
         abort_unless($category && !$category->children()->where('category_type', 'item')->exists(), 422, '请选择启用的末级 Item 类目。');

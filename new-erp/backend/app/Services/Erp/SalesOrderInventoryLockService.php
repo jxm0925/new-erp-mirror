@@ -233,7 +233,7 @@ class SalesOrderInventoryLockService
     private function factor(SalesOrderLine $line): float
     {
         $factor = (float) $line->fulfillment_factor_snapshot;
-        if ($factor <= 0) $this->fail('fulfillment_factor_missing', "第 {$line->line_no} 行缺少有效履约换算因子。");
+        if ($factor <= 0) $this->fail('fulfillment_factor_missing', "第 {$line->line_no} 行缺少有效单位换算比例。");
         return $factor;
     }
 

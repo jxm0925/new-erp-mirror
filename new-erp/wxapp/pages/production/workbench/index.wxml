@@ -1,108 +1,55 @@
 <view class="workbench-page">
-  <!-- 未登录状态卡片 -->
   <view wx:if="{{!authenticated}}" class="login-card">
-    <view class="login-icon-box">
-      <van-icon name="manager-o" size="88rpx" color="#d81e06" />
-    </view>
+    <view class="login-icon-box"><van-icon name="manager-o" size="88rpx" color="#e52613" /></view>
     <strong class="login-title">未登录统一生产账号</strong>
-    <text class="login-desc">登录后即可同步您的排产工序、在制任务与车间物料</text>
+    <text class="login-desc">登录后查看实时生产概况和现场执行任务</text>
     <button class="login-btn" bindtap="openLogin">立即登录</button>
   </view>
 
   <block wx:else>
-    <!-- 顶部今日生产作业红底卡片 -->
-    <view class="today-card">
-      <view class="today-head">
-        <text class="today-title">今日生产作业</text>
-        <view class="user-chip">
-          <text class="user-name">{{userDisplayName}}</text>
+    <view class="overview-card">
+      <view class="overview-header">
+        <view class="overview-title-wrap"><view class="title-mark"></view><text class="overview-title">生产概况</text></view>
+        <text class="trend-title">近7日生产趋势</text>
+      </view>
+
+      <view class="overview-main">
+        <view class="summary-panel">
+          <text class="summary-label">总任务</text>
+          <strong class="summary-total">{{overview.total}}</strong>
+          <view class="summary-divider"></view>
+          <text class="summary-label rate-label">完成率</text>
+          <strong class="summary-rate">{{overview.completionRate}}</strong>
+          <view class="rate-track"><view class="rate-fill" style="width: {{overview.completionRate === '—' ? 0 : overview.completionRate}}"></view></view>
+        </view>
+
+        <view class="trend-panel">
+          <view class="trend-axis"><text wx:for="{{trendTicks}}" wx:key="*this">{{item}}</text></view>
+          <view class="trend-content">
+            <canvas class="trend-canvas" id="trendCanvas" canvas-id="trendChart"></canvas>
+            <view class="trend-labels"><text wx:for="{{trend}}" wx:key="date">{{item.label}}</text></view>
+          </view>
         </view>
       </view>
-      <view class="stat-row">
-        <view class="stat-item" data-filter="running" bindtap="goTasksWithFilter">
-          <text class="stat-label">进行中</text>
-          <strong class="stat-value highlight">{{stats.running}}</strong>
-        </view>
-        <view class="stat-item" data-filter="waiting" bindtap="goTasksWithFilter">
-          <text class="stat-label">待处理</text>
-          <strong class="stat-value">{{stats.pending}}</strong>
-        </view>
-        <view class="stat-item" data-filter="completed" bindtap="goTasksWithFilter">
-          <text class="stat-label">今日完成</text>
-          <strong class="stat-value">{{stats.completed}}</strong>
-        </view>
+
+      <view wx:if="{{loading}}" class="overview-loading"><van-loading color="#e52613" size="32rpx">加载生产事实</van-loading></view>
+
+      <view class="status-row">
+        <view class="status-item" data-filter="running" bindtap="goTasksWithFilter"><view class="status-label"><view class="status-dot running"></view><text>进行中</text></view><strong>{{overview.running}}</strong></view>
+        <view class="status-item" data-filter="waiting" bindtap="goTasksWithFilter"><view class="status-label"><view class="status-dot waiting"></view><text>待处理</text></view><strong>{{overview.waiting}}</strong></view>
+        <view class="status-item" data-filter="completed" bindtap="goTasksWithFilter"><view class="status-label"><view class="status-dot completed"></view><text>已完成</text></view><strong>{{overview.completed}}</strong></view>
+        <view class="status-item" data-filter="all" bindtap="goTasksWithFilter"><view class="status-label"><view class="status-dot exception"></view><text>异常</text></view><strong>{{overview.exception}}</strong></view>
       </view>
     </view>
 
-    <!-- 6 宫格快捷业务入口卡片 -->
     <view class="shortcut-grid">
       <view class="shortcut-card" wx:for="{{shortcuts}}" wx:key="key" data-key="{{item.key}}" bindtap="openShortcut">
         <view class="badge" wx:if="{{item.count !== null && item.count > 0}}">{{item.count > 99 ? '99+' : item.count}}</view>
-        <view class="shortcut-icon-wrap">
-          <van-icon name="{{item.icon}}" size="50rpx" color="#d81e06" />
-        </view>
-        <text class="shortcut-text">{{item.title}}</text>
+        <view class="shortcut-icon"><van-icon name="{{item.icon}}" size="64rpx" color="#e52613" /></view>
+        <view class="shortcut-copy"><strong>{{item.title}}</strong><text>{{item.subtitle}}</text></view>
+        <van-icon class="shortcut-arrow" name="arrow" size="34rpx" color="#9aa4b5" />
       </view>
     </view>
-
-    <!-- 当前在制任务区域 -->
-    <view class="section-head">
-      <text class="section-title">当前在制任务</text>
-      <view class="section-link" bindtap="goAllTasks">
-        <text>全部任务</text>
-        <van-icon name="arrow" size="24rpx" color="#909399" />
-      </view>
-    </view>
-
-    <view wx:if="{{loading && !loaded}}" class="state-box">
-      <van-loading color="#d81e06">正在同步排产数据...</van-loading>
-    </view>
-
-    <view wx:elif="{{loaded && !currentTasks.length}}" class="state-box empty-state">
-      <van-empty description="暂无进行中的在制任务" />
-      <button class="empty-action-btn" data-key="pool" bindtap="openShortcut">查看待接任务</button>
-    </view>
-
-    <view class="task-card" wx:for="{{currentTasks}}" wx:key="targetKey" data-id="{{item.id}}" bindtap="openTask">
-      <view class="task-head">
-        <view class="task-no-wrap">
-          <text class="task-no-prefix">任务</text>
-          <text class="task-no">{{item.task_no}}</text>
-        </view>
-        <text class="status-tag status-{{item.targetStatus}}">{{item.statusLabel}}</text>
-      </view>
-
-      <view class="task-body">
-        <view class="task-row">
-          <text class="row-label">工序</text>
-          <strong class="row-value">{{item.operationLabel}}</strong>
-        </view>
-        <view class="task-row">
-          <text class="row-label">产品</text>
-          <strong class="row-value product-name">{{item.productName}}</strong>
-        </view>
-        <view class="task-row" wx:if="{{item.unitNo && item.unitNo !== '—'}}">
-          <text class="row-label">生产单元</text>
-          <strong class="row-value unit-no">{{item.unitNo}}</strong>
-        </view>
-        <view class="task-row" wx:if="{{item.targetStatus==='WAIT_MATERIAL'}}">
-          <text class="row-label">缺料情况</text>
-          <strong class="row-value shortage">{{item.shortageText}}</strong>
-        </view>
-        <view class="task-row" wx:else>
-          <text class="row-label">有效工时</text>
-          <strong class="row-value labor-time">{{item.laborText}}</strong>
-        </view>
-      </view>
-
-      <view class="task-action-box">
-        <button class="task-btn {{item.targetStatus==='WAIT_MATERIAL' ? 'btn-outline' : 'btn-primary'}}" catchtap="onTaskAction" data-id="{{item.id}}" data-status="{{item.targetStatus}}">
-          {{item.targetStatus==='PAUSED' ? '继续加工' : (item.targetStatus==='WAIT_MATERIAL' ? '查看齐套' : '进入作业')}}
-        </button>
-      </view>
-    </view>
-
-    <view class="bottom-space"></view>
   </block>
 </view>
 <LoginPopup class="LoginPopup"></LoginPopup>

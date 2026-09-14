@@ -44,6 +44,7 @@ module.exports = {
   workOrder: (id) => get(`production/work-orders/${id}`),
   taskPool: (query) => get('production/tasks', Object.assign({ view: 'pool' }, query || {})),
   myTasks: (query) => get('production/tasks', Object.assign({ view: 'owned' }, query || {})),
+  workbenchSummary: () => get('production/tasks/workbench-summary'),
   collaborations: (query) => get('production/tasks', Object.assign({ view: 'collaboration' }, query || {})),
   task: (id) => get(`production/tasks/${id}`),
   claimTask: (id, version, clientCommandId) => command(`production/tasks/${id}/claim`, {

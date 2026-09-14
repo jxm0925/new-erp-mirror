@@ -52,7 +52,7 @@ class SalesOrderChangeApplicationService
             // Release only active order reservations. A shipment or consumed
             // production requirement was rejected before this point, so no real
             // inventory/factory fact can be rewritten by a change request.
-            $this->reservations->releaseForSalesOrder($order, '订单变更，释放旧履约预留');
+            $this->reservations->releaseForSalesOrder($order, '订单变更，释放旧库存预留');
             SalesOrderFulfillment::where('sales_order_id', $order->id)
                 ->whereIn('demand_status', ['pending', 'confirmed'])
                 ->update([
@@ -104,7 +104,7 @@ class SalesOrderChangeApplicationService
                 'after_status' => 'pending_reconfirmation',
                 'payload' => ['change_no' => $change->change_no, 'changed_line_ids' => collect($changes)->map(fn ($row) => $row[0]->id)->values()->all()],
                 'operator' => $operator,
-                'content' => '已应用订单变更 '.$change->change_no.'；旧预留与旧履约计划已作废，必须重新进行订单生产确认。原因：'.$change->reason,
+                'content' => '已应用订单变更 '.$change->change_no.'；旧库存预留、生产和交付安排已作废，必须重新进行订单生产确认。原因：'.$change->reason,
             ]);
 
             return $change->fresh('order.lines');

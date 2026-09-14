@@ -407,6 +407,7 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::post('completions/{completionId}/review', [WorkOrderCompletionController::class, 'review'])->whereNumber('completionId');
     Route::get('work-orders/{id}/material-execution', [ProductionMaterialExecutionController::class, 'workOrderExecution'])->whereNumber('id');
     Route::get('tasks', [ProductionTaskController::class, 'index']);
+    Route::get('tasks/workbench-summary', [ProductionTaskController::class, 'workbenchSummary']);
     Route::get('tasks/{id}', [ProductionTaskController::class, 'show'])->whereNumber('id');
     Route::post('tasks/{id}/claim', [ProductionTaskController::class, 'claim'])->whereNumber('id');
     Route::post('tasks/{id}/collaborators/join', [ProductionTaskController::class, 'join'])->whereNumber('id');

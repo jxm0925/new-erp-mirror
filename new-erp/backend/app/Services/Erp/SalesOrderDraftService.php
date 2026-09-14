@@ -95,7 +95,7 @@ class SalesOrderDraftService
     public function delete(SalesOrder $order, string $operator): void
     {
         abort_if($order->order_status !== 'draft', 422, '只有草稿订单允许删除');
-        abort_if($order->fulfillments()->exists(), 422, '订单已产生履约记录，不能删除');
+        abort_if($order->fulfillments()->exists(), 422, '订单已产生库存、生产或交付记录，不能删除');
         abort_if($order->productionRequirements()->exists(), 422, '订单已产生生产需求，不能删除');
         abort_if(DB::table('erp_inventory_reservations')->where('source_order_id', $order->id)->exists(), 422, '订单已产生库存占用，不能删除');
 

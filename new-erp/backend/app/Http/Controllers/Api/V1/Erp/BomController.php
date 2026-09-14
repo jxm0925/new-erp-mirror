@@ -261,8 +261,8 @@ class BomController extends Controller
             'reservation_token' => $id ? 'prohibited' : 'required|uuid',
             'creation_session_id' => $id ? 'prohibited' : 'required|uuid',
             'bom_name' => 'required|string|max:160',
-            'product_id' => 'required|exists:erp_products,id',
-            'sku_id' => 'required|exists:erp_skus,id',
+            'product_id' => 'nullable|required_with:sku_id|exists:erp_products,id',
+            'sku_id' => 'nullable|required_with:product_id|exists:erp_skus,id',
             'output_item_id' => 'required|exists:erp_items,id',
             'bom_type' => 'required|in:standard,custom,trial',
             'version' => 'required|string|max:40',
@@ -283,6 +283,8 @@ class BomController extends Controller
             'items.*.replaceable' => 'boolean',
             'items.*.remark' => 'nullable|string',
         ]);
+        $data['product_id'] = $data['product_id'] ?? null;
+        $data['sku_id'] = $data['sku_id'] ?? null;
         if (($data['bom_type'] ?? null) !== 'custom') {
             $data['source_product_id'] = null;
             $data['source_sku_id'] = null;
@@ -337,9 +339,28 @@ class BomController extends Controller
 
     private function assertProductionTarget(array $payload): void
     {
-        $product = Product::whereKey($payload['product_id'])->where('status', 'enabled')->first();
-        $sku = Sku::whereKey($payload['sku_id'])->where('status', 'enabled')->first();
+        $productId = $payload['product_id'] ?? null;
+        $skuId = $payload['sku_id'] ?? null;
         $outputItem = Item::whereKey($payload['output_item_id'])->where('status', 'enabled')->first();
+
+        abort_if(
+            ($productId === null) !== ($skuId === null),
+            422,
+            'Product 与 SKU 必须同时关联，或同时留空。'
+        );
+
+        if ($productId === null) {
+            abort_unless(
+                $outputItem && $outputItem->is_production_item,
+                422,
+                'Item-only BOM 的产出 Item 必须已启用且可用于生产。'
+            );
+
+            return;
+        }
+
+        $product = Product::whereKey($productId)->where('status', 'enabled')->first();
+        $sku = Sku::whereKey($skuId)->where('status', 'enabled')->first();
         abort_unless($product && $sku && $outputItem, 422, '归属 Product、关联 SKU 和产出 Item 必须全部启用。');
         abort_if((int) $sku->product_id !== (int) $product->id, 422, '关联 SKU 不属于所选 Product。');
         $validOutput = DB::table('erp_sku_item_relations')

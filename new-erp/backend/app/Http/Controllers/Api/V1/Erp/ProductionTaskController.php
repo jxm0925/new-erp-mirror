@@ -34,6 +34,14 @@ class ProductionTaskController extends Controller
         return response()->json(['data' => $service->show($id, ...$this->context($request))]);
     }
 
+    public function workbenchSummary(Request $request, ProductionTaskQueryService $service)
+    {
+        return response()->json(['data' => $service->workbenchSummary(
+            ['view' => 'owned'],
+            ...$this->context($request),
+        )]);
+    }
+
     public function claim(Request $request, int $id, ProductionTaskAssignmentService $service)
     {
         $payload = $request->validate([

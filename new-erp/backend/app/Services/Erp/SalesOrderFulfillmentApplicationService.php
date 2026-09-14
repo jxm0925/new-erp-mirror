@@ -133,7 +133,7 @@ class SalesOrderFulfillmentApplicationService
                 'confirmed_at' => now(),
                 'confirmed_by' => $operatorName,
             ]);
-            $this->log($order, 'confirm', 'draft', 'confirmed', '销售订单已确认并锁定单位及履约换算快照；尚未生成履约需求。', $operatorName);
+            $this->log($order, 'confirm', 'draft', 'confirmed', '销售订单已确认并锁定单位换算信息；尚未生成库存备货或生产需求。', $operatorName);
             return $order->fresh(['lines.product', 'lines.sku', 'lines.item']);
         });
     }
@@ -166,7 +166,7 @@ class SalesOrderFulfillmentApplicationService
                         'available_sales_qty' => (float) ($planningSnapshot['available_sales_qty'] ?? 0),
                         'suggested_inventory_qty' => (float) ($planningSnapshot['suggested_inventory_qty'] ?? $quantities['inventory_qty']),
                         'suggested_production_qty' => (float) ($planningSnapshot['suggested_production_qty'] ?? $quantities['production_qty']),
-                        'suggestion_reason' => $planningSnapshot['suggestion_reason'] ?? '已确认履约方案按历史快照展示',
+                        'suggestion_reason' => $planningSnapshot['suggestion_reason'] ?? '已确认备货方案按历史记录展示',
                     ];
                 }
             } else {
@@ -192,7 +192,7 @@ class SalesOrderFulfillmentApplicationService
                         'available_sales_qty' => 0.0,
                         'suggested_inventory_qty' => (float) $quantities['inventory_qty'],
                         'suggested_production_qty' => (float) $quantities['production_qty'],
-                        'suggestion_reason' => '历史履约方案已锁定',
+                        'suggestion_reason' => '历史备货方案已锁定',
                     ]
                     : $this->inventoryAvailability->analyzeSalesOrderLine($line, $confirmQty);
             }
@@ -221,7 +221,7 @@ class SalesOrderFulfillmentApplicationService
                 'available_sales_qty' => (float) ($analysis['available_sales_qty'] ?? 0),
                 'system_suggested_inventory_qty' => (float) ($analysis['suggested_inventory_qty'] ?? 0),
                 'system_suggested_production_qty' => (float) ($analysis['suggested_production_qty'] ?? 0),
-                'system_suggestion_reason' => $analysis['suggestion_reason'] ?? ($line->line_type === 'service' ? '服务类订单行直接进入服务履约' : '无需发货订单行不进入库存或生产'),
+                'system_suggestion_reason' => $analysis['suggestion_reason'] ?? ($line->line_type === 'service' ? '服务类订单行直接登记为服务项目' : '无需发货订单行不进入库存或生产'),
                 'inventory_calculated_at' => $analysis['calculated_at'] ?? now()->toDateTimeString(),
                 'plan_locked' => $order->production_confirm_status === 'confirmed',
                 'confirmed_allocated_qty' => $confirmedAllocatedQty,
@@ -319,7 +319,7 @@ class SalesOrderFulfillmentApplicationService
             $blocked = false;
             foreach ($order->lines as $line) {
                 $row = $byLine->get($line->id);
-                if (!$row) throw ValidationException::withMessages(['lines' => "缺少第 {$line->line_no} 行的履约确认结果。"]);
+                if (!$row) throw ValidationException::withMessages(['lines' => "缺少第 {$line->line_no} 行的备货确认结果。"]);
                 $alreadyFulfilled = SalesOrderFulfillment::where('sales_order_line_id', $line->id)
                     ->where('demand_status', 'confirmed')->get()
                     ->sum(fn (SalesOrderFulfillment $record) => $this->fulfillmentSalesQuantity($record, $line));
@@ -332,7 +332,7 @@ class SalesOrderFulfillmentApplicationService
                     : null;
                 if ($inventoryAnalysis && (float) $quantities['inventory_qty'] > (float) $inventoryAnalysis['available_sales_qty'] + 0.00000001) {
                     throw ValidationException::withMessages([
-                        'lines' => "第 {$line->line_no} 行提交时可用成品库存已不足，请重新计算履约方案。",
+                        'lines' => "第 {$line->line_no} 行提交时可用成品库存已不足，请重新计算备货方案。",
                     ]);
                 }
                 $isAdjusted = $inventoryAnalysis
@@ -340,7 +340,7 @@ class SalesOrderFulfillmentApplicationService
                         || abs((float) $quantities['production_qty'] - (float) $inventoryAnalysis['suggested_production_qty']) > 0.00000001);
                 if ($isAdjusted && blank($adjustmentReason)) {
                     throw ValidationException::withMessages([
-                        'adjustment_reason' => '手工修改系统履约建议时必须填写调整原因。',
+                        'adjustment_reason' => '手工修改系统备货建议时必须填写调整原因。',
                     ]);
                 }
                 $inventoryAllocations = $inventoryAnalysis && (float) $quantities['inventory_qty'] > 0
@@ -595,8 +595,8 @@ class SalesOrderFulfillmentApplicationService
                 'production_confirm_status' => $productionConfirmStatus,
             ]);
             $this->log($order, 'production_confirm', 'pending', $productionConfirmStatus, $automatic
-                ? '销售订单已按实时库存自动锁定履约，并建立唯一主生产工单与所需待发布生产工单。'
-                : '订单生产确认已保存双口径履约需求，并建立唯一主生产工单与所需待发布生产工单。', $operatorName);
+                ? '销售订单已按实时库存自动锁定备货数量，并建立唯一主生产工单与所需待发布生产工单。'
+                : '订单生产确认已保存库存备货和生产需求，并建立唯一主生产工单与所需待发布生产工单。', $operatorName);
             return $order->fresh(['lines', 'fulfillments', 'productionRequirements', 'activeProductionMasterOrder.workOrders']);
         });
     }
@@ -649,23 +649,23 @@ class SalesOrderFulfillmentApplicationService
         foreach ($keys as $key) {
             $quantities[$key] = round((float) ($row[$key] ?? 0), 8);
             if ($quantities[$key] < 0) {
-                throw ValidationException::withMessages(['lines' => "第 {$line->line_no} 行履约数量不能小于 0。"]);
+                throw ValidationException::withMessages(['lines' => "第 {$line->line_no} 行备货或生产数量不能小于 0。"]);
             }
         }
         $confirmQty = round((float) ($row['confirm_qty'] ?? $remainingSalesQty), 8);
         if (abs(array_sum($quantities) - $confirmQty) > 0.00000001) {
-            throw ValidationException::withMessages(['lines' => "第 {$line->line_no} 行各履约数量之和必须等于本次确认数量。"]);
+            throw ValidationException::withMessages(['lines' => "第 {$line->line_no} 行库存、生产、服务及无需发货数量之和必须等于本次确认数量。"]);
         }
         if ($confirmQty > $remainingSalesQty + 0.00000001) {
             throw ValidationException::withMessages(['lines' => "第 {$line->line_no} 行本次确认数量不能超过剩余可确认数量。"]);
         }
         $quantities['undetermined_qty'] = max(0, round($remainingSalesQty - $confirmQty, 8));
         if ($line->line_type === 'service' && ($quantities['inventory_qty'] > 0 || $quantities['production_qty'] > 0 || $quantities['no_delivery_qty'] > 0)) {
-            throw ValidationException::withMessages(['lines' => "第 {$line->line_no} 行为服务行，只能填写服务履约或尚未确定数量。"]);
+            throw ValidationException::withMessages(['lines' => "第 {$line->line_no} 行为服务行，只能填写服务项目或尚未确定数量。"]);
         }
         if (in_array($line->line_type, ['no_delivery', 'fee', 'auxiliary'], true)
             && ($quantities['inventory_qty'] > 0 || $quantities['production_qty'] > 0 || $quantities['service_qty'] > 0)) {
-            throw ValidationException::withMessages(['lines' => "第 {$line->line_no} 行为无需发货行，不能进入库存、生产或服务履约。"]);
+            throw ValidationException::withMessages(['lines' => "第 {$line->line_no} 行为无需发货行，不能进入库存备货、生产安排或服务项目。"]);
         }
         if (!in_array($line->line_type, ['service', 'no_delivery', 'fee', 'auxiliary'], true)
             && ($quantities['service_qty'] > 0 || $quantities['no_delivery_qty'] > 0)) {
@@ -708,7 +708,7 @@ class SalesOrderFulfillmentApplicationService
     {
         $factor = (float) ($line->fulfillment_factor_snapshot ?: 0);
         if ($this->isPhysicalLine($line) && $factor <= 0) {
-            throw ValidationException::withMessages(['lines' => "第 {$line->line_no} 行缺少有效履约换算因子。"]);
+            throw ValidationException::withMessages(['lines' => "第 {$line->line_no} 行缺少有效单位换算比例。"]);
         }
         return $factor > 0 ? $factor : 1.0;
     }
@@ -734,9 +734,9 @@ class SalesOrderFulfillmentApplicationService
     private function resultTextFromQuantities(array $quantities): string
     {
         $rows = [];
-        if ($quantities['inventory_qty'] > 0) $rows[] = '库存履约';
+        if ($quantities['inventory_qty'] > 0) $rows[] = '库存备货';
         if ($quantities['production_qty'] > 0) $rows[] = '生产需求契约';
-        if ($quantities['service_qty'] > 0) $rows[] = '服务履约';
+        if ($quantities['service_qty'] > 0) $rows[] = '服务项目';
         if ($quantities['no_delivery_qty'] > 0) $rows[] = '无需发货';
         if ($quantities['undetermined_qty'] > 0) $rows[] = '尚未确定';
         return $rows ? implode(' + ', $rows) : '无生成结果';
@@ -775,7 +775,7 @@ class SalesOrderFulfillmentApplicationService
             ->filter(fn (SalesOrderFulfillment $row) => in_array($row->fulfillment_type, ['inventory', 'production', 'service', 'no_delivery'], true)
                 && (float) ($row->sales_qty ?? $row->fulfillment_qty) > 0)
             ->pluck('fulfillment_type')->unique()->values();
-        if ($types->isEmpty()) return '尚未形成履约明细';
+        if ($types->isEmpty()) return '尚未安排备货';
         if ($types->count() === 1 && $types->first() === 'inventory' && $plan['status'] === 'allocated') return '全部库存';
         if ($types->count() === 1 && $types->first() === 'production' && $plan['status'] === 'allocated') return '全部生产';
         if ($types->contains('inventory') && $types->contains('production')) return '部分库存 + 部分生产';
@@ -786,10 +786,10 @@ class SalesOrderFulfillmentApplicationService
     private function submitResults(array $counts): array
     {
         $rows = ['保存订单生产确认结果', '锁定本次确认使用的订单行和生产资料版本'];
-        if ($counts['inventory']) $rows[] = '生成库存履约需求';
+        if ($counts['inventory']) $rows[] = '生成库存备货需求';
         if ($counts['production']) $rows[] = '生成生产需求契约';
-        if ($counts['service']) $rows[] = '生成服务履约需求';
-        if ($counts['undetermined']) $rows[] = '保留尚未确认数量，订单履约进度为部分履约';
+        if ($counts['service']) $rows[] = '生成服务项目记录';
+        if ($counts['undetermined']) $rows[] = '保留尚未确认数量，订单交付状态为部分交付';
         return $rows;
     }
 

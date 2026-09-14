@@ -81,6 +81,59 @@ class ProductionTaskQueryService
         return $stats;
     }
 
+    /**
+     * The mobile workbench needs one partitioned, scoped snapshot.  Exception
+     * takes precedence over running, and running over waiting, so the four
+     * visible counters always add up to the total instead of double-counting a
+     * task that contains several execution targets in different states.
+     */
+    public function workbenchSummary(array $filters, object $user, array $permissions, bool $superAdmin): array
+    {
+        $base = $this->filteredQuery($filters, $user, $permissions, $superAdmin);
+        $exceptionStates = ['REWORK', 'QUALITY_FAILED', 'HANDOVER_REJECTED'];
+        $runningStates = ['IN_PROGRESS', 'PAUSED'];
+
+        $total = (clone $base)->count();
+        $completedQuery = clone $base;
+        $this->applyExecutionFilter($completedQuery, 'completed');
+        $completed = $completedQuery->count();
+
+        $exceptionQuery = clone $base;
+        $this->whereTargetState($exceptionQuery, $exceptionStates);
+        $exception = $exceptionQuery->count();
+
+        $runningQuery = clone $base;
+        $this->whereTargetState($runningQuery, $runningStates);
+        $this->whereTargetState($runningQuery, $exceptionStates, true);
+        $running = $runningQuery->count();
+        $waiting = max(0, $total - $completed - $exception - $running);
+
+        $trend = collect(range(6, 0))->map(function (int $daysAgo) use ($base): array {
+            $start = now()->subDays($daysAgo)->startOfDay();
+            $end = $start->copy()->addDay();
+            $assigned = (clone $base)->where('created_at', '>=', $start)->where('created_at', '<', $end)->count();
+            $finished = clone $base;
+            $this->whereTargetCompletedBetween($finished, $start, $end);
+
+            return [
+                'date' => $start->format('Y-m-d'),
+                'label' => $start->format('m/d'),
+                'assigned' => $assigned,
+                'completed' => $finished->count(),
+            ];
+        })->values()->all();
+
+        return [
+            'total' => $total,
+            'running' => $running,
+            'waiting' => $waiting,
+            'completed' => $completed,
+            'exception' => $exception,
+            'completion_rate' => $total > 0 ? round($completed * 100 / $total, 1) : 0,
+            'trend' => $trend,
+        ];
+    }
+
     private function applyExecutionFilter(Builder $query, string $filter): void
     {
         $running = ['IN_PROGRESS', 'PAUSED'];
@@ -111,6 +164,19 @@ class ProductionTaskQueryService
                 $quantities->where('completed_at', '>=', $start)->where('completed_at', '<', $end);
             }
             $links->where(fn ($q) => $q->where(fn ($unit) => $unit->where('target_type', 'unit_operation')->whereIn('target_id', $units))
+                ->orWhere(fn ($quantity) => $quantity->where('target_type', 'quantity_operation')->whereIn('target_id', $quantities)));
+        });
+    }
+
+    private function whereTargetCompletedBetween(Builder $query, object $start, object $end): void
+    {
+        $query->whereHas('targets', function (Builder $links) use ($start, $end): void {
+            $units = ProductionUnitOperation::query()->select('id')->where('status', 'COMPLETED')
+                ->where('completed_at', '>=', $start)->where('completed_at', '<', $end);
+            $quantities = ProductionQuantityOperation::query()->select('id')->where('status', 'COMPLETED')
+                ->where('completed_at', '>=', $start)->where('completed_at', '<', $end);
+            $links->where(fn ($target) => $target
+                ->where(fn ($unit) => $unit->where('target_type', 'unit_operation')->whereIn('target_id', $units))
                 ->orWhere(fn ($quantity) => $quantity->where('target_type', 'quantity_operation')->whereIn('target_id', $quantities)));
         });
     }

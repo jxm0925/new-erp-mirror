@@ -34,7 +34,7 @@ Do not change layout without approval.
       </div>
     </div>
 
-    <el-alert class="top-tip" type="info" :closable="false" show-icon title="新增/编辑页只提供履约建议，不生成正式销售订单工单、不锁库存、不锁BOM；提交确认后进入订单生产确认，再执行库存履约确认、BOM/工艺路线/图纸锁定。" />
+    <el-alert class="top-tip" type="info" :closable="false" show-icon title="新增/编辑页只提供备货建议，不生成正式销售订单工单、不锁库存、不锁BOM；提交确认后进入订单生产确认，再执行库存备货确认、BOM/工艺路线/图纸锁定。" />
 
     <div class="form-layout">
       <main class="form-main">
@@ -135,7 +135,7 @@ Do not change layout without approval.
           :class="{ 'precheck-focus': $route.query.focus === 'lines' || String($route.query.focus || '').startsWith('lines.') }"
         >
           <div class="section-title">
-            <h3>订单行编辑 <small>仅提供履约建议，不生成任何正式业务单据</small></h3>
+            <h3>订单行编辑 <small>仅提供备货建议，不生成任何正式业务单据</small></h3>
             <div>
               <el-button size="small" icon="el-icon-plus" @click="addLine">添加行</el-button>
               <el-button size="small" icon="el-icon-document-copy" @click="copyLine">复制行</el-button>
@@ -179,7 +179,7 @@ Do not change layout without approval.
                 <span v-if="!row.is_customized && !row.electric && row.need_pump === null" class="dash">—</span>
               </template>
             </el-table-column>
-            <el-table-column label="履约建议" width="78">
+            <el-table-column label="备货建议" width="78">
               <template slot-scope="{row}"><el-tag size="mini" :type="lineTypeTag(row.line_type)">{{ lineTypeText(row.line_type) }}</el-tag></template>
             </el-table-column>
             <el-table-column label="BOM预检" width="82">
@@ -307,7 +307,7 @@ Do not change layout without approval.
             <div><span>订单金额</span><b>¥{{ money(totalAmount) }}</b></div>
             <div><span>行数</span><b>{{ form.lines.length }} 行</b></div>
             <div><span>需要生产行</span><b>{{ productionLineCount }} 行</b></div>
-            <div><span>库存直接履约行</span><b>{{ stockLineCount }} 行</b></div>
+            <div><span>库存直接备货行</span><b>{{ stockLineCount }} 行</b></div>
             <div><span>待补资料行</span><b>{{ missingDataCount }} 行</b></div>
           </section>
           <section class="submit-check-card">
@@ -347,12 +347,12 @@ Do not change layout without approval.
             </div>
           </section>
           <section>
-            <h3><b>3</b> 履约换算信息 <small>（只读）</small></h3>
+            <h3><b>3</b> 单位换算信息 <small>（只读）</small></h3>
             <div v-if="lineNeedsItem(selectedLine)" class="fulfillment-conversion-box">
               <dl>
-                <dt>默认履约Item</dt><dd>{{ selectedLine.item_name || '待系统匹配' }}</dd>
+                <dt>默认库存物料</dt><dd>{{ selectedLine.item_name || '待系统匹配' }}</dd>
                 <dt>Item基本单位</dt><dd>{{ itemBaseUnitName(selectedLine) }}</dd>
-                <dt>履约换算</dt><dd>1{{ salesUnitName(selectedLine) }} = {{ fulfillmentFactor(selectedLine) }}{{ itemBaseUnitName(selectedLine) }}</dd>
+                <dt>单位换算</dt><dd>1{{ salesUnitName(selectedLine) }} = {{ fulfillmentFactor(selectedLine) }}{{ itemBaseUnitName(selectedLine) }}</dd>
                 <dt>Item基本需求量</dt><dd>{{ itemBaseRequiredQty(selectedLine) }}{{ itemBaseUnitName(selectedLine) }}</dd>
               </dl>
             </div>
@@ -425,12 +425,12 @@ Do not change layout without approval.
             <div class="change-tip"><i class="el-icon-warning" /> 更换后的产品不需要电压配置，原配置将被清除。</div>
           </section>
           <section>
-            <h3><b>6</b> 履约建议</h3>
+            <h3><b>6</b> 备货建议</h3>
             <div class="fulfill-box">
-              <p>建议履约方式：<el-tag size="mini">{{ lineTypeText(selectedLine.line_type) }}</el-tag></p>
+              <p>建议处理方式：<el-tag size="mini">{{ lineTypeText(selectedLine.line_type) }}</el-tag></p>
               <p>Item匹配：{{ selectedLine.item_name || '待系统匹配' }}，订单新增页只显示建议，不允许销售手工指定。</p>
-              <p>库存履约数量：提交确认后由库存模块按 Item / 仓库 / 库位 / 批次 / 检验 / 冻结 / 占用状态计算。</p>
-              <p>生产履约数量：仅不足库存的制造数量进入后续工单契约。</p>
+              <p>库存备货数量：提交确认后由库存模块按 Item / 仓库 / 库位 / 批次 / 检验 / 冻结 / 占用状态计算。</p>
+              <p>生产安排数量：仅库存不足的制造数量进入后续工单契约。</p>
             </div>
           </section>
         </template>
@@ -1299,7 +1299,7 @@ export default {
     },
     applyImpactPreview(impact) {
       const summary = impact.approval_summary || {}
-      const approvalLabels = { business: '业务审核', finance: '财务审核', fulfillment: '履约复核' }
+      const approvalLabels = { business: '业务审核', finance: '财务审核', fulfillment: '库存与交付复核' }
       this.impactPreview = {
         level: impact.overall_risk_level || 'low',
         candidateVersion: `V${impact.candidate_version || 1}`,
@@ -1426,7 +1426,7 @@ export default {
       return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     },
     lineTypeText(v) {
-      return ({ physical: '制造/发货', service: '服务履约', no_delivery: '无需发货', auxiliary: '辅助录入', fee: '费用' })[v] || v
+      return ({ physical: '制造/发货', service: '服务项目', no_delivery: '无需发货', auxiliary: '辅助录入', fee: '费用' })[v] || v
     },
     lineTypeTag(v) {
       return ({ physical: 'warning', service: 'info', no_delivery: 'success', auxiliary: '' })[v] || ''

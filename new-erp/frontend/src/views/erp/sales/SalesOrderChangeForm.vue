@@ -11,7 +11,7 @@ therefore this page intentionally offers only return and confirmed submission.
       <div class="toolbar-actions"><el-button size="small" @click="back">返回订单详情</el-button><el-button type="success" size="small" :loading="submitting" :disabled="!canSubmit" @click="confirmSubmit">提交变更</el-button></div>
     </div>
 
-    <el-alert class="change-warning" type="warning" :closable="false" show-icon title="本次变更会生成新的订单版本；旧库存预留、旧履约投影与未执行生产需求将被废止，保存后需重新进行履约/生产确认。" />
+    <el-alert class="change-warning" type="warning" :closable="false" show-icon title="本次变更会生成新的订单版本；旧库存预留、旧备货与生产安排将被废止，保存后需重新进行备货/生产确认。" />
 
     <section class="change-card change-basic-card">
       <h3>变更基本信息</h3>
@@ -48,14 +48,14 @@ therefore this page intentionally offers only return and confirmed submission.
         <div class="amount-summary"><div><span>未税金额</span><b>¥{{ money(originalTotals.excl) }}</b><em>→</em><strong>¥{{ money(nextTotals.excl) }}</strong></div><div><span>税额</span><b>¥{{ money(originalTotals.tax) }}</b><em>→</em><strong>¥{{ money(nextTotals.tax) }}</strong></div><div><span>含税总额</span><b>¥{{ money(originalTotals.incl) }}</b><em>→</em><strong>¥{{ money(nextTotals.incl) }}</strong></div><div class="total-diff"><span>本次金额变化</span><strong :class="diffClass(nextTotals.incl - originalTotals.incl)">{{ signedMoney(nextTotals.incl - originalTotals.incl) }}</strong></div></div>
       </section>
       <section class="change-card impact-card">
-        <h3>变更后的履约影响</h3>
-        <ul><li><i class="el-icon-success" /> 旧库存预留将释放，旧履约投影将废止。</li><li><i class="el-icon-success" /> 未执行的生产需求将废止并保留历史。</li><li><i class="el-icon-warning" /> 订单将回到待履约 / 待生产确认，需重新规划。</li></ul>
+        <h3>变更后的库存、生产与交付影响</h3>
+        <ul><li><i class="el-icon-success" /> 旧库存预留将释放，旧备货与交付安排将废止。</li><li><i class="el-icon-success" /> 未执行的生产需求将废止并保留历史。</li><li><i class="el-icon-warning" /> 订单将回到待安排 / 待生产确认，需重新规划。</li></ul>
         <div class="impact-facts"><span>当前有效预留：<b>{{ activeReservationQty }}</b></span><span>未执行生产需求：<b>{{ pendingProductionCount }}</b></span></div>
       </section>
     </div>
 
     <el-dialog title="确认提交订单变更" :visible.sync="confirmVisible" width="620px" class="change-confirm-dialog" append-to-body>
-      <div class="confirm-content"><i class="el-icon-warning-outline" /><div><b>本次操作将生成新的订单版本，并释放现有履约规划。</b><p>历史版本不会被覆盖。提交后订单需要重新进行履约或生产确认，是否继续？</p><p class="confirm-diff">本次共 {{ changedLineCount }} 行变更，含税金额变化 {{ signedMoney(nextTotals.incl - originalTotals.incl) }}。</p></div></div>
+      <div class="confirm-content"><i class="el-icon-warning-outline" /><div><b>本次操作将生成新的订单版本，并释放现有备货与交付安排。</b><p>历史版本不会被覆盖。提交后订单需要重新进行备货或生产确认，是否继续？</p><p class="confirm-diff">本次共 {{ changedLineCount }} 行变更，含税金额变化 {{ signedMoney(nextTotals.incl - originalTotals.incl) }}。</p></div></div>
       <span slot="footer"><el-button @click="confirmVisible=false">取消</el-button><el-button type="success" :loading="submitting" @click="submit">确认提交变更</el-button></span>
     </el-dialog>
   </section>
@@ -110,7 +110,7 @@ export default {
       this.submitting = true
       try {
         await applySalesOrderChange(this.order.id, { reason: this.reason, lines: this.lines.filter(this.changed).map(row => ({ sales_order_line_id: row.id, order_qty: row.order_qty, unit_price: row.unit_price, discount_rate: row.discount_rate, tax_rate: row.tax_rate, price_tax_mode: row.price_tax_mode })) })
-        this.$message.success('订单已变更，请重新执行履约规划或生产确认')
+        this.$message.success('订单已变更，请重新安排备货或进行生产确认')
         this.$router.replace(`/sales/orders/${this.order.id}/detail?changed=1`)
       } catch (error) { this.$message.error((error.response && error.response.data && (error.response.data.message || Object.values(error.response.data.errors || {}).flat()[0])) || '订单变更提交失败') } finally { this.submitting = false; this.confirmVisible = false }
     },

@@ -5,13 +5,13 @@
       <div class="crumb">ERP　/　<b>销售订单</b>　/　<b>订单生产确认</b></div>
       <div class="actions">
         <el-button size="small" @click="returnToOrder">返回</el-button>
-        <el-button size="small" icon="el-icon-refresh" :disabled="!editable" :loading="loading" @click="recalculate">重新计算履约方案</el-button>
+        <el-button size="small" icon="el-icon-refresh" :disabled="!editable" :loading="loading" @click="recalculate">重新计算备货方案</el-button>
         <el-button size="small" :disabled="!editable" @click="validateAll(true)">保存检查结果</el-button>
         <el-button size="small" type="success" :disabled="!canSubmit" :loading="submitting" @click="submit">提交确认</el-button>
       </div>
     </header>
 
-    <el-alert class="top-alert" type="info" :closable="false" show-icon title="本页仅确认订单履约与生产资料，保存生产需求契约；不创建生产工单、工序任务或生产排程。" />
+    <el-alert class="top-alert" type="info" :closable="false" show-icon title="本页仅确认订单备货方式与生产资料，保存生产需求契约；不创建生产工单、工序任务或生产排程。" />
 
     <div v-if="order" class="page-grid">
       <main>
@@ -23,9 +23,9 @@
           <div><span>加急标记</span><el-tag size="mini" :type="order.is_urgent ? 'danger' : 'info'">{{ order.is_urgent ? '是' : '否' }}</el-tag></div>
           <div><span>延期标记</span><el-tag size="mini" :type="order.is_delay ? 'warning' : 'info'">{{ order.is_delay ? '是' : '否' }}</el-tag></div>
           <div><span>生产确认状态</span><el-tag size="mini" type="success">{{ resultText }}</el-tag></div>
-          <div><span>实际履约状态</span><el-tag size="mini" :type="fulfillmentProgressTag(order.fulfillment_status)">{{ actualFulfillmentText(order.fulfillment_status) }}</el-tag></div>
-          <div><span>履约方案状态</span><el-tag size="mini" :type="planStatusTag(order.fulfillment_plan_status)">{{ order.fulfillment_plan_status_label || planStatusText(order.fulfillment_plan_status) }}</el-tag></div>
-          <div><span>履约组成</span><b>{{ order.fulfillment_composition_label || '尚未形成履约明细' }}</b></div>
+          <div><span>实际交付状态</span><el-tag size="mini" :type="fulfillmentProgressTag(order.fulfillment_status)">{{ actualFulfillmentText(order.fulfillment_status) }}</el-tag></div>
+          <div><span>备货方案状态</span><el-tag size="mini" :type="planStatusTag(order.fulfillment_plan_status)">{{ order.fulfillment_plan_status_label || planStatusText(order.fulfillment_plan_status) }}</el-tag></div>
+          <div><span>备货方式</span><b>{{ order.fulfillment_composition_label || '尚未安排备货' }}</b></div>
         </section>
 
         <section class="panel">
@@ -47,10 +47,10 @@
                 <small class="sub">{{ row.sales_unit || '-' }}</small>
               </template>
             </el-table-column>
-            <el-table-column label="库存履约分析" min-width="260">
+            <el-table-column label="库存可用量分析" min-width="260">
               <template slot-scope="{row}">
                 <div v-if="isPhysical(row)" class="inventory-analysis">
-                  <div><span>默认履约 Item</span><b>{{ row.default_item_name || row.item_name || '-' }}</b></div>
+                  <div><span>默认库存物料</span><b>{{ row.default_item_name || row.item_name || '-' }}</b></div>
                   <div><span>当前可用库存</span><b>{{ number(row.available_base_qty) }} {{ row.base_unit || '-' }}</b></div>
                   <div><span>方案状态</span><el-tag size="mini" :type="suggestionStatus(row).type">{{ suggestionStatus(row).text }}</el-tag></div>
                   <div><span>系统建议</span><b class="suggestion">库存 {{ number(row.system_suggested_inventory_qty) }} / 生产 {{ number(row.system_suggested_production_qty) }} {{ row.sales_unit || '-' }}</b></div>
@@ -60,7 +60,7 @@
                 <span v-else class="muted">{{ row.system_suggestion_reason }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="逐行履约拆分（销售单位）" min-width="465">
+            <el-table-column label="备货数量分配（销售单位）" min-width="465">
               <template slot-scope="{row}">
                 <div class="split-grid">
                   <label>库存<el-input-number v-model="row.inventory_qty" :disabled="!editable || !isPhysical(row)" :min="0" :max="Math.min(Number(row.confirm_qty || 0), Number(row.available_sales_qty || 0))" :precision="salesPrecision(row)" :controls="false" /></label>
@@ -80,7 +80,7 @@
             <el-table-column label="本次生成结果" min-width="155"><template slot-scope="{row}"><el-tag size="mini" :type="remainingUndetermined(row) > 0 ? 'warning' : 'success'">{{ allocationText(row) }}</el-tag></template></el-table-column>
           </el-table>
           <div v-if="editable && hasManualAdjustment" class="adjustment-reason">
-            <div><b>履约方案调整原因 <em>*</em></b><small>系统会同时保存建议数量、最终数量、操作人和操作时间</small></div>
+            <div><b>备货方案调整原因 <em>*</em></b><small>系统会同时保存建议数量、最终数量、操作人和操作时间</small></div>
             <el-input v-model.trim="adjustmentReason" type="textarea" :rows="2" maxlength="500" show-word-limit placeholder="例如：保留库存作为售后备件、指定批次暂不发货、库存质量风险等" />
           </div>
         </section>
@@ -102,14 +102,14 @@
         <section class="side-card"><h3>确认汇总</h3><dl><template v-for="row in countRows"><dt :key="row.label+'l'">{{ row.label }}</dt><dd :key="row.label+'v'">{{ row.value }} 行</dd></template></dl></section>
         <section class="side-card quantity"><h3>本次数量汇总 <small>（按销售单位）</small></h3><dl><template v-for="row in quantityRows"><dt :key="row.label+'l'">{{ row.label }}</dt><dd :key="row.label+'v'">{{ row.value }}</dd></template></dl></section>
         <section class="side-card blue"><h3>Item基本需求合计 <small>（按单位分组）</small></h3><p v-for="row in baseGroups" :key="row.unit_id || row.unit_name"><b>{{ row.unit_name || '未配置单位' }}：{{ number(row.quantity) }}</b></p><p v-if="!baseGroups.length">暂无 Item 基本需求</p></section>
-        <section class="side-card blue"><h3>服务履约需求：{{ summary.service || 0 }} 项</h3></section>
+        <section class="side-card blue"><h3>服务项目：{{ summary.service || 0 }} 项</h3></section>
         <section class="side-card result"><h3>提交结果预览 <small>（确认通过后将执行）</small></h3><p v-for="text in submitResults" :key="text"><i class="el-icon-success" /> {{ text }}</p></section>
-        <section class="side-card warn"><b><i class="el-icon-warning" /> 服务及无需发货行不进入库存或生产履约；</b><p>本阶段不创建生产工单、工序任务或排程。</p></section>
+        <section class="side-card warn"><b><i class="el-icon-warning" /> 服务及无需发货行不进入库存备货或生产安排；</b><p>本阶段不创建生产工单、工序任务或排程。</p></section>
       </aside>
     </div>
 
     <el-empty v-if="!order && !loading" description="未找到订单生产确认数据" />
-    <el-alert v-if="blocked" class="bottom-tip" type="warning" :closable="false" show-icon title="存在数量不守恒或生产资料不齐的履约行，请处理后再提交确认。" />
+    <el-alert v-if="blocked" class="bottom-tip" type="warning" :closable="false" show-icon title="存在数量不一致或生产资料不齐的订单行，请处理后再提交确认。" />
   </section>
 </template>
 
@@ -137,9 +137,9 @@ export default {
     baseGroups () { return this.preview.base_unit_groups || [] },
     summary () { return { total: this.lines.length, inventory: this.lines.filter(row => row.inventory_qty > 0).length, production: this.lines.filter(row => row.production_qty > 0).length, service: this.lines.filter(row => row.service_qty > 0).length, no_delivery: this.lines.filter(row => row.no_delivery_qty > 0).length } },
     resultText () { return this.order.production_confirm_status === 'confirmed' ? '已确认并锁定' : (this.blocked ? '待处理' : '待确认') },
-    countRows () { return [{ label: '订单总行数', value: this.summary.total }, { label: '库存履约行数', value: this.summary.inventory }, { label: '生产履约行数', value: this.summary.production }, { label: '服务履约行数', value: this.summary.service }, { label: '无需发货行数', value: this.summary.no_delivery }] },
-    quantityRows () { return [{ label: '库存履约', value: this.groupQuantity('inventory_qty') }, { label: '生产履约', value: this.groupQuantity('production_qty') }, { label: '服务履约', value: this.groupQuantity('service_qty') }, { label: '无需发货', value: this.groupQuantity('no_delivery_qty') }, { label: '尚未确定', value: this.groupQuantity('undetermined_qty') }] },
-    submitResults () { const rows = ['保存订单生产确认结果']; if (this.summary.inventory) rows.push('生成库存履约需求（Item基本数量）'); if (this.summary.production) rows.push('生成生产需求契约（销售/基本数量双口径）'); if (this.summary.service) rows.push('生成服务履约需求'); if (this.summary.no_delivery) rows.push('保存无需发货结果'); rows.push('锁定本次确认所使用的生产资料'); return rows }
+    countRows () { return [{ label: '订单总行数', value: this.summary.total }, { label: '库存备货行数', value: this.summary.inventory }, { label: '生产安排行数', value: this.summary.production }, { label: '服务项目行数', value: this.summary.service }, { label: '无需发货行数', value: this.summary.no_delivery }] },
+    quantityRows () { return [{ label: '库存备货', value: this.groupQuantity('inventory_qty') }, { label: '生产安排', value: this.groupQuantity('production_qty') }, { label: '服务项目', value: this.groupQuantity('service_qty') }, { label: '无需发货', value: this.groupQuantity('no_delivery_qty') }, { label: '尚未确定', value: this.groupQuantity('undetermined_qty') }] },
+    submitResults () { const rows = ['保存订单生产确认结果']; if (this.summary.inventory) rows.push('生成库存备货需求（Item基本数量）'); if (this.summary.production) rows.push('生成生产需求契约（销售/基本数量双口径）'); if (this.summary.service) rows.push('生成服务项目记录'); if (this.summary.no_delivery) rows.push('保存无需发货结果'); rows.push('锁定本次确认所使用的生产资料'); return rows }
   },
   created () { this.load() },
   watch: {
@@ -157,15 +157,15 @@ export default {
         this.preview = data || {}; this.order = data.order || null
         this.lines = (data.lines || []).map(row => ({ ...row, inventory_qty: Number(row.inventory_qty || 0), production_qty: Number(row.production_qty || 0), service_qty: Number(row.service_qty || 0), no_delivery_qty: Number(row.no_delivery_qty || 0), undetermined_qty: Number(row.undetermined_qty || 0), confirm_qty: Number(row.confirm_qty || 0), available_sales_qty: Number(row.available_sales_qty || 0), system_suggested_inventory_qty: Number(row.system_suggested_inventory_qty || 0), system_suggested_production_qty: Number(row.system_suggested_production_qty || 0) }))
         this.adjustmentReason = ''
-        if (notify) this.$message.success('已按当前真实可用库存重新计算履约方案')
+        if (notify) this.$message.success('已按当前真实可用库存重新计算备货方案')
       } catch (error) { this.$message.error(error.userMessage || '订单生产确认数据加载失败') } finally { this.loading = false }
     },
     recalculate () { return this.load(true) },
     validateAll (notify) { const valid = this.lines.every(row => this.allocationValid(row)) && !this.blocked && (!this.hasManualAdjustment || !!this.adjustmentReason); if (notify) this.$message[valid ? 'success' : 'warning'](valid ? '检查通过，可以提交确认' : (this.hasManualAdjustment && !this.adjustmentReason ? '手工修改系统建议后必须填写调整原因' : '存在数量不守恒、库存不足或资料不齐的订单行')); return valid },
     async submit () {
-      if (!this.validateAll(false)) return this.$message.warning('请先完成全部订单行的履约数量配置和资料检查')
-      if (this.hasManualAdjustment && !this.adjustmentReason) return this.$message.warning('手工修改系统履约建议时必须填写调整原因')
-      await this.$confirm('确认保存本订单的库存、生产、服务及无需交付履约需求？本操作不会创建生产工单。', '提交订单生产确认', { type: 'warning' })
+      if (!this.validateAll(false)) return this.$message.warning('请先完成全部订单行的备货数量配置和资料检查')
+      if (this.hasManualAdjustment && !this.adjustmentReason) return this.$message.warning('手工修改系统备货建议时必须填写调整原因')
+      await this.$confirm('确认保存本订单的库存备货、生产安排、服务项目及无需发货结果？本操作不会创建生产工单。', '提交订单生产确认', { type: 'warning' })
       this.submitting = true
       try {
         await confirmProduction(this.order.id, { adjustment_reason: this.adjustmentReason || null, lines: this.lines.map(row => ({ sales_order_line_id: row.sales_order_line_id, confirm_qty: row.confirm_qty, inventory_qty: row.inventory_qty, production_qty: row.production_qty, service_qty: row.service_qty, no_delivery_qty: row.no_delivery_qty })) })
@@ -179,15 +179,15 @@ export default {
     suggestionStatus (row) {
       const inventory = Number(row.system_suggested_inventory_qty || 0)
       const production = Number(row.system_suggested_production_qty || 0)
-      if (inventory > 0 && production <= 0) return { text: '全部库存履约', type: 'success' }
+      if (inventory > 0 && production <= 0) return { text: '全部库存备货', type: 'success' }
       if (inventory > 0 && production > 0) return { text: '库存 + 生产', type: 'warning' }
-      return { text: '全部生产履约', type: 'info' }
+      return { text: '全部生产安排', type: 'info' }
     },
     itemBaseConfirmQty (row) { return this.isPhysical(row) ? Number(row.confirm_qty || 0) * Number(row.fulfillment_factor || 0) : 0 },
     groupQuantity (key) { const groups = {}; this.lines.forEach(row => { const qty = key === 'undetermined_qty' ? this.remainingUndetermined(row) : Number(row[key] || 0); if (qty <= 0) return; const unit = row.sales_unit || '-'; groups[unit] = (groups[unit] || 0) + qty }); const values = Object.keys(groups).map(unit => `${this.number(groups[unit])} ${unit}`); return values.join(' / ') || '0' },
     remainingUndetermined (row) { return Math.max(0, Number(row.remaining_sales_qty || 0) - Number(row.confirm_qty || 0)) },
     lineBlocked (row) { return !this.allocationValid(row) || Number(row.inventory_qty || 0) > Number(row.available_sales_qty || 0) + 0.00000001 || (Number(row.production_qty || 0) > 0 && ['bom', 'drawing'].some(key => row.data_readiness && row.data_readiness[key] === 'missing')) },
-    blockingReason (row) { if (!this.allocationValid(row)) return '履约拆分数量不守恒'; if (Number(row.inventory_qty || 0) > Number(row.available_sales_qty || 0) + 0.00000001) return '库存履约数量超过当前真实可用库存'; if (Number(row.production_qty || 0) > 0 && row.data_readiness && row.data_readiness.bom === 'missing') return '未匹配到可用 BOM'; if (Number(row.production_qty || 0) > 0 && row.data_readiness && row.data_readiness.drawing === 'missing') return '特殊定制缺少设计图纸'; return '无阻塞' },
+    blockingReason (row) { if (!this.allocationValid(row)) return '各项分配数量之和与订单数量不一致'; if (Number(row.inventory_qty || 0) > Number(row.available_sales_qty || 0) + 0.00000001) return '库存备货数量超过当前真实可用库存'; if (Number(row.production_qty || 0) > 0 && row.data_readiness && row.data_readiness.bom === 'missing') return '未匹配到可用 BOM'; if (Number(row.production_qty || 0) > 0 && row.data_readiness && row.data_readiness.drawing === 'missing') return '特殊定制缺少设计图纸'; return '无阻塞' },
     isService (row) { return row.line_type === 'service' },
     isNoDelivery (row) { return ['no_delivery', 'fee', 'auxiliary'].includes(row.line_type) },
     isPhysical (row) { return !this.isService(row) && !this.isNoDelivery(row) },
@@ -195,7 +195,7 @@ export default {
     primaryType (row) { if (row.inventory_qty > 0 && row.production_qty > 0) return 'mixed'; if (row.production_qty > 0) return 'production'; if (row.inventory_qty > 0) return 'inventory'; if (row.service_qty > 0) return 'service'; if (row.no_delivery_qty > 0) return 'no_delivery'; return 'undetermined' },
     serviceItemText (row) { return this.isService(row) ? '服务项目' : '无需 Item' },
     itemRoleText (row) { const type = this.primaryType(row); return ({ production: '生产 Item', inventory: '库存 Item', mixed: '库存/生产 Item', service: '服务项目', no_delivery: '无需发货', undetermined: '尚未确定' })[type] },
-    fulfillmentText (type) { return ({ inventory: '库存履约', production: '生产履约', mixed: '混合履约', service: '服务履约', no_delivery: '无需发货', undetermined: '尚未确定' })[type] || '待确认' },
+    fulfillmentText (type) { return ({ inventory: '库存备货', production: '生产安排', mixed: '库存 + 生产', service: '服务项目', no_delivery: '无需发货', undetermined: '尚未确定' })[type] || '待确认' },
     allocationText (row) { const parts = []; if (row.inventory_qty > 0) parts.push(`库存 ${this.number(row.inventory_qty)}`); if (row.production_qty > 0) parts.push(`生产 ${this.number(row.production_qty)}`); if (row.service_qty > 0) parts.push(`服务 ${this.number(row.service_qty)}`); if (row.no_delivery_qty > 0) parts.push(`无需交付 ${this.number(row.no_delivery_qty)}`); if (this.remainingUndetermined(row) > 0) parts.push(`待确认 ${this.number(this.remainingUndetermined(row))}`); return parts.join(' + ') || '待配置' },
     typeTag (type) { return ({ inventory: 'success', production: '', mixed: 'warning', service: 'warning', no_delivery: 'info', undetermined: 'danger' })[type] || 'info' },
     salesPrecision (row) { return Number(row.sales_unit_precision || 0) },

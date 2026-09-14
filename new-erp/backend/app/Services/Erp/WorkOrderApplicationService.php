@@ -309,7 +309,12 @@ class WorkOrderApplicationService
             $workOrder->save();
 
             $this->productionExecution->initializePublished($workOrder, $executionPolicy);
-            $this->preparationOrders->syncFromPublishedWorkOrder($workOrder->fresh('materialRequirements'), $user);
+            // Order preparation documents belong to a production master order.
+            // Independent stock-prebuild work orders deliberately have no master
+            // order and publish directly into their configured inventory flow.
+            if ($workOrder->production_master_order_id) {
+                $this->preparationOrders->syncFromPublishedWorkOrder($workOrder->fresh('materialRequirements'), $user);
+            }
 
             $this->recordStatus($workOrder, self::WAIT_RELEASE, self::RELEASED, $workOrder->release_reason, $version, $version + 1, $user);
 

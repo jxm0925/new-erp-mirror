@@ -24,6 +24,7 @@ use App\Models\Erp\PaymentMethod;
 use App\Models\Erp\Sku;
 use App\Models\Erp\SkuItemRelation;
 use App\Models\Erp\Unit;
+use App\Models\Erp\WorkOrder;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\BomMatcher;
 use App\Services\Erp\DocumentNumberService;
@@ -537,7 +538,7 @@ class SalesOrderController extends Controller
             ]);
             $after = $order->fresh(['lines'])->toArray();
             $this->version($order->id, 'update', $before, $after, $payload['created_by'] ?? 'system');
-            $this->log($order->id, null, 'update', $before['order_status'] ?? null, $order->order_status, '编辑销售订单，履约结果已撤回待重新确认');
+            $this->log($order->id, null, 'update', $before['order_status'] ?? null, $order->order_status, '编辑销售订单，原备货和生产安排已撤回待重新确认');
 
             return response()->json([
                 'message' => '销售订单已更新',
@@ -577,7 +578,7 @@ class SalesOrderController extends Controller
         $confirmed = app(\App\Services\Erp\SalesOrderFulfillmentApplicationService::class)
             ->confirmOrderAndFulfill($order->id, $this->operatorName($request), $operator);
         return response()->json([
-            'message' => '订单已确认，系统已按实时库存锁定履约并建立所需生产层级。',
+            'message' => '订单已确认，系统已按实时库存锁定备货数量并建立所需生产层级。',
             'data' => $confirmed,
         ]);
     }
@@ -641,7 +642,7 @@ class SalesOrderController extends Controller
             app(AuthContextService::class)->currentUser($request),
         );
         return response()->json([
-            'message' => '订单生产确认已提交，库存占用、履约需求、主生产工单和待发布生产工单已生成。',
+            'message' => '订单生产确认已提交，库存占用、生产需求、主生产工单和待发布生产工单已生成。',
             'data' => $confirmed,
         ]);
     }
@@ -696,7 +697,7 @@ class SalesOrderController extends Controller
             ->where('is_active', true)
             ->whereIn('requirement_status', ['draft', 'blocked'])
             ->update(['requirement_status' => 'cancelled', 'is_active' => false, 'closed_qty' => DB::raw('remaining_qty')]);
-        $this->log($order->id, null, 'cancel', null, 'cancelled', '取消销售订单，历史履约记录保留');
+        $this->log($order->id, null, 'cancel', null, 'cancelled', '取消销售订单，历史库存、生产和交付记录保留');
 
         return response()->json(['message' => '订单已取消', 'data' => $order->fresh(['lines', 'fulfillments'])]);
     }
@@ -840,9 +841,9 @@ class SalesOrderController extends Controller
                 'active', 'partially_released', 'released', 'converted_to_shipment', 'consumed', 'cancelled',
             ],
             'forbidden_before_gate_passed' => [
-                '全部库存履约订单生成工单',
+                '全部库存备货订单生成工单',
                 '服务类/无需发货订单行生成制造工单',
-                '绕过库存履约数量直接生成工单',
+                '绕过库存备货数量直接生成工单',
                 '绕过 BOM、路线、图纸、交付检验快照生成工单',
             ],
         ]);
@@ -1279,8 +1280,39 @@ class SalesOrderController extends Controller
 
     private function workOrderTrackingProjection(SalesOrder $order): array
     {
-        // 当前库尚未进入生产工单阶段，禁止在销售草稿阶段伪造工单或工序数据。
-        return [];
+        $masterIds = DB::table('erp_production_master_orders')
+            ->where('sales_order_id', $order->id)
+            ->orWhere('active_sales_order_id', $order->id)
+            ->pluck('id');
+        if ($masterIds->isEmpty()) return [];
+
+        $statusLabels = [
+            'DRAFT' => '草稿',
+            'WAIT_RELEASE' => '待发布',
+            'RELEASED' => '已发布',
+            'IN_PROGRESS' => '生产中',
+            'COMPLETED' => '已完成',
+            'CANCELLED' => '已取消',
+        ];
+
+        return WorkOrder::query()
+            ->with(['demand.line', 'targetOperation'])
+            ->whereIn('production_master_order_id', $masterIds)
+            ->orderBy('id')
+            ->get()
+            ->map(function (WorkOrder $workOrder) use ($statusLabels): array {
+                $operations = (array) data_get($workOrder->routing_snapshot, 'operations', []);
+                $firstOperation = $operations[0] ?? [];
+                return [
+                    'work_order_no' => $workOrder->work_order_no,
+                    'line_no' => $workOrder->demand?->line?->line_no,
+                    'current_process_name' => $workOrder->targetOperation?->operation_name
+                        ?: ($firstOperation['operation_name'] ?? null),
+                    'progress_text' => $statusLabels[$workOrder->status] ?? $workOrder->status,
+                ];
+            })
+            ->values()
+            ->all();
     }
 
     /** 订单详情只读展示下单时的 Item 快照，不允许借详情页改写历史关联。 */
@@ -1730,7 +1762,7 @@ class SalesOrderController extends Controller
         $quantities->put('undetermined', round($unallocatedQty, 8));
 
         if ($types->isEmpty()) {
-            $label = '尚未形成履约明细';
+            $label = '尚未安排备货';
         } elseif ($types->count() === 1 && $types->first() === 'inventory' && $planStatus === 'allocated') {
             $label = '全部库存';
         } elseif ($types->count() === 1 && $types->first() === 'production' && $planStatus === 'allocated') {

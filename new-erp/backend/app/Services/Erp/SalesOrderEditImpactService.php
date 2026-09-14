@@ -53,7 +53,7 @@ class SalesOrderEditImpactService
         'unit_price' => '销售单价', 'discount_rate' => '折扣率', 'tax_rate' => '税率',
         'price_tax_mode' => '含税方式', 'order_qty' => '订单行数量',
         'sku_id' => '订单行 SKU', 'product_id' => '订单行 Product', 'line_removed' => '删除订单行',
-        'line_added' => '新增订单行', 'fulfillment_method' => '履约方式',
+        'line_added' => '新增订单行', 'fulfillment_method' => '备货方式',
         'electric' => '电压', 'need_pump' => '原水泵控制', 'is_customized' => '普通定制',
         'is_special_customized' => '特殊定制', 'configuration_snapshot' => '生产关键配置',
     ];
@@ -67,7 +67,7 @@ class SalesOrderEditImpactService
     private const APPROVAL_NEUTRAL_DESCRIPTIONS = [
         'business' => '本次修改未触发业务审核条件。',
         'finance' => '本次修改未触发财务审核条件。',
-        'fulfillment' => '本次修改未触发库存/交付履约复核条件。',
+        'fulfillment' => '本次修改未触发库存与交付复核条件。',
     ];
 
     public function __construct(
@@ -257,7 +257,7 @@ class SalesOrderEditImpactService
             'approval_summary' => ['none' => count($diffs) - count(array_filter($diffs, fn ($diff) => $diff['approval_requirements'])), 'business' => count(array_filter($diffs, fn ($d) => in_array('business', $d['approval_requirements'], true))), 'finance' => count(array_filter($diffs, fn ($d) => in_array('finance', $d['approval_requirements'], true))), 'fulfillment' => count(array_filter($diffs, fn ($d) => in_array('fulfillment', $d['approval_requirements'], true)))],
             'requires_approval' => !empty($required), 'required_approval_types' => $required,
             'approval_reasons' => $approvalReasons,
-            'candidate_effect_summary' => empty($required) ? '本次修改保存后立即生效，并记录修改历史。' : '审核通过前，正式订单、预留、履约及应收保持不变。',
+            'candidate_effect_summary' => empty($required) ? '本次修改保存后立即生效，并记录修改历史。' : '审核通过前，正式订单、库存预留、生产和交付安排及应收保持不变。',
             'production_impact' => $production,
             'business_facts' => $facts,
         ];
@@ -271,7 +271,7 @@ class SalesOrderEditImpactService
         $this->amounts->refresh($order);
         $hasOperationalImpact = collect($impact['diffs'] ?? [])->contains(fn ($diff) => collect($diff['impact_types'] ?? [])->intersect(['FULFILLMENT', 'PRODUCTION'])->isNotEmpty());
         if ($hasOperationalImpact) {
-            $this->reservations->releaseForSalesOrder($order, '订单候选版本生效，释放旧履约预留。');
+            $this->reservations->releaseForSalesOrder($order, '订单候选版本生效，释放旧库存预留。');
             SalesOrderFulfillment::where('sales_order_id', $order->id)->whereIn('demand_status', ['pending', 'confirmed'])->update(['demand_status' => 'superseded', 'reservation_status' => 'superseded', 'production_requirement_status' => 'superseded']);
             SalesOrderProductionRequirement::where('sales_order_id', $order->id)->where('is_active', true)->whereIn('requirement_status', ['draft', 'blocked', 'ready'])->update(['requirement_status' => 'superseded', 'is_active' => false]);
             $order->update(['change_status' => 'applied', 'fulfillment_status' => 'pending', 'production_confirm_status' => 'pending']);
@@ -383,7 +383,7 @@ class SalesOrderEditImpactService
         ])));
         return ['scope' => $scope, 'line_id' => $lineId, 'semantic_key' => $key, 'label' => self::LABELS[$key] ?? $key, 'before' => $before, 'after' => $after, 'impact_types' => $types, 'business_impact_text' => $this->impactText($types), 'approval_requirements' => $requirements];
     }
-    private function impactText(array $types): string { return implode('、', array_map(fn ($t) => ['INFO'=>'无业务影响','COMMERCIAL'=>'商业信息影响','FINANCIAL'=>'财务结算影响','FULFILLMENT'=>'履约与库存影响','PRODUCTION'=>'生产需求影响'][$t], $types)); }
+    private function impactText(array $types): string { return implode('、', array_map(fn ($t) => ['INFO'=>'无业务影响','COMMERCIAL'=>'商业信息影响','FINANCIAL'=>'财务结算影响','FULFILLMENT'=>'库存与交付影响','PRODUCTION'=>'生产需求影响'][$t], $types)); }
     private function approvalReasons(array $diffs, array $requiredTypes): array
     {
         $result = [];
@@ -438,7 +438,7 @@ class SalesOrderEditImpactService
                     ? '订单行数量发生调整，影响生产需求数量，需要业务审核。'
                     : '订单行数量发生调整，形成商业数量变化，需要业务审核。',
                 'electric', 'need_pump', 'is_customized', 'is_special_customized', 'configuration_snapshot' => '生产关键配置发生变化，需要重新核对生产定义。',
-                'fulfillment_method' => '订单行履约方式切换涉及生产定义，需要业务审核。',
+                'fulfillment_method' => '订单行备货方式切换涉及生产定义，需要业务审核。',
                 'trade_type' => '贸易类型发生变化，影响订单商业口径，需要业务审核。',
                 'customer_id', 'customer_name' => '订单客户发生变化，需要业务审核。',
                 'platform', 'sales_channel_id' => '成交平台或销售渠道发生变化，需要业务审核。',
@@ -454,19 +454,19 @@ class SalesOrderEditImpactService
                 default => $label.'发生变化，触发财务审核条件。',
             },
             'fulfillment' => match ($key) {
-                'payment_terms_snapshot' => '付款规则发生变化，影响生产或发货资金门槛，需要履约复核。',
-                'funding_policy_id' => '资金策略发生变化，影响生产或发货资金门槛，需要履约复核。',
-                'required_delivery_date', 'is_delay', 'delay_date' => '要求交期发生调整，影响现有库存或交付履约计划，需要履约复核。',
-                'carrier_id', 'default_carrier_id' => '承运方式发生变化，影响现有交付履约安排，需要履约复核。',
-                'sku_id' => 'SKU 身份发生变化，需要重新核对库存和交付履约。',
-                'product_id' => 'Product 身份发生变化，需要重新核对库存和交付履约。',
-                'line_added' => '新增订单行改变了库存和交付履约范围，需要履约复核。',
-                'line_removed' => '删除订单行改变了库存和交付履约范围，需要履约复核。',
-                'order_qty' => '订单行数量发生调整，影响既有库存预留或交付数量，需要履约复核。',
-                'fulfillment_method' => '订单行履约方式发生变化，需要重新核对库存和交付安排。',
-                'electric', 'need_pump', 'is_customized', 'is_special_customized', 'configuration_snapshot' => '生产关键配置发生变化，需要重新核对履约配置。',
-                'trade_type' => '贸易类型发生变化，影响交付履约口径，需要履约复核。',
-                default => $label.'发生变化，触发库存或交付履约复核条件。',
+                'payment_terms_snapshot' => '付款规则发生变化，影响生产或发货资金门槛，需要库存与交付复核。',
+                'funding_policy_id' => '资金策略发生变化，影响生产或发货资金门槛，需要库存与交付复核。',
+                'required_delivery_date', 'is_delay', 'delay_date' => '要求交期发生调整，影响现有库存、生产或交付计划，需要库存与交付复核。',
+                'carrier_id', 'default_carrier_id' => '承运方式发生变化，影响现有交付安排，需要库存与交付复核。',
+                'sku_id' => 'SKU 身份发生变化，需要重新核对库存、生产和交付安排。',
+                'product_id' => 'Product 身份发生变化，需要重新核对库存、生产和交付安排。',
+                'line_added' => '新增订单行改变了库存、生产和交付范围，需要库存与交付复核。',
+                'line_removed' => '删除订单行改变了库存、生产和交付范围，需要库存与交付复核。',
+                'order_qty' => '订单行数量发生调整，影响既有库存预留或交付数量，需要库存与交付复核。',
+                'fulfillment_method' => '订单行备货方式发生变化，需要重新核对库存、生产和交付安排。',
+                'electric', 'need_pump', 'is_customized', 'is_special_customized', 'configuration_snapshot' => '生产关键配置发生变化，需要重新核对生产和交付配置。',
+                'trade_type' => '贸易类型发生变化，影响交付规则，需要库存与交付复核。',
+                default => $label.'发生变化，触发库存与交付复核条件。',
             },
             default => null,
         };

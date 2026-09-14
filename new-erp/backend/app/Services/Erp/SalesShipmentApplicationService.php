@@ -65,12 +65,12 @@ class SalesShipmentApplicationService
                     ->where('reservation_status', 'active')
                     ->orderBy('reserved_at')->orderBy('id')->lockForUpdate()->get();
                 if ($parents->isEmpty()) {
-                    throw ValidationException::withMessages(['lines.'.$index => '当前履约没有可用于发货的有效库存预留。']);
+                    throw ValidationException::withMessages(['lines.'.$index => '当前订单行没有可用于发货的有效库存预留。']);
                 }
                 $availableQty = round((float) $parents->sum('reserved_qty'), 8);
                 $baseQty = round((float) ($row['base_qty'] ?? $availableQty), 8);
                 if ($baseQty <= 0 || $baseQty > $availableQty + 0.00000001) {
-                    throw ValidationException::withMessages(['lines.'.$index.'.base_qty' => '本次发货数量超过该履约的有效库存预留。']);
+                    throw ValidationException::withMessages(['lines.'.$index.'.base_qty' => '本次发货数量超过该订单行的有效库存预留。']);
                 }
                 $line = SalesOrderLine::query()->findOrFail($fulfillment->sales_order_line_id);
                 $serialIds = array_values(array_unique(array_map('intval', (array) ($row['inventory_serial_ids'] ?? []))));
@@ -114,7 +114,7 @@ class SalesShipmentApplicationService
                     $remainingQty = round($remainingQty - $sliceQty, 8);
                 }
             }
-            if (!$shipment->lines()->exists()) throw ValidationException::withMessages(['lines' => '发货单至少需要一行库存履约明细。']);
+            if (!$shipment->lines()->exists()) throw ValidationException::withMessages(['lines' => '发货单至少需要一行有库存预留的订单明细。']);
             $this->syncPackages($shipment, (array) ($payload['packages'] ?? []));
             $this->log($shipment, 'create', null, 'draft', $operator, '创建销售发货单草稿。');
             return $shipment->fresh(['lines', 'packages', 'order']);

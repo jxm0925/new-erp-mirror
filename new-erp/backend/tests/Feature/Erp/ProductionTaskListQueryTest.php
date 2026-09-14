@@ -58,6 +58,16 @@ class ProductionTaskListQueryTest extends TestCase
         $this->assertSame(1, $stats['running']);
         $this->assertSame(2, $stats['completed']);
         $this->assertSame(1, $stats['completed_today']);
+        $workbench = $service->workbenchSummary(['work_order_id' => $order->id, 'view' => 'owned'], $user, $permissions, true);
+        $this->assertSame(24, $workbench['total']);
+        $this->assertSame(1, $workbench['running']);
+        $this->assertSame(21, $workbench['waiting']);
+        $this->assertSame(2, $workbench['completed']);
+        $this->assertSame(0, $workbench['exception']);
+        $this->assertSame(8.3, $workbench['completion_rate']);
+        $this->assertCount(7, $workbench['trend']);
+        $this->assertSame(1, $workbench['trend'][5]['completed']);
+        $this->assertSame(1, $workbench['trend'][6]['completed']);
         $filtered = $service->paginate($filters + ['execution_filter' => 'running'], $user, $permissions, true);
         $this->assertSame($tasks[2][0]->id, $filtered->items()[0]->id);
         $searched = $service->paginate($filters + ['keyword' => '查询验证物料'], $user, $permissions, true);

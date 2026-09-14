@@ -19,7 +19,7 @@
           <div class="summary-item"><span>无需审核</span><strong>{{ displaySummary.none }}</strong><span>项</span></div>
           <div class="summary-item"><span>需业务审核</span><strong>{{ displaySummary.business }}</strong><span>项</span></div>
           <div class="summary-item"><span>需财务审核</span><strong>{{ displaySummary.finance }}</strong><span>项</span></div>
-          <div class="summary-item"><span>需履约复核</span><strong>{{ displaySummary.fulfillment }}</strong><span>项</span></div>
+          <div class="summary-item"><span>需库存与交付复核</span><strong>{{ displaySummary.fulfillment }}</strong><span>项</span></div>
           <div class="summary-item summary-level"><span>本次修改等级：</span><strong :class="`level-${level}`">{{ levelText }}</strong></div>
         </section>
 
@@ -57,7 +57,7 @@
 
         <section :class="['effect-note', { immediate: !requiresApproval }]">
           <i :class="requiresApproval ? 'el-icon-warning-outline' : 'el-icon-success'" />
-          <span v-if="requiresApproval">本次修改将形成 Candidate {{ candidateVersion }}；审核通过前，当前正式版本 {{ effectiveVersion }} 及已生效履约保持不变。</span>
+          <span v-if="requiresApproval">本次修改将形成 Candidate {{ candidateVersion }}；审核通过前，当前正式版本 {{ effectiveVersion }} 及已生效的库存、生产和交付安排保持不变。</span>
           <span v-else>本次修改保存后立即生效，并记录修改历史。</span>
         </section>
 
@@ -79,7 +79,7 @@
 const approvalMeta = [
   { key: 'business', title: '业务审核', icon: 'el-icon-user-solid', tagType: '' },
   { key: 'finance', title: '财务审核', icon: 'el-icon-coin', tagType: 'warning' },
-  { key: 'fulfillment', title: '履约复核', icon: 'el-icon-s-check', tagType: 'primary' }
+  { key: 'fulfillment', title: '库存与交付复核', icon: 'el-icon-s-check', tagType: 'primary' }
 ]
 
 export default {
@@ -104,7 +104,7 @@ export default {
       if (this.$props.summary) return this.$props.summary
       const rows = this.changes || []
       const count = text => rows.filter(row => String(row.requirement || '直接保存').includes(text)).length
-      return { total: rows.length, none: count('直接保存'), business: count('业务审核'), finance: count('财务审核'), fulfillment: count('履约复核') }
+      return { total: rows.length, none: count('直接保存'), business: count('业务审核'), finance: count('财务审核'), fulfillment: count('库存与交付复核') }
     },
     approvalCards() {
       return approvalMeta.map(card => ({
@@ -126,7 +126,7 @@ export default {
     },
     requirementTagType(requirement) {
       if (String(requirement).includes('财务')) return 'warning'
-      if (String(requirement).includes('履约')) return 'primary'
+      if (String(requirement).includes('库存与交付')) return 'primary'
       if (String(requirement).includes('业务')) return ''
       return 'success'
     }

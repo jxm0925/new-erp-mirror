@@ -70,13 +70,13 @@ class InventoryAvailabilityService
     public function analyzeSalesOrderLine(SalesOrderLine $line, float $salesQty, bool $lock = false): array
     {
         if (!$line->item_id) {
-            return $this->emptyAnalysis($line, $salesQty, '当前订单行没有默认履约 Item');
+            return $this->emptyAnalysis($line, $salesQty, '当前订单行没有默认库存物料');
         }
 
         $factor = (float) ($line->fulfillment_factor_snapshot ?: 0);
         if ($factor <= 0) {
             throw ValidationException::withMessages([
-                'lines' => "第 {$line->line_no} 行缺少有效履约换算因子。",
+                'lines' => "第 {$line->line_no} 行缺少有效单位换算比例。",
             ]);
         }
 
@@ -132,7 +132,7 @@ class InventoryAvailabilityService
 
         if ($remaining > 0.00000001) {
             throw ValidationException::withMessages([
-                'lines' => '提交时成品可用库存已发生变化，请重新计算履约方案后再提交。',
+                'lines' => '提交时成品可用库存已发生变化，请重新计算备货方案后再提交。',
             ]);
         }
 

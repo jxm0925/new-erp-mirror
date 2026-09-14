@@ -96,16 +96,16 @@
       <section class="panel output-panel">
         <h3>产出对象</h3>
         <div class="output-grid">
-          <label class="field required">
+          <label class="field" title="可选；归属商品与关联 SKU 必须同时填写或同时留空">
             <span>归属商品</span>
-            <el-select v-model="form.product_id" filterable clearable size="small" :disabled="!canEdit" placeholder="请选择">
+            <el-select v-model="form.product_id" filterable clearable size="small" :disabled="!canEdit" placeholder="可选，须与关联SKU同时填写">
               <el-option v-for="p in products" :key="p.id" :label="`${p.product_code} / ${p.product_name}`" :value="p.id" />
             </el-select>
           </label>
 
-          <label class="field required">
+          <label class="field" title="可选；关联 SKU 与归属商品必须同时填写或同时留空">
             <span>关联SKU</span>
-            <el-select v-model="form.sku_id" filterable clearable size="small" :disabled="!canEdit" placeholder="请选择">
+            <el-select v-model="form.sku_id" filterable clearable size="small" :disabled="!canEdit" placeholder="可选，须与归属商品同时填写">
               <el-option v-for="s in skus" :key="s.id" :label="`${s.sku_code} / ${s.sku_name}`" :value="s.id" />
             </el-select>
           </label>
@@ -494,6 +494,9 @@ export default {
       }
       if (payload.bom_type === 'custom' && (!payload.source_product_id || !payload.source_sku_id || !payload.source_standard_bom_id)) {
         return this.$message.error('定制 BOM 需要填写来源商品、来源SKU和来源标准BOM，用于后续追溯')
+      }
+      if (Boolean(payload.product_id) !== Boolean(payload.sku_id)) {
+        return this.$message.error('归属商品和关联 SKU 必须同时填写，或同时留空')
       }
       if (!payload.output_item_id) return this.$message.error('请选择产出 Item')
       if (payload.items.some(item => !item.component_item_id)) return this.$message.error('BOM 明细中存在未选择物料的行')

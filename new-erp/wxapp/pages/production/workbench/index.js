@@ -1,34 +1,29 @@
 const production = require('../../../services/production');
 const util = require('../../../utils/util');
 
-function taskView(task, target) {
-  const workOrder = task.work_order || {};
-  const item = workOrder.output_item || {};
-  return Object.assign({}, task, {
-    targetStatus: target.status || task.status,
-    // The task query service owns state labels and action eligibility; workbench only renders its projection.
-    statusLabel: target.status_label || '状态异常，请刷新',
-    workOrderNo: workOrder.work_order_no || '-',
-    productName: item.item_name || item.name || workOrder.output_item_name_snapshot || '-',
-    operationLabel: `${task.sequence_no_snapshot || '-'} - ${task.operation_name_snapshot || '-'}`,
-    unitNo: target.production_unit_no || '—',
-    targetKey: `${task.id}-${target.target_type}-${target.target_id}`,
-    targetType: target.target_type,
-    targetId: target.target_id,
-    laborText: `${Number(target.actual_labor_minutes || 0).toFixed(1)} 分钟`,
-    shortageText: '—'
-  });
+const EMPTY_OVERVIEW = {
+  total: '—', running: '—', waiting: '—', completed: '—', exception: '—', completionRate: '—'
+};
+
+function trendTicksFor(trend) {
+  const peak = (trend || []).reduce((value, item) => Math.max(value, Number(item.activity || 0)), 0);
+  if (peak <= 4) {
+    const top = Math.max(1, Math.ceil(peak));
+    return Array.from({ length: top + 1 }, (_, index) => top - index);
+  }
+
+  const rawStep = peak / 4;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
+  const normalized = rawStep / magnitude;
+  const niceFactor = [1, 2, 2.5, 5, 10].find(candidate => normalized <= candidate) || 10;
+  const step = Math.max(1, Math.ceil(niceFactor * magnitude));
+  const top = Math.ceil(peak / step) * step;
+  return Array.from({ length: top / step + 1 }, (_, index) => top - index * step);
 }
 
-function parseDepartmentNames(user) {
-  if (!user || !user.department_names) return [];
-  if (Array.isArray(user.department_names)) return user.department_names;
-  try {
-    const parsed = JSON.parse(user.department_names);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (e) {
-    return [];
-  }
+function permissionsReader() {
+  const permissions = wx.getStorageSync('erp_permissions') || [];
+  return code => Array.isArray(permissions) ? permissions.includes(code) : permissions[code] === true;
 }
 
 Page({
@@ -36,21 +31,18 @@ Page({
     loading: true,
     loaded: false,
     authenticated: false,
-    userName: '',
-    userDisplayName: '—',
-    stats: { running: '—', pending: '—', completed: '—' },
+    overview: EMPTY_OVERVIEW,
+    trend: [],
+    trendTicks: [],
     shortcuts: [
-      { key: 'orders', title: '生产工单', icon: 'orders-o', count: null },
-      { key: 'pool', title: '待接任务', icon: 'records', count: 0 },
-      { key: 'tasks', title: '我的任务', icon: 'notes-o', count: 0 },
-      { key: 'collaboration', title: '我的协同', icon: 'friends-o', count: 0 },
-      { key: 'receipts', title: '物料签收', icon: 'sign', count: 0 },
-      { key: 'handover', title: '工序交接', icon: 'exchange', count: 0 },
-      { key: 'kitting', title: '待齐套', icon: 'passed', count: 0 }
-    ],
-    currentTasks: []
+      { key: 'orders', title: '生产工单', subtitle: '查看整体进度', icon: 'orders-o', count: null },
+      { key: 'warehouse', title: '仓库管理', subtitle: '入库 / 发料 / 退料', icon: 'home-o', count: null },
+      { key: 'picking', title: '配料订单', subtitle: '配送 / 领料 / 签收', icon: 'cluster-o', count: null },
+      { key: 'tasks', title: '我的任务', subtitle: '接单 / 齐套 / 开工', icon: 'records', count: null }
+    ]
   },
 
+  onReady() { this.drawTrendChart(); },
   onShow() { this.load(); },
   onPullDownRefresh() { this.load().finally(() => wx.stopPullDownRefresh()); },
   onUnload() { this.requestSequence = (this.requestSequence || 0) + 1; },
@@ -58,104 +50,140 @@ Page({
   load() {
     const sequence = this.requestSequence = (this.requestSequence || 0) + 1;
     if (!wx.getStorageSync('erp_token')) {
-      this.setData({ authenticated: false, loaded: false, loading: false, currentTasks: [] });
+      this.setData({ authenticated: false, loaded: false, loading: false, overview: EMPTY_OVERVIEW, trend: [], trendTicks: [] });
       return Promise.resolve();
     }
-    const erpUser = wx.getStorageSync('erp_user') || {};
-    const name = erpUser.nickname || erpUser.username || '—';
-    const depts = parseDepartmentNames(erpUser);
-    const userDisplayName = depts.length ? `${name} · ${depts[0]}` : name;
 
+    const can = permissionsReader();
+    const optional = (allowed, request) => allowed ? request().catch(() => null) : Promise.resolve(null);
     this.setData({
       authenticated: true,
       loading: true,
       loaded: false,
-      currentTasks: [],
-      stats: { running: '—', pending: '—', completed: '—' },
-      shortcuts: this.data.shortcuts.map(item => Object.assign({}, item, { count: null })),
-      userName: name,
-      userDisplayName
+      overview: EMPTY_OVERVIEW,
+      trend: [],
+      trendTicks: [],
+      shortcuts: this.data.shortcuts.map(item => Object.assign({}, item, { count: null }))
     });
-
-    // 无权限不发请求；有权限但请求失败必须保留错误，不能把网络错误转成零待办。
-    const permissions = wx.getStorageSync('erp_permissions') || [];
-    const can = code => Array.isArray(permissions) ? permissions.includes(code) : permissions[code] === true;
-    const read = (permission, request) => can(permission) ? request() : Promise.resolve(null);
 
     return Promise.all([
-      read('production.work_order.view', () => production.masterOrders({ page: 1, per_page: 1 })),
-      read('production.task.view', () => production.taskPool({ page: 1, per_page: 20 })),
-      read('production.task.view', () => production.myTasks({ page: 1, per_page: 20, execution_filter: 'current', include_stats: 1 })),
-      read('production.task.view', () => production.collaborations({ page: 1, per_page: 20 })),
-      read('production.material_delivery.view', () => production.deliveries({ status: 'DELIVERED', page: 1, per_page: 20 })),
-      read('production.handover.view', () => production.pendingHandovers({ page: 1, per_page: 20 }))
-    ]).then(([orders, pool, owned, collaboration, receipts, handovers]) => {
+      production.workbenchSummary(),
+      optional(can('production.work_order.view'), () => production.masterOrders({ page: 1, per_page: 1 })),
+      optional(can('production.task.view'), () => production.outputs({ status: 'WAIT_WAREHOUSE', page: 1, per_page: 1 })),
+      optional(can('production.material_picking.view'), () => production.pickingTasks({ status_group: 'active', page: 1, per_page: 1 }))
+    ]).then(([summaryResponse, orders, warehouse, picking]) => {
       if (sequence !== this.requestSequence) return;
-      const tasks = ((owned && owned.data) || []).reduce((rows, task) => rows.concat((task.target_details || [])
-        .filter(target => ['IN_PROGRESS', 'PAUSED', 'WAIT_MATERIAL', 'READY'].includes(target.status)).map(target => taskView(task, target))), []).slice(0, 3);
-      const stats = owned && owned.stats;
-      const total = response => response ? response.total : null;
-      const counts = {
-        orders: total(orders),
-        pool: total(pool),
-        tasks: stats ? stats.total : null,
-        collaboration: total(collaboration),
-        receipts: total(receipts),
-        handover: total(handovers),
-        kitting: stats ? stats.kitting : null
+      const summary = summaryResponse.data || {};
+      const total = Number(summary.total || 0);
+      const trend = (Array.isArray(summary.trend) ? summary.trend : []).map(item => Object.assign({}, item, {
+        activity: Math.max(Number(item.assigned || 0), Number(item.completed || 0))
+      }));
+      const countByKey = {
+        orders: orders ? Number(orders.total || 0) : null,
+        warehouse: warehouse ? Number(warehouse.total || 0) : null,
+        picking: picking ? Number(picking.total || 0) : null,
+        tasks: total
       };
-
       this.setData({
-        stats: stats ? { running: stats.running, pending: stats.waiting, completed: stats.completed_today } : { running: '—', pending: '—', completed: '—' },
-        shortcuts: this.data.shortcuts.map((item) => Object.assign({}, item, { count: counts[item.key] })),
-        currentTasks: tasks,
+        overview: {
+          total,
+          running: Number(summary.running || 0),
+          waiting: Number(summary.waiting || 0),
+          completed: Number(summary.completed || 0),
+          exception: Number(summary.exception || 0),
+          completionRate: `${Number(summary.completion_rate || 0).toFixed(1).replace(/\.0$/, '')}%`
+        },
+        trend,
+        trendTicks: trendTicksFor(trend),
+        shortcuts: this.data.shortcuts.map(item => Object.assign({}, item, { count: countByKey[item.key] })),
         loading: false,
-        loaded: !!owned
+        loaded: true
       });
-
-      if (can('production.kitting.view')) tasks.forEach((task, index) => {
-        if (task.targetStatus !== 'WAIT_MATERIAL') return;
-        production.kittingRequirements(task.id, task.targetType, task.targetId).then(response => {
-          if (sequence !== this.requestSequence) return;
-          const count = (response.data || []).filter(row => Number(row.shortage_base_qty) > 0).length;
-          this.setData({ [`currentTasks[${index}].shortageText`]: count ? `缺 ${count} 项物料` : '物料已满足' });
-        }).catch(error => {
-          if (sequence === this.requestSequence) wx.showToast({ title: error.message, icon: 'none' });
-        });
-      });
+      this.scheduleChartDraw();
     }).catch(error => {
       if (sequence !== this.requestSequence) return;
-      this.setData({ loading: false, loaded: false, authenticated: !!wx.getStorageSync('erp_token') });
-      wx.showToast({ title: error.message || '加载失败，请下拉重试', icon: 'none' });
+      this.setData({ loading: false, loaded: false, overview: EMPTY_OVERVIEW, trend: [], trendTicks: [] });
+      wx.showToast({ title: error.message || '生产概况加载失败，请下拉重试', icon: 'none' });
     });
+  },
+
+  scheduleChartDraw() {
+    if (typeof wx.nextTick === 'function') wx.nextTick(() => this.drawTrendChart());
+    else this.drawTrendChart();
+  },
+
+  drawTrendChart() {
+    if (!this.data.trend.length || typeof wx.createSelectorQuery !== 'function' || typeof wx.createCanvasContext !== 'function') return;
+    wx.createSelectorQuery().in(this).select('#trendCanvas').boundingClientRect(rect => {
+      if (!rect || !rect.width || !rect.height) return;
+      const context = wx.createCanvasContext('trendChart', this);
+      const width = rect.width;
+      const height = rect.height;
+      const values = this.data.trend.map(item => Number(item.activity || 0));
+      const maxValue = Number(this.data.trendTicks[0]) || Math.max(1, ...values);
+      const gap = width / this.data.trend.length;
+      const top = 8;
+      const bottom = height - 4;
+      const plotHeight = bottom - top;
+
+      context.setStrokeStyle('#e6eaf0');
+      context.setLineWidth(1);
+      context.setLineDash([3, 3], 0);
+      this.data.trendTicks.forEach(tick => {
+        const y = top + plotHeight * (1 - Number(tick) / maxValue);
+        context.beginPath(); context.moveTo(0, y); context.lineTo(width, y); context.stroke();
+      });
+      context.setLineDash([], 0);
+
+      const points = [];
+      this.data.trend.forEach((item, index) => {
+        const x = gap * index + gap / 2;
+        const assignedValue = Number(item.assigned || 0);
+        const completedValue = Number(item.completed || 0);
+        const activityValue = Number(item.activity || 0);
+        const assignedHeight = assignedValue > 0 ? Math.max(3, assignedValue / maxValue * plotHeight) : 0;
+        const completedHeight = completedValue > 0 ? Math.max(2, completedValue / maxValue * plotHeight) : 0;
+        const activityHeight = activityValue > 0 ? Math.max(2, activityValue / maxValue * plotHeight) : 0;
+        const barWidth = Math.min(20, gap * 0.44);
+        context.setFillStyle('rgba(232, 43, 25, 0.14)');
+        context.fillRect(x - barWidth / 2, bottom - assignedHeight, barWidth, assignedHeight);
+        context.setFillStyle('rgba(232, 43, 25, 0.48)');
+        context.fillRect(x - barWidth / 2, bottom - completedHeight, barWidth, completedHeight);
+        points.push([x, bottom - activityHeight]);
+      });
+
+      context.setStrokeStyle('#e52613');
+      context.setLineWidth(2);
+      context.beginPath();
+      points.forEach((point, index) => index ? context.lineTo(point[0], point[1]) : context.moveTo(point[0], point[1]));
+      context.stroke();
+      points.forEach(point => {
+        context.setFillStyle('#ffffff'); context.beginPath(); context.arc(point[0], point[1], 4, 0, Math.PI * 2); context.fill();
+        context.setFillStyle('#e52613'); context.beginPath(); context.arc(point[0], point[1], 2.5, 0, Math.PI * 2); context.fill();
+      });
+      context.draw();
+    }).exec();
   },
 
   openShortcut(event) {
     const key = event.currentTarget.dataset.key;
     if (key === 'orders') return wx.navigateTo({ url: '/pages/production/tasks/index' });
     if (key === 'tasks') return wx.navigateTo({ url: '/pages/production/my-tasks/index' });
-    wx.navigateTo({ url: `/pages/production/queue/index?type=${key}` });
+    if (key === 'picking') return wx.navigateTo({ url: '/pages/production/queue/index?type=picking' });
+    if (key === 'warehouse') {
+      wx.showActionSheet({
+        itemList: ['生产入库', '半成品发料', '生产退料收货'],
+        success: result => {
+          const types = ['outputs_warehouse', 'internal_dispatch', 'return_receive'];
+          wx.navigateTo({ url: `/pages/production/queue/index?type=${types[result.tapIndex]}` });
+        }
+      });
+    }
   },
 
   goTasksWithFilter(event) {
-    const filter = event.currentTarget.dataset.filter || 'all';
-    wx.navigateTo({ url: `/pages/production/my-tasks/index?execution_filter=${filter}` });
+    wx.navigateTo({ url: `/pages/production/my-tasks/index?execution_filter=${event.currentTarget.dataset.filter || 'all'}` });
   },
 
-  goAllTasks() {
-    wx.navigateTo({ url: '/pages/production/my-tasks/index' });
-  },
-
-  openTask(event) {
-    wx.navigateTo({ url: `/pages/production/task-detail/index?id=${event.currentTarget.dataset.id}` });
-  },
-
-  onTaskAction(event) {
-    const id = event.currentTarget.dataset.id;
-    wx.navigateTo({ url: `/pages/production/task-detail/index?id=${id}` });
-  },
-
-  openLogin() {
-    util.BadgePopup();
-  }
+  openLogin() { util.BadgePopup(); }
 });

@@ -86,7 +86,7 @@ class SalesToProductionFullFlowTest extends TestCase
         $this->withToken($this->token($user->legacy_id))
             ->postJson('/api/v1/erp/sales/orders/'.$f['order']->id.'/formal-confirm')
             ->assertOk()
-            ->assertJsonPath('message', '订单已确认，系统已按实时库存锁定履约并建立所需生产层级。')
+            ->assertJsonPath('message', '订单已确认，系统已按实时库存锁定备货数量并建立所需生产层级。')
             ->assertJsonPath('data.lines.0.commercial_role', 'gift');
         $confirmed = SalesOrder::query()->with('fulfillments')->findOrFail($f['order']->id);
 
