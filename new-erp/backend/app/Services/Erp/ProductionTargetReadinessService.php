@@ -33,6 +33,7 @@ class ProductionTargetReadinessService
             ->where('supply.participates_in_kitting_snapshot', true)
             ->get([
                 'requirement.id', 'requirement.component_item_id', 'requirement.required_base_qty',
+                'requirement.cut_length_mm_snapshot', 'requirement.required_piece_qty_snapshot',
                 'requirement.satisfied_base_qty', 'requirement.returned_base_qty', 'supply.supply_mode_snapshot',
                 'check.onsite_available_base_qty_snapshot', 'check.shortage_base_qty_snapshot', 'check.result',
             ]);
@@ -78,6 +79,8 @@ class ProductionTargetReadinessService
             'component_item_id' => (int) $row->component_item_id,
             'supply_mode' => $mode,
             'required_base_qty' => (float) $row->required_base_qty,
+            'cut_length_mm' => $row->cut_length_mm_snapshot === null ? null : (float) $row->cut_length_mm_snapshot,
+            'required_piece_qty' => $row->required_piece_qty_snapshot === null ? null : (float) $row->required_piece_qty_snapshot,
             'available_base_qty' => $available,
             'shortage_base_qty' => $shortage,
         ];

@@ -58,6 +58,7 @@
           <el-table :data="result.lines" border size="small">
             <el-table-column prop="component_item_code" label="物料Item" width="135" />
             <el-table-column prop="component_item_name" label="物料名称" min-width="160" show-overflow-tooltip />
+            <el-table-column label="下料要求" width="155"><template slot-scope="{row}">{{ cutRequirement(row, true) }}</template></el-table-column>
             <el-table-column prop="unit_name" label="单位" width="70" />
             <el-table-column prop="planned_qty" label="计划数量" width="90" />
             <el-table-column prop="demand_qty" label="汇总需求" width="100" />
@@ -85,6 +86,7 @@
             </el-table-column>
             <el-table-column prop="component_item_code" label="物料Item" width="135" />
             <el-table-column prop="component_item_name" label="物料名称" min-width="140" show-overflow-tooltip />
+            <el-table-column label="下料要求" width="155"><template slot-scope="{row}">{{ cutRequirement(row, false) }}</template></el-table-column>
             <el-table-column prop="unit_qty" label="单位用量" width="90" />
             <el-table-column prop="loss_rate" label="损耗率(%)" width="95" />
             <el-table-column prop="fixed_qty" label="固定用量" width="90" />
@@ -157,6 +159,11 @@ export default {
     if (this.form.bom_id) this.expand()
   },
   methods: {
+    cutRequirement(row, aggregate) {
+      if (row.cut_length_mm === null || row.cut_length_mm === undefined) return '无需下料'
+      const pieces = aggregate ? row.required_piece_qty : row.piece_qty
+      return `${Number(row.cut_length_mm).toLocaleString('zh-CN')}mm × ${Number(pieces).toLocaleString('zh-CN')}段`
+    },
     async loadRefs() {
       const [b, s] = await Promise.all([listBoms({ per_page: 100 }), listEntity('skus', { per_page: 100 })])
       this.boms = b.data.data || []

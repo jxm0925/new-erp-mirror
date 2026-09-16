@@ -16,6 +16,7 @@ class SalesOrderLineService
         private readonly SkuItemMatcher $matcher,
         private readonly SalesOrderAttachmentService $attachments,
         private readonly UnitConversionDomainService $conversions,
+        private readonly LengthCutRequirementService $lengthCutRequirements,
     ) {
     }
 
@@ -108,6 +109,7 @@ class SalesOrderLineService
             ? $line['configuration_snapshot']
             : [];
         unset($configuration['electric'], $configuration['need_pump']);
+        $configuration = $this->lengthCutRequirements->normalizeConfiguration($configuration);
 
         $price = round((float) ($line['unit_price'] ?? 0), 4);
         $discountRate = round((float) ($line['discount_rate'] ?? 1), 6);

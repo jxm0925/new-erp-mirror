@@ -61,7 +61,7 @@ class MasterDataController extends Controller
                 }
             });
         }
-        foreach (['status', 'product_id', 'category_id', 'unit_id', 'warehouse_id', 'item_type', 'unit_type', 'category_type', 'supplier_type', 'approval_status', 'cooperation_status', 'quality_status', 'is_purchase_item'] as $field) {
+        foreach (['status', 'product_id', 'category_id', 'unit_id', 'warehouse_id', 'item_type', 'unit_type', 'category_type', 'supplier_type', 'approval_status', 'cooperation_status', 'quality_status', 'is_purchase_item', 'is_length_cut_material'] as $field) {
             if (!$request->filled($field)) continue;
             if ($request->route('entity') === 'suppliers' && $field === 'category_id') {
                 $categoryId = $request->integer('category_id');
@@ -170,6 +170,7 @@ class MasterDataController extends Controller
             $this->assertValidItemCategory($data['category_id'] ?? null, false);
             $this->assertStandardBusinessUnit((int) $data['unit_id']);
             $this->normalizeItemSerialTracking($data);
+            $this->normalizeItemLengthCut($data);
         }
         if (in_array($request->route('entity'), ['products', 'skus', 'items', 'suppliers', 'warehouses', 'locations'], true)) {
             $data = array_merge($data, $request->validate([
@@ -201,7 +202,10 @@ class MasterDataController extends Controller
             abort(422, 'Item 类目请使用专用 Item 类目接口维护。');
         }
         if ($request->route('entity') === 'items' && !empty($data['category_id'])) $this->assertValidItemCategory($data['category_id'], true);
-        if ($record instanceof Item) $this->normalizeItemSerialTracking($data, $record);
+        if ($record instanceof Item) {
+            $this->normalizeItemSerialTracking($data, $record);
+            $this->normalizeItemLengthCut($data, $record);
+        }
         if ($record instanceof Item && array_key_exists('unit_id', $data)
             && (int) $data['unit_id'] !== (int) $record->unit_id) {
             abort_if($this->itemBaseUnitLocked((int) $record->id), 422, '该 Item 已产生业务数据，基本单位不能直接修改。');
@@ -269,6 +273,17 @@ class MasterDataController extends Controller
     {
         abort_unless(filled($item->item_code) && filled($item->item_name) && filled($item->item_type), 422, 'Item 编码、名称和类型完整后才能启用。');
         abort_unless($item->unit_id && Unit::whereKey($item->unit_id)->where('status', 'enabled')->exists(), 422, '请先维护有效的基本单位后再启用。');
+        abort_if($item->is_length_cut_material && (float) $item->standard_stock_length_mm <= 0, 422, '长度下料类 Item 必须先维护标准原料长度。');
+    }
+
+    private function normalizeItemLengthCut(array &$data, ?Item $item = null): void
+    {
+        $enabled = array_key_exists('is_length_cut_material', $data)
+            ? (bool) $data['is_length_cut_material']
+            : (bool) $item?->is_length_cut_material;
+        $length = $data['standard_stock_length_mm'] ?? $item?->standard_stock_length_mm;
+        abort_if($enabled && (float) $length <= 0, 422, '长度下料类 Item 必须维护标准原料长度。');
+        if (! $enabled) $data['standard_stock_length_mm'] = null;
     }
 
     private function assertCanBeDisabled(object $record): void
@@ -520,6 +535,9 @@ class MasterDataController extends Controller
                 'item_code' => $unique('erp_items', 'item_code'), 'item_name' => 'required|string|max:160',
                 'item_type' => 'required|in:finished_product,semi_finished,raw_material,packaging,service,office_consumable',
                 'category_id' => [$id ? 'nullable' : 'required', 'integer', 'exists:erp_item_categories,id'], 'spec' => 'nullable|string|max:255',
+                'material_grade' => 'nullable|string|max:80',
+                'standard_stock_length_mm' => 'nullable|numeric|min:0.01|max:9999999999.99',
+                'is_length_cut_material' => 'boolean',
                 'unit_id' => 'required|exists:erp_units,id', 'brand' => 'nullable|string|max:100', 'model' => 'nullable|string|max:100',
                 'is_purchase_item' => 'boolean', 'is_stock_item' => 'boolean', 'is_production_item' => 'boolean',
                 'is_batch_managed' => 'boolean', 'is_serial_managed' => 'boolean',

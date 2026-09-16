@@ -20,6 +20,7 @@ class ReleaseGateApplicationService
         private readonly ProductionDataScopeResolver $scopeResolver,
         private readonly ProductionExecutionFoundationService $productionExecution,
         private readonly SalesOrderFundingGateService $fundingGates,
+        private readonly LengthCutRequirementService $lengthCutRequirements,
     ) {
     }
 
@@ -56,6 +57,7 @@ class ReleaseGateApplicationService
             (int) (($demand?->product_id ?? 0) ?: ($line->product_id ?? 0)) ?: null,
             (int) (($demand?->sku_id ?? 0) ?: ($line->sku_id ?? 0)) ?: null,
             (int) (($workOrder->output_item_id ?? 0) ?: ($demand?->item_id ?? 0) ?: ($line->item_id ?? 0)) ?: null,
+            $demand?->configuration_snapshot ?: $line?->configuration_snapshot,
         );
         $bom = null;
         if (! empty($match['bom_id'])) {
@@ -118,7 +120,7 @@ class ReleaseGateApplicationService
             'immutable' => false,
             'work_order_id' => (int) $workOrder->id,
             'work_order_version' => (int) $workOrder->business_version,
-            'bom' => $this->bomProjection($bom),
+            'bom' => $this->bomProjection($bom, $match['bom_snapshot'] ?? null),
             'checks' => $checks,
             'blockers' => array_values(array_filter($checks, fn (array $check): bool => $check['status'] !== 'passed')),
             'evaluated_at' => now()->toISOString(),
@@ -145,26 +147,37 @@ class ReleaseGateApplicationService
             ->paginate($perPage, ['*'], 'page', $page);
     }
 
-    public function buildMaterialRows(WorkOrder $workOrder, Bom $bom): array
+    public function buildMaterialRows(WorkOrder $workOrder, Bom $bom, ?array $configuration = null): array
     {
-        return $bom->items->values()->map(function ($line, int $index) use ($workOrder, $bom): array {
+        $resolved = $this->lengthCutRequirements->resolveBomLines($bom, $configuration);
+
+        return $resolved->map(function (array $line, int $index) use ($workOrder, $bom): array {
+            $template = $bom->items->firstWhere('id', (int) $line['id']);
             $plannedOutput = (float) $workOrder->target_base_qty;
-            $perOutput = (float) $line->qty;
-            $lossRate = (float) $line->loss_rate;
-            $fixedQty = (float) $line->fixed_qty;
+            $perOutput = (float) $line['qty'];
+            $lossRate = (float) $line['loss_rate'];
+            $fixedQty = (float) $line['fixed_qty'];
             $required = round($perOutput * $plannedOutput * (1 + $lossRate / 100) + $fixedQty, 8);
-            $unit = $line->unit ?: $line->componentItem?->unit;
-            $baseUnit = $line->componentItem?->unit ?: $unit;
+            $unit = $template?->unit ?: $template?->componentItem?->unit;
+            $baseUnit = $template?->componentItem?->unit ?: $unit;
+            $perOutputPieces = $line['piece_qty'] === null ? null : (float) $line['piece_qty'];
+            $requiredPieces = $perOutputPieces === null ? null : round($perOutputPieces * $plannedOutput, 8);
+            if ($requiredPieces !== null && abs($requiredPieces - round($requiredPieces)) > 0.00000001) {
+                $this->fail('cut_piece_quantity_not_integer', "下料需求 {$line['component_item_name']} {$line['cut_length_mm']}mm 的总段数必须是整数。", 422);
+            }
 
             return [
                 'work_order_id' => $workOrder->id,
-                'line_no' => (int) ($line->line_no ?: (($index + 1) * 10)),
+                'line_no' => (int) ($line['line_no'] ?: (($index + 1) * 10)),
                 'bom_id' => $bom->id,
-                'bom_item_id' => $line->id,
-                'component_item_id' => $line->component_item_id,
-                'component_item_code_snapshot' => $line->component_item_code ?: $line->componentItem?->item_code,
-                'component_item_name_snapshot' => $line->component_item_name ?: $line->componentItem?->item_name,
-                'component_spec_snapshot' => $line->componentItem?->spec,
+                'bom_item_id' => $line['id'],
+                'component_item_id' => $line['component_item_id'],
+                'component_item_code_snapshot' => $line['component_item_code'] ?: $template?->componentItem?->item_code,
+                'component_item_name_snapshot' => $line['component_item_name'] ?: $template?->componentItem?->item_name,
+                'component_spec_snapshot' => $template?->componentItem?->spec,
+                'cut_length_mm_snapshot' => $line['cut_length_mm'],
+                'per_output_piece_qty' => $perOutputPieces,
+                'required_piece_qty' => $requiredPieces,
                 'unit_id' => $unit?->id,
                 'unit_name_snapshot' => $unit?->unit_name,
                 'per_output_qty' => $perOutput,
@@ -237,7 +250,7 @@ class ReleaseGateApplicationService
         ];
     }
 
-    private function bomProjection(?Bom $bom): ?array
+    private function bomProjection(?Bom $bom, ?array $resolvedSnapshot = null): ?array
     {
         if (! $bom) return null;
 
@@ -246,7 +259,9 @@ class ReleaseGateApplicationService
             'bom_no' => $bom->bom_no,
             'bom_name' => $bom->bom_name,
             'version' => $bom->version,
-            'line_count' => $bom->items->count(),
+            'line_count' => count($resolvedSnapshot['items'] ?? $bom->items),
+            'resolution_source' => $resolvedSnapshot['resolution_source'] ?? 'approved_bom',
+            'resolved_items' => $resolvedSnapshot['items'] ?? null,
         ];
     }
 

@@ -7,6 +7,7 @@ Do not change layout without approval.
   <section class="sales-form-page">
     <product-sku-picker ref="productSkuPicker" @select="applyPicker" />
     <customer-picker ref="customerPicker" @select="applyCustomer" />
+    <purchase-item-picker ref="cutItemPicker" @select-multiple="applyCutItems" />
     <order-edit-impact-dialog
       :visible.sync="impactDialogVisible"
       :changes="impactPreview.changes"
@@ -390,7 +391,21 @@ Do not change layout without approval.
             </div>
           </section>
           <section>
-            <h3><b>5</b> 设计图纸与技术资料</h3>
+            <h3><b>5</b> 生产下料要求 <small>记录段数与每段长度，不新建长度 Item</small></h3>
+            <div class="cut-config-actions"><el-button size="mini" plain type="success" icon="el-icon-plus" @click="openCutItemPicker">选择长度下料 Item</el-button></div>
+            <div v-if="cutRequirements(selectedLine).length" class="cut-config-list">
+              <article v-for="(row,index) in cutRequirements(selectedLine)" :key="`${row.component_item_id}-${index}`">
+                <header><strong>{{ row.component_item_code || `Item #${row.component_item_id}` }} / {{ row.component_item_name || '长度下料物料' }}</strong><el-button type="text" class="danger-link" @click="removeCutRequirement(index)">删除</el-button></header>
+                <div><label>每段长度</label><el-input-number v-model="row.cut_length_mm" size="mini" :min="0.01" :max="Number(row.standard_stock_length_mm || 9999999999)" :precision="2" :controls="false" /><span>mm</span></div>
+                <div><label>段数</label><el-input-number v-model="row.piece_qty" size="mini" :min="1" :precision="0" :controls="false" /><span>段</span></div>
+                <el-input v-model.trim="row.remark" size="mini" maxlength="500" placeholder="下料/工艺备注（可选）" />
+                <el-button size="mini" type="text" @click="duplicateCutRequirement(index)">同一 Item 增加另一长度</el-button>
+              </article>
+            </div>
+            <el-alert v-else type="info" :closable="false" title="普通物料无需填写；只有方管、型材等长度下料类 Item 才能加入。" />
+          </section>
+          <section>
+            <h3><b>6</b> 设计图纸与技术资料</h3>
             <div class="upload-row">
               <el-select v-model="fileCategory" size="mini">
                 <el-option label="设计图纸" value="设计图纸" />
@@ -486,6 +501,7 @@ import SalesOrderAttachmentPreviewDialog from '@/components/sales/SalesOrderAtta
 import OrderEditImpactDialog from '@/components/sales/OrderEditImpactDialog.vue'
 import { legacyMediaUrl } from '@/utils/legacyMedia'
 import CustomerPicker from '@/components/sales/CustomerPicker.vue'
+import PurchaseItemPicker from '@/components/purchase/PurchaseItemPicker.vue'
 import { getSalesOrder, saveSalesOrder, confirmSalesOrder, getSalesOrderOptions, uploadSalesOrderAttachment, deleteSalesOrderAttachment, downloadSalesOrderAttachment, previewSalesOrderEditImpact, submitSalesOrderEditImpact } from '@/api/erp/sales'
 import { reserveForCreatePage, clearCreatePageReservation } from '@/utils/documentNumberReservation'
 
@@ -520,7 +536,7 @@ const emptyLine = () => ({
 })
 
 export default {
-  components: { ProductSkuPicker, CustomerPicker, SalesOrderAttachmentPreviewDialog, OrderEditImpactDialog },
+  components: { ProductSkuPicker, CustomerPicker, PurchaseItemPicker, SalesOrderAttachmentPreviewDialog, OrderEditImpactDialog },
   data: () => ({
     selectedLine: null,
     fileCategory: '设计图纸',
@@ -1297,6 +1313,41 @@ export default {
       if (sku.special_custom_description_required && !String((line.configuration_snapshot || {}).special_custom_description || '').trim()) return '请填写特殊定制配置说明'
       return ''
     },
+    cutRequirements(line) {
+      if (!line) return []
+      if (!line.configuration_snapshot) this.$set(line, 'configuration_snapshot', {})
+      if (!Array.isArray(line.configuration_snapshot.cut_requirements)) this.$set(line.configuration_snapshot, 'cut_requirements', [])
+      return line.configuration_snapshot.cut_requirements
+    },
+    openCutItemPicker() {
+      const selected = this.cutRequirements(this.selectedLine).map(row => ({ ...row, id: row.component_item_id, item_code: row.component_item_code, item_name: row.component_item_name }))
+      this.$refs.cutItemPicker.open({
+        multiple: true,
+        selected,
+        params: { status: 'enabled', is_purchase_item: 1, is_length_cut_material: 1 },
+        title: '选择长度下料 Item',
+        tip: '仅显示真实采购/库存的长度下料 Item。可跨分类、搜索和分页多选；长度与段数返回订单行后填写。'
+      })
+    },
+    applyCutItems(items) {
+      const existing = this.cutRequirements(this.selectedLine)
+      const retained = existing.filter(row => items.some(item => Number(item.id) === Number(row.component_item_id)))
+      items.forEach(item => {
+        if (retained.some(row => Number(row.component_item_id) === Number(item.id))) return
+        retained.push({ component_item_id: item.id, component_item_code: item.item_code, component_item_name: item.item_name, material_grade: item.material_grade || null, standard_stock_length_mm: Number(item.standard_stock_length_mm), cut_length_mm: null, piece_qty: 1, remark: '' })
+      })
+      this.$set(this.selectedLine.configuration_snapshot, 'cut_requirements', retained)
+    },
+    duplicateCutRequirement(index) {
+      const rows = this.cutRequirements(this.selectedLine)
+      const source = rows[index]
+      rows.splice(index + 1, 0, { ...source, cut_length_mm: null, piece_qty: 1, remark: '' })
+    },
+    removeCutRequirement(index) { this.cutRequirements(this.selectedLine).splice(index, 1) },
+    lineCutMessage(line) {
+      const invalid = this.cutRequirements(line).find(row => !(Number(row.cut_length_mm) > 0) || !(Number(row.piece_qty) > 0) || !Number.isInteger(Number(row.piece_qty)))
+      return invalid ? '下料要求必须填写大于 0 的每段长度和整数段数' : ''
+    },
     applyImpactPreview(impact) {
       const summary = impact.approval_summary || {}
       const approvalLabels = { business: '业务审核', finance: '财务审核', fulfillment: '库存与交付复核' }
@@ -1348,6 +1399,8 @@ export default {
       if (andConfirm && invalidAttribute) return this.$message.error(`订单行 ${this.form.lines.indexOf(invalidAttribute) + 1}：${this.lineAttributeMessage(invalidAttribute)}`)
       const invalidCustomization = this.form.lines.find(line => this.lineCustomizationMessage(line))
       if (andConfirm && invalidCustomization) return this.$message.error(`订单行 ${this.form.lines.indexOf(invalidCustomization) + 1}：${this.lineCustomizationMessage(invalidCustomization)}`)
+      const invalidCut = this.form.lines.find(line => this.lineCutMessage(line))
+      if (invalidCut) return this.$message.error(`订单行 ${this.form.lines.indexOf(invalidCut) + 1}：${this.lineCutMessage(invalidCut)}`)
       this.syncHeaderFlags()
       const carrier = this.carrierOptions.find(item => String(item.id) === String(this.form.carrier_id))
       const payload = {
@@ -1436,7 +1489,7 @@ export default {
 </script>
 
 <style scoped>
-.sales-form-page{position:relative;z-index:5;margin-top:-52px;min-height:100vh;background:#f7f8fa;color:#172033}.form-toolbar{height:52px;padding:0 20px;display:flex;align-items:center;justify-content:space-between;background:#fff;border-bottom:1px solid #e5e9ef}.page-title{display:flex;align-items:center;gap:12px;font-size:18px;font-weight:700}.back-btn{border:0;background:transparent;font-size:20px;cursor:pointer}.toolbar-actions{display:flex;gap:10px}.top-tip{margin:10px 14px}.form-tabs{height:40px;padding:0 18px;display:flex;gap:28px;background:#fff;border-bottom:1px solid #e5e9ef}.form-tabs button{border:0;background:transparent;border-bottom:2px solid transparent;font-weight:600;color:#475569;cursor:pointer}.form-tabs button.active{color:#00984f;border-color:#00984f}.form-layout{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:12px;padding:12px}.top-cards{display:grid;grid-template-columns:1.05fr 1.05fr .95fr;gap:10px}.panel{min-width:0;background:#fff;border:1px solid #e4e9f0;border-radius:5px}.panel h3{margin:0;padding:14px 16px 10px;font-size:15px}.panel h3 small{font-size:12px;color:#8b96a5;font-weight:400}.info-grid{padding:0 16px 16px;display:grid;grid-template-columns:90px minmax(0,1fr) 82px;gap:10px;align-items:center}.info-grid.two{grid-template-columns:110px minmax(0,1fr)}.info-grid label,.flag-grid label{font-weight:600;color:#455466}.required::before{content:'*';color:#f5222d;margin-right:4px}.flag-grid{padding:0 16px 10px;display:grid;grid-template-columns:120px minmax(0,1fr);gap:12px;align-items:center}.panel-note{margin:0 16px 14px;color:#8b96a5}.order-lines{margin-top:10px}.section-title{padding:12px 16px;display:flex;align-items:center;justify-content:space-between}.section-title h3{padding:0}.line-tip{margin:0 16px 10px;width:auto}.line-total{height:42px;padding:0 14px;display:flex;align-items:center;gap:42px;border-top:1px solid #edf0f4}.line-total span{margin-right:auto}.dash{color:#94a3b8}.danger-link{color:#dc2626}.select-cell{width:100%;overflow:hidden;text-overflow:ellipsis}.readonly-match{color:#64748b}.bottom-grid{margin-top:10px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}.small-panel{min-height:116px}.inline-form{padding:0 16px 14px;display:grid;grid-template-columns:auto auto auto auto;gap:10px;align-items:center}.logistics-grid{padding:0 16px 14px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}.attachment-row{padding:0 16px 14px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}.attachment-row div{height:68px;border:1px dashed #d8e0ea;border-radius:5px;display:grid;place-items:center;text-align:center;color:#64748b}.attachment-row i{font-size:18px;color:#00984f}.attachment-row small{display:block;font-size:11px;color:#94a3b8}.summary-bar{margin-top:10px;height:70px;background:#fff;border:1px solid #e4e9f0;border-radius:5px;display:grid;grid-template-columns:1.5fr repeat(4,1fr)}.summary-bar div{padding:14px 18px;border-right:1px solid #edf0f4}.summary-bar div:last-child{border-right:0}.summary-bar span{display:block;color:#64748b}.summary-bar b{font-size:22px;color:#0f172a}.line-drawer{background:#fff;border:1px solid #e4e9f0;border-radius:5px;align-self:start;position:sticky;top:64px}.drawer-head{height:50px;padding:0 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #e4e9f0}.drawer-head h2{font-size:16px;margin:0}.line-drawer section{padding:14px;border-bottom:1px solid #edf0f4}.line-drawer h3{margin:0 0 12px;font-size:14px}.line-drawer h3 b{display:inline-grid;place-items:center;width:18px;height:18px;margin-right:6px;border-radius:4px;background:#00984f;color:#fff}.product-card{display:grid;grid-template-columns:86px 1fr;gap:12px}.product-img{height:86px;border:1px solid #e4e9f0;border-radius:5px;display:grid;place-items:center;color:#94a3b8;font-size:30px}.product-img img{max-width:100%;max-height:100%;object-fit:cover}.product-card dl,.drawer-grid{display:grid;grid-template-columns:74px 1fr;gap:9px;align-items:center}.product-card dt{color:#64748b}.product-card dd{margin:0}.fulfill-box{padding:10px;background:#f8fafc;border:1px solid #e4e9f0;border-radius:5px;color:#475569}.upload-row{display:grid;grid-template-columns:1fr auto;gap:8px;margin-bottom:10px}.file-table{display:grid;grid-template-columns:minmax(0,1fr) 34px 34px 58px 34px;gap:8px;align-items:center}.file-table span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.file-table small{display:block;color:#94a3b8}.file-table em{font-style:normal;margin-left:4px;color:#00984f}.file-table a{color:#2563eb;cursor:pointer}.empty-files{padding:10px;border:1px dashed #d8e0ea;border-radius:5px;color:#94a3b8;text-align:center}.sales-form-page :deep(.el-button--success){background:#00984f;border-color:#00984f}.precheck-focus{outline:2px solid #f59e0b;outline-offset:2px;transition:outline-color .25s ease}.sales-form-page :deep(.el-input-number--mini){width:86px}.sales-form-page :deep(.el-table th){background:#f8fafc;color:#334155}@media(max-width:1400px){.top-cards{grid-template-columns:1fr}.form-layout{grid-template-columns:1fr}.line-drawer{position:static}.bottom-grid{grid-template-columns:1fr}.summary-bar{grid-template-columns:1fr 1fr}}
+.sales-form-page{position:relative;z-index:5;margin-top:-52px;min-height:100vh;background:#f7f8fa;color:#172033}.form-toolbar{height:52px;padding:0 20px;display:flex;align-items:center;justify-content:space-between;background:#fff;border-bottom:1px solid #e5e9ef}.page-title{display:flex;align-items:center;gap:12px;font-size:18px;font-weight:700}.back-btn{border:0;background:transparent;font-size:20px;cursor:pointer}.toolbar-actions{display:flex;gap:10px}.top-tip{margin:10px 14px}.form-tabs{height:40px;padding:0 18px;display:flex;gap:28px;background:#fff;border-bottom:1px solid #e5e9ef}.form-tabs button{border:0;background:transparent;border-bottom:2px solid transparent;font-weight:600;color:#475569;cursor:pointer}.form-tabs button.active{color:#00984f;border-color:#00984f}.form-layout{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:12px;padding:12px}.top-cards{display:grid;grid-template-columns:1.05fr 1.05fr .95fr;gap:10px}.panel{min-width:0;background:#fff;border:1px solid #e4e9f0;border-radius:5px}.panel h3{margin:0;padding:14px 16px 10px;font-size:15px}.panel h3 small{font-size:12px;color:#8b96a5;font-weight:400}.info-grid{padding:0 16px 16px;display:grid;grid-template-columns:90px minmax(0,1fr) 82px;gap:10px;align-items:center}.info-grid.two{grid-template-columns:110px minmax(0,1fr)}.info-grid label,.flag-grid label{font-weight:600;color:#455466}.required::before{content:'*';color:#f5222d;margin-right:4px}.flag-grid{padding:0 16px 10px;display:grid;grid-template-columns:120px minmax(0,1fr);gap:12px;align-items:center}.panel-note{margin:0 16px 14px;color:#8b96a5}.order-lines{margin-top:10px}.section-title{padding:12px 16px;display:flex;align-items:center;justify-content:space-between}.section-title h3{padding:0}.line-tip{margin:0 16px 10px;width:auto}.line-total{height:42px;padding:0 14px;display:flex;align-items:center;gap:42px;border-top:1px solid #edf0f4}.line-total span{margin-right:auto}.dash{color:#94a3b8}.danger-link{color:#dc2626}.select-cell{width:100%;overflow:hidden;text-overflow:ellipsis}.readonly-match{color:#64748b}.bottom-grid{margin-top:10px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}.small-panel{min-height:116px}.inline-form{padding:0 16px 14px;display:grid;grid-template-columns:auto auto auto auto;gap:10px;align-items:center}.logistics-grid{padding:0 16px 14px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}.attachment-row{padding:0 16px 14px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}.attachment-row div{height:68px;border:1px dashed #d8e0ea;border-radius:5px;display:grid;place-items:center;text-align:center;color:#64748b}.attachment-row i{font-size:18px;color:#00984f}.attachment-row small{display:block;font-size:11px;color:#94a3b8}.summary-bar{margin-top:10px;height:70px;background:#fff;border:1px solid #e4e9f0;border-radius:5px;display:grid;grid-template-columns:1.5fr repeat(4,1fr)}.summary-bar div{padding:14px 18px;border-right:1px solid #edf0f4}.summary-bar div:last-child{border-right:0}.summary-bar span{display:block;color:#64748b}.summary-bar b{font-size:22px;color:#0f172a}.line-drawer{background:#fff;border:1px solid #e4e9f0;border-radius:5px;align-self:start;position:sticky;top:64px}.drawer-head{height:50px;padding:0 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #e4e9f0}.drawer-head h2{font-size:16px;margin:0}.line-drawer section{padding:14px;border-bottom:1px solid #edf0f4}.line-drawer h3{margin:0 0 12px;font-size:14px}.line-drawer h3 b{display:inline-grid;place-items:center;width:18px;height:18px;margin-right:6px;border-radius:4px;background:#00984f;color:#fff}.product-card{display:grid;grid-template-columns:86px 1fr;gap:12px}.product-img{height:86px;border:1px solid #e4e9f0;border-radius:5px;display:grid;place-items:center;color:#94a3b8;font-size:30px}.product-img img{max-width:100%;max-height:100%;object-fit:cover}.product-card dl,.drawer-grid{display:grid;grid-template-columns:74px 1fr;gap:9px;align-items:center}.product-card dt{color:#64748b}.product-card dd{margin:0}.fulfill-box{padding:10px;background:#f8fafc;border:1px solid #e4e9f0;border-radius:5px;color:#475569}.upload-row{display:grid;grid-template-columns:1fr auto;gap:8px;margin-bottom:10px}.file-table{display:grid;grid-template-columns:minmax(0,1fr) 34px 34px 58px 34px;gap:8px;align-items:center}.file-table span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.file-table small{display:block;color:#94a3b8}.file-table em{font-style:normal;margin-left:4px;color:#00984f}.file-table a{color:#2563eb;cursor:pointer}.empty-files{padding:10px;border:1px dashed #d8e0ea;border-radius:5px;color:#94a3b8;text-align:center}.sales-form-page :deep(.el-button--success){background:#00984f;border-color:#00984f}.precheck-focus{outline:2px solid #f59e0b;outline-offset:2px;transition:outline-color .25s ease}.sales-form-page :deep(.el-input-number--mini){width:86px}.sales-form-page :deep(.el-table th){background:#f8fafc;color:#334155}.cut-config-actions{margin-bottom:8px}.cut-config-list{display:grid;gap:8px}.cut-config-list article{padding:9px;border:1px solid #dbe8df;border-radius:4px;background:#f8fcf9}.cut-config-list header{display:flex;align-items:center;justify-content:space-between;gap:8px}.cut-config-list article>div{display:grid;grid-template-columns:70px 1fr 28px;align-items:center;gap:6px;margin:6px 0}.cut-config-list article :deep(.el-input-number--mini){width:100%}@media(max-width:1400px){.top-cards{grid-template-columns:1fr}.form-layout{grid-template-columns:1fr}.line-drawer{position:static}.bottom-grid{grid-template-columns:1fr}.summary-bar{grid-template-columns:1fr 1fr}}
 .sales-form-page :deep(.el-input-number--mini){width:68px}.sales-form-page .line-drawer :deep(.el-input-number--mini){width:96px}.sales-form-page :deep(.el-table){font-size:12px}.sales-form-page :deep(.el-table .cell){padding-left:6px;padding-right:6px;line-height:18px}.sales-form-page :deep(.el-table--mini td),.sales-form-page :deep(.el-table--mini th){padding:6px 0}.sales-form-page :deep(.el-table .el-button--mini){padding:5px 6px;font-size:12px}.order-lines :deep(.el-input--mini .el-input__inner){height:28px;line-height:28px;padding:0 7px}
 .inline-selects{display:grid;grid-template-columns:1fr 1fr;gap:8px}.inline-selects .el-select:only-child{grid-column:1 / -1}.inline-form{grid-template-columns:auto auto auto minmax(100px,1fr);grid-auto-rows:32px}.inline-form .el-select{min-width:180px}.logistics-grid{grid-template-columns:1fr 1fr 1fr;row-gap:8px}.field-stack{min-width:0;display:grid;gap:4px}.field-stack span{font-size:12px;font-weight:600;color:#64748b}.field-stack .el-select{width:100%}.small-panel{min-height:142px}
 .final-grid{margin-top:10px;display:grid;grid-template-columns:minmax(0,1.55fr) minmax(430px,.95fr);gap:10px;align-items:stretch}.summary-bar{margin-top:0;min-height:78px;height:auto;grid-template-columns:1.1fr repeat(5,minmax(86px,1fr));overflow:hidden}.summary-bar .formula-cell{background:#fff}.formula-cell span small{margin-left:6px;color:#9aa3ac;font-weight:400}.formula-cell em{display:inline-flex;align-items:center;gap:5px;margin-top:7px;padding:4px 8px;border-radius:3px;background:#eaf7ef;color:#07883f;font-style:normal;white-space:normal}.summary-bar div{display:flex;flex-direction:column;justify-content:center;padding:10px 14px}.summary-bar b{font-size:20px;line-height:1.2}.submit-check-card{min-height:78px;height:auto;padding:12px 14px;background:#fff;border:1px solid #e4e9f0;border-radius:5px}.submit-check-card h3{display:flex;align-items:center;gap:6px;margin:0 0 7px;font-size:14px}.submit-check-card h3 i{color:#f59e0b}.submit-check-card h3 small{font-weight:400;color:#8b96a5}.submit-check-card p{margin:3px 0;color:#d97706}.submit-check-card p.ok{color:#07883f}.product-link{display:block;margin-top:10px;text-align:right}.upload-row{grid-template-columns:1fr auto auto}.file-table{display:grid;grid-template-columns:minmax(0,1.35fr) 42px 78px minmax(118px,auto);gap:0;border:1px solid #e4e9f0;border-bottom:0;font-size:11px}.file-table>*{min-height:28px;padding:6px 7px;border-right:1px solid #e4e9f0;border-bottom:1px solid #e4e9f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.file-table>*:nth-child(4n){border-right:0}.file-table strong{background:#f8fafc;color:#526176;font-weight:600}.file-actions{display:flex;gap:6px}.empty-file-row{color:#94a3b8}.change-tip{margin-top:10px;padding:8px 10px;border:1px solid #f6d7a8;background:#fff7ed;color:#ad5b00;border-radius:4px}.change-tip i{margin-right:5px}.drawer-head i{cursor:pointer;color:#64748b}

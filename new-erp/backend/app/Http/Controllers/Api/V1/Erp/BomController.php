@@ -192,7 +192,7 @@ class BomController extends Controller
             foreach ($source->items as $line) {
                 BomItem::create($line->only([
                     'line_no', 'component_item_id', 'component_item_code', 'component_item_name',
-                    'qty', 'unit_id', 'loss_rate', 'fixed_qty', 'replaceable', 'remark',
+                    'cut_length_mm', 'piece_qty', 'qty', 'unit_id', 'loss_rate', 'fixed_qty', 'replaceable', 'remark',
                 ]) + ['bom_id' => $copy->id]);
             }
             $this->log($copy, 'copy_version', "由 {$source->bom_no} 复制为新版本");
@@ -276,6 +276,8 @@ class BomController extends Controller
             'items' => 'required|array|min:1',
             'items.*.line_no' => 'nullable|integer|min:1',
             'items.*.component_item_id' => 'required|exists:erp_items,id',
+            'items.*.cut_length_mm' => 'nullable|required_with:items.*.piece_qty|numeric|min:0.01|max:9999999999.99',
+            'items.*.piece_qty' => 'nullable|required_with:items.*.cut_length_mm|integer|min:1',
             'items.*.qty' => 'required|numeric|min:0',
             'items.*.unit_id' => 'nullable|exists:erp_units,id',
             'items.*.loss_rate' => 'nullable|numeric|min:0|max:100',
@@ -310,13 +312,27 @@ class BomController extends Controller
 
     private function saveItems(Bom $bom, array $items): void
     {
-        $duplicates = collect($items)->countBy(fn (array $line) => (int) $line['component_item_id'])->filter(fn (int $count) => $count > 1);
-        abort_if($duplicates->isNotEmpty(), 422, 'BOM 明细不能包含重复组件 Item。');
+        $duplicates = collect($items)->countBy(function (array $line): string {
+            $length = array_key_exists('cut_length_mm', $line) && $line['cut_length_mm'] !== null
+                ? number_format((float) $line['cut_length_mm'], 2, '.', '')
+                : 'ordinary';
+            return ((int) $line['component_item_id']).'|'.$length;
+        })->filter(fn (int $count) => $count > 1);
+        abort_if($duplicates->isNotEmpty(), 422, '同一 BOM 中相同 Item 与相同下料长度不能重复；请合并段数。');
         foreach (array_values($items) as $index => $line) {
             abort_if((int) $line['component_item_id'] === (int) $bom->output_item_id, 422, 'BOM 组成物料不能等于产出 Item。');
             $item = Item::with('unit')->findOrFail($line['component_item_id']);
             abort_if(in_array($item->status, ['disabled', 'inactive'], true), 422, '停用物料不能作为 BOM 组成物料。');
             abort_if(!$item->unit || $item->unit->status !== 'enabled', 422, 'BOM 组成 Item 必须维护启用的库存基本单位。');
+            $hasCutLength = array_key_exists('cut_length_mm', $line) && $line['cut_length_mm'] !== null;
+            $hasPieceQty = array_key_exists('piece_qty', $line) && $line['piece_qty'] !== null;
+            if ($item->is_length_cut_material) {
+                abort_unless($hasCutLength && $hasPieceQty, 422, "长度下料类物料 {$item->item_name} 必须填写每段长度和段数。");
+                abort_if((float) $item->standard_stock_length_mm <= 0, 422, "长度下料类物料 {$item->item_name} 未维护标准原料长度。");
+                abort_if((float) $line['cut_length_mm'] > (float) $item->standard_stock_length_mm, 422, "{$item->item_name} 的下料长度不能超过标准原料长度 {$item->standard_stock_length_mm}mm。");
+            } else {
+                abort_if($hasCutLength || $hasPieceQty, 422, "普通物料 {$item->item_name} 不能填写下料长度或段数。");
+            }
             $domain = app(\App\Services\Erp\UnitConversionDomainService::class);
             $baseUnit = $domain->canonicalUnit($item->unit);
             $domain->assertUnitPrecision($line['qty'], $baseUnit, 'items.'.$index.'.qty');
@@ -327,6 +343,8 @@ class BomController extends Controller
                 'component_item_id' => $item->id,
                 'component_item_code' => $item->item_code,
                 'component_item_name' => $item->item_name,
+                'cut_length_mm' => $hasCutLength ? $line['cut_length_mm'] : null,
+                'piece_qty' => $hasPieceQty ? $line['piece_qty'] : null,
                 'qty' => $line['qty'],
                 'unit_id' => $baseUnit->id,
                 'loss_rate' => $line['loss_rate'] ?? 0,
@@ -405,6 +423,9 @@ class BomController extends Controller
                 'component_item_name' => $componentLabel,
                 'unit_name' => $line->unit?->unit_name ?: $line->componentItem?->unit?->unit_name,
                 'unit_qty' => $unitQty,
+                'cut_length_mm' => $line->cut_length_mm === null ? null : (float) $line->cut_length_mm,
+                'piece_qty' => $line->piece_qty === null ? null : (int) $line->piece_qty,
+                'required_piece_qty' => $line->piece_qty === null ? null : round((float) $line->piece_qty * $plannedQty, 4),
                 'loss_rate' => $lossRate,
                 'fixed_qty' => $fixedQty,
                 'demand_qty' => $demandQty,
@@ -428,6 +449,9 @@ class BomController extends Controller
                     'component_item_name' => $componentLabel,
                     'unit_name' => $line->unit?->unit_name ?: $line->componentItem?->unit?->unit_name,
                     'unit_qty' => $unitQty,
+                    'cut_length_mm' => $line->cut_length_mm === null ? null : (float) $line->cut_length_mm,
+                    'piece_qty' => $line->piece_qty === null ? null : (int) $line->piece_qty,
+                    'required_piece_qty' => $line->piece_qty === null ? null : round((float) $line->piece_qty * $plannedQty, 4),
                     'loss_rate' => $lossRate,
                     'fixed_qty' => $fixedQty,
                     'demand_qty' => $demandQty,
@@ -442,12 +466,19 @@ class BomController extends Controller
 
     private function mergeAggregate(array &$aggregate, array $leaf): void
     {
-        $key = (int) $leaf['component_item_id'];
+        $lengthKey = $leaf['cut_length_mm'] === null ? 'ordinary' : number_format((float) $leaf['cut_length_mm'], 2, '.', '');
+        $key = ((int) $leaf['component_item_id']).'|'.$lengthKey;
         if (!isset($aggregate[$key])) {
             $aggregate[$key] = $leaf;
             return;
         }
         $aggregate[$key]['demand_qty'] = round($aggregate[$key]['demand_qty'] + $leaf['demand_qty'], 4);
+        if (($leaf['required_piece_qty'] ?? null) !== null) {
+            $aggregate[$key]['required_piece_qty'] = round(
+                (float) ($aggregate[$key]['required_piece_qty'] ?? 0) + (float) $leaf['required_piece_qty'],
+                4
+            );
+        }
         $aggregate[$key]['paths'] = array_values(array_unique(array_merge($aggregate[$key]['paths'] ?? [], $leaf['paths'] ?? [])));
         $aggregate[$key]['replaceable'] = $aggregate[$key]['replaceable'] || ($leaf['replaceable'] ?? false);
     }

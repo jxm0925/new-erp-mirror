@@ -239,7 +239,8 @@ Design status: Approved (Optimized for modern ERP layout & responsive UX)
               <el-tag v-if="row.electric" size="mini" type="info" effect="plain">{{ row.electric }}</el-tag>
               <el-tag v-if="row.need_pump === true" size="mini" type="success" effect="plain">原水泵: 需要</el-tag>
               <el-tag v-else-if="row.need_pump === false" size="mini" type="info" effect="plain">原水泵: 不需要</el-tag>
-              <span v-if="!row.is_customized && !row.is_special_customized && !row.electric && row.need_pump === null" class="text-muted">标准配置</span>
+              <el-tag v-for="(cut,index) in ((row.configuration_snapshot || {}).cut_requirements || [])" :key="`${cut.component_item_id}-${index}`" size="mini" type="warning" effect="plain">{{ cut.component_item_name }} {{ Number(cut.cut_length_mm).toLocaleString('zh-CN') }}mm × {{ Number(cut.piece_qty).toLocaleString('zh-CN') }}段</el-tag>
+              <span v-if="!row.is_customized && !row.is_special_customized && !row.electric && row.need_pump === null && !((row.configuration_snapshot || {}).cut_requirements || []).length" class="text-muted">标准配置</span>
             </div>
           </template>
         </el-table-column>

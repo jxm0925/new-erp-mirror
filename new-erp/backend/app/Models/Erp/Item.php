@@ -9,6 +9,8 @@ class Item extends MasterModel
         'is_purchase_item' => 'boolean', 'is_stock_item' => 'boolean',
         'is_production_item' => 'boolean', 'is_batch_managed' => 'boolean',
         'is_serial_managed' => 'boolean', 'is_custom_item' => 'boolean',
+        'is_length_cut_material' => 'boolean',
+        'standard_stock_length_mm' => 'decimal:2',
         'serial_generation_routing_operation_id' => 'integer',
     ];
     public function serialTrackingMode(): string

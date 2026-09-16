@@ -69,6 +69,7 @@
             <el-table-column label="物料编码" min-width="135"><template slot-scope="scope">{{ scope.row.component && scope.row.component.code || '-' }}</template></el-table-column>
             <el-table-column label="物料名称" min-width="150"><template slot-scope="scope">{{ scope.row.component && scope.row.component.name || '-' }}</template></el-table-column>
             <el-table-column label="规格型号" min-width="130"><template slot-scope="scope">{{ scope.row.component && scope.row.component.specification || '-' }}</template></el-table-column>
+            <el-table-column label="下料要求" width="160"><template slot-scope="scope">{{ scope.row.cutting ? scope.row.cutting.display : '无需下料' }}</template></el-table-column>
             <el-table-column label="计量单位" width="95"><template slot-scope="scope">{{ scope.row.unit && scope.row.unit.name || '-' }}</template></el-table-column>
             <el-table-column label="单位用量" width="100"><template slot-scope="scope">{{ number(scope.row.formula && scope.row.formula.per_output_qty) }}</template></el-table-column>
             <el-table-column label="损耗率" width="90"><template slot-scope="scope">{{ number(scope.row.formula && scope.row.formula.loss_rate) }}%</template></el-table-column>

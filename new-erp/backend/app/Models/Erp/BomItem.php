@@ -10,6 +10,8 @@ class BomItem extends MasterModel
         'qty' => 'decimal:4',
         'loss_rate' => 'decimal:4',
         'fixed_qty' => 'decimal:4',
+        'cut_length_mm' => 'decimal:2',
+        'piece_qty' => 'integer',
     ];
 
     public function bom() { return $this->belongsTo(Bom::class, 'bom_id'); }

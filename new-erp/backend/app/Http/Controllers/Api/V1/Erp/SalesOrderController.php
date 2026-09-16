@@ -30,6 +30,7 @@ use App\Services\Erp\BomMatcher;
 use App\Services\Erp\DocumentNumberService;
 use App\Services\Erp\InventoryReservationService;
 use App\Services\Erp\InventoryAvailabilityService;
+use App\Services\Erp\LengthCutRequirementService;
 use App\Services\Erp\SalesOrderDraftService;
 use App\Services\Erp\SalesOrderAttachmentService;
 use App\Services\Erp\SalesOrderFundingGateService;
@@ -957,6 +958,11 @@ class SalesOrderController extends Controller
             'lines.*.sort_order' => 'nullable|integer|min:0',
             'lines.*.customization_description' => 'nullable|string|max:2000',
             'lines.*.configuration_snapshot' => 'nullable|array',
+            'lines.*.configuration_snapshot.cut_requirements' => 'nullable|array',
+            'lines.*.configuration_snapshot.cut_requirements.*.component_item_id' => 'required|integer|exists:erp_items,id',
+            'lines.*.configuration_snapshot.cut_requirements.*.cut_length_mm' => 'required|numeric|min:0.01|max:9999999999.99',
+            'lines.*.configuration_snapshot.cut_requirements.*.piece_qty' => 'required|integer|min:1',
+            'lines.*.configuration_snapshot.cut_requirements.*.remark' => 'nullable|string|max:500',
             'lines.*.product_snapshot' => 'nullable|array',
             'lines.*.sku_snapshot' => 'nullable|array',
             'lines.*.item_snapshot' => 'nullable|array',
@@ -1570,6 +1576,7 @@ class SalesOrderController extends Controller
             : null;
         $configuration = is_array($line['configuration_snapshot'] ?? null) ? $line['configuration_snapshot'] : [];
         unset($configuration['electric'], $configuration['need_pump']);
+        $configuration = app(LengthCutRequirementService::class)->normalizeConfiguration($configuration);
 
         if ($electric !== null && $sku->supports_electric && !empty($sku->electric_options) && !in_array($electric, $sku->electric_options, true)) {
             abort(422, '当前 SKU 不支持所选电压');

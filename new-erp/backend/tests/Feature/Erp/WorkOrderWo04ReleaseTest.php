@@ -132,6 +132,77 @@ class WorkOrderWo04ReleaseTest extends TestCase
         $this->assertSame(1, $page->currentPage());
     }
 
+    public function test_length_cut_configuration_survives_bom_work_order_and_production_targets(): void
+    {
+        [$user, $demand, $bom] = $this->fixture(7521);
+        $component = $bom->items()->first()->componentItem;
+        $component->update([
+            'item_name' => '304 方管',
+            'material_grade' => '304',
+            'standard_stock_length_mm' => 6000,
+            'is_length_cut_material' => true,
+        ]);
+        $bom->items()->delete();
+        foreach ([[350, 2], [680, 4], [1250, 1]] as $index => [$length, $pieces]) {
+            BomItem::create([
+                'bom_id' => $bom->id,
+                'line_no' => ($index + 1) * 10,
+                'component_item_id' => $component->id,
+                'component_item_code' => $component->item_code,
+                'component_item_name' => $component->item_name,
+                'cut_length_mm' => $length,
+                'piece_qty' => $pieces,
+                'qty' => 1,
+                'unit_id' => $component->unit_id,
+                'loss_rate' => 0,
+                'fixed_qty' => 0,
+                'replaceable' => false,
+            ]);
+        }
+        $configuration = ['cut_requirements' => [
+            ['component_item_id' => $component->id, 'cut_length_mm' => 350, 'piece_qty' => 2, 'remark' => '短撑'],
+            ['component_item_id' => $component->id, 'cut_length_mm' => 680, 'piece_qty' => 4, 'remark' => '横梁'],
+            ['component_item_id' => $component->id, 'cut_length_mm' => 1250, 'piece_qty' => 1, 'remark' => '立柱'],
+        ]];
+        $demand->update(['configuration_snapshot' => $configuration]);
+        $demand->line()->update(['configuration_snapshot' => $configuration]);
+
+        $service = app(WorkOrderApplicationService::class);
+        $draft = $service->createDraft([
+            'client_command_id' => 'length-cut-create',
+            'production_demand_id' => $demand->id,
+            'expected_demand_version' => 1,
+            'target_qty' => 2,
+            'planned_date' => '2026-09-18',
+            'production_batch' => 'LENGTH-CUT-REAL-01',
+            'responsible_user_legacy_id' => $user->legacy_id,
+            'production_location_name' => '方管下料车间',
+        ], $user, self::PERMISSIONS);
+        $waiting = $service->submit($draft->id, [
+            'client_command_id' => 'length-cut-submit',
+            'expected_version' => 1,
+            'reason' => '真实配置单下料需求确认',
+        ], $user, self::PERMISSIONS);
+        $released = $service->publish($waiting->id, [
+            'client_command_id' => 'length-cut-publish',
+            'expected_version' => 2,
+            'reason' => '冻结下料尺寸与段数',
+        ], $user, self::PERMISSIONS);
+
+        $workRows = DB::table('erp_work_order_material_requirements')
+            ->where('work_order_id', $released->id)->orderBy('cut_length_mm_snapshot')->get();
+        $this->assertSame([350.0, 680.0, 1250.0], $workRows->pluck('cut_length_mm_snapshot')->map(fn ($value) => (float) $value)->all());
+        $this->assertSame([4.0, 8.0, 2.0], $workRows->pluck('required_piece_qty')->map(fn ($value) => (float) $value)->all());
+        $this->assertSame('approved_bom_with_configuration_cut_requirements', data_get($released->bom_snapshot, 'resolution_source'));
+
+        $targetRows = DB::table('erp_production_target_material_requirements')
+            ->where('work_order_id', $released->id)->orderBy('cut_length_mm_snapshot')->get();
+        $this->assertCount(6, $targetRows);
+        $this->assertSame([350.0, 680.0, 1250.0], $targetRows->pluck('cut_length_mm_snapshot')->map(fn ($value) => (float) $value)->unique()->sort()->values()->all());
+        $this->assertSame([1.0, 2.0, 4.0], $targetRows->pluck('required_piece_qty_snapshot')->map(fn ($value) => (float) $value)->unique()->sort()->values()->all());
+        $this->assertSame(1, Item::query()->whereKey($component->id)->count());
+    }
+
     public function test_unit_mode_twenty_creates_exactly_twenty_units_without_rounding(): void
     {
         [$user, $demand] = $this->fixture(7530);

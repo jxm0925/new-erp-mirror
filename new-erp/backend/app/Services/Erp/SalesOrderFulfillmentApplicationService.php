@@ -197,7 +197,7 @@ class SalesOrderFulfillmentApplicationService
                     : $this->inventoryAvailability->analyzeSalesOrderLine($line, $confirmQty);
             }
             $productionQty = (float) $quantities['production_qty'];
-            $bom = $this->isPhysicalLine($line) ? $this->bomMatcher->match($line->product_id, $line->sku_id, $line->item_id) : null;
+            $bom = $this->isPhysicalLine($line) ? $this->bomMatcher->match($line->product_id, $line->sku_id, $line->item_id, $line->configuration_snapshot) : null;
             $drawing = $line->is_special_customized ? ($this->hasTechnicalAttachment($line) ? 'ready' : 'missing') : 'not_required';
             $blocking = [];
             if ($productionQty > 0 && $bom && $bom['status'] !== 'matched') $blocking[] = $bom['block_reason'] ?: '未匹配到可用 BOM';
@@ -350,7 +350,7 @@ class SalesOrderFulfillmentApplicationService
                     )
                     : [];
                 $productionQty = (float) $quantities['production_qty'];
-                $bom = $productionQty > 0 ? $this->bomMatcher->match($line->product_id, $line->sku_id, $line->item_id) : null;
+                $bom = $productionQty > 0 ? $this->bomMatcher->match($line->product_id, $line->sku_id, $line->item_id, $line->configuration_snapshot) : null;
                 $lineBlocked = ($productionQty > 0 && (($bom['status'] ?? null) !== 'matched'))
                     || ($productionQty > 0 && $line->is_special_customized && !$this->hasTechnicalAttachment($line));
                 $blocked = $blocked || $lineBlocked;

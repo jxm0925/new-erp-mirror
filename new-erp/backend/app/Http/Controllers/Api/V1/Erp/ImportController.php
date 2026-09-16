@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Erp;
 
 use App\Http\Controllers\Controller;
 use App\Models\Erp\{ImportBatch, ImportRow, Item, Location, Product, Sku, SkuItemRelation, Supplier, Warehouse};
+use App\Services\Erp\ItemImportApplicationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -63,13 +64,13 @@ class ImportController extends Controller
         return response()->json($query->orderBy('row_no')->paginate(min(200, max(10, $request->integer('per_page', 50)))));
     }
 
-    public function confirm(int $id)
+    public function confirm(int $id, ItemImportApplicationService $itemImporter)
     {
         $batch = ImportBatch::with(['rows' => fn ($q) => $q->whereIn('validation_status', ['valid', 'warning'])])->findOrFail($id);
         abort_if($batch->status === 'confirmed', 422, '该批次已经确认导入');
-        DB::transaction(function () use ($batch) {
+        DB::transaction(function () use ($batch, $itemImporter) {
             foreach ($batch->rows as $row) {
-                $target = $this->persist($batch->import_type, $row->normalized_data ?? $row->raw_data);
+                $target = $this->persist($batch->import_type, $row->normalized_data ?? $row->raw_data, $itemImporter);
                 if ($target) $row->update(['target_id' => $target->id]);
             }
             $batch->update(['status' => 'confirmed', 'confirmed_at' => now()]);
@@ -95,7 +96,7 @@ class ImportController extends Controller
         $definitions = [
             'Product' => ['code' => ['product_code', '商品编码'], 'name' => ['product_name', '商品名称']],
             'SKU' => ['code' => ['sku_code', 'SKU编码'], 'name' => ['sku_name', 'SKU名称'], 'parent' => ['product_code', '商品编码']],
-            'Item' => ['code' => ['item_code', '物料编码'], 'name' => ['item_name', '物料名称'], 'unit' => ['unit_code', '单位编码']],
+            'Item' => ['code' => ['item_code', '物料编码'], 'name' => ['item_name', '物料名称'], 'unit' => ['unit_code', '单位编码', '基本单位']],
             'Supplier' => ['code' => ['supplier_code', '供应商编码'], 'name' => ['supplier_name', '供应商名称']],
             'Warehouse' => ['code' => ['warehouse_code', '仓库编码'], 'name' => ['warehouse_name', '仓库名称']],
             'Location' => ['code' => ['location_code', '库位编码'], 'name' => ['location_name', '库位名称'], 'warehouse' => ['warehouse_code', '仓库编码']],
@@ -112,6 +113,12 @@ class ImportController extends Controller
         if ($code && isset($duplicates[$type]) && $duplicates[$type][0]::where($duplicates[$type][1], $code)->exists()) {
             return ['error', $duplicates[$type][1], 'duplicate', "编码 {$code} 已存在", '使用唯一编码或改为编辑现有数据'];
         }
+        if ($type === 'Item') {
+            $itemType = trim((string) ($row['item_type'] ?? $row['物料类型'] ?? $row['物料类型（中文选择）'] ?? ''));
+            if (! in_array($itemType, ['成品', '半成品', '原材料', '包装物', '服务', '办公耗材', 'finished_product', 'semi_finished', 'raw_material', 'packaging', 'service', 'office_consumable'], true)) {
+                return ['error', 'item_type', 'invalid', '物料类型不合法', '填写成品、半成品、原材料、包装物、服务或办公耗材'];
+            }
+        }
         if ($type === 'SKU' && !Product::where('product_code', $get($def['parent']))->exists()) return ['error', 'product_code', 'not_found', 'Product 不存在', '先导入 Product'];
         if ($type === 'Location' && !Warehouse::where('warehouse_code', $get($def['warehouse']))->exists()) return ['error', 'warehouse_code', 'not_found', '仓库不存在', '先导入 Warehouse'];
         if ($type === 'SKU-Item Relation') {
@@ -122,13 +129,13 @@ class ImportController extends Controller
         return ['valid', null, null, null, null];
     }
 
-    private function persist(string $type, array $row)
+    private function persist(string $type, array $row, ItemImportApplicationService $itemImporter)
     {
         $value = fn (...$keys) => collect($keys)->map(fn ($k) => $row[$k] ?? null)->first(fn ($v) => $v !== null && $v !== '');
         return match ($type) {
             'Product' => Product::create(['product_code' => $value('product_code', '商品编码'), 'product_name' => $value('product_name', '商品名称'), 'product_type' => $value('product_type', '商品类型') ?: 'standard', 'status' => 'enabled']),
             'SKU' => Sku::create(['product_id' => Product::where('product_code', $value('product_code', '商品编码'))->value('id'), 'sku_code' => $value('sku_code', 'SKU编码'), 'sku_name' => $value('sku_name', 'SKU名称'), 'spec_text' => $value('spec_text', '规格'), 'order_line_type' => ($value('order_line_type', '订单行类型') ?: ($value('fulfillment_type', '履约方式') ?: 'physical')) === 'virtual' ? 'no_delivery' : ($value('order_line_type', '订单行类型') ?: ($value('fulfillment_type', '履约方式') ?: 'physical')), 'fulfillment_type' => $value('fulfillment_type', '履约方式') ?: 'physical', 'status' => 'draft']),
-            'Item' => Item::create(['item_code' => $value('item_code', '物料编码'), 'item_name' => $value('item_name', '物料名称'), 'item_type' => $value('item_type', '物料类型') ?: 'raw_material', 'unit_id' => \App\Models\Erp\Unit::where('unit_code', $value('unit_code', '单位编码'))->value('id') ?: \App\Models\Erp\Unit::value('id'), 'cost_method' => 'weighted_average', 'status' => 'enabled']),
+            'Item' => $itemImporter->create($row),
             'Supplier' => Supplier::create(['supplier_code' => $value('supplier_code', '供应商编码'), 'supplier_name' => $value('supplier_name', '供应商名称'), 'supplier_type' => 'manufacturer', 'status' => 'enabled']),
             'Warehouse' => Warehouse::create(['warehouse_code' => $value('warehouse_code', '仓库编码'), 'warehouse_name' => $value('warehouse_name', '仓库名称'), 'warehouse_type' => 'general', 'status' => 'enabled']),
             'Location' => Location::create(['location_code' => $value('location_code', '库位编码'), 'location_name' => $value('location_name', '库位名称'), 'warehouse_id' => Warehouse::where('warehouse_code', $value('warehouse_code', '仓库编码'))->value('id'), 'status' => 'enabled']),

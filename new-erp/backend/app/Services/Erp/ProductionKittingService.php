@@ -66,10 +66,11 @@ class ProductionKittingService
                 ->join('erp_locations as location', 'location.id', '=', 'receipt_source.location_id')
                 ->whereRaw('receipt_source.received_base_qty - COALESCE(return_source.returned_base_qty, 0) > 0.00000001');
         } else {
-            // One selectable material even if several frozen supply rules reference it.
+            // One selectable frozen requirement even if several supply rules reference it.
+            // Different cut lengths of the same Item must remain distinct.
             $query->whereIn('target_requirement.id', DB::table('erp_production_target_material_requirements')
                 ->where('target_type', $targetType)->where('target_id', $targetId)->where('requirement_kind', 'standard')
-                ->selectRaw('MIN(id)')->groupBy('component_item_id'));
+                ->selectRaw('MIN(id)')->groupBy('material_requirement_id'));
         }
 
         // Classification is small explicit tree metadata, never a full material list.
@@ -102,7 +103,8 @@ class ProductionKittingService
             $query->where(fn ($search) => $search->where('item.item_code', 'like', $like)->orWhere('item.item_name', 'like', $like)->orWhere('item.spec', 'like', $like)->orWhere('item.model', 'like', $like));
         }
         $query->select(['target_requirement.id', 'requirement.id as material_requirement_id', 'item.id as component_item_id',
-            'item.item_code as code', 'item.item_name as name', 'item.spec', 'item.model', 'item.category_id', 'requirement.unit_name_snapshot as unit_name']);
+            'item.item_code as code', 'item.item_name as name', 'item.spec', 'item.model', 'item.category_id', 'requirement.unit_name_snapshot as unit_name',
+            'requirement.cut_length_mm_snapshot as cut_length_mm', 'requirement.required_piece_qty']);
         if ($mode === 'return') {
             $query->addSelect(['receipt_source.warehouse_id', 'receipt_source.location_id', 'receipt_source.batch_no', 'receipt_source.received_base_qty',
                 'warehouse.warehouse_name', 'location.location_name'])
@@ -115,7 +117,7 @@ class ProductionKittingService
             $data = (array) $row;
             $data['key'] = $mode === 'return'
                 ? 'r:'.$row->material_requirement_id.':'.$row->warehouse_id.':'.$row->location_id.':'.base64_encode($row->batch_no)
-                : 's:'.$row->component_item_id;
+                : 's:'.$row->material_requirement_id;
             return $data;
         })->all();
         return ['data' => $rows, 'current_page' => $page->currentPage(), 'last_page' => $page->lastPage(), 'total' => $page->total(), 'per_page' => $page->perPage(),
@@ -229,6 +231,7 @@ class ProductionKittingService
             ->select([
                 'requirement.id', 'requirement.material_requirement_id', 'requirement.material_supply_rule_snapshot_id', 'requirement.component_item_id',
                 'requirement.required_base_qty', 'requirement.satisfied_base_qty', 'requirement.returned_base_qty',
+                'requirement.cut_length_mm_snapshot', 'requirement.required_piece_qty_snapshot',
                 'work_requirement.received_qty as work_order_received_qty',
                 'supply.supply_mode_snapshot', 'item.item_code', 'item.item_name',
                 'workstation.workstation_snapshot', 'workstation.onsite_available_base_qty_snapshot',
@@ -296,6 +299,8 @@ class ProductionKittingService
                     'material_supply_rule_snapshot_id' => (int) $row->material_supply_rule_snapshot_id,
                     'component_item_id' => (int) $row->component_item_id, 'component_item_code' => $row->item_code,
                     'component_item_name' => $row->item_name, 'required_base_qty' => $required,
+                    'cut_length_mm' => $row->cut_length_mm_snapshot === null ? null : (float) $row->cut_length_mm_snapshot,
+                    'required_piece_qty' => $row->required_piece_qty_snapshot === null ? null : (float) $row->required_piece_qty_snapshot,
                     'satisfied_base_qty' => $received, 'gross_received_base_qty' => $grossReceived,
                     'returned_base_qty' => $returned, 'shortage_base_qty' => max(0, $required - $received),
                     'work_order_received_base_qty' => (float) $row->work_order_received_qty,

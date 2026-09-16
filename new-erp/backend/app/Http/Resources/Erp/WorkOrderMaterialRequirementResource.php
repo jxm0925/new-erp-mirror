@@ -30,6 +30,12 @@ class WorkOrderMaterialRequirementResource extends JsonResource
                 'loss_rate' => (float) $this->loss_rate,
                 'fixed_qty' => (float) $this->fixed_qty,
             ],
+            'cutting' => $this->cut_length_mm_snapshot === null ? null : [
+                'cut_length_mm' => (float) $this->cut_length_mm_snapshot,
+                'per_output_piece_qty' => (float) $this->per_output_piece_qty,
+                'required_piece_qty' => (float) $this->required_piece_qty,
+                'display' => $this->formatCutRequirement(),
+            ],
             'quantity' => [
                 'required_qty' => (float) $this->required_qty,
                 'base_required_qty' => (float) $this->base_required_qty,
@@ -46,5 +52,12 @@ class WorkOrderMaterialRequirementResource extends JsonResource
             'status' => $this->status,
             'business_version' => (int) $this->business_version,
         ];
+    }
+
+    private function formatCutRequirement(): string
+    {
+        $length = rtrim(rtrim(number_format((float) $this->cut_length_mm_snapshot, 2, '.', ''), '0'), '.');
+        $pieces = rtrim(rtrim(number_format((float) $this->required_piece_qty, 8, '.', ''), '0'), '.');
+        return "{$length}mm × {$pieces}段";
     }
 }

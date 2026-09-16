@@ -6,7 +6,11 @@ use App\Models\Erp\Bom;
 
 class BomMatcher
 {
-    public function match(?int $productId, ?int $skuId, ?int $itemId): array
+    public function __construct(private readonly LengthCutRequirementService $lengthCutRequirements)
+    {
+    }
+
+    public function match(?int $productId, ?int $skuId, ?int $itemId, ?array $configuration = null): array
     {
         if (!$itemId) {
             return $this->blocked('not_checked', 'Item 未匹配，不能匹配 BOM');
@@ -52,6 +56,7 @@ class BomMatcher
         }
 
         $bom = $matches->where('is_default', true)->first() ?: $matches->first();
+        $resolvedItems = $this->lengthCutRequirements->resolveBomLines($bom, $configuration);
         return [
             'status' => 'matched',
             'block_reason' => null,
@@ -63,15 +68,11 @@ class BomMatcher
                 'bom_no' => $bom->bom_no,
                 'bom_name' => $bom->bom_name,
                 'version' => $bom->version,
-                'items' => $bom->items->map(fn ($item) => [
-                    'line_no' => $item->line_no,
-                    'component_item_id' => $item->component_item_id,
-                    'component_item_code' => $item->component_item_code,
-                    'component_item_name' => $item->component_item_name,
-                    'qty' => $item->qty,
-                    'unit_id' => $item->unit_id,
-                    'loss_rate' => $item->loss_rate,
-                ])->all(),
+                'resolution_source' => collect((array) data_get($configuration, 'cut_requirements', []))->isEmpty()
+                    ? 'approved_bom'
+                    : 'approved_bom_with_configuration_cut_requirements',
+                'configuration_cut_requirements' => data_get($configuration, 'cut_requirements', []),
+                'items' => $resolvedItems->all(),
             ],
             'candidates' => [$this->candidate($bom)],
         ];

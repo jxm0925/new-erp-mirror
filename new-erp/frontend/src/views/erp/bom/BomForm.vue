@@ -142,6 +142,17 @@
           </template>
         </el-table-column>
         <el-table-column prop="component_item_name" label="物料名称" min-width="130" show-overflow-tooltip />
+        <el-table-column label="下料要求" width="225" align="center">
+          <template slot-scope="{row}">
+            <div v-if="row.is_length_cut_material" class="cut-fields">
+              <el-input-number v-model="row.cut_length_mm" size="mini" :min="0.01" :max="Number(row.standard_stock_length_mm || 9999999999)" :precision="2" :disabled="!canEdit" :controls="false" placeholder="长度" />
+              <span>mm ×</span>
+              <el-input-number v-model="row.piece_qty" size="mini" :min="1" :precision="0" :disabled="!canEdit" :controls="false" placeholder="段数" />
+              <span>段</span>
+            </div>
+            <span v-else class="ordinary-material">无需下料</span>
+          </template>
+        </el-table-column>
         <el-table-column label="用量" width="122" align="center">
           <template slot="header">
             <span class="required-head">用量</span>
@@ -269,6 +280,10 @@ const emptyLine = i => ({
   component_item_id: null,
   component_item_code: '',
   component_item_name: '',
+  is_length_cut_material: false,
+  standard_stock_length_mm: null,
+  cut_length_mm: null,
+  piece_qty: null,
   qty: 1,
   unit_id: null,
   loss_rate: 0,
@@ -412,6 +427,10 @@ export default {
           qty: Number(item.qty),
           loss_rate: Number(item.loss_rate),
           fixed_qty: Number(item.fixed_qty),
+          is_length_cut_material: Boolean(item.component_item && item.component_item.is_length_cut_material),
+          standard_stock_length_mm: item.component_item && item.component_item.standard_stock_length_mm !== null ? Number(item.component_item.standard_stock_length_mm) : null,
+          cut_length_mm: item.cut_length_mm === null ? null : Number(item.cut_length_mm),
+          piece_qty: item.piece_qty === null ? null : Number(item.piece_qty),
           replaceable: Boolean(item.replaceable)
         }))
       }
@@ -472,6 +491,10 @@ export default {
         this.$set(row, 'component_item_id', item.id)
         this.$set(row, 'component_item_code', item.item_code)
         this.$set(row, 'component_item_name', item.item_name)
+        this.$set(row, 'is_length_cut_material', Boolean(item.is_length_cut_material))
+        this.$set(row, 'standard_stock_length_mm', item.standard_stock_length_mm === null ? null : Number(item.standard_stock_length_mm))
+        this.$set(row, 'cut_length_mm', null)
+        this.$set(row, 'piece_qty', null)
         this.$set(row, 'unit_id', item.unit_id)
         this.$set(row, 'unit', item.unit ? { ...item.unit } : null)
       }
@@ -500,6 +523,7 @@ export default {
       }
       if (!payload.output_item_id) return this.$message.error('请选择产出 Item')
       if (payload.items.some(item => !item.component_item_id)) return this.$message.error('BOM 明细中存在未选择物料的行')
+      if (payload.items.some(item => item.is_length_cut_material && (!(Number(item.cut_length_mm) > 0) || !(Number(item.piece_qty) > 0)))) return this.$message.error('长度下料类物料必须填写每段长度和段数')
       const { data } = await saveBom(payload)
       if (!this.isEdit) clearCreatePageReservation(this.numberReservation)
       if (andSubmit) await submitBom(data.data.id)
@@ -796,6 +820,8 @@ export default {
 .bom-form-page :deep(.el-input-number--mini) {
   width: 92px;
 }
+
+.cut-fields{display:flex;align-items:center;justify-content:center;gap:4px;white-space:nowrap}.cut-fields :deep(.el-input-number--mini){width:66px}.ordinary-material{color:#8b97a6}
 
 .bom-form-page :deep(.el-table th) {
   background: #f7f9fb;

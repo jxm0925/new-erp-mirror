@@ -302,7 +302,15 @@ class ProductionExecutionFoundationService
             ->join('erp_work_order_material_requirements as requirement', 'requirement.id', '=', 'supply.material_requirement_id')
             ->where('supply.work_order_id', $workOrder->id)
             ->where('supply.target_routing_operation_id_snapshot', $routingOperationId)
-            ->select('supply.*', 'requirement.per_output_qty', 'requirement.loss_rate', 'requirement.fixed_qty')
+            ->select(
+                'supply.*',
+                'requirement.per_output_qty',
+                'requirement.loss_rate',
+                'requirement.fixed_qty',
+                'requirement.cut_length_mm_snapshot',
+                'requirement.per_output_piece_qty',
+                'requirement.required_piece_qty'
+            )
             ->get();
         foreach ($rows as $row) {
             $rule = json_decode((string) $row->rule_snapshot, true) ?: [];
@@ -310,6 +318,11 @@ class ProductionExecutionFoundationService
             $required = $unitSequence === null
                 ? (float) $row->required_base_qty_snapshot
                 : ((float) $row->per_output_qty * (1 + (float) $row->loss_rate / 100) + ($unitSequence === 1 ? (float) $row->fixed_qty : 0)) * $ratio;
+            $requiredPieces = $row->per_output_piece_qty === null
+                ? null
+                : ($unitSequence === null
+                    ? (float) $row->required_piece_qty * $ratio
+                    : (float) $row->per_output_piece_qty * $ratio);
             DB::table('erp_production_target_material_requirements')->insert([
                 'work_order_id' => $workOrder->id,
                 'target_type' => $targetType,
@@ -317,6 +330,8 @@ class ProductionExecutionFoundationService
                 'material_requirement_id' => $row->material_requirement_id,
                 'material_supply_rule_snapshot_id' => $row->id,
                 'component_item_id' => $row->component_item_id,
+                'cut_length_mm_snapshot' => $row->cut_length_mm_snapshot,
+                'required_piece_qty_snapshot' => $requiredPieces === null ? null : round($requiredPieces, 8),
                 'requirement_kind' => 'standard',
                 'required_base_qty' => round($required, 8),
                 'satisfied_base_qty' => 0,

@@ -282,7 +282,8 @@ class WorkOrderApplicationService
             if ($workOrder->materialRequirements()->exists()) {
                 $this->fail('material_requirements_exist', '该工单已存在正式物料需求，禁止重复展开。', 409);
             }
-            $materialRows = $this->releaseGate->buildMaterialRows($workOrder, $bom);
+            $configurationSnapshot = $workOrder->demand?->configuration_snapshot;
+            $materialRows = $this->releaseGate->buildMaterialRows($workOrder, $bom, $configurationSnapshot);
             if ($materialRows === []) {
                 $this->fail('bom_incomplete', 'BOM 没有可发布的物料需求行。', 422);
             }
@@ -299,6 +300,22 @@ class WorkOrderApplicationService
                 'version' => $bom->version,
                 'output_item_id' => (int) $bom->output_item_id,
                 'material_line_count' => count($materialRows),
+                'resolution_source' => $configurationSnapshot && data_get($configurationSnapshot, 'cut_requirements')
+                    ? 'approved_bom_with_configuration_cut_requirements'
+                    : 'approved_bom',
+                'configuration_cut_requirements' => data_get($configurationSnapshot, 'cut_requirements', []),
+                'resolved_material_lines' => collect($materialRows)->map(fn (array $row): array => [
+                    'line_no' => $row['line_no'],
+                    'bom_item_id' => $row['bom_item_id'],
+                    'component_item_id' => $row['component_item_id'],
+                    'component_item_code' => $row['component_item_code_snapshot'],
+                    'component_item_name' => $row['component_item_name_snapshot'],
+                    'cut_length_mm' => $row['cut_length_mm_snapshot'],
+                    'per_output_piece_qty' => $row['per_output_piece_qty'],
+                    'required_piece_qty' => $row['required_piece_qty'],
+                    'required_qty' => $row['required_qty'],
+                    'unit_name' => $row['unit_name_snapshot'],
+                ])->all(),
             ];
             $workOrder->status = self::RELEASED;
             $workOrder->business_version = $version + 1;

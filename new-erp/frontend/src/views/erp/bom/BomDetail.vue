@@ -34,7 +34,7 @@
           <dt>描述</dt><dd>{{ bom.custom_description || '-' }}</dd>
         </dl></section>
         <section class="detail-card"><h3>BOM明细</h3><el-table :data="bom.items || []" border size="small">
-          <el-table-column prop="line_no" label="行号" width="70" /><el-table-column prop="component_item_code" label="物料Item" width="135" /><el-table-column prop="component_item_name" label="物料名称" min-width="170" show-overflow-tooltip /><el-table-column prop="qty" label="用量" width="90" /><el-table-column label="单位" width="80"><template slot-scope="{row}">{{ row.unit ? row.unit.unit_name : '-' }}</template></el-table-column><el-table-column prop="loss_rate" label="损耗率(%)" width="100" /><el-table-column prop="fixed_qty" label="固定用量" width="95" /><el-table-column label="可替代" width="80"><template slot-scope="{row}">{{ row.replaceable ? '是' : '否' }}</template></el-table-column><el-table-column prop="remark" label="备注" min-width="130" show-overflow-tooltip />
+          <el-table-column prop="line_no" label="行号" width="70" /><el-table-column prop="component_item_code" label="物料Item" width="135" /><el-table-column prop="component_item_name" label="物料名称" min-width="170" show-overflow-tooltip /><el-table-column label="下料要求" width="150"><template slot-scope="{row}">{{ cutRequirement(row) }}</template></el-table-column><el-table-column prop="qty" label="用量" width="90" /><el-table-column label="单位" width="80"><template slot-scope="{row}">{{ row.unit ? row.unit.unit_name : '-' }}</template></el-table-column><el-table-column prop="loss_rate" label="损耗率(%)" width="100" /><el-table-column prop="fixed_qty" label="固定用量" width="95" /><el-table-column label="可替代" width="80"><template slot-scope="{row}">{{ row.replaceable ? '是' : '否' }}</template></el-table-column><el-table-column prop="remark" label="备注" min-width="130" show-overflow-tooltip />
         </el-table></section>
       </main>
       <aside>
@@ -62,6 +62,7 @@ export default {
     displayAuditType() { if (this.isDraftEditable) return 'info'; return this.auditType(this.bom.audit_status) }
   },
   methods: {
+    cutRequirement(row) { return row.cut_length_mm === null || row.cut_length_mm === undefined ? '无需下料' : `${Number(row.cut_length_mm).toLocaleString('zh-CN')}mm × ${Number(row.piece_qty).toLocaleString('zh-CN')}段` },
     async load() { this.loading = true; try { const { data } = await getBom(this.$route.params.id); this.bom = data } finally { this.loading = false } },
     async action(type) { const api = { submit: submitBom, approve: approveBom, reject: rejectBom, activate: activateBom, deactivate: deactivateBom, setDefault: setDefaultBom }[type]; const text = { submit: '提交审核', approve: '审核通过', reject: '驳回', activate: '启用', deactivate: '停用', setDefault: '设为默认' }[type]; await this.$confirm(`确认${text}？`, 'BOM操作确认', { type: 'warning' }); await api(this.bom.id); this.$message.success(`${text}成功`); this.load() },
     async copyVersion() { const { value } = await this.$prompt('请输入新版本号', '复制为新版本', { inputValue: this.nextVersion(this.bom.version) }); const { data } = await copyBomVersion(this.bom.id, { version: value }); this.$message.success('已复制为新版本草稿'); this.$router.push(`/bom/${data.data.id}/edit`) },

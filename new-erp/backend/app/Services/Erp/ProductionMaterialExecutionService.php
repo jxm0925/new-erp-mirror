@@ -62,6 +62,7 @@ final class ProductionMaterialExecutionService
                 'supply.target_operation_name_snapshot as target_operation_name',
                 'demand.target_type as production_target_type', 'demand.target_id as production_target_id',
                 'demand.material_requirement_id', 'demand.component_item_id',
+                'demand.cut_length_mm_snapshot', 'demand.required_piece_qty_snapshot',
                 'item.item_code', 'item.item_name', 'item.spec',
                 'demand.required_base_qty as required_qty', 'demand.satisfied_base_qty',
                 'demand.returned_base_qty', 'requirement.base_unit_name_snapshot as unit_name',
@@ -606,6 +607,9 @@ final class ProductionMaterialExecutionService
             'requirements' => $workOrder->materialRequirements->map(fn ($row) => [
                 'id' => $row->id, 'component_item_id' => $row->component_item_id,
                 'item_code' => $row->component_item_code_snapshot, 'item_name' => $row->component_item_name_snapshot,
+                'cut_length_mm' => $row->cut_length_mm_snapshot === null ? null : (float) $row->cut_length_mm_snapshot,
+                'required_piece_qty' => $row->required_piece_qty === null ? null : (float) $row->required_piece_qty,
+                'cut_requirement' => $row->cut_length_mm_snapshot === null ? null : $this->cutDisplay($row->cut_length_mm_snapshot, $row->required_piece_qty),
                 'required_qty' => (float) $row->required_qty, 'picked_qty' => (float) $row->picked_qty,
                 'delivered_qty' => (float) $row->delivered_qty, 'received_qty' => (float) $row->received_qty,
                 'remaining_to_pick' => max(0, (float) $row->required_qty - (float) $row->picked_qty),
@@ -615,6 +619,13 @@ final class ProductionMaterialExecutionService
             'deliveries' => $workOrder->materialDeliveries,
             'receipts' => $workOrder->materialReceipts,
         ];
+    }
+
+    private function cutDisplay($length, $pieces): string
+    {
+        $lengthText = rtrim(rtrim(number_format((float) $length, 2, '.', ''), '0'), '.');
+        $pieceText = rtrim(rtrim(number_format((float) $pieces, 8, '.', ''), '0'), '.');
+        return "{$lengthText}mm × {$pieceText}段";
     }
 
     private function taskTransition(int $id, array $payload, object $user, array $permissions, bool $superAdmin, array $from, string $to, string $action, callable $mutate): MaterialPickingTask
