@@ -173,6 +173,26 @@ class SalesReturnFlowTest extends TestCase
         ]);
     }
 
+    public function test_draft_return_deletion_releases_original_cost_allocation_and_return_quota(): void
+    {
+        [$order, $line] = $this->fixture();
+        $service = app(SalesReturnApplicationService::class);
+        $payload = ['sales_order_id' => $order->id, 'return_reason' => '草稿重建',
+            'items' => [['sales_order_line_id' => $line->id, 'requested_sales_qty' => 10]]];
+        $draft = $service->create($payload, 1, '测试管理员');
+        $returnItemId = $draft->items->first()->id;
+        $service->deleteDraft($draft->id);
+        $this->assertDatabaseMissing('erp_sales_returns', ['id' => $draft->id]);
+        $this->assertDatabaseMissing('erp_sales_return_items', ['sales_return_id' => $draft->id]);
+        $this->assertDatabaseMissing('erp_sales_return_cost_allocations', ['sales_return_item_id' => $returnItemId]);
+        $replacement = $service->create($payload, 1, '测试管理员');
+        $this->assertSame(10.0, (float) $replacement->items->first()->requested_sales_qty);
+        $this->assertSame(12.0, (float) $replacement->items->first()->frozen_unit_cost);
+        $service->confirm($replacement->id, 1, '测试管理员');
+        $this->expectException(ValidationException::class);
+        $service->deleteDraft($replacement->id);
+    }
+
     private function fixture(): array
     {
         $unit = Unit::create([

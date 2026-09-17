@@ -103,7 +103,7 @@ class ImportController extends Controller
         $this->authorizePermission($request, 'master.import.delete');
         $path = DB::transaction(function () use ($id): string {
             $batch = ImportBatch::query()->lockForUpdate()->findOrFail($id);
-            abort_unless(in_array($batch->status, ['uploaded', 'previewed'], true), 422, '已确认导入的批次不能删除；其导入结果属于正式主数据。');
+            abort_unless(in_array($batch->status, ['uploaded', 'previewed'], true) && $batch->confirmed_at === null, 422, '已确认导入的批次不能删除；其导入结果属于正式主数据。');
             $path = (string) $batch->stored_path;
             $batch->delete();
             return $path;

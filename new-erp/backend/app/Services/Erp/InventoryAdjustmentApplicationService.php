@@ -122,8 +122,12 @@ class InventoryAdjustmentApplicationService
     {
         DB::transaction(function () use ($id): void {
             $adjustment = InventoryAdjustment::query()->lockForUpdate()->findOrFail($id);
-            if ($adjustment->adjustment_status !== 'draft') {
-                throw ValidationException::withMessages(['status' => '只有草稿调整单可以删除。']);
+            if ($adjustment->adjustment_status !== 'draft' || $adjustment->submitted_at !== null
+                || $adjustment->posted_at !== null || $adjustment->cancelled_at !== null) {
+                throw ValidationException::withMessages(['status' => '只有从未提交、未过账且未取消的库存调整草稿可以删除。']);
+            }
+            if (DB::table('erp_inventory_transactions')->where('source_type', 'inventory_adjustment')->where('source_id', $id)->exists()) {
+                throw ValidationException::withMessages(['adjustment' => '该调整单已产生库存流水，不能删除。']);
             }
             $adjustment->delete();
         }, 5);

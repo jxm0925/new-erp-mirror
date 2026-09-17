@@ -78,6 +78,22 @@ class PurchaseReturnFlowTest extends TestCase
         $this->assertSame(80.0, (float) $balanceQuery->firstOrFail()->quantity_on_hand);
     }
 
+    public function test_manual_return_draft_deletion_releases_return_quantity_without_stock_effects(): void
+    {
+        [$receipt, $line, $warehouse, $location] = $this->postedReceiptFixture();
+        $service = app(PurchaseReturnApplicationService::class);
+        $payload = ['return_scope' => 'posted_inventory', 'source_receipt_id' => $receipt->id, 'supplier_id' => $receipt->supplier_id,
+            'return_date' => now()->toDateString(), 'return_reason' => '草稿重建', 'items' => [['source_receipt_item_id' => $line->id,
+                'warehouse_id' => $warehouse->id, 'location_id' => $location->id, 'batch_no' => 'B-RETURN-001', 'requested_base_qty' => 100]]];
+        $draft = $service->create($payload, 1, '测试管理员');
+        $service->deleteDraft($draft->id);
+        $this->assertDatabaseMissing('erp_purchase_returns', ['id' => $draft->id]);
+        $this->assertDatabaseMissing('erp_purchase_return_items', ['return_id' => $draft->id]);
+        $replacement = $service->create($payload, 1, '测试管理员');
+        $this->assertSame(100.0, (float) $replacement->items->first()->requested_base_qty);
+        $this->assertSame(100.0, (float) InventoryBalance::where('item_id', $line->item_id)->value('quantity_on_hand'));
+    }
+
     public function test_one_piece_quality_supplier_return_can_be_approved_and_posted(): void
     {
         [$receipt, $line, $warehouse, $location] = $this->postedReceiptFixture(1);
