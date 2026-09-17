@@ -50,6 +50,17 @@ class RbacBootstrapService
             ['production.cutting.record', '登记下料结果', 'button', 'production.work_order', null, null, 'el-icon-mouse', 73],
             ['production.cutting.confirm', '确认下料用料核算', 'button', 'production.work_order', null, null, 'el-icon-mouse', 74],
             ['production.cutting.material_manage', '维护材料实物与配置', 'button', 'production.work_order', null, null, 'el-icon-mouse', 75],
+            ['production.cutting.task.claim', '领取下料任务', 'button', 'production.work_order', null, null, 'el-icon-mouse', 76],
+            ['production.cutting.task.start', '开始下料任务', 'button', 'production.work_order', null, null, 'el-icon-mouse', 77],
+            ['production.cutting.task.pause', '暂停下料任务', 'button', 'production.work_order', null, null, 'el-icon-mouse', 78],
+            ['production.cutting.task.resume', '恢复下料任务', 'button', 'production.work_order', null, null, 'el-icon-mouse', 79],
+            ['production.cutting.task.finish', '完成下料任务', 'button', 'production.work_order', null, null, 'el-icon-mouse', 80],
+            ['production.cutting.task.collaborate', '协作下料任务', 'button', 'production.work_order', null, null, 'el-icon-mouse', 81],
+            ['production.cutting.handover.view', '查看下料交接', 'button', 'production.work_order', null, null, 'el-icon-view', 82],
+            ['production.cutting.handover.dispatch', '交出下料产出', 'button', 'production.work_order', null, null, 'el-icon-mouse', 83],
+            ['production.cutting.handover.receive', '接收下料产出', 'button', 'production.work_order', null, null, 'el-icon-mouse', 84],
+            ['production.cutting.handover.reject', '拒收下料产出', 'button', 'production.work_order', null, null, 'el-icon-mouse', 85],
+            ['production.cutting.warehouse', '下料产出正式入库', 'button', 'production.work_order', null, null, 'el-icon-mouse', 86],
 
             // 1. 主数据中心 二级菜单
             ['master.product', '产品管理', 'menu', 'master', '/master/products', 'ProductList', 'el-icon-goods', 101],
@@ -556,6 +567,12 @@ class RbacBootstrapService
                 'production.routing.view', 'production.routing.create', 'production.routing.edit', 'production.routing.activate', 'production.routing.default',
                 'production.labor_rule.view', 'production.labor_rule.manage',
                 'production.labor_stats.view',
+                'production.cutting.view', 'production.cutting.plan', 'production.cutting.issue',
+                'production.cutting.record', 'production.cutting.confirm', 'production.cutting.material_manage',
+                'production.cutting.task.claim', 'production.cutting.task.start', 'production.cutting.task.pause',
+                'production.cutting.task.resume', 'production.cutting.task.finish', 'production.cutting.task.collaborate',
+                'production.cutting.handover.view', 'production.cutting.handover.dispatch',
+                'production.cutting.handover.receive', 'production.cutting.handover.reject', 'production.cutting.warehouse',
             ])
             ->pluck('id', 'code');
         if ($permissionIds->isEmpty()) return;
@@ -576,6 +593,11 @@ class RbacBootstrapService
                 'production.output.create', 'production.output.receive', 'production.material_supplement.request', 'production.material_return.create', 'production.trace.view',
                 'production.operation.view', 'production.routing.view', 'production.labor_rule.view',
                 'production.labor_stats.view',
+                'production.cutting.view', 'production.cutting.record',
+                'production.cutting.task.claim', 'production.cutting.task.start', 'production.cutting.task.pause',
+                'production.cutting.task.resume', 'production.cutting.task.finish', 'production.cutting.task.collaborate',
+                'production.cutting.handover.view', 'production.cutting.handover.dispatch',
+                'production.cutting.handover.receive', 'production.cutting.handover.reject',
             ],
             'department_principal' => [
                 'production.base', 'production.operation', 'production.routing', 'production.labor_rule',
@@ -588,6 +610,9 @@ class RbacBootstrapService
                 'production.material_supplement.approve', 'production.material_return.receive', 'production.material_return.quality', 'production.trace.view',
                 'production.operation.view', 'production.routing.view', 'production.labor_rule.view', 'production.labor_rule.manage',
                 'production.labor_stats.view',
+                'production.cutting.view', 'production.cutting.plan', 'production.cutting.issue',
+                'production.cutting.confirm', 'production.cutting.material_manage',
+                'production.cutting.handover.view', 'production.cutting.warehouse',
             ],
         ];
         foreach ($matrix as $roleCode => $codes) {

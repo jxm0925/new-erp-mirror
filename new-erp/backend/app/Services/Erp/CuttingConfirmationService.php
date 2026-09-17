@@ -132,7 +132,9 @@ final class CuttingConfirmationService
                 if (! $target || (int) $target->component_item_id !== (int) $row->item_id) $c->fail('target_invalid','正式目标物料不匹配。');
                 $this->records->configuration($row->configuration_id,Item::findOrFail($row->item_id),$target->work_order_id);
                 $targetAdded[$target->id] = bcadd($targetAdded[$target->id] ?? '0',$qty,8);
-                $pending = (string) DB::table('erp_cutting_result_routes')->where('target_material_requirement_id',$target->id)->whereIn('status',['WAIT_DISPATCH','IN_TRANSIT','PART_RECEIVED'])->selectRaw('COALESCE(SUM(quantity-received_qty),0) AS quantity')->value('quantity');
+                $pending = (string) DB::table('erp_cutting_result_routes')->where('target_material_requirement_id',$target->id)
+                    ->whereIn('status',['WAIT_DISPATCH','PART_DISPATCHED','IN_TRANSIT','PART_RECEIVED'])
+                    ->selectRaw('COALESCE(SUM(quantity-received_qty),0) AS quantity')->value('quantity');
                 $netReceived = bcsub((string) $target->satisfied_base_qty,(string) $target->returned_base_qty,8);
                 if (bccomp(bcadd(bcadd($netReceived,$pending,8),$targetAdded[$target->id],8),(string) $target->required_base_qty,8) > 0) $c->fail('target_supply_exceeded','去下一工序的供给超过真实目标尚未满足的需求。');
             }

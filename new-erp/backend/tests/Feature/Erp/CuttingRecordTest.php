@@ -3,9 +3,10 @@
 namespace Tests\Feature\Erp;
 
 use App\Exceptions\Erp\WorkOrderDomainException;
-use App\Models\Erp\{Bom, BomItem, InventoryBalance, Item, Location, PurchaseReceipt, PurchaseReceiptItem, Supplier, Unit, Warehouse, WorkOrder, WorkOrderMaterialRequirement};
-use App\Services\Erp\{CuttingConfirmationService, CuttingDecimal, CuttingInputService, CuttingRecordService, InventoryService, PurchaseReceiptPostingRepairApplicationService};
+use App\Models\Erp\{Bom, BomItem, InventoryBalance, Item, Location, ProductionQuantityOperation, ProductionTask, PurchaseReceipt, PurchaseReceiptItem, Supplier, Unit, Warehouse, WorkOrder, WorkOrderMaterialRequirement};
+use App\Services\Erp\{CuttingConfirmationService, CuttingDecimal, CuttingHandoverService, CuttingInputService, CuttingReadService, CuttingRecordService, CuttingTaskExecutionService, CuttingWarehouseReceiptService, InventoryService, ProductionKittingService, ProductionLaborSessionService, PurchaseReceiptPostingRepairApplicationService, RbacBootstrapService};
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Tests\TestCase;
@@ -15,7 +16,13 @@ class CuttingRecordTest extends TestCase
     use DatabaseTransactions;
 
     private const PERMISSIONS = ['production.cutting.plan','production.cutting.issue','production.cutting.record',
-        'production.cutting.view','production.cutting.material_manage','production.cutting.confirm','production.output.quality'];
+        'production.cutting.view','production.cutting.material_manage','production.cutting.confirm','production.output.quality',
+        'production.cutting.task.claim','production.cutting.task.start','production.cutting.task.pause',
+        'production.cutting.task.resume','production.cutting.task.finish','production.cutting.task.collaborate',
+        'production.cutting.handover.view','production.cutting.handover.dispatch',
+        'production.cutting.handover.receive','production.cutting.handover.reject',
+        'production.cutting.warehouse',
+        'production.kitting.view','production.kitting.confirm'];
 
     public function test_two_plates_keep_two_same_named_results_and_submission_has_no_stock_effect(): void
     {
@@ -446,6 +453,273 @@ class CuttingRecordTest extends TestCase
         $this->domain('quality_not_waiting',fn () => $s->inspect($old,$this->payload(4)+['result'=>'passed'],$f['user'],self::PERMISSIONS,true),409);
     }
 
+    public function test_independent_cutting_task_http_lifecycle_uses_shared_labor_without_settling_inputs(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-09-16 08:00:00'));
+        try {
+            $f = $this->fixture(); $batch = $this->issue($f); $taskId = (int) $f['created']['cutting_task_id'];
+            $token = $this->token($f['user']); $base = '/api/v1/erp/production/cutting/tasks/'.$taskId;
+            $this->withToken($token)->getJson('/api/v1/erp/production/cutting/tasks?status=WAIT_CLAIM')->assertOk()
+                ->assertJsonPath('data.0.id',$taskId)->assertJsonPath('data.0.display_status','待领取');
+            $claimed = $this->withToken($token)->postJson($base.'/claim',$this->payload(1))->assertOk()
+                ->assertJsonPath('data.status','READY')->assertJsonPath('data.business_version',2)->json('data');
+            $this->assertSame($f['user']->legacy_id,$claimed['assignee_user_legacy_id']);
+            $this->withToken($token)->postJson($base.'/start',$this->payload(2))->assertOk()
+                ->assertJsonPath('data.status','IN_PROGRESS')->assertJsonCount(1,'data.active_labor_sessions');
+
+            Carbon::setTestNow(Carbon::now()->addMinutes(5));
+            $this->withToken($token)->postJson($base.'/pause',$this->payload(3))->assertOk()
+                ->assertJsonPath('data.status','PAUSED')->assertJsonPath('data.actual_labor_minutes','5.00');
+            $this->withToken($token)->postJson($base.'/resume',$this->payload(4))->assertOk()
+                ->assertJsonPath('data.status','IN_PROGRESS');
+            Carbon::setTestNow(Carbon::now()->addMinutes(3));
+            $this->withToken($token)->postJson($base.'/finish',$this->payload(5))->assertOk()
+                ->assertJsonPath('data.status','FINISHED')->assertJsonPath('data.actual_labor_minutes','8.00')
+                ->assertJsonPath('data.settlement_statuses.PROCESSING',1);
+
+            $this->withToken($token)->getJson($base)->assertOk()->assertJsonPath('data.task.status','FINISHED')
+                ->assertJsonPath('data.inputs.data.0.id',$batch['settlement_batch_id'])
+                ->assertJsonPath('data.input_source_locked_per_record',true)->assertJsonCount(2,'data.labor_sessions');
+            $this->assertSame('PROCESSING',DB::table('erp_cutting_settlement_batches')->where('id',$batch['settlement_batch_id'])->value('status'));
+            $this->assertSame('PUBLISHED',DB::table('erp_cutting_orders')->where('id',$f['order'])->value('status'));
+            $this->assertSame(2,DB::table('erp_production_labor_sessions')->where('execution_task_type','CUTTING_TASK')
+                ->where('cutting_task_id',$taskId)->whereNull('task_id')->where('status','ENDED')->count());
+        } finally {
+            Carbon::setTestNow();
+        }
+    }
+
+    public function test_cutting_and_production_share_one_active_employee_switch_guard(): void
+    {
+        $f = $this->fixture(); $this->issue($f); $taskId = (int) $f['created']['cutting_task_id'];
+        $tasks = app(CuttingTaskExecutionService::class);
+        $tasks->claim($taskId,$this->payload(1),$f['user'],self::PERMISSIONS,true);
+        $started = $tasks->start($taskId,$this->payload(2),$f['user'],self::PERMISSIONS,true);
+        $activeId = $started['active_labor_sessions'][0]['id'];
+        $target = ProductionQuantityOperation::findOrFail($f['producerOperation']);
+        $productionTask = ProductionTask::create(['task_no'=>'PT-SWITCH-'.Str::ulid(),'work_order_id'=>$f['wo']->id,'execution_mode'=>'quantity',
+            'routing_operation_id_snapshot'=>$f['stage'],'operation_code_snapshot'=>$target->operation_code_snapshot,
+            'operation_name_snapshot'=>$target->operation_name_snapshot,'sequence_no_snapshot'=>10,'status'=>'IN_PROGRESS',
+            'assignee_user_legacy_id'=>$f['user']->legacy_id,'claimed_at'=>now(),'business_version'=>1]);
+        $labor = app(ProductionLaborSessionService::class);
+        $this->domain('labor_switch_confirmation_required',fn () => DB::transaction(fn () => $labor->start(
+            $productionTask,$target,'quantity_operation',$f['user']->legacy_id,'owner',1,now(),[]
+        )),409);
+        DB::transaction(fn () => $labor->start($productionTask,$target,'quantity_operation',$f['user']->legacy_id,'owner',1,now(),[
+            'switch_active_labor'=>true,'expected_active_labor_session_id'=>$activeId
+        ]));
+        $this->assertSame(1,DB::table('erp_production_labor_sessions')->where('employee_legacy_id',$f['user']->legacy_id)->where('status','ACTIVE')->count());
+        $this->assertSame('task_switched',DB::table('erp_production_labor_sessions')->where('id',$activeId)->value('end_reason'));
+        $this->assertSame('PAUSED',DB::table('erp_cutting_tasks')->where('id',$taskId)->value('status'));
+        $this->assertSame('PRODUCTION_TASK',DB::table('erp_production_labor_sessions')->where('employee_legacy_id',$f['user']->legacy_id)
+            ->where('status','ACTIVE')->value('execution_task_type'));
+    }
+
+    public function test_cutting_collaborator_must_stop_shared_labor_before_owner_finishes(): void
+    {
+        $f = $this->fixture(); $this->issue($f); $taskId = (int) $f['created']['cutting_task_id'];
+        $collaborator = (object) ['legacy_id'=>random_int(100000000,999999999),'username'=>'cut-collab-'.Str::ulid()];
+        DB::table('erp_legacy_admin_users')->insert(['legacy_id'=>$collaborator->legacy_id,'username'=>$collaborator->username,
+            'status'=>'normal','auth_group_names'=>'[]','created_at'=>now(),'updated_at'=>now()]);
+        $this->token($collaborator);
+        $service = app(CuttingTaskExecutionService::class);
+        $service->claim($taskId,$this->payload(1),$f['user'],self::PERMISSIONS,true);
+        $service->start($taskId,$this->payload(2),$f['user'],self::PERMISSIONS,true);
+        $added = $service->addCollaborators($taskId,$this->payload(3)+['employee_legacy_ids'=>[$collaborator->legacy_id]],$f['user'],self::PERMISSIONS,true);
+        $this->assertSame([$collaborator->legacy_id],$added['added_employee_legacy_ids']);
+        $service->startCollaboratorLabor($taskId,$this->payload(4),$collaborator,self::PERMISSIONS,true);
+        $this->assertSame(2,DB::table('erp_production_labor_sessions')->where('cutting_task_id',$taskId)->where('status','ACTIVE')->count());
+        $this->domain('cutting_collaborator_labor_active',fn () => $service->finish($taskId,$this->payload(5),$f['user'],self::PERMISSIONS,true),409);
+        $this->assertSame(2,DB::table('erp_production_labor_sessions')->where('cutting_task_id',$taskId)->where('status','ACTIVE')->count());
+        $service->pauseCollaboratorLabor($taskId,$this->payload(5),$collaborator,self::PERMISSIONS,true);
+        $finished = $service->finish($taskId,$this->payload(6),$f['user'],self::PERMISSIONS,true);
+        $this->assertSame('FINISHED',$finished['status']);
+        $this->assertSame(0,DB::table('erp_production_labor_sessions')->where('cutting_task_id',$taskId)->where('status','ACTIVE')->count());
+        $this->assertSame('PROCESSING',DB::table('erp_cutting_settlement_batches')->where('cutting_task_id',$taskId)->value('status'));
+    }
+
+    public function test_real_cutting_handover_supports_partial_accept_reject_and_formal_kitting(): void
+    {
+        $f = $this->fixture(); $receiver = $this->employee('cut-receiver-'); $targetTask = $this->consumerTask($f,$receiver);
+        $batch = $this->issue($f); $batchId = $batch['settlement_batch_id']; $result = $this->save($f,$batchId,'10')['result_ids'][0];
+        $sourceToken = $this->token($f['user']); $receiverToken = $this->token($receiver);
+        $this->withToken($sourceToken)->getJson('/api/v1/erp/production/cutting/results/'.$result.'/handover-targets?per_page=10')
+            ->assertOk()->assertJsonPath('meta.total',1)->assertJsonPath('data.0.target_material_requirement_id',$f['targetRequirement'])
+            ->assertJsonPath('data.0.task_id',$targetTask->id)->assertJsonPath('data.0.eligible_for_dispatch',true)
+            ->assertJsonPath('data.0.selectable_qty','10.00000000');
+        $split = app(CuttingRecordService::class)->splitRoutes($result,$this->payload(1)+['routes'=>[[
+            'route_type'=>'NEXT_OPERATION','quantity'=>'10','target_material_requirement_id'=>$f['targetRequirement']
+        ]]],$f['user'],self::PERMISSIONS,true);
+        $routeId = $split['routes'][0]['id'];
+        app(CuttingConfirmationService::class)->confirm($batchId,$this->confirmation($f,$batchId,$result,'3000'),$f['user'],self::PERMISSIONS,true);
+        $inventoryTransactions = DB::table('erp_inventory_transactions')->count();
+
+        $handover = app(CuttingHandoverService::class); $routeVersion = (int) DB::table('erp_cutting_result_routes')->where('id',$routeId)->value('business_version');
+        $first = $handover->dispatch($routeId,$this->payload($routeVersion)+['quantity'=>'6'],$f['user'],self::PERMISSIONS,true);
+        $this->assertSame('PART_DISPATCHED',$first['route_status']); $this->assertSame('WAIT_HANDOVER',DB::table('erp_production_quantity_operations')->where('id',$f['consumerOperation'])->value('status'));
+        $this->withToken($receiverToken)->getJson('/api/v1/erp/production/cutting/handovers/pending')->assertOk()
+            ->assertJsonPath('data.0.id',$first['handover_id'])->assertJsonPath('data.0.task_id',$targetTask->id);
+
+        $accepted = $handover->accept($first['handover_id'],$this->payload(1)+['quantity'=>'4'],$receiver,self::PERMISSIONS,true);
+        $this->assertSame('PARTIAL',$accepted['status']); $this->assertSame('4.00000000',$accepted['route_received_qty']);
+        $this->assertSame('WAIT_HANDOVER',$accepted['target_status']);
+        $rejected = $handover->reject($first['handover_id'],$this->payload(2)+['quantity'=>'2','reason'=>'两片边缘变形'],$receiver,self::PERMISSIONS,true);
+        $this->assertSame('MIXED',$rejected['status']); $this->assertSame('4.00000000',$rejected['route_handed_over_qty']);
+        $this->assertSame('4.00000000',$rejected['route_received_qty']); $this->assertSame('WAIT_MATERIAL',$rejected['target_status']);
+
+        $routeVersion = (int) DB::table('erp_cutting_result_routes')->where('id',$routeId)->value('business_version');
+        $second = $handover->dispatch($routeId,$this->payload($routeVersion)+['quantity'=>'6'],$f['user'],self::PERMISSIONS,true);
+        $done = $handover->accept($second['handover_id'],$this->payload(1)+['quantity'=>'6'],$receiver,self::PERMISSIONS,true);
+        $this->assertSame('RECEIVED',$done['route_status']); $this->assertSame('10.00000000',$done['route_handed_over_qty']);
+        $this->assertSame('10.00000000',$done['route_received_qty']);
+        $requirement = DB::table('erp_production_target_material_requirements')->where('id',$f['targetRequirement'])->first();
+        $this->assertSame('10.00000000',$requirement->satisfied_base_qty); $this->assertSame('SATISFIED',$requirement->status);
+        $this->assertSame($inventoryTransactions,DB::table('erp_inventory_transactions')->count(),'真实工序交接不能伪造仓库流水');
+        $this->assertSame('10.00000000',(string) DB::table('erp_material_holdings')->where('position_type','PRODUCTION_WIP')
+            ->where('position_id',$f['targetRequirement'])->sum('quantity'));
+        $this->assertSame('3000.0000',(string) DB::table('erp_material_holdings')->where('position_type','PRODUCTION_WIP')
+            ->where('position_id',$f['targetRequirement'])->sum('total_cost'));
+
+        $target = ProductionQuantityOperation::findOrFail($f['consumerOperation']);
+        $kitting = app(ProductionKittingService::class)->confirm($targetTask->id,'quantity_operation',$target->id,
+            $this->payload((int) $target->business_version),$receiver,self::PERMISSIONS);
+        $this->assertSame('IN_PROGRESS',$kitting['target_status']);
+        $this->assertSame(1,DB::table('erp_production_kitting_confirmations')->where('task_id',$targetTask->id)->count());
+        $sourceFacts = json_decode(DB::table('erp_production_kitting_confirmation_lines')->where('confirmation_id',$kitting['id'])
+            ->value('source_facts_snapshot'),true,512,JSON_THROW_ON_ERROR);
+        $this->assertCount(2,$sourceFacts['cutting_handovers']);
+
+        $this->withToken($sourceToken)->getJson('/api/v1/erp/production/cutting/settlements/'.$batchId.'/execution')->assertOk()
+            ->assertJsonPath('data.results.data.0.designated_qty','10.00000000')
+            ->assertJsonPath('data.results.data.0.handed_over_qty','10.00000000')
+            ->assertJsonPath('data.results.data.0.received_qty','10.00000000')
+            ->assertJsonPath('data.results.data.0.confirm_allowed',false)
+            ->assertJsonPath('data.results.data.0.routes.0.display_status','已接收');
+    }
+
+    public function test_cutting_handover_replay_and_receiver_scope_do_not_duplicate_receipts(): void
+    {
+        $f = $this->fixture(); $receiver = $this->employee('cut-receiver-'); $this->consumerTask($f,$receiver);
+        $batch = $this->issue($f); $id = $batch['settlement_batch_id']; $result = $this->save($f,$id,'10')['result_ids'][0];
+        $split = app(CuttingRecordService::class)->splitRoutes($result,$this->payload(1)+['routes'=>[[
+            'route_type'=>'NEXT_OPERATION','quantity'=>'10','target_material_requirement_id'=>$f['targetRequirement']
+        ]]],$f['user'],self::PERMISSIONS,true); $routeId = $split['routes'][0]['id'];
+        app(CuttingConfirmationService::class)->confirm($id,$this->confirmation($f,$id,$result,'3000'),$f['user'],self::PERMISSIONS,true);
+        $service = app(CuttingHandoverService::class); $dispatchPayload = $this->payload((int) DB::table('erp_cutting_result_routes')->where('id',$routeId)->value('business_version'))+['quantity'=>'10'];
+        $dispatch = $service->dispatch($routeId,$dispatchPayload,$f['user'],self::PERMISSIONS,true);
+        $this->assertSame($dispatch,$service->dispatch($routeId,$dispatchPayload,$f['user'],self::PERMISSIONS,true));
+        $outsider = $this->employee('cut-outsider-');
+        $this->domain('cutting_expected_receiver_required',fn () => $service->accept($dispatch['handover_id'],$this->payload(1)+['quantity'=>'1'],$outsider,self::PERMISSIONS,true),403);
+        $acceptPayload = $this->payload(1)+['quantity'=>'4']; $accepted = $service->accept($dispatch['handover_id'],$acceptPayload,$receiver,self::PERMISSIONS,true);
+        $this->assertSame($accepted,$service->accept($dispatch['handover_id'],$acceptPayload,$receiver,self::PERMISSIONS,true));
+        $this->assertSame(1,DB::table('erp_cutting_handover_decisions')->where('handover_id',$dispatch['handover_id'])->where('action','ACCEPT')->count());
+        $this->assertSame('4.00000000',DB::table('erp_production_target_material_requirements')->where('id',$f['targetRequirement'])->value('satisfied_base_qty'));
+    }
+
+    public function test_formal_cutting_warehouse_receipt_is_partial_idempotent_and_distinct_from_receive(): void
+    {
+        $f = $this->fixture(); $batch = $this->issue($f); $batchId = $batch['settlement_batch_id'];
+        $result = $this->save($f,$batchId,'10')['result_ids'][0]; $split = $this->route($f,$result,'10');
+        $routeId = $split['routes'][0]['id'];
+        app(CuttingConfirmationService::class)->confirm($batchId,$this->confirmation($f,$batchId,$result,'3000'),$f['user'],self::PERMISSIONS,true);
+        $service = app(CuttingWarehouseReceiptService::class); $otherWarehouse = Warehouse::create([
+            'warehouse_code'=>'CUT-OTHER-'.Str::ulid(),'warehouse_name'=>'其他仓库','status'=>'enabled']);
+        $otherLocation = Location::create(['warehouse_id'=>$otherWarehouse->id,'location_code'=>'CUT-OTHER-LOC-'.Str::ulid(),
+            'location_name'=>'其他库位','status'=>'enabled']);
+        $version = (int) DB::table('erp_cutting_result_routes')->where('id',$routeId)->value('business_version');
+        $this->domain('location_invalid',fn () => $service->post($routeId,$this->payload($version)+[
+            'quantity'=>'1','warehouse_id'=>$f['warehouse']->id,'location_id'=>$otherLocation->id,'batch_no'=>'CUT-OUT-PARTIAL'
+        ],$f['user'],self::PERMISSIONS,true));
+        $this->assertSame(0,DB::table('erp_cutting_warehouse_receipts')->where('route_id',$routeId)->count());
+        InventoryBalance::create(['item_id'=>$f['output']->id,'warehouse_id'=>$f['warehouse']->id,'location_id'=>$f['location']->id,
+            'batch_no'=>'CUT-CONFLICT','unit_id'=>$f['output']->unit_id,'quantity_on_hand'=>1,'quantity_locked'=>0,
+            'quantity_available'=>1,'quantity_defective'=>0,'quantity_pending'=>0,'inventory_value'=>0,'average_unit_cost'=>0]);
+        $this->domain('warehouse_batch_identity_conflict',fn () => $service->post($routeId,$this->payload($version)+[
+            'quantity'=>'1','warehouse_id'=>$f['warehouse']->id,'location_id'=>$f['location']->id,'batch_no'=>'CUT-CONFLICT'
+        ],$f['user'],self::PERMISSIONS,true),409);
+
+        $firstPayload = $this->payload($version)+['quantity'=>'4','warehouse_id'=>$f['warehouse']->id,
+            'location_id'=>$f['location']->id,'batch_no'=>'CUT-OUT-PARTIAL'];
+        $first = $service->post($routeId,$firstPayload,$f['user'],self::PERMISSIONS,true);
+        $this->assertSame($first,$service->post($routeId,$firstPayload,$f['user'],self::PERMISSIONS,true));
+        $this->assertSame('PART_WAREHOUSED',$first['route_status']); $this->assertSame('1200.0000',$first['posted_cost']);
+        $second = $service->post($routeId,$this->payload($first['route_business_version'])+[
+            'quantity'=>'6','warehouse_id'=>$f['warehouse']->id,'location_id'=>$f['location']->id,'batch_no'=>'CUT-OUT-PARTIAL'
+        ],$f['user'],self::PERMISSIONS,true);
+        $this->assertSame('WAREHOUSED',$second['route_status']); $this->assertSame('1800.0000',$second['posted_cost']);
+        $this->assertSame(2,DB::table('erp_cutting_warehouse_receipts')->where('route_id',$routeId)->where('status','POSTED')->count());
+        $this->assertSame(2,DB::table('erp_inventory_transactions')->where('transaction_type','cutting_output_receipt')
+            ->where('source_type','cutting_warehouse_receipt')->count());
+        $route = DB::table('erp_cutting_result_routes')->where('id',$routeId)->first();
+        $this->assertSame('10.00000000',$route->warehoused_qty); $this->assertSame('3000.0000',$route->warehoused_cost);
+        $this->assertSame('0.00000000',$route->handed_over_qty); $this->assertSame('0.00000000',$route->received_qty);
+        $balance = InventoryBalance::where('item_id',$f['output']->id)->where('batch_no','CUT-OUT-PARTIAL')->firstOrFail();
+        $this->assertSame(0,bccomp('10',(string) $balance->quantity_on_hand,8));
+        $this->assertSame(0,bccomp('10',(string) $balance->quantity_locked,8));
+        $this->assertSame(0,bccomp('0',(string) $balance->quantity_available,8));
+        $this->assertSame(0,bccomp('0',(string) DB::table('erp_production_target_material_requirements')
+            ->where('id',$f['targetRequirement'])->value('satisfied_base_qty'),8),'入库锁定不能冒充下一工序已接收');
+        $projection = app(CuttingReadService::class)->settlementExecution($batchId,['page'=>1,'per_page'=>20],$f['user'],self::PERMISSIONS,true);
+        $this->assertSame('10.00000000',$projection['results']['data'][0]['warehoused_qty']);
+        $this->assertSame('0.00000000',$projection['results']['data'][0]['received_qty']);
+        $this->assertFalse($projection['results']['data'][0]['confirm_allowed']);
+        $this->assertSame('已入库',$projection['results']['data'][0]['routes'][0]['display_status']);
+        $this->assertCount(2,$projection['results']['data'][0]['routes'][0]['warehouse_receipts']);
+
+        $flow = $this->fixture(); $flowBatch = $this->issue($flow); $flowBatchId = $flowBatch['settlement_batch_id'];
+        $flowResult = $this->save($flow,$flowBatchId,'10')['result_ids'][0];
+        $flowSplit = app(CuttingRecordService::class)->splitRoutes($flowResult,$this->payload(1)+['routes'=>[[
+            'route_type'=>'NEXT_OPERATION','quantity'=>'10','target_material_requirement_id'=>$flow['targetRequirement']
+        ]]],$flow['user'],self::PERMISSIONS,true); $flowRouteId = $flowSplit['routes'][0]['id'];
+        app(CuttingConfirmationService::class)->confirm($flowBatchId,$this->confirmation($flow,$flowBatchId,$flowResult,'3000'),$flow['user'],self::PERMISSIONS,true);
+        $this->domain('cutting_route_not_warehouse',fn () => $service->post($flowRouteId,$this->payload(2)+[
+            'quantity'=>'1','warehouse_id'=>$flow['warehouse']->id,'location_id'=>$flow['location']->id,'batch_no'=>'FLOW-CANNOT-WH'
+        ],$flow['user'],self::PERMISSIONS,true),409);
+    }
+
+    public function test_public_cutting_surplus_remains_available_while_planned_output_is_locked(): void
+    {
+        $f = $this->fixture(); $batch = $this->issue($f); $batchId = $batch['settlement_batch_id'];
+        $result = $this->save($f,$batchId,'12')['result_ids'][0]; $split = $this->route($f,$result,'12'); $routeId = $split['routes'][0]['id'];
+        $payload = $this->confirmation($f,$batchId,$result,'3000');
+        $payload['allocations'][0]['quantity'] = '10';
+        $payload['allocations'][] = ['route_id'=>$routeId,'quantity'=>'2','disposition'=>'PUBLIC_UNALLOCATED'];
+        app(CuttingConfirmationService::class)->confirm($batchId,$payload,$f['user'],self::PERMISSIONS,true);
+        $posted = $this->withToken($this->token($f['user']))->postJson('/api/v1/erp/production/cutting/routes/'.$routeId.'/warehouse',$this->payload(2)+[
+            'quantity'=>'12','warehouse_id'=>$f['warehouse']->id,'location_id'=>$f['location']->id,'batch_no'=>'CUT-MIXED-SCOPE'
+        ])->assertCreated()->assertJsonPath('message','下料产出已正式入库')->json('data');
+        $balance = InventoryBalance::findOrFail($posted['inventory_balance_id']);
+        $this->assertSame(0,bccomp('12',(string) $balance->quantity_on_hand,8));
+        $this->assertSame(0,bccomp('10',(string) $balance->quantity_locked,8));
+        $this->assertSame(0,bccomp('2',(string) $balance->quantity_available,8));
+        $this->assertSame(2,DB::table('erp_cutting_warehouse_receipt_allocations')->where('receipt_id',$posted['receipt_id'])->count());
+        $reservation = DB::table('erp_cutting_inventory_reservations')->whereIn('receipt_allocation_id',
+            DB::table('erp_cutting_warehouse_receipt_allocations')->where('receipt_id',$posted['receipt_id'])->pluck('id'))->sole();
+        $this->assertSame('PLAN',$reservation->reservation_scope); $this->assertSame('10.00000000',$reservation->reserved_qty);
+        $this->assertSame($f['targetRequirement'],(int) $reservation->target_material_requirement_id);
+    }
+
+    public function test_builtin_production_roles_receive_explicit_cutting_permissions(): void
+    {
+        app(RbacBootstrapService::class)->bootstrap(true);
+        $matrix = DB::table('erp_rbac_roles as role')->join('erp_rbac_role_permissions as role_permission','role_permission.role_id','=','role.id')
+            ->join('erp_rbac_permissions as permission','permission.id','=','role_permission.permission_id')
+            ->whereIn('role.code',['production_manager','production_operator','department_principal'])
+            ->whereIn('permission.code',['production.cutting.view','production.cutting.record','production.cutting.handover.dispatch',
+                'production.cutting.handover.receive','production.cutting.warehouse'])
+            ->get(['role.code as role_code','permission.code as permission_code'])->groupBy('role_code');
+        $this->assertEqualsCanonicalizing([
+            'production.cutting.view','production.cutting.record','production.cutting.handover.dispatch',
+            'production.cutting.handover.receive','production.cutting.warehouse',
+        ],$matrix['production_manager']->pluck('permission_code')->all());
+        $this->assertEqualsCanonicalizing([
+            'production.cutting.view','production.cutting.record','production.cutting.handover.dispatch','production.cutting.handover.receive',
+        ],$matrix['production_operator']->pluck('permission_code')->all());
+        $this->assertEqualsCanonicalizing([
+            'production.cutting.view','production.cutting.warehouse',
+        ],$matrix['department_principal']->pluck('permission_code')->all());
+    }
+
     private function additionalInput(array $f, Item $raw, bool $sameStage): WorkOrderMaterialRequirement
     {
         $r = $f['inputRequirement']->replicate(); $r->line_no = 2; $r->component_item_id = $raw->id;
@@ -460,6 +734,29 @@ class CuttingRecordTest extends TestCase
             $operation = DB::table('erp_production_quantity_operations')->insertGetId($node);
         }
         $supply = $this->supply($f['wo'],$r,$stage,$raw->id,'2'); $this->targetRequirement($f['wo'],$r,$supply,$operation,$raw->id,'2'); return $r;
+    }
+
+    private function employee(string $prefix): object
+    {
+        $user = (object) ['legacy_id'=>random_int(100000000,999999999),'username'=>$prefix.Str::ulid()];
+        DB::table('erp_legacy_admin_users')->insert(['legacy_id'=>$user->legacy_id,'username'=>$user->username,
+            'status'=>'normal','auth_group_names'=>'[]','created_at'=>now(),'updated_at'=>now()]);
+        return $user;
+    }
+
+    private function consumerTask(array $f, object $receiver): ProductionTask
+    {
+        $target = ProductionQuantityOperation::findOrFail($f['consumerOperation']);
+        $target->fill(['status'=>'WAIT_MATERIAL','responsible_user_legacy_id'=>$receiver->legacy_id,'claimed_at'=>now(),
+            'kitting_required'=>true,'business_version'=>(int) $target->business_version+1])->save();
+        $task = ProductionTask::create(['task_no'=>'CUT-TARGET-'.Str::ulid(),'work_order_id'=>$f['consumerWo']->id,
+            'execution_mode'=>'quantity','routing_operation_id_snapshot'=>$f['consumerStage'],
+            'operation_code_snapshot'=>$target->operation_code_snapshot,'operation_name_snapshot'=>$target->operation_name_snapshot,
+            'sequence_no_snapshot'=>$target->sequence_no_snapshot,'status'=>'WAIT_MATERIAL',
+            'assignee_user_legacy_id'=>$receiver->legacy_id,'assignment_mode'=>'manual_claim','claimed_at'=>now(),'business_version'=>1]);
+        DB::table('erp_production_task_targets')->insert(['task_id'=>$task->id,'target_type'=>'quantity_operation',
+            'target_id'=>$target->id,'status_snapshot'=>'WAIT_MATERIAL','created_at'=>now(),'updated_at'=>now()]);
+        return $task;
     }
 
     private function fixture(string $quality = 'none', string $required = '10', string $planned = '10'): array

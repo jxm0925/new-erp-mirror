@@ -155,7 +155,9 @@ class ProductionKittingService
             $pendingHandover = DB::table('erp_production_operation_handovers')
                 ->where('target_target_type', $targetType)->where('target_target_id', $targetId)
                 ->where('status', 'WAIT_RECEIVE')->exists();
-            if ($pendingHandover) $this->fail('handover_not_received', '上一工序产出尚未完成交接接收，不能确认齐套。');
+            $pendingCuttingHandover = DB::table('erp_cutting_handovers')->where('target_type', $targetType)->where('target_id', $targetId)
+                ->whereIn('status', ['IN_TRANSIT', 'PARTIAL'])->exists();
+            if ($pendingHandover || $pendingCuttingHandover) $this->fail('handover_not_received', '上一工序或下料产出尚未完成交接接收，不能确认齐套。');
 
             if (! $target->kitting_required) $this->fail('kitting_not_required', '当前工序不需要齐套确认。');
             $this->applyWorkstationStockFacts($task, $targetType, $targetId, $commandId);
@@ -262,7 +264,12 @@ class ProductionKittingService
             ->groupBy('return_line.material_requirement_id', 'return_line.warehouse_id', 'return_line.location_id', DB::raw('COALESCE(return_line.batch_no, \'\')'))
             ->get()->keyBy(fn ($row) => implode('|', [(int) $row->material_requirement_id, (int) $row->warehouse_id, (int) $row->location_id, (string) $row->normalized_batch_no]));
 
-        return $rows->map(function ($row) use ($returnSources, $activeReturns): array {
+        $cuttingSources = DB::table('erp_cutting_handovers')
+            ->whereIn('target_material_requirement_id', $rows->pluck('id'))->where('accepted_qty', '>', 0)
+            ->orderBy('id')->get(['id', 'handover_no', 'target_material_requirement_id', 'accepted_qty', 'accepted_cost', 'status', 'completed_at'])
+            ->groupBy(fn ($row) => (int) $row->target_material_requirement_id);
+
+        return $rows->map(function ($row) use ($returnSources, $activeReturns, $cuttingSources): array {
                 $required = (float) $row->required_base_qty;
                 $grossReceived = (float) $row->satisfied_base_qty;
                 $returned = (float) $row->returned_base_qty;
@@ -278,6 +285,11 @@ class ProductionKittingService
                         'confirmed_at' => $row->confirmed_at,
                     ];
                 }
+                $sourceFacts['cutting_handovers'] = $cuttingSources->get((int) $row->id, collect())->map(fn ($handover) => [
+                    'id' => (int) $handover->id, 'handover_no' => $handover->handover_no,
+                    'accepted_base_qty' => (float) $handover->accepted_qty, 'status' => $handover->status,
+                    'completed_at' => $handover->completed_at,
+                ])->values()->all();
                 $sources = collect($returnSources->get((int) $row->material_requirement_id, collect()))->map(function ($source) use ($activeReturns, $row): array {
                     $key = implode('|', [(int) $row->material_requirement_id, (int) $source->warehouse_id, (int) $source->location_id, (string) ($source->batch_no ?? '')]);
                     $sourceReceived = (float) $source->received_base_qty;
@@ -335,6 +347,10 @@ class ProductionKittingService
                 ->where('target_target_type', $targetType)->where('target_target_id', $targetId)
                 ->where('status', 'WAIT_RECEIVE')->exists()) {
                 $this->fail('handover_not_received', '上一工序产出尚未完成交接接收，不能确认齐套。');
+            }
+            if (DB::table('erp_cutting_handovers')->where('target_type', $targetType)->where('target_id', $targetId)
+                ->whereIn('status', ['IN_TRANSIT', 'PARTIAL'])->exists()) {
+                $this->fail('handover_not_received', '下料产出尚未完成交接接收，不能确认齐套。');
             }
             $this->laborSessions->assertStartAllowed($targetType, $targetId, $this->userId($user), $payload);
 

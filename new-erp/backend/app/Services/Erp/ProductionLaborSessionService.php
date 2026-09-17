@@ -3,6 +3,7 @@
 namespace App\Services\Erp;
 
 use App\Exceptions\Erp\WorkOrderDomainException;
+use App\Models\Erp\CuttingTask;
 use App\Models\Erp\ProductionLaborSession;
 use App\Models\Erp\ProductionQuantityOperation;
 use App\Models\Erp\ProductionTask;
@@ -30,9 +31,45 @@ class ProductionLaborSessionService
         }
 
         return ProductionLaborSession::create([
+            'execution_task_type' => 'PRODUCTION_TASK',
             'task_id' => $task->id,
+            'cutting_task_id' => null,
             'target_type' => $type,
             'target_id' => $target->id,
+            'employee_legacy_id' => $employeeId,
+            'role' => $role,
+            'status' => 'ACTIVE',
+            'started_at' => $now,
+            'previous_labor_session_id' => $previous?->id,
+            'actual_labor_minutes' => 0,
+            'responsibility_weight_snapshot' => $weight,
+            'credited_labor_minutes' => 0,
+        ]);
+    }
+
+    public function startCutting(CuttingTask $task, int $employeeId, string $role, float $weight, $now, array $switchContext = []): ProductionLaborSession
+    {
+        $this->lockEmployee($employeeId);
+        $previous = ProductionLaborSession::query()
+            ->where('employee_legacy_id', $employeeId)
+            ->where('status', 'ACTIVE')
+            ->lockForUpdate()
+            ->first();
+        if ($previous && $previous->execution_task_type === 'CUTTING_TASK'
+            && (int) $previous->cutting_task_id === (int) $task->id) {
+            $this->fail('labor_session_active', '当前人员已经在该下料任务计时中。', 409);
+        }
+        if ($previous) {
+            $this->assertSwitchConfirmed($previous, $switchContext);
+            $this->endExistingAndRecalculate($previous, 'task_switched', $now);
+        }
+
+        return ProductionLaborSession::create([
+            'execution_task_type' => 'CUTTING_TASK',
+            'task_id' => null,
+            'cutting_task_id' => $task->id,
+            'target_type' => 'cutting_task',
+            'target_id' => $task->id,
             'employee_legacy_id' => $employeeId,
             'role' => $role,
             'status' => 'ACTIVE',
@@ -72,7 +109,7 @@ class ProductionLaborSessionService
             return null;
         }
 
-        $this->finish($session, $target, $reason, $now);
+        $target->actual_labor_minutes = (float) $target->actual_labor_minutes + $this->finish($session, $reason, $now);
         if ($recalculate) $this->workModes->recalculate($task, $target, $type, $now, $incrementTargetVersion);
         return $session;
     }
@@ -89,20 +126,63 @@ class ProductionLaborSessionService
         if (! $session) return null;
 
         $target = $this->target($session->target_type, (int) $session->target_id);
-        $this->finish($session, $target, $reason, $now);
+        $target->actual_labor_minutes = (float) $target->actual_labor_minutes + $this->finish($session, $reason, $now);
         $this->workModes->recalculate($task, $target, $session->target_type, $now);
         return $session;
     }
 
+    public function endCutting(CuttingTask $task, int $employeeId, string $reason, $now, bool $required = true, bool $recalculate = true): ?ProductionLaborSession
+    {
+        $this->lockEmployee($employeeId);
+        $session = ProductionLaborSession::query()
+            ->where('execution_task_type', 'CUTTING_TASK')
+            ->where('cutting_task_id', $task->id)
+            ->where('employee_legacy_id', $employeeId)
+            ->where('status', 'ACTIVE')
+            ->lockForUpdate()
+            ->first();
+        if (! $session) {
+            if ($required) $this->fail('labor_session_missing', '未找到当前人员的进行中下料计时。', 409);
+            return null;
+        }
+
+        $minutes = $this->finish($session, $reason, $now);
+        $task->actual_labor_minutes = (float) $task->actual_labor_minutes + $minutes;
+        if ($recalculate) $this->recalculateCuttingTask($task, $now);
+        return $session;
+    }
+
+    public function recalculateCuttingTask(CuttingTask $task, $now, bool $incrementVersion = true): void
+    {
+        if (! in_array($task->status, ['IN_PROGRESS', 'PAUSED'], true)) return;
+        $active = ProductionLaborSession::query()
+            ->where('execution_task_type', 'CUTTING_TASK')
+            ->where('cutting_task_id', $task->id)
+            ->where('status', 'ACTIVE')
+            ->exists();
+        $automatic = ($task->work_mode_snapshot ?: 'manual') === 'automatic';
+        $task->status = $automatic || $active ? 'IN_PROGRESS' : 'PAUSED';
+        $task->paused_at = $task->status === 'PAUSED' ? ($task->paused_at ?: $now) : null;
+        if ($incrementVersion) $task->business_version = (int) $task->business_version + 1;
+        $task->save();
+    }
+
     private function endExistingAndRecalculate(ProductionLaborSession $session, string $reason, $now): void
     {
+        if ($session->execution_task_type === 'CUTTING_TASK') {
+            $task = CuttingTask::query()->lockForUpdate()->findOrFail($session->cutting_task_id);
+            $minutes = $this->finish($session, $reason, $now);
+            $task->actual_labor_minutes = (float) $task->actual_labor_minutes + $minutes;
+            $this->recalculateCuttingTask($task, $now);
+            return;
+        }
         $task = ProductionTask::query()->lockForUpdate()->findOrFail($session->task_id);
         $target = $this->target($session->target_type, (int) $session->target_id);
-        $this->finish($session, $target, $reason, $now);
+        $target->actual_labor_minutes = (float) $target->actual_labor_minutes + $this->finish($session, $reason, $now);
         $this->workModes->recalculate($task, $target, $session->target_type, $now);
     }
 
-    private function finish(ProductionLaborSession $session, object $target, string $reason, $now): void
+    private function finish(ProductionLaborSession $session, string $reason, $now): float
     {
         $minutes = max(0, $session->started_at->diffInSeconds($now) / 60);
         $session->update([
@@ -112,7 +192,7 @@ class ProductionLaborSessionService
             'actual_labor_minutes' => $minutes,
             'credited_labor_minutes' => 0,
         ]);
-        $target->actual_labor_minutes = (float) $target->actual_labor_minutes + $minutes;
+        return $minutes;
     }
 
     private function assertSwitchConfirmed(ProductionLaborSession $previous, array $context): void
@@ -120,6 +200,20 @@ class ProductionLaborSessionService
         if (($context['switch_active_labor'] ?? false) === true
             && (int) ($context['expected_active_labor_session_id'] ?? 0) === (int) $previous->id) return;
 
+        if ($previous->execution_task_type === 'CUTTING_TASK') {
+            $task = CuttingTask::query()->find($previous->cutting_task_id);
+            $this->fail('labor_switch_confirmation_required', '当前人员正在另一下料任务计时，请确认切换后重试。', 409, [
+                'active_labor_session_id' => (int) $previous->id,
+                'current_task' => [
+                    'execution_task_type' => 'CUTTING_TASK',
+                    'id' => $task?->id ? (int) $task->id : null,
+                    'task_no' => $task?->task_no,
+                    'target_type' => 'cutting_task',
+                    'target_id' => (int) $previous->target_id,
+                    'started_at' => optional($previous->started_at)->toISOString(),
+                ],
+            ]);
+        }
         $task = ProductionTask::query()->find($previous->task_id);
         $target = $this->targetWithoutLock($previous->target_type, (int) $previous->target_id);
         $unitId = $previous->target_type === 'unit_operation' ? (int) ($target?->production_unit_id ?? 0) : 0;
@@ -127,6 +221,7 @@ class ProductionLaborSessionService
         $this->fail('labor_switch_confirmation_required', '当前人员正在另一生产任务计时，请确认切换后重试。', 409, [
             'active_labor_session_id' => (int) $previous->id,
             'current_task' => [
+                'execution_task_type' => 'PRODUCTION_TASK',
                 'id' => $task?->id ? (int) $task->id : null,
                 'task_no' => $task?->task_no,
                 'target_type' => $previous->target_type,

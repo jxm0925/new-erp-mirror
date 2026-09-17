@@ -12,8 +12,10 @@ class ProductionTargetReadinessService
         $pendingHandover = DB::table('erp_production_operation_handovers')
             ->where('target_target_type', $targetType)->where('target_target_id', $target->id)
             ->where('status', 'WAIT_RECEIVE')->exists();
-        if ($pendingHandover) {
-            return $this->result('handover_confirmation_required', '上一工序产出尚未接收，必须先完成交接。', [], false);
+        $pendingCuttingHandover = DB::table('erp_cutting_handovers')->where('target_type', $targetType)->where('target_id', $target->id)
+            ->whereIn('status', ['IN_TRANSIT', 'PARTIAL'])->exists();
+        if ($pendingHandover || $pendingCuttingHandover) {
+            return $this->result('handover_confirmation_required', '上一工序或下料产出尚未接收，必须先完成交接。', [], false);
         }
         if (! $eligibleState) {
             return $this->result(null, null, [], false, true);

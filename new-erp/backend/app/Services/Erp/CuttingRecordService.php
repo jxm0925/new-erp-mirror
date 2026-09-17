@@ -30,7 +30,7 @@ final class CuttingRecordService
                 'status' => 'PUBLISHED', 'business_version' => 1, 'responsible_user_legacy_id' => $c->actor($user),
                 'created_by_legacy_id' => $c->actor($user), 'published_at' => now(), 'created_at' => now(), 'updated_at' => now()]);
             $taskId = DB::table('erp_cutting_tasks')->insertGetId(['cutting_order_id' => $id, 'task_no' => $this->numbers->next('cutting_task', 'CT'),
-                'status' => 'READY', 'business_version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+                'status' => 'WAIT_CLAIM', 'business_version' => 1, 'created_at' => now(), 'updated_at' => now()]);
             usort($plans, fn ($a, $b) => [(int) ($a['work_order_id'] ?? 0), (int) ($a['stage_id'] ?? 0)] <=> [(int) ($b['work_order_id'] ?? 0), (int) ($b['stage_id'] ?? 0)]);
             foreach ($plans as $plan) {
                 $wo = $c->workOrder((int) ($plan['work_order_id'] ?? 0), $user, $permissions, $super, 'production.cutting.plan', true);

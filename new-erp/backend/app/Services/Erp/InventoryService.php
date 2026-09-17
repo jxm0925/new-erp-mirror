@@ -1086,12 +1086,19 @@ class InventoryService
     public function postCuttingReceipt(object $receipt, array $line, object $operator): InventoryTransaction
     {
         if (DB::transactionLevel() < 1) throw new \LogicException('Cutting posting requires an application transaction.');
+        $existing = InventoryTransaction::query()->where('transaction_type', 'cutting_output_receipt')
+            ->where('source_type', 'cutting_warehouse_receipt')->where('source_id', $receipt->id)->first();
+        if ($existing) return $existing;
         $transaction = InventoryTransaction::create(['transaction_no' => $this->nextNo('ITX'), 'transaction_type' => 'cutting_output_receipt',
             'source_type' => 'cutting_warehouse_receipt', 'source_id' => $receipt->id, 'source_no' => $receipt->receipt_no,
             'posting_status' => 'posted', 'warehouse_id' => $line['warehouse_id'], 'location_id' => $line['location_id'],
             'transaction_date' => now()->toDateString(), 'posted_by' => (int) ($operator->legacy_id ?? $operator->id), 'posted_at' => now()]);
         $this->applyInventoryChange($transaction, $line + ['source_type' => 'cutting_warehouse_receipt', 'source_id' => $receipt->id,
             'source_item_id' => $receipt->route_id, 'cost_source_type' => 'cutting_result_total']);
+        InventoryPostingLog::create(['source_type' => 'cutting_warehouse_receipt', 'source_id' => $receipt->id,
+            'source_no' => $receipt->receipt_no, 'transaction_type' => 'cutting_output_receipt',
+            'transaction_id' => $transaction->id, 'posting_status' => 'posted', 'message' => '下料产出库存入库过账成功',
+            'posted_by' => (int) ($operator->legacy_id ?? $operator->id ?? 0), 'posted_at' => now()]);
         return $transaction;
     }
 

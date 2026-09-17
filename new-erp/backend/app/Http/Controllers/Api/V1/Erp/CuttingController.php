@@ -4,7 +4,7 @@ namespace App\Http\Controllers\Api\V1\Erp;
 
 use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Http\Controllers\Controller;
-use App\Services\Erp\{AuthContextService, CuttingConfirmationService, CuttingInputService, CuttingReadService, CuttingRecordService};
+use App\Services\Erp\{AuthContextService, CuttingConfirmationService, CuttingHandoverService, CuttingInputService, CuttingReadService, CuttingRecordService, CuttingTaskExecutionService, CuttingWarehouseReceiptService};
 use Illuminate\Http\Request;
 
 final class CuttingController extends Controller
@@ -13,10 +13,16 @@ final class CuttingController extends Controller
     { return response()->json($s->orders($this->filters($r), ...$this->context($r))); }
     public function execution(Request $r, int $id, CuttingReadService $s)
     { return response()->json(['data'=>$s->execution($id,$this->filters($r), ...$this->context($r))]); }
+    public function tasks(Request $r, CuttingReadService $s)
+    { return response()->json($s->tasks($this->filters($r), ...$this->context($r))); }
+    public function taskExecution(Request $r, int $id, CuttingReadService $s)
+    { return response()->json(['data'=>$s->taskExecution($id,$this->filters($r), ...$this->context($r))]); }
     public function settlementExecution(Request $r, int $id, CuttingReadService $s)
     { return response()->json(['data'=>$s->settlementExecution($id,$this->filters($r), ...$this->context($r))]); }
     public function outputs(Request $r, int $id, CuttingReadService $s)
     { return response()->json($s->allowedOutputs($id,$this->filters($r), ...$this->context($r))); }
+    public function handoverTargets(Request $r, int $id, CuttingReadService $s)
+    { return response()->json($s->handoverTargets($id,$this->filters($r), ...$this->context($r))); }
     public function inputs(Request $r, int $id, CuttingReadService $s)
     { return response()->json($s->inputCandidates($id,$this->filters($r), ...$this->context($r))); }
     public function publish(Request $r, CuttingRecordService $s)
@@ -43,6 +49,34 @@ final class CuttingController extends Controller
     { $this->validateCommand($r); return response()->json(['message'=>'用料核算已确认','data'=>$s->confirm($id,$r->all(), ...$this->context($r))]); }
     public function returnForEdit(Request $r, int $id, CuttingRecordService $s)
     { $this->validateCommand($r); return response()->json(['message'=>'加工记录已退回修改','data'=>$s->returnForEdit($id,$r->all(), ...$this->context($r))]); }
+    public function claimTask(Request $r, int $id, CuttingTaskExecutionService $s)
+    { $this->validateCommand($r); return response()->json(['message'=>'下料任务已领取','data'=>$s->claim($id,$r->all(), ...$this->context($r))]); }
+    public function startTask(Request $r, int $id, CuttingTaskExecutionService $s)
+    { $this->validateCommand($r); return response()->json(['message'=>'下料任务已开始','data'=>$s->start($id,$r->all(), ...$this->context($r))]); }
+    public function pauseTask(Request $r, int $id, CuttingTaskExecutionService $s)
+    { $this->validateCommand($r); return response()->json(['message'=>'本人下料计时已暂停','data'=>$s->pause($id,$r->all(), ...$this->context($r))]); }
+    public function resumeTask(Request $r, int $id, CuttingTaskExecutionService $s)
+    { $this->validateCommand($r); return response()->json(['message'=>'本人下料计时已恢复','data'=>$s->resume($id,$r->all(), ...$this->context($r))]); }
+    public function finishTask(Request $r, int $id, CuttingTaskExecutionService $s)
+    { $this->validateCommand($r); return response()->json(['message'=>'下料任务已完成','data'=>$s->finish($id,$r->all(), ...$this->context($r))]); }
+    public function addTaskCollaborators(Request $r, int $id, CuttingTaskExecutionService $s)
+    { $this->validateCommand($r); return response()->json(['message'=>'下料协作者已更新','data'=>$s->addCollaborators($id,$r->all(), ...$this->context($r))]); }
+    public function leaveTaskCollaboration(Request $r, int $id, CuttingTaskExecutionService $s)
+    { $this->validateCommand($r); return response()->json(['message'=>'已退出下料协作','data'=>$s->leaveCollaboration($id,$r->all(), ...$this->context($r))]); }
+    public function startTaskCollaborationLabor(Request $r, int $id, CuttingTaskExecutionService $s)
+    { $this->validateCommand($r); return response()->json(['message'=>'协同下料计时已开始','data'=>$s->startCollaboratorLabor($id,$r->all(), ...$this->context($r))]); }
+    public function pauseTaskCollaborationLabor(Request $r, int $id, CuttingTaskExecutionService $s)
+    { $this->validateCommand($r); return response()->json(['message'=>'协同下料计时已暂停','data'=>$s->pauseCollaboratorLabor($id,$r->all(), ...$this->context($r))]); }
+    public function dispatchHandover(Request $r, int $id, CuttingHandoverService $s)
+    { $this->validateCommand($r); return response()->json(['message'=>'下料产出已交出','data'=>$s->dispatch($id,$r->all(), ...$this->context($r))],201); }
+    public function pendingHandovers(Request $r, CuttingHandoverService $s)
+    { return response()->json(['data'=>$s->pending(...$this->context($r))]); }
+    public function acceptHandover(Request $r, int $id, CuttingHandoverService $s)
+    { $this->validateCommand($r); return response()->json(['message'=>'下料产出已接收','data'=>$s->accept($id,$r->all(), ...$this->context($r))]); }
+    public function rejectHandover(Request $r, int $id, CuttingHandoverService $s)
+    { $this->validateCommand($r); return response()->json(['message'=>'下料产出已拒收并退回待交出','data'=>$s->reject($id,$r->all(), ...$this->context($r))]); }
+    public function warehouseRoute(Request $r, int $id, CuttingWarehouseReceiptService $s)
+    { $this->validateCommand($r); return response()->json(['message'=>'下料产出已正式入库','data'=>$s->post($id,$r->all(), ...$this->context($r))],201); }
 
     private function validateCommand(Request $r, int $minimum = 1): void
     { $r->validate(['client_command_id'=>'required|string|max:120','expected_version'=>'required|integer|min:'.$minimum]); }

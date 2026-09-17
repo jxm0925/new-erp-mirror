@@ -20,7 +20,13 @@ final class CuttingCommandService
             'issue_cutting_material' => ['physical_material_id','inventory_balance_id','input_qty'],
             'confirm_cutting_batch' => ['costs','allocations'],
             'return_cutting_for_edit' => ['reason'],
-            'submit_cutting_results','mark_cutting_first_cut' => [], default => null,
+            'start_cutting_task','resume_cutting_task','start_cutting_collaborator_labor' => ['switch_active_labor','expected_active_labor_session_id'],
+            'add_cutting_task_collaborators' => ['employee_legacy_ids'],
+            'dispatch_cutting_route','accept_cutting_handover' => ['quantity'],
+            'reject_cutting_handover' => ['quantity','reason'],
+            'warehouse_cutting_route' => ['quantity','warehouse_id','location_id','batch_no'],
+            'claim_cutting_task','pause_cutting_task','finish_cutting_task','leave_cutting_task_collaboration',
+            'pause_cutting_collaborator_labor','submit_cutting_results','mark_cutting_first_cut' => [], default => null,
         };
         if ($fields !== null && array_diff(array_keys($payload), array_merge(['client_command_id','expected_version'], $fields)))
             $this->fail('command_fields_invalid', '操作包含不允许的字段。');
