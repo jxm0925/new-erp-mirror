@@ -728,7 +728,9 @@ class InventoryService
                     $locationBalance->update(['quantity_locked' => max(0, (float) $locationBalance->quantity_locked - $quantity)]);
                 }
                 $unitCost = (float) $balance->average_unit_cost;
-                $costAmount = -round($quantity * $unitCost, 4);
+                $costAmount = $balance->material_lot_id
+                    ? bcsub('0', CuttingDecimal::share((string) $balance->inventory_value, (string) $balance->quantity_on_hand, (string) $shipmentLine->base_qty), 4)
+                    : -round($quantity * $unitCost, 4);
                 $this->applyInventoryChange($transaction, [
                     'item_id' => $shipmentLine->item_id,
                     'warehouse_id' => $shipmentLine->warehouse_id,
@@ -1064,6 +1066,35 @@ class InventoryService
         }, 5);
     }
 
+    /** Called only inside a formal cutting command's locked transaction. */
+    public function postCuttingIssue(object $batch, InventoryBalance $balance, object $operator): InventoryTransaction
+    {
+        if (DB::transactionLevel() < 1) throw new \LogicException('Cutting posting requires an application transaction.');
+        $transaction = InventoryTransaction::create(['transaction_no' => $this->nextNo('ITX'), 'transaction_type' => 'cutting_material_issue',
+            'source_type' => 'cutting_settlement', 'source_id' => $batch->id, 'source_no' => $batch->batch_no,
+            'posting_status' => 'posted', 'warehouse_id' => $balance->warehouse_id, 'location_id' => $balance->location_id,
+            'transaction_date' => now()->toDateString(), 'posted_by' => (int) ($operator->legacy_id ?? $operator->id), 'posted_at' => now()]);
+        $this->applyInventoryChange($transaction, ['item_id' => $batch->input_item_id, 'warehouse_id' => $balance->warehouse_id,
+            'location_id' => $balance->location_id, 'batch_no' => $balance->batch_no, 'unit_id' => $balance->unit_id,
+            'change_qty' => bcsub('0', (string) $batch->input_qty, 8), 'cost_amount' => bcsub('0', (string) $batch->original_total_cost, 4),
+            'unit_cost' => bcdiv((string) $batch->original_total_cost, (string) $batch->input_qty, 8),
+            'material_lot_id' => $balance->material_lot_id, 'cutting_physical_id' => $batch->physical_material_id,
+            'source_type' => 'cutting_settlement', 'source_id' => $batch->id, 'source_item_id' => $batch->id, 'cost_source_type' => 'cutting_input_total']);
+        return $transaction;
+    }
+
+    public function postCuttingReceipt(object $receipt, array $line, object $operator): InventoryTransaction
+    {
+        if (DB::transactionLevel() < 1) throw new \LogicException('Cutting posting requires an application transaction.');
+        $transaction = InventoryTransaction::create(['transaction_no' => $this->nextNo('ITX'), 'transaction_type' => 'cutting_output_receipt',
+            'source_type' => 'cutting_warehouse_receipt', 'source_id' => $receipt->id, 'source_no' => $receipt->receipt_no,
+            'posting_status' => 'posted', 'warehouse_id' => $line['warehouse_id'], 'location_id' => $line['location_id'],
+            'transaction_date' => now()->toDateString(), 'posted_by' => (int) ($operator->legacy_id ?? $operator->id), 'posted_at' => now()]);
+        $this->applyInventoryChange($transaction, $line + ['source_type' => 'cutting_warehouse_receipt', 'source_id' => $receipt->id,
+            'source_item_id' => $receipt->route_id, 'cost_source_type' => 'cutting_result_total']);
+        return $transaction;
+    }
+
     private function applyInventoryChange(InventoryTransaction $transaction, array $line): InventoryTransactionItem
     {
         $item = Item::findOrFail($line['item_id']);
@@ -1074,12 +1105,37 @@ class InventoryService
             'batch_no' => $line['batch_no'],
         ]);
 
+        if ((float) $line['change_qty'] < 0 && $item->materialManagementMode() === 'physical') {
+            // An Item-only quantity cannot identify which plate is leaving. This guard
+            // covers adjustments, picking, returns and sales as well as cutting.
+            $physical = isset($line['cutting_physical_id']) ? DB::table('erp_material_physicals')->where('id', $line['cutting_physical_id'])->lockForUpdate()->first() : null;
+            $holding = $physical ? DB::table('erp_material_holdings')->where('id', $physical->current_holding_id)->first() : null;
+            $batch = DB::table('erp_cutting_settlement_batches')->where('id', $transaction->source_id)->first();
+            if (! $physical || ! $holding || (int) $physical->item_id !== (int) $item->id || (int) $holding->inventory_balance_id !== (int) $balance->id
+                || $transaction->source_type !== 'cutting_settlement' || ! $batch || (int) $batch->physical_material_id !== (int) $physical->id
+                || $physical->status !== 'RESERVED' || bccomp((string) $line['change_qty'], '-1', 8) !== 0)
+                throw ValidationException::withMessages(['physical_material_id' => '实物管理材料必须通过绑定具体实物的正式出库命令，不能只按Item扣数量。']);
+        }
+
         $onHand = (float) ($balance->quantity_on_hand ?? 0) + (float) $line['change_qty'];
         $previousValue = (float) ($balance->inventory_value ?? 0);
         $costAmount = array_key_exists('cost_amount', $line)
             ? (float) $line['cost_amount']
             : (float) $line['change_qty'] * (float) ($line['unit_cost'] ?? 0);
-        $inventoryValue = max(0, $previousValue + $costAmount);
+        $decimalLot = ! empty($line['material_lot_id']) || ! empty($balance->material_lot_id);
+        if ($decimalLot) {
+            if (empty($line['material_lot_id'])) $line['material_lot_id'] = $balance->material_lot_id;
+            if ($balance->material_lot_id && (int) $balance->material_lot_id !== (int) $line['material_lot_id'])
+                throw ValidationException::withMessages(['material_lot_id' => '同一库存批次不能混入不同配置、阶段或来源的材料批次。']);
+            if (! array_key_exists('cost_amount', $line)) throw ValidationException::withMessages(['cost_amount' => '可追溯材料批次必须传入权威总金额。']);
+            $costAmount = (string) $line['cost_amount'];
+            if ((float) $line['change_qty'] < 0 && $transaction->source_type !== 'cutting_settlement') {
+                $consumedQty = number_format(abs((float) $line['change_qty']), 8, '.', '');
+                $costAmount = bcsub('0', CuttingDecimal::share((string) $balance->inventory_value, (string) $balance->quantity_on_hand, $consumedQty), 4);
+            }
+            $inventoryValue = bcadd((string) ($balance->inventory_value ?? '0'), $costAmount, 4);
+            if (bccomp($inventoryValue, '0', 4) < 0) throw ValidationException::withMessages(['cost_amount' => '库存总金额不足，不能用归零掩盖成本差额。']);
+        } else $inventoryValue = max(0, $previousValue + $costAmount);
         $locked = (float) ($balance->quantity_locked ?? 0);
         if ($onHand < 0 || $onHand - $locked < 0) {
             throw ValidationException::withMessages(['stock' => '当前库存不足，不能执行该调整。']);
@@ -1096,6 +1152,9 @@ class InventoryService
             'average_unit_cost' => $onHand > 0 ? $inventoryValue / $onHand : 0,
             'last_transaction_at' => now(),
         ])->save();
+
+        if ($decimalLot) $balance->update(['material_lot_id' => $line['material_lot_id'],
+            'average_unit_cost' => $onHand > 0 ? bcdiv($inventoryValue, number_format($onHand, 8, '.', ''), 8) : '0']);
 
         $locationBalance = InventoryLocationBalance::firstOrNew([
             'item_id' => $line['item_id'],
@@ -1148,6 +1207,10 @@ class InventoryService
             'source_item_id' => $line['source_item_id'] ?? null,
             'remark' => $line['remark'] ?? null,
         ]);
+        if ($decimalLot) {
+            $transactionItem->update(['material_lot_id' => $line['material_lot_id']]);
+            InventoryBatch::where('item_id', $line['item_id'])->where('batch_no', $line['batch_no'])->update(['material_lot_id' => $line['material_lot_id']]);
+        }
 
         // Alert facts belong to the same inventory transaction. The alert service deduplicates identical state/severity.
         app(InventoryAlertApplicationService::class)->recalculateForItemWarehouse(

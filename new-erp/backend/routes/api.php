@@ -37,6 +37,7 @@ use App\Http\Controllers\Api\V1\Erp\ProductionExecutionController;
 use App\Http\Controllers\Api\V1\Erp\ProductionExecutionMonitorController;
 use App\Http\Controllers\Api\V1\Erp\ProductionHandoverController;
 use App\Http\Controllers\Api\V1\Erp\ProductionOutputController;
+use App\Http\Controllers\Api\V1\Erp\CuttingController;
 use App\Http\Controllers\Api\V1\Erp\ProductionMaterialSupplementController;
 use App\Http\Controllers\Api\V1\Erp\ProductionMaterialReturnController;
 use App\Http\Controllers\Api\V1\Erp\ProductionUnitTraceController;
@@ -353,6 +354,22 @@ Route::prefix('v1/erp/sales')->group(function () {
 });
 
 Route::prefix('v1/erp/production')->group(function () {
+    Route::get('cutting/orders', [CuttingController::class, 'index']);
+    Route::post('cutting/orders/publish', [CuttingController::class, 'publish']);
+    Route::get('cutting/orders/{id}/execution', [CuttingController::class, 'execution'])->whereNumber('id');
+    Route::get('cutting/orders/{id}/input-candidates', [CuttingController::class, 'inputs'])->whereNumber('id');
+    Route::get('cutting/orders/{id}/allowed-outputs', [CuttingController::class, 'outputs'])->whereNumber('id');
+    Route::post('cutting/material-physicals', [CuttingController::class, 'registerPhysical']);
+    Route::post('cutting/orders/{id}/reserve', [CuttingController::class, 'reserve'])->whereNumber('id');
+    Route::post('cutting/orders/{id}/release', [CuttingController::class, 'release'])->whereNumber('id');
+    Route::post('cutting/orders/{id}/issue', [CuttingController::class, 'issue'])->whereNumber('id');
+    Route::put('cutting/settlements/{id}/results', [CuttingController::class, 'save'])->whereNumber('id');
+    Route::post('cutting/settlements/{id}/first-cut', [CuttingController::class, 'firstCut'])->whereNumber('id');
+    Route::post('cutting/settlements/{id}/submit', [CuttingController::class, 'submit'])->whereNumber('id');
+    Route::post('cutting/settlements/{id}/confirm', [CuttingController::class, 'confirm'])->whereNumber('id');
+    Route::post('cutting/settlements/{id}/return-for-edit', [CuttingController::class, 'returnForEdit'])->whereNumber('id');
+    Route::put('cutting/results/{id}/routes', [CuttingController::class, 'split'])->whereNumber('id');
+    Route::post('cutting/results/{id}/quality-inspect', [CuttingController::class, 'inspect'])->whereNumber('id');
     Route::get('execution-monitor', [ProductionExecutionMonitorController::class, 'index']);
     Route::get('labor-allocation-rules', [ProductionLaborAllocationRuleController::class, 'index']);
     Route::post('labor-allocation-rules', [ProductionLaborAllocationRuleController::class, 'store']);

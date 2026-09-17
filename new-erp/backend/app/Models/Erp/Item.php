@@ -17,6 +17,8 @@ class Item extends MasterModel
     {
         return $this->serial_tracking_mode ?: ($this->is_serial_managed ? 'required' : 'none');
     }
+    public function materialManagementMode(): string { return $this->material_management_mode ?: 'quantity'; }
+    public function cuttingMode(): string { return $this->cutting_mode ?: ($this->is_length_cut_material ? 'length' : 'none'); }
     public function category() { return $this->belongsTo(ItemCategory::class, 'category_id'); }
     public function unit() { return $this->belongsTo(Unit::class); }
     public function defaultSupplier() { return $this->belongsTo(Supplier::class, 'default_supplier_id'); }

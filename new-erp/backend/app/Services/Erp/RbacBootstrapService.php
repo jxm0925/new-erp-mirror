@@ -43,6 +43,13 @@ class RbacBootstrapService
             ['production.operation', '工序管理', 'menu', 'production.base', '/production/operations', 'ProductionOperationList', 'el-icon-set-up', 804],
             ['production.routing', '工艺路线', 'menu', 'production.base', '/production/routings', 'ProductionRoutingList', 'el-icon-guide', 805],
             ['production.labor_rule', '工时分配规则', 'menu', 'production.base', '/production/labor-allocation-rules', 'ProductionLaborAllocationRules', 'el-icon-timer', 806],
+            // Catalog only. Existing production roles are not silently granted cutting commands.
+            ['production.cutting.view', '查看下料记录', 'button', 'production.work_order', null, null, 'el-icon-view', 70],
+            ['production.cutting.plan', '发布下料计划', 'button', 'production.work_order', null, null, 'el-icon-mouse', 71],
+            ['production.cutting.issue', '领用下料材料', 'button', 'production.work_order', null, null, 'el-icon-mouse', 72],
+            ['production.cutting.record', '登记下料结果', 'button', 'production.work_order', null, null, 'el-icon-mouse', 73],
+            ['production.cutting.confirm', '确认下料用料核算', 'button', 'production.work_order', null, null, 'el-icon-mouse', 74],
+            ['production.cutting.material_manage', '维护材料实物与配置', 'button', 'production.work_order', null, null, 'el-icon-mouse', 75],
 
             // 1. 主数据中心 二级菜单
             ['master.product', '产品管理', 'menu', 'master', '/master/products', 'ProductList', 'el-icon-goods', 101],

@@ -52,6 +52,14 @@ class InventoryAvailabilityService
      */
     public function availableForOutbound(InventoryBalance $balance): float
     {
+        // Plates and remnants are selected by physical identity, not Item totals.
+        // Configured/staged lots also require their specific supply adapter; an
+        // Item-only sales/picking query must not widen their eligibility.
+        if ($balance->item?->materialManagementMode() === 'physical') return 0.0;
+        if ($balance->material_lot_id) {
+            $lot = \Illuminate\Support\Facades\DB::table('erp_material_lots')->where('id', $balance->material_lot_id)->first();
+            if (! $lot || $lot->configuration_id || $lot->stage_id || ! in_array($lot->material_form, ['FULL_STOCK','STANDARD_LENGTH'], true)) return 0.0;
+        }
         $calculated = $this->calculate(
             (float) $balance->quantity_on_hand,
             (float) $balance->quantity_locked,
