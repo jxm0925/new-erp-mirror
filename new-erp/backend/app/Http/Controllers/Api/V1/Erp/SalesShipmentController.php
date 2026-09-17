@@ -77,6 +77,13 @@ class SalesShipmentController extends Controller
         return response()->json(['message' => '销售发货单已取消，库存预留已释放', 'data' => $shipment]);
     }
 
+    public function destroyDraft(Request $request, int $id, SalesShipmentApplicationService $service)
+    {
+        $this->authorizePermission($request, 'sales_order.shipment.delete_draft');
+        $service->deleteDraft($this->visibleShipment($request, $id));
+        return response()->json(['message' => '销售发货草稿已删除，订单库存锁定已恢复。']);
+    }
+
     private function validateShipment(Request $request): array
     {
         return $request->validate([

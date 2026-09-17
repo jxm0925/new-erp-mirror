@@ -11,6 +11,9 @@ use App\Models\Erp\MaterialDeliveryLine;
 use App\Models\Erp\MaterialPickingTask;
 use App\Models\Erp\MaterialPickingTaskLine;
 use App\Models\Erp\MaterialReceipt;
+use App\Models\Erp\ProductionQuantityOperation;
+use App\Models\Erp\ProductionTask;
+use App\Models\Erp\ProductionUnitOperation;
 use App\Models\Erp\WorkOrder;
 use App\Models\Erp\WorkOrderMaterialRequirement;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -22,6 +25,7 @@ final class ProductionMaterialExecutionService
     public function __construct(
         private readonly ProductionDataScopeResolver $scopeResolver,
         private readonly InventoryService $inventory,
+        private readonly ProductionTargetReadinessService $targetReadiness,
     ) {}
 
     public function paginatePickingTasks(array $filters, object $user, array $permissions, bool $superAdmin): LengthAwarePaginator
@@ -551,9 +555,27 @@ final class ProductionMaterialExecutionService
                 // accepts an unfinished picking task.
                 $task->status = $allDeliveriesSettled && $allPickedMaterialReceived ? 'RECEIVED' : 'PARTIALLY_RECEIVED';
                 $task->business_version++; $task->updated_by_legacy_id = $this->userId($user); $task->save();
+                if ($delivery->production_target_type && $delivery->production_target_id) {
+                    $this->refreshTargetReadiness((string) $delivery->production_target_type, (int) $delivery->production_target_id);
+                }
                 $this->event('delivery', $delivery->id, 'receive', 'DELIVERED', $delivery->status, $beforeVersion, $delivery->business_version, $snapshot, $payload['remark'] ?? null, $user);
                 return $receipt->fresh(['lines.deliveryLine', 'delivery', 'workOrder']);
             });
+    }
+
+    private function refreshTargetReadiness(string $targetType, int $targetId): void
+    {
+        $link = DB::table('erp_production_task_targets')->where('target_type', $targetType)
+            ->where('target_id', $targetId)->lockForUpdate()->first();
+        if (! $link) $this->fail('production_target_task_missing', '配送目标没有对应的正式生产任务。', 409);
+        $task = ProductionTask::query()->lockForUpdate()->findOrFail($link->task_id);
+        $model = match ($targetType) {
+            'unit_operation' => ProductionUnitOperation::class,
+            'quantity_operation' => ProductionQuantityOperation::class,
+            default => $this->fail('production_target_type_invalid', '配送目标类型无效。', 409),
+        };
+        $target = $model::query()->lockForUpdate()->findOrFail($targetId);
+        $this->targetReadiness->refresh($targetType, $target, $task, now());
     }
 
     public function cancelDelivery(int $id, array $payload, object $user, array $permissions, bool $superAdmin): MaterialDelivery

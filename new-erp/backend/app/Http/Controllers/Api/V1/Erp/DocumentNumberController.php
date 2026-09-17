@@ -43,7 +43,7 @@ class DocumentNumberController extends Controller
 
     public function storeRule(Request $request, DocumentNumberRuleService $service)
     {
-        $user = $this->authorizePermission($request, 'document_number_rule.manage');
+        $user = $this->authorizePermission($request, 'document_number_rule.edit');
         return response()->json([
             'message' => '编号规则已新增，仅影响后续新生成编号。',
             'data' => $service->create($this->validatedRule($request, false), $user),
@@ -52,7 +52,7 @@ class DocumentNumberController extends Controller
 
     public function updateRule(Request $request, int $id, DocumentNumberRuleService $service)
     {
-        $user = $this->authorizePermission($request, 'document_number_rule.manage');
+        $user = $this->authorizePermission($request, 'document_number_rule.edit');
         return response()->json([
             'message' => '编号规则已保存，仅影响后续新生成编号。',
             'data' => $service->update(DocumentNumberRule::findOrFail($id), $this->validatedRule($request, true), $user),
@@ -61,7 +61,7 @@ class DocumentNumberController extends Controller
 
     public function enableRule(Request $request, int $id, DocumentNumberRuleService $service)
     {
-        $user = $this->authorizePermission($request, 'document_number_rule.manage');
+        $user = $this->authorizePermission($request, 'document_number_rule.edit');
         return response()->json([
             'message' => '编号规则已启用。',
             'data' => $service->setEnabled(DocumentNumberRule::findOrFail($id), true, $user),
@@ -70,11 +70,19 @@ class DocumentNumberController extends Controller
 
     public function disableRule(Request $request, int $id, DocumentNumberRuleService $service)
     {
-        $user = $this->authorizePermission($request, 'document_number_rule.manage');
+        $user = $this->authorizePermission($request, 'document_number_rule.edit');
         return response()->json([
             'message' => '编号规则已停用，历史编号和已有预留不受影响。',
             'data' => $service->setEnabled(DocumentNumberRule::findOrFail($id), false, $user),
         ]);
+    }
+
+    public function destroyRule(Request $request, int $id, DocumentNumberRuleService $service)
+    {
+        $user = $this->authorizePermission($request, 'document_number_rule.delete');
+        $data = $request->validate(['reason' => 'required|string|max:200']);
+        $service->delete(DocumentNumberRule::findOrFail($id), $data['reason'], $user);
+        return response()->json(['message' => '从未生成过编号的停用规则已删除。']);
     }
 
     public function reserve(Request $request, DocumentNumberService $service)

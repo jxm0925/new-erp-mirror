@@ -257,6 +257,16 @@ class SalesReturnController extends Controller
         ]);
     }
 
+    public function destroy(Request $request, int $id, SalesReturnApplicationService $service)
+    {
+        $this->authorizePermission($request, 'sales_return.delete');
+        $visible = SalesReturn::query()->whereKey($id);
+        $this->applyOrderVisibility($visible, $request);
+        abort_unless($visible->exists(), 403, '无权删除该销售退货草稿。');
+        $service->deleteDraft($id);
+        return response()->json(['message' => '销售退货草稿已删除。']);
+    }
+
     private function operator(Request $request): array
     {
         $user = app(AuthContextService::class)->currentUser($request);

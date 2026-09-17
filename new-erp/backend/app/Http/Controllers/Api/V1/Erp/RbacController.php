@@ -9,6 +9,8 @@ use App\Services\Erp\RbacUserRoleOwnershipService;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
 
 class RbacController extends Controller
 {
@@ -67,13 +69,36 @@ class RbacController extends Controller
         $data['updated_at'] = now();
         $id = DB::transaction(function () use ($id, $data): int {
             if ($id) {
+                $existing = DB::table('erp_rbac_permissions')->where('id', $id)->lockForUpdate()->first();
+                abort_unless($existing, 404);
+                if (($existing->is_system ?? false) && $existing->code !== $data['code']) {
+                    throw ValidationException::withMessages(['code' => '系统权限节点的编码不能修改，否则会破坏已发布的按钮权限合同。']);
+                }
                 DB::table('erp_rbac_permissions')->where('id', $id)->update($data);
                 return (int) $id;
             }
+            if (Schema::hasColumn('erp_rbac_permissions', 'is_system')) $data['is_system'] = false;
             $data['created_at'] = now();
             return (int) DB::table('erp_rbac_permissions')->insertGetId($data);
         });
         return response()->json(DB::table('erp_rbac_permissions')->find($id));
+    }
+
+    public function deletePermission(Request $request, int $id, RbacBootstrapService $rbac)
+    {
+        $user = $this->authorizePermission($request, 'system.menu.delete');
+        $rbac->bootstrap();
+        DB::transaction(function () use ($id, $user): void {
+            $permission = DB::table('erp_rbac_permissions')->where('id', $id)->lockForUpdate()->first();
+            abort_unless($permission, 404);
+            abort_if((bool) ($permission->is_system ?? false), 422, '系统内置权限节点不能删除，只能按业务需要停用。');
+            abort_if((bool) $permission->enabled, 422, '权限节点必须先停用，确认不再使用后才能删除。');
+            abort_if(DB::table('erp_rbac_permissions')->where('parent_id', $id)->exists(), 422, '该权限节点仍有子节点，请先处理子节点。');
+            abort_if(DB::table('erp_rbac_role_permissions')->where('permission_id', $id)->exists(), 422, '该权限节点仍分配给角色，不能删除。');
+            $this->auditDeletion('rbac_permission', $permission, $user);
+            DB::table('erp_rbac_permissions')->where('id', $id)->delete();
+        }, 5);
+        return response()->json(['message' => '停用且未被引用的自定义权限节点已删除。']);
     }
 
     public function roles(Request $request, RbacBootstrapService $rbac)
@@ -123,8 +148,14 @@ class RbacController extends Controller
         $data['updated_at'] = now();
         $id = DB::transaction(function () use ($id, $data, $permissionIds): int {
             if ($id) {
+                $existing = DB::table('erp_rbac_roles')->where('id', $id)->lockForUpdate()->first();
+                abort_unless($existing, 404);
+                if (($existing->is_system ?? false) && $existing->code !== $data['code']) {
+                    throw ValidationException::withMessages(['code' => '系统内置角色编码不能修改。']);
+                }
                 DB::table('erp_rbac_roles')->where('id', $id)->update($data);
             } else {
+                if (Schema::hasColumn('erp_rbac_roles', 'is_system')) $data['is_system'] = false;
                 $data['created_at'] = now();
                 $id = DB::table('erp_rbac_roles')->insertGetId($data);
             }
@@ -135,6 +166,26 @@ class RbacController extends Controller
             return (int) $id;
         });
         return response()->json(['id' => $id, 'message' => '角色已保存']);
+    }
+
+    public function deleteRole(Request $request, int $id, RbacBootstrapService $rbac)
+    {
+        $user = $this->authorizePermission($request, 'system.role.delete');
+        $rbac->bootstrap();
+        DB::transaction(function () use ($id, $user): void {
+            $role = DB::table('erp_rbac_roles')->where('id', $id)->lockForUpdate()->first();
+            abort_unless($role, 404);
+            abort_if((bool) ($role->is_system ?? false), 422, '系统内置角色不能删除，只能按业务需要停用。');
+            abort_if((bool) $role->enabled, 422, '角色必须先停用，确认不再使用后才能删除。');
+            abort_if(DB::table('erp_rbac_user_roles')->where('role_id', $id)->exists()
+                || DB::table('erp_rbac_user_role_sources')->where('role_id', $id)->exists(), 422, '该角色仍关联用户或身份来源，不能删除。');
+            abort_if($this->approvalFlowUsesRole((string) $role->code), 422, '该角色已被审核流程版本引用，不能删除。');
+
+            DB::table('erp_rbac_role_permissions')->where('role_id', $id)->delete();
+            $this->auditDeletion('rbac_role', $role, $user);
+            DB::table('erp_rbac_roles')->where('id', $id)->delete();
+        }, 5);
+        return response()->json(['message' => '停用且未被引用的自定义角色已删除。']);
     }
 
     public function roleUsers(Request $request)
@@ -201,12 +252,13 @@ class RbacController extends Controller
         return max(1, min(100, (int) $request->input('per_page', 20)));
     }
 
-    private function authorizePermission(Request $request, string $permission): void
+    private function authorizePermission(Request $request, string $permission): object
     {
         $auth = app(AuthContextService::class);
         $user = $request->attributes->get('erp_user') ?: $auth->currentUser($request);
         abort_unless($user, 401, '请先登录 ERP。');
         abort_unless($auth->isSuperAdmin($user) || in_array($permission, $auth->permissionCodes($user), true), 403, '当前用户没有系统管理权限。');
+        return $user;
     }
 
     private function paginated(LengthAwarePaginator $paginator)
@@ -291,6 +343,38 @@ class RbacController extends Controller
                 'api' => $permissions->where('type', 'api')->count(),
                 'disabled' => $permissions->where('enabled', false)->count(),
             ],
+        ]);
+    }
+
+    private function approvalFlowUsesRole(string $roleCode): bool
+    {
+        return DB::table('erp_approval_flow_versions')
+            ->orderBy('id')
+            ->get(['definition_snapshot'])
+            ->contains(function (object $version) use ($roleCode): bool {
+                $definition = json_decode((string) $version->definition_snapshot, true);
+                foreach ((array) ($definition['nodes'] ?? []) as $node) {
+                    $rule = (array) ($node['approver_rule'] ?? []);
+                    if (($rule['type'] ?? null) === 'role' && (string) ($rule['value'] ?? '') === $roleCode) return true;
+                }
+                return false;
+            });
+    }
+
+    private function auditDeletion(string $type, object $record, object $user): void
+    {
+        if (! Schema::hasTable('erp_operation_logs')) return;
+        DB::table('erp_operation_logs')->insert([
+            'module' => 'rbac',
+            'action' => 'delete',
+            'target_type' => $type,
+            'target_id' => $record->id,
+            'old_snapshot' => json_encode((array) $record, JSON_UNESCAPED_UNICODE),
+            'new_snapshot' => null,
+            'reason' => '删除停用且未被引用的自定义配置',
+            'operator_id' => $user->legacy_id ?? null,
+            'operator_name' => $user->nickname ?? $user->username ?? null,
+            'created_at' => now(),
         ]);
     }
 }

@@ -424,6 +424,26 @@ class PurchaseReturnApplicationService
         }, 'close', $operatorId, $operatorName, '关闭未执行的采购退货单');
     }
 
+    public function deleteDraft(int $id): void
+    {
+        DB::transaction(function () use ($id): void {
+            $purchaseReturn = PurchaseReturn::query()->with('items')->lockForUpdate()->findOrFail($id);
+            if ($purchaseReturn->return_status !== 'draft'
+                || $purchaseReturn->submitted_at !== null
+                || $purchaseReturn->audit_status !== 'pending'
+                || $purchaseReturn->stock_post_status !== 'pending') {
+                throw ValidationException::withMessages(['return_status' => '只有人工新建、从未提交且未产生库存事实的采购退货草稿可以删除。']);
+            }
+            if ($purchaseReturn->return_scope !== 'posted_inventory'
+                || $purchaseReturn->items->contains(fn (PurchaseReturnItem $item) => $item->source_defect_handling_id || $item->source_inventory_quality_event_id)) {
+                throw ValidationException::withMessages(['return_status' => '由不合格品或库存质量事件生成的采购退货必须保留追溯记录，不能删除。']);
+            }
+
+            // 行、设备编号选择和状态日志随草稿级联删除；单号消费记录保留，避免重用旧编号。
+            $purchaseReturn->delete();
+        }, 5);
+    }
+
     private function transition(
         int $id,
         array $allowedFrom,

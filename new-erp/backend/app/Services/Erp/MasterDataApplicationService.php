@@ -2,7 +2,7 @@
 
 namespace App\Services\Erp;
 
-use App\Models\Erp\{ItemCategory, Sku, Supplier};
+use App\Models\Erp\{ItemCategory, Sku};
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -104,6 +104,8 @@ class MasterDataApplicationService
                 abort_if(DB::table($table)->where($column, $locked->getKey())->exists(), 422, '该 SKU 已产生订单、BOM、定制或默认 Item 关系记录，只能停用，不能删除。');
             }
 
+            $this->assertNoForeignKeyReferences($locked);
+
             $locked->delete();
         });
     }
@@ -139,6 +141,7 @@ class MasterDataApplicationService
                     ['erp_item_material_policies', 'item_id', '该物料已维护物资归属策略版本'],
                     ['erp_supplier_item_relations', 'item_id', '该物料已维护供应商供应关系'],
                     ['erp_item_supplier_prices', 'item_id', '该物料已维护供应商报价'],
+                    ['erp_inventory_reservations', 'item_id', '该物料已有库存预留'],
                 ],
                 'units' => [
                     ['erp_products', 'unit_id', '该单位已被商品引用'],
@@ -147,6 +150,8 @@ class MasterDataApplicationService
                     ['erp_item_purchase_conversions', 'purchase_unit_id', '该单位已被采购换算引用'],
                     ['erp_purchase_order_items', 'purchase_unit_id', '该单位已被采购订单引用'],
                     ['erp_purchase_receipt_items', 'purchase_unit_id', '该单位已被采购到货引用'],
+                    ['erp_sales_order_lines', 'unit_id', '该单位已被销售订单引用'],
+                    ['erp_sales_order_fulfillments', 'sales_unit_id', '该单位已被销售履约引用'],
                 ],
                 'categories' => [
                     ['erp_item_categories', 'parent_id', '该类目下仍有子类目'],
@@ -167,12 +172,14 @@ class MasterDataApplicationService
                     ['erp_inventory_balances', 'warehouse_id', '该仓库已有库存余额'],
                     ['erp_inventory_transactions', 'warehouse_id', '该仓库已有库存事务'],
                     ['erp_purchase_receipt_items', 'warehouse_id', '该仓库已被采购到货引用'],
+                    ['erp_inventory_reservations', 'warehouse_id', '该仓库已有库存预留'],
                 ],
                 'locations' => [
                     ['erp_locations', 'parent_id', '该库位下仍有子库位'],
                     ['erp_inventory_location_balances', 'location_id', '该库位已有库存余额'],
                     ['erp_inventory_transaction_items', 'location_id', '该库位已有库存流水'],
                     ['erp_purchase_receipt_items', 'location_id', '该库位已被采购到货引用'],
+                    ['erp_inventory_reservations', 'location_id', '该库位已有库存预留'],
                 ],
                 default => abort(405, '当前数据类型不支持删除。'),
             };
@@ -184,15 +191,31 @@ class MasterDataApplicationService
                 }
             }
 
-            if ($locked instanceof Supplier) {
-                foreach (['erp_supplier_quotation_histories', 'erp_supplier_item_relation_logs', 'erp_supplier_item_stats', 'erp_item_supplier_prices', 'erp_supplier_item_relations', 'erp_supplier_category_capabilities'] as $table) {
-                    if (Schema::hasTable($table) && Schema::hasColumn($table, 'supplier_id')) {
-                        DB::table($table)->where('supplier_id', $locked->getKey())->delete();
-                    }
-                }
-            }
+            // 覆盖后续模块新增的 RESTRICT、SET NULL 与 CASCADE 外键。硬删除主数据
+            // 只允许用于从未参与任何配置或业务事实的停用档案，不能借 SET NULL
+            // 悄悄抹掉历史关系，也不能依赖数据库异常向用户暴露约束名。
+            $this->assertNoForeignKeyReferences($locked);
             $locked->delete();
         });
+    }
+
+    private function assertNoForeignKeyReferences(Model $record): void
+    {
+        $references = DB::select(
+            'SELECT TABLE_NAME AS child_table, COLUMN_NAME AS child_column
+             FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+             WHERE CONSTRAINT_SCHEMA = DATABASE()
+               AND REFERENCED_TABLE_NAME = ?
+               AND REFERENCED_COLUMN_NAME = ?',
+            [$record->getTable(), $record->getKeyName()],
+        );
+
+        foreach ($references as $reference) {
+            if (DB::table($reference->child_table)
+                ->where($reference->child_column, $record->getKey())->exists()) {
+                abort(422, '该主数据已被配置或业务事实引用，只能停用，不能删除。');
+            }
+        }
     }
 
     private function numberConfig(string $entity): array

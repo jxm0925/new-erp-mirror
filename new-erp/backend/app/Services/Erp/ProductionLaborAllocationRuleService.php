@@ -71,6 +71,24 @@ class ProductionLaborAllocationRuleService
         });
     }
 
+    public function deleteDraft(int $id, array $payload, object $user, array $permissions): array
+    {
+        $this->permission($permissions, 'production.labor_rule.delete');
+        return $this->command('delete_labor_rule', $id, $payload, $user, function () use ($id, $payload): array {
+            $rule = ProductionLaborAllocationRule::query()->lockForUpdate()->find($id);
+            if (! $rule) $this->fail('labor_rule_not_found', '工时分配规则不存在。', 404);
+            $this->version($rule, $payload);
+            if ($rule->status !== 'draft') {
+                $this->fail('labor_rule_state_invalid', '只有从未生效的工时分配规则草稿可以删除。', 409);
+            }
+            if (DB::table('erp_production_tasks')->where('labor_allocation_rule_id', $rule->id)->exists()) {
+                $this->fail('labor_rule_referenced', '该规则已被生产任务冻结引用，不能删除。', 409);
+            }
+            $rule->delete();
+            return ['id' => $id, 'deleted' => true];
+        });
+    }
+
     public function activeSnapshot(): array
     {
         $rule = ProductionLaborAllocationRule::query()->where('active_scope_key', self::RULE_NO)->where('status', 'active')->first();

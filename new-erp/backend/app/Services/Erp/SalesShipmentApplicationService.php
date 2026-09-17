@@ -182,6 +182,32 @@ class SalesShipmentApplicationService
         });
     }
 
+    public function deleteDraft(SalesShipment $shipment): void
+    {
+        DB::transaction(function () use ($shipment): void {
+            $shipment = SalesShipment::query()->with('lines')->lockForUpdate()->findOrFail($shipment->id);
+            if ($shipment->shipment_status !== 'draft' || $shipment->confirmed_at !== null) {
+                throw ValidationException::withMessages(['shipment' => '只有从未确认、未出库的销售发货草稿可以删除。']);
+            }
+            if (DB::table('erp_inventory_transactions')
+                ->where('source_type', 'sales_shipment')->where('source_id', $shipment->id)->exists()) {
+                throw ValidationException::withMessages(['shipment' => '该发货单已产生库存流水，不能删除；请走取消、退货或红冲流程。']);
+            }
+            if (DB::table('erp_sales_return_cost_allocations')->where('sales_shipment_id', $shipment->id)->exists()) {
+                throw ValidationException::withMessages(['shipment' => '该发货单已被销售退货成本追溯引用，不能删除。']);
+            }
+
+            $reservationIds = $shipment->lines->pluck('inventory_reservation_id')->filter()->map(fn ($id) => (int) $id)->all();
+            $this->reservations->restoreShipmentReservationToOrder($reservationIds, '删除未确认的发货草稿，恢复原销售订单库存锁定');
+            $shipment->delete();
+
+            // 分拆出的发货预留已把数量归还父预留，可清理该临时行；若原预留
+            // 是就地恢复为 active，则必须保留，继续作为销售订单库存锁定事实。
+            InventoryReservation::query()->whereIn('id', $reservationIds)
+                ->where('reservation_status', 'returned_to_order')->delete();
+        }, 5);
+    }
+
     private function syncPackages(SalesShipment $shipment, array $packages): void
     {
         foreach (array_values($packages) as $index => $package) {

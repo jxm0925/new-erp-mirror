@@ -18,6 +18,8 @@ class ProductionLaborAllocationRuleController extends Controller
     { $payload = $this->statePayload($request); [$user, $permissions] = $this->context($request); return response()->json(['message' => '工时分配规则已生效，历史任务冻结值不变。', 'data' => $service->activate($id, $payload, $user, $permissions)]); }
     public function retire(Request $request, int $id, ProductionLaborAllocationRuleService $service)
     { $payload = $this->statePayload($request); [$user, $permissions] = $this->context($request); return response()->json(['message' => '工时分配规则已退役。', 'data' => $service->retire($id, $payload, $user, $permissions)]); }
+    public function destroy(Request $request, int $id, ProductionLaborAllocationRuleService $service)
+    { $payload = $this->statePayload($request); [$user, $permissions] = $this->context($request); return response()->json(['message' => '未生效的工时分配规则草稿已删除。', 'data' => $service->deleteDraft($id, $payload, $user, $permissions)]); }
     private function statePayload(Request $request): array { return $request->validate(['client_command_id' => 'required|string|max:120', 'expected_version' => 'required|integer|min:1']); }
     private function context(Request $request): array { $auth = app(AuthContextService::class); $user = $auth->currentUser($request); if (! $user) throw new WorkOrderDomainException('unauthenticated', '请先登录 ERP。', 401); return [$user, $auth->permissionCodes($user)]; }
 }

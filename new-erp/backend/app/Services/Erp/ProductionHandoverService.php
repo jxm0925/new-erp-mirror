@@ -12,7 +12,10 @@ use Illuminate\Support\Facades\DB;
 
 class ProductionHandoverService
 {
-    public function __construct(private readonly WorkOrderCompletionReadinessService $completionReadiness) {}
+    public function __construct(
+        private readonly WorkOrderCompletionReadinessService $completionReadiness,
+        private readonly ProductionTargetReadinessService $targetReadiness,
+    ) {}
 
     public function pending(object $user, array $permissions): array
     {
@@ -52,30 +55,38 @@ class ProductionHandoverService
             if ($accept) {
                 $acceptedQty = $this->acceptTargetMaterial($handover);
                 DB::table('erp_production_operation_handovers')->where('id', $id)->update(['status' => 'RECEIVED',
-                    'expected_receiver_legacy_id' => $this->userId($user), 'received_by_legacy_id' => $this->userId($user),
+                    'received_by_legacy_id' => $this->userId($user),
                     'received_at' => $now, 'completeness_snapshot' => json_encode($payload['completeness'] ?? ['complete' => true], JSON_UNESCAPED_UNICODE),
                     'accepted_base_qty' => $acceptedQty,
                     'business_version' => (int) $handover->business_version + 1, 'updated_at' => $now]);
-                $target->status = $target->kitting_required && ! $target->kitting_confirmed_at ? 'WAIT_MATERIAL' : 'READY';
             } else {
                 $reason = trim((string) ($payload['reason'] ?? ''));
                 if ($reason === '') $this->fail('reject_reason_required', '拒收交接时必须填写原因。');
                 DB::table('erp_production_operation_handovers')->where('id', $id)->update(['status' => 'REJECTED', 'reject_reason' => $reason,
-                    'expected_receiver_legacy_id' => $this->userId($user), 'received_by_legacy_id' => $this->userId($user), 'received_at' => $now,
+                    'received_by_legacy_id' => $this->userId($user), 'received_at' => $now,
                     'business_version' => (int) $handover->business_version + 1, 'updated_at' => $now]);
                 $this->reopenSourceForRework($handover, $reason, $user);
                 $target->status = 'WAIT_HANDOVER';
             }
-            $target->business_version = (int) $target->business_version + 1; $target->save();
-            $task->targets()->where('target_type', $handover->target_target_type)->where('target_id', $handover->target_target_id)->update(['status_snapshot' => $target->status]);
+            if ($accept) {
+                $readiness = $this->targetReadiness->refresh((string) $handover->target_target_type, $target, $task, $now);
+            } else {
+                $target->business_version = (int) $target->business_version + 1; $target->save();
+                $task->targets()->where('target_type', $handover->target_target_type)->where('target_id', $handover->target_target_id)
+                    ->update(['status_snapshot' => $target->status, 'updated_at' => $now]);
+                if ($task->status !== 'WAIT_HANDOVER') {
+                    $task->update(['status' => 'WAIT_HANDOVER', 'business_version' => (int) $task->business_version + 1]);
+                }
+                $readiness = ['target_status' => $target->status, 'target_business_version' => (int) $target->business_version];
+            }
             if ($accept) {
                 $sourceWorkOrder = WorkOrder::query()->lockForUpdate()->find($handover->work_order_id);
                 if ($sourceWorkOrder?->source_type === 'stock_prebuild') {
                     $this->completionReadiness->refresh($sourceWorkOrder, $user, '指定工单备货产出已正式交接', $id);
                 }
             }
-            $result = ['id' => $id, 'status' => $accept ? 'RECEIVED' : 'REJECTED', 'target_status' => $target->status,
-                'target_business_version' => (int) $target->business_version, 'handled_at' => $now->toISOString()];
+            $result = ['id' => $id, 'status' => $accept ? 'RECEIVED' : 'REJECTED', 'target_status' => $readiness['target_status'],
+                'target_business_version' => $readiness['target_business_version'], 'handled_at' => $now->toISOString()];
             $ledger->update(['result_type' => 'operation_handover', 'result_id' => $id, 'response_snapshot' => $result,
                 'status' => 'succeeded', 'processing_finished_at' => now()]);
             return $result;

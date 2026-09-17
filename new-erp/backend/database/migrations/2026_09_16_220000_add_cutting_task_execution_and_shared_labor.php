@@ -60,7 +60,13 @@ return new class extends Migration
 
     public function down(): void
     {
-        DB::table('erp_production_labor_sessions')->where('execution_task_type', 'CUTTING_TASK')->delete();
+        $hasCuttingLabor = Schema::hasColumn('erp_production_labor_sessions', 'execution_task_type')
+            && DB::table('erp_production_labor_sessions')->where('execution_task_type', 'CUTTING_TASK')->exists();
+        $hasParticipants = Schema::hasTable('erp_cutting_task_participants')
+            && DB::table('erp_cutting_task_participants')->exists();
+        if ($hasCuttingLabor || $hasParticipants) {
+            throw new RuntimeException('已有正式下料参与人或劳动事实，不允许通过结构回退删除业务历史。');
+        }
         Schema::table('erp_production_labor_sessions', function (Blueprint $table): void {
             $table->dropForeign(['cutting_task_id']);
             $table->dropForeign('erp_prod_labor_task_fk');

@@ -70,7 +70,7 @@ final class CuttingController extends Controller
     public function dispatchHandover(Request $r, int $id, CuttingHandoverService $s)
     { $this->validateCommand($r); return response()->json(['message'=>'下料产出已交出','data'=>$s->dispatch($id,$r->all(), ...$this->context($r))],201); }
     public function pendingHandovers(Request $r, CuttingHandoverService $s)
-    { return response()->json(['data'=>$s->pending(...$this->context($r))]); }
+    { return response()->json($s->pending($this->filters($r), ...$this->context($r))); }
     public function acceptHandover(Request $r, int $id, CuttingHandoverService $s)
     { $this->validateCommand($r); return response()->json(['message'=>'下料产出已接收','data'=>$s->accept($id,$r->all(), ...$this->context($r))]); }
     public function rejectHandover(Request $r, int $id, CuttingHandoverService $s)

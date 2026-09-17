@@ -136,4 +136,27 @@ final class ProductionDataScopeResolver
                     ->where('employee_legacy_id', $userId)->whereNull('left_at'));
         });
     }
+
+    /**
+     * A cutting task is a shared execution object and can legitimately serve
+     * several work orders.  Its visibility therefore follows the task pool,
+     * current owner and active participants; it must never be reduced to the
+     * intersection of every source/target work-order scope on the CUT.
+     */
+    public function applyCuttingTaskScope(Builder $query, array $scope, int $userId): void
+    {
+        if (($scope['mode'] ?? 'deny') === 'all') return;
+        if (($scope['mode'] ?? 'deny') === 'deny') {
+            $query->whereRaw('1 = 0');
+            return;
+        }
+
+        $userIds = (array) ($scope['user_ids'] ?? [$userId]);
+        $query->where(function (Builder $task) use ($userIds, $userId): void {
+            $task->whereNull('assignee_user_legacy_id')
+                ->orWhereIn('assignee_user_legacy_id', $userIds)
+                ->orWhereHas('participants', fn (Builder $participant) => $participant
+                    ->where('employee_legacy_id', $userId)->whereNull('left_at'));
+        });
+    }
 }

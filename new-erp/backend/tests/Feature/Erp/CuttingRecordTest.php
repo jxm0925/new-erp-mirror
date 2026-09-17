@@ -597,6 +597,110 @@ class CuttingRecordTest extends TestCase
             ->assertJsonPath('data.results.data.0.routes.0.display_status','已接收');
     }
 
+    public function test_shared_cutting_task_scope_is_independent_from_every_related_work_order_scope(): void
+    {
+        $f = $this->fixture();
+        $outside = $this->employee('cut-other-department-');
+        $f['consumerWo']->update(['responsible_user_legacy_id' => $outside->legacy_id]);
+        $taskId = (int) $f['created']['cutting_task_id'];
+        $token = $this->token($f['user'], 'self');
+
+        $this->withToken($token)->getJson('/api/v1/erp/production/cutting/tasks?per_page=1')
+            ->assertOk()->assertJsonPath('meta.total', 1)->assertJsonPath('data.0.id', $taskId);
+        $this->withToken($token)->postJson('/api/v1/erp/production/cutting/tasks/'.$taskId.'/claim', $this->payload(1))
+            ->assertOk()->assertJsonPath('data.id', $taskId)->assertJsonPath('data.assignee_user_legacy_id', $f['user']->legacy_id);
+        $this->withToken($token)->getJson('/api/v1/erp/production/cutting/tasks/'.$taskId.'?per_page=1')
+            ->assertOk()->assertJsonPath('data.task.id', $taskId)->assertJsonPath('data.inputs.meta.per_page', 1);
+    }
+
+    public function test_cutting_task_execution_migration_refuses_down_when_formal_participant_exists(): void
+    {
+        $f = $this->fixture();
+        $taskId = (int) $f['created']['cutting_task_id'];
+        app(CuttingTaskExecutionService::class)->claim(
+            $taskId, $this->payload(1), $f['user'], self::PERMISSIONS, true,
+        );
+        $migration = require database_path('migrations/2026_09_16_220000_add_cutting_task_execution_and_shared_labor.php');
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('已有正式下料参与人或劳动事实，不允许通过结构回退删除业务历史。');
+        $migration->down();
+    }
+
+    public function test_cutting_receiver_uses_target_task_scope_and_current_owner_while_dispatch_snapshot_is_preserved(): void
+    {
+        $f = $this->fixture();
+        $originalReceiver = $this->employee('cut-original-receiver-');
+        $targetTask = $this->consumerTask($f, $originalReceiver);
+        $batch = $this->issue($f); $result = $this->save($f, $batch['settlement_batch_id'], '10')['result_ids'][0];
+        $split = app(CuttingRecordService::class)->splitRoutes($result, $this->payload(1) + ['routes' => [[
+            'route_type' => 'NEXT_OPERATION', 'quantity' => '10', 'target_material_requirement_id' => $f['targetRequirement'],
+        ]]], $f['user'], self::PERMISSIONS, true);
+        app(CuttingConfirmationService::class)->confirm($batch['settlement_batch_id'],
+            $this->confirmation($f, $batch['settlement_batch_id'], $result, '3000'), $f['user'], self::PERMISSIONS, true);
+        $routeId = $split['routes'][0]['id'];
+        $service = app(CuttingHandoverService::class);
+        $routeVersion = (int) DB::table('erp_cutting_result_routes')->where('id', $routeId)->value('business_version');
+        $dispatch = $service->dispatch($routeId, $this->payload($routeVersion) + ['quantity' => '10'], $f['user'], self::PERMISSIONS, true);
+
+        $originalToken = $this->token($originalReceiver, 'self');
+        $this->withToken($originalToken)->getJson('/api/v1/erp/production/cutting/handovers/pending?page=1&per_page=1')
+            ->assertOk()->assertJsonPath('meta.total', 1)->assertJsonPath('meta.per_page', 1)
+            ->assertJsonPath('data.0.id', $dispatch['handover_id']);
+
+        $currentReceiver = $this->employee('cut-current-receiver-');
+        $currentToken = $this->token($currentReceiver, 'self');
+        $targetTask->update(['assignee_user_legacy_id' => $currentReceiver->legacy_id,
+            'business_version' => (int) $targetTask->business_version + 1]);
+        ProductionQuantityOperation::whereKey($f['consumerOperation'])->update([
+            'responsible_user_legacy_id' => $currentReceiver->legacy_id,
+            'business_version' => DB::raw('business_version + 1'),
+        ]);
+
+        $this->withToken($originalToken)->getJson('/api/v1/erp/production/cutting/handovers/pending?page=1&per_page=1')
+            ->assertOk()->assertJsonPath('meta.total', 0);
+        $this->withToken($currentToken)->getJson('/api/v1/erp/production/cutting/handovers/pending?page=1&per_page=1')
+            ->assertOk()->assertJsonPath('meta.total', 1)->assertJsonPath('data.0.id', $dispatch['handover_id']);
+        $this->domain('data_scope_denied', fn () => $service->accept($dispatch['handover_id'],
+            $this->payload(1) + ['quantity' => '1'], $originalReceiver, self::PERMISSIONS, false), 403);
+
+        $accepted = $service->accept($dispatch['handover_id'], $this->payload(1) + ['quantity' => '10'],
+            $currentReceiver, self::PERMISSIONS, false);
+        $this->assertTrue($accepted['receiver_changed_after_dispatch']);
+        $this->assertSame($originalReceiver->legacy_id, $accepted['expected_receiver_legacy_id']);
+        $this->assertSame($currentReceiver->legacy_id, $accepted['handled_by_legacy_id']);
+        $this->assertSame($originalReceiver->legacy_id, (int) DB::table('erp_cutting_handovers')
+            ->where('id', $dispatch['handover_id'])->value('expected_receiver_legacy_id'));
+    }
+
+    public function test_cutting_receipt_recalculates_target_with_other_predecessor_handover_fact(): void
+    {
+        $f = $this->fixture(); $receiver = $this->employee('cut-readiness-receiver-'); $targetTask = $this->consumerTask($f, $receiver);
+        $batch = $this->issue($f); $result = $this->save($f, $batch['settlement_batch_id'], '10')['result_ids'][0];
+        $split = app(CuttingRecordService::class)->splitRoutes($result, $this->payload(1) + ['routes' => [[
+            'route_type' => 'NEXT_OPERATION', 'quantity' => '10', 'target_material_requirement_id' => $f['targetRequirement'],
+        ]]], $f['user'], self::PERMISSIONS, true);
+        app(CuttingConfirmationService::class)->confirm($batch['settlement_batch_id'],
+            $this->confirmation($f, $batch['settlement_batch_id'], $result, '3000'), $f['user'], self::PERMISSIONS, true);
+        DB::table('erp_production_operation_handovers')->insert([
+            'handover_no' => 'CUT-OTHER-HO-'.Str::ulid(), 'work_order_id' => $f['consumerWo']->id,
+            'source_target_type' => 'quantity_operation', 'source_target_id' => $f['producerOperation'],
+            'target_target_type' => 'quantity_operation', 'target_target_id' => $f['consumerOperation'],
+            'status' => 'WAIT_RECEIVE', 'handed_over_by_legacy_id' => $f['user']->legacy_id,
+            'handed_over_at' => now(), 'expected_receiver_legacy_id' => $receiver->legacy_id,
+            'identity_snapshot' => json_encode(['source' => 'other_predecessor'], JSON_THROW_ON_ERROR),
+            'business_version' => 1, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $routeId = $split['routes'][0]['id']; $service = app(CuttingHandoverService::class);
+        $routeVersion = (int) DB::table('erp_cutting_result_routes')->where('id', $routeId)->value('business_version');
+        $dispatch = $service->dispatch($routeId, $this->payload($routeVersion) + ['quantity' => '10'], $f['user'], self::PERMISSIONS, true);
+        $accepted = $service->accept($dispatch['handover_id'], $this->payload(1) + ['quantity' => '10'],
+            $receiver, self::PERMISSIONS, true);
+        $this->assertSame('WAIT_HANDOVER', $accepted['target_status']);
+        $this->assertSame('WAIT_HANDOVER', ProductionQuantityOperation::findOrFail($f['consumerOperation'])->status);
+        $this->assertSame('WAIT_HANDOVER', $targetTask->fresh()->status);
+    }
+
     public function test_cutting_handover_replay_and_receiver_scope_do_not_duplicate_receipts(): void
     {
         $f = $this->fixture(); $receiver = $this->employee('cut-receiver-'); $this->consumerTask($f,$receiver);

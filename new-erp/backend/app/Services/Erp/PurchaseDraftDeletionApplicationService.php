@@ -13,26 +13,37 @@ use App\Models\Erp\PurchaseReceipt;
 use App\Models\Erp\PurchaseRequest;
 use App\Models\Erp\PurchaseRequestItem;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 
 class PurchaseDraftDeletionApplicationService
 {
-    public function deleteRequest(int $id): void
+    public function deleteRequest(int $id, ?string $operator = null): void
     {
-        DB::transaction(function () use ($id): void {
+        DB::transaction(function () use ($id, $operator): void {
             $request = PurchaseRequest::query()->lockForUpdate()->findOrFail($id);
-            $this->assert($request->request_status === 'draft', '只有未确认的采购需求草稿可以删除。');
+            $this->assert(
+                $request->request_status === 'draft'
+                && $request->confirmed_at === null
+                && $request->cancelled_at === null,
+                '只有从未确认、未取消的采购需求草稿可以删除。'
+            );
             $this->assert(!PurchasePlanItem::query()->where('request_id', $id)->exists(), '该采购需求已被采购计划引用，不能删除。');
-            $this->deleteTrace('purchase_request', $id);
+            $this->recordDeletion('purchase_request', $id, '删除从未确认的采购需求草稿', $operator);
             $request->delete();
         }, 5);
     }
 
-    public function deletePlan(int $id): void
+    public function deletePlan(int $id, ?string $operator = null): void
     {
-        DB::transaction(function () use ($id): void {
+        DB::transaction(function () use ($id, $operator): void {
             $plan = PurchasePlan::query()->with('items')->lockForUpdate()->findOrFail($id);
-            $this->assert($plan->plan_status === 'draft', '只有草稿采购计划可以删除。');
+            $this->assert(
+                $plan->plan_status === 'draft'
+                && $plan->audit_status === 'pending'
+                && $plan->approved_at === null,
+                '只有从未提交审核的采购计划草稿可以删除；已驳回计划必须保留审核历史。'
+            );
             $this->assert(!PurchaseOrder::query()->where('plan_id', $id)->exists(), '该采购计划已经生成采购订单，不能删除。');
             $this->assert(!PurchasePlanSupplierSplit::query()->where('plan_id', $id)
                 ->where(fn ($query) => $query->whereNotNull('order_id')->orWhere('ordered_qty', '>', 0))->exists(), '该采购计划已有下游订单占用，不能删除。');
@@ -51,16 +62,21 @@ class PurchaseDraftDeletionApplicationService
             }
             foreach (array_unique($requestIds) as $requestId) $this->refreshRequest($requestId);
 
-            $this->deleteTrace('purchase_plan', $id);
+            $this->recordDeletion('purchase_plan', $id, '删除从未提交审核的采购计划草稿并释放需求占用', $operator);
             $plan->delete();
         }, 5);
     }
 
-    public function deleteOrder(int $id): void
+    public function deleteOrder(int $id, ?string $operator = null): void
     {
-        DB::transaction(function () use ($id): void {
+        DB::transaction(function () use ($id, $operator): void {
             $order = PurchaseOrder::query()->with(['items', 'receipts'])->lockForUpdate()->findOrFail($id);
-            $this->assert($order->purchase_status === 'draft', '只有草稿或驳回后返回草稿的采购订单可以删除。');
+            $this->assert(
+                $order->purchase_status === 'draft'
+                && $order->audit_status === 'pending'
+                && $order->finance_fact_status === 'pending',
+                '只有从未提交审核、未冻结财务事实的采购订单草稿可以删除；已驳回订单必须保留审核历史。'
+            );
             $this->assert($order->receipts->isEmpty(), '该采购订单已经生成到货单，不能删除。');
             $this->assert(!DB::table('erp_purchase_price_histories')->where('order_id', $id)->exists(), '该采购订单已经形成采购价格历史，不能删除。');
 
@@ -79,14 +95,14 @@ class PurchaseDraftDeletionApplicationService
             foreach (array_unique($planIds) as $planId) $this->refreshPlanOrderStatus($planId);
 
             $this->deleteAttachments('order', $id);
-            $this->deleteTrace('purchase_order', $id);
+            $this->recordDeletion('purchase_order', $id, '删除从未提交审核的采购订单草稿并释放计划占用', $operator);
             $order->delete();
         }, 5);
     }
 
-    public function deleteReceipt(int $id): void
+    public function deleteReceipt(int $id, ?string $operator = null): void
     {
-        DB::transaction(function () use ($id): void {
+        DB::transaction(function () use ($id, $operator): void {
             $receipt = PurchaseReceipt::query()->with('items')->lockForUpdate()->findOrFail($id);
             $this->assert($receipt->confirm_status === 'draft' && $receipt->receipt_status === 'draft', '只有未确认的采购到货草稿可以删除。');
             $this->assert($receipt->stock_post_status === 'pending', '该到货单已经发生库存过账，不能删除。');
@@ -102,7 +118,7 @@ class PurchaseDraftDeletionApplicationService
                 InventorySerial::query()->whereIn('id', $serials->pluck('id'))->delete();
             }
             $this->deleteAttachments('receipt', $id);
-            $this->deleteTrace('purchase_receipt', $id);
+            $this->recordDeletion('purchase_receipt', $id, '删除未确认且未产生库存事实的采购到货草稿', $operator);
             $receipt->delete();
         }, 5);
     }
@@ -126,12 +142,41 @@ class PurchaseDraftDeletionApplicationService
 
     private function deleteAttachments(string $type, int $id): void
     {
-        PurchaseAttachment::query()->where('document_type', $type)->where('document_id', $id)->update(['status' => 'deleted', 'deleted_by' => '删除草稿', 'deleted_at' => now()]);
+        $attachments = PurchaseAttachment::query()
+            ->where('document_type', $type)
+            ->where('document_id', $id)
+            ->lockForUpdate()
+            ->get(['id', 'storage_disk', 'storage_path']);
+
+        if ($attachments->isEmpty()) return;
+
+        PurchaseAttachment::query()->whereKey($attachments->pluck('id'))->delete();
+        $files = $attachments->map(fn (PurchaseAttachment $attachment) => [
+            'disk' => $attachment->storage_disk,
+            'path' => $attachment->storage_path,
+        ])->all();
+
+        DB::afterCommit(function () use ($files): void {
+            foreach ($files as $file) {
+                if (!$file['path']) continue;
+                try {
+                    Storage::disk($file['disk'] ?: config('filesystems.default'))->delete($file['path']);
+                } catch (\Throwable $error) {
+                    report($error);
+                }
+            }
+        });
     }
 
-    private function deleteTrace(string $type, int $id): void
+    private function recordDeletion(string $type, int $id, string $content, ?string $operator): void
     {
-        PurchaseLog::query()->where('target_type', $type)->where('target_id', $id)->delete();
+        PurchaseLog::create([
+            'target_type' => $type,
+            'target_id' => $id,
+            'action' => 'delete_draft',
+            'content' => $content,
+            'operator' => $operator ?: '系统任务',
+        ]);
     }
 
     private function assert(bool $condition, string $message): void

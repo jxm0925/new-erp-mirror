@@ -4,9 +4,11 @@ namespace App\Http\Controllers\Api\V1\Erp;
 
 use App\Http\Controllers\Controller;
 use App\Models\Erp\{ImportBatch, ImportRow, Item, Location, Product, Sku, SkuItemRelation, Supplier, Warehouse};
+use App\Services\Erp\AuthContextService;
 use App\Services\Erp\ItemImportApplicationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -17,6 +19,7 @@ class ImportController extends Controller
 
     public function upload(Request $request)
     {
+        $this->authorizePermission($request, 'master.import.upload');
         $data = $request->validate(['file' => 'required|file|mimes:xlsx,xls,csv|max:10240', 'import_type' => 'required|in:'.implode(',', self::TYPES)]);
         $path = $request->file('file')->store('erp-imports');
         $batch = ImportBatch::create([
@@ -27,8 +30,9 @@ class ImportController extends Controller
         return response()->json(['message' => '上传成功', 'data' => $batch], 201);
     }
 
-    public function preview(int $id)
+    public function preview(Request $request, int $id)
     {
+        $this->authorizePermission($request, 'master.import.upload');
         $batch = ImportBatch::findOrFail($id);
         $fullPath = storage_path('app/private/'.$batch->stored_path);
         if (!is_file($fullPath)) $fullPath = storage_path('app/'.$batch->stored_path);
@@ -59,13 +63,15 @@ class ImportController extends Controller
 
     public function rows(Request $request, int $id)
     {
+        $this->authorizePermission($request, 'master.import.upload');
         $query = ImportRow::where('batch_id', $id);
         if ($request->filled('status')) $query->where('validation_status', $request->status);
         return response()->json($query->orderBy('row_no')->paginate(min(200, max(10, $request->integer('per_page', 50)))));
     }
 
-    public function confirm(int $id, ItemImportApplicationService $itemImporter)
+    public function confirm(Request $request, int $id, ItemImportApplicationService $itemImporter)
     {
+        $this->authorizePermission($request, 'master.import.execute');
         $batch = ImportBatch::with(['rows' => fn ($q) => $q->whereIn('validation_status', ['valid', 'warning'])])->findOrFail($id);
         abort_if($batch->status === 'confirmed', 422, '该批次已经确认导入');
         DB::transaction(function () use ($batch, $itemImporter) {
@@ -78,8 +84,9 @@ class ImportController extends Controller
         return response()->json(['message' => "已导入 {$batch->rows->count()} 条正确数据", 'data' => $batch->fresh()]);
     }
 
-    public function exportErrors(int $id): StreamedResponse
+    public function exportErrors(Request $request, int $id): StreamedResponse
     {
+        $this->authorizePermission($request, 'master.import.upload');
         $batch = ImportBatch::findOrFail($id);
         return response()->streamDownload(function () use ($batch) {
             $out = fopen('php://output', 'w');
@@ -89,6 +96,41 @@ class ImportController extends Controller
                 ->each(fn ($row) => fputcsv($out, [$row->row_no, $row->error_field, $row->error_type, $row->error_reason, json_encode($row->raw_data, JSON_UNESCAPED_UNICODE), $row->suggestion]));
             fclose($out);
         }, $batch->batch_no.'-errors.csv', ['Content-Type' => 'text/csv; charset=UTF-8']);
+    }
+
+    public function destroy(Request $request, int $id)
+    {
+        $this->authorizePermission($request, 'master.import.delete');
+        $path = DB::transaction(function () use ($id): string {
+            $batch = ImportBatch::query()->lockForUpdate()->findOrFail($id);
+            abort_unless(in_array($batch->status, ['uploaded', 'previewed'], true), 422, '已确认导入的批次不能删除；其导入结果属于正式主数据。');
+            $path = (string) $batch->stored_path;
+            $batch->delete();
+            return $path;
+        }, 5);
+
+        if ($path !== '') {
+            DB::afterCommit(function () use ($path): void {
+                try {
+                    Storage::delete($path);
+                } catch (\Throwable $error) {
+                    report($error);
+                }
+            });
+        }
+        return response()->json(['message' => '未确认的导入批次及预检明细已删除。']);
+    }
+
+    private function authorizePermission(Request $request, string $permission): void
+    {
+        $auth = app(AuthContextService::class);
+        $user = $auth->currentUser($request);
+        abort_unless($user, 401, '未登录或登录已过期。');
+        abort_unless(
+            $auth->isSuperAdmin($user) || in_array($permission, $auth->permissionCodes($user), true),
+            403,
+            '无按钮权限：'.$permission
+        );
     }
 
     private function validateRow(string $type, array $row): array

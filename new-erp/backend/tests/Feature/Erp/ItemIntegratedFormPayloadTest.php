@@ -36,6 +36,7 @@ class ItemIntegratedFormPayloadTest extends TestCase
                 'category_id' => $category->id,
                 'unit_id' => $unit->id,
                 'spec' => 'TEST',
+                'is_length_cut_material' => false,
                 'is_purchase_item' => false,
                 'is_stock_item' => true,
                 'is_production_item' => true,

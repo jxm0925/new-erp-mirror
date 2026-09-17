@@ -438,12 +438,13 @@ class ProductionMaterialExecutionTest extends TestCase
         $args = [$task->id, 'quantity_operation', $workOrder->test_target_id, ['mode' => 'return'], $user, self::PERMISSIONS];
         $this->assertSame(0, $service->materialOptions(...$args)['total']);
         $this->deliverQuantity($user, $workOrder, $requirement, $balance, 5, 'selector');
+        $taskVersion = (int) DB::table('erp_production_tasks')->where('id', $task->id)->value('business_version');
         $page = $service->materialOptions(...$args);
         $this->assertSame(1, $page['total']);
         $this->assertSame(5.0, (float) $page['data'][0]['returnable_base_qty']);
         $this->assertSame($balance->warehouse_id, $page['data'][0]['warehouse_id']);
         app(ProductionMaterialReturnService::class)->create([
-            'client_command_id' => $this->id('selector-return'), 'expected_version' => 1,
+            'client_command_id' => $this->id('selector-return'), 'expected_version' => $taskVersion,
             'task_id' => $task->id, 'target_type' => 'quantity_operation', 'target_id' => $workOrder->test_target_id,
             'return_type' => 'normal_return', 'reason' => '全部余料退回',
             'lines' => [['material_requirement_id' => $requirement->id, 'warehouse_id' => $balance->warehouse_id,
@@ -772,6 +773,7 @@ class ProductionMaterialExecutionTest extends TestCase
         $inTransit = $materialExecution->dispatchDelivery($delivery->id, ['client_command_id' => $this->id('return-dispatch'), 'expected_version' => 1, 'delivery_user_legacy_id' => $user->legacy_id], $user, self::PERMISSIONS, true);
         $delivered = $materialExecution->deliverDelivery($delivery->id, ['client_command_id' => $this->id('return-deliver'), 'expected_version' => $inTransit->business_version], $user, self::PERMISSIONS, true);
         $materialExecution->receiveDelivery($delivery->id, ['client_command_id' => $this->id('return-receive'), 'expected_version' => $delivered->business_version, 'lines' => [['delivery_line_id' => $delivered->lines->first()->id, 'accepted_qty' => 5, 'rejected_qty' => 0]]], $user, self::PERMISSIONS, true);
+        $taskVersion = (int) DB::table('erp_production_tasks')->where('id', $task->id)->value('business_version');
 
         $mobileRequirements = app(ProductionKittingService::class)->requirements($task->id, 'quantity_operation', $workOrder->test_target_id, $user, self::PERMISSIONS);
         $this->assertSame($requirement->id, $mobileRequirements[0]['material_requirement_id']);
@@ -782,12 +784,12 @@ class ProductionMaterialExecutionTest extends TestCase
         $line = ['material_requirement_id' => $requirement->id, 'warehouse_id' => $balance->warehouse_id,
             'location_id' => $balance->location_id, 'batch_no' => $balance->batch_no, 'return_base_qty' => 2];
         $this->expectDomain('return_quantity_exceeds_received', fn () => $service->create([
-            'client_command_id' => $this->id('wrong-return-source'), 'expected_version' => 1,
+            'client_command_id' => $this->id('wrong-return-source'), 'expected_version' => $taskVersion,
             'task_id' => $task->id, 'target_type' => 'quantity_operation', 'target_id' => $workOrder->test_target_id,
             'return_type' => 'normal_return', 'reason' => '伪造批次', 'lines' => [array_merge($line, ['batch_no' => 'NOT-RECEIVED'])],
         ], $user, self::PERMISSIONS));
 
-        $normal = $service->create(['client_command_id' => $this->id('normal-return'), 'expected_version' => 1,
+        $normal = $service->create(['client_command_id' => $this->id('normal-return'), 'expected_version' => $taskVersion,
             'task_id' => $task->id, 'target_type' => 'quantity_operation', 'target_id' => $workOrder->test_target_id,
             'return_type' => 'normal_return', 'reason' => '正常未用退回', 'lines' => [$line]], $user, self::PERMISSIONS);
         $normalReceived = $service->receive($normal['id'], ['client_command_id' => $this->id('normal-receive'), 'expected_version' => 1], $user, self::PERMISSIONS);
@@ -798,7 +800,7 @@ class ProductionMaterialExecutionTest extends TestCase
         $this->assertSame(2.0, $afterNormal[0]['returned_base_qty']);
         $this->assertSame(3.0, $afterNormal[0]['satisfied_base_qty']);
 
-        $quality = $service->create(['client_command_id' => $this->id('quality-return'), 'expected_version' => 1,
+        $quality = $service->create(['client_command_id' => $this->id('quality-return'), 'expected_version' => $taskVersion,
             'task_id' => $task->id, 'target_type' => 'quantity_operation', 'target_id' => $workOrder->test_target_id,
             'return_type' => 'quality_return', 'reason' => '物料外观异常', 'lines' => [array_merge($line, ['return_base_qty' => 1])]], $user, self::PERMISSIONS);
         $qualityReceived = $service->receive($quality['id'], ['client_command_id' => $this->id('quality-receive'), 'expected_version' => 1], $user, self::PERMISSIONS);
@@ -815,7 +817,7 @@ class ProductionMaterialExecutionTest extends TestCase
         $this->assertSame(0.0, (float) $balance->fresh()->quantity_pending);
         $this->assertSame(18.0, (float) $balance->fresh()->quantity_available);
 
-        $failedQuality = $service->create(['client_command_id' => $this->id('quality-return-failed'), 'expected_version' => 1,
+        $failedQuality = $service->create(['client_command_id' => $this->id('quality-return-failed'), 'expected_version' => $taskVersion,
             'task_id' => $task->id, 'target_type' => 'quantity_operation', 'target_id' => $workOrder->test_target_id,
             'return_type' => 'quality_return', 'reason' => '物料变形', 'lines' => [array_merge($line, ['return_base_qty' => 1])]], $user, self::PERMISSIONS);
         $failedQualityReceived = $service->receive($failedQuality['id'], [
@@ -842,6 +844,7 @@ class ProductionMaterialExecutionTest extends TestCase
         DB::table('erp_production_target_material_requirements')->where('id', $targetRequirement->id)->update(['required_base_qty' => 5]);
 
         $this->deliverQuantity($user, $workOrder, $requirement, $balance, 5, 'net-initial');
+        $taskVersion = (int) DB::table('erp_production_tasks')->where('id', $task->id)->value('business_version');
         $kitting = app(ProductionKittingService::class);
         $received = $kitting->requirements($task->id, 'quantity_operation', $workOrder->test_target_id, $user, self::PERMISSIONS);
         $this->assertSame(5.0, $received[0]['satisfied_base_qty']);
@@ -849,7 +852,7 @@ class ProductionMaterialExecutionTest extends TestCase
 
         $returns = app(ProductionMaterialReturnService::class);
         $created = $returns->create([
-            'client_command_id' => $this->id('net-return-create'), 'expected_version' => 1,
+            'client_command_id' => $this->id('net-return-create'), 'expected_version' => $taskVersion,
             'task_id' => $task->id, 'target_type' => 'quantity_operation', 'target_id' => $workOrder->test_target_id,
             'return_type' => 'normal_return', 'reason' => '退回未使用物料',
             'lines' => [[

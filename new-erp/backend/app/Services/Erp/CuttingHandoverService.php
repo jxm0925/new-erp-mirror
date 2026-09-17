@@ -12,6 +12,8 @@ final class CuttingHandoverService
     public function __construct(
         private readonly CuttingCommandService $commands,
         private readonly DocumentNumberService $numbers,
+        private readonly ProductionDataScopeResolver $scopes,
+        private readonly ProductionTargetReadinessService $readiness,
     ) {}
 
     public function dispatch(int $routeId, array $payload, object $user, array $permissions, bool $super = false): array
@@ -69,32 +71,39 @@ final class CuttingHandoverService
                 'handed_over_cost' => $handedCost, 'status' => $routeStatus,
                 'business_version' => (int) $route->business_version + 1, 'updated_at' => $now]);
             $this->movement((int) $route->id, (int) $source->id, $transitId, 'DISPATCH', $quantity, $cost, $user);
-            $this->setTargetStatus($task, $target, 'WAIT_HANDOVER', $now);
+            $readiness = $this->readiness->refresh((string) $requirement->target_type, $target, $task, $now);
             $response = ['handover_id' => $handoverId, 'handover_no' => DB::table('erp_cutting_handovers')->where('id', $handoverId)->value('handover_no'),
                 'status' => 'IN_TRANSIT', 'dispatched_qty' => $quantity, 'dispatched_cost' => $cost,
                 'route_id' => (int) $route->id, 'route_status' => $routeStatus,
                 'route_business_version' => (int) $route->business_version + 1,
-                'target_task_id' => (int) $task->id, 'expected_receiver_legacy_id' => (int) $task->assignee_user_legacy_id];
+                'target_task_id' => (int) $task->id, 'expected_receiver_legacy_id' => (int) $task->assignee_user_legacy_id,
+                'target_status' => $readiness['target_status'], 'target_business_version' => $readiness['target_business_version']];
             $this->commands->event('cutting_handover', $handoverId, 'dispatch', $user, null, $response); return $response;
         });
     }
 
-    public function pending(object $user, array $permissions, bool $super = false): array
+    public function pending(array $filters, object $user, array $permissions, bool $super = false): array
     {
         $permission = 'production.cutting.handover.view'; $this->commands->permission($permissions, $permission);
         $actor = $this->commands->actor($user);
-        $rows = DB::table('erp_cutting_handovers as h')->join('erp_cutting_result_routes as route', 'route.id', '=', 'h.route_id')
+        $visibleTasks = ProductionTask::query()->select('id');
+        $this->scopes->applyProductionTaskScope($visibleTasks, $this->scopes->resolve($user, $permission, $permissions, $super), $actor);
+        $query = DB::table('erp_cutting_handovers as h')->join('erp_cutting_result_routes as route', 'route.id', '=', 'h.route_id')
             ->join('erp_cutting_results as result', 'result.id', '=', 'h.result_id')->join('erp_items as item', 'item.id', '=', 'result.item_id')
             ->join('erp_production_tasks as task', 'task.id', '=', 'h.target_task_id')
             ->join('erp_work_orders as wo', 'wo.id', '=', 'task.work_order_id')
-            ->where('h.expected_receiver_legacy_id', $actor)->whereIn('h.status', ['IN_TRANSIT', 'PARTIAL'])
-            ->orderBy('h.dispatched_at')->select('h.*', 'h.target_task_id as task_id', 'task.task_no', 'wo.work_order_no', 'item.item_code', 'item.item_name')->get();
-        $visible = [];
-        foreach ($rows as $row) {
-            $this->commands->order((int) $row->cutting_order_id, $user, $permissions, $super, $permission);
-            $visible[] = (array) $row;
+            ->where('task.assignee_user_legacy_id', $actor)->whereIn('task.id', $visibleTasks->toBase())
+            ->whereIn('h.status', ['IN_TRANSIT', 'PARTIAL'])
+            ->orderBy('h.dispatched_at')->select('h.*', 'h.target_task_id as task_id', 'task.task_no', 'wo.work_order_no', 'item.item_code', 'item.item_name');
+        $page = filter_var($filters['page'] ?? 1, FILTER_VALIDATE_INT);
+        $size = filter_var($filters['per_page'] ?? 20, FILTER_VALIDATE_INT);
+        if (! $page || $page < 1 || ! $size || $size < 1 || $size > 100) {
+            $this->commands->fail('pagination_invalid', '分页参数不合法，每页最多100条。');
         }
-        return $visible;
+        $result = $query->paginate($size, ['*'], 'page', $page);
+        return ['data' => array_map(fn ($row) => (array) $row, $result->items()), 'meta' => [
+            'current_page' => $page, 'per_page' => $size, 'total' => $result->total(), 'last_page' => $result->lastPage(),
+        ]];
     }
 
     public function accept(int $handoverId, array $payload, object $user, array $permissions, bool $super = false): array
@@ -111,17 +120,14 @@ final class CuttingHandoverService
         return $this->commands->run($command, $handoverId, $payload, $user, function () use ($accept, $handoverId, $payload, $user, $permissions, $super, $permission): array {
             $handover = DB::table('erp_cutting_handovers')->where('id', $handoverId)->lockForUpdate()->first();
             if (! $handover) $this->commands->fail('cutting_handover_missing', '下料交接不存在。', 404);
-            $this->commands->order((int) $handover->cutting_order_id, $user, $permissions, $super, $permission, true);
             $this->commands->version($handover, $payload);
             if (! in_array($handover->status, ['IN_TRANSIT', 'PARTIAL'], true)) {
                 $this->commands->fail('cutting_handover_already_decided', '该下料交接已经全部处理。', 409);
             }
             $actor = $this->commands->actor($user);
             $task = ProductionTask::query()->lockForUpdate()->find($handover->target_task_id);
-            if (! $task || (int) $task->assignee_user_legacy_id !== $actor
-                || (int) $handover->expected_receiver_legacy_id !== $actor) {
-                $this->commands->fail('cutting_expected_receiver_required', '只有下一工序当前负责人可以接收或拒收。', 403);
-            }
+            if (! $task) $this->commands->fail('cutting_target_task_invalid', '下一工序真实任务不存在。', 409);
+            $this->assertTargetTask($task, $user, $permissions, $super, $permission);
             $quantity = CuttingDecimal::value($payload['quantity'] ?? null);
             $outstandingQty = bcsub(bcsub((string) $handover->dispatched_qty, (string) $handover->accepted_qty, 8), (string) $handover->rejected_qty, 8);
             $outstandingCost = bcsub(bcsub((string) $handover->dispatched_cost, (string) $handover->accepted_cost, 4), (string) $handover->rejected_cost, 4);
@@ -198,16 +204,16 @@ final class CuttingHandoverService
                 'target_holding_id' => $targetHoldingId, 'reason' => $accept ? null : $reason,
                 'operator_legacy_id' => $actor, 'occurred_at' => $now, 'created_at' => $now, 'updated_at' => $now]);
             $target = $this->target((string) $handover->target_type, (int) $handover->target_id, true);
-            $pending = DB::table('erp_cutting_handovers')->where('target_type', $handover->target_type)->where('target_id', $handover->target_id)
-                ->whereIn('status', ['IN_TRANSIT', 'PARTIAL'])->exists();
-            $nextTargetStatus = $pending ? 'WAIT_HANDOVER' : (($target->kitting_required && ! $target->kitting_confirmed_at) ? 'WAIT_MATERIAL' : 'READY');
-            $this->setTargetStatus($task, $target, $nextTargetStatus, $now);
+            $readiness = $this->readiness->refresh((string) $handover->target_type, $target, $task, $now);
             $response = ['handover_id' => $handoverId, 'status' => $status, 'accepted_qty' => $acceptedQty,
                 'rejected_qty' => $rejectedQty, 'remaining_qty' => bcsub((string) $handover->dispatched_qty, $processed, 8),
                 'business_version' => (int) $handover->business_version + 1, 'route_id' => (int) $route->id,
                 'route_status' => $routeStatus, 'route_designated_qty' => (string) $route->quantity,
                 'route_handed_over_qty' => $routeHandedQty, 'route_received_qty' => $routeReceivedQty,
-                'target_status' => $nextTargetStatus, 'target_business_version' => (int) $target->business_version];
+                'target_status' => $readiness['target_status'], 'target_business_version' => $readiness['target_business_version'],
+                'expected_receiver_legacy_id' => (int) $handover->expected_receiver_legacy_id,
+                'handled_by_legacy_id' => $actor,
+                'receiver_changed_after_dispatch' => (int) $handover->expected_receiver_legacy_id !== $actor];
             $this->commands->event('cutting_handover', $handoverId, $accept ? 'accept' : 'reject', $user, $handover, $response); return $response;
         });
     }
@@ -217,9 +223,10 @@ final class CuttingHandoverService
         $this->commands->permission($permissions, $permission);
         $row = DB::table('erp_cutting_result_routes as route')->join('erp_cutting_results as result', 'result.id', '=', 'route.result_id')
             ->join('erp_cutting_settlement_batches as batch', 'batch.id', '=', 'result.settlement_batch_id')
-            ->where('route.id', $routeId)->select('batch.cutting_order_id')->first();
+            ->where('route.id', $routeId)->select('batch.cutting_task_id')->first();
         if (! $row) $this->commands->fail('cutting_route_missing', '产出去向不存在。', 404);
-        $this->commands->order((int) $row->cutting_order_id, $user, $permissions, $super, $permission);
+        if (! $row->cutting_task_id) $this->commands->fail('cutting_task_missing', '产出去向尚未绑定正式下料任务。', 409);
+        $this->commands->cuttingTask((int) $row->cutting_task_id, $user, $permissions, $super, $permission);
     }
 
     private function authorizeHandover(int $id, object $user, array $permissions, bool $super, string $permission): void
@@ -227,7 +234,6 @@ final class CuttingHandoverService
         $this->commands->permission($permissions, $permission);
         $row = DB::table('erp_cutting_handovers')->where('id', $id)->first();
         if (! $row) $this->commands->fail('cutting_handover_missing', '下料交接不存在。', 404);
-        $this->commands->order((int) $row->cutting_order_id, $user, $permissions, $super, $permission);
     }
 
     private function lockRoute(int $routeId, object $user, array $permissions, bool $super, string $permission): array
@@ -236,8 +242,20 @@ final class CuttingHandoverService
         $result = $route ? DB::table('erp_cutting_results')->where('id', $route->result_id)->lockForUpdate()->first() : null;
         $batch = $result ? DB::table('erp_cutting_settlement_batches')->where('id', $result->settlement_batch_id)->lockForUpdate()->first() : null;
         if (! $route || ! $result || ! $batch) $this->commands->fail('cutting_route_missing', '产出去向不存在。', 404);
-        $this->commands->order((int) $batch->cutting_order_id, $user, $permissions, $super, $permission, true);
+        if (! $batch->cutting_task_id) $this->commands->fail('cutting_task_missing', '产出去向尚未绑定正式下料任务。', 409);
+        $this->commands->cuttingTask((int) $batch->cutting_task_id, $user, $permissions, $super, $permission, true);
         return [$route, $result, $batch];
+    }
+
+    private function assertTargetTask(ProductionTask $task, object $user, array $permissions, bool $super, string $permission): void
+    {
+        $actor = $this->commands->actor($user);
+        $visible = ProductionTask::query()->whereKey($task->id);
+        $this->scopes->applyProductionTaskScope($visible, $this->scopes->resolve($user, $permission, $permissions, $super), $actor);
+        if (! $visible->exists()) $this->commands->fail('data_scope_denied', '该接收任务不在当前生产数据范围内。', 403);
+        if ((int) $task->assignee_user_legacy_id !== $actor) {
+            $this->commands->fail('cutting_expected_receiver_required', '只有下一工序当前负责人可以接收或拒收。', 403);
+        }
     }
 
     private function targetContext(object $route, bool $lock): array
@@ -260,16 +278,6 @@ final class CuttingHandoverService
         $query = $model::query(); if ($lock) $query->lockForUpdate();
         $target = $query->find($id); if (! $target) $this->commands->fail('cutting_target_missing', '下一工序执行目标不存在。', 409);
         return $target;
-    }
-
-    private function setTargetStatus(ProductionTask $task, object $target, string $status, $now): void
-    {
-        if ($target->status !== $status) {
-            $target->status = $status; $target->business_version = (int) $target->business_version + 1; $target->save();
-            $task->targets()->where('target_type', $target instanceof ProductionUnitOperation ? 'unit_operation' : 'quantity_operation')
-                ->where('target_id', $target->id)->update(['status_snapshot' => $status, 'updated_at' => $now]);
-        }
-        if ($task->status !== $status) $task->update(['status' => $status, 'business_version' => (int) $task->business_version + 1]);
     }
 
     private function routeStatus(string $handed, string $received, string $total): string

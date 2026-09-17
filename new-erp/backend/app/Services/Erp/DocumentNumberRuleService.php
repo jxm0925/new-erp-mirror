@@ -3,6 +3,7 @@
 namespace App\Services\Erp;
 
 use App\Models\Erp\DocumentNumber;
+use App\Models\Erp\DocumentNumberReservation;
 use App\Models\Erp\DocumentNumberRule;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Arr;
@@ -85,6 +86,26 @@ class DocumentNumberRuleService
             $locked->update(['enabled' => $enabled]);
             $this->log($enabled ? 'enable' : 'disable', $locked, $old, ['enabled' => $enabled], null, $operator);
             return $this->present($locked->fresh());
+        }, 5);
+    }
+
+    public function delete(DocumentNumberRule $rule, string $reason, object $operator): void
+    {
+        DB::transaction(function () use ($rule, $reason, $operator): void {
+            $locked = DocumentNumberRule::query()->lockForUpdate()->findOrFail($rule->id);
+            if ($locked->enabled) {
+                throw ValidationException::withMessages(['enabled' => '编号规则必须先停用，确认不再使用后才能删除。']);
+            }
+            if (DocumentNumber::query()->where('document_type', $locked->document_type)->exists()
+                || DocumentNumberReservation::query()->where('document_type', $locked->document_type)->exists()) {
+                throw ValidationException::withMessages(['rule' => '该业务类型已经生成或预留过编号，规则属于历史审计依据，不能删除。']);
+            }
+            $reason = trim($reason);
+            if ($reason === '') {
+                throw ValidationException::withMessages(['reason' => '删除编号规则必须填写原因。']);
+            }
+            $this->log('delete', $locked, $locked->toArray(), null, $reason, $operator);
+            $locked->delete();
         }, 5);
     }
 

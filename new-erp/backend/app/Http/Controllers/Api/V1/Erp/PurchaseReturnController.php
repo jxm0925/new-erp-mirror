@@ -344,6 +344,13 @@ class PurchaseReturnController extends Controller
         return $this->action($request, $service->close($id, ...$this->operator($request)), '采购退货单已关闭');
     }
 
+    public function destroy(Request $request, int $id, PurchaseReturnApplicationService $service)
+    {
+        $this->authorizePermission($request, 'purchase_return.delete');
+        $service->deleteDraft($id);
+        return response()->json(['message' => '采购退货草稿已删除。']);
+    }
+
     private function action(Request $request, PurchaseReturn $data, string $message)
     {
         return response()->json(compact('message', 'data'));

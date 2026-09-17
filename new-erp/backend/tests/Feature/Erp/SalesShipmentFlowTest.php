@@ -83,6 +83,44 @@ class SalesShipmentFlowTest extends TestCase
         $this->assertSame(0.0, (float) $balance->fresh()->quantity_available);
     }
 
+    public function test_deleting_split_and_full_shipment_drafts_restores_order_lock_without_unlocking_stock(): void
+    {
+        [$order, $fulfillment, $balance] = $this->fixture();
+        $service = app(SalesShipmentApplicationService::class);
+        foreach ([3, 10] as $quantity) {
+            $shipment = $service->create($order->id, [
+                'lines' => [['sales_order_fulfillment_id' => $fulfillment->id, 'base_qty' => $quantity]],
+                'packages' => [['package_no' => 'DELETE-PKG-'.$quantity]],
+            ], '测试操作员');
+            $reservationId = $shipment->lines->first()->inventory_reservation_id;
+            $service->deleteDraft($shipment);
+            $this->assertDatabaseMissing('erp_sales_shipments', ['id' => $shipment->id]);
+            $this->assertDatabaseMissing('erp_sales_shipment_lines', ['shipment_id' => $shipment->id]);
+            $this->assertDatabaseMissing('erp_sales_shipment_packages', ['shipment_id' => $shipment->id]);
+            $this->assertSame(10.0, (float) InventoryReservation::where('source_order_id', $order->id)
+                ->where('reservation_status', 'active')->sum('reserved_qty'));
+            $this->assertSame(10.0, (float) $balance->fresh()->quantity_locked);
+            $this->assertSame(0.0, (float) $balance->fresh()->quantity_available);
+            if ($quantity === 3) {
+                $this->assertDatabaseMissing('erp_inventory_reservations', ['id' => $reservationId]);
+            } else {
+                $this->assertDatabaseHas('erp_inventory_reservations', ['id' => $reservationId, 'reservation_status' => 'active']);
+            }
+        }
+    }
+
+    public function test_confirmed_shipment_cannot_be_hard_deleted(): void
+    {
+        [$order, $fulfillment] = $this->fixture();
+        $service = app(SalesShipmentApplicationService::class);
+        $shipment = $service->create($order->id, [
+            'lines' => [['sales_order_fulfillment_id' => $fulfillment->id, 'base_qty' => 3]],
+        ], '测试操作员');
+        $service->confirm($shipment, '测试操作员');
+        $this->expectException(\Illuminate\Validation\ValidationException::class);
+        $service->deleteDraft($shipment);
+    }
+
     private function fixture(): array
     {
         $unit = Unit::create(['unit_code' => 'EA-SHIP', 'unit_name' => '件', 'unit_type' => 'quantity', 'decimal_places' => 0, 'is_base' => true, 'status' => 'enabled']);

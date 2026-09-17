@@ -3,6 +3,7 @@
 namespace App\Services\Erp;
 
 use App\Exceptions\Erp\WorkOrderDomainException;
+use App\Models\Erp\CuttingTask;
 use App\Models\Erp\WorkOrder;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -70,6 +71,24 @@ final class CuttingCommandService
         $q = WorkOrder::query()->whereKey($id); if ($lock) $q->lockForUpdate();
         $wo = $q->first(); if (! $wo) $this->fail('work_order_missing', '正式来源工单不存在。', 404);
         $this->assertWorkOrder($wo, $user, $permissions, $super, $permission); return $wo;
+    }
+
+    public function cuttingTask(int $id, object $user, array $permissions, bool $super, string $permission, bool $lock = false): CuttingTask
+    {
+        $this->permission($permissions, $permission);
+        $query = CuttingTask::query()->whereKey($id);
+        $this->scope->applyCuttingTaskScope(
+            $query,
+            $this->scope->resolve($user, $permission, $permissions, $super),
+            $this->actor($user),
+        );
+        if ($lock) $query->lockForUpdate();
+        $task = $query->first();
+        if ($task) return $task;
+        if (CuttingTask::query()->whereKey($id)->exists()) {
+            $this->fail('data_scope_denied', '该下料任务不在当前下料责任范围内。', 403);
+        }
+        $this->fail('cutting_task_missing', '下料任务不存在。', 404);
     }
 
     public function assertWorkOrder(WorkOrder $wo, object $user, array $permissions, bool $super, string $permission): void

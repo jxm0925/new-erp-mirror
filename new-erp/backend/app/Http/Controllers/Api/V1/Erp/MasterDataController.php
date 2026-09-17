@@ -257,10 +257,35 @@ class MasterDataController extends Controller
     {
         [$model] = $this->config($request);
         $entity = (string) $request->route('entity');
+        $permission = match ($entity) {
+            'products' => 'master.product.delete',
+            'skus' => 'master.sku.delete',
+            'items' => 'master.item.delete',
+            'units', 'categories' => 'master.base_archive.delete',
+            'suppliers' => 'master.supplier.delete',
+            'warehouses' => 'master.warehouse.delete',
+            'locations' => 'master.location.delete',
+            default => abort(405, '当前数据类型不支持删除。'),
+        };
+        $this->authorizePermission($request, $permission);
         $record = $model::findOrFail($id);
         $service->deleteUnused($entity, $record);
 
         return response()->json(['message' => '删除成功']);
+    }
+
+    private function authorizePermission(Request $request, string $permission): object
+    {
+        $auth = app(AuthContextService::class);
+        $user = $auth->currentUser($request);
+        abort_unless($user, 401, '未登录或登录已过期。');
+        abort_unless(
+            $auth->isSuperAdmin($user) || in_array($permission, $auth->permissionCodes($user), true),
+            403,
+            '无按钮权限：'.$permission,
+        );
+
+        return $user;
     }
 
     private function assertProductCanBeEnabled(Product $product): void

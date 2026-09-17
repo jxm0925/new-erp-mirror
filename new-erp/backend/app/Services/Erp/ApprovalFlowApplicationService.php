@@ -295,6 +295,26 @@ class ApprovalFlowApplicationService
         ], $operator);
     }
 
+    public function deleteDraft(int $id): void
+    {
+        DB::transaction(function () use ($id): void {
+            $flow = ApprovalFlowTemplate::query()->lockForUpdate()->findOrFail($id);
+            if ($flow->status !== 'draft' || (int) $flow->current_version !== 0) {
+                throw ValidationException::withMessages(['flow' => '只有从未发布的审核流程草稿可以删除；已发布流程只能停用。']);
+            }
+            if (ApprovalFlowVersion::query()->where('flow_template_id', $flow->id)
+                ->where('version_status', 'published')->exists()) {
+                throw ValidationException::withMessages(['flow' => '该审核流程已有发布版本，不能删除；请停用并保留历史。']);
+            }
+            if (DB::table('erp_approval_tasks')->where('flow_template_id', $flow->id)->exists()) {
+                throw ValidationException::withMessages(['flow' => '该审核流程已产生审批任务，不能删除。']);
+            }
+
+            // 版本由数据库级联删除；任务、历史发布记录一旦存在则在上方明确阻断。
+            $flow->delete();
+        }, 5);
+    }
+
     public function validateDefinition(array $definition): array
     {
         $errors = []; $warnings = [];

@@ -7,6 +7,7 @@ use App\Models\Erp\SalesCustomer;
 use App\Models\Erp\SalesCustomerAddress;
 use App\Models\Erp\SalesCustomerContact;
 use App\Services\Erp\AuthContextService;
+use App\Services\Erp\SalesCustomerDeletionApplicationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
@@ -83,6 +84,13 @@ class SalesCustomerController extends Controller
             $this->syncChildren($customer, $contacts, $addresses);
             return response()->json(['message' => '客户已更新；历史订单快照未被修改', 'data' => $customer->fresh(['contacts', 'addresses'])]);
         });
+    }
+
+    public function destroy(Request $request, int $id, SalesCustomerDeletionApplicationService $service)
+    {
+        $this->authorize($request, 'sales.customer.delete');
+        $service->delete($id);
+        return response()->json(['message' => '未被业务引用的客户档案已删除。']);
     }
 
     private function syncChildren(SalesCustomer $customer, array $contacts, array $addresses): void

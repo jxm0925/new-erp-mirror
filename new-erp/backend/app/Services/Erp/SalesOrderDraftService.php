@@ -7,6 +7,7 @@ use App\Models\Erp\SalesOrderAttachment;
 use App\Models\Erp\SalesOrderLog;
 use App\Models\Erp\SalesOrderVersion;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class SalesOrderDraftService
 {
@@ -102,10 +103,25 @@ class SalesOrderDraftService
         DB::transaction(function () use ($order, $operator) {
             $order = SalesOrder::query()->lockForUpdate()->findOrFail($order->id);
             $this->assertDraftDeletable($order);
-            SalesOrderAttachment::query()
+            $attachments = SalesOrderAttachment::query()
                 ->where('sales_order_id', $order->id)
-                ->where('status', 'active')
-                ->update(['status' => 'deleted', 'deleted_by' => $operator, 'deleted_at' => now()]);
+                ->lockForUpdate()
+                ->get(['id', 'storage_disk', 'storage_path']);
+            SalesOrderAttachment::query()->whereKey($attachments->pluck('id'))->delete();
+            $files = $attachments->map(fn (SalesOrderAttachment $attachment) => [
+                'disk' => $attachment->storage_disk,
+                'path' => $attachment->storage_path,
+            ])->all();
+            DB::afterCommit(function () use ($files): void {
+                foreach ($files as $file) {
+                    if (!$file['path']) continue;
+                    try {
+                        Storage::disk($file['disk'] ?: config('filesystems.default'))->delete($file['path']);
+                    } catch (\Throwable $error) {
+                        report($error);
+                    }
+                }
+            });
             $this->recordLog($order, 'delete_draft', 'draft', 'deleted', '删除销售订单草稿', $operator);
             $order->lines()->delete();
             $order->delete();

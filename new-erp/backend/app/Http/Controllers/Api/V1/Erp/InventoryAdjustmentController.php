@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Erp;
 use App\Http\Controllers\Controller;
 use App\Models\Erp\InventoryAdjustment;
 use App\Models\Erp\Item;
+use App\Services\Erp\AuthContextService;
 use App\Services\Erp\InventoryAdjustmentApplicationService;
 use App\Services\Erp\InventorySerialApplicationService;
 use App\Services\Erp\InventoryService;
@@ -90,8 +91,9 @@ class InventoryAdjustmentController extends Controller
         return response()->json(['message' => '调整单已取消', 'data' => $service->cancel($id)]);
     }
 
-    public function destroy(int $id, InventoryAdjustmentApplicationService $service)
+    public function destroy(Request $request, int $id, InventoryAdjustmentApplicationService $service)
     {
+        $this->authorizePermission($request, 'inventory.adjustment.delete');
         $service->deleteDraft($id);
         return response()->json(['message' => '草稿调整单已删除']);
     }
@@ -120,5 +122,19 @@ class InventoryAdjustmentController extends Controller
     private function perPage(Request $request): int
     {
         return min(100, max(10, (int) $request->input('per_page', 20)));
+    }
+
+    private function authorizePermission(Request $request, string $permission): object
+    {
+        $auth = app(AuthContextService::class);
+        $user = $auth->currentUser($request);
+        abort_unless($user, 401, '未登录或登录已过期。');
+        abort_unless(
+            $auth->isSuperAdmin($user) || in_array($permission, $auth->permissionCodes($user), true),
+            403,
+            '无按钮权限：'.$permission,
+        );
+
+        return $user;
     }
 }

@@ -49,27 +49,31 @@ class PurchaseController extends Controller
         return response()->json($query->paginate($this->perPage($request)));
     }
 
-    public function deleteRequest(int $id, PurchaseDraftDeletionApplicationService $service)
+    public function deleteRequest(Request $request, int $id, PurchaseDraftDeletionApplicationService $service)
     {
-        $service->deleteRequest($id);
+        $this->authorizePermission($request, 'purchase.request.delete');
+        $service->deleteRequest($id, $this->operatorName($request));
         return response()->json(['message' => '采购需求草稿已删除']);
     }
 
-    public function deletePlan(int $id, PurchaseDraftDeletionApplicationService $service)
+    public function deletePlan(Request $request, int $id, PurchaseDraftDeletionApplicationService $service)
     {
-        $service->deletePlan($id);
+        $this->authorizePermission($request, 'purchase.plan.delete');
+        $service->deletePlan($id, $this->operatorName($request));
         return response()->json(['message' => '采购计划草稿已删除，关联需求占用已释放']);
     }
 
-    public function deleteOrder(int $id, PurchaseDraftDeletionApplicationService $service)
+    public function deleteOrder(Request $request, int $id, PurchaseDraftDeletionApplicationService $service)
     {
-        $service->deleteOrder($id);
+        $this->authorizePermission($request, 'purchase.order.delete');
+        $service->deleteOrder($id, $this->operatorName($request));
         return response()->json(['message' => '采购订单草稿已删除，计划占用已释放']);
     }
 
-    public function deleteReceipt(int $id, PurchaseDraftDeletionApplicationService $service)
+    public function deleteReceipt(Request $request, int $id, PurchaseDraftDeletionApplicationService $service)
     {
-        $service->deleteReceipt($id);
+        $this->authorizePermission($request, 'purchase.receipt.delete');
+        $service->deleteReceipt($id, $this->operatorName($request));
         return response()->json(['message' => '采购到货草稿已删除']);
     }
 
@@ -648,6 +652,12 @@ class PurchaseController extends Controller
     public function deleteAttachment(Request $request, int $id, PurchaseAttachmentApplicationService $attachments)
     {
         $attachment = $this->visibleAttachment($request, $id);
+        $permission = match ($attachment->document_type) {
+            'receipt' => 'purchase.receipt.delete',
+            'exchange' => 'purchase.exchange.manage',
+            default => 'purchase.order.delete',
+        };
+        $this->authorizePermission($request, $permission);
         if ($attachment->document_id) {
             $document = match ($attachment->document_type) {
                 'order' => PurchaseOrder::findOrFail($attachment->document_id),

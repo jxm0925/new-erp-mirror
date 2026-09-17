@@ -2,10 +2,13 @@
 
 namespace App\Services\Erp;
 
+use App\Models\Erp\ProductionTask;
 use Illuminate\Support\Facades\DB;
 
 class ProductionTargetReadinessService
 {
+    private const PRE_START_STATUSES = ['WAIT_CLAIM', 'CLAIMED', 'WAIT_MATERIAL', 'WAIT_HANDOVER', 'READY'];
+
     public function project(string $targetType, object $target): array
     {
         $eligibleState = in_array($target->status, ['CLAIMED', 'WAIT_MATERIAL', 'WAIT_HANDOVER'], true);
@@ -72,6 +75,65 @@ class ProductionTargetReadinessService
             return $this->result('workstation_stock_insufficient', '上次工位核对数量不足，可补足后重新核对。', $shortages, $eligibleState);
         }
         return $this->result('kitting_confirmation_required', '物料条件已满足，等待负责人确认齐套并开工。', [], $eligibleState, true);
+    }
+
+    /**
+     * Recalculate the persisted pre-start state from all authoritative facts.
+     * Callers must already hold locks on the target and its task inside the
+     * business transaction.  Individual delivery/handover modules must not
+     * guess READY from their own local fact because another source may still
+     * be outstanding.
+     */
+    public function refresh(string $targetType, object $target, ProductionTask $task, $now = null): array
+    {
+        $readiness = $this->project($targetType, $target);
+        if ((string) $target->status === 'WAIT_CLAIM' && ! $task->assignee_user_legacy_id) {
+            return $this->refreshResult($target, $task, $readiness);
+        }
+        if (! in_array((string) $target->status, self::PRE_START_STATUSES, true)) {
+            return $this->refreshResult($target, $task, $readiness);
+        }
+
+        $nextStatus = match ($readiness['reason_code']) {
+            'handover_confirmation_required' => 'WAIT_HANDOVER',
+            'materials_not_ready', 'onsite_confirmation_required', 'workstation_stock_insufficient',
+            'kitting_confirmation_required' => 'WAIT_MATERIAL',
+            default => $readiness['ready'] ? 'READY' : 'WAIT_MATERIAL',
+        };
+        $now ??= now();
+        if ((string) $target->status !== $nextStatus) {
+            $target->status = $nextStatus;
+            $target->business_version = (int) $target->business_version + 1;
+            $target->save();
+        }
+        $task->targets()->where('target_type', $targetType)->where('target_id', $target->id)
+            ->update(['status_snapshot' => $nextStatus, 'updated_at' => $now]);
+
+        if (in_array((string) $task->status, self::PRE_START_STATUSES, true)) {
+            $snapshots = $task->targets()->pluck('status_snapshot');
+            $taskStatus = $snapshots->contains('WAIT_HANDOVER') ? 'WAIT_HANDOVER'
+                : ($snapshots->contains('WAIT_MATERIAL') ? 'WAIT_MATERIAL'
+                    : ($snapshots->contains('WAIT_CLAIM') ? 'WAIT_CLAIM'
+                        : ($snapshots->contains('CLAIMED') ? 'CLAIMED' : 'READY')));
+            if ((string) $task->status !== $taskStatus) {
+                $task->status = $taskStatus;
+                $task->business_version = (int) $task->business_version + 1;
+                $task->save();
+            }
+        }
+
+        return $this->refreshResult($target, $task, $readiness);
+    }
+
+    private function refreshResult(object $target, ProductionTask $task, array $readiness): array
+    {
+        return [
+            'target_status' => (string) $target->status,
+            'target_business_version' => (int) $target->business_version,
+            'task_status' => (string) $task->status,
+            'task_business_version' => (int) $task->business_version,
+            'readiness' => $readiness,
+        ];
     }
 
     private function shortage(object $row, float $shortage, float $available, string $mode): array

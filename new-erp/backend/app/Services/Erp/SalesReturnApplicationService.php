@@ -278,6 +278,23 @@ class SalesReturnApplicationService
         }, 5);
     }
 
+    public function deleteDraft(int $id): void
+    {
+        DB::transaction(function () use ($id): void {
+            $salesReturn = SalesReturn::query()->with(['items', 'receipts'])->lockForUpdate()->findOrFail($id);
+            if ($salesReturn->return_status !== 'draft' || $salesReturn->confirmed_at !== null) {
+                throw ValidationException::withMessages(['return_status' => '只有从未确认、未产生收货事实的销售退货草稿可以删除。']);
+            }
+            if ($salesReturn->receipts->isNotEmpty()
+                || $salesReturn->items->contains(fn (SalesReturnItem $item) => (float) $item->received_base_qty > 0)) {
+                throw ValidationException::withMessages(['return_status' => '该销售退货已产生收货或入库事实，不能删除。']);
+            }
+
+            // 原出库成本占用属于草稿级预留，随退货行级联删除后释放。
+            $salesReturn->delete();
+        }, 5);
+    }
+
     private function availableSalesQuantity(SalesOrderLine $line, ?int $exceptReturnId): float
     {
         $reserved = (float) SalesReturnItem::query()

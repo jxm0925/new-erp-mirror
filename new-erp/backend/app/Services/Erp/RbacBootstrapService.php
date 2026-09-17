@@ -101,20 +101,25 @@ class RbacBootstrapService
 
             ['master.base_archive.view', '查看档案', 'button', 'master.base_archive', null, null, 'el-icon-mouse', 1],
             ['master.base_archive.create', '新增/维护单位换算', 'button', 'master.base_archive', null, null, 'el-icon-mouse', 2],
+            ['master.base_archive.delete', '删除未引用基础档案', 'button', 'master.base_archive', null, null, 'el-icon-delete', 3],
 
             ['master.supplier.view', '查看供应商', 'button', 'master.supplier', null, null, 'el-icon-mouse', 1],
             ['master.supplier.create', '新增供应商', 'button', 'master.supplier', null, null, 'el-icon-mouse', 2],
             ['master.supplier.edit', '编辑供应商', 'button', 'master.supplier', null, null, 'el-icon-mouse', 3],
             ['supplier_capability.edit', '维护供货能力', 'button', 'master.supplier', null, null, 'el-icon-mouse', 4],
             ['supplier_quotation.edit', '维护供应商报价', 'button', 'master.supplier', null, null, 'el-icon-mouse', 5],
+            ['master.supplier.delete', '删除未引用供应商', 'button', 'master.supplier', null, null, 'el-icon-delete', 6],
 
             ['master.warehouse.view', '查看仓库库位', 'button', 'master.warehouse_location', null, null, 'el-icon-mouse', 1],
             ['master.warehouse.create', '新增仓库', 'button', 'master.warehouse_location', null, null, 'el-icon-mouse', 2],
             ['master.location.create', '新增库位', 'button', 'master.warehouse_location', null, null, 'el-icon-mouse', 3],
             ['master.warehouse.edit', '编辑仓库库位', 'button', 'master.warehouse_location', null, null, 'el-icon-mouse', 4],
+            ['master.warehouse.delete', '删除未引用仓库', 'button', 'master.warehouse_location', null, null, 'el-icon-delete', 5],
+            ['master.location.delete', '删除未引用库位', 'button', 'master.warehouse_location', null, null, 'el-icon-delete', 6],
 
             ['master.import.upload', '上传数据文件', 'button', 'master.import', null, null, 'el-icon-mouse', 1],
             ['master.import.execute', '执行导入入库', 'button', 'master.import', null, null, 'el-icon-mouse', 2],
+            ['master.import.delete', '删除未确认导入批次', 'button', 'master.import', null, null, 'el-icon-delete', 3],
 
             // 2. 采购管理 二级菜单
             ['purchase.request', '采购需求', 'menu', 'purchase', '/purchase/requests', 'PurchaseRequestList', 'el-icon-shopping-cart-2', 201],
@@ -150,6 +155,7 @@ class RbacBootstrapService
             ['purchase.receipt.create', '新增到货单', 'button', 'purchase.receipt', null, null, 'el-icon-mouse', 2],
             ['purchase.receipt.edit', '编辑到货单', 'button', 'purchase.receipt', null, null, 'el-icon-mouse', 3],
             ['purchase.receipt.confirm', '确认采购到货', 'button', 'purchase.receipt', null, null, 'el-icon-mouse', 4],
+            ['purchase.receipt.delete', '删除到货草稿', 'button', 'purchase.receipt', null, null, 'el-icon-delete', 9],
             ['purchase.quality.view', '查看不合格品处理', 'button', 'purchase.receipt', null, null, 'el-icon-mouse', 5],
             ['purchase.quality.handle', '执行不合格品处理', 'button', 'purchase.receipt', null, null, 'el-icon-mouse', 6],
             ['purchase.exchange.view', '查看采购换货单', 'button', 'purchase.receipt', null, null, 'el-icon-mouse', 7],
@@ -161,6 +167,7 @@ class RbacBootstrapService
             ['purchase_return.approve', '审核采购退货', 'button', 'purchase.return', null, null, 'el-icon-mouse', 4],
             ['purchase_return.post', '采购退货出库过账', 'button', 'purchase.return', null, null, 'el-icon-mouse', 5],
             ['purchase_return.cancel', '取消采购退货', 'button', 'purchase.return', null, null, 'el-icon-mouse', 6],
+            ['purchase_return.delete', '删除采购退货草稿', 'button', 'purchase.return', null, null, 'el-icon-delete', 7],
 
             // 3. 库存管理 二级菜单
             ['inventory.posting', '库存过账工作台', 'menu', 'inventory', '/inventory/posting', 'InventoryBoard', 'el-icon-finished', 301],
@@ -183,6 +190,7 @@ class RbacBootstrapService
             ['inventory.adjustment.view', '查看手工调整', 'button', 'inventory.adjustment', null, null, 'el-icon-mouse', 1],
             ['inventory.adjustment.create', '新建盘盈盘亏调整', 'button', 'inventory.adjustment', null, null, 'el-icon-mouse', 2],
             ['inventory.adjustment.confirm', '确认调整过账', 'button', 'inventory.adjustment', null, null, 'el-icon-mouse', 3],
+            ['inventory.adjustment.delete', '删除调整草稿', 'button', 'inventory.adjustment', null, null, 'el-icon-delete', 4],
             ['inventory.alert.view', '查看库存预警', 'button', 'inventory.alert', null, null, 'el-icon-mouse', 1],
             ['inventory.alert.configure', '配置库存预警', 'button', 'inventory.alert', null, null, 'el-icon-mouse', 2],
             ['inventory.alert.create_request', '从预警生成采购需求', 'button', 'inventory.alert', null, null, 'el-icon-mouse', 3],
@@ -211,6 +219,7 @@ class RbacBootstrapService
             ['sales.customer.create', '新增客户', 'button', 'sales.customer', null, null, 'el-icon-mouse', 2],
             ['sales.customer.edit', '编辑客户', 'button', 'sales.customer', null, null, 'el-icon-mouse', 3],
             ['sales.customer.export', '导出客户清单', 'button', 'sales.customer', null, null, 'el-icon-mouse', 4],
+            ['sales.customer.delete', '删除未引用客户', 'button', 'sales.customer', null, null, 'el-icon-delete', 5],
 
             ['production.demand.view', '查看生产需求', 'button', 'production.demand', null, null, 'el-icon-mouse', 1],
             ['production.work_order.view', '查看工单', 'button', 'production.work_order', null, null, 'el-icon-mouse', 1],
@@ -272,13 +281,16 @@ class RbacBootstrapService
             ['production.operation.create', '新增工序', 'button', 'production.operation', null, null, 'el-icon-mouse', 2],
             ['production.operation.edit', '编辑工序', 'button', 'production.operation', null, null, 'el-icon-mouse', 3],
             ['production.operation.toggle', '启停工序', 'button', 'production.operation', null, null, 'el-icon-mouse', 4],
+            ['production.operation.delete', '删除未引用停用工序', 'button', 'production.operation', null, null, 'el-icon-delete', 5],
             ['production.routing.view', '查看工艺路线', 'button', 'production.routing', null, null, 'el-icon-mouse', 1],
             ['production.routing.create', '新增工艺路线', 'button', 'production.routing', null, null, 'el-icon-mouse', 2],
             ['production.routing.edit', '编辑工艺路线', 'button', 'production.routing', null, null, 'el-icon-mouse', 3],
             ['production.routing.activate', '生效工艺路线', 'button', 'production.routing', null, null, 'el-icon-mouse', 4],
             ['production.routing.default', '设置默认工艺路线', 'button', 'production.routing', null, null, 'el-icon-mouse', 5],
+            ['production.routing.delete', '删除工艺路线草稿', 'button', 'production.routing', null, null, 'el-icon-delete', 6],
             ['production.labor_rule.view', '查看工时分配规则', 'button', 'production.labor_rule', null, null, 'el-icon-mouse', 1],
             ['production.labor_rule.manage', '维护工时分配规则版本', 'button', 'production.labor_rule', null, null, 'el-icon-mouse', 2],
+            ['production.labor_rule.delete', '删除工时规则草稿', 'button', 'production.labor_rule', null, null, 'el-icon-delete', 3],
             ['production.labor_stats.view', '查看生产工时统计', 'button', 'production.work_order', null, null, 'el-icon-mouse', 48],
 
             ['sales_order.view', '销售订单查看', 'button', 'sales.order', null, null, 'el-icon-mouse', 1],
@@ -306,6 +318,7 @@ class RbacBootstrapService
             ['sales_order.shipment.post', '销售出库过账', 'button', 'sales.order', null, null, 'el-icon-mouse', 14],
             ['sales_order.shipment.dispatch', '销售发运', 'button', 'sales.order', null, null, 'el-icon-mouse', 15],
             ['sales_order.shipment.cancel', '取消销售发货单', 'button', 'sales.order', null, null, 'el-icon-mouse', 16],
+            ['sales_order.shipment.delete_draft', '删除销售发货草稿', 'button', 'sales.order', null, null, 'el-icon-delete', 17],
 
             ['sales_return.view', '查看销售退货', 'button', 'sales.return', null, null, 'el-icon-mouse', 1],
             ['sales_return.create', '新建销售退货', 'button', 'sales.return', null, null, 'el-icon-mouse', 2],
@@ -313,6 +326,7 @@ class RbacBootstrapService
             ['sales_return.receive', '销售退货收货', 'button', 'sales.return', null, null, 'el-icon-mouse', 4],
             ['sales_return.post', '销售退货入库过账', 'button', 'sales.return', null, null, 'el-icon-mouse', 5],
             ['sales_return.cancel', '取消销售退货', 'button', 'sales.return', null, null, 'el-icon-mouse', 6],
+            ['sales_return.delete', '删除销售退货草稿', 'button', 'sales.return', null, null, 'el-icon-delete', 7],
 
             // 6. 财务管理 二级菜单
             ['finance.receipt', '收款管理', 'menu', 'finance', '/finance/receipts', 'FinanceCashList', 'el-icon-money', 601],
@@ -330,11 +344,13 @@ class RbacBootstrapService
             ['finance.receipt.create', '新增收款单', 'button', 'finance.receipt', null, null, 'el-icon-mouse', 2],
             ['finance.receipt.confirm', '确认收款入账', 'button', 'finance.receipt', null, null, 'el-icon-mouse', 3],
             ['finance.receipt.void', '作废收款单', 'button', 'finance.receipt', null, null, 'el-icon-mouse', 4],
+            ['finance.receipt.delete_draft', '删除收款草稿', 'button', 'finance.receipt', null, null, 'el-icon-delete', 5],
 
             ['finance.payment.view', '查看付款单', 'button', 'finance.payment', null, null, 'el-icon-mouse', 1],
             ['finance.payment.create', '新增付款单', 'button', 'finance.payment', null, null, 'el-icon-mouse', 2],
             ['finance.payment.confirm', '确认付款出账', 'button', 'finance.payment', null, null, 'el-icon-mouse', 3],
             ['finance.payment.void', '作废付款单', 'button', 'finance.payment', null, null, 'el-icon-mouse', 4],
+            ['finance.payment.delete_draft', '删除付款草稿', 'button', 'finance.payment', null, null, 'el-icon-delete', 5],
 
             ['finance.payable.view', '查看应付账款', 'button', 'finance.payable', null, null, 'el-icon-mouse', 1],
             ['finance.payable.export', '导出应付对账', 'button', 'finance.payable', null, null, 'el-icon-mouse', 2],
@@ -349,6 +365,7 @@ class RbacBootstrapService
             ['finance.invoice.confirm', '确认发票匹配', 'button', 'finance.invoice', null, null, 'el-icon-mouse', 5],
             ['finance.invoice.reverse_match', '撤销发票匹配', 'button', 'finance.invoice', null, null, 'el-icon-mouse', 6],
             ['finance.invoice.red', '开具红字发票', 'button', 'finance.invoice', null, null, 'el-icon-mouse', 7],
+            ['finance.invoice.delete_draft', '删除发票草稿', 'button', 'finance.invoice', null, null, 'el-icon-delete', 8],
 
             ['finance.allocation.view', '查看往来核销', 'button', 'finance.allocation', null, null, 'el-icon-mouse', 1],
             ['finance.allocation.create', '创建资金核销', 'button', 'finance.allocation', null, null, 'el-icon-mouse', 2],
@@ -366,6 +383,7 @@ class RbacBootstrapService
             ['finance.transfer.view', '查看资金转账 / 换汇', 'button', 'finance.transfer', null, null, 'el-icon-mouse', 1],
             ['finance.transfer.create', '新建资金转账 / 换汇', 'button', 'finance.transfer', null, null, 'el-icon-mouse', 2],
             ['finance.transfer.confirm', '确认资金转账 / 换汇', 'button', 'finance.transfer', null, null, 'el-icon-mouse', 3],
+            ['finance.transfer.delete_draft', '删除资金转账 / 换汇草稿', 'button', 'finance.transfer', null, null, 'el-icon-delete', 4],
 
             // 7. 审核中心：业务审核动作统一从独立工作台执行
             ['approval.todo', '审核工作台', 'menu', 'approval', '/approvals/tasks', 'ApprovalWorkbench', 'el-icon-circle-check', 701],
@@ -379,6 +397,7 @@ class RbacBootstrapService
             ['approval.flow.edit', '编辑审核流程', 'button', 'approval.flow', null, null, 'el-icon-mouse', 2],
             ['approval.flow.publish', '发布审核流程', 'button', 'approval.flow', null, null, 'el-icon-mouse', 3],
             ['approval.flow.toggle', '启用/停用审核流程', 'button', 'approval.flow', null, null, 'el-icon-mouse', 4],
+            ['approval.flow.delete', '删除未发布审核流程', 'button', 'approval.flow', null, null, 'el-icon-delete', 5],
 
             // 8. 系统管理 二级菜单
             ['system.admin', '管理员管理', 'menu', 'system', '/system/admins', 'SystemAdminManagement', 'el-icon-user', 901],
@@ -396,6 +415,7 @@ class RbacBootstrapService
             ['system.role.view', '查看角色权限', 'button', 'system.role', null, null, 'el-icon-mouse', 1],
             ['system.role.create', '新增角色', 'button', 'system.role', null, null, 'el-icon-mouse', 2],
             ['system.role.save_permissions', '保存角色权限与数据范围', 'button', 'system.role', null, null, 'el-icon-mouse', 3],
+            ['system.role.delete', '删除自定义角色', 'button', 'system.role', null, null, 'el-icon-delete', 4],
 
             ['system.menu.view', '查看菜单与按钮树', 'button', 'system.menu', null, null, 'el-icon-mouse', 1],
             ['system.menu.save', '新增/编辑菜单权限节点', 'button', 'system.menu', null, null, 'el-icon-mouse', 2],
@@ -407,6 +427,7 @@ class RbacBootstrapService
 
             ['document_number_rule.view', '查看编号规则', 'button', 'system.document_number_rule', null, null, 'el-icon-mouse', 1],
             ['document_number_rule.edit', '编辑编号规则', 'button', 'system.document_number_rule', null, null, 'el-icon-mouse', 2],
+            ['document_number_rule.delete', '删除未使用编号规则', 'button', 'system.document_number_rule', null, null, 'el-icon-delete', 3],
         ];
 
         // Normal page reads must never reseed every permission.  The old
@@ -417,6 +438,9 @@ class RbacBootstrapService
         // existence check and preserves changes made in menu management.
         $codes = array_values(array_unique(array_column($permissions, 0)));
         if (!$force && $this->hasSeededPermissions($codes)) {
+            if (Schema::hasColumn('erp_rbac_permissions', 'is_system')) {
+                DB::table('erp_rbac_permissions')->whereIn('code', $codes)->update(['is_system' => true]);
+            }
             return false;
         }
 
@@ -431,20 +455,22 @@ class RbacBootstrapService
                     continue;
                 }
                 $parentId = $parentCode ? DB::table('erp_rbac_permissions')->where('code', $parentCode)->value('id') : null;
+                $values = [
+                    'parent_id' => $parentId,
+                    'name' => $name,
+                    'type' => $type,
+                    'path' => $path,
+                    'component' => $component,
+                    'icon' => $icon,
+                    'sort' => $sort,
+                    'enabled' => true,
+                    'updated_at' => now(),
+                    'created_at' => now(),
+                ];
+                if (Schema::hasColumn('erp_rbac_permissions', 'is_system')) $values['is_system'] = true;
                 DB::table('erp_rbac_permissions')->updateOrInsert(
                     ['code' => $code],
-                    [
-                        'parent_id' => $parentId,
-                        'name' => $name,
-                        'type' => $type,
-                        'path' => $path,
-                        'component' => $component,
-                        'icon' => $icon,
-                        'sort' => $sort,
-                        'enabled' => true,
-                        'updated_at' => now(),
-                        'created_at' => now(),
-                    ]
+                    $values
                 );
             }
         }
@@ -456,20 +482,22 @@ class RbacBootstrapService
                     continue;
                 }
                 $parentId = $parentCode ? DB::table('erp_rbac_permissions')->where('code', $parentCode)->value('id') : null;
+                $values = [
+                    'parent_id' => $parentId,
+                    'name' => $name,
+                    'type' => $type,
+                    'path' => $path,
+                    'component' => $component,
+                    'icon' => $icon ?: 'el-icon-mouse',
+                    'sort' => $sort,
+                    'enabled' => true,
+                    'updated_at' => now(),
+                    'created_at' => now(),
+                ];
+                if (Schema::hasColumn('erp_rbac_permissions', 'is_system')) $values['is_system'] = true;
                 DB::table('erp_rbac_permissions')->updateOrInsert(
                     ['code' => $code],
-                    [
-                        'parent_id' => $parentId,
-                        'name' => $name,
-                        'type' => $type,
-                        'path' => $path,
-                        'component' => $component,
-                        'icon' => $icon ?: 'el-icon-mouse',
-                        'sort' => $sort,
-                        'enabled' => true,
-                        'updated_at' => now(),
-                        'created_at' => now(),
-                    ]
+                    $values
                 );
             }
         }
@@ -491,9 +519,11 @@ class RbacBootstrapService
         $rebuildAdminPermissions = $force || ! $this->hasSeededRoles(count($roles));
 
         foreach ($roles as [$code, $name, $scope]) {
+            $values = ['name' => $name, 'data_scope' => $scope, 'enabled' => true, 'updated_at' => now(), 'created_at' => now()];
+            if (Schema::hasColumn('erp_rbac_roles', 'is_system')) $values['is_system'] = true;
             DB::table('erp_rbac_roles')->updateOrInsert(
                 ['code' => $code],
-                ['name' => $name, 'data_scope' => $scope, 'enabled' => true, 'updated_at' => now(), 'created_at' => now()]
+                $values
             );
         }
 
@@ -563,9 +593,9 @@ class RbacBootstrapService
                 'production.material_supplement.request', 'production.material_supplement.approve',
                 'production.material_return.create', 'production.material_return.receive', 'production.material_return.quality',
                 'production.trace.view', 'production.assignment.recommend', 'production.assignment.auto', 'production.assignment.override',
-                'production.operation.view', 'production.operation.create', 'production.operation.edit', 'production.operation.toggle',
-                'production.routing.view', 'production.routing.create', 'production.routing.edit', 'production.routing.activate', 'production.routing.default',
-                'production.labor_rule.view', 'production.labor_rule.manage',
+                'production.operation.view', 'production.operation.create', 'production.operation.edit', 'production.operation.toggle', 'production.operation.delete',
+                'production.routing.view', 'production.routing.create', 'production.routing.edit', 'production.routing.activate', 'production.routing.default', 'production.routing.delete',
+                'production.labor_rule.view', 'production.labor_rule.manage', 'production.labor_rule.delete',
                 'production.labor_stats.view',
                 'production.cutting.view', 'production.cutting.plan', 'production.cutting.issue',
                 'production.cutting.record', 'production.cutting.confirm', 'production.cutting.material_manage',

@@ -20,6 +20,7 @@ use App\Services\Erp\CounterpartyBalanceService;
 use App\Services\Erp\FinanceAccountApplicationService;
 use App\Services\Erp\FinanceAllocationApplicationService;
 use App\Services\Erp\FinanceAttachmentApplicationService;
+use App\Services\Erp\FinanceDraftDeletionApplicationService;
 use App\Services\Erp\FinanceBusinessSourceResolver;
 use App\Services\Erp\FinanceBusinessSourceQueryService;
 use App\Services\Erp\PurchasePayableQueryService;
@@ -351,6 +352,14 @@ class FinanceController extends Controller
         return response()->json(['data' => $service->void($id, $data['reason'], $user->legacy_id)]);
     }
 
+    public function deleteTransferDraft(Request $request, int $id, FinanceDraftDeletionApplicationService $service)
+    {
+        $user = $this->authorizePermission($request, 'finance.transfer.delete_draft');
+        $data = $request->validate(['reason' => 'required|string|max:255']);
+        $service->deleteTransfer($id, $data['reason'], $user);
+        return response()->json(['message' => '资金转账/换汇草稿已删除。']);
+    }
+
     public function uploadTransferAttachment(Request $request, int $id, FinanceAttachmentApplicationService $service)
     {
         $transfer = FinanceAccountTransfer::findOrFail($id);
@@ -421,6 +430,18 @@ class FinanceController extends Controller
         $user = $this->authorizePermission($request, $permission);
         $data = $request->validate(['reason' => 'required|string|max:255']);
         return response()->json(['data' => $service->void($id, $data['reason'], $user->legacy_id, $this->operatorName($user))]);
+    }
+
+    public function deleteCashDocumentDraft(Request $request, int $id, FinanceDraftDeletionApplicationService $service)
+    {
+        $document = FinanceCashDocument::findOrFail($id);
+        $permission = $document->direction === FinanceConstants::DIRECTION_RECEIPT
+            ? 'finance.receipt.delete_draft'
+            : 'finance.payment.delete_draft';
+        $user = $this->authorizePermission($request, $permission);
+        $data = $request->validate(['reason' => 'required|string|max:255']);
+        $service->deleteCashDocument($id, $data['reason'], $user);
+        return response()->json(['message' => '收付款草稿已删除。']);
     }
 
     public function allocate(Request $request, int $id, FinanceAllocationApplicationService $service)
@@ -603,6 +624,14 @@ class FinanceController extends Controller
     {
         $user = $this->authorizePermission($request, 'finance.invoice.confirm');
         return response()->json(['data' => $service->confirm($id, $user->legacy_id)]);
+    }
+
+    public function deleteInvoiceDraft(Request $request, int $id, FinanceDraftDeletionApplicationService $service)
+    {
+        $user = $this->authorizePermission($request, 'finance.invoice.delete_draft');
+        $data = $request->validate(['reason' => 'required|string|max:255']);
+        $service->deleteInvoice($id, $data['reason'], $user);
+        return response()->json(['message' => '发票草稿已删除，匹配占用已释放。']);
     }
 
     public function reverseInvoiceMatch(Request $request, int $id, FinanceInvoiceApplicationService $service)

@@ -200,6 +200,33 @@ class BomController extends Controller
         });
     }
 
+    public function destroy(Request $request, int $id)
+    {
+        $this->authorizePermission($request, 'bom.manage.delete');
+
+        DB::transaction(function () use ($id): void {
+            $bom = Bom::query()->lockForUpdate()->findOrFail($id);
+            abort_unless(
+                $bom->status === 'draft'
+                && $bom->submitted_at === null
+                && $bom->audit_status === 'pending'
+                && ! $bom->is_default,
+                422,
+                '只有从未提交、未审核、未设为默认的 BOM 草稿可以删除。'
+            );
+
+            $referenced = DB::table('erp_work_orders')->where('bom_id', $bom->id)->exists()
+                || DB::table('erp_work_order_material_requirements')->where('bom_id', $bom->id)->exists()
+                || DB::table('erp_sales_order_production_requirements')->where('bom_id', $bom->id)->exists();
+            abort_if($referenced, 422, '该 BOM 已被生产需求或工单引用，不能删除；请保留历史并使用停用或新版本。');
+
+            // 明细和日志由外键级联清理；业务编号记录保留，避免删除草稿后重用旧编号。
+            $bom->delete();
+        }, 5);
+
+        return response()->json(['message' => 'BOM 草稿已删除']);
+    }
+
     public function expand(Request $request)
     {
         $data = $request->validate([
@@ -299,6 +326,18 @@ class BomController extends Controller
             '定制 BOM 必须填写来源商品、来源SKU和来源标准BOM，用于后续追溯。'
         );
         return $data;
+    }
+
+    private function authorizePermission(Request $request, string $permission): void
+    {
+        $auth = app(AuthContextService::class);
+        $user = $auth->currentUser($request);
+        abort_unless($user, 401, '未登录或登录已过期。');
+        abort_unless(
+            $auth->isSuperAdmin($user) || in_array($permission, $auth->permissionCodes($user), true),
+            403,
+            '无按钮权限：'.$permission
+        );
     }
 
     private function mainPayload(array $payload): array

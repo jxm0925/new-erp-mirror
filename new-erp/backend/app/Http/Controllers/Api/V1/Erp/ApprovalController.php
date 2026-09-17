@@ -311,6 +311,13 @@ class ApprovalController extends Controller
         return response()->json(['message' => '审核流程已复制为新草稿。', 'data' => $service->copy($id, $this->operator($user))], 201);
     }
 
+    public function deleteFlow(Request $request, int $id, ApprovalFlowApplicationService $service)
+    {
+        $this->context($request, 'approval.flow.delete');
+        $service->deleteDraft($id);
+        return response()->json(['message' => '未发布的审核流程草稿已删除。']);
+    }
+
     private function flowPayload(Request $request): array
     {
         return $request->validate([

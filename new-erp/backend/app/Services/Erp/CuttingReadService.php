@@ -3,6 +3,7 @@
 namespace App\Services\Erp;
 
 use App\Models\Erp\WorkOrder;
+use App\Models\Erp\CuttingTask;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 
@@ -27,16 +28,11 @@ final class CuttingReadService
     public function tasks(array $f, object $user, array $permissions, bool $super = false): array
     {
         $this->commands->permission($permissions, 'production.cutting.view');
-        $visible = WorkOrder::query()->select('id');
-        $this->scopes->applyWorkOrderScope($visible, $this->scopes->resolve($user, 'production.cutting.view', $permissions, $super));
+        $actor = $this->commands->actor($user);
+        $visible = CuttingTask::query()->select('id');
+        $this->scopes->applyCuttingTaskScope($visible, $this->scopes->resolve($user, 'production.cutting.view', $permissions, $super), $actor);
         $q = DB::table('erp_cutting_tasks as t')->join('erp_cutting_orders as o', 'o.id', '=', 't.cutting_order_id')
-            ->whereExists(fn (Builder $p) => $p->selectRaw('1')->from('erp_cutting_plan_allocations as a')
-                ->whereColumn('a.cutting_order_id', 'o.id'))
-            ->whereNotExists(fn (Builder $p) => $p->selectRaw('1')->from('erp_cutting_plan_allocations as a')
-                ->whereColumn('a.cutting_order_id', 'o.id')->whereNotIn('a.work_order_id', $visible->toBase()))
-            ->whereNotExists(fn (Builder $p) => $p->selectRaw('1')->from('erp_cutting_plan_allocations as a')
-                ->join('erp_production_target_material_requirements as r', 'r.id', '=', 'a.target_material_requirement_id')
-                ->whereColumn('a.cutting_order_id', 'o.id')->whereNotIn('r.work_order_id', $visible->toBase()));
+            ->whereIn('t.id', $visible->toBase());
         if (! empty($f['status'])) $q->where('t.status', $f['status']);
         if (! empty($f['keyword'])) $q->where(fn (Builder $w) => $w->where('t.task_no', 'like', '%'.$f['keyword'].'%')
             ->orWhere('o.cutting_order_no', 'like', '%'.$f['keyword'].'%'));
@@ -48,10 +44,9 @@ final class CuttingReadService
     public function taskExecution(int $id, array $f, object $user, array $permissions, bool $super = false): array
     {
         $this->commands->permission($permissions, 'production.cutting.view');
-        $task = DB::table('erp_cutting_tasks')->where('id', $id)->first();
-        if (! $task) $this->commands->fail('cutting_task_missing', '下料任务不存在。', 404);
-        $order = $this->commands->order((int) $task->cutting_order_id, $user, $permissions, $super, 'production.cutting.view');
-        $task = (array) $task; $task['display_status'] = $this->taskStatusLabel($task['status']);
+        $taskModel = $this->commands->cuttingTask($id, $user, $permissions, $super, 'production.cutting.view');
+        $order = DB::table('erp_cutting_orders')->where('id', $taskModel->cutting_order_id)->first();
+        $task = $taskModel->toArray(); $task['display_status'] = $this->taskStatusLabel($task['status']);
         $participants = DB::table('erp_cutting_task_participants as p')->leftJoin('erp_legacy_admin_users as u', 'u.legacy_id', '=', 'p.employee_legacy_id')
             ->where('p.cutting_task_id', $id)->orderBy('p.id')->select('p.id', 'p.employee_legacy_id', 'p.role', 'p.responsibility_weight',
                 'p.joined_at', 'p.left_at', 'p.business_version', 'u.username', 'u.nickname')->get()->map(fn ($row) => (array) $row)->all();

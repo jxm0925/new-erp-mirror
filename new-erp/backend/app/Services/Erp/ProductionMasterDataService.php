@@ -131,6 +131,29 @@ class ProductionMasterDataService
         });
     }
 
+    public function deleteOperation(int $id, array $data, object $user, array $permissions, bool $superAdmin): array
+    {
+        $this->authorize($permissions, $superAdmin, 'production.operation.delete');
+        return $this->deleteCommand('delete_operation', 'operation', $id, $data, $user, function () use ($id, $data): void {
+            $operation = ProductionOperation::query()->lockForUpdate()->findOrFail($id);
+            $this->version($operation, $data);
+            if ($operation->status !== 'disabled') {
+                throw ValidationException::withMessages(['status' => '工序必须先停用，且确认无业务引用后才能删除。']);
+            }
+            if (DB::table('erp_production_routing_operations')->where('operation_id', $operation->id)->exists()) {
+                throw ValidationException::withMessages(['operation' => '该工序已被工艺路线引用；即使路线已退役也必须保留历史，不能删除。']);
+            }
+            if (DB::table('erp_work_orders')->where('target_operation_id', $operation->id)->exists()) {
+                throw ValidationException::withMessages(['operation' => '该工序已被生产工单引用，不能删除。']);
+            }
+            if (DB::table('erp_production_unit_operations')->where('operation_id_snapshot', $operation->id)->exists()
+                || DB::table('erp_production_quantity_operations')->where('operation_id_snapshot', $operation->id)->exists()) {
+                throw ValidationException::withMessages(['operation' => '该工序已被生产执行快照引用，不能删除。']);
+            }
+            $operation->delete();
+        });
+    }
+
     public function routings(array $filters, array $permissions, bool $superAdmin): LengthAwarePaginator
     {
         $this->authorize($permissions, $superAdmin, 'production.routing.view');
@@ -315,6 +338,54 @@ class ProductionMasterDataService
         });
     }
 
+    public function deleteRouting(int $id, array $data, object $user, array $permissions, bool $superAdmin): array
+    {
+        $this->authorize($permissions, $superAdmin, 'production.routing.delete');
+        return $this->deleteCommand('delete_routing', 'routing', $id, $data, $user, function () use ($id, $data): void {
+            $routing = ProductionRouting::query()->lockForUpdate()->findOrFail($id);
+            $this->version($routing, $data);
+            if ($routing->status !== 'draft' || $routing->is_default) {
+                throw ValidationException::withMessages(['status' => '只有从未生效、未设为默认的工艺路线草稿可以删除。']);
+            }
+
+            $routingOperationIds = DB::table('erp_production_routing_operations')
+                ->where('routing_id', $routing->id)->lockForUpdate()->pluck('id');
+            $referenced = DB::table('erp_work_orders')->where('production_routing_id', $routing->id)->exists()
+                || DB::table('erp_sales_order_production_requirements')->where('routing_id', $routing->id)->exists()
+                || DB::table('erp_production_units')->where('routing_id_snapshot', $routing->id)->exists()
+                || ($routingOperationIds->isNotEmpty() && (
+                    DB::table('erp_items')->whereIn('serial_generation_routing_operation_id', $routingOperationIds)->exists()
+                    || DB::table('erp_item_material_policies')->whereIn('serial_generation_routing_operation_id', $routingOperationIds)->exists()
+                    || DB::table('erp_work_orders')->whereIn('target_routing_operation_id', $routingOperationIds)->exists()
+                    || DB::table('erp_work_orders')->whereIn('reserved_for_target_operation_id', $routingOperationIds)->exists()
+                    || DB::table('erp_production_inventory_reservations')->whereIn('target_routing_operation_id', $routingOperationIds)->exists()
+                    || DB::table('erp_production_unit_operations')->whereIn('routing_operation_id_snapshot', $routingOperationIds)->exists()
+                    || DB::table('erp_production_quantity_operations')->whereIn('routing_operation_id_snapshot', $routingOperationIds)->exists()
+                    || DB::table('erp_production_tasks')->whereIn('routing_operation_id_snapshot', $routingOperationIds)->exists()
+                    || DB::table('erp_production_units')->whereIn('current_routing_operation_id', $routingOperationIds)->exists()
+                    || DB::table('erp_work_order_material_supply_rules')->whereIn('target_routing_operation_id_snapshot', $routingOperationIds)->exists()
+                    || DB::table('erp_cutting_allowed_outputs')->whereIn('stage_id', $routingOperationIds)->exists()
+                    || DB::table('erp_cutting_demands')->whereIn('stage_id', $routingOperationIds)->exists()
+                    || DB::table('erp_cutting_plan_allocations')->whereIn('stage_id', $routingOperationIds)->exists()
+                    || DB::table('erp_cutting_results')->whereIn('stage_id', $routingOperationIds)->exists()
+                    || DB::table('erp_material_lots')->whereIn('stage_id', $routingOperationIds)->exists()
+                    || DB::table('erp_routing_operation_material_supply_rules')
+                        ->whereNotIn('routing_operation_id', $routingOperationIds)
+                        ->whereIn('target_routing_operation_id', $routingOperationIds)->exists()
+                ));
+            if ($referenced) {
+                throw ValidationException::withMessages(['routing' => '该工艺路线或其节点已被生产配置、需求、工单或库存归属引用，不能删除。']);
+            }
+
+            // 供应规则的目标节点外键为 restrict，先清理本草稿内部规则，再由路线外键级联删除节点。
+            if ($routingOperationIds->isNotEmpty()) {
+                DB::table('erp_routing_operation_material_supply_rules')
+                    ->whereIn('routing_operation_id', $routingOperationIds)->delete();
+            }
+            $routing->delete();
+        });
+    }
+
     public function selector(string $type, array $filters, array $permissions, bool $superAdmin): LengthAwarePaginator
     {
         $this->authorize($permissions, $superAdmin, ['production.operation.view', 'production.routing.view', 'production.work_order.create']);
@@ -468,6 +539,34 @@ class ProductionMasterDataService
             $model = $entityType === 'operation' ? ProductionOperation::class : ProductionRouting::class;
             return $model::findOrFail($existing->entity_id);
         }
+    }
+
+    private function deleteCommand(string $type, string $entityType, int $entityId, array $data, object $user, callable $action): array
+    {
+        $commandId = trim((string) ($data['client_command_id'] ?? ''));
+        if ($commandId === '') throw ValidationException::withMessages(['client_command_id' => '写操作必须提供 client_command_id。']);
+        $hashPayload = $data + ['entity_id' => $entityId];
+        ksort($hashPayload);
+        $hash = hash('sha256', json_encode($hashPayload, JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION));
+
+        return DB::transaction(function () use ($type, $entityType, $entityId, $user, $action, $commandId, $hash): array {
+            $existing = DB::table('erp_production_master_commands')->where('client_command_id', $commandId)->lockForUpdate()->first();
+            if ($existing) {
+                if ($existing->request_hash !== $hash || $existing->command_type !== $type) {
+                    throw ValidationException::withMessages(['client_command_id' => '该请求标识已用于不同操作。']);
+                }
+                return ['id' => (int) $existing->entity_id, 'deleted' => true];
+            }
+            DB::table('erp_production_master_commands')->insert([
+                'client_command_id' => $commandId, 'command_type' => $type, 'entity_type' => $entityType,
+                'entity_id' => $entityId, 'request_hash' => $hash,
+                'initiated_by_legacy_id' => $this->userId($user),
+                'response_snapshot' => json_encode(['id' => $entityId, 'deleted' => true]),
+                'created_at' => now(), 'updated_at' => now(),
+            ]);
+            $action();
+            return ['id' => $entityId, 'deleted' => true];
+        }, 5);
     }
 
     private function version($model, array $data): void

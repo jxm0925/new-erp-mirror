@@ -176,18 +176,12 @@ final class CuttingTaskExecutionService
 
     private function authorize(int $taskId, object $user, array $permissions, bool $super, string $permission): void
     {
-        $this->commands->permission($permissions, $permission);
-        $task = CuttingTask::query()->find($taskId);
-        if (! $task) $this->commands->fail('cutting_task_missing', '下料任务不存在。', 404);
-        $this->commands->order((int) $task->cutting_order_id, $user, $permissions, $super, $permission);
+        $this->commands->cuttingTask($taskId, $user, $permissions, $super, $permission);
     }
 
     private function lock(int $taskId, object $user, array $permissions, bool $super, string $permission): CuttingTask
     {
-        $task = CuttingTask::query()->lockForUpdate()->find($taskId);
-        if (! $task) $this->commands->fail('cutting_task_missing', '下料任务不存在。', 404);
-        $this->commands->order((int) $task->cutting_order_id, $user, $permissions, $super, $permission, true);
-        return $task;
+        return $this->commands->cuttingTask($taskId, $user, $permissions, $super, $permission, true);
     }
 
     private function version(CuttingTask $task, array $payload): void { $this->commands->version($task, $payload); }

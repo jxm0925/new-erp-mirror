@@ -98,6 +98,7 @@ Route::prefix('v1/erp/approvals')->group(function () {
     Route::post('flows/{id}/publish', [ApprovalController::class, 'publishFlow'])->whereNumber('id');
     Route::post('flows/{id}/toggle', [ApprovalController::class, 'toggleFlow'])->whereNumber('id');
     Route::post('flows/{id}/copy', [ApprovalController::class, 'copyFlow'])->whereNumber('id');
+    Route::delete('flows/{id}', [ApprovalController::class, 'deleteFlow'])->whereNumber('id');
 });
 
 
@@ -167,6 +168,7 @@ Route::prefix('v1/erp/purchase')->group(function () {
     Route::post('returns/{id}/post', [PurchaseReturnController::class, 'post'])->whereNumber('id');
     Route::post('returns/{id}/cancel', [PurchaseReturnController::class, 'cancel'])->whereNumber('id');
     Route::post('returns/{id}/close', [PurchaseReturnController::class, 'close'])->whereNumber('id');
+    Route::delete('returns/{id}', [PurchaseReturnController::class, 'destroy'])->whereNumber('id');
 });
 
 Route::prefix('v1/erp/document-numbers')->group(function () {
@@ -177,6 +179,7 @@ Route::prefix('v1/erp/document-numbers')->group(function () {
     Route::put('rules/{id}', [DocumentNumberController::class, 'updateRule'])->whereNumber('id');
     Route::post('rules/{id}/enable', [DocumentNumberController::class, 'enableRule'])->whereNumber('id');
     Route::post('rules/{id}/disable', [DocumentNumberController::class, 'disableRule'])->whereNumber('id');
+    Route::delete('rules/{id}', [DocumentNumberController::class, 'destroyRule'])->whereNumber('id');
     Route::post('reserve', [DocumentNumberController::class, 'reserve']);
     Route::get('reservations', [DocumentNumberController::class, 'index']);
     Route::post('reservations/expire', [DocumentNumberController::class, 'expire']);
@@ -211,6 +214,7 @@ Route::prefix('v1/erp/finance')->group(function () {
     Route::put('transfers/{id}', [FinanceController::class, 'updateTransfer'])->whereNumber('id');
     Route::post('transfers/{id}/confirm', [FinanceController::class, 'confirmTransfer'])->whereNumber('id');
     Route::post('transfers/{id}/void', [FinanceController::class, 'voidTransfer'])->whereNumber('id');
+    Route::delete('transfers/{id}', [FinanceController::class, 'deleteTransferDraft'])->whereNumber('id');
     Route::post('transfers/{id}/attachments', [FinanceController::class, 'uploadTransferAttachment'])->whereNumber('id');
     Route::get('cash-documents/{direction}', [FinanceController::class, 'cashDocuments'])->whereIn('direction', ['receipt', 'payment']);
     Route::post('cash-documents/{direction}', [FinanceController::class, 'storeCashDocument'])->whereIn('direction', ['receipt', 'payment']);
@@ -218,6 +222,7 @@ Route::prefix('v1/erp/finance')->group(function () {
     Route::put('cash-documents/{id}', [FinanceController::class, 'updateCashDocument'])->whereNumber('id');
     Route::post('cash-documents/{id}/confirm', [FinanceController::class, 'confirmCashDocument'])->whereNumber('id');
     Route::post('cash-documents/{id}/void', [FinanceController::class, 'voidCashDocument'])->whereNumber('id');
+    Route::delete('cash-documents/{id}', [FinanceController::class, 'deleteCashDocumentDraft'])->whereNumber('id');
     Route::post('cash-documents/{id}/allocations', [FinanceController::class, 'allocate'])->whereNumber('id');
     Route::post('allocations/{id}/reverse', [FinanceController::class, 'reverseAllocation'])->whereNumber('id');
     Route::get('sources/resolve', [FinanceController::class, 'source']);
@@ -236,6 +241,7 @@ Route::prefix('v1/erp/finance')->group(function () {
     Route::put('invoices/{id}', [FinanceController::class, 'updateInvoice'])->whereNumber('id');
     Route::put('invoices/{id}/matches', [FinanceController::class, 'saveInvoiceMatches'])->whereNumber('id');
     Route::post('invoices/{id}/confirm', [FinanceController::class, 'confirmInvoice'])->whereNumber('id');
+    Route::delete('invoices/{id}', [FinanceController::class, 'deleteInvoiceDraft'])->whereNumber('id');
     Route::post('invoices/allocations/{id}/reverse', [FinanceController::class, 'reverseInvoiceMatch'])->whereNumber('id');
     Route::post('invoices/{id}/attachments', [FinanceController::class, 'uploadInvoiceAttachment'])->whereNumber('id');
     Route::delete('invoices/attachments/{id}', [FinanceController::class, 'deleteInvoiceAttachment'])->whereNumber('id');
@@ -301,6 +307,7 @@ Route::prefix('v1/erp/bom')->group(function () {
     Route::post('boms/{id}/deactivate', [BomController::class, 'deactivate'])->whereNumber('id');
     Route::post('boms/{id}/set-default', [BomController::class, 'setDefault'])->whereNumber('id');
     Route::post('boms/{id}/copy-version', [BomController::class, 'copyVersion'])->whereNumber('id');
+    Route::delete('boms/{id}', [BomController::class, 'destroy'])->whereNumber('id');
 });
 
 Route::prefix('v1/erp/sales')->group(function () {
@@ -308,6 +315,7 @@ Route::prefix('v1/erp/sales')->group(function () {
     Route::post('customers', [SalesCustomerController::class, 'store']);
     Route::get('customers/{id}', [SalesCustomerController::class, 'show'])->whereNumber('id');
     Route::put('customers/{id}', [SalesCustomerController::class, 'update'])->whereNumber('id');
+    Route::delete('customers/{id}', [SalesCustomerController::class, 'destroy'])->whereNumber('id');
     Route::get('orders', [SalesOrderController::class, 'orders']);
     Route::post('orders', [SalesOrderController::class, 'storeDraft']);
     Route::get('orders/skus/search', [SalesOrderController::class, 'searchOrderSkus']);
@@ -337,6 +345,7 @@ Route::prefix('v1/erp/sales')->group(function () {
     Route::post('shipments/{id}/post-outbound', [SalesShipmentController::class, 'postOutbound'])->whereNumber('id');
     Route::post('shipments/{id}/dispatch', [SalesShipmentController::class, 'dispatch'])->whereNumber('id');
     Route::post('shipments/{id}/cancel', [SalesShipmentController::class, 'cancel'])->whereNumber('id');
+    Route::delete('shipments/{id}', [SalesShipmentController::class, 'destroyDraft'])->whereNumber('id');
     Route::get('orders/{id}/logs', [SalesOrderController::class, 'logs'])->whereNumber('id');
     Route::get('orders/{id}/versions', [SalesOrderController::class, 'versions'])->whereNumber('id');
     Route::get('orders/{id}/changes', [SalesOrderController::class, 'changes'])->whereNumber('id');
@@ -351,6 +360,7 @@ Route::prefix('v1/erp/sales')->group(function () {
     Route::post('returns/{id}/receipts/{receiptId}/post', [SalesReturnController::class, 'postReceipt'])->whereNumber('id')->whereNumber('receiptId');
     Route::post('returns/{id}/cancel', [SalesReturnController::class, 'cancel'])->whereNumber('id');
     Route::post('returns/{id}/close', [SalesReturnController::class, 'close'])->whereNumber('id');
+    Route::delete('returns/{id}', [SalesReturnController::class, 'destroy'])->whereNumber('id');
 });
 
 Route::prefix('v1/erp/production')->group(function () {
@@ -393,6 +403,7 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::post('labor-allocation-rules', [ProductionLaborAllocationRuleController::class, 'store']);
     Route::post('labor-allocation-rules/{id}/activate', [ProductionLaborAllocationRuleController::class, 'activate'])->whereNumber('id');
     Route::post('labor-allocation-rules/{id}/retire', [ProductionLaborAllocationRuleController::class, 'retire'])->whereNumber('id');
+    Route::delete('labor-allocation-rules/{id}', [ProductionLaborAllocationRuleController::class, 'destroy'])->whereNumber('id');
     Route::get('labor-statistics', [ProductionLaborStatisticsController::class, 'index']);
     Route::get('select-options/{type}', [ProductionMasterDataController::class, 'selector'])->whereIn('type', ['items', 'operations', 'products', 'skus', 'routings']);
     Route::get('operations', [ProductionMasterDataController::class, 'operations']);
@@ -401,6 +412,7 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::put('operations/{id}', [ProductionMasterDataController::class, 'updateOperation'])->whereNumber('id');
     Route::post('operations/{id}/enable', [ProductionMasterDataController::class, 'enableOperation'])->whereNumber('id');
     Route::post('operations/{id}/disable', [ProductionMasterDataController::class, 'disableOperation'])->whereNumber('id');
+    Route::delete('operations/{id}', [ProductionMasterDataController::class, 'destroyOperation'])->whereNumber('id');
     Route::get('routings', [ProductionMasterDataController::class, 'routings']);
     Route::post('routings', [ProductionMasterDataController::class, 'storeRouting']);
     Route::get('routings/{id}', [ProductionMasterDataController::class, 'routing'])->whereNumber('id');
@@ -409,6 +421,7 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::post('routings/{id}/set-default', [ProductionMasterDataController::class, 'setDefaultRouting'])->whereNumber('id');
     Route::post('routings/{id}/copy-version', [ProductionMasterDataController::class, 'copyRouting'])->whereNumber('id');
     Route::post('routings/{id}/retire', [ProductionMasterDataController::class, 'retireRouting'])->whereNumber('id');
+    Route::delete('routings/{id}', [ProductionMasterDataController::class, 'destroyRouting'])->whereNumber('id');
     Route::get('demands', [ProductionWorkOrderController::class, 'demands']);
     Route::get('master-orders', [ProductionMasterOrderController::class, 'index']);
     Route::get('master-orders/{id}', [ProductionMasterOrderController::class, 'show'])->whereNumber('id');
@@ -515,8 +528,10 @@ Route::prefix('v1/erp/auth')->group(function () {
 Route::prefix('v1/erp/rbac')->group(function () {
     Route::get('permissions', [RbacController::class, 'permissions']);
     Route::post('permissions', [RbacController::class, 'savePermission']);
+    Route::delete('permissions/{id}', [RbacController::class, 'deletePermission'])->whereNumber('id');
     Route::get('roles', [RbacController::class, 'roles']);
     Route::post('roles', [RbacController::class, 'saveRole']);
+    Route::delete('roles/{id}', [RbacController::class, 'deleteRole'])->whereNumber('id');
     Route::get('role-users', [RbacController::class, 'roleUsers']);
     Route::post('role-users', [RbacController::class, 'saveRoleUsers']);
 });
@@ -600,4 +615,5 @@ Route::prefix('v1/erp/master')->group(function () {
     Route::post('imports/{id}/confirm', [ImportController::class, 'confirm']);
     Route::get('imports/{id}/rows', [ImportController::class, 'rows']);
     Route::get('imports/{id}/errors/export', [ImportController::class, 'exportErrors']);
+    Route::delete('imports/{id}', [ImportController::class, 'destroy'])->whereNumber('id');
 });
