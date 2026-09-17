@@ -13,6 +13,8 @@ final class CuttingController extends Controller
     { return response()->json($s->orders($this->filters($r), ...$this->context($r))); }
     public function execution(Request $r, int $id, CuttingReadService $s)
     { return response()->json(['data'=>$s->execution($id,$this->filters($r), ...$this->context($r))]); }
+    public function settlementExecution(Request $r, int $id, CuttingReadService $s)
+    { return response()->json(['data'=>$s->settlementExecution($id,$this->filters($r), ...$this->context($r))]); }
     public function outputs(Request $r, int $id, CuttingReadService $s)
     { return response()->json($s->allowedOutputs($id,$this->filters($r), ...$this->context($r))); }
     public function inputs(Request $r, int $id, CuttingReadService $s)

@@ -19,12 +19,12 @@ final class CuttingConfirmationService
             $batch = $c->batch($batchId,$user,$permissions,$super,'production.cutting.confirm'); $c->version($batch,$p);
             if ($batch->status !== 'WAIT_CONFIRM') $c->fail('batch_not_confirmable','用料批次尚未通过申报和质量确认，或已核算。',409);
             $this->records->assertInput($batch);
-            $rows = DB::table('erp_cutting_results')->where('settlement_batch_id',$batchId)->orderBy('id')->lockForUpdate()->get();
+            $rows = DB::table('erp_cutting_results')->where('settlement_batch_id',$batchId)->whereNotIn('status',['VOIDED','SUPERSEDED'])->orderBy('id')->lockForUpdate()->get();
             if ($rows->isEmpty()) $c->fail('results_missing','没有可核算的实际结果。');
             $costs = $this->costs($rows->pluck('id')->all(),$p['costs'] ?? null);
             $sum = '0'; foreach ($costs as $cost) $sum = bcadd($sum,$cost,4);
             if (bccomp($sum,(string) $batch->original_total_cost,4) !== 0) $c->fail('cost_not_conserved','逐结果金额合计必须等于本用料批次的原始投入总金额。');
-            $routes = DB::table('erp_cutting_result_routes')->whereIn('result_id',$rows->pluck('id'))->orderBy('id')->lockForUpdate()->get();
+            $routes = DB::table('erp_cutting_result_routes')->whereIn('result_id',$rows->pluck('id'))->where('status','PLANNED')->orderBy('id')->lockForUpdate()->get();
             $allocations = $this->allocations($routes,$p['allocations'] ?? null,$batch,$user,$permissions,$super);
             foreach ($rows as $row) {
                 $this->records->assertResultIdentity($batch,$row);
@@ -94,6 +94,8 @@ final class CuttingConfirmationService
         $c = $this->commands;
         if (! is_array($entries) || ! array_is_list($entries) || count($entries) < 1 || count($entries) > 500) $c->fail('allocations_required','须逐去向明确正式计划归属或未分配产出的处置。');
         $plans = DB::table('erp_cutting_plan_allocations')->where('cutting_order_id',$batch->cutting_order_id)->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+        if ($plans->contains(fn ($plan) => ! $plan->demand_id || ! $plan->input_material_requirement_id || ! $plan->target_material_requirement_id))
+            $c->fail('formal_requirement_required','历史计划尚未绑定唯一正式需求及原料行，禁止继续核算。',409);
         // Lock every source/target WO in a stable order, so different cutting orders cannot over-allocate one requirement.
         $woIds = $plans->pluck('work_order_id')->merge(DB::table('erp_production_target_material_requirements')->whereIn('id',$routes->pluck('target_material_requirement_id')->filter())->pluck('work_order_id'))->unique()->sort();
         foreach ($woIds as $woId) $c->workOrder($woId,$user,$permissions,$super,'production.cutting.confirm',true);

@@ -78,7 +78,10 @@ final class CuttingCommandService
         $this->permission($permissions, $permission);
         $q = DB::table('erp_cutting_orders')->where('id', $id); if ($lock) $q->lockForUpdate();
         $row = $q->first(); if (! $row) $this->fail('cutting_order_missing', '下料单不存在。', 404);
-        $ids = DB::table('erp_cutting_plan_allocations')->where('cutting_order_id', $id)->pluck('work_order_id')->unique()->sort();
+        $ids = DB::table('erp_cutting_plan_allocations')->where('cutting_order_id', $id)->pluck('work_order_id');
+        $targetWos = DB::table('erp_cutting_plan_allocations as p')->join('erp_production_target_material_requirements as r','r.id','=','p.target_material_requirement_id')
+            ->where('p.cutting_order_id',$id)->pluck('r.work_order_id');
+        $ids = $ids->merge($targetWos)->unique()->sort();
         if ($ids->isEmpty()) $this->fail('source_missing', '下料单没有正式来源。', 409);
         foreach ($ids as $wo) $this->workOrder((int) $wo, $user, $permissions, $super, $permission);
         return $row;

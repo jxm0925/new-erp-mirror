@@ -163,9 +163,7 @@ final class CuttingInputService
 
     private function inputAllowed(int $orderId, int $itemId): void
     {
-        if (! DB::table('erp_cutting_plan_allocations as a')->join('erp_work_order_material_requirements as r', 'r.work_order_id', '=', 'a.work_order_id')
-            ->where('a.cutting_order_id', $orderId)->where('r.component_item_id', $itemId)->exists())
-            $this->commands->fail('input_not_allowed', '用料不属于来源工单正式BOM物料需求。');
+        app(CuttingMaterialEligibilityService::class)->assertItem($orderId,$itemId);
     }
 
     private function warehouseLot(InventoryBalance $balance, string $form): int

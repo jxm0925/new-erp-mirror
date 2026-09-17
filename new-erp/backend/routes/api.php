@@ -363,6 +363,7 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::post('cutting/orders/{id}/reserve', [CuttingController::class, 'reserve'])->whereNumber('id');
     Route::post('cutting/orders/{id}/release', [CuttingController::class, 'release'])->whereNumber('id');
     Route::post('cutting/orders/{id}/issue', [CuttingController::class, 'issue'])->whereNumber('id');
+    Route::get('cutting/settlements/{id}/execution', [CuttingController::class, 'settlementExecution'])->whereNumber('id');
     Route::put('cutting/settlements/{id}/results', [CuttingController::class, 'save'])->whereNumber('id');
     Route::post('cutting/settlements/{id}/first-cut', [CuttingController::class, 'firstCut'])->whereNumber('id');
     Route::post('cutting/settlements/{id}/submit', [CuttingController::class, 'submit'])->whereNumber('id');

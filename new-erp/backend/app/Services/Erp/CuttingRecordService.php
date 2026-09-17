@@ -8,15 +8,20 @@ use Illuminate\Support\Facades\DB;
 /** Field reporting only. No inventory, receipt, kitting or settlement effects. */
 final class CuttingRecordService
 {
-    public function __construct(private readonly CuttingCommandService $commands, private readonly DocumentNumberService $numbers) {}
+    public function __construct(private readonly CuttingCommandService $commands, private readonly DocumentNumberService $numbers,
+        private readonly CuttingDemandService $demands, private readonly CuttingMaterialEligibilityService $materials) {}
 
     public function publish(array $p, object $user, array $permissions, bool $super = false): array
     {
         $c = $this->commands; $c->permission($permissions, 'production.cutting.plan');
         if (! is_array($p['plans'] ?? null)) $c->fail('source_missing', '请选择正式来源计划。');
         foreach ($p['plans'] as $plan) {
-            if (! is_array($plan) || array_diff(array_keys($plan), ['work_order_id','stage_id','planned_qty','target_material_requirement_id','configuration_id'])) $c->fail('plan_fields_invalid','来源计划包含不允许的字段。');
+            if (! is_array($plan) || array_diff(array_keys($plan), ['work_order_id','stage_id','planned_qty','target_material_requirement_id','configuration_id','input_material_requirement_id'])) $c->fail('plan_fields_invalid','来源计划包含不允许的字段。');
             $c->workOrder((int) ($plan['work_order_id'] ?? 0), $user, $permissions, $super, 'production.cutting.plan');
+            if (isset($plan['target_material_requirement_id'])) {
+                $targetWo = DB::table('erp_production_target_material_requirements')->where('id',(int) $plan['target_material_requirement_id'])->value('work_order_id');
+                if ($targetWo) $c->workOrder((int) $targetWo,$user,$permissions,$super,'production.cutting.plan');
+            }
         }
         return $c->run('publish_cutting_order', 0, $p, $user, function () use ($c, $p, $user, $permissions, $super): array {
             if (($p['expected_version'] ?? null) !== 0) $c->fail('version_required', '新建下料单版本必须为0。');
@@ -40,10 +45,8 @@ final class CuttingRecordService
                 $configId = isset($plan['configuration_id']) ? (int) $plan['configuration_id'] : null;
                 $this->configuration($configId, $item, $wo->id);
                 $qty = CuttingDecimal::value($plan['planned_qty'] ?? null);
-                $already = (string) DB::table('erp_cutting_plan_allocations as a')->join('erp_cutting_orders as o', 'o.id', '=', 'a.cutting_order_id')
-                    ->where('a.work_order_id', $wo->id)->where('a.stage_id', $stage)->whereNotIn('o.status', ['CANCELLED', 'CLOSED'])->sum('a.planned_qty');
-                if (bccomp(bcadd($already, $qty, 8), (string) $wo->target_base_qty, 8) > 0) $c->fail('plan_exceeds_source', '下料计划数量超过正式工单剩余可计划数量。');
-                $targetId = isset($plan['target_material_requirement_id']) ? (int) $plan['target_material_requirement_id'] : null;
+                $demand = $this->demands->bind($plan,$wo,$node,$user,$permissions,$super);
+                $targetId = (int) $demand->source_requirement_id;
                 if ($targetId) {
                     $target = $this->target($targetId, $itemId, $user, $permissions, $super, 'production.cutting.plan');
                     $this->configuration($configId,$item,$target->work_order_id);
@@ -54,7 +57,8 @@ final class CuttingRecordService
                     'configuration_id' => $configId, 'configuration_version' => $configId ? DB::table('erp_custom_configurations')->where('id', $configId)->value('version_no') : null];
                 $planId = DB::table('erp_cutting_plan_allocations')->insertGetId(['cutting_order_id' => $id, 'work_order_id' => $wo->id,
                     'target_material_requirement_id' => $targetId, 'output_item_id' => $itemId, 'configuration_id' => $configId, 'stage_id' => $stage,
-                    'planned_qty' => $qty, 'source_snapshot' => json_encode($snapshot, JSON_THROW_ON_ERROR), 'created_at' => now(), 'updated_at' => now()]);
+                    'demand_id'=>$demand->id,'input_material_requirement_id'=>(int) $plan['input_material_requirement_id'],
+                    'planned_qty' => $qty, 'source_snapshot' => json_encode($snapshot+['demand_id'=>$demand->id,'formal_requirement_id'=>$targetId,'input_material_requirement_id'=>(int) $plan['input_material_requirement_id']], JSON_THROW_ON_ERROR), 'created_at' => now(), 'updated_at' => now()]);
                 $alreadyAllowed = DB::table('erp_cutting_allowed_outputs')->where('cutting_order_id',$id)->where('item_id',$itemId)
                     ->where('configuration_id',$configId)->where('stage_id',$stage)->where('quality_mode',$node->quality_mode_snapshot)
                     ->where('output_mode',$node->output_mode_snapshot)->where('work_mode',$node->work_mode_snapshot)->exists();
@@ -85,20 +89,37 @@ final class CuttingRecordService
                     $c->fail('result_fields_invalid', '加工结果包含不允许的字段，来源仅由本用料批次确定。');
                 $key = $row['client_row_id'] ?? ''; if (! is_string($key) || strlen($key) < 1 || strlen($key) > 80 || in_array($key, $rowIds, true)) $c->fail('row_id_invalid', '结果行标识为空或重复。');
                 $rowIds[] = $key; $data = $this->resultData($batch, $row);
-                $existing = DB::table('erp_cutting_results')->where('settlement_batch_id', $batchId)->where('client_row_id', $key)->lockForUpdate()->first();
+                $existing = DB::table('erp_cutting_results')->where('settlement_batch_id', $batchId)->where('client_row_id', $key)->whereNotIn('status',['VOIDED','SUPERSEDED'])->lockForUpdate()->first();
+                if ($existing && DB::table('erp_production_quality_inspections')->where('cutting_result_id',$existing->id)->exists()) {
+                    // Inspected result identities/measurements are historical facts. Editing creates
+                    // a replacement; neither an FK violation nor mutation of the inspected row is allowed.
+                    $oldRoutes = DB::table('erp_cutting_result_routes')->where('result_id',$existing->id)->where('status','PLANNED')->orderBy('id')->lockForUpdate()->get();
+                    DB::table('erp_cutting_results')->where('id',$existing->id)->update(['status'=>'SUPERSEDED','voided_at'=>now(),'voided_by_legacy_id'=>$c->actor($user),'updated_at'=>now()]);
+                    $newId = DB::table('erp_cutting_results')->insertGetId($data+['settlement_batch_id'=>$batchId,'client_row_id'=>$key,'supersedes_result_id'=>$existing->id,
+                        'status'=>'DRAFT','business_version'=>1,'created_at'=>now(),'updated_at'=>now()]);
+                    if ($existing->allowed_output_id == $data['allowed_output_id'] && $existing->actual_qty == $data['actual_qty'] && $existing->result_type === $data['result_type'])
+                        foreach ($oldRoutes as $route) DB::table('erp_cutting_result_routes')->insert(['result_id'=>$newId,'route_type'=>$route->route_type,'target_material_requirement_id'=>$route->target_material_requirement_id,
+                            'quantity'=>$route->quantity,'status'=>'PLANNED','business_version'=>1,'created_at'=>now(),'updated_at'=>now()]);
+                    $this->cancelDraftRoutes([$existing->id]);
+                    $c->event('result',$existing->id,'supersede',$user,$existing,['replacement_result_id'=>$newId]);
+                    $resultIds[] = $newId; continue;
+                }
                 if ($existing) {
                     // Quantity or identity changes invalidate only this result's route plan.
                     if ($existing->allowed_output_id != $data['allowed_output_id'] || $existing->actual_qty != $data['actual_qty'] || $existing->result_type !== $data['result_type'])
-                        DB::table('erp_cutting_result_routes')->where('result_id', $existing->id)->delete();
+                        $this->cancelDraftRoutes([$existing->id]);
                     DB::table('erp_cutting_results')->where('id', $existing->id)->update($data + ['business_version' => $existing->business_version + 1, 'updated_at' => now()]);
                     $resultIds[] = $existing->id;
                 } else $resultIds[] = DB::table('erp_cutting_results')->insertGetId($data + ['settlement_batch_id' => $batchId,
                     'client_row_id' => $key, 'business_version' => 1, 'status' => 'DRAFT', 'created_at' => now(), 'updated_at' => now()]);
             }
             // This is a full batch draft replacement, never an order-wide merge.
-            $removed = DB::table('erp_cutting_results')->where('settlement_batch_id', $batchId)->whereNotIn('client_row_id', $rowIds)->pluck('id');
-            DB::table('erp_cutting_result_routes')->whereIn('result_id', $removed)->delete();
-            DB::table('erp_cutting_results')->whereIn('id', $removed)->delete();
+            $removed = DB::table('erp_cutting_results')->where('settlement_batch_id', $batchId)->whereNotIn('status',['VOIDED','SUPERSEDED'])->whereNotIn('client_row_id', $rowIds)->orderBy('id')->lockForUpdate()->get();
+            $this->cancelDraftRoutes($removed->pluck('id')->all());
+            foreach ($removed as $old) {
+                DB::table('erp_cutting_results')->where('id',$old->id)->update(['status'=>'VOIDED','voided_at'=>now(),'voided_by_legacy_id'=>$c->actor($user),'business_version'=>$old->business_version+1,'updated_at'=>now()]);
+                $c->event('result',$old->id,'void',$user,$old,['status'=>'VOIDED']);
+            }
             DB::table('erp_cutting_settlement_batches')->where('id', $batchId)->update(['business_version' => $batch->business_version + 1, 'updated_at' => now()]);
             $response = ['settlement_batch_id' => $batchId, 'result_ids' => $resultIds, 'business_version' => $batch->business_version + 1, 'status' => 'PROCESSING'];
             $c->event('batch', $batchId, 'save_results', $user, $batch, $response); return $response;
@@ -113,7 +134,7 @@ final class CuttingRecordService
             $row = DB::table('erp_cutting_results')->where('id', $resultId)->first(); if (! $row) $c->fail('result_missing', '产出结果不存在。', 404);
             $batch = $c->batch($row->settlement_batch_id, $user, $permissions, $super, 'production.cutting.record');
             $row = DB::table('erp_cutting_results')->where('id', $resultId)->lockForUpdate()->first(); $c->version($row, $p);
-            if ($batch->status !== 'PROCESSING' || $row->result_type !== 'product') $c->fail('route_not_editable', '只有未提交的产品结果可以拆分去向。', 409);
+            if ($batch->status !== 'PROCESSING' || $row->result_type !== 'product' || $row->status !== 'DRAFT') $c->fail('route_not_editable', '只有当前未提交的产品结果可以拆分去向。', 409);
             $this->input($batch);
             $routes = $p['routes'] ?? null;
             if (! is_array($routes) || ! array_is_list($routes) || count($routes) < 1 || count($routes) > 100) $c->fail('routes_invalid', '必须提供逐结果去向明细。');
@@ -142,11 +163,11 @@ final class CuttingRecordService
                     'quantity' => $qty, 'status' => 'PLANNED', 'business_version' => 1, 'created_at' => now(), 'updated_at' => now()];
             }
             if (bccomp($sum, (string) $row->actual_qty, 8) !== 0) $c->fail('route_quantity_mismatch', '去向数量合计必须等于这一条产出的实际数量。');
-            DB::table('erp_cutting_result_routes')->where('result_id', $resultId)->delete(); DB::table('erp_cutting_result_routes')->insert($insert);
+            $this->cancelDraftRoutes([$resultId]); DB::table('erp_cutting_result_routes')->insert($insert);
             DB::table('erp_cutting_results')->where('id', $resultId)->update(['business_version' => $row->business_version + 1, 'updated_at' => now()]);
             DB::table('erp_cutting_settlement_batches')->where('id', $batch->id)->update(['business_version' => $batch->business_version + 1, 'updated_at' => now()]);
             $response = ['result_id' => $resultId, 'business_version' => $row->business_version + 1, 'batch_business_version' => $batch->business_version + 1,
-                'routes' => DB::table('erp_cutting_result_routes')->where('result_id', $resultId)->get()->map(fn ($r) => (array) $r)->all()];
+                'routes' => DB::table('erp_cutting_result_routes')->where('result_id', $resultId)->where('status','PLANNED')->get()->map(fn ($r) => (array) $r)->all()];
             $c->event('result', $resultId, 'split_routes', $user, $row, $response); return $response;
         });
     }
@@ -159,12 +180,12 @@ final class CuttingRecordService
             $batch = $c->batch($batchId, $user, $permissions, $super, 'production.cutting.record'); $c->version($batch, $p);
             if ($batch->status !== 'PROCESSING') $c->fail('record_frozen', '加工结果已提交，不能重复提交。', 409);
             $this->input($batch);
-            $rows = DB::table('erp_cutting_results')->where('settlement_batch_id', $batchId)->orderBy('id')->lockForUpdate()->get();
+            $rows = DB::table('erp_cutting_results')->where('settlement_batch_id', $batchId)->whereNotIn('status',['VOIDED','SUPERSEDED'])->orderBy('id')->lockForUpdate()->get();
             if (! $rows->contains('result_type', 'product')) $c->fail('product_missing', '至少需要一条实际产品产出。');
             foreach ($rows as $row) {
                 $this->resultData($batch, (array) $row, false);
                 if ($row->result_type === 'product') {
-                    $routes = DB::table('erp_cutting_result_routes')->where('result_id', $row->id)->lockForUpdate()->get();
+                    $routes = DB::table('erp_cutting_result_routes')->where('result_id', $row->id)->where('status','PLANNED')->lockForUpdate()->get();
                     $sum = '0'; foreach ($routes as $route) {
                         $sum = bcadd($sum, (string) $route->quantity, 8);
                         if ($route->route_type === 'NEXT_OPERATION') $this->target($route->target_material_requirement_id, $row->item_id, $user, $permissions, $super, 'production.cutting.record');
@@ -173,7 +194,7 @@ final class CuttingRecordService
                 }
             }
             $status = $rows->contains('quality_status', 'WAIT_QUALITY') ? 'WAIT_QUALITY' : 'WAIT_CONFIRM';
-            DB::table('erp_cutting_results')->where('settlement_batch_id', $batchId)->update(['status' => 'SUBMITTED', 'updated_at' => now()]);
+            DB::table('erp_cutting_results')->whereIn('id',$rows->pluck('id'))->update(['status' => 'SUBMITTED', 'updated_at' => now()]);
             DB::table('erp_cutting_settlement_batches')->where('id', $batchId)->update(['status' => $status,
                 'submitted_at' => now(), 'business_version' => $batch->business_version + 1, 'updated_at' => now()]);
             $response = ['message' => '加工结果已提交', 'settlement_batch_id' => $batchId, 'status' => $status, 'business_version' => $batch->business_version + 1];
@@ -189,18 +210,18 @@ final class CuttingRecordService
             $row = DB::table('erp_cutting_results')->where('id', $resultId)->first(); if (! $row) $c->fail('result_missing', '产出结果不存在。', 404);
             $batch = $c->batch($row->settlement_batch_id, $user, $permissions, $super, 'production.output.quality');
             $row = DB::table('erp_cutting_results')->where('id', $resultId)->lockForUpdate()->first(); $c->version($row, $p);
-            if ($batch->status !== 'WAIT_QUALITY' || $row->quality_status !== 'WAIT_QUALITY') $c->fail('quality_not_waiting', '该结果不处于待质检状态。', 409);
+            if ($batch->status !== 'WAIT_QUALITY' || $row->quality_status !== 'WAIT_QUALITY' || $row->status !== 'SUBMITTED') $c->fail('quality_not_waiting', '该结果不处于当前待质检状态。', 409);
             if (! in_array($p['result'] ?? '', ['passed','failed'], true)) $c->fail('quality_invalid', '质检只接受整行合格或不合格；混合结果须先退回拆行。');
             $quality = $p['result'] === 'passed' ? 'PASSED' : 'FAILED';
             DB::table('erp_production_quality_inspections')->insert(['inspection_no' => $this->numbers->next('production_quality_inspection', 'PQI'),
                 'output_record_id' => null, 'cutting_result_id' => $resultId, 'status' => 'COMPLETED', 'result' => $p['result'],
                 'inspected_base_qty' => $row->actual_qty, 'qualified_base_qty' => $quality === 'PASSED' ? $row->actual_qty : '0',
                 'unqualified_base_qty' => $quality === 'FAILED' ? $row->actual_qty : '0', 'reason' => $p['reason'] ?? null,
-                'inspection_snapshot' => json_encode(['settlement_batch_id' => $batch->id, 'result_business_version' => $row->business_version], JSON_THROW_ON_ERROR),
+                'inspection_snapshot' => json_encode(['settlement_batch_id' => $batch->id, 'result_business_version' => $row->business_version,'result_snapshot'=>(array) $row], JSON_THROW_ON_ERROR),
                 'inspector_legacy_id' => $c->actor($user), 'inspected_at' => now(), 'business_version' => 1, 'created_at' => now(), 'updated_at' => now()]);
             DB::table('erp_cutting_results')->where('id', $resultId)->update(['quality_status' => $quality, 'business_version' => $row->business_version + 1, 'updated_at' => now()]);
-            $waiting = DB::table('erp_cutting_results')->where('settlement_batch_id', $batch->id)->where('quality_status', 'WAIT_QUALITY')->exists();
-            $failed = DB::table('erp_cutting_results')->where('settlement_batch_id', $batch->id)->where('quality_status', 'FAILED')->exists();
+            $waiting = DB::table('erp_cutting_results')->where('settlement_batch_id', $batch->id)->where('status','SUBMITTED')->where('quality_status', 'WAIT_QUALITY')->exists();
+            $failed = DB::table('erp_cutting_results')->where('settlement_batch_id', $batch->id)->where('status','SUBMITTED')->where('quality_status', 'FAILED')->exists();
             $status = $waiting ? 'WAIT_QUALITY' : ($failed ? 'QUALITY_FAILED' : 'WAIT_CONFIRM');
             DB::table('erp_cutting_settlement_batches')->where('id', $batch->id)->update(['status' => $status, 'business_version' => $batch->business_version + 1, 'updated_at' => now()]);
             $response = ['result_id' => $resultId, 'quality_status' => $quality, 'business_version' => $row->business_version + 1, 'batch_status' => $status];
@@ -216,6 +237,9 @@ final class CuttingRecordService
         if ($type === 'product') {
             $allowed = DB::table('erp_cutting_allowed_outputs')->where('cutting_order_id', $batch->cutting_order_id)->where('id', (int) ($row['allowed_output_id'] ?? 0))->first();
             if (! $allowed) $c->fail('output_not_allowed', '该Item、配置或阶段不属于本下料任务允许的正式产出集合。');
+            if (! $this->materials->plans($batch->cutting_order_id)->where('r.component_item_id',$batch->input_item_id)
+                ->where('p.output_item_id',$allowed->item_id)->where('p.configuration_id',$allowed->configuration_id)->where('p.stage_id',$allowed->stage_id)->exists())
+                $c->fail('output_input_mismatch','当前实际投入原料不属于这条产出的正式需求及冻结工序。');
             $item = Item::find($allowed->item_id); $plan = DB::table('erp_cutting_plan_allocations')->where('id', $allowed->plan_id)->first();
             $this->configuration($allowed->configuration_id, $item, $plan->work_order_id);
         } elseif (! empty($row['allowed_output_id'])) $c->fail('other_output_identity_invalid', '其他加工结果不能冒充正式产品产出。');
@@ -272,7 +296,7 @@ final class CuttingRecordService
             if (! in_array($batch->status,['WAIT_CONFIRM','WAIT_QUALITY','QUALITY_FAILED'],true)) $c->fail('return_edit_invalid','只有待确认、待质检或质量不合格的记录可以退回修改。',409);
             if (! is_string($p['reason'] ?? null) || trim($p['reason']) === '' || mb_strlen($p['reason']) > 1000) $c->fail('reason_required','请填写退回修改原因。');
             $this->input($batch);
-            $rows = DB::table('erp_cutting_results')->where('settlement_batch_id',$batchId)->orderBy('id')->lockForUpdate()->get();
+            $rows = DB::table('erp_cutting_results')->where('settlement_batch_id',$batchId)->whereNotIn('status',['VOIDED','SUPERSEDED'])->orderBy('id')->lockForUpdate()->get();
             foreach ($rows as $row) {
                 $allowed = $row->allowed_output_id ? DB::table('erp_cutting_allowed_outputs')->where('id',$row->allowed_output_id)->first() : null;
                 DB::table('erp_cutting_results')->where('id',$row->id)->update(['status'=>'DRAFT','quality_status'=>$allowed && $allowed->quality_mode !== 'none' ? 'WAIT_QUALITY' : 'NOT_REQUIRED',
@@ -288,6 +312,7 @@ final class CuttingRecordService
     private function input(object $batch): void
     {
         $c = $this->commands;
+        $this->materials->assertItem($batch->cutting_order_id,$batch->input_item_id);
         if ($batch->physical_material_id) {
             $physical = DB::table('erp_material_physicals')->where('id',$batch->physical_material_id)->lockForUpdate()->first();
             if (! $physical || $physical->status !== 'ISSUED' || (int) $physical->item_id !== (int) $batch->input_item_id
@@ -310,5 +335,12 @@ final class CuttingRecordService
         $wo = $c->workOrder($target->work_order_id, $user, $permissions, $super, $permission);
         if (! in_array($wo->status, ['RELEASED','IN_PROGRESS'], true)) $c->fail('target_not_active', '目标工单已关闭或尚未正式发布。');
         return $target;
+    }
+
+    private function cancelDraftRoutes(array $resultIds): void
+    {
+        if (DB::table('erp_cutting_result_routes')->whereIn('result_id',$resultIds)->whereNotIn('status',['PLANNED','CANCELLED'])->exists())
+            $this->commands->fail('route_frozen','已有正式去向事实的结果不能通过草稿编辑撤销。',409);
+        DB::table('erp_cutting_result_routes')->whereIn('result_id',$resultIds)->where('status','PLANNED')->update(['status'=>'CANCELLED','business_version'=>DB::raw('business_version+1'),'updated_at'=>now()]);
     }
 }

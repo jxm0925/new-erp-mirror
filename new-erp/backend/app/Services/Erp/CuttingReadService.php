@@ -16,7 +16,9 @@ final class CuttingReadService
         $visible = WorkOrder::query()->select('id');
         $this->scopes->applyWorkOrderScope($visible, $this->scopes->resolve($user, 'production.cutting.view', $permissions, $super));
         $q = DB::table('erp_cutting_orders as o')->whereExists(fn (Builder $p) => $p->selectRaw('1')->from('erp_cutting_plan_allocations as a')->whereColumn('a.cutting_order_id','o.id'))
-            ->whereNotExists(fn (Builder $p) => $p->selectRaw('1')->from('erp_cutting_plan_allocations as a')->whereColumn('a.cutting_order_id','o.id')->whereNotIn('a.work_order_id',$visible->toBase()));
+            ->whereNotExists(fn (Builder $p) => $p->selectRaw('1')->from('erp_cutting_plan_allocations as a')->whereColumn('a.cutting_order_id','o.id')->whereNotIn('a.work_order_id',$visible->toBase()))
+            ->whereNotExists(fn (Builder $p) => $p->selectRaw('1')->from('erp_cutting_plan_allocations as a')->join('erp_production_target_material_requirements as r','r.id','=','a.target_material_requirement_id')
+                ->whereColumn('a.cutting_order_id','o.id')->whereNotIn('r.work_order_id',$visible->toBase()));
         if (! empty($f['status'])) $q->where('o.status',$f['status']);
         if (! empty($f['keyword'])) $q->where('o.cutting_order_no','like','%'.$f['keyword'].'%');
         return $this->page($q->orderByDesc('o.id'),$f);
@@ -27,23 +29,59 @@ final class CuttingReadService
         $order = $this->commands->order($id,$user,$permissions,$super,'production.cutting.view');
         $inputs = $this->page(DB::table('erp_cutting_settlement_batches as b')->leftJoin('erp_material_physicals as p','p.id','=','b.physical_material_id')
             ->join('erp_items as i','i.id','=','b.input_item_id')->where('b.cutting_order_id',$id)
-            ->select('b.*','p.physical_no','p.material_form','p.shape','p.dimensions','i.item_code','i.item_name')->orderBy('b.id'),$f);
+            ->select($this->sourceColumns())->orderBy('b.id'),$f);
+        return ['order'=>(array) $order,'task'=>(array) DB::table('erp_cutting_tasks')->where('cutting_order_id',$id)->first(),
+            'inputs'=>$inputs,'results'=>$this->results($id,$f),'page_title'=>'下料记录','submit_label'=>'提交加工结果',
+            'page_scope'=>'ORDER_OVERVIEW'];
+    }
+
+    public function settlementExecution(int $id, array $f, object $user, array $permissions, bool $super = false): array
+    {
+        $batch = $this->commands->assertBatchVisible($id,$user,$permissions,$super,'production.cutting.view');
+        $source = DB::table('erp_cutting_settlement_batches as b')->leftJoin('erp_material_physicals as p','p.id','=','b.physical_material_id')
+            ->join('erp_items as i','i.id','=','b.input_item_id')->where('b.id',$id)
+            ->select($this->sourceColumns())->first();
+        // The URL, not a query/body source ID, owns the source and every result below.
+        return ['order'=>(array) DB::table('erp_cutting_orders')->where('id',$batch->cutting_order_id)->first(),
+            'source'=>(array) $source,'results'=>$this->results((int) $batch->cutting_order_id,$f,$id),
+            'page_title'=>'下料记录','submit_label'=>'提交加工结果','page_scope'=>'SETTLEMENT_BATCH',
+            'source_locked'=>true,'can_add_input'=>false];
+    }
+
+    private function results(int $orderId, array $f, ?int $batchId = null): array
+    {
         // Never GROUP BY Item/configuration/stage: one result ID retains one source.
         $q = DB::table('erp_cutting_results as r')->join('erp_cutting_settlement_batches as b','b.id','=','r.settlement_batch_id')
             ->leftJoin('erp_items as i','i.id','=','r.item_id')->leftJoin('erp_material_physicals as p','p.id','=','b.physical_material_id')
-            ->where('b.cutting_order_id',$id)->select('r.*','b.batch_no','b.physical_material_id as input_physical_material_id','p.physical_no as input_physical_no','i.item_code','i.item_name')->orderBy('r.id');
+            ->where('b.cutting_order_id',$orderId)->whereNotIn('r.status',['VOIDED','SUPERSEDED'])
+            ->select('r.id','r.settlement_batch_id','r.client_row_id','r.result_type','r.allowed_output_id','r.item_id','r.configuration_id','r.stage_id',
+                'r.actual_qty','r.piece_qty','r.cut_length_mm','r.measurements','r.measurement_status','r.quality_status','r.reported_quality',
+                'r.status','r.material_lot_id','r.physical_material_id','r.business_version','r.created_at','r.updated_at',
+                'b.batch_no','b.physical_material_id as input_physical_material_id','p.physical_no as input_physical_no','i.item_code','i.item_name')->orderBy('r.id');
+        if ($batchId !== null) $q->where('b.id',$batchId);
         $results = $this->page($q,$f);
         $ids = array_column($results['data'],'id');
-        $routes = DB::table('erp_cutting_result_routes')->whereIn('result_id',$ids)->orderBy('id')->get()->groupBy('result_id');
+        $routes = DB::table('erp_cutting_result_routes')->whereIn('result_id',$ids)->where('status','!=','CANCELLED')->orderBy('id')->get()->groupBy('result_id');
         foreach ($results['data'] as &$row) {
-            $row['routes'] = $routes->get($row['id'],collect())->map(fn ($route) => (array) $route)->all();
+            $row['routes'] = $routes->get($row['id'],collect())->map(fn ($route) => [
+                'id'=>$route->id,'result_id'=>$route->result_id,'route_type'=>$route->route_type,
+                'target_material_requirement_id'=>$route->target_material_requirement_id,'quantity'=>$route->quantity,
+                'received_qty'=>$route->received_qty,'status'=>$route->status,'business_version'=>$route->business_version,
+            ])->all();
             foreach ($row['routes'] as &$route) $route['display_status'] = $route['status'] === 'PLANNED'
-                ? ($route['route_type'] === 'WAREHOUSE' ? '待入库确认' : '去向计划') : $route['status'];
+                ? ($route['route_type'] === 'WAREHOUSE' ? '待入库确认' : '待交接') : $route['status'];
             unset($route);
         }
         unset($row);
-        return ['order'=>(array) $order,'task'=>(array) DB::table('erp_cutting_tasks')->where('cutting_order_id',$id)->first(),
-            'inputs'=>$inputs,'results'=>$results,'page_title'=>'下料记录','submit_label'=>'提交加工结果'];
+        return $results;
+    }
+
+    private function sourceColumns(): array
+    {
+        // Mobile execution projection deliberately excludes costs, holdings and transaction internals.
+        return ['b.id','b.batch_no','b.cutting_order_id','b.cutting_task_id','b.input_item_id','b.physical_material_id',
+            'b.input_qty','b.standard_stock_length_mm','b.status','b.business_version','b.first_cut_at','b.submitted_at','b.confirmed_at',
+            'p.physical_no','p.material_form','p.shape','p.dimensions','i.item_code','i.item_name','i.spec'];
     }
 
     public function allowedOutputs(int $id, array $f, object $user, array $permissions, bool $super = false): array
@@ -59,8 +97,7 @@ final class CuttingReadService
     public function inputCandidates(int $id, array $f, object $user, array $permissions, bool $super = false): array
     {
         $this->commands->order($id,$user,$permissions,$super,'production.cutting.view');
-        $itemIds = DB::table('erp_cutting_plan_allocations as a')->join('erp_work_order_material_requirements as r','r.work_order_id','=','a.work_order_id')
-            ->where('a.cutting_order_id',$id)->select('r.component_item_id');
+        $itemIds = app(CuttingMaterialEligibilityService::class)->plans($id)->select('r.component_item_id');
         if (($f['input_type'] ?? 'physical') === 'physical') {
             $q = DB::table('erp_material_physicals as p')->join('erp_items as i','i.id','=','p.item_id')
                 ->join('erp_material_holdings as h','h.id','=','p.current_holding_id')->whereIn('p.item_id',$itemIds)->where('p.status','AVAILABLE')->where('h.status','ACTIVE')
