@@ -30,6 +30,8 @@ final class CuttingReadService
         $inputs = $this->page(DB::table('erp_cutting_settlement_batches as b')->leftJoin('erp_material_physicals as p','p.id','=','b.physical_material_id')
             ->join('erp_items as i','i.id','=','b.input_item_id')->where('b.cutting_order_id',$id)
             ->select($this->sourceColumns())->orderBy('b.id'),$f);
+        foreach ($inputs['data'] as &$input) $input['display_status'] = $this->batchStatusLabel($input['status']);
+        unset($input);
         return ['order'=>(array) $order,'task'=>(array) DB::table('erp_cutting_tasks')->where('cutting_order_id',$id)->first(),
             'inputs'=>$inputs,'results'=>$this->results($id,$f),'page_title'=>'下料记录','submit_label'=>'提交加工结果',
             'page_scope'=>'ORDER_OVERVIEW'];
@@ -42,8 +44,9 @@ final class CuttingReadService
             ->join('erp_items as i','i.id','=','b.input_item_id')->where('b.id',$id)
             ->select($this->sourceColumns())->first();
         // The URL, not a query/body source ID, owns the source and every result below.
+        $source = (array) $source; $source['display_status'] = $this->batchStatusLabel($source['status']);
         return ['order'=>(array) DB::table('erp_cutting_orders')->where('id',$batch->cutting_order_id)->first(),
-            'source'=>(array) $source,'results'=>$this->results((int) $batch->cutting_order_id,$f,$id),
+            'source'=>$source,'results'=>$this->results((int) $batch->cutting_order_id,$f,$id),
             'page_title'=>'下料记录','submit_label'=>'提交加工结果','page_scope'=>'SETTLEMENT_BATCH',
             'source_locked'=>true,'can_add_input'=>false];
     }
@@ -57,7 +60,7 @@ final class CuttingReadService
             ->select('r.id','r.settlement_batch_id','r.client_row_id','r.result_type','r.allowed_output_id','r.item_id','r.configuration_id','r.stage_id',
                 'r.actual_qty','r.piece_qty','r.cut_length_mm','r.measurements','r.measurement_status','r.quality_status','r.reported_quality',
                 'r.status','r.material_lot_id','r.physical_material_id','r.business_version','r.created_at','r.updated_at',
-                'b.batch_no','b.physical_material_id as input_physical_material_id','p.physical_no as input_physical_no','i.item_code','i.item_name')->orderBy('r.id');
+                'b.batch_no','b.status as batch_status','b.physical_material_id as input_physical_material_id','p.physical_no as input_physical_no','i.item_code','i.item_name')->orderBy('r.id');
         if ($batchId !== null) $q->where('b.id',$batchId);
         $results = $this->page($q,$f);
         $ids = array_column($results['data'],'id');
@@ -71,6 +74,15 @@ final class CuttingReadService
             foreach ($row['routes'] as &$route) $route['display_status'] = $route['status'] === 'PLANNED'
                 ? ($route['route_type'] === 'WAREHOUSE' ? '待入库确认' : '待交接') : $route['status'];
             unset($route);
+            if ($row['result_type'] === 'product') {
+                $assigned = '0.00000000';
+                foreach ($row['routes'] as $route) $assigned = bcadd($assigned,(string) $route['quantity'],8);
+                $row['assigned_qty'] = $assigned;
+                $row['unassigned_qty'] = bcsub((string) $row['actual_qty'],$assigned,8);
+                $row['route_complete'] = bccomp($row['unassigned_qty'],'0',8) === 0;
+                $row['confirm_allowed'] = $row['route_complete'] && $row['batch_status'] === 'WAIT_CONFIRM';
+            }
+            unset($row['batch_status']);
         }
         unset($row);
         return $results;
@@ -82,6 +94,14 @@ final class CuttingReadService
         return ['b.id','b.batch_no','b.cutting_order_id','b.cutting_task_id','b.input_item_id','b.physical_material_id',
             'b.input_qty','b.standard_stock_length_mm','b.status','b.business_version','b.first_cut_at','b.submitted_at','b.confirmed_at',
             'p.physical_no','p.material_form','p.shape','p.dimensions','i.item_code','i.item_name','i.spec'];
+    }
+
+    private function batchStatusLabel(string $status): string
+    {
+        return match ($status) {
+            'PROCESSING'=>'草稿','WAIT_ROUTE'=>'待完善去向','WAIT_QUALITY'=>'待质检','WAIT_CONFIRM'=>'待用料确认',
+            'QUALITY_FAILED'=>'质量不合格','CONFIRMED'=>'已核算',default=>$status,
+        };
     }
 
     public function allowedOutputs(int $id, array $f, object $user, array $permissions, bool $super = false): array

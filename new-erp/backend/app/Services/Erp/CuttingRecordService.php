@@ -134,10 +134,13 @@ final class CuttingRecordService
             $row = DB::table('erp_cutting_results')->where('id', $resultId)->first(); if (! $row) $c->fail('result_missing', '产出结果不存在。', 404);
             $batch = $c->batch($row->settlement_batch_id, $user, $permissions, $super, 'production.cutting.record');
             $row = DB::table('erp_cutting_results')->where('id', $resultId)->lockForUpdate()->first(); $c->version($row, $p);
-            if ($batch->status !== 'PROCESSING' || $row->result_type !== 'product' || $row->status !== 'DRAFT') $c->fail('route_not_editable', '只有当前未提交的产品结果可以拆分去向。', 409);
+            $editableDraft = $batch->status === 'PROCESSING' && $row->status === 'DRAFT';
+            $editableSubmitted = $batch->status === 'WAIT_ROUTE' && $row->status === 'SUBMITTED';
+            if ((! $editableDraft && ! $editableSubmitted) || $row->result_type !== 'product')
+                $c->fail('route_not_editable', '只有草稿或待完善去向的产品结果可以调整去向。', 409);
             $this->input($batch);
             $routes = $p['routes'] ?? null;
-            if (! is_array($routes) || ! array_is_list($routes) || count($routes) < 1 || count($routes) > 100) $c->fail('routes_invalid', '必须提供逐结果去向明细。');
+            if (! is_array($routes) || ! array_is_list($routes) || count($routes) > 100) $c->fail('routes_invalid', '去向明细格式不合法。');
             $sum = '0'; $insert = [];
             foreach ($routes as $route) {
                 if (! is_array($route) || array_diff(array_keys($route), ['route_type','quantity','target_material_requirement_id']))
@@ -162,11 +165,20 @@ final class CuttingRecordService
                 $insert[] = ['result_id' => $resultId, 'route_type' => $type, 'target_material_requirement_id' => $targetId,
                     'quantity' => $qty, 'status' => 'PLANNED', 'business_version' => 1, 'created_at' => now(), 'updated_at' => now()];
             }
-            if (bccomp($sum, (string) $row->actual_qty, 8) !== 0) $c->fail('route_quantity_mismatch', '去向数量合计必须等于这一条产出的实际数量。');
-            $this->cancelDraftRoutes([$resultId]); DB::table('erp_cutting_result_routes')->insert($insert);
+            if (bccomp($sum, (string) $row->actual_qty, 8) > 0) $c->fail('route_quantity_exceeded', '已指定数量不能超过这一条产出的实际数量。');
+            $this->cancelDraftRoutes([$resultId]);
+            if ($insert !== []) DB::table('erp_cutting_result_routes')->insert($insert);
             DB::table('erp_cutting_results')->where('id', $resultId)->update(['business_version' => $row->business_version + 1, 'updated_at' => now()]);
-            DB::table('erp_cutting_settlement_batches')->where('id', $batch->id)->update(['business_version' => $batch->business_version + 1, 'updated_at' => now()]);
+            $summary = $this->routeSummary($batch->id);
+            $status = $batch->status;
+            if ($status === 'WAIT_ROUTE' && $summary['route_complete']) $status = $this->postRouteStatus($batch->id);
+            DB::table('erp_cutting_settlement_batches')->where('id', $batch->id)->update(['status'=>$status,
+                'business_version' => $batch->business_version + 1, 'updated_at' => now()]);
+            $resultSummary = collect($summary['results'])->firstWhere('result_id',$resultId);
             $response = ['result_id' => $resultId, 'business_version' => $row->business_version + 1, 'batch_business_version' => $batch->business_version + 1,
+                'status'=>$status,'status_label'=>$this->statusLabel($status),'actual_qty'=>$resultSummary['actual_qty'],
+                'assigned_qty'=>$resultSummary['assigned_qty'],'unassigned_qty'=>$resultSummary['unassigned_qty'],
+                'route_complete'=>$resultSummary['route_complete'],'confirm_allowed'=>$status === 'WAIT_CONFIRM',
                 'routes' => DB::table('erp_cutting_result_routes')->where('result_id', $resultId)->where('status','PLANNED')->get()->map(fn ($r) => (array) $r)->all()];
             $c->event('result', $resultId, 'split_routes', $user, $row, $response); return $response;
         });
@@ -190,14 +202,18 @@ final class CuttingRecordService
                         $sum = bcadd($sum, (string) $route->quantity, 8);
                         if ($route->route_type === 'NEXT_OPERATION') $this->target($route->target_material_requirement_id, $row->item_id, $user, $permissions, $super, 'production.cutting.record');
                     }
-                    if (bccomp($sum, (string) $row->actual_qty, 8) !== 0) $c->fail('route_quantity_mismatch', '每一条产出都必须分别完成去向数量拆分。');
+                    if (bccomp($sum, (string) $row->actual_qty, 8) > 0) $c->fail('route_quantity_exceeded', '已指定数量不能超过这一条产出的实际数量。');
                 }
             }
-            $status = $rows->contains('quality_status', 'WAIT_QUALITY') ? 'WAIT_QUALITY' : 'WAIT_CONFIRM';
+            $summary = $this->routeSummary($batchId);
+            $status = $summary['route_complete'] ? $this->postRouteStatus($batchId) : 'WAIT_ROUTE';
             DB::table('erp_cutting_results')->whereIn('id',$rows->pluck('id'))->update(['status' => 'SUBMITTED', 'updated_at' => now()]);
             DB::table('erp_cutting_settlement_batches')->where('id', $batchId)->update(['status' => $status,
                 'submitted_at' => now(), 'business_version' => $batch->business_version + 1, 'updated_at' => now()]);
-            $response = ['message' => '加工结果已提交', 'settlement_batch_id' => $batchId, 'status' => $status, 'business_version' => $batch->business_version + 1];
+            $response = ['message' => '加工结果已提交', 'settlement_batch_id' => $batchId, 'status' => $status,
+                'status_label'=>$this->statusLabel($status),'business_version' => $batch->business_version + 1,
+                'actual_qty'=>$summary['actual_qty'],'assigned_qty'=>$summary['assigned_qty'],'unassigned_qty'=>$summary['unassigned_qty'],
+                'route_complete'=>$summary['route_complete'],'confirm_allowed'=>$status === 'WAIT_CONFIRM','route_results'=>$summary['results']];
             $c->event('batch', $batchId, 'submit', $user, $batch, $response); return $response;
         });
     }
@@ -293,7 +309,7 @@ final class CuttingRecordService
         $c->assertBatchVisible($batchId, $user, $permissions, $super, 'production.cutting.confirm');
         return $c->run('return_cutting_for_edit', $batchId, $p, $user, function () use ($c,$batchId,$p,$user,$permissions,$super): array {
             $batch = $c->batch($batchId,$user,$permissions,$super,'production.cutting.confirm'); $c->version($batch,$p);
-            if (! in_array($batch->status,['WAIT_CONFIRM','WAIT_QUALITY','QUALITY_FAILED'],true)) $c->fail('return_edit_invalid','只有待确认、待质检或质量不合格的记录可以退回修改。',409);
+            if (! in_array($batch->status,['WAIT_ROUTE','WAIT_CONFIRM','WAIT_QUALITY','QUALITY_FAILED'],true)) $c->fail('return_edit_invalid','只有待完善去向、待确认、待质检或质量不合格的记录可以退回修改。',409);
             if (! is_string($p['reason'] ?? null) || trim($p['reason']) === '' || mb_strlen($p['reason']) > 1000) $c->fail('reason_required','请填写退回修改原因。');
             $this->input($batch);
             $rows = DB::table('erp_cutting_results')->where('settlement_batch_id',$batchId)->whereNotIn('status',['VOIDED','SUPERSEDED'])->orderBy('id')->lockForUpdate()->get();
@@ -342,5 +358,42 @@ final class CuttingRecordService
         if (DB::table('erp_cutting_result_routes')->whereIn('result_id',$resultIds)->whereNotIn('status',['PLANNED','CANCELLED'])->exists())
             $this->commands->fail('route_frozen','已有正式去向事实的结果不能通过草稿编辑撤销。',409);
         DB::table('erp_cutting_result_routes')->whereIn('result_id',$resultIds)->where('status','PLANNED')->update(['status'=>'CANCELLED','business_version'=>DB::raw('business_version+1'),'updated_at'=>now()]);
+    }
+
+    private function routeSummary(int $batchId): array
+    {
+        $rows = DB::table('erp_cutting_results')->where('settlement_batch_id',$batchId)->where('result_type','product')
+            ->whereNotIn('status',['VOIDED','SUPERSEDED'])->orderBy('id')->get();
+        $actual = '0.00000000'; $assigned = '0.00000000'; $details = [];
+        foreach ($rows as $row) {
+            $rowAssigned = '0.00000000';
+            foreach (DB::table('erp_cutting_result_routes')->where('result_id',$row->id)->where('status','PLANNED')->pluck('quantity') as $quantity)
+                $rowAssigned = bcadd($rowAssigned,(string) $quantity,8);
+            if (bccomp($rowAssigned,(string) $row->actual_qty,8) > 0)
+                $this->commands->fail('route_quantity_exceeded','已指定数量不能超过这一条产出的实际数量。');
+            $rowActual = CuttingDecimal::value((string) $row->actual_qty);
+            $unassigned = bcsub($rowActual,$rowAssigned,8);
+            $actual = bcadd($actual,$rowActual,8); $assigned = bcadd($assigned,$rowAssigned,8);
+            $details[] = ['result_id'=>(int) $row->id,'actual_qty'=>$rowActual,'assigned_qty'=>$rowAssigned,
+                'unassigned_qty'=>$unassigned,'route_complete'=>bccomp($unassigned,'0',8) === 0];
+        }
+        $unassigned = bcsub($actual,$assigned,8);
+        return ['actual_qty'=>$actual,'assigned_qty'=>$assigned,'unassigned_qty'=>$unassigned,
+            'route_complete'=>$details !== [] && collect($details)->every(fn (array $row) => $row['route_complete']),
+            'results'=>$details];
+    }
+
+    private function postRouteStatus(int $batchId): string
+    {
+        return DB::table('erp_cutting_results')->where('settlement_batch_id',$batchId)->whereNotIn('status',['VOIDED','SUPERSEDED'])
+            ->where('quality_status','WAIT_QUALITY')->exists() ? 'WAIT_QUALITY' : 'WAIT_CONFIRM';
+    }
+
+    private function statusLabel(string $status): string
+    {
+        return match ($status) {
+            'WAIT_ROUTE'=>'待完善去向','WAIT_QUALITY'=>'待质检','WAIT_CONFIRM'=>'待用料确认',
+            'PROCESSING'=>'草稿',default=>$status,
+        };
     }
 }

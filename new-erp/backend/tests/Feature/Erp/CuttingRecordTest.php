@@ -41,16 +41,75 @@ class CuttingRecordTest extends TestCase
         $this->assertSame(0, DB::table('erp_cutting_result_routes')->whereIn('result_id', $rows->pluck('id'))->where('status', '!=', 'PLANNED')->count());
     }
 
-    public function test_route_split_cannot_target_another_result_or_accept_warehouse_fields(): void
+    public function test_route_split_rejects_foreign_fields_and_only_rejects_quantity_above_actual(): void
     {
         $f = $this->fixture(); $batch = $this->issue($f); $result = $this->save($f, $batch['settlement_batch_id'], '10')['result_ids'][0];
         foreach (['warehouse_id','location_id','batch_no','result_id'] as $field) {
             $p = $this->payload(1) + ['routes' => [['route_type' => 'WAREHOUSE', 'quantity' => '10', $field => 123]]];
             $this->domain('route_fields_invalid', fn () => app(CuttingRecordService::class)->splitRoutes($result, $p, $f['user'], self::PERMISSIONS, true));
         }
-        $p = $this->payload(1) + ['routes' => [['route_type' => 'WAREHOUSE','quantity' => '9']]];
-        $this->domain('route_quantity_mismatch', fn () => app(CuttingRecordService::class)->splitRoutes($result, $p, $f['user'], self::PERMISSIONS, true));
+        $p = $this->payload(1) + ['routes' => [['route_type' => 'WAREHOUSE','quantity' => '11']]];
+        $this->domain('route_quantity_exceeded', fn () => app(CuttingRecordService::class)->splitRoutes($result, $p, $f['user'], self::PERMISSIONS, true));
         $this->assertSame(0, DB::table('erp_cutting_result_routes')->where('result_id', $result)->count());
+        $empty = app(CuttingRecordService::class)->splitRoutes($result,$this->payload(1)+['routes'=>[]],$f['user'],self::PERMISSIONS,true);
+        $this->assertSame('0.00000000',$empty['assigned_qty']); $this->assertSame('10.00000000',$empty['unassigned_qty']);
+        $this->assertFalse($empty['route_complete']); $this->assertSame([], $empty['routes']);
+    }
+
+    public function test_partial_route_can_submit_wait_route_and_complete_without_resubmitting_results(): void
+    {
+        $f = $this->fixture(); $batch = $this->issue($f); $id = $batch['settlement_batch_id'];
+        $result = $this->save($f,$id,'10')['result_ids'][0]; $service = app(CuttingRecordService::class); $token = $this->token($f['user']);
+        $partialResponse = $this->withToken($token)->putJson('/api/v1/erp/production/cutting/results/'.$result.'/routes',$this->payload(1)+['routes'=>[
+            ['route_type'=>'WAREHOUSE','quantity'=>'6']
+        ]])->assertOk();
+        $partial = $partialResponse->json('data');
+        $this->assertSame('10.00000000',$partial['actual_qty']);
+        $this->assertSame('6.00000000',$partial['assigned_qty']);
+        $this->assertSame('4.00000000',$partial['unassigned_qty']);
+        $this->assertFalse($partial['route_complete']); $this->assertFalse($partial['confirm_allowed']);
+
+        $submittedResponse = $this->withToken($token)->postJson('/api/v1/erp/production/cutting/settlements/'.$id.'/submit',
+            $this->payload((int) DB::table('erp_cutting_settlement_batches')->where('id',$id)->value('business_version')))
+            ->assertOk()->assertJsonPath('message','加工结果已提交');
+        $submitted = $submittedResponse->json('data');
+        $this->assertSame('WAIT_ROUTE',$submitted['status']); $this->assertSame('待完善去向',$submitted['status_label']);
+        $this->assertSame('4.00000000',$submitted['unassigned_qty']);
+        $this->assertFalse($submitted['route_complete']); $this->assertFalse($submitted['confirm_allowed']);
+        $this->assertSame('SUBMITTED',DB::table('erp_cutting_results')->where('id',$result)->value('status'));
+        $this->domain('batch_not_confirmable',fn () => app(CuttingConfirmationService::class)->confirm(
+            $id,$this->confirmation($f,$id,$result,'3000',false),$f['user'],self::PERMISSIONS,true
+        ),409);
+        $this->withToken($token)->getJson('/api/v1/erp/production/cutting/settlements/'.$id.'/execution')
+            ->assertOk()->assertJsonPath('data.source.display_status','待完善去向')
+            ->assertJsonPath('data.results.data.0.assigned_qty','6.00000000')
+            ->assertJsonPath('data.results.data.0.unassigned_qty','4.00000000')
+            ->assertJsonPath('data.results.data.0.route_complete',false)
+            ->assertJsonPath('data.results.data.0.confirm_allowed',false);
+
+        $complete = $service->splitRoutes($result,$this->payload(2)+['routes'=>[
+            ['route_type'=>'WAREHOUSE','quantity'=>'6'],['route_type'=>'WAREHOUSE','quantity'=>'4']
+        ]],$f['user'],self::PERMISSIONS,true);
+        $this->assertSame('WAIT_CONFIRM',$complete['status']); $this->assertSame('待用料确认',$complete['status_label']);
+        $this->assertSame('10.00000000',$complete['assigned_qty']); $this->assertSame('0.00000000',$complete['unassigned_qty']);
+        $this->assertTrue($complete['route_complete']); $this->assertTrue($complete['confirm_allowed']);
+        $this->assertSame('WAIT_CONFIRM',DB::table('erp_cutting_settlement_batches')->where('id',$id)->value('status'));
+        $this->assertSame(2,DB::table('erp_cutting_result_routes')->where('result_id',$result)->where('status','PLANNED')->count());
+    }
+
+    public function test_partial_required_quality_moves_from_wait_route_to_wait_quality_when_completed(): void
+    {
+        $f = $this->fixture('required'); $batch = $this->issue($f); $id = $batch['settlement_batch_id'];
+        $result = $this->save($f,$id,'10')['result_ids'][0]; $service = app(CuttingRecordService::class);
+        $service->splitRoutes($result,$this->payload(1)+['routes'=>[['route_type'=>'WAREHOUSE','quantity'=>'6']]],$f['user'],self::PERMISSIONS,true);
+        $this->assertSame('WAIT_ROUTE',$this->submitBatch($f,$id)['status']);
+        $returned = $service->returnForEdit($id,$this->payload((int) DB::table('erp_cutting_settlement_batches')->where('id',$id)->value('business_version'))+
+            ['reason'=>'修正加工结果'], $f['user'],self::PERMISSIONS,true);
+        $this->assertSame('PROCESSING',$returned['status']); $this->assertSame('DRAFT',DB::table('erp_cutting_results')->where('id',$result)->value('status'));
+        $this->assertSame('WAIT_ROUTE',$this->submitBatch($f,$id)['status']);
+        $complete = $service->splitRoutes($result,$this->payload(3)+['routes'=>[['route_type'=>'WAREHOUSE','quantity'=>'10']]],$f['user'],self::PERMISSIONS,true);
+        $this->assertSame('WAIT_QUALITY',$complete['status']); $this->assertSame('待质检',$complete['status_label']);
+        $this->assertTrue($complete['route_complete']); $this->assertFalse($complete['confirm_allowed']);
     }
 
     public function test_source_and_output_identity_are_validated_on_api_service_not_only_selector(): void
