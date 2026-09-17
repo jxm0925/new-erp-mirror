@@ -187,7 +187,7 @@ class SalesReturnFlowTest extends TestCase
         $this->assertDatabaseMissing('erp_sales_return_cost_allocations', ['sales_return_item_id' => $returnItemId]);
         $replacement = $service->create($payload, 1, '测试管理员');
         $this->assertSame(10.0, (float) $replacement->items->first()->requested_sales_qty);
-        $this->assertSame(12.0, (float) $replacement->items->first()->frozen_unit_cost);
+        $this->assertDatabaseHas('erp_sales_return_cost_allocations', ['sales_return_item_id' => $replacement->items->first()->id, 'unit_cost_snapshot' => 12, 'allocated_base_qty' => 10]);
         $service->confirm($replacement->id, 1, '测试管理员');
         $this->expectException(ValidationException::class);
         $service->deleteDraft($replacement->id);
