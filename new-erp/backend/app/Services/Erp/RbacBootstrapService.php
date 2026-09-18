@@ -61,6 +61,9 @@ class RbacBootstrapService
             ['production.cutting.handover.receive', '接收下料产出', 'button', 'production.work_order', null, null, 'el-icon-mouse', 84],
             ['production.cutting.handover.reject', '拒收下料产出', 'button', 'production.work_order', null, null, 'el-icon-mouse', 85],
             ['production.cutting.warehouse', '下料产出正式入库', 'button', 'production.work_order', null, null, 'el-icon-mouse', 86],
+            ['production.cutting.inventory.view', '查看下料专用库存', 'button', 'production.work_order', null, null, 'el-icon-view', 87],
+            ['production.cutting.inventory.issue', '安排下料专用库存领用', 'button', 'production.work_order', null, null, 'el-icon-mouse', 88],
+            ['production.cutting.inventory.release', '释放下料库存归属', 'button', 'production.work_order', null, null, 'el-icon-mouse', 89],
 
             // 1. 主数据中心 二级菜单
             ['master.product', '产品管理', 'menu', 'master', '/master/products', 'ProductList', 'el-icon-goods', 101],
@@ -268,6 +271,8 @@ class RbacBootstrapService
             ['production.output.warehouse', '生产产出入库', 'button', 'production.work_order', null, null, 'el-icon-mouse', 38],
             ['production.output.issue', '生产半成品发料', 'button', 'production.work_order', null, null, 'el-icon-mouse', 39],
             ['production.output.receive', '生产半成品接收', 'button', 'production.work_order', null, null, 'el-icon-mouse', 40],
+            ['production.output.cost.view', '查看生产材料成本', 'button', 'production.work_order', null, null, 'el-icon-view', 41],
+            ['production.output.cost.allocate', '分配生产材料损失金额', 'button', 'production.work_order', null, null, 'el-icon-mouse', 42],
             ['production.material_supplement.request', '申请生产补料', 'button', 'production.work_order', null, null, 'el-icon-mouse', 39],
             ['production.material_supplement.approve', '审批生产补料', 'button', 'production.work_order', null, null, 'el-icon-mouse', 40],
             ['production.material_return.create', '发起生产退料', 'button', 'production.work_order', null, null, 'el-icon-mouse', 41],
@@ -603,6 +608,8 @@ class RbacBootstrapService
                 'production.cutting.task.resume', 'production.cutting.task.finish', 'production.cutting.task.collaborate',
                 'production.cutting.handover.view', 'production.cutting.handover.dispatch',
                 'production.cutting.handover.receive', 'production.cutting.handover.reject', 'production.cutting.warehouse',
+                'production.cutting.inventory.view', 'production.cutting.inventory.issue', 'production.cutting.inventory.release',
+                'production.output.cost.view', 'production.output.cost.allocate',
             ])
             ->pluck('id', 'code');
         if ($permissionIds->isEmpty()) return;
@@ -643,6 +650,8 @@ class RbacBootstrapService
                 'production.cutting.view', 'production.cutting.plan', 'production.cutting.issue',
                 'production.cutting.confirm', 'production.cutting.material_manage',
                 'production.cutting.handover.view', 'production.cutting.warehouse',
+                'production.cutting.inventory.view', 'production.cutting.inventory.issue', 'production.cutting.inventory.release',
+                'production.output.cost.view', 'production.output.cost.allocate',
             ],
         ];
         foreach ($matrix as $roleCode => $codes) {

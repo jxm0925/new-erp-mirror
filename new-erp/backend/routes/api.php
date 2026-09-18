@@ -364,6 +364,16 @@ Route::prefix('v1/erp/sales')->group(function () {
 });
 
 Route::prefix('v1/erp/production')->group(function () {
+    Route::get('cutting/demands', [CuttingController::class, 'demands']);
+    Route::post('cutting/demands/generate', [CuttingController::class, 'generateDemand']);
+    Route::get('cutting/demands/{id}', [CuttingController::class, 'demand'])->whereNumber('id');
+    Route::post('cutting/demands/{id}/revisions', [CuttingController::class, 'reviseDemand'])->whereNumber('id');
+    Route::get('cutting/configurations', [CuttingController::class, 'configurations']);
+    Route::post('cutting/configurations', [CuttingController::class, 'createConfiguration']);
+    Route::get('cutting/configurations/{id}', [CuttingController::class, 'configuration'])->whereNumber('id');
+    Route::put('cutting/configurations/{id}', [CuttingController::class, 'updateConfiguration'])->whereNumber('id');
+    Route::post('cutting/configurations/{id}/publish', [CuttingController::class, 'publishConfiguration'])->whereNumber('id');
+    Route::post('cutting/configurations/{id}/versions', [CuttingController::class, 'versionConfiguration'])->whereNumber('id');
     Route::get('cutting/orders', [CuttingController::class, 'index']);
     Route::post('cutting/orders/publish', [CuttingController::class, 'publish']);
     Route::get('cutting/tasks', [CuttingController::class, 'tasks']);
@@ -381,15 +391,20 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::get('cutting/orders/{id}/input-candidates', [CuttingController::class, 'inputs'])->whereNumber('id');
     Route::get('cutting/orders/{id}/allowed-outputs', [CuttingController::class, 'outputs'])->whereNumber('id');
     Route::get('cutting/results/{id}/handover-targets', [CuttingController::class, 'handoverTargets'])->whereNumber('id');
+    Route::get('cutting/material-physicals', [CuttingController::class, 'materialPhysicals']);
+    Route::get('cutting/material-physicals/{id}', [CuttingController::class, 'materialPhysical'])->whereNumber('id');
     Route::post('cutting/material-physicals', [CuttingController::class, 'registerPhysical']);
+    Route::post('cutting/material-physicals/{id}/dispose', [CuttingController::class, 'disposePhysical'])->whereNumber('id');
     Route::post('cutting/orders/{id}/reserve', [CuttingController::class, 'reserve'])->whereNumber('id');
     Route::post('cutting/orders/{id}/release', [CuttingController::class, 'release'])->whereNumber('id');
     Route::post('cutting/orders/{id}/issue', [CuttingController::class, 'issue'])->whereNumber('id');
     Route::get('cutting/settlements/{id}/execution', [CuttingController::class, 'settlementExecution'])->whereNumber('id');
     Route::put('cutting/settlements/{id}/results', [CuttingController::class, 'save'])->whereNumber('id');
     Route::post('cutting/settlements/{id}/first-cut', [CuttingController::class, 'firstCut'])->whereNumber('id');
+    Route::post('cutting/settlements/{id}/return-original', [CuttingController::class, 'returnOriginal'])->whereNumber('id');
     Route::post('cutting/settlements/{id}/submit', [CuttingController::class, 'submit'])->whereNumber('id');
     Route::post('cutting/settlements/{id}/confirm', [CuttingController::class, 'confirm'])->whereNumber('id');
+    Route::post('cutting/settlements/{id}/reverse-confirmation', [CuttingController::class, 'reverseConfirmation'])->whereNumber('id');
     Route::post('cutting/settlements/{id}/return-for-edit', [CuttingController::class, 'returnForEdit'])->whereNumber('id');
     Route::put('cutting/results/{id}/routes', [CuttingController::class, 'split'])->whereNumber('id');
     Route::post('cutting/results/{id}/quality-inspect', [CuttingController::class, 'inspect'])->whereNumber('id');
@@ -398,6 +413,10 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::post('cutting/handovers/{id}/accept', [CuttingController::class, 'acceptHandover'])->whereNumber('id');
     Route::post('cutting/handovers/{id}/reject', [CuttingController::class, 'rejectHandover'])->whereNumber('id');
     Route::post('cutting/routes/{id}/warehouse', [CuttingController::class, 'warehouseRoute'])->whereNumber('id');
+    Route::get('cutting/inventory-reservations', [CuttingController::class, 'inventoryReservations']);
+    Route::post('cutting/inventory-reservations/{id}/issue', [CuttingController::class, 'createInventoryIssue'])->whereNumber('id');
+    Route::post('cutting/inventory-reservations/{id}/release', [CuttingController::class, 'releaseInventory'])->whereNumber('id');
+    Route::post('cutting/inventory-issues/{id}/cancel', [CuttingController::class, 'cancelInventoryIssue'])->whereNumber('id');
     Route::get('execution-monitor', [ProductionExecutionMonitorController::class, 'index']);
     Route::get('labor-allocation-rules', [ProductionLaborAllocationRuleController::class, 'index']);
     Route::post('labor-allocation-rules', [ProductionLaborAllocationRuleController::class, 'store']);

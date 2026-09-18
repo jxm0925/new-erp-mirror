@@ -231,6 +231,106 @@ class ProductionOutputFlowMatrixTest extends TestCase
         $this->assertSame('COMPLETED', $fixture['source']->fresh()->status);
     }
 
+    public function test_traceable_direct_handovers_carry_exact_cost_across_three_operations(): void
+    {
+        $fixture = $this->fixture('warehouse_optional', 'required', true, true);
+        $this->attachTraceableOutput($fixture['output'], '321.4321');
+        $user = (object) ['legacy_id' => 8801];
+        $third = ProductionQuantityOperation::create([
+            'work_order_id' => $fixture['workOrder']->id, 'operation_code_snapshot' => 'OP3', 'operation_name_snapshot' => '末道工序',
+            'sequence_no_snapshot' => 3, 'status' => 'WAIT_PREDECESSOR', 'planned_base_qty' => 2, 'completed_base_qty' => 0,
+            'remaining_base_qty' => 2, 'output_item_id_snapshot' => $fixture['item']->id, 'output_mode_snapshot' => 'flow_only',
+            'quality_mode_snapshot' => 'none', 'kitting_required' => false, 'business_version' => 1,
+        ]);
+        $thirdTask = ProductionTask::create([
+            'task_no' => $this->code('TASK3'), 'work_order_id' => $fixture['workOrder']->id,
+            'production_quantity_operation_id' => $third->id, 'execution_mode' => 'quantity',
+            'operation_code_snapshot' => 'OP3', 'operation_name_snapshot' => '末道工序', 'sequence_no_snapshot' => 3,
+            'status' => 'WAIT_PREDECESSOR', 'assignee_user_legacy_id' => 8801, 'business_version' => 1,
+        ]);
+        ProductionTaskTarget::create(['task_id' => $thirdTask->id, 'target_type' => 'quantity_operation',
+            'target_id' => $third->id, 'status_snapshot' => 'WAIT_PREDECESSOR']);
+        app(ProductionOutputService::class)->inspect($fixture['output']->id, [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => 1,
+            'result' => 'passed', 'qualified_base_qty' => 2, 'unqualified_base_qty' => 0,
+            'next_step' => 'direct_handover',
+        ], $user, ['production.output.quality']);
+        $handover = DB::table('erp_production_operation_handovers')->where('output_record_id', $fixture['output']->id)->first();
+        app(ProductionHandoverService::class)->accept($handover->id, [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => 1,
+        ], $user, ['production.handover.receive']);
+
+        $bridge = DB::table('erp_production_input_holdings')->where('operation_handover_id', $handover->id)->first();
+        $this->assertSame('321.4321', $bridge->total_cost);
+        $this->assertSame('ACTIVE', $bridge->status);
+        $this->assertSame('TRANSFERRED', DB::table('erp_material_holdings')->where('id', $fixture['output']->material_holding_id)->value('status'));
+
+        $task = ProductionTask::where('production_quantity_operation_id', $fixture['next']->id)->firstOrFail();
+        $execution = app(ProductionExecutionActionService::class);
+        $started = $execution->start($task->id, 'quantity_operation', $fixture['next']->id, [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => $fixture['next']->fresh()->business_version,
+        ], $user, ['production.task.start']);
+        $completed = $execution->complete($task->id, 'quantity_operation', $fixture['next']->id, [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => $started['target_business_version'],
+            'completed_base_qty' => 2, 'scrapped_base_qty' => 0,
+        ], $user, ['production.task.complete']);
+        $nextOutput = DB::table('erp_production_output_records')->find($completed['output_record_id']);
+        $this->assertSame('321.4321', $nextOutput->material_total_cost);
+        $this->assertSame('CONSUMED', DB::table('erp_production_input_holdings')->where('id', $bridge->id)->value('status'));
+        $this->assertDatabaseHas('erp_material_movements', ['target_holding_id' => $nextOutput->material_holding_id,
+            'action' => 'PRODUCTION_CONSUME', 'total_cost' => '321.4321']);
+
+        $secondHandover = DB::table('erp_production_operation_handovers')->where('output_record_id', $nextOutput->id)->first();
+        app(ProductionHandoverService::class)->accept($secondHandover->id, [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => 1,
+        ], $user, ['production.handover.receive']);
+        $thirdStarted = $execution->start($thirdTask->id, 'quantity_operation', $third->id, [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => $third->fresh()->business_version,
+        ], $user, ['production.task.start']);
+        $thirdCompleted = $execution->complete($thirdTask->id, 'quantity_operation', $third->id, [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => $thirdStarted['target_business_version'],
+            'completed_base_qty' => 2, 'scrapped_base_qty' => 0,
+        ], $user, ['production.task.complete']);
+        $this->assertSame('321.4321', DB::table('erp_production_output_records')->where('id', $thirdCompleted['output_record_id'])->value('material_total_cost'));
+        $this->assertSame(2, DB::table('erp_production_material_consumptions')
+            ->whereIn('output_record_id', [$nextOutput->id, $thirdCompleted['output_record_id']])->count());
+    }
+
+    public function test_traceable_warehouse_issue_carries_posted_cost_into_next_operation_output(): void
+    {
+        $fixture = $this->fixture('warehouse_required', 'none', true, true);
+        $this->attachTraceableOutput($fixture['output'], '654.3210');
+        $user = (object) ['legacy_id' => 8801];
+        $warehouse = Warehouse::create(['warehouse_code' => $this->code('TWH'), 'warehouse_name' => '追溯中转仓', 'status' => 'enabled']);
+        $location = Location::create(['warehouse_id' => $warehouse->id, 'location_code' => $this->code('TLOC'), 'location_name' => '追溯库位', 'status' => 'enabled']);
+        $posted = app(ProductionOutputService::class)->warehouse($fixture['output']->id, [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => 1,
+            'warehouse_id' => $warehouse->id, 'location_id' => $location->id, 'batch_no' => $this->code('TB'),
+        ], $user, ['production.output.warehouse']);
+        $issues = app(ProductionInternalIssueService::class);
+        $issued = $issues->dispatch($posted['internal_issue_task_id'], [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => 1,
+        ], $user, ['production.output.issue']);
+        $issues->receive($posted['internal_issue_task_id'], [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => $issued['business_version'],
+        ], $user, ['production.output.receive']);
+        $bridge = DB::table('erp_production_input_holdings')->whereNotNull('internal_issue_line_id')
+            ->where('source_output_record_id', $fixture['output']->id)->first();
+        $this->assertSame('654.3210', $bridge->total_cost);
+
+        $task = ProductionTask::where('production_quantity_operation_id', $fixture['next']->id)->firstOrFail();
+        $execution = app(ProductionExecutionActionService::class);
+        $started = $execution->start($task->id, 'quantity_operation', $fixture['next']->id, [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => $fixture['next']->fresh()->business_version,
+        ], $user, ['production.task.start']);
+        $completed = $execution->complete($task->id, 'quantity_operation', $fixture['next']->id, [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => $started['target_business_version'],
+            'completed_base_qty' => 2, 'scrapped_base_qty' => 0,
+        ], $user, ['production.task.complete']);
+        $this->assertSame('654.3210', DB::table('erp_production_output_records')->where('id', $completed['output_record_id'])->value('material_total_cost'));
+        $this->assertSame('CONSUMED', DB::table('erp_production_input_holdings')->where('id', $bridge->id)->value('status'));
+    }
+
     private function fixture(string $outputMode, string $qualityMode, bool $withNext, bool $claimedNext = false): array
     {
         $unit = Unit::create(['unit_code' => $this->code('U'), 'unit_name' => '件', 'unit_type' => 'quantity', 'decimal_places' => 0, 'is_base' => true, 'status' => 'enabled']);
@@ -276,6 +376,22 @@ class ProductionOutputFlowMatrixTest extends TestCase
             ]);
         }
         return compact('unit', 'item', 'workOrder', 'source', 'output', 'next');
+    }
+
+    private function attachTraceableOutput(ProductionOutputRecord $output, string $cost): void
+    {
+        $lot = DB::table('erp_material_lots')->insertGetId([
+            'lot_no' => $this->code('LOT'), 'item_id' => $output->output_item_id, 'material_form' => 'PRODUCT',
+            'source_type' => 'production_output_record', 'source_id' => $output->id, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $holding = DB::table('erp_material_holdings')->insertGetId([
+            'material_lot_id' => $lot, 'position_type' => 'OUTPUT_WIP', 'position_id' => $output->id,
+            'quantity' => $output->output_base_qty, 'total_cost' => $cost, 'status' => 'ACTIVE', 'business_version' => 1,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $output->update(['material_lot_id' => $lot, 'material_holding_id' => $holding,
+            'material_total_cost' => $cost, 'material_loss_cost' => '0.0000']);
+        $output->refresh();
     }
 
     private function code(string $prefix): string { return $prefix.'-'.Str::upper(Str::random(10)); }

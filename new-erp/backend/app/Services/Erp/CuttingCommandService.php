@@ -15,17 +15,28 @@ final class CuttingCommandService
     public function run(string $type, int $aggregateId, array $payload, object $user, callable $action): array
     {
         $fields = match ($type) {
+            'create_cutting_configuration' => ['item_id','dimensions','drawing_reference','scope_mode','scope_work_order_ids'],
+            'update_cutting_configuration' => ['dimensions','drawing_reference','scope_mode','scope_work_order_ids'],
+            'publish_cutting_configuration','version_cutting_configuration' => [],
+            'generate_cutting_demand' => ['source_requirement_id','producer_work_order_id','producer_stage_id','configuration_id'],
+            'revise_cutting_demand' => ['reason'],
             'publish_cutting_order' => ['plans'], 'save_cutting_results' => ['results'], 'split_cutting_result' => ['routes'],
             'inspect_cutting_result' => ['result','reason'], 'register_material_physical' => ['source_transaction_item_id','dimensions'],
             'reserve_cutting_physical' => ['physical_material_ids'], 'release_cutting_physical' => ['physical_material_id'],
-            'issue_cutting_material' => ['physical_material_id','inventory_balance_id','input_qty'],
+            'issue_cutting_material' => ['physical_material_id','remnant_holding_id','inventory_balance_id','input_qty'],
+            'return_uncut_cutting_material' => ['reason'],
+            'dispose_cutting_remnant' => ['reason'],
             'confirm_cutting_batch' => ['costs','allocations'],
+            'reverse_cutting_confirmation' => ['reason'],
             'return_cutting_for_edit' => ['reason'],
             'start_cutting_task','resume_cutting_task','start_cutting_collaborator_labor' => ['switch_active_labor','expected_active_labor_session_id'],
             'add_cutting_task_collaborators' => ['employee_legacy_ids'],
             'dispatch_cutting_route','accept_cutting_handover' => ['quantity'],
             'reject_cutting_handover' => ['quantity','reason'],
             'warehouse_cutting_route' => ['quantity','warehouse_id','location_id','batch_no'],
+            'create_cutting_inventory_issue' => ['quantity','target_material_requirement_id'],
+            'release_cutting_inventory' => ['quantity','reason'],
+            'cancel_cutting_inventory_issue' => [],
             'claim_cutting_task','pause_cutting_task','finish_cutting_task','leave_cutting_task_collaboration',
             'pause_cutting_collaborator_labor','submit_cutting_results','mark_cutting_first_cut' => [], default => null,
         };
@@ -42,7 +53,10 @@ final class CuttingCommandService
         };
         try {
             return DB::transaction(function () use ($id, $type, $hash, $user, $action, $recover): array {
-                $existing = DB::table('erp_cutting_commands')->where('client_command_id', $id)->lockForUpdate()->first();
+                // Successful rows are immutable. Do not take an absent-key gap lock here: distinct
+                // command IDs must reach their real aggregate row locks, not deadlock on ledger inserts.
+                // The unique command ID arbitrates same-key inserts; duplicate recovery runs after rollback.
+                $existing = DB::table('erp_cutting_commands')->where('client_command_id', $id)->first();
                 if ($existing) return $recover($existing);
                 $commandId = DB::table('erp_cutting_commands')->insertGetId(['client_command_id' => $id, 'command_type' => $type,
                     'actor_legacy_id' => $this->actor($user), 'request_hash' => $hash, 'status' => 'PROCESSING', 'created_at' => now(), 'updated_at' => now()]);

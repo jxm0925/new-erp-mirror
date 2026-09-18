@@ -20,7 +20,7 @@ final class ProductionExecutionInboxService
     public function paginate(string $resource, array $filters, object $user, array $permissions, bool $superAdmin): LengthAwarePaginator
     {
         $this->permission($permissions, 'production.task.view');
-        $query = $this->query($resource, $this->visibleWorkOrderIds($user, $permissions, $superAdmin));
+        $query = $this->query($resource, $this->visibleWorkOrderIds($user, $permissions, $superAdmin), $user, $permissions, $superAdmin);
         $this->applyFilters($query, $filters);
         $page = $query->orderByDesc('records.id')->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 20))));
         $rawRows = collect($page->items());
@@ -60,7 +60,7 @@ final class ProductionExecutionInboxService
     private function visibleRecord(string $resource, int $id, object $user, array $permissions, bool $superAdmin): ?object
     {
         $this->permission($permissions, 'production.task.view');
-        return $this->query($resource, $this->visibleWorkOrderIds($user, $permissions, $superAdmin))
+        return $this->query($resource, $this->visibleWorkOrderIds($user, $permissions, $superAdmin), $user, $permissions, $superAdmin)
             ->where('records.id', $id)->first();
     }
 
@@ -72,7 +72,7 @@ final class ProductionExecutionInboxService
         return $query;
     }
 
-    private function query(string $resource, $visibleWorkOrders): Builder
+    private function query(string $resource, $visibleWorkOrders, object $user, array $permissions, bool $superAdmin): Builder
     {
         $table = match ($resource) {
             'outputs' => 'erp_production_output_records',
@@ -84,7 +84,6 @@ final class ProductionExecutionInboxService
         $query = DB::table("{$table} as records")
             ->join('erp_work_orders as wo', 'wo.id', '=', 'records.work_order_id')
             ->leftJoin('erp_items as output_item', 'output_item.id', '=', 'wo.output_item_id')
-            ->whereIn('records.work_order_id', $visibleWorkOrders)
             ->select('records.*', 'wo.work_order_no', 'wo.status as work_order_status',
                 'output_item.item_code as work_order_item_code', 'output_item.item_name as work_order_item_name');
         if ($resource !== 'outputs') {
@@ -95,6 +94,18 @@ final class ProductionExecutionInboxService
             $query->leftJoin('erp_items as item', 'item.id', '=', 'records.output_item_id')
                 ->addSelect('item.item_code', 'item.item_name');
         }
+        if ($resource === 'internal_issues') {
+            $tasks = \App\Models\Erp\ProductionTask::query();
+            $this->scopeResolver->applyProductionTaskScope($tasks,
+                $this->scopeResolver->resolve($user, 'production.task.view', $permissions, $superAdmin),
+                (int) ($user->legacy_id ?? $user->id ?? 0));
+            // A cutting receipt can serve a different WO owner. The receiver follows the
+            // real target task; unrelated ordinary issue records retain their previous WO gate.
+            $query->where(fn ($q) => $q->whereIn('records.work_order_id', $visibleWorkOrders)
+                ->orWhere(fn ($q) => $q->where('records.source_type', 'cutting_reserved')
+                    ->whereIn('records.target_task_id', $tasks->select('erp_production_tasks.id'))));
+            $query->addSelect('task.assignee_user_legacy_id as current_receiver_legacy_id');
+        } else $query->whereIn('records.work_order_id', $visibleWorkOrders);
         return $query;
     }
 
@@ -108,6 +119,7 @@ final class ProductionExecutionInboxService
     private function present(string $resource, object $row, array $permissions, object $user, bool $detail = false): array
     {
         $data = (array) $row;
+        if ($resource === 'outputs') $data = ProductionMaterialCostService::presentOutput($row, $permissions);
         $data['id'] = (int) $row->id;
         $data['work_order_id'] = (int) $row->work_order_id;
         $data['business_version'] = (int) $row->business_version;
@@ -121,6 +133,10 @@ final class ProductionExecutionInboxService
         if ($resource === 'internal_issues') {
             $data['lines'] = DB::table('erp_production_internal_issue_lines as line')->leftJoin('erp_items as item', 'item.id', '=', 'line.item_id')
                 ->where('line.issue_task_id', $row->id)->select('line.*', 'item.item_code', 'item.item_name')->orderBy('line.id')->get()->map(fn ($v) => (array) $v)->all();
+            if (($row->source_type ?? '') === 'cutting_reserved' && ! in_array('production.cutting.inventory.view', $permissions, true)) {
+                foreach ($data['lines'] as &$line) unset($line['issue_total_cost']);
+                unset($line);
+            }
         }
         if ($resource === 'material_supplements') {
             $data['lines'] = DB::table('erp_production_material_supplement_lines as line')->leftJoin('erp_items as item', 'item.id', '=', 'line.component_item_id')
@@ -148,7 +164,8 @@ final class ProductionExecutionInboxService
             'internal_issues' => [
                 'dispatch' => $status === 'WAIT_ISSUE' && $has('production.output.issue'),
                 'receive' => $status === 'ISSUED' && $has('production.output.receive')
-                    && (int) ($row->expected_receiver_legacy_id ?? 0) === (int) ($user->legacy_id ?? $user->id ?? 0),
+                    && (int) (($row->source_type ?? '') === 'cutting_reserved'
+                        ? ($row->current_receiver_legacy_id ?? 0) : ($row->expected_receiver_legacy_id ?? 0)) === (int) ($user->legacy_id ?? $user->id ?? 0),
             ],
             'material_supplements' => ['decide' => $status === 'SUBMITTED' && $has('production.material_supplement.approve')],
             'material_returns' => [

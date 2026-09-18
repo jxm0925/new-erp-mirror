@@ -137,7 +137,7 @@ final class CuttingReadService
         // Never GROUP BY Item/configuration/stage: one result ID retains one source.
         $q = DB::table('erp_cutting_results as r')->join('erp_cutting_settlement_batches as b','b.id','=','r.settlement_batch_id')
             ->leftJoin('erp_items as i','i.id','=','r.item_id')->leftJoin('erp_material_physicals as p','p.id','=','b.physical_material_id')
-            ->where('b.cutting_order_id',$orderId)->whereNotIn('r.status',['VOIDED','SUPERSEDED'])
+            ->where('b.cutting_order_id',$orderId)->whereNotIn('r.status',['VOIDED','SUPERSEDED','REVERSED'])
             ->select('r.id','r.settlement_batch_id','r.client_row_id','r.result_type','r.allowed_output_id','r.item_id','r.configuration_id','r.stage_id',
                 'r.actual_qty','r.piece_qty','r.cut_length_mm','r.measurements','r.measurement_status','r.quality_status','r.reported_quality',
                 'r.status','r.material_lot_id','r.physical_material_id','r.business_version','r.created_at','r.updated_at',
@@ -206,7 +206,7 @@ final class CuttingReadService
     {
         // Mobile execution projection deliberately excludes costs, holdings and transaction internals.
         return ['b.id','b.batch_no','b.cutting_order_id','b.cutting_task_id','b.input_item_id','b.physical_material_id',
-            'b.input_qty','b.standard_stock_length_mm','b.status','b.business_version','b.first_cut_at','b.submitted_at','b.confirmed_at',
+            'b.input_qty','b.standard_stock_length_mm','b.status','b.business_version','b.correction_of_batch_id','b.first_cut_at','b.submitted_at','b.confirmed_at',
             'p.physical_no','p.material_form','p.shape','p.dimensions','i.item_code','i.item_name','i.spec'];
     }
 
@@ -214,7 +214,7 @@ final class CuttingReadService
     {
         return match ($status) {
             'PROCESSING'=>'草稿','WAIT_ROUTE'=>'待完善去向','WAIT_QUALITY'=>'待质检','WAIT_CONFIRM'=>'待用料确认',
-            'QUALITY_FAILED'=>'质量不合格','CONFIRMED'=>'已核算',default=>$status,
+            'QUALITY_FAILED'=>'质量不合格','CONFIRMED'=>'已核算','REVERSED'=>'已转更正',default=>$status,
         };
     }
 
@@ -239,23 +239,107 @@ final class CuttingReadService
     public function inputCandidates(int $id, array $f, object $user, array $permissions, bool $super = false): array
     {
         $this->commands->order($id,$user,$permissions,$super,'production.cutting.view');
-        $itemIds = app(CuttingMaterialEligibilityService::class)->plans($id)->select('r.component_item_id');
+        $itemIds = app(CuttingMaterialEligibilityService::class)->plans($id)->pluck('r.component_item_id')->map(fn ($itemId) => (int) $itemId)->unique()->values()->all();
         if (($f['input_type'] ?? 'physical') === 'physical') {
             $q = DB::table('erp_material_physicals as p')->join('erp_items as i','i.id','=','p.item_id')
                 ->join('erp_material_holdings as h','h.id','=','p.current_holding_id')->whereIn('p.item_id',$itemIds)->where('p.status','AVAILABLE')->where('h.status','ACTIVE')
-                ->where('h.position_type','WAREHOUSE');
+                ->where(fn (Builder $q) => $q->where('h.position_type','WAREHOUSE')
+                    ->orWhere(fn (Builder $q) => $q->where('h.position_type','REMNANT_WIP')->where('p.material_form','REMNANT')->whereNull('h.inventory_balance_id')));
             if (! empty($f['material_form'])) $q->where('p.material_form',$f['material_form']);
             if (! empty($f['shape'])) $q->where('p.shape',$f['shape']);
             $this->itemFilter($q,$f,'p.physical_no');
             return $this->page($q->select('p.*','i.item_code','i.item_name','i.spec','i.category_id','h.position_type','h.position_id')->orderBy('p.id'),$f);
         }
-        $q = DB::table('erp_inventory_balances as b')->join('erp_items as i','i.id','=','b.item_id')
+        $warehouse = DB::table('erp_inventory_balances as b')->join('erp_items as i','i.id','=','b.item_id')
             ->leftJoin('erp_material_lots as l','l.id','=','b.material_lot_id')->whereNull('l.configuration_id')->whereNull('l.stage_id')->whereIn('b.item_id',$itemIds)
             ->where('b.quantity_available','>',0)->where('i.material_management_mode','quantity')
             ->where(fn (Builder $q) => $q->where('i.cutting_mode','length')->orWhere(fn (Builder $q) => $q->whereNull('i.cutting_mode')->where('i.is_length_cut_material',true)));
-        $this->itemFilter($q,$f,'b.batch_no');
-        return $this->page($q->select('b.id as inventory_balance_id','b.item_id','b.batch_no','b.quantity_available as available_root_qty',
-            'i.item_code','i.item_name','i.spec','i.category_id','i.standard_stock_length_mm')->orderBy('b.id'),$f);
+        $warehouse->selectRaw("'WAREHOUSE' AS source_type, b.id AS inventory_balance_id, NULL AS remnant_holding_id, b.item_id, b.batch_no,
+            b.quantity_available AS available_root_qty, i.item_code, i.item_name, i.spec, i.category_id,
+            i.standard_stock_length_mm, l.material_form, 'WAREHOUSE' AS position_type");
+        $remnants = DB::table('erp_material_holdings as h')->join('erp_material_lots as l', 'l.id', '=', 'h.material_lot_id')
+            ->join('erp_items as i', 'i.id', '=', 'l.item_id')->whereIn('l.item_id', $itemIds)
+            ->where('h.position_type', 'REMNANT_WIP')->where('h.status', 'ACTIVE')->whereNull('h.inventory_balance_id')
+            ->where('l.material_form', 'REMNANT')->whereNotNull('l.cut_length_mm')->where('i.material_management_mode', 'quantity')
+            ->where(fn (Builder $q) => $q->where('i.cutting_mode', 'length')->orWhere(fn (Builder $q) => $q->whereNull('i.cutting_mode')->where('i.is_length_cut_material', true)))
+            ->selectRaw("'REMNANT_WIP' AS source_type, NULL AS inventory_balance_id, h.id AS remnant_holding_id, l.item_id,
+                l.lot_no AS batch_no, h.quantity AS available_root_qty, i.item_code, i.item_name, i.spec, i.category_id,
+                l.cut_length_mm AS standard_stock_length_mm, l.material_form, h.position_type");
+        $q = DB::query()->fromSub($warehouse->unionAll($remnants), 'candidate');
+        if (! empty($f['category_id'])) $q->where('candidate.category_id', (int) $f['category_id']);
+        if (! empty($f['material_form'])) $q->where('candidate.material_form', $f['material_form']);
+        if (! empty($f['keyword'])) {
+            $keyword = '%'.$f['keyword'].'%';
+            $q->where(fn (Builder $q) => $q->where('candidate.item_code', 'like', $keyword)->orWhere('candidate.item_name', 'like', $keyword)
+                ->orWhere('candidate.spec', 'like', $keyword)->orWhere('candidate.batch_no', 'like', $keyword));
+        }
+
+        return $this->page($q->orderBy('candidate.source_type')->orderBy('candidate.item_id')->orderBy('candidate.batch_no'), $f);
+    }
+
+    public function materialPhysicals(array $f, object $user, array $permissions, bool $super = false): array
+    {
+        $this->commands->permission($permissions, 'production.cutting.material_manage');
+        $query = $this->materialPhysicalQuery($user, $permissions, $super);
+        if (! empty($f['status'])) $query->where('p.status', $f['status']);
+        if (! empty($f['material_form'])) $query->where('p.material_form', $f['material_form']);
+        if (! empty($f['shape'])) $query->where('p.shape', $f['shape']);
+        $this->itemFilter($query, $f, 'p.physical_no');
+        $summary = [
+            'full_stock' => (clone $query)->where('p.material_form', 'FULL_STOCK')->count('p.id'),
+            'rectangle_remnant' => (clone $query)->where('p.material_form', 'REMNANT')->where('p.shape', 'RECTANGLE')->count('p.id'),
+            'irregular_remnant' => (clone $query)->where('p.material_form', 'REMNANT')->where('p.shape', 'IRREGULAR')->count('p.id'),
+        ];
+        $page = $this->page($query->select($this->physicalColumns())->orderByDesc('p.id'), $f);
+
+        return $page + ['summary' => $summary];
+    }
+
+    public function materialPhysical(int $id, object $user, array $permissions, bool $super = false): array
+    {
+        $this->commands->permission($permissions, 'production.cutting.material_manage');
+        $base = $this->materialPhysicalQuery($user, $permissions, $super);
+        $physical = (clone $base)->where('p.id', $id)->select($this->physicalColumns())->first();
+        if (! $physical) $this->commands->fail('physical_missing', '材料实物不存在或不在当前数据范围。', 404);
+        $rootId = (int) ($physical->root_physical_id ?: $physical->id);
+        $lineage = (clone $base)->where(fn (Builder $q) => $q->where('p.id', $rootId)->orWhere('p.root_physical_id', $rootId))
+            ->select($this->physicalColumns())->orderBy('p.id')->get()->map(fn ($row) => (array) $row)->all();
+        $sourceResult = DB::table('erp_cutting_results as r')->join('erp_cutting_settlement_batches as b', 'b.id', '=', 'r.settlement_batch_id')
+            ->where('r.physical_material_id', $id)->orderByDesc('r.id')->first(['r.id as result_id', 'r.settlement_batch_id', 'b.batch_no']);
+        $uses = DB::table('erp_cutting_settlement_batches as b')->join('erp_cutting_orders as o', 'o.id', '=', 'b.cutting_order_id')
+            ->where('b.physical_material_id', $id)->orderBy('b.id')->get(['b.id as settlement_batch_id', 'b.batch_no', 'b.status',
+                'b.first_cut_at', 'b.correction_of_batch_id', 'o.id as cutting_order_id', 'o.cutting_order_no'])
+            ->map(fn ($row) => (array) $row)->all();
+
+        return ['physical' => (array) $physical, 'source' => $physical->source_transaction_item_id
+            ? ['type' => 'PURCHASE_RECEIPT_ITEM', 'source_transaction_item_id' => (int) $physical->source_transaction_item_id]
+            : ['type' => 'CUTTING_RESULT', 'result_id' => $sourceResult ? (int) $sourceResult->result_id : null,
+                'settlement_batch_id' => $sourceResult ? (int) $sourceResult->settlement_batch_id : null,
+                'batch_no' => $sourceResult?->batch_no],
+            'lineage' => $lineage, 'uses' => $uses];
+    }
+
+    private function materialPhysicalQuery(object $user, array $permissions, bool $super): Builder
+    {
+        $scope = $this->scopes->resolve($user, 'production.cutting.view', $permissions, $super);
+        $visible = CuttingTask::query()->select('id');
+        $this->scopes->applyCuttingTaskScope($visible, $scope, $this->commands->actor($user));
+        $query = DB::table('erp_material_physicals as p')->join('erp_items as i', 'i.id', '=', 'p.item_id')
+            ->join('erp_material_holdings as h', 'h.id', '=', 'p.current_holding_id');
+        if (($scope['mode'] ?? 'deny') !== 'all') $query->where(fn (Builder $q) => $q->whereExists(fn (Builder $b) => $b->selectRaw('1')->from('erp_cutting_settlement_batches as direct_batch')
+                ->whereColumn('direct_batch.physical_material_id', 'p.id')->whereIn('direct_batch.cutting_task_id', $visible->toBase()))
+                ->orWhereExists(fn (Builder $r) => $r->selectRaw('1')->from('erp_cutting_results as source_result')
+                    ->join('erp_cutting_settlement_batches as source_batch', 'source_batch.id', '=', 'source_result.settlement_batch_id')
+                    ->whereColumn('source_result.physical_material_id', 'p.id')->whereIn('source_batch.cutting_task_id', $visible->toBase())));
+
+        return $query;
+    }
+
+    private function physicalColumns(): array
+    {
+        return ['p.id', 'p.physical_no', 'p.item_id', 'p.source_transaction_item_id', 'p.root_physical_id', 'p.parent_physical_id',
+            'p.material_form', 'p.shape', 'p.dimensions', 'p.status', 'p.business_version', 'p.first_cut_at', 'p.created_at', 'p.updated_at',
+            'i.item_code', 'i.item_name', 'i.spec', 'i.category_id', 'h.position_type', 'h.position_id', 'h.status as holding_status'];
     }
 
     private function itemFilter(Builder $q, array $f, ?string $extra = null): void

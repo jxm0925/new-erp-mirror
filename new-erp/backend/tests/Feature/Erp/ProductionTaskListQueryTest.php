@@ -16,6 +16,7 @@ class ProductionTaskListQueryTest extends TestCase
 
     public function test_filters_and_summary_use_all_targets_before_twenty_row_pagination(): void
     {
+        $this->travelTo(now()->startOfDay()->addHours(12));
         $suffix = Str::upper(Str::random(8));
         $unit = Unit::create(['unit_code' => 'QL-'.$suffix, 'unit_name' => '件', 'unit_type' => 'quantity', 'decimal_places' => 0, 'is_base' => true, 'status' => 'enabled']);
         $item = Item::create(['item_code' => 'QL-'.$suffix, 'item_name' => '查询验证物料', 'item_type' => 'finished_good', 'unit_id' => $unit->id, 'status' => 'enabled']);
@@ -68,10 +69,30 @@ class ProductionTaskListQueryTest extends TestCase
         $this->assertCount(7, $workbench['trend']);
         $this->assertSame(1, $workbench['trend'][5]['completed']);
         $this->assertSame(1, $workbench['trend'][6]['completed']);
+        $this->assertSame(2, array_sum(array_column($workbench['trend'], 'completed')));
         $filtered = $service->paginate($filters + ['execution_filter' => 'running'], $user, $permissions, true);
         $this->assertSame($tasks[2][0]->id, $filtered->items()[0]->id);
         $searched = $service->paginate($filters + ['keyword' => '查询验证物料'], $user, $permissions, true);
         $this->assertSame(24, $searched->total());
         $this->assertSame(0, $service->paginate($filters, (object) ['legacy_id' => 33002], $permissions, true)->total());
+
+        // 该聚合任务两个目标分别昨天/今天完成，只在最后完成日计一次。
+        $tasks[2][1]->update(['completed_at' => now()->subDay()]);
+        $tasks[3][1]->update(['status' => 'COMPLETED', 'completed_at' => now()]);
+        $finished = $service->workbenchSummary($filters, $user, $permissions, true);
+        $this->assertSame(3, $finished['completed']);
+        $this->assertSame(0, $finished['running']);
+        $this->assertSame(1, $finished['trend'][5]['completed']);
+        $this->assertSame(2, $finished['trend'][6]['completed']);
+        $this->assertSame(3, array_sum(array_column($finished['trend'], 'completed')));
+
+        // 缺时间事实时不猜完成日；下一日00:00也不能落入今天的半开区间。
+        $tasks[3][1]->update(['completed_at' => null]);
+        $unknown = $service->workbenchSummary($filters, $user, $permissions, true);
+        $this->assertSame(3, $unknown['completed']);
+        $this->assertSame(2, array_sum(array_column($unknown['trend'], 'completed')));
+        $tasks[3][1]->update(['completed_at' => now()->addDay()->startOfDay()]);
+        $future = $service->workbenchSummary($filters, $user, $permissions, true);
+        $this->assertSame(2, array_sum(array_column($future['trend'], 'completed')));
     }
 }

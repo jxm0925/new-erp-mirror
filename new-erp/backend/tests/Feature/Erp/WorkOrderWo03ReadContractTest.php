@@ -391,7 +391,8 @@ class WorkOrderWo03ReadContractTest extends TestCase
         $this->assertStringNotContainsString('productionShellTitle', $app);
         $this->assertStringNotContainsString('质量管理', $app);
         $this->assertStringNotContainsString('报表中心', $app);
-        $this->assertStringContainsString('#app.production-route.sidebar-collapsed .erp-sidebar { width: 64px; }', $styles);
+        // 验证选择器和宽度语义，允许格式化工具把同一规则排为多行。
+        $this->assertMatchesRegularExpression('/#app\.production-route\.sidebar-collapsed\s+\.erp-sidebar\s*\{\s*width\s*:\s*64px\s*;\s*\}/', $styles);
         $this->assertStringNotContainsString('mockAction', $admin);
         $this->assertStringNotContainsString('批量上传', $salesForm);
         foreach (['开始生产', '现场报工', '领料成功', '完工成功'] as $fakeAction) {

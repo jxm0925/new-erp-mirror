@@ -113,6 +113,8 @@ class ProductionTaskQueryService
             $end = $start->copy()->addDay();
             $assigned = (clone $base)->where('created_at', '>=', $start)->where('created_at', '<', $end)->count();
             $finished = clone $base;
+            // 趋势与已完成计数共用全部目标完成门禁，不能把仍有目标加工中的聚合任务算作完成。
+            $this->applyExecutionFilter($finished, 'completed');
             $this->whereTargetCompletedBetween($finished, $start, $end);
 
             return [
@@ -175,6 +177,16 @@ class ProductionTaskQueryService
                 ->where('completed_at', '>=', $start)->where('completed_at', '<', $end);
             $quantities = ProductionQuantityOperation::query()->select('id')->where('status', 'COMPLETED')
                 ->where('completed_at', '>=', $start)->where('completed_at', '<', $end);
+            $links->where(fn ($target) => $target
+                ->where(fn ($unit) => $unit->where('target_type', 'unit_operation')->whereIn('target_id', $units))
+                ->orWhere(fn ($quantity) => $quantity->where('target_type', 'quantity_operation')->whereIn('target_id', $quantities)));
+        });
+        // 一个任务的目标可能跨日完成；按最后一个目标完成的日期计一次，不能在多个日期重复计任务。
+        $query->whereDoesntHave('targets', function (Builder $links) use ($end): void {
+            $units = ProductionUnitOperation::query()->select('id')->where('status', 'COMPLETED')
+                ->where(fn ($q) => $q->where('completed_at', '>=', $end)->orWhereNull('completed_at'));
+            $quantities = ProductionQuantityOperation::query()->select('id')->where('status', 'COMPLETED')
+                ->where(fn ($q) => $q->where('completed_at', '>=', $end)->orWhereNull('completed_at'));
             $links->where(fn ($target) => $target
                 ->where(fn ($unit) => $unit->where('target_type', 'unit_operation')->whereIn('target_id', $units))
                 ->orWhere(fn ($quantity) => $quantity->where('target_type', 'quantity_operation')->whereIn('target_id', $quantities)));

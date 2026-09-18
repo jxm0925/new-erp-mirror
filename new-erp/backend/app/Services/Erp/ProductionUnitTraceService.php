@@ -62,7 +62,7 @@ final class ProductionUnitTraceService
         $outputIds = DB::table('erp_production_output_records')->where('production_unit_id', $unit->id)->pluck('id');
         return $this->projection($unit) + [
             'operations' => $this->timeline($unit),
-            'outputs' => DB::table('erp_production_output_records')->where('production_unit_id', $unit->id)->orderBy('produced_at')->get()->map(fn ($row) => (array) $row)->all(),
+            'outputs' => DB::table('erp_production_output_records')->where('production_unit_id', $unit->id)->orderBy('produced_at')->get()->map(fn ($row) => ProductionMaterialCostService::presentOutput($row, $permissions))->all(),
             'handovers' => DB::table('erp_production_operation_handovers')->where('work_order_id', $unit->work_order_id)->whereIn('source_target_id', $operationIds)->orderBy('handed_over_at')->get()->map(fn ($row) => (array) $row)->all(),
             'lineage' => DB::table('erp_production_output_lineage_links as lineage')
                 ->join('erp_production_output_records as parent', 'parent.id', '=', 'lineage.parent_output_record_id')

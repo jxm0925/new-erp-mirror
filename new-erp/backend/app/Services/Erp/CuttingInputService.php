@@ -97,9 +97,12 @@ final class CuttingInputService
         $c->order($orderId, $user, $permissions, $super, 'production.cutting.issue');
         return $c->run('issue_cutting_material', $orderId, $p, $user, function () use ($c, $orderId, $p, $user, $permissions, $super): array {
             $order = $c->order($orderId, $user, $permissions, $super, 'production.cutting.issue', true); $c->version($order, $p); $this->activeOrder($order);
-            $physicalId = isset($p['physical_material_id']) ? (int) $p['physical_material_id'] : null; $physical = null;
+            $physicalId = isset($p['physical_material_id']) ? (int) $p['physical_material_id'] : null;
+            $remnantHoldingId = isset($p['remnant_holding_id']) ? (int) $p['remnant_holding_id'] : null;
+            if ($physicalId && $remnantHoldingId) $c->fail('input_source_conflict', '钢板余料实物和定长余料份额不能同时选择。');
+            $physical = null; $source = null; $item = null; $remnantLength = null;
             if ($physicalId) {
-                if (isset($p['input_qty']) || isset($p['inventory_balance_id'])) $c->fail('physical_quantity_forbidden', '钢板按具体实物领用，不能填写数量或替换来源余额。');
+                if (isset($p['input_qty']) || isset($p['inventory_balance_id']) || isset($p['remnant_holding_id'])) $c->fail('physical_quantity_forbidden', '钢板按具体实物领用，不能填写数量或替换来源余额。');
                 $physical = DB::table('erp_material_physicals')->where('id', $physicalId)->lockForUpdate()->first();
                 $reservation = DB::table('erp_material_physical_reservations')->where('physical_material_id', $physicalId)->where('cutting_order_id', $orderId)->where('status', 'ACTIVE')->lockForUpdate()->first();
                 if (! $physical || $physical->status !== 'RESERVED' || ! $reservation) $c->fail('physical_not_reserved', '该实物未由当前下料单有效占用。', 409);
@@ -107,42 +110,60 @@ final class CuttingInputService
                 if (! $source || $source->status !== 'ACTIVE') $c->fail('source_holding_invalid', '实物来源持有份额无效。', 409);
                 $qty = '1.00000000'; $cost = (string) $physical->total_cost;
                 $balanceId = $source->inventory_balance_id;
+            } elseif ($remnantHoldingId) {
+                if (isset($p['input_qty']) || isset($p['inventory_balance_id'])) $c->fail('remnant_quantity_forbidden', '定长余料按当前余料份额领用，不能填写数量或替换仓库来源。');
+                $source = DB::table('erp_material_holdings')->where('id', $remnantHoldingId)->lockForUpdate()->first();
+                $lot = $source ? DB::table('erp_material_lots')->where('id', $source->material_lot_id)->lockForUpdate()->first() : null;
+                $item = $lot ? Item::find($lot->item_id) : null;
+                if (! $source || ! $lot || ! $item || $source->position_type !== 'REMNANT_WIP' || $source->status !== 'ACTIVE'
+                    || $source->inventory_balance_id !== null || $lot->material_form !== 'REMNANT' || $item->cuttingMode() !== 'length'
+                    || bccomp((string) $source->quantity, '1', 8) !== 0 || bccomp((string) $source->total_cost, '0', 4) < 0
+                    || ! $lot->cut_length_mm) $c->fail('remnant_holding_invalid', '定长余料份额不存在、已被使用或缺少实际余料长度。', 409);
+                $qty = '1.00000000'; $cost = (string) $source->total_cost; $balanceId = null;
+                $remnantLength = (string) $lot->cut_length_mm;
             } else {
                 $balanceId = (int) ($p['inventory_balance_id'] ?? 0); $qty = CuttingDecimal::value($p['input_qty'] ?? null);
             }
+            $remnant = ($physical && $physical->material_form === 'REMNANT') || $remnantHoldingId;
             $balance = $balanceId ? InventoryBalance::query()->whereKey($balanceId)->lockForUpdate()->first() : null;
-            if (! $balance) $c->fail('input_source_invalid', '第一版领料必须引用真实仓库来源余额。');
-            $item = Item::find($balance->item_id); $this->inputAllowed($orderId, $item->id);
+            if (! $balance && ! $remnant) $c->fail('input_source_invalid', '整板和定长原料领用必须引用真实仓库来源余额。');
+            $item ??= Item::find($physical?->item_id ?? $balance?->item_id); $this->inputAllowed($orderId, $item->id);
+            if ($physical && $remnant && ($source->position_type !== 'REMNANT_WIP' || $source->inventory_balance_id !== null
+                || bccomp((string) $source->quantity, '1', 8) !== 0 || bccomp((string) $source->total_cost, $cost, 4) !== 0)) {
+                $c->fail('remnant_holding_invalid', '余料实物与当前余料持有份额不一致，不能再次领用。', 409);
+            }
             if ($physical === null && $item->materialManagementMode() === 'physical') $c->fail('physical_required', '实物管理钢板必须选择具体钢板，不接受数量领料。');
             if ($physical === null && $item->cuttingMode() !== 'length') $c->fail('length_material_required', '数量下料须使用已配置标准长度的原料。');
-            if ($physical === null && (bccomp($qty, bcadd($qty, '0', 0), 8) !== 0 || ! $item->standard_stock_length_mm)) $c->fail('root_quantity_invalid', '方管必须明确实际根数及标准原料长度，不能按产出段数倒推。');
-            if (bccomp((string) $balance->quantity_available, $qty, 8) < 0) $c->fail('input_stock_insufficient', '来源批次可用数量不足。', 409);
-            $lotId = $this->warehouseLot($balance, $physical ? $physical->material_form : 'STANDARD_LENGTH');
-            $sourceId = DB::table('erp_material_holdings')->where('inventory_balance_id', $balance->id)->value('id');
+            if ($physical === null && ! $remnant && (bccomp($qty, bcadd($qty, '0', 0), 8) !== 0 || ! $item->standard_stock_length_mm)) $c->fail('root_quantity_invalid', '方管必须明确实际根数及标准原料长度，不能按产出段数倒推。');
+            if ($balance && bccomp((string) $balance->quantity_available, $qty, 8) < 0) $c->fail('input_stock_insufficient', '来源批次可用数量不足。', 409);
+            $lotId = $remnant ? (int) $source->material_lot_id : $this->warehouseLot($balance, $physical ? $physical->material_form : 'STANDARD_LENGTH');
+            $sourceId = $remnant ? (int) $source->id : DB::table('erp_material_holdings')->where('inventory_balance_id', $balance->id)->value('id');
             $lot = DB::table('erp_material_lots')->where('id', $lotId)->first();
             if ($lot->configuration_id || $lot->stage_id) $c->fail('processed_input_requires_adapter', '已配置或已加工批次不能冒充普通原材料领料。');
-            if (! $physical) $cost = CuttingDecimal::share((string) $balance->inventory_value, (string) $balance->quantity_on_hand, $qty);
-            if (bccomp((string) $balance->inventory_value, $cost, 4) < 0) $c->fail('input_cost_insufficient', '实物总金额超过来源库存剩余金额。', 409);
+            if (! $physical && ! $remnant) $cost = CuttingDecimal::share((string) $balance->inventory_value, (string) $balance->quantity_on_hand, $qty);
+            if ($balance && bccomp((string) $balance->inventory_value, $cost, 4) < 0) $c->fail('input_cost_insufficient', '实物总金额超过来源库存剩余金额。', 409);
             $taskId = DB::table('erp_cutting_tasks')->where('cutting_order_id', $orderId)->value('id');
             $id = DB::table('erp_cutting_settlement_batches')->insertGetId(['batch_no' => $this->numbers->next('cutting_settlement', 'CB'),
                 'cutting_order_id' => $orderId, 'cutting_task_id' => $taskId, 'input_item_id' => $item->id,
                 'physical_material_id' => $physicalId, 'source_holding_id' => $sourceId, 'input_qty' => $qty,
-                'original_total_cost' => $cost, 'standard_stock_length_mm' => $physical ? null : $item->standard_stock_length_mm,
+                'original_total_cost' => $cost, 'standard_stock_length_mm' => $physical ? null : ($remnantLength ?? $item->standard_stock_length_mm),
                 'status' => 'PROCESSING', 'business_version' => 1, 'created_at' => now(), 'updated_at' => now()]);
             $batch = DB::table('erp_cutting_settlement_batches')->where('id', $id)->first();
-            $tx = $this->inventory->postCuttingIssue($batch, $balance, $user);
+            $tx = $remnant ? null : $this->inventory->postCuttingIssue($batch, $balance, $user);
             $wipId = DB::table('erp_material_holdings')->insertGetId(['material_lot_id' => $lotId, 'position_type' => 'CUTTING_WIP',
                 'position_id' => $id, 'quantity' => $qty, 'total_cost' => $cost, 'status' => 'ACTIVE', 'business_version' => 1, 'created_at' => now(), 'updated_at' => now()]);
-            DB::table('erp_cutting_settlement_batches')->where('id', $id)->update(['issue_transaction_id' => $tx->id, 'wip_holding_id' => $wipId]);
+            DB::table('erp_cutting_settlement_batches')->where('id', $id)->update(['issue_transaction_id' => $tx?->id, 'wip_holding_id' => $wipId]);
             DB::table('erp_material_movements')->insert(['movement_no' => $this->numbers->next('material_movement', 'MM'),
-                'source_holding_id' => $sourceId, 'target_holding_id' => $wipId, 'action' => 'ISSUE', 'quantity' => $qty, 'total_cost' => $cost,
-                'inventory_transaction_id' => $tx->id, 'operator_legacy_id' => $c->actor($user), 'created_at' => now(), 'updated_at' => now()]);
+                'source_holding_id' => $sourceId, 'target_holding_id' => $wipId, 'action' => $remnant ? 'RECUT_ISSUE' : 'ISSUE', 'quantity' => $qty, 'total_cost' => $cost,
+                'inventory_transaction_id' => $tx?->id, 'operator_legacy_id' => $c->actor($user), 'created_at' => now(), 'updated_at' => now()]);
+            if ($remnant) DB::table('erp_material_holdings')->where('id', $sourceId)->update(['quantity' => '0', 'total_cost' => '0',
+                'status' => 'CONSUMED', 'business_version' => $source->business_version + 1, 'updated_at' => now()]);
             if ($physical) DB::table('erp_material_physicals')->where('id', $physicalId)->update(['status' => 'ISSUED', 'current_holding_id' => $wipId,
                 'business_version' => $physical->business_version + 1, 'updated_at' => now()]);
             DB::table('erp_cutting_orders')->where('id', $orderId)->update(['business_version' => $order->business_version + 1, 'updated_at' => now()]);
             $response = ['settlement_batch_id' => $id, 'status' => 'PROCESSING', 'business_version' => 1, 'order_business_version' => $order->business_version + 1,
-                'physical_material_id' => $physicalId, 'input_qty' => $qty, 'original_total_cost' => $cost];
-            $c->event('batch', $id, 'issue', $user, null, $response + ['inventory_transaction_id' => $tx->id]); return $response;
+                'physical_material_id' => $physicalId, 'remnant_holding_id' => $remnantHoldingId, 'input_qty' => $qty, 'original_total_cost' => $cost];
+            $c->event('batch', $id, 'issue', $user, null, $response + ['inventory_transaction_id' => $tx?->id]); return $response;
         });
     }
 
@@ -158,6 +179,94 @@ final class CuttingInputService
                 'business_version' => DB::raw('business_version + 1'), 'updated_at' => now()]);
             $response = ['settlement_batch_id' => $batchId, 'business_version' => $batch->business_version + 1];
             $c->event('batch', $batchId, 'first_cut', $user, $batch, $response); return $response;
+        });
+    }
+
+    public function returnOriginal(int $batchId, array $p, object $user, array $permissions, bool $super = false): array
+    {
+        $c = $this->commands; $c->permission($permissions, 'production.cutting.issue');
+        $c->assertBatchVisible($batchId, $user, $permissions, $super, 'production.cutting.issue');
+        return $c->run('return_uncut_cutting_material', $batchId, $p, $user, function () use ($c, $batchId, $p, $user, $permissions, $super): array {
+            $batch = $c->batch($batchId, $user, $permissions, $super, 'production.cutting.issue'); $c->version($batch, $p);
+            if ($batch->status !== 'PROCESSING' || ! $batch->physical_material_id) $c->fail('original_return_invalid', '只有尚在加工中且绑定具体实物的用料批次可以退回原材料。', 409);
+            if ($batch->first_cut_at) $c->fail('original_return_after_cut', '材料已经发生真实切割，不能恢复成原完整材料。', 409);
+            if (DB::table('erp_cutting_results')->where('settlement_batch_id', $batchId)->exists())
+                $c->fail('original_return_has_results', '已经登记加工结果，不能退回完整原材料。', 409);
+            $physical = DB::table('erp_material_physicals')->where('id', $batch->physical_material_id)->lockForUpdate()->first();
+            if (! $physical || $physical->status !== 'ISSUED' || (int) $physical->current_holding_id !== (int) $batch->wip_holding_id)
+                $c->fail('original_return_physical_invalid', '原材料实物已发生其他流转，不能退回。', 409);
+            if (DB::table('erp_material_physicals')->where('parent_physical_id', $physical->id)->exists())
+                $c->fail('original_return_has_children', '原材料已经形成子余料，不能恢复成完整原材料。', 409);
+            $wip = DB::table('erp_material_holdings')->where('id', $batch->wip_holding_id)->lockForUpdate()->first();
+            $source = DB::table('erp_material_holdings')->where('id', $batch->source_holding_id)->lockForUpdate()->first();
+            if (! $wip || $wip->status !== 'ACTIVE' || bccomp((string) $wip->quantity, (string) $batch->input_qty, 8) !== 0
+                || bccomp((string) $wip->total_cost, (string) $batch->original_total_cost, 4) !== 0 || ! $source || $source->position_type !== 'WAREHOUSE'
+                || ! $source->inventory_balance_id) $c->fail('original_return_holding_invalid', '原材料在制或来源仓库份额已发生变化，不能退回。', 409);
+            $balance = InventoryBalance::query()->whereKey($source->inventory_balance_id)->lockForUpdate()->first();
+            if (! $balance || (int) $balance->item_id !== (int) $batch->input_item_id) $c->fail('original_return_balance_invalid', '原仓库余额不存在或物料不一致。', 409);
+            $tx = $this->inventory->postCuttingOriginalReturn($batch, $balance, $user);
+            DB::table('erp_material_holdings')->where('id', $wip->id)->update(['quantity' => '0', 'total_cost' => '0', 'status' => 'RETURNED',
+                'business_version' => $wip->business_version + 1, 'updated_at' => now()]);
+            DB::table('erp_material_physicals')->where('id', $physical->id)->update(['status' => 'AVAILABLE', 'current_holding_id' => $source->id,
+                'business_version' => $physical->business_version + 1, 'updated_at' => now()]);
+            DB::table('erp_material_physical_reservations')->where('physical_material_id', $physical->id)->where('cutting_order_id', $batch->cutting_order_id)
+                ->where('status', 'ACTIVE')->update(['status' => 'RETURNED', 'updated_at' => now()]);
+            DB::table('erp_material_movements')->insert(['movement_no' => $this->numbers->next('material_movement', 'MM'),
+                'source_holding_id' => $wip->id, 'target_holding_id' => $source->id, 'action' => 'RETURN_ORIGINAL',
+                'quantity' => (string) $batch->input_qty, 'total_cost' => (string) $batch->original_total_cost,
+                'inventory_transaction_id' => $tx->id, 'operator_legacy_id' => $c->actor($user), 'created_at' => now(), 'updated_at' => now()]);
+            DB::table('erp_cutting_settlement_batches')->where('id', $batchId)->update(['status' => 'RETURNED',
+                'business_version' => $batch->business_version + 1, 'updated_at' => now()]);
+            $response = ['settlement_batch_id' => $batchId, 'physical_material_id' => (int) $physical->id, 'status' => 'RETURNED',
+                'business_version' => $batch->business_version + 1, 'inventory_transaction_id' => (int) $tx->id];
+            $c->event('batch', $batchId, 'return_original', $user, $batch, $response + ['reason' => $p['reason']]); return $response;
+        });
+    }
+
+    public function disposeRemnant(int $physicalId, array $p, object $user, array $permissions, bool $super = false): array
+    {
+        $c = $this->commands; $c->permission($permissions, 'production.cutting.material_manage');
+        $sourceBatchId = DB::table('erp_cutting_results')->where('physical_material_id', $physicalId)->value('settlement_batch_id');
+        if (! $sourceBatchId) $c->fail('remnant_source_missing', '余料没有可追溯的下料结果来源。', 404);
+        $c->assertBatchVisible((int) $sourceBatchId, $user, $permissions, $super, 'production.cutting.material_manage');
+
+        return $c->run('dispose_cutting_remnant', $physicalId, $p, $user, function () use ($physicalId, $p, $user, $c): array {
+            $reason = trim((string) ($p['reason'] ?? ''));
+            if ($reason === '' || mb_strlen($reason) > 1000) $c->fail('reason_required', '请填写余料处置原因。');
+            $physical = DB::table('erp_material_physicals')->where('id', $physicalId)->lockForUpdate()->first();
+            if (! $physical) $c->fail('physical_missing', '材料实物不存在。', 404);
+            $c->version($physical, $p);
+            if ($physical->material_form !== 'REMNANT' || $physical->status !== 'AVAILABLE')
+                $c->fail('remnant_disposal_invalid', '只有尚未占用或再次下料的可用余料可以处置。', 409);
+            if (DB::table('erp_material_physical_reservations')->where('physical_material_id', $physicalId)->where('status', 'ACTIVE')->exists()
+                || DB::table('erp_cutting_settlement_batches')->where('physical_material_id', $physicalId)->exists()
+                || DB::table('erp_material_physicals')->where('parent_physical_id', $physicalId)->exists()) {
+                $c->fail('remnant_disposal_dependency', '余料已经被占用、再次下料或形成子料，不能直接处置。', 409);
+            }
+            $source = DB::table('erp_material_holdings')->where('id', $physical->current_holding_id)->lockForUpdate()->first();
+            if (! $source || $source->position_type !== 'REMNANT_WIP' || $source->status !== 'ACTIVE'
+                || bccomp((string) $source->quantity, '1', 8) !== 0 || bccomp((string) $source->total_cost, (string) $physical->total_cost, 4) !== 0) {
+                $c->fail('remnant_holding_invalid', '余料实物与当前余料持有份额不一致，不能处置。', 409);
+            }
+            $disposalId = DB::table('erp_material_physical_disposals')->insertGetId(['disposal_no' => $this->numbers->next('material_disposal', 'MD'),
+                'physical_material_id' => $physicalId, 'source_holding_id' => $source->id, 'quantity' => '1',
+                'total_cost' => $physical->total_cost, 'reason' => $reason, 'status' => 'POSTED',
+                'disposed_by_legacy_id' => $c->actor($user), 'disposed_at' => now(), 'created_at' => now(), 'updated_at' => now()]);
+            $targetId = DB::table('erp_material_holdings')->insertGetId(['material_lot_id' => $source->material_lot_id,
+                'position_type' => 'DISPOSAL', 'position_id' => $disposalId, 'quantity' => '1', 'total_cost' => $physical->total_cost,
+                'status' => 'DISPOSED', 'business_version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+            DB::table('erp_material_physical_disposals')->where('id', $disposalId)->update(['disposal_holding_id' => $targetId]);
+            DB::table('erp_material_holdings')->where('id', $source->id)->update(['quantity' => '0', 'total_cost' => '0',
+                'status' => 'DISPOSED', 'business_version' => $source->business_version + 1, 'updated_at' => now()]);
+            DB::table('erp_material_movements')->insert(['movement_no' => $this->numbers->next('material_movement', 'MM'),
+                'source_holding_id' => $source->id, 'target_holding_id' => $targetId, 'action' => 'DISPOSE',
+                'quantity' => '1', 'total_cost' => $physical->total_cost, 'operator_legacy_id' => $c->actor($user),
+                'created_at' => now(), 'updated_at' => now()]);
+            DB::table('erp_material_physicals')->where('id', $physicalId)->update(['status' => 'DISPOSED',
+                'current_holding_id' => $targetId, 'business_version' => $physical->business_version + 1, 'updated_at' => now()]);
+            $response = ['disposal_id' => $disposalId, 'physical_material_id' => $physicalId, 'status' => 'DISPOSED',
+                'business_version' => $physical->business_version + 1, 'total_cost' => (string) $physical->total_cost];
+            $c->event('physical', $physicalId, 'dispose', $user, $physical, $response + ['reason' => $reason]); return $response;
         });
     }
 

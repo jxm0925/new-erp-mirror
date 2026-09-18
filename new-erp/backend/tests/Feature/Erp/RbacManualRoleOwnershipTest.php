@@ -39,9 +39,28 @@ class RbacManualRoleOwnershipTest extends TestCase
         $ownership->addManualRole($ids[1], $roleId);
         $ownership->addManualRole($ids[2], $roleId);
 
+        // 本用例自行建立有效操作者及最小权限，不依赖测试库恰好存在legacy_id=1的管理员。
+        $managerId = 996100;
+        DB::table('erp_legacy_admin_users')->insert([
+            'legacy_id' => $managerId, 'username' => 'manual-manager-'.Str::lower(Str::random(8)),
+            'nickname' => '角色来源管理测试', 'status' => 'normal', 'auth_group_names' => '[]',
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $managerRole = DB::table('erp_rbac_roles')->insertGetId([
+            'code' => 'manual_manager_'.Str::lower(Str::random(8)), 'name' => '角色来源管理测试',
+            'data_scope' => 'all', 'enabled' => true, 'is_system' => false,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $managerPermissions = DB::table('erp_rbac_permissions')
+            ->whereIn('code', ['system.role.view', 'system.role.save_permissions'])->pluck('id');
+        $this->assertCount(2, $managerPermissions);
+        foreach ($managerPermissions as $permissionId) {
+            DB::table('erp_rbac_role_permissions')->insert(['role_id' => $managerRole, 'permission_id' => $permissionId]);
+        }
+        $ownership->addManualRole($managerId, $managerRole);
         $token = 'rbac-manual-'.Str::random(28);
         DB::table('erp_auth_tokens')->insert([
-            'user_legacy_id' => 1,
+            'user_legacy_id' => $managerId,
             'token_hash' => hash('sha256', $token),
             'expires_at' => now()->addHour(),
             'created_at' => now(),
@@ -73,5 +92,10 @@ class RbacManualRoleOwnershipTest extends TestCase
         ]);
         $this->assertDatabaseHas('erp_rbac_user_roles', ['user_legacy_id' => $ids[1], 'role_id' => $roleId]);
         $this->assertDatabaseMissing('erp_rbac_user_roles', ['user_legacy_id' => $ids[2], 'role_id' => $roleId]);
+
+        // 修夹具不放松认证：同一操作者停用后原token仍必须即时失效。
+        DB::table('erp_legacy_admin_users')->where('legacy_id', $managerId)->update(['status' => 'disabled']);
+        $this->withToken($token)->getJson('/api/v1/erp/rbac/role-users?role_id='.$roleId)->assertUnauthorized();
+        $this->assertDatabaseMissing('erp_auth_tokens', ['token_hash' => hash('sha256', $token)]);
     }
 }

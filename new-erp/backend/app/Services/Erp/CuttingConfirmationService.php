@@ -70,6 +70,8 @@ final class CuttingConfirmationService
             }
             DB::table('erp_cutting_settlement_batches')->where('id',$batchId)->update(['status'=>'CONFIRMED','confirmed_at'=>now(),'confirmed_by_legacy_id'=>$c->actor($user),
                 'first_cut_at'=>DB::raw('COALESCE(first_cut_at,CURRENT_TIMESTAMP)'),'business_version'=>$batch->business_version+1,'updated_at'=>now()]);
+            if ($batch->correction_of_batch_id) DB::table('erp_cutting_corrections')->where('correction_settlement_batch_id', $batchId)
+                ->where('status', 'OPEN')->update(['status' => 'CONFIRMED', 'completed_at' => now(), 'updated_at' => now()]);
             $response = ['settlement_batch_id'=>$batchId,'status'=>'CONFIRMED','business_version'=>$batch->business_version+1,'confirmed_total_cost'=>$sum];
             $c->event('batch',$batchId,'confirm',$user,$batch,$response); return $response;
         });

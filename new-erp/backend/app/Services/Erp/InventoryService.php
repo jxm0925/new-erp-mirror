@@ -662,7 +662,7 @@ class InventoryService
                 'remark' => '销售发货库存出库；操作人：'.$operator,
             ]);
 
-            $totalCost = 0.0;
+            $totalCost = '0.0000';
             $allSerialIds = [];
             foreach ($shipment->lines as $shipmentLine) {
                 $reservation = $shipmentLine->reservation()->lockForUpdate()->firstOrFail();
@@ -770,11 +770,12 @@ class InventoryService
                 ]);
                 $shipmentLine->update([
                     'unit_cost_snapshot' => $unitCost,
-                    'cost_amount_snapshot' => abs($costAmount),
+                    'cost_amount_snapshot' => $balance->material_lot_id ? bcsub('0', (string) $costAmount, 4) : abs($costAmount),
                 ]);
-                $totalCost += abs($costAmount);
+                $totalCost = bcadd($totalCost, $balance->material_lot_id ? bcsub('0', (string) $costAmount, 4)
+                    : number_format(abs($costAmount), 4, '.', ''), 4);
             }
-            $shipment->update(['actual_cost_amount' => round($totalCost, 4)]);
+            $shipment->update(['actual_cost_amount' => $totalCost]);
             InventoryPostingLog::create([
                 'source_type' => 'sales_shipment',
                 'source_id' => $shipment->id,
@@ -913,6 +914,7 @@ class InventoryService
             $warehouseId = (int) ($posting['warehouse_id'] ?? 0); $locationId = (int) ($posting['location_id'] ?? 0);
             $batchNo = trim((string) ($posting['batch_no'] ?? ''));
             if ($warehouseId < 1 || $locationId < 1 || $batchNo === '') throw ValidationException::withMessages(['posting' => '生产入库必须指定仓库、库位和批次号。']);
+            $materialAmount = app(ProductionMaterialCostService::class)->receiptAmount($output, (string) $output->output_base_qty);
             $transaction = InventoryTransaction::create(['transaction_no' => $this->nextNo('ITX'),
                 'transaction_type' => 'production_output_receipt', 'source_type' => 'production_output_record',
                 'source_id' => $output->id, 'source_no' => $output->output_no, 'posting_status' => 'posted',
@@ -920,14 +922,17 @@ class InventoryService
                 'posted_by' => (int) ($operator->legacy_id ?? $operator->id ?? 0), 'posted_at' => now(), 'remark' => '生产工序产出正式入库']);
             $this->applyInventoryChange($transaction, ['item_id' => $output->output_item_id, 'warehouse_id' => $warehouseId,
                 'location_id' => $locationId, 'batch_no' => $batchNo, 'unit_id' => Item::findOrFail($output->output_item_id)->unit_id,
-                'change_qty' => (float) $output->output_base_qty, 'unit_cost' => (float) ($posting['unit_cost'] ?? 0),
-                'cost_source_type' => 'production_output_fact', 'source_type' => 'production_output_record',
+                'change_qty' => (string) $output->output_base_qty,
+                ...($materialAmount ?? ['unit_cost' => (float) ($posting['unit_cost'] ?? 0)]),
+                'cost_source_type' => $materialAmount['cost_source_type'] ?? 'production_output_fact', 'source_type' => 'production_output_record',
                 'source_id' => $output->id, 'remark' => '生产产出入库 '.$output->output_no]);
             InventoryPostingLog::create(['source_type' => 'production_output_record', 'source_id' => $output->id,
                 'source_no' => $output->output_no, 'transaction_type' => 'production_output_receipt',
                 'transaction_id' => $transaction->id, 'posting_status' => 'posted', 'message' => '生产产出库存入库过账成功',
                 'posted_by' => (int) ($operator->legacy_id ?? $operator->id ?? 0), 'posted_at' => now()]);
-            return $transaction->fresh(['items']);
+            $transaction = $transaction->fresh(['items']);
+            app(ProductionMaterialCostService::class)->recordReceipt($output, $transaction, (int) ($operator->legacy_id ?? $operator->id ?? 0));
+            return $transaction;
         }, 5);
     }
 
@@ -948,6 +953,7 @@ class InventoryService
             if ($warehouseId < 1 || $locationId < 1 || $batchNo === '' || $quantity <= 0) {
                 throw ValidationException::withMessages(['posting' => '成品入库必须指定正数数量、仓库、库位和批次号。']);
             }
+            $materialAmount = app(ProductionMaterialCostService::class)->receiptAmount($output, (string) $receipt->posted_base_qty);
             $transaction = InventoryTransaction::create(['transaction_no' => $this->nextNo('ITX'),
                 'transaction_type' => 'finished_goods_receipt', 'source_type' => 'work_order_finished_goods_receipt',
                 'source_id' => $receipt->id, 'source_no' => $receipt->receipt_no, 'posting_status' => 'posted',
@@ -956,14 +962,17 @@ class InventoryService
                 'remark' => '工单成品入库']);
             $this->applyInventoryChange($transaction, ['item_id' => $output->output_item_id, 'warehouse_id' => $warehouseId,
                 'location_id' => $locationId, 'batch_no' => $batchNo, 'unit_id' => Item::findOrFail($output->output_item_id)->unit_id,
-                'change_qty' => $quantity, 'unit_cost' => (float) ($posting['unit_cost'] ?? 0),
-                'cost_source_type' => 'finished_goods_receipt', 'source_type' => 'work_order_finished_goods_receipt',
+                'change_qty' => (string) $receipt->posted_base_qty,
+                ...($materialAmount ?? ['unit_cost' => (float) ($posting['unit_cost'] ?? 0)]),
+                'cost_source_type' => $materialAmount['cost_source_type'] ?? 'finished_goods_receipt', 'source_type' => 'work_order_finished_goods_receipt',
                 'source_id' => $receipt->id, 'remark' => '成品入库 '.$receipt->receipt_no]);
             InventoryPostingLog::create(['source_type' => 'work_order_finished_goods_receipt', 'source_id' => $receipt->id,
                 'source_no' => $receipt->receipt_no, 'transaction_type' => 'finished_goods_receipt',
                 'transaction_id' => $transaction->id, 'posting_status' => 'posted', 'message' => '工单成品库存入库过账成功',
                 'posted_by' => (int) ($operator->legacy_id ?? $operator->id ?? 0), 'posted_at' => now()]);
-            return $transaction->fresh(['items']);
+            $transaction = $transaction->fresh(['items']);
+            app(ProductionMaterialCostService::class)->recordReceipt($output, $transaction, (int) ($operator->legacy_id ?? $operator->id ?? 0));
+            return $transaction;
         }, 5);
     }
 
@@ -1058,8 +1067,11 @@ class InventoryService
                 $this->applyInventoryChange($transaction, ['item_id' => $line->item_id, 'warehouse_id' => $line->warehouse_id,
                     'location_id' => $line->location_id, 'batch_no' => $line->batch_no, 'unit_id' => $balance->unit_id,
                     'change_qty' => -(float) $line->issue_base_qty, 'unit_cost' => $balance->average_unit_cost,
-                    'cost_amount' => -(float) $line->issue_base_qty * (float) $balance->average_unit_cost,
-                    'cost_source_type' => 'production_internal_issue_fact', 'source_type' => 'production_internal_issue',
+                    'cost_amount' => ! empty($line->cutting_inventory_reservation_id)
+                        ? bcsub('0', (string) $line->issue_total_cost, 4)
+                        : -(float) $line->issue_base_qty * (float) $balance->average_unit_cost,
+                    'cost_source_type' => ! empty($line->cutting_inventory_reservation_id) ? 'cutting_reserved_total' : 'production_internal_issue_fact',
+                    'source_type' => 'production_internal_issue',
                     'source_id' => $issue->id, 'source_item_id' => $line->id, 'remark' => '生产内部领用 '.$issue->issue_no]);
             }
             return $transaction->fresh(['items']);
@@ -1080,6 +1092,27 @@ class InventoryService
             'unit_cost' => bcdiv((string) $batch->original_total_cost, (string) $batch->input_qty, 8),
             'material_lot_id' => $balance->material_lot_id, 'cutting_physical_id' => $batch->physical_material_id,
             'source_type' => 'cutting_settlement', 'source_id' => $batch->id, 'source_item_id' => $batch->id, 'cost_source_type' => 'cutting_input_total']);
+        return $transaction;
+    }
+
+    /** Restore one uncut input to its exact source balance; never used after first_cut_at. */
+    public function postCuttingOriginalReturn(object $batch, InventoryBalance $balance, object $operator): InventoryTransaction
+    {
+        if (DB::transactionLevel() < 1) throw new \LogicException('Cutting posting requires an application transaction.');
+        $existing = InventoryTransaction::query()->where('transaction_type', 'cutting_material_return')
+            ->where('source_type', 'cutting_settlement')->where('source_id', $batch->id)->first();
+        if ($existing) return $existing;
+        $transaction = InventoryTransaction::create(['transaction_no' => $this->nextNo('ITX'), 'transaction_type' => 'cutting_material_return',
+            'source_type' => 'cutting_settlement', 'source_id' => $batch->id, 'source_no' => $batch->batch_no,
+            'posting_status' => 'posted', 'warehouse_id' => $balance->warehouse_id, 'location_id' => $balance->location_id,
+            'transaction_date' => now()->toDateString(), 'posted_by' => (int) ($operator->legacy_id ?? $operator->id), 'posted_at' => now()]);
+        $this->applyInventoryChange($transaction, ['item_id' => $batch->input_item_id, 'warehouse_id' => $balance->warehouse_id,
+            'location_id' => $balance->location_id, 'batch_no' => $balance->batch_no, 'unit_id' => $balance->unit_id,
+            'change_qty' => (string) $batch->input_qty, 'cost_amount' => (string) $batch->original_total_cost,
+            'unit_cost' => bcdiv((string) $batch->original_total_cost, (string) $batch->input_qty, 8),
+            'material_lot_id' => $balance->material_lot_id, 'cutting_physical_id' => $batch->physical_material_id,
+            'source_type' => 'cutting_settlement', 'source_id' => $batch->id, 'source_item_id' => $batch->id,
+            'cost_source_type' => 'cutting_input_return_total']);
         return $transaction;
     }
 
@@ -1136,7 +1169,20 @@ class InventoryService
                 throw ValidationException::withMessages(['material_lot_id' => '同一库存批次不能混入不同配置、阶段或来源的材料批次。']);
             if (! array_key_exists('cost_amount', $line)) throw ValidationException::withMessages(['cost_amount' => '可追溯材料批次必须传入权威总金额。']);
             $costAmount = (string) $line['cost_amount'];
-            if ((float) $line['change_qty'] < 0 && $transaction->source_type !== 'cutting_settlement') {
+            $cuttingReservedTotal = ($line['cost_source_type'] ?? null) === 'cutting_reserved_total';
+            if ($cuttingReservedTotal) {
+                // The receipt allocation owns a total amount, not an averaged batch unit price.
+                // Only a persisted formal cutting issue line may select this exact-total path.
+                $issueLine = DB::table('erp_production_internal_issue_lines')->where('id', $line['source_item_id'] ?? 0)
+                    ->where('issue_task_id', $transaction->source_id)->where('inventory_balance_id', $balance->id)
+                    ->whereNotNull('cutting_inventory_reservation_id')->first();
+                if ($transaction->source_type !== 'production_internal_issue' || ! $issueLine || $issueLine->issue_total_cost === null
+                    || bccomp($costAmount, bcsub('0', (string) $issueLine->issue_total_cost, 4), 4) !== 0
+                    || bccomp((string) $line['change_qty'], bcsub('0', (string) $issueLine->issue_base_qty, 8), 8) !== 0) {
+                    throw ValidationException::withMessages(['cost_amount' => '专用库存出库必须引用正式领用单的权威总金额。']);
+                }
+            }
+            if ((float) $line['change_qty'] < 0 && $transaction->source_type !== 'cutting_settlement' && ! $cuttingReservedTotal) {
                 $consumedQty = number_format(abs((float) $line['change_qty']), 8, '.', '');
                 $costAmount = bcsub('0', CuttingDecimal::share((string) $balance->inventory_value, (string) $balance->quantity_on_hand, $consumedQty), 4);
             }

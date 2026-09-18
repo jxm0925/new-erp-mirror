@@ -15,6 +15,7 @@ class ProductionHandoverService
     public function __construct(
         private readonly WorkOrderCompletionReadinessService $completionReadiness,
         private readonly ProductionTargetReadinessService $targetReadiness,
+        private readonly ProductionMaterialCostService $materialCosts,
     ) {}
 
     public function pending(object $user, array $permissions): array
@@ -54,6 +55,7 @@ class ProductionHandoverService
             $now = now();
             if ($accept) {
                 $acceptedQty = $this->acceptTargetMaterial($handover);
+                $this->materialCosts->acceptHandover($handover, $acceptedQty, $this->userId($user));
                 DB::table('erp_production_operation_handovers')->where('id', $id)->update(['status' => 'RECEIVED',
                     'received_by_legacy_id' => $this->userId($user),
                     'received_at' => $now, 'completeness_snapshot' => json_encode($payload['completeness'] ?? ['complete' => true], JSON_UNESCAPED_UNICODE),

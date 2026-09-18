@@ -69,7 +69,10 @@ class ProductionExecutionController extends Controller
             'completed_base_qty' => 'nullable|numeric|min:0', 'scrapped_base_qty' => 'nullable|numeric|min:0',
             'defect_reason' => 'nullable|string|max:1000', 'remark' => 'nullable|string|max:2000',
             'attachments' => 'nullable|array|max:20', 'attachments.*' => 'array',
-            'disposition' => 'nullable|in:direct_handover,warehouse']);
+            'disposition' => 'nullable|in:direct_handover,warehouse',
+            'material_cost_allocation' => 'nullable|array:output_total_cost,loss_total_cost',
+            'material_cost_allocation.output_total_cost' => 'required_with:material_cost_allocation|string',
+            'material_cost_allocation.loss_total_cost' => 'required_with:material_cost_allocation|string']);
         [$user, $permissions] = $this->context($request);
         return response()->json(['message' => '工序执行已完成。', 'data' => $service->complete($taskId, $targetType, $targetId, $payload, $user, $permissions)]);
     }

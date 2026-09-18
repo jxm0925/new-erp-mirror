@@ -328,18 +328,27 @@ final class CuttingRecordService
     private function input(object $batch): void
     {
         $c = $this->commands;
+        $correction = $batch->correction_of_batch_id !== null;
         $this->materials->assertItem($batch->cutting_order_id,$batch->input_item_id);
         if ($batch->physical_material_id) {
             $physical = DB::table('erp_material_physicals')->where('id',$batch->physical_material_id)->lockForUpdate()->first();
-            if (! $physical || $physical->status !== 'ISSUED' || (int) $physical->item_id !== (int) $batch->input_item_id
+            if (! $physical || $physical->status !== ($correction ? 'CORRECTION' : 'ISSUED') || (int) $physical->item_id !== (int) $batch->input_item_id
                 || (int) $physical->current_holding_id !== (int) $batch->wip_holding_id)
                 $c->fail('input_physical_conflict','来源实物已不属于本用料批次的有效投入。',409);
         }
         $wip = DB::table('erp_material_holdings')->where('id',$batch->wip_holding_id)->lockForUpdate()->first();
-        if (! $wip || $wip->status !== 'ACTIVE' || $wip->position_type !== 'CUTTING_WIP' || (int) $wip->position_id !== (int) $batch->id
+        if (! $wip || $wip->status !== 'ACTIVE' || $wip->position_type !== ($correction ? 'CORRECTION_WIP' : 'CUTTING_WIP') || (int) $wip->position_id !== (int) $batch->id
             || bccomp((string) $wip->quantity,(string) $batch->input_qty,8) !== 0 || bccomp((string) $wip->total_cost,(string) $batch->original_total_cost,4) !== 0)
             $c->fail('input_wip_conflict','实际投入的在制数量或金额不完整。',409);
-        if (! DB::table('erp_inventory_transactions')->where('id',$batch->issue_transaction_id)->where('posting_status','posted')
+        $recut = ! $correction && $batch->issue_transaction_id === null
+            && DB::table('erp_material_movements')->where('source_holding_id', $batch->source_holding_id)->where('target_holding_id', $batch->wip_holding_id)
+                ->where('action', 'RECUT_ISSUE')->where('quantity', $batch->input_qty)->where('total_cost', $batch->original_total_cost)->exists()
+            && DB::table('erp_material_holdings')->where('id', $batch->source_holding_id)->where('position_type', 'REMNANT_WIP')->where('status', 'CONSUMED')->exists();
+        if ($correction) {
+            if ($batch->issue_transaction_id !== null || ! DB::table('erp_cutting_corrections')->where('correction_settlement_batch_id', $batch->id)
+                ->where('original_settlement_batch_id', $batch->correction_of_batch_id)->where('status', 'OPEN')->exists())
+                $c->fail('correction_source_invalid', '用料更正记录不存在或已经结束。', 409);
+        } elseif (! $recut && ! DB::table('erp_inventory_transactions')->where('id',$batch->issue_transaction_id)->where('posting_status','posted')
             ->where('source_type','cutting_settlement')->where('source_id',$batch->id)->exists()) $c->fail('input_not_issued','用料批次尚未通过正式领料，不允许登记结果。',409);
     }
 

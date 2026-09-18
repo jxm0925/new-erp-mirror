@@ -58,7 +58,8 @@ class InventoryAvailabilityService
         if ($balance->item?->materialManagementMode() === 'physical') return 0.0;
         if ($balance->material_lot_id) {
             $lot = \Illuminate\Support\Facades\DB::table('erp_material_lots')->where('id', $balance->material_lot_id)->first();
-            if (! $lot || $lot->configuration_id || $lot->stage_id || ! in_array($lot->material_form, ['FULL_STOCK','STANDARD_LENGTH'], true)) return 0.0;
+            $finished = $lot && $this->isPublicFinishedProductionLot($balance, $lot);
+            if (! $lot || (! $finished && ($lot->configuration_id || $lot->stage_id || ! in_array($lot->material_form, ['FULL_STOCK','STANDARD_LENGTH'], true)))) return 0.0;
         }
         $calculated = $this->calculate(
             (float) $balance->quantity_on_hand,
@@ -68,6 +69,33 @@ class InventoryAvailabilityService
         );
 
         return max(0, min((float) $balance->quantity_available, $calculated));
+    }
+
+    private function isPublicFinishedProductionLot(InventoryBalance $balance, object $lot): bool
+    {
+        if ($lot->source_type !== 'production_output_record' || $lot->material_form !== 'PRODUCT' || $lot->configuration_id
+            || $balance->item?->is_custom_item) return false;
+        $output = \Illuminate\Support\Facades\DB::table('erp_production_output_records as output')
+            ->join('erp_work_orders as wo', 'wo.id', '=', 'output.work_order_id')
+            ->where('output.id', $lot->source_id)->where('output.material_lot_id', $lot->id)
+            ->where('output.output_item_id', $balance->item_id)->whereColumn('wo.output_item_id', 'output.output_item_id')
+            ->whereNotNull('output.material_total_cost')->whereNull('wo.reserved_for_work_order_id')
+            ->first(['output.*']);
+        if (! $output) return false;
+        $table = $output->source_target_type === 'unit_operation' ? 'erp_production_unit_operations' : 'erp_production_quantity_operations';
+        $source = \Illuminate\Support\Facades\DB::table($table)->where('id', $output->source_target_id)->first();
+        if (! $source || (int) $source->routing_operation_id_snapshot !== (int) $lot->stage_id) return false;
+        $later = \Illuminate\Support\Facades\DB::table($table)->where('sequence_no_snapshot', '>', $source->sequence_no_snapshot);
+        $output->source_target_type === 'unit_operation' ? $later->where('production_unit_id', $source->production_unit_id)
+            : $later->where('work_order_id', $source->work_order_id);
+        if ($later->exists()) return false;
+        // Staged stock is not generally eligible. Only an approved terminal output with a factual
+        // finished-goods receipt may re-enter ordinary outbound availability; no receipt/status shortcut.
+        return \Illuminate\Support\Facades\DB::table('erp_work_order_finished_goods_receipts as receipt')
+            ->join('erp_work_order_completions as completion', 'completion.id', '=', 'receipt.completion_id')
+            ->where('receipt.output_record_id', $output->id)->where('receipt.status', 'POSTED')
+            ->where('completion.status', 'APPROVED')->where('receipt.batch_no', $balance->batch_no)
+            ->where('receipt.warehouse_id', $balance->warehouse_id)->where('receipt.location_id', $balance->location_id)->exists();
     }
 
     public function calculate(float $onHand, float $locked, float $defective, float $pending): float
