@@ -234,6 +234,10 @@ final class CuttingHandoverService
         $this->commands->permission($permissions, $permission);
         $row = DB::table('erp_cutting_handovers')->where('id', $id)->first();
         if (! $row) $this->commands->fail('cutting_handover_missing', '下料交接不存在。', 404);
+        // 成功命令也必须复验当前访问资格；幂等恢复只防重复事实，不能保留旧负责人的权限。
+        $task = ProductionTask::query()->find($row->target_task_id);
+        if (! $task) $this->commands->fail('cutting_target_task_invalid', '下一工序真实任务不存在。', 409);
+        $this->assertTargetTask($task, $user, $permissions, $super, $permission);
     }
 
     private function lockRoute(int $routeId, object $user, array $permissions, bool $super, string $permission): array

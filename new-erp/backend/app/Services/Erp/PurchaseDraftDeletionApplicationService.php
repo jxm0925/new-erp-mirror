@@ -36,8 +36,15 @@ class PurchaseDraftDeletionApplicationService
 
     public function deletePlan(int $id, ?string $operator = null): void
     {
-        DB::transaction(function () use ($id, $operator): void {
+        // 删除开始时捕获审计修订；若等待编辑事务后修订已变化，即使仍为草稿也要求刷新。
+        // 单靠排队行锁会让“编辑成功后紧接着删除”两边都成功，吞掉本次并发编辑。
+        $revision = (int) PurchaseLog::query()->where('target_type', 'purchase_plan')->where('target_id', $id)
+            ->orderByDesc('id')->value('id');
+        DB::transaction(function () use ($id, $operator, $revision): void {
             $plan = PurchasePlan::query()->with('items')->lockForUpdate()->findOrFail($id);
+            $currentRevision = (int) PurchaseLog::query()->where('target_type', 'purchase_plan')->where('target_id', $id)
+                ->orderByDesc('id')->lockForUpdate()->value('id');
+            $this->assert($revision === $currentRevision, '采购计划已被其他操作修改，请刷新后重新确认删除。');
             $this->assert(
                 $plan->plan_status === 'draft'
                 && $plan->audit_status === 'pending'

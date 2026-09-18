@@ -281,6 +281,19 @@ class DeletionLifecycleTest extends TestCase
         $this->deleteJson('/api/v1/erp/rbac/permissions/991001')->assertStatus(503);
     }
 
+    public function test_rbac_existing_record_save_fails_closed_when_system_protection_migration_is_missing(): void
+    {
+        $this->mockPermissions(['system.role.save_permissions', 'system.menu.save']);
+        $role = DB::table('erp_rbac_roles')->insertGetId(['code' => 'save_guard_role', 'name' => '编辑保护角色', 'data_scope' => 'self', 'enabled' => false, 'is_system' => true]);
+        $permission = DB::table('erp_rbac_permissions')->insertGetId(['code' => 'save.guard.permission', 'name' => '编辑保护权限', 'type' => 'button', 'enabled' => false, 'is_system' => true]);
+        Schema::partialMock()->shouldReceive('hasColumn')->with('erp_rbac_roles', 'is_system')->andReturn(false);
+        Schema::partialMock()->shouldReceive('hasColumn')->with('erp_rbac_permissions', 'is_system')->andReturn(false);
+        $this->postJson('/api/v1/erp/rbac/roles', ['id' => $role, 'code' => 'changed_role', 'name' => '不得修改', 'data_scope' => 'all'])->assertStatus(503);
+        $this->postJson('/api/v1/erp/rbac/permissions', ['id' => $permission, 'code' => 'changed.permission', 'name' => '不得修改', 'type' => 'button'])->assertStatus(503);
+        $this->assertDatabaseHas('erp_rbac_roles', ['id' => $role, 'code' => 'save_guard_role']);
+        $this->assertDatabaseHas('erp_rbac_permissions', ['id' => $permission, 'code' => 'save.guard.permission']);
+    }
+
     public function test_purchase_plan_submission_log_cannot_be_erased_by_draft_status_reset(): void
     {
         [, , $plan] = $this->purchasePlan();

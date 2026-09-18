@@ -720,6 +720,38 @@ class CuttingRecordTest extends TestCase
         $this->assertSame('4.00000000',DB::table('erp_production_target_material_requirements')->where('id',$f['targetRequirement'])->value('satisfied_base_qty'));
     }
 
+    public function test_successful_cutting_accept_and_reject_replays_recheck_current_owner_before_returning_history(): void
+    {
+        foreach (['accept', 'reject'] as $action) {
+            $f = $this->fixture(); $receiver = $this->employee('cut-replay-old-');
+            $task = $this->consumerTask($f, $receiver);
+            $batch = $this->issue($f); $id = $batch['settlement_batch_id'];
+            $result = $this->save($f, $id, '10')['result_ids'][0];
+            $split = app(CuttingRecordService::class)->splitRoutes($result, $this->payload(1) + ['routes' => [[
+                'route_type' => 'NEXT_OPERATION', 'quantity' => '10', 'target_material_requirement_id' => $f['targetRequirement'],
+            ]]], $f['user'], self::PERMISSIONS, true);
+            app(CuttingConfirmationService::class)->confirm($id, $this->confirmation($f, $id, $result, '3000'), $f['user'], self::PERMISSIONS, true);
+            $routeId = $split['routes'][0]['id']; $service = app(CuttingHandoverService::class);
+            $dispatch = $service->dispatch($routeId, $this->payload((int) DB::table('erp_cutting_result_routes')->where('id', $routeId)->value('business_version'))
+                + ['quantity' => '10'], $f['user'], self::PERMISSIONS, true);
+            $payload = $this->payload(1) + ['quantity' => '4'];
+            if ($action === 'reject') $payload['reason'] = '边缘损坏';
+            $token = $this->token($receiver, 'self');
+            $url = '/api/v1/erp/production/cutting/handovers/'.$dispatch['handover_id'].'/'.$action;
+            $this->withToken($token)->postJson($url, $payload)->assertOk();
+            $before = DB::table('erp_production_target_material_requirements')->where('id', $f['targetRequirement'])->value('satisfied_base_qty');
+            $this->assertSame($action === 'accept' ? '4.00000000' : '0.00000000', $before);
+            $current = $this->employee('cut-replay-new-');
+            $task->update(['assignee_user_legacy_id' => $current->legacy_id, 'business_version' => $task->business_version + 1]);
+
+            // 完全相同的键、内容和操作者必须403，而非从命令账本返回旧success。
+            $this->withToken($token)->postJson($url, $payload)->assertForbidden();
+            $this->assertSame(1, DB::table('erp_cutting_handover_decisions')->where('handover_id', $dispatch['handover_id'])->count());
+            $this->assertSame('4.00000000', DB::table('erp_cutting_handover_decisions')->where('handover_id', $dispatch['handover_id'])->value('quantity'));
+            $this->assertSame($before, DB::table('erp_production_target_material_requirements')->where('id', $f['targetRequirement'])->value('satisfied_base_qty'));
+        }
+    }
+
     public function test_formal_cutting_warehouse_receipt_is_partial_idempotent_and_distinct_from_receive(): void
     {
         $f = $this->fixture(); $batch = $this->issue($f); $batchId = $batch['settlement_batch_id'];

@@ -264,10 +264,11 @@ class PurchaseController extends Controller
 
     public function updatePlan(Request $request, int $id)
     {
-        $plan = PurchasePlan::findOrFail($id);
-        abort_if($plan->plan_status !== 'draft', 422, '只有草稿采购计划可以编辑');
         $payload = $this->validatePlan($request);
-        return DB::transaction(function () use ($plan, $payload) {
+        return DB::transaction(function () use ($id, $payload) {
+            // 与提交/删除共用计划行锁，等待后重新读取，不能凭事务外的草稿快照改明细。
+            $plan = PurchasePlan::query()->lockForUpdate()->findOrFail($id);
+            abort_if($plan->plan_status !== 'draft', 422, '只有草稿采购计划可以编辑');
             $plan->update([
                 'plan_date' => $payload['plan_date'] ?? $plan->plan_date,
                 'remark' => $payload['remark'] ?? null,
@@ -277,34 +278,38 @@ class PurchaseController extends Controller
             $this->savePlanItems($plan, $payload['items']);
             $this->log('purchase_plan', $plan->id, 'update', '编辑采购计划及供应商拆分');
             return response()->json(['message' => '采购计划已更新', 'data' => $plan->fresh(['items.item.unit', 'items.splits.supplier'])]);
-        });
+        }, 5);
     }
 
     public function submitPlan(int $id)
     {
-        $plan = PurchasePlan::with('items.splits.supplier')->findOrFail($id);
-        abort_if($plan->items->isEmpty(), 422, '采购计划至少需要一行明细');
-        abort_if($plan->items->contains(fn ($i) => (float) $i->remaining_qty > 0), 422, '采购计划存在未分配数量，不能提交审核');
-        abort_if($plan->items->contains(fn ($i) => $i->splits->isEmpty()), 422, '采购计划必须完成供应商拆分');
-        abort_if(
-            PurchasePlanSupplierSplit::where('plan_id', $id)->where('unit_price', '<=', 0)->exists(),
-            422,
-            '采购计划存在采购单价小于或等于 0 的供应商拆分，不能提交审核。供应商报价仅供参考，实际采购价必须由采购员确认。'
-        );
-        $conversionService = app(\App\Services\Erp\PurchaseConversionApplicationService::class);
-        foreach ($plan->items as $item) {
-            foreach ($item->splits as $split) {
-                $conversionService->orderLineSnapshotFromBaseRequirement([
-                    'item_id' => $item->item_id,
-                    'supplier_id' => $split->supplier_id,
-                    'base_qty' => $split->purchase_qty,
-                    'base_unit_price' => $split->unit_price,
-                ]);
+        return DB::transaction(function () use ($id) {
+            // 状态、明细验证和submit日志与删除互斥提交，避免删除后追加孤立提交日志。
+            $plan = PurchasePlan::query()->with('items.splits.supplier')->lockForUpdate()->findOrFail($id);
+            abort_if($plan->plan_status !== 'draft', 422, '只有草稿采购计划可以提交');
+            abort_if($plan->items->isEmpty(), 422, '采购计划至少需要一行明细');
+            abort_if($plan->items->contains(fn ($i) => (float) $i->remaining_qty > 0), 422, '采购计划存在未分配数量，不能提交审核');
+            abort_if($plan->items->contains(fn ($i) => $i->splits->isEmpty()), 422, '采购计划必须完成供应商拆分');
+            abort_if(
+                PurchasePlanSupplierSplit::where('plan_id', $id)->where('unit_price', '<=', 0)->exists(),
+                422,
+                '采购计划存在采购单价小于或等于 0 的供应商拆分，不能提交审核。供应商报价仅供参考，实际采购价必须由采购员确认。'
+            );
+            $conversionService = app(\App\Services\Erp\PurchaseConversionApplicationService::class);
+            foreach ($plan->items as $item) {
+                foreach ($item->splits as $split) {
+                    $conversionService->orderLineSnapshotFromBaseRequirement([
+                        'item_id' => $item->item_id,
+                        'supplier_id' => $split->supplier_id,
+                        'base_qty' => $split->purchase_qty,
+                        'base_unit_price' => $split->unit_price,
+                    ]);
+                }
             }
-        }
-        $plan->update(['plan_status' => 'submitted', 'audit_status' => 'pending']);
-        $this->log('purchase_plan', $id, 'submit', '提交采购计划');
-        return response()->json(['message' => '采购计划已提交', 'data' => $plan->fresh(['items.item', 'items.splits.supplier'])]);
+            $plan->update(['plan_status' => 'submitted', 'audit_status' => 'pending']);
+            $this->log('purchase_plan', $id, 'submit', '提交采购计划');
+            return response()->json(['message' => '采购计划已提交', 'data' => $plan->fresh(['items.item', 'items.splits.supplier'])]);
+        }, 5);
     }
 
     public function approvePlan(Request $request, int $id, PurchaseWorkflowApplicationService $workflow)

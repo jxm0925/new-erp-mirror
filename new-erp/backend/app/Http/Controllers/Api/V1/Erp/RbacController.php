@@ -69,6 +69,7 @@ class RbacController extends Controller
         $data['updated_at'] = now();
         $id = DB::transaction(function () use ($id, $data): int {
             if ($id) {
+                abort_unless(Schema::hasColumn('erp_rbac_permissions', 'is_system'), 503, '权限编辑保护结构尚未部署，请先更新数据库结构。');
                 $existing = DB::table('erp_rbac_permissions')->where('id', $id)->lockForUpdate()->first();
                 abort_unless($existing, 404);
                 if (($existing->is_system ?? false) && $existing->code !== $data['code']) {
@@ -150,6 +151,7 @@ class RbacController extends Controller
         $data['updated_at'] = now();
         $id = DB::transaction(function () use ($id, $data, $permissionIds): int {
             if ($id) {
+                abort_unless(Schema::hasColumn('erp_rbac_roles', 'is_system'), 503, '角色编辑保护结构尚未部署，请先更新数据库结构。');
                 $existing = DB::table('erp_rbac_roles')->where('id', $id)->lockForUpdate()->first();
                 abort_unless($existing, 404);
                 if (($existing->is_system ?? false) && $existing->code !== $data['code']) {
