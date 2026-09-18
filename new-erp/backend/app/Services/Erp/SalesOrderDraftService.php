@@ -229,10 +229,15 @@ class SalesOrderDraftService
 
     private function assertDraftDeletable(SalesOrder $order): void
     {
-        abort_if($order->order_status !== 'draft', 422, 'Only draft orders can be deleted.');
-        abort_if($order->fulfillments()->exists(), 422, 'Orders with fulfillment records cannot be deleted.');
-        abort_if($order->productionRequirements()->exists(), 422, 'Orders with production requirements cannot be deleted.');
-        abort_if(DB::table('erp_inventory_reservations')->where('source_order_id', $order->id)->exists(), 422, 'Orders with inventory reservations cannot be deleted.');
+        abort_if($order->order_status !== 'draft' || $order->confirmed_at !== null
+            || $order->confirm_status === 'pending_confirmation', 422, '只有未确认、未进入待审核状态的销售订单草稿可以删除。');
+        abort_if($order->fulfillments()->exists(), 422, '订单已产生库存、生产或交付记录，不能删除。');
+        abort_if($order->productionRequirements()->exists(), 422, '订单已产生生产需求，不能删除。');
+        abort_if(DB::table('erp_inventory_reservations')->where('source_order_id', $order->id)->exists(), 422, '订单已产生库存占用，不能删除。');
+        $financeReferenced = DB::table('erp_finance_allocations')
+            ->whereIn('source_business_type', ['sales_order', 'sales_order_refund'])->where('source_document_id', $order->id)->exists()
+            || DB::table('erp_finance_invoice_allocations')->where('source_business_type', 'sales_order')->where('source_document_id', $order->id)->exists();
+        abort_if($financeReferenced, 422, '该订单已有资金或发票匹配事实，不能删除。');
     }
 
     private function assertDraftConfirmationGate(SalesOrder $order): void

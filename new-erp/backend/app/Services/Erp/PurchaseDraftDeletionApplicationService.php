@@ -47,6 +47,7 @@ class PurchaseDraftDeletionApplicationService
             $this->assert(!PurchaseOrder::query()->where('plan_id', $id)->exists(), '该采购计划已经生成采购订单，不能删除。');
             $this->assert(!PurchasePlanSupplierSplit::query()->where('plan_id', $id)
                 ->where(fn ($query) => $query->whereNotNull('order_id')->orWhere('ordered_qty', '>', 0))->exists(), '该采购计划已有下游订单占用，不能删除。');
+            $this->assert(!$this->hasApprovalHistory('purchase_plan', $id), '该采购计划已有提交或审核历史，不能删除。');
 
             $requestIds = [];
             foreach ($plan->items as $planItem) {
@@ -78,6 +79,7 @@ class PurchaseDraftDeletionApplicationService
                 '只有从未提交审核、未冻结财务事实的采购订单草稿可以删除；已驳回订单必须保留审核历史。'
             );
             $this->assert($order->receipts->isEmpty(), '该采购订单已经生成到货单，不能删除。');
+            $this->assert(!$this->hasApprovalHistory('purchase_order', $id), '该采购订单已有提交或审核历史，不能删除。');
             $this->assert(!DB::table('erp_purchase_price_histories')->where('order_id', $id)->exists(), '该采购订单已经形成采购价格历史，不能删除。');
 
             $planIds = [];
@@ -104,7 +106,7 @@ class PurchaseDraftDeletionApplicationService
     {
         DB::transaction(function () use ($id, $operator): void {
             $receipt = PurchaseReceipt::query()->with('items')->lockForUpdate()->findOrFail($id);
-            $this->assert($receipt->confirm_status === 'draft' && $receipt->receipt_status === 'draft', '只有未确认的采购到货草稿可以删除。');
+            $this->assert($receipt->confirm_status === 'draft' && $receipt->receipt_status === 'draft' && $receipt->confirmed_at === null, '只有未确认的采购到货草稿可以删除。');
             $this->assert($receipt->stock_post_status === 'pending', '该到货单已经发生库存过账，不能删除。');
             $this->assert(!DB::table('erp_purchase_defect_handlings')->where('receipt_id', $id)->exists(), '该到货单已经产生不合格品处理，不能删除。');
             $this->assert(!DB::table('erp_purchase_returns')->where('source_receipt_id', $id)->exists(), '该到货单已经产生采购退货单，不能删除。');
@@ -129,7 +131,10 @@ class PurchaseDraftDeletionApplicationService
         if (!$request) return;
         $planned = (float) $request->items->sum('converted_qty');
         $total = (float) $request->items->sum('request_qty');
-        $status = $planned <= 0 ? 'confirmed' : ($planned < $total ? 'partially_planned' : 'planned');
+        // 释放草稿计划仅恢复数量，不撤销人工关闭/取消决定，避免旧需求被重新开放。
+        $status = in_array($request->request_status, ['closed', 'cancelled'], true)
+            ? $request->request_status
+            : ($planned <= 0 ? 'confirmed' : ($planned < $total ? 'partially_planned' : 'planned'));
         $request->update(['planned_qty' => $planned, 'request_status' => $status, 'status' => $status]);
     }
 
@@ -177,6 +182,12 @@ class PurchaseDraftDeletionApplicationService
             'content' => $content,
             'operator' => $operator ?: '系统任务',
         ]);
+    }
+
+    private function hasApprovalHistory(string $type, int $id): bool
+    {
+        return PurchaseLog::query()->where('target_type', $type)->where('target_id', $id)
+            ->whereIn('action', ['submit', 'approve', 'reject'])->exists();
     }
 
     private function assert(bool $condition, string $message): void

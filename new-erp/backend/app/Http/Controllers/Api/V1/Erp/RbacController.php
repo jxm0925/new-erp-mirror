@@ -87,6 +87,8 @@ class RbacController extends Controller
     public function deletePermission(Request $request, int $id, RbacBootstrapService $rbac)
     {
         $user = $this->authorizePermission($request, 'system.menu.delete');
+        // 代码先部署而结构未升级时必须拒绝删除，不能把缺失的系统标记当成自定义。
+        abort_unless(Schema::hasColumn('erp_rbac_permissions', 'is_system'), 503, '权限删除保护结构尚未部署，请先更新数据库结构。');
         $rbac->bootstrap();
         DB::transaction(function () use ($id, $user): void {
             $permission = DB::table('erp_rbac_permissions')->where('id', $id)->lockForUpdate()->first();
@@ -171,6 +173,7 @@ class RbacController extends Controller
     public function deleteRole(Request $request, int $id, RbacBootstrapService $rbac)
     {
         $user = $this->authorizePermission($request, 'system.role.delete');
+        abort_unless(Schema::hasColumn('erp_rbac_roles', 'is_system'), 503, '角色删除保护结构尚未部署，请先更新数据库结构。');
         $rbac->bootstrap();
         DB::transaction(function () use ($id, $user): void {
             $role = DB::table('erp_rbac_roles')->where('id', $id)->lockForUpdate()->first();

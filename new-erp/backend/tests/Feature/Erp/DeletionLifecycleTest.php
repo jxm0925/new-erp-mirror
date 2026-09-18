@@ -4,11 +4,15 @@ namespace Tests\Feature\Erp;
 
 use App\Models\Erp\{FinanceInvoice, FinanceInvoiceAllocation, Item, ProductionOperation, ProductionRouting, PurchaseOrder, PurchaseOrderItem, PurchasePlan, PurchasePlanItem, PurchasePlanSupplierSplit, PurchaseRequest, PurchaseRequestItem, Supplier, SupplierItemRelation, Unit};
 use App\Models\Erp\{ApprovalFlowTemplate, Bom, FinanceAccount, FinanceAccountTransfer, FinanceAttachment, FinanceCashDocument, SalesCustomer, SalesOrder};
+use App\Models\Erp\{DocumentNumberRule, ImportBatch, InventoryAdjustment, ProductionLaborAllocationRule, PurchaseLog, SalesOrderAttachment};
 use App\Services\Erp\{AuthContextService, FinanceDraftDeletionApplicationService, MasterDataApplicationService, ProductionMasterDataService, PurchaseDraftDeletionApplicationService, RbacBootstrapService};
 use App\Services\Erp\{ApprovalFlowApplicationService, SalesCustomerDeletionApplicationService};
+use App\Services\Erp\{DocumentNumberRuleService, DocumentNumberService, InventoryAdjustmentApplicationService, ProductionLaborAllocationRuleService, SalesOrderDraftService};
+use App\Exceptions\Erp\WorkOrderDomainException;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 use Mockery\MockInterface;
 use Symfony\Component\HttpKernel\Exception\HttpException;
@@ -90,6 +94,16 @@ class DeletionLifecycleTest extends TestCase
         $this->assertDatabaseMissing('erp_finance_invoices', ['id' => $invoice->id]);
         $this->assertDatabaseMissing('erp_finance_invoice_allocations', ['id' => $match->id]);
         $this->assertDatabaseHas('erp_finance_operation_logs', ['document_type' => 'finance_invoice', 'document_id' => $invoice->id, 'action' => 'delete_draft', 'content' => '录入错误重建']);
+    }
+
+    public function test_supplier_finance_party_reference_blocks_deletion_without_a_foreign_key(): void
+    {
+        $supplier = $this->supplier();
+        $supplier->update(['status' => 'disabled']);
+        $invoice = $this->invoice();
+        $invoice->update(['invoice_direction' => 'purchase', 'party_type' => 'supplier', 'party_id' => $supplier->id]);
+        $this->denied(fn () => app(MasterDataApplicationService::class)->deleteUnused('suppliers', $supplier));
+        $this->assertDatabaseHas('erp_suppliers', ['id' => $supplier->id]);
     }
 
     public function test_financial_draft_deletion_requires_reason_and_rejects_prior_confirmation(): void
@@ -249,6 +263,99 @@ class DeletionLifecycleTest extends TestCase
         $this->assertDatabaseMissing('erp_rbac_roles', ['id' => $custom]);
     }
 
+    public function test_plan_deletion_does_not_reopen_closed_purchase_request(): void
+    {
+        [$request, $requestItem, $plan] = $this->purchasePlan();
+        $request->update(['request_status' => 'closed', 'status' => 'closed']);
+        app(PurchaseDraftDeletionApplicationService::class)->deletePlan($plan->id);
+        $this->assertSame('closed', $request->fresh()->request_status);
+        $this->assertSame(10.0, (float) $requestItem->fresh()->remaining_qty);
+    }
+
+    public function test_rbac_delete_fails_closed_when_system_protection_migration_is_missing(): void
+    {
+        $this->mockPermissions(['system.role.delete', 'system.menu.delete']);
+        Schema::partialMock()->shouldReceive('hasColumn')->with('erp_rbac_roles', 'is_system')->andReturn(false);
+        Schema::partialMock()->shouldReceive('hasColumn')->with('erp_rbac_permissions', 'is_system')->andReturn(false);
+        $this->deleteJson('/api/v1/erp/rbac/roles/991001')->assertStatus(503);
+        $this->deleteJson('/api/v1/erp/rbac/permissions/991001')->assertStatus(503);
+    }
+
+    public function test_purchase_plan_submission_log_cannot_be_erased_by_draft_status_reset(): void
+    {
+        [, , $plan] = $this->purchasePlan();
+        PurchaseLog::create(['target_type' => 'purchase_plan', 'target_id' => $plan->id, 'action' => 'submit', 'content' => '历史提交', 'operator' => '核查员']);
+        $this->denied(fn () => app(PurchaseDraftDeletionApplicationService::class)->deletePlan($plan->id));
+        $this->assertDatabaseHas('erp_purchase_plans', ['id' => $plan->id]);
+    }
+
+    public function test_inventory_adjustment_deletion_rejects_submitted_and_posted_history(): void
+    {
+        $adjustment = InventoryAdjustment::create(['adjustment_no' => 'DEL-ADJ', 'adjustment_status' => 'draft', 'submitted_at' => now()]);
+        $service = app(InventoryAdjustmentApplicationService::class);
+        $this->denied(fn () => $service->deleteDraft($adjustment->id));
+        $adjustment->update(['submitted_at' => null, 'posted_at' => now()]);
+        $this->denied(fn () => $service->deleteDraft($adjustment->id));
+        $adjustment->update(['posted_at' => null]);
+        $service->deleteDraft($adjustment->id);
+        $this->assertDatabaseMissing('erp_inventory_adjustments', ['id' => $adjustment->id]);
+    }
+
+    public function test_import_deletion_cascades_preview_rows_but_never_confirmed_results(): void
+    {
+        $this->mockPermissions(['master.import.delete']);
+        $batch = ImportBatch::create(['batch_no' => 'DEL-IMPORT', 'import_type' => 'Item', 'file_name' => 'delete.csv', 'status' => 'previewed']);
+        $row = $batch->rows()->create(['row_no' => 1, 'raw_data' => ['物料名称' => '预检物料'], 'validation_status' => 'valid']);
+        $batch->update(['confirmed_at' => now()]);
+        $this->deleteJson('/api/v1/erp/master/imports/'.$batch->id)->assertUnprocessable();
+        $this->assertDatabaseHas('erp_import_rows', ['id' => $row->id]);
+        $batch->update(['confirmed_at' => null]);
+        $this->deleteJson('/api/v1/erp/master/imports/'.$batch->id)->assertOk();
+        $this->assertDatabaseMissing('erp_import_rows', ['id' => $row->id]);
+    }
+
+    public function test_number_rule_delete_preserves_allocated_number_history(): void
+    {
+        $rule = DocumentNumberRule::create(['document_type' => 'deletion_unused', 'name' => '未用规则', 'prefix' => 'DU', 'enabled' => false]);
+        app(DocumentNumberRuleService::class)->delete($rule, '清理未用规则', $this->user());
+        $this->assertDatabaseMissing('erp_document_number_rules', ['id' => $rule->id]);
+        app(DocumentNumberService::class)->next('deletion_used', 'DT');
+        $used = DocumentNumberRule::create(['document_type' => 'deletion_used', 'name' => '已用规则', 'prefix' => 'DT', 'enabled' => false]);
+        $this->denied(fn () => app(DocumentNumberRuleService::class)->delete($used, '保留旧编号', $this->user()));
+        $this->assertDatabaseHas('erp_document_number_rules', ['id' => $used->id]);
+    }
+
+    public function test_labor_rule_delete_is_idempotent_and_active_versions_are_retained(): void
+    {
+        $rule = ProductionLaborAllocationRule::create(['rule_no' => 'DEL-LABOR', 'rule_name' => '草稿工时规则', 'version_no' => 1, 'owner_ratio' => .6, 'collaborator_total_ratio' => .4, 'collaborator_allocation_method' => 'actual_labor_ratio', 'status' => 'draft', 'business_version' => 1]);
+        $service = app(ProductionLaborAllocationRuleService::class);
+        $payload = ['expected_version' => 1, 'client_command_id' => 'DEL-LABOR-CMD'];
+        $rule->update(['status' => 'active']);
+        $this->denied(fn () => $service->deleteDraft($rule->id, $payload, $this->user(), ['production.labor_rule.delete']));
+        $rule->update(['status' => 'draft', 'effective_at' => now()]);
+        $this->denied(fn () => $service->deleteDraft($rule->id, $payload, $this->user(), ['production.labor_rule.delete']));
+        $rule->update(['effective_at' => null]);
+        $result = $service->deleteDraft($rule->id, $payload, $this->user(), ['production.labor_rule.delete']);
+        $this->assertTrue($result['deleted']);
+        $this->assertSame($result, $service->deleteDraft($rule->id, $payload, $this->user(), ['production.labor_rule.delete']));
+    }
+
+    public function test_sales_order_draft_delete_removes_all_attachment_rows_and_keeps_deletion_log(): void
+    {
+        $order = SalesOrder::create(['sales_order_no' => 'DEL-SO', 'customer_name' => '草稿客户', 'order_status' => 'draft']);
+        foreach (['active', 'deleted', 'replaced'] as $status) {
+            SalesOrderAttachment::create(['sales_order_id' => $order->id, 'original_name' => $status.'.txt', 'stored_name' => $status.'.txt', 'storage_path' => '', 'status' => $status]);
+        }
+        $service = app(SalesOrderDraftService::class);
+        $order->update(['confirm_status' => 'pending_confirmation']);
+        $this->denied(fn () => $service->delete($order, '删除核查员'));
+        $order->update(['confirm_status' => 'unconfirmed']);
+        $service->delete($order, '删除核查员');
+        $this->assertDatabaseMissing('erp_sales_orders', ['id' => $order->id]);
+        $this->assertDatabaseMissing('erp_sales_order_attachments', ['sales_order_id' => $order->id]);
+        $this->assertDatabaseHas('erp_sales_order_logs', ['action' => 'delete_draft', 'operator' => '删除核查员']);
+    }
+
     private function purchasePlan(): array
     {
         $item = $this->item();
@@ -272,7 +379,7 @@ class DeletionLifecycleTest extends TestCase
 
     private function invoice(): FinanceInvoice
     {
-        return FinanceInvoice::create(['document_no' => 'DEL-INV', 'invoice_direction' => 'output', 'party_type' => 'customer', 'party_id' => 991001, 'party_name_snapshot' => '删除测试客户', 'amount_excl_tax' => 100, 'tax_amount' => 0, 'amount_incl_tax' => 100, 'status' => 'draft']);
+        return FinanceInvoice::create(['document_no' => 'DEL-INV', 'invoice_direction' => 'sales', 'party_type' => 'customer', 'party_id' => 991001, 'party_name_snapshot' => '删除测试客户', 'amount_excl_tax' => 100, 'tax_amount' => 0, 'amount_incl_tax' => 100, 'status' => 'draft']);
     }
 
     private function user(): object
@@ -294,7 +401,7 @@ class DeletionLifecycleTest extends TestCase
         try {
             $action();
             $this->fail('状态、权限或引用不满足时不允许删除。');
-        } catch (ValidationException|HttpException $exception) {
+        } catch (ValidationException|HttpException|WorkOrderDomainException $exception) {
             $this->assertNotEmpty($exception->getMessage());
         }
     }

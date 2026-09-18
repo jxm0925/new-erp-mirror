@@ -9,7 +9,10 @@ use Illuminate\Validation\ValidationException;
 
 class ItemCategoryApplicationService
 {
-    public function __construct(private readonly DocumentNumberService $numbers)
+    public function __construct(
+        private readonly DocumentNumberService $numbers,
+        private readonly MasterDataApplicationService $masterData,
+    )
     {
     }
 
@@ -132,7 +135,9 @@ class ItemCategoryApplicationService
             abort_if($locked->children()->where('category_type', 'item')->exists(), 422, '该类目下仍有子类目，不能删除。');
             abort_if($locked->items()->exists(), 422, '该类目已被 Item 引用，只能停用，不能删除。');
             abort_if($locked->supplierCapabilities()->exists(), 422, '该类目已被供应商可供范围引用，只能停用，不能删除。');
-            $locked->delete();
+            // 与通用主数据入口共用最终引用保护，涵盖产品和后续模块的外键，
+            // 防止通过 Item 类目专用路由绕过历史关系保护。
+            $this->masterData->deleteUnused('categories', $locked);
         });
     }
 

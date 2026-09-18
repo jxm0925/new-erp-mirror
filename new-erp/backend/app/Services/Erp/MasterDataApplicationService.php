@@ -191,6 +191,16 @@ class MasterDataApplicationService
                 }
             }
 
+            // 财务往来方使用 party_type/party_id 多态引用，不能依赖外键发现。
+            // 即使只有一张资金或发票草稿，也要保留其供应商身份关系。
+            if ($entity === 'suppliers') {
+                foreach (['erp_finance_cash_documents', 'erp_finance_allocations', 'erp_finance_invoices'] as $table) {
+                    if (DB::table($table)->where('party_type', 'supplier')->where('party_id', $locked->getKey())->exists()) {
+                        abort(422, '该供应商已被财务往来事实引用，只能停用，不能删除。');
+                    }
+                }
+            }
+
             // 覆盖后续模块新增的 RESTRICT、SET NULL 与 CASCADE 外键。硬删除主数据
             // 只允许用于从未参与任何配置或业务事实的停用档案，不能借 SET NULL
             // 悄悄抹掉历史关系，也不能依赖数据库异常向用户暴露约束名。

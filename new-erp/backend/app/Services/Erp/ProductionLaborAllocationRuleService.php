@@ -78,7 +78,7 @@ class ProductionLaborAllocationRuleService
             $rule = ProductionLaborAllocationRule::query()->lockForUpdate()->find($id);
             if (! $rule) $this->fail('labor_rule_not_found', '工时分配规则不存在。', 404);
             $this->version($rule, $payload);
-            if ($rule->status !== 'draft') {
+            if ($rule->status !== 'draft' || $rule->effective_at !== null || $rule->retired_at !== null) {
                 $this->fail('labor_rule_state_invalid', '只有从未生效的工时分配规则草稿可以删除。', 409);
             }
             if (DB::table('erp_production_tasks')->where('labor_allocation_rule_id', $rule->id)->exists()) {
