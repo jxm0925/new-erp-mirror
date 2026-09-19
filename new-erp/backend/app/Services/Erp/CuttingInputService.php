@@ -8,6 +8,25 @@ use Illuminate\Support\Facades\DB;
 
 final class CuttingInputService
 {
+    public function issuePhysicals(int $orderId, array $payload, object $user, array $permissions, bool $super = false): array
+    {
+        $this->commands->order($orderId,$user,$permissions,$super,'production.cutting.issue');
+        return $this->commands->run('issue_cutting_physicals',$orderId,$payload,$user,function () use ($orderId,$payload,$user,$permissions,$super): array {
+            // The outer command makes a multi-selection one atomic stock action. Child command
+            // IDs are deterministic for audit/recovery, and all child facts roll back together.
+            $prefix = 'cut-multi-'.hash('sha256',$payload['client_command_id']);
+            $reserved = $this->reserve($orderId,['client_command_id'=>$prefix.'-reserve','expected_version'=>$payload['expected_version'],
+                'physical_material_ids'=>$payload['physical_material_ids'] ?? []],$user,$permissions,$super);
+            $version = $reserved['business_version']; $batches = [];
+            $ids = array_map('intval',$reserved['physical_material_ids']); sort($ids);
+            foreach ($ids as $id) {
+                $batch = $this->issue($orderId,['client_command_id'=>$prefix.'-'.$id,'expected_version'=>$version,'physical_material_id'=>$id],$user,$permissions,$super);
+                $version = $batch['order_business_version']; $batches[] = $batch;
+            }
+            return ['cutting_order_id'=>$orderId,'order_business_version'=>$version,'batches'=>$batches];
+        });
+    }
+
     public function __construct(private readonly CuttingCommandService $commands, private readonly InventoryService $inventory,
         private readonly DocumentNumberService $numbers) {}
 

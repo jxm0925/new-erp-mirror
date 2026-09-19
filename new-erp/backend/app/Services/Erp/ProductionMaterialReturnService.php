@@ -10,7 +10,11 @@ use Illuminate\Support\Facades\DB;
 
 class ProductionMaterialReturnService
 {
-    public function __construct(private readonly DocumentNumberService $numbers, private readonly InventoryService $inventory) {}
+    public function __construct(
+        private readonly DocumentNumberService $numbers,
+        private readonly InventoryService $inventory,
+        private readonly ProductionMaterialCostService $materialCosts,
+    ) {}
 
     public function create(array $payload, object $user, array $permissions): array
     {
@@ -69,7 +73,11 @@ class ProductionMaterialReturnService
             if ((int) $return->business_version !== (int) $payload['expected_version']) $this->fail('version_conflict', '退料单版本已变化，请刷新后重试。', 409);
             if ($return->status !== 'SUBMITTED') $this->fail('material_return_already_received', '该生产退料已由仓库处理。', 409);
             $lines = DB::table('erp_production_material_return_lines')->where('return_id', $id)->lockForUpdate()->get();
-            $transaction = $this->inventory->postProductionMaterialReturnReceipt($return, $lines, $user, $return->return_type === 'quality_return');
+            $costs = $this->materialCosts->prepareMaterialReturns($return, $lines);
+            $transaction = $this->inventory->postProductionMaterialReturnReceipt(
+                $return, $lines, $user, $return->return_type === 'quality_return', $costs
+            );
+            $this->materialCosts->finalizeMaterialReturns($lines, $transaction);
             foreach ($lines as $line) {
                 $requirement = WorkOrderMaterialRequirement::lockForUpdate()->findOrFail($line->material_requirement_id);
                 $requirement->returned_qty = (float) $requirement->returned_qty + (float) $line->return_base_qty;

@@ -15,7 +15,7 @@ class InventoryPostingController extends Controller
     public function pendingReceipts(Request $request, PurchaseReceiptPostingEligibilityService $eligibility)
     {
         $this->authorizePermission($request, 'inventory.post.view');
-        $query = PurchaseReceipt::with(['supplier', 'order', 'items.item.unit', 'items.warehouse', 'items.location', 'items.allocations.warehouse', 'items.allocations.location'])
+        $query = PurchaseReceipt::with(['supplier', 'order', 'items.item.unit', 'items.warehouse', 'items.location', 'items.allocations.warehouse', 'items.allocations.location', 'items.allocations.physicalEntries'])
             ->where('stock_post_status', 'pending')
             ->where('receipt_status', 'confirmed')
             ->where('confirm_status', 'confirmed')
@@ -58,7 +58,7 @@ class InventoryPostingController extends Controller
     public function showReceipt(Request $request, int $id)
     {
         $this->authorizePermission($request, 'inventory.post.view');
-        return response()->json(PurchaseReceipt::with(['supplier', 'order', 'items.item.unit', 'items.warehouse', 'items.location', 'items.allocations.warehouse', 'items.allocations.location'])->findOrFail($id));
+        return response()->json(PurchaseReceipt::with(['supplier', 'order', 'items.item.unit', 'items.warehouse', 'items.location', 'items.allocations.warehouse', 'items.allocations.location', 'items.allocations.physicalEntries'])->findOrFail($id));
     }
 
     public function repairReceiptAllocations(
@@ -76,6 +76,11 @@ class InventoryPostingController extends Controller
             'items.*.allocations.*.base_qty' => 'required|numeric|gt:0',
             'items.*.allocations.*.serial_nos' => 'nullable|array',
             'items.*.allocations.*.serial_nos.*' => 'string|max:100',
+            'items.*.allocations.*.physical_entries' => 'nullable|array|max:500',
+            'items.*.allocations.*.physical_entries.*.dimensions' => 'required_with:items.*.allocations.*.physical_entries|array',
+            'items.*.allocations.*.physical_entries.*.dimensions.length_mm' => ['required_with:items.*.allocations.*.physical_entries', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],
+            'items.*.allocations.*.physical_entries.*.dimensions.width_mm' => ['required_with:items.*.allocations.*.physical_entries', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],
+            'items.*.allocations.*.physical_entries.*.dimensions.thickness_mm' => ['required_with:items.*.allocations.*.physical_entries', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],
         ]);
 
         $receipt = $service->repair($id, $data['items'], $request->user()?->name ?: $request->user()?->username);

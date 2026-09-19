@@ -599,7 +599,7 @@ class PurchaseController extends Controller
     public function showReceipt(int $id)
     {
         return response()->json(PurchaseReceipt::with([
-            'supplier', 'order', 'items.item.unit', 'items.orderItem', 'items.warehouse', 'items.location', 'items.allocations.warehouse', 'items.allocations.location', 'items.defectHandlings',
+            'supplier', 'order', 'items.item.unit', 'items.orderItem', 'items.warehouse', 'items.location', 'items.allocations.warehouse', 'items.allocations.location', 'items.allocations.physicalEntries', 'items.defectHandlings',
             'attachments' => fn ($query) => $query->where('status', 'active')->latest('id'),
             'logs',
         ])->findOrFail($id));
@@ -955,6 +955,11 @@ class PurchaseController extends Controller
             'items.*.allocations.*.base_qty' => 'required_with:items.*.allocations|numeric|min:0.00000001',
             'items.*.allocations.*.serial_nos' => 'nullable|array',
             'items.*.allocations.*.serial_nos.*' => 'string|max:120',
+            'items.*.allocations.*.physical_entries' => 'nullable|array|max:500',
+            'items.*.allocations.*.physical_entries.*.dimensions' => 'required_with:items.*.allocations.*.physical_entries|array',
+            'items.*.allocations.*.physical_entries.*.dimensions.length_mm' => ['required_with:items.*.allocations.*.physical_entries', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],
+            'items.*.allocations.*.physical_entries.*.dimensions.width_mm' => ['required_with:items.*.allocations.*.physical_entries', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],
+            'items.*.allocations.*.physical_entries.*.dimensions.thickness_mm' => ['required_with:items.*.allocations.*.physical_entries', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],
             'items.*.remark' => 'nullable|string',
         ]);
     }
@@ -1218,7 +1223,7 @@ class PurchaseController extends Controller
         app(PurchaseAttachmentApplicationService::class)->bindDraft('receipt', $receipt->id, $payload['attachment_draft_token'] ?? null);
         $this->refreshReceiptTotal($receipt->id);
         $this->log('purchase_receipt', $receipt->id, $action, $action === 'create' ? '新增到货单' : '编辑到货单');
-        return response()->json(['message' => '到货单已保存', 'data' => $receipt->fresh(['items.item.unit', 'items.warehouse', 'items.location', 'items.allocations.warehouse', 'items.allocations.location', 'order', 'supplier', 'attachments'])], $action === 'create' ? 201 : 200);
+        return response()->json(['message' => '到货单已保存', 'data' => $receipt->fresh(['items.item.unit', 'items.warehouse', 'items.location', 'items.allocations.warehouse', 'items.allocations.location', 'items.allocations.physicalEntries', 'order', 'supplier', 'attachments'])], $action === 'create' ? 201 : 200);
     }
 
     private function visibleAttachment(Request $request, int $id): PurchaseAttachment

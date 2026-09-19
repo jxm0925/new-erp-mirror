@@ -13,19 +13,33 @@ final class CuttingConfirmationService
 
     public function confirm(int $batchId, array $p, object $user, array $permissions, bool $super = false): array
     {
-        $c = $this->commands; $c->permission($permissions,'production.cutting.confirm');
-        $c->assertBatchVisible($batchId,$user,$permissions,$super,'production.cutting.confirm');
-        return $c->run('confirm_cutting_batch',$batchId,$p,$user,function () use ($c,$batchId,$p,$user,$permissions,$super): array {
-            $batch = $c->batch($batchId,$user,$permissions,$super,'production.cutting.confirm'); $c->version($batch,$p);
+        $c = $this->commands;
+        $automatic = ($p['cost_method'] ?? null) === CuttingAutomaticCostService::RULE;
+        if (isset($p['cost_method']) && ! $automatic) $c->fail('cost_method_invalid','自动分摊规则不存在。');
+        if ($automatic && (isset($p['costs']) || isset($p['allocations']))) $c->fail('automatic_cost_fields_forbidden','自动核算不能传入人工金额或替换产出去向。');
+        $permission = $automatic ? 'production.cutting.record' : 'production.cutting.confirm';
+        $c->permission($permissions,$permission);
+        $c->assertBatchVisible($batchId,$user,$permissions,$super,$permission);
+        return $c->run('confirm_cutting_batch',$batchId,$p,$user,function () use ($c,$batchId,$p,$user,$permissions,$super,$automatic,$permission): array {
+            $batch = $c->batch($batchId,$user,$permissions,$super,$permission); $c->version($batch,$p);
+            if ($automatic && ! DB::table('erp_cutting_orders')->where('id',$batch->cutting_order_id)->where('purpose','WORKER')->exists())
+                $c->fail('automatic_cost_scope_invalid','此自动规则仅用于工人自主下料，不改变既有计划核算。');
             if ($batch->status !== 'WAIT_CONFIRM') $c->fail('batch_not_confirmable','用料批次尚未通过申报和质量确认，或已核算。',409);
             $this->records->assertInput($batch);
             $rows = DB::table('erp_cutting_results')->where('settlement_batch_id',$batchId)->whereNotIn('status',['VOIDED','SUPERSEDED'])->orderBy('id')->lockForUpdate()->get();
             if ($rows->isEmpty()) $c->fail('results_missing','没有可核算的实际结果。');
-            $costs = $this->costs($rows->pluck('id')->all(),$p['costs'] ?? null);
+            $calculation = $automatic ? app(CuttingAutomaticCostService::class)->allocate($batch,$rows) : null;
+            $costs = $calculation ? $calculation['costs'] : $this->costs($rows->pluck('id')->all(),$p['costs'] ?? null);
             $sum = '0'; foreach ($costs as $cost) $sum = bcadd($sum,$cost,4);
             if (bccomp($sum,(string) $batch->original_total_cost,4) !== 0) $c->fail('cost_not_conserved','逐结果金额合计必须等于本用料批次的原始投入总金额。');
             $routes = DB::table('erp_cutting_result_routes')->whereIn('result_id',$rows->pluck('id'))->where('status','PLANNED')->orderBy('id')->lockForUpdate()->get();
-            $allocations = $this->allocations($routes,$p['allocations'] ?? null,$batch,$user,$permissions,$super);
+            $entries = $automatic ? $routes->map(function ($route) use ($rows): array {
+                $row = $rows->firstWhere('id',$route->result_id);
+                $scope = $row->configuration_id ? DB::table('erp_custom_configurations')->where('id',$row->configuration_id)->value('scope_mode') : 'PUBLIC';
+                return ['route_id'=>$route->id,'quantity'=>$route->quantity,'disposition'=>$route->route_type === 'NEXT_OPERATION'
+                    ? 'WORK_ORDER' : ($scope === 'PUBLIC' ? 'PUBLIC_UNALLOCATED' : 'RESTRICTED_UNALLOCATED')];
+            })->all() : ($p['allocations'] ?? null);
+            $allocations = $this->allocations($routes,$entries,$batch,$user,$permissions,$super,$permission);
             foreach ($rows as $row) {
                 $this->records->assertResultIdentity($batch,$row);
                 if ($row->status !== 'SUBMITTED') $c->fail('result_not_submitted','结果尚未正式提交。',409);
@@ -73,7 +87,9 @@ final class CuttingConfirmationService
             if ($batch->correction_of_batch_id) DB::table('erp_cutting_corrections')->where('correction_settlement_batch_id', $batchId)
                 ->where('status', 'OPEN')->update(['status' => 'CONFIRMED', 'completed_at' => now(), 'updated_at' => now()]);
             $response = ['settlement_batch_id'=>$batchId,'status'=>'CONFIRMED','business_version'=>$batch->business_version+1,'confirmed_total_cost'=>$sum];
-            $c->event('batch',$batchId,'confirm',$user,$batch,$response); return $response;
+            $c->event('batch',$batchId,'confirm',$user,$batch,$response+($calculation ? ['automatic_cost'=>$calculation] : []));
+            if ($automatic) { unset($response['confirmed_total_cost']); $response['cost_method'] = CuttingAutomaticCostService::RULE; }
+            return $response;
         });
     }
 
@@ -91,16 +107,17 @@ final class CuttingConfirmationService
         return $costs;
     }
 
-    private function allocations(object $routes, mixed $entries, object $batch, object $user, array $permissions, bool $super): array
+    private function allocations(object $routes, mixed $entries, object $batch, object $user, array $permissions, bool $super, string $permission = 'production.cutting.confirm'): array
     {
         $c = $this->commands;
-        if (! is_array($entries) || ! array_is_list($entries) || count($entries) < 1 || count($entries) > 500) $c->fail('allocations_required','须逐去向明确正式计划归属或未分配产出的处置。');
+        if (! is_array($entries) || ! array_is_list($entries) || ($routes->isNotEmpty() && count($entries) < 1) || count($entries) > 500) $c->fail('allocations_required','须逐去向明确正式计划归属或未分配产出的处置。');
+        $workerOrigin = DB::table('erp_cutting_orders')->where('id',$batch->cutting_order_id)->where('purpose','WORKER')->exists();
         $plans = DB::table('erp_cutting_plan_allocations')->where('cutting_order_id',$batch->cutting_order_id)->orderBy('id')->lockForUpdate()->get()->keyBy('id');
         if ($plans->contains(fn ($plan) => ! $plan->demand_id || ! $plan->input_material_requirement_id || ! $plan->target_material_requirement_id))
             $c->fail('formal_requirement_required','历史计划尚未绑定唯一正式需求及原料行，禁止继续核算。',409);
         // Lock every source/target WO in a stable order, so different cutting orders cannot over-allocate one requirement.
         $woIds = $plans->pluck('work_order_id')->merge(DB::table('erp_production_target_material_requirements')->whereIn('id',$routes->pluck('target_material_requirement_id')->filter())->pluck('work_order_id'))->unique()->sort();
-        foreach ($woIds as $woId) $c->workOrder($woId,$user,$permissions,$super,'production.cutting.confirm',true);
+        foreach ($woIds as $woId) $c->workOrder($woId,$user,$permissions,$super,$permission,true);
         $result = []; $planAdded = []; $targetAdded = []; $seen = [];
         foreach ($entries as $entry) {
             if (! is_array($entry) || array_diff(array_keys($entry),['route_id','plan_id','quantity','disposition'])) $c->fail('allocation_fields_invalid','分配字段不合法。');
@@ -124,6 +141,11 @@ final class CuttingConfirmationService
                 $planAdded[$planId] = bcadd($planAdded[$planId] ?? '0',$qty,8);
                 $used = (string) DB::table('erp_cutting_output_allocations')->where('plan_id',$planId)->where('status','EFFECTIVE')->sum('quantity');
                 if (bccomp(bcadd($used,$planAdded[$planId],8),(string) $plan->planned_qty,8) > 0) $c->fail('allocation_exceeds_plan','正式归属数量超过本计划尚未满足的数量。');
+            } elseif ($type === 'WORK_ORDER' && $workerOrigin) {
+                // A worker assigns already reported output to a real demand, without creating a
+                // fictitious producer WO/plan. The same target lock and remaining-supply cap below apply.
+                if ($planId || $route->route_type !== 'NEXT_OPERATION' || ! $route->target_material_requirement_id)
+                    $c->fail('allocation_target_invalid','工单归属必须对应人工选择的真实工单需求。');
             } else {
                 if ($planId || $route->route_type !== 'WAREHOUSE' || ! in_array($type,['PUBLIC_UNALLOCATED','RESTRICTED_UNALLOCATED'],true)) $c->fail('surplus_disposition_invalid','未分配产出必须明确公共或专用备货处置，不能冒充目标需求。');
                 $scope = $row->configuration_id ? DB::table('erp_custom_configurations')->where('id',$row->configuration_id)->value('scope_mode') : 'PUBLIC';

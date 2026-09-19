@@ -1,0 +1,219 @@
+<view class="page create-page">
+  <!-- 流程步骤指引 Header -->
+  <view class="step-guide-card">
+    <view class="guide-header">
+      <view class="guide-mark"></view>
+      <text class="guide-title">领用投入原料</text>
+    </view>
+    <view class="steps-row">
+      <view class="step-item active">
+        <text class="step-num">1</text>
+        <text class="step-txt">选择投入原料</text>
+      </view>
+      <view class="step-line"></view>
+      <view class="step-item {{selected.length ? 'active' : ''}}">
+        <text class="step-num">2</text>
+        <text class="step-txt">核对投入数量</text>
+      </view>
+      <view class="step-line"></view>
+      <view class="step-item">
+        <text class="step-num">3</text>
+        <text class="step-txt">开始加工</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 本次用料清单卡片 -->
+  <view class="card material-section">
+    <view class="card-header">
+      <view class="header-left">
+        <view class="title-mark"></view>
+        <text class="section-title">本次领用材料</text>
+        <text class="count-badge" wx:if="{{selected.length}}">{{selected.length}} 份</text>
+      </view>
+      <view class="header-action" wx:if="{{selected.length}}" bindtap="openPicker">
+        <van-icon name="plus" size="26rpx" color="#d7190b" />
+        <text>继续添加</text>
+      </view>
+    </view>
+
+    <!-- 已选材料列表 -->
+    <view class="material-list" wx:if="{{selected.length}}">
+      <view class="material-card" wx:for="{{selected}}" wx:key="_key">
+        <view class="mat-card-top">
+          <image class="mat-thumb" src="/static/images/cutting-plate.png" mode="aspectFit" />
+          <view class="mat-info">
+            <view class="mat-badge-row">
+              <text class="mat-source-badge">{{item.physical_no ? '实物钢板' : item.remnant_holding_id ? '余料' : '定长原料'}}</text>
+              <text class="mat-no">{{item.source_label}}</text>
+            </view>
+            <text class="mat-name">{{item.item_code}} {{item.item_name}}</text>
+            <text class="mat-spec">{{item.dimensions_label || item.spec || '-'}}</text>
+            <text class="mat-extra" wx:if="{{item.standard_stock_length_mm}}">原料规格长度：{{item.standard_stock_length_mm}} mm</text>
+          </view>
+          <view class="mat-remove-btn" data-index="{{index}}" bindtap="remove" hover-class="btn-hover">
+            <van-icon name="delete-o" size="34rpx" color="#9aa7b9" />
+          </view>
+        </view>
+
+        <!-- 数量输入或整份说明 -->
+        <view class="mat-card-bottom">
+          <block wx:if="{{item.quantity_editable}}">
+            <view class="qty-control-wrap">
+              <text class="qty-label">领用投入数量</text>
+              <view class="qty-input-box">
+                <input class="qty-input" type="number" value="{{item.input_qty}}" data-index="{{index}}" bindinput="onQuantity" disabled="{{busy}}" placeholder="根数" />
+                <text class="qty-unit">根</text>
+              </view>
+            </view>
+          </block>
+          <view class="full-sheet-tip" wx:else>
+            <van-icon name="passed" size="28rpx" color="#0e8c45" />
+            <text>整张/整份使用 · 自动全量核销锁定</text>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 空态引导卡片 -->
+    <view class="empty-picker-zone" wx:if="{{!selected.length}}" bindtap="openPicker">
+      <view class="zone-icon-box">
+        <van-icon name="plus" size="48rpx" color="#d7190b" />
+      </view>
+      <text class="zone-title">点击选择本次使用的钢板或方管</text>
+      <text class="zone-desc">支持按钢板实物号或方管库存批次跨页多选</text>
+    </view>
+  </view>
+
+  <!-- 底部固定吸底操作栏 -->
+  <view class="bottom-bar-placeholder"></view>
+  <view class="bottom-action-bar">
+    <view class="bar-summary" wx:if="{{selected.length}}">
+      <text class="bar-summary-label">已选材料</text>
+      <text class="bar-summary-val">{{selected.length}} <text class="unit">项</text></text>
+    </view>
+    <button class="primary-action-btn {{!selected.length ? 'disabled' : ''}}" bindtap="create" loading="{{busy}}" disabled="{{busy || !selected.length}}" hover-class="action-btn-hover">
+      <van-icon name="records" size="32rpx" wx:if="{{!busy}}" />
+      <text>确认领用，登记产出</text>
+    </button>
+  </view>
+</view>
+
+<!-- 全模态用料选择器 Modal -->
+<view class="overlay" wx:if="{{showPicker}}" catchtouchmove="noop">
+  <view class="modal-panel">
+    <!-- 头部 -->
+    <view class="modal-head">
+      <view class="modal-title-wrap">
+        <text class="modal-title">选择领用原料</text>
+        <text class="modal-subtitle">从可用库存中挑选钢板实物或定长型材</text>
+      </view>
+      <view class="close-icon-wrap" bindtap="closePicker">
+        <van-icon name="cross" size="38rpx" color="#7d8d9f" />
+      </view>
+    </view>
+
+    <!-- 原料类型 Tabs -->
+    <view class="type-tabs">
+      <view class="type-tab {{inputType === 'physical' ? 'active' : ''}}" data-type="physical" bindtap="setInputType">
+        <van-icon name="apps-o" size="26rpx" />
+        <text>钢板实物 / 余料</text>
+      </view>
+      <view class="type-tab {{inputType === 'quantity' ? 'active' : ''}}" data-type="quantity" bindtap="setInputType">
+        <van-icon name="bars" size="26rpx" />
+        <text>方管 / 定长原料</text>
+      </view>
+    </view>
+
+    <!-- 搜索栏 -->
+    <view class="modal-search">
+      <van-icon name="search" size="32rpx" color="#8c9cb0" />
+      <input class="search-input" placeholder="输入物料编码 / 名称 / 规格 / 批次" value="{{keyword}}" bindinput="onKeyword" bindconfirm="search" confirm-type="search" />
+      <button class="modal-search-btn" bindtap="search">查询</button>
+    </view>
+
+    <!-- 选料主体联动区域 -->
+    <view class="picker-body">
+      <!-- 左侧分类 -->
+      <scroll-view class="category-list" scroll-y>
+        <view class="category-item {{categoryId == item.id ? 'active' : ''}}" wx:for="{{categories}}" wx:key="id" data-id="{{item.id}}" bindtap="setCategory">
+          <text class="category-name">{{item.category_name}}</text>
+        </view>
+        <view class="category-item more" wx:if="{{categoryPage < categoryLastPage}}" bindtap="moreCategories">
+          <text>更多分类…</text>
+        </view>
+      </scroll-view>
+
+      <!-- 右侧候选列表 -->
+      <view class="candidate-area">
+        <scroll-view class="candidate-list" scroll-y>
+          <view class="candidate-item {{item._selected ? 'selected' : ''}}" wx:for="{{candidates}}" wx:key="_key" data-key="{{item._key}}" bindtap="toggle">
+            <image class="candidate-thumb" src="/static/images/cutting-plate.png" mode="aspectFit" />
+            <view class="candidate-info">
+              <view class="candidate-no-row">
+                <text class="candidate-source-no">{{item.source_label}}</text>
+              </view>
+              <text class="candidate-name">{{item.item_code}} {{item.item_name}}</text>
+              <text class="candidate-spec">{{item.dimensions_label || item.spec || '-'}}</text>
+              <text class="candidate-avail" wx:if="{{item.available_root_qty}}">
+                可用：<text class="avail-num">{{item.available_root_qty}}</text> 根 · {{item.standard_stock_length_mm}} mm
+              </text>
+            </view>
+            <view class="check-box {{item._selected ? 'checked' : ''}}">
+              <van-icon name="success" size="24rpx" color="#ffffff" wx:if="{{item._selected}}" />
+            </view>
+          </view>
+          <view class="empty-state small" wx:if="{{loading}}">
+            <van-loading size="36rpx" color="#d7190b">加载原料中…</van-loading>
+          </view>
+          <view class="empty-state small" wx:elif="{{!candidates.length}}">
+            <van-icon name="warning-o" size="44rpx" color="#b0bdce" />
+            <text class="small-empty-text">暂无符合条件的可用原料</text>
+          </view>
+        </scroll-view>
+
+        <!-- 分页控制 -->
+        <view class="modal-pager">
+          <button class="mpager-btn" disabled="{{page <= 1 || loading}}" bindtap="prevPage">上页</button>
+          <text class="mpager-text">{{page}} / {{lastPage}} · 共{{total}}条</text>
+          <button class="mpager-btn" disabled="{{page >= lastPage || loading}}" bindtap="nextPage">下页</button>
+        </view>
+      </view>
+    </view>
+
+    <!-- 已选托盘汇总条 -->
+    <view class="selection-box" bindtap="toggleSelected">
+      <view class="selection-left">
+        <van-icon name="bag-o" size="30rpx" color="#d7190b" />
+        <text class="selection-text">已勾选 <text class="highlight">{{pickerSelected.length}}</text> 项</text>
+      </view>
+      <view class="selection-right">
+        <text>{{showSelected ? '收起明细' : '查看已选'}}</text>
+        <van-icon name="{{showSelected ? 'arrow-down' : 'arrow-up'}}" size="24rpx" />
+      </view>
+    </view>
+
+    <!-- 已选抽屉展开列表 -->
+    <scroll-view class="selected-list" scroll-y wx:if="{{showSelected}}">
+      <view class="selected-row" wx:for="{{pickerSelected}}" wx:key="_key">
+        <view class="selected-row-info">
+          <text class="sel-no">{{item.source_label}}</text>
+          <text class="sel-name">{{item.item_name}} {{item.spec}}</text>
+        </view>
+        <view class="remove-btn" data-key="{{item._key}}" bindtap="toggle">
+          <van-icon name="close" size="26rpx" color="#d7190b" />
+          <text>移除</text>
+        </view>
+      </view>
+    </scroll-view>
+
+    <!-- 弹窗底部操作按钮 -->
+    <view class="modal-actions">
+      <button class="modal-cancel-btn" bindtap="closePicker">取消</button>
+      <button class="modal-confirm-btn" bindtap="confirmPicker">
+        确认选择 {{pickerSelected.length ? ('(' + pickerSelected.length + ')') : ''}}
+      </button>
+    </view>
+  </view>
+</view>
+

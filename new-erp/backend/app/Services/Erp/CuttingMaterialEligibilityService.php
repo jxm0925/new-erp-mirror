@@ -25,7 +25,26 @@ final class CuttingMaterialEligibilityService
 
     public function assertItem(int $orderId, int $itemId): void
     {
+        if (DB::table('erp_cutting_orders')->where('id', $orderId)->where('purpose', 'WORKER')->exists()) {
+            if (! $this->workerMaterials()->where('id', $itemId)->exists())
+                app(CuttingCommandService::class)->fail('input_not_allowed', '请选择已启用的钢板或定长下料原料。');
+            return;
+        }
         if (! $this->plans($orderId)->where('r.component_item_id',$itemId)->exists())
             app(CuttingCommandService::class)->fail('input_not_allowed','用料不属于当前正式下料需求及冻结工序的具体原料。');
+    }
+
+    public function itemIds(int $orderId): Builder
+    {
+        return DB::table('erp_cutting_orders')->where('id', $orderId)->where('purpose', 'WORKER')->exists()
+            ? $this->workerMaterials()->select('id') : $this->plans($orderId)->select('r.component_item_id');
+    }
+
+    public function workerMaterials(): Builder
+    {
+        return DB::table('erp_items')->where('status', 'enabled')->where('item_type', 'raw_material')
+            ->where(fn (Builder $q) => $q->where(fn (Builder $sheet) => $sheet->where('cutting_mode','sheet')->where('material_management_mode','physical'))
+                ->orWhere(fn (Builder $length) => $length->where('material_management_mode','quantity')
+                    ->where(fn (Builder $mode) => $mode->where('cutting_mode','length')->orWhere(fn (Builder $legacy) => $legacy->whereNull('cutting_mode')->where('is_length_cut_material',true)))));
     }
 }

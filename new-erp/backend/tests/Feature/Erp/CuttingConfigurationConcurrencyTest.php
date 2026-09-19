@@ -55,7 +55,7 @@ class CuttingConfigurationConcurrencyTest extends TestCase
     private function race(array $firstArgs, array $secondArgs): array
     {
         $database = (string) config('database.connections.mysql.database');
-        $this->assertStringEndsWith('_test', $database);
+        $this->assertSame('erp_sdjiantan', strtolower($database));
         $environment = array_merge($_ENV, ['ERP_CUTTING_CONFIGURATION_RACE_DATABASE' => $database, 'APP_ENV' => 'testing', 'DB_DATABASE' => $database]);
         $input = new InputStream;
         $make = fn (array $args, bool $hold) => new Process([PHP_BINARY, base_path('tests/Support/cutting_configuration_race_worker.php'),

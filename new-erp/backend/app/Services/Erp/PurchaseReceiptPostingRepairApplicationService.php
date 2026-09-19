@@ -42,11 +42,11 @@ class PurchaseReceiptPostingRepairApplicationService
                 $this->allocations->replace($line, $submitted['allocations'] ?? []);
             }
 
-            $receipt->refresh()->load(['items.item', 'items.allocations.warehouse', 'items.allocations.location']);
+            $receipt->refresh()->load(['items.item', 'items.allocations.warehouse', 'items.allocations.location', 'items.allocations.physicalEntries']);
             $this->allocations->ensureForConfirmation($receipt);
             $receipt->load(['items.item', 'items.allocations']);
             $this->serials->registerAcceptedReceipt($receipt);
-            $receipt->load(['items.item', 'items.allocations.warehouse', 'items.allocations.location']);
+            $receipt->load(['items.item', 'items.allocations.warehouse', 'items.allocations.location', 'items.allocations.physicalEntries']);
             $result = $this->eligibility->evaluate($receipt);
             if (!$result['can_post']) {
                 throw ValidationException::withMessages(['allocations' => $result['reason_text']]);
@@ -60,7 +60,7 @@ class PurchaseReceiptPostingRepairApplicationService
                 'operator' => $operator ?: '系统',
             ]);
 
-            return $receipt->fresh(['supplier', 'order', 'items.item.unit', 'items.allocations.warehouse', 'items.allocations.location']);
+            return $receipt->fresh(['supplier', 'order', 'items.item.unit', 'items.allocations.warehouse', 'items.allocations.location', 'items.allocations.physicalEntries']);
         }, 5);
     }
 }

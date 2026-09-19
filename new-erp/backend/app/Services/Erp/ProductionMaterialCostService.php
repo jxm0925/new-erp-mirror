@@ -100,6 +100,171 @@ final class ProductionMaterialCostService
         }
     }
 
+    /** Freeze each ordinary warehouse pick's posted quantity and amount while it is in production transit. */
+    public function recordPickingOutbound(object $task, object $transaction): void
+    {
+        if (DB::transactionLevel() < 1) throw new \LogicException('Production picking cost capture requires a transaction.');
+        foreach ($task->lines as $line) {
+            if (bccomp((string) $line->actual_pick_qty, '0', 8) <= 0) continue;
+            $posted = collect($transaction->items)->first(fn ($item) => (int) $item->source_item_id === (int) $line->id);
+            $expectedChange = bcsub('0', (string) $line->actual_pick_qty, 8);
+            if (! $posted || (int) $posted->item_id !== (int) $line->component_item_id
+                || bccomp((string) $posted->change_qty, $expectedChange, 8) !== 0
+                || bccomp((string) $posted->cost_amount, '0', 4) > 0) {
+                $this->fail('production_picking_cost_fact_invalid', '生产配料成本必须直接引用本次正式库存出库的数量和金额。');
+            }
+            $existing = DB::table('erp_material_holdings')->where('position_type', 'PRODUCTION_TRANSIT')
+                ->where('position_id', $posted->id)->lockForUpdate()->first();
+            if ($existing) {
+                if (bccomp((string) $existing->quantity, (string) $line->actual_pick_qty, 8) !== 0
+                    || bccomp((string) $existing->total_cost, bcsub('0', (string) $posted->cost_amount, 4), 4) !== 0) {
+                    $this->fail('production_picking_cost_replay_mismatch', '生产配料出库的在途成本事实与原库存过账不一致。');
+                }
+                continue;
+            }
+            $balance = DB::table('erp_inventory_balances')->where('id', $line->inventory_balance_id)->lockForUpdate()->first();
+            if (! $balance || (int) $balance->item_id !== (int) $line->component_item_id) {
+                $this->fail('production_picking_balance_invalid', '生产配料行缺少与正式出库一致的库存余额。');
+            }
+            $lotId = (int) ($balance->material_lot_id ?? 0);
+            if (! $lotId) {
+                $lotId = DB::table('erp_material_lots')->insertGetId([
+                    'lot_no' => $this->numbers->next('material_lot', 'ML'), 'item_id' => $line->component_item_id,
+                    'material_form' => 'COMPONENT', 'source_type' => 'inventory_transaction_item', 'source_id' => $posted->id,
+                    'created_at' => now(), 'updated_at' => now(),
+                ]);
+            }
+            DB::table('erp_material_holdings')->insert([
+                'material_lot_id' => $lotId, 'position_type' => 'PRODUCTION_TRANSIT', 'position_id' => $posted->id,
+                'quantity' => $line->actual_pick_qty, 'total_cost' => bcsub('0', (string) $posted->cost_amount, 4),
+                'status' => 'ACTIVE', 'business_version' => 1, 'created_at' => now(), 'updated_at' => now(),
+            ]);
+        }
+    }
+
+    /** Turn only an accepted delivery share into the target operation's consumable input cost fact. */
+    public function recordDeliveryReceipt(object $delivery, object $deliveryLine, object $receiptLine, int $actor): void
+    {
+        if (DB::transactionLevel() < 1) throw new \LogicException('Production receipt cost capture requires a transaction.');
+        $quantity = CuttingDecimal::value($receiptLine->accepted_qty, 8, false);
+        if (bccomp($quantity, '0', 8) <= 0) return;
+        if (DB::table('erp_production_input_holdings')->where('material_receipt_line_id', $receiptLine->id)->exists()) return;
+        $pickLine = DB::table('erp_material_picking_task_lines')->where('id', $deliveryLine->picking_task_line_id)->lockForUpdate()->first();
+        if (! $pickLine || (int) $pickLine->component_item_id !== (int) $receiptLine->component_item_id) {
+            $this->fail('production_receipt_picking_line_invalid', '生产收料行与原正式配料行不一致。');
+        }
+        $requirement = DB::table('erp_production_target_material_requirements')
+            ->where('target_type', $delivery->production_target_type)->where('target_id', $delivery->production_target_id)
+            ->where('material_requirement_id', $pickLine->material_requirement_id)->lockForUpdate()->first();
+        if (! $requirement) $this->fail('production_receipt_target_requirement_missing', '生产收料缺少正式目标物料需求，不能建立投入成本。');
+        $this->validateTargetRequirement($requirement->id, $delivery->production_target_type,
+            (int) $delivery->production_target_id, (int) $pickLine->component_item_id);
+        $posted = DB::table('erp_inventory_transaction_items as item')
+            ->join('erp_inventory_transactions as tx', 'tx.id', '=', 'item.transaction_id')
+            ->where('tx.transaction_type', 'production_material_picking_outbound')
+            ->where('tx.source_type', 'material_picking_task')->where('tx.source_id', $pickLine->task_id)
+            ->where('item.source_item_id', $pickLine->id)->lockForUpdate()
+            ->first(['item.*', 'tx.id as posted_transaction_id']);
+        $source = $posted ? DB::table('erp_material_holdings')->where('position_type', 'PRODUCTION_TRANSIT')
+            ->where('position_id', $posted->id)->lockForUpdate()->first() : null;
+        $lot = $source ? DB::table('erp_material_lots')->where('id', $source->material_lot_id)->first() : null;
+        if (! $posted || ! $source || ! $lot || $source->status !== 'ACTIVE'
+            || (int) $posted->item_id !== (int) $pickLine->component_item_id
+            || (int) $lot->item_id !== (int) $pickLine->component_item_id
+            || bccomp($quantity, (string) $source->quantity, 8) > 0) {
+            $this->fail('production_receipt_cost_source_invalid', '生产收料缺少本次正式出库形成的在途数量或金额。');
+        }
+        $sourceOutputId = $lot->source_type === 'production_output_record' ? (int) $lot->source_id : null;
+        $cost = CuttingDecimal::share((string) $source->total_cost, (string) $source->quantity, $quantity);
+        $bridge = DB::table('erp_production_input_holdings')->insertGetId([
+            'target_type' => $delivery->production_target_type, 'target_id' => $delivery->production_target_id,
+            'target_material_requirement_id' => $requirement->id, 'source_output_record_id' => $sourceOutputId,
+            'inventory_transaction_item_id' => $posted->id, 'source_holding_id' => $source->id,
+            'material_receipt_line_id' => $receiptLine->id, 'quantity' => $quantity, 'total_cost' => $cost,
+            'status' => 'ACTIVE', 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $input = DB::table('erp_material_holdings')->insertGetId([
+            'material_lot_id' => $source->material_lot_id, 'position_type' => 'PRODUCTION_INPUT', 'position_id' => $bridge,
+            'quantity' => $quantity, 'total_cost' => $cost, 'status' => 'ACTIVE', 'business_version' => 1,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('erp_production_input_holdings')->where('id', $bridge)->update(['input_holding_id' => $input, 'updated_at' => now()]);
+        $this->reduceHolding($source, $quantity, $cost);
+        DB::table('erp_material_movements')->insert([
+            'movement_no' => $this->numbers->next('material_movement', 'MM'), 'source_holding_id' => $source->id,
+            'target_holding_id' => $input, 'action' => 'PROD_MATERIAL_RECEIPT', 'quantity' => $quantity,
+            'total_cost' => $cost, 'inventory_transaction_id' => $posted->posted_transaction_id,
+            'operator_legacy_id' => $actor, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+    }
+
+    /** Allocate a production return from the exact still-active receipt costs before inventory is posted back. */
+    public function prepareMaterialReturns(object $return, iterable $lines): array
+    {
+        if (DB::transactionLevel() < 1) throw new \LogicException('Production material return cost allocation requires a transaction.');
+        $costs = [];
+        foreach ($lines as $line) {
+            $requirement = DB::table('erp_production_target_material_requirements')
+                ->where('target_type', $return->target_type)->where('target_id', $return->target_id)
+                ->where('material_requirement_id', $line->material_requirement_id)->lockForUpdate()->first();
+            if (! $requirement || (int) $requirement->component_item_id !== (int) $line->component_item_id) {
+                $this->fail('production_return_requirement_invalid', '生产退料与目标物料需求不一致。');
+            }
+            $sources = DB::table('erp_production_input_holdings as input')
+                ->join('erp_material_holdings as holding', 'holding.id', '=', 'input.input_holding_id')
+                ->join('erp_inventory_transaction_items as posted', 'posted.id', '=', 'input.inventory_transaction_item_id')
+                ->join('erp_material_picking_task_lines as pick', 'pick.id', '=', 'posted.source_item_id')
+                ->where('input.target_material_requirement_id', $requirement->id)->where('input.status', 'ACTIVE')
+                ->where('holding.status', 'ACTIVE')->where('holding.quantity', '>', 0)
+                ->where('pick.warehouse_id', $line->warehouse_id)->where('pick.location_id', $line->location_id)
+                ->whereRaw("COALESCE(pick.batch_no, '') = ?", [(string) ($line->batch_no ?? '')])
+                ->orderBy('holding.id')->lockForUpdate()
+                ->get(['input.id as input_bridge_id', 'holding.*']);
+            $remaining = CuttingDecimal::value((string) $line->return_base_qty, 8, false);
+            $total = '0.0000';
+            foreach ($sources as $source) {
+                if (bccomp($remaining, '0', 8) === 0) break;
+                $quantity = bccomp($remaining, (string) $source->quantity, 8) >= 0 ? (string) $source->quantity : $remaining;
+                $cost = CuttingDecimal::share((string) $source->total_cost, (string) $source->quantity, $quantity);
+                DB::table('erp_production_material_return_cost_allocations')->insert([
+                    'return_line_id' => $line->id, 'source_input_holding_id' => $source->id,
+                    'quantity' => $quantity, 'total_cost' => $cost, 'created_at' => now(), 'updated_at' => now(),
+                ]);
+                $this->reduceHolding($source, $quantity, $cost);
+                if (bccomp($quantity, (string) $source->quantity, 8) === 0) {
+                    DB::table('erp_production_input_holdings')->where('id', $source->input_bridge_id)
+                        ->update(['status' => 'RETURNED', 'updated_at' => now()]);
+                }
+                $remaining = bcsub($remaining, $quantity, 8);
+                $total = bcadd($total, $cost, 4);
+            }
+            if (bccomp($remaining, '0', 8) !== 0) {
+                $this->fail('production_return_cost_coverage_incomplete', '退料数量超过该目标尚未消耗的真实生产投入，不能按零成本退回。');
+            }
+            $costs[(int) $line->id] = ['cost_amount' => $total,
+                'unit_cost' => bcdiv($total, (string) $line->return_base_qty, 8)];
+        }
+        return $costs;
+    }
+
+    /** Bind prepared return shares to the exact positive inventory transaction line. */
+    public function finalizeMaterialReturns(iterable $lines, object $transaction): void
+    {
+        if (DB::transactionLevel() < 1) throw new \LogicException('Production material return cost finalization requires a transaction.');
+        foreach ($lines as $line) {
+            $posted = collect($transaction->items)->first(fn ($item) => (int) $item->source_item_id === (int) $line->id);
+            $allocated = DB::table('erp_production_material_return_cost_allocations')->where('return_line_id', $line->id)->get();
+            $quantity = $allocated->reduce(fn ($sum, $row) => bcadd($sum, (string) $row->quantity, 8), '0.00000000');
+            $cost = $allocated->reduce(fn ($sum, $row) => bcadd($sum, (string) $row->total_cost, 4), '0.0000');
+            if (! $posted || bccomp((string) $posted->change_qty, $quantity, 8) !== 0
+                || bccomp((string) $posted->cost_amount, $cost, 4) !== 0) {
+                $this->fail('production_return_posting_cost_invalid', '生产退料库存过账数量和金额与原生产投入分配不一致。');
+            }
+            DB::table('erp_production_material_return_cost_allocations')->where('return_line_id', $line->id)
+                ->update(['inventory_transaction_item_id' => $posted->id, 'updated_at' => now()]);
+        }
+    }
+
     public function consume(object $output, object $target, string $type, array $payload, int $actor, array $permissions): object
     {
         if (DB::transactionLevel() < 1) throw new \LogicException('Material consumption requires the completion transaction.');
@@ -113,7 +278,7 @@ final class ProductionMaterialCostService
             ->where('input.target_type', $type)->where('input.target_id', $target->id)->where('input.status', 'ACTIVE')
             ->where('holding.status', 'ACTIVE')->where('holding.quantity', '>', 0)->orderBy('holding.id')->lockForUpdate()
             ->get(['holding.*', 'input.id as input_bridge_id', 'input.target_material_requirement_id as input_requirement_id',
-                'input.source_output_record_id']);
+                'input.source_output_record_id', 'input.inventory_transaction_item_id', 'input.material_receipt_line_id']);
         $holdings = $requirementHoldings->map(function ($holding) {
             $holding->input_bridge_id = null; $holding->input_requirement_id = $holding->position_id;
             $holding->source_output_record_id = null; return $holding;
@@ -126,6 +291,25 @@ final class ProductionMaterialCostService
         }
         if ($holdings->isEmpty()) return $output; // Ordinary, non-lot production retains its existing accounting policy.
         foreach ($inputHoldings as $holding) {
+            if ($holding->inventory_transaction_item_id) {
+                $bridge = DB::table('erp_production_input_holdings')->where('id', $holding->input_bridge_id)->first();
+                $posted = DB::table('erp_inventory_transaction_items as item')
+                    ->join('erp_inventory_transactions as tx', 'tx.id', '=', 'item.transaction_id')
+                    ->where('item.id', $holding->inventory_transaction_item_id)->first(['item.*', 'tx.transaction_type']);
+                $lot = DB::table('erp_material_lots')->where('id', $holding->material_lot_id)->first();
+                $source = $bridge ? DB::table('erp_material_holdings')->where('id', $bridge->source_holding_id)->first() : null;
+                $receiptLine = DB::table('erp_material_receipt_lines')->where('id', $holding->material_receipt_line_id)->first();
+                if (! $posted || $posted->transaction_type !== 'production_material_picking_outbound'
+                    || ! $lot || (int) $lot->item_id !== (int) $posted->item_id
+                    || ! $source || $source->position_type !== 'PRODUCTION_TRANSIT' || (int) $source->position_id !== (int) $posted->id
+                    || (int) $source->material_lot_id !== (int) $holding->material_lot_id || ! $receiptLine
+                    || bccomp((string) $receiptLine->accepted_qty, (string) $bridge->quantity, 8) !== 0
+                    || ! DB::table('erp_material_movements')->where('target_holding_id', $holding->id)
+                        ->where('source_holding_id', $source->id)->where('action', 'PROD_MATERIAL_RECEIPT')->exists()) {
+                    $this->fail('production_input_inventory_ancestry_invalid', '采购件投入缺少与正式库存出库、生产收料一致的数量、金额或转移事实。');
+                }
+                continue;
+            }
             $parent = DB::table('erp_production_output_records')->where('id', $holding->source_output_record_id)->first();
             $lot = DB::table('erp_material_lots')->where('id', $holding->material_lot_id)->first();
             if (! $parent || $parent->material_total_cost === null || (int) $parent->material_lot_id !== (int) $holding->material_lot_id
@@ -145,7 +329,7 @@ final class ProductionMaterialCostService
                 $lot = DB::table('erp_material_lots')->where('id', $holding->material_lot_id)->first();
                 if (! $lot || (int) $lot->item_id !== (int) $requirement->component_item_id
                     || ! DB::table('erp_material_movements')->where('target_holding_id', $holding->id)
-                        ->whereIn('action', ['RECEIVE', 'INTERNAL_ISSUE', 'PRODUCTION_HANDOVER', 'PROD_INTERNAL_ISSUE'])->exists()) {
+                        ->whereIn('action', ['RECEIVE', 'INTERNAL_ISSUE', 'PRODUCTION_HANDOVER', 'PROD_INTERNAL_ISSUE', 'PROD_MATERIAL_RECEIPT'])->exists()) {
                     $this->fail('production_material_holding_source_invalid', '生产材料持有记录必须来自同物料的真实交接接收或正式领用。');
                 }
                 app(CuttingRecordService::class)->configuration($lot->configuration_id,

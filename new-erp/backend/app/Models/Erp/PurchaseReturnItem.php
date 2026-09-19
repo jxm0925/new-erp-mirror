@@ -32,4 +32,5 @@ class PurchaseReturnItem extends PurchaseBaseModel
     public function baseUnit() { return $this->belongsTo(Unit::class, 'base_unit_id'); }
     public function returnUnit() { return $this->belongsTo(Unit::class, 'return_unit_id'); }
     public function serialLinks() { return $this->hasMany(PurchaseReturnItemSerial::class, 'purchase_return_item_id'); }
+    public function physicalLinks() { return $this->hasMany(PurchaseReturnItemPhysical::class, 'purchase_return_item_id'); }
 }

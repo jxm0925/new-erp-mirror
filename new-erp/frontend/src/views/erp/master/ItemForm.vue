@@ -763,9 +763,11 @@ export default {
         if (!valid) return
         this.saving = true
         try {
+          const itemPayload = { ...this.form }
+          delete itemPayload.base_unit_locked
           const payload = {
             item: {
-              ...this.form,
+              ...itemPayload,
               reservation_token: this.reservation && this.reservation.token,
               creation_session_id: this.reservation && this.reservation.sessionId
             },

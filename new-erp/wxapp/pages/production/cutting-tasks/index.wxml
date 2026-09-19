@@ -1,0 +1,109 @@
+<view class="page">
+  <!-- 顶部工段看板 Hero -->
+  <view class="hero-card">
+    <view class="hero-header">
+      <view class="hero-title-group">
+        <view class="hero-title-wrap">
+          <view class="hero-mark"></view>
+          <text class="hero-title">下料中心</text>
+        </view>
+        <text class="hero-subtitle">自主领用原料，登记实际产出与去向流转</text>
+      </view>
+      <button class="hero-btn" bindtap="goCreate" hover-class="hero-btn-hover">
+        <van-icon name="plus" size="28rpx" />
+        <text>开始下料</text>
+      </button>
+    </view>
+  </view>
+
+  <!-- 选项卡与搜索 -->
+  <view class="control-panel">
+    <view class="tabs">
+      <view class="tab-item {{group==='active' ? 'active' : ''}}" data-group="active" bindtap="switchGroup">
+        <text class="tab-text">我的进行中</text>
+      </view>
+      <view class="tab-item {{group==='finished' ? 'active' : ''}}" data-group="finished" bindtap="switchGroup">
+        <text class="tab-text">历史记录</text>
+      </view>
+    </view>
+
+    <view class="search-bar">
+      <view class="search-input-wrap">
+        <van-icon name="search" size="32rpx" color="#8a97ab" class="search-icon" />
+        <input class="search-input" placeholder="输入下料单号 / 任务单号" value="{{keyword}}" bindinput="onKeyword" confirm-type="search" bindconfirm="reload" placeholder-class="search-placeholder" />
+        <view class="clear-btn" wx:if="{{keyword}}" catchtap="clearKeyword">
+          <van-icon name="clear" size="32rpx" color="#b8c2d1" />
+        </view>
+      </view>
+      <button class="search-btn" bindtap="reload" hover-class="search-btn-hover">查询</button>
+    </view>
+  </view>
+
+  <!-- 任务卡片列表 -->
+  <view class="task-list">
+    <view class="task-card" wx:for="{{tasks}}" wx:key="id" data-task-id="{{item.id}}" data-order-id="{{item.cutting_order_id}}" bindtap="openTask" hover-class="task-card-hover">
+      <view class="task-header">
+        <view class="task-no-wrap">
+          <text class="task-tag">任务</text>
+          <text class="task-no">{{item.task_no || ('#' + item.id)}}</text>
+        </view>
+        <view class="task-badge {{item.display_status === '加工中' || item.status === 'IN_PROGRESS' ? 'running' : item.display_status === '已完成' || item.status === 'COMPLETED' ? 'completed' : 'pending'}}">
+          <text class="badge-dot"></text>
+          <text>{{item.display_status || item.status || '-'}}</text>
+        </view>
+      </view>
+
+      <view class="task-body">
+        <view class="task-fact-row">
+          <view class="fact-item">
+            <van-icon name="apps-o" size="28rpx" color="#d7190b" class="fact-icon" />
+            <text class="fact-label">产出</text>
+            <text class="fact-val output-highlight">{{item.output_summary || '待加工产出'}}</text>
+          </view>
+          <view class="fact-item">
+            <van-icon name="user-o" size="28rpx" color="#73849c" class="fact-icon" />
+            <text class="fact-label">执行人</text>
+            <text class="fact-val">{{item.owner_label}}</text>
+          </view>
+        </view>
+      </view>
+
+      <view class="task-footer">
+        <text class="task-arrow-text">查看任务与用料详情</text>
+        <van-icon name="arrow" size="26rpx" color="#9aa6b8" />
+      </view>
+    </view>
+  </view>
+
+  <!-- 状态提示 -->
+  <view class="empty-state" wx:if="{{loading}}">
+    <van-loading size="44rpx" color="#e52613">正在加载下料任务…</van-loading>
+  </view>
+  <view class="empty-state error" wx:elif="{{error}}" bindtap="reload">
+    <van-icon name="warning-o" size="56rpx" color="#d92d20" />
+    <text class="error-msg">{{error}}</text>
+    <text class="retry-hint">点击重新加载</text>
+  </view>
+  <view class="empty-state" wx:elif="{{!tasks.length}}">
+    <van-icon name="todo-list-o" size="76rpx" color="#c1cad6" />
+    <text class="empty-title">{{group==='active' ? '暂无进行中的下料任务' : '暂无历史下料记录'}}</text>
+    <text class="empty-desc">您可以点击上方“开始下料”领用原料创建新单</text>
+  </view>
+
+  <!-- 分页栏 -->
+  <view class="pager-bar" wx:if="{{tasks.length > 0 || lastPage > 1}}">
+    <button class="pager-btn {{currentPage <= 1 || loading ? 'disabled' : ''}}" disabled="{{loading || currentPage <= 1}}" bindtap="prevPage">
+      <van-icon name="arrow-left" size="24rpx" />
+      <text>上一页</text>
+    </button>
+    <view class="pager-info">
+      <text class="pager-pages"><text class="curr">{{currentPage}}</text> / {{lastPage}}</text>
+      <text class="pager-total">共 {{total}} 条</text>
+    </view>
+    <button class="pager-btn {{currentPage >= lastPage || loading ? 'disabled' : ''}}" disabled="{{loading || currentPage >= lastPage}}" bindtap="nextPage">
+      <text>下一页</text>
+      <van-icon name="arrow" size="24rpx" />
+    </button>
+  </view>
+</view>
+

@@ -14,4 +14,5 @@ class PurchaseReceiptItemAllocation extends PurchaseBaseModel
     public function receiptItem() { return $this->belongsTo(PurchaseReceiptItem::class, 'receipt_item_id'); }
     public function warehouse() { return $this->belongsTo(Warehouse::class); }
     public function location() { return $this->belongsTo(Location::class); }
+    public function physicalEntries() { return $this->hasMany(PurchaseReceiptAllocationPhysical::class, 'allocation_id')->orderBy('sequence_no'); }
 }

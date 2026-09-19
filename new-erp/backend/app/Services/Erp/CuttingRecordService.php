@@ -14,7 +14,12 @@ final class CuttingRecordService
     public function publish(array $p, object $user, array $permissions, bool $super = false): array
     {
         $c = $this->commands; $c->permission($permissions, 'production.cutting.plan');
-        if (! is_array($p['plans'] ?? null)) $c->fail('source_missing', '请选择正式来源计划。');
+        $purpose = strtoupper((string) ($p['purpose'] ?? 'FORMAL'));
+        if (! in_array($purpose, ['FORMAL', 'STOCK'], true)) $c->fail('purpose_invalid', '下料目的只能是正式需求或备货。');
+        if ($purpose === 'STOCK') {
+            return $this->publishStockOrder($p, $user, $permissions, $super);
+        }
+        if (! is_array($p['plans'] ?? null)) $c->fail('source_missing', '请选择正式来源计划，或改为备货下料。');
         foreach ($p['plans'] as $plan) {
             if (! is_array($plan) || array_diff(array_keys($plan), ['work_order_id','stage_id','planned_qty','target_material_requirement_id','configuration_id','input_material_requirement_id'])) $c->fail('plan_fields_invalid','来源计划包含不允许的字段。');
             $c->workOrder((int) ($plan['work_order_id'] ?? 0), $user, $permissions, $super, 'production.cutting.plan');
@@ -27,7 +32,7 @@ final class CuttingRecordService
             if (($p['expected_version'] ?? null) !== 0) $c->fail('version_required', '新建下料单版本必须为0。');
             $plans = $p['plans'] ?? []; if (! is_array($plans) || ! array_is_list($plans) || count($plans) < 1 || count($plans) > 100) $c->fail('source_missing', '下料单必须包含1至100条正式来源计划。');
             $id = DB::table('erp_cutting_orders')->insertGetId(['cutting_order_no' => $this->numbers->next('cutting_order', 'CUT'),
-                'status' => 'PUBLISHED', 'business_version' => 1, 'responsible_user_legacy_id' => $c->actor($user),
+                'status' => 'PUBLISHED', 'purpose' => 'FORMAL', 'business_version' => 1, 'responsible_user_legacy_id' => $c->actor($user),
                 'created_by_legacy_id' => $c->actor($user), 'published_at' => now(), 'created_at' => now(), 'updated_at' => now()]);
             $taskId = DB::table('erp_cutting_tasks')->insertGetId(['cutting_order_id' => $id, 'task_no' => $this->numbers->next('cutting_task', 'CT'),
                 'status' => 'WAIT_CLAIM', 'business_version' => 1, 'created_at' => now(), 'updated_at' => now()]);
@@ -85,8 +90,13 @@ final class CuttingRecordService
             $rowIds = []; $resultIds = [];
             foreach ($rows as $row) {
                 if (! is_array($row)) $c->fail('results_invalid', '加工结果格式不合法。');
-                if (array_diff(array_keys($row), ['client_row_id','result_type','allowed_output_id','actual_qty','piece_qty','cut_length_mm','measurement_status','measurements','reported_quality']))
+                if (array_diff(array_keys($row), ['client_row_id','result_type','allowed_output_id','item_id','configuration_id','actual_qty','piece_qty','cut_length_mm','measurement_status','measurements','reported_quality']))
                     $c->fail('result_fields_invalid', '加工结果包含不允许的字段，来源仅由本用料批次确定。');
+                if (isset($row['item_id']) || isset($row['configuration_id'])) {
+                    if (($row['result_type'] ?? null) !== 'product' || isset($row['allowed_output_id']))
+                        $c->fail('output_source_invalid','产出身份只能使用一种来源。');
+                    $row['allowed_output_id'] = app(CuttingWorkerOrderService::class)->resolveOutput($batch,$row,$user,$permissions,$super);
+                }
                 $key = $row['client_row_id'] ?? ''; if (! is_string($key) || strlen($key) < 1 || strlen($key) > 80 || in_array($key, $rowIds, true)) $c->fail('row_id_invalid', '结果行标识为空或重复。');
                 $rowIds[] = $key; $data = $this->resultData($batch, $row);
                 $existing = DB::table('erp_cutting_results')->where('settlement_batch_id', $batchId)->where('client_row_id', $key)->whereNotIn('status',['VOIDED','SUPERSEDED'])->lockForUpdate()->first();
@@ -158,7 +168,8 @@ final class CuttingRecordService
                     $this->target($targetId, $row->item_id, $user, $permissions, $super, 'production.cutting.record');
                     $target = $this->target($targetId,$row->item_id,$user,$permissions,$super,'production.cutting.record');
                     $this->configuration($row->configuration_id,Item::findOrFail($row->item_id),$target->work_order_id);
-                    if (! DB::table('erp_cutting_plan_allocations')->where('cutting_order_id',$batch->cutting_order_id)->where('output_item_id',$row->item_id)
+                    $workerOrigin = DB::table('erp_cutting_orders')->where('id',$batch->cutting_order_id)->where('purpose','WORKER')->exists();
+                    if (! $workerOrigin && ! DB::table('erp_cutting_plan_allocations')->where('cutting_order_id',$batch->cutting_order_id)->where('output_item_id',$row->item_id)
                         ->where('configuration_id',$row->configuration_id)->where('stage_id',$row->stage_id)->where('target_material_requirement_id',$targetId)->exists())
                         $c->fail('target_not_planned', '去向目标不属于该产出的正式来源计划。');
                 }
@@ -206,6 +217,11 @@ final class CuttingRecordService
                 }
             }
             $summary = $this->routeSummary($batchId);
+            if (DB::table('erp_cutting_orders')->where('id',$batch->cutting_order_id)->where('purpose','WORKER')->exists()) {
+                // Validate the automatic basis before freezing the editable report;
+                // missing measurements must remain correctable by the worker.
+                app(CuttingAutomaticCostService::class)->allocate($batch,$rows);
+            }
             $status = $summary['route_complete'] ? $this->postRouteStatus($batchId) : 'WAIT_ROUTE';
             DB::table('erp_cutting_results')->whereIn('id',$rows->pluck('id'))->update(['status' => 'SUBMITTED', 'updated_at' => now()]);
             DB::table('erp_cutting_settlement_batches')->where('id', $batchId)->update(['status' => $status,
@@ -252,12 +268,19 @@ final class CuttingRecordService
         $allowed = null;
         if ($type === 'product') {
             $allowed = DB::table('erp_cutting_allowed_outputs')->where('cutting_order_id', $batch->cutting_order_id)->where('id', (int) ($row['allowed_output_id'] ?? 0))->first();
-            if (! $allowed) $c->fail('output_not_allowed', '该Item、配置或阶段不属于本下料任务允许的正式产出集合。');
-            if (! $this->materials->plans($batch->cutting_order_id)->where('r.component_item_id',$batch->input_item_id)
-                ->where('p.output_item_id',$allowed->item_id)->where('p.configuration_id',$allowed->configuration_id)->where('p.stage_id',$allowed->stage_id)->exists())
-                $c->fail('output_input_mismatch','当前实际投入原料不属于这条产出的正式需求及冻结工序。');
-            $item = Item::find($allowed->item_id); $plan = DB::table('erp_cutting_plan_allocations')->where('id', $allowed->plan_id)->first();
-            $this->configuration($allowed->configuration_id, $item, $plan->work_order_id);
+            if (! $allowed) $c->fail('output_not_allowed', '该Item、配置或阶段不属于本下料任务允许的产出集合。');
+            $orderPurpose = (string) (DB::table('erp_cutting_orders')->where('id', $batch->cutting_order_id)->value('purpose') ?: 'FORMAL');
+            if (! in_array($orderPurpose, ['STOCK', 'WORKER'], true)) {
+                if (! $this->materials->plans($batch->cutting_order_id)->where('r.component_item_id',$batch->input_item_id)
+                    ->where('p.output_item_id',$allowed->item_id)->where('p.configuration_id',$allowed->configuration_id)->where('p.stage_id',$allowed->stage_id)->exists())
+                    $c->fail('output_input_mismatch','当前实际投入原料不属于这条产出的正式需求及冻结工序。');
+                $item = Item::find($allowed->item_id); $plan = DB::table('erp_cutting_plan_allocations')->where('id', $allowed->plan_id)->first();
+                if (! $plan) $c->fail('plan_missing', '正式产出缺少来源计划。');
+                $this->configuration($allowed->configuration_id, $item, $plan->work_order_id);
+            } else {
+                $item = Item::find($allowed->item_id);
+                if (! $item || $item->status !== 'enabled') $c->fail('output_item_invalid', '备货产出物料未启用。');
+            }
         } elseif (! empty($row['allowed_output_id'])) $c->fail('other_output_identity_invalid', '其他加工结果不能冒充正式产品产出。');
         $measurement = $row['measurement_status'] ?? 'NOT_RECORDED';
         if (! in_array($measurement, ['MEASURED','NOT_MEASURED','NOT_RECORDED'], true)) $c->fail('measurement_invalid', '请选择实测、未测量或未登记。');
@@ -388,7 +411,7 @@ final class CuttingRecordService
         }
         $unassigned = bcsub($actual,$assigned,8);
         return ['actual_qty'=>$actual,'assigned_qty'=>$assigned,'unassigned_qty'=>$unassigned,
-            'route_complete'=>$details !== [] && collect($details)->every(fn (array $row) => $row['route_complete']),
+            'route_complete'=>collect($details)->every(fn (array $row) => $row['route_complete']),
             'results'=>$details];
     }
 
@@ -405,4 +428,68 @@ final class CuttingRecordService
             'PROCESSING'=>'草稿',default=>$status,
         };
     }
+    private function publishStockOrder(array $p, object $user, array $permissions, bool $super = false): array
+    {
+        $c = $this->commands;
+        return $c->run('publish_cutting_order', 0, $p, $user, function () use ($c, $p, $user): array {
+            if (($p['expected_version'] ?? null) !== 0) $c->fail('version_required', '新建下料单版本必须为0。');
+            $outputs = $p['stock_outputs'] ?? $p['allowed_item_ids'] ?? [];
+            if (! is_array($outputs) || ! array_is_list($outputs) || count($outputs) < 1 || count($outputs) > 100) {
+                $c->fail('stock_outputs_missing', '备货下料请至少选择1个产出物料。');
+            }
+            $id = DB::table('erp_cutting_orders')->insertGetId([
+                'cutting_order_no' => $this->numbers->next('cutting_order', 'CUT'),
+                'status' => 'PUBLISHED',
+                'purpose' => 'STOCK',
+                'business_version' => 1,
+                'responsible_user_legacy_id' => $c->actor($user),
+                'created_by_legacy_id' => $c->actor($user),
+                'published_at' => now(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            $taskId = DB::table('erp_cutting_tasks')->insertGetId([
+                'cutting_order_id' => $id,
+                'task_no' => $this->numbers->next('cutting_task', 'CT'),
+                'status' => 'WAIT_CLAIM',
+                'business_version' => 1,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            $allowedIds = [];
+            foreach ($outputs as $row) {
+                $itemId = is_array($row) ? (int) ($row['item_id'] ?? $row['id'] ?? 0) : (int) $row;
+                $configId = is_array($row) && isset($row['configuration_id']) ? (int) $row['configuration_id'] : null;
+                $item = Item::find($itemId);
+                if (! $item || $item->status !== 'enabled') $c->fail('output_item_invalid', '备货产出物料未启用。');
+                $allowedIds[] = DB::table('erp_cutting_allowed_outputs')->insertGetId([
+                    'cutting_order_id' => $id,
+                    'plan_id' => null,
+                    'item_id' => $itemId,
+                    'configuration_id' => $configId,
+                    'stage_id' => null,
+                    'quality_mode' => 'none',
+                    'output_mode' => 'stockable',
+                    'work_mode' => 'manual',
+                    'rule_snapshot' => json_encode([
+                        'purpose' => 'STOCK',
+                        'item_code' => $item->item_code,
+                        'item_name' => $item->item_name,
+                    ], JSON_THROW_ON_ERROR),
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+            $response = [
+                'cutting_order_id' => $id,
+                'cutting_task_id' => $taskId,
+                'purpose' => 'STOCK',
+                'allowed_output_ids' => $allowedIds,
+                'business_version' => 1,
+            ];
+            $c->event('order', $id, 'publish_stock', $user, null, $response);
+            return $response;
+        });
+    }
+
 }

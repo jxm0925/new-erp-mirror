@@ -60,6 +60,9 @@ import ProductionOperationForm from './views/erp/production/ProductionOperationF
 import ProductionRoutingList from './views/erp/production/ProductionRoutingList.vue'
 import ProductionRoutingForm from './views/erp/production/ProductionRoutingForm.vue'
 import ProductionExecutionMonitor from './views/erp/production/ProductionExecutionMonitor.vue'
+import CuttingList from './views/erp/production/CuttingList.vue'
+import CuttingCreate from './views/erp/production/CuttingCreate.vue'
+import CuttingDetail from './views/erp/production/CuttingDetail.vue'
 import ApprovalWorkbench from './views/erp/approval/ApprovalWorkbench.vue'
 import ApprovalTaskDetail from './views/erp/approval/ApprovalTaskDetail.vue'
 import ApprovalFlowList from './views/erp/approval/ApprovalFlowList.vue'
@@ -195,6 +198,9 @@ const router = new VueRouter({
     { path: '/production/routings/:id/edit', component: ProductionRoutingForm, meta: { permission: 'production.routing.edit' } },
     { path: '/production/routings/:id', component: ProductionRoutingForm, meta: { permission: 'production.routing.view' } },
     { path: '/production/execution-monitor', component: ProductionExecutionMonitor, meta: { permission: 'production.unit.view' } },
+    { path: '/production/cutting', component: CuttingList, meta: { permission: 'production.cutting.view' } },
+    { path: '/production/cutting/create', component: CuttingCreate, meta: { permission: 'production.cutting.publish' } },
+    { path: '/production/cutting/:id', component: CuttingDetail, meta: { permission: 'production.cutting.view' } },
     { path: '/approvals', redirect: '/approvals/tasks' },
     { path: '/approvals/tasks', component: ApprovalWorkbench, meta: { permission: 'approval.task.view' } },
     { path: '/approvals/processed', redirect: { path: '/approvals/tasks', query: { scope: 'processed' } } },

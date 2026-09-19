@@ -3,12 +3,7 @@
   "libVersion": "trial",
   "packOptions": {
     "ignore": [],
-    "include": [
-      {
-        "value": "pages/production/**",
-        "type": "glob"
-      }
-    ]
+    "include": []
   },
   "setting": {
     "coverView": true,

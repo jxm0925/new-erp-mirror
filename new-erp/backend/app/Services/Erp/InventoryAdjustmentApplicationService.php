@@ -13,6 +13,8 @@ use Illuminate\Validation\ValidationException;
 
 class InventoryAdjustmentApplicationService
 {
+    public function __construct(private readonly MaterialPhysicalService $physicalMaterials) {}
+
     public function save(array $payload, ?int $id = null): InventoryAdjustment
     {
         return DB::transaction(function () use ($payload, $id): InventoryAdjustment {
@@ -76,16 +78,22 @@ class InventoryAdjustmentApplicationService
                         'number_source' => $entry['number_source'],
                     ]);
                 }
+                $this->physicalMaterials->replaceAdjustmentEntries(
+                    $adjustmentItem,
+                    $item,
+                    $balance,
+                    $line['physical_entries'] ?? [],
+                );
             }
 
-            return $adjustment->fresh(['items.item.unit', 'items.warehouse', 'items.location', 'items.serials']);
+            return $adjustment->fresh(['items.item.unit', 'items.warehouse', 'items.location', 'items.serials', 'items.physicalEntries']);
         }, 5);
     }
 
     public function submit(int $id): InventoryAdjustment
     {
         return DB::transaction(function () use ($id): InventoryAdjustment {
-            $adjustment = InventoryAdjustment::query()->with(['items.item', 'items.serials'])->lockForUpdate()->findOrFail($id);
+            $adjustment = InventoryAdjustment::query()->with(['items.item', 'items.serials', 'items.physicalEntries'])->lockForUpdate()->findOrFail($id);
             if ($adjustment->adjustment_status !== 'draft') {
                 throw ValidationException::withMessages(['status' => '只有草稿调整单可以提交。']);
             }
@@ -102,7 +110,7 @@ class InventoryAdjustmentApplicationService
                 $this->validateStoredLine($line, $balance, $adjustment->id);
             }
             $adjustment->update(['adjustment_status' => 'submitted', 'submitted_at' => now()]);
-            return $adjustment->fresh(['items.serials']);
+            return $adjustment->fresh(['items.serials', 'items.physicalEntries']);
         }, 5);
     }
 
@@ -142,13 +150,15 @@ class InventoryAdjustmentApplicationService
     {
         $line->loadMissing(['item', 'serials']);
 
-        return $this->validatedSerialEntries($line->item, $balance, [
+        $serials = $this->validatedSerialEntries($line->item, $balance, [
             'change_qty' => (float) $line->change_qty,
             'serial_entries' => $line->serials->map(fn (InventoryAdjustmentSerial $serial) => [
                 'serial_no' => $serial->serial_no,
                 'source' => $serial->number_source,
             ])->all(),
         ], $adjustmentId);
+        $this->physicalMaterials->assertAdjustmentReady($line, $balance);
+        return $serials;
     }
 
     private function validatedSerialEntries(Item $item, InventoryBalance $balance, array $line, ?int $ignoreAdjustmentId = null): array

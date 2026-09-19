@@ -16,6 +16,7 @@ class ProductionHandoverService
         private readonly WorkOrderCompletionReadinessService $completionReadiness,
         private readonly ProductionTargetReadinessService $targetReadiness,
         private readonly ProductionMaterialCostService $materialCosts,
+        private readonly ProductionDataScopeResolver $scopeResolver,
     ) {}
 
     public function pending(object $user, array $permissions): array
@@ -30,28 +31,35 @@ class ProductionHandoverService
             ->orderBy('handover.handed_over_at')->select('handover.*', 'task.id as task_id', 'task.task_no')->get()->map(fn ($row) => (array) $row)->all();
     }
 
-    public function accept(int $id, array $payload, object $user, array $permissions): array
-    { $this->permission($permissions, 'production.handover.receive'); return $this->decide($id, $payload, $user, true); }
-    public function reject(int $id, array $payload, object $user, array $permissions): array
-    { $this->permission($permissions, 'production.handover.reject'); return $this->decide($id, $payload, $user, false); }
+    public function accept(int $id, array $payload, object $user, array $permissions, bool $super = false): array
+    { $this->permission($permissions, 'production.handover.receive'); return $this->decide($id, $payload, $user, $permissions, $super, true); }
+    public function reject(int $id, array $payload, object $user, array $permissions, bool $super = false): array
+    { $this->permission($permissions, 'production.handover.reject'); return $this->decide($id, $payload, $user, $permissions, $super, false); }
 
-    private function decide(int $id, array $payload, object $user, bool $accept): array
+    private function decide(int $id, array $payload, object $user, array $permissions, bool $super, bool $accept): array
     {
         $commandId = trim((string) ($payload['client_command_id'] ?? ''));
         $type = $accept ? 'accept_handover' : 'reject_handover';
+        $permission = $accept ? 'production.handover.receive' : 'production.handover.reject';
+        $actor = $this->userId($user);
         $hash = hash('sha256', json_encode([$id, (int) ($payload['expected_version'] ?? 0), $payload['reason'] ?? null], JSON_UNESCAPED_UNICODE));
-        return DB::transaction(function () use ($id, $payload, $user, $accept, $commandId, $type, $hash): array {
+        // Idempotency only prevents duplicate facts. It must never preserve an
+        // old receiver's authority after the target task has been reassigned.
+        $this->authorizeHandover($id, $user, $permissions, $super, $permission);
+        return DB::transaction(function () use ($id, $payload, $user, $permissions, $super, $accept, $commandId, $type, $hash, $permission, $actor): array {
             $existing = ProductionExecutionCommand::query()->where('client_command_id', $commandId)->lockForUpdate()->first();
-            if ($existing) return $this->replay($existing, $type, $hash);
+            if ($existing) return $this->replay($existing, $type, $hash, $actor);
             $ledger = ProductionExecutionCommand::create(['client_command_id' => $commandId, 'command_type' => $type,
                 'aggregate_type' => 'operation_handover', 'aggregate_id' => $id, 'request_hash' => $hash, 'status' => 'processing',
-                'initiated_by_legacy_id' => $this->userId($user), 'processing_started_at' => now()]);
+                'initiated_by_legacy_id' => $actor, 'processing_started_at' => now()]);
             $handover = DB::table('erp_production_operation_handovers')->where('id', $id)->lockForUpdate()->first();
             if (! $handover) $this->fail('handover_not_found', '工序交接单不存在。', 404);
             if ((int) $handover->business_version !== (int) ($payload['expected_version'] ?? 0)) $this->fail('version_conflict', '交接单版本已变化，请刷新后重试。', 409);
             if ($handover->status !== 'WAIT_RECEIVE') $this->fail('handover_already_decided', '该工序交接已经处理。', 409);
             [$task, $target] = $this->targetTask($handover->target_target_type, (int) $handover->target_target_id);
-            if ((int) $task->assignee_user_legacy_id !== $this->userId($user)) $this->fail('expected_receiver_required', '只有下一工序当前接单负责人可以处理交接。', 403);
+            // Keep the locked recheck: authorization may change between the
+            // pre-ledger check and the business transaction acquiring its rows.
+            $this->assertTargetTask($task, $user, $permissions, $super, $permission);
             $now = now();
             if ($accept) {
                 $acceptedQty = $this->acceptTargetMaterial($handover);
@@ -168,12 +176,14 @@ class ProductionHandoverService
         return $accepted;
     }
 
-    private function targetTask(string $type, int $id): array
+    private function targetTask(string $type, int $id, bool $lock = true): array
     {
         $link = DB::table('erp_production_task_targets')->where('target_type', $type)->where('target_id', $id)->first();
-        $task = $link ? ProductionTask::query()->lockForUpdate()->find($link->task_id) : null;
+        $taskQuery = ProductionTask::query();
+        if ($lock) $taskQuery->lockForUpdate();
+        $task = $link ? $taskQuery->find($link->task_id) : null;
         if (! $task) $this->fail('target_task_not_found', '下一工序尚未形成有效生产任务。', 409);
-        return [$task, $this->target($type, $id, true)];
+        return [$task, $this->target($type, $id, $lock)];
     }
     private function target(string $type, int $id, bool $lock): object
     {
@@ -182,8 +192,31 @@ class ProductionHandoverService
         $query = $model::query(); if ($lock) $query->lockForUpdate();
         return $query->findOrFail($id);
     }
-    private function replay(ProductionExecutionCommand $command, string $type, string $hash): array
+    private function authorizeHandover(int $id, object $user, array $permissions, bool $super, string $permission): void
     {
+        $handover = DB::table('erp_production_operation_handovers')->where('id', $id)->first();
+        if (! $handover) $this->fail('handover_not_found', '工序交接单不存在。', 404);
+        [$task] = $this->targetTask((string) $handover->target_target_type, (int) $handover->target_target_id, false);
+        $this->assertTargetTask($task, $user, $permissions, $super, $permission);
+    }
+
+    private function assertTargetTask(ProductionTask $task, object $user, array $permissions, bool $super, string $permission): void
+    {
+        $actor = $this->userId($user);
+        $visible = ProductionTask::query()->whereKey($task->id);
+        $scope = $this->scopeResolver->resolve($user, $permission, $permissions, $super);
+        $this->scopeResolver->applyProductionTaskScope($visible, $scope, $actor);
+        if (! $visible->exists()) $this->fail('data_scope_denied', '该接收任务不在当前生产数据范围内。', 403);
+        if ((int) $task->assignee_user_legacy_id !== $actor) {
+            $this->fail('expected_receiver_required', '只有下一工序当前接单负责人可以处理交接。', 403);
+        }
+    }
+
+    private function replay(ProductionExecutionCommand $command, string $type, string $hash, int $actor): array
+    {
+        if ((int) $command->initiated_by_legacy_id !== $actor) {
+            $this->fail('command_actor_mismatch', '该 client_command_id 属于其他操作者，不能恢复其历史结果。', 403);
+        }
         if ($command->command_type !== $type || $command->request_hash !== $hash) $this->fail('command_conflict', '该 client_command_id 已用于不同请求。', 409);
         if ($command->status !== 'succeeded' || ! is_array($command->response_snapshot)) $this->fail('command_processing', '相同命令正在处理中，请稍后重试。', 409);
         return $command->response_snapshot;

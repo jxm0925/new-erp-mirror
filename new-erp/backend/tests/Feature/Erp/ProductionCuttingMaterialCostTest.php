@@ -3,9 +3,10 @@
 namespace Tests\Feature\Erp;
 
 use App\Exceptions\Erp\WorkOrderDomainException;
-use App\Models\Erp\{InventoryBalance, Item, ProductionQuantityOperation, SalesOrder, SalesOrderFulfillment, SalesOrderLine};
+use App\Models\Erp\{BomItem, InventoryBalance, Item, ProductionQuantityOperation, SalesOrder, SalesOrderFulfillment, SalesOrderLine, Unit, WorkOrderMaterialRequirement};
 use App\Services\Erp\{CuttingInventoryReservationService, ProductionExecutionActionService, ProductionInternalIssueService,
-    ProductionKittingService, ProductionOutputService, WorkOrderCompletionService, InventoryReservationService, SalesShipmentApplicationService};
+    ProductionKittingService, ProductionMaterialExecutionService, ProductionOutputService, WorkOrderCompletionService,
+    InventoryReservationService, SalesShipmentApplicationService};
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -19,7 +20,11 @@ class ProductionCuttingMaterialCostTest extends TestCase
     private function productionPermissions(): array
     {
         return array_merge(self::PERMISSIONS, ['production.task.complete', 'production.completion.create',
-            'production.completion.review', 'production.output.warehouse', 'production.output.cost.allocate', 'production.output.cost.view']);
+            'production.completion.review', 'production.output.warehouse', 'production.output.cost.allocate', 'production.output.cost.view',
+            'production.material_picking.view', 'production.material_picking.create', 'production.material_picking.assign',
+            'production.material_picking.pick', 'production.material_delivery.view', 'production.material_delivery.create',
+            'production.material_delivery.dispatch', 'production.material_delivery.confirm',
+            'production.material_receipt.view', 'production.material_receipt.confirm']);
     }
 
     private function received(): array
@@ -38,6 +43,87 @@ class ProductionCuttingMaterialCostTest extends TestCase
         app(ProductionKittingService::class)->confirm($task->id, 'quantity_operation', $target->id,
             $this->payload($target->business_version), $receiver, self::PERMISSIONS);
         return [$f, $receiver, $task];
+    }
+
+    private function receivePurchasedComponents(array $f, object $receiver): array
+    {
+        $specs = [
+            ['name' => 'PLC', 'cost' => '600.0000'],
+            ['name' => '开关电源', 'cost' => '200.0000'],
+            ['name' => '继电器', 'cost' => '100.0000'],
+            ['name' => '线材端子', 'cost' => '300.0000'],
+        ];
+        $unit = Unit::findOrFail($f['consumerRequirement']->unit_id);
+        $rows = []; $requirementIds = [];
+        foreach ($specs as $offset => $spec) {
+            $suffix = (string) Str::ulid();
+            $item = Item::create([
+                'item_code' => 'ASM-COMP-'.$suffix, 'item_name' => $spec['name'], 'item_type' => 'raw_material',
+                'unit_id' => $unit->id, 'is_purchase_item' => true, 'is_stock_item' => true, 'status' => 'enabled',
+            ]);
+            $bomItem = BomItem::create([
+                'bom_id' => $f['consumerWo']->bom_id, 'line_no' => $offset + 2, 'component_item_id' => $item->id,
+                'component_item_code' => $item->item_code, 'component_item_name' => $item->item_name,
+                'qty' => '0.1', 'unit_id' => $unit->id, 'loss_rate' => 0, 'fixed_qty' => 0, 'replaceable' => false,
+            ]);
+            $requirement = WorkOrderMaterialRequirement::create([
+                'work_order_id' => $f['consumerWo']->id, 'line_no' => $offset + 2, 'bom_id' => $f['consumerWo']->bom_id,
+                'bom_item_id' => $bomItem->id, 'component_item_id' => $item->id,
+                'component_item_code_snapshot' => $item->item_code, 'component_item_name_snapshot' => $item->item_name,
+                'unit_id' => $unit->id, 'unit_name_snapshot' => $unit->unit_name, 'per_output_qty' => '0.1',
+                'loss_rate' => 0, 'fixed_qty' => 0, 'required_qty' => 1, 'base_unit_id' => $unit->id,
+                'base_unit_name_snapshot' => $unit->unit_name, 'base_required_qty' => 1, 'issued_qty' => 0,
+                'returned_qty' => 0, 'remaining_qty' => 1, 'status' => 'OPEN', 'business_version' => 1,
+            ]);
+            $supply = $this->supply($f['consumerWo'], $requirement, $f['consumerStage'], $item->id, '1');
+            $targetRequirement = $this->targetRequirement($f['consumerWo'], $requirement, $supply,
+                $f['consumerOperation'], $item->id, '1');
+            $balance = InventoryBalance::create([
+                'item_id' => $item->id, 'warehouse_id' => $f['warehouse']->id, 'location_id' => $f['location']->id,
+                'batch_no' => 'ASM-COMP-'.$suffix, 'unit_id' => $unit->id, 'quantity_on_hand' => 5,
+                'quantity_available' => 5, 'quantity_locked' => 0, 'quantity_defective' => 0, 'quantity_pending' => 0,
+                'average_unit_cost' => $spec['cost'], 'inventory_value' => bcmul($spec['cost'], '5', 4),
+            ]);
+            $rows[] = ['target_material_requirement_id' => $targetRequirement,
+                'inventory_balance_id' => $balance->id, 'planned_pick_qty' => '1'];
+            $requirementIds[] = $targetRequirement;
+        }
+        $service = app(ProductionMaterialExecutionService::class); $permissions = $this->productionPermissions();
+        $pick = $service->createPickingTask([
+            'client_command_id' => (string) Str::uuid(), 'work_order_id' => $f['consumerWo']->id,
+            'expected_version' => $f['consumerWo']->fresh()->business_version, 'warehouse_id' => $f['warehouse']->id,
+            'lines' => $rows,
+        ], $f['user'], $permissions, true);
+        $pick = $service->assignPickingTask($pick->id, [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => $pick->business_version,
+            'assigned_picker_legacy_id' => $f['user']->legacy_id,
+        ], $f['user'], $permissions, true);
+        $pick = $service->startPickingTask($pick->id, [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => $pick->business_version,
+        ], $f['user'], $permissions, true);
+        $pick = $service->confirmPickingTask($pick->id, [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => $pick->business_version,
+            'lines' => $pick->lines->map(fn ($line) => ['picking_task_line_id' => $line->id, 'actual_pick_qty' => '1'])->all(),
+        ], $f['user'], $permissions, true);
+        $delivery = $service->createDelivery([
+            'client_command_id' => (string) Str::uuid(), 'picking_task_id' => $pick->id,
+            'expected_version' => $pick->business_version,
+            'lines' => $pick->lines->map(fn ($line) => ['picking_task_line_id' => $line->id, 'delivery_qty' => '1'])->all(),
+        ], $f['user'], $permissions, true);
+        $delivery = $service->dispatchDelivery($delivery->id, [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => $delivery->business_version,
+            'delivery_user_legacy_id' => $f['user']->legacy_id,
+        ], $f['user'], $permissions, true);
+        $delivery = $service->deliverDelivery($delivery->id, [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => $delivery->business_version,
+        ], $f['user'], $permissions, true);
+        $service->receiveDelivery($delivery->id, [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => $delivery->business_version,
+            'lines' => $delivery->lines->map(fn ($line) => [
+                'delivery_line_id' => $line->id, 'accepted_qty' => '1', 'rejected_qty' => '0',
+            ])->all(),
+        ], $receiver, $permissions, true);
+        return compact('pick', 'requirementIds', 'specs');
     }
 
     private function complete(array $f, object $receiver, object $task, bool $loss = false): array
@@ -112,6 +198,43 @@ class ProductionCuttingMaterialCostTest extends TestCase
         $this->assertSame(0, bccomp((string) $balance->fresh()->inventory_value, '0', 4));
         $this->assertSame(0, bccomp((string) $balance->fresh()->quantity_on_hand, '0', 8));
         $this->assertSame('2400.0001', (string) $sales->fresh()->actual_sales_cost_amount);
+    }
+
+    public function test_self_made_enclosure_and_purchased_components_use_real_posted_amounts_in_one_output_cost(): void
+    {
+        $this->travelTo(now()->startOfSecond());
+        $f = $this->fixture('none', '10', '10', false, true, '1800'); $receiver = $this->employee('mixed-cost-');
+        $f['consumerWo']->update(['production_location_name' => '智能控制电箱总装工位']);
+        $task = $this->consumerTask($f, $receiver);
+        Item::whereKey($f['consumerWo']->output_item_id)->update(['is_stock_item' => true]);
+        $stock = $this->warehouseStock($f, '10', '1800.0000');
+        $issue = app(CuttingInventoryReservationService::class)->createIssue($stock['reservation_ids'][0],
+            $this->payload(1) + ['quantity' => '10'], $f['user'], self::PERMISSIONS, true);
+        $internal = app(ProductionInternalIssueService::class);
+        $internal->dispatch($issue['internal_issue_task_id'], $this->payload(1), $f['user'], self::PERMISSIONS, true);
+        $internal->receive($issue['internal_issue_task_id'], $this->payload(2), $receiver, self::PERMISSIONS, true);
+        $purchased = $this->receivePurchasedComponents($f, $receiver);
+
+        $bridges = DB::table('erp_production_input_holdings')->whereIn('target_material_requirement_id', $purchased['requirementIds'])
+            ->orderBy('total_cost')->get();
+        $this->assertSame(['100.0000', '200.0000', '300.0000', '600.0000'], $bridges->pluck('total_cost')->all());
+        $this->assertSame('1200.0000', $bridges->reduce(fn ($sum, $row) => bcadd($sum, (string) $row->total_cost, 4), '0.0000'));
+        $this->assertTrue($bridges->every(fn ($row) => $row->inventory_transaction_item_id && $row->material_receipt_line_id));
+        $postedCosts = DB::table('erp_inventory_transaction_items')->where('transaction_id', $purchased['pick']->inventory_transaction_id)
+            ->orderBy('cost_amount')->pluck('cost_amount')->all();
+        $this->assertSame(['-600.0000', '-300.0000', '-200.0000', '-100.0000'], $postedCosts);
+
+        $target = ProductionQuantityOperation::findOrFail($f['consumerOperation']);
+        app(ProductionKittingService::class)->confirm($task->id, 'quantity_operation', $target->id,
+            $this->payload($target->business_version), $receiver, $this->productionPermissions());
+        $result = $this->complete($f, $receiver, $task);
+        $output = DB::table('erp_production_output_records')->find($result['output_record_id']);
+        $this->assertSame('3000.0000', $output->material_total_cost);
+        $this->assertSame(5, DB::table('erp_production_material_consumptions')->where('output_record_id', $output->id)->count());
+        $this->assertSame('1800.0000', DB::table('erp_production_material_consumptions')->where('output_record_id', $output->id)
+            ->where('target_material_requirement_id', $f['targetRequirement'])->value('total_cost'));
+        $this->assertSame('1200.0000', DB::table('erp_production_material_consumptions')->where('output_record_id', $output->id)
+            ->whereIn('target_material_requirement_id', $purchased['requirementIds'])->sum('total_cost'));
     }
 
     public function test_loss_requires_explicit_conserved_cost_allocation_and_rolls_back_completion(): void

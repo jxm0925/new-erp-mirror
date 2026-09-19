@@ -8,7 +8,7 @@ use Tests\Support\CommittedInsertTracker;
 
 require dirname(__DIR__, 2).'/vendor/autoload.php';
 $database = (string) getenv('ERP_CUTTING_RACE_DATABASE');
-if (! str_ends_with($database, '_test')) exit(2);
+if (strtolower($database) !== 'erp_sdjiantan') exit(2);
 $args = json_decode(base64_decode($argv[1] ?? '', true), true, 512, JSON_THROW_ON_ERROR);
 putenv('DB_DATABASE='.$database);
 $_ENV['DB_DATABASE'] = $_SERVER['DB_DATABASE'] = $database;

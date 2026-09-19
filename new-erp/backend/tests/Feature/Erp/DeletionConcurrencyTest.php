@@ -111,7 +111,7 @@ class DeletionConcurrencyTest extends TestCase
     private function race(array $firstArgs, array $secondArgs): array
     {
         $database = (string) config('database.connections.mysql.database');
-        $this->assertStringEndsWith('_test', $database);
+        $this->assertSame('erp_sdjiantan', strtolower($database));
         $environment = array_merge($_ENV, ['ERP_DELETION_RACE_DATABASE' => $database, 'APP_ENV' => 'testing', 'DB_DATABASE' => $database]);
         $input = new InputStream();
         $first = new Process([PHP_BINARY, base_path('tests/Support/deletion_race_worker.php'), base64_encode(json_encode($firstArgs + ['hold' => true], JSON_THROW_ON_ERROR))], base_path(), $environment, $input, 20);

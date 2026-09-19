@@ -12,6 +12,8 @@ use Illuminate\Validation\ValidationException;
 
 class PurchaseReceiptAllocationService
 {
+    public function __construct(private readonly MaterialPhysicalService $physicalMaterials) {}
+
     public function replace(PurchaseReceiptItem $line, array $allocations): void
     {
         $line->allocations()->delete();
@@ -26,7 +28,7 @@ class PurchaseReceiptAllocationService
             $quantity = round((float) ($allocation['base_qty'] ?? 0), 8);
             if (!$warehouseId || !$locationId || $quantity <= 0) continue;
             $this->assertLocator($warehouseId, $locationId);
-            PurchaseReceiptItemAllocation::create([
+            $stored = PurchaseReceiptItemAllocation::create([
                 'receipt_item_id' => $line->id,
                 'warehouse_id' => $warehouseId,
                 'location_id' => $locationId,
@@ -34,6 +36,11 @@ class PurchaseReceiptAllocationService
                 'serial_nos' => array_values(array_unique(array_filter(array_map('strval', $allocation['serial_nos'] ?? [])))),
                 'sort_order' => $index,
             ]);
+            $this->physicalMaterials->replaceReceiptAllocationEntries(
+                $stored,
+                $line->item,
+                $allocation['physical_entries'] ?? [],
+            );
         }
 
         $first = $line->allocations()->first();
@@ -42,7 +49,7 @@ class PurchaseReceiptAllocationService
 
     public function ensureForConfirmation(PurchaseReceipt $receipt): void
     {
-        $receipt->load(['items.item', 'items.allocations']);
+        $receipt->load(['items.item', 'items.allocations.physicalEntries']);
         foreach ($receipt->items as $line) {
             if (!(bool) ($line->is_stock_item_snapshot ?? $line->item?->is_stock_item)) continue;
             $qualified = round((float) $line->qualified_base_qty, 8);
@@ -61,7 +68,7 @@ class PurchaseReceiptAllocationService
                     'serial_nos' => $this->lineSerialNumbers($line)->values()->all(),
                     'sort_order' => 0,
                 ]);
-                $line->load('allocations');
+                $line->load('allocations.physicalEntries');
             }
 
             $duplicates = $line->allocations
@@ -95,6 +102,7 @@ class PurchaseReceiptAllocationService
                 }
             }
         }
+        $this->physicalMaterials->assertReceiptReady($receipt);
     }
 
     public function serialLocator(PurchaseReceiptItem $line, string $serialNo): ?PurchaseReceiptItemAllocation

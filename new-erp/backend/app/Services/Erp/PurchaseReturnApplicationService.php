@@ -25,6 +25,7 @@ class PurchaseReturnApplicationService
         private readonly PurchaseFinancialFactService $finance,
         private readonly PurchaseReceiptSettlementService $settlements,
         private readonly PurchaseSettlementSourceApplicationService $settlementSources,
+        private readonly MaterialPhysicalService $physicalMaterials,
     ) {
     }
 
@@ -117,6 +118,10 @@ class PurchaseReturnApplicationService
                         'serial_no' => $serial->serial_no,
                     ]);
                 }
+                $this->physicalMaterials->replacePurchaseReturnLinks(
+                    $returnItem,
+                    $row['physical_material_ids'] ?? [],
+                );
             }
 
             $this->refreshFinancialTotals($purchaseReturn);
@@ -226,6 +231,11 @@ class PurchaseReturnApplicationService
             if ($existing) return $this->load($existing->purchaseReturn);
 
             $source = PurchaseReceiptItem::query()->with(['receipt', 'item'])->lockForUpdate()->findOrFail($source->id);
+            if ($source->item?->materialManagementMode() === 'physical') {
+                throw ValidationException::withMessages([
+                    'physical_material_id' => '实物管理板材的质量退供应商必须逐张选择具体实物，不能只按质量事件数量生成退货。',
+                ]);
+            }
             $row = [
                 'warehouse_id' => $balance->warehouse_id,
                 'location_id' => $balance->location_id,
@@ -295,6 +305,7 @@ class PurchaseReturnApplicationService
             foreach ($return->items as $item) {
                 $this->assertReturnAvailability($item, $return->id);
                 $this->assertReturnItemSerials($item, $return->id);
+                $this->physicalMaterials->assertPurchaseReturnReady($item, (string) $item->requested_base_qty);
             }
             $return->update(['audit_status' => 'pending', 'submitted_by' => $operatorId, 'submitted_at' => now()]);
         }, 'submit', $operatorId, $operatorName, '提交采购退货审批');
@@ -315,6 +326,7 @@ class PurchaseReturnApplicationService
                 if ($return->return_scope === 'posted_inventory') {
                     $this->assertReturnAvailability($item, $return->id);
                     $this->assertReturnItemSerials($item, $return->id);
+                    $this->physicalMaterials->assertPurchaseReturnReady($item, (string) $item->requested_base_qty);
                 }
                 $item->update(['approved_base_qty' => $item->requested_base_qty]);
             }
@@ -501,7 +513,20 @@ class PurchaseReturnApplicationService
             ->where('batch_no', $batchNo)
             ->lockForUpdate()
             ->first();
-        $currentAvailable = $balance ? $this->availability->availableForOutbound($balance) : 0.0;
+        if ($source->item?->materialManagementMode() === 'physical' && $balance) {
+            $currentAvailable = (float) DB::table('erp_material_physicals as physical')
+                ->join('erp_material_holdings as holding', 'holding.id', '=', 'physical.current_holding_id')
+                ->join('erp_inventory_transaction_items as source_line', 'source_line.id', '=', 'physical.source_transaction_item_id')
+                ->where('holding.inventory_balance_id', $balance->id)
+                ->where('holding.position_type', 'WAREHOUSE')
+                ->where('holding.status', 'ACTIVE')
+                ->where('physical.status', 'AVAILABLE')
+                ->where('source_line.source_type', 'purchase_receipt')
+                ->where('source_line.source_item_id', $source->id)
+                ->count();
+        } else {
+            $currentAvailable = $balance ? $this->availability->availableForOutbound($balance) : 0.0;
+        }
         $available = min(max(0, $posted - $reserved), max(0, $currentAvailable));
         if ($posted <= 0) {
             throw ValidationException::withMessages(['items' => '所选物料批次不是该采购到货单形成的正式入库批次。']);
@@ -737,6 +762,7 @@ class PurchaseReturnApplicationService
             'items.baseUnit',
             'items.returnUnit',
             'items.serialLinks.inventorySerial',
+            'items.physicalLinks',
             'logs',
         ]);
     }

@@ -141,10 +141,13 @@ class ProductionOutputFlowMatrixTest extends TestCase
         $this->assertSame('HANDED_OVER', $quality['output_status']);
         $handover = DB::table('erp_production_operation_handovers')->where('output_record_id', $fixture['output']->id)->first();
 
-        $rejected = app(ProductionHandoverService::class)->reject($handover->id, [
-            'client_command_id' => (string) Str::uuid(), 'expected_version' => 1,
+        $rejectCommand = (string) Str::uuid();
+        $rejectPayload = [
+            'client_command_id' => $rejectCommand, 'expected_version' => 1,
             'reason' => '下游发现装配面划伤',
-        ], $user, ['production.handover.reject']);
+        ];
+        $handoverService = app(ProductionHandoverService::class);
+        $rejected = $handoverService->reject($handover->id, $rejectPayload, $user, ['production.handover.reject'], true);
         $this->assertSame('REJECTED', $rejected['status']);
         $this->assertSame('WAIT_HANDOVER', $fixture['next']->fresh()->status);
         $this->assertSame('REWORK', $fixture['source']->fresh()->status);
@@ -155,6 +158,31 @@ class ProductionOutputFlowMatrixTest extends TestCase
         $this->assertDatabaseHas('erp_production_execution_events', [
             'aggregate_type' => 'quantity_operation', 'aggregate_id' => $fixture['source']->id,
             'action' => 'handover_rework', 'after_status' => 'REWORK',
+        ]);
+
+        $targetTask = ProductionTask::where('production_quantity_operation_id', $fixture['next']->id)->firstOrFail();
+        $targetTask->update(['assignee_user_legacy_id' => 8802]);
+        $factsBeforeReplay = [
+            'handover_count' => DB::table('erp_production_operation_handovers')->where('id', $handover->id)->count(),
+            'event_count' => DB::table('erp_production_execution_events')->where('action', 'handover_rework')
+                ->where('aggregate_id', $fixture['source']->id)->count(),
+            'command_count' => DB::table('erp_production_execution_commands')->where('client_command_id', $rejectCommand)->count(),
+            'remaining_qty' => (string) $fixture['source']->fresh()->remaining_base_qty,
+        ];
+        foreach ([$user, (object) ['legacy_id' => 8802]] as $replayUser) {
+            try {
+                $handoverService->reject($handover->id, $rejectPayload, $replayUser, ['production.handover.reject'], true);
+                $this->fail('负责人改派后不得恢复旧拒收命令的成功结果。');
+            } catch (WorkOrderDomainException $exception) {
+                $this->assertSame(403, $exception->status);
+            }
+        }
+        $this->assertSame($factsBeforeReplay, [
+            'handover_count' => DB::table('erp_production_operation_handovers')->where('id', $handover->id)->count(),
+            'event_count' => DB::table('erp_production_execution_events')->where('action', 'handover_rework')
+                ->where('aggregate_id', $fixture['source']->id)->count(),
+            'command_count' => DB::table('erp_production_execution_commands')->where('client_command_id', $rejectCommand)->count(),
+            'remaining_qty' => (string) $fixture['source']->fresh()->remaining_base_qty,
         ]);
 
         $execution = app(ProductionExecutionActionService::class);
@@ -196,18 +224,43 @@ class ProductionOutputFlowMatrixTest extends TestCase
         try {
             $service->accept($handover->id, [
                 'client_command_id' => (string) Str::uuid(), 'expected_version' => 1,
-            ], (object) ['legacy_id' => 8899], ['production.handover.receive']);
+            ], (object) ['legacy_id' => 8899], ['production.handover.receive'], true);
             $this->fail('非下工序负责人不得接收交接。');
         } catch (WorkOrderDomainException $exception) {
             $this->assertSame('expected_receiver_required', $exception->errorCode);
         }
-        $accepted = $service->accept($handover->id, [
-            'client_command_id' => (string) Str::uuid(), 'expected_version' => 1,
+        $acceptCommand = (string) Str::uuid();
+        $acceptPayload = [
+            'client_command_id' => $acceptCommand, 'expected_version' => 1,
             'completeness' => ['complete' => true],
-        ], $owner, ['production.handover.receive']);
+        ];
+        $accepted = $service->accept($handover->id, $acceptPayload, $owner, ['production.handover.receive'], true);
         $this->assertSame('RECEIVED', $accepted['status']);
         $this->assertSame('READY', $fixture['next']->fresh()->status);
         $this->assertSame(8801, (int) DB::table('erp_production_operation_handovers')->where('id', $handover->id)->value('received_by_legacy_id'));
+
+        $targetTask = ProductionTask::where('production_quantity_operation_id', $fixture['next']->id)->firstOrFail();
+        $targetTask->update(['assignee_user_legacy_id' => 8802]);
+        $factsBeforeReplay = [
+            'handover_count' => DB::table('erp_production_operation_handovers')->where('id', $handover->id)->count(),
+            'satisfied_qty' => (string) DB::table('erp_production_target_material_requirements')
+                ->where('target_type', 'quantity_operation')->where('target_id', $fixture['next']->id)->value('satisfied_base_qty'),
+            'command_count' => DB::table('erp_production_execution_commands')->where('client_command_id', $acceptCommand)->count(),
+        ];
+        foreach ([$owner, (object) ['legacy_id' => 8802]] as $replayUser) {
+            try {
+                $service->accept($handover->id, $acceptPayload, $replayUser, ['production.handover.receive'], true);
+                $this->fail('负责人改派后不得恢复旧接收命令的成功结果。');
+            } catch (WorkOrderDomainException $exception) {
+                $this->assertSame(403, $exception->status);
+            }
+        }
+        $this->assertSame($factsBeforeReplay, [
+            'handover_count' => DB::table('erp_production_operation_handovers')->where('id', $handover->id)->count(),
+            'satisfied_qty' => (string) DB::table('erp_production_target_material_requirements')
+                ->where('target_type', 'quantity_operation')->where('target_id', $fixture['next']->id)->value('satisfied_base_qty'),
+            'command_count' => DB::table('erp_production_execution_commands')->where('client_command_id', $acceptCommand)->count(),
+        ]);
     }
 
     public function test_optional_quality_pass_can_choose_warehouse_path(): void
@@ -258,7 +311,7 @@ class ProductionOutputFlowMatrixTest extends TestCase
         $handover = DB::table('erp_production_operation_handovers')->where('output_record_id', $fixture['output']->id)->first();
         app(ProductionHandoverService::class)->accept($handover->id, [
             'client_command_id' => (string) Str::uuid(), 'expected_version' => 1,
-        ], $user, ['production.handover.receive']);
+        ], $user, ['production.handover.receive'], true);
 
         $bridge = DB::table('erp_production_input_holdings')->where('operation_handover_id', $handover->id)->first();
         $this->assertSame('321.4321', $bridge->total_cost);
@@ -283,7 +336,7 @@ class ProductionOutputFlowMatrixTest extends TestCase
         $secondHandover = DB::table('erp_production_operation_handovers')->where('output_record_id', $nextOutput->id)->first();
         app(ProductionHandoverService::class)->accept($secondHandover->id, [
             'client_command_id' => (string) Str::uuid(), 'expected_version' => 1,
-        ], $user, ['production.handover.receive']);
+        ], $user, ['production.handover.receive'], true);
         $thirdStarted = $execution->start($thirdTask->id, 'quantity_operation', $third->id, [
             'client_command_id' => (string) Str::uuid(), 'expected_version' => $third->fresh()->business_version,
         ], $user, ['production.task.start']);

@@ -10,10 +10,10 @@ abstract class TestCase extends BaseTestCase
     {
         $database = (string) ($_ENV['DB_DATABASE'] ?? $_SERVER['DB_DATABASE'] ?? getenv('DB_DATABASE') ?: '');
 
-        if (! str_ends_with(strtolower($database), '_test')) {
+        if (strtolower($database) !== 'erp_sdjiantan') {
             throw new \RuntimeException(
                 "Refusing to run database tests against unsafe database [{$database}]. ".
-                'DB_DATABASE must end with _test.'
+                'DB_DATABASE must equal erp_sdjiantan.'
             );
         }
 

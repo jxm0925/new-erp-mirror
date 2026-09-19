@@ -12,4 +12,5 @@ class InventoryAdjustmentItem extends MasterModel
     public function location() { return $this->belongsTo(Location::class); }
     public function unit() { return $this->belongsTo(Unit::class); }
     public function serials() { return $this->hasMany(InventoryAdjustmentSerial::class, 'adjustment_item_id'); }
+    public function physicalEntries() { return $this->hasMany(InventoryAdjustmentItemPhysical::class, 'adjustment_item_id')->orderBy('sequence_no'); }
 }

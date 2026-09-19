@@ -20,6 +20,7 @@ trait CuttingTestFixtures
         'production.cutting.handover.receive','production.cutting.handover.reject',
         'production.cutting.warehouse',
         'production.cutting.inventory.view','production.cutting.inventory.issue','production.cutting.inventory.release',
+        'production.cutting.close','production.cutting.cancel',
         'production.output.issue','production.output.receive','production.task.view',
         'production.kitting.view','production.kitting.confirm'];
 
@@ -34,12 +35,12 @@ trait CuttingTestFixtures
             'allocations'=>DB::table('erp_cutting_result_routes')->where('result_id',$result)->orderBy('id')->get()->map(fn ($r) => ['route_id'=>$r->id,'plan_id'=>$plan,'quantity'=>$r->quantity,'disposition'=>'PLAN'])->all()];
     }
 
-    private function warehouseStock(array $f, string $quantity): array
+    private function warehouseStock(array $f, string $quantity, string $cost = '3000'): array
     {
         $batch = $this->issue($f); $batchId = $batch['settlement_batch_id'];
         $result = $this->save($f,$batchId,$quantity)['result_ids'][0];
         $routeId = $this->route($f,$result,$quantity)['routes'][0]['id'];
-        app(CuttingConfirmationService::class)->confirm($batchId,$this->confirmation($f,$batchId,$result,'3000'),$f['user'],self::PERMISSIONS,true);
+        app(CuttingConfirmationService::class)->confirm($batchId,$this->confirmation($f,$batchId,$result,$cost),$f['user'],self::PERMISSIONS,true);
         return app(CuttingWarehouseReceiptService::class)->post($routeId,$this->payload(2)+[
             'quantity'=>$quantity,'warehouse_id'=>$f['warehouse']->id,'location_id'=>$f['location']->id,'batch_no'=>'CUT-ISSUE-'.Str::ulid()],$f['user'],self::PERMISSIONS,true);
     }
@@ -67,7 +68,8 @@ trait CuttingTestFixtures
         return $task;
     }
 
-    private function fixture(string $quality = 'none', string $required = '10', string $planned = '10', bool $restricted = false, bool $publish = true): array
+    private function fixture(string $quality = 'none', string $required = '10', string $planned = '10', bool $restricted = false,
+        bool $publish = true, string $rawUnitCost = '3000'): array
     {
         $s = strtoupper(substr((string) Str::ulid(), -10)); $user = (object) ['legacy_id'=>random_int(100000000,999999999),'username'=>'cut-'.$s];
         DB::table('erp_legacy_admin_users')->insert(['legacy_id'=>$user->legacy_id,'username'=>$user->username,'status'=>'normal','auth_group_names'=>'[]','created_at'=>now(),'updated_at'=>now()]);
@@ -79,19 +81,24 @@ trait CuttingTestFixtures
         $warehouse = Warehouse::create(['warehouse_code'=>'CUT-WH-'.$s,'warehouse_name'=>'板材仓库','status'=>'enabled']);
         $location = Location::create(['location_code'=>'CUT-LOC-'.$s,'location_name'=>'板材库位','warehouse_id'=>$warehouse->id,'status'=>'enabled']);
         $receipt = PurchaseReceipt::create(['receipt_no'=>'CUT-PRC-'.$s,'supplier_id'=>$supplier->id,'receipt_date'=>now()->toDateString(),
-            'receipt_status'=>'confirmed','confirm_status'=>'confirmed','stock_post_status'=>'pending','total_receipt_qty'=>2,'total_qualified_qty'=>2,'total_amount'=>6000]);
+            'receipt_status'=>'confirmed','confirm_status'=>'confirmed','stock_post_status'=>'pending','total_receipt_qty'=>2,'total_qualified_qty'=>2,
+            'total_amount'=>bcmul($rawUnitCost,'2',4)]);
         $line = PurchaseReceiptItem::create(['receipt_id'=>$receipt->id,'item_id'=>$raw->id,'purchase_unit_id'=>$unit->id,'purchase_unit_name_snapshot'=>'件',
             'conversion_factor_snapshot'=>1,'base_unit_id'=>$unit->id,'base_unit_name_snapshot'=>'件','receipt_qty'=>2,'qualified_qty'=>2,'unqualified_qty'=>0,
             'standard_base_qty'=>2,'actual_base_qty'=>2,'qualified_base_qty'=>2,'unqualified_base_qty'=>0,'is_stock_item_snapshot'=>true,
             'quality_fact_origin'=>'current','original_received_qty'=>2,'original_qualified_qty'=>2,'original_unqualified_qty'=>0,
             'original_received_base_qty'=>2,'original_qualified_base_qty'=>2,'original_unqualified_base_qty'=>0,'final_stockable_base_qty'=>2,
-            'physical_received_base_qty'=>2,'contract_fulfilled_base_qty'=>2,'unit_price'=>3000,'receipt_cost'=>6000,'batch_no'=>'CUT-BAT-'.$s,'inventory_posting_status'=>'pending']);
+            'physical_received_base_qty'=>2,'contract_fulfilled_base_qty'=>2,'unit_price'=>$rawUnitCost,'receipt_cost'=>bcmul($rawUnitCost,'2',4),
+            'batch_no'=>'CUT-BAT-'.$s,'inventory_posting_status'=>'pending']);
         app(PurchaseReceiptPostingRepairApplicationService::class)->repair($receipt->id, [['receipt_item_id'=>$line->id,'allocations'=>[
-            ['warehouse_id'=>$warehouse->id,'location_id'=>$location->id,'base_qty'=>2,'serial_nos'=>[]]]]],'下料专项');
+            ['warehouse_id'=>$warehouse->id,'location_id'=>$location->id,'base_qty'=>2,'serial_nos'=>[],
+                'physical_entries'=>[
+                    ['dimensions'=>['length_mm'=>'2440','width_mm'=>'1220','thickness_mm'=>'2']],
+                    ['dimensions'=>['length_mm'=>'2440','width_mm'=>'1220','thickness_mm'=>'2']],
+                ]]]]],'下料专项');
         $tx = app(InventoryService::class)->postPurchaseReceipt($receipt->id); $txLine = $tx->items->first();
         $balance = InventoryBalance::where('item_id',$raw->id)->where('batch_no','CUT-BAT-'.$s)->firstOrFail();
-        $physicals = []; for ($n=0;$n<2;$n++) $physicals[] = app(CuttingInputService::class)->registerPhysical($this->payload(0) + [
-            'source_transaction_item_id'=>$txLine->id,'dimensions'=>['length_mm'=>'2440','width_mm'=>'1220','thickness_mm'=>'2']],$user,self::PERMISSIONS)['physical_material_id'];
+        $physicals = DB::table('erp_material_physicals')->where('source_transaction_item_id', $txLine->id)->orderBy('id')->pluck('id')->map(fn ($id) => (int) $id)->all();
         $bom = Bom::create(['bom_no'=>'CUT-BOM-'.$s,'bom_name'=>'侧板BOM','output_item_id'=>$output->id,'bom_type'=>'standard','version'=>'V1','status'=>'active','audit_status'=>'approved']);
         $bomItem = BomItem::create(['bom_id'=>$bom->id,'line_no'=>1,'component_item_id'=>$raw->id,'component_item_code'=>$raw->item_code,
             'component_item_name'=>$raw->item_name,'qty'=>'0.2','unit_id'=>$unit->id,'loss_rate'=>0,'fixed_qty'=>0,'replaceable'=>false]);

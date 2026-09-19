@@ -26,6 +26,7 @@ final class ProductionMaterialExecutionService
         private readonly ProductionDataScopeResolver $scopeResolver,
         private readonly InventoryService $inventory,
         private readonly ProductionTargetReadinessService $targetReadiness,
+        private readonly ProductionMaterialCostService $materialCosts,
     ) {}
 
     public function paginatePickingTasks(array $filters, object $user, array $permissions, bool $superAdmin): LengthAwarePaginator
@@ -254,6 +255,7 @@ final class ProductionMaterialExecutionService
                 }
                 if ($quantitySnapshot === []) $this->fail('validation_error', '确认拣货至少需要一条大于 0 的实拣数量。');
                 $transaction = $this->inventory->postProductionMaterialPicking($task, $user);
+                $this->materialCosts->recordPickingOutbound($task, $transaction);
                 foreach ($task->lines->where('actual_pick_qty', '>', 0) as $line) {
                     $requirement = WorkOrderMaterialRequirement::lockForUpdate()->findOrFail($line->material_requirement_id);
                     $requirement->picked_qty = (float) $requirement->picked_qty + (float) $line->actual_pick_qty;
@@ -498,13 +500,14 @@ final class ProductionMaterialExecutionService
                         $this->fail('serial_invalid', '收料序列号必须来自该配送行的真实配料序列号。');
                     }
                     if (array_intersect($acceptedSerials, $rejectedSerials)) $this->fail('serial_duplicate', '同一序列号不能同时收料和拒收。');
-                    MaterialReceipt::findOrFail($receipt->id)->lines()->create([
+                    $receiptLine = MaterialReceipt::findOrFail($receipt->id)->lines()->create([
                         'delivery_line_id' => $line->id, 'component_item_id' => $line->component_item_id,
                         'delivered_qty_snapshot' => $line->delivery_qty, 'accepted_qty' => $accepted,
                         'rejected_qty' => $rejected, 'reject_reason' => $reason ?: null, 'unit_id' => $line->unit_id,
                         'accepted_serial_snapshot' => $acceptedSerials ? ['inventory_serial_ids' => $acceptedSerials] : null,
                         'rejected_serial_snapshot' => $rejectedSerials ? ['inventory_serial_ids' => $rejectedSerials] : null,
                     ]);
+                    $this->materialCosts->recordDeliveryReceipt($delivery, $line, $receiptLine, $this->userId($user));
                     $line->received_qty = (float) $line->received_qty + $accepted;
                     $line->rejected_qty = (float) $line->rejected_qty + $rejected;
                     $line->save();

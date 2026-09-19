@@ -11,7 +11,7 @@ final class CommittedInsertTracker
 
     public function listen(?callable $emit = null): void
     {
-        if (! str_ends_with((string) config('database.connections.mysql.database'), '_test')
+        if (strtolower((string) config('database.connections.mysql.database')) !== 'erp_sdjiantan'
             || (int) DB::selectOne('SELECT @@auto_increment_increment AS step')->step !== 1) {
             throw new \RuntimeException('Committed fixtures require a guarded test database and increment 1.');
         }
@@ -30,7 +30,7 @@ final class CommittedInsertTracker
 
     public function cleanup(array $additional = []): void
     {
-        if (! str_ends_with((string) DB::selectOne('SELECT DATABASE() AS name')->name, '_test')) {
+        if (strtolower((string) DB::selectOne('SELECT DATABASE() AS name')->name) !== 'erp_sdjiantan') {
             throw new \RuntimeException('Unsafe fixture cleanup database.');
         }
         // Two processes interleave FK dependencies, so insertion order is not a reliable topological order.

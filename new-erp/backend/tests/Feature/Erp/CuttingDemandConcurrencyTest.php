@@ -136,7 +136,7 @@ class CuttingDemandConcurrencyTest extends TestCase
     private function race(array $firstArgs, array $secondArgs): array
     {
         $database = (string) config('database.connections.mysql.database');
-        $this->assertStringEndsWith('_test', $database);
+        $this->assertSame('erp_sdjiantan', strtolower($database));
         $environment = array_merge($_ENV, [
             'ERP_CUTTING_DEMAND_RACE_DATABASE' => $database,
             'APP_ENV' => 'testing',

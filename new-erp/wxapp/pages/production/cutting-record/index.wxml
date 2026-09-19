@@ -1,0 +1,520 @@
+<view class="page" wx:if="{{!loading}}">
+  <view class="error-strip" wx:if="{{error}}" bindtap="load">
+    <van-icon name="warning-o" size="30rpx" />
+    <text>{{error}} · 点击重试</text>
+  </view>
+
+  <!-- 顶部单据状态 Header -->
+  <view class="order-hero-card">
+    <view class="order-hero-content">
+      <view class="order-hero-left">
+        <view class="order-type-tag">下料记录</view>
+        <view class="order-no-wrap">
+          <text class="order-label">NO.</text>
+          <text class="order-no">{{order.cutting_order_no || '-'}}</text>
+        </view>
+      </view>
+      <view class="record-status-pill">{{statusLabel}}</view>
+    </view>
+  </view>
+
+  <!-- 模块 1：用了什么（投入材料） -->
+  <view class="card source-section">
+    <view class="card-header">
+      <view class="header-left">
+        <view class="title-mark"></view>
+        <text class="section-title">投入原料</text>
+      </view>
+      <view class="source-lock-tag">
+        <van-icon name="lock" size="22rpx" color="#556885" />
+        <text>{{source.physical_material_id ? '整张使用' : ('投入 ' + source.input_qty + ' 根')}} · 来源已锁定</text>
+      </view>
+    </view>
+
+    <view class="source-body">
+      <image class="source-thumb" src="/static/images/cutting-plate.png" mode="aspectFit" />
+      <view class="source-info">
+        <view class="source-title-row">
+          <text class="source-type-label">{{source.physical_material_id ? '实物材料' : '定长型材'}}</text>
+          <text class="source-title-no">{{source.physical_no || source.batch_no}}</text>
+        </view>
+        <text class="source-name">{{source.item_name}} {{source.spec || ''}}</text>
+        <text class="source-detail" wx:if="{{source.standard_stock_length_mm}}">原料标准长度：{{source.standard_stock_length_mm}} mm</text>
+        <text class="source-batch">来源：用料批次 {{source.batch_no}}</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 模块 2：做出了什么（正式产出） -->
+  <view class="card output-section">
+    <view class="card-header">
+      <view class="header-left">
+        <view class="title-mark"></view>
+        <text class="section-title">正式产出</text>
+        <text class="count-badge" wx:if="{{products.length}}">{{products.length}} 项</text>
+      </view>
+      <view class="header-action" wx:if="{{editableResults}}" bindtap="openAddOutput">
+        <van-icon name="plus" size="26rpx" color="#d7190b" />
+        <text>添加产出</text>
+      </view>
+    </view>
+
+    <!-- 产出项列表 -->
+    <view class="products-list" wx:if="{{products.length}}">
+      <view class="product-card" wx:for="{{products}}" wx:key="client_row_id">
+        <view class="product-card-top">
+          <image class="product-thumb" src="/static/images/cutting-plate.png" mode="aspectFit" />
+          <view class="product-info">
+            <text class="product-name">{{item.item_name}}</text>
+            <text class="product-code">{{item.item_code || ''}} {{item.configuration_no || ''}}</text>
+            <text class="product-spec">{{item.drawing_reference || item.spec || '-'}}</text>
+          </view>
+          <view class="product-remove-btn" wx:if="{{editableResults}}" data-index="{{index}}" bindtap="removeProduct">
+            <van-icon name="delete-o" size="32rpx" color="#9aa7b9" />
+          </view>
+        </view>
+
+        <!-- 产出数量步进器 -->
+        <view class="product-qty-row">
+          <text class="qty-field-label">实际产出数量</text>
+          <view class="stepper-wrap">
+            <button class="stepper-btn minus {{!editableResults ? 'disabled' : ''}}" disabled="{{!editableResults}}" data-index="{{index}}" data-delta="-1" bindtap="bumpProductQty">−</button>
+            <input class="stepper-input" disabled="{{!editableResults}}" type="digit" value="{{item.actual_qty}}" data-index="{{index}}" bindinput="onProductQty" />
+            <button class="stepper-btn plus {{!editableResults ? 'disabled' : ''}}" disabled="{{!editableResults}}" data-index="{{index}}" data-delta="1" bindtap="bumpProductQty">+</button>
+            <text class="stepper-unit">片</text>
+          </view>
+        </view>
+
+        <!-- 尺寸与重量测量表单 -->
+        <view class="measure-grid" wx:if="{{editableResults && order.purpose === 'WORKER'}}">
+          <view class="measure-item" wx:if="{{source.physical_material_id}}">
+            <text class="measure-label">单件长度</text>
+            <view class="measure-input-box">
+              <input type="digit" value="{{item.measure_length_mm}}" data-index="{{index}}" data-field="length_mm" bindinput="onProductMeasure" placeholder="0" />
+              <text class="unit">mm</text>
+            </view>
+          </view>
+          <view class="measure-item" wx:if="{{source.physical_material_id}}">
+            <text class="measure-label">单件宽度</text>
+            <view class="measure-input-box">
+              <input type="digit" value="{{item.measure_width_mm}}" data-index="{{index}}" data-field="width_mm" bindinput="onProductMeasure" placeholder="0" />
+              <text class="unit">mm</text>
+            </view>
+          </view>
+          <view class="measure-item" wx:if="{{!source.physical_material_id}}">
+            <text class="measure-label">切段长度</text>
+            <view class="measure-input-box">
+              <input type="digit" value="{{item.measure_length_mm}}" data-index="{{index}}" data-field="length_mm" bindinput="onProductMeasure" placeholder="0" />
+              <text class="unit">mm</text>
+            </view>
+          </view>
+          <view class="measure-item">
+            <text class="measure-label">单条总重(选填)</text>
+            <view class="measure-input-box">
+              <input type="digit" value="{{item.measure_weight_kg}}" data-index="{{index}}" data-field="weight_kg" bindinput="onProductMeasure" placeholder="0.0" />
+              <text class="unit">kg</text>
+            </view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 空态 -->
+    <view class="empty-product-zone" wx:if="{{!products.length}}">
+      <van-icon name="records" size="52rpx" color="#c1cbd8" />
+      <text class="empty-zone-title">还没有登记正式产出</text>
+      <button class="empty-add-btn" wx:if="{{editableResults}}" bindtap="openAddOutput"><van-icon name="plus" /> 添加正式产出</button>
+    </view>
+
+    <!-- 副产物与损耗 Grid -->
+    <view class="others-section">
+      <view class="others-header">
+        <text class="others-title">其他结果（余料、废料与损耗）</text>
+        <text class="others-sub">材料来源：{{source.physical_no || source.batch_no}}</text>
+      </view>
+      <view class="others-grid">
+        <view class="other-card" wx:for="{{others}}" wx:key="client_row_id" data-key="{{item.client_row_id}}" bindtap="openOther" hover-class="other-card-hover">
+          <view class="other-icon-wrap">
+            <van-icon name="{{item.icon}}" size="36rpx" color="#4a5d7c" />
+          </view>
+          <view class="other-info">
+            <text class="other-label">{{item.label}}</text>
+            <text class="other-summary {{item.measurement_status === 'MEASURED' ? 'measured' : ''}}">{{item.summary}}</text>
+          </view>
+          <van-icon name="arrow" size="24rpx" color="#9aa7b9" />
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 模块 3：产出去向 -->
+  <view class="card routes-section">
+    <view class="card-header">
+      <view class="header-left">
+        <view class="title-mark"></view>
+        <text class="section-title">产出去向流转</text>
+      </view>
+    </view>
+
+    <view class="routes-container" wx:if="{{products.length}}">
+      <view class="route-product-card" wx:for="{{products}}" wx:key="client_row_id" wx:for-item="product" wx:for-index="pIndex">
+        <view class="route-p-head">
+          <view class="route-p-title-wrap">
+            <text class="route-p-name">{{product.item_name}}</text>
+            <text class="route-p-total">共 {{product.actual_qty}} 片</text>
+          </view>
+          <button class="split-btn" wx:if="{{editableRoutes}}" data-index="{{pIndex}}" bindtap="openSplit">
+            <van-icon name="cluster-o" size="24rpx" />
+            <text>拆分去向</text>
+          </button>
+        </view>
+
+        <!-- 去向进度指示条 -->
+        <view class="route-progress-box">
+          <view class="progress-labels">
+            <text class="p-lab">已指定 <text class="highlight">{{product.assigned_qty_ui}}</text> 片</text>
+            <text class="p-lab unassigned">未指定 {{product.unassigned_qty_ui}} 片</text>
+          </view>
+        </view>
+
+        <!-- 去向明细列表 -->
+        <view class="route-list" wx:if="{{product.routes && product.routes.length}}">
+          <view class="route-item" wx:for="{{product.routes}}" wx:key="index" wx:for-item="route">
+            <view class="route-type-badge {{route.route_type === 'WAREHOUSE' ? 'warehouse' : 'next'}}">
+              <van-icon name="{{route.route_type === 'WAREHOUSE' ? 'wap-home-o' : 'exchange'}}" size="26rpx" />
+              <text>{{route.route_type === 'WAREHOUSE' ? '入库备货' : '下一工序'}} · {{route.quantity}}片</text>
+            </view>
+            <text class="route-target-text">{{route.target_label}}</text>
+            <text class="route-status-tag">{{route.display_status || (route.route_type === 'WAREHOUSE' ? '待入库确认' : '待交接')}}</text>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <view class="empty-product-zone" wx:if="{{!products.length}}">
+      <van-icon name="exchange" size="48rpx" color="#c1cbd8" />
+      <text class="empty-zone-title">先添加产出后再指定去向</text>
+    </view>
+
+    <view class="route-tip-line">
+      <van-icon name="info-o" size="24rpx" color="#8b9cb0" />
+      <text>指定去向不代表已交出、已接收或已入库，需由接收方确认。</text>
+    </view>
+  </view>
+
+  <!-- 底部吸底操作栏 -->
+  <view class="bottom-placeholder" wx:if="{{editableResults || editableRoutes || pendingSave || canAutoConfirm}}"></view>
+  <view class="bottom-action-bar" wx:if="{{editableResults || editableRoutes || pendingSave || canAutoConfirm}}">
+    <view class="actions-wrapper" wx:if="{{editableResults || editableRoutes || pendingSave}}">
+      <view class="actions-row">
+        <button class="secondary-action-btn" bindtap="saveDraft" loading="{{busy}}">
+          {{pendingSave ? '继续上次保存' : editableResults ? '保存草稿' : '保存去向'}}
+        </button>
+        <button class="primary-action-btn" wx:if="{{editableResults}}" bindtap="submitResult" loading="{{busy}}">
+          提交加工结果
+        </button>
+      </view>
+      <text class="action-rule-tip" wx:if="{{editableResults}}">提交后按去向完整度进入待完善去向、待质检或待用料确认</text>
+    </view>
+    <view class="actions-wrapper single" wx:elif="{{canAutoConfirm && !pendingSave}}">
+      <button class="primary-action-btn" bindtap="confirmAutomatic" loading="{{busy}}" disabled="{{busy}}">
+        确认加工结果
+      </button>
+    </view>
+  </view>
+</view>
+
+<!-- 全局加载态 -->
+<view class="loading-state" wx:else>
+  <van-loading color="#d7190b" size="48rpx">正在读取下料记录…</van-loading>
+</view>
+
+<!-- 弹窗 1：添加产出 Modal -->
+<view class="overlay" wx:if="{{showOutput}}" catchtouchmove="noop">
+  <view class="modal-panel output-modal">
+    <view class="modal-head">
+      <view class="modal-title-wrap">
+        <text class="modal-title">添加正式产出</text>
+        <text class="modal-subtitle">从工艺库或物料清单中挑选本次加工成品</text>
+      </view>
+      <view class="close-icon-wrap" bindtap="closeOutput">
+        <van-icon name="cross" size="38rpx" color="#7d8d9f" />
+      </view>
+    </view>
+
+    <!-- 原料锁定卡片 -->
+    <view class="modal-source-mini">
+      <text class="mini-label">投入原料：</text>
+      <text class="mini-val">{{source.physical_no || source.batch_no}} (批次 {{source.batch_no}})</text>
+      <text class="source-note">来源由当前用料批次确定，不可切换</text>
+    </view>
+
+    <!-- 搜索 -->
+    <view class="modal-search">
+      <van-icon name="search" size="32rpx" color="#8c9cb0" />
+      <input class="search-input" value="{{outputKeyword}}" placeholder="编码 / 名称 / 规格 / 图纸号" bindinput="onOutputKeyword" bindconfirm="searchOutputs" confirm-type="search" />
+      <button class="modal-search-btn" bindtap="searchOutputs">查询</button>
+    </view>
+
+    <!-- 联动选择主体 -->
+    <view class="picker-body">
+      <scroll-view scroll-y class="category-list">
+        <view class="category-item {{outputCategoryId == item.id ? 'active' : ''}}" wx:for="{{outputCategories}}" wx:key="id" data-id="{{item.id}}" bindtap="setOutputCategory">
+          <text class="category-name">{{item.category_name}}</text>
+        </view>
+        <view class="category-item more" wx:if="{{categoryPage < categoryLastPage}}" bindtap="moreOutputCategories">更多分类…</view>
+      </scroll-view>
+
+      <view class="candidate-area">
+        <scroll-view scroll-y class="candidate-list">
+          <view class="candidate-item {{selectedOutput && selectedOutput.option_key === item.option_key ? 'selected' : ''}}" wx:for="{{outputCandidates}}" wx:key="option_key" data-key="{{item.option_key}}" bindtap="pickOutput">
+            <image class="candidate-thumb" src="/static/images/cutting-plate.png" mode="aspectFit" />
+            <view class="candidate-info">
+              <text class="candidate-name">{{item.item_name}}</text>
+              <text class="candidate-spec">{{item.item_code}} {{item.configuration_no || ''}}</text>
+              <text class="candidate-avail">{{item.drawing_reference || item.spec || '-'}}</text>
+            </view>
+            <view class="radio-circle {{selectedOutput && selectedOutput.option_key === item.option_key ? 'checked' : ''}}"></view>
+          </view>
+          <view class="empty-state small" wx:if="{{!outputLoading && !outputCandidates.length}}">
+            <van-icon name="warning-o" size="40rpx" color="#a8b6c8" />
+            <text class="small-empty-text">暂无符合条件的产出物料</text>
+          </view>
+        </scroll-view>
+
+        <view class="modal-pager">
+          <button class="mpager-btn" disabled="{{outputPage <= 1}}" bindtap="prevOutputs">上页</button>
+          <text class="mpager-text">{{outputPage}} / {{outputLastPage}}</text>
+          <button class="mpager-btn" disabled="{{outputPage >= outputLastPage}}" bindtap="nextOutputs">下页</button>
+        </view>
+      </view>
+    </view>
+
+    <!-- 选中产出及数量步进器 -->
+    <view class="selected-product-box" wx:if="{{selectedOutput}}">
+      <view class="sel-prod-top">
+        <text class="sel-prod-name">{{selectedOutput.item_name}}</text>
+        <text class="sel-prod-spec">{{selectedOutput.drawing_reference || selectedOutput.spec || selectedOutput.item_code}}</text>
+      </view>
+      <view class="sel-prod-stepper-row">
+        <text class="stepper-label">本次产出数量</text>
+        <view class="stepper-box">
+          <button class="s-btn" data-delta="-1" bindtap="bumpOutputQty">−</button>
+          <input class="s-input" type="digit" value="{{outputQty}}" bindinput="onOutputQty" />
+          <button class="s-btn" data-delta="1" bindtap="bumpOutputQty">+</button>
+          <text class="s-unit">片</text>
+        </view>
+      </view>
+    </view>
+
+    <!-- 尺寸与重量表单 -->
+    <view class="modal-measure-stack" wx:if="{{selectedOutput && !source.physical_material_id}}">
+      <view class="m-field">
+        <text class="m-label">切段长度（mm）</text>
+        <input class="m-input" type="digit" value="{{outputLength}}" bindinput="onOutputLength" placeholder="请输入切段长度" />
+      </view>
+    </view>
+
+    <view class="modal-measure-grid" wx:if="{{selectedOutput && source.physical_material_id && order.purpose === 'WORKER'}}">
+      <view class="m-field">
+        <text class="m-label">单件长度（mm）</text>
+        <input class="m-input" type="digit" value="{{outputLength}}" bindinput="onOutputLength" placeholder="单件长度" />
+      </view>
+      <view class="m-field">
+        <text class="m-label">单件宽度（mm）</text>
+        <input class="m-input" type="digit" value="{{outputWidth}}" bindinput="onOutputWidth" placeholder="单件宽度" />
+      </view>
+    </view>
+
+    <view class="modal-measure-stack" wx:if="{{selectedOutput && order.purpose === 'WORKER'}}">
+      <view class="m-field">
+        <text class="m-label">本条产出总重量（kg，选填）</text>
+        <input class="m-input" type="digit" value="{{outputWeight}}" bindinput="onOutputWeight" placeholder="选填总重量" />
+      </view>
+    </view>
+
+    <!-- 弹窗按钮 -->
+    <view class="modal-actions">
+      <button class="modal-cancel-btn" bindtap="closeOutput">取消</button>
+      <button class="modal-confirm-btn" bindtap="confirmOutput">确认添加产出</button>
+    </view>
+  </view>
+</view>
+
+<!-- 弹窗 2：登记其他结果 Modal -->
+<view class="overlay" wx:if="{{showOther}}" catchtouchmove="noop">
+  <view class="modal-panel other-modal">
+    <view class="modal-head">
+      <view class="modal-title-wrap">
+        <text class="modal-title">登记{{otherDraft.label}}</text>
+        <text class="modal-subtitle">来源：{{source.physical_no || source.batch_no}}</text>
+      </view>
+      <view class="close-icon-wrap" bindtap="closeOther">
+        <van-icon name="cross" size="38rpx" color="#7d8d9f" />
+      </view>
+    </view>
+
+    <!-- 形状选择（若是余料且实物） -->
+    <view class="measure-tabs" wx:if="{{otherDraft.type === 'usable_remnant' && source.physical_material_id}}">
+      <view class="measure-tab {{otherDraft.measurements.shape === 'RECTANGLE' ? 'active' : ''}}" data-shape="RECTANGLE" bindtap="setOtherShape">矩形余料</view>
+      <view class="measure-tab {{otherDraft.measurements.shape === 'IRREGULAR' ? 'active' : ''}}" data-shape="IRREGULAR" bindtap="setOtherShape">异形余料</view>
+    </view>
+
+    <!-- 测量状态选择 -->
+    <view class="measure-tabs">
+      <view class="measure-tab {{otherDraft.measurement_status === 'MEASURED' ? 'active' : ''}}" data-status="MEASURED" bindtap="setMeasurementStatus">已实测</view>
+      <view class="measure-tab {{otherDraft.measurement_status === 'NOT_MEASURED' ? 'active' : ''}}" data-status="NOT_MEASURED" bindtap="setMeasurementStatus">未测量</view>
+      <view class="measure-tab {{otherDraft.measurement_status === 'NOT_RECORDED' ? 'active' : ''}}" data-status="NOT_RECORDED" bindtap="setMeasurementStatus">未登记</view>
+    </view>
+
+    <!-- 实测表单 -->
+    <view wx:if="{{otherDraft.measurement_status === 'MEASURED'}}" class="other-form-content">
+      <view class="m-field">
+        <text class="m-label">{{otherDraft.type === 'recyclable_scrap' || otherDraft.type === 'process_loss' ? '实际称重（kg）' : '实际数量（' + otherDraft.unit + '）'}}</text>
+        <input class="m-input" type="digit" value="{{otherDraft.actual_qty}}" bindinput="onOtherQty" placeholder="请输入数量或重量" />
+      </view>
+      <block wx:if="{{otherDraft.type === 'usable_remnant'}}">
+        <view class="modal-measure-grid-3">
+          <view class="m-field">
+            <text class="m-label">长度 mm</text>
+            <input class="m-input" type="digit" data-field="length_mm" value="{{otherDraft.measurements.length_mm}}" bindinput="onOtherMeasure" />
+          </view>
+          <view class="m-field">
+            <text class="m-label">宽度 mm</text>
+            <input class="m-input" type="digit" data-field="width_mm" value="{{otherDraft.measurements.width_mm}}" bindinput="onOtherMeasure" />
+          </view>
+          <view class="m-field">
+            <text class="m-label">厚度 mm</text>
+            <input class="m-input" type="digit" data-field="thickness_mm" value="{{otherDraft.measurements.thickness_mm}}" bindinput="onOtherMeasure" />
+          </view>
+        </view>
+      </block>
+    </view>
+    <view class="source-note-box" wx:else>
+      <van-icon name="info-o" size="26rpx" color="#8b9cb0" />
+      <text>未测量和未登记不会自动写成 0，将保留待测事实。</text>
+    </view>
+
+    <button class="add-entry-btn" bindtap="addOtherEntry">
+      <van-icon name="plus" size="24rpx" />
+      <text>新增一条{{otherDraft.label}}</text>
+    </button>
+
+    <view class="modal-actions">
+      <button class="modal-cancel-btn" bindtap="closeOther">取消</button>
+      <button class="modal-confirm-btn" bindtap="confirmOther">确认保存</button>
+    </view>
+  </view>
+</view>
+
+<!-- 弹窗 3：拆分去向 Modal -->
+<view class="overlay" wx:if="{{showSplit}}" catchtouchmove="noop">
+  <view class="modal-panel split-modal">
+    <!-- 固定头部 -->
+    <view class="modal-head">
+      <view class="modal-title-wrap">
+        <text class="modal-title">拆分产出去向</text>
+        <text class="modal-subtitle">{{splitProduct.item_name}}</text>
+      </view>
+      <view class="close-icon-wrap" bindtap="closeSplit">
+        <van-icon name="cross" size="38rpx" color="#7d8d9f" />
+      </view>
+    </view>
+
+    <!-- 中间独立平滑滚动内容区，防止小屏与内容过多导致弹窗错位 -->
+    <scroll-view scroll-y class="split-modal-scroll">
+      <!-- 产出数量统计条 -->
+      <view class="split-stats-bar">
+        <view class="s-stat"><text class="s-lab">产出总数</text><text class="s-val">{{splitProduct.actual_qty}}</text></view>
+        <view class="s-stat"><text class="s-lab">已指定</text><text class="s-val green">{{splitProduct.assigned_qty_ui}}</text></view>
+        <view class="s-stat"><text class="s-lab">未指定</text><text class="s-val red">{{splitProduct.unassigned_qty_ui}}</text></view>
+      </view>
+
+      <!-- 已有去向计划列表（上下层分明，防挤压错位） -->
+      <view class="existing-routes-section" wx:if="{{splitProduct.routes && splitProduct.routes.length}}">
+        <text class="existing-routes-title">已指定的去向计划</text>
+        <view class="existing-routes-list">
+          <view class="existing-route-card" wx:for="{{splitProduct.routes}}" wx:key="index">
+            <view class="ex-route-top">
+              <view class="ex-route-tag {{item.route_type === 'WAREHOUSE' ? 'warehouse' : 'next'}}">
+                <van-icon name="{{item.route_type === 'WAREHOUSE' ? 'wap-home-o' : 'exchange'}}" size="22rpx" />
+                <text>{{item.route_type === 'WAREHOUSE' ? '入库备货' : '下一工序'}} · {{item.quantity}}片</text>
+              </view>
+              <view class="ex-remove-btn" wx:if="{{item.editable}}" data-index="{{index}}" bindtap="removeRoute">
+                <van-icon name="delete-o" size="28rpx" color="#d7190b" />
+                <text>删除</text>
+              </view>
+              <text class="ex-locked" wx:else>{{item.display_status}}</text>
+            </view>
+            <view class="ex-route-bottom">
+              <text class="ex-route-target">{{item.target_label}}</text>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <!-- 去向类型切换 -->
+      <view class="type-tabs">
+        <view class="type-tab {{routeType === 'NEXT_OPERATION' ? 'active' : ''}}" data-type="NEXT_OPERATION" bindtap="setRouteType">
+          <van-icon name="exchange" size="26rpx" />
+          <text>下一工序</text>
+        </view>
+        <view class="type-tab {{routeType === 'WAREHOUSE' ? 'active' : ''}}" data-type="WAREHOUSE" bindtap="setRouteType">
+          <van-icon name="wap-home-o" size="26rpx" />
+          <text>入库备货</text>
+        </view>
+      </view>
+
+      <!-- 下一工序目标任务搜索与选择 -->
+      <block wx:if="{{routeType === 'NEXT_OPERATION'}}">
+        <view class="modal-search">
+          <van-icon name="search" size="32rpx" color="#8c9cb0" />
+          <input class="search-input" value="{{targetKeyword}}" placeholder="搜索工单 / 任务 / 加工对象" bindinput="onTargetKeyword" bindconfirm="searchTargets" confirm-type="search" />
+          <button class="modal-search-btn" bindtap="searchTargets">查询</button>
+        </view>
+
+        <view class="target-select-list">
+          <view class="target-card {{targetIndex === index ? 'selected' : ''}}" wx:for="{{targets}}" wx:key="target_material_requirement_id" data-index="{{index}}" bindtap="pickTarget">
+            <view class="radio-circle {{targetIndex === index ? 'checked' : ''}}"></view>
+            <view class="target-card-info">
+              <text class="target-title">{{item.work_order_no}} / {{item.task_no}}</text>
+              <text class="target-sub">{{item.unit_no || '数量型任务'}} · 可指定 {{item.selectable_qty}}</text>
+            </view>
+          </view>
+          <view class="empty-state small" wx:if="{{!targetLoading && !targets.length}}">
+            <text class="small-empty-text">输入关键词搜索真实任务目标</text>
+          </view>
+        </view>
+
+        <view class="modal-pager">
+          <button class="mpager-btn" disabled="{{targetPage <= 1 || targetLoading}}" bindtap="prevTargets">上页</button>
+          <text class="mpager-text">{{targetPage}} / {{targetLastPage}}</text>
+          <button class="mpager-btn" disabled="{{targetPage >= targetLastPage || targetLoading}}" bindtap="nextTargets">下页</button>
+        </view>
+      </block>
+
+      <view class="source-note-box warehouse-note" wx:else>
+        <van-icon name="info-o" size="28rpx" color="#0e8c45" />
+        <text>确认后进入现有入库确认流程。本页保存去向计划，不增加可用库存。</text>
+      </view>
+
+      <!-- 本次指定数量步进器 -->
+      <view class="assign-qty-box">
+        <text class="stepper-label">本次指定数量</text>
+        <view class="stepper-box">
+          <button class="s-btn" data-delta="-1" bindtap="bumpRouteQty">−</button>
+          <input class="s-input" type="digit" value="{{routeQty}}" bindinput="onRouteQty" />
+          <button class="s-btn" data-delta="1" bindtap="bumpRouteQty">+</button>
+          <text class="s-unit">片</text>
+        </view>
+      </view>
+    </scroll-view>
+
+    <!-- 固定底部操作按钮 -->
+    <view class="modal-actions">
+      <button class="modal-cancel-btn" bindtap="closeSplit">取消</button>
+      <button class="modal-confirm-btn" bindtap="confirmSplit">确认拆分</button>
+    </view>
+  </view>
+</view>
+

@@ -646,7 +646,7 @@ final class CuttingDemandService
         $planned = DB::table('erp_cutting_plan_allocations as plan')
             ->join('erp_cutting_orders as cutting_order', 'cutting_order.id', '=', 'plan.cutting_order_id')
             ->whereIn('plan.demand_id', $demandIds)->where('cutting_order.status', '!=', 'CANCELLED')
-            ->groupBy('plan.demand_id')->selectRaw('plan.demand_id AS aggregate_id, COALESCE(SUM(plan.planned_qty),0) AS quantity')
+            ->groupBy('plan.demand_id')->selectRaw("plan.demand_id AS aggregate_id, COALESCE(SUM(CASE WHEN cutting_order.status = 'CLOSED' THEN COALESCE(plan.closed_planned_qty, plan.planned_qty) ELSE plan.planned_qty END),0) AS quantity")
             ->pluck('quantity', 'aggregate_id');
         $routeBase = fn (): Builder => DB::table('erp_cutting_result_routes as route')
             ->join('erp_cutting_results as result', 'result.id', '=', 'route.result_id')
@@ -725,9 +725,10 @@ final class CuttingDemandService
         $plans = DB::table('erp_cutting_plan_allocations as plan')
             ->join('erp_cutting_orders as cutting_order', 'cutting_order.id', '=', 'plan.cutting_order_id')
             ->where('plan.demand_id', $demand->id)->where('cutting_order.status', '!=', 'CANCELLED')
-            ->orderBy('plan.id')->lockForUpdate()->get(['plan.planned_qty']);
+            ->orderBy('plan.id')->lockForUpdate()->get(['plan.planned_qty', 'plan.closed_planned_qty', 'cutting_order.status']);
         foreach ($plans as $plan) {
-            $planned = bcadd($planned, (string) $plan->planned_qty, 8);
+            $quantity = $plan->status === 'CLOSED' ? ($plan->closed_planned_qty ?? $plan->planned_qty) : $plan->planned_qty;
+            $planned = bcadd($planned, (string) $quantity, 8);
         }
 
         $received = $this->maxZero(bcsub((string) $target->satisfied_base_qty, (string) $target->returned_base_qty, 8));

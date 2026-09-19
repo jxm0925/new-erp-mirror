@@ -212,7 +212,7 @@ class ProductionMaterialExecutionTest extends TestCase
         $this->assertNotSame('COMPLETED', $source['workOrder']->fresh()->status);
         app(ProductionHandoverService::class)->accept($handover->id, [
             'client_command_id' => $this->id('direct-accept'), 'expected_version' => 1,
-        ], $user, ['production.handover.receive']);
+        ], $user, ['production.handover.receive'], true);
         $this->assertSame('COMPLETED', $source['workOrder']->fresh()->status);
         $this->assertSame(2.0, (float) DB::table('erp_production_target_material_requirements')
             ->where('id', $source['targetRequirementId'])->value('satisfied_base_qty'));
@@ -615,6 +615,11 @@ class ProductionMaterialExecutionTest extends TestCase
         $this->assertSame('RECEIVED', $receipt->delivery->status);
         $this->assertSame('PARTIALLY_RECEIVED', $task->fresh()->status);
         $this->assertSame(3.0, (float) $requirement->fresh()->received_qty);
+        $postedLineId = (int) DB::table('erp_inventory_transaction_items')->where('transaction_id', $picked->inventory_transaction_id)->value('id');
+        $transit = DB::table('erp_material_holdings')->where('position_type', 'PRODUCTION_TRANSIT')->where('position_id', $postedLineId)->first();
+        $this->assertSame('1.00000000', $transit->quantity);
+        $this->assertSame('3.0000', $transit->total_cost);
+        $this->assertSame('9.0000', DB::table('erp_production_input_holdings')->where('inventory_transaction_item_id', $postedLineId)->value('total_cost'));
 
         $this->expectDomain('redelivery_quantity_exceeded', fn () => $service->createDelivery([
             'client_command_id' => $this->id('reject-over-redelivery'), 'picking_task_id' => $task->id,
@@ -651,6 +656,9 @@ class ProductionMaterialExecutionTest extends TestCase
         $this->assertSame('RECEIVED', $task->fresh()->status);
         $this->assertSame(4.0, (float) $requirement->fresh()->received_qty);
         $this->assertSame(2, DB::table('erp_material_receipts')->whereIn('delivery_id', [$delivery->id, $redelivery->id])->count());
+        $this->assertSame(2, DB::table('erp_production_input_holdings')->where('inventory_transaction_item_id', $postedLineId)->count());
+        $this->assertSame('12.0000', DB::table('erp_production_input_holdings')->where('inventory_transaction_item_id', $postedLineId)->sum('total_cost'));
+        $this->assertSame('TRANSFERRED', DB::table('erp_material_holdings')->where('id', $transit->id)->value('status'));
     }
 
     public function test_ready_delivery_can_be_cancelled_and_its_quantity_reallocated(): void
@@ -794,6 +802,7 @@ class ProductionMaterialExecutionTest extends TestCase
             'return_type' => 'normal_return', 'reason' => '正常未用退回', 'lines' => [$line]], $user, self::PERMISSIONS);
         $normalReceived = $service->receive($normal['id'], ['client_command_id' => $this->id('normal-receive'), 'expected_version' => 1], $user, self::PERMISSIONS);
         $this->assertSame('COMPLETED', $normalReceived['status']);
+        $this->assertSame('6.0000', DB::table('erp_inventory_transaction_items')->where('transaction_id', $normalReceived['inventory_transaction_id'])->value('cost_amount'));
         $this->assertSame(17.0, (float) $balance->fresh()->quantity_available);
         $afterNormal = app(ProductionKittingService::class)->requirements($task->id, 'quantity_operation', $workOrder->test_target_id, $user, self::PERMISSIONS);
         $this->assertSame(5.0, $afterNormal[0]['gross_received_base_qty']);
@@ -805,6 +814,7 @@ class ProductionMaterialExecutionTest extends TestCase
             'return_type' => 'quality_return', 'reason' => '物料外观异常', 'lines' => [array_merge($line, ['return_base_qty' => 1])]], $user, self::PERMISSIONS);
         $qualityReceived = $service->receive($quality['id'], ['client_command_id' => $this->id('quality-receive'), 'expected_version' => 1], $user, self::PERMISSIONS);
         $this->assertSame('WAIT_QUALITY', $qualityReceived['status']);
+        $this->assertSame('3.0000', DB::table('erp_inventory_transaction_items')->where('transaction_id', $qualityReceived['inventory_transaction_id'])->value('cost_amount'));
         $afterQualityWarehouseReceipt = app(ProductionKittingService::class)->requirements($task->id, 'quantity_operation', $workOrder->test_target_id, $user, self::PERMISSIONS);
         $this->assertSame(3.0, $afterQualityWarehouseReceipt[0]['returned_base_qty']);
         $this->assertSame(2.0, $afterQualityWarehouseReceipt[0]['satisfied_base_qty']);
@@ -830,9 +840,11 @@ class ProductionMaterialExecutionTest extends TestCase
         $this->assertEquals($quarantine, $quarantineReplay);
         $this->assertSame('QUARANTINED', $quarantine['status']);
         $this->assertNull($quarantine['inventory_transaction_id']);
+        $this->assertSame('3.0000', DB::table('erp_inventory_transaction_items')->where('transaction_id', $failedQualityReceived['inventory_transaction_id'])->value('cost_amount'));
         $this->assertSame(1.0, (float) $balance->fresh()->quantity_pending);
         $this->assertSame(18.0, (float) $balance->fresh()->quantity_available);
         $this->assertSame(1, DB::table('erp_production_material_return_inspections')->where('return_id', $failedQuality['id'])->count());
+        $this->assertSame('12.0000', DB::table('erp_production_material_return_cost_allocations')->sum('total_cost'));
     }
 
     public function test_return_reduces_kitting_net_and_replenishment_restores_readiness_without_replay_double_count(): void
@@ -864,6 +876,7 @@ class ProductionMaterialExecutionTest extends TestCase
         $firstReceipt = $returns->receive($created['id'], $receivePayload, $user, self::PERMISSIONS);
         $replayReceipt = $returns->receive($created['id'], $receivePayload, $user, self::PERMISSIONS);
         $this->assertEquals($firstReceipt, $replayReceipt);
+        $this->assertSame('6.0000', DB::table('erp_inventory_transaction_items')->where('transaction_id', $firstReceipt['inventory_transaction_id'])->value('cost_amount'));
 
         $short = $kitting->requirements($task->id, 'quantity_operation', $workOrder->test_target_id, $user, self::PERMISSIONS);
         $this->assertSame(5.0, $short[0]['gross_received_base_qty']);
@@ -882,6 +895,11 @@ class ProductionMaterialExecutionTest extends TestCase
         $this->assertSame(7.0, $ready[0]['gross_received_base_qty']);
         $this->assertSame(5.0, $ready[0]['satisfied_base_qty']);
         $this->assertEquals(0.0, $ready[0]['shortage_base_qty']);
+        $activeInputs = DB::table('erp_production_input_holdings as input')
+            ->join('erp_material_holdings as holding', 'holding.id', '=', 'input.input_holding_id')
+            ->where('input.target_material_requirement_id', $targetRequirement->id)->where('input.status', 'ACTIVE')->get();
+        $this->assertSame('5.00000000', $activeInputs->reduce(fn ($sum, $row) => bcadd($sum, (string) $row->quantity, 8), '0.00000000'));
+        $this->assertSame('15.0000', $activeInputs->reduce(fn ($sum, $row) => bcadd($sum, (string) $row->total_cost, 4), '0.0000'));
         $confirmation = $kitting->confirm(
             $task->id, 'quantity_operation', $workOrder->test_target_id,
             ['client_command_id' => $this->id('net-confirm-ready'), 'expected_version' => 1],
@@ -905,7 +923,7 @@ class ProductionMaterialExecutionTest extends TestCase
         $requirement = WorkOrderMaterialRequirement::create(['work_order_id' => $workOrder->id, 'line_no' => 1, 'bom_id' => $bom->id, 'bom_item_id' => $bomLine->id, 'component_item_id' => $component->id, 'component_item_code_snapshot' => $component->item_code, 'component_item_name_snapshot' => $component->item_name, 'unit_id' => $unit->id, 'unit_name_snapshot' => '件', 'per_output_qty' => 1, 'loss_rate' => 0, 'fixed_qty' => 0, 'required_qty' => 10, 'base_unit_id' => $unit->id, 'base_unit_name_snapshot' => '件', 'base_required_qty' => 10, 'issued_qty' => 0, 'returned_qty' => 0, 'remaining_qty' => 10, 'status' => 'OPEN', 'business_version' => 1]);
         $warehouse = Warehouse::create(['warehouse_code' => 'P6B-WH-'.$suffix, 'warehouse_name' => 'Phase6B 仓库', 'status' => 'enabled']);
         $location = Location::create(['location_code' => 'P6B-LC-'.$suffix, 'location_name' => 'Phase6B 库位', 'warehouse_id' => $warehouse->id, 'status' => 'enabled']);
-        $balance = InventoryBalance::create(['item_id' => $component->id, 'warehouse_id' => $warehouse->id, 'location_id' => $location->id, 'batch_no' => 'P6B-BATCH-'.$suffix, 'unit_id' => $unit->id, 'quantity_on_hand' => 20, 'quantity_available' => 20, 'quantity_locked' => 0, 'quantity_defective' => 0, 'quantity_pending' => 0, 'average_unit_cost' => 3]);
+        $balance = InventoryBalance::create(['item_id' => $component->id, 'warehouse_id' => $warehouse->id, 'location_id' => $location->id, 'batch_no' => 'P6B-BATCH-'.$suffix, 'unit_id' => $unit->id, 'quantity_on_hand' => 20, 'quantity_available' => 20, 'quantity_locked' => 0, 'quantity_defective' => 0, 'quantity_pending' => 0, 'average_unit_cost' => 3, 'inventory_value' => 60]);
         $operationId = DB::table('erp_production_operations')->insertGetId(['operation_no' => 'P6B-OP-'.$suffix,
             'operation_name' => 'Phase6B 配料目标工序', 'status' => 'enabled', 'sort' => 10, 'business_version' => 1, 'created_at' => now(), 'updated_at' => now()]);
         $routingId = DB::table('erp_production_routings')->insertGetId(['routing_no' => 'P6B-RT-'.$suffix, 'routing_name' => 'Phase6B 路线',

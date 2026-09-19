@@ -52,6 +52,8 @@ page {
 
 .shortcut-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18rpx; margin-top: 24rpx; }
 .shortcut-card { position: relative; min-width: 0; height: 274rpx; padding: 28rpx 22rpx 24rpx; border-radius: 18rpx; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.shortcut-card:last-child:nth-child(odd) { grid-column: 1 / -1; height: 210rpx; flex-direction: row; gap: 28rpx; }
+.shortcut-card:last-child:nth-child(odd) .shortcut-copy { margin-top: 0; text-align: left; }
 .shortcut-card:active { background: #fffafa; transform: scale(.985); }
 .shortcut-icon { width: 112rpx; height: 112rpx; border-radius: 50%; background: linear-gradient(145deg, #fff3f2, #fffafa); display: flex; align-items: center; justify-content: center; }
 .shortcut-copy { min-width: 0; margin-top: 18rpx; text-align: center; }

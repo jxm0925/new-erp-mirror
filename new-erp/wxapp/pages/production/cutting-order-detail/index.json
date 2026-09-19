@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "下料单详情",
+  "navigationBarBackgroundColor": "#e52613",
+  "navigationBarTextStyle": "white",
+  "enablePullDownRefresh": true,
+  "usingComponents": {}
+}

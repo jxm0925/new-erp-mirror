@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "下料记录",
+  "navigationBarBackgroundColor": "#e52613",
+  "navigationBarTextStyle": "white",
+  "enablePullDownRefresh": true,
+  "usingComponents": {}
+}

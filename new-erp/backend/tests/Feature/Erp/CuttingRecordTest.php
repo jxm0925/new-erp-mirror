@@ -509,11 +509,19 @@ class CuttingRecordTest extends TestCase
     public function test_authenticated_http_selectors_and_execution_are_paginated_and_preserve_result_ids(): void
     {
         $f = $this->fixture(); $token = $this->token($f['user']); $base = '/api/v1/erp/production/cutting';
+        $categoryId = DB::table('erp_item_categories')->insertGetId(['category_code'=>'CUT-CAT-'.Str::ulid(),
+            'category_name'=>'下料测试分类','sort_order'=>10,'status'=>'enabled','created_at'=>now(),'updated_at'=>now()]);
+        DB::table('erp_items')->whereIn('id',[$f['raw']->id,$f['output']->id])->update(['category_id'=>$categoryId]);
         $commands = DB::table('erp_cutting_commands')->count();
         $this->withToken($token)->getJson($base.'/orders/'.$f['order'].'/input-candidates?per_page=1')
             ->assertOk()->assertJsonCount(1,'data')->assertJsonPath('meta.total',2);
         $this->withToken($token)->getJson($base.'/orders/'.$f['order'].'/allowed-outputs?keyword='.urlencode('电箱侧板').'&per_page=1')
             ->assertOk()->assertJsonPath('meta.total',1)->assertJsonPath('data.0.id',$f['allowed']);
+        $this->withToken($token)->getJson($base.'/orders/'.$f['order'].'/selector-categories?mode=inputs&per_page=1')
+            ->assertOk()->assertJsonPath('meta.total',1)->assertJsonPath('data.0.id',$categoryId)
+            ->assertJsonPath('data.0.category_name','下料测试分类');
+        $this->withToken($token)->getJson($base.'/orders/'.$f['order'].'/selector-categories?mode=outputs&per_page=1')
+            ->assertOk()->assertJsonPath('meta.total',1)->assertJsonPath('data.0.id',$categoryId);
         $this->assertSame($commands,DB::table('erp_cutting_commands')->count());
         $one = $this->issue($f); $two = $this->issue($f,1);
         $r1 = $this->save($f,$one['settlement_batch_id'],'6'); $r2 = $this->save($f,$two['settlement_batch_id'],'4');
@@ -904,10 +912,12 @@ class CuttingRecordTest extends TestCase
         $taskId = (int) $f['created']['cutting_task_id'];
         $token = $this->token($f['user'], 'self');
 
-        $this->withToken($token)->getJson('/api/v1/erp/production/cutting/tasks?per_page=1')
-            ->assertOk()->assertJsonPath('meta.total', 1)->assertJsonPath('data.0.id', $taskId);
+        $pool = $this->withToken($token)->getJson('/api/v1/erp/production/cutting/tasks?scope=pool&per_page=100')->assertOk();
+        $this->assertContains($taskId, array_map('intval', array_column($pool->json('data'), 'id')));
         $this->withToken($token)->postJson('/api/v1/erp/production/cutting/tasks/'.$taskId.'/claim', $this->payload(1))
             ->assertOk()->assertJsonPath('data.id', $taskId)->assertJsonPath('data.assignee_user_legacy_id', $f['user']->legacy_id);
+        $mine = $this->withToken($token)->getJson('/api/v1/erp/production/cutting/tasks?scope=mine&per_page=100')->assertOk();
+        $this->assertContains($taskId, array_map('intval', array_column($mine->json('data'), 'id')));
         $this->withToken($token)->getJson('/api/v1/erp/production/cutting/tasks/'.$taskId.'?per_page=1')
             ->assertOk()->assertJsonPath('data.task.id', $taskId)->assertJsonPath('data.inputs.meta.per_page', 1);
     }
@@ -1149,10 +1159,23 @@ class CuttingRecordTest extends TestCase
         ],$matrix['production_manager']->pluck('permission_code')->all());
         $this->assertEqualsCanonicalizing([
             'production.cutting.view','production.cutting.record','production.cutting.handover.dispatch','production.cutting.handover.receive',
+            'production.cutting.warehouse',
         ],$matrix['production_operator']->pluck('permission_code')->all());
         $this->assertEqualsCanonicalizing([
             'production.cutting.view','production.cutting.warehouse',
         ],$matrix['department_principal']->pluck('permission_code')->all());
+        // Worker-origin cutting includes physical issue/stock completion, but it
+        // must not silently grant planning or financial cost-confirmation power.
+        $operatorCodes = DB::table('erp_rbac_roles as role')
+            ->join('erp_rbac_role_permissions as rp','rp.role_id','=','role.id')
+            ->join('erp_rbac_permissions as p','p.id','=','rp.permission_id')
+            ->where('role.code','production_operator')->pluck('p.code')->all();
+        foreach (['production.cutting.issue','production.cutting.close','production.cutting.cancel'] as $code) {
+            $this->assertContains($code,$operatorCodes);
+        }
+        foreach (['production.cutting.plan','production.cutting.confirm','production.output.cost.allocate'] as $code) {
+            $this->assertNotContains($code,$operatorCodes);
+        }
     }
 
     public function test_cutting_reserved_inventory_uses_formal_internal_issue_and_current_receiver_without_double_holding(): void

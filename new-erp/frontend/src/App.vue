@@ -125,7 +125,8 @@ export default {
       ] },
       { name: '生产执行监管', path: '/production/execution-monitor', icon: 'el-icon-monitor', permission: 'production.unit.view' },
       { name: '生产需求', path: '/production/demands', icon: 'el-icon-document', permission: 'production.demand' },
-      { name: '工单管理', path: '/production/work-orders', icon: 'el-icon-s-order', permission: 'production.work_order' }
+      { name: '工单管理', path: '/production/work-orders', icon: 'el-icon-s-order', permission: 'production.work_order' },
+      { name: '下料管理', path: '/production/cutting', icon: 'el-icon-scissors', permission: 'production.cutting' }
     ],
     approvalMenus: [
       { name: '审核工作台', path: '/approvals/tasks', icon: 'el-icon-circle-check', permission: 'approval.task.view' },

@@ -15,18 +15,20 @@ final class CuttingCommandService
     public function run(string $type, int $aggregateId, array $payload, object $user, callable $action): array
     {
         $fields = match ($type) {
+            'create_worker_cutting_order' => ['inputs'],
             'create_cutting_configuration' => ['item_id','dimensions','drawing_reference','scope_mode','scope_work_order_ids'],
             'update_cutting_configuration' => ['dimensions','drawing_reference','scope_mode','scope_work_order_ids'],
             'publish_cutting_configuration','version_cutting_configuration' => [],
             'generate_cutting_demand' => ['source_requirement_id','producer_work_order_id','producer_stage_id','configuration_id'],
             'revise_cutting_demand' => ['reason'],
-            'publish_cutting_order' => ['plans'], 'save_cutting_results' => ['results'], 'split_cutting_result' => ['routes'],
+            'publish_cutting_order' => ['plans','purpose','stock_outputs','allowed_item_ids'], 'save_cutting_results' => ['results'], 'split_cutting_result' => ['routes'],
             'inspect_cutting_result' => ['result','reason'], 'register_material_physical' => ['source_transaction_item_id','dimensions'],
             'reserve_cutting_physical' => ['physical_material_ids'], 'release_cutting_physical' => ['physical_material_id'],
+            'issue_cutting_physicals' => ['physical_material_ids'],
             'issue_cutting_material' => ['physical_material_id','remnant_holding_id','inventory_balance_id','input_qty'],
             'return_uncut_cutting_material' => ['reason'],
             'dispose_cutting_remnant' => ['reason'],
-            'confirm_cutting_batch' => ['costs','allocations'],
+            'confirm_cutting_batch' => ['costs','allocations','cost_method'],
             'reverse_cutting_confirmation' => ['reason'],
             'return_cutting_for_edit' => ['reason'],
             'start_cutting_task','resume_cutting_task','start_cutting_collaborator_labor' => ['switch_active_labor','expected_active_labor_session_id'],
@@ -37,6 +39,7 @@ final class CuttingCommandService
             'create_cutting_inventory_issue' => ['quantity','target_material_requirement_id'],
             'release_cutting_inventory' => ['quantity','reason'],
             'cancel_cutting_inventory_issue' => [],
+            'close_cutting_order','cancel_cutting_order' => ['reason'],
             'claim_cutting_task','pause_cutting_task','finish_cutting_task','leave_cutting_task_collaboration',
             'pause_cutting_collaborator_labor','submit_cutting_results','mark_cutting_first_cut' => [], default => null,
         };
@@ -117,6 +120,20 @@ final class CuttingCommandService
         $this->permission($permissions, $permission);
         $q = DB::table('erp_cutting_orders')->where('id', $id); if ($lock) $q->lockForUpdate();
         $row = $q->first(); if (! $row) $this->fail('cutting_order_missing', '下料单不存在。', 404);
+        if (($row->purpose ?? 'FORMAL') === 'WORKER') {
+            $taskId = DB::table('erp_cutting_tasks')->where('cutting_order_id', $id)->value('id');
+            $task = $this->cuttingTask((int) $taskId, $user, $permissions, $super, $permission, $lock);
+            $scope = $this->scope->resolve($user,$permission,$permissions,$super);
+            if (($scope['mode'] ?? 'deny') !== 'all' && in_array($permission,['production.cutting.record','production.cutting.issue',
+                'production.cutting.warehouse','production.cutting.close','production.cutting.cancel'],true)) {
+                $actor = $this->actor($user);
+                $owner = (int) $task->assignee_user_legacy_id === $actor;
+                $collaborator = $task->participants()->where('employee_legacy_id',$actor)->whereNull('left_at')->exists();
+                if (! $owner && (! $collaborator || in_array($permission,['production.cutting.close','production.cutting.cancel'],true)))
+                    $this->fail('cutting_participant_required','只能操作本人负责或参与的下料记录。',403);
+            }
+            return $row;
+        }
         $ids = DB::table('erp_cutting_plan_allocations')->where('cutting_order_id', $id)->pluck('work_order_id');
         $targetWos = DB::table('erp_cutting_plan_allocations as p')->join('erp_production_target_material_requirements as r','r.id','=','p.target_material_requirement_id')
             ->where('p.cutting_order_id',$id)->pluck('r.work_order_id');
@@ -130,7 +147,10 @@ final class CuttingCommandService
     {
         $row = DB::table('erp_cutting_settlement_batches')->where('id', $id)->first();
         if (! $row) $this->fail('batch_missing', '用料批次不存在。', 404);
-        $this->order($row->cutting_order_id, $user, $permissions, $super, $permission, true);
+        $order = $this->order($row->cutting_order_id, $user, $permissions, $super, $permission, true);
+        if (in_array($order->status, ['CLOSED', 'CANCELLED'], true)) {
+            $this->fail('cutting_order_terminal', '下料单已经关闭或取消，不能再修改用料事实。', 409);
+        }
         return DB::table('erp_cutting_settlement_batches')->where('id', $id)->lockForUpdate()->first();
     }
 

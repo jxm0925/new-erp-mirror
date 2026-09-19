@@ -4,11 +4,22 @@ namespace App\Http\Controllers\Api\V1\Erp;
 
 use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Http\Controllers\Controller;
-use App\Services\Erp\{AuthContextService, CuttingConfigurationService, CuttingConfirmationService, CuttingCorrectionService, CuttingDemandService, CuttingHandoverService, CuttingInputService, CuttingInventoryReservationService, CuttingReadService, CuttingRecordService, CuttingTaskExecutionService, CuttingWarehouseReceiptService};
+use App\Services\Erp\{AuthContextService, CuttingConfigurationService, CuttingConfirmationService, CuttingCorrectionService, CuttingDemandService, CuttingHandoverService, CuttingInputService, CuttingInventoryReservationService, CuttingOrderLifecycleService, CuttingReadService, CuttingRecordService, CuttingTaskExecutionService, CuttingWarehouseReceiptService};
 use Illuminate\Http\Request;
 
 final class CuttingController extends Controller
 {
+    public function workerCreate(Request $r, \App\Services\Erp\CuttingWorkerOrderService $s)
+    { $this->validateCommand($r,0); return response()->json(['data'=>$s->create($r->all(), ...$this->context($r))],201); }
+    public function workerOutputs(Request $r, \App\Services\Erp\CuttingWorkerOrderService $s)
+    { return response()->json($s->outputs($this->filters($r), ...$this->context($r))); }
+    public function workerCategories(Request $r, \App\Services\Erp\CuttingWorkerOrderService $s)
+    { return response()->json($s->categories($this->filters($r), ...$this->context($r))); }
+    public function workerInputs(Request $r, CuttingReadService $s)
+    { return response()->json($s->workerInputs($this->filters($r), ...$this->context($r))); }
+    public function workerInputCategories(Request $r, CuttingReadService $s)
+    { return response()->json($s->workerInputCategories($this->filters($r), ...$this->context($r))); }
+
     public function demands(Request $r, CuttingDemandService $s)
     { return response()->json($s->paginate($this->demandFilters($r), ...$this->context($r))); }
     public function demand(Request $r, int $id, CuttingDemandService $s)
@@ -43,6 +54,8 @@ final class CuttingController extends Controller
     { return response()->json(['data'=>$s->settlementExecution($id,$this->filters($r), ...$this->context($r))]); }
     public function outputs(Request $r, int $id, CuttingReadService $s)
     { return response()->json($s->allowedOutputs($id,$this->filters($r), ...$this->context($r))); }
+    public function selectorCategories(Request $r, int $id, CuttingReadService $s)
+    { return response()->json($s->selectorCategories($id,$this->selectorCategoryFilters($r), ...$this->context($r))); }
     public function handoverTargets(Request $r, int $id, CuttingReadService $s)
     { return response()->json($s->handoverTargets($id,$this->filters($r), ...$this->context($r))); }
     public function inputs(Request $r, int $id, CuttingReadService $s)
@@ -53,6 +66,10 @@ final class CuttingController extends Controller
     { return response()->json(['data'=>$s->materialPhysical($id, ...$this->context($r))]); }
     public function publish(Request $r, CuttingRecordService $s)
     { $this->validateCommand($r,0); return response()->json(['data'=>$s->publish($r->all(), ...$this->context($r))],201); }
+    public function closeOrder(Request $r, int $id, CuttingOrderLifecycleService $s)
+    { $this->validateCommand($r); $r->validate(['reason'=>'required|string|max:1000']); return response()->json(['message'=>'下料单已关闭','data'=>$s->close($id,$r->all(), ...$this->context($r))]); }
+    public function cancelOrder(Request $r, int $id, CuttingOrderLifecycleService $s)
+    { $this->validateCommand($r); $r->validate(['reason'=>'required|string|max:1000']); return response()->json(['message'=>'下料单已取消','data'=>$s->cancel($id,$r->all(), ...$this->context($r))]); }
     public function registerPhysical(Request $r, CuttingInputService $s)
     { $this->validateCommand($r,0); [$u,$p] = $this->context($r); return response()->json(['data'=>$s->registerPhysical($r->all(),$u,$p)],201); }
     public function disposePhysical(Request $r, int $id, CuttingInputService $s)
@@ -63,6 +80,8 @@ final class CuttingController extends Controller
     { $this->validateCommand($r); return response()->json(['data'=>$s->release($id,$r->all(), ...$this->context($r))]); }
     public function issue(Request $r, int $id, CuttingInputService $s)
     { $this->validateCommand($r); return response()->json(['data'=>$s->issue($id,$r->all(), ...$this->context($r))],201); }
+    public function issuePhysicals(Request $r, int $id, CuttingInputService $s)
+    { $this->validateCommand($r); return response()->json(['data'=>$s->issuePhysicals($id,$r->all(), ...$this->context($r))],201); }
     public function firstCut(Request $r, int $id, CuttingInputService $s)
     { $this->validateCommand($r); return response()->json(['data'=>$s->markFirstCut($id,$r->all(), ...$this->context($r))]); }
     public function returnOriginal(Request $r, int $id, CuttingInputService $s)
@@ -123,7 +142,10 @@ final class CuttingController extends Controller
     private function filters(Request $r): array
     { return $r->validate(['page'=>'nullable|integer|min:1','per_page'=>'nullable|integer|min:1|max:100','keyword'=>'nullable|string|max:100',
         'category_id'=>'nullable|integer|min:1','status'=>'nullable|string|max:24','input_type'=>'nullable|in:physical,quantity',
-        'material_form'=>'nullable|in:FULL_STOCK,REMNANT','shape'=>'nullable|in:RECTANGLE,IRREGULAR']); }
+        'material_form'=>'nullable|in:FULL_STOCK,REMNANT','shape'=>'nullable|in:RECTANGLE,IRREGULAR',
+        'scope'=>'nullable|in:mine,pool','status_group'=>'nullable|in:active,finished','flow'=>'nullable|in:confirm,handover,warehouse']); }
+    private function selectorCategoryFilters(Request $r): array
+    { return $r->validate(['mode'=>'required|in:inputs,outputs','page'=>'nullable|integer|min:1','per_page'=>'nullable|integer|min:1|max:100']); }
     private function configurationFilters(Request $r): array
     { return $r->validate(['page'=>'nullable|integer|min:1','per_page'=>'nullable|integer|min:1|max:100',
         'keyword'=>'nullable|string|max:100','item_id'=>'nullable|integer|min:1','status'=>'nullable|in:DRAFT,PUBLISHED',

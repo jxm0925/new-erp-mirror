@@ -236,6 +236,7 @@ class PurchaseReturnController extends Controller
             'items.baseUnit',
             'items.returnUnit',
             'items.serialLinks.inventorySerial',
+            'items.physicalLinks',
             'logs',
         ])->findOrFail($id);
 
@@ -299,6 +300,8 @@ class PurchaseReturnController extends Controller
             'items.*.return_unit_id' => 'required|exists:erp_units,id',
             'items.*.serial_ids' => 'nullable|array|max:500',
             'items.*.serial_ids.*' => 'integer|distinct|exists:erp_inventory_serials,id',
+            'items.*.physical_material_ids' => 'nullable|array|max:500',
+            'items.*.physical_material_ids.*' => 'integer|distinct|exists:erp_material_physicals,id',
             'items.*.remark' => 'nullable|string',
         ]);
         [$operatorId, $operatorName] = $this->operator($request);

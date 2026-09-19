@@ -14,7 +14,7 @@ require dirname(__DIR__, 2).'/vendor/autoload.php';
 
 $database = (string) getenv('ERP_DELETION_RACE_DATABASE');
 $args = json_decode(base64_decode($argv[1] ?? '', true) ?: '', true, 512, JSON_THROW_ON_ERROR);
-if (!str_ends_with(strtolower($database), '_test')) {
+if (strtolower($database) !== 'erp_sdjiantan') {
     fwrite(STDERR, "unsafe race database\n");
     exit(2);
 }

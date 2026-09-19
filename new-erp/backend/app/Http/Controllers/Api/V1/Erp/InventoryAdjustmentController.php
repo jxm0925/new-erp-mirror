@@ -26,7 +26,7 @@ class InventoryAdjustmentController extends Controller
 
     public function index(Request $request)
     {
-        $query = InventoryAdjustment::with(['items.item.unit', 'items.warehouse', 'items.location', 'items.serials'])->latest('updated_at');
+        $query = InventoryAdjustment::with(['items.item.unit', 'items.warehouse', 'items.location', 'items.serials', 'items.physicalEntries'])->latest('updated_at');
         if ($request->filled('adjustment_no')) $query->where('adjustment_no', 'like', '%' . $request->input('adjustment_no') . '%');
         if ($request->filled('reason')) $query->where('reason', $request->input('reason'));
         if ($request->filled('keyword')) {
@@ -66,7 +66,7 @@ class InventoryAdjustmentController extends Controller
 
     public function show(int $id)
     {
-        return response()->json(InventoryAdjustment::with(['items.item.unit', 'items.warehouse', 'items.location', 'items.serials'])->findOrFail($id));
+        return response()->json(InventoryAdjustment::with(['items.item.unit', 'items.warehouse', 'items.location', 'items.serials', 'items.physicalEntries'])->findOrFail($id));
     }
 
     public function update(Request $request, int $id, InventoryAdjustmentApplicationService $service)
@@ -116,6 +116,13 @@ class InventoryAdjustmentController extends Controller
             'items.*.serial_entries' => 'nullable|array|max:500',
             'items.*.serial_entries.*.serial_no' => 'required|string|max:120',
             'items.*.serial_entries.*.source' => 'nullable|in:manual,system,supplier',
+            'items.*.physical_entries' => 'nullable|array|max:500',
+            'items.*.physical_entries.*.physical_material_id' => 'nullable|integer|distinct|exists:erp_material_physicals,id',
+            'items.*.physical_entries.*.dimensions' => 'nullable|array',
+            'items.*.physical_entries.*.dimensions.length_mm' => ['nullable', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],
+            'items.*.physical_entries.*.dimensions.width_mm' => ['nullable', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],
+            'items.*.physical_entries.*.dimensions.thickness_mm' => ['nullable', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],
+            'items.*.physical_entries.*.total_cost' => ['nullable', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/'],
         ]);
     }
 

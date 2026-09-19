@@ -64,6 +64,8 @@ class RbacBootstrapService
             ['production.cutting.inventory.view', '查看下料专用库存', 'button', 'production.work_order', null, null, 'el-icon-view', 87],
             ['production.cutting.inventory.issue', '安排下料专用库存领用', 'button', 'production.work_order', null, null, 'el-icon-mouse', 88],
             ['production.cutting.inventory.release', '释放下料库存归属', 'button', 'production.work_order', null, null, 'el-icon-mouse', 89],
+            ['production.cutting.close', '关闭下料单', 'button', 'production.work_order', null, null, 'el-icon-circle-check', 90],
+            ['production.cutting.cancel', '取消下料单', 'button', 'production.work_order', null, null, 'el-icon-circle-close', 91],
 
             // 1. 主数据中心 二级菜单
             ['master.product', '产品管理', 'menu', 'master', '/master/products', 'ProductList', 'el-icon-goods', 101],
@@ -194,6 +196,7 @@ class RbacBootstrapService
             ['inventory.adjustment.create', '新建盘盈盘亏调整', 'button', 'inventory.adjustment', null, null, 'el-icon-mouse', 2],
             ['inventory.adjustment.confirm', '确认调整过账', 'button', 'inventory.adjustment', null, null, 'el-icon-mouse', 3],
             ['inventory.adjustment.delete', '删除调整草稿', 'button', 'inventory.adjustment', null, null, 'el-icon-delete', 4],
+            ['inventory.physical.manage', '实物材料调拨及报废', 'button', 'inventory.adjustment', null, null, 'el-icon-sort', 5],
             ['inventory.alert.view', '查看库存预警', 'button', 'inventory.alert', null, null, 'el-icon-mouse', 1],
             ['inventory.alert.configure', '配置库存预警', 'button', 'inventory.alert', null, null, 'el-icon-mouse', 2],
             ['inventory.alert.create_request', '从预警生成采购需求', 'button', 'inventory.alert', null, null, 'el-icon-mouse', 3],
@@ -609,6 +612,7 @@ class RbacBootstrapService
                 'production.cutting.handover.view', 'production.cutting.handover.dispatch',
                 'production.cutting.handover.receive', 'production.cutting.handover.reject', 'production.cutting.warehouse',
                 'production.cutting.inventory.view', 'production.cutting.inventory.issue', 'production.cutting.inventory.release',
+                'production.cutting.close', 'production.cutting.cancel',
                 'production.output.cost.view', 'production.output.cost.allocate',
             ])
             ->pluck('id', 'code');
@@ -630,7 +634,8 @@ class RbacBootstrapService
                 'production.output.create', 'production.output.receive', 'production.material_supplement.request', 'production.material_return.create', 'production.trace.view',
                 'production.operation.view', 'production.routing.view', 'production.labor_rule.view',
                 'production.labor_stats.view',
-                'production.cutting.view', 'production.cutting.record',
+                'production.cutting.view', 'production.cutting.record', 'production.cutting.issue',
+                'production.cutting.warehouse', 'production.cutting.close', 'production.cutting.cancel',
                 'production.cutting.task.claim', 'production.cutting.task.start', 'production.cutting.task.pause',
                 'production.cutting.task.resume', 'production.cutting.task.finish', 'production.cutting.task.collaborate',
                 'production.cutting.handover.view', 'production.cutting.handover.dispatch',
@@ -651,6 +656,7 @@ class RbacBootstrapService
                 'production.cutting.confirm', 'production.cutting.material_manage',
                 'production.cutting.handover.view', 'production.cutting.warehouse',
                 'production.cutting.inventory.view', 'production.cutting.inventory.issue', 'production.cutting.inventory.release',
+                'production.cutting.close', 'production.cutting.cancel',
                 'production.output.cost.view', 'production.output.cost.allocate',
             ],
         ];

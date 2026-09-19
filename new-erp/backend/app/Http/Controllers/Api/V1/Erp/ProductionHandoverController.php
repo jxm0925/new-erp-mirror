@@ -20,10 +20,10 @@ class ProductionHandoverController extends Controller
     {
         $payload = $request->validate(['client_command_id' => 'required|string|max:120', 'expected_version' => 'required|integer|min:1',
             'reason' => $accept ? 'prohibited' : 'required|string|max:1000', 'completeness' => $accept ? 'nullable|array' : 'prohibited']);
-        [$user, $permissions] = $this->context($request);
-        $result = $accept ? $service->accept($id, $payload, $user, $permissions) : $service->reject($id, $payload, $user, $permissions);
+        [$user, $permissions, $super] = $this->context($request);
+        $result = $accept ? $service->accept($id, $payload, $user, $permissions, $super) : $service->reject($id, $payload, $user, $permissions, $super);
         return response()->json(['message' => $accept ? '工序交接接收成功。' : '工序交接已拒收并退回上游返工。', 'data' => $result]);
     }
     private function context(Request $request): array
-    { $auth = app(AuthContextService::class); $user = $auth->currentUser($request); if (! $user) throw new WorkOrderDomainException('unauthenticated', '请先登录 ERP。', 401); return [$user, $auth->permissionCodes($user)]; }
+    { $auth = app(AuthContextService::class); $user = $auth->currentUser($request); if (! $user) throw new WorkOrderDomainException('unauthenticated', '请先登录 ERP。', 401); return [$user, $auth->permissionCodes($user), $auth->isSuperAdmin($user)]; }
 }

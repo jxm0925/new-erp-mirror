@@ -1,0 +1,361 @@
+<view class="page" wx:if="{{!loading}}">
+  <!-- 沉浸式单据 Header -->
+  <view class="order-hero-card">
+    <view class="order-hero-content">
+      <view class="order-hero-left">
+        <view class="order-type-tag">下料工单</view>
+        <view class="order-no-wrap">
+          <text class="order-label">NO.</text>
+          <text class="order-no">{{order.cutting_order_no || '-'}}</text>
+        </view>
+      </view>
+      <view class="order-status-pill">{{order.display_status || '-'}}</view>
+    </view>
+  </view>
+
+  <!-- 加工任务看板 Card -->
+  <view class="card task-card">
+    <view class="card-header">
+      <view class="header-left">
+        <view class="title-mark"></view>
+        <text class="section-title">加工任务详情</text>
+      </view>
+      <view class="state-pill {{task.status === 'IN_PROGRESS' ? 'running' : task.status === 'COMPLETED' ? 'completed' : ''}}">
+        <text class="status-dot"></text>
+        <text>{{task.display_status || task.status || '-'}}</text>
+      </view>
+    </view>
+
+    <!-- 任务信息与计时仪表板 -->
+    <view class="task-dashboard">
+      <view class="task-info-grid">
+        <view class="dashboard-item">
+          <text class="dash-label">目标产出</text>
+          <text class="dash-val bold output-name">{{task.output_summary || '待加工产出'}}</text>
+        </view>
+        <view class="dashboard-item">
+          <text class="dash-label">负责人</text>
+          <text class="dash-val">{{participants[0].nickname || participants[0].username || (task.assignee_user_legacy_id ? ('#' + task.assignee_user_legacy_id) : '暂未领取')}}</text>
+        </view>
+        <view class="dashboard-item wide">
+          <text class="dash-label">开始加工时间</text>
+          <text class="dash-val font-num">{{task.started_at || '-'}}</text>
+        </view>
+      </view>
+
+      <!-- 本人计时高亮卡片 -->
+      <view class="timer-card {{task.status === 'IN_PROGRESS' ? 'active' : ''}}">
+        <view class="timer-top">
+          <van-icon name="clock-o" size="28rpx" color="{{task.status === 'IN_PROGRESS' ? '#d7190b' : '#7d8da2'}}" />
+          <text class="timer-title">本人计时</text>
+        </view>
+        <text class="timer-value">{{elapsedLabel || '00:00:00'}}</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 已领用料 / 用料批次 Card -->
+  <view class="card material-card">
+    <view class="card-header">
+      <view class="header-left">
+        <view class="title-mark"></view>
+        <text class="section-title">已领用料 / 批次</text>
+        <text class="count-badge" wx:if="{{inputsTotal}}">{{inputsTotal}} 批</text>
+      </view>
+      <view class="header-action" wx:if="{{canAddInput}}" bindtap="openAddInput">
+        <van-icon name="plus" size="26rpx" color="#d7190b" />
+        <text>添加用料</text>
+      </view>
+    </view>
+
+    <!-- 批次物料列表 -->
+    <view class="batch-list" wx:if="{{inputs.length}}">
+      <view class="batch-item" wx:for="{{inputs}}" wx:key="id">
+        <view class="batch-top">
+          <image class="plate-image" src="/static/images/cutting-plate.png" mode="aspectFit" />
+          <view class="batch-main">
+            <view class="batch-no-row">
+              <text class="batch-tag">{{item.physical_material_id ? '实物材料' : '用料批次'}}</text>
+              <text class="batch-source-no">{{item.source_no}}</text>
+            </view>
+            <text class="batch-name">{{item.source_name || '-'}}</text>
+            <text class="batch-spec" wx:if="{{item.dimension_text}}">{{item.dimension_text}}</text>
+            <text class="batch-origin" wx:if="{{item.physical_material_id && item.batch_no}}">来源批次：{{item.batch_no}}</text>
+          </view>
+        </view>
+
+        <view class="batch-bottom">
+          <view class="batch-status-badge {{item.status_tone}}">
+            <text class="badge-dot"></text>
+            <text>{{item.display_status}}</text>
+          </view>
+          <button class="batch-action-btn {{item.status === 'PROCESSING' ? 'primary' : 'outline'}}" data-id="{{item.id}}" bindtap="goRecord">
+            <text>{{item.status === 'PROCESSING' ? '登记加工' : '查看记录'}}</text>
+            <van-icon name="arrow" size="24rpx" />
+          </button>
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{!inputs.length}}" class="empty-batch-zone" bindtap="openAddInput">
+      <van-icon name="warning-o" size="48rpx" color="#b8c5d6" />
+      <text class="empty-text">暂无已领用料，请先添加实际用料</text>
+      <button class="empty-add-btn" wx:if="{{canAddInput}}"><van-icon name="plus" /> 添加用料</button>
+    </view>
+
+    <!-- 批次分页器 -->
+    <view class="batch-pager" wx:if="{{inputsLastPage > 1}}">
+      <button class="bpager-btn" disabled="{{inputsPage <= 1}}" bindtap="prevBatches">上页</button>
+      <text class="bpager-text">{{inputsPage}} / {{inputsLastPage}} · {{inputsTotal}}批</text>
+      <button class="bpager-btn" disabled="{{inputsPage >= inputsLastPage}}" bindtap="nextBatches">下页</button>
+    </view>
+  </view>
+
+  <!-- 结果流转管线 Card -->
+  <view class="card pipeline-card">
+    <view class="card-header">
+      <view class="header-left">
+        <view class="title-mark"></view>
+        <text class="section-title">结果流转看板</text>
+      </view>
+    </view>
+
+    <view class="pipeline-grid">
+      <!-- 待用料确认 -->
+      <view class="pipeline-item" data-type="confirm" bindtap="openFlow" hover-class="pipeline-hover">
+        <view class="pipeline-icon-wrap confirm">
+          <van-icon name="records" size="38rpx" color="#d7190b" />
+        </view>
+        <view class="pipeline-content">
+          <text class="pipeline-label">待用料确认</text>
+          <text class="pipeline-count"><text class="num">{{flow.confirm}}</text> 批</text>
+        </view>
+        <van-icon name="arrow" size="26rpx" color="#adb9c8" />
+      </view>
+
+      <!-- 待交接 -->
+      <view class="pipeline-item" data-type="handover" bindtap="openFlow" hover-class="pipeline-hover">
+        <view class="pipeline-icon-wrap handover">
+          <van-icon name="exchange" size="38rpx" color="#0870e6" />
+        </view>
+        <view class="pipeline-content">
+          <text class="pipeline-label">待交接</text>
+          <text class="pipeline-count"><text class="num blue">{{flow.handover}}</text> 件</text>
+        </view>
+        <van-icon name="arrow" size="26rpx" color="#adb9c8" />
+      </view>
+
+      <!-- 待入库确认 -->
+      <view class="pipeline-item" data-type="warehouse" bindtap="openFlow" hover-class="pipeline-hover">
+        <view class="pipeline-icon-wrap warehouse">
+          <van-icon name="wap-home-o" size="38rpx" color="#0e8c45" />
+        </view>
+        <view class="pipeline-content">
+          <text class="pipeline-label">待入库确认</text>
+          <text class="pipeline-count"><text class="num green">{{flow.warehouse}}</text> 件</text>
+        </view>
+        <van-icon name="arrow" size="26rpx" color="#adb9c8" />
+      </view>
+    </view>
+
+    <view class="pipeline-tip">
+      <van-icon name="info-o" size="24rpx" color="#8b9cb0" />
+      <text>提交加工结果不代表已接收或已入库，需由交接人或仓库确认。</text>
+    </view>
+  </view>
+
+  <!-- 生命周期与阻断 Card -->
+  <view class="card lifecycle-card" wx:if="{{lifecycle.close_permitted || lifecycle.cancel_permitted}}">
+    <view class="card-header">
+      <view class="header-left">
+        <view class="title-mark gray"></view>
+        <text class="section-title">下料单生命周期</text>
+      </view>
+    </view>
+
+    <view class="blocker-box" wx:if="{{lifecycle.close_permitted && !lifecycle.can_close}}">
+      <van-icon name="warning" size="28rpx" color="#f59e0b" />
+      <text class="blocker-text">关闭条件未满足：{{lifecycle.close_blockers[0].message}}</text>
+    </view>
+
+    <view class="blocker-box danger" wx:if="{{lifecycle.cancel_permitted && !lifecycle.can_cancel}}">
+      <van-icon name="warning" size="28rpx" color="#ef4444" />
+      <text class="blocker-text">取消条件未满足：{{lifecycle.cancel_blockers[0].message}}</text>
+    </view>
+
+    <view class="lifecycle-actions">
+      <button class="lifecycle-btn close" wx:if="{{lifecycle.close_permitted && lifecycle.can_close}}" data-type="close" bindtap="runLifecycle">
+        关闭下料单
+      </button>
+      <button class="lifecycle-btn cancel" wx:if="{{lifecycle.cancel_permitted && lifecycle.can_cancel}}" data-type="cancel" bindtap="runLifecycle">
+        取消下料单
+      </button>
+    </view>
+  </view>
+
+  <!-- 底部固定吸底操作栏 -->
+  <view class="bottom-placeholder" wx:if="{{actionName}}"></view>
+  <view class="bottom-action-bar" wx:if="{{actionName}}">
+    <button class="secondary-btn" wx:if="{{secondaryActionName}}" data-action="{{secondaryActionName}}" bindtap="runTaskAction" loading="{{busy}}">
+      {{secondaryActionLabel}}
+    </button>
+    <button class="primary-btn" data-action="{{actionName}}" bindtap="runTaskAction" loading="{{busy}}">
+      {{actionLabel}}
+    </button>
+  </view>
+</view>
+
+<!-- 全局加载态 -->
+<view class="loading-state" wx:else>
+  <van-loading color="#d7190b" size="48rpx">正在读取任务详情…</van-loading>
+</view>
+
+<!-- 模态添加用料 Selector Modal -->
+<view class="overlay" wx:if="{{showInput}}" catchtouchmove="noop">
+  <view class="modal-panel selector-panel">
+    <!-- 弹窗头部 -->
+    <view class="modal-head">
+      <view class="modal-title-wrap">
+        <text class="modal-title">添加用料</text>
+        <text class="modal-subtitle">{{inputType === 'physical' ? '按实物号选择，选中即整张或整块使用。支持跨页多选。' : '选择真实来源批次，并填写本次实际投入根数。'}}</text>
+      </view>
+      <view class="close-icon-wrap" bindtap="closeAddInput">
+        <van-icon name="cross" size="38rpx" color="#7d8d9f" />
+      </view>
+    </view>
+
+    <!-- 原料类型 Tabs -->
+    <view class="type-tabs">
+      <view class="type-tab {{inputType === 'physical' ? 'active' : ''}}" data-type="physical" bindtap="setInputType">
+        <van-icon name="apps-o" size="26rpx" />
+        <text>钢板 / 实物余料</text>
+      </view>
+      <view class="type-tab {{inputType === 'quantity' ? 'active' : ''}}" data-type="quantity" bindtap="setInputType">
+        <van-icon name="bars" size="26rpx" />
+        <text>方管 / 定长原料</text>
+      </view>
+    </view>
+
+    <!-- 搜索栏 -->
+    <view class="modal-search">
+      <van-icon name="search" size="32rpx" color="#8c9cb0" />
+      <input class="search-input" value="{{inputKeyword}}" placeholder="编码 / 名称 / 规格 / 实物号或批次" bindinput="onInputKeyword" bindconfirm="searchInputs" confirm-type="search" />
+      <button class="modal-search-btn" bindtap="searchInputs">查询</button>
+    </view>
+
+    <!-- 分类与候选联动区域 -->
+    <view class="picker-body">
+      <scroll-view scroll-y class="category-list">
+        <view class="category-item {{categoryId == item.id ? 'active' : ''}}" wx:for="{{categories}}" wx:key="id" data-id="{{item.id}}" bindtap="setCategory">
+          <text class="category-name">{{item.category_name}}</text>
+        </view>
+        <view class="category-item more" wx:if="{{categoryPage < categoryLastPage}}" bindtap="moreCategories">更多分类…</view>
+      </scroll-view>
+
+      <view class="candidate-area">
+        <scroll-view scroll-y class="candidate-list">
+          <view class="candidate-item {{item._selected ? 'selected' : ''}}" wx:for="{{inputCandidates}}" wx:key="_key" data-key="{{item._key}}" bindtap="toggleInput">
+            <view class="check-box {{item._selected ? 'checked' : ''}}">
+              <van-icon name="success" size="22rpx" color="#ffffff" wx:if="{{item._selected}}" />
+            </view>
+            <view class="candidate-info">
+              <text class="candidate-source-no">{{item.source_no}}</text>
+              <text class="candidate-name">{{item.source_name || '-'}}</text>
+              <text class="candidate-spec">{{item.dimension_text || '-'}}</text>
+              <text class="candidate-avail">{{item.available_label}}</text>
+            </view>
+          </view>
+          <view class="empty-state small" wx:if="{{!inputLoading && !inputCandidates.length}}">
+            <van-icon name="warning-o" size="40rpx" color="#a8b6c8" />
+            <text class="small-empty-text">暂无符合条件的可用材料</text>
+          </view>
+          <view class="empty-state small" wx:if="{{inputLoading}}">
+            <van-loading size="34rpx" color="#d7190b">正在加载…</van-loading>
+          </view>
+        </scroll-view>
+
+        <!-- 弹窗分页 -->
+        <view class="modal-pager">
+          <button class="mpager-btn" disabled="{{inputPage <= 1}}" bindtap="prevInputs">上页</button>
+          <text class="mpager-text">{{inputPage}} / {{inputLastPage}}</text>
+          <button class="mpager-btn" disabled="{{inputPage >= inputLastPage}}" bindtap="nextInputs">下页</button>
+        </view>
+      </view>
+    </view>
+
+    <!-- 底部已选汇总条与步进器 -->
+    <view class="selection-box">
+      <view class="selection-left" bindtap="toggleSelected">
+        <van-icon name="bag-o" size="28rpx" color="#d7190b" />
+        <text class="selection-text">已选 <text class="highlight">{{selectedInputs.length}}</text> 项 · {{showSelected ? '收起' : '查看已选'}}</text>
+      </view>
+      <view class="quantity-stepper" wx:if="{{inputType === 'quantity' && selectedInputs.length}}">
+        <text class="stepper-label">投入根数</text>
+        <view class="stepper-box">
+          <button class="s-btn" data-delta="-1" bindtap="bumpQuantity">−</button>
+          <input class="s-input" type="digit" value="{{quantityValue}}" bindinput="onQuantityValue" />
+          <button class="s-btn" data-delta="1" bindtap="bumpQuantity">+</button>
+        </view>
+      </view>
+    </view>
+
+    <!-- 已选明细展开 -->
+    <scroll-view class="selected-list" scroll-y wx:if="{{showSelected}}">
+      <view class="selected-row" wx:for="{{selectedInputs}}" wx:key="_key">
+        <view class="selected-row-info">
+          <text class="sel-no">{{item.source_no}}</text>
+          <text class="sel-name">{{item.source_name}}</text>
+        </view>
+        <view class="remove-btn" data-key="{{item._key}}" bindtap="removeSelected">
+          <van-icon name="close" size="26rpx" color="#d7190b" />
+          <text>移除</text>
+        </view>
+      </view>
+    </scroll-view>
+
+    <!-- 弹窗操作按钮 -->
+    <view class="modal-actions">
+      <button class="modal-cancel-btn" bindtap="closeAddInput">取消</button>
+      <button class="modal-confirm-btn" bindtap="confirmAddInput" loading="{{busy}}">确认领用</button>
+    </view>
+  </view>
+</view>
+
+<!-- 模态流转列表 Modal -->
+<view class="overlay" wx:if="{{showFlow}}" catchtouchmove="noop">
+  <view class="modal-panel flow-panel">
+    <view class="modal-head">
+      <view class="modal-title-wrap">
+        <text class="modal-title">{{flowType === 'confirm' ? '待用料确认明细' : flowType === 'warehouse' ? '待入库确认明细' : '待交接明细'}}</text>
+      </view>
+      <view class="close-icon-wrap" bindtap="closeFlow">
+        <van-icon name="cross" size="38rpx" color="#7d8d9f" />
+      </view>
+    </view>
+
+    <scroll-view scroll-y class="flow-list">
+      <view class="flow-card" wx:for="{{flowRows}}" wx:key="id" data-id="{{item.record_id}}" bindtap="goRecord">
+        <view class="flow-card-info">
+          <text class="flow-item-name">{{item.item_name}}</text>
+          <text class="flow-item-meta">批次：{{item.batch_no}} · {{item.display_status || ''}}</text>
+        </view>
+        <van-icon name="arrow" size="28rpx" color="#9aa7b9" />
+      </view>
+      <view class="empty-state small" wx:if="{{!flowLoading && !flowRows.length}}">
+        <van-icon name="passed" size="44rpx" color="#10b981" />
+        <text class="small-empty-text">暂无待处理流转记录</text>
+      </view>
+      <view class="empty-state small" wx:if="{{flowLoading}}">
+        <van-loading size="36rpx" color="#d7190b">加载流转记录…</van-loading>
+      </view>
+    </scroll-view>
+
+    <!-- 流转分页 -->
+    <view class="modal-pager">
+      <button class="mpager-btn" disabled="{{flowPage <= 1}}" bindtap="prevFlow">上页</button>
+      <text class="mpager-text">{{flowPage}} / {{flowLastPage}}</text>
+      <button class="mpager-btn" disabled="{{flowPage >= flowLastPage}}" bindtap="nextFlow">下页</button>
+    </view>
+  </view>
+</view>
+
