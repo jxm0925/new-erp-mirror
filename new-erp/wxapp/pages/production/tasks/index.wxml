@@ -31,6 +31,7 @@
   </view>
 
   <view class="filter-panel">
+    <button wx:if="{{canCreate}}" class="create-stock" bindtap="createStock">发起备货工单</button>
     <view class="source-tabs">
       <view class="source-tab {{source==='sales'?'active':''}}" data-source="sales" bindtap="setSource">销售生产</view>
       <view class="source-tab {{source==='stock'?'active':''}}" data-source="stock" bindtap="setSource">备货生产</view>

@@ -311,6 +311,7 @@ class WorkOrderApplicationService
                     'component_item_code' => $row['component_item_code_snapshot'],
                     'component_item_name' => $row['component_item_name_snapshot'],
                     'cut_length_mm' => $row['cut_length_mm_snapshot'],
+                    'cutting_requirements' => $row['cutting_requirement_snapshot'] ? json_decode($row['cutting_requirement_snapshot'], true, 512, JSON_THROW_ON_ERROR) : null,
                     'per_output_piece_qty' => $row['per_output_piece_qty'],
                     'required_piece_qty' => $row['required_piece_qty'],
                     'required_qty' => $row['required_qty'],

@@ -139,6 +139,7 @@ Page({
     loading: true,
     loadingMore: false,
     loaded: false,
+    canCreate: false,
     source: 'sales',
     activeStatus: '',
     keyword: '',
@@ -157,6 +158,8 @@ Page({
     this.setData({ statusBarHeight, navBarHeight, scanRight });
   },
   onShow() {
+    const permissions = wx.getStorageSync('erp_permissions') || [];
+    this.setData({ canCreate: Array.isArray(permissions) ? permissions.includes('production.work_order.create') : permissions['production.work_order.create'] === true });
     this.load();
   },
   onPullDownRefresh() { this.load().finally(() => wx.stopPullDownRefresh()); },
@@ -236,6 +239,7 @@ Page({
   },
   clearSearch() { this.setData({ keyword: '' }); this.load(); },
   goBack() { wx.navigateBack({ delta: 1 }); },
+  createStock() { wx.navigateTo({ url: '/pages/production/work-order-form/index' }); },
   scan() {
     wx.scanCode({ success: result => wx.navigateTo({ url: `/pages/production/queue/index?type=trace&keyword=${encodeURIComponent(result.result)}` }) });
   },
@@ -245,6 +249,10 @@ Page({
     if (!row) return;
     if (row.kind === 'master') {
       wx.navigateTo({ url: `/pages/production/master-detail/index?id=${row.id}` });
+      return;
+    }
+    if (row.kind === 'work_order') {
+      wx.navigateTo({ url: `/pages/production/work-order-form/index?id=${row.id}` });
       return;
     }
     const blockerText = (row.blockers || []).map(item => `• ${item.label || item.shortLabel}`).join('\n');

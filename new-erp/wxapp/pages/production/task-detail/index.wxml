@@ -224,8 +224,11 @@
     <block wx:elif="{{targets[0].allowed_actions.pause_collaborator_labor}}">
       <button class="btn-outline" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="pauseCollaboratorLabor">暂停协同计时</button>
     </block>
-    <block wx:elif="{{targets[0].status === 'WAIT_QUALITY' || targets[0].status === 'WAIT_WAREHOUSE'}}">
-      <button class="btn-primary" data-id="{{targets[0].target_id}}" bindtap="openOutputAction">{{targets[0].status === 'WAIT_QUALITY' ? '进入产出质检' : '进入产出入库'}}</button>
+    <block wx:elif="{{targets[0].status === 'WAIT_QUALITY'}}">
+      <button class="btn-primary" data-id="{{targets[0].target_id}}" bindtap="openOutputAction">进入产出质检</button>
+    </block>
+    <block wx:elif="{{targets[0].status === 'WAIT_WAREHOUSE'}}">
+      <text>等待库管办理入库</text>
     </block>
     <block wx:elif="{{targets[0].status === 'COMPLETED'}}">
       <button wx:if="{{targets[0].output_record && targets[0].output_record.status === 'WAIT_COMPLETION'}}" class="btn-primary" bindtap="openCompletion">提交工单完工</button>

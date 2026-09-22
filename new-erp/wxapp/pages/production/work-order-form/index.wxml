@@ -1,0 +1,43 @@
+<view class="form-page">
+  <view class="notice">备货工单用于制造公共库存</view>
+  <view class="error" wx:if="{{error}}">{{error}}</view>
+  <view class="card number-card"><text class="muted">工单编号</text><view class="number-row"><text>{{number || '尚未取得编号'}}</text><text class="status">{{statusLabel}}</text></view></view>
+  <view wx:if="{{loading}}" class="state">加载中</view>
+  <block wx:else>
+    <view class="card fields">
+      <view class="field" data-type="items" bindtap="openPicker"><text class="label">产出物料</text><view class="value">{{item.name || '请选择产出物料'}}<text class="muted code" wx:if="{{item.code}}">{{item.code}}</text></view><text wx:if="{{!id && editable}}" class="arrow">›</text></view>
+      <view class="field" data-type="routings" bindtap="openPicker"><text class="label">工艺路线</text><view class="value">{{routing.name || '请选择工艺路线'}}<text class="muted code" wx:if="{{routing.version}}">版本：V{{routing.version}}</text></view><text wx:if="{{editable}}" class="arrow">›</text></view>
+      <view class="field" data-type="routing_operations" bindtap="openPicker"><text class="label">目标工序</text><text class="value">{{operation.name || '请选择目标工序'}}</text><text wx:if="{{editable}}" class="arrow">›</text></view>
+      <view class="field"><text class="label">计划数量</text><input type="digit" class="value" value="{{form.target_qty}}" disabled="{{!editable || busy || pending}}" data-field="target_qty" bindinput="input" placeholder="请输入计划数量" /><text class="unit">{{item.unit_name}}</text></view>
+      <view class="field"><text class="label">计划日期</text><picker class="value" mode="date" value="{{form.planned_date}}" disabled="{{!editable || busy || pending}}" data-field="planned_date" bindchange="input"><view>{{form.planned_date || '请选择计划日期'}}</view></picker><text class="arrow">›</text></view>
+      <view class="field"><text class="label">生产地点</text><input class="value" value="{{form.production_location_name}}" disabled="{{!editable || busy || pending}}" data-field="production_location_name" bindinput="input" maxlength="160" placeholder="请输入车间 / 工位" /></view>
+      <view class="field"><text class="label">生产批次</text><input class="value" value="{{form.production_batch}}" disabled="{{!editable || busy || pending}}" data-field="production_batch" bindinput="input" maxlength="120" placeholder="请输入生产批次" /></view>
+    </view>
+    <view class="card overview" wx:if="{{routing.id}}"><view class="card-title">工艺路线概览</view><view class="field"><text class="label">工艺路线</text><text class="value">{{routing.name}}</text></view><view class="field"><text class="label">版本</text><text class="value">V{{routing.version}}</text></view><view class="field"><text class="label">目标工序</text><text class="value">{{operation.name || '待选择'}}</text></view><view class="route-node" wx:for="{{routeSummary}}" wx:key="id">{{item.name}}</view></view>
+    <view class="card overview" wx:if="{{gate}}"><view class="card-title">{{gate.allowed ? '发布条件已满足' : '发布条件未满足'}}</view><view class="error" wx:for="{{gate.blockers}}" wx:key="key">{{item.message}}</view></view>
+    <view class="actions" wx:if="{{pending}}"><text class="muted">上次{{pending.label}}结果尚未确认</text><button class="primary" disabled="{{busy}}" loading="{{busy}}" bindtap="retry">继续上次操作</button></view>
+    <view class="actions" wx:else>
+      <button wx:if="{{editable}}" class="primary" disabled="{{busy}}" loading="{{busy}}" bindtap="save">保存草稿</button>
+      <button wx:if="{{actions.submit}}" class="primary" disabled="{{busy || dirty}}" data-action="submit" bindtap="transition">提交工单</button>
+      <button wx:if="{{id && actions.view_release_gate}}" disabled="{{busy || dirty}}" bindtap="checkGate">检查发布条件</button>
+      <button wx:if="{{actions.publish}}" class="primary" disabled="{{busy}}" data-action="publish" bindtap="transition">发布工单</button>
+      <button wx:if="{{actions.return_draft}}" disabled="{{busy}}" data-action="return-draft" bindtap="transition">退回草稿</button>
+      <button wx:if="{{released}}" disabled="{{busy}}" bindtap="openTasks">查看待接任务</button>
+    </view>
+  </block>
+</view>
+<view wx:if="{{picker}}" class="mask" catchtap="closePicker" catchtouchmove="noop">
+  <view class="selector" catchtap="noop">
+    <view class="selector-head"><text>{{pickerTitle}}</text><text bindtap="closePicker">关闭</text></view>
+    <view class="search"><input value="{{keyword}}" bindinput="keyword" bindconfirm="search" confirm-type="search" placeholder="搜索编码 / 名称 / 规格" /><button size="mini" bindtap="search">搜索</button></view>
+    <view class="selector-body">
+      <view class="categories" wx:if="{{picker === 'items'}}">
+        <scroll-view scroll-y class="category-scroll"><view class="category {{!categoryId ? 'selected' : ''}}" data-id="" bindtap="category">全部分类</view><view wx:for="{{categories}}" wx:key="id" class="category {{categoryId === item.id ? 'selected' : ''}}" data-id="{{item.id}}" bindtap="category">{{item.name}}</view></scroll-view>
+        <view class="category-pages"><button size="mini" disabled="{{categoryLoading || categoryPage <= 1}}" data-step="-1" bindtap="pageCategories">上页</button><text>{{categoryPage}}/{{categoryLastPage}}</text><button size="mini" disabled="{{categoryLoading || categoryPage >= categoryLastPage}}" data-step="1" bindtap="pageCategories">下页</button></view>
+      </view>
+      <scroll-view scroll-y class="option-scroll"><view class="state" wx:if="{{optionLoading}}">加载中</view><view class="state" wx:elif="{{!options.length}}">暂无可选资料</view><view wx:for="{{options}}" wx:key="id" class="option {{selected.id === item.id ? 'selected' : ''}}" data-id="{{item.id}}" bindtap="select"><text>{{item.name}}</text><text class="muted">{{item.code}}</text><text class="muted" wx:if="{{item.detail}}">{{item.detail}}</text></view></scroll-view>
+    </view>
+    <view class="pages"><button size="mini" disabled="{{optionLoading || page <= 1}}" data-step="-1" bindtap="pageOptions">上一页</button><text>{{page}} / {{lastPage}}</text><button size="mini" disabled="{{optionLoading || page >= lastPage}}" data-step="1" bindtap="pageOptions">下一页</button></view>
+    <view class="selection">已选：{{selected.name || '未选择'}}</view><button class="primary" bindtap="confirmSelection" disabled="{{!selected.id}}">确认选择</button>
+  </view>
+</view>

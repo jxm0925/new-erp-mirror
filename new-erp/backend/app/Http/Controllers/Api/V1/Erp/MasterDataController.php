@@ -298,17 +298,19 @@ class MasterDataController extends Controller
     {
         abort_unless(filled($item->item_code) && filled($item->item_name) && filled($item->item_type), 422, 'Item 编码、名称和类型完整后才能启用。');
         abort_unless($item->unit_id && Unit::whereKey($item->unit_id)->where('status', 'enabled')->exists(), 422, '请先维护有效的基本单位后再启用。');
-        abort_if($item->is_length_cut_material && (float) $item->standard_stock_length_mm <= 0, 422, '长度下料类 Item 必须先维护标准原料长度。');
+        abort_if($item->cuttingMode() === 'length' && (float) $item->standard_stock_length_mm <= 0, 422, '定长材料必须先维护标准原料长度。');
     }
 
     private function normalizeItemLengthCut(array &$data, ?Item $item = null): void
     {
-        $enabled = array_key_exists('is_length_cut_material', $data)
-            ? (bool) $data['is_length_cut_material']
-            : (bool) $item?->is_length_cut_material;
+        $mode = array_key_exists('cutting_mode', $data) ? ($data['cutting_mode'] ?: 'none')
+            : (array_key_exists('is_length_cut_material', $data) ? ((bool) $data['is_length_cut_material'] ? 'length' : 'none') : ($item?->cuttingMode() ?: 'none'));
         $length = $data['standard_stock_length_mm'] ?? $item?->standard_stock_length_mm;
-        abort_if($enabled && (float) $length <= 0, 422, '长度下料类 Item 必须维护标准原料长度。');
-        if (! $enabled) $data['standard_stock_length_mm'] = null;
+        abort_if($mode === 'length' && (float) $length <= 0, 422, '定长材料必须维护标准原料长度。');
+        $data['cutting_mode'] = $mode;
+        $data['is_length_cut_material'] = $mode === 'length';
+        $data['material_management_mode'] = $mode === 'sheet' ? 'physical' : 'quantity';
+        if ($mode !== 'length') $data['standard_stock_length_mm'] = null;
     }
 
     private function assertCanBeDisabled(object $record): void
@@ -561,6 +563,8 @@ class MasterDataController extends Controller
                 'item_type' => 'required|in:finished_product,semi_finished,raw_material,packaging,service,office_consumable',
                 'category_id' => [$id ? 'nullable' : 'required', 'integer', 'exists:erp_item_categories,id'], 'spec' => 'nullable|string|max:255',
                 'material_grade' => 'nullable|string|max:80',
+                'cutting_mode' => 'nullable|in:none,sheet,length',
+                'material_management_mode' => 'nullable|in:quantity,physical',
                 'standard_stock_length_mm' => 'nullable|numeric|min:0.01|max:9999999999.99',
                 'is_length_cut_material' => 'boolean',
                 'unit_id' => 'required|exists:erp_units,id', 'brand' => 'nullable|string|max:100', 'model' => 'nullable|string|max:100',

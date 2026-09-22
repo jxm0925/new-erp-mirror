@@ -7,6 +7,7 @@
         <p class="sub">加工进度：{{ progressLabel }}　｜　用料核算：{{ settlementLabel }}</p>
       </div>
       <div class="heading-actions">
+        <el-button @click="fetchDetail">刷新</el-button>
         <el-button @click="$router.push('/production/cutting')">返回列表</el-button>
         <el-button v-if="$can('production.cutting.close')" type="danger" plain :loading="closing" @click="closeOrder">关闭下料单</el-button>
       </div>
@@ -66,17 +67,24 @@
           <el-table-column label="状态" width="120">
             <template slot-scope="{ row }">{{ row.status_label || row.status || '-' }}</template>
           </el-table-column>
+          <el-table-column label="已入库 / 入库单" min-width="180"><template slot-scope="{row}">{{ row.warehoused_qty || '0' }}<div v-for="receipt in row.warehouse_receipts || []" :key="receipt.id">{{ receipt.receipt_no }} / {{ receipt.posted_qty }}</div></template></el-table-column>
         </el-table>
       </el-tab-pane>
+      <el-tab-pane label="产出入库" name="warehouse" v-if="$can('production.cutting.warehouse')">
+        <cutting-warehouse-panel :order-id="$route.params.id" @posted="fetchDetail" />
+      </el-tab-pane>
     </el-tabs>
+    <el-pagination v-if="tab === 'settlements' || tab === 'handovers'" :current-page="page" :page-size="20" :total="tab === 'settlements' ? inputTotal : resultTotal" layout="total, prev, pager, next" @current-change="changePage" />
   </section>
 </template>
 
 <script>
 import { getCuttingExecution, closeCuttingOrder } from '../../../api/erp/cutting'
+import CuttingWarehousePanel from './CuttingWarehousePanel.vue'
 
 export default {
   name: 'CuttingDetail',
+  components: { CuttingWarehousePanel },
   data: () => ({
     loading: false,
     closing: false,
@@ -84,7 +92,8 @@ export default {
     detail: {},
     tasks: [],
     settlements: [],
-    handovers: []
+    handovers: [],
+    page: 1, inputTotal: 0, resultTotal: 0, lifecycle: {}
   }),
   computed: {
     orderNo() { return this.detail.cutting_order_no || this.detail.order_no || (`下料单 #${this.$route.params.id}`) },
@@ -97,20 +106,24 @@ export default {
       return this.detail.settlement_status || '-'
     },
     sourceText() { return this.detail.source_summary || this.detail.work_order_no || '-' },
-    closeHint() { return this.detail.can_close ? '当前可关闭' : '需完成加工、用料核算与工序交接后关闭' }
+    closeHint() { return this.lifecycle.can_close ? '当前可关闭' : '需完成加工、用料核算与工序交接后关闭' }
   },
   created() { this.fetchDetail() },
-  watch: { '$route.params.id'() { this.fetchDetail() } },
+  watch: { '$route.params.id'() { this.page = 1; this.fetchDetail() } },
   methods: {
+    changePage(page) { this.page = page; this.fetchDetail() },
     async fetchDetail() {
       this.loading = true
       try {
-        const { data } = await getCuttingExecution(this.$route.params.id)
+        const { data } = await getCuttingExecution(this.$route.params.id, { page: this.page, per_page: 20 })
         const payload = data.data || data
         this.detail = payload.order || payload.cutting_order || payload
-        this.tasks = payload.tasks || payload.cutting_tasks || []
-        this.settlements = payload.settlements || payload.settlement_batches || payload.batches || []
-        this.handovers = payload.handovers || payload.routes || []
+        this.lifecycle = payload.lifecycle || {}
+        this.tasks = payload.task && payload.task.id ? [payload.task] : []
+        const inputs = payload.inputs || {}; const results = payload.results || {}
+        this.inputTotal = Number((inputs.meta || {}).total || 0); this.resultTotal = Number((results.meta || {}).total || 0)
+        this.settlements = (inputs.data || []).map(row => ({ ...row, settlement_no: row.batch_no, status_label: row.display_status }))
+        this.handovers = (results.data || []).flatMap(result => (result.routes || []).map(route => ({ ...route, item_name: result.item_name, status_label: route.display_status, target_label: route.route_type === 'WAREHOUSE' ? '入库' : [route.work_order_no, route.operation_name].filter(Boolean).join(' / ') })))
       } catch (error) {
         this.detail = {}
         this.tasks = []
@@ -151,4 +164,7 @@ export default {
 .panel { background: #fff; border: 1px solid #e6ebf0; border-radius: 8px; padding: 14px; }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .grid-2 label { display: block; color: #64717d; font-size: 12px; margin-bottom: 4px; }
+.heading-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.heading-actions .el-button { margin-left: 0; }
+@media (max-width: 760px) { .page-heading { flex-direction: column; gap: 12px; }.grid-2 { grid-template-columns: minmax(0, 1fr); }.production-page { padding: 12px; } }
 </style>

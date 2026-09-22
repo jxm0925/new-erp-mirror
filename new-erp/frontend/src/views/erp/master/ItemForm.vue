@@ -66,15 +66,16 @@
               <el-form-item label="材质牌号">
                 <el-input v-model.trim="form.material_grade" placeholder="例如：304 / 201" />
               </el-form-item>
-              <el-form-item label="长度下料" class="form-item-switch">
-                <div class="switch-field-wrap">
-                  <el-switch v-model="form.is_length_cut_material" active-color="#008b4b" inactive-color="#dcdfe6" @change="normalizeLengthCut" />
-                  <span class="switch-label-text">{{ form.is_length_cut_material ? '需要按长度下料' : '普通物料' }}</span>
-                </div>
+              <el-form-item label="下料原料分类">
+                <el-radio-group v-model="form.cutting_mode" @change="normalizeCuttingMode">
+                  <el-radio label="none">非下料原料</el-radio>
+                  <el-radio label="sheet">板材</el-radio>
+                  <el-radio label="length">定长材料</el-radio>
+                </el-radio-group>
               </el-form-item>
             </div>
 
-            <el-form-item v-if="form.is_length_cut_material" label="标准原料长度" prop="standard_stock_length_mm" required class="form-item-full">
+            <el-form-item v-if="form.cutting_mode === 'length'" label="标准原料长度" prop="standard_stock_length_mm" required class="form-item-full">
               <el-input-number v-model="form.standard_stock_length_mm" :min="0.01" :precision="2" :controls="false" style="width:100%" />
               <span class="field-suffix">mm / {{ unitSymbol }}</span>
             </el-form-item>
@@ -476,6 +477,8 @@ const blankItem = () => ({
   unit_id: null,
   spec: '',
   material_grade: '',
+  cutting_mode: 'none',
+  material_management_mode: 'quantity',
   standard_stock_length_mm: null,
   is_length_cut_material: false,
   is_purchase_item: false,
@@ -573,7 +576,7 @@ export default {
         item_type: [{ required: true, message: '请选择物料类型' }],
         category_id: [{ required: true, message: '请选择末级 Item 类目' }],
         unit_id: [{ required: true, message: '请选择库存基本单位' }],
-        standard_stock_length_mm: [{ validator: (rule, value, callback) => this.form.is_length_cut_material && !(Number(value) > 0) ? callback(new Error('请输入大于 0 的标准原料长度')) : callback(), trigger: 'blur' }]
+        standard_stock_length_mm: [{ validator: (rule, value, callback) => this.form.cutting_mode === 'length' && !(Number(value) > 0) ? callback(new Error('请输入大于 0 的标准原料长度')) : callback(), trigger: 'blur' }]
       }
     }
   },
@@ -684,7 +687,8 @@ export default {
       this.loading = true
       try {
         const { data } = await getItemIntegratedForm(this.$route.params.id)
-        this.form = { ...blankItem(), ...data.item }
+        this.form = { ...blankItem(), ...data.item, cutting_mode: data.item.cutting_mode || (data.item.is_length_cut_material ? 'length' : 'none') }
+        this.normalizeCuttingMode(this.form.cutting_mode)
         const current = data.policy.draft || data.policy.active
         this.policy = {
           ...blankPolicy(),
@@ -708,8 +712,10 @@ export default {
         if (this.policy.future_route === 'inventory') this.applyRoute('direct_expense')
       }
     },
-    normalizeLengthCut(value) {
-      if (!value) this.form.standard_stock_length_mm = null
+    normalizeCuttingMode(value) {
+      this.form.is_length_cut_material = value === 'length'
+      this.form.material_management_mode = value === 'sheet' ? 'physical' : 'quantity'
+      if (value !== 'length') this.form.standard_stock_length_mm = null
     },
     applyTemplate(value) {
       const map = {
@@ -757,7 +763,7 @@ export default {
       this.normalizeStock()
     },
     save(activate) {
-      const error = this.form.is_length_cut_material && !(Number(this.form.standard_stock_length_mm) > 0) ? '长度下料类 Item 必须填写标准原料长度' : !this.policy.template_code ? '请选择物资管理属性模板' : !this.routeValid ? '请选择与库存管理一致的默认经济归属' : !this.actionValid ? '采购后处理策略与经济归属不一致' : !this.capitalizationValid ? '需要资产化的物资必须选择固定资产待验收' : !this.policy.serial_tracking_mode ? '请选择序列号策略' : !this.policy.post_purchase_action ? '请选择采购后处理策略' : !this.policy.consumption_confirmation_mode ? '请选择消耗/确认方式' : !this.policy.future_bearer_type ? '请选择领用后归属' : !this.returnableValid ? '可归还物资必须启用责任人管理' : ''
+      const error = this.form.cutting_mode === 'length' && !(Number(this.form.standard_stock_length_mm) > 0) ? '定长材料必须填写标准原料长度' : !this.policy.template_code ? '请选择物资管理属性模板' : !this.routeValid ? '请选择与库存管理一致的默认经济归属' : !this.actionValid ? '采购后处理策略与经济归属不一致' : !this.capitalizationValid ? '需要资产化的物资必须选择固定资产待验收' : !this.policy.serial_tracking_mode ? '请选择序列号策略' : !this.policy.post_purchase_action ? '请选择采购后处理策略' : !this.policy.consumption_confirmation_mode ? '请选择消耗/确认方式' : !this.policy.future_bearer_type ? '请选择领用后归属' : !this.returnableValid ? '可归还物资必须启用责任人管理' : ''
       if (error) return this.$message.error(error)
       this.$refs.form.validate(async valid => {
         if (!valid) return

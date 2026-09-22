@@ -33,6 +33,19 @@ final class CuttingReadService
         return $this->page($q->orderByDesc('o.id'),$f);
     }
 
+    public function warehouseLocators(array $filters, object $user, array $permissions, bool $super = false): array
+    {
+        $this->commands->permission($permissions, 'production.cutting.warehouse');
+        $location = ($filters['mode'] ?? '') === 'location';
+        $prefix = $location ? 'location' : 'warehouse';
+        $query = DB::table($location ? 'erp_locations' : 'erp_warehouses')->where('status', 'enabled');
+        if ($location) $query->where('warehouse_id', (int) ($filters['warehouse_id'] ?? 0));
+        if ($keyword = trim((string) ($filters['keyword'] ?? ''))) {
+            $query->where(fn (Builder $q) => $q->where($prefix.'_code', 'like', '%'.$keyword.'%')->orWhere($prefix.'_name', 'like', '%'.$keyword.'%'));
+        }
+        return $this->page($query->select('id', $prefix.'_code as code', $prefix.'_name as name')->orderBy('id'), $filters);
+    }
+
     public function tasks(array $f, object $user, array $permissions, bool $super = false): array
     {
         $this->commands->permission($permissions, 'production.cutting.view');
@@ -182,9 +195,8 @@ final class CuttingReadService
     {
         $result = $this->commands->assertResultVisible($resultId, $user, $permissions, $super, 'production.cutting.view');
         $batch = DB::table('erp_cutting_settlement_batches')->where('id', $result->settlement_batch_id)->first();
-        $pending = DB::table('erp_cutting_result_routes')->whereNotNull('target_material_requirement_id')->where('status', '!=', 'CANCELLED')
-            ->selectRaw('target_material_requirement_id, SUM(quantity - received_qty) AS pending_qty')
-            ->groupBy('target_material_requirement_id');
+        $eligibility = app(CuttingRouteEligibilityService::class);
+        $pending = $eligibility->pending($resultId);
         $workerOrigin = DB::table('erp_cutting_orders')->where('id',$batch->cutting_order_id)->where('purpose','WORKER')->exists();
         $q = DB::table('erp_production_target_material_requirements as requirement');
         if (! $workerOrigin) $q->join('erp_cutting_plan_allocations as plan','requirement.id','=','plan.target_material_requirement_id')
@@ -202,25 +214,33 @@ final class CuttingReadService
             ->join('erp_production_task_targets as link', function ($join): void {
                 $join->on('link.target_type', '=', 'requirement.target_type')->on('link.target_id', '=', 'requirement.target_id');
             })->join('erp_production_tasks as task', 'task.id', '=', 'link.task_id')
+            ->whereNotIn('task.status', ['IN_PROGRESS', 'COMPLETED', 'CANCELLED'])
+            ->leftJoin('erp_items as target_item', 'target_item.id', '=', 'wo.output_item_id')
             ->leftJoin('erp_production_unit_operations as unit_operation', function ($join): void {
                 $join->on('unit_operation.id', '=', 'requirement.target_id')->where('requirement.target_type', '=', 'unit_operation');
             })->leftJoin('erp_production_units as unit', 'unit.id', '=', 'unit_operation.production_unit_id')
             ->leftJoinSub($pending, 'pending_supply', fn ($join) => $join->on('pending_supply.target_material_requirement_id', '=', 'requirement.id'));
+        $eligibility->constrain($q, $result);
+        $q->whereRaw('requirement.required_base_qty > GREATEST(0, requirement.satisfied_base_qty - requirement.returned_base_qty) + COALESCE(pending_supply.pending_qty, 0)');
         if (! empty($f['keyword'])) {
             $keyword = '%'.$f['keyword'].'%';
             $q->where(fn (Builder $where) => $where->where('wo.work_order_no', 'like', $keyword)->orWhere('task.task_no', 'like', $keyword)
-                ->orWhere('unit.unit_no', 'like', $keyword));
+                ->orWhere('unit.unit_no', 'like', $keyword)->orWhere('wo.source_no_snapshot', 'like', $keyword)
+                ->orWhere('wo.source_title_snapshot', 'like', $keyword)->orWhere('target_item.item_name', 'like', $keyword));
         }
         $q->select('requirement.id as target_material_requirement_id', 'requirement.target_type', 'requirement.target_id',
             'requirement.required_base_qty', 'requirement.satisfied_base_qty', 'requirement.returned_base_qty', 'requirement.status as requirement_status',
             'wo.id as work_order_id', 'wo.work_order_no', 'task.id as task_id', 'task.task_no', 'task.status as task_status',
+            'wo.source_type', 'wo.source_no_snapshot as order_no', 'wo.source_title_snapshot as order_title',
+            'target_item.item_name as target_item_name', 'task.operation_name_snapshot as operation_name',
             'task.assignee_user_legacy_id', 'unit.id as production_unit_id', 'unit.unit_no', DB::raw('COALESCE(pending_supply.pending_qty,0) AS pending_qty'))
             ->distinct()->orderBy('wo.id')->orderBy('task.id');
         $page = $this->page($q, $f);
         foreach ($page['data'] as &$row) {
-            $received = max(0, (float) $row['satisfied_base_qty'] - (float) $row['returned_base_qty']);
-            $row['received_qty'] = number_format($received, 8, '.', '');
-            $row['selectable_qty'] = number_format(max(0, (float) $row['required_base_qty'] - $received - (float) $row['pending_qty']), 8, '.', '');
+            $received = bcsub((string) $row['satisfied_base_qty'], (string) $row['returned_base_qty'], 8);
+            $row['received_qty'] = bccomp($received, '0', 8) < 0 ? '0.00000000' : $received;
+            $row['selectable_qty'] = bcsub(bcsub((string) $row['required_base_qty'], $row['received_qty'], 8), (string) $row['pending_qty'], 8);
+            $row['order_label'] = $row['order_no'] ?: $row['work_order_no'];
             $row['eligible_for_dispatch'] = ! empty($row['assignee_user_legacy_id'])
                 && ! in_array($row['task_status'], ['WAIT_CLAIM', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'], true);
         }
@@ -235,7 +255,7 @@ final class CuttingReadService
             ->leftJoin('erp_custom_configurations as cfg','cfg.id','=','r.configuration_id')
             ->where('b.cutting_order_id',$orderId)->whereNotIn('r.status',['VOIDED','SUPERSEDED','REVERSED'])
             ->select('r.id','r.settlement_batch_id','r.client_row_id','r.result_type','r.allowed_output_id','r.item_id','r.configuration_id','r.stage_id',
-                'r.actual_qty','r.piece_qty','r.cut_length_mm','r.measurements','r.measurement_status','r.quality_status','r.reported_quality',
+                'r.actual_qty','r.piece_qty','r.cut_length_mm','r.measurements','r.measurement_status','r.quality_status','r.reported_quality','r.cutting_requirement_snapshot',
                 'r.status','r.material_lot_id','r.physical_material_id','r.business_version','r.created_at','r.updated_at',
                 'b.batch_no','b.status as batch_status','b.physical_material_id as input_physical_material_id','p.physical_no as input_physical_no','i.item_code','i.item_name',
                 'i.spec','cfg.configuration_no','cfg.version_no as configuration_version','cfg.scope_mode as configuration_scope',
@@ -249,7 +269,14 @@ final class CuttingReadService
         }
         $results = $this->page($q,$f);
         $ids = array_column($results['data'],'id');
-        $routes = DB::table('erp_cutting_result_routes')->whereIn('result_id',$ids)->where('status','!=','CANCELLED')->orderBy('id')->get()->groupBy('result_id');
+        $routes = DB::table('erp_cutting_result_routes as route')
+            ->leftJoin('erp_production_target_material_requirements as target', 'target.id', '=', 'route.target_material_requirement_id')
+            ->leftJoin('erp_work_orders as wo', 'wo.id', '=', 'target.work_order_id')
+            ->leftJoin('erp_production_task_targets as link', fn ($join) => $join->on('link.target_type', '=', 'target.target_type')->on('link.target_id', '=', 'target.target_id'))
+            ->leftJoin('erp_production_tasks as task', 'task.id', '=', 'link.task_id')
+            ->whereIn('route.result_id',$ids)->where('route.status','!=','CANCELLED')->orderBy('route.id')
+            ->select('route.*', 'wo.work_order_no', 'wo.source_no_snapshot as order_no', 'task.task_no', 'task.operation_name_snapshot as operation_name')
+            ->get()->groupBy('result_id');
         $routeIds = $routes->flatten(1)->pluck('id');
         $handovers = DB::table('erp_cutting_handovers')->whereIn('route_id', $routeIds)->orderBy('id')->get()
             ->groupBy('route_id');
@@ -259,6 +286,7 @@ final class CuttingReadService
             $row['routes'] = $routes->get($row['id'],collect())->map(fn ($route) => [
                 'id'=>$route->id,'result_id'=>$route->result_id,'route_type'=>$route->route_type,
                 'target_material_requirement_id'=>$route->target_material_requirement_id,'quantity'=>$route->quantity,
+                'order_no'=>$route->order_no,'work_order_no'=>$route->work_order_no,'task_no'=>$route->task_no,'operation_name'=>$route->operation_name,
                 'handed_over_qty'=>$route->handed_over_qty,'received_qty'=>$route->received_qty,
                 'warehoused_qty'=>$route->warehoused_qty,
                 'status'=>$route->status,'business_version'=>$route->business_version,
@@ -321,7 +349,8 @@ final class CuttingReadService
         // Mobile execution projection deliberately excludes costs, holdings and transaction internals.
         return ['b.id','b.batch_no','b.cutting_order_id','b.cutting_task_id','b.input_item_id','b.physical_material_id',
             'b.input_qty','b.standard_stock_length_mm','b.status','b.business_version','b.correction_of_batch_id','b.first_cut_at','b.submitted_at','b.confirmed_at',
-            'p.physical_no','p.material_form','p.shape','p.dimensions','i.item_code','i.item_name','i.spec'];
+            'p.physical_no','p.material_form','p.shape','p.dimensions','i.item_code','i.item_name','i.spec',
+            DB::raw("CASE WHEN i.cutting_mode IS NULL AND i.is_length_cut_material = 1 THEN 'length' ELSE COALESCE(i.cutting_mode, 'none') END AS input_cutting_mode")];
     }
 
     private function batchStatusLabel(string $status): string
@@ -407,7 +436,7 @@ final class CuttingReadService
             if (! empty($f['shape'])) $q->where('p.shape',$f['shape']);
             $this->itemFilter($q,$f,'p.physical_no');
             return $this->page($q->select('p.id','p.physical_no','p.item_id','p.material_form','p.shape','p.dimensions','p.status','p.business_version',
-                'i.item_code','i.item_name','i.spec','i.category_id','h.position_type','h.position_id')->orderBy('p.id'),$f);
+                'i.item_code','i.item_name','i.spec','i.category_id','i.cutting_mode','h.position_type','h.position_id')->orderBy('p.id'),$f);
         }
         $warehouse = DB::table('erp_inventory_balances as b')->join('erp_items as i','i.id','=','b.item_id')
             ->leftJoin('erp_material_lots as l','l.id','=','b.material_lot_id')->whereNull('l.configuration_id')->whereNull('l.stage_id')->whereIn('b.item_id',$itemIds)
@@ -415,7 +444,7 @@ final class CuttingReadService
             ->where(fn (Builder $q) => $q->where('i.cutting_mode','length')->orWhere(fn (Builder $q) => $q->whereNull('i.cutting_mode')->where('i.is_length_cut_material',true)));
         $warehouse->selectRaw("'WAREHOUSE' AS source_type, b.id AS inventory_balance_id, NULL AS remnant_holding_id, b.item_id, b.batch_no,
             b.quantity_available AS available_root_qty, i.item_code, i.item_name, i.spec, i.category_id,
-            i.standard_stock_length_mm, l.material_form, 'WAREHOUSE' AS position_type");
+            i.standard_stock_length_mm, l.material_form, 'WAREHOUSE' AS position_type, 'length' AS cutting_mode");
         $remnants = DB::table('erp_material_holdings as h')->join('erp_material_lots as l', 'l.id', '=', 'h.material_lot_id')
             ->join('erp_items as i', 'i.id', '=', 'l.item_id')->whereIn('l.item_id', $itemIds)
             ->where('h.position_type', 'REMNANT_WIP')->where('h.status', 'ACTIVE')->whereNull('h.inventory_balance_id')
@@ -423,7 +452,7 @@ final class CuttingReadService
             ->where(fn (Builder $q) => $q->where('i.cutting_mode', 'length')->orWhere(fn (Builder $q) => $q->whereNull('i.cutting_mode')->where('i.is_length_cut_material', true)))
             ->selectRaw("'REMNANT_WIP' AS source_type, NULL AS inventory_balance_id, h.id AS remnant_holding_id, l.item_id,
                 l.lot_no AS batch_no, h.quantity AS available_root_qty, i.item_code, i.item_name, i.spec, i.category_id,
-                l.cut_length_mm AS standard_stock_length_mm, l.material_form, h.position_type");
+                l.cut_length_mm AS standard_stock_length_mm, l.material_form, h.position_type, 'length' AS cutting_mode");
         $q = DB::query()->fromSub($warehouse->unionAll($remnants), 'candidate');
         if (! empty($f['category_id'])) $q->where('candidate.category_id', (int) $f['category_id']);
         if (! empty($f['material_form'])) $q->where('candidate.material_form', $f['material_form']);

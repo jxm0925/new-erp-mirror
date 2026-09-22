@@ -27,7 +27,7 @@
       </view>
       <view class="source-lock-tag">
         <van-icon name="lock" size="22rpx" color="#556885" />
-        <text>{{source.physical_material_id ? '整张使用' : ('投入 ' + source.input_qty + ' 根')}} · 来源已锁定</text>
+        <text>{{source.input_cutting_mode === 'sheet' ? '整张使用' : ('投入 ' + source.input_qty + ' 根')}} · 来源已锁定</text>
       </view>
     </view>
 
@@ -35,11 +35,12 @@
       <image class="source-thumb" src="/static/images/cutting-plate.png" mode="aspectFit" />
       <view class="source-info">
         <view class="source-title-row">
-          <text class="source-type-label">{{source.physical_material_id ? '实物材料' : '定长型材'}}</text>
+          <text class="source-type-label">{{source.input_cutting_mode === 'sheet' ? '板材实物' : '定长材料'}}</text>
           <text class="source-title-no">{{source.physical_no || source.batch_no}}</text>
         </view>
         <text class="source-name">{{source.item_name}} {{source.spec || ''}}</text>
-        <text class="source-detail" wx:if="{{source.standard_stock_length_mm}}">原料标准长度：{{source.standard_stock_length_mm}} mm</text>
+        <text class="source-detail" wx:if="{{source.physical_material_id}}">实际尺寸：{{source.dimensions.length_mm || '-'}} × {{source.dimensions.width_mm || '-'}} × {{source.dimensions.thickness_mm || '-'}} mm</text>
+        <text class="source-detail" wx:elif="{{source.standard_stock_length_mm}}">本次原料长度：{{source.standard_stock_length_mm}} mm</text>
         <text class="source-batch">来源：用料批次 {{source.batch_no}}</text>
       </view>
     </view>
@@ -67,7 +68,7 @@
           <view class="product-info">
             <text class="product-name">{{item.item_name}}</text>
             <text class="product-code">{{item.item_code || ''}} {{item.configuration_no || ''}}</text>
-            <text class="product-spec">{{item.drawing_reference || item.spec || '-'}}</text>
+            <text class="product-spec">{{item.required_length_mm ? item.required_length_mm + (item.required_width_mm ? ' × ' + item.required_width_mm : '') + (item.required_thickness_mm ? ' × ' + item.required_thickness_mm : '') + ' mm' : item.drawing_reference || item.spec || '-'}}</text>
           </view>
           <view class="product-remove-btn" wx:if="{{editableResults}}" data-index="{{index}}" bindtap="removeProduct">
             <van-icon name="delete-o" size="32rpx" color="#9aa7b9" />
@@ -81,30 +82,30 @@
             <button class="stepper-btn minus {{!editableResults ? 'disabled' : ''}}" disabled="{{!editableResults}}" data-index="{{index}}" data-delta="-1" bindtap="bumpProductQty">−</button>
             <input class="stepper-input" disabled="{{!editableResults}}" type="digit" value="{{item.actual_qty}}" data-index="{{index}}" bindinput="onProductQty" />
             <button class="stepper-btn plus {{!editableResults ? 'disabled' : ''}}" disabled="{{!editableResults}}" data-index="{{index}}" data-delta="1" bindtap="bumpProductQty">+</button>
-            <text class="stepper-unit">片</text>
+            <text class="stepper-unit">{{source.input_cutting_mode === 'length' ? '件' : '片'}}</text>
           </view>
         </view>
 
         <!-- 尺寸与重量测量表单 -->
         <view class="measure-grid" wx:if="{{editableResults && order.purpose === 'WORKER'}}">
-          <view class="measure-item" wx:if="{{source.physical_material_id}}">
+          <view class="measure-item" wx:if="{{source.input_cutting_mode === 'sheet'}}">
             <text class="measure-label">单件长度</text>
             <view class="measure-input-box">
-              <input type="digit" value="{{item.measure_length_mm}}" data-index="{{index}}" data-field="length_mm" bindinput="onProductMeasure" placeholder="0" />
+              <input type="digit" value="{{item.measure_length_mm}}" disabled="{{item.dimensions_locked}}" data-index="{{index}}" data-field="length_mm" bindinput="onProductMeasure" placeholder="0" />
               <text class="unit">mm</text>
             </view>
           </view>
-          <view class="measure-item" wx:if="{{source.physical_material_id}}">
+          <view class="measure-item" wx:if="{{source.input_cutting_mode === 'sheet'}}">
             <text class="measure-label">单件宽度</text>
             <view class="measure-input-box">
-              <input type="digit" value="{{item.measure_width_mm}}" data-index="{{index}}" data-field="width_mm" bindinput="onProductMeasure" placeholder="0" />
+              <input type="digit" value="{{item.measure_width_mm}}" disabled="{{item.dimensions_locked}}" data-index="{{index}}" data-field="width_mm" bindinput="onProductMeasure" placeholder="0" />
               <text class="unit">mm</text>
             </view>
           </view>
-          <view class="measure-item" wx:if="{{!source.physical_material_id}}">
+          <view class="measure-item" wx:if="{{source.input_cutting_mode === 'length'}}">
             <text class="measure-label">切段长度</text>
             <view class="measure-input-box">
-              <input type="digit" value="{{item.measure_length_mm}}" data-index="{{index}}" data-field="length_mm" bindinput="onProductMeasure" placeholder="0" />
+              <input type="digit" value="{{item.measure_length_mm}}" disabled="{{item.dimensions_locked}}" data-index="{{index}}" data-field="length_mm" bindinput="onProductMeasure" placeholder="0" />
               <text class="unit">mm</text>
             </view>
           </view>
@@ -133,12 +134,12 @@
         <text class="others-sub">材料来源：{{source.physical_no || source.batch_no}}</text>
       </view>
       <view class="others-grid">
-        <view class="other-card" wx:for="{{others}}" wx:key="client_row_id" data-key="{{item.client_row_id}}" bindtap="openOther" hover-class="other-card-hover">
+        <view class="other-card" wx:for="{{otherCards}}" wx:key="type" data-type="{{item.type}}" bindtap="openOther" hover-class="other-card-hover">
           <view class="other-icon-wrap">
             <van-icon name="{{item.icon}}" size="36rpx" color="#4a5d7c" />
           </view>
           <view class="other-info">
-            <text class="other-label">{{item.label}}</text>
+            <text class="other-label">{{item.label}}<text wx:if="{{item.count}}">（{{item.count}}条）</text></text>
             <text class="other-summary {{item.measurement_status === 'MEASURED' ? 'measured' : ''}}">{{item.summary}}</text>
           </view>
           <van-icon name="arrow" size="24rpx" color="#9aa7b9" />
@@ -161,7 +162,7 @@
         <view class="route-p-head">
           <view class="route-p-title-wrap">
             <text class="route-p-name">{{product.item_name}}</text>
-            <text class="route-p-total">共 {{product.actual_qty}} 片</text>
+            <text class="route-p-total">共 {{product.actual_qty}} {{source.input_cutting_mode === 'length' ? '件' : '片'}}</text>
           </view>
           <button class="split-btn" wx:if="{{editableRoutes}}" data-index="{{pIndex}}" bindtap="openSplit">
             <van-icon name="cluster-o" size="24rpx" />
@@ -172,8 +173,8 @@
         <!-- 去向进度指示条 -->
         <view class="route-progress-box">
           <view class="progress-labels">
-            <text class="p-lab">已指定 <text class="highlight">{{product.assigned_qty_ui}}</text> 片</text>
-            <text class="p-lab unassigned">未指定 {{product.unassigned_qty_ui}} 片</text>
+            <text class="p-lab">已指定 <text class="highlight">{{product.assigned_qty_ui}}</text> {{source.input_cutting_mode === 'length' ? '件' : '片'}}</text>
+            <text class="p-lab unassigned">未指定 {{product.unassigned_qty_ui}} {{source.input_cutting_mode === 'length' ? '件' : '片'}}</text>
           </view>
         </view>
 
@@ -182,10 +183,11 @@
           <view class="route-item" wx:for="{{product.routes}}" wx:key="index" wx:for-item="route">
             <view class="route-type-badge {{route.route_type === 'WAREHOUSE' ? 'warehouse' : 'next'}}">
               <van-icon name="{{route.route_type === 'WAREHOUSE' ? 'wap-home-o' : 'exchange'}}" size="26rpx" />
-              <text>{{route.route_type === 'WAREHOUSE' ? '入库备货' : '下一工序'}} · {{route.quantity}}片</text>
+              <text>{{route.route_type === 'WAREHOUSE' ? '入库' : '分配订单'}} · {{route.quantity}}{{source.input_cutting_mode === 'length' ? '件' : '片'}}</text>
             </view>
             <text class="route-target-text">{{route.target_label}}</text>
             <text class="route-status-tag">{{route.display_status || (route.route_type === 'WAREHOUSE' ? '待入库确认' : '待交接')}}</text>
+            <button class="split-btn" wx:if="{{canDispatch && route.route_type === 'NEXT_OPERATION' && (route.can_dispatch || route.pending_transfer)}}" disabled="{{busy}}" data-id="{{route.id}}" bindtap="openTransfer">{{route.pending_transfer ? '继续上次操作' : '交出产出'}}</button>
           </view>
         </view>
       </view>
@@ -228,14 +230,25 @@
 <view class="loading-state" wx:else>
   <van-loading color="#d7190b" size="48rpx">正在读取下料记录…</van-loading>
 </view>
+<view class="transfer-mask" wx:if="{{showTransfer}}" catchtouchmove="noop">
+  <view class="transfer-dialog">
+    <text class="transfer-title">交出产出</text>
+    <text>{{transfer.target_label}}</text>
+    <text wx:if="{{transfer.locked}}">上次操作结果待确认，请按原内容重试</text>
+    <view class="transfer-fields">
+      <label>本次数量<input type="digit" value="{{transfer.quantity}}" disabled="{{busy || transfer.locked}}" data-field="quantity" bindinput="onTransferField" /></label>
+      <view class="transfer-actions"><button disabled="{{busy}}" bindtap="closeTransfer">取消</button><button loading="{{busy}}" disabled="{{busy}}" bindtap="submitTransfer">{{transfer.locked ? '重试原操作' : '确认'}}</button></view>
+    </view>
+  </view>
+</view>
 
 <!-- 弹窗 1：添加产出 Modal -->
 <view class="overlay" wx:if="{{showOutput}}" catchtouchmove="noop">
   <view class="modal-panel output-modal">
     <view class="modal-head">
       <view class="modal-title-wrap">
-        <text class="modal-title">添加正式产出</text>
-        <text class="modal-subtitle">从工艺库或物料清单中挑选本次加工成品</text>
+        <text class="modal-title">添加产出</text>
+        <text class="modal-subtitle">选择符合当前材料用料要求的产出</text>
       </view>
       <view class="close-icon-wrap" bindtap="closeOutput">
         <van-icon name="cross" size="38rpx" color="#7d8d9f" />
@@ -271,8 +284,8 @@
             <image class="candidate-thumb" src="/static/images/cutting-plate.png" mode="aspectFit" />
             <view class="candidate-info">
               <text class="candidate-name">{{item.item_name}}</text>
-              <text class="candidate-spec">{{item.item_code}} {{item.configuration_no || ''}}</text>
-              <text class="candidate-avail">{{item.drawing_reference || item.spec || '-'}}</text>
+              <text class="candidate-spec">{{item.item_code}} {{item.configuration_no || item.bom_no || ''}}</text>
+              <text class="candidate-avail">{{item.dimensions_label || item.drawing_reference || item.spec || '-'}}</text>
             </view>
             <view class="radio-circle {{selectedOutput && selectedOutput.option_key === item.option_key ? 'checked' : ''}}"></view>
           </view>
@@ -294,7 +307,7 @@
     <view class="selected-product-box" wx:if="{{selectedOutput}}">
       <view class="sel-prod-top">
         <text class="sel-prod-name">{{selectedOutput.item_name}}</text>
-        <text class="sel-prod-spec">{{selectedOutput.drawing_reference || selectedOutput.spec || selectedOutput.item_code}}</text>
+        <text class="sel-prod-spec">{{selectedOutput.dimensions_label || selectedOutput.drawing_reference || selectedOutput.spec || selectedOutput.item_code}}</text>
       </view>
       <view class="sel-prod-stepper-row">
         <text class="stepper-label">本次产出数量</text>
@@ -302,27 +315,27 @@
           <button class="s-btn" data-delta="-1" bindtap="bumpOutputQty">−</button>
           <input class="s-input" type="digit" value="{{outputQty}}" bindinput="onOutputQty" />
           <button class="s-btn" data-delta="1" bindtap="bumpOutputQty">+</button>
-          <text class="s-unit">片</text>
+          <text class="s-unit">{{source.input_cutting_mode === 'length' ? '件' : '片'}}</text>
         </view>
       </view>
     </view>
 
     <!-- 尺寸与重量表单 -->
-    <view class="modal-measure-stack" wx:if="{{selectedOutput && !source.physical_material_id}}">
+    <view class="modal-measure-stack" wx:if="{{selectedOutput && source.input_cutting_mode === 'length'}}">
       <view class="m-field">
         <text class="m-label">切段长度（mm）</text>
-        <input class="m-input" type="digit" value="{{outputLength}}" bindinput="onOutputLength" placeholder="请输入切段长度" />
+        <input class="m-input" type="digit" value="{{outputLength}}" disabled="{{selectedOutput.required_length_mm}}" bindinput="onOutputLength" placeholder="请输入切段长度" />
       </view>
     </view>
 
-    <view class="modal-measure-grid" wx:if="{{selectedOutput && source.physical_material_id && order.purpose === 'WORKER'}}">
+    <view class="modal-measure-grid" wx:if="{{selectedOutput && source.input_cutting_mode === 'sheet' && order.purpose === 'WORKER'}}">
       <view class="m-field">
         <text class="m-label">单件长度（mm）</text>
-        <input class="m-input" type="digit" value="{{outputLength}}" bindinput="onOutputLength" placeholder="单件长度" />
+        <input class="m-input" type="digit" value="{{outputLength}}" disabled="{{selectedOutput.required_length_mm}}" bindinput="onOutputLength" placeholder="单件长度" />
       </view>
       <view class="m-field">
         <text class="m-label">单件宽度（mm）</text>
-        <input class="m-input" type="digit" value="{{outputWidth}}" bindinput="onOutputWidth" placeholder="单件宽度" />
+        <input class="m-input" type="digit" value="{{outputWidth}}" disabled="{{selectedOutput.required_width_mm}}" bindinput="onOutputWidth" placeholder="单件宽度" />
       </view>
     </view>
 
@@ -355,7 +368,7 @@
     </view>
 
     <!-- 形状选择（若是余料且实物） -->
-    <view class="measure-tabs" wx:if="{{otherDraft.type === 'usable_remnant' && source.physical_material_id}}">
+    <view class="measure-tabs" wx:if="{{otherDraft.type === 'usable_remnant' && source.input_cutting_mode === 'sheet'}}">
       <view class="measure-tab {{otherDraft.measurements.shape === 'RECTANGLE' ? 'active' : ''}}" data-shape="RECTANGLE" bindtap="setOtherShape">矩形余料</view>
       <view class="measure-tab {{otherDraft.measurements.shape === 'IRREGULAR' ? 'active' : ''}}" data-shape="IRREGULAR" bindtap="setOtherShape">异形余料</view>
     </view>
@@ -371,7 +384,7 @@
     <view wx:if="{{otherDraft.measurement_status === 'MEASURED'}}" class="other-form-content">
       <view class="m-field">
         <text class="m-label">{{otherDraft.type === 'recyclable_scrap' || otherDraft.type === 'process_loss' ? '实际称重（kg）' : '实际数量（' + otherDraft.unit + '）'}}</text>
-        <input class="m-input" type="digit" value="{{otherDraft.actual_qty}}" bindinput="onOtherQty" placeholder="请输入数量或重量" />
+        <input class="m-input" type="digit" value="{{otherDraft.type === 'usable_remnant' ? 1 : otherDraft.actual_qty}}" bindinput="onOtherQty" disabled="{{otherDraft.type === 'usable_remnant'}}" placeholder="请输入数量或重量" />
       </view>
       <block wx:if="{{otherDraft.type === 'usable_remnant'}}">
         <view class="modal-measure-grid-3">
@@ -379,14 +392,25 @@
             <text class="m-label">长度 mm</text>
             <input class="m-input" type="digit" data-field="length_mm" value="{{otherDraft.measurements.length_mm}}" bindinput="onOtherMeasure" />
           </view>
-          <view class="m-field">
+          <view class="m-field" wx:if="{{source.input_cutting_mode === 'sheet'}}">
             <text class="m-label">宽度 mm</text>
             <input class="m-input" type="digit" data-field="width_mm" value="{{otherDraft.measurements.width_mm}}" bindinput="onOtherMeasure" />
           </view>
-          <view class="m-field">
+          <view class="m-field" wx:if="{{source.input_cutting_mode === 'sheet'}}">
             <text class="m-label">厚度 mm</text>
-            <input class="m-input" type="digit" data-field="thickness_mm" value="{{otherDraft.measurements.thickness_mm}}" bindinput="onOtherMeasure" />
+            <input class="m-input" type="digit" data-field="thickness_mm" value="{{otherDraft.measurements.thickness_mm}}" disabled="{{source.dimensions.thickness_mm}}" bindinput="onOtherMeasure" />
           </view>
+        </view>
+        <view class="m-field" wx:if="{{source.input_cutting_mode === 'sheet' && otherDraft.measurements.shape === 'IRREGULAR'}}">
+          <text class="m-label">重量 kg（外包长宽未完整时必填）</text>
+          <input class="m-input" type="digit" data-field="weight_kg" value="{{otherDraft.measurements.weight_kg}}" bindinput="onOtherMeasure" />
+        </view>
+      </block>
+      <block wx:if="{{otherDraft.type === 'scrapped_output'}}">
+        <view class="modal-measure-grid-3">
+          <view class="m-field"><text class="m-label">长度 mm</text><input class="m-input" type="digit" data-field="length_mm" value="{{otherDraft.measurements.length_mm}}" bindinput="onOtherMeasure" /></view>
+          <view class="m-field" wx:if="{{source.input_cutting_mode === 'sheet'}}"><text class="m-label">宽度 mm</text><input class="m-input" type="digit" data-field="width_mm" value="{{otherDraft.measurements.width_mm}}" bindinput="onOtherMeasure" /></view>
+          <view class="m-field"><text class="m-label">总重量 kg</text><input class="m-input" type="digit" data-field="weight_kg" value="{{otherDraft.measurements.weight_kg}}" bindinput="onOtherMeasure" /></view>
         </view>
       </block>
     </view>
@@ -395,9 +419,16 @@
       <text>未测量和未登记不会自动写成 0，将保留待测事实。</text>
     </view>
 
+    <view class="staged-other-list" wx:if="{{otherSessionRows.length}}">
+      <view class="staged-other-row" wx:for="{{otherSessionRows}}" wx:key="client_row_id">
+        <view class="staged-other-info"><text>第 {{index + 1}} 条</text><text>{{item.summary}}</text></view>
+        <view class="staged-other-actions"><text data-index="{{index}}" bindtap="editOtherEntry">编辑</text><text class="delete" data-index="{{index}}" bindtap="deleteOtherEntry">删除</text></view>
+      </view>
+    </view>
+
     <button class="add-entry-btn" bindtap="addOtherEntry">
       <van-icon name="plus" size="24rpx" />
-      <text>新增一条{{otherDraft.label}}</text>
+      <text>{{otherEditIndex >= 0 ? '保存本条修改并继续' : '保存本条并新增一条'}}</text>
     </button>
 
     <view class="modal-actions">
@@ -438,7 +469,7 @@
             <view class="ex-route-top">
               <view class="ex-route-tag {{item.route_type === 'WAREHOUSE' ? 'warehouse' : 'next'}}">
                 <van-icon name="{{item.route_type === 'WAREHOUSE' ? 'wap-home-o' : 'exchange'}}" size="22rpx" />
-                <text>{{item.route_type === 'WAREHOUSE' ? '入库备货' : '下一工序'}} · {{item.quantity}}片</text>
+                <text>{{item.route_type === 'WAREHOUSE' ? '入库' : '分配订单'}} · {{item.quantity}}{{source.input_cutting_mode === 'length' ? '件' : '片'}}</text>
               </view>
               <view class="ex-remove-btn" wx:if="{{item.editable}}" data-index="{{index}}" bindtap="removeRoute">
                 <van-icon name="delete-o" size="28rpx" color="#d7190b" />
@@ -457,11 +488,11 @@
       <view class="type-tabs">
         <view class="type-tab {{routeType === 'NEXT_OPERATION' ? 'active' : ''}}" data-type="NEXT_OPERATION" bindtap="setRouteType">
           <van-icon name="exchange" size="26rpx" />
-          <text>下一工序</text>
+          <text>分配订单</text>
         </view>
         <view class="type-tab {{routeType === 'WAREHOUSE' ? 'active' : ''}}" data-type="WAREHOUSE" bindtap="setRouteType">
           <van-icon name="wap-home-o" size="26rpx" />
-          <text>入库备货</text>
+          <text>入库</text>
         </view>
       </view>
 
@@ -469,7 +500,7 @@
       <block wx:if="{{routeType === 'NEXT_OPERATION'}}">
         <view class="modal-search">
           <van-icon name="search" size="32rpx" color="#8c9cb0" />
-          <input class="search-input" value="{{targetKeyword}}" placeholder="搜索工单 / 任务 / 加工对象" bindinput="onTargetKeyword" bindconfirm="searchTargets" confirm-type="search" />
+          <input class="search-input" value="{{targetKeyword}}" placeholder="搜索订单号 / 工单号 / 产品" bindinput="onTargetKeyword" bindconfirm="searchTargets" confirm-type="search" />
           <button class="modal-search-btn" bindtap="searchTargets">查询</button>
         </view>
 
@@ -477,12 +508,12 @@
           <view class="target-card {{targetIndex === index ? 'selected' : ''}}" wx:for="{{targets}}" wx:key="target_material_requirement_id" data-index="{{index}}" bindtap="pickTarget">
             <view class="radio-circle {{targetIndex === index ? 'checked' : ''}}"></view>
             <view class="target-card-info">
-              <text class="target-title">{{item.work_order_no}} / {{item.task_no}}</text>
-              <text class="target-sub">{{item.unit_no || '数量型任务'}} · 可指定 {{item.selectable_qty}}</text>
+              <text class="target-title">{{item.order_label}} · {{item.target_item_name}}</text>
+              <text class="target-sub">{{item.operation_name}} {{item.unit_no || ''}} · 可分配 {{item.selectable_qty}}</text>
             </view>
           </view>
           <view class="empty-state small" wx:if="{{!targetLoading && !targets.length}}">
-            <text class="small-empty-text">输入关键词搜索真实任务目标</text>
+            <text class="small-empty-text">暂无可接收这项产出的订单需求</text>
           </view>
         </view>
 
@@ -505,7 +536,7 @@
           <button class="s-btn" data-delta="-1" bindtap="bumpRouteQty">−</button>
           <input class="s-input" type="digit" value="{{routeQty}}" bindinput="onRouteQty" />
           <button class="s-btn" data-delta="1" bindtap="bumpRouteQty">+</button>
-          <text class="s-unit">片</text>
+          <text class="s-unit">{{source.input_cutting_mode === 'length' ? '件' : '片'}}</text>
         </view>
       </view>
     </scroll-view>
@@ -513,8 +544,7 @@
     <!-- 固定底部操作按钮 -->
     <view class="modal-actions">
       <button class="modal-cancel-btn" bindtap="closeSplit">取消</button>
-      <button class="modal-confirm-btn" bindtap="confirmSplit">确认拆分</button>
+      <button class="modal-confirm-btn" bindtap="confirmSplit">确认保存</button>
     </view>
   </view>
 </view>
-

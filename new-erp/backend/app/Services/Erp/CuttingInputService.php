@@ -312,7 +312,8 @@ final class CuttingInputService
     private function dimensions(mixed $value, bool $irregular): array
     {
         if (! is_array($value) || ! isset($value['length_mm'], $value['width_mm'], $value['thickness_mm'])) $this->commands->fail('dimensions_required', '须维护真实板材尺寸或明确外包尺寸。');
-        if (array_diff(array_keys($value), ['length_mm','width_mm','thickness_mm'])) $this->commands->fail('dimensions_invalid', '板材尺寸字段不合法。');
+        if (array_diff(array_keys($value), ['length_mm','width_mm','thickness_mm','nominal_thickness_mm'])) $this->commands->fail('dimensions_invalid', '板材尺寸字段不合法。');
+        if (array_key_exists('nominal_thickness_mm', $value) && $value['nominal_thickness_mm'] === null) unset($value['nominal_thickness_mm']);
         foreach ($value as $key => $v) $value[$key] = CuttingDecimal::value($v, 2); return $value;
     }
 }

@@ -70,8 +70,8 @@
           <el-table-column label="合格 / 不合格" width="112"><template slot-scope="{row}">{{ number(row.qualified_qty) }} / {{ number(row.unqualified_qty) }}</template></el-table-column>
           <el-table-column label="批次" min-width="112"><template slot-scope="{row}">{{ isStockManaged(row) ? (row.batch_no || '系统生成') : '非库存' }}</template></el-table-column>
           <el-table-column label="仓库 / 库位" min-width="166"><template slot-scope="{row}">{{ isStockManaged(row) ? allocationSummary(row) : '无需入库' }}</template></el-table-column>
-          <el-table-column label="编号完成度" width="118">
-            <template slot-scope="{row}"><div v-if="isStockManaged(row)" class="serial-progress"><span>{{ serialNumberList(row).length }} / {{ serialRequiredCount(row) }}</span><i><b :style="{width:serialProgress(row)+'%'}" /></i></div><span v-else>无需编号</span></template>
+          <el-table-column label="实物 / 编号" width="118">
+            <template slot-scope="{row}"><span v-if="isPhysicalManaged(row)">{{ physicalEntryCount(row) }} / {{ number(qualifiedBaseQty(row)) }} 张</span><div v-else-if="isStockManaged(row)" class="serial-progress"><span>{{ serialNumberList(row).length }} / {{ serialRequiredCount(row) }}</span><i><b :style="{width:serialProgress(row)+'%'}" /></i></div><span v-else>无需编号</span></template>
           </el-table-column>
           <el-table-column label="金额（未税）" width="116" align="right"><template slot-scope="{row}">¥{{ money(lineAmount(row)) }}</template></el-table-column>
           <el-table-column label="操作" width="94" fixed="right">
@@ -113,6 +113,13 @@
           </section>
 
           <section class="editor-group serial-group">
+            <template v-if="isPhysicalManaged(activeLine)">
+              <div v-for="(group,groupIndex) in physicalGroups(activeLine)" :key="`${activeLine.item_id}-${groupIndex}`" class="physical-group">
+                <h3>{{ warehouseName(group.warehouse_id) }} / {{ locationName(group.location_id) }}</h3>
+                <receipt-physical-entries :entries="group.physical_entries || []" :quantity="Number(group.base_qty)" @change="setPhysicalEntries(activeLine,groupIndex,$event)" />
+              </div>
+            </template>
+            <template v-else>
             <div class="serial-title"><h3>设备编号 / 序列号</h3><el-tag v-if="isSerialManaged(activeLine)" size="mini" type="danger" effect="plain">{{ serialTrackingMode(activeLine)==='required' ? '必须逐件编号' : '按需逐件编号' }}</el-tag></div>
             <template v-if="isStockManaged(activeLine) && isSerialManaged(activeLine)">
               <div class="generate-row"><label><span>合格数量</span><el-input :value="serialRequiredCount(activeLine)" size="small" disabled /></label><el-button size="small" type="success" @click="generateLineSerials(activeLine)">一次生成 {{ serialRequiredCount(activeLine) }} 个</el-button></div>
@@ -126,6 +133,7 @@
               </div>
             </template>
             <el-alert v-else :title="isStockManaged(activeLine) ? '该物料仅按批次追溯，无需录入单件编号。' : '非库存物料不建立库存序列号档案。'" type="info" :closable="false" />
+            </template>
           </section>
         </div>
       </section>
@@ -182,9 +190,10 @@ import { generateReceiptSerials, getPurchase, savePurchaseReceipt } from '@/api/
 import { reserveForCreatePage, clearCreatePageReservation } from '@/utils/documentNumberReservation'
 import PurchaseItemPicker from '@/components/purchase/PurchaseItemPicker.vue'
 import PurchaseAttachmentPanel from '@/components/purchase/PurchaseAttachmentPanel.vue'
+import ReceiptPhysicalEntries from '@/components/purchase/ReceiptPhysicalEntries.vue'
 
 export default {
-  components: { PurchaseItemPicker, PurchaseAttachmentPanel },
+  components: { PurchaseItemPicker, PurchaseAttachmentPanel, ReceiptPhysicalEntries },
   data: () => ({
     form: { receipt_no: '', supplier_id: null, receipt_date: '', confirm_status: 'draft', stock_post_status: 'pending', remark: '', items: [] },
     items: [], suppliers: [], warehouses: [], locations: [], activeIndex: 0, reservation: null, saving: false, pickerTarget: null, attachmentDraftToken: '',
@@ -222,7 +231,7 @@ export default {
     totalAmount() { return this.taxMode === 'tax_included' ? this.form.items.reduce((sum, line) => sum + this.lineAmount(line), 0) : this.untaxedAmount + this.taxAmount },
     activeLineValid() {
       const line = this.activeLine
-      if (!line || !line.item_id || !line.purchase_unit_id || !Number(line.qty) || !this.lineAllocationValid(line)) return false
+      if (!line || !line.item_id || !line.purchase_unit_id || !Number(line.qty) || !this.lineAllocationValid(line) || !this.physicalEntriesValid(line)) return false
       if (Math.abs(Number(line.qualified_qty || 0) + Number(line.unqualified_qty || 0) - Number(line.qty || 0)) > 0.000001) return false
       if (this.hasDifference(line) && !String(line.difference_reason || '').trim()) return false
       return !this.isSerialManaged(line) || this.serialTrackingMode(line) === 'optional' || this.serialNumberList(line).length === this.serialRequiredCount(line)
@@ -245,7 +254,7 @@ export default {
     await this.initializeDocument()
   },
   methods: {
-    blankLine() { return { item_id: null, qty: 1, purchase_unit_id: null, qualified_qty: 1, unqualified_qty: 0, actual_base_qty: 0, unit_price: 0, tax_rate: 13, difference_reason: '', batch_no: '', expected_arrival_date: this.form.receipt_date, warehouse_id: null, location_id: null, remark: '', serial_text: '', serial_number_source: 'supplier', _conversionOptions: [], _serialEntries: [], _allocations: [], _scanInput: '', _serialError: '' } },
+    blankLine() { return { item_id: null, qty: 1, purchase_unit_id: null, qualified_qty: 1, unqualified_qty: 0, actual_base_qty: 0, unit_price: 0, tax_rate: 13, difference_reason: '', batch_no: '', expected_arrival_date: this.form.receipt_date, warehouse_id: null, location_id: null, remark: '', serial_text: '', serial_number_source: 'supplier', _conversionOptions: [], _serialEntries: [], _allocations: [], _physicalEntries: [], _scanInput: '', _serialError: '' } },
     async initializeDocument() {
       this.activeIndex = 0
       this.reservation = null
@@ -273,7 +282,7 @@ export default {
     },
     normalizeLine(line) {
       const entries = Array.isArray(line.serial_entries) && line.serial_entries.length ? line.serial_entries : String(line.serial_text || '').split(/\r?\n|,|，/).map(value => value.trim()).filter(Boolean).map(serial_no => ({ serial_no, source: line.serial_number_source || 'supplier' }))
-      const allocations = (line.allocations || []).map(row => ({ warehouse_id: row.warehouse_id, location_id: row.location_id, base_qty: Number(row.base_qty || 0), serial_nos: [...(row.serial_nos || [])] }))
+      const allocations = (line.allocations || []).map(row => ({ warehouse_id: row.warehouse_id, location_id: row.location_id, base_qty: Number(row.base_qty || 0), serial_nos: [...(row.serial_nos || [])], physical_entries: (row.physical_entries || []).map(entry => ({ dimensions: { ...entry.dimensions } })) }))
       return { ...line, qty: Number(line.receipt_qty || line.qty || 0), qualified_qty: Number(line.qualified_qty || 0), unqualified_qty: Number(line.unqualified_qty || 0), unit_price: Number(line.unit_price || 0), tax_rate: Number(line.tax_rate == null ? 13 : line.tax_rate), actual_base_qty: line.actual_base_qty == null ? null : Number(line.actual_base_qty), _conversionOptions: [], _serialEntries: entries, _allocations: allocations, _scanInput: '', _serialError: '' }
     },
     addLine() { this.form.items.push(this.blankLine()); this.activeIndex = this.form.items.length - 1 },
@@ -295,6 +304,7 @@ export default {
       if (changed) {
         this.$set(line, 'purchase_unit_id', null)
         this.$set(line, '_conversionOptions', [])
+        this.$set(line, '_physicalEntries', [])
         this.$set(line, '_serialEntries', [])
         this.$set(line, '_allocations', [])
         this.$set(line, '_scanInput', '')
@@ -350,6 +360,18 @@ export default {
     locationName(id) { return this.locations.find(row => Number(row.id) === Number(id))?.location_name || '-' },
     qualifiedBaseQty(line) { const received = Number(line.qty || 0); const actual = Number(line.actual_base_qty == null ? this.standardBaseQtyNumber(line) : line.actual_base_qty); return received > 0 ? actual * Number(line.qualified_qty || 0) / received : 0 },
     allocations(line) { return Array.isArray(line._allocations) ? line._allocations : [] },
+    isPhysicalManaged(line) { const item = this.itemById(line.item_id); return this.isStockManaged(line) && item.material_management_mode === 'physical' && item.cutting_mode === 'sheet' },
+    physicalEntryCount(line) { return this.physicalGroups(line).reduce((sum, group) => sum + (group.physical_entries || []).length, 0) },
+    physicalGroups(line) { return this.allocations(line).length ? this.allocations(line) : [{ warehouse_id: line.warehouse_id, location_id: line.location_id, base_qty: this.qualifiedBaseQty(line), physical_entries: line._physicalEntries || [] }] },
+    setPhysicalEntries(line, index, entries) { if (this.allocations(line).length) this.$set(line._allocations[index], 'physical_entries', entries); else this.$set(line, '_physicalEntries', entries) },
+    physicalEntriesValid(line) {
+      if (!this.isPhysicalManaged(line)) return true
+      const valid = value => /^\d+(\.\d{1,2})?$/.test(String(value)) && Number(value) > 0
+      return this.physicalGroups(line).every(group => Number.isInteger(Number(group.base_qty)) && (group.physical_entries || []).length === Number(group.base_qty) && (group.physical_entries || []).every(entry => {
+        const dims = entry.dimensions || {}
+        return ['length_mm', 'width_mm', 'thickness_mm'].every(key => valid(dims[key])) && (!dims.nominal_thickness_mm || valid(dims.nominal_thickness_mm))
+      }))
+    },
     allocationSummary(line) {
       const rows = this.allocations(line)
       if (!rows.length) return `${this.warehouseName(line.warehouse_id)} / ${this.locationName(line.location_id)}`
@@ -368,21 +390,28 @@ export default {
       const serials = rows.flatMap(row => row.serial_nos || [])
       return !this.isSerialManaged(line) || !this.serialNumberList(line).length || (new Set(serials).size === this.serialNumberList(line).length && serials.length === this.serialNumberList(line).length)
     },
-    onDefaultWarehouseChange(line) { this.$set(line, 'location_id', null); if (this.allocations(line).length <= 1) this.$set(line, '_allocations', []) },
-    onDefaultLocationChange(line) { if (this.allocations(line).length <= 1) this.$set(line, '_allocations', []) },
+    resetSingleAllocation(line) {
+      // A locator change must retain the entered dimensions of these same sheets.
+      if (this.allocations(line).length <= 1) {
+        if (this.allocations(line).length) this.$set(line, '_physicalEntries', line._allocations[0].physical_entries || [])
+        this.$set(line, '_allocations', [])
+      }
+    },
+    onDefaultWarehouseChange(line) { this.$set(line, 'location_id', null); this.resetSingleAllocation(line) },
+    onDefaultLocationChange(line) { this.resetSingleAllocation(line) },
     openAllocationDialog(line) {
       if (!line.item_id) return this.$message.warning('请先选择物料')
       const existing = this.allocations(line)
-      const rows = existing.length ? existing : [{ warehouse_id: line.warehouse_id || null, location_id: line.location_id || null, base_qty: this.qualifiedBaseQty(line), serial_nos: this.serialNumberList(line).map(entry => entry.serial_no) }]
-      this.allocationDialog = { visible: true, line, rows: rows.map(row => ({ warehouse_id: row.warehouse_id, location_id: row.location_id, base_qty: Number(row.base_qty || 0), serial_nos: [...(row.serial_nos || [])] })) }
+      const rows = existing.length ? existing : [{ warehouse_id: line.warehouse_id || null, location_id: line.location_id || null, base_qty: this.qualifiedBaseQty(line), serial_nos: this.serialNumberList(line).map(entry => entry.serial_no), physical_entries: line._physicalEntries || [] }]
+      this.allocationDialog = { visible: true, line, rows: rows.map(row => ({ warehouse_id: row.warehouse_id, location_id: row.location_id, base_qty: Number(row.base_qty || 0), serial_nos: [...(row.serial_nos || [])], physical_entries: (row.physical_entries || []).map(entry => ({ dimensions: { ...entry.dimensions } })) })) }
     },
-    addAllocationRow() { this.allocationDialog.rows.push({ warehouse_id: null, location_id: null, base_qty: 0, serial_nos: [] }) },
+    addAllocationRow() { this.allocationDialog.rows.push({ warehouse_id: null, location_id: null, base_qty: 0, serial_nos: [], physical_entries: [] }) },
     removeAllocationRow(index) { if (this.allocationDialog.rows.length === 1) return this.$message.warning('至少保留一个入库库位'); this.allocationDialog.rows.splice(index,1) },
     serialAssignedElsewhere(serialNo, currentRow) { return this.allocationDialog.rows.some(row => row !== currentRow && (row.serial_nos || []).includes(serialNo)) },
     confirmAllocationDialog() {
       if (!this.allocationDialogValid) return this.$message.error('库位分配数量、库位或设备编号尚未分配完整')
       const line = this.allocationDialog.line
-      const rows = this.allocationDialog.rows.map(row => ({ warehouse_id: row.warehouse_id, location_id: row.location_id, base_qty: Number(row.base_qty), serial_nos: [...(row.serial_nos || [])] }))
+      const rows = this.allocationDialog.rows.map(row => ({ warehouse_id: row.warehouse_id, location_id: row.location_id, base_qty: Number(row.base_qty), serial_nos: [...(row.serial_nos || [])], physical_entries: (row.physical_entries || []).map(entry => ({ dimensions: { ...entry.dimensions } })) }))
       this.$set(line, '_allocations', rows)
       this.$set(line, 'warehouse_id', rows[0].warehouse_id)
       this.$set(line, 'location_id', rows[0].location_id)
@@ -444,7 +473,7 @@ export default {
       popup.document.close(); popup.focus(); window.setTimeout(() => popup.print(), 250)
     },
     lineAmount(line) { return Number(line.qty || 0) * Number(line.unit_price || 0) },
-    payload() { return { ...this.form, attachment_draft_token: this.attachmentDraftToken, reservation_token: this.reservation?.reservation_token, creation_session_id: this.reservation?.creation_session_id, items: this.form.items.map(line => { const stock = this.isStockManaged(line); return { ...line, receipt_qty: line.qty, warehouse_id: stock ? line.warehouse_id : null, location_id: stock ? line.location_id : null, batch_no: stock ? line.batch_no : null, serial_text: stock ? line.serial_text : null, serial_entries: stock ? this.serialNumberList(line).map(entry => ({ serial_no: entry.serial_no, source: entry.source })) : [], allocations: stock ? (this.allocations(line).length ? this.allocations(line) : (line.warehouse_id && line.location_id ? [{ warehouse_id: line.warehouse_id, location_id: line.location_id, base_qty: this.qualifiedBaseQty(line), serial_nos: this.serialNumberList(line).map(entry => entry.serial_no) }] : [])) : [] } }) } },
+    payload() { return { ...this.form, attachment_draft_token: this.attachmentDraftToken, reservation_token: this.reservation?.reservation_token, creation_session_id: this.reservation?.creation_session_id, items: this.form.items.map(line => { const stock = this.isStockManaged(line); return { ...line, receipt_qty: line.qty, warehouse_id: stock ? line.warehouse_id : null, location_id: stock ? line.location_id : null, batch_no: stock ? line.batch_no : null, serial_text: stock ? line.serial_text : null, serial_entries: stock ? this.serialNumberList(line).map(entry => ({ serial_no: entry.serial_no, source: entry.source })) : [], allocations: stock ? (this.allocations(line).length ? this.allocations(line) : (line.warehouse_id && line.location_id ? [{ warehouse_id: line.warehouse_id, location_id: line.location_id, base_qty: this.qualifiedBaseQty(line), serial_nos: this.serialNumberList(line).map(entry => entry.serial_no), physical_entries: line._physicalEntries || [] }] : [])) : [] } }) } },
     newDraftToken() { return window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : `purchase-${Date.now()}-${Math.random().toString(16).slice(2)}` },
     validate(strict) {
       if (!this.form.supplier_id) return '供应商不能为空'
@@ -453,6 +482,7 @@ export default {
       if (this.form.items.some(line => Math.abs(Number(line.qualified_qty || 0) + Number(line.unqualified_qty || 0) - Number(line.qty || 0)) > 0.000001)) return '合格数量与不合格数量之和必须等于到货数量'
       if (this.form.items.some(line => this.hasDifference(line) && !String(line.difference_reason || '').trim())) return '存在基本数量差异时必须填写差异原因'
       if (strict && this.form.items.some(line => this.serialTrackingMode(line) === 'required' && this.serialNumberList(line).length !== this.serialRequiredCount(line))) return '必须逐件编号的物料，已录入编号数量必须与合格实际入库数量一致'
+      if (strict && this.form.items.some(line => !this.physicalEntriesValid(line))) return '请逐张补齐板材实际长宽厚，张数须与各库位合格基本数量一致'
       if (strict && this.form.items.some(line => !this.lineAllocationValid(line))) return '每一行合格基本数量必须完整分配到有效仓库和库位；设备编号不得漏分或重复分配'
       return ''
     },

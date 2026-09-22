@@ -176,6 +176,11 @@ class ReleaseGateApplicationService
                 'component_item_name_snapshot' => $line['component_item_name'] ?: $template?->componentItem?->item_name,
                 'component_spec_snapshot' => $template?->componentItem?->spec,
                 'cut_length_mm_snapshot' => $line['cut_length_mm'],
+                'cutting_requirement_snapshot' => $line['cut_length_mm'] === null ? null : json_encode([
+                    'length_mm' => $line['cut_length_mm'], 'width_mm' => $line['cut_width_mm'],
+                    'thickness_mm' => $line['cut_thickness_mm'], 'allow_rotation' => $line['allow_cut_rotation'],
+                    'piece_qty' => $line['piece_qty'], 'source' => $line['cut_requirement_source'],
+                ], JSON_THROW_ON_ERROR),
                 'per_output_piece_qty' => $perOutputPieces,
                 'required_piece_qty' => $requiredPieces,
                 'unit_id' => $unit?->id,

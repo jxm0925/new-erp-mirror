@@ -490,12 +490,13 @@ final class MaterialPhysicalService
 
     private function dimensions(mixed $value): array
     {
-        if (!is_array($value) || count($value) !== 3
-            || array_diff(array_keys($value), ['length_mm', 'width_mm', 'thickness_mm']) !== []) {
-            throw ValidationException::withMessages(['dimensions' => '板材尺寸必须且只能包含 length_mm、width_mm、thickness_mm。']);
+        if (!is_array($value) || !isset($value['length_mm'], $value['width_mm'], $value['thickness_mm'])
+            || array_diff(array_keys($value), ['length_mm', 'width_mm', 'thickness_mm', 'nominal_thickness_mm']) !== []) {
+            throw ValidationException::withMessages(['dimensions' => '板材必须填写实际长、宽、厚，可另行登记采购公称厚度。']);
         }
         $result = [];
         foreach ($value as $key => $number) {
+            if ($key === 'nominal_thickness_mm' && $number === null) continue;
             if ((!is_string($number) && !is_int($number)) || !preg_match('/^\d{1,10}(?:\.\d{1,2})?$/', (string) $number)
                 || bccomp((string) $number, '0', 2) <= 0) {
                 throw ValidationException::withMessages(['dimensions' => '板材长、宽、厚必须使用大于 0 且最多两位小数的十进制值。']);

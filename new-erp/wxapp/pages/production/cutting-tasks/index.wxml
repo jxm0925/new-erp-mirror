@@ -9,7 +9,7 @@
         </view>
         <text class="hero-subtitle">自主领用原料，登记实际产出与去向流转</text>
       </view>
-      <button class="hero-btn" bindtap="goCreate" hover-class="hero-btn-hover">
+      <button class="hero-btn" wx:if="{{canCreate}}" bindtap="goCreate" hover-class="hero-btn-hover">
         <van-icon name="plus" size="28rpx" />
         <text>开始下料</text>
       </button>
@@ -19,10 +19,11 @@
   <!-- 选项卡与搜索 -->
   <view class="control-panel">
     <view class="tabs">
-      <view class="tab-item {{group==='active' ? 'active' : ''}}" data-group="active" bindtap="switchGroup">
+      <view wx:if="{{canViewHandovers}}" class="tab-item {{group==='handovers' ? 'active' : ''}}" data-group="handovers" bindtap="switchGroup"><text class="tab-text">待我接收</text></view>
+      <view wx:if="{{canViewCutting}}" class="tab-item {{group==='active' ? 'active' : ''}}" data-group="active" bindtap="switchGroup">
         <text class="tab-text">我的进行中</text>
       </view>
-      <view class="tab-item {{group==='finished' ? 'active' : ''}}" data-group="finished" bindtap="switchGroup">
+      <view wx:if="{{canViewCutting}}" class="tab-item {{group==='finished' ? 'active' : ''}}" data-group="finished" bindtap="switchGroup">
         <text class="tab-text">历史记录</text>
       </view>
     </view>
@@ -30,7 +31,7 @@
     <view class="search-bar">
       <view class="search-input-wrap">
         <van-icon name="search" size="32rpx" color="#8a97ab" class="search-icon" />
-        <input class="search-input" placeholder="输入下料单号 / 任务单号" value="{{keyword}}" bindinput="onKeyword" confirm-type="search" bindconfirm="reload" placeholder-class="search-placeholder" />
+        <input class="search-input" placeholder="{{group === 'handovers' ? '交接号 / 工单号 / 物料' : '输入下料单号 / 任务单号'}}" value="{{keyword}}" bindinput="onKeyword" confirm-type="search" bindconfirm="reload" placeholder-class="search-placeholder" />
         <view class="clear-btn" wx:if="{{keyword}}" catchtap="clearKeyword">
           <van-icon name="clear" size="32rpx" color="#b8c2d1" />
         </view>
@@ -40,7 +41,8 @@
   </view>
 
   <!-- 任务卡片列表 -->
-  <view class="task-list">
+  <view class="task-card" wx:for="{{pendingDecisions}}" wx:key="path"><text>交接 #{{item.id}} 的{{item.accept ? '接收' : '拒收'}}结果待确认</text><button class="search-btn" data-index="{{index}}" bindtap="resumeDecision">继续上次操作</button></view>
+  <view class="task-list" wx:if="{{group !== 'handovers'}}">
     <view class="task-card" wx:for="{{tasks}}" wx:key="id" data-task-id="{{item.id}}" data-order-id="{{item.cutting_order_id}}" bindtap="openTask" hover-class="task-card-hover">
       <view class="task-header">
         <view class="task-no-wrap">
@@ -76,6 +78,13 @@
   </view>
 
   <!-- 状态提示 -->
+  <view class="task-list" wx:if="{{group === 'handovers'}}">
+    <view class="task-card" wx:for="{{tasks}}" wx:key="id">
+      <view class="task-header"><text class="task-no">{{item.handover_no}}</text><text>待处理 {{item.remaining_qty}}</text></view>
+      <view class="task-body"><text>{{item.item_code}} · {{item.item_name}}</text><view>{{item.work_order_no}} / {{item.task_no}}</view><view>已接收 {{item.accepted_qty}} · 已拒收 {{item.rejected_qty}}</view></view>
+      <view class="transfer-actions"><button wx:if="{{canReject}}" data-id="{{item.id}}" data-action="reject" bindtap="openDecision">拒收</button><button wx:if="{{canReceive}}" data-id="{{item.id}}" data-action="accept" bindtap="openDecision">接收</button></view>
+    </view>
+  </view>
   <view class="empty-state" wx:if="{{loading}}">
     <van-loading size="44rpx" color="#e52613">正在加载下料任务…</van-loading>
   </view>
@@ -86,8 +95,8 @@
   </view>
   <view class="empty-state" wx:elif="{{!tasks.length}}">
     <van-icon name="todo-list-o" size="76rpx" color="#c1cad6" />
-    <text class="empty-title">{{group==='active' ? '暂无进行中的下料任务' : '暂无历史下料记录'}}</text>
-    <text class="empty-desc">您可以点击上方“开始下料”领用原料创建新单</text>
+    <text class="empty-title">{{group==='handovers' ? '暂无待接收产出' : group==='active' ? '暂无进行中的下料任务' : '暂无历史下料记录'}}</text>
+    <text class="empty-desc" wx:if="{{group !== 'handovers'}}">您可以点击上方“开始下料”领用原料创建新单</text>
   </view>
 
   <!-- 分页栏 -->
@@ -106,4 +115,10 @@
     </button>
   </view>
 </view>
-
+<view class="transfer-mask" wx:if="{{showDecision}}" catchtouchmove="noop"><view class="transfer-dialog">
+  <text class="transfer-title">{{decision.accept ? '接收下料产出' : '拒收下料产出'}}</text><text>{{decision.handover_no}}</text>
+  <text wx:if="{{decision.locked}}">上次操作结果待确认，请按原内容重试</text>
+  <view class="transfer-fields"><label>本次数量<input type="digit" value="{{decision.quantity}}" data-field="quantity" bindinput="onDecisionField" disabled="{{busy || decision.locked}}" /></label>
+  <label wx:if="{{!decision.accept}}">拒收原因<input value="{{decision.reason}}" data-field="reason" bindinput="onDecisionField" disabled="{{busy || decision.locked}}" maxlength="1000" /></label></view>
+  <view class="transfer-actions"><button disabled="{{busy}}" bindtap="closeDecision">取消</button><button disabled="{{busy}}" loading="{{busy}}" bindtap="submitDecision">{{decision.locked ? '重试原操作' : '确认'}}</button></view>
+</view></view>

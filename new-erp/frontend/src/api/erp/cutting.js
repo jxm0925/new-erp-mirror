@@ -41,4 +41,33 @@ export const dispatchCuttingHandover = (id, data) => api.post(`/v1/erp/productio
 export const acceptCuttingHandover = (id, data = {}) => api.post(`/v1/erp/production/cutting/handovers/${id}/accept`, { ...data, client_command_id: data.client_command_id || cmd('cut-accept') })
 export const rejectCuttingHandover = (id, data = {}) => api.post(`/v1/erp/production/cutting/handovers/${id}/reject`, { ...data, client_command_id: data.client_command_id || cmd('cut-reject') })
 
+export const listCuttingWarehouseLocators = params => api.get('/v1/erp/production/cutting/warehouse-locators', { params })
+const receiptKey = orderId => {
+  let actor = {}
+  try { actor = JSON.parse(localStorage.getItem('erp_user') || '{}') || {} } catch (_) { /* A malformed cached profile must not abort the page. */ }
+  return `cutting-warehouse-pending:${actor.legacy_id || actor.id || 'session'}:${orderId}`
+}
+export const pendingCuttingReceipt = orderId => {
+  const stored = localStorage.getItem(receiptKey(orderId))
+  return stored ? JSON.parse(stored) : null
+}
+export const postCuttingWarehouseReceipt = async (orderId, routeId, data) => {
+  const key = receiptKey(orderId)
+  const previous = pendingCuttingReceipt(orderId)
+  if (previous && Number(previous.routeId) !== Number(routeId)) throw new Error('请先处理上次未确认的入库操作。')
+  // An uncertain response retains the exact request, including its version and command.
+  // Do not issue a second receipt merely because the first one is no longer in the pending list.
+  const job = previous || { routeId, payload: { ...data, client_command_id: data.client_command_id || cmd('cut-warehouse') } }
+  localStorage.setItem(key, JSON.stringify(job))
+  try {
+    const response = await api.post(`/v1/erp/production/cutting/routes/${job.routeId}/warehouse`, job.payload)
+    localStorage.removeItem(key)
+    return response
+  } catch (error) {
+    const status = error.response && error.response.status
+    if (status >= 400 && status < 500 && ![401, 403, 408, 429].includes(status) && !['command_processing', 'command_recovery_required'].includes(error.errorCode)) localStorage.removeItem(key)
+    throw error
+  }
+}
+
 export default api

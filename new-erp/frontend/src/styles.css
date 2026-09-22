@@ -492,8 +492,9 @@ select {
   }
 }
 
-/* WO-03 locked V2 shell: production pages use the compact, no-topbar canvas. */
-#app.production-route .erp-sidebar {
+/* Keep the existing production sidebar as the shared navigation baseline.
+   The shell must not change geometry or theme when a business route changes. */
+#app.erp-layout .erp-sidebar {
   display: flex;
   flex-direction: column;
   width: 192px;
@@ -503,7 +504,7 @@ select {
   box-shadow: 3px 0 0 #0b2438;
 }
 
-#app.production-route .erp-brand {
+#app.erp-layout .erp-brand {
   order: 0;
   height: 57px;
   padding: 0 16px;
@@ -511,71 +512,71 @@ select {
   font-size: 18px;
 }
 
-#app.production-route .brand-logo-icon {
+#app.erp-layout .brand-logo-icon {
   width: 24px;
   height: 24px;
 }
 
-#app.production-route .console-link {
+#app.erp-layout .console-link {
   order: 1;
   height: 57px;
   padding: 0 18px;
   gap: 12px;
 }
 
-#app.production-route .console-link>i,
-#app.production-route .menu-title>i:first-child {
+#app.erp-layout .console-link>i,
+#app.erp-layout .menu-title>i:first-child {
   width: 18px;
   font-size: 18px;
   text-align: center;
   color: #f5f7fa;
 }
 
-#app.production-route .menu-section {
+#app.erp-layout .menu-section {
   flex: 0 0 auto;
 }
 
-#app.production-route .menu-section {
+#app.erp-layout .menu-section {
   border-bottom: 0;
 }
 
-#app.production-route .menu-section[data-section-key="production"] {
+#app.erp-layout .menu-section[data-section-key="production"] {
   order: 2;
 }
 
-#app.production-route .menu-section[data-section-key="master"] {
+#app.erp-layout .menu-section[data-section-key="master"] {
   order: 3;
 }
 
-#app.production-route .menu-section[data-section-key="purchase"] {
+#app.erp-layout .menu-section[data-section-key="purchase"] {
   order: 4;
 }
 
-#app.production-route .menu-section[data-section-key="inventory"] {
+#app.erp-layout .menu-section[data-section-key="inventory"] {
   order: 5;
 }
 
-#app.production-route .menu-section[data-section-key="bom"] {
+#app.erp-layout .menu-section[data-section-key="bom"] {
   order: 6;
 }
 
-#app.production-route .menu-section[data-section-key="sales"] {
+#app.erp-layout .menu-section[data-section-key="sales"] {
   order: 7;
 }
 
-#app.production-route .menu-section[data-section-key="approval"] {
+#app.erp-layout .menu-section[data-section-key="approval"] {
   order: 8;
 }
 
-#app.production-route .menu-section[data-section-key="finance"] {
+#app.erp-layout .menu-section[data-section-key="finance"] {
   order: 9;
 }
 
-#app.production-route .menu-section[data-section-key="system"] {
+#app.erp-layout .menu-section[data-section-key="system"] {
   order: 10;
 }
 
-#app.production-route .collapse {
+#app.erp-layout .collapse {
   position: static;
   flex: 0 0 54px;
   order: 11;
@@ -586,54 +587,69 @@ select {
   background: #0a1f31;
 }
 
-#app.production-route .collapse .collapse-tail {
+#app.erp-layout .collapse .collapse-tail {
   margin-left: auto;
 }
 
-#app.production-route .erp-topbar {
-  display: none;
-}
-
-#app.production-route .erp-shell {
+#app.erp-layout .erp-shell {
   width: calc(100% - 192px);
   margin-left: 192px;
 }
 
-#app.production-route .menu-title {
+#app.erp-layout .menu-title {
   height: 45px;
   padding: 0 18px;
   gap: 12px;
 }
 
-#app.production-route .master-menu {
+/* Active borders otherwise animate from the white text's currentColor.
+   Keep border geometry immediate, and reserve the focus ring for keyboard use. */
+#app.erp-layout .console-link,
+#app.erp-layout .menu-title,
+#app.erp-layout .master-menu a,
+#app.erp-layout .collapse {
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+#app.erp-layout .console-link:focus,
+#app.erp-layout .menu-title:focus,
+#app.erp-layout .master-menu a:focus,
+#app.erp-layout .collapse:focus {
+  outline: none;
+}
+
+#app.erp-layout .console-link:focus-visible,
+#app.erp-layout .menu-title:focus-visible,
+#app.erp-layout .master-menu a:focus-visible,
+#app.erp-layout .collapse:focus-visible {
+  outline: 2px solid #20b56e;
+  outline-offset: -3px;
+}
+
+#app.erp-layout .master-menu {
   background: rgba(0, 0, 0, .16);
   box-shadow: none;
 }
 
-#app.production-route .master-menu a {
+#app.erp-layout .master-menu a {
   height: 38px;
   padding: 0 18px;
   gap: 12px;
 }
 
-#app.production-route .master-menu a:hover {
+#app.erp-layout .master-menu a:hover {
   padding-left: 18px;
 }
 
-#app.production-route .console-link.router-link-active {
-  background: transparent;
-  border-left-color: transparent;
-}
-
-#app.production-route .erp-brand {
+#app.erp-layout .erp-brand {
   border-bottom-color: transparent;
 }
 
-#app.production-route .erp-brand>span {
+#app.erp-layout .erp-brand>span {
   transform: translateY(3px);
 }
 
-#app.production-route .menu-section.active .menu-title {
+#app.erp-layout .menu-section.active .menu-title {
   width: calc(100% - 16px);
   margin: 0 8px;
   background: linear-gradient(90deg, #00603d 0%, #004f34 100%);
@@ -643,7 +659,7 @@ select {
   border-bottom: 2px solid #0a1f31;
 }
 
-#app.production-route .master-menu a.router-link-active {
+#app.erp-layout .master-menu a.router-link-active {
   width: calc(100% - 18px);
   margin: 0 8px 0 10px;
   background: #004b34;
@@ -654,104 +670,104 @@ select {
   border-bottom: 1px solid rgba(0, 0, 0, .16);
 }
 
-#app.production-route.sidebar-collapsed .erp-sidebar {
+#app.erp-layout.sidebar-collapsed .erp-sidebar {
   width: 64px;
 }
 
-#app.production-route.sidebar-collapsed .erp-shell {
+#app.erp-layout.sidebar-collapsed .erp-shell {
   width: calc(100% - 64px);
   margin-left: 64px;
 }
 
 /* On phone-sized browser canvases the fixed desktop sidebar leaves too little
-   room for production forms and tables. Keep the desktop shell unchanged and
+   room for forms and tables. Keep the desktop shell unchanged and
    reuse its established collapsed presentation only below the phone breakpoint. */
 @media (max-width: 767px) {
-  #app.production-route .erp-sidebar {
+  #app.erp-layout .erp-sidebar {
     width: 64px;
     overflow: hidden;
   }
 
-  #app.production-route .erp-shell {
+  #app.erp-layout .erp-shell {
     width: calc(100% - 64px);
     margin-left: 64px;
   }
 
-  #app.production-route .erp-brand {
+  #app.erp-layout .erp-brand {
     justify-content: center;
     padding: 0;
   }
 
-  #app.production-route .erp-brand span,
-  #app.production-route .console-link span,
-  #app.production-route .menu-title span,
-  #app.production-route .menu-title .menu-arrow,
-  #app.production-route .master-menu,
-  #app.production-route .collapse span,
-  #app.production-route .collapse .collapse-tail {
+  #app.erp-layout .erp-brand span,
+  #app.erp-layout .console-link span,
+  #app.erp-layout .menu-title span,
+  #app.erp-layout .menu-title .menu-arrow,
+  #app.erp-layout .master-menu,
+  #app.erp-layout .collapse span,
+  #app.erp-layout .collapse .collapse-tail {
     display: none;
   }
 
-  #app.production-route .console-link,
-  #app.production-route .menu-title,
-  #app.production-route .collapse {
+  #app.erp-layout .console-link,
+  #app.erp-layout .menu-title,
+  #app.erp-layout .collapse {
     justify-content: center;
     padding: 0;
   }
 
-  #app.production-route .menu-section.active .menu-title {
+  #app.erp-layout .menu-section.active .menu-title {
     width: calc(100% - 12px);
     margin: 0 6px;
     padding: 0;
   }
 
-  #app.production-route .erp-sidebar:hover,
-  #app.production-route .erp-sidebar:focus-within {
+  #app.erp-layout .erp-sidebar:hover,
+  #app.erp-layout .erp-sidebar:focus-within {
     width: 192px;
     overflow-y: auto;
     box-shadow: 8px 0 18px rgba(7, 25, 40, 0.24);
   }
 
-  #app.production-route .erp-sidebar:hover .erp-brand,
-  #app.production-route .erp-sidebar:focus-within .erp-brand {
+  #app.erp-layout .erp-sidebar:hover .erp-brand,
+  #app.erp-layout .erp-sidebar:focus-within .erp-brand {
     justify-content: flex-start;
     padding: 0 16px;
   }
 
-  #app.production-route .erp-sidebar:hover .erp-brand span,
-  #app.production-route .erp-sidebar:hover .console-link span,
-  #app.production-route .erp-sidebar:hover .menu-title span,
-  #app.production-route .erp-sidebar:hover .menu-title .menu-arrow,
-  #app.production-route .erp-sidebar:hover .master-menu,
-  #app.production-route .erp-sidebar:hover .collapse span,
-  #app.production-route .erp-sidebar:hover .collapse .collapse-tail,
-  #app.production-route .erp-sidebar:focus-within .erp-brand span,
-  #app.production-route .erp-sidebar:focus-within .console-link span,
-  #app.production-route .erp-sidebar:focus-within .menu-title span,
-  #app.production-route .erp-sidebar:focus-within .menu-title .menu-arrow,
-  #app.production-route .erp-sidebar:focus-within .master-menu,
-  #app.production-route .erp-sidebar:focus-within .collapse span,
-  #app.production-route .erp-sidebar:focus-within .collapse .collapse-tail {
+  #app.erp-layout .erp-sidebar:hover .erp-brand span,
+  #app.erp-layout .erp-sidebar:hover .console-link span,
+  #app.erp-layout .erp-sidebar:hover .menu-title span,
+  #app.erp-layout .erp-sidebar:hover .menu-title .menu-arrow,
+  #app.erp-layout .erp-sidebar:hover .master-menu,
+  #app.erp-layout .erp-sidebar:hover .collapse span,
+  #app.erp-layout .erp-sidebar:hover .collapse .collapse-tail,
+  #app.erp-layout .erp-sidebar:focus-within .erp-brand span,
+  #app.erp-layout .erp-sidebar:focus-within .console-link span,
+  #app.erp-layout .erp-sidebar:focus-within .menu-title span,
+  #app.erp-layout .erp-sidebar:focus-within .menu-title .menu-arrow,
+  #app.erp-layout .erp-sidebar:focus-within .master-menu,
+  #app.erp-layout .erp-sidebar:focus-within .collapse span,
+  #app.erp-layout .erp-sidebar:focus-within .collapse .collapse-tail {
     display: initial;
   }
 
-  #app.production-route .erp-sidebar:hover .master-menu,
-  #app.production-route .erp-sidebar:focus-within .master-menu {
+  #app.erp-layout .erp-sidebar:hover .master-menu,
+  #app.erp-layout .erp-sidebar:focus-within .master-menu {
     display: grid;
   }
 
-  #app.production-route .erp-sidebar:hover .console-link,
-  #app.production-route .erp-sidebar:hover .menu-title,
-  #app.production-route .erp-sidebar:hover .collapse,
-  #app.production-route .erp-sidebar:focus-within .console-link,
-  #app.production-route .erp-sidebar:focus-within .menu-title,
-  #app.production-route .erp-sidebar:focus-within .collapse {
+  #app.erp-layout .erp-sidebar:hover .console-link,
+  #app.erp-layout .erp-sidebar:hover .menu-title,
+  #app.erp-layout .erp-sidebar:hover .collapse,
+  #app.erp-layout .erp-sidebar:focus-within .console-link,
+  #app.erp-layout .erp-sidebar:focus-within .menu-title,
+  #app.erp-layout .erp-sidebar:focus-within .collapse {
     justify-content: flex-start;
     padding: 0 18px;
   }
 
-  #app.production-route .erp-sidebar:hover .menu-section.active .menu-title,
-  #app.production-route .erp-sidebar:focus-within .menu-section.active .menu-title {
+  #app.erp-layout .erp-sidebar:hover .menu-section.active .menu-title,
+  #app.erp-layout .erp-sidebar:focus-within .menu-section.active .menu-title {
     width: calc(100% - 16px);
     margin: 0 8px;
     padding-left: 10px;
@@ -762,9 +778,8 @@ select {
   }
 }
 
-/* The same compact/off-canvas behavior is required by system pages used to
-   administer production permissions. Production rules above remain the visual
-   baseline; these selectors extend the behavior to every ERP route. */
+/* Preserve the compact/off-canvas behavior on every ERP route, including when
+   the user has also manually collapsed the sidebar. */
 @media (max-width: 767px) {
   #app .erp-sidebar {
     width: 64px !important;

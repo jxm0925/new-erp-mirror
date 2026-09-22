@@ -90,7 +90,7 @@ final class CuttingRecordService
             $rowIds = []; $resultIds = [];
             foreach ($rows as $row) {
                 if (! is_array($row)) $c->fail('results_invalid', '加工结果格式不合法。');
-                if (array_diff(array_keys($row), ['client_row_id','result_type','allowed_output_id','item_id','configuration_id','actual_qty','piece_qty','cut_length_mm','measurement_status','measurements','reported_quality']))
+                if (array_diff(array_keys($row), ['client_row_id','result_type','allowed_output_id','item_id','configuration_id','bom_item_id','actual_qty','piece_qty','cut_length_mm','measurement_status','measurements','reported_quality']))
                     $c->fail('result_fields_invalid', '加工结果包含不允许的字段，来源仅由本用料批次确定。');
                 if (isset($row['item_id']) || isset($row['configuration_id'])) {
                     if (($row['result_type'] ?? null) !== 'product' || isset($row['allowed_output_id']))
@@ -99,6 +99,7 @@ final class CuttingRecordService
                 }
                 $key = $row['client_row_id'] ?? ''; if (! is_string($key) || strlen($key) < 1 || strlen($key) > 80 || in_array($key, $rowIds, true)) $c->fail('row_id_invalid', '结果行标识为空或重复。');
                 $rowIds[] = $key; $data = $this->resultData($batch, $row);
+                if ($data['result_type'] === 'product') $this->assertWorkerConfiguration($batch, (object) $data, $user, $permissions, $super);
                 $existing = DB::table('erp_cutting_results')->where('settlement_batch_id', $batchId)->where('client_row_id', $key)->whereNotIn('status',['VOIDED','SUPERSEDED'])->lockForUpdate()->first();
                 if ($existing && DB::table('erp_production_quality_inspections')->where('cutting_result_id',$existing->id)->exists()) {
                     // Inspected result identities/measurements are historical facts. Editing creates
@@ -107,7 +108,7 @@ final class CuttingRecordService
                     DB::table('erp_cutting_results')->where('id',$existing->id)->update(['status'=>'SUPERSEDED','voided_at'=>now(),'voided_by_legacy_id'=>$c->actor($user),'updated_at'=>now()]);
                     $newId = DB::table('erp_cutting_results')->insertGetId($data+['settlement_batch_id'=>$batchId,'client_row_id'=>$key,'supersedes_result_id'=>$existing->id,
                         'status'=>'DRAFT','business_version'=>1,'created_at'=>now(),'updated_at'=>now()]);
-                    if ($existing->allowed_output_id == $data['allowed_output_id'] && $existing->actual_qty == $data['actual_qty'] && $existing->result_type === $data['result_type'])
+                    if ($existing->allowed_output_id == $data['allowed_output_id'] && $existing->actual_qty == $data['actual_qty'] && $existing->result_type === $data['result_type'] && json_decode($existing->cutting_requirement_snapshot ?: 'null', true) == json_decode($data['cutting_requirement_snapshot'] ?: 'null', true))
                         foreach ($oldRoutes as $route) DB::table('erp_cutting_result_routes')->insert(['result_id'=>$newId,'route_type'=>$route->route_type,'target_material_requirement_id'=>$route->target_material_requirement_id,
                             'quantity'=>$route->quantity,'status'=>'PLANNED','business_version'=>1,'created_at'=>now(),'updated_at'=>now()]);
                     $this->cancelDraftRoutes([$existing->id]);
@@ -116,7 +117,7 @@ final class CuttingRecordService
                 }
                 if ($existing) {
                     // Quantity or identity changes invalidate only this result's route plan.
-                    if ($existing->allowed_output_id != $data['allowed_output_id'] || $existing->actual_qty != $data['actual_qty'] || $existing->result_type !== $data['result_type'])
+                    if ($existing->allowed_output_id != $data['allowed_output_id'] || $existing->actual_qty != $data['actual_qty'] || $existing->result_type !== $data['result_type'] || json_decode($existing->cutting_requirement_snapshot ?: 'null', true) != json_decode($data['cutting_requirement_snapshot'] ?: 'null', true))
                         $this->cancelDraftRoutes([$existing->id]);
                     DB::table('erp_cutting_results')->where('id', $existing->id)->update($data + ['business_version' => $existing->business_version + 1, 'updated_at' => now()]);
                     $resultIds[] = $existing->id;
@@ -151,11 +152,11 @@ final class CuttingRecordService
             $this->input($batch);
             $routes = $p['routes'] ?? null;
             if (! is_array($routes) || ! array_is_list($routes) || count($routes) > 100) $c->fail('routes_invalid', '去向明细格式不合法。');
-            $sum = '0'; $insert = [];
+            $sum = '0'; $insert = []; $targetQuantities = [];
             foreach ($routes as $route) {
                 if (! is_array($route) || array_diff(array_keys($route), ['route_type','quantity','target_material_requirement_id']))
                     $c->fail('route_fields_invalid', '本页只保存去向计划，不能指定仓库、库位、批次或其他结果ID。');
-                $type = $route['route_type'] ?? ''; if (! in_array($type, ['WAREHOUSE','NEXT_OPERATION'], true)) $c->fail('route_type_invalid', '请选择去下一工序或入库备货。');
+                $type = $route['route_type'] ?? ''; if (! in_array($type, ['WAREHOUSE','NEXT_OPERATION'], true)) $c->fail('route_type_invalid', '请选择分配订单或入库。');
                 $qty = CuttingDecimal::value($route['quantity'] ?? null); $sum = bcadd($sum, $qty, 8);
                 $targetId = isset($route['target_material_requirement_id']) ? (int) $route['target_material_requirement_id'] : null;
                 $allowed = DB::table('erp_cutting_allowed_outputs')->where('id', $row->allowed_output_id)->first();
@@ -165,8 +166,9 @@ final class CuttingRecordService
                 } else {
                     if (! $targetId) $c->fail('target_missing', '去下一工序必须明确正式需求目标。');
                     if ($allowed->output_mode === 'warehouse_required') $c->fail('warehouse_required', '该正式路线产出必须先入库。');
-                    $this->target($targetId, $row->item_id, $user, $permissions, $super, 'production.cutting.record');
                     $target = $this->target($targetId,$row->item_id,$user,$permissions,$super,'production.cutting.record');
+                    $targetQuantities[$targetId] = bcadd($targetQuantities[$targetId] ?? '0', $qty, 8);
+                    app(CuttingRouteEligibilityService::class)->assertTarget($target, $row, $targetQuantities[$targetId]);
                     $this->configuration($row->configuration_id,Item::findOrFail($row->item_id),$target->work_order_id);
                     $workerOrigin = DB::table('erp_cutting_orders')->where('id',$batch->cutting_order_id)->where('purpose','WORKER')->exists();
                     if (! $workerOrigin && ! DB::table('erp_cutting_plan_allocations')->where('cutting_order_id',$batch->cutting_order_id)->where('output_item_id',$row->item_id)
@@ -208,6 +210,8 @@ final class CuttingRecordService
             foreach ($rows as $row) {
                 $this->resultData($batch, (array) $row, false);
                 if ($row->result_type === 'product') {
+                    $this->assertWorkerConfiguration($batch, $row, $user, $permissions, $super);
+                    $this->assertPlannedTargets($row, $user, $permissions, $super, 'production.cutting.record');
                     $routes = DB::table('erp_cutting_result_routes')->where('result_id', $row->id)->where('status','PLANNED')->lockForUpdate()->get();
                     $sum = '0'; foreach ($routes as $route) {
                         $sum = bcadd($sum, (string) $route->quantity, 8);
@@ -218,6 +222,7 @@ final class CuttingRecordService
             }
             $summary = $this->routeSummary($batchId);
             if (DB::table('erp_cutting_orders')->where('id',$batch->cutting_order_id)->where('purpose','WORKER')->exists()) {
+                app(CuttingOutputEligibilityService::class)->assertBatchFits($batch, $rows);
                 // Validate the automatic basis before freezing the editable report;
                 // missing measurements must remain correctable by the worker.
                 app(CuttingAutomaticCostService::class)->allocate($batch,$rows);
@@ -265,7 +270,7 @@ final class CuttingRecordService
     {
         $c = $this->commands; $type = $row['result_type'] ?? '';
         if (! in_array($type, ['product','usable_remnant','recyclable_scrap','process_loss','scrapped_output'], true)) $c->fail('result_type_invalid', '结果类型不合法。');
-        $allowed = null;
+        $allowed = null; $cuttingRequirement = null;
         if ($type === 'product') {
             $allowed = DB::table('erp_cutting_allowed_outputs')->where('cutting_order_id', $batch->cutting_order_id)->where('id', (int) ($row['allowed_output_id'] ?? 0))->first();
             if (! $allowed) $c->fail('output_not_allowed', '该Item、配置或阶段不属于本下料任务允许的产出集合。');
@@ -280,6 +285,27 @@ final class CuttingRecordService
             } else {
                 $item = Item::find($allowed->item_id);
                 if (! $item || $item->status !== 'enabled') $c->fail('output_item_invalid', '备货产出物料未启用。');
+                if ($orderPurpose === 'WORKER') {
+                    $frozen = $draft ? DB::table('erp_cutting_results')->where('settlement_batch_id', $batch->id)
+                        ->where('client_row_id', $row['client_row_id'] ?? '')->where('allowed_output_id', $allowed->id)
+                        ->whereNotIn('status', ['VOIDED', 'SUPERSEDED'])->value('cutting_requirement_snapshot') : ($row['cutting_requirement_snapshot'] ?? null);
+                    $frozen = is_string($frozen) ? json_decode($frozen, true, 512, JSON_THROW_ON_ERROR) : $frozen;
+                    if ($draft) {
+                        // Even an allowed_output_id must match THIS physical. Allowed
+                        // output rows are shared by an order and are not source proof.
+                        $bomItemId = isset($row['bom_item_id']) ? (int) $row['bom_item_id'] : ($frozen['bom_item_id'] ?? null);
+                        $cuttingRequirement = app(CuttingOutputEligibilityService::class)->match($batch, (int) $allowed->item_id,
+                            $allowed->configuration_id ? (int) $allowed->configuration_id : null, $bomItemId);
+                    } else {
+                        if (! $frozen || (int) ($frozen['input']['item_id'] ?? 0) !== (int) $batch->input_item_id
+                            || (int) ($frozen['input']['physical_material_id'] ?? 0) !== (int) ($batch->physical_material_id ?? 0)
+                            || (int) ($frozen['item_id'] ?? 0) !== (int) $allowed->item_id
+                            || (int) ($frozen['configuration_id'] ?? 0) !== (int) ($allowed->configuration_id ?? 0)) {
+                            $c->fail('cutting_requirement_missing', '该产出缺少与当前材料对应的尺寸要求，请退回草稿后重新选择产出。');
+                        }
+                        $cuttingRequirement = $frozen;
+                    }
+                }
             }
         } elseif (! empty($row['allowed_output_id'])) $c->fail('other_output_identity_invalid', '其他加工结果不能冒充正式产品产出。');
         $measurement = $row['measurement_status'] ?? 'NOT_RECORDED';
@@ -296,13 +322,44 @@ final class CuttingRecordService
             if ($key === 'shape') { if (! in_array($value, ['RECTANGLE','IRREGULAR'], true)) $c->fail('shape_invalid', '余料形状不合法。'); }
             else CuttingDecimal::value($value, 8, true);
         }
+        if ($cuttingRequirement) {
+            app(CuttingOutputEligibilityService::class)->assertMeasurements($cuttingRequirement, $measurements ?? [],
+                $row['cut_length_mm'] ?? null, $row['piece_qty'] ?? null, (string) $qty);
+        }
+        if (! $draft && $type !== 'product') {
+            if ($measurement !== 'MEASURED') $c->fail('other_result_measurement_required','其他结果提交前必须完成实测登记。');
+            $input = Item::find($batch->input_item_id); $mode = $input?->cuttingMode() ?: ($batch->physical_material_id ? 'sheet' : 'length');
+            $positive = fn (string $field): bool => isset($measurements[$field]) && bccomp((string) $measurements[$field],'0',8) > 0;
+            if ($type === 'usable_remnant') {
+                if (bccomp((string) $qty,'1',8) !== 0) $c->fail('remnant_quantity_invalid','每条可用余料的数量必须为1。');
+                if ($mode === 'length' && ! $positive('length_mm')) $c->fail('remnant_length_required','定长余料必须填写余料长度。');
+                if ($mode === 'sheet') {
+                    $shape = $measurements['shape'] ?? null;
+                    if (! in_array($shape,['RECTANGLE','IRREGULAR'],true)) $c->fail('remnant_shape_required','板材余料必须选择矩形或异形。');
+                    if ($shape === 'RECTANGLE' && (! $positive('length_mm') || ! $positive('width_mm') || ! $positive('thickness_mm')))
+                        $c->fail('remnant_dimensions_required','矩形板材余料必须填写长、宽、厚。');
+                    if ($shape === 'IRREGULAR' && ! $positive('weight_kg') && (! $positive('length_mm') || ! $positive('width_mm')))
+                        $c->fail('remnant_extent_required','异形板材余料必须填写外包长宽或重量。');
+                }
+            }
+            if (in_array($type,['recyclable_scrap','process_loss'],true) && ! $positive('weight_kg'))
+                $c->fail('weight_required','废料和工艺损耗必须填写实际称重。');
+            if ($type === 'scrapped_output') {
+                if ($mode === 'length' && ! $positive('length_mm') && ! $positive('weight_kg'))
+                    $c->fail('scrapped_output_measurement_required','定长报废产出必须填写长度或总重量。');
+                if ($mode === 'sheet' && ! $positive('weight_kg') && (! $positive('length_mm') || ! $positive('width_mm')))
+                    $c->fail('scrapped_output_measurement_required','板材报废产出必须填写长宽或总重量。');
+            }
+        }
         $quality = $allowed && $allowed->quality_mode !== 'none' ? 'WAIT_QUALITY' : 'NOT_REQUIRED';
         if (isset($row['reported_quality']) && ! in_array($row['reported_quality'], ['qualified','unqualified'], true)) $c->fail('reported_quality_invalid','现场申报只能填写合格或不合格，不代替正式质检。');
         return ['result_type' => $type, 'allowed_output_id' => $allowed?->id, 'item_id' => $allowed?->item_id,
             'configuration_id' => $allowed?->configuration_id, 'stage_id' => $allowed?->stage_id, 'actual_qty' => $qty,
-            'piece_qty' => isset($row['piece_qty']) ? CuttingDecimal::value($row['piece_qty']) : null,
+            'piece_qty' => $cuttingRequirement ? bcmul((string) $qty, (string) $cuttingRequirement['per_output_piece_qty'], 8)
+                : (isset($row['piece_qty']) ? CuttingDecimal::value($row['piece_qty']) : null),
             'cut_length_mm' => isset($row['cut_length_mm']) ? CuttingDecimal::value($row['cut_length_mm'], 2) : null,
             'measurements' => $measurements === null ? null : json_encode($measurements, JSON_THROW_ON_ERROR), 'measurement_status' => $measurement,
+            'cutting_requirement_snapshot' => $cuttingRequirement ? json_encode($cuttingRequirement, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE) : null,
             'quality_status' => $draft ? $quality : $row['quality_status'], 'reported_quality' => $row['reported_quality'] ?? null];
     }
 
@@ -318,6 +375,28 @@ final class CuttingRecordService
 
     public function assertInput(object $batch): void
     { $this->input($batch); }
+
+    public function assertWorkerConfiguration(object $batch, object $row, object $user, array $permissions, bool $super): void
+    {
+        if (! DB::table('erp_cutting_orders')->where('id', $batch->cutting_order_id)->where('purpose', 'WORKER')->exists()) return;
+        $item = Item::find($row->item_id);
+        if (! $item || $item->status !== 'enabled' || ! $item->is_production_item || ! $item->is_stock_item) {
+            $this->commands->fail('output_item_invalid', '产出物料必须已启用、可生产且可入库。');
+        }
+        app(CuttingWorkerOrderService::class)->configuration($item, $row->configuration_id ? (int) $row->configuration_id : null, $user, $permissions, $super);
+    }
+
+    public function assertPlannedTargets(object $row, object $user, array $permissions, bool $super, string $permission): void
+    {
+        $quantities = DB::table('erp_cutting_result_routes')->where('result_id', $row->id)->where('status', 'PLANNED')
+            ->where('route_type', 'NEXT_OPERATION')->selectRaw('target_material_requirement_id, SUM(quantity) AS quantity')
+            ->groupBy('target_material_requirement_id')->orderBy('target_material_requirement_id')->get();
+        foreach ($quantities as $route) {
+            $target = $this->target((int) $route->target_material_requirement_id, (int) $row->item_id, $user, $permissions, $super, $permission);
+            $this->configuration($row->configuration_id, Item::findOrFail($row->item_id), (int) $target->work_order_id);
+            app(CuttingRouteEligibilityService::class)->assertTarget($target, $row, (string) $route->quantity);
+        }
+    }
 
     public function assertResultIdentity(object $batch, object $row): void
     {

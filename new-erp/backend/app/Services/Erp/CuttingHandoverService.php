@@ -94,7 +94,13 @@ final class CuttingHandoverService
             ->join('erp_work_orders as wo', 'wo.id', '=', 'task.work_order_id')
             ->where('task.assignee_user_legacy_id', $actor)->whereIn('task.id', $visibleTasks->toBase())
             ->whereIn('h.status', ['IN_TRANSIT', 'PARTIAL'])
-            ->orderBy('h.dispatched_at')->select('h.*', 'h.target_task_id as task_id', 'task.task_no', 'wo.work_order_no', 'item.item_code', 'item.item_name');
+            ->orderBy('h.dispatched_at')->select('h.id', 'h.handover_no', 'h.route_id', 'h.result_id', 'h.status', 'h.business_version',
+                'h.dispatched_qty', 'h.accepted_qty', 'h.rejected_qty', 'h.dispatched_at', 'h.expected_receiver_legacy_id',
+                'h.target_task_id as task_id', 'task.task_no', 'wo.work_order_no', 'item.item_code', 'item.item_name');
+        if ($keyword = trim((string) ($filters['keyword'] ?? ''))) {
+            $query->where(fn ($q) => $q->where('h.handover_no', 'like', '%'.$keyword.'%')->orWhere('wo.work_order_no', 'like', '%'.$keyword.'%')
+                ->orWhere('task.task_no', 'like', '%'.$keyword.'%')->orWhere('item.item_code', 'like', '%'.$keyword.'%')->orWhere('item.item_name', 'like', '%'.$keyword.'%'));
+        }
         $page = filter_var($filters['page'] ?? 1, FILTER_VALIDATE_INT);
         $size = filter_var($filters['per_page'] ?? 20, FILTER_VALIDATE_INT);
         if (! $page || $page < 1 || ! $size || $size < 1 || $size > 100) {

@@ -44,7 +44,7 @@
           <image class="mat-thumb" src="/static/images/cutting-plate.png" mode="aspectFit" />
           <view class="mat-info">
             <view class="mat-badge-row">
-              <text class="mat-source-badge">{{item.physical_no ? '实物钢板' : item.remnant_holding_id ? '余料' : '定长原料'}}</text>
+              <text class="mat-source-badge">{{item.physical_no ? (item.material_form === 'REMNANT' ? '板材余料' : '板材实物') : item.remnant_holding_id ? '定长余料' : '定长材料'}}</text>
               <text class="mat-no">{{item.source_label}}</text>
             </view>
             <text class="mat-name">{{item.item_code}} {{item.item_name}}</text>
@@ -69,7 +69,7 @@
           </block>
           <view class="full-sheet-tip" wx:else>
             <van-icon name="passed" size="28rpx" color="#0e8c45" />
-            <text>整张/整份使用 · 自动全量核销锁定</text>
+            <text>{{item.remnant_holding_id ? '整根余料使用' : '整张/整份板材使用'}} · 自动全量核销锁定</text>
           </view>
         </view>
       </view>
@@ -80,8 +80,8 @@
       <view class="zone-icon-box">
         <van-icon name="plus" size="48rpx" color="#d7190b" />
       </view>
-      <text class="zone-title">点击选择本次使用的钢板或方管</text>
-      <text class="zone-desc">支持按钢板实物号或方管库存批次跨页多选</text>
+      <text class="zone-title">点击选择本次使用的板材或定长材料</text>
+      <text class="zone-desc">支持按板材实物号或定长材料库存批次跨页多选</text>
     </view>
   </view>
 
@@ -106,7 +106,7 @@
     <view class="modal-head">
       <view class="modal-title-wrap">
         <text class="modal-title">选择领用原料</text>
-        <text class="modal-subtitle">从可用库存中挑选钢板实物或定长型材</text>
+        <text class="modal-subtitle">从可用库存中挑选板材实物或定长材料</text>
       </view>
       <view class="close-icon-wrap" bindtap="closePicker">
         <van-icon name="cross" size="38rpx" color="#7d8d9f" />
@@ -117,11 +117,11 @@
     <view class="type-tabs">
       <view class="type-tab {{inputType === 'physical' ? 'active' : ''}}" data-type="physical" bindtap="setInputType">
         <van-icon name="apps-o" size="26rpx" />
-        <text>钢板实物 / 余料</text>
+        <text>板材实物 / 板材余料</text>
       </view>
       <view class="type-tab {{inputType === 'quantity' ? 'active' : ''}}" data-type="quantity" bindtap="setInputType">
         <van-icon name="bars" size="26rpx" />
-        <text>方管 / 定长原料</text>
+        <text>定长材料 / 定长余料</text>
       </view>
     </view>
 
@@ -216,4 +216,3 @@
     </view>
   </view>
 </view>
-

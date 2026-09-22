@@ -11,6 +11,7 @@ class WorkOrderMaterialRequirement extends MasterModel
         'loss_rate' => 'decimal:4',
         'fixed_qty' => 'decimal:8',
         'cut_length_mm_snapshot' => 'decimal:2',
+        'cutting_requirement_snapshot' => 'array',
         'per_output_piece_qty' => 'decimal:8',
         'required_piece_qty' => 'decimal:8',
         'required_qty' => 'decimal:8',

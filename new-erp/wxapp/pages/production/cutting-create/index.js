@@ -81,7 +81,7 @@ Page({
   create() {
     if (this.data.busy) return;
     if (!this.data.selected.length || this.data.selected.some(row => row.quantity_editable && (!/^\d+$/.test(String(row.input_qty)) || Number(row.input_qty) <= 0)))
-      return wx.showToast({ title: '请选择钢板或方管，并填写实际领用根数', icon: 'none' });
+      return wx.showToast({ title: '请选择板材或定长材料，并填写实际领用根数', icon: 'none' });
     const inputs = this.data.selected.map(row => {
       if (row.physical_no) return { physical_material_id: Number(row.id) };
       if (row.remnant_holding_id) return { remnant_holding_id: Number(row.remnant_holding_id) };

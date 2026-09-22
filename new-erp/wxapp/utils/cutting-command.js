@@ -13,6 +13,19 @@ function businessPayload(data) {
   return JSON.stringify(canonical(result));
 }
 
+function pendingCommands(pathPrefix) {
+  const actor = wx.getStorageSync('erp_user') || {};
+  const prefix = `cutting-pending:${actor.legacy_id || actor.id || 'session'}:POST:${pathPrefix}`;
+  return (wx.getStorageInfoSync().keys || []).filter(key => key.startsWith(prefix)).map(key => ({
+    path: key.slice(key.indexOf(':POST:') + 6), payload: (wx.getStorageSync(key) || {}).payload,
+  })).filter(row => row.payload);
+}
+
+function pendingCommand(path, method = 'POST') {
+  const actor = wx.getStorageSync('erp_user') || {};
+  return (wx.getStorageSync(`cutting-pending:${actor.legacy_id || actor.id || 'session'}:${method}:${path}`) || {}).payload || null;
+}
+
 // A lost response is not a failed transaction. Keep the original version and command
 // across refresh/restart; an explicit retry recovers its immutable server response.
 function write(path, data, prefix, method = 'POST') {
@@ -34,9 +47,9 @@ function write(path, data, prefix, method = 'POST') {
     // failures and processing conflicts have an unknown commit outcome, so retain.
     // Authentication expiry or throttling does not disprove an earlier timeout's
     // commit. Retain identity until the original business command is resolved.
-    if (error.statusCode >= 400 && error.statusCode < 500 && ![401, 403, 408, 429].includes(error.statusCode) && error.errorCode !== 'command_processing') wx.removeStorageSync(key);
+    if (error.statusCode >= 400 && error.statusCode < 500 && ![401, 403, 408, 429].includes(error.statusCode) && !['command_processing', 'command_recovery_required'].includes(error.errorCode)) wx.removeStorageSync(key);
     throw error;
   });
 }
 
-module.exports = { write, businessPayload };
+module.exports = { write, businessPayload, pendingCommands, pendingCommand };

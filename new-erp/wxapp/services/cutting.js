@@ -35,7 +35,6 @@ module.exports = {
   inspectResult: (id, data) => command(`production/cutting/results/${id}/quality-inspect`, data || {}, 'cut-inspect'),
   returnForEdit: (id, data) => command(`production/cutting/settlements/${id}/return-for-edit`, data || {}, 'cut-edit'),
   dispatchRoute: (id, data) => command(`production/cutting/routes/${id}/dispatch`, data || {}, 'cut-dispatch'),
-  warehouseRoute: (id, data) => command(`production/cutting/routes/${id}/warehouse`, data || {}, 'cut-warehouse'),
   claimTask: (id, data) => command(`production/cutting/tasks/${id}/claim`, data || {}, 'cut-claim'),
   startTask: (id, data) => command(`production/cutting/tasks/${id}/start`, data || {}, 'cut-start'),
   pauseTask: (id, data) => command(`production/cutting/tasks/${id}/pause`, data || {}, 'cut-pause'),

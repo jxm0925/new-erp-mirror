@@ -11,10 +11,12 @@ final class CuttingController extends Controller
 {
     public function workerCreate(Request $r, \App\Services\Erp\CuttingWorkerOrderService $s)
     { $this->validateCommand($r,0); return response()->json(['data'=>$s->create($r->all(), ...$this->context($r))],201); }
+    public function warehouseLocators(Request $r, CuttingReadService $s)
+    { return response()->json($s->warehouseLocators($r->validate(['mode'=>'required|in:warehouse,location','warehouse_id'=>'required_if:mode,location|nullable|integer|min:1','keyword'=>'nullable|string|max:100','page'=>'nullable|integer|min:1','per_page'=>'nullable|integer|min:1|max:100']), ...$this->context($r))); }
     public function workerOutputs(Request $r, \App\Services\Erp\CuttingWorkerOrderService $s)
-    { return response()->json($s->outputs($this->filters($r), ...$this->context($r))); }
+    { return response()->json($s->outputs($this->workerOutputFilters($r), ...$this->context($r))); }
     public function workerCategories(Request $r, \App\Services\Erp\CuttingWorkerOrderService $s)
-    { return response()->json($s->categories($this->filters($r), ...$this->context($r))); }
+    { return response()->json($s->categories($this->workerOutputFilters($r), ...$this->context($r))); }
     public function workerInputs(Request $r, CuttingReadService $s)
     { return response()->json($s->workerInputs($this->filters($r), ...$this->context($r))); }
     public function workerInputCategories(Request $r, CuttingReadService $s)
@@ -146,6 +148,9 @@ final class CuttingController extends Controller
         'scope'=>'nullable|in:mine,pool','status_group'=>'nullable|in:active,finished','flow'=>'nullable|in:confirm,handover,warehouse']); }
     private function selectorCategoryFilters(Request $r): array
     { return $r->validate(['mode'=>'required|in:inputs,outputs','page'=>'nullable|integer|min:1','per_page'=>'nullable|integer|min:1|max:100']); }
+    private function workerOutputFilters(Request $r): array
+    { return $r->validate(['settlement_batch_id'=>'required|integer|min:1','page'=>'nullable|integer|min:1',
+        'per_page'=>'nullable|integer|min:1|max:100','keyword'=>'nullable|string|max:100','category_id'=>'nullable|integer|min:1']); }
     private function configurationFilters(Request $r): array
     { return $r->validate(['page'=>'nullable|integer|min:1','per_page'=>'nullable|integer|min:1|max:100',
         'keyword'=>'nullable|string|max:100','item_id'=>'nullable|integer|min:1','status'=>'nullable|in:DRAFT,PUBLISHED',

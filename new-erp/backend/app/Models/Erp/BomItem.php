@@ -11,6 +11,9 @@ class BomItem extends MasterModel
         'loss_rate' => 'decimal:4',
         'fixed_qty' => 'decimal:4',
         'cut_length_mm' => 'decimal:2',
+        'cut_width_mm' => 'decimal:2',
+        'cut_thickness_mm' => 'decimal:2',
+        'allow_cut_rotation' => 'boolean',
         'piece_qty' => 'integer',
     ];
 

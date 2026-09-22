@@ -54,6 +54,8 @@ class ItemIntegratedFormController extends Controller
             'item.category_id' => 'required|integer|exists:erp_item_categories,id',
             'item.spec' => 'nullable|string|max:255',
             'item.material_grade' => 'nullable|string|max:80',
+            'item.cutting_mode' => 'required|in:none,sheet,length',
+            'item.material_management_mode' => 'required|in:quantity,physical',
             'item.standard_stock_length_mm' => 'nullable|numeric|min:0.01|max:9999999999.99',
             'item.is_length_cut_material' => 'required|boolean',
             'item.unit_id' => 'required|integer|exists:erp_units,id',
@@ -84,7 +86,11 @@ class ItemIntegratedFormController extends Controller
         $item = $validated['item'];
         $policy = $validated['policy'];
 
-        if ($item['is_length_cut_material']) {
+        $mode = $item['cutting_mode'] ?? (($item['is_length_cut_material'] ?? false) ? 'length' : 'none');
+        $item['cutting_mode'] = $mode;
+        $item['is_length_cut_material'] = $mode === 'length';
+        $item['material_management_mode'] = $mode === 'sheet' ? 'physical' : 'quantity';
+        if ($mode === 'length') {
             abort_if(empty($item['standard_stock_length_mm']), 422, '长度下料类 Item 必须维护标准原料长度。');
         } else {
             $item['standard_stock_length_mm'] = null;

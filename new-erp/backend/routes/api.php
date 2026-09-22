@@ -22,6 +22,7 @@ use App\Http\Controllers\Api\V1\Erp\ItemMaterialPolicyController;
 use App\Http\Controllers\Api\V1\Erp\ItemIntegratedFormController;
 use App\Http\Controllers\Api\V1\Erp\MasterDataController;
 use App\Http\Controllers\Api\V1\Erp\PurchaseController;
+use App\Http\Controllers\Api\V1\Erp\ShopfloorOptionController;
 use App\Http\Controllers\Api\V1\Erp\PurchaseExchangeController;
 use App\Http\Controllers\Api\V1\Erp\PurchaseReturnController;
 use App\Http\Controllers\Api\V1\Erp\PurchaseSupplierRecommendationController;
@@ -102,6 +103,8 @@ Route::prefix('v1/erp/approvals')->group(function () {
     Route::delete('flows/{id}', [ApprovalController::class, 'deleteFlow'])->whereNumber('id');
 });
 
+
+Route::get('v1/erp/shopfloor/options/{type}', [ShopfloorOptionController::class, 'index']);
 
 Route::prefix('v1/erp/purchase')->group(function () {
     Route::post('attachments/upload', [PurchaseController::class, 'uploadAttachment']);
@@ -422,6 +425,7 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::post('cutting/results/{id}/quality-inspect', [CuttingController::class, 'inspect'])->whereNumber('id');
     Route::post('cutting/routes/{id}/dispatch', [CuttingController::class, 'dispatchHandover'])->whereNumber('id');
     Route::get('cutting/handovers/pending', [CuttingController::class, 'pendingHandovers']);
+    Route::get('cutting/warehouse-locators', [CuttingController::class, 'warehouseLocators']);
     Route::post('cutting/handovers/{id}/accept', [CuttingController::class, 'acceptHandover'])->whereNumber('id');
     Route::post('cutting/handovers/{id}/reject', [CuttingController::class, 'rejectHandover'])->whereNumber('id');
     Route::post('cutting/routes/{id}/warehouse', [CuttingController::class, 'warehouseRoute'])->whereNumber('id');

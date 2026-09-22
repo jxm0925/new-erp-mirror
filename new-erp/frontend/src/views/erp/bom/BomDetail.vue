@@ -62,7 +62,11 @@ export default {
     displayAuditType() { if (this.isDraftEditable) return 'info'; return this.auditType(this.bom.audit_status) }
   },
   methods: {
-    cutRequirement(row) { return row.cut_length_mm === null || row.cut_length_mm === undefined ? '无需下料' : `${Number(row.cut_length_mm).toLocaleString('zh-CN')}mm × ${Number(row.piece_qty).toLocaleString('zh-CN')}段` },
+    cutRequirement(row) {
+      if (row.cut_length_mm == null) return '无需下料'
+      const dimensions = [row.cut_length_mm, row.cut_width_mm, row.cut_thickness_mm].filter(value => value != null).map(value => Number(value).toLocaleString('zh-CN')).join(' × ')
+      return `${dimensions} mm × ${Number(row.piece_qty).toLocaleString('zh-CN')}${row.cut_width_mm != null ? '件' : '段'}`
+    },
     async load() { this.loading = true; try { const { data } = await getBom(this.$route.params.id); this.bom = data } finally { this.loading = false } },
     async action(type) { const api = { submit: submitBom, approve: approveBom, reject: rejectBom, activate: activateBom, deactivate: deactivateBom, setDefault: setDefaultBom }[type]; const text = { submit: '提交审核', approve: '审核通过', reject: '驳回', activate: '启用', deactivate: '停用', setDefault: '设为默认' }[type]; await this.$confirm(`确认${text}？`, 'BOM操作确认', { type: 'warning' }); await api(this.bom.id); this.$message.success(`${text}成功`); this.load() },
     async copyVersion() { const { value } = await this.$prompt('请输入新版本号', '复制为新版本', { inputValue: this.nextVersion(this.bom.version) }); const { data } = await copyBomVersion(this.bom.id, { version: value }); this.$message.success('已复制为新版本草稿'); this.$router.push(`/bom/${data.data.id}/edit`) },

@@ -29,11 +29,14 @@ final class CuttingAutomaticCostService
             elseif (isset($frozen['weight_kg'])) $weights[$row->id] = bcmul(CuttingDecimal::value($frozen['weight_kg']), (string) $qty,8);
             elseif (in_array($row->result_type,['recyclable_scrap','process_loss'],true) && $row->measurement_status === 'MEASURED') $weights[$row->id] = (string) $qty;
             $size = $measure + $frozen;
-            $pieceArea = isset($size['area_mm2']) ? CuttingDecimal::value($size['area_mm2'])
-                : (isset($size['length_mm'],$size['width_mm']) ? bcmul(CuttingDecimal::value($size['length_mm']),CuttingDecimal::value($size['width_mm']),8) : null);
-            if ($pieceArea !== null) $area[$row->id] = bcmul($pieceArea,(string) $qty,8);
-            $pieceLength = $row->cut_length_mm ?? $size['length_mm'] ?? null;
-            if ($pieceLength !== null) $length[$row->id] = bcmul(CuttingDecimal::value($pieceLength),(string) ($row->piece_qty ?? $qty),8);
+            $pieces = (string) ($row->result_type === 'product' ? ($row->piece_qty ?? $qty) : $qty);
+            // Rectangular dimensions are authoritative; a caller-supplied area
+            // cannot shrink a large piece or alter its material-cost share.
+            $pieceArea = isset($size['length_mm'],$size['width_mm'])
+                ? bcmul(CuttingDecimal::value($size['length_mm']),CuttingDecimal::value($size['width_mm']),8) : null;
+            if ($pieceArea !== null && ($size['shape'] ?? 'RECTANGLE') === 'RECTANGLE') $area[$row->id] = bcmul($pieceArea,$pieces,8);
+            $pieceLength = $row->result_type === 'product' ? ($row->cut_length_mm ?? $size['length_mm'] ?? null) : ($size['length_mm'] ?? null);
+            if ($pieceLength !== null) $length[$row->id] = bcmul(CuttingDecimal::value($pieceLength),$pieces,8);
         }
         $basis = null; $shares = [];
         if (count($weights) === $rows->count()) { $basis = 'WEIGHT_KG'; $shares = $weights; }
@@ -55,7 +58,7 @@ final class CuttingAutomaticCostService
                 if ($batch->physical_material_id && count(array_intersect_key($area, array_flip($otherIds))) === count($otherIds)) {
                     $source = DB::table('erp_material_physicals')->where('id',$batch->physical_material_id)->first();
                     $sourceSize = $source ? json_decode($source->dimensions,true,512,JSON_THROW_ON_ERROR) : [];
-                    $sourceTotal = $sourceSize['area_mm2'] ?? (isset($sourceSize['length_mm'],$sourceSize['width_mm'])
+                    $sourceTotal = $sourceSize['area_mm2'] ?? ($source && $source->shape === 'RECTANGLE' && isset($sourceSize['length_mm'],$sourceSize['width_mm'])
                         ? bcmul((string) $sourceSize['length_mm'],(string) $sourceSize['width_mm'],8) : null);
                     if ($sourceTotal !== null) {
                         $shares = $this->withResidual($area, $lossIds, $lossWeights, (string) $sourceTotal, $c);
@@ -79,11 +82,13 @@ final class CuttingAutomaticCostService
             $source = DB::table('erp_material_physicals')->where('id',$batch->physical_material_id)->first();
             $size = json_decode($source->dimensions,true,512,JSON_THROW_ON_ERROR);
             foreach ($dimensions as $resultSize) {
-                $thickness = $resultSize['measurements']['thickness_mm'] ?? $resultSize['configuration_dimensions']['thickness_mm'] ?? null;
-                if ($thickness !== null && isset($size['thickness_mm']) && bccomp((string) $thickness,(string) $size['thickness_mm'],8) !== 0)
+                $actualThickness = $resultSize['measurements']['thickness_mm'] ?? null;
+                $nominalThickness = $resultSize['configuration_dimensions']['thickness_mm'] ?? null;
+                if (($actualThickness !== null && isset($size['thickness_mm']) && bccomp((string) $actualThickness,(string) $size['thickness_mm'],8) !== 0)
+                    || ($nominalThickness !== null && bccomp((string) $nominalThickness,(string) ($size['nominal_thickness_mm'] ?? $size['thickness_mm']),8) !== 0))
                     $c->fail('automatic_cost_thickness_mismatch','产出厚度与来源钢板不一致，不能按同板面积核算。');
             }
-            $sourceArea = $size['area_mm2'] ?? (isset($size['length_mm'],$size['width_mm']) ? bcmul((string) $size['length_mm'],(string) $size['width_mm'],8) : null);
+            $sourceArea = $size['area_mm2'] ?? ($source->shape === 'RECTANGLE' && isset($size['length_mm'],$size['width_mm']) ? bcmul((string) $size['length_mm'],(string) $size['width_mm'],8) : null);
             if ($sourceArea === null || bccomp($sum,(string) $sourceArea,8) > 0) $c->fail('automatic_cost_material_exceeded','产出与余料面积超过实际投入，不能核算。');
         } elseif ($basis === 'LENGTH_MM' && bccomp($sum,bcmul((string) $batch->standard_stock_length_mm,(string) $batch->input_qty,8),8) > 0)
             $c->fail('automatic_cost_material_exceeded','产出与余料长度超过实际投入，不能核算。');

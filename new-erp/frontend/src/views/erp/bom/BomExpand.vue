@@ -162,7 +162,8 @@ export default {
     cutRequirement(row, aggregate) {
       if (row.cut_length_mm === null || row.cut_length_mm === undefined) return '无需下料'
       const pieces = aggregate ? row.required_piece_qty : row.piece_qty
-      return `${Number(row.cut_length_mm).toLocaleString('zh-CN')}mm × ${Number(pieces).toLocaleString('zh-CN')}段`
+      const dimensions = [row.cut_length_mm, row.cut_width_mm, row.cut_thickness_mm].filter(value => value != null).map(value => Number(value).toLocaleString('zh-CN')).join(' × ')
+      return `${dimensions} mm × ${Number(pieces).toLocaleString('zh-CN')}${row.cut_width_mm != null ? '件' : '段'}`
     },
     async loadRefs() {
       const [b, s] = await Promise.all([listBoms({ per_page: 100 }), listEntity('skus', { per_page: 100 })])

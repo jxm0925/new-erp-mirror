@@ -81,6 +81,7 @@ class InventoryPostingController extends Controller
             'items.*.allocations.*.physical_entries.*.dimensions.length_mm' => ['required_with:items.*.allocations.*.physical_entries', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],
             'items.*.allocations.*.physical_entries.*.dimensions.width_mm' => ['required_with:items.*.allocations.*.physical_entries', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],
             'items.*.allocations.*.physical_entries.*.dimensions.thickness_mm' => ['required_with:items.*.allocations.*.physical_entries', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],
+            'items.*.allocations.*.physical_entries.*.dimensions.nominal_thickness_mm' => ['nullable', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],
         ]);
 
         $receipt = $service->repair($id, $data['items'], $request->user()?->name ?: $request->user()?->username);

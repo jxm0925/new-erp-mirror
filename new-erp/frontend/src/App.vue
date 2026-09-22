@@ -1,25 +1,20 @@
 <template>
-  <div id="app" :class="{ 'sidebar-collapsed': sidebarCollapsed, 'production-route': $route.path.startsWith('/production') }">
+  <div id="app" class="erp-layout" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
     <router-view v-if="$route.path === '/login'" />
     <template v-else>
       <aside class="erp-sidebar">
         <div class="erp-brand">
-          <svg v-if="$route.path.startsWith('/production')" class="brand-logo-icon production-logo-icon" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
+          <svg class="brand-logo-icon" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
             <polygon points="12,1 22,7 12,13 2,7" fill="#12d39a" />
             <polygon points="2,7 12,13 12,23 2,17" fill="#00a978" />
             <polygon points="22,7 12,13 12,23 22,17" fill="#008b67" />
-          </svg>
-          <svg v-else class="brand-logo-icon" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2">
-            <polygon points="12 2 2 7 12 12 22 7 12 2" stroke="#00c58e" fill="rgba(0,197,142,0.15)" />
-            <polyline points="2 17 12 22 22 17" stroke="#00c58e" />
-            <polyline points="2 12 12 17 22 12" stroke="#00c58e" />
           </svg>
           <span>ERP系统</span>
         </div>
 
         <router-link class="console-link" :class="{ active: $route.path.startsWith('/console') }" to="/console">
           <i class="el-icon-s-home" />
-          <span>{{ $route.path.startsWith('/production') ? '运营控制台' : '首页' }}</span>
+          <span>运营控制台</span>
         </router-link>
 
         <section
@@ -47,7 +42,7 @@
         <button class="collapse" type="button" @click="sidebarCollapsed = !sidebarCollapsed">
           <i :class="sidebarCollapsed ? 'el-icon-s-unfold' : 'el-icon-s-fold'" />
           <span>{{ sidebarCollapsed ? '展开菜单' : '收起菜单' }}</span>
-          <i v-if="$route.path.startsWith('/production')" class="el-icon-d-arrow-left collapse-tail" />
+          <i v-if="!sidebarCollapsed" class="el-icon-d-arrow-left collapse-tail" />
         </button>
       </aside>
 

@@ -444,8 +444,8 @@ Page({
     const target = this.findTarget(event);
     const output = target && target.output_record;
     if (!output) return wx.showToast({ title: '产出记录尚未生成', icon: 'none' });
-    const type = output.allowed_actions && output.allowed_actions.quality_inspect ? 'outputs_quality' : 'outputs_warehouse';
-    wx.navigateTo({ url: `/pages/production/queue/index?type=${type}` });
+    if (!output.allowed_actions || !output.allowed_actions.quality_inspect) return;
+    wx.navigateTo({ url: '/pages/production/queue/index?type=outputs_quality' });
   },
 
   openMaterialActions(event) {

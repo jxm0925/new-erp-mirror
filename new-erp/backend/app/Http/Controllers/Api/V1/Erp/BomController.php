@@ -192,7 +192,7 @@ class BomController extends Controller
             foreach ($source->items as $line) {
                 BomItem::create($line->only([
                     'line_no', 'component_item_id', 'component_item_code', 'component_item_name',
-                    'cut_length_mm', 'piece_qty', 'qty', 'unit_id', 'loss_rate', 'fixed_qty', 'replaceable', 'remark',
+                    'cut_length_mm', 'cut_width_mm', 'cut_thickness_mm', 'allow_cut_rotation', 'piece_qty', 'qty', 'unit_id', 'loss_rate', 'fixed_qty', 'replaceable', 'remark',
                 ]) + ['bom_id' => $copy->id]);
             }
             $this->log($copy, 'copy_version', "由 {$source->bom_no} 复制为新版本");
@@ -304,6 +304,9 @@ class BomController extends Controller
             'items.*.line_no' => 'nullable|integer|min:1',
             'items.*.component_item_id' => 'required|exists:erp_items,id',
             'items.*.cut_length_mm' => 'nullable|required_with:items.*.piece_qty|numeric|min:0.01|max:9999999999.99',
+            'items.*.cut_width_mm' => 'nullable|numeric|min:0.01|max:9999999999.99',
+            'items.*.cut_thickness_mm' => 'nullable|numeric|min:0.01|max:9999999999.99',
+            'items.*.allow_cut_rotation' => 'sometimes|boolean',
             'items.*.piece_qty' => 'nullable|required_with:items.*.cut_length_mm|integer|min:1',
             'items.*.qty' => 'required|numeric|min:0',
             'items.*.unit_id' => 'nullable|exists:erp_units,id',
@@ -355,9 +358,9 @@ class BomController extends Controller
             $length = array_key_exists('cut_length_mm', $line) && $line['cut_length_mm'] !== null
                 ? number_format((float) $line['cut_length_mm'], 2, '.', '')
                 : 'ordinary';
-            return ((int) $line['component_item_id']).'|'.$length;
+            return ((int) $line['component_item_id']).'|'.$length.'|'.number_format((float) ($line['cut_width_mm'] ?? 0), 2, '.', '').'|'.number_format((float) ($line['cut_thickness_mm'] ?? 0), 2, '.', '');
         })->filter(fn (int $count) => $count > 1);
-        abort_if($duplicates->isNotEmpty(), 422, '同一 BOM 中相同 Item 与相同下料长度不能重复；请合并段数。');
+        abort_if($duplicates->isNotEmpty(), 422, '同一 BOM 中相同物料与相同下料尺寸不能重复；请合并件数。');
         foreach (array_values($items) as $index => $line) {
             abort_if((int) $line['component_item_id'] === (int) $bom->output_item_id, 422, 'BOM 组成物料不能等于产出 Item。');
             $item = Item::with('unit')->findOrFail($line['component_item_id']);
@@ -365,11 +368,12 @@ class BomController extends Controller
             abort_if(!$item->unit || $item->unit->status !== 'enabled', 422, 'BOM 组成 Item 必须维护启用的库存基本单位。');
             $hasCutLength = array_key_exists('cut_length_mm', $line) && $line['cut_length_mm'] !== null;
             $hasPieceQty = array_key_exists('piece_qty', $line) && $line['piece_qty'] !== null;
-            if ($item->is_length_cut_material) {
+            app(\App\Services\Erp\CuttingOutputEligibilityService::class)->validateBomLine($item, $line);
+            if ($item->cuttingMode() === 'length') {
                 abort_unless($hasCutLength && $hasPieceQty, 422, "长度下料类物料 {$item->item_name} 必须填写每段长度和段数。");
                 abort_if((float) $item->standard_stock_length_mm <= 0, 422, "长度下料类物料 {$item->item_name} 未维护标准原料长度。");
                 abort_if((float) $line['cut_length_mm'] > (float) $item->standard_stock_length_mm, 422, "{$item->item_name} 的下料长度不能超过标准原料长度 {$item->standard_stock_length_mm}mm。");
-            } else {
+            } elseif ($item->cuttingMode() !== 'sheet') {
                 abort_if($hasCutLength || $hasPieceQty, 422, "普通物料 {$item->item_name} 不能填写下料长度或段数。");
             }
             $domain = app(\App\Services\Erp\UnitConversionDomainService::class);
@@ -383,6 +387,9 @@ class BomController extends Controller
                 'component_item_code' => $item->item_code,
                 'component_item_name' => $item->item_name,
                 'cut_length_mm' => $hasCutLength ? $line['cut_length_mm'] : null,
+                'cut_width_mm' => $line['cut_width_mm'] ?? null,
+                'cut_thickness_mm' => $line['cut_thickness_mm'] ?? null,
+                'allow_cut_rotation' => $line['allow_cut_rotation'] ?? false,
                 'piece_qty' => $hasPieceQty ? $line['piece_qty'] : null,
                 'qty' => $line['qty'],
                 'unit_id' => $baseUnit->id,
@@ -463,6 +470,8 @@ class BomController extends Controller
                 'unit_name' => $line->unit?->unit_name ?: $line->componentItem?->unit?->unit_name,
                 'unit_qty' => $unitQty,
                 'cut_length_mm' => $line->cut_length_mm === null ? null : (float) $line->cut_length_mm,
+                'cut_width_mm' => $line->cut_width_mm === null ? null : (float) $line->cut_width_mm,
+                'cut_thickness_mm' => $line->cut_thickness_mm === null ? null : (float) $line->cut_thickness_mm,
                 'piece_qty' => $line->piece_qty === null ? null : (int) $line->piece_qty,
                 'required_piece_qty' => $line->piece_qty === null ? null : round((float) $line->piece_qty * $plannedQty, 4),
                 'loss_rate' => $lossRate,
@@ -489,6 +498,8 @@ class BomController extends Controller
                     'unit_name' => $line->unit?->unit_name ?: $line->componentItem?->unit?->unit_name,
                     'unit_qty' => $unitQty,
                     'cut_length_mm' => $line->cut_length_mm === null ? null : (float) $line->cut_length_mm,
+                    'cut_width_mm' => $line->cut_width_mm === null ? null : (float) $line->cut_width_mm,
+                    'cut_thickness_mm' => $line->cut_thickness_mm === null ? null : (float) $line->cut_thickness_mm,
                     'piece_qty' => $line->piece_qty === null ? null : (int) $line->piece_qty,
                     'required_piece_qty' => $line->piece_qty === null ? null : round((float) $line->piece_qty * $plannedQty, 4),
                     'loss_rate' => $lossRate,
@@ -506,7 +517,7 @@ class BomController extends Controller
     private function mergeAggregate(array &$aggregate, array $leaf): void
     {
         $lengthKey = $leaf['cut_length_mm'] === null ? 'ordinary' : number_format((float) $leaf['cut_length_mm'], 2, '.', '');
-        $key = ((int) $leaf['component_item_id']).'|'.$lengthKey;
+        $key = ((int) $leaf['component_item_id']).'|'.$lengthKey.'|'.number_format((float) ($leaf['cut_width_mm'] ?? 0), 2, '.', '').'|'.number_format((float) ($leaf['cut_thickness_mm'] ?? 0), 2, '.', '');
         if (!isset($aggregate[$key])) {
             $aggregate[$key] = $leaf;
             return;

@@ -37,8 +37,6 @@ Page({
     trendTicks: [],
     shortcuts: [
       { key: 'orders', title: '生产工单', subtitle: '查看整体进度', icon: 'orders-o', count: null },
-      { key: 'warehouse', title: '仓库管理', subtitle: '入库 / 发料 / 退料', icon: 'home-o', count: null },
-      { key: 'picking', title: '配料订单', subtitle: '配送 / 领料 / 签收', icon: 'cluster-o', count: null },
       { key: 'tasks', title: '我的任务', subtitle: '接单 / 齐套 / 开工', icon: 'records', count: null },
       { key: 'cutting', title: '下料', subtitle: '自主下料 / 记录 / 流转', icon: 'coupon-o', count: null }
     ]
@@ -71,10 +69,8 @@ Page({
     return Promise.all([
       production.workbenchSummary(),
       optional(can('production.work_order.view'), () => production.masterOrders({ page: 1, per_page: 1 })),
-      optional(can('production.task.view'), () => production.outputs({ status: 'WAIT_WAREHOUSE', page: 1, per_page: 1 })),
-      optional(can('production.material_picking.view'), () => production.pickingTasks({ status_group: 'active', page: 1, per_page: 1 })),
       optional(can('production.cutting.view'), () => cutting.listTasks({ scope: 'mine', status_group: 'active', page: 1, per_page: 1 }))
-    ]).then(([summaryResponse, orders, warehouse, picking, cuttingTasks]) => {
+    ]).then(([summaryResponse, orders, cuttingTasks]) => {
       if (sequence !== this.requestSequence) return;
       const summary = summaryResponse.data || {};
       const total = Number(summary.total || 0);
@@ -83,8 +79,6 @@ Page({
       }));
       const countByKey = {
         orders: orders ? Number(orders.total || 0) : null,
-        warehouse: warehouse ? Number(warehouse.total || 0) : null,
-        picking: picking ? Number(picking.total || 0) : null,
         tasks: total,
         cutting: cuttingTasks ? Number((cuttingTasks.meta || {}).total || 0) : null
       };
@@ -174,16 +168,6 @@ Page({
     if (key === 'orders') return wx.navigateTo({ url: '/pages/production/tasks/index' });
     if (key === 'tasks') return wx.navigateTo({ url: '/pages/production/my-tasks/index' });
     if (key === 'cutting') return wx.navigateTo({ url: '/pages/production/cutting-tasks/index' });
-    if (key === 'picking') return wx.navigateTo({ url: '/pages/production/queue/index?type=picking' });
-    if (key === 'warehouse') {
-      wx.showActionSheet({
-        itemList: ['生产入库', '半成品发料', '生产退料收货'],
-        success: result => {
-          const types = ['outputs_warehouse', 'internal_dispatch', 'return_receive'];
-          wx.navigateTo({ url: `/pages/production/queue/index?type=${types[result.tapIndex]}` });
-        }
-      });
-    }
   },
 
   goTasksWithFilter(event) {

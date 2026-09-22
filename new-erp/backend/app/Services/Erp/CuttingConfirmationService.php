@@ -28,6 +28,13 @@ final class CuttingConfirmationService
             $this->records->assertInput($batch);
             $rows = DB::table('erp_cutting_results')->where('settlement_batch_id',$batchId)->whereNotIn('status',['VOIDED','SUPERSEDED'])->orderBy('id')->lockForUpdate()->get();
             if ($rows->isEmpty()) $c->fail('results_missing','没有可核算的实际结果。');
+            if (DB::table('erp_cutting_orders')->where('id', $batch->cutting_order_id)->where('purpose', 'WORKER')->exists()) {
+                app(CuttingOutputEligibilityService::class)->assertBatchFits($batch, $rows);
+            }
+            foreach ($rows->where('result_type', 'product') as $product) {
+                $this->records->assertWorkerConfiguration($batch, $product, $user, $permissions, $super);
+                $this->records->assertPlannedTargets($product, $user, $permissions, $super, $permission);
+            }
             $calculation = $automatic ? app(CuttingAutomaticCostService::class)->allocate($batch,$rows) : null;
             $costs = $calculation ? $calculation['costs'] : $this->costs($rows->pluck('id')->all(),$p['costs'] ?? null);
             $sum = '0'; foreach ($costs as $cost) $sum = bcadd($sum,$cost,4);
@@ -190,14 +197,30 @@ final class CuttingConfirmationService
         $item = Item::findOrFail($batch->input_item_id); $dimensions = []; $parent = null;
         if ($batch->physical_material_id) {
             $parent = DB::table('erp_material_physicals')->where('id',$batch->physical_material_id)->first();
-            foreach (['length_mm','width_mm','thickness_mm'] as $field) $dimensions[$field] = CuttingDecimal::value($measure[$field] ?? null,2);
-            if (! in_array($measure['shape'] ?? '',['RECTANGLE','IRREGULAR'],true)) $c->fail('remnant_shape_required','须明确余料矩形或异形及真实／外包尺寸。');
+            $parentDimensions = json_decode($parent->dimensions, true, 512, JSON_THROW_ON_ERROR);
+            $shape = $measure['shape'] ?? null;
+            if (! in_array($shape,['RECTANGLE','IRREGULAR'],true)) $c->fail('remnant_shape_required','须明确余料矩形或异形及真实／外包尺寸。');
+            if ($shape === 'RECTANGLE') {
+                foreach (['length_mm','width_mm','thickness_mm'] as $field) $dimensions[$field] = CuttingDecimal::value($measure[$field] ?? null,2);
+            } else {
+                foreach (['length_mm','width_mm','thickness_mm','weight_kg'] as $field)
+                    if (isset($measure[$field])) $dimensions[$field] = CuttingDecimal::value($measure[$field],2);
+                if (! isset($dimensions['weight_kg']) && (! isset($dimensions['length_mm']) || ! isset($dimensions['width_mm'])))
+                    $c->fail('remnant_extent_required','异形板材余料必须填写外包长宽或重量。');
+            }
+            if (isset($parentDimensions['nominal_thickness_mm'])) $dimensions['nominal_thickness_mm'] = $parentDimensions['nominal_thickness_mm'];
+            if (isset($parentDimensions['thickness_mm'])) {
+                if (isset($dimensions['thickness_mm']) && bccomp($dimensions['thickness_mm'], (string) $parentDimensions['thickness_mm'], 2) !== 0) {
+                    $c->fail('remnant_thickness_mismatch', '余料厚度必须继承来源板材，不能改成其他厚度。');
+                }
+                $dimensions['thickness_mm'] = $parentDimensions['thickness_mm'];
+            }
         } else {
             if ($item->cuttingMode() !== 'length') $c->fail('remnant_input_invalid','余料来源不是已支持的板材或定长原料。');
             $dimensions['length_mm'] = CuttingDecimal::value($measure['length_mm'] ?? null,2);
         }
         $sourceLot = DB::table('erp_material_holdings')->where('id',$batch->wip_holding_id)->value('material_lot_id');
-        $lotId = $this->lot($item->id,null,null,'REMNANT',$dimensions['length_mm'],$row->id,$sourceLot);
+        $lotId = $this->lot($item->id,null,null,'REMNANT',$dimensions['length_mm'] ?? null,$row->id,$sourceLot);
         $holdingId = $this->holding($lotId,'REMNANT_WIP',$row->id,'1.00000000',$cost); $physicalId = null;
         if ($parent) {
             $physicalId = DB::table('erp_material_physicals')->insertGetId(['physical_no'=>$this->numbers->next('material_physical','PLATE'),'item_id'=>$item->id,

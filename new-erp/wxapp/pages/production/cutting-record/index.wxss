@@ -1,3 +1,4 @@
+@import "../../../styles/cutting-transfer.wxss";
 page {
   background: #f4f6fa;
   color: #0c1839;
@@ -1301,6 +1302,10 @@ page {
 .other-form-content {
   margin-top: 14rpx;
 }
+.staged-other-list{margin:18rpx 0;border:1rpx solid #e4e9f0;border-radius:10rpx;overflow:hidden;background:#fff}
+.staged-other-row{display:flex;align-items:center;justify-content:space-between;gap:16rpx;padding:16rpx 18rpx;border-bottom:1rpx solid #edf0f4}
+.staged-other-row:last-child{border-bottom:0}.staged-other-info{display:flex;flex:1;min-width:0;flex-direction:column;gap:5rpx;color:#26364d;font-size:24rpx}.staged-other-info text:last-child{color:#7b8798;font-size:21rpx;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.staged-other-actions{display:flex;gap:18rpx;color:#1677ff;font-size:23rpx}.staged-other-actions .delete{color:#d33b32}
 
 .source-note-box {
   margin-top: 14rpx;

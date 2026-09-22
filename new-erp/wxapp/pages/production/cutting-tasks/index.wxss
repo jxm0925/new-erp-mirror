@@ -1,3 +1,4 @@
+@import "../../../styles/cutting-transfer.wxss";
 
 /* 页面基础容器与响应式适配 */
 page {

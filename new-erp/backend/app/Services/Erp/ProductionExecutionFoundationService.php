@@ -308,6 +308,7 @@ class ProductionExecutionFoundationService
                 'requirement.loss_rate',
                 'requirement.fixed_qty',
                 'requirement.cut_length_mm_snapshot',
+                'requirement.cutting_requirement_snapshot',
                 'requirement.per_output_piece_qty',
                 'requirement.required_piece_qty'
             )
@@ -331,6 +332,7 @@ class ProductionExecutionFoundationService
                 'material_supply_rule_snapshot_id' => $row->id,
                 'component_item_id' => $row->component_item_id,
                 'cut_length_mm_snapshot' => $row->cut_length_mm_snapshot,
+                'cutting_requirement_snapshot' => $row->cutting_requirement_snapshot,
                 'required_piece_qty_snapshot' => $requiredPieces === null ? null : round($requiredPieces, 8),
                 'requirement_kind' => 'standard',
                 'required_base_qty' => round($required, 8),
