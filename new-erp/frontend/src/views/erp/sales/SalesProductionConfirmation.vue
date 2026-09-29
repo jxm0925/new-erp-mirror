@@ -114,6 +114,7 @@
 </template>
 
 <script>
+import cachedPageRoute from '@/utils/cachedPageRoute'
 import { confirmProduction, getProductionPreview } from '@/api/erp/sales'
 
 const ReadinessTag = {
@@ -126,6 +127,7 @@ const ReadinessTag = {
 }
 
 export default {
+  mixins: [cachedPageRoute],
   name: 'SalesProductionConfirmation',
   components: { ReadinessTag },
   data: () => ({ loading: false, submitting: false, preview: {}, order: null, lines: [], adjustmentReason: '' }),
@@ -143,7 +145,7 @@ export default {
   },
   created () { this.load() },
   watch: {
-    '$route.params.id' () { this.load() }
+    'pageRoute.params.id' () { this.load() }
   },
   methods: {
     returnToOrder () {
@@ -153,7 +155,7 @@ export default {
     async load (notify = false) {
       this.loading = true
       try {
-        const { data } = await getProductionPreview(this.$route.params.id)
+        const { data } = await getProductionPreview(this.pageRoute.params.id)
         this.preview = data || {}; this.order = data.order || null
         this.lines = (data.lines || []).map(row => ({ ...row, inventory_qty: Number(row.inventory_qty || 0), production_qty: Number(row.production_qty || 0), service_qty: Number(row.service_qty || 0), no_delivery_qty: Number(row.no_delivery_qty || 0), undetermined_qty: Number(row.undetermined_qty || 0), confirm_qty: Number(row.confirm_qty || 0), available_sales_qty: Number(row.available_sales_qty || 0), system_suggested_inventory_qty: Number(row.system_suggested_inventory_qty || 0), system_suggested_production_qty: Number(row.system_suggested_production_qty || 0) }))
         this.adjustmentReason = ''
@@ -186,8 +188,8 @@ export default {
     itemBaseConfirmQty (row) { return this.isPhysical(row) ? Number(row.confirm_qty || 0) * Number(row.fulfillment_factor || 0) : 0 },
     groupQuantity (key) { const groups = {}; this.lines.forEach(row => { const qty = key === 'undetermined_qty' ? this.remainingUndetermined(row) : Number(row[key] || 0); if (qty <= 0) return; const unit = row.sales_unit || '-'; groups[unit] = (groups[unit] || 0) + qty }); const values = Object.keys(groups).map(unit => `${this.number(groups[unit])} ${unit}`); return values.join(' / ') || '0' },
     remainingUndetermined (row) { return Math.max(0, Number(row.remaining_sales_qty || 0) - Number(row.confirm_qty || 0)) },
-    lineBlocked (row) { return !this.allocationValid(row) || Number(row.inventory_qty || 0) > Number(row.available_sales_qty || 0) + 0.00000001 || (Number(row.production_qty || 0) > 0 && ['bom', 'drawing'].some(key => row.data_readiness && row.data_readiness[key] === 'missing')) },
-    blockingReason (row) { if (!this.allocationValid(row)) return '各项分配数量之和与订单数量不一致'; if (Number(row.inventory_qty || 0) > Number(row.available_sales_qty || 0) + 0.00000001) return '库存备货数量超过当前真实可用库存'; if (Number(row.production_qty || 0) > 0 && row.data_readiness && row.data_readiness.bom === 'missing') return '未匹配到可用 BOM'; if (Number(row.production_qty || 0) > 0 && row.data_readiness && row.data_readiness.drawing === 'missing') return '特殊定制缺少设计图纸'; return '无阻塞' },
+    lineBlocked (row) { return !this.allocationValid(row) || Number(row.inventory_qty || 0) > Number(row.available_sales_qty || 0) + 0.00000001 },
+    blockingReason (row) { if (!this.allocationValid(row)) return '各项分配数量之和与订单数量不一致'; if (Number(row.inventory_qty || 0) > Number(row.available_sales_qty || 0) + 0.00000001) return '库存备货数量超过当前真实可用库存'; return '无阻塞' },
     isService (row) { return row.line_type === 'service' },
     isNoDelivery (row) { return ['no_delivery', 'fee', 'auxiliary'].includes(row.line_type) },
     isPhysical (row) { return !this.isService(row) && !this.isNoDelivery(row) },

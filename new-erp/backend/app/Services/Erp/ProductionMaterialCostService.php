@@ -134,11 +134,15 @@ final class ProductionMaterialCostService
                     'created_at' => now(), 'updated_at' => now(),
                 ]);
             }
-            DB::table('erp_material_holdings')->insert([
+            $transitHoldingId = DB::table('erp_material_holdings')->insertGetId([
                 'material_lot_id' => $lotId, 'position_type' => 'PRODUCTION_TRANSIT', 'position_id' => $posted->id,
                 'quantity' => $line->actual_pick_qty, 'total_cost' => bcsub('0', (string) $posted->cost_amount, 4),
                 'status' => 'ACTIVE', 'business_version' => 1, 'created_at' => now(), 'updated_at' => now(),
             ]);
+            $physicalSnapshot = DB::table('erp_material_picking_task_lines')->where('id',$line->id)->value('serial_snapshot');
+            $physicalIds = $physicalSnapshot ? (json_decode($physicalSnapshot,true)['physical_material_ids'] ?? []) : [];
+            if ($physicalIds) DB::table('erp_material_physicals')->whereIn('id',$physicalIds)->where('status','PRODUCTION_TRANSIT')
+                ->update(['current_holding_id'=>$transitHoldingId,'updated_at'=>now()]);
         }
     }
 
@@ -176,6 +180,14 @@ final class ProductionMaterialCostService
         }
         $sourceOutputId = $lot->source_type === 'production_output_record' ? (int) $lot->source_id : null;
         $cost = CuttingDecimal::share((string) $source->total_cost, (string) $source->quantity, $quantity);
+        $physicals = DB::table('erp_material_physicals')->where('current_holding_id',$source->id)->where('status','PRODUCTION_TRANSIT')->orderBy('id')->lockForUpdate()->get();
+        if ($physicals->isNotEmpty()) {
+            if (bccomp($quantity,bcadd($quantity,'0',0),8) !== 0 || $physicals->count() < (int) $quantity)
+                $this->fail('production_physical_receipt_invalid','板材收料必须逐张对应本次配料出库实物。');
+            $physicals = $physicals->take((int) $quantity); $cost = '0';
+            foreach ($physicals as $physical) $cost = bcadd($cost,(string) $physical->total_cost,4);
+            if (bccomp($cost,(string) $source->total_cost,4) > 0) $this->fail('production_physical_receipt_cost_invalid','板材实物金额超过正式出库在途金额。');
+        }
         $bridge = DB::table('erp_production_input_holdings')->insertGetId([
             'target_type' => $delivery->production_target_type, 'target_id' => $delivery->production_target_id,
             'target_material_requirement_id' => $requirement->id, 'source_output_record_id' => $sourceOutputId,
@@ -189,6 +201,8 @@ final class ProductionMaterialCostService
             'created_at' => now(), 'updated_at' => now(),
         ]);
         DB::table('erp_production_input_holdings')->where('id', $bridge)->update(['input_holding_id' => $input, 'updated_at' => now()]);
+        if ($physicals->isNotEmpty()) DB::table('erp_material_physicals')->whereIn('id',$physicals->pluck('id'))
+            ->update(['status'=>'PRODUCTION_RECEIVED','current_holding_id'=>$input,'business_version'=>DB::raw('business_version+1'),'updated_at'=>now()]);
         $this->reduceHolding($source, $quantity, $cost);
         DB::table('erp_material_movements')->insert([
             'movement_no' => $this->numbers->next('material_movement', 'MM'), 'source_holding_id' => $source->id,
@@ -226,9 +240,12 @@ final class ProductionMaterialCostService
                 if (bccomp($remaining, '0', 8) === 0) break;
                 $quantity = bccomp($remaining, (string) $source->quantity, 8) >= 0 ? (string) $source->quantity : $remaining;
                 $cost = CuttingDecimal::share((string) $source->total_cost, (string) $source->quantity, $quantity);
+                $physicalReturn = app(ProductionPhysicalMaterialReturnService::class)->prepare($source, (int) $line->component_item_id, $quantity);
+                if ($physicalReturn) $cost = $physicalReturn['cost'];
                 DB::table('erp_production_material_return_cost_allocations')->insert([
                     'return_line_id' => $line->id, 'source_input_holding_id' => $source->id,
-                    'quantity' => $quantity, 'total_cost' => $cost, 'created_at' => now(), 'updated_at' => now(),
+                    'quantity' => $quantity, 'total_cost' => $cost, 'physical_material_ids' => $physicalReturn ? json_encode($physicalReturn['ids'], JSON_THROW_ON_ERROR) : null,
+                    'created_at' => now(), 'updated_at' => now(),
                 ]);
                 $this->reduceHolding($source, $quantity, $cost);
                 if (bccomp($quantity, (string) $source->quantity, 8) === 0) {
@@ -262,6 +279,7 @@ final class ProductionMaterialCostService
             }
             DB::table('erp_production_material_return_cost_allocations')->where('return_line_id', $line->id)
                 ->update(['inventory_transaction_item_id' => $posted->id, 'updated_at' => now()]);
+            app(ProductionPhysicalMaterialReturnService::class)->finalize($line, $posted, $transaction);
         }
     }
 
@@ -269,7 +287,9 @@ final class ProductionMaterialCostService
     {
         if (DB::transactionLevel() < 1) throw new \LogicException('Material consumption requires the completion transaction.');
         $requirements = DB::table('erp_production_target_material_requirements')
-            ->where('target_type', $type)->where('target_id', $target->id)->orderBy('id')->lockForUpdate()->get();
+            ->where('target_type', $type)->where('target_id', $target->id)
+            ->whereNotIn('id', app(ProductionCuttingOperationService::class)->coveredRequirementIds($type, $target->id))
+            ->orderBy('id')->lockForUpdate()->get();
         $requirementHoldings = DB::table('erp_material_holdings')->where('position_type', 'PRODUCTION_WIP')
             ->whereIn('position_id', $requirements->pluck('id'))->where('status', 'ACTIVE')
             ->where('quantity', '>', 0)->orderBy('id')->lockForUpdate()->get();
@@ -353,7 +373,11 @@ final class ProductionMaterialCostService
             $this->fail('production_material_cost_allocation_invalid', '良品金额与损失金额必须精确等于实际材料投入总金额。');
         }
         $now = now();
+        $technicalWorkOrder = DB::table('erp_work_orders')->where('id', $output->work_order_id)->first();
+        $outputConfigurationId = $technicalWorkOrder && (int) $technicalWorkOrder->output_item_id === (int) $output->output_item_id
+            ? $technicalWorkOrder->output_configuration_id : null;
         $lot = DB::table('erp_material_lots')->insertGetId(['lot_no' => $this->numbers->next('material_lot', 'ML'),
+            'configuration_id' => $outputConfigurationId,
             'item_id' => $output->output_item_id, 'stage_id' => $target->routing_operation_id_snapshot,
             'material_form' => 'PRODUCT', 'source_type' => 'production_output_record', 'source_id' => $output->id,
             'created_at' => $now, 'updated_at' => $now]);

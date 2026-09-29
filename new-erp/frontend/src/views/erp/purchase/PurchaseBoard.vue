@@ -158,7 +158,7 @@
           <div v-for="group in orderPreview" :key="group.supplier_id" class="preview-card">
             <b>供应商：{{ group.supplier_name || group.supplier_id }}</b>
             <span>预计生成 1 张采购订单，{{ group.line_count }} 行明细</span>
-            <em>采购数量 {{ group.total_qty }}，预计金额 ¥{{ money(group.total_amount) }}</em>
+            <em>采购数量 {{ planPreviewQuantity(group) }}，预计金额 ¥{{ money(group.total_amount) }}</em>
           </div>
         </div>
         <el-empty v-else description="审核通过后可预览并生成采购订单" :image-size="70" />
@@ -168,11 +168,11 @@
         <el-progress :percentage="orderProgress(selected)" color="#07883f" />
         <p>到货状态：{{ labelOf(selected.receipt_status) }}</p>
         <el-alert v-if="selected.open_receipt_id" class="receipt-allocation-alert" type="warning" :closable="false" show-icon>
-          <template slot="title">待确认到货单 {{ selected.open_receipt_no }} 已占用 {{ number(selected.pending_receipt_qty) }}，确认或调整前不能重复生成。</template>
+          <template slot="title">待确认到货单 {{ selected.open_receipt_no }} 已占用 {{ quantityByUnit(selected.items || [], 'pending_receipt_qty', false) }}，确认或调整前不能重复生成。</template>
         </el-alert>
         <dl class="receipt-allocation-summary">
-          <dt>草稿占用数量</dt><dd>{{ number(selected.pending_receipt_qty) }}</dd>
-          <dt>当前可生成数量</dt><dd>{{ number(selected.available_receipt_qty) }}</dd>
+          <dt>草稿占用数量</dt><dd>{{ quantityByUnit(selected.items || [], 'pending_receipt_qty', false) }}</dd>
+          <dt>当前可生成数量</dt><dd>{{ quantityByUnit(selected.items || [], 'available_receipt_qty', false) }}</dd>
         </dl>
         <div v-if="receiptRecords(selected).length">
           <div v-for="receipt in receiptRecords(selected)" :key="receipt.id" class="linked-card">
@@ -435,7 +435,7 @@ export default {
       const sum = p => this.rows.reduce((n, r) => n + Number(this.valueOf(r, p) || 0), 0)
       return [
         { label: '单据总数', value: this.total, sub: `${this.rows.length} 条当前页`, icon: 'el-icon-document' },
-        { label: this.mode === 'requests' ? '需求明细' : this.mode === 'receipts' ? '到货明细' : '采购明细', value: this.rows.reduce((total, row) => total + (this.mode === 'requests' ? Number(row.request_summary?.line_count || 0) : (row.items || []).length), 0), sub: '行 / 分单位核对', icon: 'el-icon-box' },
+        { label: this.mode === 'requests' ? '需求明细' : this.mode === 'receipts' ? '到货明细' : '采购明细', value: this.rows.reduce((total, row) => total + (this.mode === 'requests' ? this.requestSummary(row).line_count : (row.items || []).length), 0), sub: '当前页 / 行', icon: 'el-icon-box' },
         { label: '预计金额', value: `¥${this.money(this.mode === 'orders' || this.mode === 'plans' || this.mode === 'receipts' ? sum('total_amount') : 0)}`, sub: '含税参考', icon: 'el-icon-money' },
         { label: '待处理', value: this.rows.filter(r => ['draft', 'submitted', 'processing'].includes(this.mainStatus(r))).length, sub: '单', icon: 'el-icon-warning-outline' }
       ]
@@ -471,6 +471,7 @@ export default {
     async load() {
       const res = await listPurchase(this.mode, { keyword: this.filters.keyword, status: this.filters.status, page: this.page, per_page: this.perPage })
       this.rows = (res.data.data || []).map(row => ({ ...row, receipt_quantity_summary: this.receiptQuantitySummary(row) }))
+      this.total = Number(res.data.total ?? res.data.meta?.total ?? 0)
       const currentId = this.selected && this.selected.id
       const next = currentId ? this.rows.find(r => Number(r.id) === Number(currentId)) : null
       if (next) await this.reloadDetail(next.id)
@@ -720,17 +721,31 @@ export default {
       const no = this.detailNo(row)
       const lines = row.items || row.request_items || []
       const lineCount = lines.length || Number(row.line_count || 0)
-      const qty = Number(this.mode === 'requests' ? this.requestSummary(row).request_qty : row.total_qty || row.total_receipt_qty || 0)
       const amount = this.money(row.total_amount || 0)
       const summaries = {
-        submitRequest: `<p>确认需求：${no}</p><p>明细 ${lineCount} 行，需求数量 ${qty}。确认后需求会被锁定，可转采购计划。</p>`,
-        requestToPlan: `<p>转采购计划：${no}</p><p>明细 ${lineCount} 行，总需求数量 ${qty}，预计转化数量 ${this.requestSummary(row).remaining_qty || qty}。</p>`,
+        submitRequest: `<p>确认需求：${no}</p><p>明细 ${lineCount} 行，需求数量 ${this.quantityByUnit(lines, 'request_qty')}。确认后需求会被锁定，可转采购计划。</p>`,
+        requestToPlan: `<p>转采购计划：${no}</p><p>明细 ${lineCount} 行，需求数量 ${this.quantityByUnit(lines, 'request_qty')}，本次转化数量 ${this.quantityByUnit(lines, line => line.remaining_qty ?? Math.max(0, Number(line.request_qty || 0) - Number(line.converted_qty ?? line.planned_qty ?? 0)))}。</p>`,
         approvePlan: `<p>审核采购计划：${no}</p><p>物料 ${lineCount} 行，供应商 ${this.planSupplierCount(row)} 个，预计金额 ¥${amount}。审核通过后可生成采购订单。</p>`,
-        submitOrder: `<p>提交采购订单审核：${no}</p><p>供应商：${row.supplier ? row.supplier.supplier_name : '--'}；明细 ${lineCount} 行，采购数量 ${row.total_qty || qty}，金额 ¥${amount}。</p>`,
+        submitOrder: `<p>提交采购订单审核：${no}</p><p>供应商：${row.supplier ? row.supplier.supplier_name : '--'}；明细 ${lineCount} 行，采购数量 ${this.quantityByUnit(lines, line => line.purchase_qty ?? line.order_qty ?? line.qty ?? 0)}，金额 ¥${amount}。</p>`,
         approveOrder: `<p>审核采购订单：${no}</p><p>供应商：${row.supplier ? row.supplier.supplier_name : '--'}；审核通过后才可生成到货单。</p>`,
-        confirmReceipt: `<p>确认到货：${no}</p><p>到货 ${row.total_receipt_qty || qty}，合格 ${this.receiptQty(row, 'qualified_qty')}，不合格 ${this.receiptQty(row, 'unqualified_qty')}，质量待处理 ${this.receiptUnresolvedQty(row)}。本次不更新正式库存。</p>`
+        confirmReceipt: `<p>确认到货：${no}</p><p>到货 ${this.quantityByUnit(lines, 'receipt_qty')}，合格 ${this.quantityByUnit(lines, 'qualified_qty')}，不合格 ${this.quantityByUnit(lines, 'unqualified_qty')}，质量待处理 ${this.quantityByUnit(lines, line => this.receiptUnresolvedQty(line))}。本次不更新正式库存。</p>`
       }
       return summaries[command] || `<p>确认执行 ${no} 的业务动作？</p>`
+    },
+    planPreviewQuantity(group) {
+      const lines = (group.items || []).map(line => ({ ...((this.selected.items || []).find(item => Number(item.id) === Number(line.plan_item_id)) || {}), ...line }))
+      return this.quantityByUnit(lines, 'purchase_qty', false)
+    },
+    quantityByUnit(lines, quantity, html = true) {
+      const groups = new Map()
+      lines.forEach(line => {
+        const unit = this.lineUnit(line)
+        const value = Number(typeof quantity === 'function' ? quantity(line) : line[quantity] || 0)
+        groups.set(unit, (groups.get(unit) || 0) + value)
+      })
+      // 确认框使用 HTML；单位来自主数据，必须转义且不能把不同单位相加。
+      const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
+      return Array.from(groups, ([unit, value]) => `${this.number(value)} ${html ? escape(unit) : unit}`).join('；') || '0'
     },
     successMessage(command, res) {
       if (command === 'submitRequest') return '需求已确认，已锁定需求，可转采购计划'

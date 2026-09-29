@@ -1,0 +1,18 @@
+<view class="warehouse-page">
+  <view class="delivery-tabs"><view wx:for="{{tabs}}" wx:key="value" class="delivery-tab {{status === item.value ? 'active' : ''}}" data-status="{{item.value}}" bindtap="statusChange">{{item.name}}</view></view>
+  <view class="warehouse-search"><input value="{{keyword}}" placeholder="配送单号、工单号或配送员" bindinput="keywordInput" bindconfirm="search" confirm-type="search"/><button bindtap="search">搜索</button></view>
+  <view wx:for="{{recoveryRows}}" wx:key="pickingId" class="warehouse-card"><view class="warehouse-card-title">配送提交结果待确认</view><view class="warehouse-field">{{item.pickingNo}} {{item.target}}</view><button class="warehouse-secondary" data-id="{{item.pickingId}}" bindtap="recover">查询原提交结果</button></view>
+  <view wx:if="{{error}}" class="warehouse-error">{{error}}<button class="warehouse-secondary" bindtap="load">重新加载</button></view>
+  <view wx:if="{{loading}}" class="warehouse-empty">加载中</view>
+  <view wx:elif="{{!rows.length && !error}}" class="warehouse-empty">暂无配送单</view>
+  <view wx:for="{{rows}}" wx:key="id" class="warehouse-card">
+    <view class="delivery-heading"><text class="warehouse-card-title">{{item.delivery_no}}</text><text class="delivery-status">{{item.statusText}}</text></view>
+    <view class="warehouse-field"><text class="warehouse-label">目标工单</text><text class="warehouse-value">{{item.work_order.work_order_no}}</text></view>
+    <view class="warehouse-field"><text class="warehouse-label">目标工序</text><text class="warehouse-value">{{item.target_operation_name_snapshot || item.to_production_location_snapshot || '—'}}</text></view>
+    <view class="warehouse-field"><text class="warehouse-label">物料项数</text><text class="warehouse-value">{{item.material_items_count}} 项</text></view>
+    <view class="warehouse-field"><text class="warehouse-label">配送员</text><text class="warehouse-value">{{item.delivery_user_name || '—'}}</text></view>
+    <view class="warehouse-field"><text class="warehouse-label">创建时间</text><text class="warehouse-value">{{item.created_at}}</text></view>
+    <button class="warehouse-secondary" data-id="{{item.id}}" bindtap="open">查看详情</button>
+  </view>
+  <view wx:if="{{!loading && !error}}" class="warehouse-pager"><text>共 {{total}} 条</text><button disabled="{{page <= 1}}" data-delta="-1" bindtap="turnPage">上一页</button><text>{{page}} / {{lastPage}}</text><button disabled="{{page >= lastPage}}" data-delta="1" bindtap="turnPage">下一页</button></view>
+</view>

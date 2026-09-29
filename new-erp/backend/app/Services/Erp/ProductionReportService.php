@@ -44,6 +44,8 @@ final class ProductionReportService
             $this->participant($task, $user);
             $target = ProductionQuantityOperation::query()->lockForUpdate()->find($targetId);
             if (! $target) $this->fail('task_target_not_found', '数量型生产目标不存在。', 404);
+            if (app(ProductionCuttingOperationService::class)->required('quantity_operation', $targetId))
+                $this->fail('cutting_results_required', '本工序在下料登记中记录实际产出，无需重复报工。', 409);
             if ((int) $target->business_version !== (int) ($payload['expected_version'] ?? 0)) {
                 $this->fail('version_conflict', '生产目标版本已变化，请刷新后重试。', 409, ['current_version' => (int) $target->business_version]);
             }

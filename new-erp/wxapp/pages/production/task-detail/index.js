@@ -397,6 +397,7 @@ Page({
   complete(event) {
     const t = this.findTarget(event);
     if (!t) return;
+    if (t.cutting_required) return this.openCutting(t);
     const payload = { expected_version: t.business_version, disposition: 'direct_handover' };
     if (t.target_type === 'quantity_operation' && !t.readyForCompletion) {
       return wx.showToast({ title: '请先完成剩余数量报工', icon: 'none' });
@@ -416,9 +417,14 @@ Page({
   openReport(event) {
     const t = this.findTarget(event);
     if (!t || t.target_type !== 'quantity_operation') return;
+    if (t.cutting_required) return this.openCutting(t);
     wx.navigateTo({
       url: `/pages/production/report/index?taskId=${this.data.id}&targetType=${t.target_type}&targetId=${t.target_id}`,
     });
+  },
+
+  openCutting(target) {
+    return wx.navigateTo({ url: `/pages/production/cutting-operation/index?taskId=${this.data.id}&targetType=${target.target_type}&targetId=${target.target_id}` });
   },
 
   openCompletion() {

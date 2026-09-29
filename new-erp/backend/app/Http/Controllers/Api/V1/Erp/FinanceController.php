@@ -63,7 +63,13 @@ class FinanceController extends Controller
             $query->where(fn ($q) => $q->where('method_code', 'like', "%{$keyword}%")
                 ->orWhere('method_name', 'like', "%{$keyword}%"));
         }
-        return response()->json($query->paginate($this->perPage($request)));
+        $stats = $request->boolean('include_stats') ? [
+            'enabled' => (clone $query)->where('status', 'enabled')->count(),
+            'sales' => (clone $query)->where('available_for_sales', true)->count(),
+            'payment' => (clone $query)->where('available_for_payment', true)->count(),
+        ] : null;
+        $page = $query->paginate($this->perPage($request));
+        return response()->json([...$page->toArray(), ...($stats === null ? [] : ['stats' => $stats])]);
     }
 
     public function storePaymentMethod(Request $request, PaymentMethodApplicationService $service)

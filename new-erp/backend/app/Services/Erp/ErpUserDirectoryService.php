@@ -15,8 +15,18 @@ class ErpUserDirectoryService
     {
         $query = DB::table('erp_legacy_admin_users')->orderByDesc('sort')->orderBy('legacy_id');
 
-        if (($filters['status'] ?? 'normal') !== 'all') {
+        $warehouseScope = ($filters['scope'] ?? null) === 'warehouse';
+        if ($warehouseScope) {
+            $query->whereIn(DB::raw('LOWER(TRIM(status))'), ['normal', 'active']);
+        } elseif (($filters['status'] ?? 'normal') !== 'all') {
             $query->where('status', $filters['status'] ?? 'normal');
+        }
+        if ($warehouseScope && !empty($filters['department_id'])) {
+            $query->whereExists(function ($members) use ($filters): void {
+                $members->selectRaw('1')->from('erp_department_users as du')
+                    ->whereColumn('du.user_legacy_id', 'erp_legacy_admin_users.legacy_id')
+                    ->where('du.department_legacy_id', (int) $filters['department_id']);
+            });
         }
         if (($filters['scope'] ?? null) === 'sales') $query->where('is_sales', true);
         if (($filters['scope'] ?? null) === 'production') {
@@ -82,7 +92,8 @@ class ErpUserDirectoryService
         $columns = $productionScope
             ? ['legacy_id as user_id', 'nickname as display_name', 'department_names as department_name', 'status']
             : ['legacy_id as id', 'username', 'nickname', 'status', 'department_names', 'mobile', 'email', 'is_sales'];
-        if (!empty($filters['per_page']) || !empty($filters['page'])) {
+        if ($warehouseScope) $columns = ['legacy_id as id', 'username', 'nickname', 'status', 'department_names'];
+        if ($warehouseScope || !empty($filters['per_page']) || !empty($filters['page'])) {
             $paginator = $query->paginate(max(1, min(100, (int) ($filters['per_page'] ?? 20))), $columns);
             if (! $productionScope && ($filters['scope'] ?? 'system') === 'system') {
                 $paginator->setCollection($this->attachRbacRoles($paginator->getCollection()));

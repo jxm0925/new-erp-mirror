@@ -1,0 +1,12 @@
+@import "../../pages/warehouse/shared.wxss";
+.receipt-scroll { flex: 1; min-height: 0; max-height: 60vh; }
+.receipt-table { min-width: 600rpx; }
+.serial-cell { width: 34%; padding: 16rpx 10rpx; word-break: break-all; }
+.result-cell { width: 34%; padding: 16rpx 6rpx; }
+.reason-cell { width: 32%; padding: 16rpx 6rpx; }
+.receipt-choice { display: flex; }
+.receipt-choice button { flex: 1; padding: 12rpx 6rpx; background: #f4f6f9; font-size: 25rpx; color: #61708a; border: 1rpx solid #e0e5ed; }
+.receipt-choice button.chosen { color: white; background: #ef1008; border-color: #ef1008; }
+.reason-cell .warehouse-input { min-height: 60rpx; padding: 8rpx; }
+.receipt-summary { padding: 20rpx; margin: 0 24rpx; text-align: center; background: #fff1f2; border-radius: 10rpx; }
+.receipt-summary text { color: #ef1008; font-weight: 600; }

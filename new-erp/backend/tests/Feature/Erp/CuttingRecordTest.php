@@ -550,6 +550,7 @@ class CuttingRecordTest extends TestCase
     public function test_settlement_execution_locks_one_source_and_never_projects_another_plate(): void
     {
         $f = $this->fixture(); $one = $this->issue($f); $two = $this->issue($f,1);
+        $this->consumerTask($f, $f['user']);
         $r1 = $this->save($f,$one['settlement_batch_id'],'6')['result_ids'][0];
         $r2 = $this->save($f,$two['settlement_batch_id'],'4')['result_ids'][0];
         app(CuttingRecordService::class)->splitRoutes($r1,$this->payload(1)+['routes'=>[[
@@ -1111,7 +1112,8 @@ class CuttingRecordTest extends TestCase
         $this->assertSame('已入库',$projection['results']['data'][0]['routes'][0]['display_status']);
         $this->assertCount(2,$projection['results']['data'][0]['routes'][0]['warehouse_receipts']);
 
-        $flow = $this->fixture(); $flowBatch = $this->issue($flow); $flowBatchId = $flowBatch['settlement_batch_id'];
+        $flow = $this->fixture(); $this->consumerTask($flow, $flow['user']);
+        $flowBatch = $this->issue($flow); $flowBatchId = $flowBatch['settlement_batch_id'];
         $flowResult = $this->save($flow,$flowBatchId,'10')['result_ids'][0];
         $flowSplit = app(CuttingRecordService::class)->splitRoutes($flowResult,$this->payload(1)+['routes'=>[[
             'route_type'=>'NEXT_OPERATION','quantity'=>'10','target_material_requirement_id'=>$flow['targetRequirement']

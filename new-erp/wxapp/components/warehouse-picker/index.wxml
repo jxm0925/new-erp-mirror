@@ -1,0 +1,39 @@
+<view wx:if="{{open}}" class="warehouse-overlay" catchtouchmove="stop">
+  <view class="warehouse-dialog picker-dialog">
+    <view class="warehouse-dialog-header"><text>{{title || '请选择'}}</text><button class="warehouse-close" bindtap="cancel"><van-icon name="cross" size="20"/></button></view>
+    <view class="picker-content">
+      <view wx:if="{{hasCategories}}" class="picker-categories">
+        <view class="picker-category-title">{{mode === 'stock' ? '库位' : '所属部门'}}</view>
+        <scroll-view scroll-y class="picker-category-scroll">
+          <view class="picker-category {{categoryId === 0 ? 'active' : ''}}" data-id="0" bindtap="chooseCategory">全部</view>
+          <view wx:for="{{categories}}" wx:key="id" class="picker-category {{categoryId === item.id ? 'active' : ''}}" data-id="{{item.id}}" bindtap="chooseCategory">{{item.label}}</view>
+          <view wx:if="{{categoryLoading}}" class="picker-category"><van-loading size="18"/></view>
+          <view wx:if="{{categoryError}}" class="warehouse-error">{{categoryError}}<text bindtap="loadCategories">重试</text></view>
+        </scroll-view>
+        <view class="picker-category-pager"><button disabled="{{categoryPage <= 1 || categoryLoading}}" data-delta="-1" bindtap="categoryPage"><van-icon name="arrow-left"/></button><text>{{categoryPage}}/{{categoryLastPage}}</text><button disabled="{{categoryPage >= categoryLastPage || categoryLoading}}" data-delta="1" bindtap="categoryPage"><van-icon name="arrow"/></button></view>
+      </view>
+      <view class="picker-main">
+        <view class="warehouse-search"><van-icon name="search"/><input value="{{keyword}}" placeholder="{{mode === 'people' ? '姓名或用户名' : mode === 'physical' ? '实物编号' : mode === 'serial' ? '序列号' : '编码、名称或规格'}}" bindinput="keywordInput" bindconfirm="search" confirm-type="search"/><button bindtap="search">搜索</button></view>
+        <scroll-view scroll-y class="picker-rows">
+          <view wx:if="{{loading}}" class="warehouse-empty"><van-loading color="#ef1008"/></view>
+          <view wx:elif="{{!rows.length && !error}}" class="warehouse-empty">暂无可选记录</view>
+          <view wx:elif="{{error && !rows.length}}" class="warehouse-error">{{error}}<button class="warehouse-secondary" bindtap="load">重新加载</button></view>
+          <block wx:else>
+            <view class="picker-table-head"><text class="picker-check">选择</text><text class="picker-col-name">{{mode === 'stock' ? '批次 / 库位' : mode === 'physical' ? '实物编号 / 规格' : mode === 'serial' ? '序列号' : mode === 'people' ? '姓名 / 用户名' : mode === 'target' ? '工单 / 目标工序' : '仓库'}}</text><text wx:if="{{quantity}}" class="picker-col-quantity">可用 / 本次数量</text><text wx:elif="{{mode === 'physical' || mode === 'serial'}}" class="picker-col-status">状态</text></view>
+            <view wx:for="{{rows}}" wx:key="key" class="picker-row">
+              <view class="picker-check"><van-checkbox value="{{item.checked}}" shape="{{multiple ? 'square' : 'round'}}" checked-color="#ef1008" data-key="{{item.key}}" bind:change="toggle"/></view>
+              <view class="picker-col-name" data-key="{{item.key}}" bindtap="toggle"><view>{{item.title}}</view><view wx:if="{{item.subtitle}}" class="warehouse-muted">{{item.subtitle}}{{mode === 'physical' ? ' mm' : ''}}</view></view>
+              <view wx:if="{{quantity}}" class="picker-col-quantity"><view>{{item.availableText}} {{item.unitName}}</view><view class="picker-stepper"><button disabled="{{!item.checked}}" data-key="{{item.key}}" data-delta="-1" bindtap="stepQuantity"><van-icon name="minus"/></button><input type="digit" value="{{item.selected_qty}}" disabled="{{!item.checked}}" data-key="{{item.key}}" bindinput="quantityInput"/><button disabled="{{!item.checked}}" data-key="{{item.key}}" data-delta="1" bindtap="stepQuantity"><van-icon name="plus"/></button></view></view>
+              <text wx:elif="{{mode === 'physical' || mode === 'serial'}}" class="picker-col-status picker-status">{{item.statusText}}</text>
+            </view>
+          </block>
+        </scroll-view>
+        <view class="warehouse-pager"><button disabled="{{page <= 1 || loading}}" data-delta="-1" bindtap="turnPage"><van-icon name="arrow-left"/></button><text>共{{total}}条 {{page}}/{{lastPage}}</text><button disabled="{{page >= lastPage || loading}}" data-delta="1" bindtap="turnPage"><van-icon name="arrow"/></button></view>
+      </view>
+    </view>
+    <view class="picker-selection"><text>已选 {{selectedCount}} 项<text wx:if="{{quantity}}"> / 合计 {{selectedQuantity}} {{selectedRows[0].unitName}}</text></text><text class="warehouse-danger" bindtap="toggleSelected">{{showSelected ? '收起已选' : '查看已选'}}（{{selectedCount}}）</text></view>
+    <scroll-view wx:if="{{showSelected}}" scroll-y class="picker-selected"><view wx:for="{{selectedRows}}" wx:key="key" class="picker-selected-row"><view>{{item.title}}<text wx:if="{{quantity}}"> / {{item.selected_qty}} {{item.unitName}}</text><view class="warehouse-muted">{{item.subtitle}}</view></view><button class="warehouse-close warehouse-danger" data-key="{{item.key}}" bindtap="remove">移除</button></view></scroll-view>
+    <view wx:if="{{error && rows.length}}" class="warehouse-error picker-error">{{error}}</view>
+    <view class="warehouse-dialog-footer"><button class="warehouse-secondary" bindtap="cancel">取消</button><button class="warehouse-primary" disabled="{{loading}}" bindtap="confirm">确认选择</button></view>
+  </view>
+</view>

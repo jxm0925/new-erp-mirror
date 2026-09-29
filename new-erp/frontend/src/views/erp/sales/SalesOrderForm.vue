@@ -26,22 +26,26 @@ Do not change layout without approval.
     <div class="form-toolbar">
       <div class="page-title">
         <button type="button" class="back-btn" @click="$router.push('/sales/orders')"><i class="el-icon-back" /></button>
-        <span>销售订单 / {{ isEdit ? '编辑订单' : '新增订单' }}</span>
+        <div class="title-meta-group">
+          <span class="main-title">销售订单 / {{ isEdit ? '编辑订单' : '新增订单' }}</span>
+          <span v-if="form.sales_order_no" class="order-no-pill">{{ form.sales_order_no }}</span>
+        </div>
       </div>
       <div class="toolbar-actions">
         <el-button size="small" @click="$router.push('/sales/orders')">返回列表</el-button>
         <el-button v-if="isEdit ? ($can('sales_order.edit_draft') || $can('sales_order.change')) : $can('sales_order.create')" size="small" @click="save(false)">{{ isConfirmedEdit ? '保存修改' : '保存草稿' }}</el-button>
-        <el-button v-if="!isConfirmedEdit && $can('sales_order.submit_confirmation')" size="small" type="success" @click="save(true)">提交确认</el-button>
+        <el-button v-if="!isConfirmedEdit && $can('sales_order.submit_confirmation')" size="small" type="primary" class="btn-emerald-primary" @click="save(true)">提交确认</el-button>
       </div>
     </div>
-
-    <el-alert class="top-tip" type="info" :closable="false" show-icon title="新增/编辑页只提供备货建议，不生成正式销售订单工单、不锁库存、不锁BOM；提交确认后进入订单生产确认，再执行库存备货确认、BOM/工艺路线/图纸锁定。" />
 
     <div class="form-layout">
       <main class="form-main">
         <div class="top-cards">
           <section ref="基本信息" class="panel order-basic-card">
-            <h3>订单基本信息</h3>
+            <div class="panel-header">
+              <i class="el-icon-document text-emerald" />
+              <h3>订单基本信息</h3>
+            </div>
             <div class="info-grid order-basic-grid">
               <label>订单号</label>
               <el-input :value="form.sales_order_no || '保存后系统生成'" size="small" disabled />
@@ -86,7 +90,10 @@ Do not change layout without approval.
           </section>
 
           <section ref="客户与收货" class="panel customer-card">
-            <h3>客户与收货</h3>
+            <div class="panel-header">
+              <i class="el-icon-user text-emerald" />
+              <h3>客户与收货</h3>
+            </div>
             <div class="info-grid two">
               <label class="required">客户</label>
               <div class="customer-select-field">
@@ -106,7 +113,7 @@ Do not change layout without approval.
                 <el-radio-button label="individual">个人客户</el-radio-button>
                 <el-radio-button label="enterprise">企业客户</el-radio-button>
               </el-radio-group>
-              <label>订单标签（只读）</label>
+              <label>订单标签</label>
               <el-input size="small" value="销售订单" disabled />
               <label>收货地址</label>
               <el-input v-model="form.full_address" type="textarea" :rows="2" placeholder="省 / 市 / 区 / 详细地址" />
@@ -116,17 +123,19 @@ Do not change layout without approval.
           </section>
 
           <section class="panel delivery-card">
-            <h3>生产与交付标识 <small>订单线汇总</small></h3>
+            <div class="panel-header">
+              <i class="el-icon-truck text-emerald" />
+              <h3>生产与交付标识</h3>
+            </div>
             <div class="flag-grid">
               <label>是否加急</label><el-switch v-model="form.is_urgent" />
               <label>是否延期</label><el-switch v-model="form.is_delay" />
               <label>延期发货日期</label><el-date-picker v-model="form.delay_date" size="small" value-format="yyyy-MM-dd" :disabled="!form.is_delay" />
               <label>要求交期</label><el-date-picker v-model="form.required_delivery_date" size="small" value-format="yyyy-MM-dd" />
-              <label>订单是否包含定制产品</label><el-tag size="small">{{ form.is_customized ? '是' : '否' }}</el-tag>
+              <label>包含定制</label><el-tag size="small" :type="form.is_customized ? 'warning' : 'info'">{{ form.is_customized ? '包含定制' : '标准产品' }}</el-tag>
               <label>订单行数</label><strong>{{ form.lines.length }} 行</strong>
               <label>待补资料</label><el-tag size="small" :type="missingDataCount ? 'warning' : 'success'">{{ missingDataCount }} 行</el-tag>
             </div>
-            <p class="panel-note">任意订单行定制为自动汇总，仅作汇总标识，不影响单行配置。</p>
           </section>
         </div>
 
@@ -136,86 +145,491 @@ Do not change layout without approval.
           :class="{ 'precheck-focus': $route.query.focus === 'lines' || String($route.query.focus || '').startsWith('lines.') }"
         >
           <div class="section-title">
-            <h3>订单行编辑 <small>仅提供备货建议，不生成任何正式业务单据</small></h3>
-            <div>
-              <el-button size="small" icon="el-icon-plus" @click="addLine">添加行</el-button>
-              <el-button size="small" icon="el-icon-document-copy" @click="copyLine">复制行</el-button>
+            <div class="title-meta">
+              <div class="title-main">
+                <i class="el-icon-s-order text-emerald" />
+                <h3>订单行明细</h3>
+                <span class="lines-count-pill">{{ form.lines.length }} 行</span>
+              </div>
+            </div>
+            <div class="title-action-btns">
+              <el-button size="small" type="primary" class="btn-emerald-primary" icon="el-icon-plus" @click="addLine">添加订单行</el-button>
+              <el-button size="small" icon="el-icon-document-copy" @click="copyLine">复制当前行</el-button>
             </div>
           </div>
-          <el-alert class="line-tip" type="info" :closable="false" title="正式说明：本页不锁库存，不能建生产工单，不锁BOM，不生成发货单。" />
-          <el-table :data="form.lines" border size="mini" highlight-current-row @current-change="selectLine">
-            <el-table-column label="行号" width="52" align="center">
-              <template slot-scope="{$index}">{{ $index + 1 }}</template>
-            </el-table-column>
-            <el-table-column label="产品名称" width="105">
-              <template slot-scope="{row}">
-                <el-button class="select-cell" size="mini" plain @click="openProductPicker(row)">{{ row.product_name || '选择Product' }}</el-button>
+          <el-table
+            ref="lineTable"
+            :data="form.lines"
+            row-key="line_uuid"
+            :expand-row-keys="expandedLineKeys"
+            border
+            size="small"
+            class="sales-order-table"
+            highlight-current-row
+            @current-change="selectLine"
+            @expand-change="handleLineExpand"
+          >
+            <el-table-column type="expand" width="46" align="center">
+              <template slot-scope="{row, $index}">
+                <div class="order-line-detail">
+                  <header class="studio-header">
+                    <div class="studio-header-left">
+                      <span class="studio-row-badge">行 {{ $index + 1 }}</span>
+                      <div class="studio-title-block">
+                        <strong class="studio-title">{{ row.product_name || '未选产品' }} · {{ row.sku_name || '未选规格' }}</strong>
+                        <span class="studio-spec-text">{{ row.spec_text_snapshot || '暂无规格快照' }}</span>
+                      </div>
+                    </div>
+                    <div class="studio-header-right">
+                      <div class="studio-stat-chip">
+                        <span class="stat-label">本行小计</span>
+                        <strong class="stat-val">¥{{ money(lineAmount(row)) }}</strong>
+                      </div>
+                      <el-button type="text" size="small" class="studio-collapse-btn" @click="expandedLineKeys = []">
+                        <i class="el-icon-arrow-up" /> 收起配置
+                      </el-button>
+                    </div>
+                  </header>
+
+                  <div class="studio-grid">
+                    <!-- Card 1: 核心产品与规格档案 -->
+                    <div class="studio-card product-card-section">
+                      <div class="card-header-bar">
+                        <div class="bar-title"><i class="el-icon-goods text-emerald" /> 核心产品与规格档案</div>
+                        <el-link class="product-link" type="primary" :underline="false">
+                          产品档案 <i class="el-icon-arrow-right" />
+                        </el-link>
+                      </div>
+                      <div class="studio-card-body">
+                        <div class="product-showcase-box">
+                          <div class="product-img-wrap">
+                            <img v-if="row.product_snapshot && row.product_snapshot.image" :src="legacyMediaUrl(row.product_snapshot.image)" alt="产品图片">
+                            <div v-else class="img-empty-box"><i class="el-icon-picture-outline" /></div>
+                          </div>
+                          <div class="product-meta-stack">
+                            <div class="product-code-row">
+                              <span class="code-badge">{{ row.product_code_snapshot || '未分配产品编码' }}</span>
+                              <el-tag size="mini" type="info" effect="plain">{{ (row.product_snapshot && row.product_snapshot.category_name) || '标准物料分类' }}</el-tag>
+                            </div>
+                            <div class="item-matching-banner">
+                              <span class="label">匹配物料：</span>
+                              <strong class="item-name">{{ row.item_name || '待系统匹配' }}</strong>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div class="studio-form-grid">
+                          <div class="form-field-group">
+                            <label>Product (产品)</label>
+                            <div class="studio-select-pill" @click="openProductPicker(row)">
+                              <span class="pill-text" :class="{ 'text-muted': !row.product_name }">{{ row.product_name || '点击选择 Product' }}</span>
+                              <i class="el-icon-edit-outline" />
+                            </div>
+                          </div>
+                          <div class="form-field-group">
+                            <label>SKU (规格)</label>
+                            <div class="studio-select-pill" @click="openSkuPicker(row)">
+                              <span class="pill-text" :class="{ 'text-muted': !row.sku_name }">{{ row.sku_name || '点击选择 SKU' }}</span>
+                              <i class="el-icon-edit-outline" />
+                            </div>
+                          </div>
+                          <div class="form-field-group full-span">
+                            <label>规格参数描述</label>
+                            <div class="spec-readout">{{ row.spec_text_snapshot || '—' }}</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Card 2: 数量、单价与约定 -->
+                    <div class="studio-card commercial-card-section">
+                      <div class="card-header-bar">
+                        <div class="bar-title"><i class="el-icon-money text-emerald" /> 数量与价格条款</div>
+                      </div>
+                      <div class="studio-card-body">
+                        <div class="commercial-grid">
+                          <div class="form-field-group">
+                            <label class="required">销售数量</label>
+                            <div class="input-with-unit-group">
+                              <el-input-number v-model="row.order_qty" size="small" :min="0.0001" :precision="4" controls-position="right" class="compact-input-number" @change="recalc" />
+                              <span class="input-unit-addon">{{ salesUnitName(row) }}</span>
+                            </div>
+                          </div>
+                          <div class="form-field-group">
+                            <label class="required">销售单价</label>
+                            <div class="input-with-addon-group">
+                              <span class="addon-prefix">¥</span>
+                              <el-input-number v-model="row.unit_price" size="small" :min="0" :precision="2" controls-position="right" class="compact-input-number" @change="recalc" />
+                            </div>
+                          </div>
+                          <div class="form-field-group">
+                            <label>报价有效期</label>
+                            <el-input v-model="row.configuration_snapshot.valid_days" size="small" placeholder="如 60 天" />
+                          </div>
+                          <div class="form-field-group">
+                            <label>行处理类型</label>
+                            <div class="line-type-chip-wrap">
+                              <el-tag size="small" :type="lineTypeTag(row.line_type)" effect="light">{{ lineTypeText(row.line_type) }}</el-tag>
+                            </div>
+                          </div>
+                          <div class="form-field-group full-span">
+                            <label>订单行备注</label>
+                            <el-input v-model="row.remark" size="small" placeholder="填写针对该行的特殊包装、备货或交付嘱咐" />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Card 3: 客户定制与属性 -->
+                    <div class="studio-card attributes-card-section">
+                      <div class="card-header-bar">
+                        <div class="bar-title"><i class="el-icon-set-up text-emerald" /> 订单行定制与电气配置</div>
+                      </div>
+                      <div class="studio-card-body">
+                        <div class="toggles-cluster">
+                          <div v-if="lineCapabilities(row).allow_customized" class="toggle-card">
+                            <div class="toggle-info">
+                              <span class="toggle-title">普通定制</span>
+                              <small class="toggle-desc">客户要求常规规格微调或非标要求</small>
+                            </div>
+                            <el-switch v-model="row.is_customized" active-color="#008b4b" @change="syncHeaderFlags" />
+                          </div>
+
+                          <div v-if="lineCapabilities(row).allow_special_customized" class="toggle-card" :class="{ 'is-active': row.is_special_customized }">
+                            <div class="toggle-info">
+                              <span class="toggle-title">特殊定制</span>
+                              <small class="toggle-desc">涉及结构变更或需专属技术协议</small>
+                            </div>
+                            <el-switch v-model="row.is_special_customized" active-color="#008b4b" @change="syncHeaderFlags" />
+                          </div>
+                        </div>
+
+                        <div v-if="row.is_special_customized && lineCapabilities(row).special_custom_description_required" class="special-desc-box">
+                          <label class="required">特殊定制配置说明</label>
+                          <el-input v-model="row.configuration_snapshot.special_custom_description" size="small" type="textarea" :rows="2" placeholder="请详细填写特殊定制配置说明（必填）" />
+                        </div>
+
+                        <div class="dropdowns-grid">
+                          <div v-if="lineSupportsElectric(row)" class="form-field-group">
+                            <label :class="{ required: lineElectricRequired(row) }">工作电压</label>
+                            <el-select v-model="row.electric" size="small" clearable placeholder="请选择电压">
+                              <el-option v-for="option in lineElectricOptions(row)" :key="option" :label="option" :value="option" />
+                            </el-select>
+                          </div>
+
+                          <div v-if="lineSupportsNeedPump(row)" class="form-field-group">
+                            <label :class="{ required: lineNeedPumpRequired(row) }">原水泵控制</label>
+                            <el-select v-model="row.need_pump" size="small" clearable placeholder="请选择">
+                              <el-option label="需要控制水泵" :value="true" />
+                              <el-option label="不需要控制水泵" :value="false" />
+                            </el-select>
+                          </div>
+
+                          <div v-if="lineCapabilities(row).delivery_inspection_required" class="form-field-group">
+                            <label>交付前检验</label>
+                            <el-tag size="small" type="warning" effect="dark">需要交付前检验</el-tag>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Studio Collapsible Extended Sections -->
+                  <div class="studio-subsections">
+                    <el-collapse v-model="detailSections" class="studio-collapse">
+                      <!-- Cut requirements -->
+                      <el-collapse-item name="cut">
+                        <template slot="title">
+                          <div class="collapse-title-inner">
+                            <i class="el-icon-scissors" />
+                            <span>生产长度下料要求</span>
+                            <span class="count-tag">{{ cutRequirements(row).length }} 项</span>
+                          </div>
+                        </template>
+                        <div class="sub-panel-body">
+                          <div class="cut-actions-bar">
+                            <el-button size="small" type="success" plain icon="el-icon-plus" @click="openCutItemPicker">选择长度下料 Item</el-button>
+                            <span class="bar-note">仅方管、型材等长度下料物料可添加定长分段</span>
+                          </div>
+                          <div v-if="cutRequirements(row).length" class="cut-items-grid">
+                            <div v-for="(cut, index) in cutRequirements(row)" :key="`${cut.component_item_id}-${index}`" class="cut-item-card">
+                              <div class="cut-item-header">
+                                <div class="cut-item-title">
+                                  <span class="code">{{ cut.component_item_code || `Item #${cut.component_item_id}` }}</span>
+                                  <span class="name">{{ cut.component_item_name || '长度下料物料' }}</span>
+                                </div>
+                                <el-button type="text" class="danger-link" icon="el-icon-delete" @click="removeCutRequirement(index)">删除</el-button>
+                              </div>
+                              <div class="cut-params-row">
+                                <div class="cut-param-field">
+                                  <label>每段长度</label>
+                                  <div class="input-unit">
+                                    <el-input-number v-model="cut.cut_length_mm" size="small" :min="0.01" :max="Number(cut.standard_stock_length_mm || 9999999999)" :precision="2" :controls="false" />
+                                    <span>mm</span>
+                                  </div>
+                                </div>
+                                <div class="cut-param-field">
+                                  <label>分段数量</label>
+                                  <div class="input-unit">
+                                    <el-input-number v-model="cut.piece_qty" size="small" :min="1" :precision="0" :controls="false" />
+                                    <span>段</span>
+                                  </div>
+                                </div>
+                                <div class="cut-param-field remark-field">
+                                  <label>工艺备注</label>
+                                  <el-input v-model.trim="cut.remark" size="small" maxlength="500" placeholder="下料工艺特殊备注（可选）" />
+                                </div>
+                              </div>
+                              <div class="cut-card-footer">
+                                <el-button size="mini" type="text" icon="el-icon-document-copy" @click="duplicateCutRequirement(index)">增加同一物料不同长度分段</el-button>
+                              </div>
+                            </div>
+                          </div>
+                          <div v-else class="cut-empty-state">
+                            <i class="el-icon-info text-muted" />
+                            <span>当前订单行尚未配置长度下料明细。普通物料无需下料；只有定长方管、型材等物料才需添加。</span>
+                          </div>
+                        </div>
+                      </el-collapse-item>
+
+                      <!-- Attachments -->
+                      <el-collapse-item name="attachments">
+                        <template slot="title">
+                          <div class="collapse-title-inner">
+                            <i class="el-icon-folder" />
+                            <span>设计图纸与技术资料</span>
+                            <span class="count-tag">{{ files(row).length }} 份</span>
+                          </div>
+                        </template>
+                        <div class="sub-panel-body">
+                          <div class="upload-studio-bar">
+                            <div class="upload-controls">
+                              <span class="label">资料类别：</span>
+                              <el-select v-model="fileCategory" size="small" class="category-select">
+                                <el-option label="设计图纸" value="设计图纸" />
+                                <el-option label="客户图纸" value="客户图纸" />
+                                <el-option label="技术协议" value="技术协议" />
+                                <el-option label="配置说明" value="配置说明" />
+                                <el-option label="其他技术附件" value="其他技术附件" />
+                              </el-select>
+                              <el-upload action="#" :auto-upload="false" :show-file-list="false" :on-change="addLineFile">
+                                <el-button size="small" type="primary" icon="el-icon-upload2" class="btn-emerald-primary">上传图纸 / 文件</el-button>
+                              </el-upload>
+                            </div>
+                            <div class="upload-tip">支持 PDF、CAD 导出图、图片、技术协议；特殊定制必传技术协议或图纸</div>
+                          </div>
+
+                          <div class="studio-file-table-wrap">
+                            <table class="studio-file-table">
+                              <thead>
+                                <tr>
+                                  <th style="width: 40%">文件名称</th>
+                                  <th style="width: 15%">版本</th>
+                                  <th style="width: 25%">附件分类</th>
+                                  <th style="width: 20%; text-align: center">操作</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <template v-if="files(row).length">
+                                  <tr v-for="(file, index) in files(row)" :key="file.uid + '-' + index">
+                                    <td>
+                                      <div class="file-name-cell">
+                                        <i class="el-icon-document file-icon" />
+                                        <span class="file-text" :title="file.file_name">{{ file.file_name }}</span>
+                                        <span v-if="file.is_main" class="main-file-pill">主图纸</span>
+                                      </div>
+                                    </td>
+                                    <td><span class="version-tag">V{{ index + 1 }}.0</span></td>
+                                    <td><span class="type-badge">{{ file.file_type }}</span></td>
+                                    <td class="action-cell">
+                                      <el-button v-if="file.can_preview === true" type="text" size="mini" @click.stop="previewAttachment(file)">预览</el-button>
+                                      <el-button v-if="file.can_download !== false" type="text" size="mini" @click.stop="downloadAttachment(file)">下载</el-button>
+                                      <el-button type="text" size="mini" @click.stop="setMainFile(index)">设为主图</el-button>
+                                      <el-button v-if="file.can_delete === true" type="text" size="mini" class="danger-link" @click.stop="removeLineFile(index)">删除</el-button>
+                                    </td>
+                                  </tr>
+                                </template>
+                                <tr v-else>
+                                  <td colspan="4" class="empty-table-cell">
+                                    <i class="el-icon-document-remove text-muted" /> 尚未上传本行图纸或技术附件
+                                  </td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </el-collapse-item>
+
+                      <!-- Unit conversion -->
+                      <el-collapse-item name="units">
+                        <template slot="title">
+                          <div class="collapse-title-inner">
+                            <i class="el-icon-refresh" />
+                            <span>单位换算与规格配比</span>
+                          </div>
+                        </template>
+                        <div class="sub-panel-body">
+                          <div v-if="lineNeedsItem(row)" class="conversion-cards-grid">
+                            <div class="stat-card">
+                              <span class="sc-label">默认库存物料</span>
+                              <strong class="sc-value">{{ row.item_name || '待系统匹配' }}</strong>
+                            </div>
+                            <div class="stat-card">
+                              <span class="sc-label">Item 基本单位</span>
+                              <strong class="sc-value">{{ itemBaseUnitName(row) }}</strong>
+                            </div>
+                            <div class="stat-card">
+                              <span class="sc-label">单位换算关系</span>
+                              <strong class="sc-value text-emerald">1 {{ salesUnitName(row) }} = {{ fulfillmentFactor(row) }} {{ itemBaseUnitName(row) }}</strong>
+                            </div>
+                            <div class="stat-card">
+                              <span class="sc-label">Item 基本需求量</span>
+                              <strong class="sc-value text-amber">{{ itemBaseRequiredQty(row) }} {{ itemBaseUnitName(row) }}</strong>
+                            </div>
+                          </div>
+                          <div v-else class="cut-empty-state">
+                            <i class="el-icon-check text-emerald" /> <span>该产品/规格无需 Item 换算。</span>
+                          </div>
+                        </div>
+                      </el-collapse-item>
+                    </el-collapse>
+                  </div>
+                </div>
               </template>
             </el-table-column>
-            <el-table-column label="SKU名称" width="105">
-              <template slot-scope="{row}">
-                <el-button class="select-cell" size="mini" plain @click="openSkuPicker(row)">{{ row.sku_name || '选择SKU' }}</el-button>
+
+            <el-table-column label="行号" width="56" align="center">
+              <template slot-scope="{$index}">
+                <span class="table-row-index">{{ $index + 1 }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="物料名称" width="90">
+
+            <el-table-column label="产品名称" min-width="140">
               <template slot-scope="{row}">
-                <span class="readonly-match">{{ row.item_name || '待系统匹配' }}</span>
+                <div class="cell-selector-card" :class="{ 'has-value': !!row.product_name }" @click="openProductPicker(row)" title="点击选择或更换 Product">
+                  <div class="cell-card-main">{{ row.product_name || '选择 Product' }}</div>
+                  <div v-if="row.product_code_snapshot" class="cell-card-sub">{{ row.product_code_snapshot }}</div>
+                </div>
               </template>
             </el-table-column>
-            <el-table-column label="数量及销售单位" width="118">
-              <template slot-scope="{row}"><div class="qty-unit-cell"><el-input v-model.number="row.order_qty" size="mini" @input="recalc" /><b>{{ salesUnitName(row) }}</b></div></template>
-            </el-table-column>
-            <el-table-column label="销售单价" width="80">
-              <template slot-scope="{row}"><el-input v-model.number="row.unit_price" size="mini" @input="recalc" /></template>
-            </el-table-column>
-            <el-table-column label="金额" width="80" align="right">
-              <template slot-scope="{row}">¥{{ money(lineAmount(row)) }}</template>
-            </el-table-column>
-            <el-table-column label="配置角标" width="80">
+
+            <el-table-column label="SKU 规格" min-width="150">
               <template slot-scope="{row}">
-                <el-tag v-if="row.is_customized" size="mini">定制</el-tag>
-                <el-tag v-if="row.electric" size="mini">{{ row.electric }}</el-tag>
-                <el-tag v-if="row.need_pump === true" size="mini" type="success">需要原水泵</el-tag>
-                <el-tag v-else-if="row.need_pump === false" size="mini" type="info">不需要原水泵</el-tag>
-                <span v-if="!row.is_customized && !row.electric && row.need_pump === null" class="dash">—</span>
+                <div class="cell-selector-card" :class="{ 'has-value': !!row.sku_name }" @click="openSkuPicker(row)" title="点击选择或更换 SKU">
+                  <div class="cell-card-main">{{ row.sku_name || '选择 SKU' }}</div>
+                  <div v-if="row.spec_text_snapshot" class="cell-card-sub">{{ row.spec_text_snapshot }}</div>
+                </div>
               </template>
             </el-table-column>
-            <el-table-column label="备货建议" width="78">
-              <template slot-scope="{row}"><el-tag size="mini" :type="lineTypeTag(row.line_type)">{{ lineTypeText(row.line_type) }}</el-tag></template>
-            </el-table-column>
-            <el-table-column label="BOM预检" width="82">
+
+            <el-table-column label="匹配物料" width="115">
               <template slot-scope="{row}">
-                <span v-if="row.line_type === 'service' || row.line_type === 'no_delivery'" class="dash">无需BOM</span>
-                <el-tag v-else-if="row.bom_snapshot && row.bom_snapshot.name" size="mini" type="success">就绪</el-tag>
-                <el-tag v-else size="mini" type="warning">待补充</el-tag>
+                <div class="match-item-cell" :title="row.item_name">
+                  <span class="match-dot" :class="row.item_match_status === 'matched' ? 'dot-green' : 'dot-gray'" />
+                  <span class="match-name">{{ row.item_name || '待系统匹配' }}</span>
+                </div>
               </template>
             </el-table-column>
-            <el-table-column label="设计图纸" width="96">
+
+            <el-table-column label="数量及单位" width="130">
+              <template slot-scope="{row}">
+                <div class="qty-unit-cell">
+                  <el-input v-model.number="row.order_qty" size="mini" class="table-inline-input text-right" @input="recalc" />
+                  <span class="table-unit-pill">{{ salesUnitName(row) }}</span>
+                </div>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="销售单价" width="105">
+              <template slot-scope="{row}">
+                <div class="price-input-cell">
+                  <span class="cell-currency">¥</span>
+                  <el-input v-model.number="row.unit_price" size="mini" class="table-inline-input" @input="recalc" />
+                </div>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="金额小计" width="115" align="right">
+              <template slot-scope="{row}">
+                <span class="table-amount-cell">¥{{ money(lineAmount(row)) }}</span>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="配置角标" width="115">
+              <template slot-scope="{row}">
+                <div class="table-badges-flex">
+                  <span v-if="row.is_customized" class="badge-chip chip-amber">定制</span>
+                  <span v-if="row.electric" class="badge-chip chip-blue">{{ row.electric }}</span>
+                  <span v-if="row.need_pump === true" class="badge-chip chip-emerald">原水泵</span>
+                  <span v-else-if="row.need_pump === false" class="badge-chip chip-slate">无水泵</span>
+                  <span v-if="!row.is_customized && !row.electric && row.need_pump === null" class="badge-chip-dash">—</span>
+                </div>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="履约类型" width="95" align="center">
+              <template slot-scope="{row}">
+                <el-tag size="mini" :type="lineTypeTag(row.line_type)" effect="light">{{ lineTypeText(row.line_type) }}</el-tag>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="BOM状态" width="85" align="center">
+              <template slot-scope="{row}">
+                <span v-if="row.line_type === 'service' || row.line_type === 'no_delivery'" class="dash-text">无需</span>
+                <el-tag v-else-if="row.bom_snapshot && row.bom_snapshot.name" size="mini" type="success" effect="plain">就绪</el-tag>
+                <el-tag v-else size="mini" type="warning" effect="plain">待补</el-tag>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="图纸资料" width="105" align="center">
               <template slot-scope="{row}">
                 <el-upload class="line-file-upload" action="#" :auto-upload="false" :show-file-list="false" :on-change="file => addLineFileForRow(file, row)">
-                  <el-button size="mini" plain>上传/管理 {{ files(row).length }}</el-button>
+                  <el-button size="mini" plain class="btn-file-count">
+                    <i class="el-icon-paperclip" /> {{ files(row).length }} 份
+                  </el-button>
                 </el-upload>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="92" align="center">
-              <template slot-scope="{$index,row}">
-                <div class="row-actions">
-                  <el-button type="text" size="mini" @click="selectedLine = row">编辑</el-button>
-                  <el-button type="text" size="mini" class="danger-link" @click="removeLine($index)">删除</el-button>
+
+            <el-table-column label="操作" width="115" align="center" fixed="right">
+              <template slot-scope="{$index, row}">
+                <div class="row-actions-modern">
+                  <el-button type="text" size="mini" class="btn-action-edit" @click="toggleLineDetail(row)">
+                    <i :class="expandedLineKeys.includes(row.line_uuid) ? 'el-icon-arrow-up' : 'el-icon-edit'" />
+                    {{ expandedLineKeys.includes(row.line_uuid) ? '收起' : '配置' }}
+                  </el-button>
+                  <el-button type="text" size="mini" class="btn-action-del" @click="removeLine($index)">删除</el-button>
                 </div>
               </template>
             </el-table-column>
           </el-table>
-          <div class="line-total">
-            <span>合计（行数：{{ form.lines.length }}）</span>
-            <b>{{ totalQty }} 件</b>
-            <b>¥{{ money(totalAmount) }}</b>
+
+          <div class="line-total-bar">
+            <div class="total-meta">
+              <span class="total-label">订单行明细汇总</span>
+              <span class="total-count-tag">{{ form.lines.length }} 行</span>
+            </div>
+            <div class="total-stats">
+              <div class="stat-item">
+                <span class="label">产品总数量：</span>
+                <strong class="val">{{ totalQty }}</strong>
+                <span class="unit">件</span>
+              </div>
+              <div class="stat-divider" />
+              <div class="stat-item">
+                <span class="label">订单行总额：</span>
+                <strong class="val-price">¥{{ money(totalAmount) }}</strong>
+              </div>
+            </div>
           </div>
         </section>
 
         <div class="bottom-grid">
           <section ref="提醒与共享" class="panel small-panel reminder-card">
-            <h3>提醒与共享</h3>
+            <div class="panel-header">
+              <i class="el-icon-bell text-emerald" />
+              <h3>提醒与共享</h3>
+            </div>
             <div class="reminder-form">
               <div class="reminder-row">
                 <div class="switch-field">
@@ -245,11 +659,13 @@ Do not change layout without approval.
                   <el-tag v-for="id in form.share_user" :key="id" size="mini" closable @close="removeShareUser(id)">{{ shareUserName(id) }}</el-tag>
                 </div>
               </div>
-              <p v-if="!remind.enabled && !form.is_share" class="reminder-empty-hint">开启提醒后显示提醒天数和内容；开启共享后通过“+ 选择人员”添加共享人。</p>
             </div>
           </section>
           <section ref="外贸物流" class="panel small-panel logistics-card">
-            <h3>外贸物流 <small>保留旧系统快递与费用字段</small></h3>
+            <div class="panel-header">
+              <i class="el-icon-ship text-emerald" />
+              <h3>外贸与物流</h3>
+            </div>
             <div class="logistics-grid">
               <div class="field-stack"><span>是否自提</span><el-switch v-model="form.shipping_snapshot.is_self_pickup" /></div>
               <div class="field-stack"><span>客户物流备注</span><el-input v-model="form.shipping_snapshot.customer_logistics_note" size="small" placeholder="客户指定承运方式、运输注意事项" /></div>
@@ -268,7 +684,10 @@ Do not change layout without approval.
             </div>
           </section>
           <section ref="合同附件" class="panel small-panel contract-card">
-            <h3>合同附件 <small>按类型归档</small></h3>
+            <div class="panel-header">
+              <i class="el-icon-collection text-emerald" />
+              <h3>合同附件</h3>
+            </div>
             <div class="contract-upload-grid">
               <el-upload action="#" :auto-upload="false" :show-file-list="false" :on-change="file => addContractFile(file, '合同图片 / PDF')">
                 <button type="button" class="upload-card">
@@ -281,175 +700,66 @@ Do not change layout without approval.
                 <button type="button" class="upload-card">
                   <i class="el-icon-upload2" />
                   <span>客户技术协议</span>
-                  <small>提交确认时上传</small>
+                  <small>技术协议文件</small>
                 </button>
               </el-upload>
               <el-upload action="#" :auto-upload="false" :show-file-list="false" :on-change="file => addContractFile(file, '订单附件')">
                 <button type="button" class="upload-card">
                   <i class="el-icon-upload2" />
                   <span>订单附件</span>
-                  <small>报价单 / 聊天记录 / 其他</small>
+                  <small>报价单 / 沟通凭单</small>
                 </button>
               </el-upload>
             </div>
             <div class="contract-meta">
-              <span>已上传 {{ contractFiles.length }} 个附件，随订单归档并参与提交校验。</span>
+              <span>已上传 {{ contractFiles.length }} 个合同附件</span>
               <el-button size="mini" plain icon="el-icon-folder-opened" @click="contractDialogVisible=true">查看附件清单</el-button>
             </div>
           </section>
         </div>
 
         <div class="final-grid">
-          <section class="summary-bar">
-            <div class="formula-cell">
-              <span>金额汇总 <small>销售单价口径</small></span>
-              <em><i class="el-icon-info" /> 订单金额 = Σ（数量 × 销售单价）</em>
+          <section class="summary-bar-modern">
+            <div class="summary-metric-card primary">
+              <span class="metric-label">订单总金额</span>
+              <div class="metric-value-wrap">
+                <span class="currency">¥</span>
+                <span class="amount">{{ money(totalAmount) }}</span>
+              </div>
             </div>
-            <div><span>订单金额</span><b>¥{{ money(totalAmount) }}</b></div>
-            <div><span>行数</span><b>{{ form.lines.length }} 行</b></div>
-            <div><span>需要生产行</span><b>{{ productionLineCount }} 行</b></div>
-            <div><span>库存直接备货行</span><b>{{ stockLineCount }} 行</b></div>
-            <div><span>待补资料行</span><b>{{ missingDataCount }} 行</b></div>
-          </section>
-          <section class="submit-check-card">
-            <h3><i class="el-icon-warning-outline" /> 提交确认校验 <small>必须 / 全量校验</small></h3>
-            <p :class="{ok: validationState.requiredOk}">{{ validationState.requiredOk ? '基础必填项已完成' : '基础必填项未完成：客户 / 销售 / 成交平台 / 付款方式 / 订单行Product与SKU' }}</p>
-            <p :class="{ok: validationState.lineOk}">{{ validationState.lineOk ? '订单行资料满足提交要求' : '当前订单行仍有待补资料或特殊定制附件未上传' }}</p>
+            <div class="summary-metric-card">
+              <span class="metric-label">订单总行数</span>
+              <div class="metric-value-wrap">
+                <span class="num">{{ form.lines.length }}</span>
+                <span class="unit">行</span>
+              </div>
+            </div>
+            <div class="summary-metric-card">
+              <span class="metric-label">需生产制造</span>
+              <div class="metric-value-wrap">
+                <span class="num text-emerald">{{ productionLineCount }}</span>
+                <span class="unit">行</span>
+              </div>
+            </div>
+            <div class="summary-metric-card">
+              <span class="metric-label">库存直发</span>
+              <div class="metric-value-wrap">
+                <span class="num text-blue">{{ stockLineCount }}</span>
+                <span class="unit">行</span>
+              </div>
+            </div>
+            <div class="summary-metric-card">
+              <span class="metric-label">待补齐资料</span>
+              <div class="metric-value-wrap">
+                <span class="num" :class="missingDataCount ? 'text-amber' : 'text-muted'">{{ missingDataCount }}</span>
+                <span class="unit">行</span>
+              </div>
+            </div>
           </section>
         </div>
       </main>
 
-      <aside class="line-drawer">
-        <div class="drawer-head">
-          <h2>行 {{ currentIndex + 1 }} 详情（{{ currentLineName }}）</h2>
-          <i class="el-icon-close" />
-        </div>
-        <template v-if="selectedLine">
-          <section>
-            <h3><b>1</b> 产品与SKU</h3>
-            <div class="product-card">
-              <div class="product-img"><img v-if="selectedLine.product_snapshot && selectedLine.product_snapshot.image" :src="legacyMediaUrl(selectedLine.product_snapshot.image)"><i v-else class="el-icon-picture-outline" /></div>
-              <dl>
-                <dt>Product</dt><dd><el-button class="select-cell" size="mini" plain @click="openProductPicker(selectedLine)">{{ selectedLine.product_name || '选择Product' }}</el-button></dd>
-                <dt>SKU</dt><dd><el-button class="select-cell" size="mini" plain @click="openSkuPicker(selectedLine)">{{ selectedLine.sku_name || '选择SKU' }}</el-button></dd>
-                <dt>规格</dt><dd>{{ selectedLine.spec_text_snapshot || '—' }}</dd>
-                <dt>匹配Item</dt><dd><el-tag size="mini" type="info">{{ selectedLine.item_name || '待系统匹配' }}</el-tag></dd>
-              </dl>
-            </div>
-            <el-link class="product-link" type="primary">查看产品档案 <i class="el-icon-arrow-right" /></el-link>
-          </section>
-          <section>
-            <h3><b>2</b> 数量与价格</h3>
-            <div class="drawer-grid">
-              <label>数量</label><div class="number-with-unit"><el-input-number v-model="selectedLine.order_qty" size="mini" :min="0.0001" :precision="4" controls-position="right" /><b>{{ salesUnitName(selectedLine) }}</b></div>
-              <label>销售单价</label><el-input-number v-model="selectedLine.unit_price" size="mini" :min="0" :precision="2" controls-position="right" />
-              <label>有效期</label><el-input v-model="selectedLine.configuration_snapshot.valid_days" size="mini" placeholder="60 天" />
-              <label>备注</label><el-input v-model="selectedLine.remark" size="mini" />
-            </div>
-          </section>
-          <section>
-            <h3><b>3</b> 单位换算信息 <small>（只读）</small></h3>
-            <div v-if="lineNeedsItem(selectedLine)" class="fulfillment-conversion-box">
-              <dl>
-                <dt>默认库存物料</dt><dd>{{ selectedLine.item_name || '待系统匹配' }}</dd>
-                <dt>Item基本单位</dt><dd>{{ itemBaseUnitName(selectedLine) }}</dd>
-                <dt>单位换算</dt><dd>1{{ salesUnitName(selectedLine) }} = {{ fulfillmentFactor(selectedLine) }}{{ itemBaseUnitName(selectedLine) }}</dd>
-                <dt>Item基本需求量</dt><dd>{{ itemBaseRequiredQty(selectedLine) }}{{ itemBaseUnitName(selectedLine) }}</dd>
-              </dl>
-            </div>
-            <el-alert v-else type="info" :closable="false" title="无需Item换算" />
-          </section>
-          <section>
-            <h3><b>4</b> 订单行属性 <small>仅记录本次客户要求，不匹配 SKU / Item / BOM / 工艺路线</small></h3>
-            <div class="drawer-grid">
-              <template v-if="lineCapabilities(selectedLine).allow_customized">
-                <label>普通定制</label><el-switch v-model="selectedLine.is_customized" @change="syncHeaderFlags" />
-              </template>
-              <template v-if="lineCapabilities(selectedLine).allow_special_customized">
-                <label>特殊定制</label><el-switch v-model="selectedLine.is_special_customized" @change="syncHeaderFlags" />
-                <template v-if="selectedLine.is_special_customized && lineCapabilities(selectedLine).special_custom_description_required">
-                  <label class="required">配置说明</label><el-input v-model="selectedLine.configuration_snapshot.special_custom_description" size="mini" placeholder="请填写特殊定制配置说明" />
-                </template>
-              </template>
-              <template v-if="lineSupportsElectric(selectedLine)">
-                <label :class="{ required: lineElectricRequired(selectedLine) }">电压</label>
-                <el-select v-model="selectedLine.electric" size="mini" clearable placeholder="未填写">
-                  <el-option v-for="option in lineElectricOptions(selectedLine)" :key="option" :label="option" :value="option" />
-                </el-select>
-              </template>
-              <template v-if="lineSupportsNeedPump(selectedLine)">
-                <label :class="{ required: lineNeedPumpRequired(selectedLine) }">原水泵控制</label>
-                <el-select v-model="selectedLine.need_pump" size="mini" clearable placeholder="未填写">
-                  <el-option label="需要" :value="true" />
-                  <el-option label="不需要" :value="false" />
-                </el-select>
-              </template>
-              <label>行类型</label><el-tag size="mini" :type="lineTypeTag(selectedLine.line_type)">{{ lineTypeText(selectedLine.line_type) }}</el-tag>
-              <template v-if="lineCapabilities(selectedLine).delivery_inspection_required">
-                <label>交付前检验</label><el-tag size="mini" type="warning">需要</el-tag>
-              </template>
-            </div>
-          </section>
-          <section>
-            <h3><b>5</b> 生产下料要求 <small>记录段数与每段长度，不新建长度 Item</small></h3>
-            <div class="cut-config-actions"><el-button size="mini" plain type="success" icon="el-icon-plus" @click="openCutItemPicker">选择长度下料 Item</el-button></div>
-            <div v-if="cutRequirements(selectedLine).length" class="cut-config-list">
-              <article v-for="(row,index) in cutRequirements(selectedLine)" :key="`${row.component_item_id}-${index}`">
-                <header><strong>{{ row.component_item_code || `Item #${row.component_item_id}` }} / {{ row.component_item_name || '长度下料物料' }}</strong><el-button type="text" class="danger-link" @click="removeCutRequirement(index)">删除</el-button></header>
-                <div><label>每段长度</label><el-input-number v-model="row.cut_length_mm" size="mini" :min="0.01" :max="Number(row.standard_stock_length_mm || 9999999999)" :precision="2" :controls="false" /><span>mm</span></div>
-                <div><label>段数</label><el-input-number v-model="row.piece_qty" size="mini" :min="1" :precision="0" :controls="false" /><span>段</span></div>
-                <el-input v-model.trim="row.remark" size="mini" maxlength="500" placeholder="下料/工艺备注（可选）" />
-                <el-button size="mini" type="text" @click="duplicateCutRequirement(index)">同一 Item 增加另一长度</el-button>
-              </article>
-            </div>
-            <el-alert v-else type="info" :closable="false" title="普通物料无需填写；只有方管、型材等长度下料类 Item 才能加入。" />
-          </section>
-          <section>
-            <h3><b>6</b> 设计图纸与技术资料</h3>
-            <div class="upload-row">
-              <el-select v-model="fileCategory" size="mini">
-                <el-option label="设计图纸" value="设计图纸" />
-                <el-option label="客户图纸" value="客户图纸" />
-                <el-option label="技术协议" value="技术协议" />
-                <el-option label="配置说明" value="配置说明" />
-                <el-option label="其他技术附件" value="其他技术附件" />
-              </el-select>
-              <el-upload action="#" :auto-upload="false" :show-file-list="false" :on-change="addLineFile">
-                <el-button size="mini" icon="el-icon-upload2">上传文件</el-button>
-              </el-upload>
-            </div>
-            <div class="file-table">
-              <strong>文件名称</strong><strong>版本</strong><strong>说明</strong><strong>操作</strong>
-              <template v-if="files(selectedLine).length">
-                <template v-for="(file,index) in files(selectedLine)">
-                  <span :key="file.uid + '-name'">{{ file.file_name }} <em v-if="file.is_main">主图纸</em></span>
-                  <span :key="file.uid + '-version'">V{{ index + 1 }}.0</span>
-                  <span :key="file.uid + '-type'">{{ file.file_type }}</span>
-                  <span :key="file.uid + '-actions'" class="file-actions">
-                    <a v-if="file.can_preview === true" @click.stop="previewAttachment(file)">预览</a>
-                    <a v-if="file.can_download !== false" @click.stop="downloadAttachment(file)">下载</a>
-                    <a @click.stop="setMainFile(index)">设为主图</a>
-                    <a v-if="file.can_delete === true" class="danger-link" @click.stop="removeLineFile(index)">删除</a>
-                  </span>
-                </template>
-              </template>
-              <template v-else>
-                <span class="empty-file-row">尚未上传订单行图纸或技术附件</span><span>-</span><span>提交确认前按定制口径校验</span><span><a>待补</a></span>
-              </template>
-            </div>
-            <div class="change-tip"><i class="el-icon-warning" /> 更换后的产品不需要电压配置，原配置将被清除。</div>
-          </section>
-          <section>
-            <h3><b>6</b> 备货建议</h3>
-            <div class="fulfill-box">
-              <p>建议处理方式：<el-tag size="mini">{{ lineTypeText(selectedLine.line_type) }}</el-tag></p>
-              <p>Item匹配：{{ selectedLine.item_name || '待系统匹配' }}，订单新增页只显示建议，不允许销售手工指定。</p>
-              <p>库存备货数量：提交确认后由库存模块按 Item / 仓库 / 库位 / 批次 / 检验 / 冻结 / 占用状态计算。</p>
-              <p>生产安排数量：仅库存不足的制造数量进入后续工单契约。</p>
-            </div>
-          </section>
-        </template>
-      </aside>
+
     </div>
 
     <el-dialog title="选择共享人" :visible.sync="shareDialogVisible" width="520px" append-to-body>
@@ -496,6 +806,7 @@ Do not change layout without approval.
 </template>
 
 <script>
+import cachedPageRoute from '@/utils/cachedPageRoute'
 import ProductSkuPicker from '@/components/sales/ProductSkuPicker.vue'
 import SalesOrderAttachmentPreviewDialog from '@/components/sales/SalesOrderAttachmentPreviewDialog.vue'
 import OrderEditImpactDialog from '@/components/sales/OrderEditImpactDialog.vue'
@@ -536,9 +847,12 @@ const emptyLine = () => ({
 })
 
 export default {
+  mixins: [cachedPageRoute],
   components: { ProductSkuPicker, CustomerPicker, PurchaseItemPicker, SalesOrderAttachmentPreviewDialog, OrderEditImpactDialog },
   data: () => ({
     selectedLine: null,
+    expandedLineKeys: [],
+    detailSections: [],
     fileCategory: '设计图纸',
     remind: { enabled: false, days: 3, content: '' },
     customerRawText: '',
@@ -606,8 +920,11 @@ export default {
     }
   }),
   computed: {
+    requiredOpenSections() {
+      return this.selectedLine ? this.requiredDetailSections(this.selectedLine) : []
+    },
     isEdit() {
-      return Boolean(this.$route.params.id)
+      return Boolean(this.pageRoute.params.id)
     },
     isConfirmedEdit() {
       return this.isEdit && this.editOrderMeta && this.editOrderMeta.order_status === 'confirmed'
@@ -670,11 +987,17 @@ export default {
     if (this.isEdit) await this.load()
     else await this.reserveSalesOrderNumber()
     if (!this.selectedLine) this.selectedLine = this.form.lines[0]
-    if (process.env.NODE_ENV !== 'production' && this.$route.query.impact_preview === 'master') this.impactDialogVisible = true
+    if (process.env.NODE_ENV !== 'production' && this.pageRoute.query.impact_preview === 'master') this.impactDialogVisible = true
     this.$nextTick(() => window.setTimeout(() => this.focusRequestedField(), 300))
   },
   watch: {
-    '$route.params.id': {
+    selectedLine(row) {
+      if (!row || !this.expandedLineKeys.includes(row.line_uuid)) this.expandedLineKeys = []
+    },
+    requiredOpenSections(sections) {
+      if (this.expandedLineKeys.length) this.detailSections = [...new Set([...this.detailSections, ...sections])]
+    },
+    'pageRoute.params.id': {
       async handler() {
         if (this.isEdit) {
           await this.load()
@@ -685,7 +1008,7 @@ export default {
         }
       }
     },
-    '$route.query.focus'() {
+    'pageRoute.query.focus'() {
       this.$nextTick(() => window.setTimeout(() => this.focusRequestedField(), 100))
     }
   },
@@ -756,7 +1079,7 @@ export default {
     },
     async load() {
       try {
-      const { data } = await getSalesOrder(this.$route.params.id)
+      const { data } = await getSalesOrder(this.pageRoute.params.id)
       this.editOrderMeta = data
       this.form = {
         ...this.form,
@@ -794,6 +1117,7 @@ export default {
       this.selectedLine = this.form.lines[0] || null
       return true
       } catch (error) {
+        if (!this.isPageRouteActive) return false
         const status = error && error.response && error.response.status
         this.$message.error(status === 404 ? '订单不存在或已被删除，已返回订单列表' : '订单加载失败，请稍后重试')
         this.$router.replace('/sales/orders')
@@ -822,7 +1146,41 @@ export default {
       this.syncHeaderFlags()
     },
     selectLine(row) {
+      if (row) this.selectedLine = row
+    },
+    requiredDetailSections(row) {
+      const sections = []
+      if (this.lineCutMessage(row)) sections.push('cut')
+      if (/协议|图纸/.test(this.lineCustomizationMessage(row))) sections.push('attachments')
+      return sections
+    },
+    handleLineExpand(row, expandedRows) {
+      if (expandedRows.includes(row)) this.openLineDetail(row)
+      else this.expandedLineKeys = []
+    },
+    showLineError(row, message, section) {
+      this.openLineDetail(row, section)
+      this.$message.error(`订单行 ${this.form.lines.indexOf(row) + 1}：${message}`)
+    },
+    toggleLineDetail(row, section) {
+      if (!row) return
+      if (this.expandedLineKeys.includes(row.line_uuid)) {
+        this.expandedLineKeys = []
+      } else {
+        this.openLineDetail(row, section)
+      }
+    },
+    openLineDetail(row, section) {
+      if (!row) return
       this.selectedLine = row
+      this.expandedLineKeys = [row.line_uuid]
+      this.detailSections = [...new Set([...this.requiredDetailSections(row), ...(section ? [section] : [])])]
+      this.$nextTick(() => {
+        const table = this.$refs.lineTable
+        if (table && table.bodyWrapper) table.bodyWrapper.scrollLeft = 0
+        const detail = table && table.$el.querySelector('.order-line-detail')
+        if (detail) detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+      })
     },
     applyCustomer(row) {
       const contact = (row.contacts || []).find(item => item.is_default) || (row.contacts || [])[0] || null
@@ -955,6 +1313,7 @@ export default {
       line.electric = ''
       line.need_pump = null
       this.syncHeaderFlags()
+      this.$nextTick(() => this.openLineDetail(line))
     },
     salesUnitName(line) {
       const snapshot = line && line.sku_snapshot
@@ -1021,7 +1380,8 @@ export default {
       return result
     },
     focusRequestedField() {
-      const field = String(this.$route.query.focus || '')
+      if (!this.isPageRouteActive) return
+      const field = String(this.pageRoute.query.focus || '')
       if (!field) return
       let selector = '.order-basic-card'
       if (field === 'customer') selector = '.customer-card'
@@ -1030,7 +1390,7 @@ export default {
       const lineMatch = field.match(/^lines\.(\d+)\./)
       if (lineMatch) {
         const line = this.form.lines[Number(lineMatch[1]) - 1]
-        if (line) this.selectedLine = line
+        if (line) this.openLineDetail(line)
       }
       const target = this.$el.querySelector(selector)
       if (target) {
@@ -1108,7 +1468,7 @@ export default {
       if (address) this.form.full_address = address
     },
     addLineFileForRow(file, row) {
-      this.selectedLine = row
+      this.openLineDetail(row, 'attachments')
       return this.addLineFile(file)
     },
     async addLineFile(file) {
@@ -1308,7 +1668,6 @@ export default {
       if (!line.is_special_customized) return ''
       const sku = this.lineCapabilities(line)
       const files = this.files(line)
-      if (sku.special_custom_drawing_required && !files.some(file => ['设计图纸', '客户图纸'].includes(file.file_type))) return '特殊定制缺少设计图纸'
       if (sku.special_custom_agreement_required && !files.some(file => file.file_type === '技术协议')) return '特殊定制缺少客户技术协议'
       if (sku.special_custom_description_required && !String((line.configuration_snapshot || {}).special_custom_description || '').trim()) return '请填写特殊定制配置说明'
       return ''
@@ -1380,10 +1739,10 @@ export default {
       if (this.impactPreview.requiresApproval && !String(this.impactReason || '').trim()) return this.$message.error('请填写本次修改的变更原因')
       this.impactSubmitting = true
       try {
-        const { data } = await submitSalesOrderEditImpact(this.$route.params.id, { ...this.impactPayload, change_reason: this.impactReason })
+        const { data } = await submitSalesOrderEditImpact(this.pageRoute.params.id, { ...this.impactPayload, change_reason: this.impactReason })
         this.$message.success(data.message || '订单修改已处理')
         this.impactDialogVisible = false
-        this.$router.push(`/sales/orders/${this.$route.params.id}/detail`)
+        this.$router.push(`/sales/orders/${this.pageRoute.params.id}/detail`)
       } finally { this.impactSubmitting = false }
     },
     async save(andConfirm) {
@@ -1396,11 +1755,11 @@ export default {
       if (andConfirm && !this.form.carrier_id) return this.$message.error('提交确认前必须先选择快递')
       if (andConfirm && this.form.lines.some(line => Number(line.unit_price || 0) <= 0)) return this.$message.error('提交确认前，订单行销售单价必须大于 0')
       const invalidAttribute = this.form.lines.find(line => this.lineAttributeMessage(line))
-      if (andConfirm && invalidAttribute) return this.$message.error(`订单行 ${this.form.lines.indexOf(invalidAttribute) + 1}：${this.lineAttributeMessage(invalidAttribute)}`)
+      if (andConfirm && invalidAttribute) return this.showLineError(invalidAttribute, this.lineAttributeMessage(invalidAttribute))
       const invalidCustomization = this.form.lines.find(line => this.lineCustomizationMessage(line))
-      if (andConfirm && invalidCustomization) return this.$message.error(`订单行 ${this.form.lines.indexOf(invalidCustomization) + 1}：${this.lineCustomizationMessage(invalidCustomization)}`)
+      if (andConfirm && invalidCustomization) return this.showLineError(invalidCustomization, this.lineCustomizationMessage(invalidCustomization))
       const invalidCut = this.form.lines.find(line => this.lineCutMessage(line))
-      if (invalidCut) return this.$message.error(`订单行 ${this.form.lines.indexOf(invalidCut) + 1}：${this.lineCutMessage(invalidCut)}`)
+      if (invalidCut) return this.showLineError(invalidCut, this.lineCutMessage(invalidCut), 'cut')
       this.syncHeaderFlags()
       const carrier = this.carrierOptions.find(item => String(item.id) === String(this.form.carrier_id))
       const payload = {
@@ -1440,7 +1799,7 @@ export default {
         }))
       }
       if (this.isConfirmedEdit) {
-        const { data } = await previewSalesOrderEditImpact(this.$route.params.id, payload)
+        const { data } = await previewSalesOrderEditImpact(this.pageRoute.params.id, payload)
         const impact = data.data
         if (!impact || Number(impact.change_count || 0) === 0) {
           this.impactPayload = null
@@ -1467,7 +1826,7 @@ export default {
       } else {
         this.$message.success('订单草稿已保存')
         const editPath = `/sales/orders/${id}/edit`
-        if (this.$route.path !== editPath) {
+        if (this.pageRoute.path !== editPath) {
           this.$router.push(editPath)
         }
       }
@@ -1489,129 +1848,1600 @@ export default {
 </script>
 
 <style scoped>
-.sales-form-page{position:relative;z-index:5;margin-top:-52px;min-height:100vh;background:#f7f8fa;color:#172033}.form-toolbar{height:52px;padding:0 20px;display:flex;align-items:center;justify-content:space-between;background:#fff;border-bottom:1px solid #e5e9ef}.page-title{display:flex;align-items:center;gap:12px;font-size:18px;font-weight:700}.back-btn{border:0;background:transparent;font-size:20px;cursor:pointer}.toolbar-actions{display:flex;gap:10px}.top-tip{margin:10px 14px}.form-tabs{height:40px;padding:0 18px;display:flex;gap:28px;background:#fff;border-bottom:1px solid #e5e9ef}.form-tabs button{border:0;background:transparent;border-bottom:2px solid transparent;font-weight:600;color:#475569;cursor:pointer}.form-tabs button.active{color:#00984f;border-color:#00984f}.form-layout{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:12px;padding:12px}.top-cards{display:grid;grid-template-columns:1.05fr 1.05fr .95fr;gap:10px}.panel{min-width:0;background:#fff;border:1px solid #e4e9f0;border-radius:5px}.panel h3{margin:0;padding:14px 16px 10px;font-size:15px}.panel h3 small{font-size:12px;color:#8b96a5;font-weight:400}.info-grid{padding:0 16px 16px;display:grid;grid-template-columns:90px minmax(0,1fr) 82px;gap:10px;align-items:center}.info-grid.two{grid-template-columns:110px minmax(0,1fr)}.info-grid label,.flag-grid label{font-weight:600;color:#455466}.required::before{content:'*';color:#f5222d;margin-right:4px}.flag-grid{padding:0 16px 10px;display:grid;grid-template-columns:120px minmax(0,1fr);gap:12px;align-items:center}.panel-note{margin:0 16px 14px;color:#8b96a5}.order-lines{margin-top:10px}.section-title{padding:12px 16px;display:flex;align-items:center;justify-content:space-between}.section-title h3{padding:0}.line-tip{margin:0 16px 10px;width:auto}.line-total{height:42px;padding:0 14px;display:flex;align-items:center;gap:42px;border-top:1px solid #edf0f4}.line-total span{margin-right:auto}.dash{color:#94a3b8}.danger-link{color:#dc2626}.select-cell{width:100%;overflow:hidden;text-overflow:ellipsis}.readonly-match{color:#64748b}.bottom-grid{margin-top:10px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}.small-panel{min-height:116px}.inline-form{padding:0 16px 14px;display:grid;grid-template-columns:auto auto auto auto;gap:10px;align-items:center}.logistics-grid{padding:0 16px 14px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}.attachment-row{padding:0 16px 14px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}.attachment-row div{height:68px;border:1px dashed #d8e0ea;border-radius:5px;display:grid;place-items:center;text-align:center;color:#64748b}.attachment-row i{font-size:18px;color:#00984f}.attachment-row small{display:block;font-size:11px;color:#94a3b8}.summary-bar{margin-top:10px;height:70px;background:#fff;border:1px solid #e4e9f0;border-radius:5px;display:grid;grid-template-columns:1.5fr repeat(4,1fr)}.summary-bar div{padding:14px 18px;border-right:1px solid #edf0f4}.summary-bar div:last-child{border-right:0}.summary-bar span{display:block;color:#64748b}.summary-bar b{font-size:22px;color:#0f172a}.line-drawer{background:#fff;border:1px solid #e4e9f0;border-radius:5px;align-self:start;position:sticky;top:64px}.drawer-head{height:50px;padding:0 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #e4e9f0}.drawer-head h2{font-size:16px;margin:0}.line-drawer section{padding:14px;border-bottom:1px solid #edf0f4}.line-drawer h3{margin:0 0 12px;font-size:14px}.line-drawer h3 b{display:inline-grid;place-items:center;width:18px;height:18px;margin-right:6px;border-radius:4px;background:#00984f;color:#fff}.product-card{display:grid;grid-template-columns:86px 1fr;gap:12px}.product-img{height:86px;border:1px solid #e4e9f0;border-radius:5px;display:grid;place-items:center;color:#94a3b8;font-size:30px}.product-img img{max-width:100%;max-height:100%;object-fit:cover}.product-card dl,.drawer-grid{display:grid;grid-template-columns:74px 1fr;gap:9px;align-items:center}.product-card dt{color:#64748b}.product-card dd{margin:0}.fulfill-box{padding:10px;background:#f8fafc;border:1px solid #e4e9f0;border-radius:5px;color:#475569}.upload-row{display:grid;grid-template-columns:1fr auto;gap:8px;margin-bottom:10px}.file-table{display:grid;grid-template-columns:minmax(0,1fr) 34px 34px 58px 34px;gap:8px;align-items:center}.file-table span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.file-table small{display:block;color:#94a3b8}.file-table em{font-style:normal;margin-left:4px;color:#00984f}.file-table a{color:#2563eb;cursor:pointer}.empty-files{padding:10px;border:1px dashed #d8e0ea;border-radius:5px;color:#94a3b8;text-align:center}.sales-form-page :deep(.el-button--success){background:#00984f;border-color:#00984f}.precheck-focus{outline:2px solid #f59e0b;outline-offset:2px;transition:outline-color .25s ease}.sales-form-page :deep(.el-input-number--mini){width:86px}.sales-form-page :deep(.el-table th){background:#f8fafc;color:#334155}.cut-config-actions{margin-bottom:8px}.cut-config-list{display:grid;gap:8px}.cut-config-list article{padding:9px;border:1px solid #dbe8df;border-radius:4px;background:#f8fcf9}.cut-config-list header{display:flex;align-items:center;justify-content:space-between;gap:8px}.cut-config-list article>div{display:grid;grid-template-columns:70px 1fr 28px;align-items:center;gap:6px;margin:6px 0}.cut-config-list article :deep(.el-input-number--mini){width:100%}@media(max-width:1400px){.top-cards{grid-template-columns:1fr}.form-layout{grid-template-columns:1fr}.line-drawer{position:static}.bottom-grid{grid-template-columns:1fr}.summary-bar{grid-template-columns:1fr 1fr}}
-.sales-form-page :deep(.el-input-number--mini){width:68px}.sales-form-page .line-drawer :deep(.el-input-number--mini){width:96px}.sales-form-page :deep(.el-table){font-size:12px}.sales-form-page :deep(.el-table .cell){padding-left:6px;padding-right:6px;line-height:18px}.sales-form-page :deep(.el-table--mini td),.sales-form-page :deep(.el-table--mini th){padding:6px 0}.sales-form-page :deep(.el-table .el-button--mini){padding:5px 6px;font-size:12px}.order-lines :deep(.el-input--mini .el-input__inner){height:28px;line-height:28px;padding:0 7px}
-.inline-selects{display:grid;grid-template-columns:1fr 1fr;gap:8px}.inline-selects .el-select:only-child{grid-column:1 / -1}.inline-form{grid-template-columns:auto auto auto minmax(100px,1fr);grid-auto-rows:32px}.inline-form .el-select{min-width:180px}.logistics-grid{grid-template-columns:1fr 1fr 1fr;row-gap:8px}.field-stack{min-width:0;display:grid;gap:4px}.field-stack span{font-size:12px;font-weight:600;color:#64748b}.field-stack .el-select{width:100%}.small-panel{min-height:142px}
-.final-grid{margin-top:10px;display:grid;grid-template-columns:minmax(0,1.55fr) minmax(430px,.95fr);gap:10px;align-items:stretch}.summary-bar{margin-top:0;min-height:78px;height:auto;grid-template-columns:1.1fr repeat(5,minmax(86px,1fr));overflow:hidden}.summary-bar .formula-cell{background:#fff}.formula-cell span small{margin-left:6px;color:#9aa3ac;font-weight:400}.formula-cell em{display:inline-flex;align-items:center;gap:5px;margin-top:7px;padding:4px 8px;border-radius:3px;background:#eaf7ef;color:#07883f;font-style:normal;white-space:normal}.summary-bar div{display:flex;flex-direction:column;justify-content:center;padding:10px 14px}.summary-bar b{font-size:20px;line-height:1.2}.submit-check-card{min-height:78px;height:auto;padding:12px 14px;background:#fff;border:1px solid #e4e9f0;border-radius:5px}.submit-check-card h3{display:flex;align-items:center;gap:6px;margin:0 0 7px;font-size:14px}.submit-check-card h3 i{color:#f59e0b}.submit-check-card h3 small{font-weight:400;color:#8b96a5}.submit-check-card p{margin:3px 0;color:#d97706}.submit-check-card p.ok{color:#07883f}.product-link{display:block;margin-top:10px;text-align:right}.upload-row{grid-template-columns:1fr auto auto}.file-table{display:grid;grid-template-columns:minmax(0,1.35fr) 42px 78px minmax(118px,auto);gap:0;border:1px solid #e4e9f0;border-bottom:0;font-size:11px}.file-table>*{min-height:28px;padding:6px 7px;border-right:1px solid #e4e9f0;border-bottom:1px solid #e4e9f0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.file-table>*:nth-child(4n){border-right:0}.file-table strong{background:#f8fafc;color:#526176;font-weight:600}.file-actions{display:flex;gap:6px}.empty-file-row{color:#94a3b8}.change-tip{margin-top:10px;padding:8px 10px;border:1px solid #f6d7a8;background:#fff7ed;color:#ad5b00;border-radius:4px}.change-tip i{margin-right:5px}.drawer-head i{cursor:pointer;color:#64748b}
-@media(max-width:1400px){.final-grid{grid-template-columns:1fr}.summary-bar{grid-template-columns:1fr 1fr}.submit-check-card{height:auto}}
-
-/* Phase 6 order add/edit image-to-code correction: remove fake tabs, tighten ERP density */
-.sales-form-page{max-width:100%;overflow-x:hidden}
-.form-main{min-width:0}
-.form-layout{grid-template-columns:minmax(0,1fr) 365px;padding:10px 12px 14px;gap:10px;max-width:100%;overflow-x:hidden}
-.top-cards{grid-template-columns:1.15fr 1fr .92fr;align-items:stretch;gap:10px}
-.top-cards .panel{display:flex;flex-direction:column;min-height:248px}
-.panel h3{padding:12px 14px 8px}
-.order-basic-card .info-grid{grid-template-columns:86px minmax(0,1fr) 76px;gap:8px;padding:0 14px 12px}
-.customer-card .info-grid.two{grid-template-columns:96px minmax(0,1fr);gap:8px;padding:0 14px 12px}
-.customer-select-field{display:grid;grid-template-columns:minmax(0,1fr) 84px;gap:8px;align-items:center}
-.customer-kind-radios{display:flex;min-width:0}.customer-kind-radios :deep(.el-radio-button__inner){padding:7px 10px;font-size:11px}
-.customer-card :deep(.el-textarea__inner){min-height:52px!important}
-.delivery-card .flag-grid{grid-template-columns:96px minmax(0,1fr);gap:8px;padding:0 14px 8px}
-.delivery-card .panel-note{margin-top:auto;padding-top:6px;border-top:1px dashed #e5e9ef}
-.info-grid label,.flag-grid label{font-size:12px;color:#475569}
-.info-grid :deep(.el-input__inner),.flag-grid :deep(.el-input__inner),.logistics-grid :deep(.el-input__inner){height:31px;line-height:31px}
-.order-lines{margin-top:10px}
-.order-lines :deep(.el-table){width:100%!important}
-.order-lines :deep(.el-table__body),.order-lines :deep(.el-table__header){width:100%!important}
-.order-lines :deep(.el-table__empty-block){width:100%!important}
-.section-title{padding:10px 14px}
-.section-title>div{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
-.line-tip{margin:0 14px 8px}
-.bottom-grid{grid-template-columns:.95fr 1.2fr 1fr;gap:10px}
-.small-panel{min-height:188px}
-.reminder-grid{padding:0 14px 14px;display:grid;grid-template-columns:78px minmax(120px,1fr) 88px minmax(120px,1fr);gap:10px 12px;align-items:center}
-.reminder-grid label{font-size:12px;font-weight:600;color:#475569}
-.reminder-grid .el-textarea{grid-column:2 / 5}
-.reminder-grid .el-select{grid-column:2 / 5}
-.reminder-form{padding:0 14px 14px;display:grid;gap:10px}
-.reminder-row{display:grid;grid-template-columns:minmax(150px,1fr) minmax(190px,1.15fr);gap:14px;align-items:center}
-.switch-field,.days-field,.share-user-line{display:flex;align-items:center;gap:8px;min-width:0}
-.switch-field span,.days-field span,.share-user-line>span,.reminder-content>span{font-size:12px;font-weight:600;color:#475569;white-space:nowrap}
-.switch-field em,.days-field em{font-style:normal;color:#64748b;font-size:12px}
-.days-field :deep(.el-input-number--small){width:92px}
-.reminder-content{display:grid;grid-template-columns:76px minmax(0,1fr);gap:8px;align-items:start}
-.share-switch-line{margin-top:2px}
-.share-user-line{align-items:flex-start}
-.select-share-btn{height:30px;padding:0 10px;border:1px solid #d8e0ea;border-radius:4px;background:#fff;color:#334155;cursor:pointer}
-.select-share-btn:hover{border-color:#00984f;color:#00984f;background:#f2fbf6}
-.select-share-btn i{color:#00984f}
-.share-picker-inline{grid-column:2 / 5;display:flex;align-items:center;gap:8px;min-width:0}
-.plus-share-btn{width:30px;height:30px;border:1px solid #cfe4d7;border-radius:4px;background:#f2fbf6;color:#07883f;cursor:pointer}
-.plus-share-btn:hover{background:#e5f7ec;border-color:#07883f}
-.share-chip-list{min-height:30px;flex:1;display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:3px 8px;border:1px solid #e2e8f0;border-radius:4px;background:#fff}
-.share-chip-list span{color:#94a3b8}
-.reminder-empty-hint{grid-column:1 / -1;margin:4px 0 0;padding:9px 10px;border:1px dashed #d8e0ea;border-radius:5px;background:#fbfdff;color:#8a96a6}
-.share-dialog-body{display:grid;gap:12px}
-.share-user-list{max-height:320px;overflow:auto;border:1px solid #e4e9f0;border-radius:4px;padding:8px 10px;display:grid;grid-template-columns:1fr 1fr;gap:6px 12px}
-.share-user-list .el-checkbox{margin:0;padding:8px;border-radius:4px}
-.share-user-list .el-checkbox:hover{background:#f8fafc}
-.share-user-list span,.share-user-list small{display:block}
-.share-user-list small{margin-top:2px;color:#94a3b8;font-size:11px}
-.logistics-grid{padding:0 14px 14px;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
-.logistics-card .field-stack span{line-height:18px}
-.logistics-card :deep(.el-date-editor.el-input){width:100%}
-.contract-upload-grid{padding:0 14px 10px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
-.contract-upload-grid :deep(.el-upload){display:block;width:100%}
-.contract-upload-grid .el-upload{display:block;width:100%}
-.upload-card{height:78px;border:1px dashed #d4dde8;border-radius:6px;background:#fbfdff;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:#506070;cursor:pointer}
-.upload-card{width:100%}
-.upload-card:hover{border-color:#00984f;background:#f2fbf6}
-.upload-card i{font-size:18px;color:#00984f}
-.upload-card span{font-weight:600;font-size:12px}
-.upload-card small{font-size:11px;color:#93a0af}
-.contract-meta{margin:0 14px 14px;padding:8px 10px;border-radius:5px;background:#f8fafc;border:1px solid #e7ebf1;display:flex;align-items:center;justify-content:space-between;gap:8px;color:#64748b;font-size:12px}
-.line-drawer{width:365px;min-width:0}
-.line-drawer section{padding:11px 13px}
-.drawer-head{height:46px}
-.drawer-head h2{font-size:15px;max-width:310px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.product-card{grid-template-columns:76px 1fr;gap:10px}
-.product-img{height:76px;font-size:26px}
-.product-card dl,.drawer-grid{grid-template-columns:70px minmax(0,1fr);gap:7px}
-.line-drawer h3{margin-bottom:9px}
-.line-drawer .fulfill-box p{margin:6px 0;line-height:1.45}
-.final-grid{grid-template-columns:minmax(0,1.45fr) minmax(440px,.95fr)}
-.row-actions{display:flex;align-items:center;justify-content:center;gap:8px;white-space:nowrap}
-.line-file-upload{display:block}
-.line-file-upload :deep(.el-upload){width:100%}
-.qty-unit-cell,.number-with-unit{display:flex;align-items:center;gap:6px}.qty-unit-cell .el-input{min-width:0}.qty-unit-cell b,.number-with-unit b{white-space:nowrap;color:#475569}.fulfillment-conversion-box{padding:10px;background:#f5f8fc;border:1px solid #e1e7ef;border-radius:5px}.fulfillment-conversion-box dl{margin:0;display:grid;grid-template-columns:104px 1fr;gap:9px}.fulfillment-conversion-box dt{color:#64748b}.fulfillment-conversion-box dd{margin:0;color:#26354d;font-weight:600}
-@media(max-width:1500px){.top-cards{grid-template-columns:1fr}.top-cards .panel{min-height:auto}.bottom-grid{grid-template-columns:1fr}.form-layout{grid-template-columns:1fr}.line-drawer{position:static;width:auto}}
-/* Keep the image-to-code desktop composition at common laptop/desktop widths. */
-@media (min-width:1101px) and (max-width:1500px){
-  .form-layout{grid-template-columns:minmax(0,1fr) 365px!important}
-  .top-cards{grid-template-columns:1.15fr 1fr .92fr!important}
-  .bottom-grid{grid-template-columns:.95fr 1.2fr 1fr!important}
-  .line-drawer{position:sticky!important;width:365px!important}
-  .final-grid{grid-template-columns:minmax(0,1.45fr) minmax(440px,.95fr)!important}
+/* ==========================================================================
+   销售订单创建/编辑 - 现代化企业级视觉规范
+   ========================================================================== */
+.sales-form-page {
+  position: relative;
+  z-index: 5;
+  min-height: 100vh;
+  background: #f8fafc;
+  color: #0f172a;
+  max-width: 100%;
+  overflow-x: hidden;
 }
-/* The order stores a default carrier and customer logistics preferences; actual tracking belongs to shipment records. */
-.logistics-grid > .field-stack:nth-child(6){display:none}
 
-/* Confirmed responsive correction: a 1500px browser still leaves only about 880px
-   for the form when the ERP sidebar and line drawer are open.  Do not force the
-   wide three-card desktop grid into that remaining space. */
-@media (min-width:1101px) and (max-width:1650px){
-  .form-layout{grid-template-columns:minmax(0,1fr) 365px!important}
-  .top-cards{grid-template-columns:repeat(2,minmax(0,1fr))!important}
-  .top-cards .delivery-card{grid-column:1 / -1}
-  .bottom-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
-  .bottom-grid .contract-card{grid-column:1 / -1}
-  .small-panel{min-height:0}
-  .reminder-card,.logistics-card{min-width:0}
-  .reminder-row{grid-template-columns:1fr;gap:8px}
-  .reminder-empty-hint{grid-column:auto;min-width:0;overflow-wrap:anywhere;word-break:break-word}
-  .logistics-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .logistics-grid .trade-type-field{grid-column:1 / -1}
-  .final-grid{grid-template-columns:1fr!important}
-  .summary-bar{grid-template-columns:repeat(3,minmax(0,1fr))}
-  .summary-bar .formula-cell{grid-column:1 / -1}
+/* 顶部吸顶工具栏 */
+.form-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  height: 56px;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid #e2e8f0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
-@media (max-width:1100px){
-  .form-layout,.top-cards,.bottom-grid,.final-grid{grid-template-columns:1fr!important}
-  .top-cards .delivery-card,.bottom-grid .contract-card{grid-column:auto}
-  .line-drawer{position:static!important;width:auto!important}
-  .logistics-grid,.contract-upload-grid{grid-template-columns:1fr}
-  .summary-bar{grid-template-columns:1fr 1fr}
-  .summary-bar .formula-cell{grid-column:1 / -1}
+.page-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.title-meta-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.main-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.order-no-pill {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 10px;
+  background: #f1f5f9;
+  color: #475569;
+  border-radius: 4px;
+  border: 1px solid #cbd5e1;
+}
+.back-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #475569;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.back-btn:hover {
+  background: #f1f5f9;
+  color: #008b4b;
+  border-color: #cbd5e1;
+}
+.toolbar-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+/* 整体布局框架 */
+.form-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) !important;
+  gap: 14px;
+  padding: 14px 18px 24px;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+.form-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* 通用卡片面板 */
+.panel {
+  min-width: 0;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  transition: box-shadow 0.2s ease;
+}
+.panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px;
+  border-bottom: 1px solid #f1f5f9;
+  background: #ffffff;
+}
+.panel-header i {
+  font-size: 15px;
+}
+.panel-header h3 {
+  margin: 0;
+  padding: 0;
+  font-size: 14px;
+  font-weight: 700;
+  color: #1e293b;
+  letter-spacing: -0.2px;
+}
+
+/* 顶部三卡片 */
+.top-cards {
+  display: grid;
+  grid-template-columns: 1.15fr 1.05fr 0.95fr;
+  gap: 14px;
+  align-items: stretch;
+}
+.top-cards .panel {
+  display: flex;
+  flex-direction: column;
+}
+.info-grid {
+  padding: 12px 18px 16px;
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr) 78px;
+  gap: 10px 12px;
+  align-items: center;
+}
+.info-grid.two {
+  grid-template-columns: 104px minmax(0, 1fr);
+}
+.info-grid label,
+.flag-grid label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+.required::before {
+  content: '*';
+  color: #ef4444;
+  margin-right: 4px;
+  font-weight: 700;
+}
+.customer-select-field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 88px;
+  gap: 8px;
+  align-items: center;
+}
+.customer-kind-radios {
+  display: flex;
+  min-width: 0;
+}
+.customer-kind-radios ::v-deep .el-radio-button__inner {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+.flag-grid {
+  padding: 12px 18px 14px;
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 10px 12px;
+  align-items: center;
+}
+.inline-selects {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.inline-selects .el-select:only-child {
+  grid-column: 1 / -1;
+}
+
+/* ==========================================================================
+   订单行核心编辑区 (Order Lines)
+   ========================================================================== */
+.order-lines {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  overflow: hidden;
+}
+.order-lines .section-title {
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #f1f5f9;
+  background: #ffffff;
+}
+.title-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.title-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.title-main h3 {
+  margin: 0;
+  padding: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.lines-count-pill {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 10px;
+  border-radius: 12px;
+  background: #eaf7ef;
+  color: #008b4b;
+  border: 1px solid #ccebd7;
+}
+.title-action-btns {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.btn-emerald-primary {
+  background: linear-gradient(135deg, #008b4b 0%, #00763f 100%) !important;
+  border-color: #00763f !important;
+  color: #ffffff !important;
+  font-weight: 600;
+  box-shadow: 0 2px 4px rgba(0, 139, 75, 0.2);
+}
+.btn-emerald-primary:hover {
+  background: linear-gradient(135deg, #009d55 0%, #008b4b 100%) !important;
+}
+
+/* 主表格样式优化 */
+.sales-order-table {
+  width: 100% !important;
+  border-color: #e2e8f0 !important;
+}
+.sales-order-table ::v-deep th {
+  background: #f8fafc !important;
+  color: #475569 !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  padding: 8px 0 !important;
+  border-color: #e2e8f0 !important;
+}
+.sales-order-table ::v-deep td {
+  padding: 8px 0 !important;
+  border-color: #f1f5f9 !important;
+  font-size: 12px !important;
+}
+.sales-order-table ::v-deep .el-table__row:hover > td {
+  background-color: #f0fdf4 !important;
+}
+.sales-order-table ::v-deep .current-row > td {
+  background-color: #ecfdf5 !important;
+}
+.sales-order-table ::v-deep .el-table__expanded-cell {
+  padding: 0 !important;
+  background: #f8fafc !important;
+  border-bottom: 2px solid #e2e8f0 !important;
+}
+
+.table-row-index {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+/* Product & SKU 选择卡片单元格 */
+.cell-selector-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 4px 8px;
+  min-height: 34px;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+.cell-selector-card:hover {
+  border-color: #008b4b;
+  border-style: solid;
+  background: #ffffff;
+  box-shadow: 0 2px 4px rgba(0, 139, 75, 0.1);
+}
+.cell-selector-card.has-value {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+}
+.cell-card-main {
+  font-size: 12px;
+  font-weight: 600;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cell-selector-card:not(.has-value) .cell-card-main {
+  color: #008b4b;
+  font-weight: 500;
+}
+.cell-card-sub {
+  font-size: 11px;
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 匹配物料单元格 */
+.match-item-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px;
+}
+.match-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.match-dot.dot-green {
+  background: #10b981;
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+}
+.match-dot.dot-gray {
+  background: #cbd5e1;
+}
+.match-name {
+  color: #475569;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 数量及单位单元格 */
+.qty-unit-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.table-inline-input ::v-deep .el-input__inner {
+  height: 28px !important;
+  line-height: 28px !important;
+  padding: 0 6px !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  border-radius: 4px !important;
+  border-color: #d8e0ea !important;
+}
+.table-inline-input.text-right ::v-deep .el-input__inner {
+  text-align: right !important;
+}
+.table-inline-input ::v-deep .el-input__inner:focus {
+  border-color: #008b4b !important;
+  box-shadow: 0 0 0 2px rgba(0, 139, 75, 0.12) !important;
+}
+.table-unit-pill {
+  font-size: 11px;
+  font-weight: 600;
+  color: #475569;
+  background: #f1f5f9;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+/* 单价单元格 */
+.price-input-cell {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.cell-currency {
+  font-size: 12px;
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+/* 金额单元格 */
+.table-amount-cell {
+  font-size: 13px;
+  font-weight: 700;
+  color: #008b4b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* 特性角标 Flex */
+.table-badges-flex {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+.badge-chip {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.chip-amber {
+  background: #fef3c7;
+  color: #b45309;
+  border: 1px solid #fde68a;
+}
+.chip-blue {
+  background: #e0f2fe;
+  color: #0369a1;
+  border: 1px solid #bae6fd;
+}
+.chip-emerald {
+  background: #dcfce7;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+}
+.chip-slate {
+  background: #f1f5f9;
+  color: #64748b;
+  border: 1px solid #e2e8f0;
+}
+.badge-chip-dash {
+  color: #cbd5e1;
+}
+.dash-text {
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+.btn-file-count {
+  height: 26px !important;
+  padding: 0 8px !important;
+  font-size: 11px !important;
+  border-radius: 13px !important;
+  border-color: #cbd5e1 !important;
+  color: #475569 !important;
+}
+.btn-file-count:hover {
+  border-color: #008b4b !important;
+  color: #008b4b !important;
+}
+
+/* 操作列现代按钮 */
+.row-actions-modern {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.btn-action-edit {
+  color: #008b4b !important;
+  font-weight: 600 !important;
+  padding: 0 !important;
+}
+.btn-action-edit:hover {
+  color: #00763f !important;
+}
+.btn-action-del {
+  color: #ef4444 !important;
+  padding: 0 !important;
+}
+.btn-action-del:hover {
+  color: #dc2626 !important;
+}
+
+/* 表格底部汇总条 */
+.line-total-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: #f8fafc;
+  border-top: 1px solid #e2e8f0;
+}
+.total-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.total-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: #334155;
+}
+.total-count-tag {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: #e2e8f0;
+  color: #475569;
+  font-weight: 600;
+}
+.total-stats {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.stat-item {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.stat-item .label {
+  font-size: 12px;
+  color: #64748b;
+}
+.stat-item .val {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.stat-item .unit {
+  font-size: 12px;
+  color: #64748b;
+}
+.stat-item .val-price {
+  font-size: 18px;
+  font-weight: 800;
+  color: #008b4b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.stat-divider {
+  width: 1px;
+  height: 18px;
+  background: #cbd5e1;
+}
+
+/* ==========================================================================
+   行内展开编辑工作台 (Order Line Studio)
+   ========================================================================== */
+.order-line-detail {
+  box-sizing: border-box;
+  margin: 14px 20px 20px;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  box-shadow: 0 4px 16px -2px rgba(15, 23, 42, 0.08), 0 2px 6px -2px rgba(15, 23, 42, 0.04);
+  overflow: hidden;
+  color: #0f172a;
+  white-space: normal;
+  scroll-margin-top: 70px;
+}
+
+/* Studio 头部横幅 */
+.studio-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: linear-gradient(90deg, #f8fafc 0%, #f1f5f9 100%);
+  border-bottom: 1px solid #e2e8f0;
+}
+.studio-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.studio-row-badge {
+  background: #008b4b;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 6px;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+.studio-title-block {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.studio-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+  overflow-wrap: anywhere;
+}
+.studio-spec-text {
+  font-size: 12px;
+  color: #64748b;
+  overflow-wrap: anywhere;
+}
+.studio-header-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-shrink: 0;
+}
+.studio-stat-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #ffffff;
+  padding: 4px 12px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+}
+.studio-stat-chip .stat-label {
+  font-size: 11px;
+  color: #64748b;
+}
+.studio-stat-chip .stat-val {
+  font-size: 14px;
+  font-weight: 700;
+  color: #008b4b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.studio-collapse-btn {
+  color: #475569 !important;
+  font-size: 12px !important;
+  padding: 4px 8px !important;
+}
+.studio-collapse-btn:hover {
+  color: #008b4b !important;
+}
+
+/* Studio 主卡片三栏网格 */
+.studio-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  padding: 16px 20px;
+  background: #f8fafc;
+}
+.studio-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+}
+.card-header-bar {
+  height: 38px;
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #ffffff;
+  border-bottom: 1px solid #f1f5f9;
+}
+.bar-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #1e293b;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.bar-hint {
+  font-size: 11px;
+  color: #94a3b8;
+  font-weight: 400;
+}
+.text-emerald {
+  color: #008b4b;
+}
+.studio-card-body {
+  padding: 14px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Card 1: 核心产品与规格档案 */
+.product-showcase-box {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  background: #f8fafc;
+  border-radius: 6px;
+  border: 1px solid #f1f5f9;
+}
+.product-img-wrap {
+  width: 58px;
+  height: 58px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.product-img-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.img-empty-box {
+  color: #94a3b8;
+  font-size: 24px;
+}
+.product-meta-stack {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.product-code-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.code-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: #334155;
+  background: #e2e8f0;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.item-matching-banner {
+  font-size: 11px;
+  color: #64748b;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.item-matching-banner .item-name {
+  color: #0f172a;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.studio-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.form-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.form-field-group.full-span {
+  grid-column: 1 / -1;
+}
+.form-field-group label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+}
+.studio-select-pill {
+  height: 32px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  border: 1px solid #d8e0ea;
+  border-radius: 6px;
+  background: #ffffff;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.studio-select-pill:hover {
+  border-color: #008b4b;
+  background: #f0fdf4;
+}
+.studio-select-pill .pill-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.studio-select-pill .text-muted {
+  color: #94a3b8;
+  font-weight: normal;
+}
+.spec-readout {
+  padding: 6px 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #334155;
+  min-height: 28px;
+  overflow-wrap: anywhere;
+}
+
+/* Card 2: 数量与价格条款 */
+.commercial-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.input-with-unit-group,
+.input-with-addon-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.compact-input-number {
+  flex: 1;
+  min-width: 0;
+}
+.compact-input-number ::v-deep .el-input__inner {
+  height: 32px !important;
+  line-height: 32px !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+}
+.input-unit-addon,
+.addon-prefix {
+  font-size: 12px;
+  font-weight: 700;
+  color: #475569;
+  background: #f1f5f9;
+  padding: 0 8px;
+  height: 32px;
+  line-height: 32px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+}
+.line-type-chip-wrap {
+  height: 32px;
+  display: flex;
+  align-items: center;
+}
+
+/* Card 3: 客户定制与属性 */
+.toggles-cluster {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.toggle-card {
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fafc;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  transition: all 0.2s ease;
+}
+.toggle-card.is-active {
+  border-color: #a7f3d0;
+  background: #f0fdf4;
+}
+.toggle-info {
+  display: flex;
+  flex-direction: column;
+}
+.toggle-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1e293b;
+}
+.toggle-desc {
+  font-size: 10px;
+  color: #94a3b8;
+}
+.special-desc-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.special-desc-box label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #ef4444;
+}
+.dropdowns-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  align-items: end;
+}
+.dropdowns-grid .el-select {
+  width: 100%;
+}
+
+/* Studio 折叠拓展区 */
+.studio-subsections {
+  border-top: 1px solid #e2e8f0;
+  background: #ffffff;
+  padding: 0 20px 10px;
+}
+.studio-collapse {
+  border: 0 !important;
+}
+.studio-collapse ::v-deep .el-collapse-item__header {
+  height: 44px !important;
+  line-height: 44px !important;
+  border-bottom: 1px solid #f1f5f9 !important;
+  background: #ffffff !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  color: #1e293b !important;
+}
+.studio-collapse ::v-deep .el-collapse-item__wrap {
+  border-bottom: 1px solid #f1f5f9 !important;
+  background: #ffffff !important;
+}
+.studio-collapse ::v-deep .el-collapse-item__content {
+  padding-bottom: 14px !important;
+}
+.collapse-title-inner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.collapse-title-inner i {
+  color: #008b4b;
+  font-size: 14px;
+}
+.count-tag {
+  font-size: 11px;
+  font-weight: normal;
+  color: #64748b;
+  background: #f1f5f9;
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+.sub-panel-body {
+  padding: 10px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* 长度下料排版 */
+.cut-actions-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.bar-note {
+  font-size: 12px;
+  color: #94a3b8;
+}
+.cut-items-grid {
+  display: grid;
+  gap: 8px;
+}
+.cut-item-card {
+  padding: 10px 14px;
+  border: 1px solid #d1fae5;
+  border-radius: 6px;
+  background: #f0fdf4;
+}
+.cut-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.cut-item-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cut-item-title .code {
+  font-size: 11px;
+  font-weight: 700;
+  color: #065f46;
+  background: #a7f3d0;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.cut-item-title .name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #065f46;
+}
+.cut-params-row {
+  display: grid;
+  grid-template-columns: 140px 140px minmax(0, 1fr);
+  gap: 10px;
+  align-items: end;
+}
+.cut-param-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.cut-param-field label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #047857;
+}
+.cut-param-field .input-unit {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.cut-param-field .input-unit span {
+  font-size: 11px;
+  color: #065f46;
+  font-weight: 600;
+}
+.cut-card-footer {
+  margin-top: 6px;
+}
+.cut-empty-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 6px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+/* 图纸资料排版 */
+.upload-studio-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.upload-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.upload-controls .label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+.category-select {
+  width: 140px;
+}
+.upload-tip {
+  font-size: 12px;
+  color: #94a3b8;
+}
+.studio-file-table-wrap {
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.studio-file-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.studio-file-table th {
+  background: #f8fafc;
+  color: #475569;
+  font-weight: 600;
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid #e2e8f0;
+}
+.studio-file-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid #f1f5f9;
+  color: #1e293b;
+}
+.studio-file-table tr:last-child td {
+  border-bottom: 0;
+}
+.file-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.file-icon {
+  color: #008b4b;
+  font-size: 14px;
+}
+.file-text {
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.main-file-pill {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #dcfce7;
+  color: #15803d;
+  font-weight: 600;
+}
+.version-tag {
+  font-size: 11px;
+  color: #64748b;
+  background: #f1f5f9;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.type-badge {
+  font-size: 11px;
+  color: #475569;
+}
+.action-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.empty-table-cell {
+  text-align: center;
+  padding: 16px !important;
+  color: #94a3b8;
+}
+
+/* 单位换算卡片 */
+.conversion-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+.stat-card {
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sc-label {
+  font-size: 11px;
+  color: #64748b;
+}
+.sc-value {
+  font-size: 13px;
+  color: #0f172a;
+  overflow-wrap: anywhere;
+}
+.text-amber {
+  color: #d97706;
+}
+
+
+/* ==========================================================================
+   底部外贸、提醒、合同附件卡片
+   ========================================================================== */
+.bottom-grid {
+  display: grid;
+  grid-template-columns: 0.95fr 1.2fr 1fr;
+  gap: 14px;
+}
+.small-panel {
+  min-height: 180px;
+}
+.reminder-form {
+  padding: 4px 18px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.reminder-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(180px, 1.2fr);
+  gap: 12px;
+  align-items: center;
+}
+.switch-field,
+.days-field,
+.share-user-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.switch-field span,
+.days-field span,
+.share-user-line > span,
+.reminder-content > span {
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  white-space: nowrap;
+}
+.switch-field em,
+.days-field em {
+  font-style: normal;
+  color: #64748b;
+  font-size: 12px;
+}
+.days-field ::v-deep .el-input-number--small {
+  width: 96px;
+}
+.reminder-content {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+.share-switch-line {
+  margin-top: 4px;
+}
+.share-user-line {
+  align-items: flex-start;
+}
+.select-share-btn {
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid #d8e0ea;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #334155;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.select-share-btn:hover {
+  border-color: #008b4b;
+  color: #008b4b;
+  background: #f0fdf4;
+}
+.select-share-btn i {
+  color: #008b4b;
+}
+.share-chip-list {
+  min-height: 30px;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 3px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #ffffff;
+}
+.reminder-empty-hint {
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  border: 1px dashed #d8e0ea;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+/* 外贸物流网格 */
+.logistics-grid {
+  padding: 4px 18px 16px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.field-stack {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.field-stack span {
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+.field-stack .el-select,
+.field-stack .el-date-editor {
+  width: 100% !important;
+}
+
+/* 合同附件上传卡片 */
+.contract-upload-grid {
+  padding: 4px 18px 10px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.contract-upload-grid ::v-deep .el-upload {
+  display: block;
+  width: 100%;
+}
+.upload-card {
+  width: 100%;
+  height: 80px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: #475569;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.upload-card:hover {
+  border-color: #008b4b;
+  background: #f0fdf4;
+  color: #008b4b;
+}
+.upload-card i {
+  font-size: 18px;
+  color: #008b4b;
+}
+.upload-card span {
+  font-weight: 600;
+  font-size: 12px;
+}
+.upload-card small {
+  font-size: 11px;
+  color: #94a3b8;
+}
+.contract-meta {
+  margin: 0 18px 16px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #64748b;
+  font-size: 12px;
+}
+
+/* ==========================================================================
+   底部金额汇总指标栏 (Modern Financial Summary Dashboard)
+   ========================================================================== */
+.final-grid {
+  width: 100%;
+}
+.summary-bar-modern {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+  display: grid;
+  grid-template-columns: 1.4fr repeat(4, 1fr);
+  overflow: hidden;
+}
+.summary-metric-card {
+  padding: 14px 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  border-right: 1px solid #f1f5f9;
+  background: #ffffff;
+  transition: all 0.2s ease;
+}
+.summary-metric-card:last-child {
+  border-right: 0;
+}
+.summary-metric-card.primary {
+  background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%);
+  border-right-color: #e2e8f0;
+}
+.summary-metric-card .metric-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+.summary-metric-card.primary .metric-label {
+  color: #166534;
+}
+.metric-value-wrap {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.metric-value-wrap .currency {
+  font-size: 16px;
+  font-weight: 700;
+  color: #008b4b;
+}
+.metric-value-wrap .amount {
+  font-size: 24px;
+  font-weight: 800;
+  color: #008b4b;
+  letter-spacing: -0.5px;
+  line-height: 1;
+}
+.metric-value-wrap .num {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1e293b;
+  line-height: 1;
+}
+.metric-value-wrap .unit {
+  font-size: 12px;
+  color: #94a3b8;
+  font-weight: 500;
+}
+.metric-value-wrap .text-emerald {
+  color: #008b4b;
+}
+.metric-value-wrap .text-blue {
+  color: #2563eb;
+}
+.metric-value-wrap .text-amber {
+  color: #d97706;
+}
+.metric-value-wrap .text-muted {
+  color: #94a3b8;
+}
+
+/* 共享人弹窗 */
+.share-dialog-body {
+  display: grid;
+  gap: 12px;
+}
+.share-user-list {
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid #e4e9f0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+}
+.share-user-list .el-checkbox {
+  margin: 0;
+  padding: 8px;
+  border-radius: 4px;
+}
+.share-user-list .el-checkbox:hover {
+  background: #f8fafc;
+}
+.share-user-list span,
+.share-user-list small {
+  display: block;
+}
+.share-user-list small {
+  margin-top: 2px;
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+/* 预检焦点高亮 */
+.precheck-focus {
+  outline: 2px solid #f59e0b;
+  outline-offset: 2px;
+  transition: outline-color 0.25s ease;
+}
+
+/* ==========================================================================
+   响应式断点适配规则 (Responsive Design)
+   ========================================================================== */
+@media (max-width: 1400px) {
+  .top-cards {
+    grid-template-columns: 1fr 1fr;
+  }
+  .top-cards .delivery-card {
+    grid-column: 1 / -1;
+  }
+  .studio-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .studio-grid .attributes-card-section {
+    grid-column: 1 / -1;
+  }
+  .bottom-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .bottom-grid .contract-card {
+    grid-column: 1 / -1;
+  }
+  .summary-bar-modern {
+    grid-template-columns: 1.3fr repeat(4, 1fr);
+  }
+}
+
+@media (max-width: 1100px) {
+  .top-cards {
+    grid-template-columns: 1fr;
+  }
+  .top-cards .delivery-card {
+    grid-column: auto;
+  }
+  .studio-grid {
+    grid-template-columns: 1fr;
+  }
+  .studio-grid .attributes-card-section {
+    grid-column: auto;
+  }
+  .conversion-cards-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .bottom-grid {
+    grid-template-columns: 1fr;
+  }
+  .bottom-grid .contract-card {
+    grid-column: auto;
+  }
+  .logistics-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+  .summary-bar-modern {
+    grid-template-columns: 1fr 1fr;
+  }
+  .summary-bar-modern .summary-metric-card.primary {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 768px) {
+  .form-toolbar {
+    padding: 0 14px;
+    height: auto;
+    min-height: 52px;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+  .form-layout {
+    padding: 10px 12px;
+  }
+  .order-line-detail {
+    margin: 8px 10px 14px;
+  }
+  .studio-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .studio-header-right {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .studio-grid {
+    padding: 10px;
+  }
+  .commercial-grid,
+  .studio-form-grid,
+  .toggles-cluster,
+  .dropdowns-grid {
+    grid-template-columns: 1fr;
+  }
+  .cut-params-row {
+    grid-template-columns: 1fr;
+  }
+  .summary-bar-modern {
+    grid-template-columns: 1fr 1fr;
+  }
+  .summary-bar-modern .summary-metric-card.primary {
+    grid-column: 1 / -1;
+  }
+  .logistics-grid,
+  .contract-upload-grid {
+    grid-template-columns: 1fr;
+  }
+  .line-total-bar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .total-stats {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
+@media (max-width: 480px) {
+  .info-grid {
+    grid-template-columns: 1fr;
+  }
+  .flag-grid {
+    grid-template-columns: 1fr;
+  }
+  .customer-select-field {
+    grid-template-columns: 1fr;
+  }
+  .conversion-cards-grid {
+    grid-template-columns: 1fr;
+  }
+  .summary-bar-modern {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

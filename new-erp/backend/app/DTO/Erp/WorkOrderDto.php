@@ -26,7 +26,17 @@ final class WorkOrderDto
 
         return [
             'id' => (int) $workOrder->id,
+            'technical_version' => (int) $workOrder->technical_version,
+            'technical_snapshot' => $workOrder->technical_snapshot,
+            'output_configuration_id' => $workOrder->output_configuration_id ? (int) $workOrder->output_configuration_id : null,
             'work_order_no' => $workOrder->work_order_no,
+            'production_master_order_id' => $workOrder->production_master_order_id ? (int) $workOrder->production_master_order_id : null,
+            'execution_mode' => $workOrder->production_execution_mode_snapshot ?: ($workOrder->outputItem?->production_execution_mode ?: 'unit'),
+            'stocking_purpose' => $workOrder->stocking_purpose,
+            'reserved_for_work_order_id' => $workOrder->reserved_for_work_order_id ? (int) $workOrder->reserved_for_work_order_id : null,
+            'reserved_for_production_unit_id' => $workOrder->reserved_for_production_unit_id ? (int) $workOrder->reserved_for_production_unit_id : null,
+            'reserved_for_target_operation_id' => $workOrder->reserved_for_target_operation_id ? (int) $workOrder->reserved_for_target_operation_id : null,
+            'reserved_target' => $workOrder->getAttribute('reserved_target_projection'),
             'production_demand_id' => $workOrder->production_demand_id ? (int) $workOrder->production_demand_id : null,
             'source_type' => $workOrder->source_type ?: 'sales_order',
             'source_type_label' => self::sourceTypeLabel($workOrder->source_type ?: 'sales_order'),
@@ -35,6 +45,8 @@ final class WorkOrderDto
                 'demand_no' => $demand?->requirement_no ?? $demand?->demand_no ?? null,
                 'sales_order_no' => $order?->sales_order_no ?? null,
                 'customer' => self::snapshotLabel($order?->customer_snapshot),
+                'required_delivery_date' => $order?->required_delivery_date ? substr((string) $order->required_delivery_date, 0, 10) : null,
+                'remark' => $order?->order_remark ?: ($order?->customer_remark ?: $order?->remark),
                 'type' => $workOrder->source_type ?: 'sales_order',
                 'type_label' => self::sourceTypeLabel($workOrder->source_type ?: 'sales_order'),
                 'id' => $workOrder->source_id ? (int) $workOrder->source_id : null,
@@ -44,7 +56,7 @@ final class WorkOrderDto
             'product' => [
                 'name' => self::snapshotLabel($line?->product_snapshot) ?: ($line?->product_name ?? null),
                 'sku' => self::snapshotLabel($line?->sku_snapshot) ?: ($line?->sku_name ?? null),
-                'specification' => data_get($line?->item_snapshot, 'spec') ?: ($line?->item?->spec ?? null),
+                'specification' => data_get($line?->item_snapshot, 'spec') ?: ($line?->item?->spec ?? $workOrder->outputItem?->spec),
                 'item_id' => $workOrder->output_item_id ? (int) $workOrder->output_item_id : ($demand?->item_id ? (int) $demand->item_id : null),
                 'item_code' => $workOrder->outputItem?->item_code,
                 'item_name' => $workOrder->outputItem?->item_name ?: ($line?->item_name ?? null),
@@ -85,6 +97,7 @@ final class WorkOrderDto
             'production_batch' => $workOrder->production_batch,
             'production_location_name' => $workOrder->production_location_name,
             'status' => $workOrder->status,
+            'display_status' => $workOrder->getAttribute('display_status_projection'),
             'execution_summary' => $workOrder->getAttribute('execution_summary'),
             'business_version' => (int) $workOrder->business_version,
             'release' => [
@@ -117,6 +130,7 @@ final class WorkOrderDto
             'actions' => [
                 'view' => self::allowed($permissions, 'production.work_order.view'),
                 'edit' => $workOrder->status === 'DRAFT' && self::allowed($permissions, 'production.work_order.edit'),
+                'edit_plan' => in_array($workOrder->status, ['DRAFT', 'WAIT_RELEASE'], true) && self::allowed($permissions, 'production.work_order.edit'),
                 'submit' => $workOrder->status === 'DRAFT' && self::allowed($permissions, 'production.work_order.submit'),
                 'return_draft' => $workOrder->status === 'WAIT_RELEASE' && self::allowed($permissions, 'production.work_order.edit'),
                 'rematch_routing' => ($workOrder->source_type ?: 'sales_order') === 'sales_order'
@@ -129,6 +143,10 @@ final class WorkOrderDto
                     && self::allowed($permissions, 'production.work_order.publish'),
                 'view_release_gate' => self::allowed($permissions, 'production.work_order.gate.view'),
                 'view_materials' => self::allowed($permissions, 'production.material.view'),
+                'view_units' => $superAdmin || self::allowed($permissions, 'production.unit.view'),
+                'view_operations' => self::allowed($permissions, 'production.work_order.view'),
+                'view_tasks' => $superAdmin || self::allowed($permissions, 'production.task.view'),
+                'view_master_order' => self::allowed($permissions, 'production.work_order.view'),
                 'cancel' => in_array((string) $workOrder->status, ['DRAFT', 'WAIT_RELEASE'], true) && self::allowed($permissions, 'production.work_order.cancel'),
             ],
         ];

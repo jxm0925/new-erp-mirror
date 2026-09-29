@@ -1445,16 +1445,7 @@ class SalesOrderController extends Controller
 
     private function redactSensitiveAmounts(array $payload): array
     {
-        $redacted = [];
-        foreach ($payload as $key => $value) {
-            $name = is_string($key) ? strtolower($key) : '';
-            if ($name !== '' && (preg_match('/(^|_)(amount|price|cost)(_|$)/', $name)
-                || in_array($name, ['receipt_ratio', 'production_threshold_value'], true))) {
-                continue;
-            }
-            $redacted[$key] = is_array($value) ? $this->redactSensitiveAmounts($value) : $value;
-        }
-        return $redacted;
+        return app(\App\Services\Erp\SalesAmountVisibilityService::class)->redact($payload);
     }
 
     private function attachCurrentOperator(array $payload, Request $request): array

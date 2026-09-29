@@ -138,7 +138,7 @@ class UnitConversionBusinessScenariosTest extends TestCase
         $this->assertNotNull($workOrder);
         $this->assertSame('WAIT_RELEASE', $workOrder->status);
         $this->assertSame(25.0, (float) $workOrder->target_base_qty);
-        $this->assertSame(15, DB::table('erp_work_order_release_gate_checks')->where('work_order_id', $workOrder->id)->count());
+        $this->assertSame(16, DB::table('erp_work_order_release_gate_checks')->where('work_order_id', $workOrder->id)->count());
         $this->assertSame(1, DB::table('erp_production_master_orders')->where('sales_order_id', $order->id)->count());
     }
 
@@ -153,7 +153,7 @@ class UnitConversionBusinessScenariosTest extends TestCase
 
         $decisions = [$this->decision($first, 2, production: 2), $this->decision($second, 2, production: 2)];
         $this->confirm($order, $decisions);
-        $this->assertSame('blocked', $order->fresh()->production_confirm_status);
+        $this->assertSame('confirmed', $order->fresh()->production_confirm_status);
         $this->assertSame(2, DB::table('erp_sales_order_production_requirements')->where('sales_order_id', $order->id)->count());
         $this->assertSame(2, DB::table('erp_sales_order_production_requirements')
             ->where('sales_order_id', $order->id)->where('is_active', true)->count());
@@ -328,7 +328,7 @@ class UnitConversionBusinessScenariosTest extends TestCase
 
         $confirmed = $this->confirm($order, [$this->decision($line, 1, production: 1)]);
 
-        $this->assertSame('blocked', $confirmed->production_confirm_status);
+        $this->assertSame('confirmed', $confirmed->production_confirm_status);
         $demandId = (int) DB::table('erp_sales_order_production_requirements')
             ->where('sales_order_id', $order->id)->where('sales_order_line_id', $line->id)->value('id');
         $workOrderId = (int) DB::table('erp_work_orders')->where('production_demand_id', $demandId)->value('id');

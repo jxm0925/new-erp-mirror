@@ -49,6 +49,16 @@ class InventoryBalanceController extends Controller
             'quality_line_count' => (clone $statsQuery)->where(fn ($q) => $q->where('quantity_defective', '>', 0)->orWhere('quantity_pending', '>', 0))->count(),
             'inventory_value' => (float) (clone $statsQuery)->sum('inventory_value'),
         ];
+        if ($request->boolean('include_quantity_summary')) {
+            // 不同库存单位不可直接相加；全量汇总后按余额快照单位返回，保留小数精度。
+            $quantities = (clone $statsQuery)->toBase()->reorder()->select('unit_id')
+                ->selectRaw('SUM(quantity_on_hand) AS quantity')->groupBy('unit_id')->orderBy('unit_id')->get();
+            $unitNames = \App\Models\Erp\Unit::whereIn('id', $quantities->pluck('unit_id')->filter())->pluck('unit_name', 'id');
+            $stats['quantity_by_unit'] = $quantities->map(fn ($row) => [
+                'unit_id' => $row->unit_id, 'unit_name' => $unitNames[$row->unit_id] ?? '未指定单位',
+                'quantity' => (string) $row->quantity,
+            ])->all();
+        }
         $paginator = $query->paginate($this->perPage($request));
         return response()->json([...$paginator->toArray(), 'stats' => $stats]);
     }

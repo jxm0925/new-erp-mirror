@@ -6,7 +6,7 @@
       <aside class="sku-card"><h3>SKU只读信息</h3><dl><dt>Product</dt><dd>{{ product }}</dd><dt>SKU编码</dt><dd>{{ sku.sku_code }}</dd><dt>SKU名称</dt><dd>{{ sku.sku_name }}</dd><dt>规格型号</dt><dd>{{ sku.spec_text || '—' }}</dd><dt>销售单位</dt><dd>{{ sku.sales_unit?.unit_name || '—' }}</dd><dt>订单行类型</dt><dd>实物</dd></dl></aside>
       <section class="setting-card"><h3>默认Item设置</h3>
         <div class="selection">
-          <section class="item-card"><b>当前默认Item（旧Item）</b><dl v-if="current"><dt>Item编码</dt><dd>{{ current.item_code }}</dd><dt>Item名称</dt><dd>{{ current.item_name }}</dd><dt>规格型号</dt><dd>{{ current.spec_text || current.spec_model || '—' }}</dd><dt>Item类型</dt><dd>{{ itemType(current.item_type) }}</dd><dt>库存单位</dt><dd>{{ current.unit?.unit_name || '—' }}</dd><dt>状态</dt><dd><span>启用</span></dd></dl><p v-else>暂未设置</p></section>
+          <section class="item-card"><b>当前默认Item（旧Item）</b><dl v-if="current"><dt>Item编码</dt><dd>{{ current.item_code }}</dd><dt>Item名称</dt><dd>{{ current.item_name }}</dd><dt>规格型号</dt><dd>{{ current.spec || '—' }}</dd><dt>Item类型</dt><dd>{{ itemType(current.item_type) }}</dd><dt>库存单位</dt><dd>{{ current.unit?.unit_name || '—' }}</dd><dt>状态</dt><dd><span>启用</span></dd></dl><p v-else>暂未设置</p></section>
           <span class="arrow"><i class="el-icon-right" /></span>
           <div class="new-item">
             <label>新默认Item<el-select v-model="form.item_id" filterable remote clearable :remote-method="searchItems" :loading="itemsLoading" placeholder="搜索Item编码、名称、规格型号" @change="selectItem"><el-option v-for="x in items" :key="x.id" :value="x.id" :label="`${x.item_code}｜${x.item_name}`"/></el-select></label>
@@ -17,7 +17,7 @@
             </div>
             <small>支持搜索、分页，仅可选择启用状态Item（共 {{ itemTotal }} 条）</small>
           </div>
-          <section class="item-card chosen"><b>已选择的新默认Item</b><dl v-if="chosen"><dt>Item编码</dt><dd>{{ chosen.item_code }}</dd><dt>Item名称</dt><dd>{{ chosen.item_name }}</dd><dt>规格型号</dt><dd>{{ chosen.spec_text || chosen.spec_model || '—' }}</dd><dt>Item类型</dt><dd>{{ itemType(chosen.item_type) }}</dd><dt>库存单位</dt><dd>{{ chosen.unit?.unit_name || '—' }}</dd><dt>状态</dt><dd><span>启用</span></dd></dl><p v-else>等待选择</p></section>
+          <section class="item-card chosen"><b>已选择的新默认Item</b><dl v-if="chosen"><dt>Item编码</dt><dd>{{ chosen.item_code }}</dd><dt>Item名称</dt><dd>{{ chosen.item_name }}</dd><dt>规格型号</dt><dd>{{ chosen.spec || '—' }}</dd><dt>Item类型</dt><dd>{{ itemType(chosen.item_type) }}</dd><dt>库存单位</dt><dd>{{ chosen.unit?.unit_name || '—' }}</dd><dt>状态</dt><dd><span>启用</span></dd></dl><p v-else>等待选择</p></section>
         </div>
         <section class="fulfillment-conversion">
           <h3>履约换算</h3>

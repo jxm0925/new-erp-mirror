@@ -37,6 +37,14 @@ class ProductionWorkOrderController extends Controller
         return response()->json($response);
     }
 
+    public function operations(Request $request, int $id, \App\Services\Erp\ProductionWorkOrderOperationQueryService $service)
+    {
+        $filters = $request->validate([
+            'status' => 'nullable|string|max:30', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50',
+        ]);
+        return response()->json($service->paginate($id, $filters, ...$this->context($request)));
+    }
+
     public function showWorkOrder(Request $request, int $id, ProductionWorkOrderQueryService $service)
     {
         $context = $this->context($request);
@@ -75,6 +83,21 @@ class ProductionWorkOrderController extends Controller
         $context = $this->context($request);
         $workOrder = $service->updateDraft($id, $this->commandPayload($request, true), ...$context);
         return response()->json(['message' => '工单草稿已更新。', 'data' => WorkOrderResource::make($workOrder)->resolve($request)]);
+    }
+
+    public function updatePlan(Request $request, int $id, WorkOrderApplicationService $service)
+    {
+        $payload = $request->validate([
+            'client_command_id' => ['required', 'string', 'max:120'],
+            'expected_version' => ['required', 'integer', 'min:1'],
+            'planned_date' => ['sometimes', 'nullable', 'date_format:Y-m-d'],
+            'production_location_name' => ['prohibited'],
+            'production_batch' => ['prohibited'],
+            'target_qty' => ['prohibited'], 'output_item_id' => ['prohibited'],
+            'production_routing_id' => ['prohibited'], 'target_routing_operation_id' => ['prohibited'],
+        ]);
+        $workOrder = $service->updatePlan($id, $payload, ...$this->context($request));
+        return response()->json(['message' => '生产计划已保存。', 'data' => WorkOrderResource::make($workOrder)->resolve($request)]);
     }
 
     public function submit(Request $request, int $id, WorkOrderApplicationService $service)
@@ -118,6 +141,69 @@ class ProductionWorkOrderController extends Controller
         ]);
         $workOrder = $service->rematchRouting($id, $payload, ...$context);
         return response()->json(['message' => '工艺路线已重新匹配并冻结。', 'data' => WorkOrderResource::make($workOrder)->resolve($request)]);
+    }
+
+    public function technicalPreparation(Request $request, int $id, WorkOrderApplicationService $service)
+    {
+        $workOrder = $service->showWorkOrder($id, ...$this->context($request));
+        $technical = app(\App\Services\Erp\WorkOrderTechnicalService::class);
+        if ($request->filled('type')) {
+            return response()->json($technical->options($workOrder, (string) $request->input('type'), $request->only(['keyword', 'item_id', 'bom_id', 'category_id', 'per_page'])));
+        }
+        return response()->json(['data' => $technical->preview($workOrder, $request->filled('bom_id') ? (int) $request->input('bom_id') : null)]);
+    }
+
+    public function confirmTechnical(Request $request, int $id, WorkOrderApplicationService $service)
+    {
+        $context = $this->context($request);
+        $payload = $request->validate([
+            'client_command_id' => ['required', 'string', 'max:120'],
+            'expected_version' => ['required', 'integer', 'min:1'],
+            'bom_id' => ['required', 'integer', 'min:1'],
+            'production_routing_id' => ['required', 'integer', 'min:1'],
+            'output_configuration_id' => ['nullable', 'integer', 'min:1'],
+            'drawing_reference' => ['nullable', 'string', 'max:255'],
+            'reason' => ['nullable', 'string', 'max:500'],
+            'attachment_ids' => ['sometimes', 'array', 'max:20'],
+            'attachment_ids.*' => ['integer', 'min:1', 'distinct'],
+            'materials' => ['present', 'array', 'max:500'],
+            'materials.*.bom_item_id' => ['required', 'integer', 'min:1', 'distinct'],
+            'materials.*.configuration_id' => ['nullable', 'integer', 'min:1'],
+        ]);
+        $workOrder = $service->confirmTechnical($id, $payload, ...$context);
+        return response()->json(['message' => '生产资料已确认并保存版本。', 'data' => WorkOrderResource::make($workOrder)->resolve($request)]);
+    }
+
+    public function uploadTechnicalAttachment(Request $request, int $id, \App\Services\Erp\WorkOrderTechnicalAttachmentApplicationService $service)
+    {
+        $payload = $request->validate(['client_command_id' => ['required', 'string', 'max:120'], 'expected_version' => ['required', 'integer', 'min:1'], 'file' => ['required', 'file']]);
+        $row = $service->upload($id, $request->file('file'), $request->only(['client_command_id', 'expected_version']), ...$this->context($request));
+        return response()->json(['data' => $service->metadata($row)]);
+    }
+
+    public function readTechnicalAttachment(Request $request, int $id, int $attachmentId, \App\Services\Erp\WorkOrderTechnicalAttachmentApplicationService $service)
+    {
+        $row = $service->read($id, $attachmentId, ...$this->context($request));
+        $disk = \Illuminate\Support\Facades\Storage::disk($row->storage_disk);
+        abort_unless($disk->exists($row->storage_path), 404, '附件文件不存在。');
+        $preview = ! $request->boolean('download') && $service->metadata($row)['previewable'];
+        return $disk->response($row->storage_path, $row->original_name, [
+            'Content-Type' => $preview ? $row->mime_type : 'application/octet-stream',
+            'X-Content-Type-Options' => 'nosniff', 'Cache-Control' => 'private, no-store',
+        ], $preview ? 'inline' : 'attachment');
+    }
+
+    public function technicalVersions(Request $request, int $id, WorkOrderApplicationService $service)
+    {
+        $service->showWorkOrder($id, ...$this->context($request));
+        $rows = \Illuminate\Support\Facades\DB::table('erp_work_order_technical_versions')
+            ->where('work_order_id', $id)->orderByDesc('version_no')
+            ->paginate(max(1, min(100, (int) $request->input('per_page', 20))));
+        $rows->getCollection()->transform(function ($row) {
+            $row->snapshot = json_decode($row->snapshot, true, 512, JSON_THROW_ON_ERROR);
+            return $row;
+        });
+        return response()->json($rows);
     }
 
     private function context(Request $request): array

@@ -206,16 +206,21 @@ class ProductionOutputService
 
     private function isTerminalOutput(ProductionOutputRecord $output): bool
     {
-        $source = $this->sourceTarget($output);
-        if (! $source) return false;
-        $table = $output->source_target_type === 'unit_operation'
-            ? 'erp_production_unit_operations'
-            : 'erp_production_quantity_operations';
-        $query = DB::table($table)->where('sequence_no_snapshot', '>', $source->sequence_no_snapshot);
-        $output->source_target_type === 'unit_operation'
-            ? $query->where('production_unit_id', $source->production_unit_id)
-            : $query->where('work_order_id', $source->work_order_id);
-        return ! $query->exists();
+        return $this->terminalOutputIdsQuery()->where('terminal_output.id', $output->id)->exists();
+    }
+
+    /** The warehouse list and the posting command must agree on terminal operation identity. */
+    public function terminalOutputIdsQuery(): \Illuminate\Database\Query\Builder
+    {
+        return DB::table('erp_production_output_records as terminal_output')->select('terminal_output.id')->where(function ($types) {
+            foreach (['unit_operation' => ['erp_production_unit_operations', 'production_unit_id'],
+                'quantity_operation' => ['erp_production_quantity_operations', 'work_order_id']] as $type => [$table, $owner]) {
+                $types->orWhere(fn ($q) => $q->where('terminal_output.source_target_type', $type)->whereExists(fn ($source) => $source->selectRaw('1')
+                    ->from($table.' as terminal_source')->whereColumn('terminal_source.id', 'terminal_output.source_target_id')
+                    ->whereNotExists(fn ($next) => $next->selectRaw('1')->from($table.' as terminal_next')
+                        ->whereColumn('terminal_next.'.$owner, 'terminal_source.'.$owner)->whereColumn('terminal_next.sequence_no_snapshot', '>', 'terminal_source.sequence_no_snapshot'))));
+            }
+        });
     }
 
     private function createInternalIssue(ProductionOutputRecord $output, array $payload, object $transaction): ?int

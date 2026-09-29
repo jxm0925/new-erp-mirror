@@ -9,8 +9,8 @@
       </div>
       <div class="toolbar-actions">
         <el-button size="small" @click="$router.push('/bom/boms')">取消</el-button>
-        <el-button v-if="canEdit" size="small" @click="save">保存草稿</el-button>
-        <el-button v-if="canEdit" size="small" type="success" @click="save(true)">提交审核</el-button>
+        <el-button v-if="canEdit" size="small" :loading="saving" @click="save(false)">保存草稿</el-button>
+        <el-button v-if="canEdit" size="small" type="success" :loading="saving" @click="save(true)">提交审核</el-button>
       </div>
     </div>
 
@@ -222,7 +222,8 @@
       </section>
     </div>
 
-    <el-dialog :visible.sync="picker.visible" :title="picker.mode === 'output' ? '选择产出 Item' : '选择组成物料'" width="980px" class="item-picker">
+    <!-- 页面本身有层叠上下文，弹窗必须与挂在 body 的遮罩同层，否则遮罩会覆盖弹窗并吞掉点击。 -->
+    <el-dialog :visible.sync="picker.visible" :title="picker.mode === 'output' ? '选择产出 Item' : '选择组成物料'" append-to-body width="980px" class="item-picker">
       <div class="picker-filter">
         <el-input v-model="picker.keyword" size="small" clearable placeholder="Item编码/名称" @keyup.enter.native="searchItems" @clear="searchItems" />
         <el-select v-model="picker.category_id" size="small" clearable placeholder="分类" @change="searchItems">
@@ -332,6 +333,7 @@ export default {
     categories: [],
     boms: [],
     numberReservation: null,
+    saving: false,
     picker: {
       visible: false,
       mode: 'component',
@@ -520,6 +522,7 @@ export default {
       this.picker.visible = false
     },
     async save(andSubmit = false) {
+      if (this.saving) return
       const payload = {
         ...this.form,
         items: this.form.items.map((line, index) => ({ ...line, line_no: (index + 1) * 10 }))
@@ -544,11 +547,22 @@ export default {
       if (payload.items.some(item => !item.component_item_id)) return this.$message.error('BOM 明细中存在未选择物料的行')
       if (payload.items.some(item => item.is_length_cut_material && (!(Number(item.cut_length_mm) > 0) || !(Number(item.piece_qty) > 0)))) return this.$message.error('长度下料类物料必须填写每段长度和段数')
       if (payload.items.some(item => item.cutting_mode === 'sheet' && ['cut_length_mm', 'cut_width_mm', 'cut_thickness_mm', 'piece_qty'].some(key => !(Number(item[key]) > 0)))) return this.$message.error('板材必须填写单件长、宽、厚和每份产出的件数')
-      const { data } = await saveBom(payload)
-      if (!this.isEdit) clearCreatePageReservation(this.numberReservation)
-      if (andSubmit) await submitBom(data.data.id)
-      this.$message.success(andSubmit ? 'BOM 已保存并提交审核' : 'BOM 草稿已保存')
-      this.$router.push(`/bom/${data.data.id}/detail`)
+      this.saving = true
+      let savedId = null
+      try {
+        const { data } = await saveBom(payload)
+        savedId = data.data.id
+        if (!this.isEdit) clearCreatePageReservation(this.numberReservation)
+        if (andSubmit) await submitBom(savedId)
+        this.$message.success(andSubmit ? 'BOM 已保存并提交审核' : 'BOM 草稿已保存')
+        this.$router.push(`/bom/${savedId}/detail`)
+      } catch (error) {
+        this.$message.error(error.userMessage || 'BOM 保存失败，请稍后重试')
+        // 保存与提交是两次正式动作；保存成功后进入已保存单据，避免提交失败时再次新建。
+        if (savedId) this.$router.push(`/bom/${savedId}/detail`)
+      } finally {
+        this.saving = false
+      }
     },
     itemTypeText(value) {
       return ({ finished_product: '成品', semi_finished: '半成品', raw_material: '原材料', packaging: '包材', service: '服务' })[value] || value
@@ -571,7 +585,6 @@ export default {
 .bom-form-page {
   position: relative;
   z-index: 5;
-  margin-top: -52px;
   min-height: 100vh;
   background: #fff;
   color: #172033;

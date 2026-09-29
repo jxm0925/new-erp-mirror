@@ -1,0 +1,173 @@
+<template>
+  <section class="production-picking-page">
+    <header class="pm-page-head"><h1>生产配料</h1><p>根据已发布的生产工单进行原材料配料，生成配料单供现场领用。</p></header>
+    <el-tabs v-model="tab" class="pm-tabs" @tab-click="switchTab"><el-tab-pane v-if="$can('production.material_requirement.view')" name="demands" label="待配料" /><el-tab-pane v-if="$can('production.material_picking.view')" name="picking" label="配料单" /><el-tab-pane v-if="$can('production.material_delivery.view')" name="delivery" label="配送单" /></el-tabs>
+    <section class="pm-filters pm-list-filters"><label>{{ tab === 'demands' ? '工单/物料' : tab === 'delivery' ? '工单/配送单号' : '工单/配料单号' }}</label><el-input v-model="query.keyword" size="small" clearable placeholder="输入单号或名称查询" @keyup.enter.native="search" /><template v-if="tab !== 'demands'"><label>状态</label><el-select v-model="query.status" size="small" clearable placeholder="全部"><el-option v-for="(label, key) in statuses" :key="key" :label="label" :value="key" /></el-select></template><el-button type="success" size="small" @click="search">查询</el-button><el-button size="small" @click="reset">重置</el-button></section>
+    <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
+    <section class="pm-list">
+      <el-table :key="tab" v-loading="loading" :data="rows" border size="small" :empty-text="tab === 'demands' ? '暂无待配料需求' : '暂无符合条件的单据'">
+        <el-table-column v-if="tab !== 'demands'" :prop="tab === 'delivery' ? 'delivery_no' : 'task_no'" :label="tab === 'delivery' ? '配送单号' : '配料单号'" min-width="185" />
+        <el-table-column label="工单与产品" min-width="190"><template slot-scope="{row}"><span>{{ workOrder(row).work_order_no }}</span><small>{{ product(row) }}</small><small v-if="row.production_unit_no">生产编号：{{ row.production_unit_no }}</small></template></el-table-column>
+        <el-table-column label="接收工序" min-width="115"><template slot-scope="{row}">{{ row.target_operation_name || row.target_operation_name_snapshot || row.production_location_name_snapshot || '—' }}</template></el-table-column>
+        <el-table-column v-if="tab === 'demands'" label="待配物料" width="100"><template slot-scope="{row}">{{ row.material_count }} 种</template></el-table-column>
+        <el-table-column v-if="tab === 'picking'" label="仓库" min-width="125"><template slot-scope="{row}">{{ row.warehouse && row.warehouse.warehouse_name }}</template></el-table-column>
+        <el-table-column v-if="tab === 'delivery'" label="配送人" width="100"><template slot-scope="{row}">{{ row.delivery_user_name || '未分配' }}</template></el-table-column>
+        <el-table-column v-if="tab !== 'demands'" label="状态" width="115"><template slot-scope="{row}"><el-tag size="small" :type="tagType(row.status)">{{ status(row.status, tab) }}</el-tag></template></el-table-column>
+        <el-table-column v-if="tab === 'delivery'" label="收料结果" min-width="120"><template slot-scope="{row}"><span v-if="row.rejected_lines_count" class="pm-danger">有拒收</span><span v-else>{{ row.status === 'RECEIVED' ? '全部接收' : row.status === 'DELIVERED' ? '待确认' : '—' }}</span></template></el-table-column>
+        <el-table-column label="操作" min-width="230"><template slot-scope="{row}"><div class="pm-actions">
+          <el-button v-if="tab === 'demands' && $can('production.material_picking.create')" type="text" @click="openDraft(row)">配料</el-button>
+          <template v-if="tab !== 'demands'"><el-button type="text" @click="openDetail(tab, row.id)">查看</el-button><template v-if="tab === 'delivery'"><el-button v-if="row.status === 'READY' && $can('production.material_delivery.dispatch')" type="text" @click="openDeliveryAction(row, 'dispatch')">发出</el-button><el-button v-if="row.status === 'READY' && $can('production.material_delivery.cancel')" type="text" class="pm-danger" @click="cancelDocument('delivery', row)">取消</el-button><el-button v-if="row.status === 'IN_TRANSIT' && $can('production.material_delivery.confirm')" type="text" @click="openDeliveryAction(row, 'deliver')">确认送达</el-button><el-button v-if="row.rejected_lines_count && $can('production.material_delivery.create')" type="text" @click="openRedelivery(row.id)">创建补送单</el-button></template></template>
+        </div></template></el-table-column>
+      </el-table>
+      <el-pagination class="pm-pagination" :current-page.sync="query.page" :page-size.sync="query.per_page" :page-sizes="[10,20,50]" :total="total" layout="total, sizes, prev, pager, next" @current-change="load" @size-change="search" />
+    </section>
+
+    <el-dialog title="新建配料单" :visible.sync="draft.visible" width="1060px" custom-class="production-material-dialog" append-to-body :close-on-click-modal="false" :before-close="closeWhenIdle">
+      <template v-if="draft.target">
+        <el-alert v-if="draft.error" :title="draft.error" type="warning" :closable="false" show-icon />
+        <div class="pm-meta"><span>工单：{{ draft.target.work_order_no }}</span><span>产品：{{ draft.target.output_item_name }}</span><span>接收工序：{{ draft.target.target_operation_name }}</span></div>
+        <div class="pm-inline-field"><label>仓库：</label><el-input :value="draft.warehouse.warehouse_name" size="small" readonly placeholder="请选择仓库" suffix-icon="el-icon-arrow-down" @click.native="chooseWarehouse" /></div>
+        <material-lines :groups="draft.groups" mode="plan" editable @stock="chooseStock" />
+        <el-pagination v-if="draft.total > 20" class="pm-pagination" :current-page.sync="draft.page" :page-size="20" :total="draft.total" layout="total, prev, pager, next" @current-change="loadDraft" />
+      </template>
+      <span slot="footer" class="pm-footer"><span>共 {{ draft.total }} 种物料</span><span><el-button size="small" :disabled="busy" @click="draft.visible = false">取消</el-button><el-button v-if="draft.error" size="small" :disabled="busy" @click="refreshDraft">刷新库存</el-button><el-button type="success" size="small" :loading="busy" :disabled="!canCreate" @click="createPicking">生成配料单</el-button></span></span>
+    </el-dialog>
+
+    <el-dialog :visible.sync="detail.visible" width="1060px" custom-class="production-material-dialog" append-to-body :close-on-click-modal="false" :before-close="closeWhenIdle">
+      <span slot="title">{{ detail.kind === 'delivery' ? '配送单详情' : '配料单详情' }} <el-tag v-if="detail.data" size="small" :type="tagType(detail.data.status)">{{ status(detail.data.status, detail.kind) }}</el-tag><el-tag v-if="detailHasRejection" size="small" type="warning">有拒收</el-tag></span>
+      <template v-if="detail.data">
+        <el-alert v-if="detail.error" :title="detail.error" type="error" :closable="false" />
+        <div class="pm-meta"><span>{{ detail.kind === 'delivery' ? '配送单：' : '配料单：' }}{{ detail.data.delivery_no || detail.data.task_no }}</span><span>工单：{{ workOrder(detail.data).work_order_no }}</span><span>仓库：{{ detailWarehouse }}</span><span>产品：{{ product(detail.data) }}</span><span>接收工序：{{ detail.data.target_operation_name_snapshot || detail.data.production_location_name_snapshot }}</span><span v-if="detail.kind === 'picking'">拣货人：{{ detail.data.assigned_picker_name || '未分配' }}</span><template v-else><span>配料单：{{ detail.data.picking_task && detail.data.picking_task.task_no }}</span><span>配送人：{{ detail.data.delivery_user_name || '未分配' }}</span><span>接收人：{{ detail.data.expected_receiver_name || '尚未接单' }}</span></template></div>
+        <div v-if="detail.kind === 'picking' && detail.data.status === 'WAIT_PICK' && $can('production.material_picking.assign')" class="pm-inline-field"><label>拣货人：</label><el-input :value="detail.picker && personLabel(detail.picker)" size="small" readonly placeholder="请选择人员" /><el-button size="small" icon="el-icon-user" @click="selectPerson('picker')">选择人员</el-button></div>
+        <el-steps v-if="detail.kind === 'picking' && ['WAIT_PICK','PICKING','PICKED'].includes(detail.data.status)" :active="detail.data.status === 'WAIT_PICK' ? 0 : detail.data.status === 'PICKING' ? 1 : 3" finish-status="success" align-center class="pm-steps"><el-step title="待拣货" /><el-step title="拣货中" /><el-step title="已拣货" /></el-steps>
+        <el-steps v-if="detail.kind === 'delivery' && detail.data.status !== 'CANCELLED'" :active="deliveryStep" finish-status="success" align-center class="pm-steps"><el-step title="已创建" :description="date(detail.data.created_at)" /><el-step title="已发出" :description="date(detail.data.departed_at)" /><el-step title="已送达" :description="date(detail.data.delivered_at)" /><el-step title="已确认" /></el-steps>
+        <material-lines :groups="detail.groups" :mode="detailMode" :editable="detail.kind === 'picking' && detail.data.status === 'PICKING' && $can('production.material_picking.pick')" @serials="chooseSerials" />
+        <div v-if="detail.kind === 'picking' && detail.data.status === 'PICKING'" class="pm-remark"><label>备注：</label><el-input v-model="detail.reason" size="small" maxlength="500" placeholder="请输入备注（选填）" /><p><i class="el-icon-info" /> 确认拣货后按实拣数量扣减库存。</p></div>
+        <el-alert v-if="detailHasRejection" class="pm-rejection" :title="rejectionSummary" type="warning" :closable="false" show-icon />
+        <div v-if="detail.kind === 'picking' && (detail.data.deliveries || []).length" class="pm-related"><b>配送记录</b><el-button v-for="delivery in detail.data.deliveries" :key="delivery.id" type="text" @click="openDetail('delivery', delivery.id)">{{ delivery.delivery_no }} · {{ status(delivery.status, 'delivery') }}</el-button></div>
+        <el-collapse class="pm-events" @change="loadEvents"><el-collapse-item title="操作记录" name="events"><el-table :data="detail.events" size="small" empty-text="暂无操作记录"><el-table-column label="时间" min-width="150"><template slot-scope="{row}">{{ date(row.occurred_at) }}</template></el-table-column><el-table-column prop="operator_name" label="操作人" width="100" /><el-table-column label="操作" width="110"><template slot-scope="{row}">{{ eventName(row.action) }}</template></el-table-column><el-table-column prop="reason" label="说明" min-width="170" /></el-table><el-pagination :current-page.sync="detail.eventPage" :total="detail.eventTotal" :page-size="20" layout="total, prev, pager, next" @current-change="loadEvents" /></el-collapse-item></el-collapse>
+      </template>
+      <span slot="footer" class="pm-footer"><span><el-button v-if="detail.data && detail.kind === 'picking' && ['WAIT_PICK','PICKING'].includes(detail.data.status) && $can('production.material_picking.cancel')" type="text" class="pm-danger" :disabled="busy" @click="cancelDocument('picking', detail.data)">取消配料</el-button><el-button v-if="detail.data && detail.kind === 'delivery' && detail.data.status === 'READY' && $can('production.material_delivery.cancel')" type="text" class="pm-danger" :disabled="busy" @click="cancelDocument('delivery', detail.data)">取消配送</el-button></span><span>
+        <el-button size="small" :disabled="busy" @click="detail.visible = false">关闭</el-button>
+        <template v-if="detail.data && detail.kind === 'picking'"><el-button v-if="detail.data.status === 'WAIT_PICK' && $can('production.material_picking.assign')" size="small" type="success" :disabled="!detail.picker" :loading="busy" @click="assignPicker">{{ detail.data.assigned_picker_legacy_id ? '重新分配' : '分配拣货人' }}</el-button><el-button v-if="detail.data.status === 'WAIT_PICK' && detail.data.assigned_picker_legacy_id && $can('production.material_picking.pick')" size="small" type="success" :loading="busy" @click="pickingAction('start')">开始拣货</el-button><el-button v-if="detail.data.status === 'PICKING' && $can('production.material_picking.pick')" type="success" size="small" :loading="busy" :disabled="!canConfirmPicking" @click="confirmPicking">确认拣货</el-button><el-button v-if="canPrepareDelivery" size="small" type="success" :loading="busy" @click="prepareDelivery">创建配送单</el-button></template>
+        <template v-if="detail.data && detail.kind === 'delivery'"><el-button v-if="detail.data.status === 'READY' && $can('production.material_delivery.dispatch')" type="success" size="small" :loading="busy" @click="dispatchFromDetail">发出</el-button><el-button v-if="detail.data.status === 'IN_TRANSIT' && $can('production.material_delivery.confirm')" type="success" size="small" :loading="busy" @click="deliveryAction('deliver')">确认送达</el-button><el-button v-if="detailHasRedelivery && $can('production.material_delivery.create')" type="success" size="small" :loading="busy" @click="openRedelivery(detail.data.id)">创建补送单</el-button></template>
+      </span></span>
+    </el-dialog>
+
+    <el-dialog :title="send.redelivery ? '创建补送单' : '创建配送单'" :visible.sync="send.visible" width="1060px" custom-class="production-material-dialog" append-to-body :close-on-click-modal="false" :before-close="closeWhenIdle">
+      <template v-if="send.task">
+        <el-alert v-if="send.error" :title="send.error" type="error" :closable="false" />
+        <div class="pm-meta"><span v-if="send.redelivery">原配送单：{{ send.source.delivery_no }}</span><span>配料单：{{ send.task.task_no }}</span><span>工单：{{ workOrder(send.task).work_order_no }}</span><span>仓库：{{ send.task.warehouse && send.task.warehouse.warehouse_name }}</span><span>接收工序：{{ send.targetName }}</span><span>产品：{{ product(send.task) }}</span></div>
+        <div v-if="send.targetOptions.length > 1" class="pm-inline-field"><label>生产目标：</label><el-select v-model="send.target" size="small" @change="selectDeliveryTarget"><el-option v-for="target in send.targetOptions" :key="target.key" :value="target.key" :label="target.name" /></el-select></div>
+        <div class="pm-inline-field"><label>配送人：</label><el-input :value="send.person && personLabel(send.person)" size="small" readonly placeholder="请选择人员" /><el-button size="small" icon="el-icon-user" @click="selectPerson('delivery')">选择人员</el-button></div>
+        <material-lines :groups="send.groups" mode="send" :redelivery="send.redelivery" editable @serials="chooseSerials" />
+        <div class="pm-inline-field pm-remark"><label>{{ send.redelivery ? '处理说明：' : '备注：' }}</label><el-input v-model="send.remark" size="small" maxlength="2000" placeholder="请输入说明（选填）" /></div>
+      </template>
+      <span slot="footer" class="pm-footer"><span>本次配送 {{ send.groups.filter(group => group.sources.some(source => Number(source.quantity) > 0)).length }} 种物料</span><span><el-button size="small" :disabled="busy" @click="send.visible = false">取消</el-button><el-button size="small" type="success" :loading="busy" :disabled="!canSend" @click="createDelivery">{{ send.redelivery ? '创建补送单' : '创建配送单' }}</el-button></span></span>
+    </el-dialog>
+    <stock-selector ref="stock" @confirm="acceptStock" /><option-picker ref="options" />
+  </section>
+</template>
+
+<script>
+import { materialWorkspace, materialDemands, materialList, materialDetail, materialCommand, materialEvents } from '@/api/erp/production-materials'
+import MaterialLines from './ProductionMaterialLines.vue'
+import StockSelector from './ProductionStockSelector.vue'
+import OptionPicker from './ProductionMaterialOptionPicker.vue'
+const PICK = { WAIT_PICK: '待拣货', PICKING: '拣货中', PICKED: '已拣货', WAIT_DELIVERY: '待配送', DELIVERING: '配送中', DELIVERED: '已送达', PARTIALLY_RECEIVED: '部分收料', RECEIVED: '已收齐', CANCELLED: '已取消' }
+const DELIVERY = { READY: '待发出', IN_TRANSIT: '配送中', DELIVERED: '待收料', RECEIVED: '已确认', CANCELLED: '已取消' }
+const blankDraft = () => ({ visible: false, target: null, warehouse: {}, groups: [], groupMap: {}, total: 0, page: 1, error: '' })
+const blankDetail = () => ({ visible: false, data: null, kind: 'picking', groups: [], picker: null, reason: '', error: '', events: [], eventPage: 1, eventTotal: 0 })
+const blankSend = () => ({ visible: false, task: null, groups: [], allGroups: [], target: '', targetName: '', targetOptions: [], person: null, redelivery: false, source: null, remark: '', error: '' })
+export default {
+  components: { MaterialLines, StockSelector, OptionPicker },
+  data: () => ({ tab: 'demands', rows: [], total: 0, query: { keyword: '', status: '', page: 1, per_page: 20 }, loading: false, busy: false, error: '', listSequence: 0, detailSequence: 0, draftSequence: 0, draft: blankDraft(), detail: blankDetail(), send: blankSend() }),
+  computed: {
+    statuses() { return this.tab === 'delivery' ? DELIVERY : PICK },
+    draftChosen() { return Object.values(this.draft.groupMap).filter(group => group.sources.length) },
+    canCreate() { return !!this.draft.warehouse.id && this.draftChosen.length > 0 && this.draftChosen.every(group => group.sources.every(row => this.validQty(row.quantity, row.picking_available_qty, false)) && group.sources.reduce((sum, row) => sum + Number(row.quantity), 0) <= group.remaining + 0.00000001) },
+    detailMode() { return this.detail.kind === 'delivery' ? 'receipt' : this.detail.data && this.detail.data.status === 'WAIT_PICK' ? 'assign' : 'pick' },
+    detailWarehouse() { const data = this.detail.data || {}; const task = this.detail.kind === 'delivery' ? data.picking_task : data; return task && task.warehouse && task.warehouse.warehouse_name },
+    detailHasRejection() { return this.detail.kind === 'delivery' && this.detail.groups.some(group => group.sources.some(row => row.rejected > 0)) },
+    detailHasRedelivery() { return this.detailHasRejection && (this.detail.data.lines || []).some(line => Number(line.remaining_redelivery_qty) > 0) },
+    rejectionSummary() { const pending = this.detail.groups.map(group => { const qty = group.sources.reduce((sum, row) => sum + Number(row.remainingRedelivery || 0), 0); return qty > 0 ? `${group.name} ${this.number(qty)} ${group.unit}` : '' }).filter(Boolean).join('，'); return pending ? '待补送：' + pending : '拒收物料已安排补送。' },
+    deliveryStep() { return ({ READY: 1, IN_TRANSIT: 2, DELIVERED: 3, RECEIVED: 4 })[(this.detail.data || {}).status] || 0 },
+    canConfirmPicking() { const rows = this.detail.groups.flatMap(group => group.sources); return rows.some(row => Number(row.quantity) > 0) && rows.every(row => this.validQty(row.quantity, row.planned, true) && (!row.serialRequired || Number(row.quantity) === (row.serials || []).length)) },
+    canPrepareDelivery() { return this.$can('production.material_delivery.create') && ['PICKED','WAIT_DELIVERY','DELIVERING','DELIVERED','PARTIALLY_RECEIVED'].includes((this.detail.data || {}).status) && (this.detail.data.lines || []).some(row => Number(row.remaining_delivery_qty) > 0) },
+    canSend() { const rows = this.send.groups.flatMap(group => group.sources); return rows.some(row => Number(row.quantity) > 0) && rows.every(row => this.validQty(row.quantity, row.available, true) && (!row.serialRequired || Number(row.quantity) === (row.serials || []).length)) }
+  },
+  created() { if (!this.$can('production.material_requirement.view')) this.tab = this.$can('production.material_picking.view') ? 'picking' : 'delivery'; this.load() },
+  beforeDestroy() { this.listSequence++; this.detailSequence++; this.draftSequence++ },
+  methods: {
+    number(value) { return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 8 }) },
+    date(value) { return value ? String(value).replace('T', ' ').slice(0, 16) : '—' },
+    status(value, kind) { return (kind === 'delivery' ? DELIVERY : PICK)[value] || value },
+    tagType(value) { return ['RECEIVED','PICKED'].includes(value) ? 'success' : ['CANCELLED'].includes(value) ? 'info' : ['PICKING','IN_TRANSIT','DELIVERING'].includes(value) ? '' : 'warning' },
+    personLabel(person) { return person.nickname || person.username || person.name || '' },
+    workOrder(row) { return row.work_order || row },
+    product(row) { const wo = this.workOrder(row); return wo.output_item_name || (wo.output_item && wo.output_item.item_name) || '—' },
+    validQty(value, maximum, zero) { return /^\d+(\.\d{1,8})?$/.test(String(value)) && Number(value) >= (zero ? 0 : 0.00000001) && Number(value) <= Number(maximum) + 0.00000001 },
+    eventName(action) { return ({ create: '创建', assign: '分配拣货人', start: '开始拣货', confirm: '确认拣货', cancel: '取消', dispatch: '发出', deliver: '确认送达', receive: '收料确认' })[action] || action },
+    closeWhenIdle(done) { if (!this.busy) done() },
+    switchTab() { this.query = { keyword: '', status: '', page: 1, per_page: 20 }; this.load() },
+    search() { this.query.page = 1; this.load() },
+    reset() { this.query.keyword = ''; this.query.status = ''; this.search() },
+    async load() { const sequence = ++this.listSequence; this.loading = true; this.error = ''; try { const { data } = await (this.tab === 'demands' ? materialWorkspace('targets', this.query) : materialList(this.tab, this.query)); if (sequence === this.listSequence) { this.rows = data.data; this.total = data.total } } catch (e) { if (sequence === this.listSequence) this.error = e.userMessage } finally { if (sequence === this.listSequence) this.loading = false } },
+    async openDraft(target) { this.draft = { ...blankDraft(), visible: true, target }; await this.loadDraft() },
+    async loadDraft() {
+      const sequence = ++this.draftSequence; const target = this.draft.target
+      try { const { data } = await materialDemands({ work_order_id: target.work_order_id, production_target_type: target.production_target_type, production_target_id: target.production_target_id, page: this.draft.page, per_page: 20 }); if (sequence !== this.draftSequence) return; this.draft.total = data.total
+        this.draft.groups = data.data.map(row => { const previous = this.draft.groupMap[row.id]; const group = { key: String(row.id), demand: row, name: row.item_name, code: row.item_code, spec: row.spec, unit: row.unit_name, required: Number(row.required_qty), allocated: Number(row.required_qty) - Number(row.remaining_to_prepare), remaining: Number(row.remaining_to_prepare), sources: previous ? previous.sources : [], expanded: previous ? previous.expanded : false }; this.$set(this.draft.groupMap, row.id, group); this.draft.target.work_order_version = row.work_order_version; return group })
+      } catch (e) { if (sequence === this.draftSequence) this.draft.error = e.userMessage }
+    },
+    chooseWarehouse() { this.$refs.options.open('warehouses', '选择仓库', {}, async warehouse => { if (this.draft.warehouse.id && this.draft.warehouse.id !== warehouse.id && this.draftChosen.length) { try { await this.$confirm('切换仓库将清除已选库存来源，是否继续？', '切换仓库', { type: 'warning' }) } catch (_) { return } Object.values(this.draft.groupMap).forEach(group => { group.sources = [] }) } this.draft.warehouse = warehouse }) },
+    chooseStock(group) { if (!this.draft.warehouse.id) { this.$message.warning('请先选择仓库'); return } this.$refs.stock.open(group.demand, this.draft.warehouse, group.sources) },
+    acceptStock({ demandId, sources }) { const group = this.draft.groupMap[demandId]; if (!group) return; group.sources = sources; group.expanded = sources.length > 1; this.draft.error = '' },
+    async refreshDraft() { this.draft.error = ''; await this.loadDraft(); try { for (const group of this.draftChosen) { const { data } = await materialWorkspace('sources', { target_material_requirement_id: group.demand.id, warehouse_id: this.draft.warehouse.id, ids: group.sources.map(row => row.id), per_page: 100 }); group.sources = group.sources.map(row => ({ ...row, ...(data.data.find(fresh => fresh.id === row.id) || { picking_available_qty: 0 }), quantity: row.quantity })) } } catch (e) { this.draft.error = e.userMessage } },
+    async createPicking() { const target = this.draft.target; const body = { work_order_id: target.work_order_id, expected_version: target.work_order_version, warehouse_id: this.draft.warehouse.id, lines: this.draftChosen.flatMap(group => group.sources.map(row => ({ target_material_requirement_id: group.demand.id, inventory_balance_id: row.id, planned_pick_qty: Number(row.quantity) }))) }; await this.execute('picking-new-' + target.work_order_id, 'picking', null, '', body, async result => { this.draft.visible = false; this.tab = 'picking'; this.reset(); await this.openDetail('picking', result.id) }, message => { this.draft.error = message }) },
+    async openDetail(kind, id) { const sequence = ++this.detailSequence; this.detail = { ...blankDetail(), kind, visible: true }; try { const { data } = await materialDetail(kind, id); if (sequence !== this.detailSequence) return; this.detail.data = data.data; this.detail.groups = this.groupsFor(data.data, kind); if (data.data.assigned_picker_legacy_id) this.detail.picker = { id: data.data.assigned_picker_legacy_id, nickname: data.data.assigned_picker_name } } catch (e) { if (sequence === this.detailSequence) this.detail.error = e.userMessage } },
+    groupsFor(document, kind) {
+      const map = {}
+      ;(document.lines || []).forEach(line => { const pick = kind === 'delivery' ? line.picking_task_line || {} : line; const item = pick.component_item || {}; const requirement = line.requirement || pick.requirement || {}; const key = [pick.material_requirement_id, pick.production_target_type, pick.production_target_id, pick.material_supply_rule_snapshot_id].join(':'); const inventory = pick.inventory_balance || {}
+        if (!map[key]) map[key] = { key, name: item.item_name || requirement.component_item_name_snapshot, code: item.item_code || requirement.component_item_code_snapshot, spec: item.spec, unit: pick.unit_name_snapshot || line.unit_name_snapshot, targetKey: [pick.production_target_type, pick.production_target_id, pick.target_routing_operation_id_snapshot].join(':'), targetName: pick.target_operation_name_snapshot, expanded: false, sources: [] }
+        const serialIds = (pick.serial_snapshot || {}).inventory_serial_ids || []; const received = Number(line.received_qty || 0); const rejected = Number(line.rejected_qty || 0)
+        map[key].sources.push({ id: line.id, pickLineId: pick.id, location: inventory.location, batch_no: line.batch_no, planned: Number(pick.planned_pick_qty), picked: Number(pick.actual_pick_qty), quantity: document.status === 'PICKING' ? Number(pick.actual_pick_qty) || Number(pick.planned_pick_qty) : Number(pick.actual_pick_qty), allocated: Number(pick.allocated_delivery_qty || 0), available: Number(pick.remaining_delivery_qty || 0), delivered: Number(line.delivery_qty || 0), received, rejected, pending: Math.max(0, Number(line.delivery_qty || 0) - received - rejected), rejectReason: (line.reject_reasons || []).join('；'), remainingRedelivery: Number(line.remaining_redelivery_qty || 0), serialRequired: pick.serial_control_type !== 'none' && !!pick.serial_control_type, serials: serialIds.map(id => ({ id, serial_no: String(id) })), availableSerialIds: pick.available_delivery_serial_ids || serialIds, original: line })
+      }); return Object.values(map).map(group => ({ ...group, expanded: group.sources.length > 1 }))
+    },
+    selectPerson(target) { this.$refs.options.open('people', target === 'picker' ? '选择拣货人' : '选择配送人', {}, person => { if (target === 'picker') this.detail.picker = person; else this.send.person = person }) },
+    async assignPicker() { await this.pickingAction('assign', { assigned_picker_legacy_id: this.detail.picker.id }) },
+    async pickingAction(action, extra = {}) { const task = this.detail.data; await this.execute('picking-' + task.id + '-' + action, 'picking', task.id, action, { expected_version: task.business_version, ...extra }, async () => { await this.openDetail('picking', task.id); this.load() }, message => { this.detail.error = message }) },
+    async confirmPicking() { await this.pickingAction('confirm', { reason: this.detail.reason, lines: this.detail.groups.flatMap(group => group.sources.map(row => ({ picking_task_line_id: row.id, actual_pick_qty: Number(row.quantity), serial_ids: row.serialRequired ? row.serials.map(serial => serial.id) : undefined }))) }) },
+    chooseSerials(source) { const task = this.send.visible ? this.send.task : this.detail.data; this.$refs.options.open('serials', '选择序列号', { picking_task_id: task.id, picking_task_line_id: source.pickLineId, source_delivery_id: this.send.visible && this.send.redelivery ? this.send.source.id : undefined }, rows => { const allowed = this.send.visible ? source.availableSerialIds : null; if (allowed && rows.some(row => !allowed.includes(row.id))) { this.$message.warning('所选序列号已分配或不属于本次可配送范围'); return } source.serials = rows; source.quantity = rows.length }, source.serials || []) },
+    async prepareDelivery() { const { data } = await materialDetail('picking', this.detail.data.id); this.setupDelivery(data.data) },
+    setupDelivery(task, source = null) {
+      this.send = { ...blankSend(), task, visible: true, redelivery: !!source, source }
+      let groups = this.groupsFor(task, 'picking')
+      groups.forEach(group => { group.sources.forEach(row => { if (source) { const original = source.lines.find(line => line.picking_task_line_id === row.id); row.available = original ? Number(original.remaining_redelivery_qty) : 0; row.picked = original ? Number(original.rejected_qty) : 0; row.allocated = original ? Number(original.redelivered_qty) : 0; row.availableSerialIds = original ? original.available_redelivery_serial_ids || [] : [] } row.quantity = row.available; row.serials = (row.availableSerialIds || []).map(id => ({ id, serial_no: String(id) })) }); group.sources = group.sources.filter(row => row.available > 0) }); groups = groups.filter(group => group.sources.length)
+      this.send.allGroups = groups; const targets = {}; groups.forEach(group => { targets[group.targetKey] = { key: group.targetKey, name: group.targetName + (groups.some(other => other.targetName === group.targetName && other.targetKey !== group.targetKey) ? ' · ' + group.targetKey.split(':')[1] : '') } }); this.send.targetOptions = Object.values(targets); this.send.target = this.send.targetOptions[0] ? this.send.targetOptions[0].key : ''; this.selectDeliveryTarget()
+    },
+    selectDeliveryTarget() { this.send.groups = this.send.allGroups.filter(group => group.targetKey === this.send.target); this.send.targetName = this.send.groups[0] ? this.send.groups[0].targetName : '—' },
+    async openRedelivery(id) { try { const delivery = (await materialDetail('delivery', id)).data.data; const task = (await materialDetail('picking', delivery.picking_task_id)).data.data; this.setupDelivery(task, delivery); if (!this.send.groups.length) this.send.error = '该配送单已没有可补送的拒收余额。' } catch (e) { this.$message.error(e.userMessage) } },
+    async createDelivery() { const task = this.send.task; const body = { picking_task_id: task.id, expected_version: task.business_version, delivery_user_legacy_id: this.send.person && this.send.person.id, delivery_type: this.send.redelivery ? 'redelivery' : 'standard', source_delivery_id: this.send.redelivery ? this.send.source.id : undefined, remark: this.send.remark, lines: this.send.groups.flatMap(group => group.sources.filter(row => Number(row.quantity) > 0).map(row => ({ picking_task_line_id: row.id, delivery_qty: Number(row.quantity), serial_ids: row.serialRequired ? row.serials.map(serial => serial.id) : undefined }))) }; await this.execute('delivery-new-' + task.id, 'delivery', null, '', body, async result => { this.send.visible = false; this.tab = 'delivery'; this.reset(); await this.openDetail('delivery', result.id) }, message => { this.send.error = message }) },
+    async openDeliveryAction(row, action) { await this.openDetail('delivery', row.id); if (!this.detail.data) return; action === 'dispatch' ? this.dispatchFromDetail() : this.deliveryAction(action) },
+    async dispatchFromDetail() { const document = this.detail.data; if (document.delivery_user_legacy_id) await this.deliveryAction('dispatch', { delivery_user_legacy_id: document.delivery_user_legacy_id }); else this.$refs.options.open('people', '选择配送人', {}, person => this.deliveryAction('dispatch', { delivery_user_legacy_id: person.id })) },
+    async deliveryAction(action, extra = {}) { const document = this.detail.data; await this.execute('delivery-' + document.id + '-' + action, 'delivery', document.id, action, { expected_version: document.business_version, ...extra }, async () => { await this.openDetail('delivery', document.id); this.load() }, message => { this.detail.error = message }) },
+    async cancelDocument(kind, document) { try { const { value } = await this.$prompt('请填写取消原因', kind === 'delivery' ? '取消配送单' : '取消配料单', { inputType: 'textarea', inputValidator: value => !!String(value || '').trim() || '取消原因不能为空', confirmButtonText: '确认取消', cancelButtonText: '返回' }); await this.execute(kind + '-' + document.id + '-cancel', kind, document.id, 'cancel', { expected_version: document.business_version, reason: value.trim() }, async () => { if (this.detail.visible) await this.openDetail(kind, document.id); this.load() }, message => this.$message.error(message)) } catch (e) { if (e !== 'cancel' && e !== 'close') this.$message.error(e.userMessage || e.message) } },
+    async loadEvents() { if (!this.detail.data) return; const sequence = this.detailSequence; try { const { data } = await materialEvents(this.detail.kind, this.detail.data.id, { page: this.detail.eventPage, per_page: 20 }); if (sequence === this.detailSequence) { this.detail.events = data.data; this.detail.eventTotal = data.total } } catch (e) { this.detail.error = e.userMessage } },
+    async execute(key, kind, id, action, payload, success, fail) {
+      if (this.busy) return; this.busy = true
+      // Keep an uncertain command across reloads. Retry its exact body before accepting another
+      // write at this entry point, so a timeout cannot create a second picking/delivery document.
+      const storageKey = 'erp-material-command:' + key
+      const pending = JSON.parse(sessionStorage.getItem(storageKey) || 'null')
+      const body = pending || { ...payload, client_command_id: 'pc-material-' + (window.crypto.randomUUID ? window.crypto.randomUUID() : Date.now() + '-' + Math.random().toString(36).slice(2)) }
+      sessionStorage.setItem(storageKey, JSON.stringify(body))
+      try { const { data } = await materialCommand(kind, id, action, body); sessionStorage.removeItem(storageKey); await success(data.data); this.$message.success(pending ? '已确认上次提交结果，请核对单据。' : data.message || '操作成功') }
+      catch (e) { if (e.response && e.response.status < 500 && e.response.data.error_code !== 'command_processing') sessionStorage.removeItem(storageKey); fail(e.userMessage || '提交结果尚未确认，请重试确认上次操作。'); if (e.response && e.response.data.error_code === 'inventory_changed') { const info = e.response.data.details || {}; this.draftChosen.forEach(group => group.sources.forEach(row => { if (row.id === Number(info.inventory_balance_id) && info.available_qty !== undefined) row.picking_available_qty = info.available_qty })) } }
+      finally { this.busy = false }
+    }
+  }
+}
+</script>
+
+<style src="./production-materials.css"></style>

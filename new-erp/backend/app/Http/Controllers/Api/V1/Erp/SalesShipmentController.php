@@ -140,23 +140,7 @@ class SalesShipmentController extends Controller
         $auth = app(AuthContextService::class);
         $user = $auth->currentUser($request);
         abort_unless($user, 401, '未登录或登录已过期。');
-        if ($auth->isSuperAdmin($user) || $auth->dataScope($user) === 'all') return;
-
-        $query->whereHas('order', function (Builder $orders) use ($auth, $user): void {
-            if ($auth->dataScope($user) === 'department') {
-                $orders->whereIn('sales_user_legacy_id', $auth->departmentUserIds($user));
-                return;
-            }
-
-            $legacyId = (int) $user->legacy_id;
-            $orders->where(function (Builder $scope) use ($legacyId): void {
-                $scope->where('sales_user_legacy_id', $legacyId)
-                    ->orWhere(function (Builder $fallback) use ($legacyId): void {
-                        $fallback->whereNull('sales_user_legacy_id')
-                            ->where('created_by_legacy_id', $legacyId);
-                    });
-            });
-        });
+        $query->whereHas('order', fn (Builder $orders) => app(\App\Services\Erp\SalesOrderVisibilityService::class)->apply($orders, $user));
     }
 
     private function authorizePermission(Request $request, string $permission): object

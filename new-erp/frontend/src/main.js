@@ -17,7 +17,7 @@ import SkuItemRelationList from './views/erp/master/SkuItemRelationList.vue'
 import SkuItemRelationDetail from './views/erp/master/SkuItemRelationDetail.vue'
 import SkuItemSetPrimary from './views/erp/master/SkuItemSetPrimary.vue'
 import SkuItemIntegrityCheck from './views/erp/master/SkuItemIntegrityCheck.vue'
-import UnitList from './views/erp/master/UnitList.vue'
+import BaseArchives from './views/erp/master/BaseArchives.vue'
 import ItemCategoryList from './views/erp/master/ItemCategoryList.vue'
 import SupplierList from './views/erp/master/SupplierList.vue'
 import WarehouseList from './views/erp/master/WarehouseList.vue'
@@ -38,6 +38,7 @@ import PurchaseReceiptForm from './views/erp/purchase/PurchaseReceiptForm.vue'
 import PurchasePlanDetail from './views/erp/purchase/PurchasePlanDetail.vue'
 import PurchaseSimpleDetail from './views/erp/purchase/PurchaseSimpleDetail.vue'
 import InventoryBoard from './views/erp/inventory/InventoryBoard.vue'
+import ProductionPickingBoard from './views/erp/inventory/ProductionPickingBoard.vue'
 import InventoryAlertWorkbench from './views/erp/inventory/InventoryAlertWorkbench.vue'
 import InventoryAlertConfiguration from './views/erp/inventory/InventoryAlertConfiguration.vue'
 import InventoryAlertDetail from './views/erp/inventory/InventoryAlertDetail.vue'
@@ -114,17 +115,7 @@ const router = new VueRouter({
     { path: '/master/skus', component: SkuList },
     { path: '/master/skus/new', component: SkuForm },
     { path: '/master/skus/:id/complete', component: SkuForm },
-    {
-      path: '/master/skus/:id/edit',
-      component: SkuForm,
-      beforeEnter: (to, from, next) => {
-        if (to.query.scope === 'basic' && to.query.from === 'product') {
-          next({ path: '/master/products', query: { edit_sku: to.params.id }, replace: true })
-          return
-        }
-        next()
-      }
-    },
+    { path: '/master/skus/:id/edit', component: SkuForm },
     { path: '/master/skus/:id', component: SkuDetail },
     { path: '/master/items', component: ItemList },
     { path: '/master/items/new', component: ItemForm },
@@ -134,8 +125,8 @@ const router = new VueRouter({
     { path: '/master/sku-item-relations/integrity-check', component: SkuItemIntegrityCheck },
     { path: '/master/sku-item-relations/:skuId/set-primary', component: SkuItemSetPrimary },
     { path: '/master/sku-item-relations/:skuId', component: SkuItemRelationDetail },
-    { path: '/master/base-archives', component: UnitList },
-    { path: '/master/units', component: UnitList },
+    { path: '/master/base-archives', component: BaseArchives },
+    { path: '/master/units', redirect: '/master/base-archives' },
     { path: '/master/categories', component: ItemCategoryList, meta: { permission: 'item_category.view' } },
     { path: '/master/suppliers', component: SupplierList },
     { path: '/master/warehouse-locations', component: WarehouseList },
@@ -165,6 +156,7 @@ const router = new VueRouter({
     { path: '/purchase/returns/:id/detail', component: ReturnDetail, props: { kind: 'purchase' }, meta: { permission: 'purchase_return.view' } },
     { path: '/inventory', redirect: '/inventory/posting' },
     { path: '/inventory/posting', component: InventoryBoard },
+    { path: '/inventory/production-picking', component: ProductionPickingBoard, meta: { permission: 'production.material_picking.view' } },
     { path: '/inventory/balances', component: InventoryBoard },
     { path: '/inventory/transactions', component: InventoryBoard },
     { path: '/inventory/adjustments', component: InventoryBoard },

@@ -428,7 +428,7 @@ class InventoryService
                 $restock = (float) $line->restock_base_qty;
                 if ($restock <= 0) continue;
                 foreach ($this->consumeSalesReturnCostAllocations($line, $restock) as $segment) {
-                    $this->applyInventoryChange($transaction, [
+                    $transactionItem = $this->applyInventoryChange($transaction, [
                         'item_id' => $line->item_id,
                         'warehouse_id' => $line->warehouse_id,
                         'location_id' => $line->location_id,
@@ -443,6 +443,9 @@ class InventoryService
                         'source_item_id' => $line->id,
                         'remark' => '销售退货按原发运成本重新入库；原发运单行 #'.$segment['shipment_line_id'],
                     ]);
+                    if (isset($segment['return_serial_identity_id'])) {
+                        app(SalesReturnIdentityService::class)->completeRestock((int) $segment['return_serial_identity_id'], $transactionItem, $operatorId);
+                    }
                 }
             }
 
@@ -963,7 +966,8 @@ class InventoryService
                     throw ValidationException::withMessages(['serial_ids' => '所选序列号不属于当前真实可用库存批次，或已被其他业务占用。']);
                 }
 
-                $unitCost = (float) $balance->average_unit_cost;
+                $physicalCost = $this->preparePickingPhysicals($line, $balance, $quantity);
+                $unitCost = $physicalCost !== null ? (float) bcdiv($physicalCost,(string) $quantity,8) : (float) $balance->average_unit_cost;
                 $this->applyInventoryChange($transaction, [
                     'item_id' => $line->component_item_id,
                     'warehouse_id' => $line->warehouse_id,
@@ -972,13 +976,15 @@ class InventoryService
                     'unit_id' => $line->unit_id,
                     'change_qty' => -$quantity,
                     'unit_cost' => $unitCost,
-                    'cost_amount' => -round($quantity * $unitCost, 4),
+                    'cost_amount' => $physicalCost !== null ? bcsub('0',$physicalCost,4) : -round($quantity * $unitCost, 4),
                     'cost_source_type' => 'production_material_picking_fact',
                     'source_type' => 'material_picking_task',
                     'source_id' => $task->id,
                     'source_item_id' => $line->id,
                     'remark' => '生产配料出库 '.$task->task_no,
                 ]);
+                if ($physicalCost !== null) DB::table('erp_material_physicals')->whereIn('id',$line->serial_snapshot['physical_material_ids'])
+                    ->update(['status'=>'PRODUCTION_TRANSIT','business_version'=>DB::raw('business_version+1'),'updated_at'=>now()]);
                 foreach ($serials as $serial) {
                     $serial->update(['serial_status' => 'production_in_transit', 'outbound_at' => now()]);
                     InventorySerialEvent::create([
@@ -1144,6 +1150,7 @@ class InventoryService
                 $location->quantity_pending = max(0, (float) $location->quantity_pending - $qty);
                 $location->quantity_available = $this->availability->calculate((float) $location->quantity_on_hand, (float) $location->quantity_locked,
                     (float) $location->quantity_defective, (float) $location->quantity_pending); $location->save();
+                app(ProductionPhysicalMaterialReturnService::class)->release($line, (int) $balance->id);
                 InventoryTransactionItem::create(['transaction_id' => $transaction->id, 'transaction_no' => $transaction->transaction_no,
                     'item_id' => $line->component_item_id, 'item_code' => Item::find($line->component_item_id)?->item_code,
                     'item_name' => Item::find($line->component_item_id)?->item_name, 'warehouse_id' => $line->warehouse_id,
@@ -1221,6 +1228,26 @@ class InventoryService
             'material_lot_id' => $balance->material_lot_id, 'cutting_physical_id' => $batch->physical_material_id,
             'source_type' => 'cutting_settlement', 'source_id' => $batch->id, 'source_item_id' => $batch->id,
             'cost_source_type' => 'cutting_input_return_total']);
+        return $transaction;
+    }
+
+    public function postCuttingRemnantReceipt(object $receipt, iterable $lines, object $operator): InventoryTransaction
+    {
+        if (DB::transactionLevel() < 1) throw new \LogicException('Remnant posting requires an application transaction.');
+        $transaction = InventoryTransaction::create(['transaction_no' => $this->nextNo('ITX'), 'transaction_type' => 'cutting_remnant_receipt',
+            'source_type' => 'cutting_remnant_receipt', 'source_id' => $receipt->id, 'source_no' => $receipt->receipt_no,
+            'posting_status' => 'posted', 'warehouse_id' => $receipt->warehouse_id, 'location_id' => $receipt->location_id,
+            'transaction_date' => now()->toDateString(), 'posted_by' => (int) ($operator->legacy_id ?? $operator->id), 'posted_at' => now()]);
+        foreach ($lines as $line) $this->applyInventoryChange($transaction, [
+            'item_id' => $line->item_id, 'unit_id' => $line->unit_id, 'warehouse_id' => $receipt->warehouse_id, 'location_id' => $receipt->location_id,
+            'batch_no' => $line->batch_no, 'change_qty' => $line->posted_qty, 'unit_cost' => bcdiv((string) $line->posted_cost, (string) $line->posted_qty, 8),
+            'cost_amount' => $line->posted_cost, 'material_lot_id' => $line->material_lot_id, 'source_type' => 'cutting_remnant_receipt',
+            'source_id' => $receipt->id, 'source_item_id' => $line->id, 'cost_source_type' => 'cutting_remnant_total',
+            'physical_material_id' => $line->physical_material_id, 'remark' => '余料正式入库 '.$receipt->receipt_no,
+        ]);
+        InventoryPostingLog::create(['source_type' => 'cutting_remnant_receipt', 'source_id' => $receipt->id, 'source_no' => $receipt->receipt_no,
+            'transaction_type' => 'cutting_remnant_receipt', 'transaction_id' => $transaction->id, 'posting_status' => 'posted',
+            'message' => '余料库存入库过账成功', 'posted_by' => (int) ($operator->legacy_id ?? $operator->id), 'posted_at' => now()]);
         return $transaction;
     }
 
@@ -1580,9 +1607,65 @@ class InventoryService
                 && $physical->status === 'ISSUED' && bccomp($quantity, '1', 8) === 0) return;
         }
 
+        if ($transaction->source_type === 'material_picking_task' && $transaction->transaction_type === 'production_material_picking_outbound') {
+            $pick = DB::table('erp_material_picking_task_lines')->where('id',(int) ($line['source_item_id'] ?? 0))
+                ->where('task_id',$transaction->source_id)->where('inventory_balance_id',$balance->id)->where('component_item_id',$item->id)->lockForUpdate()->first();
+            $ids = $pick ? (json_decode($pick->serial_snapshot ?: '{}',true)['physical_material_ids'] ?? []) : [];
+            $sum = '0'; $valid = $pick && count($ids) > 0 && count($ids) === count(array_unique($ids))
+                && bccomp($quantity,bcsub('0',(string) count($ids),8),8) === 0
+                && bccomp((string) $pick->actual_pick_qty,(string) count($ids),8) === 0;
+            foreach ($ids as $id) {
+                if (! $this->physicalAtBalance((int) $id,(int) $item->id,(int) $balance->id)) { $valid = false; break; }
+                $sum = bcadd($sum,(string) DB::table('erp_material_physicals')->where('id',$id)->value('total_cost'),4);
+            }
+            if ($valid && bccomp(bcsub('0',$sum,4),(string) ($line['cost_amount'] ?? ''),4) === 0) return;
+        }
+
+        if ($transaction->source_type === 'cutting_remnant_receipt' && $transaction->transaction_type === 'cutting_remnant_receipt') {
+            // A quantity-only caller cannot bypass physical inventory: verify the persisted receipt
+            // line and its still-active WIP identity before accepting the +1 stock movement.
+            $entry = DB::table('erp_cutting_remnant_receipt_lines as l')
+                ->join('erp_cutting_remnant_receipts as r', 'r.id', '=', 'l.receipt_id')
+                ->join('erp_material_physicals as p', 'p.id', '=', 'l.physical_material_id')
+                ->join('erp_material_holdings as h', 'h.id', '=', 'l.source_holding_id')
+                ->where('l.id', (int) ($line['source_item_id'] ?? 0))->where('l.receipt_id', $transaction->source_id)
+                ->where('r.status', 'POSTING')->where('l.item_id', $item->id)->where('p.item_id', $item->id)
+                ->where('p.id', (int) ($line['physical_material_id'] ?? 0))->where('p.status', 'AVAILABLE')
+                ->whereColumn('p.current_holding_id', 'h.id')->whereColumn('p.material_lot_id', 'l.material_lot_id')
+                ->whereColumn('h.material_lot_id', 'l.material_lot_id')->whereColumn('h.position_id', 'l.result_id')
+                ->where('h.position_type', 'REMNANT_WIP')->where('h.status', 'ACTIVE')->whereNull('h.inventory_balance_id')
+                ->where('r.warehouse_id', $line['warehouse_id'])->where('r.location_id', $line['location_id'])
+                ->where('l.batch_no', $line['batch_no'])->lockForUpdate()->select('l.*', 'h.quantity as holding_qty', 'h.total_cost as holding_cost', 'p.total_cost as physical_cost')->first();
+            if ($entry && bccomp($quantity, '1', 8) === 0 && bccomp((string) $entry->holding_qty, '1', 8) === 0
+                && bccomp((string) $entry->posted_qty, $quantity, 8) === 0
+                && bccomp((string) $entry->posted_cost, (string) ($line['cost_amount'] ?? '-1'), 4) === 0
+                && bccomp((string) $entry->posted_cost, (string) $entry->holding_cost, 4) === 0
+                && bccomp((string) $entry->posted_cost, (string) $entry->physical_cost, 4) === 0) return;
+        }
+        if (app(ProductionPhysicalMaterialReturnService::class)->validPosting($transaction, $line, $quantity, (int) $item->id)) return;
         throw ValidationException::withMessages([
             'physical_material_id' => '实物管理物料禁止通过普通数量接口改变库存；必须逐张绑定已落库的正式实物动作。',
         ]);
+    }
+
+    private function preparePickingPhysicals(object $line, InventoryBalance $balance, float $quantity): ?string
+    {
+        if ($line->componentItem?->materialManagementMode() !== 'physical') return null;
+        if (abs($quantity - round($quantity)) > 0.00000001) throw ValidationException::withMessages(['actual_pick_qty'=>'板材实拣数量必须是整张。']);
+        $requested = $line->serial_snapshot['physical_material_ids'] ?? null;
+        if ($requested !== null && (count($requested) !== (int) $quantity || count($requested) !== count(array_unique($requested))))
+            throw ValidationException::withMessages(['physical_material_id'=>'所选实物张数与实拣数量不一致。']);
+        $physicals = DB::table('erp_material_physicals as physical')->join('erp_material_holdings as holding','holding.id','=','physical.current_holding_id')
+            ->where('physical.item_id',$line->component_item_id)->where('physical.status','AVAILABLE')
+            ->where('holding.inventory_balance_id',$balance->id)->where('holding.position_type','WAREHOUSE')->where('holding.status','ACTIVE')
+            ->when($requested !== null, fn ($query) => $query->whereIn('physical.id', $requested))
+            ->orderBy('physical.id')->limit((int) $quantity)->lockForUpdate()->get(['physical.*']);
+        if ($physicals->count() !== (int) $quantity) throw ValidationException::withMessages(['physical_material_id'=>'本批次可用板材实物不足，不能用数量替代实物出库。']);
+        $sum = '0'; foreach ($physicals as $physical) $sum = bcadd($sum,(string) $physical->total_cost,4);
+        // The persisted pick line, not a caller-provided bypass flag, authorizes these exact identities.
+        $line->serial_snapshot = array_merge($line->serial_snapshot ?? [], ['physical_material_ids'=>$physicals->pluck('id')->map(fn ($id)=>(int) $id)->all()]);
+        $line->save();
+        return $sum;
     }
 
     private function physicalAtBalance(int $physicalId, int $itemId, int $balanceId): bool
@@ -1600,6 +1683,8 @@ class InventoryService
      */
     private function consumeSalesReturnCostAllocations(object $receiptLine, float $restockQty): array
     {
+        $serialSegments = app(SalesReturnIdentityService::class)->consumeRestock($receiptLine);
+        if ($serialSegments !== null) return $serialSegments;
         $allocations = SalesReturnCostAllocation::query()
             ->where('sales_return_item_id', $receiptLine->sales_return_item_id)
             ->whereIn('allocation_status', ['reserved', 'posted'])
@@ -1653,6 +1738,8 @@ class InventoryService
 
     private function nextNo(string $prefix): string
     {
-        return $prefix . now()->format('YmdHis') . random_int(100, 999);
+        // Several stock postings can share one second. A random three-digit suffix collided
+        // during real production regression; use the same locked counter as other documents.
+        return app(DocumentNumberService::class)->next('inventory_transaction', $prefix);
     }
 }

@@ -7,6 +7,7 @@ class WorkOrderMaterialRequirement extends MasterModel
     protected $table = 'erp_work_order_material_requirements';
 
     protected $casts = [
+        'configuration_snapshot' => 'array',
         'per_output_qty' => 'decimal:8',
         'loss_rate' => 'decimal:4',
         'fixed_qty' => 'decimal:8',

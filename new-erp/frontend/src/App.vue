@@ -32,8 +32,27 @@
           <el-collapse-transition>
             <nav v-show="isMenuOpen(section.key)" class="master-menu">
               <template v-for="item in visibleItems(section.items)">
-                <div v-if="item.children" :key="item.name" class="menu-subgroup"><span>{{ item.name }}</span><router-link v-for="child in visibleItems(item.children)" :key="child.path" :to="child.path"><i :class="child.icon || 'el-icon-menu'" class="sub-menu-icon" /><span class="sub-menu-text">{{ child.name }}</span></router-link></div>
-                <router-link v-else :key="item.path" :to="item.path"><i :class="item.icon || 'el-icon-menu'" class="sub-menu-icon" /><span class="sub-menu-text">{{ item.name }}</span></router-link>
+                <div v-if="item.children" :key="item.name" class="menu-subgroup">
+                  <span>{{ item.name }}</span>
+                  <router-link
+                    v-for="child in visibleItems(item.children)"
+                    :key="child.path"
+                    :to="child.path"
+                    :class="{ 'router-link-active': isItemActive(child) }"
+                  >
+                    <i :class="child.icon || 'el-icon-menu'" class="sub-menu-icon" />
+                    <span class="sub-menu-text">{{ child.name }}</span>
+                  </router-link>
+                </div>
+                <router-link
+                  v-else
+                  :key="item.path"
+                  :to="item.path"
+                  :class="{ 'router-link-active': isItemActive(item) }"
+                >
+                  <i :class="item.icon || 'el-icon-menu'" class="sub-menu-icon" />
+                  <span class="sub-menu-text">{{ item.name }}</span>
+                </router-link>
               </template>
             </nav>
           </el-collapse-transition>
@@ -48,24 +67,91 @@
 
       <main class="erp-shell">
         <header class="erp-topbar">
-          <div class="breadcrumb"><i class="el-icon-s-unfold" /> {{ currentModule }} <b>/</b> {{ currentTitle }}</div>
-          <el-input
-            size="small"
-            prefix-icon="el-icon-search"
-            placeholder="搜索采购需求、采购订单、发票、销售订单、产品、SKU、物料..."
-          />
+          <div class="topbar-left">
+            <button
+              class="sidebar-toggle-btn"
+              type="button"
+              :title="sidebarCollapsed ? '展开菜单' : '收起菜单'"
+              @click="sidebarCollapsed = !sidebarCollapsed"
+            >
+              <i :class="sidebarCollapsed ? 'el-icon-s-unfold' : 'el-icon-s-fold'" />
+            </button>
+            <nav class="erp-breadcrumb" aria-label="breadcrumb">
+              <template v-for="(bc, bcIdx) in breadcrumbList">
+                <span v-if="bcIdx > 0" :key="'sep-' + bcIdx" class="bc-sep">/</span>
+                <span
+                  :key="'bc-' + bcIdx"
+                  class="bc-item"
+                  :class="{ 'is-link': !!bc.path && !bc.active, active: !!bc.active }"
+                  @click="bc.path && !bc.active && $router.push(bc.path)"
+                >
+                  <i v-if="bc.icon" :class="bc.icon" />
+                  {{ bc.title }}
+                </span>
+              </template>
+            </nav>
+          </div>
+
+          <div class="topbar-search">
+            <el-input
+              size="small"
+              prefix-icon="el-icon-search"
+              placeholder="搜索采购需求、采购订单、发票、销售订单、产品、SKU、物料..."
+              clearable
+            />
+          </div>
+
           <div class="top-actions">
             <el-popover placement="bottom-end" width="380" trigger="hover" :open-delay="120" :close-delay="180" popper-class="inventory-alert-popover">
               <section class="inventory-alert-notices"><header><strong>审批通知</strong><el-button type="text" @click="$router.push('/approvals/tasks')">查看待审</el-button></header><button v-for="notice in approvalNotifications" :key="'approval-' + notice.id" class="inventory-alert-notice" @click="openApprovalNotification(notice)"><b class="warning"></b><span><strong>{{ notice.title }}</strong><small>{{ notice.content }}</small></span></button><p v-if="!approvalNotifications.length">当前没有审批通知</p><header><strong>库存预警通知</strong><el-button type="text" @click="$router.push('/inventory/alerts')">查看工作台</el-button></header><button v-for="alert in inventoryAlerts" :key="alert.id" class="inventory-alert-notice" @click="openInventoryAlert(alert)"><b :class="alert.severity"></b><span><strong>{{ alert.item && (alert.item.item_code || alert.item.item_name) }}</strong><small>当前可用库存 {{ alert.available_qty }}，{{ inventoryAlertLabel(alert) }}</small></span></button><p v-if="!inventoryAlerts.length">当前没有库存预警通知</p></section>
               <el-badge slot="reference" :value="totalNotificationCount" :hidden="!totalNotificationCount"><i class="el-icon-bell" /></el-badge>
             </el-popover>
-            <i class="el-icon-question" />
             <span class="avatar">{{ userInitial }}</span>
-            <strong>{{ currentUser.nickname || currentUser.username || '用户' }}<small>{{ dataScopeText }}</small></strong>
-            <el-button type="text" @click="logout">退出</el-button>
+            <div class="user-meta-block">
+              <strong class="user-name">{{ currentUser.nickname || currentUser.username || '用户' }}</strong>
+              <small class="user-scope">{{ dataScopeText }}</small>
+            </div>
+            <el-button type="text" class="btn-logout" @click="logout"><i class="el-icon-switch-button" /> 退出</el-button>
           </div>
         </header>
-        <router-view />
+
+        <!-- 多标签页导航 TagsView -->
+        <nav class="erp-tags-bar" aria-label="页面标签导航">
+          <div ref="tagsContainer" class="tags-scroll-container">
+            <div
+              v-for="(tag, index) in visitedViews"
+              :key="tag.path"
+              class="tag-tab-item"
+              :class="{ active: isTagActive(tag) }"
+              @click="handleTagClick(tag)"
+            >
+              <span class="tag-dot" />
+              <span class="tag-title" :title="tag.title">{{ tag.title }}</span>
+              <i
+                v-if="!tag.affix"
+                class="el-icon-close tag-close-icon"
+                title="关闭标签"
+                @click.stop="closeTag(tag, index)"
+              />
+            </div>
+          </div>
+          <div class="tags-action-menu">
+            <el-dropdown trigger="click" size="small" @command="handleTagAction">
+              <button type="button" class="btn-tags-more" title="标签操作选项">
+                <i class="el-icon-arrow-down" />
+              </button>
+              <el-dropdown-menu slot="dropdown">
+                <el-dropdown-item command="closeOthers" icon="el-icon-circle-close">关闭其他标签</el-dropdown-item>
+                <el-dropdown-item command="closeAll" icon="el-icon-close">关闭全部标签</el-dropdown-item>
+                <el-dropdown-item command="refreshCurrent" icon="el-icon-refresh" divided>刷新当前页面</el-dropdown-item>
+              </el-dropdown-menu>
+            </el-dropdown>
+          </div>
+        </nav>
+
+        <section class="erp-content-container">
+          <router-view v-if="isRouterAlive" :key="$route.fullPath" />
+        </section>
       </main>
     </template>
   </div>
@@ -80,7 +166,7 @@ import { connectApprovalTasks, connectInventoryAlerts, disconnectRealtime } from
 export default {
   data: () => ({
     masterMenus: [
-      { name: '产品管理', path: '/master/products', icon: 'el-icon-goods', permission: 'master.product' },
+      { name: '商品管理', path: '/master/products', icon: 'el-icon-goods', permission: 'master.product' },
       { name: 'SKU管理', path: '/master/skus', icon: 'el-icon-box', permission: 'master.sku' },
       { name: '物料管理', path: '/master/items', icon: 'el-icon-coin', permission: 'master.item' },
       { name: '物料类目', path: '/master/categories', icon: 'el-icon-folder-opened', permission: 'item_category.view' },
@@ -99,6 +185,7 @@ export default {
     ],
     inventoryMenus: [
       { name: '库存过账工作台', path: '/inventory/posting', icon: 'el-icon-finished', permission: 'inventory.posting' },
+      { name: '生产配料', path: '/inventory/production-picking', icon: 'el-icon-finished', permission: 'production.material_picking.view' },
       { name: '库存余额', path: '/inventory/balances', icon: 'el-icon-coin', permission: 'inventory.balance' },
       { name: '库存流水', path: '/inventory/transactions', icon: 'el-icon-tickets', permission: 'inventory.transaction' },
       { name: '手工调整', path: '/inventory/adjustments', icon: 'el-icon-edit-outline', permission: 'inventory.adjustment' },
@@ -156,7 +243,9 @@ export default {
     approvalNotifications: [],
     stopRealtime: null,
     stopApprovalRealtime: null,
-    realtimeToken: null
+    realtimeToken: null,
+    visitedViews: [],
+    isRouterAlive: true
   }),
   computed: {
     totalNotificationCount() { return this.inventoryAlertCount + this.approvalNotificationCount },
@@ -170,7 +259,7 @@ export default {
         { key: 'purchase', title: '采购管理', icon: 'el-icon-shopping-cart-2', items: this.purchaseMenus, match: '/purchase' },
         { key: 'inventory', title: '库存管理', icon: 'el-icon-house', items: this.inventoryMenus, match: '/inventory' },
         { key: 'bom', title: 'BOM管理', icon: 'el-icon-connection', items: this.bomMenus, match: '/bom' },
-        { key: 'sales', title: '销售管理', icon: 'el-icon-s-order', items: this.$route.path.startsWith('/production') ? this.salesMenus.filter(item => item.path === '/sales/orders') : this.salesMenus, match: '/sales' },
+        { key: 'sales', title: '销售管理', icon: 'el-icon-s-order', items: this.salesMenus, match: '/sales' },
         { key: 'approval', title: '审核中心', icon: 'el-icon-circle-check', items: this.approvalMenus, match: '/approvals' },
         { key: 'finance', title: '财务管理', icon: 'el-icon-coin', items: this.financeMenus, match: '/finance' },
         { key: 'system', title: '系统管理', icon: 'el-icon-setting', items: this.systemMenus, match: '/system' }
@@ -196,82 +285,30 @@ export default {
       return '主数据中心'
     },
     currentTitle() {
+      return this.titleForPath(this.$route.path)
+    },
+    breadcrumbList() {
       const path = this.$route.path
-      if (path === '/production/demands') return '生产需求'
-      if (path.startsWith('/production/demands/')) return '生产需求 / 详情'
-      if (path === '/production/work-orders') return '工单管理'
-      if (path.startsWith('/production/work-orders/')) return '工单管理 / 详情'
-      if (path === '/purchase/returns') return '采购退货'
-      if (path === '/purchase/returns/create') return '采购退货 / 新建'
-      if (path.startsWith('/purchase/returns/') && path.endsWith('/detail')) return '采购退货 / 详情'
-      if (path === '/sales/returns') return '销售退货'
-      if (path === '/finance/receipts') return '收款管理'
-      if (path === '/finance/receipts/create') return '收款管理 / 新增收款单'
-      if (/^\/finance\/receipts\/\d+$/.test(path)) return '收款管理 / 收款单详情'
-      if (path === '/finance/payments') return '付款管理'
-      if (path === '/finance/payments/create') return '付款管理 / 新增付款单'
-      if (/^\/finance\/payments\/\d+$/.test(path)) return '付款管理 / 付款单详情'
-      if (path === '/finance/payables') return '应付管理'
-      if (path === '/finance/supplier-ledgers') return '供应商往来'
-      if (path === '/finance/invoices') return '发票管理'
-      if (path === '/finance/invoices/create') return '发票管理 / 登记进项发票'
-      if (path.startsWith('/finance/invoices/') && path.endsWith('/edit')) return '发票管理 / 登记进项发票'
-      if (path.startsWith('/finance/invoices/') && path.endsWith('/match')) return '发票管理 / 发票匹配'
-      if (path.startsWith('/finance/invoices/')) return '发票管理 / 发票详情'
-      if (path === '/finance/allocations') return '往来核销'
-      if (path.startsWith('/finance/allocations/')) return '往来核销'
-      if (path === '/finance/accounts') return '资金账户'
-      if (path === '/finance/exchange-rates') return '汇率历史'
-      if (path === '/finance/transfers') return '资金转账 / 换汇记录'
-      if (path === '/finance/transfers/create') return '资金转账 / 换汇'
-      if (path.startsWith('/finance/transfers/')) return '资金转账 / 换汇详情'
-      if (path === '/finance/account-valuations') return '资金账户余额与估值'
-      if (path === '/sales/returns/create') return '销售退货 / 新建'
-      if (path.startsWith('/sales/returns/') && path.endsWith('/detail')) return '销售退货 / 详情'
-      if (path.startsWith('/master/sku-item-relations')) return 'SKU-物料默认关系'
-      if (path === '/master/categories') return '物料类目'
-      if (path.startsWith('/console')) return '运营控制台'
-      if (path === '/system/admins') return '管理员管理'
-      if (path === '/system/document-number-rules') return '编号规则'
-      if (path === '/system/roles') return '角色权限'
-      if (path === '/system/menus') return '菜单管理'
-      if (path === '/system/departments') return '部门管理'
-      if (path.startsWith('/sales/orders/') && path.endsWith('/production-confirmation')) return '销售订单 / 订单生产确认'
-      if (path === '/approvals/tasks') return '审核工作台'
-      if (path.startsWith('/approvals/tasks/')) return '审核任务详情'
-      if (path === '/approvals/flows') return '流程配置'
-      if (path === '/approvals/flows/create') return '流程配置 / 新增审核流程'
-      if (path.startsWith('/approvals/flows/')) return '流程配置 / 编辑审核流程'
-      if (path === '/approvals/forms') return '表单管理'
-      if (path === '/approvals/forms/create') return '表单管理 / 新建自定义表单'
-      if (path.startsWith('/approvals/forms/')) return '表单管理 / 编辑自定义表单'
-      const inventoryTitles = { posting: '库存过账工作台', balances: '库存余额', transactions: '库存流水', adjustments: '手工调整' }
-      const inventoryMatch = path.match(/^\/inventory\/(posting|balances|transactions|adjustments)/)
-      if (inventoryMatch) return inventoryTitles[inventoryMatch[1]]
-      const purchaseTitles = { requests: '采购需求', plans: '采购计划', orders: '采购订单', receipts: '采购到货', defects: '不合格品处理', exchanges: '采购换货单' }
-      const purchaseMatch = path.match(/^\/purchase\/(requests|plans|orders|receipts|defects|exchanges)(?:\/([^/]+))?(?:\/(edit|detail))?/)
-      if (purchaseMatch) return this.docTitle(purchaseTitles[purchaseMatch[1]], purchaseMatch[2], purchaseMatch[3])
-      if (path === '/bom/boms') return 'BOM管理'
-      if (path === '/bom/create') return 'BOM管理 / 新增'
-      if (path === '/bom/expand') return 'BOM展开'
-      if (path.startsWith('/bom/') && path.endsWith('/edit')) return 'BOM管理 / 编辑'
-      if (path.startsWith('/bom/') && path.endsWith('/detail')) return 'BOM管理 / 详情'
-      if (path === '/sales/orders') return '销售订单'
-      if (path === '/sales/customers') return '客户管理'
-      if (path === '/sales/orders/create') return '销售订单 / 新增订单'
-      if (path.startsWith('/sales/orders/') && path.endsWith('/change')) return '销售订单 / 订单变更'
-      if (path.startsWith('/sales/orders/') && path.endsWith('/edit')) return '销售订单 / 编辑订单'
-      if (path.startsWith('/sales/orders/') && path.endsWith('/detail')) return '销售订单 / 订单详情'
-      if (path === '/sales/production-confirmation') return '订单生产确认'
-      if (path === '/master/skus') return 'SKU管理'
-      if (path === '/master/skus/new') return 'SKU管理 / 新增'
-      if (path.startsWith('/master/skus/') && path.endsWith('/edit')) return 'SKU管理 / 编辑'
-      if (path.startsWith('/master/skus/')) return 'SKU管理 / 详情'
-      const current = this.masterMenus.find(item => item.path === path)
-      if (current) return current.name
-      if (path === '/master/units') return '基础档案'
-      if (['/master/warehouses', '/master/locations'].includes(path)) return '仓库与库位'
-      return '商品管理'
+      if (path === '/console') {
+        return [{ title: '运营控制台', path: '/console', icon: 'el-icon-s-home', active: true }]
+      }
+      const list = [{ title: '首页', path: '/console', icon: 'el-icon-s-home' }]
+      const moduleName = this.currentModule
+      if (moduleName) {
+        list.push({ title: moduleName })
+      }
+      const title = this.currentTitle
+      if (title) {
+        const parts = title.split(' / ')
+        if (parts.length > 1) {
+          const parentRoute = this.findParentRoute(path)
+          list.push({ title: parts[0], path: parentRoute !== path ? parentRoute : null })
+          list.push({ title: parts[1], active: true })
+        } else {
+          list.push({ title, active: true })
+        }
+      }
+      return list
     }
   },
   created() {
@@ -279,6 +316,8 @@ export default {
     this.refreshInventoryAlerts()
     this.refreshApprovalNotifications()
     this.ensureRealtimeSubscriptions()
+    this.loadVisitedViews()
+    this.addVisitedView(this.$route)
     window.addEventListener('erp:inventory-alert-read', this.refreshInventoryAlerts)
   },
   beforeDestroy() {
@@ -287,19 +326,26 @@ export default {
     if (this.stopApprovalRealtime) this.stopApprovalRealtime()
   },
   watch: {
-    '$route.path': {
+    '$route': {
       immediate: true,
-      handler(path) {
+      handler(to) {
         this.currentUser = JSON.parse(localStorage.getItem('erp_user') || '{}')
         this.permissions = JSON.parse(localStorage.getItem('erp_permissions') || '[]')
         this.ensureRealtimeSubscriptions()
-        if (path.startsWith('/console')) {
-          this.openedMenus = []
-          this.sidebarCollapsed = false
-          return
+        if (to && to.path !== '/login') {
+          this.addVisitedView(to)
+          if (!to.path.startsWith('/console')) {
+            const section = this.menuSections.find(item => to.path.startsWith(item.match))
+            if (section) {
+              this.openedMenus = [section.key]
+            } else {
+              this.openedMenus = []
+            }
+          } else {
+            this.openedMenus = []
+          }
+          this.moveToCurrentTag()
         }
-        const section = this.menuSections.find(item => path.startsWith(item.match))
-        this.openedMenus = section ? [section.key] : []
       }
     }
   },
@@ -374,15 +420,322 @@ export default {
       if (suffix === 'detail') return `${base} / 详情`
       return base
     },
+    isItemActive(item) {
+      if (!item || !item.path) return false
+      const path = this.$route.path
+      if (path === item.path) return true
+      if (path.startsWith(item.path + '/')) return true
+      return false
+    },
+    addVisitedView(route) {
+      if (!route || !route.path || route.path === '/login') return
+      const path = route.path
+      const fullPath = route.fullPath || route.path
+      const title = this.computePageTitle(route)
+      const existing = this.visitedViews.find(v => v.path === path)
+      if (existing) {
+        existing.fullPath = fullPath
+        existing.title = title
+        existing.query = route.query
+      } else {
+        this.visitedViews.push({
+          title,
+          path,
+          fullPath,
+          query: route.query,
+          affix: path === '/console'
+        })
+      }
+      this.saveVisitedViews()
+    },
+    saveVisitedViews() {
+      try {
+        sessionStorage.setItem('erp_visited_views', JSON.stringify(this.visitedViews))
+      } catch (e) {}
+    },
+    loadVisitedViews() {
+      try {
+        const cached = sessionStorage.getItem('erp_visited_views')
+        if (cached) {
+          const parsed = JSON.parse(cached)
+          if (Array.isArray(parsed) && parsed.length) {
+            this.visitedViews = parsed.filter(v => v && v.path && v.title && typeof v.title === 'string' && v.title.trim().length > 0 && v.title !== '页面' && v.title !== '业务页面')
+            if (!this.visitedViews.some(v => v.path === '/console')) {
+              this.visitedViews.unshift({ title: '运营控制台', path: '/console', fullPath: '/console', affix: true })
+            }
+            return
+          }
+        }
+      } catch (e) {}
+      this.visitedViews = [
+        { title: '运营控制台', path: '/console', fullPath: '/console', affix: true }
+      ]
+    },
+    moveToCurrentTag() {
+      this.$nextTick(() => {
+        const container = this.$refs.tagsContainer
+        if (!container) return
+        if (this.$route.path === '/console') {
+          container.scrollLeft = 0
+          return
+        }
+        const activeEl = container.querySelector('.tag-tab-item.active')
+        if (activeEl) {
+          const cRect = container.getBoundingClientRect()
+          const eRect = activeEl.getBoundingClientRect()
+          if (eRect.left < cRect.left) {
+            container.scrollLeft -= (cRect.left - eRect.left + 8)
+          } else if (eRect.right > cRect.right) {
+            container.scrollLeft += (eRect.right - cRect.right + 8)
+          }
+        }
+      })
+    },
+    isTagActive(tag) {
+      return this.$route.path === tag.path
+    },
+    handleTagClick(tag) {
+      if (this.$route.fullPath !== tag.fullPath) {
+        this.$router.push(tag.fullPath).catch(() => {})
+      }
+    },
+    closeTag(tag, index) {
+      if (tag.affix) return
+      this.visitedViews.splice(index, 1)
+      this.saveVisitedViews()
+      if (this.isTagActive(tag)) {
+        const nextTag = this.visitedViews[index] || this.visitedViews[index - 1] || this.visitedViews[0]
+        if (nextTag) {
+          this.$router.push(nextTag.fullPath).catch(() => {})
+        } else {
+          this.$router.push('/console').catch(() => {})
+        }
+      }
+    },
+    handleTagAction(command) {
+      if (command === 'closeOthers') {
+        this.visitedViews = this.visitedViews.filter(v => v.affix || this.isTagActive(v))
+        this.saveVisitedViews()
+      } else if (command === 'closeAll') {
+        this.visitedViews = this.visitedViews.filter(v => v.affix)
+        this.saveVisitedViews()
+        this.$router.push('/console').catch(() => {})
+      } else if (command === 'refreshCurrent') {
+        this.refreshCurrentView()
+      }
+    },
+    refreshCurrentView() {
+      this.isRouterAlive = false
+      this.$nextTick(() => {
+        this.isRouterAlive = true
+      })
+    },
+    computePageTitle(route) {
+      if (!route || !route.path) return '运营控制台'
+      const path = route.path
+      if (path === '/console' || path === '/') return '运营控制台'
+      const title = this.titleForPath(path)
+      return title || '业务管理'
+    },
+    getMenuNameForPath(path) {
+      const allMenus = [
+        ...this.masterMenus,
+        ...this.purchaseMenus,
+        ...this.inventoryMenus,
+        ...this.bomMenus,
+        ...this.salesMenus,
+        ...this.productionMenus,
+        ...this.approvalMenus,
+        ...this.financeMenus,
+        ...this.systemMenus
+      ]
+      for (const item of allMenus) {
+        if (item.path === path) return item.name
+        if (item.children && Array.isArray(item.children)) {
+          for (const child of item.children) {
+            if (child.path === path) return child.name
+          }
+        }
+      }
+      return null
+    },
+    titleForPath(path) {
+      if (!path) return '运营控制台'
+      if (path === '/' || path.startsWith('/console')) return '运营控制台'
+
+      // Exact menu item name
+      const menuName = this.getMenuNameForPath(path)
+      if (menuName) return menuName
+
+      // 生产管理
+      if (path === '/production/operations') return '工序管理'
+      if (path === '/production/routings') return '工艺路线'
+      if (path.startsWith('/production/routings/new')) return '工艺路线 / 新增'
+      if (path.startsWith('/production/routings/') && path.endsWith('/edit')) return '工艺路线 / 编辑'
+      if (path.startsWith('/production/routings/')) return '工艺路线 / 详情'
+      if (path === '/production/execution-monitor') return '生产执行监管'
+      if (path === '/production/demands') return '生产需求'
+      if (path.startsWith('/production/demands/')) return '生产需求 / 详情'
+      if (path === '/production/work-orders') return '工单管理'
+      if (path.startsWith('/production/work-orders/new')) return '工单管理 / 新增'
+      if (path.startsWith('/production/work-orders/') && path.endsWith('/edit')) return '工单管理 / 编辑'
+      if (path.startsWith('/production/work-orders/')) return '工单管理 / 详情'
+      if (path === '/production/cutting') return '下料管理'
+      if (path.startsWith('/production/cutting/')) return '下料管理 / 详情'
+
+      // 销售管理
+      if (path === '/sales/orders/create') return '销售订单 / 新增订单'
+      if (path.startsWith('/sales/orders/') && path.endsWith('/change')) return '销售订单 / 订单变更'
+      if (path.startsWith('/sales/orders/') && path.endsWith('/edit')) return '销售订单 / 编辑订单'
+      if (path.startsWith('/sales/orders/') && path.endsWith('/detail')) return '销售订单 / 订单详情'
+      if (path === '/sales/orders') return '销售订单'
+      if (path === '/sales/customers') return '客户管理'
+      if (path === '/sales/returns/create') return '销售退货 / 新建'
+      if (path.startsWith('/sales/returns/') && path.endsWith('/detail')) return '销售退货 / 详情'
+      if (path === '/sales/returns') return '销售退货'
+      if (path.startsWith('/sales/orders/') && path.endsWith('/production-confirmation')) return '订单生产确认'
+      if (path === '/sales/production-confirmation') return '订单生产确认'
+
+      // 采购管理
+      if (path === '/purchase/requests') return '采购需求'
+      if (path === '/purchase/plans') return '采购计划'
+      if (path === '/purchase/orders') return '采购订单'
+      if (path === '/purchase/receipts') return '采购到货'
+      if (path === '/purchase/returns') return '采购退货'
+      if (path === '/purchase/returns/create') return '采购退货 / 新建'
+      if (path.startsWith('/purchase/returns/') && path.endsWith('/detail')) return '采购退货 / 详情'
+      if (path === '/purchase/defects') return '不合格品处理'
+      if (path === '/purchase/exchanges') return '采购换货'
+      const purchaseTitles = { requests: '采购需求', plans: '采购计划', orders: '采购订单', receipts: '采购到货', defects: '不合格品处理', exchanges: '采购换货单' }
+      const purchaseMatch = path.match(/^\/purchase\/(requests|plans|orders|receipts|defects|exchanges)(?:\/([^/]+))?(?:\/(edit|detail))?/)
+      if (purchaseMatch) return this.docTitle(purchaseTitles[purchaseMatch[1]], purchaseMatch[2], purchaseMatch[3])
+
+      // 库存管理
+      if (path === '/inventory/posting') return '库存过账工作台'
+      if (path === '/inventory/production-picking') return '生产配料'
+      if (path === '/inventory/balances') return '库存余额'
+      if (path === '/inventory/transactions') return '库存流水'
+      if (path === '/inventory/adjustments') return '手工调整'
+      if (path === '/inventory/alerts') return '库存预警'
+      if (path.startsWith('/inventory/alerts/')) return '库存预警 / 详情'
+
+      // BOM管理
+      if (path === '/bom/boms') return 'BOM管理'
+      if (path === '/bom/create') return 'BOM管理 / 新增'
+      if (path === '/bom/expand') return 'BOM展开'
+      if (path.startsWith('/bom/') && path.endsWith('/edit')) return 'BOM管理 / 编辑'
+      if (path.startsWith('/bom/') && path.endsWith('/detail')) return 'BOM管理 / 详情'
+
+      // 主数据中心
+      if (path === '/master/products') return '商品管理'
+      if (path === '/master/products/new') return '商品管理 / 新增商品'
+      if (path.startsWith('/master/products/') && path.endsWith('/edit')) return '商品管理 / 编辑商品'
+      if (path.startsWith('/master/products/')) return '商品管理 / 商品详情'
+      if (path === '/master/skus') return 'SKU管理'
+      if (path.startsWith('/master/skus/new')) return 'SKU管理 / 新增'
+      if (path.startsWith('/master/skus/') && path.endsWith('/edit')) return 'SKU管理 / 编辑'
+      if (path.startsWith('/master/skus/')) return 'SKU管理 / 详情'
+      if (path === '/master/items') return '物料管理'
+      if (path.startsWith('/master/items/new')) return '物料管理 / 新增'
+      if (path.startsWith('/master/items/') && path.endsWith('/edit')) return '物料管理 / 编辑'
+      if (path.startsWith('/master/items/')) return '物料管理 / 详情'
+      if (path === '/master/categories') return '物料类目'
+      if (path.startsWith('/master/sku-item-relations')) return 'SKU-物料默认关系'
+      if (path === '/master/base-archives' || path === '/master/units') return '基础档案'
+      if (path === '/master/suppliers') return '供应商管理'
+      if (path === '/master/warehouse-locations' || ['/master/warehouses', '/master/locations'].includes(path)) return '仓库与库位'
+      if (path === '/master/imports') return '数据导入'
+
+      // 审核中心
+      if (path === '/approvals/tasks') return '审核工作台'
+      if (path.startsWith('/approvals/tasks/')) return '审核任务详情'
+      if (path === '/approvals/flows') return '流程配置'
+      if (path.startsWith('/approvals/flows/create')) return '流程配置 / 新增流程'
+      if (path.startsWith('/approvals/flows/')) return '流程配置 / 编辑流程'
+      if (path === '/approvals/forms') return '表单管理'
+      if (path.startsWith('/approvals/forms/create')) return '表单管理 / 新建表单'
+      if (path.startsWith('/approvals/forms/')) return '表单管理 / 编辑表单'
+
+      // 财务管理
+      if (path === '/finance/receipts') return '收款管理'
+      if (path === '/finance/receipts/create') return '收款管理 / 新增收款单'
+      if (/^\/finance\/receipts\/\d+$/.test(path)) return '收款管理 / 收款单详情'
+      if (path === '/finance/payments') return '付款管理'
+      if (path === '/finance/payments/create') return '付款管理 / 新增付款单'
+      if (/^\/finance\/payments\/\d+$/.test(path)) return '付款管理 / 付款单详情'
+      if (path === '/finance/payables') return '应付管理'
+      if (path === '/finance/supplier-ledgers') return '供应商往来'
+      if (path === '/finance/invoices') return '发票管理'
+      if (path === '/finance/invoices/create') return '发票管理 / 登记进项发票'
+      if (path.startsWith('/finance/invoices/') && path.endsWith('/edit')) return '发票管理 / 登记进项发票'
+      if (path.startsWith('/finance/invoices/') && path.endsWith('/match')) return '发票管理 / 发票匹配'
+      if (path.startsWith('/finance/invoices/')) return '发票管理 / 发票详情'
+      if (path.startsWith('/finance/allocations')) return '往来核销'
+      if (path === '/finance/accounts') return '资金账户'
+      if (path === '/finance/exchange-rates') return '汇率历史'
+      if (path === '/finance/transfers/create') return '资金转账 / 换汇'
+      if (path.startsWith('/finance/transfers/')) return '资金转账 / 换汇详情'
+      if (path.startsWith('/finance/transfers')) return '资金转账 / 换汇'
+      if (path === '/finance/account-valuations') return '资金账户估值'
+
+      // 系统管理
+      if (path === '/system/document-number-rules') return '编号规则'
+      if (path === '/system/admins') return '管理员管理'
+      if (path === '/system/roles') return '角色权限'
+      if (path === '/system/menus') return '菜单管理'
+      if (path === '/system/departments') return '部门管理'
+
+      return '业务管理'
+    },
+    findParentRoute(path) {
+      if (path.startsWith('/sales/orders')) return '/sales/orders'
+      if (path.startsWith('/sales/customers')) return '/sales/customers'
+      if (path.startsWith('/sales/returns')) return '/sales/returns'
+      if (path.startsWith('/purchase/requests')) return '/purchase/requests'
+      if (path.startsWith('/purchase/plans')) return '/purchase/plans'
+      if (path.startsWith('/purchase/orders')) return '/purchase/orders'
+      if (path.startsWith('/purchase/receipts')) return '/purchase/receipts'
+      if (path.startsWith('/purchase/returns')) return '/purchase/returns'
+      if (path.startsWith('/inventory/alerts')) return '/inventory/alerts'
+      if (path.startsWith('/production/work-orders')) return '/production/work-orders'
+      if (path.startsWith('/production/demands')) return '/production/demands'
+      if (path.startsWith('/production/operations')) return '/production/operations'
+      if (path.startsWith('/production/routings')) return '/production/routings'
+      if (path.startsWith('/production/cutting')) return '/production/cutting'
+      if (path.startsWith('/bom/boms') || path.startsWith('/bom/create') || path.startsWith('/bom/')) return '/bom/boms'
+      if (path.startsWith('/finance/receipts')) return '/finance/receipts'
+      if (path.startsWith('/finance/payments')) return '/finance/payments'
+      if (path.startsWith('/finance/invoices')) return '/finance/invoices'
+      if (path.startsWith('/finance/allocations')) return '/finance/allocations'
+      if (path.startsWith('/finance/transfers')) return '/finance/transfers'
+      if (path.startsWith('/master/products')) return '/master/products'
+      if (path.startsWith('/master/skus')) return '/master/skus'
+      if (path.startsWith('/master/items')) return '/master/items'
+      if (path.startsWith('/master/sku-item-relations')) return '/master/sku-item-relations'
+      if (path.startsWith('/approvals/tasks')) return '/approvals/tasks'
+      if (path.startsWith('/approvals/flows')) return '/approvals/flows'
+      if (path.startsWith('/approvals/forms')) return '/approvals/forms'
+      if (path.startsWith('/system/admins')) return '/system/admins'
+      if (path.startsWith('/system/roles')) return '/system/roles'
+      if (path.startsWith('/system/menus')) return '/system/menus'
+      if (path.startsWith('/system/departments')) return '/system/departments'
+      return null
+    },
     toggleMenu(key) {
       if (this.sidebarCollapsed) this.sidebarCollapsed = false
-      this.openedMenus = this.openedMenus.includes(key)
-        ? this.openedMenus.filter(item => item !== key)
-        : [key]
+      if (this.openedMenus.includes(key)) {
+        this.openedMenus = []
+      } else {
+        this.openedMenus = [key]
+      }
     },
     openMenuSection(section) {
       if (this.sidebarCollapsed) this.sidebarCollapsed = false
-      this.toggleMenu(section.key)
+      if (this.openedMenus.includes(section.key)) {
+        this.openedMenus = []
+      } else {
+        this.openedMenus = [section.key]
+      }
     },
     isMenuOpen(key) {
       return this.openedMenus.includes(key)

@@ -14,6 +14,146 @@ class SalesToProductionFullFlowTest extends TestCase
 {
     use DatabaseTransactions;
 
+    public function test_multiple_products_confirm_into_independent_routes_while_missing_technical_data_waits_on_its_own_work_order(): void
+    {
+        $f = $this->fixture();
+        $user = (object) ['legacy_id' => 9901, 'username' => 'full-flow', 'nickname' => '全流程测试员'];
+        $f['order']->update(['order_status' => 'draft', 'confirm_status' => 'pending_confirmation', 'carrier_id' => 1]);
+        $routingA = \App\Models\Erp\ProductionRouting::where('output_item_id', $f['item']->id)->firstOrFail();
+        $nodeA = $routingA->operations()->firstOrFail();
+        $operationA = $nodeA->operation;
+        $lastA = $nodeA->replicate();
+        $lastA->sequence = 20;
+        $lastA->save();
+
+        $lineIds = [$f['line']->id];
+        $routes = [$routingA->id];
+        foreach ([2 => 20, 3 => 5] as $index => $qty) {
+            $product = $f['product']->replicate();
+            $product->product_code .= '-'.$index;
+            $product->save();
+            $item = $f['item']->replicate();
+            $item->item_code .= '-'.$index;
+            $item->save();
+            $sku = $f['sku']->replicate();
+            $sku->sku_code .= '-'.$index;
+            $sku->product_id = $product->id;
+            $sku->save();
+            SkuItemRelation::create(['sku_id' => $sku->id, 'item_id' => $item->id, 'relation_type' => 'primary',
+                'qty' => 1, 'unit_id' => $f['unit']->id, 'is_primary' => true, 'status' => 'active', 'effective_at' => now()->subDay()]);
+            $line = $f['line']->replicate();
+            $line->fill(['line_no' => $index, 'line_uuid' => $f['line']->line_uuid.'-'.$index,
+                'product_id' => $product->id, 'sku_id' => $sku->id, 'item_id' => $item->id,
+                'order_qty' => $qty, 'is_special_customized' => $index === 3]);
+            $line->save();
+            $lineIds[] = $line->id;
+            if ($index === 3) continue; // 第三种产品尚未准备 BOM、路线及图纸。
+            $bom = Bom::where('output_item_id', $f['item']->id)->firstOrFail();
+            $newBom = $bom->replicate();
+            $newBom->fill(['bom_no' => $bom->bom_no.'-B', 'product_id' => $product->id, 'sku_id' => $sku->id, 'output_item_id' => $item->id]);
+            $newBom->save();
+            foreach ($bom->items as $material) {
+                $copy = $material->replicate();
+                $copy->bom_id = $newBom->id;
+                $copy->save();
+            }
+            $routeB = $routingA->replicate();
+            $routeB->fill(['routing_no' => $routingA->routing_no.'-B', 'output_item_id' => $item->id,
+                'product_id' => $product->id, 'sku_id' => $sku->id, 'default_scope_key' => $item->id]);
+            $routeB->save();
+            $routes[] = $routeB->id;
+            foreach (['下料', '焊接', '检验'] as $pos => $name) {
+                $op = $operationA->replicate();
+                $op->fill(['operation_no' => $operationA->operation_no.'-B'.$pos, 'operation_name' => $name]);
+                $op->save();
+                $node = $nodeA->replicate();
+                $node->fill(['routing_id' => $routeB->id, 'operation_id' => $op->id, 'sequence' => ($pos + 1) * 10, 'output_item_id' => $item->id]);
+                $node->save();
+                if ($pos === 0) foreach ($nodeA->materialSupplyRules as $rule) {
+                    $copy = $rule->replicate();
+                    $copy->fill(['routing_operation_id' => $node->id, 'target_routing_operation_id' => $node->id]);
+                    $copy->save();
+                }
+            }
+        }
+        $service = app(SalesOrderFulfillmentApplicationService::class);
+        $confirmed = $service->confirmOrderAndFulfill($f['order']->id, $user->nickname, $user);
+        $this->assertSame('confirmed', $confirmed->production_confirm_status);
+        $orders = \App\Models\Erp\WorkOrder::where('source_id', $f['order']->id)->where('source_type', 'sales_order')->orderBy('id')->get();
+        $this->assertCount(3, $orders);
+        $this->assertSame([6.0, 20.0, 5.0], $orders->map(fn ($row) => (float) $row->target_qty)->all());
+        $this->assertSame($lineIds, $orders->map(fn ($row) => (int) $row->demand->sales_order_line_id)->all());
+        $this->assertSame($routes, $orders->take(2)->pluck('production_routing_id')->all());
+        $this->assertSame([2, 3, 0], $orders->map(fn ($row) => count($row->routing_snapshot['operations'] ?? []))->all());
+        $this->assertSame(['下料', '焊接', '检验'], array_column($orders[1]->routing_snapshot['operations'], 'operation_name'));
+        $this->assertSame(['WAIT_RELEASE'], $orders->pluck('status')->unique()->values()->all());
+        $this->assertCount(1, $orders->pluck('production_master_order_id')->unique());
+        $this->assertSame('demand_confirmed', $f['line']->fresh()->line_status);
+        $this->assertDatabaseHas('erp_work_order_release_gate_checks', ['work_order_id' => $orders[2]->id, 'check_key' => 'bom_match', 'status' => 'blocked']);
+        $this->assertDatabaseHas('erp_work_order_release_gate_checks', ['work_order_id' => $orders[2]->id, 'check_key' => 'technical_confirmation', 'status' => 'blocked']);
+        $beforeIds = $orders->pluck('id')->all();
+        $service->confirmOrderAndFulfill($f['order']->id, $user->nickname, $user);
+        $this->assertSame($beforeIds, \App\Models\Erp\WorkOrder::where('source_id', $f['order']->id)->where('source_type', 'sales_order')->orderBy('id')->pluck('id')->all());
+    }
+
+    public function test_custom_order_can_submit_without_production_drawings(): void
+    {
+        $f = $this->fixture();
+        $f['order']->update(['order_status' => 'draft', 'confirm_status' => 'unconfirmed', 'carrier_id' => 1,
+            'contact_phone' => '13800000000', 'full_address' => '测试收货地址']);
+        $f['line']->update(['is_special_customized' => true]);
+        $f['sku']->update(['special_custom_drawing_required' => true,
+            'special_custom_agreement_required' => false, 'special_custom_description_required' => false]);
+        $service = app(\App\Services\Erp\SalesOrderDraftService::class);
+        $this->assertTrue($service->precheckConfirmation($f['order'])['passed']);
+        $this->assertSame('pending_confirmation', $service->submitForConfirmation($f['order'], '全流程测试员')->confirm_status);
+    }
+
+    public function test_skus_sharing_one_item_use_their_own_default_routes_and_do_not_allocate_the_same_stock_twice(): void
+    {
+        $f = $this->fixture();
+        $user = (object) ['legacy_id' => 9901, 'username' => 'full-flow', 'nickname' => '全流程测试员'];
+        $f['order']->update(['order_status' => 'draft', 'confirm_status' => 'pending_confirmation', 'carrier_id' => 1]);
+        $skuB = $f['sku']->replicate();
+        $skuB->sku_code .= '-B';
+        $skuB->save();
+        SkuItemRelation::create(['sku_id' => $skuB->id, 'item_id' => $f['item']->id, 'relation_type' => 'primary',
+            'qty' => 1, 'unit_id' => $f['unit']->id, 'is_primary' => true, 'status' => 'active', 'effective_at' => now()->subDay()]);
+        $lineB = $f['line']->replicate();
+        $lineB->fill(['line_uuid' => $f['line']->line_uuid.'-B', 'line_no' => 2, 'sku_id' => $skuB->id, 'order_qty' => 20]);
+        $lineB->save();
+        $generic = \App\Models\Erp\ProductionRouting::where('output_item_id', $f['item']->id)->firstOrFail();
+        $specific = [];
+        $masterData = app(\App\Services\Erp\ProductionMasterDataService::class);
+        foreach ([$f['sku'], $skuB] as $index => $sku) {
+            $route = $generic->replicate();
+            $route->fill(['routing_no' => $generic->routing_no.'-'.$index, 'product_id' => $f['product']->id,
+                'sku_id' => $sku->id, 'default_scope_key' => null, 'is_default' => false]);
+            $route->save();
+            foreach ($generic->operations as $node) {
+                $copy = $node->replicate();
+                $copy->routing_id = $route->id;
+                $copy->save();
+            }
+            $specific[] = $masterData->setDefaultRouting($route->id,
+                ['client_command_id' => 'sku-default-'.$index, 'expected_version' => 1], $user, ['production.routing.default'], false)->id;
+        }
+        $this->assertTrue($generic->fresh()->is_default);
+        $this->assertSame(3, \App\Models\Erp\ProductionRouting::where('output_item_id', $f['item']->id)->where('is_default', true)->count());
+        $this->assertSame($generic->id, $masterData->defaultRoutingMatches($f['item']->id, null, null)->sole()->id);
+        $service = app(SalesOrderFulfillmentApplicationService::class);
+        $preview = $service->preview($f['order']->id);
+        $this->assertSame([4.0, 0.0], collect($preview['lines'])->pluck('system_suggested_inventory_qty')->all());
+        $confirmed = $service->confirmOrderAndFulfill($f['order']->id, $user->nickname, $user);
+        $this->assertSame('confirmed', $confirmed->production_confirm_status);
+        $this->assertSame(4.0, (float) $f['balance']->fresh()->quantity_locked);
+        $this->assertSame(4.0, (float) $confirmed->fulfillments->where('fulfillment_type', 'inventory')->sum('sales_qty'));
+        $orders = \App\Models\Erp\WorkOrder::whereIn('production_demand_id', $confirmed->productionRequirements->pluck('id'))->orderBy('id')->get();
+        $this->assertSame($specific, $orders->pluck('production_routing_id')->all());
+        $this->assertSame([6.0, 20.0], $orders->map(fn ($row) => (float) $row->target_qty)->all());
+        $this->assertSame([$f['line']->id, $lineB->id], $orders->map(fn ($row) => $row->demand->sales_order_line_id)->all());
+    }
+
     public function test_formal_sales_confirmation_locks_stock_and_creates_visible_mwo_and_wo_idempotently(): void
     {
         $f = $this->fixture();
@@ -47,11 +187,11 @@ class SalesToProductionFullFlowTest extends TestCase
             'status' => 'blocked',
             'reason_code' => 'production_funding_blocked',
         ]);
-        $this->assertDatabaseHas('erp_work_order_release_gate_checks', [
-            'work_order_id' => $workOrder->id,
-            'check_key' => 'production_location',
-            'status' => 'blocked',
+        $this->assertDatabaseMissing('erp_work_order_release_gate_checks', [
+            'work_order_id' => $workOrder->id, 'check_key' => 'production_location',
         ]);
+        $this->assertNull($workOrder->production_location_name);
+        $this->assertSame($workOrder->work_order_no, $workOrder->production_batch);
         $this->assertSame(4.0, (float) InventoryBalance::query()->whereKey($f['balance']->id)->value('quantity_locked'));
 
         $replayed = $service->confirmOrderAndFulfill($f['order']->id, $user->nickname, $user);
@@ -227,6 +367,7 @@ class SalesToProductionFullFlowTest extends TestCase
 
     private function fixture(): array
     {
+        $this->seed(\Database\Seeders\ErpDocumentNumberRuleSeeder::class);
         $suffix = Str::upper(Str::random(8));
         DB::table('erp_legacy_admin_users')->insert(['legacy_id' => 9901, 'username' => 'flow-'.$suffix, 'nickname' => '全流程测试员',
             'status' => 'normal', 'auth_group_names' => '[]', 'created_at' => now(), 'updated_at' => now()]);

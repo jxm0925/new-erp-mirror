@@ -31,6 +31,7 @@ class ItemIntegratedFormController extends Controller
 
     public function store(Request $request, ItemIntegratedFormApplicationService $service, AuthContextService $auth)
     {
+        app(\App\Services\Erp\MasterDataAccessService::class)->authorize($request, 'items', 'create');
         [$item, $policy, $activate] = $this->validated($request);
         $saved = $service->save(null, $item, $policy, $activate, $auth->currentLegacyId($request));
         return response()->json(['message' => $activate ? '物料与归属策略已启用' : '物料与归属策略草稿已保存', 'data' => $saved], 201);
@@ -38,6 +39,7 @@ class ItemIntegratedFormController extends Controller
 
     public function update(Request $request, int $id, ItemIntegratedFormApplicationService $service, AuthContextService $auth)
     {
+        app(\App\Services\Erp\MasterDataAccessService::class)->authorize($request, 'items', 'edit');
         [$item, $policy, $activate] = $this->validated($request, $id);
         $saved = $service->save(Item::query()->findOrFail($id), $item, $policy, $activate, $auth->currentLegacyId($request));
         return response()->json(['message' => $activate ? '物料与归属策略已启用' : '物料与归属策略草稿已保存', 'data' => $saved]);

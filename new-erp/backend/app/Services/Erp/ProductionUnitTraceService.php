@@ -20,12 +20,14 @@ final class ProductionUnitTraceService
     {
         $this->permission($permissions, 'production.unit.view', $superAdmin);
         $this->visible($workOrderId, $user, $permissions, $superAdmin, 'production.unit.view');
-        $page = ProductionUnit::query()->with(['deviceSerial', 'equipmentIdentity', 'workOrder.outputItem'])
-            ->where('work_order_id', $workOrderId)
-            ->when(! empty($filters['status']), fn ($query) => $query->where('status', $filters['status']))
-            ->orderBy('sequence_no')
+        $query = ProductionUnit::query()->with(['deviceSerial', 'equipmentIdentity', 'workOrder.outputItem'])
+            ->where('erp_production_units.work_order_id', $workOrderId)
+            ->when(! empty($filters['status']), fn ($query) => $query->where('erp_production_units.status', $filters['status']));
+        app(ProductionUnitDisplayQuery::class)->apply($query, $workOrderId, $filters['display_status'] ?? null);
+        $page = $query->orderBy('erp_production_units.sequence_no')->orderBy('erp_production_units.id')
             ->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 20))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
-        $page->setCollection($page->getCollection()->map(fn (ProductionUnit $unit) => $this->projection($unit)));
+        $rows = $page->getCollection()->map(fn (ProductionUnit $unit) => $this->projection($unit))->all();
+        $page->setCollection(collect($this->withTaskActions($rows, $user, $permissions, $superAdmin)));
         return $page;
     }
 
@@ -35,7 +37,7 @@ final class ProductionUnitTraceService
         $unit = ProductionUnit::with(['deviceSerial', 'equipmentIdentity', 'workOrder.outputItem'])->find($id);
         if (! $unit) $this->fail('production_unit_not_found', '生产单元不存在。', 404);
         $this->visible($unit->work_order_id, $user, $permissions, $superAdmin, 'production.unit.view');
-        return $this->projection($unit) + ['operations' => $this->timeline($unit)];
+        return $this->withTaskActions([$this->projection($unit) + ['operations' => $this->timeline($unit)]], $user, $permissions, $superAdmin)[0];
     }
 
     public function trace(string $keyword, object $user, array $permissions, bool $superAdmin): array
@@ -74,6 +76,24 @@ final class ProductionUnitTraceService
                     'child.output_no as child_output_no', 'child.serial_no_snapshot as child_serial_no',
                 ])->map(fn ($row) => (array) $row)->all(),
         ];
+    }
+
+    private function withTaskActions(array $rows, object $user, array $permissions, bool $superAdmin): array
+    {
+        $ids = collect($rows)->flatMap(fn ($row) => [data_get($row, 'execution.current_task.id'),
+            ...collect($row['operations'] ?? [])->pluck('task.id')->all()])->filter()->unique();
+        $query = \App\Models\Erp\ProductionTask::query()->whereIn('id', $ids);
+        $this->scopeResolver->applyProductionTaskScope($query,
+            $this->scopeResolver->resolve($user, 'production.task.view', $permissions, $superAdmin), (int) ($user->legacy_id ?? $user->id));
+        $visible = ($superAdmin || in_array('production.task.view', $permissions, true)) ? $query->pluck('id')->all() : [];
+        foreach ($rows as &$row) {
+            $row['actions']['view_task'] = in_array((int) data_get($row, 'execution.current_task.id'), $visible, true);
+            foreach ($row['operations'] ?? [] as $index => $operation) {
+                $row['operations'][$index]['actions']['view_task'] = in_array((int) data_get($operation, 'task.id'), $visible, true);
+            }
+        }
+        unset($row);
+        return $rows;
     }
 
     private function timeline(ProductionUnit $unit): array
@@ -144,6 +164,7 @@ final class ProductionUnitTraceService
             ],
             'sequence_no' => (int) $unit->sequence_no,
             'status' => $unit->status,
+            'display_status' => $unit->getAttribute('display_status'),
             'status_label' => $this->unitStatusLabel((string) $unit->status),
             'serial' => $this->serialProjection($unit),
             'equipment_identity' => $this->equipmentProjection($unit),
@@ -182,7 +203,7 @@ final class ProductionUnitTraceService
         $workMode = $current->work_mode_snapshot ?: 'manual';
         $handover = DB::table('erp_production_operation_handovers')->where('target_target_type', 'unit_operation')
             ->where('target_target_id', $current->id)->orderByDesc('id')->first();
-        $handoverStatus = (int) $current->sequence_no_snapshot === 1 ? 'NOT_REQUIRED'
+        $handoverStatus = (int) $operations->first()?->id === (int) $current->id ? 'NOT_REQUIRED'
             : ($handover?->status === 'RECEIVED' ? 'RECEIVED' : ($handover?->status === 'REJECTED' ? 'EXCEPTION' : 'WAIT_RECEIVE'));
         $requirement = DB::table('erp_production_target_material_requirements')->where('target_type', 'unit_operation')->where('target_id', $current->id)
             ->selectRaw('SUM(required_base_qty) required_qty, SUM(satisfied_base_qty) satisfied_qty')->first();
@@ -193,6 +214,7 @@ final class ProductionUnitTraceService
             'current_operation' => [
                 'id' => (int) $current->id, 'code' => $current->operation_code_snapshot, 'name' => $current->operation_name_snapshot,
                 'sequence' => (int) $current->sequence_no_snapshot, 'total' => $operations->count(), 'status' => $current->status,
+                'position' => $operations->values()->search(fn ($operation) => (int) $operation->id === (int) $current->id) + 1,
                 'label' => $this->operationStatusLabel((string) $current->status), 'work_mode_snapshot' => $workMode,
             ],
             'current_task' => [

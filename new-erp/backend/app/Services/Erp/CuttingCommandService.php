@@ -36,6 +36,7 @@ final class CuttingCommandService
             'dispatch_cutting_route','accept_cutting_handover' => ['quantity'],
             'reject_cutting_handover' => ['quantity','reason'],
             'warehouse_cutting_route' => ['quantity','warehouse_id','location_id','batch_no'],
+            'warehouse_cutting_remnants' => ['lines','warehouse_id','location_id','remark'],
             'create_cutting_inventory_issue' => ['quantity','target_material_requirement_id'],
             'release_cutting_inventory' => ['quantity','reason'],
             'cancel_cutting_inventory_issue' => [],
@@ -120,6 +121,9 @@ final class CuttingCommandService
         $this->permission($permissions, $permission);
         $q = DB::table('erp_cutting_orders')->where('id', $id); if ($lock) $q->lockForUpdate();
         $row = $q->first(); if (! $row) $this->fail('cutting_order_missing', '下料单不存在。', 404);
+        if (in_array($permission, ['production.cutting.close', 'production.cutting.cancel'], true)
+            && app(ProductionCuttingOperationService::class)->linkedOrder($id))
+            $this->fail('production_operation_lifecycle_required', '下料记录随所属工序完成，不能独立关闭或取消。', 409);
         if (($row->purpose ?? 'FORMAL') === 'WORKER') {
             $taskId = DB::table('erp_cutting_tasks')->where('cutting_order_id', $id)->value('id');
             $task = $this->cuttingTask((int) $taskId, $user, $permissions, $super, $permission, $lock);

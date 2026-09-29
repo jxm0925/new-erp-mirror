@@ -12,7 +12,7 @@
       <div class="import-summary"><span>总行数 <b>{{batch.total_rows}}</b></span><span>可导入 <b class="ok">{{batch.valid_rows+batch.warning_rows}}</b></span><span>警告 <b class="warn">{{batch.warning_rows}}</b></span><span>错误 <b class="error">{{batch.error_rows}}</b></span></div>
       <div class="table-panel import-table">
         <div class="table-tabs"><button v-for="tab in tabs" :key="tab.value" :class="{active:filter===tab.value}" @click="filter=tab.value;loadRows()">{{tab.label}}</button></div>
-        <el-table v-loading="busy" :data="rows" height="calc(100vh - 340px)" :row-class-name="rowClass">
+        <el-table v-paged-scroll="loadMoreRows" v-loading="busy" :data="rows" height="calc(100vh - 340px)" :row-class-name="rowClass">
           <el-table-column prop="row_no" label="行号" width="70" /><el-table-column label="导入数据" min-width="360"><template slot-scope="{row}"><div class="raw-values"><span v-for="(value,key) in row.raw_data" :key="key"><small>{{key}}</small>{{value}}</span></div></template></el-table-column>
           <el-table-column label="校验状态" width="100"><template slot-scope="{row}"><el-tag size="mini" :type="row.validation_status==='error'?'danger':row.validation_status==='warning'?'warning':'success'">{{row.validation_status==='error'?'错误':row.validation_status==='warning'?'警告':'可导入'}}</el-tag></template></el-table-column>
           <el-table-column prop="error_field" label="字段" width="120" /><el-table-column prop="error_reason" label="校验信息" min-width="180" /><el-table-column prop="suggestion" label="建议处理" min-width="180" />
@@ -23,17 +23,98 @@
   </section>
 </template>
 <script>
-import { uploadImport, previewImport, importRows, confirmImport, errorExportUrl } from '../../../api/erp/master'
+import { uploadImport, previewImport, importRows, confirmImport, downloadImportErrors } from '../../../api/erp/master'
+import pagedScroll from '../../../directives/pagedScroll'
+import { createPageState, queryPage, invalidatePage } from '../../../utils/pagedQuery'
+import cachedPageRoute from '../../../utils/cachedPageRoute'
+
+const importTypes = ['Product', 'SKU', 'Item', 'Supplier', 'Warehouse', 'Location', 'SKU-Item Relation']
 export default {
-  data:()=>({steps:['上传文件','数据预检','确认导入','完成'],stage:0,types:['Product','SKU','Item','Supplier','Warehouse','Location','SKU-Item Relation','Legacy Mapping'],importType:'Product',file:null,batch:null,rows:[],busy:false,filter:'',tabs:[{label:'全部',value:''},{label:'仅错误',value:'error'},{label:'仅警告',value:'warning'},{label:'可导入',value:'valid'}]}),
-  methods:{
-    fileChanged(file){this.file=file.raw},
-    async upload(){this.busy=true;try{const form=new FormData();form.append('file',this.file);form.append('import_type',this.importType);let{data}=await uploadImport(form);this.batch=data.data;this.stage=1;({data}=await previewImport(this.batch.id));this.batch=data.data;this.rows=data.rows.data;this.$message.success('预检完成')}catch(e){this.$message.error(e.userMessage)}finally{this.busy=false}},
-    async loadRows(){if(!this.batch)return;this.busy=true;try{const{data}=await importRows(this.batch.id,{status:this.filter,per_page:100});this.rows=data.data}catch(e){this.$message.error(e.userMessage)}finally{this.busy=false}},
-    async confirm(){try{await this.$confirm(`将导入 ${this.batch.valid_rows+this.batch.warning_rows} 条正确数据，错误行会跳过。确认继续？`,'确认导入',{type:'warning'});this.busy=true;const{data}=await confirmImport(this.batch.id);this.batch=data.data;this.stage=3;this.$message.success(data.message)}catch(e){if(e!=='cancel')this.$message.error(e.userMessage||'导入失败')}finally{this.busy=false}},
-    exportErrors(){window.open(errorExportUrl(this.batch.id),'_blank')},
-    reset(){this.stage=0;this.file=null;this.batch=null;this.rows=[]},
-    rowClass({row}){return row.validation_status==='error'?'error-row':row.validation_status==='warning'?'warning-row':''}
+  mixins: [cachedPageRoute],
+  directives: { pagedScroll },
+  data () {
+    return {
+      steps: ['上传文件', '数据预检', '确认导入', '完成'], stage: 0,
+      types: importTypes, importType: importTypes.includes(this.$route.query.type) ? this.$route.query.type : 'Product',
+      file: null, batch: null, rows: [], busy: false, filter: '', uploadSequence: 0,
+      rowPage: createPageState(50),
+      tabs: [{ label: '全部', value: '' }, { label: '仅错误', value: 'error' }, { label: '仅警告', value: 'warning' }, { label: '可导入', value: 'valid' }]
+    }
+  },
+  watch: {
+    'pageRoute.query.type' (type) {
+      if (!importTypes.includes(type) || type === this.importType) return
+      this.reset()
+      this.importType = type
+    }
+  },
+  methods: {
+    fileChanged (file) { this.file = file.raw },
+    async upload () {
+      if (this.busy || !this.file) return
+      const sequence = ++this.uploadSequence
+      this.busy = true
+      try {
+        const form = new FormData()
+        form.append('file', this.file)
+        form.append('import_type', this.importType)
+        const uploaded = await uploadImport(form)
+        if (sequence !== this.uploadSequence) return
+        this.batch = uploaded.data.data
+        this.stage = 1
+        const { data } = await previewImport(this.batch.id)
+        if (sequence !== this.uploadSequence) return
+        this.batch = data.data
+        this.filter = ''
+        // 预检首屏和后续分页使用相同页长，不能首屏50条后改用100条而跳过中间记录。
+        const page = data.rows
+        this.rowPage = { ...createPageState(Number(page.per_page || 50)), rows: page.data || [],
+          page: Number(page.current_page || 1), total: Number(page.total || 0), lastPage: Number(page.last_page || 1), params: { status: '' } }
+        this.rows = this.rowPage.rows
+        this.$message.success('预检完成')
+      } catch (e) {
+        if (sequence === this.uploadSequence) this.$message.error(e.userMessage || '预检失败')
+      } finally {
+        if (sequence === this.uploadSequence) this.busy = false
+      }
+    },
+    async loadRows (append = false) {
+      if (!this.batch) return
+      const batchId = this.batch.id
+      try {
+        const data = await queryPage(this.rowPage, params => importRows(batchId, params), { status: this.filter }, append)
+        if (data) this.rows = this.rowPage.rows
+      } catch (e) { this.$message.error(e.userMessage || '预检行加载失败') }
+    },
+    loadMoreRows () { return this.loadRows(true) },
+    async confirm () {
+      if (this.busy || !this.batch || this.stage > 1) return
+      const batchId = this.batch.id
+      const sequence = this.uploadSequence
+      try {
+        await this.$confirm(`将导入 ${this.batch.valid_rows + this.batch.warning_rows} 条正确数据，错误行会跳过。确认继续？`, '确认导入', { type: 'warning' })
+        if (sequence !== this.uploadSequence || !this.batch || this.batch.id !== batchId) return
+        this.busy = true
+        const { data } = await confirmImport(batchId)
+        if (sequence !== this.uploadSequence) return
+        this.batch = data.data
+        this.stage = 3
+        this.$message.success(data.message)
+      } catch (e) {
+        if (e !== 'cancel' && e !== 'close') this.$message.error(e.userMessage || '导入失败')
+      } finally { if (sequence === this.uploadSequence) this.busy = false }
+    },
+    async exportErrors () {
+      try { await downloadImportErrors(this.batch.id, this.batch.batch_no + '-errors.csv') }
+      catch (e) { this.$message.error(e.userMessage || '错误明细下载失败') }
+    },
+    reset () {
+      this.uploadSequence += 1
+      invalidatePage(this.rowPage)
+      this.rowPage = createPageState(50)
+      this.stage = 0; this.file = null; this.batch = null; this.rows = []; this.filter = ''; this.busy = false
+    },
+    rowClass ({ row }) { return row.validation_status === 'error' ? 'error-row' : row.validation_status === 'warning' ? 'warning-row' : '' }
   }
 }
 </script>

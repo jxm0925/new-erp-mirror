@@ -23,12 +23,13 @@ api.interceptors.response.use(response => response, error => {
 })
 
 export const listEntity = (entity, params) => api.get(`/v1/erp/master/${entity}`, { params })
-export const getEntity = (entity, id) => api.get(`/v1/erp/master/${entity}/${id}`)
+export const getEntity = (entity, id, params) => api.get(`/v1/erp/master/${entity}/${id}`, { params })
 export const uploadProductImage = form => api.post('/v1/erp/master/products/image-upload', form, { headers: { 'Content-Type': 'multipart/form-data' } })
 export const uploadSkuImage = form => api.post('/v1/erp/master/skus/image-upload', form, { headers: { 'Content-Type': 'multipart/form-data' } })
 export const saveEntity = (entity, data) => data.id
   ? api.put(`/v1/erp/master/${entity}/${data.id}`, data)
   : api.post(`/v1/erp/master/${entity}`, data)
+export const saveProductSkuMatrix = (productId, rows) => api.post(`/v1/erp/master/products/${productId}/sku-matrix`, { sku_matrix: rows })
 export const disableEntity = (entity, id) => api.post(`/v1/erp/master/${entity}/${id}/disable`)
 export const enableEntity = (entity, id) => api.post(`/v1/erp/master/${entity}/${id}/enable`)
 export const deleteEntity = (entity, id) => api.delete(`/v1/erp/master/${entity}/${id}`)
@@ -89,5 +90,18 @@ export const previewImport = id => api.post(`/v1/erp/master/imports/${id}/previe
 export const importRows = (id, params) => api.get(`/v1/erp/master/imports/${id}/rows`, { params })
 export const confirmImport = id => api.post(`/v1/erp/master/imports/${id}/confirm`)
 export const errorExportUrl = id => `${api.defaults.baseURL}/v1/erp/master/imports/${id}/errors/export`
+
+// 使用同一鉴权客户端下载，令牌留在请求头，不能放进URL或依赖 window.open。
+export const downloadImportErrors = async (id, filename) => {
+  const response = await api.get(`/v1/erp/master/imports/${id}/errors/export`, { responseType: 'blob' })
+  const url = URL.createObjectURL(response.data)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
 
 export default api

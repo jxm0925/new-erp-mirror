@@ -14,6 +14,10 @@ Page({
   data: { id: 0, mode: 'delivery', loading: true, busy: false, delivery: null, lines: [] },
 
   onLoad(options) {
+    // Preserve old links while routing all delivery/signing actions through the new
+    // paginated warehouse flow with explicit serial identity and durable recovery.
+    wx.redirectTo({ url: `/pages/warehouse/delivery/index?id=${Number(options.id || 0)}` });
+    return;
     const mode = options.mode === 'receipt' ? 'receipt' : 'delivery';
     this.setData({ id: Number(options.id || 0), mode });
     wx.setNavigationBarTitle({ title: mode === 'receipt' ? '物料签收' : '物料配送' });

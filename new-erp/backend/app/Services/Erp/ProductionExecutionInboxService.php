@@ -19,8 +19,7 @@ final class ProductionExecutionInboxService
 
     public function paginate(string $resource, array $filters, object $user, array $permissions, bool $superAdmin): LengthAwarePaginator
     {
-        $this->permission($permissions, 'production.task.view');
-        $query = $this->query($resource, $this->visibleWorkOrderIds($user, $permissions, $superAdmin), $user, $permissions, $superAdmin);
+        $query = $this->visibleQuery($resource, $user, $permissions, $superAdmin);
         $this->applyFilters($query, $filters);
         $page = $query->orderByDesc('records.id')->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 20))));
         $rawRows = collect($page->items());
@@ -42,6 +41,12 @@ final class ProductionExecutionInboxService
         $row = $this->visibleRecord($resource, $id, $user, $permissions, $superAdmin);
         if (! $row) throw new WorkOrderDomainException('execution_record_not_found', '生产执行记录不存在或不在当前数据范围内。', 404);
         return $this->present($resource, $row, $permissions, $user, true);
+    }
+
+    public function visibleQuery(string $resource, object $user, array $permissions, bool $superAdmin): Builder
+    {
+        $this->permission($permissions, 'production.task.view');
+        return $this->query($resource, $this->visibleWorkOrderIds($user, $permissions, $superAdmin), $user, $permissions, $superAdmin);
     }
 
     /**

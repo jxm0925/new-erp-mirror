@@ -1,0 +1,45 @@
+page { background: #f7f9fb; color: #101829; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif; font-size: 28rpx; }
+view, text, button, input, textarea, scroll-view { box-sizing: border-box; min-width: 0; }
+button { margin: 0; font-size: 28rpx; line-height: 1.4; padding: 18rpx 24rpx; border-radius: 10rpx; }
+button::after { border: 0; }
+.warehouse-page { padding: 20rpx 24rpx 32rpx; width: 100%; }
+.warehouse-card { background: #fff; border: 1rpx solid #e8edf2; border-radius: 16rpx; padding: 24rpx; margin-bottom: 18rpx; }
+.warehouse-title { font-size: 32rpx; font-weight: 600; margin: 24rpx 0 16rpx; }
+.warehouse-card-title { font-size: 29rpx; font-weight: 600; margin-bottom: 20rpx; word-break: break-all; }
+.warehouse-field { display: flex; align-items: flex-start; gap: 16rpx; margin: 10rpx 0; line-height: 1.6; }
+.warehouse-label { width: 154rpx; flex-shrink: 0; color: #62708a; }
+.warehouse-value { flex: 1; word-break: break-all; }
+.warehouse-muted { color: #748097; }
+.warehouse-danger { color: #ee160b; }
+.warehouse-primary { background: #ef1008; color: white; font-weight: 500; width: 100%; }
+.warehouse-primary[disabled] { background: #f8b7b3; color: white; }
+.warehouse-secondary { background: white; border: 1rpx solid #ef1008; color: #ef1008; width: 100%; }
+.warehouse-actions { display: flex; gap: 18rpx; margin-top: 24rpx; }
+.warehouse-actions button { flex: 1; }
+.warehouse-input { width: 100%; min-height: 72rpx; padding: 12rpx 20rpx; border: 1rpx solid #dce2ea; border-radius: 9rpx; background: #fbfcfe; font-size: 27rpx; }
+textarea.warehouse-input { height: 112rpx; }
+.warehouse-search { display: flex; align-items: center; gap: 12rpx; background: #f0f3f7; border-radius: 12rpx; padding: 12rpx 18rpx; margin-bottom: 18rpx; }
+.warehouse-search input { flex: 1; height: 44rpx; font-size: 27rpx; }
+.warehouse-search button { padding: 8rpx 14rpx; background: white; color: #d81e06; font-size: 25rpx; }
+.warehouse-empty { text-align: center; color: #758097; padding: 90rpx 30rpx; word-break: break-all; }
+.warehouse-error { color: #e52613; font-size: 25rpx; line-height: 1.5; margin: 10rpx 0; word-break: break-all; }
+.warehouse-pager { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 18rpx; margin: 24rpx 0; font-size: 25rpx; }
+.warehouse-pager button { padding: 12rpx 20rpx; background: #fff; border: 1rpx solid #e1e6ed; color: #58647c; font-size: 25rpx; }
+.warehouse-pager button[disabled] { color: #b3bac4; background: #f1f3f6; }
+.warehouse-overlay { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(24,32,42,.48); }
+.warehouse-dialog { width: 100%; max-width: 660px; max-height: calc(100vh - 32px); border-radius: 12rpx; background: white; display: flex; flex-direction: column; overflow: hidden; }
+.warehouse-dialog-header { padding: 24rpx; border-bottom: 1rpx solid #e7ebf1; display: flex; align-items: center; justify-content: space-between; gap: 16rpx; font-weight: 600; font-size: 32rpx; flex-shrink: 0; }
+.warehouse-dialog-body { padding: 24rpx; overflow-y: auto; min-height: 0; flex: 1 1 auto; max-height: calc(100vh - 240rpx); }
+.warehouse-dialog-footer { padding: 18rpx 24rpx 24rpx; display: flex; gap: 16rpx; flex-shrink: 0; }
+.warehouse-dialog-footer button { flex: 1; }
+.warehouse-close { border: 0; background: transparent; padding: 4rpx; color: #68758b; }
+.warehouse-readonly { background: #f3f5f7; color: #56627a; padding: 12rpx 18rpx; border: 1rpx solid #e1e6ee; border-radius: 8rpx; }
+.warehouse-note { padding: 16rpx; background: #f1f3f7; color: #60708a; font-size: 25rpx; line-height: 1.6; border-radius: 9rpx; }
+.warehouse-selection { display: flex; align-items: center; gap: 14rpx; }
+.warehouse-kv-select { display: flex; align-items: center; justify-content: space-between; gap: 10rpx; min-height: 64rpx; }
+.warehouse-table-scroll { width: 100%; overflow-x: auto; }
+.warehouse-table { min-width: 560rpx; }
+.warehouse-tr { display: flex; border-bottom: 1rpx solid #e3e8ef; }
+.warehouse-th { background: #f3f6f9; font-weight: 500; color: #61718a; }
+.warehouse-td { padding: 14rpx 10rpx; flex: 1; word-break: break-all; line-height: 1.5; }
+@media (min-width: 700px) { .warehouse-page { max-width: 900px; margin: 0 auto; } }

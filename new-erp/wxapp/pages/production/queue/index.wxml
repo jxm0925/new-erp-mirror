@@ -3,7 +3,7 @@
   <view wx:elif="{{type==='trace' && trace}}" class="trace-card"><view wx:for="{{trace}}" wx:key="id"><text>{{item.type || item.serial_no || item.unit_no}}</text><text>{{item.status || item.event || '-'}}</text></view></view>
   <view wx:elif="{{loaded && !rows.length}}" class="state"><van-empty description="当前没有待处理记录" /></view>
 
-  <view wx:if="{{type==='pool' || type==='collaboration' || type==='kitting'}}" class="card" wx:for="{{rows}}" wx:key="id" data-id="{{item.id}}" bindtap="openTask">
+  <view wx:if="{{type==='pool' || type==='collaboration' || type==='kitting' || type==='work_order'}}" class="card" wx:for="{{rows}}" wx:key="id" data-id="{{item.id}}" bindtap="openTask">
     <view class="head"><strong>{{item.task_no}}</strong><text>{{item.statusLabel}}</text></view><view class="product">{{item.productName}}</view><view class="meta"><text>工单 {{item.workOrderNo}}</text><text>工序 {{item.sequence_no_snapshot}} - {{item.operation_name_snapshot}}</text><text>{{item.unitLabel}}</text></view>
     <button wx:if="{{type==='pool'}}" class="primary" data-id="{{item.id}}" catchtap="claim" loading="{{busy}}">自主接单</button><button wx:else class="outline">查看任务详情</button>
   </view>

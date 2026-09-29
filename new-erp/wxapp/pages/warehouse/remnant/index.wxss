@@ -1,0 +1,16 @@
+@import "../shared.wxss";
+.remnant-status { align-items: center; gap: 36rpx; margin: 16rpx 0 26rpx; }
+.remnant-status picker { flex: 1; }
+.remnant-status .warehouse-input { display: flex; justify-content: space-between; align-items: center; background: white; }
+.remnant-check-all { display: flex; align-items: center; gap: 18rpx; font-weight: 600; padding: 18rpx 22rpx; }
+.remnant-row { display: flex; align-items: flex-start; gap: 20rpx; padding: 20rpx; }
+.remnant-checkbox { padding-top: 2rpx; }
+.remnant-row-main { flex: 1; }
+.remnant-row .warehouse-label { width: 140rpx; }
+.remnant-row .warehouse-field { font-size: 26rpx; gap: 10rpx; }
+.remnant-list-bottom { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16rpx; margin: 28rpx 0 20rpx; font-size: 27rpx; }
+.remnant-total { color: #ef1008; font-size: 32rpx; font-weight: 600; margin-left: 12rpx; }
+.remnant-confirm-title { display: flex; justify-content: space-between; align-items: flex-start; gap: 10rpx; }
+.remnant-confirm-title .warehouse-card-title { flex: 1; }
+.remnant-remove { padding: 0; background: transparent; color: #ef1008; font-size: 24rpx; }
+.remnant-receipt-total { display: flex; justify-content: space-between; gap: 20rpx; margin: 26rpx 0 24rpx; flex-wrap: wrap; }

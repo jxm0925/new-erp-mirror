@@ -22,6 +22,14 @@ class ItemCategorySupplierScopeTest extends TestCase
 {
     use DatabaseTransactions;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // 用例事务内准备真实编号规则，不依赖测试库残留的种子数据。
+        $this->seed(\Database\Seeders\ErpDocumentNumberRuleSeeder::class);
+    }
+
+
     public function test_category_create_always_uses_item_type(): void
     {
         $row = $this->categories()->create($this->categoryData('A'));
@@ -287,7 +295,7 @@ class ItemCategorySupplierScopeTest extends TestCase
     {
         $source = file_get_contents(base_path('../frontend/src/views/erp/master/ItemCategoryList.vue'));
         $this->assertStringContainsString("reserveForCreatePage('item_category'", $source);
-        $this->assertStringContainsString('disabled placeholder="正在预生成"', $source);
+        $this->assertMatchesRegularExpression('/<el-input[^>]*v-model(?:\.trim)?="form\.category_code"[^>]*\bdisabled\b/', $source);
         $this->assertStringContainsString('reservation_token', $source);
     }
 
@@ -295,7 +303,7 @@ class ItemCategorySupplierScopeTest extends TestCase
     {
         $supplier = file_get_contents(base_path('../frontend/src/views/erp/master/SupplierList.vue'));
         $purchase = file_get_contents(base_path('../frontend/src/views/erp/purchase/PurchaseDocumentForm.vue'));
-        $this->assertStringContainsString('可供Item类目', $supplier);
+        $this->assertMatchesRegularExpression('/可供(?:Item|物料)类目/u', $supplier);
         $this->assertStringNotContainsString('供应品类', $supplier);
         $this->assertStringNotContainsString('供应品类', $purchase);
     }

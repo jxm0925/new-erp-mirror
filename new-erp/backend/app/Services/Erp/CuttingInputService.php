@@ -72,6 +72,8 @@ final class CuttingInputService
 
     public function reserve(int $orderId, array $p, object $user, array $permissions, bool $super = false): array
     {
+        if (app(ProductionCuttingOperationService::class)->linkedOrder($orderId))
+            $this->commands->fail('operation_received_material_required', '工序下料直接使用本工序已收材料，请由仓库完成配料配送。', 409);
         $c = $this->commands; $c->permission($permissions, 'production.cutting.issue');
         $c->order($orderId, $user, $permissions, $super, 'production.cutting.issue');
         return $c->run('reserve_cutting_physical', $orderId, $p, $user, function () use ($c, $orderId, $p, $user, $permissions, $super): array {
@@ -112,6 +114,8 @@ final class CuttingInputService
 
     public function issue(int $orderId, array $p, object $user, array $permissions, bool $super = false): array
     {
+        if (app(ProductionCuttingOperationService::class)->linkedOrder($orderId))
+            $this->commands->fail('operation_received_material_required', '本工序材料已由仓库出库，下料不能重复扣减库存。', 409);
         $c = $this->commands; $c->permission($permissions, 'production.cutting.issue');
         $c->order($orderId, $user, $permissions, $super, 'production.cutting.issue');
         return $c->run('issue_cutting_material', $orderId, $p, $user, function () use ($c, $orderId, $p, $user, $permissions, $super): array {
@@ -143,7 +147,9 @@ final class CuttingInputService
             } else {
                 $balanceId = (int) ($p['inventory_balance_id'] ?? 0); $qty = CuttingDecimal::value($p['input_qty'] ?? null);
             }
-            $remnant = ($physical && $physical->material_form === 'REMNANT') || $remnantHoldingId;
+            // A remnant already received into a warehouse must issue stock again. Only a
+            // direct workshop-to-workshop recut bypasses the warehouse ledger.
+            $remnant = ($physical && $physical->material_form === 'REMNANT' && ! $balanceId) || $remnantHoldingId;
             $balance = $balanceId ? InventoryBalance::query()->whereKey($balanceId)->lockForUpdate()->first() : null;
             if (! $balance && ! $remnant) $c->fail('input_source_invalid', '整板和定长原料领用必须引用真实仓库来源余额。');
             $item ??= Item::find($physical?->item_id ?? $balance?->item_id); $this->inputAllowed($orderId, $item->id);
@@ -158,6 +164,10 @@ final class CuttingInputService
             $lotId = $remnant ? (int) $source->material_lot_id : $this->warehouseLot($balance, $physical ? $physical->material_form : 'STANDARD_LENGTH');
             $sourceId = $remnant ? (int) $source->id : DB::table('erp_material_holdings')->where('inventory_balance_id', $balance->id)->value('id');
             $lot = DB::table('erp_material_lots')->where('id', $lotId)->first();
+            if (! $physical && $lot->material_form === 'REMNANT') {
+                if (! $lot->cut_length_mm || bccomp((string) $lot->cut_length_mm, '0', 2) <= 0) $c->fail('remnant_length_missing', '余料批次缺少实际长度，不能以标准原料长度代替。', 409);
+                $remnantLength = (string) $lot->cut_length_mm;
+            }
             if ($lot->configuration_id || $lot->stage_id) $c->fail('processed_input_requires_adapter', '已配置或已加工批次不能冒充普通原材料领料。');
             if (! $physical && ! $remnant) $cost = CuttingDecimal::share((string) $balance->inventory_value, (string) $balance->quantity_on_hand, $qty);
             if ($balance && bccomp((string) $balance->inventory_value, $cost, 4) < 0) $c->fail('input_cost_insufficient', '实物总金额超过来源库存剩余金额。', 409);
@@ -205,6 +215,8 @@ final class CuttingInputService
     {
         $c = $this->commands; $c->permission($permissions, 'production.cutting.issue');
         $c->assertBatchVisible($batchId, $user, $permissions, $super, 'production.cutting.issue');
+        if (DB::table('erp_production_cutting_inputs')->where('settlement_batch_id', $batchId)->exists())
+            $c->fail('production_return_required', '工序已收材料请通过生产退料处理，不能在下料页直接增加库存。', 409);
         return $c->run('return_uncut_cutting_material', $batchId, $p, $user, function () use ($c, $batchId, $p, $user, $permissions, $super): array {
             $batch = $c->batch($batchId, $user, $permissions, $super, 'production.cutting.issue'); $c->version($batch, $p);
             if ($batch->status !== 'PROCESSING' || ! $batch->physical_material_id) $c->fail('original_return_invalid', '只有尚在加工中且绑定具体实物的用料批次可以退回原材料。', 409);

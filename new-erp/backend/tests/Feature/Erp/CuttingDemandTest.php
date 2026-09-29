@@ -152,9 +152,42 @@ class CuttingDemandTest extends TestCase
         $this->assertSame(1, DB::table('erp_cutting_demands')->where('source_requirement_id', $fixture['targetRequirement'])->count());
     }
 
+    public function test_cutting_demand_rejects_configuration_different_from_confirmed_work_order_material(): void
+    {
+        $f = $this->fixture('none', '10', '10', false, false);
+        $target = DB::table('erp_production_target_material_requirements')->find($f['targetRequirement']);
+        DB::table('erp_items')->where('id', $target->component_item_id)->update(['is_custom_item' => true]);
+        $configurationIds = [];
+        foreach ([300, 500] as $length) {
+            $configurationIds[] = DB::table('erp_custom_configurations')->insertGetId([
+                'item_id' => $target->component_item_id, 'configuration_no' => 'CFG-TECH-'.$length.'-'.uniqid(),
+                'version_no' => 1, 'dimensions' => json_encode(['length_mm' => $length, 'width_mm' => 200, 'thickness_mm' => 2]),
+                'drawing_reference' => '板件'.$length, 'scope_mode' => 'PUBLIC', 'status' => 'PUBLISHED',
+                'business_version' => 2, 'created_by_legacy_id' => $f['user']->legacy_id,
+                'created_at' => now(), 'updated_at' => now(),
+            ]);
+        }
+        DB::table('erp_work_orders')->where('id', $f['consumerWo']->id)->update(['technical_version' => 1]);
+        DB::table('erp_work_order_material_requirements')->where('id', $target->material_requirement_id)
+            ->update(['configuration_id' => $configurationIds[0]]);
+        $payload = $this->payload(0) + ['source_requirement_id' => $target->id,
+            'producer_work_order_id' => $f['wo']->id, 'producer_stage_id' => $f['stage'], 'configuration_id' => $configurationIds[1]];
+        try {
+            app(CuttingDemandService::class)->generate($payload, $f['user'], self::PERMISSIONS, true);
+            $this->fail('同物料不同配置不得替换已确认需求');
+        } catch (\App\Exceptions\Erp\WorkOrderDomainException $e) {
+            $this->assertSame('technical_configuration_mismatch', $e->errorCode);
+        }
+        $this->assertSame(0, DB::table('erp_cutting_demands')->where('source_requirement_id', $target->id)->count());
+        $payload['client_command_id'] .= '-valid'; $payload['configuration_id'] = $configurationIds[0];
+        app(CuttingDemandService::class)->generate($payload, $f['user'], self::PERMISSIONS, true);
+        $this->assertSame($configurationIds[0], (int) DB::table('erp_cutting_demands')->where('source_requirement_id', $target->id)->value('configuration_id'));
+    }
+
     public function test_summary_keeps_reported_quality_and_formal_allocation_states_separate(): void
     {
         $fixture = $this->fixture('required');
+        $this->consumerTask($fixture, $fixture['user']);
         $batch = $this->issue($fixture);
         $batchId = $batch['settlement_batch_id'];
         $resultId = $this->save($fixture, $batchId, '10')['result_ids'][0];

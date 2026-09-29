@@ -242,20 +242,21 @@ export default {
       return this.linesForAmount().reduce((sum, line) => {
         const amount = Number(line.qty || 0) * Number(line.price || 0)
         const rate = Number(line.tax || 0)
-        return sum + (this.form.tax_mode === 'tax_included' && rate > 0 ? amount * 100 / (100 + rate) : amount)
+        return sum + ((this.form.tax_mode || 'tax_included') === 'tax_included' && rate > 0 ? amount * 100 / (100 + rate) : amount)
       }, 0)
     },
     taxAmount() {
       return this.linesForAmount().reduce((sum, line) => {
         const amount = Number(line.qty || 0) * Number(line.price || 0)
         const rate = Number(line.tax || 0)
-        return sum + (this.form.tax_mode === 'tax_included' && rate > 0
+        return sum + ((this.form.tax_mode || 'tax_included') === 'tax_included' && rate > 0
           ? amount - amount * 100 / (100 + rate)
           : amount * rate / 100)
       }, 0)
     },
     totalAmount() {
-      const lineAmount = this.form.tax_mode === 'tax_included'
+      // 计划生成的订单采用含税价；没有显式口径时，预览必须与生成结果一致。
+      const lineAmount = (this.form.tax_mode || 'tax_included') === 'tax_included'
         ? this.linesForAmount().reduce((sum, line) => sum + Number(line.qty || 0) * Number(line.price || 0), 0)
         : this.untaxedAmount + this.taxAmount
       return lineAmount + Number(this.form.freight_amount || 0)

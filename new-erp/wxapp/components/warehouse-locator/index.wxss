@@ -1,0 +1,19 @@
+@import "../../pages/warehouse/shared.wxss";
+.locator-panels { display: flex; min-height: 0; flex: 1; }
+.locator-warehouses { width: 35%; flex-shrink: 0; border-right: 1rpx solid #e2e8f0; display: flex; flex-direction: column; }
+.locator-locations { flex: 1; display: flex; flex-direction: column; }
+.locator-pane-title { padding: 16rpx; font-weight: 600; }
+.locator-search { display: flex; gap: 4rpx; padding: 4rpx 10rpx 14rpx; }
+.locator-search input { font-size: 22rpx; flex: 1; padding: 8rpx; height: 60rpx; background: #f3f5f9; border: 1rpx solid #e2e8f0; border-radius: 8rpx; }
+.locator-search button { padding: 10rpx 6rpx; background: white; color: #ef1008; font-size: 24rpx; }
+.locator-scroll { height: min(44vh, 530rpx); min-height: 130rpx; }
+.locator-warehouse { padding: 22rpx 16rpx; display: flex; flex-direction: column; gap: 8rpx; font-size: 25rpx; word-break: break-all; border-left: 5rpx solid transparent; border-bottom: 1rpx solid #e8edf3; }
+.locator-warehouse.selected { background: #fff0ef; color: #ef1008; border-left-color: #ef1008; }
+.locator-location { padding: 18rpx 12rpx; display: flex; align-items: center; gap: 10rpx; border-bottom: 1rpx solid #e3e8ef; font-size: 24rpx; }
+.locator-location > view { display: flex; flex-direction: column; gap: 6rpx; word-break: break-all; }
+.locator-enabled { color: #149557; font-size: 22rpx; }
+.locator-pager { display: flex; align-items: center; justify-content: center; gap: 8rpx; padding: 14rpx 4rpx; font-size: 22rpx; }
+.locator-pager button { background: #f6f8fb; color: #63728a; padding: 10rpx 8rpx; font-size: 22rpx; }
+.locator-pager button[disabled] { color: #bcc5d0; }
+.locator-summary { padding: 14rpx 24rpx; font-size: 25rpx; word-break: break-all; }
+.locator-empty { padding: 32rpx 12rpx; color: #7a879a; text-align: center; font-size: 25rpx; }

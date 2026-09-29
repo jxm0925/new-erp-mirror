@@ -28,7 +28,7 @@ class ItemCategoryController extends Controller
 
         $paginator = $query->orderBy('sort_order')->orderBy('id')
             ->paginate(min(100, max(5, $request->integer('per_page', 20))));
-        $paginator->getCollection()->transform(fn (ItemCategory $category) => $this->serialize($category, $all));
+        $paginator->getCollection()->transform(fn (ItemCategory $category) => $this->serialize($all->firstWhere('id', $category->id) ?? $category, $all));
 
         return response()->json($paginator);
     }

@@ -1,0 +1,6 @@
+@import "../shared.wxss";
+.delivery-tabs { display: flex; margin: -20rpx -24rpx 24rpx; padding: 0 20rpx; background: white; }
+.delivery-tab { flex: 1; text-align: center; padding: 28rpx 0 20rpx; color: #34425f; border-bottom: 4rpx solid transparent; }
+.delivery-tab.active { color: #ef1008; border-color: #ef1008; font-weight: 600; }
+.delivery-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12rpx; }
+.delivery-status { color: #ef1008; border: 1rpx solid #ffb2a5; padding: 4rpx 12rpx; border-radius: 8rpx; flex-shrink: 0; }

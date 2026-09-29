@@ -10,7 +10,6 @@
         <label><span>工单号 / 需求号</span><el-input v-model="filters.keyword" placeholder="请输入工单号 / 需求号" clearable /></label>
         <label><span>客户</span><el-input v-model="filters.customer" placeholder="请选择客户" clearable /></label>
         <label><span>产品 / SKU</span><el-input v-model="filters.product" placeholder="请输入产品名称 / SKU" clearable /></label>
-        <label><span>生产地点 / 车间</span><el-input v-model="filters.production_location_name" placeholder="请输入生产地点 / 车间" clearable /></label>
         <label><span>负责人</span><el-select v-model="filters.responsible_user_legacy_id" placeholder="请选择负责人" clearable filterable><el-option v-for="user in productionUsers" :key="user.user_id" :label="displayUser(user)" :value="user.user_id" /></el-select></label>
         <label><span>计划日期</span><el-date-picker v-model="dateRange" type="daterange" value-format="yyyy-MM-dd" range-separator="~" start-placeholder="开始日期" end-placeholder="结束日期" /></label>
         <label><span>状态</span><el-select v-model="filters.status" placeholder="请选择状态" clearable><el-option v-for="item in statuses" :key="item.value" :label="item.label" :value="item.value" /></el-select></label>
@@ -24,7 +23,7 @@
       <el-table :data="rows" border>
         <el-table-column label="工单号 / 来源" min-width="190"><template slot-scope="scope"><button class="link-button" @click="open(scope.row)">{{ scope.row.work_order_no }}</button><small>{{ scope.row.source_type_label }} · {{ scope.row.source && (scope.row.source.no || scope.row.source.demand_no) || '-' }}</small></template></el-table-column>
         <el-table-column label="客户" min-width="155"><template slot-scope="scope">{{ scope.row.source && scope.row.source.customer || '-' }}</template></el-table-column>
-        <el-table-column label="产品 / SKU" min-width="190"><template slot-scope="scope"><span>{{ scope.row.product && scope.row.product.name || '-' }}</span><small>{{ scope.row.product && scope.row.product.sku || '-' }}</small></template></el-table-column>
+        <el-table-column label="产品 / SKU" min-width="190"><template slot-scope="scope"><span>{{ scope.row.product && (scope.row.product.name || scope.row.product.item_name) || '-' }}</span><small>{{ scope.row.product && (scope.row.product.sku || scope.row.product.item_code) || '-' }}</small></template></el-table-column>
         <el-table-column label="计划量" width="105"><template slot-scope="scope">{{ number(scope.row.quantity && scope.row.quantity.target_qty) }} {{ scope.row.quantity && scope.row.quantity.unit_name || '' }}</template></el-table-column>
         <el-table-column label="计划日期" width="125"><template slot-scope="scope">{{ scope.row.plan && scope.row.plan.planned_date || '-' }}</template></el-table-column>
         <el-table-column label="状态" width="105"><template slot-scope="scope"><el-tag size="mini" :type="statusType(scope.row.status)">{{ statusText(scope.row.status) }}</el-tag></template></el-table-column>

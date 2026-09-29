@@ -16,6 +16,14 @@ class ItemCategoryPermissionClosureTest extends TestCase
 {
     use DatabaseTransactions;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        // 用例事务内准备真实编号规则，不依赖测试库残留的种子数据。
+        $this->seed(\Database\Seeders\ErpDocumentNumberRuleSeeder::class);
+    }
+
+
     public function test_user_without_item_category_permissions_is_forbidden_everywhere(): void
     {
         $category = $this->category('NONE');

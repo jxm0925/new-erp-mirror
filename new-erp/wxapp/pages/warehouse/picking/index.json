@@ -1,0 +1,1 @@
+{"navigationBarTitleText":"配料单详情","enablePullDownRefresh":true,"usingComponents":{"warehouse-picker":"/components/warehouse-picker/index","van-icon":"@vant/weapp/icon/index","van-loading":"@vant/weapp/loading/index"}}

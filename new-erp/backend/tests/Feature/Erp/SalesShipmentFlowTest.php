@@ -33,7 +33,18 @@ class SalesShipmentFlowTest extends TestCase
         ], '测试操作员');
         $this->assertSame(2, $first->packages()->count());
         $first = $service->confirm($first, '测试操作员');
+        $mobileActor = (object) ['legacy_id' => 971551];
+        $order->update(['sales_user_legacy_id' => $mobileActor->legacy_id]);
+        $mobilePermissions = ['sales_order.shipment.view', 'sales_order.shipment.post', 'sales_order.shipment.dispatch'];
+        $mobile = app(\App\Services\Erp\WarehouseDocumentService::class)->show('sales_shipment', $first->id, ['per_page' => 1], $mobileActor, $mobilePermissions, false);
+        $this->assertSame(['sales_shipment.post'], $mobile['actions']);
+        $this->assertCount(1, $mobile['packages']['data']);
+        $this->assertSame(2, $mobile['packages']['total']);
+        $queue = app(\App\Services\Erp\WarehouseWorkspaceService::class)->paginate(['kind' => 'sales_shipment', 'keyword' => $first->shipment_no], $mobileActor, $mobilePermissions, false);
+        $this->assertSame(1, $queue['meta']['total']);
         $first = $service->postOutbound($first, '测试操作员');
+        $mobile = app(\App\Services\Erp\WarehouseDocumentService::class)->show('sales_shipment', $first->id, [], $mobileActor, $mobilePermissions, false);
+        $this->assertSame(['sales_shipment.dispatch'], $mobile['actions']);
 
         $this->assertSame('outbound_posted', $first->shipment_status);
         $this->assertSame(40.0, (float) $first->actual_cost_amount);

@@ -185,7 +185,7 @@ class SalesReturnApplicationService
                     throw ValidationException::withMessages(['items' => '存在可重新入库数量时，必须选择仓库、库位并确认退货批次。']);
                 }
 
-                SalesReturnReceiptItem::create([
+                $receiptLine = SalesReturnReceiptItem::create([
                     'receipt_id' => $receipt->id,
                     'sales_return_item_id' => $returnItem->id,
                     'item_id' => $returnItem->item_id,
@@ -200,6 +200,7 @@ class SalesReturnApplicationService
                     'rejected_base_qty' => $rejected,
                     'inspection_remark' => $row['inspection_remark'] ?? null,
                 ]);
+                app(SalesReturnIdentityService::class)->recordReceipt($returnItem, $receiptLine, $row, $operatorId);
                 $returnItem->increment('received_base_qty', $received);
                 $returnItem->increment('restock_base_qty', $restock);
                 $returnItem->increment('pending_base_qty', $pending);

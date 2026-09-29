@@ -1,0 +1,16 @@
+@import "../shared.wxss";
+.document-section-heading { display:flex; justify-content:space-between; align-items:center; gap:16rpx; margin:22rpx 0 16rpx; font-size:30rpx; font-weight:600; }
+.document-small-button { padding:10rpx 18rpx; width:auto; font-size:25rpx; flex-shrink:0; }
+.document-stats { display:flex; flex-wrap:wrap; gap:16rpx; background:#fff2f1; border-radius:10rpx; padding:18rpx; margin-top:20rpx; }
+.document-stats > view { flex:1; min-width:180rpx; }
+.document-warning { padding:18rpx; border:1rpx solid #ffbf8b; background:#fff5eb; border-radius:8rpx; line-height:1.6; }
+.document-allocation { border:1rpx solid #e2e7ef; border-radius:10rpx; padding:18rpx; margin-bottom:18rpx; }
+.document-piece-fields { display:flex; flex-wrap:wrap; gap:12rpx; margin:12rpx 0; }
+.document-piece-fields > view { flex:1; min-width:110rpx; font-size:23rpx; color:#65718a; }
+.document-piece-fields input { padding:10rpx; }
+.document-serials { height:120rpx; }
+.document-success { color:#008b45; }
+.document-timeline { padding-left:22rpx; border-left:2rpx solid #f12317; margin:20rpx 10rpx; line-height:1.7; }
+.document-related { display:flex; justify-content:space-between; gap:18rpx; }
+.document-related text { word-break:break-all; }
+.document-result { margin-bottom:22rpx; }

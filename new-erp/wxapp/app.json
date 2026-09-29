@@ -1,6 +1,13 @@
 {
   "pages": [
     "pages/index/index",
+    "pages/warehouse/workbench/index",
+    "pages/warehouse/list/index",
+    "pages/warehouse/remnant/index",
+    "pages/warehouse/document/index",
+    "pages/warehouse/picking/index",
+    "pages/warehouse/deliveries/index",
+    "pages/warehouse/delivery/index",
     "pages/production/tasks/index",
     "pages/production/master-detail/index",
     "pages/production/work-order-detail/index",
@@ -9,6 +16,7 @@
     "pages/production/my-tasks/index",
     "pages/production/workbench/index",
     "pages/production/cutting-record/index",
+    "pages/production/cutting-operation/index",
     "pages/production/cutting-order-detail/index",
     "pages/production/cutting-create/index",
     "pages/production/cutting-tasks/index",

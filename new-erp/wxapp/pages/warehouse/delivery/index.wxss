@@ -1,0 +1,23 @@
+@import "../shared.wxss";
+.document-no { font-weight: 600; }
+.delivery-status { color: #ef1008; border: 1rpx solid #ffb2a5; padding: 2rpx 10rpx; border-radius: 7rpx; flex-shrink: 0; font-size: 24rpx; }
+.material-name { font-weight: 600; line-height: 1.5; word-break: break-all; }
+.material-code { color: #4e607b; font-size: 25rpx; margin: 2rpx 0 12rpx; word-break: break-all; }
+.quantity-input { display: flex; align-items: center; border: 1rpx solid #dce2ea; border-radius: 9rpx; overflow: hidden; background: #fff; min-height: 62rpx; }
+.quantity-input input { width: 100%; flex: 1; padding: 10rpx 14rpx; height: 62rpx; font-size: 28rpx; }
+.quantity-input > text { flex-shrink: 0; padding: 12rpx; color: #5e6c86; background: #f3f5f8; }
+.serial-button { width: 100%; margin-top: 16rpx; background: #f4f6f9; color: #586880; text-align: left; font-size: 26rpx; padding: 16rpx; }
+.receipt-quantities { display: flex; gap: 14rpx; margin-top: 18rpx; }
+.receipt-column { flex: 1; font-size: 24rpx; }
+.receipt-column .quantity-input { margin-top: 10rpx; }
+.receipt-column .quantity-input input { padding: 8rpx 10rpx; }
+.receipt-column .quantity-input > text { padding: 12rpx 8rpx; }
+.receipt-delivered { margin-top: 24rpx; }
+.timeline-step { display: flex; gap: 18rpx; padding: 0 0 28rpx 30rpx; margin-left: 10rpx; border-left: 2rpx solid #ccd3df; position: relative; line-height: 1.5; }
+.timeline-step::before { content: ''; position: absolute; left: -12rpx; top: 4rpx; width: 22rpx; height: 22rpx; border: 2rpx solid #7987a0; border-radius: 50%; background: #fff; box-sizing: border-box; }
+.timeline-step.done::before { background: #ef1008; border-color: #ef1008; }
+.timeline-step:last-child { padding-bottom: 0; border-color: transparent; }
+.timeline-label { flex-shrink: 0; width: 110rpx; font-weight: 600; }
+.redelivery-table { min-width: 850rpx; padding: 0; }
+.cancel-message { text-align: center; line-height: 1.7; margin: 12rpx 0 38rpx; }
+@media (max-width: 350px) { .warehouse-field { gap: 10rpx; } .warehouse-label { width: 145rpx; } .delivery-status { padding: 2rpx 6rpx; } }

@@ -6,6 +6,9 @@ use App\Http\Controllers\Controller;
 use App\Models\Erp\{Item, ItemCategory, Location, Product, Sku, Supplier, Unit, Warehouse};
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\MasterDataApplicationService;
+use App\Services\Erp\MasterDataAccessService;
+use App\Services\Erp\MasterDataSummaryService;
+use App\Services\Erp\ProductMatrixApplicationService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -22,7 +25,7 @@ class MasterDataController extends Controller
         'units' => [Unit::class, 'unit_code', 'unit_name', ['standardUnit']],
         'categories' => [ItemCategory::class, 'category_code', 'category_name', ['parent']],
         'suppliers' => [Supplier::class, 'supplier_code', 'supplier_name', ['categoryCapabilities.category']],
-        'warehouses' => [Warehouse::class, 'warehouse_code', 'warehouse_name', ['locations']],
+        'warehouses' => [Warehouse::class, 'warehouse_code', 'warehouse_name', ['locations', 'managerUser']],
         'locations' => [Location::class, 'location_code', 'location_name', ['warehouse', 'parent']],
     ];
 
@@ -37,9 +40,14 @@ class MasterDataController extends Controller
         if ($request->route('entity') === 'items') {
             $relations = ['category', 'unit.standardUnit', 'baseItem', 'defaultSupplier', 'activeDefaultSupplierRelation.supplier', 'activeMaterialPolicy'];
         }
+        if ($request->route('entity') === 'warehouses' && $request->boolean('include_location_summary')) {
+            $relations = ['managerUser'];
+        }
         $query = $model::query()->with($relations);
-        if ($request->route('entity') === 'products') {
-            $query->withCount('skus');
+        if ($request->route('entity') === 'warehouses' && $request->boolean('include_location_summary')) {
+            $query->withCount('locations')->addSelect(['area_count' => Location::query()
+                ->selectRaw("COUNT(DISTINCT NULLIF(TRIM(area), ''))")
+                ->whereColumn('warehouse_id', 'erp_warehouses.id')]);
         }
         if ($request->route('entity') === 'products') {
             $query->withCount('skus');
@@ -56,10 +64,22 @@ class MasterDataController extends Controller
         if ($keyword !== '') {
             $query->where(function (Builder $q) use ($request, $code, $name, $keyword): void {
                 $q->where($code, 'like', "%{$keyword}%")->orWhere($name, 'like', "%{$keyword}%");
+                if ($request->route('entity') === 'skus') $q->orWhere('spec_text', 'like', "%{$keyword}%");
+                if ($request->route('entity') === 'warehouses') {
+                    $q->orWhere('manager', 'like', "%{$keyword}%")->orWhereHas('managerUser', fn ($account) => $account
+                        ->where('nickname', 'like', "%{$keyword}%")->orWhere('username', 'like', "%{$keyword}%"));
+                }
                 if ($request->route('entity') === 'items') {
                     $q->orWhere('spec', 'like', "%{$keyword}%")->orWhere('model', 'like', "%{$keyword}%");
                 }
             });
+        }
+        if ($request->route('entity') === 'skus' && $request->filled('order_line_type')) {
+            $request->validate(['order_line_type' => 'in:physical,service,no_delivery']);
+            $query->where('order_line_type', $request->input('order_line_type'));
+        }
+        if ($request->route('entity') === 'locations' && $request->filled('area')) {
+            $query->whereRaw('TRIM(area) = ?', [trim((string) $request->input('area'))]);
         }
         foreach (['status', 'product_id', 'category_id', 'unit_id', 'warehouse_id', 'item_type', 'unit_type', 'category_type', 'supplier_type', 'approval_status', 'cooperation_status', 'quality_status', 'is_purchase_item', 'is_length_cut_material'] as $field) {
             if (!$request->filled($field)) continue;
@@ -96,7 +116,7 @@ class MasterDataController extends Controller
             ]);
         }
         if ($request->route('entity') === 'skus' && $request->boolean('missing_default_item')) {
-            $query->where('order_line_type', 'physical')->where('status', 'enabled')->whereDoesntHave('itemRelations', function (Builder $relation) {
+            $query->where('order_line_type', 'physical')->whereDoesntHave('itemRelations', function (Builder $relation) {
                 $relation->where('status', 'active')->where('is_primary', true)->whereHas('item', fn (Builder $item) => $item->where('status', 'enabled'));
             });
         }
@@ -128,7 +148,12 @@ class MasterDataController extends Controller
                     });
             });
         }
-        $data = $query->latest('updated_at')->paginate(min(100, max(5, (int) $request->input('per_page', 20))));
+        $stats = $request->boolean('include_stats')
+            ? app(MasterDataSummaryService::class)->summarize((string) $request->route('entity'), $query) : null;
+        $warehouseStats = $request->route('entity') === 'locations' && $request->boolean('include_stats') && $request->filled('warehouse_id')
+            ? app(MasterDataSummaryService::class)->locations($request->integer('warehouse_id')) : null;
+        // 稳定的次级排序保证更新时间相同的记录不会跨页重复或遗漏。
+        $data = $query->latest('updated_at')->orderByDesc('id')->paginate(min(100, max(5, (int) $request->input('per_page', 20))));
         if ($request->route('entity') === 'items') {
             $data->getCollection()->transform(function (Item $item): Item {
                 $relationSupplier = $item->activeDefaultSupplierRelation?->supplier;
@@ -138,13 +163,19 @@ class MasterDataController extends Controller
                 return $item;
             });
         }
-        return response()->json($data);
+        return response()->json([...$data->toArray(), ...($stats === null ? [] : ['stats' => $stats]),
+            ...($warehouseStats === null ? [] : ['warehouse_stats' => $warehouseStats])]);
     }
 
     public function show(Request $request, int $id)
     {
         [$model, , , $relations] = $this->config($request);
-        $record = $model::with($relations)->findOrFail($id);
+        $warehouseSummary = $request->route('entity') === 'warehouses' && $request->boolean('include_location_summary');
+        if ($warehouseSummary) $relations = ['managerUser'];
+        $query = $model::with($relations);
+        if ($warehouseSummary) $query->withCount('locations')->addSelect(['area_count' => Location::query()
+            ->selectRaw("COUNT(DISTINCT NULLIF(TRIM(area), ''))")->whereColumn('warehouse_id', 'erp_warehouses.id')]);
+        $record = $query->findOrFail($id);
         if ($record instanceof Item) {
             $record->setAttribute('base_unit_locked', $this->itemBaseUnitLocked((int) $record->id));
             $record->load('activeMaterialPolicy');
@@ -157,6 +188,7 @@ class MasterDataController extends Controller
 
     public function store(Request $request, MasterDataApplicationService $service)
     {
+        app(MasterDataAccessService::class)->authorize($request, (string) $request->route('entity'), 'create');
         [$model] = $this->config($request);
         $this->prepareSkuCanonicalInput($request);
         $this->prepareSkuOrderLineType($request);
@@ -181,6 +213,12 @@ class MasterDataController extends Controller
         $this->normalizeSkuOrderAttributeCapabilities($request, $data);
         if ($request->route('entity') === 'skus') $this->assertPhysicalSkuCanBeEnabled($data);
         $this->enforceUnitBaseRule($request, $data);
+        if ($request->route('entity') === 'products' && $request->has('sku_matrix')) {
+            app(MasterDataAccessService::class)->authorize($request, 'skus', 'create');
+            $matrix = $request->validate(['sku_matrix' => 'required|array|min:1|max:500']);
+            $record = app(ProductMatrixApplicationService::class)->save(null, $data, $matrix['sku_matrix'], app(AuthContextService::class)->currentUser($request)?->legacy_id);
+            return response()->json(['message' => '商品与规格已保存', 'data' => $record], 201);
+        }
         $record = $service->create(
             (string) $request->route('entity'),
             $model,
@@ -192,6 +230,7 @@ class MasterDataController extends Controller
 
     public function update(Request $request, int $id, MasterDataApplicationService $service)
     {
+        app(MasterDataAccessService::class)->authorize($request, (string) $request->route('entity'), 'edit');
         [$model, $code] = $this->config($request);
         $record = $model::findOrFail($id);
         $this->prepareSkuCanonicalInput($request);
@@ -220,6 +259,12 @@ class MasterDataController extends Controller
         $this->normalizeSkuOrderAttributeCapabilities($request, $data);
         if ($record instanceof Sku) $this->assertPhysicalSkuCanBeEnabled($data, $record->id);
         $this->enforceUnitBaseRule($request, $data, $id);
+        if ($request->route('entity') === 'products' && $request->has('sku_matrix')) {
+            app(MasterDataAccessService::class)->authorize($request, 'skus', 'create');
+            $matrix = $request->validate(['sku_matrix' => 'required|array|min:1|max:500']);
+            $record = app(ProductMatrixApplicationService::class)->save($id, $data, $matrix['sku_matrix'], app(AuthContextService::class)->currentUser($request)?->legacy_id);
+            return response()->json(['message' => '商品与规格已保存', 'data' => $record], 200);
+        }
         $record = $service->update(
             (string) $request->route('entity'),
             $record,
@@ -229,8 +274,17 @@ class MasterDataController extends Controller
         return response()->json(['message' => '保存成功', 'data' => $record]);
     }
 
+    public function storeSkuMatrix(Request $request, int $id, ProductMatrixApplicationService $service)
+    {
+        $operator = app(MasterDataAccessService::class)->authorize($request, 'skus', 'create');
+        $data = $request->validate(['sku_matrix' => 'required|array|min:1|max:500']);
+        $product = $service->save($id, null, $data['sku_matrix'], $operator->legacy_id);
+        return response()->json(['message' => '规格批次已保存', 'data' => $product], 201);
+    }
+
     public function disable(Request $request, int $id, MasterDataApplicationService $service)
     {
+        app(MasterDataAccessService::class)->authorize($request, (string) $request->route('entity'), 'edit');
         [$model] = $this->config($request);
         $record = $model::findOrFail($id);
         $this->assertCanBeDisabled($record);
@@ -240,6 +294,7 @@ class MasterDataController extends Controller
 
     public function enable(Request $request, int $id, MasterDataApplicationService $service)
     {
+        app(MasterDataAccessService::class)->authorize($request, (string) $request->route('entity'), 'edit');
         [$model] = $this->config($request);
         $record = $model::findOrFail($id);
         if ($record instanceof Sku) {
@@ -377,12 +432,14 @@ class MasterDataController extends Controller
     /** Upload a Product display image directly to OSS. */
     public function uploadProductImage(Request $request)
     {
+        app(MasterDataAccessService::class)->authorize($request, 'products', 'image');
         return $this->uploadMasterImage($request, 'product-images');
     }
 
     /** Upload a SKU sales-display image directly to OSS. */
     public function uploadSkuImage(Request $request)
     {
+        app(MasterDataAccessService::class)->authorize($request, 'skus', 'image');
         return $this->uploadMasterImage($request, 'sku-images');
     }
 
@@ -524,7 +581,7 @@ class MasterDataController extends Controller
                 'model' => 'nullable|string|max:100', 'unit_id' => 'nullable|exists:erp_units,id',
                 'search_aliases' => 'nullable|string|max:500', 'search_keywords' => 'nullable|string',
                 'brand' => 'nullable|string|max:100', 'origin' => 'nullable|string|max:120',
-                'image' => 'nullable|string|max:255', 'description' => 'nullable|string', 'status' => 'required|in:enabled,disabled',
+                'image' => 'nullable|string|max:255', 'description' => 'nullable|string', 'status' => 'required|in:draft,enabled,disabled',
                 'remark' => 'nullable|string',
             ],
             'skus' => [
@@ -623,7 +680,9 @@ class MasterDataController extends Controller
             ],
             'warehouses' => [
                 'warehouse_code' => $unique('erp_warehouses', 'warehouse_code'), 'warehouse_name' => 'required|string|max:120',
-                'warehouse_type' => 'required|string|max:40', 'manager' => 'nullable|string|max:80',
+                'warehouse_type' => 'required|string|max:40', 'manager' => 'prohibited',
+                'manager_user_id' => 'nullable|integer|min:1',
+                'expected_manager_user_id' => 'nullable|integer|min:1',
                 'status' => 'required|in:enabled,disabled', 'remark' => 'nullable|string',
             ],
             'locations' => [

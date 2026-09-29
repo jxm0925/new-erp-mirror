@@ -177,6 +177,8 @@ final class CuttingTaskExecutionService
     private function authorize(int $taskId, object $user, array $permissions, bool $super, string $permission): void
     {
         $this->commands->cuttingTask($taskId, $user, $permissions, $super, $permission);
+        if (DB::table('erp_production_cutting_operations')->where('cutting_task_id', $taskId)->exists())
+            $this->commands->fail('production_operation_clock_required', '请在所属工序操作计时和协作，下料不再单独计时。', 409);
     }
 
     private function lock(int $taskId, object $user, array $permissions, bool $super, string $permission): CuttingTask

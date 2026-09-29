@@ -1,0 +1,34 @@
+<view class="warehouse-page warehouse-workbench">
+  <view wx:if="{{!authenticated && !loading}}" class="warehouse-card warehouse-empty"><view>请先登录仓库账号</view><button class="warehouse-primary" bindtap="openLogin">立即登录</button></view>
+  <view wx:elif="{{loading}}" class="warehouse-empty"><van-loading color="#ee160b" /></view>
+  <view wx:elif="{{error}}" class="warehouse-empty"><text>{{error}}</text><button class="warehouse-secondary" bindtap="load">重新加载</button></view>
+  <block wx:elif="{{summary}}">
+    <view class="workspace-totals">
+      <view><text>今日已入库</text><view class="workspace-total"><text>{{summary.today_inbound}}</text><text>单</text></view></view>
+      <view class="workspace-divider"></view>
+      <view><text>今日已出库</text><view class="workspace-total"><text>{{summary.today_outbound}}</text><text>单</text></view></view>
+    </view>
+    <view class="workspace-shortcuts">
+      <view wx:if="{{canInbound}}" class="workspace-shortcut" data-direction="inbound" bindtap="openList"><van-icon name="down" size="72rpx" color="#ed1609"/><text>入库办理</text></view>
+      <view wx:if="{{canOutbound}}" class="workspace-shortcut" data-direction="outbound" bindtap="openList"><van-icon name="up" size="72rpx" color="#ed1609"/><text>出库办理</text></view>
+      <view wx:if="{{summary.can_delivery}}" class="workspace-shortcut" bindtap="openDelivery"><van-icon name="logistics" size="72rpx" color="#ed1609"/><text>配送管理</text></view>
+    </view>
+    <view class="workspace-section"><text>我的待办</text><view data-direction="all" bindtap="openList">查看更多 <van-icon name="arrow"/></view></view>
+    <view wx:if="{{!todos.length}}" class="warehouse-card warehouse-empty">暂无待办理单据</view>
+    <view wx:for="{{todos}}" wx:key="key" class="warehouse-card workspace-todo" data-key="{{item.key}}" bindtap="openTodo">
+      <van-icon name="{{item.direction === 'inbound' ? 'gift-o' : 'orders-o'}}" size="48rpx" color="#ed1609"/>
+      <view class="workspace-todo-main"><view class="workspace-todo-title"><text>{{item.title}}</text><text>{{item.status_label}}</text></view>
+        <view>单号：{{item.number}}</view><view wx:if="{{item.work_order_no}}">工单：{{item.work_order_no}}</view>
+        <view wx:if="{{item.related_number}}">来源：{{item.related_number}}</view><view>物料：{{item.item_name}}</view>
+        <view wx:if="{{item.quantityText}}">数量：{{item.quantityText}} {{item.unit_name}}</view>
+      </view><van-icon name="arrow" color="#61718a"/>
+    </view>
+  </block>
+</view>
+<LoginPopup class="LoginPopup"></LoginPopup>
+<view class="workspace-navigation">
+  <view class="active"><van-icon name="wap-home" size="46rpx"/><text>工作台</text></view>
+  <view bindtap="openTasks"><van-icon name="orders-o" size="46rpx"/><text>任务</text></view>
+  <view bindtap="openTodos"><van-icon name="todo-list-o" size="46rpx"/><text>待办</text></view>
+  <view bindtap="openProfile"><van-icon name="user-o" size="46rpx"/><text>我的</text></view>
+</view>

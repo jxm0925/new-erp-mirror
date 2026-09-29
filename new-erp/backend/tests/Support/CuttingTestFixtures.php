@@ -69,13 +69,14 @@ trait CuttingTestFixtures
     }
 
     private function fixture(string $quality = 'none', string $required = '10', string $planned = '10', bool $restricted = false,
-        bool $publish = true, string $rawUnitCost = '3000'): array
+        bool $publish = true, string $rawUnitCost = '3000', string $rawMode = 'sheet'): array
     {
         $s = strtoupper(substr((string) Str::ulid(), -10)); $user = (object) ['legacy_id'=>random_int(100000000,999999999),'username'=>'cut-'.$s];
         DB::table('erp_legacy_admin_users')->insert(['legacy_id'=>$user->legacy_id,'username'=>$user->username,'status'=>'normal','auth_group_names'=>'[]','created_at'=>now(),'updated_at'=>now()]);
         $unit = Unit::create(['unit_code'=>'CUT-U-'.$s,'unit_name'=>'件','unit_type'=>'count','decimal_places'=>0,'is_base'=>true,'status'=>'enabled']);
         $raw = Item::create(['item_code'=>'CUT-RM-'.$s,'item_name'=>'304整板','item_type'=>'raw_material','unit_id'=>$unit->id,
-            'is_purchase_item'=>true,'is_stock_item'=>true,'status'=>'enabled','material_management_mode'=>'physical','cutting_mode'=>'sheet','serial_tracking_mode'=>'none']);
+            'is_purchase_item'=>true,'is_stock_item'=>true,'status'=>'enabled','material_management_mode'=>$rawMode === 'sheet' ? 'physical' : 'quantity',
+            'cutting_mode'=>$rawMode,'standard_stock_length_mm'=>$rawMode === 'length' ? '6000' : null,'serial_tracking_mode'=>'none']);
         $output = Item::create(['item_code'=>'CUT-OUT-'.$s,'item_name'=>'电箱侧板','item_type'=>'semi_finished','unit_id'=>$unit->id,'is_stock_item'=>true,'is_production_item'=>true,'status'=>'enabled']);
         $supplier = Supplier::create(['supplier_code'=>'CUT-SUP-'.$s,'supplier_name'=>'板材供应商','supplier_type'=>'manufacturer','status'=>'enabled']);
         $warehouse = Warehouse::create(['warehouse_code'=>'CUT-WH-'.$s,'warehouse_name'=>'板材仓库','status'=>'enabled']);
@@ -92,10 +93,10 @@ trait CuttingTestFixtures
             'batch_no'=>'CUT-BAT-'.$s,'inventory_posting_status'=>'pending']);
         app(PurchaseReceiptPostingRepairApplicationService::class)->repair($receipt->id, [['receipt_item_id'=>$line->id,'allocations'=>[
             ['warehouse_id'=>$warehouse->id,'location_id'=>$location->id,'base_qty'=>2,'serial_nos'=>[],
-                'physical_entries'=>[
+                'physical_entries'=>$rawMode === 'sheet' ? [
                     ['dimensions'=>['length_mm'=>'2440','width_mm'=>'1220','thickness_mm'=>'2']],
                     ['dimensions'=>['length_mm'=>'2440','width_mm'=>'1220','thickness_mm'=>'2']],
-                ]]]]],'下料专项');
+                ] : []]]]],'下料专项');
         $tx = app(InventoryService::class)->postPurchaseReceipt($receipt->id); $txLine = $tx->items->first();
         $balance = InventoryBalance::where('item_id',$raw->id)->where('batch_no','CUT-BAT-'.$s)->firstOrFail();
         $physicals = DB::table('erp_material_physicals')->where('source_transaction_item_id', $txLine->id)->orderBy('id')->pluck('id')->map(fn ($id) => (int) $id)->all();

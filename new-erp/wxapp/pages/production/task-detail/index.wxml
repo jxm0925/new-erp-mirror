@@ -210,13 +210,13 @@
     </block>
     <block wx:elif="{{targets[0].allowed_actions.pause}}">
       <button class="btn-secondary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="pause">暂停我的作业</button>
-      <button wx:if="{{targets[0].target_type === 'quantity_operation' && !targets[0].readyForCompletion}}" class="btn-primary" data-id="{{targets[0].target_id}}" bindtap="openReport">提交报工</button>
-      <button wx:else class="btn-primary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="complete">完成工序并产出</button>
+      <button wx:if="{{targets[0].target_type === 'quantity_operation' && !targets[0].readyForCompletion}}" class="btn-primary" data-id="{{targets[0].target_id}}" bindtap="openReport">{{targets[0].cutting_required ? '登记下料' : '提交报工'}}</button>
+      <button wx:else class="btn-primary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="complete">{{targets[0].cutting_required ? '登记下料' : '完成工序并产出'}}</button>
     </block>
     <block wx:elif="{{targets[0].allowed_actions.resume}}">
       <button class="btn-primary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="resume">恢复我的作业</button>
-      <button wx:if="{{targets[0].target_type === 'quantity_operation' && !targets[0].readyForCompletion}}" class="btn-secondary" data-id="{{targets[0].target_id}}" bindtap="openReport">提交报工</button>
-      <button wx:else class="btn-secondary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="complete">完成工序</button>
+      <button wx:if="{{targets[0].target_type === 'quantity_operation' && !targets[0].readyForCompletion}}" class="btn-secondary" data-id="{{targets[0].target_id}}" bindtap="openReport">{{targets[0].cutting_required ? '登记下料' : '提交报工'}}</button>
+      <button wx:else class="btn-secondary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="complete">{{targets[0].cutting_required ? '登记下料' : '完成工序'}}</button>
     </block>
     <block wx:elif="{{targets[0].allowed_actions.start_collaborator_labor}}">
       <button class="btn-primary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="startCollaboratorLabor">开始协同计时</button>

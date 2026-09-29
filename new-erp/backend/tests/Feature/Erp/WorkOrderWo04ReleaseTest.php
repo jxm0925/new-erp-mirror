@@ -1030,9 +1030,11 @@ class WorkOrderWo04ReleaseTest extends TestCase
             'reason' => '进入发布检查',
         ], $user, self::PERMISSIONS);
 
+        $waiting->update(['routing_snapshot' => null]);
         $gate = $gateService->evaluate($waiting->id, $user, self::PERMISSIONS);
         $this->assertFalse($gate['allowed']);
-        $this->assertSame('production_location_missing', collect($gate['blockers'])->firstWhere('key', 'production_location')['reason_code']);
+        $this->assertSame('routing_snapshot_missing', collect($gate['blockers'])->firstWhere('key', 'routing_snapshot')['reason_code']);
+        $this->assertNull(collect($gate['blockers'])->firstWhere('key', 'production_location'));
 
         try {
             $service->publish($waiting->id, [
@@ -1303,6 +1305,298 @@ class WorkOrderWo04ReleaseTest extends TestCase
             ['production.work_order.gate.view', 'production.work_order.publish', 'production.material.view'],
             $matrix['department_principal']->pluck('permission_code')->all(),
         );
+    }
+
+    public function test_release_keeps_confirmed_bom_version_after_default_changes(): void
+    {
+        [$user, $demand, $bom] = $this->fixture();
+        $demand->update(['bom_id' => $bom->id, 'bom_version' => $bom->version,
+            'bom_snapshot' => ['id' => $bom->id, 'version' => $bom->version]]);
+        $service = app(WorkOrderApplicationService::class);
+        $draft = $service->createDraft(['client_command_id' => 'pin-create', 'production_demand_id' => $demand->id,
+            'expected_demand_version' => 1, 'target_qty' => 2, 'production_batch' => 'PIN-BATCH', 'production_location_name' => '装配车间'], $user, self::PERMISSIONS);
+        $this->assertSame($bom->id, $draft->bom_snapshot['id']);
+        $waiting = $service->submit($draft->id, ['client_command_id' => 'pin-submit', 'expected_version' => 1], $user, self::PERMISSIONS);
+        $bom->update(['is_default' => false]);
+        $replacement = $bom->replicate();
+        $replacement->bom_no .= '-NEW';
+        $replacement->version = 'V2.0';
+        $replacement->is_default = true;
+        $replacement->save();
+        foreach ($bom->items as $item) {
+            $copy = $item->replicate(); $copy->bom_id = $replacement->id; $copy->qty = 99; $copy->save();
+        }
+        $gate = app(ReleaseGateApplicationService::class)->evaluate($waiting->id, $user, self::PERMISSIONS);
+        $this->assertTrue($gate['allowed']);
+        $this->assertSame($bom->id, $gate['bom']['bom_id']);
+        $released = $service->publish($waiting->id, ['client_command_id' => 'pin-publish', 'expected_version' => 2], $user, self::PERMISSIONS);
+        $this->assertSame($bom->id, (int) $released->bom_id);
+        $this->assertSame('V1.0', $released->bom_version);
+    }
+
+    public function test_invalid_confirmed_bom_does_not_fall_back_to_another_version(): void
+    {
+        [$user, $demand, $bom] = $this->fixture();
+        $demand->update(['bom_id' => $bom->id, 'bom_version' => $bom->version]);
+        $service = app(WorkOrderApplicationService::class);
+        $draft = $service->createDraft(['client_command_id' => 'pin-invalid-create', 'production_demand_id' => $demand->id,
+            'expected_demand_version' => 1, 'target_qty' => 2, 'production_batch' => 'PIN-BATCH', 'production_location_name' => '装配车间'], $user, self::PERMISSIONS);
+        $waiting = $service->submit($draft->id, ['client_command_id' => 'pin-invalid-submit', 'expected_version' => 1], $user, self::PERMISSIONS);
+        $bom->update(['status' => 'disabled', 'is_default' => false]);
+        $replacement = $bom->replicate(); $replacement->bom_no .= '-NEW'; $replacement->version = 'V2.0';
+        $replacement->status = 'active'; $replacement->is_default = true; $replacement->save();
+        $gate = app(ReleaseGateApplicationService::class)->evaluate($waiting->id, $user, self::PERMISSIONS);
+        $this->assertFalse($gate['allowed']);
+        $this->assertContains('bom_match', array_column($gate['blockers'], 'key'));
+        $this->assertSame($bom->id, (int) $waiting->fresh()->bom_id);
+        $this->assertSame(0, $waiting->materialRequirements()->count());
+    }
+
+    public function test_obsolete_location_gate_is_removed_only_for_the_current_unreleased_version(): void
+    {
+        [$user, $demand] = $this->fixture();
+        $service = app(WorkOrderApplicationService::class);
+        $draft = $service->createDraft(['client_command_id' => 'location-remove-create', 'production_demand_id' => $demand->id,
+            'expected_demand_version' => 1, 'target_qty' => 2], $user, self::PERMISSIONS);
+        // 旧草稿可能没有日期和生产批次，正式提交时补系统批次即可。
+        $draft->update(['production_batch' => null, 'planned_date' => null]);
+        $waiting = $service->submit($draft->id, ['client_command_id' => 'location-remove-submit', 'expected_version' => 1], $user, self::PERMISSIONS);
+        $this->assertSame($draft->work_order_no, $waiting->production_batch);
+        foreach ([1, 2] as $version) {
+            \App\Models\Erp\WorkOrderReleaseGateCheck::create(['work_order_id' => $draft->id, 'work_order_version' => $version,
+                'check_key' => 'production_location', 'status' => 'blocked', 'reason_code' => 'production_location_missing',
+                'message' => '旧版地点检查', 'evidence' => [], 'evaluated_by_legacy_id' => $user->legacy_id, 'evaluated_at' => now()]);
+        }
+        $gate = app(ReleaseGateApplicationService::class)->evaluate($waiting->id, $user, self::PERMISSIONS);
+        $this->assertTrue($gate['allowed']);
+        $this->assertDatabaseMissing('erp_work_order_release_gate_checks', ['work_order_id' => $draft->id, 'work_order_version' => 2, 'check_key' => 'production_location']);
+        $this->assertDatabaseHas('erp_work_order_release_gate_checks', ['work_order_id' => $draft->id, 'work_order_version' => 1, 'check_key' => 'production_location', 'status' => 'blocked']);
+        $released = $service->publish($waiting->id, ['client_command_id' => 'location-remove-publish', 'expected_version' => 2], $user, self::PERMISSIONS);
+        $this->assertTrue(app(ReleaseGateApplicationService::class)->evaluate($released->id, $user, self::PERMISSIONS)['allowed']);
+    }
+
+    public function test_waiting_order_plan_updates_preserve_frozen_identity_and_replay_once(): void
+    {
+        [$user, $demand] = $this->fixture();
+        $service = app(WorkOrderApplicationService::class);
+        $draft = $service->createDraft(['client_command_id' => 'plan-create', 'production_demand_id' => $demand->id,
+            'expected_demand_version' => 1, 'target_qty' => 2, 'production_batch' => 'PLAN-INITIAL', 'production_location_name' => '原车间'], $user, self::PERMISSIONS);
+        $waiting = $service->submit($draft->id, ['client_command_id' => 'plan-submit', 'expected_version' => 1], $user, self::PERMISSIONS);
+        $payload = ['client_command_id' => 'plan-edit', 'expected_version' => 2, 'planned_date' => '2026-10-01',
+            'production_location_name' => '装配车间', 'production_batch' => 'PLAN-01'];
+        $updated = $service->updatePlan($waiting->id, $payload, $user, self::PERMISSIONS);
+        $replayed = $service->updatePlan($waiting->id, $payload, $user, self::PERMISSIONS);
+        $this->assertSame(3, $updated->business_version);
+        $this->assertSame(3, $replayed->business_version);
+        $this->assertSame('WAIT_RELEASE', $updated->status);
+        $this->assertNull($updated->production_location_name);
+        $this->assertSame($draft->work_order_no, $updated->production_batch);
+        $this->assertSame($updated->production_batch, $replayed->production_batch);
+        $this->assertSame('2026-10-01', $updated->planned_date->format('Y-m-d'));
+        foreach (['target_qty', 'target_base_qty', 'production_routing_id', 'routing_snapshot', 'technical_version', 'technical_snapshot'] as $field) {
+            $this->assertEquals($waiting->{$field}, $updated->{$field});
+        }
+        foreach ([['client_command_id' => 'plan-stale', 'expected_version' => 2], ['client_command_id' => 'plan-permission', 'expected_version' => 3]] as $i => $override) {
+            try {
+                $service->updatePlan($waiting->id, array_replace($payload, $override), $user, $i === 0 ? self::PERMISSIONS : ['production.work_order.view']);
+                $this->fail('过期版本和无编辑权限不得保存。');
+            } catch (WorkOrderDomainException $error) { $this->assertSame($i === 0 ? 409 : 403, $error->status); }
+        }
+        $released = $service->publish($waiting->id, ['client_command_id' => 'plan-publish', 'expected_version' => 3], $user, self::PERMISSIONS);
+        $this->expectException(WorkOrderDomainException::class);
+        $service->updatePlan($released->id, array_replace($payload, ['client_command_id' => 'plan-too-late', 'expected_version' => 4]), $user, self::PERMISSIONS);
+    }
+
+    public function test_technical_confirmation_versions_are_immutable_and_retries_do_not_duplicate(): void
+    {
+        [$user, $demand, $bom] = $this->fixture();
+        $service = app(WorkOrderApplicationService::class);
+        $draft = $service->createDraft(['client_command_id' => 'technical-create', 'production_demand_id' => $demand->id,
+            'expected_demand_version' => 1, 'target_qty' => 2, 'production_batch' => 'TECH', 'production_location_name' => '装配车间'], $user, self::PERMISSIONS);
+        $permissions = [...self::PERMISSIONS, 'production.technical.prepare'];
+        $payload = ['client_command_id' => 'technical-confirm', 'expected_version' => 1, 'bom_id' => $bom->id,
+            'production_routing_id' => $draft->production_routing_id, 'materials' => [], 'drawing_reference' => '图纸 R1'];
+        $confirmed = $service->confirmTechnical($draft->id, $payload, $user, $permissions);
+        $retry = $service->confirmTechnical($draft->id, $payload, $user, $permissions);
+        $this->assertSame(1, $confirmed->technical_version);
+        $this->assertSame(2, $retry->business_version);
+        $this->assertSame(1, DB::table('erp_work_order_technical_versions')->where('work_order_id', $draft->id)->count());
+        $revised = $service->confirmTechnical($draft->id, array_replace($payload, [
+            'client_command_id' => 'technical-revise', 'expected_version' => 2, 'drawing_reference' => '图纸 R2', 'reason' => '修改图纸尺寸',
+        ]), $user, $permissions);
+        $this->assertSame(2, $revised->technical_version);
+        $first = json_decode(DB::table('erp_work_order_technical_versions')->where('work_order_id', $draft->id)->where('version_no', 1)->value('snapshot'), true);
+        $this->assertSame('图纸 R1', $first['drawing_reference']);
+        $waiting = $service->submit($draft->id, ['client_command_id' => 'technical-submit', 'expected_version' => 3], $user, self::PERMISSIONS);
+        $released = $service->publish($draft->id, ['client_command_id' => 'technical-release', 'expected_version' => 4], $user, self::PERMISSIONS);
+        $this->assertSame('图纸 R2', $released->technical_snapshot['drawing_reference']);
+        $this->expectException(\App\Exceptions\Erp\WorkOrderDomainException::class);
+        $service->confirmTechnical($draft->id, array_replace($payload, ['client_command_id' => 'technical-after-release', 'expected_version' => 5, 'reason' => '禁止发布后修订']), $user, $permissions);
+    }
+
+    public function test_technical_attachments_are_idempotent_scoped_and_preserved_in_history(): void
+    {
+        \Illuminate\Support\Facades\Storage::fake('local');
+        config(['erp.work_order_technical_attachment_disk' => 'local']);
+        [$user, $demand, $bom] = $this->fixture();
+        $service = app(WorkOrderApplicationService::class);
+        $files = app(\App\Services\Erp\WorkOrderTechnicalAttachmentApplicationService::class);
+        $draft = $service->createDraft(['client_command_id' => 'attachment-create', 'production_demand_id' => $demand->id,
+            'expected_demand_version' => 1, 'target_qty' => 2, 'production_batch' => 'TECH', 'production_location_name' => '装配车间'], $user, self::PERMISSIONS);
+        $permissions = [...self::PERMISSIONS, 'production.technical.prepare'];
+        $file = \Illuminate\Http\UploadedFile::fake()->createWithContent('装配图纸.pdf', "%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF");
+        $upload = ['client_command_id' => 'attachment-upload', 'expected_version' => 1];
+        $attachment = $files->upload($draft->id, $file, $upload, $user, $permissions);
+        $retry = $files->upload($draft->id, $file, $upload, $user, $permissions);
+        $this->assertSame($attachment->id, $retry->id);
+        $this->assertSame(1, \App\Models\Erp\WorkOrderTechnicalAttachment::where('work_order_id', $draft->id)->count());
+        $this->assertArrayNotHasKey('url', $files->metadata($attachment));
+        $this->assertSame('装配图纸.pdf', $files->metadata($attachment)['original_name']);
+        $this->assertTrue($files->metadata($attachment)['previewable']);
+        $this->assertArrayNotHasKey('storage_path', $attachment->toArray());
+
+        $other = (object) ['legacy_id' => 999999, 'nickname' => '其他技术员', 'username' => 'other'];
+        try {
+            $files->read($draft->id, $attachment->id, $other, $permissions, true);
+            $this->fail('尚未确认的附件只能由上传者读取。');
+        } catch (WorkOrderDomainException $error) { $this->assertSame(403, $error->status); }
+        $foreign = new \App\Models\Erp\WorkOrder(['id' => -1]);
+        try {
+            $files->snapshot($foreign, [$attachment->id], $user);
+            $this->fail('其他工单的附件不可引用。');
+        } catch (WorkOrderDomainException $error) { $this->assertSame('attachment_scope_invalid', $error->errorCode); }
+
+        $payload = ['client_command_id' => 'attachment-confirm', 'expected_version' => 1, 'bom_id' => $bom->id,
+            'production_routing_id' => $draft->production_routing_id, 'materials' => [], 'attachment_ids' => [$attachment->id]];
+        $first = $service->confirmTechnical($draft->id, $payload, $user, $permissions);
+        $this->assertSame($attachment->file_hash, $first->technical_snapshot['attachments'][0]['file_hash']);
+        $this->assertSame($attachment->id, $files->read($draft->id, $attachment->id, $other, self::PERMISSIONS, true)->id);
+        $second = $service->confirmTechnical($draft->id, array_replace($payload, [
+            'client_command_id' => 'attachment-remove', 'expected_version' => 2, 'attachment_ids' => [], 'reason' => '下一版取消该附件',
+        ]), $user, $permissions);
+        $this->assertSame([], $second->technical_snapshot['attachments']);
+        $old = json_decode(DB::table('erp_work_order_technical_versions')->where('work_order_id', $draft->id)->where('version_no', 1)->value('snapshot'), true);
+        $this->assertSame($attachment->id, $old['attachments'][0]['id']);
+        \Illuminate\Support\Facades\Storage::disk('local')->assertExists($attachment->storage_path);
+        $this->assertSame($attachment->id, $files->read($draft->id, $attachment->id, $other, self::PERMISSIONS, true)->id);
+        $service->submit($draft->id, ['client_command_id' => 'attachment-submit', 'expected_version' => 3], $user, self::PERMISSIONS);
+        $service->publish($draft->id, ['client_command_id' => 'attachment-publish', 'expected_version' => 4], $user, self::PERMISSIONS);
+        $this->expectException(WorkOrderDomainException::class);
+        $files->upload($draft->id, $file, ['client_command_id' => 'attachment-after-release', 'expected_version' => 5], $user, $permissions);
+    }
+
+    public function test_technical_attachment_upload_rejects_unauthorized_stale_and_conflicting_requests(): void
+    {
+        \Illuminate\Support\Facades\Storage::fake('local');
+        config(['erp.work_order_technical_attachment_disk' => 'local']);
+        [$user, $demand] = $this->fixture();
+        $files = app(\App\Services\Erp\WorkOrderTechnicalAttachmentApplicationService::class);
+        $draft = app(WorkOrderApplicationService::class)->createDraft(['client_command_id' => 'attachment-guard-create', 'production_demand_id' => $demand->id,
+            'expected_demand_version' => 1, 'target_qty' => 1, 'production_batch' => 'TECH', 'production_location_name' => '装配车间'], $user, self::PERMISSIONS);
+        $file = \Illuminate\Http\UploadedFile::fake()->createWithContent('加工图.dxf', "0\nSECTION\n2\nHEADER\n0\nENDSEC\n0\nEOF");
+        $permissions = [...self::PERMISSIONS, 'production.technical.prepare'];
+        foreach ([[self::PERMISSIONS, 1, 'forbidden'], [$permissions, 999, 'version_conflict']] as [$perms, $version, $code]) {
+            try {
+                $files->upload($draft->id, $file, ['client_command_id' => 'attachment-denied-'.$code, 'expected_version' => $version], $user, $perms);
+                $this->fail('无权限或版本过期不能上传。');
+            } catch (WorkOrderDomainException $error) { $this->assertSame($code, $error->errorCode); }
+        }
+        $payload = ['client_command_id' => 'attachment-conflict', 'expected_version' => 1];
+        $files->upload($draft->id, $file, $payload, $user, $permissions);
+        try {
+            $files->upload($draft->id, \Illuminate\Http\UploadedFile::fake()->createWithContent('加工图.dxf', 'different'), $payload, $user, $permissions);
+            $this->fail('同一上传命令不能替换文件。');
+        } catch (WorkOrderDomainException $error) { $this->assertSame('command_conflict', $error->errorCode); }
+        $this->assertCount(1, \Illuminate\Support\Facades\Storage::disk('local')->allFiles());
+        $this->assertSame(1, $draft->fresh()->business_version);
+    }
+
+    public function test_custom_material_requires_matching_published_configuration_and_technical_permission(): void
+    {
+        [$user, $demand, $bom] = $this->fixture();
+        $component = $bom->items->first()->componentItem;
+        $component->update(['is_custom_item' => true, 'is_production_item' => true]);
+        $service = app(WorkOrderApplicationService::class);
+        $draft = $service->createDraft(['client_command_id' => 'custom-tech-create', 'production_demand_id' => $demand->id,
+            'expected_demand_version' => 1, 'target_qty' => 2, 'production_batch' => 'CUSTOM', 'production_location_name' => '装配车间'], $user, self::PERMISSIONS);
+        $waiting = $service->submit($draft->id, ['client_command_id' => 'custom-tech-submit', 'expected_version' => 1], $user, self::PERMISSIONS);
+        $gate = app(ReleaseGateApplicationService::class)->evaluate($draft->id, $user, self::PERMISSIONS);
+        $this->assertContains('technical_confirmation', array_column($gate['blockers'], 'key'));
+        $payload = ['client_command_id' => 'custom-tech-confirm', 'expected_version' => 2, 'bom_id' => $bom->id,
+            'production_routing_id' => $draft->production_routing_id, 'materials' => []];
+        try {
+            $service->confirmTechnical($draft->id, $payload, $user, self::PERMISSIONS);
+            $this->fail('生产操作权限不能代替技术确认权限');
+        } catch (\App\Exceptions\Erp\WorkOrderDomainException $e) {
+            $this->assertSame(403, $e->status);
+        }
+        try {
+            $service->confirmTechnical($draft->id, $payload, $user, [...self::PERMISSIONS, 'production.technical.prepare']);
+            $this->fail('定制用料不允许缺少配置版本');
+        } catch (\App\Exceptions\Erp\WorkOrderDomainException $e) {
+            $this->assertSame('technical_configuration_required', $e->errorCode);
+        }
+        $configurationId = DB::table('erp_custom_configurations')->insertGetId([
+            'item_id' => $component->id, 'configuration_no' => 'CFG-TECH-TEST', 'version_no' => 1,
+            'drawing_reference' => '定制板件 R1',
+            'dimensions' => json_encode(['length_mm' => 300, 'width_mm' => 200, 'thickness_mm' => 2]),
+            'scope_mode' => 'PUBLIC', 'status' => 'PUBLISHED', 'business_version' => 2,
+            'created_by_legacy_id' => 7501, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $confirmed = $service->confirmTechnical($draft->id, array_replace($payload, [
+            'client_command_id' => 'custom-tech-confirm-valid',
+            'materials' => [['bom_item_id' => $bom->items->first()->id, 'configuration_id' => $configurationId]],
+        ]), $user, [...self::PERMISSIONS, 'production.technical.prepare']);
+        $released = $service->publish($draft->id, ['client_command_id' => 'custom-tech-release', 'expected_version' => 3], $user, self::PERMISSIONS);
+        $requirement = $released->materialRequirements()->first();
+        $this->assertSame($configurationId, (int) $requirement->configuration_id);
+        $this->assertSame(300, json_decode($requirement->getRawOriginal('configuration_snapshot'), true)['dimensions']['length_mm']);
+        $this->assertSame(5.4, (float) $requirement->required_qty);
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('cuttingTechnicalCases')]
+    public function test_standard_and_custom_sheet_and_pipe_freeze_their_own_cut_dimensions(string $mode, bool $custom): void
+    {
+        [$user, $demand, $bom] = $this->fixture();
+        $material = $bom->items->first();
+        $material->componentItem->update(['cutting_mode' => $mode, 'is_length_cut_material' => $mode === 'length', 'standard_stock_length_mm' => 6000]);
+        $material->update(['cut_length_mm' => 300, 'cut_width_mm' => $mode === 'sheet' ? 200 : null,
+            'cut_thickness_mm' => 2, 'piece_qty' => 2]);
+        $bom->outputItem->update(['is_custom_item' => $custom]);
+        // 历史销售参数故意与正式尺寸冲突，技术确认后不能继续覆盖生产。
+        $demand->update(['configuration_snapshot' => ['cut_requirements' => [[
+            'component_item_id' => $material->component_item_id, 'cut_length_mm' => 999, 'piece_qty' => 9, 'remark' => null,
+        ]]]]);
+        $service = app(WorkOrderApplicationService::class);
+        $draft = $service->createDraft(['client_command_id' => 'dimension-create', 'production_demand_id' => $demand->id,
+            'expected_demand_version' => 1, 'target_qty' => 2, 'production_batch' => 'DIMENSIONS', 'production_location_name' => '下料车间'], $user, self::PERMISSIONS);
+        $configurationId = null;
+        if ($custom) $configurationId = DB::table('erp_custom_configurations')->insertGetId([
+            'item_id' => $bom->output_item_id, 'configuration_no' => 'CFG-DIMENSIONS', 'version_no' => 1,
+            'drawing_reference' => '尺寸 R1', 'dimensions' => json_encode(['length_mm' => 500, 'width_mm' => 250, 'thickness_mm' => 2]),
+            'scope_mode' => 'PUBLIC', 'status' => 'PUBLISHED', 'business_version' => 2,
+            'created_by_legacy_id' => 7501, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $service->confirmTechnical($draft->id, ['client_command_id' => 'dimension-confirm', 'expected_version' => 1,
+            'bom_id' => $bom->id, 'production_routing_id' => $draft->production_routing_id, 'materials' => [],
+            'output_configuration_id' => $configurationId, 'drawing_reference' => '尺寸 R1'], $user, [...self::PERMISSIONS, 'production.technical.prepare']);
+        $service->submit($draft->id, ['client_command_id' => 'dimension-submit', 'expected_version' => 2], $user, self::PERMISSIONS);
+        $released = $service->publish($draft->id, ['client_command_id' => 'dimension-publish', 'expected_version' => 3], $user, self::PERMISSIONS);
+        $requirement = $released->materialRequirements()->firstOrFail();
+        $geometry = $requirement->cutting_requirement_snapshot;
+        $this->assertSame($custom ? 500.0 : 300.0, (float) $requirement->cut_length_mm_snapshot);
+        $this->assertSame($mode === 'sheet' ? ($custom ? 250.0 : 200.0) : null,
+            $geometry['width_mm'] === null ? null : (float) $geometry['width_mm']);
+        $this->assertSame(4.0, (float) $requirement->required_piece_qty);
+        $this->assertSame(5.4, (float) $requirement->required_qty);
+        $this->assertSame(300.0, (float) $material->fresh()->cut_length_mm);
+        $this->assertSame($configurationId, $released->output_configuration_id);
+        $this->assertSame('work_order_technical_version', $released->bom_snapshot['resolution_source']);
+    }
+
+    public static function cuttingTechnicalCases(): array
+    {
+        return ['标准板件' => ['sheet', false], '定制板件' => ['sheet', true], '标准管件' => ['length', false], '定制管件' => ['length', true]];
     }
 
     private function fixture(int $userId = 7501): array

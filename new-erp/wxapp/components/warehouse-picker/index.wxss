@@ -1,0 +1,35 @@
+@import "../../pages/warehouse/shared.wxss";
+.picker-dialog { max-width: 760px; color: #101829; font-size: 25rpx; }
+.picker-content { display: flex; min-height: 0; overflow: hidden; }
+.picker-categories { flex: 0 0 27%; background: #f6f8fb; display: flex; flex-direction: column; border-right: 1rpx solid #e4e9f0; }
+.picker-category-title { padding: 20rpx 12rpx; font-weight: 600; }
+.picker-category-scroll { height: 41vh; min-height: 0; }
+.picker-category { padding: 22rpx 12rpx; word-break: break-all; }
+.picker-category.active { background: #fff0f0; border-left: 5rpx solid #ef1008; color: #ef1008; font-weight: 600; }
+.picker-category-pager { display: flex; align-items: center; justify-content: space-around; gap: 4rpx; font-size: 20rpx; padding: 8rpx 4rpx; }
+.picker-category-pager button { padding: 8rpx 5rpx; font-size: 22rpx; background: white; }
+.picker-main { flex: 1; padding: 18rpx 14rpx 0; overflow: hidden; }
+.warehouse-search { gap: 7rpx; padding: 9rpx; }
+.warehouse-search input { font-size: 23rpx; }
+.warehouse-search button { padding: 6rpx; font-size: 24rpx; flex-shrink: 0; }
+.picker-rows { height: 40vh; min-height: 140px; }
+.picker-table-head,.picker-row { display: flex; align-items: center; gap: 9rpx; padding: 16rpx 3rpx; border-bottom: 1rpx solid #e6ebf1; }
+.picker-table-head { background: #f4f6f9; font-size: 22rpx; font-weight: 500; }
+.picker-row { min-height: 104rpx; line-height: 1.6; }
+.picker-check { flex: 0 0 42rpx; }
+.picker-col-name { flex: 1; word-break: break-all; }
+.picker-col-name .warehouse-muted { font-size: 23rpx; }
+.picker-col-quantity { flex: 0 0 145rpx; text-align: right; }
+.picker-col-status { flex: 0 0 68rpx; text-align: right; word-break: break-all; }
+.picker-status { color: #138744; }
+.picker-stepper { display: flex; align-items: center; border: 1rpx solid #dce3ec; border-radius: 6rpx; margin-top: 7rpx; overflow: hidden; }
+.picker-stepper button { flex: 0 0 35rpx; padding: 9rpx 0; font-size: 21rpx; border-radius: 0; background: #f8fafc; }
+.picker-stepper input { flex: 1; width: 0; height: 45rpx; text-align: center; font-size: 24rpx; }
+.warehouse-pager { gap: 9rpx; font-size: 22rpx; margin: 18rpx 0; }
+.warehouse-pager button { padding: 10rpx 13rpx; }
+.picker-selection { display: flex; justify-content: space-between; gap: 12rpx; flex-wrap: wrap; border-top: 1rpx solid #e6ebf1; padding: 18rpx 24rpx; }
+.picker-selected { max-height: 18vh; height: 18vh; border-top: 1rpx solid #e6ebf1; }
+.picker-selected-row { display: flex; align-items: center; justify-content: space-between; gap: 14rpx; padding: 14rpx 24rpx; word-break: break-all; }
+.picker-selected-row > view { flex: 1; }.picker-selected-row button { flex-shrink: 0; font-size: 24rpx; }
+.picker-error { padding: 0 24rpx; }
+@media (max-width: 350px) { .picker-main { padding-left: 8rpx; padding-right: 8rpx; }.picker-col-quantity { flex-basis: 130rpx; }.picker-categories { flex-basis: 25%; }.picker-row { font-size: 24rpx; }.picker-check { flex-basis: 37rpx; } }

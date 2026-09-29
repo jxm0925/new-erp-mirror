@@ -1003,10 +1003,12 @@
 </template>
 
 <script>
+import cachedPageRoute from '@/utils/cachedPageRoute'
 import { listEntity } from '@/api/erp/master'
 import { listPendingReceipts, repairPostingReceiptAllocations, postPostingReceipt, listInventoryBalances, listInventoryItemBatches, getInventoryBatchContext, listInventoryBalanceSerials, listInventoryTransactions, listInventoryAdjustments, listInventoryAdjustmentReasons, generateInventoryAdjustmentSerials, saveInventoryAdjustment, submitInventoryAdjustment, postInventoryAdjustment, cancelInventoryAdjustment, deleteInventoryAdjustment, getInventoryQualityContext, createInventoryQualityEvent, getInventoryAlertPolicy, activateInventoryAlertPolicy, disableInventoryAlertPolicy } from '@/api/erp/inventory'
 
 export default {
+  mixins: [cachedPageRoute],
   name: 'InventoryBoard',
   data() {
     return {
@@ -1206,7 +1208,7 @@ export default {
     }
   },
   watch: {
-    '$route.path': { immediate: true, handler() { this.syncActiveView(); this.loadCurrentView() } },
+    'pageRoute.path': { immediate: true, handler() { this.syncActiveView(); this.loadCurrentView() } },
     balancePickerQuery: { deep: true, handler() { this.balancePickerPagination.page = 1 } }
   },
   mounted() {
@@ -1324,7 +1326,7 @@ export default {
       }
     },
     async loadTransactions() {
-      const routeItemId = Number(this.$route.query.item_id || 0) || null
+      const routeItemId = Number(this.pageRoute.query.item_id || 0) || null
       if (routeItemId) this.txQuery.itemId = routeItemId
       const res = await listInventoryTransactions({
         view: 'lines',
@@ -1425,7 +1427,7 @@ export default {
       this.loadTransactions()
     },
     resetTxQuery() {
-      this.txQuery = { type: '', sourceNo: '', keyword: this.$route.query.item_code || '', warehouse: '', location: '', batch: '', dateRange: [], itemId: Number(this.$route.query.item_id || 0) || null }
+      this.txQuery = { type: '', sourceNo: '', keyword: this.pageRoute.query.item_code || '', warehouse: '', location: '', batch: '', dateRange: [], itemId: Number(this.pageRoute.query.item_id || 0) || null }
       this.searchTransactions()
     },
     handleTxSizeChange(size) {
@@ -1897,7 +1899,7 @@ export default {
       }
     },
     syncActiveView() {
-      const path = this.$route.path
+      const path = this.pageRoute.path
       const previousView = this.activeView
       if (path.includes('/balances')) this.activeView = 'balances'
       else if (path.includes('/transactions')) this.activeView = 'transactions'

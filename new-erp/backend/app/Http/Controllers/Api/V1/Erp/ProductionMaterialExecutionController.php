@@ -6,16 +6,46 @@ use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Http\Controllers\Controller;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\ProductionMaterialExecutionService;
+use App\Services\Erp\ProductionPickingWorkspaceService;
 use Illuminate\Http\Request;
 
 class ProductionMaterialExecutionController extends Controller
 {
+    public function pickingWorkspace(Request $request, string $action, ProductionPickingWorkspaceService $service)
+    {
+        $filters = $request->validate([
+            'keyword' => ['nullable', 'string', 'max:160'], 'page' => ['nullable', 'integer', 'min:1'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'], 'work_order_id' => ['nullable', 'integer', 'min:1'],
+            'target_material_requirement_id' => [$action === 'sources' || $request->input('kind') === 'categories' ? 'required' : 'nullable', 'integer', 'min:1'],
+            'warehouse_id' => [$action === 'sources' ? 'required' : 'nullable', 'integer', 'min:1'],
+            'location_id' => ['nullable', 'integer', 'min:1'], 'category_id' => ['nullable', 'integer', 'min:1'],
+            'kind' => [$action === 'options' ? 'required' : 'nullable', 'in:warehouses,people,categories,departments,locations'],
+            'department_id' => ['nullable', 'integer', 'min:1'],
+            'ids' => ['nullable', 'array', 'max:100'], 'ids.*' => ['integer', 'min:1'],
+            'picking_task_id' => [in_array($action, ['serials', 'physicals'], true) ? 'required' : 'nullable', 'integer', 'min:1'],
+            'picking_task_line_id' => [in_array($action, ['serials', 'physicals'], true) ? 'required' : 'nullable', 'integer', 'min:1'],
+            'source_delivery_id' => ['nullable', 'integer', 'min:1'],
+            'delivery_id' => [$action === 'receipt-serials' ? 'required' : 'nullable', 'integer', 'min:1'],
+            'delivery_line_id' => [$action === 'receipt-serials' ? 'required' : 'nullable', 'integer', 'min:1'],
+        ]);
+        $method = $action === 'receipt-serials' ? 'receiptSerials' : $action;
+        return response()->json($service->{$method}($filters, ...$this->context($request)));
+    }
+
+    public function materialEvents(Request $request, string $type, int $id, ProductionPickingWorkspaceService $service)
+    {
+        $filters = $request->validate(['page' => ['nullable', 'integer', 'min:1'], 'per_page' => ['nullable', 'integer', 'min:1', 'max:100']]);
+        return response()->json($service->events($type, $id, $filters, ...$this->context($request)));
+    }
+
     public function preparationDemands(Request $request, ProductionMaterialExecutionService $service)
     {
         $filters = $request->validate([
             'status' => ['nullable', 'string', 'max:40'],
             'work_order_id' => ['nullable', 'integer', 'min:1'],
             'target_routing_operation_id' => ['nullable', 'integer', 'min:1'],
+            'production_target_type' => ['nullable', 'in:unit_operation,quantity_operation'],
+            'production_target_id' => ['nullable', 'integer', 'min:1'],
             'keyword' => ['nullable', 'string', 'max:160'],
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
@@ -30,7 +60,7 @@ class ProductionMaterialExecutionController extends Controller
 
     public function showPickingTask(Request $request, int $id, ProductionMaterialExecutionService $service)
     {
-        return response()->json(['data' => $service->showPickingTask($id, ...$this->context($request))]);
+        return response()->json(['data' => $service->showPickingTask($id, ...array_merge($this->context($request), [$this->detailPagination($request)]))]);
     }
 
     public function createPickingTask(Request $request, ProductionMaterialExecutionService $service)
@@ -60,6 +90,8 @@ class ProductionMaterialExecutionController extends Controller
             'lines.*.actual_pick_qty' => ['required', 'numeric', 'min:0'],
             'lines.*.serial_ids' => ['nullable', 'array'],
             'lines.*.serial_ids.*' => ['integer', 'min:1'],
+            'lines.*.physical_material_ids' => ['nullable', 'array', 'max:1000'],
+            'lines.*.physical_material_ids.*' => ['integer', 'min:1', 'distinct'],
         ]);
         $task = $service->confirmPickingTask($id, $payload, ...$this->context($request));
         return response()->json(['message' => '拣货已确认并完成正式库存过账。', 'data' => $task]);
@@ -78,7 +110,7 @@ class ProductionMaterialExecutionController extends Controller
 
     public function showDelivery(Request $request, int $id, ProductionMaterialExecutionService $service)
     {
-        return response()->json(['data' => $service->showDelivery($id, ...$this->context($request))]);
+        return response()->json(['data' => $service->showDelivery($id, ...array_merge($this->context($request), [$this->detailPagination($request)]))]);
     }
 
     public function createDelivery(Request $request, ProductionMaterialExecutionService $service)
@@ -92,6 +124,8 @@ class ProductionMaterialExecutionController extends Controller
             'lines' => ['required', 'array', 'min:1'],
             'lines.*.picking_task_line_id' => ['required', 'integer', 'min:1'],
             'lines.*.delivery_qty' => ['required', 'numeric', 'gt:0'],
+            'lines.*.serial_ids' => ['nullable', 'array'],
+            'lines.*.serial_ids.*' => ['integer', 'min:1', 'distinct'],
         ]);
         $delivery = $service->createDelivery($payload, ...$this->context($request));
         return response()->json(['message' => '配送单已创建。', 'data' => $delivery], 201);
@@ -122,6 +156,8 @@ class ProductionMaterialExecutionController extends Controller
             'lines.*.accepted_serial_ids.*' => ['integer', 'min:1'],
             'lines.*.rejected_serial_ids' => ['nullable', 'array'],
             'lines.*.rejected_serial_ids.*' => ['integer', 'min:1'],
+            'lines.*.rejected_serial_reasons' => ['nullable', 'array', 'max:1000'],
+            'lines.*.rejected_serial_reasons.*' => ['string', 'max:500'],
         ]);
         $receipt = $service->receiveDelivery($id, $payload, ...$this->context($request));
         return response()->json(['message' => '收料已确认。', 'data' => $receipt], 201);
@@ -183,11 +219,19 @@ class ProductionMaterialExecutionController extends Controller
         ]);
     }
 
+    private function detailPagination(Request $request): array
+    {
+        if (! $request->has('line_page')) return [];
+        $data = $request->validate(['line_page' => 'required|integer|min:1', 'line_per_page' => 'nullable|integer|min:1|max:100']);
+        return ['page' => $data['line_page'], 'per_page' => $data['line_per_page'] ?? 10];
+    }
+
     private function filters(Request $request, bool $picking = false): array
     {
         return $request->validate([
             'status' => ['nullable', 'string', 'max:40'],
             'warehouse_id' => [$picking ? 'nullable' : 'prohibited', 'integer', 'min:1'],
+            'keyword' => ['nullable', 'string', 'max:160'],
             'status_group' => ['nullable', 'in:'.($picking ? 'active' : 'pending_dispatch')],
             'page' => ['nullable', 'integer', 'min:1'],
             'work_order_id' => ['nullable', 'integer', 'min:1'],

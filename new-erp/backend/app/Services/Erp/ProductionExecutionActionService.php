@@ -87,6 +87,7 @@ class ProductionExecutionActionService
         if (array_key_exists('material_cost_allocation', $payload)) $this->permission($permissions, 'production.output.cost.allocate');
         return $this->mutate('complete_target', $taskId, $type, $targetId, $payload, $user, function ($task, $target, int $userId) use ($type, $payload, $permissions): array {
             if (! in_array($target->status, ['IN_PROGRESS', 'PAUSED'], true)) $this->fail('target_not_in_progress', '只有加工中或已暂停的生产目标可以完成。', 409);
+            app(ProductionCuttingOperationService::class)->beforeComplete($type, $target, $payload);
             $now = now();
             $this->laborSessions->end($task, $target, $type, $userId, 'target_completed', $now, false, false);
             if (ProductionLaborSession::query()->where('target_type', $type)->where('target_id', $target->id)->where('status', 'ACTIVE')->exists())
@@ -97,6 +98,7 @@ class ProductionExecutionActionService
             $terminal = $this->isTerminalTarget($type, $target, (int) $task->work_order_id);
             $output = $this->createOutput($type, $target, $userId, $payload, $now, $terminal);
             $output = $this->materialCosts->consume($output, $target, $type, $payload, $userId, $permissions);
+            $output = app(ProductionCuttingOperationService::class)->attachOutputCosts($output, $target, $type, $userId);
             $this->syncInputLineage($type, (int) $target->id, (int) $output->id);
             $warehouseChosen = $target->output_mode_snapshot === 'warehouse_required'
                 || ($target->output_mode_snapshot === 'warehouse_optional' && ($payload['disposition'] ?? null) === 'warehouse');

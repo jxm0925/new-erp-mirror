@@ -212,9 +212,9 @@ Page({
   },
   openWorkOrder(event) {
     const workOrderId = Number(event.currentTarget.dataset.id || 0);
-    if (!workOrderId || !this.data.id) return;
+    if (!workOrderId) return;
     wx.navigateTo({
-      url: `/pages/production/work-order-detail/index?masterId=${this.data.id}&masterOrderNo=${encodeURIComponent(this.data.master.master_order_no)}&workOrderId=${workOrderId}`,
+      url: `/pages/production/work-order-detail/index?id=${workOrderId}`,
     });
   },
   previewAttachment(event) {
@@ -235,7 +235,7 @@ Page({
   },
   openActiveDelivery(event) {
     const item = event.currentTarget.dataset.item;
-    if (item && item.first_delivery_id) wx.navigateTo({ url: `/pages/production/delivery-detail/index?id=${item.first_delivery_id}` });
+    if (item && item.first_delivery_id) wx.navigateTo({ url: `/pages/warehouse/delivery/index?id=${item.first_delivery_id}` });
   },
   openUpcomingDelivery(event) {
     const item = event.currentTarget.dataset.item;

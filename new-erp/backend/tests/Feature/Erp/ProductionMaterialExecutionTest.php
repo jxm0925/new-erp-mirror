@@ -46,6 +46,7 @@ class ProductionMaterialExecutionTest extends TestCase
     public function test_warehouse_creates_picking_task_from_system_preparation_demand_without_retyping_production_requirement(): void
     {
         [$user, $workOrder, $requirement, $balance] = $this->fixture();
+        DB::table('erp_work_orders')->where('id', $workOrder->id)->update(['production_location_name' => null]);
         $service = app(ProductionMaterialExecutionService::class);
         $demand = DB::table('erp_production_target_material_requirements')
             ->where('work_order_id', $workOrder->id)->first();
@@ -68,6 +69,7 @@ class ProductionMaterialExecutionTest extends TestCase
             ]],
         ], $user, self::PERMISSIONS, true);
 
+        $this->assertSame(DB::table('erp_work_order_material_supply_rules')->where('id', $demand->material_supply_rule_snapshot_id)->value('target_operation_name_snapshot'), $task->production_location_name_snapshot);
         $line = $task->lines->first();
         $this->assertSame($requirement->id, (int) $line->material_requirement_id);
         $this->assertSame((int) $demand->material_supply_rule_snapshot_id, (int) $line->material_supply_rule_snapshot_id);
@@ -105,13 +107,19 @@ class ProductionMaterialExecutionTest extends TestCase
         $pick = $material->startPickingTask($pick->id, [
             'client_command_id' => $this->id('dw-pick-start'), 'expected_version' => $pick->business_version,
         ], $user, self::PERMISSIONS, true);
+        $balance->item->update(['is_serial_managed' => true, 'serial_tracking_mode' => 'required']);
+        $pick->lines->first()->update(['serial_control_type' => 'required']);
+        $serialIds = [];
+        for ($i = 0; $i < 6; $i++) $serialIds[] = \App\Models\Erp\InventorySerial::create([
+            'serial_no' => $this->id('wave-sn'), 'inventory_balance_id' => $balance->id,
+            'item_id' => $balance->item_id, 'warehouse_id' => $balance->warehouse_id,
+            'location_id' => $balance->location_id, 'batch_no' => $balance->batch_no, 'serial_status' => 'available',
+        ])->id;
         $pick = $material->confirmPickingTask($pick->id, [
             'client_command_id' => $this->id('dw-pick-confirm'), 'expected_version' => $pick->business_version,
-            'lines' => [['picking_task_line_id' => $pick->lines->first()->id, 'actual_pick_qty' => 6]],
+            'lines' => [['picking_task_line_id' => $pick->lines->first()->id, 'actual_pick_qty' => 6, 'serial_ids' => $serialIds]],
         ], $user, self::PERMISSIONS, true);
         $pickLine = $pick->lines->first();
-        $serialIds = [910001, 910002, 910003, 910004, 910005, 910006];
-        $pickLine->update(['serial_control_type' => 'unit_serial', 'serial_snapshot' => ['inventory_serial_ids' => $serialIds]]);
 
         $first = $material->createDelivery([
             'client_command_id' => $this->id('dt-first'), 'picking_task_id' => $pick->id,
@@ -187,7 +195,7 @@ class ProductionMaterialExecutionTest extends TestCase
             $material->receiveDelivery($delivery->id, [
                 'client_command_id' => $this->id('dt-receive-'.$delivery->id), 'expected_version' => $delivery->business_version,
                 'lines' => $delivery->lines->map(fn ($line) => [
-                    'delivery_line_id' => $line->id, 'accepted_qty' => (float) $line->delivery_qty, 'rejected_qty' => 0,
+                    'delivery_line_id' => $line->id, 'accepted_qty' => (float) $line->delivery_qty, 'rejected_qty' => 0, 'accepted_serial_ids' => $line->serial_snapshot['inventory_serial_ids'],
                 ])->all(),
             ], $user, self::PERMISSIONS, true);
         }
@@ -572,7 +580,27 @@ class ProductionMaterialExecutionTest extends TestCase
 
     public function test_rejected_delivery_remains_open_until_exact_redelivery_is_received(): void
     {
+        $this->assertRejectedRedeliveryFlow(false);
+    }
+
+    public function test_serialized_rejection_redelivery_preserves_identity_and_deducts_inventory_once(): void
+    {
+        $this->assertRejectedRedeliveryFlow(true);
+    }
+
+    private function assertRejectedRedeliveryFlow(bool $serialized): void
+    {
         [$user, $workOrder, $requirement, $balance] = $this->fixture();
+        $serials = [];
+        if ($serialized) {
+            $balance->item->update(['is_serial_managed' => true, 'serial_tracking_mode' => 'required']);
+            for ($i = 0; $i < 4; $i++) $serials[] = \App\Models\Erp\InventorySerial::create([
+                'serial_no' => $this->id('delivery-sn'), 'inventory_balance_id' => $balance->id,
+                'item_id' => $balance->item_id, 'warehouse_id' => $balance->warehouse_id,
+                'location_id' => $balance->location_id, 'batch_no' => $balance->batch_no,
+                'serial_status' => 'available',
+            ])->id;
+        }
         $service = app(ProductionMaterialExecutionService::class);
 
         $task = $service->createPickingTask([
@@ -589,13 +617,13 @@ class ProductionMaterialExecutionTest extends TestCase
         ], $user, self::PERMISSIONS, true);
         $picked = $service->confirmPickingTask($task->id, [
             'client_command_id' => $this->id('reject-confirm'), 'expected_version' => $picking->business_version,
-            'lines' => [['picking_task_line_id' => $task->lines->first()->id, 'actual_pick_qty' => 4]],
+            'lines' => [['picking_task_line_id' => $task->lines->first()->id, 'actual_pick_qty' => 4, 'serial_ids' => $serials]],
         ], $user, self::PERMISSIONS, true);
 
         $delivery = $service->createDelivery([
             'client_command_id' => $this->id('reject-delivery'), 'picking_task_id' => $task->id,
             'expected_version' => $picked->business_version,
-            'lines' => [['picking_task_line_id' => $task->lines->first()->id, 'delivery_qty' => 4]],
+            'lines' => [['picking_task_line_id' => $task->lines->first()->id, 'delivery_qty' => 4, 'serial_ids' => $serials]],
         ], $user, self::PERMISSIONS, true);
         $inTransit = $service->dispatchDelivery($delivery->id, [
             'client_command_id' => $this->id('reject-dispatch'), 'expected_version' => $delivery->business_version,
@@ -604,16 +632,28 @@ class ProductionMaterialExecutionTest extends TestCase
         $delivered = $service->deliverDelivery($delivery->id, [
             'client_command_id' => $this->id('reject-deliver'), 'expected_version' => $inTransit->business_version,
         ], $user, self::PERMISSIONS, true);
+        if ($serialized) {
+            $this->expectDomain('serial_reject_reason_invalid', fn () => $service->receiveDelivery($delivery->id, [
+                'client_command_id' => $this->id('reject-invalid-reasons'), 'expected_version' => $delivered->business_version,
+                'lines' => [['delivery_line_id' => $delivered->lines->first()->id, 'accepted_qty' => 3, 'rejected_qty' => 1,
+                    'accepted_serial_ids' => array_slice($serials, 0, 3), 'rejected_serial_ids' => array_slice($serials, 3),
+                    'reject_reason' => '包装破损', 'rejected_serial_reasons' => [$serials[0] => '错误身份']]],
+            ], $user, self::PERMISSIONS, true));
+            $this->assertSame('DELIVERED', $delivery->fresh()->status);
+            $this->assertSame(0, DB::table('erp_material_receipts')->where('delivery_id', $delivery->id)->count());
+        }
         $receipt = $service->receiveDelivery($delivery->id, [
             'client_command_id' => $this->id('reject-receive'), 'expected_version' => $delivered->business_version,
             'lines' => [[
                 'delivery_line_id' => $delivered->lines->first()->id,
-                'accepted_qty' => 3, 'rejected_qty' => 1, 'reject_reason' => '包装破损',
+                'accepted_qty' => 3, 'rejected_qty' => 1, 'accepted_serial_ids' => array_slice($serials, 0, 3), 'rejected_serial_ids' => array_slice($serials, 3), 'reject_reason' => '包装破损',
+                'rejected_serial_reasons' => $serialized ? [$serials[3] => '外包装破损，需重新包装'] : [],
             ]],
         ], $user, self::PERMISSIONS, true);
 
         $this->assertSame('RECEIVED', $receipt->delivery->status);
         $this->assertSame('PARTIALLY_RECEIVED', $task->fresh()->status);
+        if ($serialized) $this->assertSame('外包装破损，需重新包装', $receipt->lines->first()->rejected_serial_snapshot['reasons'][$serials[3]]);
         $this->assertSame(3.0, (float) $requirement->fresh()->received_qty);
         $postedLineId = (int) DB::table('erp_inventory_transaction_items')->where('transaction_id', $picked->inventory_transaction_id)->value('id');
         $transit = DB::table('erp_material_holdings')->where('position_type', 'PRODUCTION_TRANSIT')->where('position_id', $postedLineId)->first();
@@ -632,12 +672,13 @@ class ProductionMaterialExecutionTest extends TestCase
             'client_command_id' => $this->id('reject-redelivery'), 'picking_task_id' => $task->id,
             'expected_version' => $task->fresh()->business_version, 'delivery_type' => 'redelivery',
             'source_delivery_id' => $delivery->id,
-            'lines' => [['picking_task_line_id' => $task->lines->first()->id, 'delivery_qty' => 1]],
+            'lines' => [['picking_task_line_id' => $task->lines->first()->id, 'delivery_qty' => 1, 'serial_ids' => array_slice($serials, 3)]],
         ], $user, self::PERMISSIONS, true);
         $redeliveryInTransit = $service->dispatchDelivery($redelivery->id, [
             'client_command_id' => $this->id('reject-redelivery-dispatch'), 'expected_version' => $redelivery->business_version,
             'delivery_user_legacy_id' => $user->legacy_id,
         ], $user, self::PERMISSIONS, true);
+        if ($serialized) $this->assertDatabaseHas('erp_inventory_serials', ['id' => $serials[3], 'serial_status' => 'production_in_transit']);
         $redeliveryDelivered = $service->deliverDelivery($redelivery->id, [
             'client_command_id' => $this->id('reject-redelivery-deliver'), 'expected_version' => $redeliveryInTransit->business_version,
         ], $user, self::PERMISSIONS, true);
@@ -646,13 +687,14 @@ class ProductionMaterialExecutionTest extends TestCase
             'expected_version' => $redeliveryDelivered->business_version,
             'lines' => [[
                 'delivery_line_id' => $redeliveryDelivered->lines->first()->id,
-                'accepted_qty' => 1, 'rejected_qty' => 0,
+                'accepted_qty' => 1, 'rejected_qty' => 0, 'accepted_serial_ids' => array_slice($serials, 3),
             ]],
         ];
         $completed = $service->receiveDelivery($redelivery->id, $receivePayload, $user, self::PERMISSIONS, true);
         $replay = $service->receiveDelivery($redelivery->id, $receivePayload, $user, self::PERMISSIONS, true);
 
         $this->assertSame($completed->id, $replay->id);
+        if ($serialized) $this->assertSame(4, DB::table('erp_inventory_serials')->whereIn('id', $serials)->where('serial_status', 'production_received')->count());
         $this->assertSame('RECEIVED', $task->fresh()->status);
         $this->assertSame(4.0, (float) $requirement->fresh()->received_qty);
         $this->assertSame(2, DB::table('erp_material_receipts')->whereIn('delivery_id', [$delivery->id, $redelivery->id])->count());
@@ -906,6 +948,86 @@ class ProductionMaterialExecutionTest extends TestCase
             $user, self::PERMISSIONS
         );
         $this->assertSame('CONFIRMED', $confirmation['status']);
+    }
+
+    public function test_picking_splits_one_requirement_across_stock_sources_and_preserves_each_source_cost(): void
+    {
+        [$user, $wo, $requirement, $first] = $this->fixture();
+        $second = $first->replicate();
+        $second->batch_no = $this->id('second-stock');
+        $second->average_unit_cost = 7;
+        $second->inventory_value = 140;
+        $second->save();
+        $service = app(ProductionMaterialExecutionService::class);
+        $payload = ['client_command_id' => $this->id('split-create'), 'work_order_id' => $wo->id,
+            'expected_version' => 1, 'warehouse_id' => $first->warehouse_id,
+            'lines' => [$this->pickLine($wo, $requirement, $first, 4), $this->pickLine($wo, $requirement, $second, 6)]];
+        $pick = $service->createPickingTask($payload, $user, self::PERMISSIONS, true);
+        $this->assertCount(2, $pick->lines);
+        $this->assertSame($pick->id, $service->createPickingTask($payload, $user, self::PERMISSIONS, true)->id);
+        $pick = $service->assignPickingTask($pick->id, ['client_command_id' => $this->id('split-assign'), 'expected_version' => $pick->business_version, 'assigned_picker_legacy_id' => $user->legacy_id], $user, self::PERMISSIONS, true);
+        $pick = $service->startPickingTask($pick->id, ['client_command_id' => $this->id('split-start'), 'expected_version' => $pick->business_version], $user, self::PERMISSIONS, true);
+        $confirm = ['client_command_id' => $this->id('split-confirm'), 'expected_version' => $pick->business_version,
+            'lines' => $pick->lines->map(fn ($line) => ['picking_task_line_id' => $line->id, 'actual_pick_qty' => $line->planned_pick_qty])->all()];
+        $pick = $service->confirmPickingTask($pick->id, $confirm, $user, self::PERMISSIONS, true);
+        $this->assertEquals(16, $first->fresh()->quantity_on_hand);
+        $this->assertEquals(14, $second->fresh()->quantity_on_hand);
+        $this->assertEquals(10, $requirement->fresh()->picked_qty);
+        $this->assertCount(2, $pick->inventoryTransaction->items);
+        $this->assertEquals(-54, $pick->inventoryTransaction->items->sum('cost_amount'));
+        $this->assertSame($pick->id, $service->confirmPickingTask($pick->id, $confirm, $user, self::PERMISSIONS, true)->id);
+        $this->assertEquals(16, $first->fresh()->quantity_on_hand);
+        $this->assertEquals(14, $second->fresh()->quantity_on_hand);
+    }
+
+    public function test_split_picking_rejects_combined_overdemand_duplicate_source_and_changed_stock_atomically(): void
+    {
+        [$user, $wo, $requirement, $first] = $this->fixture();
+        $second = $first->replicate(); $second->batch_no = $this->id('split-limit'); $second->save();
+        $service = app(ProductionMaterialExecutionService::class);
+        $base = ['work_order_id' => $wo->id, 'expected_version' => 1, 'warehouse_id' => $first->warehouse_id];
+        $before = DB::table('erp_material_picking_tasks')->count();
+        $this->expectDomain('pick_quantity_exceeded', fn () => $service->createPickingTask($base + [
+            'client_command_id' => $this->id('split-too-many'),
+            'lines' => [$this->pickLine($wo, $requirement, $first, 6), $this->pickLine($wo, $requirement, $second, 5)],
+        ], $user, self::PERMISSIONS, true));
+        $this->expectDomain('duplicate_requirement', fn () => $service->createPickingTask($base + [
+            'client_command_id' => $this->id('split-same-source'),
+            'lines' => [$this->pickLine($wo, $requirement, $first, 4), $this->pickLine($wo, $requirement, $first, 6)],
+        ], $user, self::PERMISSIONS, true));
+        $second->update(['quantity_available' => 2]);
+        $this->expectDomain('inventory_changed', fn () => $service->createPickingTask($base + [
+            'client_command_id' => $this->id('split-stock-changed'),
+            'lines' => [$this->pickLine($wo, $requirement, $first, 4), $this->pickLine($wo, $requirement, $second, 6)],
+        ], $user, self::PERMISSIONS, true), 409);
+        $this->assertSame($before, DB::table('erp_material_picking_tasks')->count());
+        $this->assertEquals(20, $first->fresh()->quantity_on_hand);
+        $this->assertEquals(0, $requirement->fresh()->picked_qty);
+    }
+
+    public function test_short_pick_reopens_remaining_preparation_and_workspace_scopes_sources(): void
+    {
+        [$user, $wo, $requirement, $balance] = $this->fixture();
+        $service = app(ProductionMaterialExecutionService::class);
+        $workspace = app(\App\Services\Erp\ProductionPickingWorkspaceService::class);
+        $targets = $workspace->targets(['work_order_id' => $wo->id], $user, self::PERMISSIONS, true);
+        $this->assertSame(1, $targets->total());
+        $demand = $service->paginatePreparationDemands(['work_order_id' => $wo->id], $user, self::PERMISSIONS, true)->items()[0];
+        $sources = $workspace->sources(['target_material_requirement_id' => $demand->id, 'warehouse_id' => $balance->warehouse_id, 'per_page' => 1], $user, self::PERMISSIONS, true);
+        $this->assertSame(1, $sources->total());
+        $this->assertEquals(20, $sources->items()[0]->picking_available_qty);
+        $this->expectDomain('data_scope_denied', fn () => $workspace->sources(['target_material_requirement_id' => $demand->id, 'warehouse_id' => $balance->warehouse_id], $user, self::PERMISSIONS, false), 403);
+        $pick = $service->createPickingTask(['client_command_id' => $this->id('short-plan'), 'work_order_id' => $wo->id, 'expected_version' => 1,
+            'warehouse_id' => $balance->warehouse_id, 'lines' => [$this->pickLine($wo, $requirement, $balance, 10)]], $user, self::PERMISSIONS, true);
+        $pick = $service->assignPickingTask($pick->id, ['client_command_id' => $this->id('short-assign'), 'expected_version' => $pick->business_version, 'assigned_picker_legacy_id' => $user->legacy_id], $user, self::PERMISSIONS, true);
+        $pick = $service->startPickingTask($pick->id, ['client_command_id' => $this->id('short-start'), 'expected_version' => $pick->business_version], $user, self::PERMISSIONS, true);
+        $service->confirmPickingTask($pick->id, ['client_command_id' => $this->id('short-confirm'), 'expected_version' => $pick->business_version,
+            'lines' => [['picking_task_line_id' => $pick->lines->first()->id, 'actual_pick_qty' => 6]]], $user, self::PERMISSIONS, true);
+        $page = $service->paginatePreparationDemands(['work_order_id' => $wo->id], $user, self::PERMISSIONS, true);
+        $this->assertEquals(4, $page->items()[0]->remaining_to_prepare);
+        $this->assertSame('PARTIAL_PREPARING', $page->items()[0]->status);
+        $sources = $workspace->sources(['target_material_requirement_id' => $demand->id, 'warehouse_id' => $balance->warehouse_id], $user, self::PERMISSIONS, true);
+        $this->assertEquals(14, $sources->items()[0]->picking_available_qty);
     }
 
     private function fixture(): array

@@ -24,8 +24,8 @@
         <env name="BROADCAST_CONNECTION" value="null"/>
         <env name="CACHE_STORE" value="array"/>
         <env name="DB_CONNECTION" value="mysql" force="true"/>
-        <env name="DB_DATABASE" value="erp_sdjiantan" force="true"/>
-        <env name="DB_URL" value=""/>
+        <env name="DB_DATABASE" value="erp_sdjiantan_test" force="true"/>
+        <env name="DB_URL" value="" force="true"/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>

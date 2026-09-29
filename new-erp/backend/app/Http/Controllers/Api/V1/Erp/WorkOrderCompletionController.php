@@ -15,9 +15,10 @@ final class WorkOrderCompletionController extends Controller
 
     public function index(Request $request, int $id, WorkOrderCompletionService $service)
     {
-        $filters = $request->validate(['page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
+        $filters = $request->validate(['page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100',
+            'status' => 'nullable|in:PENDING_REVIEW,APPROVED,REJECTED', 'completion_id' => 'nullable|integer|min:1']);
         return response()->json($service->paginate($id, (int) ($filters['page'] ?? 1),
-            (int) ($filters['per_page'] ?? 20), ...$this->context($request)));
+            (int) ($filters['per_page'] ?? 20), ...[...$this->context($request), $filters]));
     }
 
     public function store(Request $request, int $id, WorkOrderCompletionService $service)

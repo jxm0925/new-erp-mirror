@@ -1,269 +1,136 @@
 const production = require('../../../services/production');
 
-const MASTER_STATUS = {
+const DISPLAY_STATUS = {
   IN_PROGRESS: { label: '生产中', tone: 'running' },
   WAIT_CONDITION: { label: '待条件', tone: 'waiting' },
   EXCEPTION: { label: '异常', tone: 'exception' },
   COMPLETED: { label: '已完成', tone: 'completed' },
 };
+const STATUS = { DRAFT: '草稿', WAIT_RELEASE: '待发布', RELEASED: '已发布', IN_PROGRESS: '生产中', COMPLETED: '已完成', CLOSED: '已关闭', CANCELLED: '已取消' };
+const blankSummary = () => ({ total: '—', in_progress: '—', wait_condition: '—', exception: '—', completed: '—' });
 
 function numberText(value) {
-  if (value === null || value === undefined || value === '') return '—';
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return '—';
-  const parts = numeric.toFixed(4).replace(/\.?0+$/, '').split('.');
-  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  return parts.join('.');
+  if (value === null || value === undefined || value === '' || !Number.isFinite(Number(value))) return '—';
+  return String(Number(Number(value).toFixed(8)));
 }
 
-function kittingText(kitting) {
-  const current = Number(kitting.confirmed_target_count || 0);
-  const total = Number(kitting.required_target_count || 0);
-  if (kitting.status === 'NOT_REQUIRED') return '无需齐套';
-  if (kitting.status === 'READY') return `全部齐套 ${current} / ${total}`;
-  if (kitting.status === 'PARTIAL') return `部分齐套 ${current} / ${total}`;
-  return `待齐套 ${current} / ${total}`;
-}
-
-function productText(product) {
-  const name = product.item_name || product.item_code || '未命名产品';
-  const spec = product.spec ? ` ${product.spec}` : '';
-  return `${name}${spec} × ${numberText(product.planned_qty)}${product.unit_name ? ` ${product.unit_name}` : ''}`;
-}
-
-function deliveryView(delivery) {
-  const current = Number(delivery.received_line_count || 0);
-  const total = Number(delivery.total_line_count || 0);
-  const suffix = total > 0 ? ` ${current} / ${total}` : '';
-  if (delivery.status === 'RECEIVED') return { text: `全部到位${suffix}`, tone: 'success' };
-  if (delivery.status === 'PARTIALLY_RECEIVED') return { text: `部分到位${suffix}`, tone: 'warning' };
-  if (delivery.status === 'IN_TRANSIT') return { text: `配送中${suffix}`, tone: 'warning' };
-  if (delivery.status === 'WAIT_PREPARE') return { text: `待备料${suffix}`, tone: 'muted' };
-  return { text: '备料单待生成', tone: 'muted' };
-}
-
-function fundingText(row) {
-  const productionText = row.funding_status === 'passed' ? '生产已满足' : '生产资金待满足';
-  const shipmentText = row.shipment_status === 'passed' ? '发货已满足' : '发货待付清';
-  return `${productionText} · ${shipmentText}`;
-}
-
-function shortBlocker(blocker) {
-  const count = Number(blocker.count || 1);
-  if (blocker.type === 'production_funding') return '生产资金待满足';
-  if (String(blocker.reason_code || '').includes('routing')) return `缺少工艺路线 ${count} 项`;
-  if (String(blocker.reason_code || '').includes('bom')) return `BOM 条件未满足 ${count} 项`;
-  if (String(blocker.reason_code || '').includes('material_supply')) return `物料供应规则缺失 ${count} 项`;
-  return blocker.label || `发布条件未满足 ${count} 项`;
-}
-
-function masterView(row) {
-  const status = MASTER_STATUS[row.display_status] || MASTER_STATUS.WAIT_CONDITION;
-  const quantity = row.quantity_summary || {};
-  const taskProgress = row.production_task_progress || {};
-  const progressPct = Math.max(0, Math.min(100, Math.round(Number(taskProgress.ratio || 0) * 100)));
-  const delivery = deliveryView(row.delivery || {});
-  const customer = row.customer_snapshot || {};
-  const blockers = (row.blockers || []).map(item => Object.assign({}, item, { shortLabel: shortBlocker(item) }));
-  const comparable = quantity.comparable !== false;
-  return Object.assign({}, row, {
-    kind: 'master',
-    documentLabel: '主生产单',
-    number: row.master_order_no,
-    statusLabel: status.label,
-    statusTone: status.tone,
-    sourceNo: row.sales_order_no_snapshot || '—',
-    customerName: customer.customer_name || '—',
-    salespersonName: (row.salesperson || {}).display_name || row.salesperson_name_snapshot || '—',
-    productLines: (row.product_summary || []).map(product => Object.assign({}, product, { displayText: productText(product) })),
-    workOrderCountText: `${Number(row.work_order_count || 0)} 张生产工单`,
-    plannedText: comparable ? numberText(quantity.planned_qty) : '多单位',
-    completedText: comparable ? numberText(quantity.completed_qty) : '分项',
-    inProgressText: comparable ? numberText(quantity.in_progress_qty) : '分项',
-    exceptionText: comparable ? numberText(quantity.exception_qty) : '分项',
-    progressPct,
-    progressText: `${Number(taskProgress.completed || 0)} / ${Number(taskProgress.total || 0)} · ${progressPct}%`,
-    deliveryText: delivery.text,
-    deliveryTone: delivery.tone,
-    kittingText: (row.kitting || {}).progress_label || kittingText(row.kitting || {}),
-    fundingText: fundingText(row),
-    remarkText: row.order_remark_snapshot || '—',
-    blockers,
-    compact: blockers.length > 0,
-    actionText: blockers.length > 0 ? '查看阻断' : '查看详情',
-  });
-}
-
-function independentView(row) {
-  const mappedStatus = row.status === 'IN_PROGRESS' ? 'IN_PROGRESS'
-    : (['COMPLETED', 'CLOSED'].includes(row.status) ? 'COMPLETED'
-      : (row.status === 'CANCELLED' ? 'EXCEPTION' : 'WAIT_CONDITION'));
-  const status = MASTER_STATUS[mappedStatus];
+function workOrderView(row) {
+  const state = DISPLAY_STATUS[row.display_status] || DISPLAY_STATUS.WAIT_CONDITION;
   const product = row.product || {};
-  const quantity = row.quantity || {};
-  const gateBlockers = (((row.release || {}).gate_summary || {}).blockers || []).map(item => ({
-    type: 'release_gate', reason_code: item.reason_code, label: item.message, count: 1, shortLabel: shortBlocker(item),
-  }));
+  const source = row.source || {};
+  const summary = row.execution_summary || {};
+  const quantity = summary.quantity || {};
+  const tasks = summary.tasks || {};
+  const unit = quantity.unit_name || (row.quantity || {}).unit_name || '';
+  const blockers = (((row.release || {}).gate_summary || {}).blockers || []).map(item => item.message);
+  if (!blockers.length && row.status === 'WAIT_RELEASE') blockers.push('尚未发布');
+  const withUnit = value => numberText(value) + (value === null || value === undefined ? '' : unit);
   return Object.assign({}, row, {
-    kind: 'work_order',
-    documentLabel: '生产工单',
-    number: row.work_order_no,
-    statusLabel: status.label,
-    statusTone: status.tone,
-    sourceNo: (row.source && (row.source.no || row.source.type_label)) || '—',
-    customerName: '',
-    salespersonName: '',
-    productLines: [{ displayText: `${product.item_name || product.item_code || '未命名产品'} × ${numberText(quantity.target_qty)}${quantity.unit_name ? ` ${quantity.unit_name}` : ''}` }],
-    workOrderCountText: '1 张生产工单',
-    plannedText: numberText(quantity.target_base_qty),
-    completedText: '—',
-    inProgressText: '—',
-    exceptionText: '—',
-    progressPct: 0,
-    progressText: '执行进度进入工单查看',
-    deliveryText: '按生产工单执行',
-    deliveryTone: 'muted',
-    fundingText: '独立生产不适用销售资金 Gate',
-    remarkText: (row.source && row.source.title) || '—',
-    blockers: gateBlockers,
-    compact: gateBlockers.length > 0,
-    actionText: gateBlockers.length > 0 ? '查看阻断' : '查看详情',
+    kind: 'work_order', documentLabel: '工单', number: row.work_order_no,
+    statusLabel: STATUS[row.status] || state.label, statusTone: state.tone,
+    sourceNo: row.stocking_purpose === 'common_inventory' ? '公共库存备货'
+      : (row.stocking_purpose === 'reserved_for_work_order' ? '指定工单备货' : (source.no || source.type_label || '—')),
+    customerName: source.customer || '',
+    productName: product.item_name || product.name || product.item_code || '—',
+    executionLabel: row.execution_mode === 'quantity' ? '按数量生产' : '逐件生产',
+    plannedText: withUnit(quantity.planned_qty === undefined ? (row.quantity || {}).target_qty : quantity.planned_qty),
+    completedText: withUnit(quantity.completed_qty),
+    inProgressText: withUnit(quantity.in_progress_qty),
+    exceptionText: withUnit(quantity.exception_qty),
+    progressText: numberText(tasks.completed) + ' / ' + numberText(tasks.total),
+    deliveryDate: source.required_delivery_date || '',
+    plannedDate: (row.plan || {}).planned_date || '',
+    remarkText: source.remark || '',
+    blockers, compact: row.status === 'DRAFT' || row.status === 'WAIT_RELEASE',
   });
 }
 
 Page({
   data: {
-    statusBarHeight: 20,
-    navBarHeight: 44,
-    scanRight: 64,
-    loading: true,
-    loadingMore: false,
-    loaded: false,
-    canCreate: false,
-    source: 'sales',
-    activeStatus: '',
-    keyword: '',
-    page: 0,
-    total: 0,
-    rows: [],
-    summary: { total: '—', in_progress: '—', wait_condition: '—', exception: '—', completed: '—' },
+    statusBarHeight: 20, navBarHeight: 44, scanRight: 64,
+    loading: true, loadingMore: false, loaded: false, canCreate: false,
+    source: 'sales', activeStatus: '', keyword: '', page: 0, total: 0, rows: [],
+    summary: blankSummary(), error: '', errorTitle: '', errorCode: '',
   },
-
   onLoad() {
     const system = wx.getSystemInfoSync ? wx.getSystemInfoSync() : {};
     const menu = wx.getMenuButtonBoundingClientRect ? wx.getMenuButtonBoundingClientRect() : null;
     const statusBarHeight = Number(system.statusBarHeight || 20);
-    const navBarHeight = menu ? Math.max(40, (menu.top - statusBarHeight) * 2 + menu.height) : 44;
-    const scanRight = menu && system.windowWidth ? Math.max(54, system.windowWidth - menu.left + 12) : 64;
-    this.setData({ statusBarHeight, navBarHeight, scanRight });
+    this.setData({
+      statusBarHeight,
+      navBarHeight: menu ? Math.max(40, (menu.top - statusBarHeight) * 2 + menu.height) : 44,
+      scanRight: menu && system.windowWidth ? Math.max(54, system.windowWidth - menu.left + 12) : 64,
+    });
   },
   onShow() {
-    const permissions = wx.getStorageSync('erp_permissions') || [];
-    this.setData({ canCreate: Array.isArray(permissions) ? permissions.includes('production.work_order.create') : permissions['production.work_order.create'] === true });
+    this.setData({ canCreate: false });
     this.load();
   },
-  onPullDownRefresh() { this.load().finally(() => wx.stopPullDownRefresh()); },
-  onReachBottom() {
-    if (!this.data.loading && !this.data.loadingMore && this.data.rows.length < this.data.total) this.load(true);
-  },
-  onUnload() {
-    clearTimeout(this.searchTimer);
-    this.requestSequence = (this.requestSequence || 0) + 1;
-  },
-
+  onPullDownRefresh() { return this.load().finally(() => wx.stopPullDownRefresh()); },
+  onReachBottom() { if (!this.data.loading && !this.data.loadingMore && this.data.rows.length < this.data.total) return this.load(true); },
+  onUnload() { clearTimeout(this.searchTimer); this.requestSequence = (this.requestSequence || 0) + 1; },
   load(append = false) {
+    if (append && (this.data.loading || this.data.loadingMore)) return Promise.resolve();
     if (!wx.getStorageSync('erp_token')) {
-      this.setData({ loading: false, loaded: false, rows: [], total: 0 });
-      wx.showToast({ title: '请先登录统一账号', icon: 'none' });
+      this.setData({ loading: false, loaded: false, rows: [], total: 0, errorTitle: '请先登录', error: '请登录统一账号后查看工单', errorCode: 'login' });
       return Promise.resolve();
     }
     const sequence = this.requestSequence = (this.requestSequence || 0) + 1;
     const page = append ? this.data.page + 1 : 1;
-    const params = {
-      page,
-      per_page: 10,
-      keyword: this.data.keyword.trim(),
-      status: this.data.activeStatus,
-    };
-    let request;
-    if (this.data.source === 'sales') {
-      request = production.masterOrders(params);
-    } else {
-      const sourceGroup = this.data.source === 'stock' ? 'stock_prebuild' : 'other';
-      request = production.workOrders(Object.assign({}, params, {
-        source_group: sourceGroup,
-        include_summary: 1,
-        status: '',
-        display_status: this.data.activeStatus,
-      }));
-    }
-    this.setData(append ? { loadingMore: true } : { loading: true, loaded: false, rows: [], page: 0, total: 0 });
-    return request.then((response) => {
+    const params = { page, per_page: 10, keyword: this.data.keyword.trim(), display_status: this.data.activeStatus, include_summary: 1 };
+    if (this.data.source === 'sales') params.source_type = 'sales_order';
+    else params.source_group = this.data.source === 'stock' ? 'stock_prebuild' : 'other';
+    this.setData(append ? { loadingMore: true, error: '' } : { loading: true, loadingMore: false, loaded: false, rows: [], page: 0, total: 0, summary: blankSummary(), error: '', errorCode: '' });
+    return production.workOrders(params).then(response => {
       if (sequence !== this.requestSequence) return;
-      let incoming = (response.data || []).map(this.data.source === 'sales' ? masterView : independentView);
+      const incoming = (response.data || []).map(workOrderView);
       const existing = append ? this.data.rows : [];
-      const keys = new Set(existing.map(item => `${item.kind}:${item.id}`));
-      const rows = existing.concat(incoming.filter(item => !keys.has(`${item.kind}:${item.id}`)));
+      const keys = new Set(existing.map(item => item.id));
       this.setData({
-        rows,
-        page: Number(response.current_page || page),
-        total: Number(response.total || 0),
-        summary: response.summary || this.data.summary,
-        loading: false,
-        loadingMore: false,
-        loaded: true,
+        rows: existing.concat(incoming.filter(item => !keys.has(item.id))),
+        page: Number(response.current_page || page), total: Number(response.total || 0),
+        summary: response.summary || blankSummary(), loading: false, loadingMore: false, loaded: true,
       });
-    }).catch((error) => {
+    }).catch(error => {
       if (sequence !== this.requestSequence) return;
-      this.setData({ loading: false, loadingMore: false, loaded: append && this.data.loaded });
-      wx.showToast({ title: error.message || '主生产工单加载失败', icon: 'none', duration: 2600 });
+      this.setData({ loading: false, loadingMore: false,
+        error: error.message || '请检查网络后重试', errorCode: error.statusCode === 403 ? 'forbidden' : 'load',
+        errorTitle: error.statusCode === 403 ? '无权查看生产工单' : '加载失败' });
     });
   },
-
   setSource(event) {
     const source = event.currentTarget.dataset.source;
     if (!source || source === this.data.source) return;
-    this.setData({ source, activeStatus: '', keyword: '', summary: { total: '—', in_progress: '—', wait_condition: '—', exception: '—', completed: '—' } });
-    this.load();
+    clearTimeout(this.searchTimer);
+    this.setData({ source, activeStatus: '', keyword: '' });
+    return this.load();
   },
   setStatus(event) {
     const status = event.currentTarget.dataset.status || '';
     if (status === this.data.activeStatus) return;
+    clearTimeout(this.searchTimer);
     this.setData({ activeStatus: status });
-    this.load();
+    return this.load();
   },
   onSearch(event) {
-    this.setData({ keyword: event.detail.value || '' });
     clearTimeout(this.searchTimer);
+    // Invalidate the active page immediately. A stale response must not render
+    // during the debounce delay or re-enable paging for the previous keyword.
+    this.requestSequence = (this.requestSequence || 0) + 1;
+    this.setData({ keyword: event.detail.value || '', loading: true, loadingMore: false, rows: [], total: 0 });
     this.searchTimer = setTimeout(() => this.load(), 350);
   },
-  clearSearch() { this.setData({ keyword: '' }); this.load(); },
-  goBack() { wx.navigateBack({ delta: 1 }); },
-  createStock() { wx.navigateTo({ url: '/pages/production/work-order-form/index' }); },
-  scan() {
-    wx.scanCode({ success: result => wx.navigateTo({ url: `/pages/production/queue/index?type=trace&keyword=${encodeURIComponent(result.result)}` }) });
+  clearSearch() { clearTimeout(this.searchTimer); this.setData({ keyword: '' }); return this.load(); },
+  retry() { return this.load(this.data.rows.length > 0); },
+  goBack() {
+    if (getCurrentPages().length > 1) wx.navigateBack({ delta: 1 });
+    else wx.reLaunch({ url: '/pages/index/index' });
   },
+
+  scan() { wx.scanCode({ success: result => wx.navigateTo({ url: '/pages/production/queue/index?type=trace&keyword=' + encodeURIComponent(result.result) }) }); },
   openRow(event) {
-    const key = String(event.currentTarget.dataset.key || '');
-    const row = this.data.rows.find(item => `${item.kind}:${item.id}` === key);
-    if (!row) return;
-    if (row.kind === 'master') {
-      wx.navigateTo({ url: `/pages/production/master-detail/index?id=${row.id}` });
-      return;
-    }
-    if (row.kind === 'work_order') {
-      wx.navigateTo({ url: `/pages/production/work-order-form/index?id=${row.id}` });
-      return;
-    }
-    const blockerText = (row.blockers || []).map(item => `• ${item.label || item.shortLabel}`).join('\n');
-    const detailText = row.kind === 'master'
-      ? `${row.workOrderCountText}\nPT 进度 ${row.progressText}\n备料配送 ${row.deliveryText}\n齐套状态 ${row.kittingText}\n${row.fundingText}`
-      : `${row.sourceNo}\n${row.productLines.map(item => item.displayText).join('\n')}\n状态：${row.statusLabel}`;
-    wx.showModal({
-      title: row.blockers.length ? '当前阻断' : row.number,
-      content: row.blockers.length ? blockerText : detailText,
-      showCancel: false,
-      confirmText: '知道了',
-    });
+    const id = Number(event.currentTarget.dataset.id || String(event.currentTarget.dataset.key || '').split(':').pop());
+    const row = this.data.rows.find(item => Number(item.id) === id);
+    if (row) wx.navigateTo({ url: '/pages/production/work-order-detail/index?id=' + row.id });
   },
 });

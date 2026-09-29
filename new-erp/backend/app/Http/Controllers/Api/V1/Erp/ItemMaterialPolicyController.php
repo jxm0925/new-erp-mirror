@@ -25,12 +25,14 @@ class ItemMaterialPolicyController extends Controller
 
     public function saveDraft(Request $request, int $itemId, MaterialPolicyApplicationService $service, AuthContextService $auth)
     {
+        app(\App\Services\Erp\MasterDataAccessService::class)->authorize($request, 'items', 'edit');
         $policy = $service->saveDraft(Item::findOrFail($itemId), $this->validated($request, false), $auth->currentLegacyId($request));
         return response()->json(['message' => '策略草稿已保存', 'data' => $policy]);
     }
 
     public function activate(Request $request, int $itemId, MaterialPolicyApplicationService $service, AuthContextService $auth)
     {
+        app(\App\Services\Erp\MasterDataAccessService::class)->authorize($request, 'items', 'edit');
         $policy = $service->activate(Item::findOrFail($itemId), $this->validated($request, true), $auth->currentLegacyId($request));
         return response()->json(['message' => '物资归属策略已启用', 'data' => $policy]);
     }

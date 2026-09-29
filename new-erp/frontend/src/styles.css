@@ -46,7 +46,7 @@ select {
   width: var(--sidebar-width);
   background: linear-gradient(180deg, #071928 0%, #0b2236 100%);
   color: #dbe3ea;
-  z-index: 10;
+  z-index: 1000;
   overflow: auto;
   transition: width 0.24s cubic-bezier(0.22, 0.61, 0.36, 1);
   box-shadow: 1px 0 6px rgba(0, 0, 0, 0.1);
@@ -312,55 +312,124 @@ select {
   transition: width 0.24s cubic-bezier(0.22, 0.61, 0.36, 1), margin-left 0.24s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
+/* ==========================================================================
+   全局统一顶部栏 (Top Bar)
+   ========================================================================== */
 .erp-topbar {
-  height: 54px;
+  height: 52px;
   min-width: 0;
   padding: 0 20px;
-  display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(240px, 360px) minmax(200px, 1fr);
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 16px;
   background: #ffffff;
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid #eef2f6;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+  position: sticky;
+  top: 0;
+  z-index: 50;
 }
 
-.breadcrumb {
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   min-width: 0;
-  overflow: hidden;
-  font-size: 13px;
-  font-weight: 500;
-  color: #374151;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  flex: 1;
 }
 
-.breadcrumb i {
-  margin-right: 8px;
-  color: #6b7280;
+.sidebar-toggle-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #475569;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
   font-size: 16px;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
 }
 
-.breadcrumb b {
-  margin: 0 6px;
-  color: #9ca3af;
-  font-weight: 400;
+.sidebar-toggle-btn:hover {
+  background: #f1f5f9;
+  color: #008b4b;
+  border-color: #cbd5e1;
+}
+
+.erp-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.erp-breadcrumb .bc-item {
+  color: #64748b;
+  cursor: default;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.erp-breadcrumb .bc-item.is-link {
+  cursor: pointer;
+  transition: color 0.2s;
+}
+
+.erp-breadcrumb .bc-item.is-link:hover {
+  color: #008b4b;
+}
+
+.erp-breadcrumb .bc-item.active {
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.erp-breadcrumb .bc-sep {
+  color: #cbd5e1;
+  font-size: 12px;
+  margin: 0 2px;
+}
+
+.topbar-search {
+  max-width: 360px;
+  flex: 1;
+}
+
+.topbar-search .el-input__inner {
+  border-radius: 20px;
+  background: #f8fafc;
+  border-color: #e2e8f0;
+}
+
+.topbar-search .el-input__inner:focus {
+  background: #ffffff;
+  border-color: #008b4b;
 }
 
 .top-actions {
-  justify-self: end;
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
-.top-actions>i {
+.top-actions > i {
   font-size: 16px;
   color: #4b5563;
   cursor: pointer;
 }
 
-.top-actions>i:hover {
+.top-actions > i:hover {
   color: #111827;
 }
 
@@ -376,18 +445,171 @@ select {
   font-weight: 600;
 }
 
-.top-actions strong {
+.user-meta-block {
   display: flex;
-  align-items: center;
-  gap: 4px;
+  flex-direction: column;
+  line-height: 1.2;
+}
+
+.user-meta-block .user-name {
   font-size: 13px;
+  font-weight: 600;
   color: #1f2937;
 }
 
-.top-actions small {
-  color: var(--muted);
-  font-weight: 400;
+.user-meta-block .user-scope {
   font-size: 11px;
+  color: #64748b;
+}
+
+.btn-logout {
+  color: #ef4444 !important;
+  font-size: 13px;
+  padding: 4px 8px;
+}
+
+.btn-logout:hover {
+  color: #dc2626 !important;
+  background: #fef2f2;
+  border-radius: 4px;
+}
+
+/* ==========================================================================
+   多标签页导航栏 (TagsView)
+   ========================================================================== */
+.erp-tags-bar {
+  height: 38px;
+  background: #ffffff;
+  border-bottom: 1px solid #eef2f6;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.02);
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 8px;
+  position: sticky;
+  top: 52px;
+  z-index: 40;
+}
+
+.tags-scroll-container {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  flex: 1;
+  padding: 2px 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.tags-scroll-container::-webkit-scrollbar {
+  display: none;
+}
+
+.tag-tab-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  height: 28px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #475569;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  flex-shrink: 0;
+}
+
+.tag-tab-item:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+  border-color: #cbd5e1;
+}
+
+.tag-tab-item.active {
+  background: #f0fdf4;
+  color: #008b4b;
+  border-color: #86efac;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 139, 75, 0.1);
+}
+
+.tag-tab-item .tag-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #94a3b8;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.tag-tab-item.active .tag-dot {
+  background: #008b4b;
+  box-shadow: 0 0 0 2px rgba(0, 139, 75, 0.2);
+}
+
+.tag-tab-item .tag-title {
+  min-width: 24px;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-tab-item .tag-close-icon {
+  font-size: 12px;
+  border-radius: 50%;
+  width: 14px;
+  height: 14px;
+  display: grid;
+  place-items: center;
+  color: #94a3b8;
+  transition: all 0.15s ease;
+}
+
+.tag-tab-item .tag-close-icon:hover {
+  background: #e2e8f0;
+  color: #ef4444;
+}
+
+.tag-tab-item.active .tag-close-icon:hover {
+  background: #bbf7d0;
+  color: #15803d;
+}
+
+.tags-action-menu {
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+
+.btn-tags-more {
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  color: #64748b;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-tags-more:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+  border-color: #cbd5e1;
+}
+
+.erp-content-container {
+  min-height: calc(100vh - 90px);
+  background: #f8fafc;
 }
 
 /* ==========================================================================
@@ -483,11 +705,19 @@ select {
 }
 
 @media (max-width: 1100px) {
-  .erp-topbar {
-    grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+  .topbar-search {
+    max-width: 220px;
   }
+}
 
-  .top-actions {
+@media (max-width: 768px) {
+  .topbar-search {
+    display: none;
+  }
+  .top-actions > i {
+    display: none;
+  }
+  .user-role-badge {
     display: none;
   }
 }
@@ -502,6 +732,7 @@ select {
   overflow-y: auto;
   background: linear-gradient(180deg, #0c2237 0%, #0b2438 100%);
   box-shadow: 3px 0 0 #0b2438;
+  z-index: 1000;
 }
 
 #app.erp-layout .erp-brand {
@@ -855,4 +1086,72 @@ select {
     justify-content: flex-start;
     padding: 0 18px;
   }
+}
+
+/* ==========================================================================
+   全局统一页面提示条 (Page Tip Banner - 2026-09-27 规范化锁定)
+   统一应用于所有页面顶部提示说明，禁止直接在标题下方堆砌零散段落文本
+   ========================================================================== */
+.erp-page-tip {
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+  font-size: 12px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+
+.erp-page-tip i {
+  font-size: 15px;
+  color: #008b4b;
+  flex-shrink: 0;
+}
+
+.erp-page-tip strong {
+  color: #008b4b;
+  font-weight: 600;
+}
+
+/* ==========================================================================
+   全局 Element UI 分页器主题色定制（统一为品牌绿 #008b4b，彻底消除蓝色）
+   ========================================================================== */
+.el-pagination.is-background .el-pager li:not(.disabled).active {
+  background-color: #008b4b !important;
+  color: #ffffff !important;
+}
+
+.el-pagination.is-background .el-pager li:not(.disabled):hover {
+  color: #008b4b !important;
+}
+
+.el-pagination.is-background .el-pager li:not(.disabled).active:hover {
+  color: #ffffff !important;
+}
+
+.el-pagination.is-background .btn-next:hover:not([disabled]),
+.el-pagination.is-background .btn-prev:hover:not([disabled]) {
+  color: #008b4b !important;
+}
+
+.el-pagination .el-pager li.active {
+  color: #008b4b !important;
+}
+
+.el-pagination .el-pager li:hover {
+  color: #008b4b !important;
+}
+
+.el-pagination .el-select .el-input.is-focus .el-input__inner,
+.el-pagination .el-select .el-input .el-input__inner:focus {
+  border-color: #008b4b !important;
+}
+
+.el-pagination__editor.el-input .el-input__inner:focus {
+  border-color: #008b4b !important;
 }

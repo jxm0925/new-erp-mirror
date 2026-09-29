@@ -87,6 +87,12 @@ class ErpApprovalConfigurationSeeder extends Seeder
             ]);
 
             $objectId = (int) DB::table('erp_approval_business_objects')->where('object_code', $code)->value('id');
+            if ($code === 'PURCHASE_ORDER') {
+                // 只补缺失权限，保留管理员后续收紧的来源权限配置。
+                DB::table('erp_approval_business_objects')->where('id', $objectId)
+                    ->where(fn ($query) => $query->whereNull('view_permission_code')->orWhere('view_permission_code', ''))
+                    ->update(['view_permission_code' => 'purchase.order.view']);
+            }
             $this->syncObjectFields($objectId, $config['table'], $config);
         }
     }
@@ -302,4 +308,3 @@ class ErpApprovalConfigurationSeeder extends Seeder
         DB::table($table)->updateOrInsert($key, $payload);
     }
 }
-

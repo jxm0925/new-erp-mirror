@@ -29,7 +29,7 @@
           <template v-if="current">
             <p><span>Item编码</span><b>{{ current.item_code }}</b></p>
             <p><span>Item名称</span><b>{{ current.item_name }}</b></p>
-            <p><span>规格型号</span><b>{{ current.spec_text || '—' }}</b></p>
+            <p><span>规格型号</span><b>{{ current.spec || '—' }}</b></p>
             <p><span>Item状态</span><b :class="['tag', { bad: current.status !== 'enabled' }]">{{ current.status === 'enabled' ? '启用' : '停用' }}</b></p>
             <p><span>关系状态</span><b :class="['tag', { bad: audit.check_status !== 'normal' }]">{{ audit.check_status === 'normal' ? '正常' : '异常' }}</b></p>
             <p><span>生效时间</span><b>{{ currentRelation && currentRelation.effective_at || '—' }}</b></p>
@@ -75,7 +75,7 @@
         <el-table :data="history.relations" border size="small">
           <el-table-column label="Item编码" prop="item.item_code" />
           <el-table-column label="Item名称" prop="item.item_name" />
-          <el-table-column label="规格型号"><template slot-scope="{ row }">{{ row.item && row.item.spec_text || '—' }}</template></el-table-column>
+          <el-table-column label="规格型号"><template slot-scope="{ row }">{{ row.item && row.item.spec || '—' }}</template></el-table-column>
           <el-table-column label="生效时间" prop="effective_at" />
           <el-table-column label="失效时间" prop="expired_at" />
           <el-table-column label="状态"><template slot-scope="{ row }"><span :class="row.status === 'active' ? 'active' : 'inactive'">{{ row.status === 'active' ? '生效中' : '已失效' }}</span></template></el-table-column>
@@ -129,7 +129,7 @@ export default {
   methods: {
     relationLabel (relation) {
       const item = relation.item || {}
-      return `${item.item_code || '—'}｜${item.item_name || '—'}｜${item.spec_text || '—'}`
+      return `${item.item_code || '—'}｜${item.item_name || '—'}｜${item.spec || '—'}`
     },
     async load () {
       this.loading = true

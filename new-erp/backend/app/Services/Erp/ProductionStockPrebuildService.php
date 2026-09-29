@@ -260,30 +260,13 @@ final class ProductionStockPrebuildService
 
     private function targetContext(WorkOrder $source, int $itemId): array
     {
-        $targetWorkOrder = WorkOrder::query()->whereKey($source->reserved_for_work_order_id)->lockForUpdate()->first();
-        if (! $targetWorkOrder || in_array($targetWorkOrder->status, ['COMPLETED', 'CANCELLED'], true)) {
-            $this->fail('reserved_target_work_order_unavailable', '指定的目标生产工单不可用。', 409);
+        try {
+            return app(StockPrebuildTargetService::class)->resolve((int) $source->reserved_for_work_order_id,
+                $source->reserved_for_production_unit_id ? (int) $source->reserved_for_production_unit_id : null,
+                (int) $source->reserved_for_target_operation_id, $itemId);
+        } catch (WorkOrderDomainException $exception) {
+            $this->fail($exception->errorCode, $exception->getMessage(), 409);
         }
-        if ($targetWorkOrder->production_execution_mode_snapshot === 'unit') {
-            if (! $source->reserved_for_production_unit_id) $this->fail('reserved_target_unit_required', '逐件目标工单必须指定生产单元。', 409);
-            $target = ProductionUnitOperation::query()->where('production_unit_id', $source->reserved_for_production_unit_id)
-                ->where('routing_operation_id_snapshot', $source->reserved_for_target_operation_id)->lockForUpdate()->first();
-            $type = 'unit_operation';
-        } else {
-            $target = ProductionQuantityOperation::query()->where('work_order_id', $targetWorkOrder->id)
-                ->where('routing_operation_id_snapshot', $source->reserved_for_target_operation_id)->lockForUpdate()->first();
-            $type = 'quantity_operation';
-        }
-        if (! $target) $this->fail('reserved_target_execution_missing', '目标工单尚未发布形成指定工序执行对象。', 409);
-        $requirements = DB::table('erp_production_target_material_requirements')->where('target_type', $type)
-            ->where('target_id', $target->id)->where('component_item_id', $itemId)->lockForUpdate()->get();
-        if ($requirements->count() !== 1) {
-            $this->fail('reserved_target_material_requirement_invalid', '目标工序必须存在唯一且正式的同 Item 物料需求。', 409);
-        }
-        $taskId = DB::table('erp_production_task_targets')->where('target_type', $type)->where('target_id', $target->id)->value('task_id');
-        if (! $taskId) $this->fail('reserved_target_task_missing', '目标工序尚未形成正式生产任务。', 409);
-        return ['type' => $type, 'id' => (int) $target->id, 'task_id' => (int) $taskId,
-            'requirement_id' => (int) $requirements->first()->id];
     }
 
     private function changeLockedQuantity(InventoryBalance $balance, float $delta): void

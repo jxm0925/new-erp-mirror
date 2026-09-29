@@ -22,6 +22,8 @@ final class CuttingConfirmationService
         $c->assertBatchVisible($batchId,$user,$permissions,$super,$permission);
         return $c->run('confirm_cutting_batch',$batchId,$p,$user,function () use ($c,$batchId,$p,$user,$permissions,$super,$automatic,$permission): array {
             $batch = $c->batch($batchId,$user,$permissions,$super,$permission); $c->version($batch,$p);
+            if (app(ProductionCuttingOperationService::class)->linkedOrder((int) $batch->cutting_order_id) && ! $automatic)
+                $c->fail('operation_automatic_cost_required','工序下料必须按实际材料和结果自动核算，不能另填金额。');
             if ($automatic && ! DB::table('erp_cutting_orders')->where('id',$batch->cutting_order_id)->where('purpose','WORKER')->exists())
                 $c->fail('automatic_cost_scope_invalid','此自动规则仅用于工人自主下料，不改变既有计划核算。');
             if ($batch->status !== 'WAIT_CONFIRM') $c->fail('batch_not_confirmable','用料批次尚未通过申报和质量确认，或已核算。',409);
@@ -94,6 +96,7 @@ final class CuttingConfirmationService
             if ($batch->correction_of_batch_id) DB::table('erp_cutting_corrections')->where('correction_settlement_batch_id', $batchId)
                 ->where('status', 'OPEN')->update(['status' => 'CONFIRMED', 'completed_at' => now(), 'updated_at' => now()]);
             $response = ['settlement_batch_id'=>$batchId,'status'=>'CONFIRMED','business_version'=>$batch->business_version+1,'confirmed_total_cost'=>$sum];
+            app(ProductionCuttingOperationService::class)->holdForOperation($batch);
             $c->event('batch',$batchId,'confirm',$user,$batch,$response+($calculation ? ['automatic_cost'=>$calculation] : []));
             if ($automatic) { unset($response['confirmed_total_cost']); $response['cost_method'] = CuttingAutomaticCostService::RULE; }
             return $response;

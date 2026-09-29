@@ -167,7 +167,7 @@ class ProductionMasterDataService
     public function routing(int $id, array $permissions, bool $superAdmin): ProductionRouting
     {
         $this->authorize($permissions, $superAdmin, 'production.routing.view');
-        return ProductionRouting::with(['outputItem', 'product', 'sku', 'operations.operation'])->findOrFail($id);
+        return ProductionRouting::with(['outputItem', 'product', 'sku', 'operations.operation', 'operations.outputItem', 'operations.materialSupplyRules.componentItem'])->findOrFail($id);
     }
 
     public function createRouting(array $data, object $user, array $permissions, bool $superAdmin): ProductionRouting
@@ -226,6 +226,7 @@ class ProductionMasterDataService
             if ($routing->status !== 'draft') throw ValidationException::withMessages(['status' => '只有草稿工艺路线可以生效。']);
             if ($routing->operations->isEmpty()) throw ValidationException::withMessages(['operations' => '工艺路线至少需要一道工序。']);
             if ($routing->operations->contains(fn ($row) => $row->operation?->status !== 'enabled')) throw ValidationException::withMessages(['operations' => '工艺路线包含已停用工序，不能生效。']);
+            $this->validateRoutingExecution($routing);
             $routing->status = 'active';
             $routing->business_version++;
             $routing->updated_by_legacy_id = $this->userId($user);
@@ -243,6 +244,7 @@ class ProductionMasterDataService
             // the new default leaves the old version stale even though its business fact
             // changed, allowing an old edit screen to overwrite newer routing state.
             $family = ProductionRouting::where('output_item_id', $candidate->output_item_id)
+                ->where('product_id', $candidate->product_id)->where('sku_id', $candidate->sku_id)
                 ->orderBy('id')->lockForUpdate()->get();
             $routing = $family->firstWhere('id', $id);
             if (! $routing) throw ValidationException::withMessages(['id' => '工艺路线不存在。']);
@@ -256,7 +258,7 @@ class ProductionMasterDataService
                 $oldDefault->save();
             }
             $routing->is_default = true;
-            $routing->default_scope_key = $routing->output_item_id;
+            $routing->default_scope_key = $routing->output_item_id.':'.($routing->product_id ?: 0).':'.($routing->sku_id ?: 0);
             $routing->business_version++;
             $routing->updated_by_legacy_id = $this->userId($user);
             $routing->save();
@@ -408,6 +410,19 @@ class ProductionMasterDataService
         return $query->paginate($perPage);
     }
 
+    public function defaultRoutingMatches(int $itemId, ?int $productId, ?int $skuId): \Illuminate\Support\Collection
+    {
+        $matches = ProductionRouting::with(['outputItem', 'product', 'sku', 'operations.operation'])
+            ->where('output_item_id', $itemId)->where('status', 'active')->where('is_default', true)
+            ->where(fn ($q) => $q->whereNull('product_id')->orWhere('product_id', $productId))
+            ->where(fn ($q) => $q->whereNull('sku_id')->orWhere('sku_id', $skuId))
+            ->orderBy('id')->lockForUpdate()->get();
+        // SKU 专用默认优先于物料通用默认；同一优先级不唯一时交给调用方明确阻断。
+        $rank = static fn ($row): int => ($row->sku_id ? 2 : 0) + ($row->product_id ? 1 : 0);
+        $highest = $matches->max($rank);
+        return $matches->filter(fn ($row) => $rank($row) === $highest)->values();
+    }
+
     public function snapshot(ProductionRouting $routing): array
     {
         $routing->loadMissing(['outputItem', 'product', 'sku', 'operations.operation', 'operations.outputItem', 'operations.materialSupplyRules']);
@@ -454,6 +469,14 @@ class ProductionMasterDataService
         if ($sequences->duplicates()->isNotEmpty()) throw ValidationException::withMessages(['operations' => '同一路线的工序顺序号不能重复。']);
         $enabled = ProductionOperation::whereIn('id', collect($rows)->pluck('operation_id'))->where('status', 'enabled')->count();
         if ($enabled !== count(array_unique(collect($rows)->pluck('operation_id')->all()))) throw ValidationException::withMessages(['operations' => '存在无效或已停用的工序。']);
+        $componentIds = collect($rows)->flatMap(fn ($row) => $row['material_supply_rules'] ?? [])->pluck('component_item_id')->unique();
+        if (Item::whereIn('id', $componentIds)->where('status', 'enabled')->count() !== $componentIds->count()) {
+            throw ValidationException::withMessages(['operations' => '工序用料包含不存在或已停用的物料。']);
+        }
+        // 规则同时引用来源和目标工序；先清除本草稿规则，避免目标外键阻止再次保存。
+        // 已生效路线只能复制新版本，历史执行快照不会进入此重建路径。
+        $operationIds = $routing->operations()->pluck('id');
+        DB::table('erp_routing_operation_material_supply_rules')->whereIn('routing_operation_id', $operationIds)->delete();
         $routing->operations()->delete();
         $createdBySequence = collect();
         foreach (collect($rows)->sortBy('sequence')->values() as $row) {
@@ -493,6 +516,29 @@ class ProductionMasterDataService
         }
     }
 
+    private function validateRoutingExecution(ProductionRouting $routing): void
+    {
+        $routing->loadMissing(['outputItem', 'operations.outputItem', 'operations.materialSupplyRules.componentItem']);
+        if ($routing->outputItem?->status !== 'enabled') {
+            throw ValidationException::withMessages(['output_item_id' => '路线产出物料不存在或已停用。']);
+        }
+        foreach ($routing->operations as $operation) {
+            if (($operation->output_item_id && $operation->outputItem?->status !== 'enabled')
+                || (in_array($operation->output_mode, ['warehouse_optional', 'warehouse_required'], true) && ! $operation->output_item_id)) {
+                throw ValidationException::withMessages(['operations' => '入库工序必须配置已启用的产出物料。']);
+            }
+        }
+        // BOM 决定总需求量；路线只分配需求到工序。跨工序占比必须合计为一，避免重复备料。
+        $rules = $routing->operations->flatMap(fn ($operation) => $operation->materialSupplyRules);
+        foreach ($rules->groupBy('component_item_id') as $componentRules) {
+            if ($componentRules->contains(fn ($rule) => $rule->componentItem?->status !== 'enabled')
+                || abs((float) $componentRules->sum('required_qty_ratio') - 1) > 0.000001
+                || $componentRules->pluck('target_routing_operation_id')->duplicates()->isNotEmpty()) {
+                throw ValidationException::withMessages(['operations' => '同一物料的工序用量占比必须合计为100%，目标工序不能重复，且物料必须启用。']);
+            }
+        }
+    }
+
     private function assertObjectRelation(int $outputItemId, mixed $productId, mixed $skuId): void
     {
         if ($productId && ! $skuId) throw ValidationException::withMessages(['sku_id' => '关联产品时必须同时选择对应 SKU，不能绕过 SKU-物料关系校验。']);
@@ -502,7 +548,9 @@ class ProductionMasterDataService
             throw ValidationException::withMessages(['sku_id' => '所选 SKU 不属于当前产品。']);
         }
         $matches = DB::table('erp_sku_item_relations')->where('sku_id', $sku->id)
-            ->where('item_id', $outputItemId)->where('status', 'enabled')->where('is_primary', true)->exists();
+            ->where('item_id', $outputItemId)->whereIn('status', ['active', 'enabled'])->where('is_primary', true)
+            ->where(fn ($q) => $q->whereNull('effective_at')->orWhere('effective_at', '<=', now()))
+            ->where(fn ($q) => $q->whereNull('expired_at')->orWhere('expired_at', '>', now()))->exists();
         if (! $matches) {
             throw ValidationException::withMessages(['output_item_id' => '产出物料必须是该 SKU 当前启用的默认物料，不能由销售链路手工改配。']);
         }

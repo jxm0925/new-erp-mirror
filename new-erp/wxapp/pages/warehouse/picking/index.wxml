@@ -1,0 +1,55 @@
+<view class="warehouse-page">
+  <view wx:if="{{error}}" class="warehouse-error">{{error}}</view>
+  <view wx:if="{{pendingAction}}" class="warehouse-note">本次操作结果尚未确认，请先查询原操作结果。<button class="warehouse-secondary" disabled="{{busy}}" loading="{{busy}}" bindtap="retry">查询原结果</button></view>
+  <block wx:if="{{mode === 'create'}}">
+    <view wx:if="{{!canCreate}}" class="warehouse-note">当前账号仅可查看</view>
+    <view class="warehouse-card">
+      <view class="warehouse-field"><text class="warehouse-label">来源工单</text><view class="warehouse-value warehouse-kv-select" bindtap="chooseTarget"><text>{{target.work_order_no || '请选择工单和目标工序'}}</text><van-icon wx:if="{{canCreate}}" name="arrow"/></view></view>
+      <view class="warehouse-field"><text class="warehouse-label">目标工序</text><text class="warehouse-value">{{target.target_operation_name || '—'}}<text wx:if="{{target.production_unit_no}}"> / {{target.production_unit_no}}</text></text></view>
+      <view class="warehouse-field"><text class="warehouse-label">仓库</text><view class="warehouse-value warehouse-kv-select" bindtap="chooseWarehouse"><text>{{warehouse.warehouse_name || '请选择仓库'}}</text><van-icon wx:if="{{canCreate}}" name="arrow"/></view></view>
+      <view class="warehouse-field"><text class="warehouse-label">领料位置</text><text class="warehouse-value">{{target.target_operation_name || '—'}}</text></view>
+    </view>
+    <view class="picking-section-title"><text class="warehouse-title">物料需求</text><text class="warehouse-muted">共 {{total}} 项</text></view>
+    <view wx:if="{{loading}}" class="warehouse-empty"><van-loading color="#ef1008"/></view>
+    <view wx:elif="{{!rows.length}}" class="warehouse-empty">{{target ? '暂无待配物料' : '请选择来源工单和目标工序'}}</view>
+    <view wx:for="{{rows}}" wx:key="id" class="warehouse-card picking-demand">
+      <view class="picking-material-heading"><text class="picking-number">{{(page - 1) * 10 + index + 1}}</text><view class="picking-material-name"><view>{{item.item_code}}</view><view>{{item.item_name}}</view><view wx:if="{{item.spec}}" class="warehouse-muted">{{item.spec}}</view></view><text class="picking-badge">待配料</text></view>
+      <view class="picking-quantities"><view><view class="warehouse-muted">需求数量</view><view>{{item.requiredText}} {{item.unit_name}}</view></view><view><view class="warehouse-muted">已配数量</view><view>{{item.preparedText}} {{item.unit_name}}</view></view><view><view class="warehouse-muted">待配数量</view><view class="warehouse-danger">{{item.remainingText}} {{item.unit_name}}</view></view><view><view class="warehouse-muted">本次配料</view><view class="picking-qty-value">{{item.selectedQty}} {{item.unit_name}}</view></view></view>
+      <view class="picking-source-title">已选来源（{{item.sources.length}}）</view>
+      <view wx:for="{{item.sources}}" wx:for-item="source" wx:key="id" class="picking-source"><view class="picking-source-body"><view><text>{{source.warehouse.warehouse_name}} / {{source.subtitle}}</text><text>可用 {{source.availableText}} {{item.unit_name}}</text></view><view><text>批次 {{source.batch_no || '—'}}</text><text>本次 {{source.selected_qty}} {{item.unit_name}}</text></view></view><button class="picking-remove" disabled="{{busy || pendingAction}}" data-id="{{item.id}}" data-source="{{source.id}}" bindtap="removeSource">移除</button></view>
+      <button wx:if="{{canCreate}}" class="warehouse-secondary picking-source-button" disabled="{{busy || pendingAction}}" data-id="{{item.id}}" bindtap="chooseSources"><van-icon name="plus"/> 选择库存</button>
+    </view>
+    <view wx:if="{{target}}" class="warehouse-pager"><button disabled="{{page <= 1 || loading}}" data-delta="-1" bindtap="turnPage">上一页</button><text>{{page}} / {{lastPage}}</text><button disabled="{{page >= lastPage || loading}}" data-delta="1" bindtap="turnPage">下一页</button></view>
+    <view wx:if="{{selectedDemandCount}}" class="picking-selected-total">已选 {{selectedDemandCount}} 项物料</view>
+    <button wx:if="{{canCreate}}" class="warehouse-primary" loading="{{busy}}" disabled="{{busy || pendingAction || !selectedDemandCount || loading}}" bindtap="submitCreate">确认配料</button>
+  </block>
+  <block wx:else>
+    <view wx:if="{{loading}}" class="warehouse-empty"><van-loading color="#ef1008"/></view>
+    <block wx:elif="{{task}}">
+      <view wx:if="{{readOnly}}" class="warehouse-note">当前账号仅可查看</view>
+      <view class="warehouse-card">
+        <view class="warehouse-field"><text class="warehouse-label">配料单号</text><text class="warehouse-value">{{task.task_no}}</text><text class="warehouse-danger picking-status">{{task.statusText}}</text></view>
+        <view class="warehouse-field"><text class="warehouse-label">来源工单</text><text class="warehouse-value">{{task.work_order.work_order_no}}</text></view>
+        <view class="warehouse-field"><text class="warehouse-label">目标工序</text><text class="warehouse-value">{{task.operationText || '—'}}</text></view>
+        <view class="warehouse-field"><text class="warehouse-label">仓库</text><text class="warehouse-value">{{task.warehouse.warehouse_name}}</text></view>
+        <view class="warehouse-field"><text class="warehouse-label">拣料位置</text><text class="warehouse-value">{{task.production_location_name_snapshot || '—'}}</text></view>
+        <view class="warehouse-field"><text class="warehouse-label">拣货员</text><text class="warehouse-value">{{task.assigned_picker_name || '待分配'}}</text></view>
+      </view>
+      <view class="picking-section-title"><text class="warehouse-title">{{canConfirm ? '实拣明细' : '物料明细'}}</text><text wx:if="{{canConfirm}}" class="warehouse-muted">已核对 {{checkedCount}} / {{total}} 项</text><text wx:else class="warehouse-muted">共 {{total}} 项</text></view>
+      <view wx:for="{{rows}}" wx:key="id" class="warehouse-card">
+        <view class="picking-material-heading"><text class="picking-number">{{(page - 1) * 10 + index + 1}}</text><view class="picking-material-name"><view>{{item.itemCode}}</view><view>{{item.itemName}}</view><view wx:if="{{item.spec}}" class="warehouse-muted">{{item.spec}}</view></view></view>
+        <view class="warehouse-field"><text class="warehouse-label">库位</text><text class="warehouse-value">{{item.locationName || '—'}}</text></view>
+        <view class="warehouse-field"><text class="warehouse-label">批次</text><text class="warehouse-value">{{item.batchNo || '—'}}</text></view>
+        <view class="picking-actual-row"><text>应拣 {{item.plannedText}} {{item.unitName}}</text><view wx:if="{{canConfirm}}" class="picking-actual"><text class="warehouse-danger">实拣</text><view class="picking-input-unit"><input type="digit" value="{{item.draftQty}}" placeholder="请填写" disabled="{{busy || pendingAction}}" data-id="{{item.id}}" bindinput="pickInput"/><text>{{item.unitName}}</text></view></view><text wx:else>实拣 {{item.actualText}} {{item.unitName}}</text></view>
+        <button wx:if="{{canConfirm && (item.physical || item.serial)}}" class="warehouse-secondary picking-identity" disabled="{{busy || pendingAction}}" data-id="{{item.id}}" bindtap="chooseIdentity">{{item.physical ? '选择实物' : '选择序列号'}}（{{item.selectedCount}}）</button>
+      </view>
+      <view class="warehouse-pager"><button disabled="{{page <= 1 || loading}}" data-delta="-1" bindtap="turnPage">上一页</button><text>{{page}} / {{lastPage}}</text><button disabled="{{page >= lastPage || loading}}" data-delta="1" bindtap="turnPage">下一页</button></view>
+      <view class="warehouse-card"><view class="warehouse-field"><text class="warehouse-label">备注</text><text class="warehouse-value">{{task.remark || '—'}}</text></view></view>
+      <view class="picking-actions"><button wx:if="{{canAssign}}" class="warehouse-primary" disabled="{{busy || pendingAction}}" bindtap="assign">{{task.assigned_picker_legacy_id ? '重新指派拣货员' : '指派拣货员'}}</button><button wx:if="{{canStart}}" class="warehouse-primary" disabled="{{busy || pendingAction}}" loading="{{busy}}" bindtap="start">开始拣货</button><button wx:if="{{canConfirm}}" class="warehouse-primary" disabled="{{busy || pendingAction}}" loading="{{busy}}" bindtap="confirm">确认实拣</button><button wx:if="{{canDelivery}}" class="warehouse-primary" disabled="{{busy || pendingAction}}" bindtap="createDelivery">创建配送</button><button wx:if="{{canCancel}}" class="warehouse-secondary" disabled="{{busy || pendingAction}}" bindtap="openCancel">取消配料单</button></view>
+    </block>
+    <button wx:elif="{{!loading}}" class="warehouse-secondary" bindtap="load">重新加载</button>
+  </block>
+</view>
+<warehouse-picker open="{{pickerOpen}}" title="{{pickerTitle}}" mode="{{pickerMode}}" query="{{pickerQuery}}" selected="{{pickerSelected}}" multiple="{{pickerMultiple}}" max-count="{{pickerMaxCount}}" quantity="{{pickerQuantity}}" bind:confirm="pickerConfirm" bind:cancel="closePicker"/>
+<view wx:if="{{cancelOpen}}" class="warehouse-overlay" catchtouchmove="stop"><view class="warehouse-dialog"><view class="warehouse-dialog-header picking-dialog-title">取消配料单</view><view class="warehouse-dialog-body"><view class="picking-cancel-text">确认取消此配料单？未出库的库存预留将释放。</view><view class="picking-cancel-label">取消原因 <text class="warehouse-danger">*</text></view><textarea class="warehouse-input" value="{{cancelReason}}" maxlength="500" disabled="{{busy || pendingAction}}" placeholder="请输入取消原因" bindinput="reasonInput"/><view wx:if="{{cancelError}}" class="warehouse-error">{{cancelError}}</view></view><view class="warehouse-dialog-footer"><button class="warehouse-secondary" disabled="{{busy}}" bindtap="closeCancel">返回</button><button class="warehouse-primary" disabled="{{busy || pendingAction}}" loading="{{busy}}" bindtap="cancel">确认取消</button></view></view></view>
+<view wx:if="{{resultOpen}}" class="warehouse-overlay" catchtouchmove="stop"><view class="warehouse-dialog"><view class="warehouse-dialog-header">{{pendingAction ? '结果尚未确认' : '库存或单据已变化'}}</view><view class="warehouse-dialog-body">{{pendingAction ? '本次提交结果尚未确认，请先查询原操作结果。' : resultMessage}}</view><view class="warehouse-dialog-footer"><button class="warehouse-secondary" bindtap="closeResult">返回核对</button><button wx:if="{{pendingAction}}" class="warehouse-primary" loading="{{busy}}" bindtap="retry">查询原结果</button><button wx:elif="{{conflict}}" class="warehouse-primary" bindtap="refreshConflict">刷新并核对</button></view></view></view>

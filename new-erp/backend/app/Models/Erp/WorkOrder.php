@@ -7,6 +7,8 @@ class WorkOrder extends MasterModel
     protected $table = 'erp_work_orders';
 
     protected $casts = [
+        'technical_version' => 'integer',
+        'technical_snapshot' => 'array',
         'target_qty' => 'decimal:8',
         'target_base_qty' => 'decimal:8',
         'planned_date' => 'date:Y-m-d',

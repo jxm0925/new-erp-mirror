@@ -4,6 +4,9 @@ namespace Tests\Feature\Erp;
 
 use App\Models\Erp\Item;
 use App\Models\Erp\ProductionRouting;
+use App\Models\Erp\Product;
+use App\Models\Erp\Sku;
+use App\Models\Erp\SkuItemRelation;
 use App\Models\Erp\Unit;
 use App\Services\Erp\DocumentNumberService;
 use App\Services\Erp\ProductionMasterDataService;
@@ -235,6 +238,96 @@ class Phase6AProductionMasterTest extends TestCase
         $this->assertSame('enabled', $referenced->fresh()->status);
     }
 
+    public function test_routing_supply_rules_survive_repeated_save_reorder_and_version_copy(): void
+    {
+        [$user, $item] = $this->fixture();
+        $service = app(ProductionMasterDataService::class);
+        $first = $this->createOperation($service, $user, '装配', 10);
+        $last = $this->createOperation($service, $user, '检验', 20);
+        $route = $this->createRouting($service, $user, $item, [$first->id, $last->id]);
+        $rows = [
+            ['operation_id' => $first->id, 'sequence' => 20, 'output_item_id' => $item->id,
+                'setup_standard_minutes' => 10, 'unit_standard_minutes' => 5,
+                'material_supply_rules' => [['component_item_id' => $item->id, 'target_sequence' => 10,
+                    'required_qty_ratio' => 1, 'supply_mode' => 'dedicated_delivery']]],
+            ['operation_id' => $last->id, 'sequence' => 10, 'output_item_id' => $item->id,
+                'output_mode' => 'warehouse_required', 'quality_mode' => 'required'],
+        ];
+        foreach ([1, 2] as $version) {
+            $service->updateRouting($route->id, ['client_command_id' => $this->id('save-rules'),
+                'expected_version' => $version, 'operations' => $rows], $user, self::MASTER_PERMISSIONS, true);
+            $loaded = $service->routing($route->id, self::MASTER_PERMISSIONS, true);
+            $rule = $loaded->operations->last()->materialSupplyRules->sole();
+            $this->assertSame($loaded->operations->first()->id, (int) $rule->target_routing_operation_id);
+            $this->assertTrue($rule->relationLoaded('componentItem'));
+            $this->assertSame('required', $loaded->operations->first()->quality_mode);
+            $this->assertSame('5.00', $loaded->operations->last()->unit_standard_minutes);
+        }
+        $service->activateRouting($route->id, ['client_command_id' => $this->id('activate-rules'),
+            'expected_version' => 3], $user, self::MASTER_PERMISSIONS, true);
+        $snapshot = $service->snapshot($loaded);
+        $copy = $service->copyRouting($route->id, ['client_command_id' => $this->id('copy-rules')], $user, self::MASTER_PERMISSIONS, true);
+        $copied = $service->routing($copy->id, self::MASTER_PERMISSIONS, true);
+        $this->assertSame($copied->operations->first()->id, (int) $copied->operations->last()->materialSupplyRules->sole()->target_routing_operation_id);
+        $rows[0]['unit_standard_minutes'] = 8;
+        $service->updateRouting($copy->id, ['client_command_id' => $this->id('edit-copy'),
+            'expected_version' => 1, 'operations' => $rows], $user, self::MASTER_PERMISSIONS, true);
+        $this->assertSame($snapshot, $service->snapshot($service->routing($route->id, self::MASTER_PERMISSIONS, true)));
+    }
+
+    public function test_activation_rejects_incomplete_material_distribution_and_rolls_back(): void
+    {
+        [$user, $item] = $this->fixture();
+        $service = app(ProductionMasterDataService::class);
+        $operation = $this->createOperation($service, $user, '装配', 10);
+        $route = $this->createRouting($service, $user, $item, [$operation->id]);
+        $service->updateRouting($route->id, ['client_command_id' => $this->id('partial-rules'), 'expected_version' => 1,
+            'operations' => [['operation_id' => $operation->id, 'sequence' => 10,
+                'material_supply_rules' => [['component_item_id' => $item->id, 'target_sequence' => 10,
+                    'required_qty_ratio' => .5, 'supply_mode' => 'workstation_stock']]]]], $user, self::MASTER_PERMISSIONS, true);
+        try {
+            $service->activateRouting($route->id, ['client_command_id' => $this->id('invalid-activate'),
+                'expected_version' => 2], $user, self::MASTER_PERMISSIONS, true);
+            $this->fail('不完整的分配不能启用。');
+        } catch (ValidationException $exception) {
+            $this->assertStringContainsString('100%', $exception->getMessage());
+        }
+        $this->assertSame('draft', $route->fresh()->status);
+        $this->assertSame(2, $route->fresh()->business_version);
+    }
+
+    public function test_sku_routing_uses_effective_primary_relation_and_keeps_generic_default(): void
+    {
+        [$user, $item] = $this->fixture();
+        $service = app(ProductionMasterDataService::class);
+        $operation = $this->createOperation($service, $user, '组装', 10);
+        $product = Product::create(['product_code' => $this->id('P'), 'product_name' => '多规格产品', 'product_type' => 'standard', 'status' => 'enabled']);
+        $sku = Sku::create(['product_id' => $product->id, 'sales_unit_id' => $item->unit_id, 'sku_code' => $this->id('S'), 'sku_name' => '专用规格', 'order_line_type' => 'physical', 'fulfillment_type' => 'physical', 'status' => 'enabled']);
+        $relation = SkuItemRelation::create(['sku_id' => $sku->id, 'item_id' => $item->id, 'relation_type' => 'primary', 'qty' => 1, 'unit_id' => $item->unit_id, 'is_primary' => true, 'status' => 'active', 'effective_at' => now()->subDay()]);
+        $generic = $this->createRouting($service, $user, $item, [$operation->id]);
+        $generic = $service->activateRouting($generic->id, ['client_command_id' => $this->id('activate'), 'expected_version' => 1], $user, self::MASTER_PERMISSIONS, true);
+        $generic = $service->setDefaultRouting($generic->id, ['client_command_id' => $this->id('default'), 'expected_version' => 2], $user, self::MASTER_PERMISSIONS, true);
+        $specific = $this->createRouting($service, $user, $item, [$operation->id], 1, ['product_id' => $product->id, 'sku_id' => $sku->id]);
+        $specific = $service->activateRouting($specific->id, ['client_command_id' => $this->id('activate'), 'expected_version' => 1], $user, self::MASTER_PERMISSIONS, true);
+        $specific = $service->setDefaultRouting($specific->id, ['client_command_id' => $this->id('default'), 'expected_version' => 2], $user, self::MASTER_PERMISSIONS, true);
+        $this->assertTrue((bool) $generic->fresh()->is_default);
+        $this->assertTrue((bool) $specific->is_default);
+        $this->assertSame([$specific->id], $service->defaultRoutingMatches($item->id, $product->id, $sku->id)->pluck('id')->all());
+        $this->assertSame([$generic->id], $service->defaultRoutingMatches($item->id, null, null)->pluck('id')->all());
+
+        foreach ([['effective_at' => now()->addDay(), 'expired_at' => null], ['effective_at' => now()->subDays(2), 'expired_at' => now()->subDay()]] as $dates) {
+            $relation->update($dates);
+            $before = ProductionRouting::count();
+            try {
+                $this->createRouting($service, $user, $item, [$operation->id], 1, ['product_id' => $product->id, 'sku_id' => $sku->id]);
+                $this->fail('未生效或过期的 SKU 物料关系不得创建路线。');
+            } catch (ValidationException $exception) {
+                $this->assertArrayHasKey('output_item_id', $exception->errors());
+            }
+            $this->assertSame($before, ProductionRouting::count());
+        }
+    }
+
     private function fixture(): array
     {
         $legacyId = random_int(800000, 899999);
@@ -254,7 +347,7 @@ class Phase6AProductionMasterTest extends TestCase
         return $service->createOperation(['client_command_id' => $this->id('operation'), 'creation_session_id' => $session, 'reservation_token' => $reservation->reservation_token, 'operation_name' => $name, 'sort' => $sort, 'status' => 'enabled'], $user, self::MASTER_PERMISSIONS, true);
     }
 
-    private function createRouting(ProductionMasterDataService $service, object $user, Item $item, array $operationIds, int $version = 1): ProductionRouting
+    private function createRouting(ProductionMasterDataService $service, object $user, Item $item, array $operationIds, int $version = 1, array $scope = []): ProductionRouting
     {
         $session = $this->uuid();
         $reservation = app(DocumentNumberService::class)->reserve('routing', $session, $user->legacy_id, '/production/routings/new');
@@ -266,7 +359,7 @@ class Phase6AProductionMasterTest extends TestCase
                 'is_key_operation' => $index === count($operationIds) - 1,
                 'output_item_id' => $item->id, 'output_mode' => 'flow_only',
             ])->all(),
-        ], $user, self::MASTER_PERMISSIONS, true);
+        ] + $scope, $user, self::MASTER_PERMISSIONS, true);
     }
 
     private function id(string $prefix): string { return $prefix.'-'.str_replace('.', '', uniqid('', true)); }

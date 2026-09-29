@@ -173,6 +173,7 @@ Page({
     const masterIdx = pages && pages.findIndex(page => page.route && page.route.includes('master-detail'));
     if (pages && masterIdx >= 0) wx.navigateBack({ delta: pages.length - 1 - masterIdx });
     else if (this.data.masterId) wx.navigateTo({ url: `/pages/production/master-detail/index?id=${this.data.masterId}` });
+    else this.navBackToWorkOrder();
   },
 
   navBackToWorkOrder() {
@@ -180,7 +181,8 @@ Page({
     const workOrderIdx = pages && pages.findIndex(page => page.route && page.route.includes('work-order-detail'));
     if (pages && workOrderIdx >= 0) wx.navigateBack({ delta: pages.length - 1 - workOrderIdx });
     else if (this.data.workOrderId) wx.navigateTo({
-      url: `/pages/production/work-order-detail/index?masterId=${this.data.masterId}&masterOrderNo=${encodeURIComponent(this.data.masterOrderNo)}&workOrderId=${this.data.workOrderId}`,
+      url: `/pages/production/work-order-detail/index?id=${this.data.workOrderId}`,
     });
+    else wx.redirectTo({ url: '/pages/production/tasks/index' });
   },
 });

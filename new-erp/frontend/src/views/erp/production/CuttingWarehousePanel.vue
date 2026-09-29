@@ -13,7 +13,7 @@
       <el-table-column label="操作" width="140"><template slot-scope="{row}"><el-button v-if="$can('production.cutting.warehouse') && ['WAIT_WAREHOUSE','PART_WAREHOUSED'].includes(row.status)" type="text" :disabled="busy || !!pending" @click="open(row)">办理入库</el-button><span v-else>—</span></template></el-table-column>
     </el-table>
     <el-pagination :current-page="page" :page-size="10" :total="total" layout="total, prev, pager, next" @current-change="load" />
-    <el-drawer title="下料产出入库" :visible.sync="showForm" size="min(520px, 95vw)" :wrapper-closable="!busy && !pending" :before-close="closeForm">
+    <el-dialog title="下料产出入库" :visible.sync="showForm" width="600px" custom-class="remnant-dialog" append-to-body :close-on-click-modal="false" :close-on-press-escape="!busy" :show-close="!busy" :before-close="closeForm">
       <el-form class="receipt-form" label-position="top" :disabled="busy || !!pending">
         <el-form-item label="产出物料">{{ selected.item_code }} / {{ selected.item_name }}</el-form-item>
         <el-form-item label="本次入库数量"><el-input v-model.trim="form.quantity" inputmode="decimal" /></el-form-item>
@@ -21,7 +21,7 @@
         <el-form-item label="入库批次"><el-input v-model.trim="form.batch_no" maxlength="80" /></el-form-item>
       </el-form>
       <div class="receipt-actions"><el-button :disabled="busy" @click="showForm=false">关闭</el-button><el-button type="success" :loading="busy" @click="submit">{{ pending ? '继续上次入库' : '确认入库' }}</el-button></div>
-    </el-drawer>
+    </el-dialog>
     <div v-if="showLocator" class="locator-mask" @click.self="showLocator=false">
       <section class="locator-dialog">
         <div class="receipt-heading"><h3>选择仓库和库位</h3><el-button type="text" @click="showLocator=false">关闭</el-button></div>

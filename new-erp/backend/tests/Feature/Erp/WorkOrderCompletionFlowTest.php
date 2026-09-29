@@ -43,6 +43,18 @@ class WorkOrderCompletionFlowTest extends TestCase
         $this->expectDomain('command_conflict', fn () => $service->submit($f['workOrder']->id,
             array_merge($payload, ['remark' => '不同请求']), $user, ['production.completion.create'], true), 409);
 
+        $pending = $service->paginate($f['workOrder']->id, 1, 1, $user,
+            ['production.completion.view', 'production.completion.review'], true, ['status' => 'PENDING_REVIEW']);
+        $this->assertSame(1, $pending['total']);
+        $this->assertTrue($pending['data'][0]['allowed_actions']['review']);
+        $this->assertTrue($pending['data'][0]['preflight_snapshot']['passed']);
+        $this->expectDomain('completion_reject_reason_required', fn () => $service->review($submitted['completion_id'], [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => 1, 'decision' => 'reject', 'reason' => ' ',
+        ], $user, ['production.completion.review'], true), 422);
+        $this->expectDomain('version_conflict', fn () => $service->review($submitted['completion_id'], [
+            'client_command_id' => (string) Str::uuid(), 'expected_version' => 2, 'decision' => 'approve',
+        ], $user, ['production.completion.review'], true), 409);
+
         $rejected = $service->review($submitted['completion_id'], [
             'client_command_id' => (string) Str::uuid(), 'expected_version' => 1,
             'decision' => 'reject', 'reason' => '完工资料需补充',
@@ -64,10 +76,14 @@ class WorkOrderCompletionFlowTest extends TestCase
             'client_command_id' => (string) Str::uuid(), 'expected_version' => 2,
             'output_record_ids' => [$f['output']->id], 'remark' => '补充后重新申报',
         ], $user, ['production.completion.create'], true);
-        $approved = $service->review($resubmitted['completion_id'], [
+        $approvalPayload = [
             'client_command_id' => (string) Str::uuid(), 'expected_version' => 1, 'decision' => 'approve',
-        ], $user, ['production.completion.review'], true);
+        ];
+        $approved = $service->review($resubmitted['completion_id'], $approvalPayload, $user, ['production.completion.review'], true);
         $this->assertSame('APPROVED', $approved['status']);
+        $this->assertEquals($approved, $service->review($resubmitted['completion_id'], $approvalPayload,
+            $user, ['production.completion.review'], true));
+        $this->assertSame(2, (int) DB::table('erp_work_order_completions')->where('id', $resubmitted['completion_id'])->value('business_version'));
         $this->assertSame('IN_PROGRESS', $f['workOrder']->fresh()->status);
         $this->assertSame('WAIT_WAREHOUSE', $f['output']->fresh()->status);
         $this->assertDatabaseMissing('erp_work_order_status_logs', [
@@ -84,6 +100,14 @@ class WorkOrderCompletionFlowTest extends TestCase
             $user, ['production.output.warehouse']);
         $this->assertSame('WAIT_WAREHOUSE', $posted['output_status']);
         $this->assertSame(3.0, $posted['remaining_receivable_base_qty']);
+        $mobilePermissions = ['production.task.view', 'production.output.warehouse'];
+        $mobile = app(\App\Services\Erp\WarehouseDocumentService::class)->show('output', $output->id, [], $user, $mobilePermissions, true);
+        $this->assertSame('3.00000000', $mobile['header']['remaining_qty']);
+        $this->assertSame(['output.warehouse'], $mobile['actions']);
+        $this->assertArrayNotHasKey('material_total_cost', $mobile['header']);
+        $receiptView = app(\App\Services\Erp\WarehouseDocumentService::class)->show('output', $output->id, ['receipt_id' => $posted['posting_id']], $user, $mobilePermissions, true);
+        $this->assertSame($posted['finished_goods_receipt_no'], $receiptView['receipt']->receipt_no);
+        $this->assertSame([], $receiptView['actions']);
         $this->assertSame('IN_PROGRESS', $f['workOrder']->fresh()->status);
         $this->assertEquals($posted, app(ProductionOutputService::class)->warehouse($output->id,
             $firstPostingPayload, $user, ['production.output.warehouse']));
@@ -118,6 +142,16 @@ class WorkOrderCompletionFlowTest extends TestCase
             ['production.completion.view'], true);
         $this->assertCount(2, $page['data']);
         $this->assertSame(2, $page['total']);
+        $approvedPage = $service->paginate($f['workOrder']->id, 1, 1, $user,
+            ['production.completion.view'], true, ['status' => 'APPROVED']);
+        $this->assertSame(1, $approvedPage['total']);
+        $this->assertSame($resubmitted['completion_id'], $approvedPage['data'][0]['completion_id']);
+        $this->assertFalse($approvedPage['data'][0]['allowed_actions']['review']);
+        $rejectedPage = $service->paginate($f['workOrder']->id, 1, 1, $user,
+            ['production.completion.view'], true, ['completion_id' => $submitted['completion_id']]);
+        $this->assertSame('REJECTED', $rejectedPage['data'][0]['status']);
+        $this->assertSame(0, $service->paginate($f['workOrder']->id, 1, 1, $user,
+            ['production.completion.view'], true, ['status' => 'PENDING_REVIEW'])['total']);
     }
 
     public function test_unit_mode_requires_all_terminal_units_to_be_approved_and_warehoused_before_work_order_completion(): void
@@ -270,6 +304,18 @@ class WorkOrderCompletionFlowTest extends TestCase
         $this->withToken($this->token(971004))
             ->getJson('/api/v1/erp/production/work-orders/'.$f['workOrder']->id.'/completions')
             ->assertOk()->assertJsonCount(1, 'data');
+        $url = '/api/v1/erp/production/work-orders/'.$f['workOrder']->id.'/completions';
+        $this->withToken($this->token(971004))->getJson($url.'?status=APPROVED&per_page=1')
+            ->assertOk()->assertJsonPath('total', 1)->assertJsonPath('data.0.completion_id', $completionId)
+            ->assertJsonPath('data.0.preflight_snapshot.passed', true)->assertJsonPath('data.0.allowed_actions.review', false);
+        $this->withToken($this->token(971004))->getJson($url.'?status=PENDING_REVIEW')
+            ->assertOk()->assertJsonPath('total', 0)->assertJsonCount(0, 'data');
+        $this->withToken($this->token(971004))->getJson($url.'?completion_id='.$completionId)
+            ->assertOk()->assertJsonPath('data.0.status', 'APPROVED');
+        $this->withToken($this->token(971004))->getJson($url.'?status=UNKNOWN')
+            ->assertUnprocessable()->assertJsonValidationErrors('status');
+        $this->withToken($this->token(971005))->getJson($url.'?completion_id='.$completionId)
+            ->assertForbidden()->assertJsonPath('error_code', 'data_scope_denied');
     }
 
     private function quantityFixture(string $outputMode, string $qualityMode = 'none'): array

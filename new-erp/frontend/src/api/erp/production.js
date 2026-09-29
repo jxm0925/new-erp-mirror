@@ -50,3 +50,8 @@ export const reviewWorkOrderCompletion = (id, data) => api.post(`/v1/erp/product
 export const warehouseProductionOutput = (id, data) => api.post(`/v1/erp/production/outputs/${id}/warehouse`, data)
 
 export default api
+export const getWorkOrderTechnical = (id, params) => api.get(`/v1/erp/production/work-orders/${id}/technical-preparation`, { params })
+export const confirmWorkOrderTechnical = (id, data) => api.post(`/v1/erp/production/work-orders/${id}/confirm-technical`, data)
+export const listWorkOrderTechnicalVersions = (id, params) => api.get(`/v1/erp/production/work-orders/${id}/technical-versions`, { params })
+export const uploadWorkOrderTechnicalAttachment = (id, data) => api.post(`/v1/erp/production/work-orders/${id}/technical-attachments`, data)
+export const readWorkOrderTechnicalAttachment = (id, attachmentId, download = false) => api.get(`/v1/erp/production/work-orders/${id}/technical-attachments/${attachmentId}`, { params: { download: download ? 1 : 0 }, responseType: 'blob' })

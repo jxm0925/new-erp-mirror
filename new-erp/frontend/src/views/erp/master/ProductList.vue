@@ -1,264 +1,491 @@
 <template>
-  <section class="pd-page" :class="{ 'drawer-open': drawerVisible }">
-    <div class="pd-workspace">
-      <div class="pd-head">
-        <div>
-          <h1>商品管理 <em>{{ total }}</em></h1>
-          <p>商品是销售展示对象，SKU 承接订单履约，Item 承接采购、库存、生产和成本。</p>
+  <div class="product-page-container">
+    <!-- 页面全局头部：图标、标题、统计标签与主要操作 -->
+    <header class="page-head">
+      <div class="head-left">
+        <span class="head-icon"><i class="el-icon-goods" /></span>
+        <div class="head-title-wrap">
+          <div class="title-row">
+            <h1 class="page-title">商品档案</h1>
+            <el-tag size="small" type="success" effect="plain" class="head-tag">共 {{ total }} 款商品</el-tag>
+          </div>
         </div>
-        <div class="pd-actions">
-          <el-button size="small" icon="el-icon-upload2" @click="$router.push('/master/imports')">导入商品</el-button>
-          <el-button size="small" type="success" icon="el-icon-plus" @click="openProductCreate">新增商品</el-button>
+      </div>
+      <div class="head-actions">
+        <el-button size="small" icon="el-icon-refresh" class="btn-refresh" @click="fetchAll">刷新</el-button>
+        <el-button size="small" icon="el-icon-upload2" class="btn-import" @click="$router.push({ path: '/master/imports', query: { type: 'Product' } })">导入商品</el-button>
+        <el-button size="small" type="success" icon="el-icon-plus" class="btn-theme-create" @click="openProductCreate">新增商品</el-button>
+      </div>
+    </header>
+
+    <!-- 统一页面提示条 -->
+    <div class="erp-page-tip">
+      <i class="el-icon-info" />
+      <span>维护标准商品与套装商品档案，管理规格维度与笛卡尔积 SKU，打通采购、销售与生产主数据链路。</span>
+    </div>
+
+    <!-- 顶部概览指标卡片 -->
+    <section class="metric-overview-grid">
+      <div class="metric-card metric-all">
+        <div class="metric-icon-box"><i class="el-icon-s-goods" /></div>
+        <div class="metric-info">
+          <span class="metric-label">全部商品</span>
+          <strong class="metric-val">{{ total }}</strong>
+        </div>
+      </div>
+      <div class="metric-card metric-enabled">
+        <div class="metric-icon-box"><i class="el-icon-circle-check" /></div>
+        <div class="metric-info">
+          <span class="metric-label">已启用商品</span>
+          <strong class="metric-val">{{ enabledCount }}</strong>
+        </div>
+      </div>
+      <div class="metric-card metric-disabled">
+        <div class="metric-icon-box"><i class="el-icon-circle-close" /></div>
+        <div class="metric-info">
+          <span class="metric-label">已停用商品</span>
+          <strong class="metric-val">{{ disabledCount }}</strong>
+        </div>
+      </div>
+      <div class="metric-card metric-skus">
+        <div class="metric-icon-box"><i class="el-icon-box" /></div>
+        <div class="metric-info">
+          <span class="metric-label">当前页SKU总计</span>
+          <strong class="metric-val">{{ totalSkusCount }}</strong>
+        </div>
+      </div>
+    </section>
+
+    <!-- 搜索筛选与操作栏 -->
+    <section class="table-container-card">
+      <div class="filter-toolbar">
+        <div class="filter-fields">
+          <el-input
+            v-model="filters.keyword"
+            size="small"
+            clearable
+            prefix-icon="el-icon-search"
+            placeholder="搜索商品编码、商品名称、型号..."
+            class="filter-input-search"
+            @keyup.enter.native="applyFilters"
+            @clear="applyFilters"
+          />
+          <el-select
+            v-model="filters.category_id"
+            size="small"
+            clearable
+            placeholder="所属分类"
+            class="filter-select"
+            @change="applyFilters"
+          >
+            <el-option v-for="c in categories" :key="c.id" :label="c.category_name" :value="c.id" />
+          </el-select>
+          <el-select
+            v-model="filters.status"
+            size="small"
+            clearable
+            placeholder="销售状态"
+            class="filter-select-sm"
+            @change="applyFilters"
+          >
+            <el-option label="全部状态" value="" />
+            <el-option label="已启用" value="enabled" />
+            <el-option label="已停用" value="disabled" />
+          </el-select>
+        </div>
+        <div class="filter-actions">
+          <el-button size="small" type="primary" icon="el-icon-search" @click="applyFilters">查询</el-button>
+          <el-button size="small" icon="el-icon-refresh-left" @click="resetFilters">重置</el-button>
+          <el-button size="small" icon="el-icon-refresh" circle title="刷新列表" @click="fetchAll" />
         </div>
       </div>
 
-      <div class="pd-filter">
-        <el-input v-model="filters.keyword" size="small" clearable prefix-icon="el-icon-search" placeholder="请输入商品编码/名称" @keyup.enter.native="applyFilters" @clear="applyFilters" />
-        <el-select v-model="filters.category_id" size="small" clearable placeholder="分类" @change="applyFilters">
-          <el-option v-for="c in categories" :key="c.id" :label="c.category_name" :value="c.id" />
-        </el-select>
-        <el-select v-model="filters.status" size="small" clearable placeholder="状态" @change="applyFilters">
-          <el-option label="启用" value="enabled" />
-          <el-option label="停用" value="disabled" />
-        </el-select>
-      </div>
-
-      <div class="pd-table-card">
+      <!-- 主数据商品列表 -->
+      <div class="main-table-wrap">
         <el-table
           v-loading="loading"
           :data="products"
-          size="mini"
+          size="small"
           border
           row-key="id"
           :expand-row-keys="expandedKeys"
-          :row-class-name="rowClass"
-          empty-text="暂无商品，请先新增商品或导入旧数据。"
-          @row-click="openProductDetail"
+          class="custom-product-table"
+          empty-text="暂无商品档案，请点击上方“新增商品”录入或“导入商品”。"
           @expand-change="onExpandChange"
         >
-          <el-table-column type="expand" width="34">
+          <!-- 展开行：对应商品的 SKU 规格子表格 -->
+          <el-table-column type="expand" width="48">
             <template slot-scope="{ row }">
-              <div class="sku-expand">
-                <div class="sku-expand-head">
-                  <strong>SKU 列表（{{ skuTotal(row) }}）</strong>
-                  <div>
-                    <el-button size="mini" icon="el-icon-plus" @click.stop="openSkuCreate(row)">单独新增SKU</el-button>
-                    <el-button size="mini" icon="el-icon-s-grid" @click.stop="openSkuMatrix(row)">生成SKU矩阵</el-button>
+              <div class="sku-nested-panel">
+                <div class="nested-panel-header">
+                  <div class="nested-title">
+                    <span class="icon-chip"><i class="el-icon-box" /></span>
+                    <strong>「{{ row.product_name }}」规格 SKU 列表</strong>
+                    <el-tag size="mini" type="info" effect="plain">共 {{ skuTotal(row) }} 条规格</el-tag>
+                    <span class="sub-hint"><i class="el-icon-info" /> 点击行或操作按钮可直达 SKU 独立详情与编辑页</span>
+                  </div>
+                  <div class="nested-actions">
+                    <el-button size="mini" type="primary" plain icon="el-icon-plus" @click.stop="openSkuCreate(row)">单独新增SKU</el-button>
+                    <el-button size="mini" type="success" plain icon="el-icon-s-grid" @click.stop="openSkuMatrix(row)">生成SKU矩阵</el-button>
                   </div>
                 </div>
-                <el-table v-loading="skuPage(row).loading" :data="skuList(row)" size="mini" border empty-text="暂无 SKU" @row-click="openSkuEdit(row, $event)">
-                  <el-table-column prop="sku_code" label="SKU编码" min-width="110" />
-                  <el-table-column prop="spec_text" label="规格型号" min-width="140">
-                    <template slot-scope="{ row: sku }">{{ sku.spec_text || sku.sku_name }}</template>
-                  </el-table-column>
-                  <el-table-column label="计量单位" min-width="82">
-                    <template slot-scope="{ row: sku }">{{ row.unit ? row.unit.unit_name : '-' }}</template>
-                  </el-table-column>
-                  <el-table-column label="销售状态" min-width="82">
-                    <template slot-scope="{ row: sku }"><span class="pd-dot" :class="sku.status">{{ statusText(sku.status) }}</span></template>
-                  </el-table-column>
-                  <el-table-column label="关联物料数" min-width="96" align="center">
-                    <template slot-scope="{ row: sku }">{{ relationList(sku).length }}</template>
-                  </el-table-column>
-                  <el-table-column label="更新时间" min-width="140">
-                    <template slot-scope="{ row: sku }">{{ formatDate(sku.updated_at) }}</template>
-                  </el-table-column>
-                  <el-table-column label="操作" width="174">
+
+                <el-table
+                  v-loading="skuPage(row).loading"
+                  :data="skuList(row)"
+                  size="mini"
+                  border
+                  class="sku-inner-table"
+                  empty-text="当前商品尚未添加规格 SKU，可点击右上角新增或矩阵生成。"
+                  @row-click="onSkuRowClick(row, $event)"
+                >
+                  <el-table-column prop="sku_code" label="SKU编码" min-width="130">
                     <template slot-scope="{ row: sku }">
-                      <el-button type="text" size="mini" @click.stop="openSkuDetail(row, sku)">详情</el-button>
-                      <el-button type="text" size="mini" @click.stop="openSkuEdit(row, sku)">编辑</el-button>
-                      <el-button v-if="sku.status === 'enabled'" type="text" size="mini" class="danger-link" @click.stop="disableSku(sku)">停用</el-button>
-                      <el-button v-else-if="sku.status === 'disabled'" type="text" size="mini" class="success-link" @click.stop="disableSku(sku)">启用</el-button>
+                      <span class="sku-code-badge font-mono">{{ sku.sku_code }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="spec_text" label="规格型号 / 名称" min-width="160">
+                    <template slot-scope="{ row: sku }">
+                      <span class="sku-spec-text">{{ sku.spec_text || sku.sku_name || '-' }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="计量单位" width="95" align="center">
+                    <template slot-scope="{ row: sku }">
+                      <span class="unit-badge">{{ (sku.sales_unit && sku.sales_unit.unit_name) || (row.unit && row.unit.unit_name) || '-' }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="默认售价" width="115" align="right">
+                    <template slot-scope="{ row: sku }">
+                      <span class="price-val">¥{{ Number(sku.sale_price || 0).toFixed(2) }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="关联Item物料" width="125" align="center">
+                    <template slot-scope="{ row: sku }">
+                      <el-tag v-if="relationList(sku).length" size="mini" type="success" effect="plain">已绑定 {{ relationList(sku).length }} 个物料</el-tag>
+                      <el-tag v-else size="mini" type="warning" effect="plain">未绑定物料</el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="状态" width="80" align="center">
+                    <template slot-scope="{ row: sku }">
+                      <span class="status-pill" :class="sku.status">{{ statusText(sku.status) }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="操作" min-width="160" align="center">
+                    <template slot-scope="{ row: sku }">
+                      <el-button type="text" size="mini" icon="el-icon-view" @click.stop="openSkuDetail(sku)">详情</el-button>
+                      <el-button type="text" size="mini" icon="el-icon-edit" @click.stop="openSkuEdit(sku)">编辑</el-button>
+                      <el-button
+                        type="text"
+                        size="mini"
+                        :class="sku.status === 'enabled' ? 'danger-link' : 'success-link'"
+                        @click.stop="disableSku(sku)"
+                      >
+                        {{ sku.status === 'enabled' ? '停用' : '启用' }}
+                      </el-button>
                       <el-button v-if="sku.status !== 'enabled'" type="text" size="mini" class="danger-link" @click.stop="deleteSku(sku)">删除</el-button>
                     </template>
                   </el-table-column>
                 </el-table>
-                <div v-if="skuTotal(row) > 0" class="sku-pagination">
-                  <span>共 {{ skuTotal(row) }} 条</span>
-                  <el-pagination small layout="prev, pager, next, sizes" :current-page="skuPage(row).page" :page-size="skuPage(row).per_page" :page-sizes="[5,10,20]" :total="skuTotal(row)" @current-change="changeSkuPage(row, $event)" @size-change="changeSkuPageSize(row, $event)" />
+
+                <div v-if="skuTotal(row) > 5" class="nested-pagination">
+                  <span>共 {{ skuTotal(row) }} 条规格 SKU</span>
+                  <el-pagination
+                    small
+                    layout="prev, pager, next, sizes"
+                    :current-page="skuPage(row).page"
+                    :page-size="skuPage(row).per_page"
+                    :page-sizes="[5, 10, 20]"
+                    :total="skuTotal(row)"
+                    @current-change="changeSkuPage(row, $event)"
+                    @size-change="changeSkuPageSize(row, $event)"
+                  />
                 </div>
               </div>
             </template>
           </el-table-column>
-          <el-table-column prop="product_code" label="商品编码" min-width="110" />
-          <el-table-column prop="product_name" label="商品名称" min-width="180" />
-          <el-table-column label="分类" min-width="110">
-            <template slot-scope="{ row }">{{ row.category ? row.category.category_name : '-' }}</template>
-          </el-table-column>
-          <el-table-column label="SKU数量" min-width="80" align="center">
-            <template slot-scope="{ row }">{{ skuTotal(row) }}</template>
-          </el-table-column>
-          <el-table-column label="状态" min-width="78">
-            <template slot-scope="{ row }"><span class="pd-dot" :class="row.status">{{ statusText(row.status) }}</span></template>
-          </el-table-column>
-          <el-table-column label="更新时间" min-width="140">
-            <template slot-scope="{ row }">{{ formatDate(row.updated_at) }}</template>
-          </el-table-column>
-          <el-table-column label="操作" width="174">
+
+          <el-table-column prop="product_code" label="商品编码" min-width="140">
             <template slot-scope="{ row }">
-              <el-button type="text" size="mini" @click.stop="openProductDetail(row)">详情</el-button>
-              <el-button type="text" size="mini" @click.stop="openProductEdit(row)">编辑</el-button>
-              <el-button type="text" size="mini" :class="row.status === 'enabled' ? 'danger-link' : 'success-link'" @click.stop="disableProduct(row)">{{ row.status === 'enabled' ? '停用' : '启用' }}</el-button>
-              <el-button v-if="row.status !== 'enabled'" type="text" size="mini" class="danger-link" @click.stop="deleteProduct(row)">删除</el-button>
+              <span class="product-code-link font-mono" @click.stop="openProductDetail(row)">
+                <i class="el-icon-goods" /> {{ row.product_code }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="product_name" label="商品名称" min-width="200">
+            <template slot-scope="{ row }">
+              <div class="product-name-cell">
+                <span class="p-name" :title="row.product_name">{{ row.product_name }}</span>
+                <span v-if="row.model" class="p-model"><i class="el-icon-price-tag" /> {{ row.model }}</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="所属分类" min-width="120">
+            <template slot-scope="{ row }">
+              <el-tag v-if="row.category" size="small" type="info" effect="plain" class="category-tag">
+                <i class="el-icon-folder" /> {{ row.category.category_name }}
+              </el-tag>
+              <span v-else class="text-muted">—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="商品类型" width="105" align="center">
+            <template slot-scope="{ row }">
+              <el-tag size="mini" :type="row.product_type === 'bundle' ? 'warning' : 'primary'" effect="plain">
+                {{ row.product_type === 'bundle' ? '套装商品' : '标准商品' }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="计量单位" width="95" align="center">
+            <template slot-scope="{ row }">
+              <span class="unit-badge">{{ row.unit ? row.unit.unit_name : '—' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="SKU规格数" width="125" align="center">
+            <template slot-scope="{ row }">
+              <button type="button" class="sku-count-chip" title="点击展开/收起 SKU 列表" @click.stop="toggleRowExpand(row)">
+                <i class="el-icon-menu" /> {{ skuTotal(row) }} 款 SKU
+              </button>
+            </template>
+          </el-table-column>
+          <el-table-column label="销售状态" width="95" align="center">
+            <template slot-scope="{ row }">
+              <span class="status-pill" :class="row.status">{{ statusText(row.status) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="更新时间" width="145" align="center">
+            <template slot-scope="{ row }">
+              <span class="time-text">{{ formatDate(row.updated_at) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="160" align="center">
+            <template slot-scope="{ row }">
+              <el-button type="text" size="small" icon="el-icon-view" @click.stop="openProductDetail(row)">详情</el-button>
+              <el-button type="text" size="small" icon="el-icon-edit" @click.stop="openProductEdit(row)">编辑</el-button>
+              <el-button
+                type="text"
+                size="small"
+                :class="row.status === 'enabled' ? 'danger-link' : 'success-link'"
+                @click.stop="disableProduct(row)"
+              >
+                {{ row.status === 'enabled' ? '停用' : '启用' }}
+              </el-button>
+              <el-button v-if="row.status !== 'enabled'" type="text" size="small" class="danger-link" @click.stop="deleteProduct(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
-        <div class="pd-pagination">
-          <span>共 {{ total }} 条</span>
-          <el-pagination small layout="prev, pager, next, sizes" :current-page="filters.page" :page-size="filters.per_page" :page-sizes="[10,20,50]" :total="total" @current-change="changePage" @size-change="changePageSize" />
+      </div>
+
+      <!-- 分页栏 -->
+      <div class="table-pagination-footer">
+        <span class="total-text">共 <strong>{{ total }}</strong> 款商品</span>
+        <el-pagination
+          background
+          layout="total, sizes, prev, pager, next, jumper"
+          :current-page="filters.page"
+          :page-size="filters.per_page"
+          :page-sizes="[10, 20, 50, 100]"
+          :total="total"
+          @current-change="changePage"
+          @size-change="changePageSize"
+        />
+      </div>
+    </section>
+
+    <!-- 商品详情模态弹窗 (替换原有侧边抽屉) -->
+    <el-dialog
+      :visible.sync="detailDialogVisible"
+      title="商品档案详情"
+      width="780px"
+      custom-class="product-detail-modal"
+      :close-on-click-modal="true"
+      destroy-on-close
+    >
+      <div v-if="selectedProduct.id" class="product-modal-content">
+        <!-- 弹窗头部高亮看板 -->
+        <div class="modal-summary-banner">
+          <div class="banner-icon"><i class="el-icon-goods" /></div>
+          <div class="banner-main">
+            <div class="banner-title-line">
+              <h2>{{ selectedProduct.product_name }}</h2>
+              <span class="status-pill" :class="selectedProduct.status">{{ statusText(selectedProduct.status) }}</span>
+              <el-tag size="mini" :type="selectedProduct.product_type === 'bundle' ? 'warning' : 'primary'" effect="plain">
+                {{ selectedProduct.product_type === 'bundle' ? '套装商品' : '标准商品' }}
+              </el-tag>
+            </div>
+            <div class="banner-sub-meta">
+              <span>商品编码：<strong>{{ selectedProduct.product_code }}</strong></span>
+              <span v-if="selectedProduct.model">型号：<strong>{{ selectedProduct.model }}</strong></span>
+              <span>计量单位：<strong>{{ selectedProduct.unit ? selectedProduct.unit.unit_name : '-' }}</strong></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 详细信息卡片 -->
+        <div class="modal-detail-sections">
+          <div class="detail-section-card">
+            <h4 class="sec-title"><i class="el-icon-document" /> 基本档案资料</h4>
+            <div class="property-grid">
+              <div class="prop-item"><span class="prop-label">商品编码</span><span class="prop-value font-mono">{{ selectedProduct.product_code }}</span></div>
+              <div class="prop-item"><span class="prop-label">商品名称</span><span class="prop-value">{{ selectedProduct.product_name }}</span></div>
+              <div class="prop-item"><span class="prop-label">所属分类</span><span class="prop-value">{{ selectedProduct.category ? selectedProduct.category.category_name : '-' }}</span></div>
+              <div class="prop-item"><span class="prop-label">计量单位</span><span class="prop-value">{{ selectedProduct.unit ? selectedProduct.unit.unit_name : '-' }}</span></div>
+              <div class="prop-item"><span class="prop-label">规格型号</span><span class="prop-value">{{ selectedProduct.model || '-' }}</span></div>
+              <div class="prop-item"><span class="prop-label">销售状态</span><span class="prop-value">{{ statusText(selectedProduct.status) }}</span></div>
+              <div class="prop-item"><span class="prop-label">创建时间</span><span class="prop-value">{{ formatDate(selectedProduct.created_at) }}</span></div>
+              <div class="prop-item"><span class="prop-label">更新时间</span><span class="prop-value">{{ formatDate(selectedProduct.updated_at) }}</span></div>
+              <div class="prop-item full-width"><span class="prop-label">商品描述</span><span class="prop-value text-desc">{{ selectedProduct.description || '暂无描述信息' }}</span></div>
+            </div>
+          </div>
+
+          <div class="detail-section-card">
+            <div class="sec-title-bar">
+              <h4 class="sec-title"><i class="el-icon-connection" /> SKU 规格结构速览（共 {{ skuTotal(selectedProduct) }} 条）</h4>
+              <el-button type="text" size="mini" icon="el-icon-plus" @click="openSkuCreate(selectedProduct)">新增SKU</el-button>
+            </div>
+            <div v-if="skuList(selectedProduct).length" class="modal-sku-preview-table">
+              <el-table :data="skuList(selectedProduct)" size="mini" border max-height="220">
+                <el-table-column prop="sku_code" label="SKU编码" width="140">
+                  <template slot-scope="{ row }"><span class="font-mono">{{ row.sku_code }}</span></template>
+                </el-table-column>
+                <el-table-column label="规格型号 / 名称" min-width="140">
+                  <template slot-scope="{ row }">{{ row.spec_text || row.sku_name || '-' }}</template>
+                </el-table-column>
+                <el-table-column label="售价" width="90" align="right">
+                  <template slot-scope="{ row }">¥{{ Number(row.sale_price || 0).toFixed(2) }}</template>
+                </el-table-column>
+                <el-table-column label="状态" width="75" align="center">
+                  <template slot-scope="{ row }">
+                    <span class="status-pill" :class="row.status">{{ statusText(row.status) }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" width="110" align="center">
+                  <template slot-scope="{ row }">
+                    <el-button type="text" size="mini" @click="openSkuDetail(row)">详情</el-button>
+                    <el-button type="text" size="mini" @click="openSkuEdit(row)">编辑</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+            <p v-else class="empty-sku-hint">该商品暂未配置规格 SKU，可点击下方按钮单独新增或批量生成 SKU 矩阵。</p>
+          </div>
         </div>
       </div>
-    </div>
-
-    <aside v-if="drawerVisible" class="pd-drawer">
-      <div class="drawer-head">
-        <h2>{{ drawerTitle }}</h2>
-        <i class="el-icon-close" @click="drawerVisible=false" />
+      <div slot="footer" class="dialog-footer">
+        <el-button size="small" @click="detailDialogVisible = false">关闭</el-button>
+        <el-button size="small" icon="el-icon-s-grid" @click="openSkuMatrix(selectedProduct)">生成SKU矩阵</el-button>
+        <el-button size="small" icon="el-icon-plus" @click="openSkuCreate(selectedProduct)">新增SKU</el-button>
+        <el-button size="small" type="primary" icon="el-icon-edit" @click="openProductEdit(selectedProduct)">编辑此商品</el-button>
       </div>
+    </el-dialog>
 
-      <div class="drawer-body" v-if="drawerMode === 'product-detail'">
-        <section class="drawer-card">
-          <h3>基础信息 <i class="el-icon-arrow-up" /></h3>
-          <dl>
-            <dt>商品编码</dt><dd>{{ selectedProduct.product_code }}</dd>
-            <dt>商品名称</dt><dd>{{ selectedProduct.product_name }}</dd>
-            <dt>分类</dt><dd>{{ selectedProduct.category ? selectedProduct.category.category_name : '-' }}</dd>
-            <dt>计量单位</dt><dd>{{ selectedProduct.unit ? selectedProduct.unit.unit_name : '-' }}</dd>
-            <dt>型号</dt><dd>{{ selectedProduct.model || '-' }}</dd>
-            <dt>状态</dt><dd><span class="pd-dot" :class="selectedProduct.status">{{ statusText(selectedProduct.status) }}</span></dd>
-            <dt>创建时间</dt><dd>{{ formatDate(selectedProduct.created_at) }}</dd>
-            <dt>更新时间</dt><dd>{{ formatDate(selectedProduct.updated_at) }}</dd>
-            <dt>描述</dt><dd>{{ selectedProduct.description || '适用于销售展示与 SKU 聚合管理' }}</dd>
-          </dl>
-        </section>
+    <!-- SKU 矩阵生成弹窗 -->
+    <el-dialog
+      :visible.sync="matrixDialogVisible"
+      title="生成 SKU 规格矩阵"
+      width="820px"
+      custom-class="sku-matrix-modal"
+      :close-on-click-modal="false"
+      destroy-on-close
+    >
+      <div v-if="selectedProduct.id" class="matrix-modal-content">
+        <div class="matrix-tips-box">
+          <i class="el-icon-info" />
+          <span>系统将依据下方配置的规格维度按笛卡尔积排列组合批量生成 SKU。生成的 SKU 将继承商品计量单位 <strong>{{ selectedProduct.unit && selectedProduct.unit.unit_name || '未维护' }}</strong>，初始状态为草稿。</span>
+        </div>
 
-        <section class="drawer-card">
-          <h3>关系结构 <i class="el-icon-arrow-up" /></h3>
-          <div class="tree-line">
-            <b>Product 商品</b>
-            <span>{{ selectedProduct.product_code }}　{{ selectedProduct.product_name }}</span>
+        <section class="matrix-block">
+          <div class="block-title-row">
+            <h5>规格维度定义</h5>
+            <el-button size="mini" type="primary" plain icon="el-icon-plus" @click="addSkuDimension">新增规格维度</el-button>
           </div>
-          <div class="tree-line child">
-            <b>SKU 规格</b>
-            <span v-for="sku in skuList(selectedProduct)" :key="sku.id">{{ sku.sku_code }}　{{ sku.spec_text || sku.sku_name }}</span>
-          </div>
-          <div class="tree-line child item">
-            <b>Item 物料（件）</b>
-            <span>共 {{ itemCount(selectedProduct) }} 个</span>
+          <div v-for="(dim, index) in skuMatrix.dimensions" :key="index" class="dimension-edit-row">
+            <span class="dim-num">维度 {{ index + 1 }}</span>
+            <el-input v-model="dim.name" size="small" placeholder="规格名称（如：颜色、尺码）" style="width: 180px;" />
+            <el-input v-model="dim.valuesText" size="small" placeholder="规格取值，用逗号分隔（如：哑光黑,亮光银,曜石蓝）" style="flex: 1;" />
+            <el-button type="text" class="danger-link" icon="el-icon-delete" @click="skuMatrix.dimensions.splice(index, 1)">删除</el-button>
           </div>
         </section>
 
-      </div>
-
-      <el-form v-else-if="drawerMode.indexOf('product-') === 0" ref="productForm" :model="productForm" :rules="productRules" label-position="top" size="small" class="drawer-body drawer-form">
-        <el-form-item label="商品编码" prop="product_code"><el-input v-model="productForm.product_code" :disabled="drawerMode==='product-edit'" /></el-form-item>
-        <el-form-item label="商品名称" prop="product_name"><el-input v-model="productForm.product_name" /></el-form-item>
-        <el-form-item label="商品类型" prop="product_type">
-          <el-select v-model="productForm.product_type" class="full"><el-option label="标准商品" value="standard" /><el-option label="套装商品" value="bundle" /></el-select>
-        </el-form-item>
-        <el-form-item label="分类"><el-select v-model="productForm.category_id" clearable class="full"><el-option v-for="c in categories" :key="c.id" :label="c.category_name" :value="c.id" /></el-select></el-form-item>
-        <el-form-item label="计量单位"><el-select v-model="productForm.unit_id" clearable class="full"><el-option v-for="u in units" :key="u.id" :label="u.unit_name" :value="u.id" /></el-select></el-form-item>
-        <el-form-item label="型号"><el-input v-model="productForm.model" /></el-form-item>
-        <el-form-item label="状态"><el-radio-group v-model="productForm.status"><el-radio label="enabled">启用</el-radio><el-radio label="disabled">停用</el-radio></el-radio-group></el-form-item>
-        <el-form-item label="描述"><el-input v-model="productForm.description" type="textarea" :rows="4" /></el-form-item>
-      </el-form>
-
-      <div v-else-if="drawerMode === 'sku-matrix'" class="drawer-body drawer-form matrix-body">
-        <section class="matrix-card">
-          <h3>规格维度</h3>
-          <p>用逗号分隔规格值，系统会按笛卡尔积生成 SKU。</p>
-          <div v-for="(dim,index) in skuMatrix.dimensions" :key="index" class="matrix-dim">
-            <el-input v-model="dim.name" size="small" placeholder="规格名，如颜色" />
-            <el-input v-model="dim.valuesText" size="small" placeholder="规格值，如黑,白,红" />
-            <el-button type="text" class="danger-link" @click="skuMatrix.dimensions.splice(index,1)">删除</el-button>
-          </div>
-          <el-button size="mini" icon="el-icon-plus" @click="addSkuDimension">新增规格维度</el-button>
-        </section>
-        <section class="matrix-card">
-          <h3>生成规则</h3>
-          <el-form label-width="82px" size="small">
-            <el-form-item label="编码前缀"><el-input v-model="skuMatrix.codePrefix" /></el-form-item>
-            <el-form-item label="销售价"><el-input-number v-model="skuMatrix.sale_price" :min="0" :precision="2" controls-position="right" /></el-form-item>
-            <el-form-item label="销售单位"><el-tag size="small" :type="selectedProduct.unit_id ? 'success' : 'danger'">{{ selectedProduct.unit && selectedProduct.unit.unit_name || '请先维护商品计量单位' }}</el-tag><span class="matrix-hint">生成SKU统一继承商品计量单位</span></el-form-item>
-            <el-form-item label="生成状态"><el-tag size="small" type="warning">统一保存为草稿</el-tag><span class="matrix-hint">实物SKU需在资料补全页绑定默认Item后再启用</span></el-form-item>
+        <section class="matrix-block">
+          <h5>生成规则</h5>
+          <el-form label-width="90px" size="small" class="matrix-rules-form" inline>
+            <el-form-item label="编码前缀">
+              <el-input v-model="skuMatrix.codePrefix" placeholder="如 SKU" style="width: 160px;" />
+            </el-form-item>
+            <el-form-item label="默认售价">
+              <el-input-number v-model="skuMatrix.sale_price" :min="0" :precision="2" controls-position="right" style="width: 140px;" />
+            </el-form-item>
           </el-form>
         </section>
-        <section class="matrix-card">
-          <h3>矩阵预览（{{ skuMatrixRows.length }} 个 SKU）</h3>
-          <el-table :data="skuMatrixRows" size="mini" border max-height="260" empty-text="请先维护规格维度和值">
-            <el-table-column prop="sku_code" label="SKU编码" min-width="118" />
-            <el-table-column prop="sku_name" label="SKU名称" min-width="130" show-overflow-tooltip />
-            <el-table-column prop="spec_text" label="规格组合" min-width="120" show-overflow-tooltip />
-            <el-table-column prop="sale_price" label="销售价" width="76" />
-            <el-table-column label="生成状态" width="86" fixed="right">
+
+        <section class="matrix-block">
+          <h5>组合实时预览（{{ skuMatrixRows.length }} 个 SKU）</h5>
+          <el-table :data="skuMatrixRows" size="mini" border max-height="240" empty-text="请在上方输入规格维度和值以实时预览笛卡尔积组合">
+            <el-table-column prop="sku_code" label="SKU编码预览" min-width="140" />
+            <el-table-column prop="sku_name" label="SKU名称" min-width="160" show-overflow-tooltip />
+            <el-table-column prop="spec_model" label="规格组合" min-width="140" show-overflow-tooltip />
+            <el-table-column prop="sale_price" label="销售价" width="90" align="right">
+              <template slot-scope="{ row }">¥{{ Number(row.sale_price || 0).toFixed(2) }}</template>
+            </el-table-column>
+            <el-table-column label="状态" width="90" align="center">
               <template slot-scope="{ row }">
-                <el-tag size="mini" :type="row.can_generate ? 'success' : 'warning'" effect="plain">{{ row.preview_status }}</el-tag>
+                <el-tag size="mini" :type="row.can_generate ? 'success' : 'warning'" effect="plain">
+                  {{ row.preview_status }}
+                </el-tag>
               </template>
             </el-table-column>
           </el-table>
         </section>
       </div>
-
-      <el-form v-else ref="skuForm" :model="skuForm" :rules="skuRules" label-position="top" size="small" class="drawer-body drawer-form">
-        <el-form-item label="所属商品"><el-input :value="selectedProduct.product_name" disabled /></el-form-item>
-        <el-form-item label="SKU编码" prop="sku_code"><el-input v-model="skuForm.sku_code" disabled placeholder="正在预生成"><template slot="append">系统预生成</template></el-input></el-form-item>
-        <el-form-item label="SKU名称" prop="sku_name"><el-input v-model="skuForm.sku_name" /></el-form-item>
-        <el-form-item label="规格型号"><el-input v-model="skuForm.spec_text" /></el-form-item>
-        <el-form-item label="销售单位"><el-select v-model="skuForm.sales_unit_id" class="full" :disabled="skuForm.sales_unit_locked"><el-option v-for="unit in units" :key="unit.id" :label="`${unit.unit_code || ''} ${unit.unit_name}`.trim()" :value="unit.id" /></el-select><small v-if="skuForm.sales_unit_locked" class="field-tip">已有已确认订单，销售单位不可修改</small></el-form-item>
-        <el-form-item label="销售价格"><el-input-number v-model="skuForm.sale_price" :min="0" :precision="2" controls-position="right" class="full" /></el-form-item>
-        <el-form-item label="SKU图片">
-          <div class="sku-image-editor">
-            <el-image v-if="skuForm.image" :src="skuImageUrl" fit="cover" :preview-src-list="[skuImageUrl]" />
-            <div v-else class="sku-image-empty"><i class="el-icon-picture-outline" /><span>暂无图片</span></div>
-            <div><el-upload action="#" :show-file-list="false" accept="image/jpeg,image/png,image/webp,image/gif" :http-request="uploadSkuBasicImage"><el-button size="mini" icon="el-icon-upload2">{{ skuForm.image ? '替换图片' : '上传图片' }}</el-button></el-upload><el-button v-if="skuForm.image" type="text" size="mini" class="danger-link" @click="skuForm.image=''">清除图片</el-button><p class="field-tip">上传至 OSS，最大 5MB</p></div>
-          </div>
-        </el-form-item>
-      </el-form>
-
-      <div class="drawer-footer">
-        <el-button size="small" @click="drawerVisible=false">取消</el-button>
-        <template v-if="drawerMode === 'product-detail'">
-          <el-button size="small" @click="openProductEdit(selectedProduct)">编辑商品</el-button>
-          <el-button size="small" @click="openSkuCreate(selectedProduct)">单独新增SKU</el-button>
-          <el-button size="small" type="success" @click="openSkuMatrix(selectedProduct)">生成SKU矩阵</el-button>
-        </template>
-        <el-button v-else size="small" type="success" :loading="saving" @click="saveDrawer">{{ drawerMode === 'sku-matrix' ? '批量生成' : '保存' }}</el-button>
+      <div slot="footer" class="dialog-footer">
+        <el-button size="small" @click="matrixDialogVisible = false">取消</el-button>
+        <el-button size="small" type="success" :loading="saving" :disabled="!skuMatrixRows.length" icon="el-icon-check" @click="saveSkuMatrix">
+          确认批量生成（{{ creatableMatrixCount }} 个）
+        </el-button>
       </div>
-    </aside>
-  </section>
+    </el-dialog>
+  </div>
 </template>
 
 <script>
-import { listEntity, getEntity, saveEntity, disableEntity, enableEntity, deleteEntity, uploadSkuImage } from '../../../api/erp/master'
+import { saveProductSkuMatrix } from '../../../api/erp/master'
+import { listEntity, saveEntity, disableEntity, enableEntity, deleteEntity } from '../../../api/erp/master'
 import { reserveFreshDocumentNumber } from '../../../utils/documentNumberReservation'
-import { legacyMediaUrl } from '../../../utils/legacyMedia'
-
-const emptyProduct = () => ({ id: null, product_code: '', product_name: '', product_type: 'standard', category_id: null, unit_id: null, model: '', description: '', status: 'enabled' })
-const emptySku = () => ({ id: null, product_id: null, sku_code: '', sku_name: '', spec_text: '', sale_price: 0, reference_cost: 0, product_structure_type: 'single', production_policy: 'stock', fulfillment_type: 'physical', is_customizable: false, is_need_production: false, is_need_bom: false, is_sale_item: true, status: 'enabled' })
 
 export default {
   name: 'ProductList',
   data() {
     return {
-      loading: false, saving: false, drawerVisible: false, drawerMode: 'product-detail',
-      products: [], categories: [], units: [], skuPages: {},
-      selectedProduct: {}, selectedSku: {}, expandedKeys: [],
-      filters: { keyword: '', category_id: '', status: '', page: 1, per_page: 10 }, total: 0,
-      productForm: emptyProduct(), skuForm: emptySku(),
-      skuMatrix: { codePrefix: '', sale_price: 0, status: 'enabled', dimensions: [] },
-      productRules: { product_code: [{ required: true, message: '请输入商品编码', trigger: 'blur' }], product_name: [{ required: true, message: '请输入商品名称', trigger: 'blur' }], product_type: [{ required: true, message: '请选择商品类型', trigger: 'change' }] },
-      skuRules: { sku_code: [{ required: true, message: '请输入 SKU 编码', trigger: 'blur' }], sku_name: [{ required: true, message: '请输入 SKU 名称', trigger: 'blur' }] }
+      loading: false,
+      saving: false,
+      detailDialogVisible: false,
+      matrixDialogVisible: false,
+      products: [],
+      categories: [],
+      units: [],
+      skuPages: {},
+      selectedProduct: {},
+      expandedKeys: [],
+      filters: { keyword: '', category_id: '', status: '', page: 1, per_page: 10 },
+      total: 0,
+      stats: {},
+      skuMatrix: { codePrefix: '', sale_price: 0, status: 'enabled', dimensions: [] }
     }
   },
   computed: {
-    drawerTitle() {
-      return { 'product-detail': this.selectedProduct.product_name || '商品详情', 'product-create': '新增商品', 'product-edit': '编辑商品', 'sku-create': '新增 SKU', 'sku-edit': '编辑 SKU', 'sku-matrix': 'SKU矩阵生成' }[this.drawerMode] || '商品详情'
+    enabledCount () {
+      return Number(this.stats.enabled || 0)
     },
-    skuImageUrl() { return legacyMediaUrl(this.skuForm.image) },
-    filteredProducts() { return this.products },
-    pagedProducts() { return this.products },
+    disabledCount () {
+      return Number(this.stats.disabled || 0)
+    },
+    totalSkusCount() {
+      return this.products.reduce((acc, cur) => acc + Number(cur.skus_count || 0), 0)
+    },
+    creatableMatrixCount() {
+      return this.skuMatrixRows.filter(r => r.can_generate).length
+    },
     skuMatrixRows() {
-      if (this.drawerMode !== 'sku-matrix') return []
+      if (!this.matrixDialogVisible) return []
       const dims = this.skuMatrix.dimensions
         .map(d => ({ name: d.name.trim(), values: d.valuesText.split(/[,，]/).map(v => v.trim()).filter(Boolean) }))
         .filter(d => d.name && d.values.length)
@@ -298,95 +525,117 @@ export default {
   },
   async created() {
     await this.fetchAll()
-    await this.openRequestedSkuEditor()
-  },
-  watch: {
-    filteredProducts(list) {
-      if (!list.length) {
-        this.selectedProduct = {}
-        this.selectedSku = {}
-        this.expandedKeys = []
-        if (['product-detail', 'sku-matrix', 'sku-edit', 'sku-create'].includes(this.drawerMode)) this.drawerVisible = false
-        return
-      }
-      if (this.selectedProduct.id && !list.some(p => Number(p.id) === Number(this.selectedProduct.id))) {
-        this.selectedProduct = {}
-        this.selectedSku = {}
-        this.expandedKeys = []
-        if (['product-detail', 'sku-matrix', 'sku-edit', 'sku-create'].includes(this.drawerMode)) this.drawerVisible = false
-      }
-    }
   },
   methods: {
-    async openRequestedSkuEditor() {
-      const skuId = Number(this.$route.query.edit_sku || 0)
-      if (!skuId) return
-      try {
-        const skuResponse = await getEntity('skus', skuId)
-        const sku = skuResponse.data
-        let product = this.products.find(item => Number(item.id) === Number(sku.product_id)) || sku.product
-        if (!product && sku.product_id) {
-          const productResponse = await getEntity('products', sku.product_id)
-          product = productResponse.data
-        }
-        if (!product) throw new Error('SKU 所属商品不存在')
-        this.openSkuEdit(product, sku)
-        this.$router.replace('/master/products')
-      } catch (e) {
-        this.$message.error(e.userMessage || e.message || 'SKU 基础信息加载失败')
-        this.$router.replace('/master/products')
-      }
-    },
     async fetchAll() {
       this.loading = true
       try {
         const [products, categories, units] = await Promise.all([
-          listEntity('products', { ...this.filters }),
+          listEntity('products', { ...this.filters, include_stats: 1 }),
           listEntity('categories', { per_page: 100, category_type: 'product' }),
           listEntity('units', { per_page: 100 })
         ])
         this.products = products.data.data || []
         this.total = products.data.total || 0
+        this.stats = products.data.stats || {}
         this.categories = categories.data.data || []
         this.units = units.data.data || []
-        if (!this.selectedProduct.id && this.products.length) {
-          this.expandedKeys = [this.products[0].id]
-          this.openProductDetail(this.products[0])
-        }
+
         for (const expandedId of this.expandedKeys) {
           const expandedProduct = this.products.find(item => Number(item.id) === Number(expandedId))
           if (expandedProduct) await this.loadSkuPage(expandedProduct, this.skuPage(expandedProduct).page)
         }
-        if (!this.products.length) { this.selectedProduct = {}; this.selectedSku = {}; this.expandedKeys = []; this.drawerVisible = false }
-      } catch (e) { this.$message.error(e.userMessage || '商品数据加载失败') } finally { this.loading = false }
+      } catch (e) {
+        this.$message.error(e.userMessage || '商品数据加载失败')
+      } finally {
+        this.loading = false
+      }
     },
-    applyFilters() { this.filters.page = 1; this.fetchAll() },
-    changePage(page) { this.filters.page = page; this.fetchAll() },
-    changePageSize(size) { this.filters.per_page = size; this.filters.page = 1; this.fetchAll() },
-    skuPage(row) { return this.skuPages[row.id] || { rows: [], total: Number(row.skus_count || 0), page: 1, per_page: 5, loading: false } },
-    skuList(row) { return this.skuPage(row).rows },
-    skuTotal(row) { const page = this.skuPages[row.id]; return page ? Number(page.total || 0) : Number(row.skus_count || 0) },
+    applyFilters() {
+      this.filters.page = 1
+      this.fetchAll()
+    },
+    resetFilters() {
+      this.filters = { keyword: '', category_id: '', status: '', page: 1, per_page: this.filters.per_page }
+      this.fetchAll()
+    },
+    changePage(page) {
+      this.filters.page = page
+      this.fetchAll()
+    },
+    changePageSize(size) {
+      this.filters.per_page = size
+      this.filters.page = 1
+      this.fetchAll()
+    },
+    skuPage(row) {
+      return this.skuPages[row.id] || { rows: [], total: Number(row.skus_count || 0), page: 1, per_page: 5, loading: false }
+    },
+    skuList(row) {
+      return this.skuPage(row).rows
+    },
+    skuTotal(row) {
+      const page = this.skuPages[row.id]
+      return page ? Number(page.total || 0) : Number(row.skus_count || 0)
+    },
     async loadSkuPage(row, page = 1, perPage = null) {
       const current = this.skuPage(row)
       const state = { ...current, page, per_page: perPage || current.per_page || 5, loading: true }
       this.$set(this.skuPages, row.id, state)
       try {
         const response = await listEntity('skus', { product_id: row.id, page: state.page, per_page: state.per_page })
-        this.$set(this.skuPages, row.id, { rows: response.data.data || [], total: Number(response.data.total || 0), page: Number(response.data.current_page || state.page), per_page: Number(response.data.per_page || state.per_page), loading: false })
+        this.$set(this.skuPages, row.id, {
+          rows: response.data.data || [],
+          total: Number(response.data.total || 0),
+          page: Number(response.data.current_page || state.page),
+          per_page: Number(response.data.per_page || state.per_page),
+          loading: false
+        })
       } catch (e) {
         this.$set(this.skuPages, row.id, { ...state, loading: false })
         this.$message.error(e.userMessage || 'SKU 列表加载失败')
       }
     },
-    changeSkuPage(row, page) { this.loadSkuPage(row, page) },
-    changeSkuPageSize(row, size) { this.loadSkuPage(row, 1, size) },
-    relationList(sku) { return (sku.item_relations || sku.itemRelations || []).filter(relation => relation.status === 'active') },
-    itemCount(product) { return this.skuList(product).reduce((n, sku) => n + this.relationList(sku).length, 0) },
-    onExpandChange(row, expanded) { this.expandedKeys = expanded.map(item => item.id); if (expanded.some(item => Number(item.id) === Number(row.id))) this.loadSkuPage(row, this.skuPage(row).page); this.openProductDetail(row) },
-    openProductDetail(row) { this.selectedProduct = { ...row }; this.drawerMode = 'product-detail'; this.drawerVisible = true },
-    openProductCreate() { this.$router.push('/master/products/new') },
-    openProductEdit(row) { this.$router.push(`/master/products/${row.id}/edit`) },
-    openSkuCreate(product) { this.$router.push({ path: '/master/skus/new', query: { product_id: product.id } }) },
+    changeSkuPage(row, page) {
+      this.loadSkuPage(row, page)
+    },
+    changeSkuPageSize(row, size) {
+      this.loadSkuPage(row, 1, size)
+    },
+    relationList(sku) {
+      return (sku.item_relations || sku.itemRelations || []).filter(relation => relation.status === 'active')
+    },
+    onExpandChange(row, expanded) {
+      this.expandedKeys = expanded.map(item => item.id)
+      if (expanded.some(item => Number(item.id) === Number(row.id))) {
+        this.loadSkuPage(row, this.skuPage(row).page)
+      }
+    },
+    toggleRowExpand(row) {
+      const isExpanded = this.expandedKeys.includes(row.id)
+      if (isExpanded) {
+        this.expandedKeys = this.expandedKeys.filter(id => id !== row.id)
+      } else {
+        this.expandedKeys.push(row.id)
+        this.loadSkuPage(row, this.skuPage(row).page)
+      }
+    },
+    openProductDetail(row) {
+      this.selectedProduct = { ...row }
+      this.detailDialogVisible = true
+      this.loadSkuPage(row, 1)
+    },
+    openProductCreate() {
+      this.$router.push('/master/products/new')
+    },
+    openProductEdit(row) {
+      this.detailDialogVisible = false
+      this.$router.push(`/master/products/${row.id}/edit`)
+    },
+    openSkuCreate(product) {
+      this.detailDialogVisible = false
+      this.$router.push({ path: '/master/skus/new', query: { product_id: product.id, from: 'product' } })
+    },
     openSkuMatrix(product) {
       this.selectedProduct = { ...product }
       this.skuMatrix = {
@@ -394,56 +643,27 @@ export default {
         sale_price: null,
         status: 'draft',
         dimensions: [
-          { name: '', valuesText: '' }
+          { name: '规格', valuesText: '' }
         ]
       }
-      this.drawerMode = 'sku-matrix'
-      this.drawerVisible = true
+      this.matrixDialogVisible = true
     },
-    addSkuDimension() { this.skuMatrix.dimensions.push({ name: '', valuesText: '' }) },
-    openSkuDetail(product, sku) { this.$router.push(`/master/skus/${sku.id}`) },
-    openSkuEdit(product, sku) {
-      this.selectedProduct = { ...product }
-      this.selectedSku = { ...sku }
-      if (sku.sales_unit && !this.units.some(unit => Number(unit.id) === Number(sku.sales_unit.id))) this.units.push(sku.sales_unit)
-      this.skuForm = { ...emptySku(), ...sku, product_id: product.id }
-      this.drawerMode = 'sku-edit'
-      this.drawerVisible = true
-      this.$nextTick(() => this.$refs.skuForm && this.$refs.skuForm.clearValidate())
+    addSkuDimension() {
+      this.skuMatrix.dimensions.push({ name: '', valuesText: '' })
     },
-    async uploadSkuBasicImage(option) {
-      try {
-        const data = new FormData()
-        data.append('image', option.file)
-        const response = await uploadSkuImage(data)
-        this.skuForm.image = response.data.data.url
-        option.onSuccess(response.data)
-        this.$message.success('SKU 图片上传成功，保存后生效')
-      } catch (e) {
-        option.onError(e)
-        this.$message.error(e.userMessage || 'SKU 图片上传失败')
-      }
+    openSkuDetail(sku) {
+      this.detailDialogVisible = false
+      this.$router.push({ path: `/master/skus/${sku.id}`, query: { from: 'product' } })
     },
-    saveDrawer() {
-      if (this.drawerMode.indexOf('product-') === 0) return this.saveProduct()
-      if (this.drawerMode === 'sku-matrix') return this.saveSkuMatrix()
-      return this.saveSku()
+    openSkuEdit(sku) {
+      this.detailDialogVisible = false
+      this.$router.push({ path: `/master/skus/${sku.id}/edit`, query: { from: 'product' } })
     },
-    async saveProduct() {
-      this.$refs.productForm.validate(async ok => {
-        if (!ok) return
-        this.saving = true
-        try { await saveEntity('products', this.productForm); this.$message.success('商品保存成功'); await this.fetchAll(); this.openProductDetail(this.products.find(p => p.product_code === this.productForm.product_code) || this.selectedProduct) } catch (e) { this.$message.error(e.userMessage || '商品保存失败') } finally { this.saving = false }
-      })
-    },
-    async saveSku() {
-      this.$refs.skuForm.validate(async ok => {
-        if (!ok) return
-        this.saving = true
-        try { await saveEntity('skus', { ...this.skuForm }); this.$message.success('SKU 保存成功'); await this.fetchAll(); const p = this.products.find(x => x.id === this.skuForm.product_id); if (p) this.openProductDetail(p) } catch (e) { this.$message.error(e.userMessage || 'SKU 保存失败') } finally { this.saving = false }
-      })
+    onSkuRowClick(row, sku) {
+      this.openSkuDetail(sku)
     },
     async saveSkuMatrix() {
+      if (this.saving) return
       const rows = this.skuMatrixRows
       if (!rows.length) return this.$message.error('请先维护规格维度和值')
       if (!this.selectedProduct.unit_id) return this.$message.error('请先在商品档案维护计量单位，SKU矩阵将统一继承该单位')
@@ -452,20 +672,20 @@ export default {
       if (!creatableRows.length) return this.$message.warning('没有可生成的 SKU，预览中的组合均已存在或重复')
       this.saving = true
       try {
+        const productId = this.selectedProduct.id
+        const matrix = []
         for (const row of creatableRows) {
-          const { can_generate: canGenerate, preview_status: previewStatus, ...payload } = row
-          const reservation = await reserveFreshDocumentNumber('sku', `/master/products/${this.selectedProduct.id}#sku-matrix`)
-          await saveEntity('skus', {
-            ...payload,
-            sku_code: reservation.document_no,
-            reservation_token: reservation.reservation_token,
-            creation_session_id: reservation.creation_session_id
-          })
+          const reservation = await reserveFreshDocumentNumber('sku', `/master/products/${productId}#sku-matrix`)
+          matrix.push({ sku_name: row.sku_name, spec_text: row.spec_model, sale_price: row.sale_price,
+            sku_code: reservation.document_no, reservation_token: reservation.reservation_token,
+            creation_session_id: reservation.creation_session_id })
         }
+        await saveProductSkuMatrix(productId, matrix)
         this.$message.success(`已生成 ${creatableRows.length} 个 SKU，跳过 ${rows.length - creatableRows.length} 个已存在/重复项`)
+        this.matrixDialogVisible = false
         await this.fetchAll()
         const p = this.products.find(x => x.id === this.selectedProduct.id)
-        if (p) this.openProductDetail(p)
+        if (p) this.loadSkuPage(p, 1)
       } catch (e) {
         this.$message.error(e.userMessage || 'SKU矩阵生成失败')
       } finally {
@@ -476,22 +696,60 @@ export default {
       const map = { 黑: 'BLK', 白: 'WHT', 红: 'RED', 蓝: 'BLU', 绿: 'GRN', 黄: 'YLW' }
       return map[value] || String(value).replace(/\s+/g, '').slice(0, 8)
     },
-    normalSpec(value) { return String(value || '').replace(/\s+/g, '').toLowerCase() },
-    async toggleProductStatus(row) { const enabling=row.status!=='enabled'; try { await this.$confirm(enabling?'确认启用该商品？':'确认停用该商品？', enabling?'启用确认':'停用确认',{type:enabling?'success':'warning'}); await (enabling?enableEntity:disableEntity)('products',row.id); await this.fetchAll(); this.$message.success(enabling?'商品已启用':'商品已停用') } catch(e) { if(e!=='cancel')this.$message.error(e.userMessage||(enabling?'启用失败':'停用失败')) } },
-    async toggleSkuStatus(row) { const enabling=row.status!=='enabled'; try { await this.$confirm(enabling?'确认启用该 SKU？':'确认停用该 SKU？', enabling?'启用确认':'停用确认',{type:enabling?'success':'warning'}); await (enabling?enableEntity:disableEntity)('skus',row.id); await this.fetchAll(); this.$message.success(enabling?'SKU 已启用':'SKU 已停用') } catch(e) { if(e!=='cancel')this.$message.error(e.userMessage||(enabling?'启用失败':'停用失败')) } },
+    normalSpec(value) {
+      return String(value || '').replace(/\s+/g, '').toLowerCase()
+    },
+    async toggleProductStatus(row) {
+      const enabling = row.status !== 'enabled'
+      try {
+        await this.$confirm(
+          enabling ? '确认启用该商品？' : '确认停用该商品？',
+          enabling ? '启用确认' : '停用确认',
+          { type: enabling ? 'success' : 'warning' }
+        )
+        await (enabling ? enableEntity : disableEntity)('products', row.id)
+        await this.fetchAll()
+        this.$message.success(enabling ? '商品已启用' : '商品已停用')
+      } catch (e) {
+        if (e !== 'cancel') this.$message.error(e.userMessage || (enabling ? '启用失败' : '停用失败'))
+      }
+    },
+    async toggleSkuStatus(row) {
+      const enabling = row.status !== 'enabled'
+      try {
+        await this.$confirm(
+          enabling ? '确认启用该 SKU？' : '确认停用该 SKU？',
+          enabling ? '启用确认' : '停用确认',
+          { type: enabling ? 'success' : 'warning' }
+        )
+        await (enabling ? enableEntity : disableEntity)('skus', row.id)
+        await this.fetchAll()
+        this.$message.success(enabling ? 'SKU 已启用' : 'SKU 已停用')
+      } catch (e) {
+        if (e !== 'cancel') this.$message.error(e.userMessage || (enabling ? '启用失败' : '停用失败'))
+      }
+    },
     async deleteSku(row) {
       try {
-        await this.$confirm(`\u786e\u8ba4\u5220\u9664 SKU\u300c${row.sku_code}\u300d\uff1f\u4ec5\u672a\u542f\u7528\u4e14\u4ece\u672a\u88ab\u8ba2\u5355\u3001BOM\u3001\u5b9a\u5236\u6216\u9ed8\u8ba4 Item \u5173\u7cfb\u5f15\u7528\u7684 SKU \u53ef\u4ee5\u5220\u9664\u3002`, '\u5220\u9664\u786e\u8ba4', { type: 'warning', confirmButtonText: '\u786e\u8ba4\u5220\u9664' })
+        await this.$confirm(
+          `确认删除 SKU「${row.sku_code}」？仅未启用且从未被订单、BOM、定制或默认 Item 关系引用的 SKU 可以删除。`,
+          '删除确认',
+          { type: 'warning', confirmButtonText: '确认删除' }
+        )
         await deleteEntity('skus', row.id)
-        this.$message.success('\u0053\u004b\u0055 \u5df2\u5220\u9664')
+        this.$message.success('SKU 已删除')
         await this.fetchAll()
       } catch (e) {
-        if (e !== 'cancel' && e !== 'close') this.$message.error(e.userMessage || '\u0053\u004b\u0055 \u5220\u9664\u5931\u8d25')
+        if (e !== 'cancel' && e !== 'close') this.$message.error(e.userMessage || 'SKU 删除失败')
       }
     },
     async deleteProduct(row) {
       try {
-        await this.$confirm(`确认删除商品「${row.product_code}」？只有停用且没有 SKU、订单或 BOM 引用的商品可以删除。`, '删除确认', { type: 'warning', confirmButtonText: '确认删除' })
+        await this.$confirm(
+          `确认删除商品「${row.product_code}」？只有停用且没有 SKU、订单或 BOM 引用的商品可以删除。`,
+          '删除确认',
+          { type: 'warning', confirmButtonText: '确认删除' }
+        )
         await deleteEntity('products', row.id)
         this.$message.success('商品已删除')
         await this.fetchAll()
@@ -499,16 +757,857 @@ export default {
         if (e !== 'cancel' && e !== 'close') this.$message.error(e.userMessage || '商品删除失败')
       }
     },
-    disableProduct(row) { return this.toggleProductStatus(row) },
-    disableSku(row) { return this.toggleSkuStatus(row) },
-    rowClass({ row }) { return row.id === this.selectedProduct.id ? 'selected-row' : '' },
-    statusText(status) { return ({ enabled: '启用', disabled: '停用', draft: '草稿' })[status] || status },
-    formatDate(v) { return v ? String(v).replace('T', ' ').slice(0, 16) : '-' }
+    disableProduct(row) {
+      return this.toggleProductStatus(row)
+    },
+    disableSku(row) {
+      return this.toggleSkuStatus(row)
+    },
+    statusText(status) {
+      return ({ enabled: '启用', disabled: '停用', draft: '草稿' })[status] || status
+    },
+    formatDate(v) {
+      return v ? String(v).replace('T', ' ').slice(0, 16) : '-'
+    }
   }
 }
 </script>
 
 <style scoped>
-.pd-page{position:relative;min-height:calc(100vh - 52px);background:#f7f8f9;min-width:960px}.pd-workspace{padding:16px 18px;transition:padding-right .18s;min-width:900px}.pd-page.drawer-open .pd-workspace{padding-right:374px}.pd-head{height:64px;display:flex;align-items:flex-start;justify-content:space-between}.pd-head h1{margin:0;font-size:17px}.pd-head h1 em{margin-left:7px;color:#6c7882;font-style:normal;font-size:12px;font-weight:400}.pd-head p{margin:4px 0 0;color:#77828c;font-size:10px}.pd-actions{display:flex;gap:10px}.pd-filter{height:58px;display:flex;align-items:center;gap:12px}.pd-filter .el-input{width:260px}.pd-filter .el-select{width:170px}.pd-table-card{overflow:hidden;background:#fff;border:1px solid #dfe5e9;border-radius:4px}.pd-pagination{height:46px;padding:0 12px;display:flex;align-items:center;justify-content:flex-end;gap:22px;color:#69747d}.sku-expand{padding:10px;background:#fff}.sku-expand-head{height:34px;display:flex;align-items:center;justify-content:space-between}.sku-expand-head strong{font-size:12px}.pd-dot{display:inline-flex;align-items:center;gap:6px}.pd-dot:before{content:'';width:6px;height:6px;border-radius:50%;background:#07883f}.pd-dot.disabled:before{background:#9aa3ac}::v-deep .selected-row td{background:#edf8f1!important}::v-deep .selected-row td:first-child{box-shadow:inset 3px 0 0 #07883f}.pd-drawer{position:fixed;top:52px;right:0;bottom:0;z-index:9;width:356px;background:#fff;border-left:1px solid #dfe5e9;box-shadow:-8px 0 24px rgba(25,43,58,.08)}.drawer-head{height:58px;padding:0 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #e3e8ec}.drawer-head h2{margin:0;font-size:16px}.drawer-head i{cursor:pointer;color:#65717b}.drawer-body{height:calc(100% - 122px);padding:10px 10px 84px;overflow:auto}.drawer-card,.matrix-card{margin-bottom:8px;padding:12px;border:1px solid #e1e7eb;border-radius:4px;background:#fff}.drawer-card h3,.matrix-card h3{margin:0 0 10px;display:flex;justify-content:space-between;font-size:12px}.matrix-card p{margin:0 0 10px;color:#737d87;font-size:11px}.matrix-dim{display:grid;grid-template-columns:76px 1fr 32px;gap:8px;margin-bottom:8px;align-items:center}.matrix-body .el-input-number{width:100%}.drawer-card dl{display:grid;grid-template-columns:86px 1fr;gap:9px 10px;margin:0}.drawer-card dt{color:#76818b}.drawer-card dd{margin:0;color:#2d3842}.tree-line{position:relative;padding:0 0 10px 20px;border-left:1px solid #bfc9d2}.tree-line:before{content:'';position:absolute;left:-4px;top:3px;width:7px;height:7px;border-radius:50%;background:#26313b}.tree-line b{display:block}.tree-line span{display:block;margin-top:5px;color:#58636d}.tree-line.child{margin-left:14px}.tree-line.item:before{background:#07883f}.drawer-form{padding:16px}.drawer-form .full{width:100%}.drawer-footer{position:absolute;left:0;right:0;bottom:0;height:64px;padding:12px;display:flex;gap:10px;background:#fff;border-top:1px solid #e3e8ec}.drawer-footer .el-button{flex:1}.danger-link{color:#e04444!important}.success-link{color:#07883f!important}@media(max-width:1180px){.pd-page.drawer-open .pd-workspace{padding-right:18px}.pd-drawer{width:380px}}
-.sku-pagination{min-height:42px;padding:8px 4px 0;display:flex;align-items:center;justify-content:flex-end;gap:16px;color:#68737d;font-size:12px}::v-deep .sku-expand .el-table__body tr{cursor:pointer}.sku-image-editor{display:flex;gap:12px;align-items:center}.sku-image-editor>.el-image,.sku-image-empty{width:74px;height:74px;border:1px solid #dfe6ea;border-radius:4px}.sku-image-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:#9aa4ad;background:#f7f9fa}.sku-image-empty i{font-size:22px}.field-tip{display:block;margin:5px 0 0;color:#8a959e;font-size:11px}
+.product-page-container {
+  padding: 16px 20px;
+  background: #f8fafc;
+  min-height: calc(100vh - 90px);
+  box-sizing: border-box;
+}
+
+/* 页面头部 */
+.page-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  margin-bottom: 14px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+}
+
+.head-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.head-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  background: #f0fdf4;
+  color: #008b4b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.head-title-wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.head-tag {
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.btn-refresh {
+  border-color: #cbd5e1 !important;
+  color: #475569 !important;
+}
+
+.btn-refresh:hover {
+  border-color: #008b4b !important;
+  color: #008b4b !important;
+}
+
+.btn-import {
+  border-color: #cbd5e1 !important;
+  color: #475569 !important;
+}
+
+.btn-import:hover {
+  border-color: #008b4b !important;
+  color: #008b4b !important;
+}
+
+.btn-theme-create {
+  background: #008b4b !important;
+  border-color: #008b4b !important;
+  color: #ffffff !important;
+  font-weight: 500;
+}
+
+.btn-theme-create:hover {
+  background: #00763f !important;
+  border-color: #00763f !important;
+}
+
+/* 概览统计指标卡 */
+.metric-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.metric-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.metric-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+  border-color: #cbd5e1;
+}
+
+.metric-icon-box {
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.metric-all .metric-icon-box { background: #eaf7ef; color: #008b4b; }
+.metric-enabled .metric-icon-box { background: #f0fdf4; color: #059669; }
+.metric-disabled .metric-icon-box { background: #f1f5f9; color: #64748b; }
+.metric-skus .metric-icon-box { background: #f0fdfa; color: #0f766e; }
+
+.metric-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.metric-label {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.metric-val {
+  font-size: 22px;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.2;
+}
+
+/* 主数据卡片容器 */
+.table-container-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+  overflow: hidden;
+}
+
+/* 筛选工具栏 */
+.filter-toolbar {
+  padding: 14px 18px;
+  background: #ffffff;
+  border-bottom: 1px solid #f1f5f9;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.filter-fields {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.filter-input-search {
+  width: 280px;
+}
+
+.filter-select {
+  width: 170px;
+}
+
+.filter-select-sm {
+  width: 120px;
+}
+
+.filter-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 表格主体 */
+.main-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.custom-product-table {
+  width: 100%;
+}
+
+.font-mono {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.3px;
+}
+
+.product-code-link {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  font-variant-numeric: tabular-nums;
+  color: #00763f;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  transition: all 0.15s ease;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.product-code-link:hover {
+  background: #dcfce7;
+  border-color: #86efac;
+  color: #00562e;
+  box-shadow: 0 1px 4px rgba(0, 118, 63, 0.15);
+}
+
+.product-code-link i {
+  font-size: 13px;
+  color: #008b4b;
+  flex-shrink: 0;
+}
+
+.product-name-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.p-name {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.p-model {
+  font-size: 11px;
+  color: #64748b;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.category-tag {
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.unit-badge {
+  background: #f1f5f9;
+  color: #475569;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.sku-count-chip {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.2s;
+}
+
+.sku-count-chip:hover {
+  background: #dcfce7;
+  border-color: #86efac;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.status-pill:before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #008b4b;
+}
+
+.status-pill.disabled:before {
+  background: #94a3b8;
+}
+
+.status-pill.draft:before {
+  background: #f59e0b;
+}
+
+.time-text {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.text-muted {
+  color: #94a3b8;
+}
+
+/* 嵌套 SKU 面板 */
+.sku-nested-panel {
+  padding: 14px 16px;
+  background: #f8fafc;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  margin: 6px 10px;
+}
+
+.nested-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.nested-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #0f172a;
+}
+
+.icon-chip {
+  width: 22px;
+  height: 22px;
+  background: #e2e8f0;
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  color: #475569;
+}
+
+.sub-hint {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-left: 8px;
+}
+
+.nested-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sku-inner-table {
+  background: #ffffff;
+}
+
+.sku-code-badge {
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.sku-spec-text {
+  color: #334155;
+  font-size: 12px;
+}
+
+.price-val {
+  color: #b91c1c;
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.nested-pagination {
+  margin-top: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: #64748b;
+}
+
+/* 表格底部分页栏 */
+.table-pagination-footer {
+  padding: 12px 18px;
+  background: #ffffff;
+  border-top: 1px solid #f1f5f9;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.total-text {
+  font-size: 13px;
+  color: #64748b;
+}
+
+.total-text strong {
+  color: #0f172a;
+}
+
+/* 查询按钮与主要操作按钮定制为 ERP 主题绿 */
+::v-deep .filter-actions .el-button--primary,
+::v-deep .nested-actions .el-button--primary,
+::v-deep .table-container-card .el-button--primary,
+::v-deep .product-detail-modal .el-button--primary {
+  background-color: #008b4b !important;
+  border-color: #008b4b !important;
+  color: #ffffff !important;
+  transition: all 0.2s ease;
+}
+
+::v-deep .filter-actions .el-button--primary:hover,
+::v-deep .filter-actions .el-button--primary:focus,
+::v-deep .nested-actions .el-button--primary:hover,
+::v-deep .nested-actions .el-button--primary:focus,
+::v-deep .table-container-card .el-button--primary:hover,
+::v-deep .table-container-card .el-button--primary:focus,
+::v-deep .product-detail-modal .el-button--primary:hover,
+::v-deep .product-detail-modal .el-button--primary:focus {
+  background-color: #00763f !important;
+  border-color: #00763f !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 6px rgba(0, 139, 75, 0.25);
+}
+
+::v-deep .filter-actions .el-button--primary:active,
+::v-deep .nested-actions .el-button--primary:active {
+  background-color: #006233 !important;
+  border-color: #006233 !important;
+}
+
+/* 朴素主要按钮（如展开面板中的单独新增SKU） */
+::v-deep .el-button--primary.is-plain {
+  background-color: #eaf7ef !important;
+  border-color: #b7ebc7 !important;
+  color: #008b4b !important;
+}
+
+::v-deep .el-button--primary.is-plain:hover,
+::v-deep .el-button--primary.is-plain:focus {
+  background-color: #008b4b !important;
+  border-color: #008b4b !important;
+  color: #ffffff !important;
+  box-shadow: 0 2px 6px rgba(0, 139, 75, 0.2);
+}
+
+/* 分页组件：当前激活页码与悬停样式适配 ERP 主题绿 */
+::v-deep .el-pagination.is-background .el-pager li:not(.disabled).active {
+  background-color: #008b4b !important;
+  color: #ffffff !important;
+  font-weight: 600;
+}
+
+::v-deep .el-pagination.is-background .el-pager li:not(.disabled):hover {
+  color: #008b4b !important;
+}
+
+::v-deep .el-pagination .el-select .el-input.is-focus .el-input__inner,
+::v-deep .el-pagination__sizes .el-input .el-input__inner:focus,
+::v-deep .el-pagination__editor.el-input .el-input__inner:focus {
+  border-color: #008b4b !important;
+}
+
+/* 输入框与选择器聚焦适配主题绿 */
+::v-deep .el-input.is-active .el-input__inner,
+::v-deep .el-input__inner:focus,
+::v-deep .el-select .el-input.is-focus .el-input__inner {
+  border-color: #008b4b !important;
+  box-shadow: 0 0 0 2px rgba(0, 139, 75, 0.12);
+}
+
+/* 标签样式适配 */
+::v-deep .el-tag--primary.el-tag--plain {
+  background-color: #eaf7ef !important;
+  border-color: #b7ebc7 !important;
+  color: #008b4b !important;
+}
+
+/* 表格文本按钮与操作高亮 */
+::v-deep .el-button--text:not(.danger-link):not(.success-link) {
+  color: #008b4b;
+}
+
+::v-deep .el-button--text:not(.danger-link):not(.success-link):hover,
+::v-deep .el-button--text:not(.danger-link):not(.success-link):focus {
+  color: #00763f;
+}
+
+/* 商品详情模态弹窗样式 */
+::v-deep .product-detail-modal .el-dialog__header {
+  padding: 16px 20px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+::v-deep .product-detail-modal .el-dialog__title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+::v-deep .product-detail-modal .el-dialog__body {
+  padding: 18px 20px;
+  background: #f8fafc;
+  max-height: 72vh;
+  overflow-y: auto;
+}
+
+.modal-summary-banner {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.banner-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: #eaf7ef;
+  color: #008b4b;
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  flex-shrink: 0;
+}
+
+.banner-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.banner-title-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.banner-title-line h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.banner-sub-meta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.banner-sub-meta strong {
+  color: #1e293b;
+}
+
+.modal-detail-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.detail-section-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.sec-title-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.sec-title {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #1e293b;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.property-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px 18px;
+}
+
+.prop-item {
+  display: flex;
+  align-items: baseline;
+  font-size: 13px;
+}
+
+.prop-item.full-width {
+  grid-column: 1 / -1;
+}
+
+.prop-label {
+  width: 80px;
+  color: #64748b;
+  flex-shrink: 0;
+}
+
+.prop-value {
+  color: #0f172a;
+  word-break: break-all;
+}
+
+.text-desc {
+  color: #475569;
+  line-height: 1.5;
+}
+
+.empty-sku-hint {
+  margin: 10px 0;
+  font-size: 12px;
+  color: #94a3b8;
+  text-align: center;
+}
+
+/* SKU 矩阵模态框 */
+.matrix-tips-box {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  color: #166534;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  margin-bottom: 14px;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.matrix-tips-box i {
+  font-size: 15px;
+  margin-top: 2px;
+}
+
+.matrix-block {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+
+.matrix-block h5 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.block-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.dimension-edit-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.dim-num {
+  font-size: 12px;
+  color: #64748b;
+  width: 50px;
+  flex-shrink: 0;
+}
+
+.danger-link {
+  color: #ef4444 !important;
+}
+
+.success-link {
+  color: #16a34a !important;
+}
+
+.sku-nested-panel {
+  background: #f8fafc;
+  padding: 14px 16px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.nested-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.nested-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 13px;
+  color: #1e293b;
+}
+
+.nested-title .icon-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: #eaf7ef;
+  color: #008b4b;
+  font-size: 13px;
+}
+
+.nested-title .sub-hint {
+  font-size: 12px;
+  color: #64748b;
+  margin-left: 4px;
+}
+
+.nested-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.sku-inner-table {
+  width: 100% !important;
+  background: #ffffff;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.nested-pagination {
+  margin-top: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: #64748b;
+}
+
+/* 响应式适配 */
+@media (max-width: 1024px) {
+  .metric-overview-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .filter-input-search {
+    width: 220px;
+  }
+}
+
+@media (max-width: 768px) {
+  .product-page-container {
+    padding: 10px 12px;
+  }
+  .page-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .head-actions {
+    width: 100%;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+  .metric-overview-grid {
+    grid-template-columns: 1fr;
+  }
+  .filter-input-search {
+    width: 100%;
+  }
+  .filter-select, .filter-select-sm {
+    width: 100%;
+  }
+  .property-grid {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

@@ -1,0 +1,18 @@
+<view wx:if="{{open}}" class="warehouse-overlay" catchtouchmove="stop"><view class="warehouse-dialog">
+  <view class="warehouse-dialog-header"><text>选择仓库 / 库位</text><button class="warehouse-close" bindtap="cancel"><van-icon name="cross"/></button></view>
+  <view class="locator-panels">
+    <view class="locator-warehouses"><view class="locator-pane-title">仓库</view><view class="locator-search"><input value="{{warehouseKeyword}}" data-field="warehouseKeyword" bindinput="input" bindconfirm="searchWarehouses" placeholder="搜索仓库" confirm-type="search"/><button bindtap="searchWarehouses"><van-icon name="search"/></button></view>
+      <scroll-view scroll-y class="locator-scroll"><view wx:if="{{warehouseLoading}}" class="locator-empty">加载中</view><view wx:elif="{{!warehouses.length}}" class="locator-empty">暂无仓库</view><block wx:else><view wx:for="{{warehouses}}" wx:key="id" class="locator-warehouse {{selected.warehouse_id === item.id ? 'selected' : ''}}" data-id="{{item.id}}" bindtap="chooseWarehouse"><text>{{item.name}}</text><text class="warehouse-muted">{{item.code}}</text></view></block></scroll-view>
+      <view class="locator-pager"><button data-pane="warehouse" data-delta="-1" disabled="{{warehousePage <= 1 || warehouseLoading}}" bindtap="turnPage"><van-icon name="arrow-left"/></button><text>{{warehousePage}}/{{warehouseLast}}</text><button data-pane="warehouse" data-delta="1" disabled="{{warehousePage >= warehouseLast || warehouseLoading}}" bindtap="turnPage"><van-icon name="arrow"/></button></view>
+    </view>
+    <view class="locator-locations"><view class="locator-pane-title">库位</view><view class="locator-search"><input value="{{locationKeyword}}" data-field="locationKeyword" bindinput="input" bindconfirm="searchLocations" placeholder="编码 / 名称" confirm-type="search"/><button disabled="{{!selected.warehouse_id}}" bindtap="searchLocations"><van-icon name="search"/></button></view>
+      <scroll-view scroll-y class="locator-scroll"><view wx:if="{{locationLoading}}" class="locator-empty">加载中</view><view wx:elif="{{!selected.warehouse_id}}" class="locator-empty">请先选择仓库</view><view wx:elif="{{!locations.length}}" class="locator-empty">暂无可用库位</view>
+        <block wx:else><view wx:for="{{locations}}" wx:key="id" class="locator-location" data-id="{{item.id}}" bindtap="chooseLocation"><van-icon name="{{selected.location_id === item.id ? 'checked' : 'circle'}}" color="{{selected.location_id === item.id ? '#ef1008' : '#c2cad6'}}" size="30rpx"/><view><text>{{item.code}}</text><text>{{item.name}}</text><text wx:if="{{item.areaName}}" class="warehouse-muted">{{item.areaName}}</text><text class="locator-enabled">启用</text></view></view></block>
+      </scroll-view>
+      <view class="locator-pager"><button data-pane="location" data-delta="-1" disabled="{{locationPage <= 1 || locationLoading}}" bindtap="turnPage"><van-icon name="arrow-left"/></button><text>{{locationPage}}/{{locationLast}}</text><button data-pane="location" data-delta="1" disabled="{{locationPage >= locationLast || locationLoading}}" bindtap="turnPage"><van-icon name="arrow"/></button></view>
+    </view>
+  </view>
+  <view wx:if="{{error}}" class="warehouse-error locator-summary">{{error}}</view>
+  <view class="locator-summary">已选：{{selected.warehouse_name || '未选择'}}<text wx:if="{{selected.location_name}}"> / {{selected.location_name}}</text></view>
+  <view class="warehouse-dialog-footer"><button class="warehouse-secondary" bindtap="cancel">返回</button><button class="warehouse-primary" disabled="{{!selected.location_id || warehouseLoading || locationLoading}}" bindtap="confirm">确认选择</button></view>
+</view></view>

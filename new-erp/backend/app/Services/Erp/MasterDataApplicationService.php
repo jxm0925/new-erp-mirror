@@ -2,10 +2,11 @@
 
 namespace App\Services\Erp;
 
-use App\Models\Erp\{ItemCategory, Sku};
+use App\Models\Erp\{ItemCategory, Product, Sku};
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
 
 class MasterDataApplicationService
 {
@@ -18,6 +19,7 @@ class MasterDataApplicationService
     public function create(string $entity, string $modelClass, array $data, ?int $operatorLegacyId): Model
     {
         return DB::transaction(function () use ($entity, $modelClass, $data, $operatorLegacyId) {
+            if ($entity === 'warehouses') $data = $this->warehouseManagerData($data);
             if ($entity === 'items') $this->assertItemCategory($data['category_id'] ?? null, false);
             $categoryIds = $data['category_ids'] ?? [];
             $reservationToken = $data['reservation_token'] ?? null;
@@ -47,6 +49,10 @@ class MasterDataApplicationService
                 );
             }
 
+            if ($entity === 'warehouses') {
+                $this->logWarehouseManager($record, null, $operatorLegacyId);
+                return $record->fresh(['managerUser']);
+            }
             return $record->fresh();
         });
     }
@@ -54,6 +60,26 @@ class MasterDataApplicationService
     public function update(string $entity, Model $record, array $data, ?int $operatorLegacyId): Model
     {
         return DB::transaction(function () use ($entity, $record, $data, $operatorLegacyId) {
+            // 编辑入口与停用入口保持同一父商品状态约束，不能用“保存草稿”绕过。
+            if ($record instanceof Product) {
+                $record = $record->newQuery()->lockForUpdate()->findOrFail($record->getKey());
+                $this->assertProductStatus($record, $data['status'] ?? $record->status);
+            }
+            $oldManager = null;
+            if ($entity === 'warehouses') {
+                $record = $record->newQuery()->lockForUpdate()->findOrFail($record->getKey());
+                $oldManager = ['manager_user_id' => $record->manager_user_id, 'manager' => $record->manager];
+                if (array_key_exists('manager_user_id', $data)
+                    && (int) $data['manager_user_id'] !== (int) $record->manager_user_id
+                    && !array_key_exists('expected_manager_user_id', $data)) {
+                    throw ValidationException::withMessages(['expected_manager_user_id' => '请刷新仓库后重新选择负责人。']);
+                }
+                if (array_key_exists('expected_manager_user_id', $data)
+                    && (int) $data['expected_manager_user_id'] !== (int) $record->manager_user_id) {
+                    throw ValidationException::withMessages(['manager_user_id' => '仓管负责人已被修改，请刷新后重试。']);
+                }
+                $data = $this->warehouseManagerData($data, $record);
+            }
             if ($entity === 'items') $this->assertItemCategory($data['category_id'] ?? $record->category_id, true);
             if ($entity === 'items') $this->assertItemBaseUnitChangeAllowed($record, $data['unit_id'] ?? null);
             if ($entity === 'skus') $this->assertSkuSalesUnitChangeAllowed($record, $data['sales_unit_id'] ?? null);
@@ -70,17 +96,60 @@ class MasterDataApplicationService
                 );
             }
 
+            if ($entity === 'warehouses') {
+                $this->logWarehouseManager($record, $oldManager, $operatorLegacyId);
+                return $record->fresh(['managerUser']);
+            }
             return $record->fresh();
         });
+    }
+
+    private function warehouseManagerData(array $data, ?Model $record = null): array
+    {
+        unset($data['expected_manager_user_id']);
+        // 姓名仅为服务端快照，不能把客户端任意字符串当作人员身份。
+        if (!empty($data['manager'])) {
+            throw ValidationException::withMessages(['manager_user_id' => '请从员工账号中选择仓管负责人。']);
+        }
+        unset($data['manager']);
+        if (!array_key_exists('manager_user_id', $data)) return $data;
+        $id = $data['manager_user_id'];
+        if ($id === null) return [...$data, 'manager' => null];
+        $account = DB::table('erp_legacy_admin_users')->where('legacy_id', $id)->lockForUpdate()->first();
+        if (!$account || (!app(AuthContextService::class)->isActiveUser($account)
+            && (int) $record?->manager_user_id !== (int) $id)) {
+            throw ValidationException::withMessages(['manager_user_id' => '请选择正常启用的员工账号。']);
+        }
+        // 已任职员工停用后仍保留历史关联，允许编辑仓库其他字段；不得新分配停用账号。
+        return [...$data, 'manager' => mb_substr($account->nickname ?: $account->username ?: (string) $id, 0, 80)];
+    }
+
+    private function logWarehouseManager(Model $record, ?array $old, ?int $operatorId): void
+    {
+        $new = ['manager_user_id' => $record->manager_user_id, 'manager' => $record->manager];
+        if ($old === $new || ($old === null && !$record->manager_user_id)) return;
+        DB::table('erp_operation_logs')->insert([
+            'module' => 'warehouse', 'action' => 'set_manager', 'target_type' => 'erp_warehouses',
+            'target_id' => $record->getKey(), 'old_snapshot' => $old ? json_encode($old, JSON_UNESCAPED_UNICODE) : null,
+            'new_snapshot' => json_encode($new, JSON_UNESCAPED_UNICODE), 'reason' => '仓库负责人维护',
+            'operator_id' => $operatorId, 'created_at' => now(),
+        ]);
     }
 
     public function setStatus(Model $record, string $status): Model
     {
         return DB::transaction(function () use ($record, $status) {
             $locked = $record->newQuery()->lockForUpdate()->findOrFail($record->getKey());
+            if ($locked instanceof Product) $this->assertProductStatus($locked, $status);
             $locked->update(['status' => $status]);
             return $locked->fresh();
         });
+    }
+
+    private function assertProductStatus(Product $product, string $status): void
+    {
+        abort_if($status !== 'enabled' && $product->skus()->where('status', 'enabled')->exists(),
+            422, '该商品下仍有启用 SKU，请先停用或调整其 SKU 后再保存为草稿或停用商品。');
     }
 
     public function deleteUnusedSku(Sku $sku): void

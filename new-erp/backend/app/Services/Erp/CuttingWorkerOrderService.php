@@ -68,6 +68,8 @@ final class CuttingWorkerOrderService
     /** Freeze a real output only when the worker records it, never at order creation. */
     public function resolveOutput(object $batch, array $row, object $user, array $permissions, bool $super): int
     {
+        if (app(ProductionCuttingOperationService::class)->linkedOrder((int) $batch->cutting_order_id))
+            $this->commands->fail('operation_output_frozen', '下料工序的产出已由技术资料确定，不能现场另选物料。');
         $order = DB::table('erp_cutting_orders')->where('id',$batch->cutting_order_id)->lockForUpdate()->first();
         if ($order->purpose !== 'WORKER') $this->commands->fail('output_source_invalid','计划下料必须使用已冻结的正式产出。');
         $item = Item::query()->whereKey((int) ($row['item_id'] ?? 0))->lockForUpdate()->first();

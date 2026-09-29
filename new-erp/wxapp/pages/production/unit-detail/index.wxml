@@ -1,8 +1,7 @@
 <view class="page-container">
   <!-- Top Breadcrumb Navigation -->
   <view class="breadcrumb-bar">
-    <text class="crumb-text font-num" bindtap="navBackToMaster">{{ masterOrderNo }}</text>
-    <text class="crumb-separator">></text>
+    <block wx:if="{{masterId}}"><text class="crumb-text font-num" bindtap="navBackToMaster">{{ masterOrderNo }}</text><text class="crumb-separator">></text></block>
     <text class="crumb-text font-num" bindtap="navBackToWorkOrder">{{ workOrderNo }}</text>
     <text class="crumb-separator">></text>
     <text class="crumb-text crumb-active font-num">{{ unit.unit_no }}</text>

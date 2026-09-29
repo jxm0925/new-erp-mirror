@@ -10,13 +10,16 @@ class BomMatcher
     {
     }
 
-    public function match(?int $productId, ?int $skuId, ?int $itemId, ?array $configuration = null): array
+    public function match(?int $productId, ?int $skuId, ?int $itemId, ?array $configuration = null, ?int $pinnedBomId = null): array
     {
         if (!$itemId) {
             return $this->blocked('not_checked', 'Item 未匹配，不能匹配 BOM');
         }
 
         $query = Bom::with('items')
+            // 已确认需求引用的是具体版本。默认版本改变不得替换已选的生产资料；
+            // 原版本失效则显式阻断，由技术岗位修订，不能自动回退到另一份 BOM。
+            ->when($pinnedBomId !== null, fn ($q) => $q->whereKey($pinnedBomId))
             ->where('output_item_id', $itemId)
             ->where('audit_status', 'approved')
             ->whereIn('status', ['active', 'enabled', 'published'])
@@ -42,7 +45,9 @@ class BomMatcher
             });
         $matches = $matches->orderByDesc('is_default')->orderByDesc('id')->get();
 
-        if ($matches->isEmpty()) return $this->blocked('missing', '未找到已审核且有效的 BOM');
+        if ($matches->isEmpty()) return $this->blocked('missing', $pinnedBomId !== null
+            ? '已确认的 BOM 版本已失效或不适用于该产出，请先修订生产资料'
+            : '未找到已审核且有效的 BOM');
         if ($matches->count() > 1 && $matches->where('is_default', true)->count() !== 1) {
             return [
                 'status' => 'conflict',

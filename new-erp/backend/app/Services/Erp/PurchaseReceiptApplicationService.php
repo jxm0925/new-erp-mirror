@@ -211,6 +211,11 @@ class PurchaseReceiptApplicationService
                 ->groupBy('order_item_id')
                 ->map(fn (Collection $lines) => (float) $lines->sum('receipt_qty'));
             $pending = (float) $pendingByItem->sum();
+            $order->items->each(function (PurchaseOrderItem $item) use ($pendingByItem): void {
+                $reserved = (float) ($pendingByItem[$item->id] ?? 0);
+                $item->setAttribute('pending_receipt_qty', $reserved);
+                $item->setAttribute('available_receipt_qty', max(0, (float) $item->remaining_qty - $reserved));
+            });
             $available = (float) $order->items->sum(fn (PurchaseOrderItem $item) =>
                 max(0, (float) $item->remaining_qty - (float) ($pendingByItem[$item->id] ?? 0))
             );

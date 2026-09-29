@@ -72,13 +72,14 @@ final class ProductionWorkOrderQueryService
         $this->assertPermission($permissions, 'production.work_order.view', $superAdmin);
         $query = WorkOrder::query()
             ->select('erp_work_orders.*')
+            ->selectRaw($this->workOrderDisplayState().' AS display_status_projection')
             ->with([
-                'outputItem:id,item_code,item_name,spec,unit_id',
+                'outputItem:id,item_code,item_name,spec,unit_id,production_execution_mode',
                 'routing:id,routing_no,routing_name,version',
                 'targetOperation:id,operation_no,operation_name',
                 'targetRoutingOperation.operation:id,operation_no,operation_name',
                 'demand:id,requirement_no,sales_order_id,sales_order_line_id,production_qty,remaining_qty',
-                'demand.order:id,sales_order_no,customer_snapshot,sales_user_legacy_id,created_by_legacy_id',
+                'demand.order:id,sales_order_no,customer_snapshot,sales_user_legacy_id,created_by_legacy_id,required_delivery_date,order_remark,customer_remark,remark',
                 'demand.line:id,product_snapshot,sku_snapshot,item_snapshot,product_name,sku_name,item_name,unit_name_snapshot',
                 'demand.line.item:id,item_name,spec,unit_id',
             ])->withCount('materialRequirements')->orderByDesc('id');
@@ -89,6 +90,7 @@ final class ProductionWorkOrderQueryService
         $this->applyWorkOrderFilters($query, $filters);
         $paginator = $query->paginate($this->perPage($filters), ['*'], 'page', $this->page($filters));
         $this->attachWorkOrderUserProjections($paginator->getCollection());
+        $this->attachExecutionProjections($paginator->getCollection(), $user, $permissions, $superAdmin);
         return $paginator;
     }
 
@@ -105,19 +107,13 @@ final class ProductionWorkOrderQueryService
         unset($summaryFilters['status'], $summaryFilters['display_status'], $summaryFilters['page'], $summaryFilters['per_page'], $summaryFilters['include_summary']);
         $this->applyWorkOrderFilters($query, $summaryFilters);
 
-        $exception = clone $query;
-        $this->applyWorkOrderException($exception);
-        $inProgress = clone $query;
-        $this->applyWorkOrderException($inProgress, true);
-        $waitCondition = clone $query;
-        $this->applyWorkOrderException($waitCondition, true);
-        $completed = clone $query;
-        $this->applyWorkOrderException($completed, true);
+        $grouped = $query->select([])->selectRaw($this->workOrderDisplayState().' AS display_state, COUNT(*) AS aggregate')
+            ->groupBy('display_state')->pluck('aggregate', 'display_state');
         $counts = [
-            'in_progress' => $inProgress->where('status', 'IN_PROGRESS')->count(),
-            'wait_condition' => $waitCondition->whereIn('status', ['DRAFT', 'WAIT_RELEASE', 'RELEASED'])->count(),
-            'exception' => $exception->count(),
-            'completed' => $completed->whereIn('status', ['COMPLETED', 'CLOSED'])->count(),
+            'in_progress' => (int) ($grouped['IN_PROGRESS'] ?? 0),
+            'wait_condition' => (int) ($grouped['WAIT_CONDITION'] ?? 0),
+            'exception' => (int) ($grouped['EXCEPTION'] ?? 0),
+            'completed' => (int) ($grouped['COMPLETED'] ?? 0),
         ];
         return ['total' => array_sum($counts), ...$counts];
     }
@@ -125,13 +121,14 @@ final class ProductionWorkOrderQueryService
     public function workOrder(int $id, object $user, array $permissions, bool $superAdmin = false): WorkOrder
     {
         $this->assertPermission($permissions, 'production.work_order.view', $superAdmin);
-        $workOrder = WorkOrder::query()->with([
-            'outputItem:id,item_code,item_name,spec,unit_id',
+        $workOrder = WorkOrder::query()->select('erp_work_orders.*')
+            ->selectRaw($this->workOrderDisplayState().' AS display_status_projection')->with([
+            'outputItem:id,item_code,item_name,spec,unit_id,production_execution_mode',
             'routing:id,routing_no,routing_name,version',
             'targetOperation:id,operation_no,operation_name',
             'targetRoutingOperation.operation:id,operation_no,operation_name',
             'demand:id,requirement_no,sales_order_id,sales_order_line_id,production_qty,allocated_qty,consumed_qty,closed_qty,remaining_qty',
-            'demand.order:id,sales_order_no,customer_snapshot,sales_user_legacy_id,created_by_legacy_id',
+            'demand.order:id,sales_order_no,customer_snapshot,sales_user_legacy_id,created_by_legacy_id,required_delivery_date,order_remark,customer_remark,remark',
             'demand.line:id,product_snapshot,sku_snapshot,item_snapshot,product_name,sku_name,item_name,unit_name_snapshot',
             'demand.line.item:id,item_name,spec,unit_id',
             'statusLogs:id,work_order_id,before_status,after_status,reason,operator_name,occurred_at',
@@ -140,10 +137,7 @@ final class ProductionWorkOrderQueryService
         if (! $workOrder) throw new WorkOrderDomainException('not_found', 'Work order not found.', 404);
         $this->assertWorkOrderVisible($workOrder, $user, $permissions, $superAdmin);
         $workOrder->setAttribute('field_audit_summary', $this->fieldAuditSummary($workOrder));
-        $workOrder->setAttribute(
-            'execution_summary',
-            $this->executionProjections->summaries(collect([$workOrder]))[(int) $workOrder->id] ?? null,
-        );
+        $this->attachExecutionProjections(collect([$workOrder]), $user, $permissions, $superAdmin);
         $this->attachWorkOrderUserProjections(collect([$workOrder]));
         return $workOrder;
     }
@@ -169,19 +163,7 @@ final class ProductionWorkOrderQueryService
     {
         if ($this->value($filters, 'status')) $query->where('status', $this->value($filters, 'status'));
         if ($this->value($filters, 'display_status')) {
-            $displayStatus = $this->value($filters, 'display_status');
-            if ($displayStatus === 'EXCEPTION') {
-                $this->applyWorkOrderException($query);
-            } elseif ($displayStatus === 'IN_PROGRESS') {
-                $this->applyWorkOrderException($query, true);
-                $query->where('status', 'IN_PROGRESS');
-            } elseif ($displayStatus === 'COMPLETED') {
-                $this->applyWorkOrderException($query, true);
-                $query->whereIn('status', ['COMPLETED', 'CLOSED']);
-            } else {
-                $this->applyWorkOrderException($query, true);
-                $query->whereIn('status', ['DRAFT', 'WAIT_RELEASE', 'RELEASED']);
-            }
+            $query->whereRaw('('.$this->workOrderDisplayState().') = ?', [$this->value($filters, 'display_status')]);
         }
         if ($this->value($filters, 'production_demand_id')) $query->where('production_demand_id', (int) $this->value($filters, 'production_demand_id'));
         if ($this->value($filters, 'source_type')) {
@@ -195,7 +177,11 @@ final class ProductionWorkOrderQueryService
         if ($this->value($filters, 'production_location_name')) $query->where('production_location_name', 'like', '%'.$this->value($filters, 'production_location_name').'%');
         if ($this->value($filters, 'responsible_user_legacy_id')) $query->where('responsible_user_legacy_id', (int) $this->value($filters, 'responsible_user_legacy_id'));
         if ($this->value($filters, 'customer')) $query->whereHas('demand.order', fn ($q) => $q->where('customer_name', 'like', '%'.$this->value($filters, 'customer').'%')->orWhereRaw("JSON_SEARCH(customer_snapshot, 'one', ?) IS NOT NULL", [$this->value($filters, 'customer')]));
-        if ($this->value($filters, 'product')) $query->whereHas('demand.line', fn ($q) => $q->where('product_name', 'like', '%'.$this->value($filters, 'product').'%')->orWhere('sku_name', 'like', '%'.$this->value($filters, 'product').'%'));
+        if ($this->value($filters, 'product')) $query->where(function (Builder $q) use ($filters): void {
+            $like = '%'.$this->value($filters, 'product').'%';
+            $q->whereHas('demand.line', fn ($line) => $line->where('product_name', 'like', $like)->orWhere('sku_name', 'like', $like))
+                ->orWhereHas('outputItem', fn ($item) => $item->where('item_name', 'like', $like)->orWhere('item_code', 'like', $like)->orWhere('spec', 'like', $like));
+        });
         if ($this->value($filters, 'date_from')) $query->whereDate('planned_date', '>=', $this->value($filters, 'date_from'));
         if ($this->value($filters, 'date_to')) $query->whereDate('planned_date', '<=', $this->value($filters, 'date_to'));
         if ($this->value($filters, 'delivery_date_from')) $query->whereHas('demand.order', fn ($q) => $q->whereDate('required_delivery_date', '>=', $this->value($filters, 'delivery_date_from')));
@@ -208,27 +194,46 @@ final class ProductionWorkOrderQueryService
             $q->where('work_order_no', 'like', $like)
                 ->orWhere('source_no_snapshot', 'like', $like)
                 ->orWhere('source_title_snapshot', 'like', $like)
+                ->orWhereHas('outputItem', fn ($item) => $item->where('item_name', 'like', $like)->orWhere('item_code', 'like', $like)->orWhere('spec', 'like', $like))
                 ->orWhereHas('demand', fn ($d) => $d->where('requirement_no', 'like', $like))
                 ->orWhereHas('demand.order', fn ($o) => $o->where('sales_order_no', 'like', $like)->orWhereRaw("JSON_SEARCH(customer_snapshot, 'one', ?) IS NOT NULL", [$keyword]))
                 ->orWhereHas('demand.line', fn ($l) => $l->where('product_name', 'like', $like)->orWhere('sku_name', 'like', $like));
         });
     }
 
-    private function applyWorkOrderException(Builder $query, bool $negate = false): void
+    private function workOrderDisplayState(): string
     {
-        $operationIds = DB::table('erp_production_unit_operations')
-            ->select('work_order_id')
-            ->whereIn('status', ['REWORK', 'QUALITY_FAILED', 'HANDOVER_REJECTED'])
-            ->union(DB::table('erp_production_quantity_operations')
-                ->select('work_order_id')
-                ->whereIn('status', ['REWORK', 'QUALITY_FAILED', 'HANDOVER_REJECTED']));
-        if ($negate) {
-            $query->where('status', '!=', 'CANCELLED')->whereNotIn('erp_work_orders.id', $operationIds);
-            return;
+        // List rows, pagination filters and totals must classify the same WO.
+        // Execution quantities remain separate facts, not an implicit WO close.
+        return "CASE WHEN erp_work_orders.status = 'CANCELLED'
+            OR EXISTS (SELECT 1 FROM erp_production_unit_operations op WHERE op.work_order_id = erp_work_orders.id AND op.status IN ('REWORK','QUALITY_FAILED','HANDOVER_REJECTED'))
+            OR EXISTS (SELECT 1 FROM erp_production_quantity_operations op WHERE op.work_order_id = erp_work_orders.id AND op.status IN ('REWORK','QUALITY_FAILED','HANDOVER_REJECTED')) THEN 'EXCEPTION'
+            WHEN erp_work_orders.status IN ('COMPLETED','CLOSED') THEN 'COMPLETED'
+            WHEN erp_work_orders.status = 'IN_PROGRESS' THEN 'IN_PROGRESS' ELSE 'WAIT_CONDITION' END";
+    }
+
+    private function attachExecutionProjections(Collection $orders, object $user, array $permissions, bool $superAdmin): void
+    {
+        $summaries = $this->executionProjections->summaries($orders);
+        $targets = WorkOrder::query()->whereIn('id', $orders->pluck('reserved_for_work_order_id')->filter()->unique());
+        $this->scopeResolver->applyWorkOrderScope($targets, $this->scopeResolver->resolve($user, 'production.work_order.view', $permissions, $superAdmin));
+        $targets = $targets->get(['id', 'work_order_no', 'production_execution_mode_snapshot', 'routing_snapshot'])->keyBy('id');
+        $units = DB::table('erp_production_units')->whereIn('work_order_id', $targets->keys())
+            ->whereIn('id', $orders->pluck('reserved_for_production_unit_id')->filter())->get(['id', 'unit_no', 'work_order_id'])->keyBy('id');
+        foreach ($orders as $order) {
+            $order->setAttribute('execution_summary', $summaries[(int) $order->id] ?? null);
+            $target = $targets[(int) $order->reserved_for_work_order_id] ?? null;
+            if (!$target) continue;
+            $unit = $units[(int) $order->reserved_for_production_unit_id] ?? null;
+            $operation = collect($target->routing_snapshot['operations'] ?? [])->firstWhere('routing_operation_id', (int) $order->reserved_for_target_operation_id);
+            $order->setAttribute('reserved_target_projection', [
+                'work_order_id' => (int) $target->id, 'work_order_no' => $target->work_order_no,
+                'execution_mode' => $target->production_execution_mode_snapshot,
+                'unit_id' => $unit?->id, 'unit_no' => $unit?->unit_no,
+                'routing_operation_id' => $order->reserved_for_target_operation_id,
+                'operation_name' => $operation['operation_name'] ?? null,
+            ]);
         }
-        $query->where(function (Builder $exception) use ($operationIds): void {
-            $exception->where('status', 'CANCELLED')->orWhereIn('erp_work_orders.id', $operationIds);
-        });
     }
 
     private function applyDemandKeyword(Builder $query, ?string $keyword): void

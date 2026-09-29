@@ -27,21 +27,29 @@ final class ProductionMaterialExecutionService
         private readonly InventoryService $inventory,
         private readonly ProductionTargetReadinessService $targetReadiness,
         private readonly ProductionMaterialCostService $materialCosts,
+        private readonly ProductionPickingStockService $pickingStock,
     ) {}
 
     public function paginatePickingTasks(array $filters, object $user, array $permissions, bool $superAdmin): LengthAwarePaginator
     {
         $this->permission($permissions, 'production.material_picking.view');
-        $query = MaterialPickingTask::query()->with(['workOrder.outputItem', 'warehouse'])->orderByDesc('id');
+        $query = MaterialPickingTask::query()->with(['workOrder.outputItem', 'warehouse'])->withCount('lines')->orderByDesc('id');
         $this->applyWorkOrderRelationScope($query, 'workOrder', $user, 'production.material_picking.view', $permissions, $superAdmin);
         if (! empty($filters['status'])) $query->where('status', $filters['status']);
         if (($filters['status_group'] ?? null) === 'active') $query->whereIn('status', ['WAIT_PICK', 'PICKING']);
         if (! empty($filters['warehouse_id'])) $query->where('warehouse_id', (int) $filters['warehouse_id']);
         if (! empty($filters['work_order_id'])) $query->where('work_order_id', (int) $filters['work_order_id']);
+        $this->searchDocuments($query, $filters, 'task_no');
         return $query->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 20))));
     }
 
     public function paginatePreparationDemands(array $filters, object $user, array $permissions, bool $superAdmin): LengthAwarePaginator
+    {
+        return $this->preparationDemandQuery($filters, $user, $permissions, $superAdmin)
+            ->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 20))));
+    }
+
+    public function preparationDemandQuery(array $filters, object $user, array $permissions, bool $superAdmin)
     {
         $this->permission($permissions, 'production.material_requirement.view');
         $scope = $this->scopeResolver->resolve($user, 'production.material_requirement.view', $permissions, $superAdmin);
@@ -56,12 +64,20 @@ final class ProductionMaterialExecutionService
             ->join('erp_work_order_material_requirements as requirement', 'requirement.id', '=', 'demand.material_requirement_id')
             ->join('erp_work_orders as work_order', 'work_order.id', '=', 'demand.work_order_id')
             ->join('erp_items as item', 'item.id', '=', 'demand.component_item_id')
+            ->leftJoin('erp_items as output', 'output.id', '=', 'work_order.output_item_id')
+            ->leftJoin('erp_production_unit_operations as unit_operation', fn ($join) => $join->on('unit_operation.id', '=', 'demand.target_id')->where('demand.target_type', 'unit_operation'))
+            ->leftJoin('erp_production_units as production_unit', 'production_unit.id', '=', 'unit_operation.production_unit_id')
             ->whereIn('demand.work_order_id', $visibleWorkOrders)
+            ->whereIn('work_order.status', ['RELEASED', 'IN_PROGRESS'])
             ->where('supply.supply_mode_snapshot', 'dedicated_delivery')
             ->where('supply.requires_delivery_snapshot', true)
             ->orderBy('demand.id')
             ->select([
                 'demand.id', 'demand.work_order_id', 'work_order.work_order_no',
+                'work_order.business_version as work_order_version', 'work_order.production_batch as production_batch_no',
+                'output.item_name as output_item_name', 'output.item_code as output_item_code',
+                'production_unit.unit_no as production_unit_no',
+                'requirement.configuration_id', 'item.category_id',
                 'supply.target_routing_operation_id_snapshot as target_routing_operation_id',
                 'supply.target_operation_code_snapshot as target_operation_code',
                 'supply.target_operation_name_snapshot as target_operation_name',
@@ -84,6 +100,8 @@ final class ProductionMaterialExecutionService
         if (! empty($filters['target_routing_operation_id'])) {
             $query->where('supply.target_routing_operation_id_snapshot', (int) $filters['target_routing_operation_id']);
         }
+        if (! empty($filters['production_target_type'])) $query->where('demand.target_type', $filters['production_target_type']);
+        if (! empty($filters['production_target_id'])) $query->where('demand.target_id', (int) $filters['production_target_id']);
         if (trim((string) ($filters['keyword'] ?? '')) !== '') {
             $keyword = '%'.trim((string) $filters['keyword']).'%';
             $query->where(function ($nested) use ($keyword): void {
@@ -94,15 +112,36 @@ final class ProductionMaterialExecutionService
             });
         }
 
-        return $query->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 20))));
+        return $query;
     }
 
-    public function showPickingTask(int $id, object $user, array $permissions, bool $superAdmin): MaterialPickingTask
+    public function showPickingTask(int $id, object $user, array $permissions, bool $superAdmin, array $lineFilters = []): MaterialPickingTask
     {
         $this->permission($permissions, 'production.material_picking.view');
-        $task = MaterialPickingTask::with($this->pickingRelations())->find($id);
+        $query = MaterialPickingTask::with($lineFilters ? array_values(array_filter($this->pickingRelations(), fn ($r) => ! in_array($r, ['inventoryTransaction.items', 'deliveries'], true))) : $this->pickingRelations());
+        if ($lineFilters) $query->with(['lines' => fn ($q) => $q->orderBy('id')->offset(((int) $lineFilters['page'] - 1) * (int) $lineFilters['per_page'])->limit((int) $lineFilters['per_page'])]);
+        $task = $query->find($id);
         if (! $task) $this->fail('not_found', '配料任务不存在。', 404);
         $this->visible($task->workOrder, $user, 'production.material_picking.view', $permissions, $superAdmin);
+        $task->setAttribute('assigned_picker_name', $this->personName($task->assigned_picker_legacy_id));
+        $task->setAttribute('allowed_actions', array_values(array_filter([
+            $task->status === 'WAIT_PICK' ? 'picking.assign' : null,
+            $task->status === 'WAIT_PICK' && $task->assigned_picker_legacy_id ? 'picking.start' : null,
+            $task->status === 'PICKING' ? 'picking.confirm' : null,
+            in_array($task->status, ['WAIT_PICK', 'PICKING'], true) ? 'picking.cancel' : null,
+            in_array($task->status, ['PICKED', 'WAIT_DELIVERY', 'DELIVERING', 'DELIVERED', 'PARTIALLY_RECEIVED'], true) ? 'delivery.create' : null,
+        ], fn ($action) => $action && in_array(WarehouseActionService::PERMISSIONS[$action], $permissions, true))));
+        if ($lineFilters) $task->setAttribute('line_meta', $this->lineMeta($task->lines()->count(), $lineFilters));
+        $allocated = DB::table('erp_material_delivery_lines as line')->join('erp_material_deliveries as delivery', 'delivery.id', '=', 'line.delivery_id')
+            ->where('delivery.picking_task_id', $task->id)->whereIn('line.picking_task_line_id', $task->lines->pluck('id'))->where('delivery.status', '<>', 'CANCELLED')
+            ->where('delivery.delivery_type', '<>', 'redelivery')->get(['line.picking_task_line_id', 'line.delivery_qty', 'line.serial_snapshot']);
+        foreach ($task->lines as $line) {
+            $rows = $allocated->where('picking_task_line_id', $line->id);
+            $line->setAttribute('allocated_delivery_qty', (float) $rows->sum('delivery_qty'));
+            $line->setAttribute('remaining_delivery_qty', max(0, (float) $line->actual_pick_qty - (float) $rows->sum('delivery_qty')));
+            $used = $rows->flatMap(fn ($row) => json_decode($row->serial_snapshot ?: '{}', true)['inventory_serial_ids'] ?? [])->all();
+            $line->setAttribute('available_delivery_serial_ids', array_values(array_diff($line->serial_snapshot['inventory_serial_ids'] ?? [], $used)));
+        }
         return $task;
     }
 
@@ -115,30 +154,43 @@ final class ProductionMaterialExecutionService
                 if (! $workOrder) $this->fail('not_found', '工单不存在。', 404);
                 $this->visible($workOrder, $user, 'production.material_picking.view', $permissions, $superAdmin);
                 $this->version($workOrder, $payload);
-                if ($workOrder->status !== WorkOrderApplicationService::RELEASED) {
+                if (! in_array($workOrder->status, [WorkOrderApplicationService::RELEASED, 'IN_PROGRESS'], true)) {
                     $this->fail('invalid_state', '只有已发布工单可以创建配料任务。');
-                }
-                if (trim((string) $workOrder->production_location_name) === '') {
-                    $this->fail('production_location_missing', '工单缺少生产地点，不能创建配送任务。');
                 }
                 $warehouseId = (int) ($payload['warehouse_id'] ?? 0);
                 $rows = $this->resolvePickingRows(collect($payload['lines'] ?? []), $workOrder);
                 if ($warehouseId <= 0 || $rows->isEmpty()) $this->fail('validation_error', '仓库和配料明细不能为空。');
-                if ($rows->pluck('material_requirement_id')->duplicates()->isNotEmpty()) {
-                    $this->fail('duplicate_requirement', '同一配料任务内一个物料需求只能出现一次。');
+                // Split a demand across sources without weakening its aggregate quantity limit.
+                $sourceKeys = $rows->map(fn ($row) => implode(':', [
+                    $row['material_requirement_id'] ?? 0, $row['material_supply_rule_snapshot_id'] ?? 0,
+                    $row['production_target_type'] ?? '', $row['production_target_id'] ?? 0,
+                    $row['inventory_balance_id'] ?? 0,
+                ]));
+                if ($sourceKeys->duplicates()->isNotEmpty()) {
+                    $this->fail('duplicate_requirement', '同一物料需求与生产目标下的库存来源不能重复选择。');
                 }
 
-                $requirementIds = $rows->pluck('material_requirement_id')->map(fn ($id) => (int) $id)->all();
+                $requirementIds = $rows->pluck('material_requirement_id')->map(fn ($id) => (int) $id)->unique()->values()->all();
                 $requirements = WorkOrderMaterialRequirement::whereIn('id', $requirementIds)->orderBy('id')->lockForUpdate()->get()->keyBy('id');
                 if ($requirements->count() !== count($requirementIds) || $requirements->contains(fn ($row) => (int) $row->work_order_id !== (int) $workOrder->id)) {
                     $this->fail('requirement_invalid', '配料任务只能引用当前已发布工单的正式物料需求。');
                 }
+                $balances = InventoryBalance::with(['item', 'warehouse', 'location'])->whereIn('id', $rows->pluck('inventory_balance_id'))
+                    ->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+
+                // 本厂按固定工序配送；地点摘要取冻结供料工序，不能要求工单再次填写。
+                // 多工序配料保留行级接收目标，配送单再按本次实际目标工序带出。
+                $destinations = DB::table('erp_work_order_material_supply_rules')->where('work_order_id', $workOrder->id)
+                    ->whereIn('id', $rows->pluck('material_supply_rule_snapshot_id'))->orderBy('id')->lockForUpdate()
+                    ->pluck('target_operation_name_snapshot')->filter()->unique()->values();
+                $destination = $destinations->implode('、');
+                if (mb_strlen($destination) > 160) $destination = $destinations->count().'个工序（详见明细）';
 
                 $task = MaterialPickingTask::create([
                     'task_no' => 'TMP-'.bin2hex(random_bytes(12)), 'work_order_id' => $workOrder->id,
                     'status' => 'WAIT_PICK', 'warehouse_id' => $warehouseId,
                     'organization_code' => $workOrder->organization_code,
-                    'production_location_name_snapshot' => $workOrder->production_location_name,
+                    'production_location_name_snapshot' => $destination,
                     'responsible_user_legacy_id' => $workOrder->responsible_user_legacy_id,
                     'planned_delivery_at' => $payload['planned_delivery_at'] ?? null,
                     'remark' => $payload['remark'] ?? null, 'business_version' => 1,
@@ -163,11 +215,24 @@ final class ProductionMaterialExecutionService
                         ->where('target_type', $targetType)->where('target_id', $targetId)
                         ->where('material_supply_rule_snapshot_id', $supply->id)->lockForUpdate()->first();
                     if (! $targetRequirement) $this->fail('production_target_invalid', '配料明细没有匹配的生产执行目标物料需求。');
-                    $balance = InventoryBalance::with('item')->whereKey((int) ($row['inventory_balance_id'] ?? 0))->lockForUpdate()->first();
+                    $balance = $balances->get((int) ($row['inventory_balance_id'] ?? 0));
                     if (! $balance || (int) $balance->item_id !== (int) $requirement->component_item_id || (int) $balance->warehouse_id !== $warehouseId) {
                         $this->fail('inventory_batch_invalid', '配料明细必须选择当前仓库中该物料的真实库存批次。');
                     }
                     $planned = $this->quantity($row['planned_pick_qty'] ?? null, 'planned_pick_qty');
+                    $lotConfigurationId = $balance->material_lot_id
+                        ? DB::table('erp_material_lots')->where('id', $balance->material_lot_id)->value('configuration_id') : null;
+                    if ((int) $requirement->configuration_id !== (int) $lotConfigurationId) {
+                        $this->fail('material_configuration_mismatch', '库存批次配置与工单已确认用料配置不一致。');
+                    }
+                    if (! $this->pickingStock->eligible($balance, $requirement)) {
+                        $this->fail('inventory_source_ineligible', '所选库存来源已停用、过期或不符合该物料需求。');
+                    }
+                    $available = $this->pickingStock->available($balance);
+                    if ($planned > $available + 0.00000001) {
+                        $this->fail('inventory_changed', '库存已变化，请调整后重试。', 409,
+                            ['inventory_balance_id' => $balance->id, 'available_qty' => $available]);
+                    }
                     $reserved = (float) MaterialPickingTaskLine::query()
                         ->join('erp_material_picking_tasks as tasks', 'tasks.id', '=', 'erp_material_picking_task_lines.task_id')
                         ->where('erp_material_picking_task_lines.material_requirement_id', $requirement->id)
@@ -239,6 +304,8 @@ final class ProductionMaterialExecutionService
                 if ($task->status !== 'PICKING') $this->fail('invalid_state', '只有拣货中的任务可以确认拣货。');
                 $actualRows = collect($payload['lines'] ?? [])->keyBy(fn ($row) => (int) ($row['picking_task_line_id'] ?? 0));
                 if ($actualRows->isEmpty()) $this->fail('validation_error', '实拣明细不能为空。');
+                if ($actualRows->count() !== count($payload['lines']) || $actualRows->keys()->diff($task->lines->pluck('id'))->isNotEmpty())
+                    $this->fail('validation_error', '实拣明细重复或不属于当前配料任务。');
                 $quantitySnapshot = [];
                 foreach ($task->lines as $line) {
                     $row = $actualRows->get($line->id);
@@ -247,6 +314,12 @@ final class ProductionMaterialExecutionService
                     if ($actual > 0 && isset($row['serial_ids'])) {
                         $line->serial_snapshot = ['inventory_serial_ids' => array_values(array_unique(array_map('intval', (array) $row['serial_ids'])))];
                     }
+                    if ($actual > 0 && array_key_exists('physical_material_ids', $row)) {
+                        $ids = array_map('intval', (array) $row['physical_material_ids']);
+                        if ($line->componentItem?->materialManagementMode() !== 'physical' || count($ids) !== count(array_unique($ids)) || count($ids) !== (int) $actual)
+                            $this->fail('physical_selection_invalid', '所选实物必须与当前物料和实拣整张数量一致。');
+                        $line->serial_snapshot = array_merge($line->serial_snapshot ?? [], ['physical_material_ids' => $ids]);
+                    }
                     $line->actual_pick_qty = $actual;
                     $line->status = $actual > 0 ? 'PICKED' : 'UNPICKED';
                     $line->business_version++;
@@ -254,6 +327,14 @@ final class ProductionMaterialExecutionService
                     if ($actual > 0) $quantitySnapshot[] = ['line_id' => $line->id, 'actual_pick_qty' => $actual];
                 }
                 if ($quantitySnapshot === []) $this->fail('validation_error', '确认拣货至少需要一条大于 0 的实拣数量。');
+                foreach ($task->lines->groupBy('inventory_balance_id')->sortKeys() as $balanceId => $sourceLines) {
+                    $balance = InventoryBalance::with(['item', 'warehouse', 'location'])->whereKey($balanceId)->lockForUpdate()->first();
+                    $required = WorkOrderMaterialRequirement::findOrFail($sourceLines->first()->material_requirement_id);
+                    if (! $balance || ! $this->pickingStock->eligible($balance, $required)
+                        || $sourceLines->sum('actual_pick_qty') > $this->pickingStock->available($balance, $task->id) + 0.00000001) {
+                        $this->fail('inventory_changed', '库存已变化，请调整实拣数量后重试。', 409, ['inventory_balance_id' => $balanceId]);
+                    }
+                }
                 $transaction = $this->inventory->postProductionMaterialPicking($task, $user);
                 $this->materialCosts->recordPickingOutbound($task, $transaction);
                 foreach ($task->lines->where('actual_pick_qty', '>', 0) as $line) {
@@ -271,6 +352,11 @@ final class ProductionMaterialExecutionService
                 $task->business_version++;
                 $task->updated_by_legacy_id = $this->userId($user);
                 $task->save();
+                foreach ($task->lines as $line) {
+                    $demandId = DB::table('erp_production_target_material_requirements')->where('target_type', $line->production_target_type)
+                        ->where('target_id', $line->production_target_id)->where('material_supply_rule_snapshot_id', $line->material_supply_rule_snapshot_id)->value('id');
+                    if ($demandId) $this->refreshPreparationStatus((int) $demandId);
+                }
                 $this->event('picking_task', $task->id, 'confirm', 'PICKING', 'PICKED', $beforeVersion, $task->business_version, $quantitySnapshot, $payload['reason'] ?? null, $user);
                 return $task->fresh($this->pickingRelations());
             });
@@ -289,25 +375,63 @@ final class ProductionMaterialExecutionService
     public function paginateDeliveries(array $filters, object $user, array $permissions, bool $superAdmin): LengthAwarePaginator
     {
         $this->permission($permissions, 'production.material_delivery.view');
-        $query = MaterialDelivery::query()->with(['workOrder.outputItem', 'pickingTask'])->orderByDesc('id');
+        $query = MaterialDelivery::query()->with(['workOrder.outputItem', 'pickingTask'])->withCount(['lines',
+            'lines as material_items_count' => fn ($q) => $q->select(DB::raw('COUNT(DISTINCT component_item_id)')),
+            'lines as rejected_lines_count' => fn ($q) => $q->where('rejected_qty', '>', 0)])->orderByDesc('id');
         $this->applyWorkOrderRelationScope($query, 'workOrder', $user, 'production.material_delivery.view', $permissions, $superAdmin);
         if (($filters['status_group'] ?? null) === 'pending_dispatch') $query->whereIn('status', ['READY', 'IN_TRANSIT']);
         if (! empty($filters['status'])) $query->where('status', $filters['status']);
         if (! empty($filters['work_order_id'])) $query->where('work_order_id', (int) $filters['work_order_id']);
-        return $query->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 20))));
+        $this->searchDocuments($query, $filters, 'delivery_no');
+        $page = $query->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 20))));
+        foreach ($page->items() as $delivery) $delivery->setAttribute('delivery_user_name', $this->personName($delivery->delivery_user_legacy_id));
+        return $page;
     }
 
-    public function showDelivery(int $id, object $user, array $permissions, bool $superAdmin): MaterialDelivery
+    public function showDelivery(int $id, object $user, array $permissions, bool $superAdmin, array $lineFilters = []): MaterialDelivery
     {
         $this->permission($permissions, 'production.material_delivery.view');
-        $delivery = MaterialDelivery::with($this->deliveryRelations())->find($id);
+        $query = MaterialDelivery::with($this->deliveryRelations());
+        if ($lineFilters) $query->with(['lines' => fn ($q) => $q->orderBy('id')->offset(((int) $lineFilters['page'] - 1) * (int) $lineFilters['per_page'])->limit((int) $lineFilters['per_page'])]);
+        $delivery = $query->find($id);
         if (! $delivery) $this->fail('not_found', '配送单不存在。', 404);
         $this->visible($delivery->workOrder, $user, 'production.material_delivery.view', $permissions, $superAdmin);
+        if ($lineFilters) $delivery->setAttribute('line_meta', $this->lineMeta($delivery->lines()->count(), $lineFilters));
         $person = DB::table('erp_legacy_admin_users')->where('legacy_id', $delivery->delivery_user_legacy_id)->first(['nickname', 'username']);
         $delivery->setAttribute('delivery_user_name', $person?->nickname ?: $person?->username);
         $unit = $delivery->production_target_type === 'unit_operation'
             ? \App\Models\Erp\ProductionUnitOperation::with('productionUnit')->find($delivery->production_target_id)?->productionUnit : null;
         $delivery->setAttribute('production_unit_no', $unit?->unit_no);
+        $delivery->setAttribute('expected_receiver_name', $this->personName($this->expectedReceiver($delivery)));
+        $receiver = $this->expectedReceiver($delivery);
+        $receiptScope = $this->scopeResolver->resolve($user, 'production.material_receipt.view', $permissions, $superAdmin);
+        $canReceive = $delivery->status === 'DELIVERED' && $receiver === $this->userId($user)
+            && $this->scopeResolver->workOrderVisible($delivery->workOrder, $receiptScope);
+        $hasRemainingRedelivery = $delivery->lines()->whereRaw('rejected_qty > COALESCE((SELECT SUM(resent.delivery_qty)
+            FROM erp_material_delivery_lines resent JOIN erp_material_deliveries redelivery ON redelivery.id=resent.delivery_id
+            WHERE redelivery.source_delivery_id=? AND redelivery.delivery_type=? AND redelivery.status<>?
+            AND resent.picking_task_line_id=erp_material_delivery_lines.picking_task_line_id),0)', [$delivery->id, 'redelivery', 'CANCELLED'])->exists();
+        $delivery->setAttribute('has_remaining_redelivery', $hasRemainingRedelivery);
+        $delivery->setAttribute('allowed_actions', array_values(array_filter([
+            $delivery->status === 'READY' ? 'delivery.dispatch' : null,
+            $delivery->status === 'IN_TRANSIT' ? 'delivery.deliver' : null,
+            $delivery->status === 'READY' ? 'delivery.cancel' : null,
+            $canReceive ? 'delivery.receive' : null,
+            $hasRemainingRedelivery ? 'delivery.create' : null,
+        ], fn ($action) => $action && in_array(WarehouseActionService::PERMISSIONS[$action], $permissions, true))));
+        foreach ($delivery->lines as $line) {
+            $resentLines = DB::table('erp_material_delivery_lines as line')->join('erp_material_deliveries as delivery', 'delivery.id', '=', 'line.delivery_id')
+                ->where('delivery.source_delivery_id', $delivery->id)->where('delivery.delivery_type', 'redelivery')
+                ->where('delivery.status', '<>', 'CANCELLED')->where('line.picking_task_line_id', $line->picking_task_line_id)->get(['line.delivery_qty', 'line.serial_snapshot']);
+            $resent = $resentLines->sum('delivery_qty');
+            $rejectedIds = $delivery->receipts->flatMap(fn ($receipt) => $receipt->lines)->where('delivery_line_id', $line->id)
+                ->flatMap(fn ($receiptLine) => $receiptLine->rejected_serial_snapshot['inventory_serial_ids'] ?? [])->all();
+            $allocatedIds = $resentLines->flatMap(fn ($resentLine) => json_decode($resentLine->serial_snapshot ?: '{}', true)['inventory_serial_ids'] ?? [])->all();
+            $line->setAttribute('available_redelivery_serial_ids', array_values(array_diff($rejectedIds, $allocatedIds)));
+            $line->setAttribute('redelivered_qty', (float) $resent);
+            $line->setAttribute('remaining_redelivery_qty', max(0, (float) $line->rejected_qty - (float) $resent));
+            $line->setAttribute('reject_reasons', $delivery->receipts->flatMap(fn ($receipt) => $receipt->lines)->where('delivery_line_id', $line->id)->pluck('reject_reason')->filter()->values());
+        }
         return $delivery;
     }
 
@@ -321,7 +445,7 @@ final class ProductionMaterialExecutionService
                 if (! $task) $this->fail('not_found', '配料任务不存在。', 404);
                 $this->visible($task->workOrder, $user, 'production.material_delivery.view', $permissions, $superAdmin);
                 $this->version($task, $payload);
-                if (! in_array($task->status, ['PICKED', 'WAIT_DELIVERY', 'DELIVERED', 'PARTIALLY_RECEIVED'], true)) {
+                if (! in_array($task->status, ['PICKED', 'WAIT_DELIVERY', 'DELIVERING', 'DELIVERED', 'PARTIALLY_RECEIVED'], true)) {
                     $this->fail('invalid_state', '当前配料任务状态不能创建配送单。');
                 }
                 $rows = collect($payload['lines'] ?? []);
@@ -329,7 +453,7 @@ final class ProductionMaterialExecutionService
                 $deliveryType = (string) ($payload['delivery_type'] ?? 'standard');
                 $sourceDelivery = null;
                 if ($deliveryType === 'redelivery') {
-                    $sourceDelivery = MaterialDelivery::with('lines')->lockForUpdate()->find((int) ($payload['source_delivery_id'] ?? 0));
+                    $sourceDelivery = MaterialDelivery::with(['lines', 'receipts.lines'])->lockForUpdate()->find((int) ($payload['source_delivery_id'] ?? 0));
                     if (! $sourceDelivery || (int) $sourceDelivery->work_order_id !== (int) $task->work_order_id) $this->fail('source_delivery_invalid', '补送配送必须关联同一工单的原配送单。');
                     if (! $sourceDelivery->lines->contains(fn ($line) => (float) $line->rejected_qty > 0)) $this->fail('redelivery_balance_missing', '原配送单没有拒收余额，不需要补送。');
                 } elseif (! empty($payload['source_delivery_id'])) {
@@ -361,7 +485,7 @@ final class ProductionMaterialExecutionService
                     'delivery_user_legacy_id' => $payload['delivery_user_legacy_id'] ?? null,
                     'expected_receiver_legacy_id' => $expectedReceiver,
                     'from_warehouse_id' => $task->warehouse_id, 'organization_code' => $task->organization_code,
-                    'to_production_location_snapshot' => $task->production_location_name_snapshot,
+                    'to_production_location_snapshot' => $firstPickLine->target_operation_name_snapshot ?: $task->production_location_name_snapshot,
                     'remark' => $payload['remark'] ?? null, 'business_version' => 1,
                     'created_by_legacy_id' => $this->userId($user), 'updated_by_legacy_id' => $this->userId($user),
                 ]);
@@ -383,19 +507,26 @@ final class ProductionMaterialExecutionService
                     $allocated = (float) MaterialDeliveryLine::query()
                         ->join('erp_material_deliveries as deliveries', 'deliveries.id', '=', 'erp_material_delivery_lines.delivery_id')
                         ->where('erp_material_delivery_lines.picking_task_line_id', $pickLine->id)
-                        ->where('deliveries.status', '<>', 'CANCELLED')->sum('erp_material_delivery_lines.delivery_qty');
+                        ->where('deliveries.status', '<>', 'CANCELLED')->where('deliveries.delivery_type', '<>', 'redelivery')->sum('erp_material_delivery_lines.delivery_qty');
                     if ($quantity > (float) $pickLine->actual_pick_qty - $allocated + 0.00000001) {
                         $this->fail('delivery_quantity_exceeded', '配送数量不能超过该配料行尚未分配的已拣数量。');
                     }
                     }
                     $serialIds = array_values(array_unique(array_map('intval', (array) ($row['serial_ids'] ?? []))));
                     $availableSerialIds = array_values(array_map('intval', (array) (($pickLine->serial_snapshot ?? [])['inventory_serial_ids'] ?? [])));
+                    if ($deliveryType === 'redelivery') {
+                        $sourceLineId = $sourceDelivery->lines->firstWhere('picking_task_line_id', $pickLine->id)?->id;
+                        $availableSerialIds = $sourceDelivery->receipts->flatMap(fn ($receipt) => $receipt->lines)
+                            ->where('delivery_line_id', $sourceLineId)->flatMap(fn ($row) => $row->rejected_serial_snapshot['inventory_serial_ids'] ?? [])
+                            ->map(fn ($id) => (int) $id)->unique()->values()->all();
+                    }
                     if ($serialIds && array_diff($serialIds, $availableSerialIds)) {
                         $this->fail('delivery_serial_invalid', '配送任务行的序列号切片必须来自该正式配料行。');
                     }
                     $allocatedSerialIds = MaterialDeliveryLine::query()
                         ->where('picking_task_line_id', $pickLine->id)
                         ->whereHas('delivery', fn ($query) => $query->where('status', '<>', 'CANCELLED'))
+                        ->when($deliveryType === 'redelivery', fn ($query) => $query->whereHas('delivery', fn ($d) => $d->where('source_delivery_id', $sourceDelivery->id)))
                         ->get()->flatMap(fn (MaterialDeliveryLine $line) => (array) (($line->serial_snapshot ?? [])['inventory_serial_ids'] ?? []))
                         ->map(fn ($id) => (int) $id)->unique()->all();
                     if (array_intersect($serialIds, $allocatedSerialIds)) {
@@ -416,7 +547,7 @@ final class ProductionMaterialExecutionService
                     ]);
                 }
                 $this->event('delivery', $delivery->id, 'create', null, 'READY', 0, 1, null, $payload['remark'] ?? null, $user);
-                $task->status = 'WAIT_DELIVERY'; $task->business_version++; $task->updated_by_legacy_id = $this->userId($user); $task->save();
+                $this->refreshPickingDeliveryState($task->id, $user);
                 return $delivery->fresh($this->deliveryRelations());
             });
     }
@@ -431,9 +562,24 @@ final class ProductionMaterialExecutionService
             }
             $delivery->delivery_user_legacy_id = $deliveryUser;
             $delivery->departed_at = now();
-            $delivery->pickingTask->status = 'DELIVERING';
-            $delivery->pickingTask->business_version++;
-            $delivery->pickingTask->save();
+            // Re-dispatch the exact rejected serials without another inventory deduction.
+            // Keep READY/cancelled redeliveries rejected until they actually depart.
+            if ($delivery->delivery_type === 'redelivery') {
+                $ids = $delivery->lines->flatMap(fn ($line) => $line->serial_snapshot['inventory_serial_ids'] ?? [])->all();
+                $serials = InventorySerial::whereIn('id', $ids)->where('serial_status', 'production_rejected')->lockForUpdate()->get();
+                if ($serials->count() !== count($ids)) $this->fail('serial_state_conflict', '补送序列号已被其他操作处理，请刷新后重试。', 409);
+                foreach ($serials as $serial) {
+                    $serial->update(['serial_status' => 'production_in_transit']);
+                    InventorySerialEvent::create([
+                        'inventory_serial_id' => $serial->id, 'event_type' => 'production_material_redelivery',
+                        'document_type' => 'material_delivery', 'document_id' => $delivery->id,
+                        'document_no' => $delivery->delivery_no, 'from_status' => 'production_rejected',
+                        'to_status' => 'production_in_transit', 'warehouse_id' => $serial->warehouse_id,
+                        'location_id' => $serial->location_id, 'batch_no' => $serial->batch_no,
+                        'occurred_at' => now(),
+                    ]);
+                }
+            }
         });
     }
 
@@ -446,9 +592,6 @@ final class ProductionMaterialExecutionService
                 $line->requirement()->lockForUpdate()->incrementEach(['delivered_qty' => $line->delivery_qty, 'business_version' => 1]);
             }
             $delivery->delivered_at = now();
-            $delivery->pickingTask->status = 'DELIVERED';
-            $delivery->pickingTask->business_version++;
-            $delivery->pickingTask->save();
         });
     }
 
@@ -462,11 +605,7 @@ final class ProductionMaterialExecutionService
                 $this->visible($delivery->workOrder, $user, 'production.material_receipt.view', $permissions, $superAdmin);
                 $this->version($delivery, $payload);
                 if ($delivery->status !== 'DELIVERED') $this->fail('invalid_state', '只有已送达且尚未全部确认的配送单可以收料。');
-                $expectedReceiver = $delivery->expected_receiver_legacy_id ?: DB::table('erp_production_task_targets as target')
-                    ->join('erp_production_tasks as production_task', 'production_task.id', '=', 'target.task_id')
-                    ->where('target.target_type', $delivery->production_target_type)
-                    ->where('target.target_id', $delivery->production_target_id)
-                    ->value('production_task.assignee_user_legacy_id');
+                $expectedReceiver = $this->expectedReceiver($delivery);
                 if (! $expectedReceiver) $this->fail('production_target_unclaimed', '生产目标尚未接单，不能确认物料责任交接。', 409);
                 if ((int) $expectedReceiver !== $this->userId($user)) {
                     $this->fail('receiver_mismatch', '只有该生产目标当前责任人可以确认收料。', 403);
@@ -474,6 +613,8 @@ final class ProductionMaterialExecutionService
                 if (! $delivery->expected_receiver_legacy_id) $delivery->expected_receiver_legacy_id = (int) $expectedReceiver;
                 $rows = collect($payload['lines'] ?? [])->keyBy(fn ($row) => (int) ($row['delivery_line_id'] ?? 0));
                 if ($rows->isEmpty()) $this->fail('validation_error', '收料明细不能为空。');
+                if ($rows->count() !== count($payload['lines']) || $rows->keys()->diff($delivery->lines->pluck('id'))->isNotEmpty())
+                    $this->fail('validation_error', '收料明细重复或不属于当前配送单。');
                 $receipt = MaterialReceipt::create([
                     'receipt_no' => 'TMP-'.bin2hex(random_bytes(12)), 'delivery_id' => $delivery->id,
                     'work_order_id' => $delivery->work_order_id, 'status' => 'CONFIRMED',
@@ -500,12 +641,28 @@ final class ProductionMaterialExecutionService
                         $this->fail('serial_invalid', '收料序列号必须来自该配送行的真实配料序列号。');
                     }
                     if (array_intersect($acceptedSerials, $rejectedSerials)) $this->fail('serial_duplicate', '同一序列号不能同时收料和拒收。');
+                    $serialReasons = [];
+                    if (array_key_exists('rejected_serial_reasons', $row)) {
+                        $submittedReasons = (array) $row['rejected_serial_reasons'];
+                        if (array_diff(array_map('intval', array_keys($submittedReasons)), $rejectedSerials)
+                            || count($submittedReasons) !== count($rejectedSerials)) $this->fail('serial_reject_reason_invalid', '逐件拒收原因必须与本次拒收序列号一一对应。');
+                        foreach ($rejectedSerials as $serialId) {
+                            $serialReason = trim((string) ($submittedReasons[$serialId] ?? ''));
+                            if ($serialReason === '' || mb_strlen($serialReason) > 500) $this->fail('serial_reject_reason_required', '每个拒收序列号都必须填写不超过500字的原因。');
+                            $serialReasons[$serialId] = $serialReason;
+                        }
+                    } else foreach ($rejectedSerials as $serialId) $serialReasons[$serialId] = $reason;
+                    if ($line->pickingTaskLine->serial_control_type !== 'none'
+                        && (count($acceptedSerials) !== (int) $accepted || count($rejectedSerials) !== (int) $rejected
+                            || abs($accepted - (int) $accepted) > 0.00000001 || abs($rejected - (int) $rejected) > 0.00000001)) {
+                        $this->fail('receipt_serial_quantity_mismatch', '收料及拒收数量必须分别与所选序列号数量一致。');
+                    }
                     $receiptLine = MaterialReceipt::findOrFail($receipt->id)->lines()->create([
                         'delivery_line_id' => $line->id, 'component_item_id' => $line->component_item_id,
                         'delivered_qty_snapshot' => $line->delivery_qty, 'accepted_qty' => $accepted,
                         'rejected_qty' => $rejected, 'reject_reason' => $reason ?: null, 'unit_id' => $line->unit_id,
                         'accepted_serial_snapshot' => $acceptedSerials ? ['inventory_serial_ids' => $acceptedSerials] : null,
-                        'rejected_serial_snapshot' => $rejectedSerials ? ['inventory_serial_ids' => $rejectedSerials] : null,
+                        'rejected_serial_snapshot' => $rejectedSerials ? ['inventory_serial_ids' => $rejectedSerials, 'reasons' => $serialReasons] : null,
                     ]);
                     $this->materialCosts->recordDeliveryReceipt($delivery, $line, $receiptLine, $this->userId($user));
                     $line->received_qty = (float) $line->received_qty + $accepted;
@@ -547,17 +704,12 @@ final class ProductionMaterialExecutionService
                 $delivery->updated_by_legacy_id = $this->userId($user);
                 $delivery->save();
                 $task = $delivery->pickingTask()->lockForUpdate()->first();
-                $allDeliveriesSettled = $task->deliveries()->where('status', '<>', 'RECEIVED')->doesntExist();
-                $allPickedMaterialReceived = $task->lines()->get()->every(
-                    fn (MaterialPickingTaskLine $line) => (float) $line->received_qty + 0.00000001 >= (float) $line->actual_pick_qty
-                );
                 // A rejected delivery line is settled for that delivery, but the picked
                 // material is still outstanding until a redelivery is actually accepted.
                 // Completing the picking task on delivery status alone would make the
                 // redelivery route unreachable because createDelivery intentionally only
                 // accepts an unfinished picking task.
-                $task->status = $allDeliveriesSettled && $allPickedMaterialReceived ? 'RECEIVED' : 'PARTIALLY_RECEIVED';
-                $task->business_version++; $task->updated_by_legacy_id = $this->userId($user); $task->save();
+                $this->refreshPickingDeliveryState($task->id, $user);
                 if ($delivery->production_target_type && $delivery->production_target_id) {
                     $this->refreshTargetReadiness((string) $delivery->production_target_type, (int) $delivery->production_target_id);
                 }
@@ -584,28 +736,8 @@ final class ProductionMaterialExecutionService
     public function cancelDelivery(int $id, array $payload, object $user, array $permissions, bool $superAdmin): MaterialDelivery
     {
         $this->permission($permissions, 'production.material_delivery.cancel');
-        return $this->deliveryTransition($id, $payload, $user, $permissions, $superAdmin, 'READY', 'CANCELLED', 'cancel', function (MaterialDelivery $delivery) use ($payload, $user): void {
+        return $this->deliveryTransition($id, $payload, $user, $permissions, $superAdmin, 'READY', 'CANCELLED', 'cancel', function (MaterialDelivery $delivery) use ($payload): void {
             if (trim((string) ($payload['reason'] ?? '')) === '') $this->fail('reason_required', '取消配送单必须填写原因。');
-
-            $task = $delivery->pickingTask;
-            $otherStatuses = $task->deliveries()->whereKeyNot($delivery->id)->where('status', '<>', 'CANCELLED')->pluck('status');
-            $lines = $task->lines()->lockForUpdate()->get();
-            $allPickedMaterialReceived = $lines->every(
-                fn (MaterialPickingTaskLine $line) => (float) $line->received_qty + 0.00000001 >= (float) $line->actual_pick_qty
-            );
-            $hasReceivedMaterial = $lines->contains(fn (MaterialPickingTaskLine $line) => (float) $line->received_qty > 0.00000001);
-
-            $task->status = match (true) {
-                $otherStatuses->contains('IN_TRANSIT') => 'DELIVERING',
-                $otherStatuses->contains('DELIVERED') => 'DELIVERED',
-                $otherStatuses->contains('READY') => 'WAIT_DELIVERY',
-                $otherStatuses->isNotEmpty() && $allPickedMaterialReceived => 'RECEIVED',
-                $hasReceivedMaterial => 'PARTIALLY_RECEIVED',
-                default => 'PICKED',
-            };
-            $task->business_version++;
-            $task->updated_by_legacy_id = $this->userId($user);
-            $task->save();
         });
     }
 
@@ -690,6 +822,7 @@ final class ProductionMaterialExecutionService
             $beforeVersion = (int) $delivery->business_version;
             $mutate($delivery);
             $delivery->status = $to; $delivery->business_version++; $delivery->updated_by_legacy_id = $this->userId($user); $delivery->save();
+            $this->refreshPickingDeliveryState($delivery->picking_task_id, $user);
             $this->event('delivery', $delivery->id, $action, $from, $to, $beforeVersion, $delivery->business_version, null, $payload['reason'] ?? null, $user);
             return $delivery->fresh($this->deliveryRelations());
         });
@@ -880,6 +1013,45 @@ final class ProductionMaterialExecutionService
         ]);
     }
 
+    private function refreshPickingDeliveryState(int $taskId, object $user): void
+    {
+        // Derive the whole task from all live deliveries; one completed/cancelled wave must
+        // never hide another wave that is still on the road or material still to be sent.
+        $task = MaterialPickingTask::with('lines')->lockForUpdate()->findOrFail($taskId);
+        $statuses = $task->deliveries()->where('status', '<>', 'CANCELLED')->pluck('status');
+        $allReceived = $task->lines->every(fn ($line) => (float) $line->received_qty + 0.00000001 >= (float) $line->actual_pick_qty);
+        $anyReceived = $task->lines->contains(fn ($line) => (float) $line->received_qty > 0);
+        $task->status = match (true) {
+            $statuses->contains('IN_TRANSIT') => 'DELIVERING',
+            $statuses->contains('DELIVERED') => 'DELIVERED',
+            $statuses->contains('READY') => 'WAIT_DELIVERY',
+            $statuses->isNotEmpty() && $allReceived => 'RECEIVED',
+            $anyReceived => 'PARTIALLY_RECEIVED',
+            default => 'PICKED',
+        };
+        $task->business_version++;
+        $task->updated_by_legacy_id = $this->userId($user);
+        $task->save();
+    }
+
+    private function personName(?int $id): ?string
+    {
+        $person = $id ? DB::table('erp_legacy_admin_users')->where('legacy_id', $id)->first(['nickname', 'username']) : null;
+        return $person?->nickname ?: $person?->username;
+    }
+
+    private function searchDocuments($query, array $filters, string $number): void
+    {
+        $keyword = trim((string) ($filters['keyword'] ?? ''));
+        if ($keyword !== '') $query->where(function ($q) use ($number, $keyword): void {
+            $q->where($number, 'like', '%'.$keyword.'%')
+                ->orWhereHas('workOrder', fn ($wo) => $wo->where('work_order_no', 'like', '%'.$keyword.'%')
+                    ->orWhereHas('outputItem', fn ($item) => $item->where('item_name', 'like', '%'.$keyword.'%')->orWhere('item_code', 'like', '%'.$keyword.'%')));
+            if ($number === 'delivery_no') $q->orWhereIn('delivery_user_legacy_id', DB::table('erp_legacy_admin_users')
+                ->where(fn ($person) => $person->where('nickname', 'like', '%'.$keyword.'%')->orWhere('username', 'like', '%'.$keyword.'%'))->select('legacy_id'));
+        });
+    }
+
     private function sortPayload(array $payload): array
     {
         foreach ($payload as $key => $value) if (is_array($value)) $payload[$key] = $this->sortPayload($value);
@@ -888,7 +1060,16 @@ final class ProductionMaterialExecutionService
     }
 
     private function userId(object $user): int { return (int) ($user->legacy_id ?? $user->id ?? 0); }
-    private function pickingRelations(): array { return ['workOrder.outputItem', 'warehouse', 'inventoryTransaction.items', 'lines.requirement', 'lines.componentItem', 'lines.inventoryBalance']; }
-    private function deliveryRelations(): array { return ['workOrder.outputItem', 'pickingTask', 'lines.requirement', 'lines.pickingTaskLine', 'receipts.lines']; }
+    private function lineMeta(int $total, array $filters): array
+    { return ['total' => $total, 'current_page' => (int) $filters['page'], 'per_page' => (int) $filters['per_page'], 'last_page' => max(1, (int) ceil($total / (int) $filters['per_page']))]; }
+
+    private function expectedReceiver(MaterialDelivery $delivery): int
+    { return (int) ($delivery->expected_receiver_legacy_id ?: DB::table('erp_production_task_targets as target')
+        ->join('erp_production_tasks as production_task', 'production_task.id', '=', 'target.task_id')
+        ->where('target.target_type', $delivery->production_target_type)->where('target.target_id', $delivery->production_target_id)
+        ->value('production_task.assignee_user_legacy_id')); }
+
+    private function pickingRelations(): array { return ['workOrder.outputItem', 'warehouse', 'inventoryTransaction.items', 'lines.requirement', 'lines.componentItem', 'lines.inventoryBalance.location', 'deliveries']; }
+    private function deliveryRelations(): array { return ['workOrder.outputItem', 'pickingTask.warehouse', 'lines.requirement', 'lines.pickingTaskLine.componentItem', 'lines.pickingTaskLine.inventoryBalance.location', 'receipts.lines']; }
     private function fail(string $code, string $message, int $status = 422, array $details = []): never { throw new WorkOrderDomainException($code, $message, $status, $details); }
 }

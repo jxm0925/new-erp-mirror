@@ -1,160 +1,38 @@
-<view class="page-container">
-  <view wx:if="{{ loading }}" class="loading-state">
-    <van-loading type="spinner" color="#d81e06" vertical>加载工单详情中...</van-loading>
-  </view>
-
-  <block wx:else>
-    <!-- Product Overview Card (with integrated top breadcrumb) -->
-    <view class="card product-card">
-      <!-- Breadcrumb Header -->
-      <view class="crumb-nav">
-        <text class="crumb-link font-num" bindtap="navBackToMaster">{{ masterOrderNo }}</text>
-        <text class="crumb-sep">></text>
-        <text class="crumb-active font-num">{{ workOrder.work_order_no }}</text>
-      </view>
-
-      <view class="product-top">
-        <image class="product-img" src="{{ workOrder.product_image || '/static/images/work_order.png' }}" mode="aspectFit" />
-        <view class="product-info">
-          <view class="product-title">{{ workOrder.product_name }}</view>
-          <view class="product-spec">产品型号：<text class="font-num">{{ workOrder.product_model }}</text></view>
-          <view class="product-qty">订单数量：<text class="font-num font-bold">{{ workOrder.target_qty }}</text> {{ workOrder.unit_name }}</view>
-        </view>
-      </view>
-
-      <view class="metric-divider"></view>
-
-      <!-- 6 Metrics Row (Labels on Top, Numbers on Bottom, with dividers) -->
-      <view class="metrics-grid">
-        <view class="metric-col">
-          <view class="metric-label">计划</view>
-          <view class="metric-val text-dark">
-            <text class="val-num font-num">{{ metrics.planned }}</text>
-            <text class="val-unit"> {{ workOrder.unit_name }}</text>
-          </view>
-        </view>
-        <view class="col-divider"></view>
-        <view class="metric-col">
-          <view class="metric-label">完成</view>
-          <view class="metric-val text-green">
-            <text class="val-num font-num">{{ metrics.completed }}</text>
-            <text class="val-unit"> {{ workOrder.unit_name }}</text>
-          </view>
-        </view>
-        <view class="col-divider"></view>
-        <view class="metric-col">
-          <view class="metric-label">在制</view>
-          <view class="metric-val text-blue">
-            <text class="val-num font-num">{{ metrics.in_progress }}</text>
-            <text class="val-unit"> {{ workOrder.unit_name }}</text>
-          </view>
-        </view>
-        <view class="col-divider"></view>
-        <view class="metric-col">
-          <view class="metric-label">待生产</view>
-          <view class="metric-val text-orange">
-            <text class="val-num font-num">{{ metrics.waiting }}</text>
-            <text class="val-unit"> {{ workOrder.unit_name }}</text>
-          </view>
-        </view>
-        <view class="col-divider"></view>
-        <view class="metric-col">
-          <view class="metric-label">异常</view>
-          <view class="metric-val text-red">
-            <text class="val-num font-num">{{ metrics.exception }}</text>
-            <text class="val-unit"> {{ workOrder.unit_name }}</text>
-          </view>
-        </view>
-        <view class="col-divider"></view>
-        <view class="metric-col">
-          <view class="metric-label">工序完成</view>
-          <view class="metric-val text-dark">
-            <text class="val-num font-num">{{ metrics.tasks_completed }}/{{ metrics.tasks_total }}</text>
-          </view>
-        </view>
-      </view>
+<view class="detail-page">
+  <view wx:if="{{loading}}" class="state"><van-loading color="#e31912">加载中</van-loading></view>
+  <view wx:elif="{{error}}" class="card state"><van-icon name="{{errorCode==='forbidden'?'lock':(errorCode==='not_found'?'warning-o':'info-o')}}" size="64rpx" color="#e31912" /><strong>{{errorTitle}}</strong><text>{{error}}</text><button class="primary" wx:if="{{errorCode==='load'}}" bindtap="load">重新加载</button><button class="primary" wx:else bindtap="backToList">返回工单列表</button></view>
+  <block wx:elif="{{workOrder}}">
+    <view class="card summary">
+      <view class="draft-banner" wx:if="{{workOrder.status==='DRAFT' || workOrder.status==='WAIT_RELEASE'}}"><text>{{workOrder.statusLabel}}</text></view>
+      <view class="heading"><strong class="document-no">{{workOrder.work_order_no}}</strong><text class="badge {{workOrder.source_type==='sales_order'?'red':'blue'}}">{{workOrder.sourceLabel}}</text></view>
+      <strong class="product-name">{{workOrder.productName}}</strong>
+      <view class="source-line" wx:if="{{workOrder.sourceNo}}"><text>来源单据：{{workOrder.sourceNo}}</text><text class="link" wx:if="{{masterId && actions.view_master_order}}" bindtap="openMaster">销售生产总览 ›</text></view>
+      <view class="meta" wx:if="{{mode==='quantity'}}"><text>生产方式</text><text>按数量生产</text></view>
+      <view class="meta" wx:if="{{mode==='quantity'}}"><text>加工终点</text><text>{{workOrder.endpoint}}</text></view>
+      <block wx:if="{{workOrder.stocking_purpose==='reserved_for_work_order'}}"><view class="meta"><text>目标工单</text><text>{{workOrder.reserved_target.work_order_no || '无权查看目标工单'}}</text></view><view class="meta" wx:if="{{workOrder.reserved_for_production_unit_id}}"><text>生产单元</text><text>{{workOrder.reserved_target.unit_no || '—'}}</text></view><view class="meta"><text>接收工序</text><text>{{workOrder.reserved_target.operation_name || '—'}}</text></view></block>
+      <view class="metrics"><view wx:for="{{metrics}}" wx:key="label"><text class="muted">{{item.label}}</text><view class="metric-value {{item.color}}"><strong>{{item.value}}</strong><text>{{item.unit}}</text></view></view></view>
     </view>
-
-    <!-- Section Header: 生产单元 (6) & 筛选 -->
-    <view class="section-bar">
-      <view class="section-title">
-        生产单元 <text class="count-num font-num">({{ filteredUnits.length }})</text>
+    <view class="section-title"><strong>{{mode==='unit'?'生产单元':'工序进度'}}{{mode==='unit' && !rowsForbidden?'（'+rowTotal+'）':''}}</strong><text wx:if="{{!rowsForbidden}}" bindtap="openFilterPicker"><van-icon name="filter-o" /> {{activeFilterLabel || '筛选'}}</text></view>
+    <view wx:if="{{rowsForbidden}}" class="card state permission"><van-icon name="lock" size="52rpx" /><strong>无权查看{{mode==='unit'?'生产单元':'工序进度'}}</strong><text>请联系管理员</text></view>
+    <view wx:elif="{{!rowsLoading && !rowsError && !rows.length}}" class="card state"><text>暂无{{currentFilter?'符合条件的':''}}{{mode==='unit'?'生产单元':'工序记录'}}</text></view>
+    <block wx:if="{{mode==='unit'}}">
+      <view class="card execution-card" wx:for="{{rows}}" wx:key="id">
+        <view class="heading"><strong class="unit-no">{{item.unit_no}}</strong><text class="badge {{item.tone}}">{{item.statusLabel}}</text><text class="link push" data-id="{{item.id}}" bindtap="openUnit">查看单元 ›</text></view>
+        <view class="meta"><text>当前工序</text><strong>{{item.operationName}}</strong><text class="muted">{{item.sequenceText}}</text></view>
+        <view class="meta"><text>当前工序任务</text><text class="task-no">{{item.taskNo}}</text><text wx:if="{{item.canViewTask}}" class="link push" data-id="{{item.id}}" bindtap="openTask">查看任务 ›</text></view>
+        <view class="conditions"><view><text class="muted">物料齐套</text><text class="badge {{item.kittingTone}}">{{item.kittingLabel}}</text></view><view><text class="muted">前序交接</text><text class="badge {{item.handoverTone}}">{{item.handoverLabel}}</text></view></view>
       </view>
-      <view class="filter-action {{ currentFilter !== 'all' ? 'filter-active' : '' }}" bindtap="openFilterPicker">
-        <van-icon name="filter-o" size="14px" color="{{ currentFilter !== 'all' ? '#d81e06' : '#1f2329' }}" />
-        <text class="filter-text">{{ activeFilterLabel || '筛选' }}</text>
+    </block>
+    <block wx:else>
+      <view class="card execution-card" wx:for="{{rows}}" wx:key="id">
+        <view class="heading"><strong class="sequence">{{item.sequence}}</strong><strong class="op-name">{{item.operation_name}}</strong><text class="badge push {{item.tone}}">{{item.statusLabel}}</text></view>
+        <view class="metrics op-metrics"><view><text class="muted">计划数量</text><view class="metric-value"><strong>{{item.planned}}</strong><text>{{item.unit}}</text></view></view><view><text class="muted">完成数量</text><view class="metric-value green"><strong>{{item.completed}}</strong><text>{{item.unit}}</text></view></view><view><text class="muted">不合格</text><view class="metric-value red"><strong>{{item.unqualified}}</strong><text>{{item.unit}}</text></view></view><view><text class="muted">报废</text><view class="metric-value red"><strong>{{item.scrapped}}</strong><text>{{item.unit}}</text></view></view></view>
+        <view class="meta task-line"><text>当前工序任务</text><text class="task-no">{{item.taskNo}}</text><text wx:if="{{item.canViewTask}}" class="link push" data-id="{{item.id}}" bindtap="openTask">查看任务 ›</text></view>
       </view>
-    </view>
-
-    <!-- Production Unit (PU) Cards List -->
-    <view class="pu-list">
-      <block wx:for="{{ filteredUnits }}" wx:key="id">
-        <view class="card pu-card" bindtap="openUnit" data-unit="{{ item }}">
-          <!-- PU Header Row -->
-          <view class="pu-row-header">
-            <view class="pu-identity">
-              <text class="pu-code font-num">{{ item.unit_no }}</text>
-              <text class="status-pill {{ item.statusClass }}">{{ item.statusLabel }}</text>
-            </view>
-            <view class="pu-link" catchtap="openUnit" data-unit="{{ item }}">
-              <text>查看工序任务</text>
-              <van-icon name="arrow" size="12px" color="#909399" />
-            </view>
-          </view>
-
-          <!-- PU Operation Row -->
-          <view class="pu-op-row">
-            <text class="pu-label">当前工序</text>
-            <text class="pu-op-name">{{ item.current_operation_name }}</text>
-            <text class="pu-op-seq" wx:if="{{ item.seq_text }}">（{{ item.seq_text }}）</text>
-          </view>
-
-          <!-- PU 3-Column Attributes Grid -->
-          <view class="pu-meta-grid">
-            <view class="meta-col">
-              <view class="col-label">当前工序任务</view>
-              <view class="col-val pt-code font-num">{{ item.current_pt_no || '—' }}</view>
-            </view>
-            <view class="meta-col">
-              <view class="col-label">物料齐套</view>
-              <view class="col-val">
-                <text wx:if="{{ item.kittingLabel && item.kittingLabel !== '—' }}" class="tag-badge {{ item.kittingClass }}">{{ item.kittingLabel }}</text>
-                <text wx:else class="text-placeholder">—</text>
-              </view>
-            </view>
-            <view class="meta-col">
-              <view class="col-label">生产单元状态</view>
-              <view class="col-val">
-                <text wx:if="{{ item.handoverLabel && item.handoverLabel !== '—' }}" class="tag-badge {{ item.handoverClass }}">{{ item.handoverLabel }}</text>
-                <text wx:else class="text-placeholder">—</text>
-              </view>
-            </view>
-          </view>
-        </view>
-      </block>
-
-      <view wx:if="{{ !filteredUnits.length }}" class="empty-state">
-        <text>暂无符合筛选条件的生产单元</text>
-      </view>
-    </view>
+    </block>
+    <view class="state compact" wx:if="{{rowsLoading}}"><van-loading color="#e31912">加载中</van-loading></view>
+    <view class="state compact" wx:if="{{rowsError && !rowsForbidden}}" bindtap="retryRows">{{rowsError}} · 点击重试</view>
+    <view class="actions"><button wx:if="{{actions.view_materials}}" class="outline" bindtap="openMaterials">查看物料</button><button wx:if="{{actions.view_tasks}}" class="primary" bindtap="openTasks">查看工序任务</button></view>
   </block>
-
-  <!-- Filter Modal / Bottom Sheet -->
-  <view wx:if="{{ showFilterModal }}" class="modal-mask" bindtap="closeFilterPicker">
-    <view class="modal-sheet" catchtap="stopBubble">
-      <view class="sheet-header">
-        <text class="sheet-title">筛选生产单元</text>
-        <view class="sheet-close" bindtap="closeFilterPicker">
-          <van-icon name="cross" size="18px" color="#909399" />
-        </view>
-      </view>
-      <view class="filter-options">
-        <block wx:for="{{ filterOptions }}" wx:key="key">
-          <view class="filter-chip {{ currentFilter === item.key ? 'filter-chip-active' : '' }}" bindtap="applyFilter" data-key="{{ item.key }}" data-label="{{ item.label }}">
-            {{ item.label }}
-          </view>
-        </block>
-      </view>
-    </view>
-  </view>
 </view>
+<view wx:if="{{showFilter}}" class="filter-mask" catchtap="closeFilter" catchtouchmove="noop"><view class="filter-dialog" catchtap="noop"><strong>筛选状态</strong><view class="filter-choice {{currentFilter===item.key?'chosen':''}}" wx:for="{{filterOptions}}" wx:key="key" data-key="{{item.key}}" bindtap="applyFilter">{{item.label}}</view><button bindtap="closeFilter">取消</button></view></view>

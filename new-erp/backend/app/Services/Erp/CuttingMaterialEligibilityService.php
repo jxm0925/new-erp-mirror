@@ -25,6 +25,11 @@ final class CuttingMaterialEligibilityService
 
     public function assertItem(int $orderId, int $itemId): void
     {
+        if ($link = app(ProductionCuttingOperationService::class)->linkedOrder($orderId)) {
+            if (! app(ProductionCuttingOperationService::class)->requirements($link->target_type, $link->target_id)->where('target.component_item_id', $itemId)->exists())
+                app(CuttingCommandService::class)->fail('input_not_allowed', '该材料不属于本工序的冻结用料。');
+            return;
+        }
         if (DB::table('erp_cutting_orders')->where('id', $orderId)->where('purpose', 'WORKER')->exists()) {
             if (! $this->workerMaterials()->where('id', $itemId)->exists())
                 app(CuttingCommandService::class)->fail('input_not_allowed', '请选择已启用的钢板或定长下料原料。');

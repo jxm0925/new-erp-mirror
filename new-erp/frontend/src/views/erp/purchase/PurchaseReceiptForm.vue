@@ -73,7 +73,7 @@
           <el-table-column label="实物 / 编号" width="118">
             <template slot-scope="{row}"><span v-if="isPhysicalManaged(row)">{{ physicalEntryCount(row) }} / {{ number(qualifiedBaseQty(row)) }} 张</span><div v-else-if="isStockManaged(row)" class="serial-progress"><span>{{ serialNumberList(row).length }} / {{ serialRequiredCount(row) }}</span><i><b :style="{width:serialProgress(row)+'%'}" /></i></div><span v-else>无需编号</span></template>
           </el-table-column>
-          <el-table-column label="金额（未税）" width="116" align="right"><template slot-scope="{row}">¥{{ money(lineAmount(row)) }}</template></el-table-column>
+          <el-table-column :label="isReplacement ? '库存成本金额' : taxMode === 'tax_included' ? '金额（含税）' : '金额（未税）'" width="116" align="right"><template slot-scope="{row}">¥{{ money(lineAmount(row)) }}</template></el-table-column>
           <el-table-column label="操作" width="94" fixed="right">
             <template slot-scope="{row,$index}"><el-button type="text" size="mini" @click.stop="selectLine(row)">查看</el-button><el-button v-if="!isReplacement" class="danger-link" type="text" size="mini" @click.stop="removeLine($index)">删除</el-button></template>
           </el-table-column>
@@ -94,7 +94,7 @@
             <label class="compact-field"><span>实际基本数量</span><el-input v-model.number="activeLine.actual_base_qty" type="number" size="small" min="0" :disabled="!actualConversionAllowed(activeLine)" /></label>
             <label class="compact-field"><span>差异数量</span><el-input :value="differenceQty(activeLine)" size="small" disabled /></label>
             <label class="compact-field"><span>差异原因</span><el-select v-model="activeLine.difference_reason" size="small" :disabled="!hasDifference(activeLine)" placeholder="无差异"><el-option label="包装重量偏差" value="包装重量偏差" /><el-option label="计量差异" value="计量差异" /><el-option label="验收修正" value="验收修正" /><el-option label="其他" value="其他" /></el-select></label>
-            <label class="compact-field required"><span>{{ isReplacement ? '库存成本单价' : '单价（未税）' }}</span><el-input v-model.number="activeLine.unit_price" type="number" size="small" min="0" :disabled="isReplacement"><template slot="append">CNY</template></el-input></label>
+            <label class="compact-field required"><span>{{ isReplacement ? '库存成本单价' : taxMode === 'tax_included' ? '单价（含税）' : '单价（未税）' }}</span><el-input v-model.number="activeLine.unit_price" type="number" size="small" min="0" :disabled="isReplacement"><template slot="append">CNY</template></el-input></label>
           </section>
 
           <section class="editor-group">

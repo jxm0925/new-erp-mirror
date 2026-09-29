@@ -275,6 +275,7 @@ class ProductionTaskQueryService
                 return [
                     'target_type' => $link->target_type,
                     'target_id' => (int) $target->id,
+                    'cutting_required' => app(ProductionCuttingOperationService::class)->required($link->target_type, (int) $target->id),
                     'status' => $target->status,
                     'status_label' => $this->statusLabel($status),
                     'reason_code' => $this->reasonCode($status),

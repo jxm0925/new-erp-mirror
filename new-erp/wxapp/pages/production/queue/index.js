@@ -1,14 +1,14 @@
 const production = require('../../../services/production');
 
-const TITLES = { pool: '待接任务', collaboration: '我的协同', deliveries: '物料配送', receipts: '物料签收', handover: '待交接', kitting: '待齐套', trace: '扫码追溯', outputs_quality: '产出质检', internal_receive: '半成品接收', supplements: '补料审批', return_quality: '退料质检' };
+const TITLES = { work_order: '工序任务', pool: '待接任务', collaboration: '我的协同', deliveries: '物料配送', receipts: '物料签收', handover: '待交接', kitting: '待齐套', trace: '扫码追溯', outputs_quality: '产出质检', internal_receive: '半成品接收', supplements: '补料审批', return_quality: '退料质检' };
 const STATUS = { WAIT_PREVIOUS: '待前工序', WAIT_CLAIM: '待接单', CLAIMED: '已接单', WAIT_MATERIAL: '待齐套', WAIT_HANDOVER: '待交接', READY: '待处理', WAIT_PICK: '待拣货', PICKING: '拣货中', IN_PROGRESS: '加工中', PAUSED: '已暂停', WAIT_ISSUE: '待发料', ISSUED: '待接收', SUBMITTED: '待处理', WAIT_QUALITY: '待质检', WAIT_WAREHOUSE: '待入库', REWORK: '返工中', COMPLETED: '已完成', CANCELLED: '已取消', DELIVERED: '待收料' };
 const EXECUTION_TYPES = ['outputs_quality', 'internal_receive', 'supplements', 'return_quality'];
 
 Page({
-  data: { type: '', title: '生产待办', loading: true, loadingMore: false, loaded: false, page: 0, total: 0, busy: false, rows: [], keyword: '', trace: null },
+  data: { type: '', title: '生产待办', loading: true, loadingMore: false, loaded: false, page: 0, total: 0, busy: false, rows: [], keyword: '', workOrderId: 0, trace: null },
   onLoad(options) {
     const type = ['picking', 'outputs_warehouse', 'internal_dispatch', 'return_receive'].includes(options.type) ? 'pool' : (options.type || 'pool');
-    this.setData({ type, title: TITLES[type] || '生产待办', keyword: decodeURIComponent(options.keyword || '') });
+    this.setData({ workOrderId: Number(options.workOrderId || 0), type, title: TITLES[type] || '生产待办', keyword: decodeURIComponent(options.keyword || '') });
     wx.setNavigationBarTitle({ title: this.data.title });
     this.load();
   },
@@ -29,6 +29,7 @@ Page({
     this.setData(append ? { loadingMore: true } : { loading: true, loaded: false, rows: [], page: 0, total: 0 });
     let promise;
     if (this.data.type === 'pool') promise = production.taskPool(params);
+    else if (this.data.type === 'work_order') promise = production.workOrderTasks(this.data.workOrderId, params);
     else if (this.data.type === 'collaboration') promise = production.collaborations(params);
     else if (this.data.type === 'kitting') promise = production.myTasks(Object.assign({}, params, { execution_filter: 'kitting' }));
     else if (this.data.type === 'deliveries') promise = production.deliveries(Object.assign({}, params, { status_group: 'pending_dispatch' }));
@@ -67,7 +68,7 @@ Page({
     }).catch((error) => { if (sequence !== this.requestSequence) return; this.setData({ loading: false, loadingMore: false }); wx.showToast({ title: error.message, icon: 'none' }); });
   },
   openTask(event) { wx.navigateTo({ url: `/pages/production/task-detail/index?id=${event.currentTarget.dataset.id}` }); },
-  openDelivery(event) { wx.navigateTo({ url: `/pages/production/delivery-detail/index?id=${event.currentTarget.dataset.id}&mode=${this.data.type === 'receipts' ? 'receipt' : 'delivery'}` }); },
+  openDelivery(event) { wx.navigateTo({ url: `/pages/warehouse/delivery/index?id=${event.currentTarget.dataset.id}&mode=${this.data.type === 'receipts' ? 'receipt' : 'delivery'}` }); },
   claim(event) {
     if (this.data.busy) return;
     const task = this.data.rows.find((row) => row.id === Number(event.currentTarget.dataset.id));

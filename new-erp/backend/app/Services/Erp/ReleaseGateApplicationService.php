@@ -31,17 +31,17 @@ class ReleaseGateApplicationService
         if (! $workOrder) $this->fail('not_found', '工单不存在。', 404);
         $this->assertVisible($workOrder, $user, $permissions, $superAdmin);
 
-        return DB::transaction(function () use ($workOrderId, $user): array {
+        return DB::transaction(function () use ($workOrderId, $user, $permissions, $superAdmin): array {
             $locked = WorkOrder::query()->lockForUpdate()->findOrFail($workOrderId);
             if ($locked->status === WorkOrderApplicationService::RELEASED) {
                 return $this->releasedResult($locked);
             }
 
-            return $this->evaluateLocked($locked, $user, true);
+            return $this->evaluateLocked($locked, $user, true, $permissions, $superAdmin);
         }, 3);
     }
 
-    public function evaluateLocked(WorkOrder $workOrder, object $user, bool $persist = true): array
+    public function evaluateLocked(WorkOrder $workOrder, object $user, bool $persist = true, ?array $permissions = null, ?bool $superAdmin = null): array
     {
         if ($workOrder->status === WorkOrderApplicationService::RELEASED) {
             return $this->releasedResult($workOrder);
@@ -57,7 +57,8 @@ class ReleaseGateApplicationService
             (int) (($demand?->product_id ?? 0) ?: ($line->product_id ?? 0)) ?: null,
             (int) (($demand?->sku_id ?? 0) ?: ($line->sku_id ?? 0)) ?: null,
             (int) (($workOrder->output_item_id ?? 0) ?: ($demand?->item_id ?? 0) ?: ($line->item_id ?? 0)) ?: null,
-            $demand?->configuration_snapshot ?: $line?->configuration_snapshot,
+            app(WorkOrderTechnicalService::class)->effectiveConfiguration($workOrder),
+            ($workOrder->bom_id ?: $demand?->bom_id) ? (int) ($workOrder->bom_id ?: $demand?->bom_id) : null,
         );
         $bom = null;
         if (! empty($match['bom_id'])) {
@@ -103,16 +104,40 @@ class ReleaseGateApplicationService
             $this->check('routing_snapshot', is_array($workOrder->routing_snapshot) && ! empty($workOrder->routing_snapshot['operations']), 'routing_snapshot_missing', '未找到该产出物料的默认生效工艺路线，工单不能发布。', ['routing_id' => $workOrder->production_routing_id, 'routing_version' => $workOrder->routing_version_snapshot]),
             $this->check('quantity', (float) $workOrder->target_qty > 0 && (float) $workOrder->target_base_qty > 0, 'quantity_invalid', '工单计划数量和基准数量必须大于 0。', ['target_qty' => (float) $workOrder->target_qty, 'target_base_qty' => (float) $workOrder->target_base_qty]),
             $this->check('responsible_user', ! $workOrder->responsible_user_legacy_id || DB::table('erp_legacy_admin_users')->where('legacy_id', $workOrder->responsible_user_legacy_id)->where('status', 'normal')->exists(), 'responsible_user_invalid', '工单既定负责人不存在或已停用；未指定时将由首个正式接单人担任。', []),
-            $this->check('production_location', trim((string) $workOrder->production_location_name) !== '', 'production_location_missing', '发布前必须填写生产地点/车间。', []),
             $this->check('bom_match', $bom !== null && ($match['status'] ?? null) === 'matched', 'bom_not_matched', (string) ($match['block_reason'] ?? '未匹配到唯一有效 BOM。'), ['match_status' => $match['status'] ?? null, 'candidates' => $match['candidates'] ?? []]),
             $this->check('bom_effective', $this->bomEffective($bom), 'bom_not_effective', 'BOM 必须已审核、启用且处于生效期。', $bom ? ['bom_id' => $bom->id, 'status' => $bom->status, 'audit_status' => $bom->audit_status, 'effective_date' => optional($bom->effective_date)->format('Y-m-d'), 'expire_date' => optional($bom->expire_date)->format('Y-m-d')] : []),
             $this->check('bom_complete', $this->bomComplete($bom), 'bom_incomplete', 'BOM 必须至少包含一条用量或固定用量大于 0 的有效物料行。', ['line_count' => $bom?->items?->count() ?? 0]),
-            $this->check('custom_documents', $this->customDocumentsReady($line), 'custom_documents_missing', '特殊定制订单行发布前必须具备图纸或技术附件。', ['special_customized' => (bool) ($line->is_special_customized ?? false)]),
+            $this->check('custom_documents', filled(data_get($workOrder->technical_snapshot, 'drawing_reference')) || $this->customDocumentsReady($line), 'custom_documents_missing', '定制生产发布前必须由技术岗位确认图纸或技术附件。', ['special_customized' => (bool) ($line->is_special_customized ?? false)]),
+            $this->check('technical_confirmation', ! app(WorkOrderTechnicalService::class)->requiresConfirmation($workOrder, $bom) || (
+                $workOrder->technical_version > 0
+                && (int) data_get($workOrder->technical_snapshot, 'bom_id') === (int) $workOrder->bom_id
+                && (int) data_get($workOrder->technical_snapshot, 'production_routing_id') === (int) $workOrder->production_routing_id
+            ), 'technical_confirmation_required', '定制成品或定制用料必须先完成工单技术确认。', ['technical_version' => (int) $workOrder->technical_version]),
             $this->check('production_execution_mode', in_array($executionMode, ['unit', 'quantity'], true), 'production_execution_mode_invalid', '产出物料必须配置有效的生产执行模式。', ['production_execution_mode' => $executionMode]),
             $this->check('production_unit_quantity', $unitQuantityValid, 'production_unit_quantity_not_integer', "逐件生产物料的工单基准数量必须为整数，当前基准数量为 {$workOrder->target_base_qty}，请检查订单数量或单位换算。", ['production_execution_mode' => $executionMode, 'target_base_qty' => (string) $workOrder->target_base_qty]),
             $this->check('material_supply_rules', $supplyCoverage['valid'], 'material_supply_rule_incomplete', '工艺路线没有完整配置 BOM 物料的目标工序和供应规则。', $supplyCoverage),
         ];
 
+        if ($workOrder->source_type === 'stock_prebuild') {
+            try {
+                app(StockPrebuildEligibilityService::class)->assertWorkOrder($workOrder);
+                $checks[] = $this->check('stock_prebuild_material', true, '', '', []);
+            } catch (WorkOrderDomainException $exception) {
+                $checks[] = $this->check('stock_prebuild_material', false, $exception->errorCode,
+                    $exception->getMessage(), $exception->details);
+            }
+        }
+        if ($workOrder->source_type === 'stock_prebuild' && $workOrder->stocking_purpose === 'reserved_for_work_order') {
+            try {
+                $auth = app(AuthContextService::class);
+                $target = app(StockPrebuildTargetService::class)->forWorkOrder($workOrder, $user,
+                    $permissions ?? $auth->permissionCodes($user), $superAdmin ?? $auth->isSuperAdmin($user));
+                $checks[] = $this->check('stock_prebuild_reserved_target', true, '', '', $target);
+            } catch (WorkOrderDomainException $exception) {
+                $checks[] = $this->check('stock_prebuild_reserved_target', false, $exception->errorCode,
+                    $exception->getMessage(), ['reserved_for_work_order_id' => $workOrder->reserved_for_work_order_id]);
+            }
+        }
         $allowed = collect($checks)->every(fn (array $check): bool => $check['status'] === 'passed');
         $result = [
             'allowed' => $allowed,
@@ -149,10 +174,15 @@ class ReleaseGateApplicationService
 
     public function buildMaterialRows(WorkOrder $workOrder, Bom $bom, ?array $configuration = null): array
     {
+        if ($workOrder->technical_version > 0) {
+            $configuration = app(WorkOrderTechnicalService::class)->effectiveConfiguration($workOrder);
+        }
         $resolved = $this->lengthCutRequirements->resolveBomLines($bom, $configuration);
 
         return $resolved->map(function (array $line, int $index) use ($workOrder, $bom): array {
             $template = $bom->items->firstWhere('id', (int) $line['id']);
+            $materialConfiguration = collect(data_get($workOrder->technical_snapshot, 'materials', []))
+                ->firstWhere('bom_item_id', (int) $line['id'])['configuration'] ?? null;
             $plannedOutput = (float) $workOrder->target_base_qty;
             $perOutput = (float) $line['qty'];
             $lossRate = (float) $line['loss_rate'];
@@ -172,6 +202,8 @@ class ReleaseGateApplicationService
                 'bom_id' => $bom->id,
                 'bom_item_id' => $line['id'],
                 'component_item_id' => $line['component_item_id'],
+                'configuration_id' => $materialConfiguration['id'] ?? null,
+                'configuration_snapshot' => $materialConfiguration ? json_encode($materialConfiguration, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE) : null,
                 'component_item_code_snapshot' => $line['component_item_code'] ?: $template?->componentItem?->item_code,
                 'component_item_name_snapshot' => $line['component_item_name'] ?: $template?->componentItem?->item_name,
                 'component_spec_snapshot' => $template?->componentItem?->spec,
@@ -273,6 +305,10 @@ class ReleaseGateApplicationService
     private function persist(WorkOrder $workOrder, array $checks, object $user, bool $allowed): void
     {
         $evaluatedAt = now();
+        // 未发布单的当前版本只保留本次适用的检查；旧版本发布证据保持原样。
+        WorkOrderReleaseGateCheck::query()->where('work_order_id', $workOrder->id)
+            ->where('work_order_version', (int) $workOrder->business_version)
+            ->whereNotIn('check_key', array_column($checks, 'key'))->delete();
         foreach ($checks as $check) {
             WorkOrderReleaseGateCheck::query()->updateOrCreate([
                 'work_order_id' => $workOrder->id,

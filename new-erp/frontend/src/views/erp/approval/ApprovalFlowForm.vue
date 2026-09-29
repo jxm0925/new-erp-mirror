@@ -1302,6 +1302,7 @@ export default {
       );
     },
     approverTypeChanged(t) {
+      this.selected.approver_rule.type = t;
       this.selected.approver_rule.value = ["user", "specified_users"].includes(t) ? [] : "";
       this.selected.approver_rule.field = "";
       this.selected.approver_rule.label = "";

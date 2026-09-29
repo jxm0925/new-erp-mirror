@@ -270,6 +270,7 @@ final class CuttingDemandService
         }
 
         $configurationId = isset($plan['configuration_id']) ? (int) $plan['configuration_id'] : null;
+        $this->assertTechnicalConfiguration($target, $consumer, $producer, (int) $item->id, $configurationId);
         $this->assertConfiguration($configurationId, $item, [(int) $producer->id, (int) $consumer->id]);
         [$demand] = $this->ensureDemand(
             $target, $outputId, $configurationId, (int) $node->routing_operation_id_snapshot, $user
@@ -361,8 +362,23 @@ final class CuttingDemandService
         $this->assertConfiguration(
             $payload['configuration_id'], $item, [(int) $producer->id, (int) $consumer->id]
         );
+        $this->assertTechnicalConfiguration($target, $consumer, $producer, (int) $item->id, $payload['configuration_id']);
 
         return compact('producer', 'consumer', 'target', 'item');
+    }
+
+    private function assertTechnicalConfiguration(object $target, WorkOrder $consumer, WorkOrder $producer, int $itemId, ?int $configurationId): void
+    {
+        $source = DB::table('erp_work_order_material_requirements')->where('id', $target->material_requirement_id)->first();
+        // 新技术版本形成后，配置是需求身份的一部分。旧工单沿用原下料需求校验，
+        // 不能把新增字段的空值误判成历史单据必须使用标准规格。
+        if ($consumer->technical_version > 0 && (int) $source?->configuration_id !== (int) $configurationId) {
+            $this->commands->fail('technical_configuration_mismatch', '下料配置与目标工单已确认用料配置不一致。');
+        }
+        if ($producer->technical_version > 0 && (int) $producer->output_item_id === $itemId
+            && (int) $producer->output_configuration_id !== (int) $configurationId) {
+            $this->commands->fail('technical_output_configuration_mismatch', '下料配置与来源工单已确认成品配置不一致。');
+        }
     }
 
     private function assertFormalTarget(object $target, WorkOrder $consumer): void

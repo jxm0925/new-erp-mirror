@@ -12,9 +12,8 @@
         <el-form-item label="备货目标路线工序" prop="target_routing_operation_id"><el-select v-model="form.target_routing_operation_id" style="width:100%"><el-option v-for="node in routeOperations" :key="node.id" :label="`${node.sequence} - ${node.operation && node.operation.operation_name}`" :value="node.id" /></el-select></el-form-item>
         <el-form-item label="计划数量" prop="target_qty"><el-input-number v-model="form.target_qty" :min="0.0001" :precision="4" style="width:100%" /></el-form-item>
         <el-form-item label="计划日期"><el-date-picker v-model="form.planned_date" type="date" value-format="yyyy-MM-dd" style="width:100%" /></el-form-item>
-        <el-form-item label="生产批次"><el-input v-model="form.production_batch" /></el-form-item>
+        <el-form-item label="生产批次"><el-input :value="form.production_batch || form.work_order_no" disabled /></el-form-item>
         <el-form-item label="负责人"><el-select v-model="form.responsible_user_legacy_id" clearable filterable remote :remote-method="searchUsers" :loading="optionLoading" style="width:100%"><el-option v-for="u in users" :key="u.user_id" :label="u.display_name" :value="u.user_id" /></el-select></el-form-item>
-        <el-form-item label="生产地点 / 车间"><el-input v-model="form.production_location_name" /></el-form-item>
       </div>
       <div class="form-actions"><el-button @click="$router.push('/production/work-orders')">取消</el-button><el-button type="success" @click="save">保存草稿</el-button></div>
     </el-form></section>

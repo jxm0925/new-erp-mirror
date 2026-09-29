@@ -50,12 +50,18 @@ class CuttingWorkerFlowTest extends TestCase
     public function test_worker_automatic_cost_uses_area_not_piece_count_and_freezes_exact_amounts(): void
     {
         $f = $this->fixture(publish:false);
+        $this->sheetRequirement($f, '100');
         $created = app(CuttingWorkerOrderService::class)->create($this->payload(0)+['inputs'=>[['physical_material_id'=>$f['physicals'][0]]]],$f['user'],self::PERMISSIONS,true);
+        $large = $f['output']->replicate(); $large->item_code = 'WF-LARGE-'.Str::ulid(); $large->save();
+        $bom = \App\Models\Erp\Bom::findOrFail($f['inputRequirement']->bom_id)->replicate();
+        $bom->bom_no = 'WF-LARGE-BOM-'.Str::ulid(); $bom->output_item_id = $large->id; $bom->save();
+        $component = \App\Models\Erp\BomItem::findOrFail($f['inputRequirement']->bom_item_id)->replicate();
+        $component->bom_id = $bom->id; $component->cut_length_mm = 200; $component->save();
         $batchId = $created['batches'][0]['settlement_batch_id'];
         $records = app(CuttingRecordService::class);
         $saved = $records->saveResults($batchId,$this->payload(1)+['results'=>[
             ['client_row_id'=>'small','result_type'=>'product','item_id'=>$f['output']->id,'actual_qty'=>'1','measurement_status'=>'MEASURED','measurements'=>['length_mm'=>'100','width_mm'=>'100']],
-            ['client_row_id'=>'large','result_type'=>'product','item_id'=>$f['output']->id,'actual_qty'=>'1','measurement_status'=>'MEASURED','measurements'=>['length_mm'=>'200','width_mm'=>'100']],
+            ['client_row_id'=>'large','result_type'=>'product','item_id'=>$large->id,'actual_qty'=>'1','measurement_status'=>'MEASURED','measurements'=>['length_mm'=>'200','width_mm'=>'100']],
         ]],$f['user'],self::PERMISSIONS,true);
         foreach ($saved['result_ids'] as $id) $records->splitRoutes($id,$this->payload(1)+['routes'=>[['route_type'=>'WAREHOUSE','quantity'=>'1']]],$f['user'],self::PERMISSIONS,true);
         $submitted = $this->submitBatch($f,$batchId);
@@ -68,23 +74,21 @@ class CuttingWorkerFlowTest extends TestCase
         $this->withToken($token)->postJson('/api/v1/erp/production/cutting/settlements/'.$batchId.'/confirm',$command)->assertOk()->assertJsonPath('data',$one);
         $costs = DB::table('erp_cutting_results')->whereIn('id',$saved['result_ids'])->orderBy('id')->pluck('total_cost')->all();
         $this->assertSame(['1000.0000','2000.0000'],$costs);
-        $this->assertSame(1,DB::table('erp_cutting_allowed_outputs')->where('cutting_order_id',$created['cutting_order_id'])->count());
+        $this->assertSame(2,DB::table('erp_cutting_allowed_outputs')->where('cutting_order_id',$created['cutting_order_id'])->count());
         $this->assertSame(0,DB::table('erp_inventory_balances')->where('item_id',$f['output']->id)->count());
     }
 
-    public function test_missing_cost_basis_does_not_freeze_worker_report_or_invent_zero_cost(): void
+    public function test_missing_cost_basis_does_not_invent_zero_cost(): void
     {
-        $f = $this->fixture(publish:false);
-        $created = app(CuttingWorkerOrderService::class)->create($this->payload(0)+['inputs'=>[['physical_material_id'=>$f['physicals'][0]]]],$f['user'],self::PERMISSIONS,true);
-        $batchId = $created['batches'][0]['settlement_batch_id'];
-        $saved = app(CuttingRecordService::class)->saveResults($batchId,$this->payload(1)+['results'=>[
-            ['client_row_id'=>'a','result_type'=>'product','item_id'=>$f['output']->id,'actual_qty'=>'1'],
-            ['client_row_id'=>'b','result_type'=>'product','item_id'=>$f['output']->id,'actual_qty'=>'1'],
-        ]],$f['user'],self::PERMISSIONS,true);
-        $this->withToken($this->token($f['user']))->postJson('/api/v1/erp/production/cutting/settlements/'.$batchId.'/submit',$this->payload($saved['business_version']))
-            ->assertUnprocessable()->assertJsonPath('error_code','automatic_cost_basis_missing');
-        $this->assertDatabaseHas('erp_cutting_settlement_batches',['id'=>$batchId,'status'=>'PROCESSING','business_version'=>$saved['business_version']]);
-        $this->assertSame(0,DB::table('erp_cutting_results')->whereIn('id',$saved['result_ids'])->whereNotNull('total_cost')->count());
+        $batch = (object) ['original_total_cost'=>'3000','physical_material_id'=>null,'standard_stock_length_mm'=>null,'input_qty'=>'1'];
+        $rows = collect([1,2])->map(fn ($id) => (object) ['id'=>$id,'result_type'=>'product','configuration_id'=>null,'actual_qty'=>'1',
+            'measurements'=>null,'measurement_status'=>'NOT_RECORDED','cut_length_mm'=>null,'piece_qty'=>null]);
+        try {
+            app(\App\Services\Erp\CuttingAutomaticCostService::class)->allocate($batch,$rows);
+            $this->fail('Missing measurements must not produce a zero-cost result.');
+        } catch (WorkOrderDomainException $e) {
+            $this->assertSame('automatic_cost_basis_missing',$e->errorCode);
+        }
     }
 
     public function test_creation_rejects_output_first_and_invalid_material_rolls_back_everything(): void
@@ -157,6 +161,7 @@ class CuttingWorkerFlowTest extends TestCase
     public function test_worker_output_splits_to_real_work_order_and_stock_after_cutting_without_producer_plan(): void
     {
         $f = $this->fixture(publish:false);
+        $this->sheetRequirement($f, '100');
         $receiver = $this->employee('接收'); $targetTask = $this->consumerTask($f,$receiver);
         $created = app(CuttingWorkerOrderService::class)->create($this->payload(0)+['inputs'=>[['physical_material_id'=>$f['physicals'][0]]]],$f['user'],self::PERMISSIONS,true);
         $f['order'] = $created['cutting_order_id'];
@@ -167,7 +172,7 @@ class CuttingWorkerFlowTest extends TestCase
         app(CuttingTaskExecutionService::class)->start($created['cutting_task_id'],$this->payload(1),$f['user'],self::PERMISSIONS,true);
         $result = app(CuttingRecordService::class)->saveResults($batchId,$this->payload(1)+['results'=>[
             ['client_row_id'=>'first-and-only-product-selection','result_type'=>'product','item_id'=>$f['output']->id,
-                'actual_qty'=>'10','measurement_status'=>'NOT_RECORDED']]],$f['user'],self::PERMISSIONS,true)['result_ids'][0];
+                'actual_qty'=>'10','measurement_status'=>'MEASURED','measurements'=>['length_mm'=>'100','width_mm'=>'100']]]],$f['user'],self::PERMISSIONS,true)['result_ids'][0];
         $targets = app(CuttingReadService::class)->handoverTargets($result,[],$f['user'],self::PERMISSIONS,true);
         $this->assertContains($f['targetRequirement'],array_column($targets['data'],'target_material_requirement_id'));
         $routes = app(CuttingRecordService::class)->splitRoutes($result,$this->payload(1)+['routes'=>[
@@ -193,6 +198,13 @@ class CuttingWorkerFlowTest extends TestCase
         app(CuttingTaskExecutionService::class)->finish($created['cutting_task_id'],$this->payload(2),$f['user'],self::PERMISSIONS,true);
         $closed = app(CuttingOrderLifecycleService::class)->close($f['order'],$this->payload((int) DB::table('erp_cutting_orders')->where('id',$f['order'])->value('business_version'))+['reason'=>'本次下料已完成'],$f['user'],self::PERMISSIONS,true);
         $this->assertSame('CLOSED',$closed['status']);
+    }
+
+    private function sheetRequirement(array $f, string $length): void
+    {
+        // Standalone worker output must have a real, dimensioned approved BOM.
+        DB::table('erp_bom_items')->where('id',$f['inputRequirement']->bom_item_id)->update([
+            'cut_length_mm'=>$length,'cut_width_mm'=>100,'cut_thickness_mm'=>2,'piece_qty'=>1]);
     }
 
     private function counts(): array

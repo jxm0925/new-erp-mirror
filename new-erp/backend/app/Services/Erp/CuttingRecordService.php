@@ -157,6 +157,8 @@ final class CuttingRecordService
                 if (! is_array($route) || array_diff(array_keys($route), ['route_type','quantity','target_material_requirement_id']))
                     $c->fail('route_fields_invalid', '本页只保存去向计划，不能指定仓库、库位、批次或其他结果ID。');
                 $type = $route['route_type'] ?? ''; if (! in_array($type, ['WAREHOUSE','NEXT_OPERATION'], true)) $c->fail('route_type_invalid', '请选择分配订单或入库。');
+                if (app(ProductionCuttingOperationService::class)->linkedOrder((int) $batch->cutting_order_id) && $type !== 'WAREHOUSE')
+                    $c->fail('operation_route_frozen', '本工序产出统一由工序完工后按冻结路线流转。');
                 $qty = CuttingDecimal::value($route['quantity'] ?? null); $sum = bcadd($sum, $qty, 8);
                 $targetId = isset($route['target_material_requirement_id']) ? (int) $route['target_material_requirement_id'] : null;
                 $allowed = DB::table('erp_cutting_allowed_outputs')->where('id', $row->allowed_output_id)->first();
@@ -206,7 +208,11 @@ final class CuttingRecordService
             if ($batch->status !== 'PROCESSING') $c->fail('record_frozen', '加工结果已提交，不能重复提交。', 409);
             $this->input($batch);
             $rows = DB::table('erp_cutting_results')->where('settlement_batch_id', $batchId)->whereNotIn('status',['VOIDED','SUPERSEDED'])->orderBy('id')->lockForUpdate()->get();
-            if (! $rows->contains('result_type', 'product')) $c->fail('product_missing', '至少需要一条实际产品产出。');
+            // One physical may yield only measured loss; its operation can still finish from other batches.
+            // Standalone jobs retain their product requirement, and the ordinary operation validates total output.
+            if (! $rows->contains('result_type', 'product') && ($rows->isEmpty()
+                || ! app(ProductionCuttingOperationService::class)->linkedOrder((int) $batch->cutting_order_id)))
+                $c->fail('product_missing', '至少需要一条实际产品产出。');
             foreach ($rows as $row) {
                 $this->resultData($batch, (array) $row, false);
                 if ($row->result_type === 'product') {
@@ -290,7 +296,10 @@ final class CuttingRecordService
                         ->where('client_row_id', $row['client_row_id'] ?? '')->where('allowed_output_id', $allowed->id)
                         ->whereNotIn('status', ['VOIDED', 'SUPERSEDED'])->value('cutting_requirement_snapshot') : ($row['cutting_requirement_snapshot'] ?? null);
                     $frozen = is_string($frozen) ? json_decode($frozen, true, 512, JSON_THROW_ON_ERROR) : $frozen;
-                    if ($draft) {
+                    $operationRequirement = app(ProductionCuttingOperationService::class)->frozenRequirement($batch, $allowed);
+                    if ($operationRequirement) {
+                        $cuttingRequirement = $operationRequirement;
+                    } elseif ($draft) {
                         // Even an allowed_output_id must match THIS physical. Allowed
                         // output rows are shared by an order and are not source proof.
                         $bomItemId = isset($row['bom_item_id']) ? (int) $row['bom_item_id'] : ($frozen['bom_item_id'] ?? null);
@@ -378,6 +387,12 @@ final class CuttingRecordService
 
     public function assertWorkerConfiguration(object $batch, object $row, object $user, array $permissions, bool $super): void
     {
+        if ($link = app(ProductionCuttingOperationService::class)->linkedOrder((int) $batch->cutting_order_id)) {
+            $snapshot = json_decode($link->technical_snapshot, true, 512, JSON_THROW_ON_ERROR);
+            if ((int) $row->item_id !== (int) $snapshot['output_item_id'] || (int) $row->configuration_id !== (int) $snapshot['configuration_id'])
+                $this->commands->fail('operation_output_frozen', '加工结果与本工序冻结产出不一致。');
+            return;
+        }
         if (! DB::table('erp_cutting_orders')->where('id', $batch->cutting_order_id)->where('purpose', 'WORKER')->exists()) return;
         $item = Item::find($row->item_id);
         if (! $item || $item->status !== 'enabled' || ! $item->is_production_item || ! $item->is_stock_item) {
@@ -450,7 +465,8 @@ final class CuttingRecordService
             if ($batch->issue_transaction_id !== null || ! DB::table('erp_cutting_corrections')->where('correction_settlement_batch_id', $batch->id)
                 ->where('original_settlement_batch_id', $batch->correction_of_batch_id)->where('status', 'OPEN')->exists())
                 $c->fail('correction_source_invalid', '用料更正记录不存在或已经结束。', 409);
-        } elseif (! $recut && ! DB::table('erp_inventory_transactions')->where('id',$batch->issue_transaction_id)->where('posting_status','posted')
+        } elseif (! $recut && ! app(ProductionCuttingOperationService::class)->receivedInputValid($batch)
+            && ! DB::table('erp_inventory_transactions')->where('id',$batch->issue_transaction_id)->where('posting_status','posted')
             ->where('source_type','cutting_settlement')->where('source_id',$batch->id)->exists()) $c->fail('input_not_issued','用料批次尚未通过正式领料，不允许登记结果。',409);
     }
 

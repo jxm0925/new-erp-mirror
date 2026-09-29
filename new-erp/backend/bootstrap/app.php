@@ -25,7 +25,7 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (WorkOrderDomainException $exception, $request) {
-            if ($request->is('api/v1/erp/production/*') || $request->is('api/v1/erp/sales/*')) {
+            if ($request->is('api/v1/erp/production/*') || $request->is('api/v1/erp/sales/*') || $request->is('api/v1/erp/inventory/warehouse-*')) {
                 return response()->json([
                     'message' => $exception->getMessage(),
                     'error_code' => $exception->errorCode,
@@ -35,7 +35,7 @@ return Application::configure(basePath: dirname(__DIR__))
             }
         });
         $exceptions->render(function (ValidationException $exception, $request) {
-            if ($request->is('api/v1/erp/production/*') || $request->is('api/v1/erp/sales/*')) {
+            if ($request->is('api/v1/erp/production/*') || $request->is('api/v1/erp/sales/*') || $request->is('api/v1/erp/inventory/warehouse-*')) {
                 return response()->json([
                     'message' => '请求参数校验失败。',
                     'error_code' => 'validation_error',
@@ -45,7 +45,7 @@ return Application::configure(basePath: dirname(__DIR__))
             }
         });
         $exceptions->render(function (QueryException $exception, $request) {
-            if (! $request->is('api/v1/erp/production/*') && ! $request->is('api/v1/erp/sales/*')) return;
+            if (! $request->is('api/v1/erp/production/*') && ! $request->is('api/v1/erp/sales/*') && ! $request->is('api/v1/erp/inventory/warehouse-*')) return;
             $sqlState = (string) $exception->getCode();
             $driverCode = (string) ($exception->errorInfo[1] ?? '');
             $concurrency = $sqlState === '40001' || in_array($driverCode, ['1205', '1213'], true);

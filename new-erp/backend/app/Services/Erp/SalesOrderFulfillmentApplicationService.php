@@ -142,7 +142,8 @@ class SalesOrderFulfillmentApplicationService
     {
         $order = SalesOrder::with(['lines.product', 'lines.sku', 'lines.item', 'fulfillments'])->findOrFail($orderId);
         $existing = $order->fulfillments->groupBy('sales_order_line_id');
-        $lines = $order->lines->map(function (SalesOrderLine $line) use ($existing, $order) {
+        $plannedByBalance = [];
+        $lines = $order->lines->sortBy('line_no')->values()->map(function (SalesOrderLine $line) use ($existing, $order, &$plannedByBalance) {
             $lineFulfillments = $existing->get($line->id, collect());
             $confirmed = $lineFulfillments->where('demand_status', 'confirmed');
             $pending = $lineFulfillments->where('demand_status', 'pending');
@@ -172,7 +173,7 @@ class SalesOrderFulfillmentApplicationService
             } else {
                 $confirmQty = $remainingSalesQty;
                 if ($this->isPhysicalLine($line)) {
-                    $analysis = $this->inventoryAvailability->analyzeSalesOrderLine($line, $confirmQty);
+                    $analysis = $this->inventoryAvailability->analyzeSalesOrderLine($line, $confirmQty, false, $plannedByBalance);
                     $quantities = [
                         'inventory_qty' => $analysis['suggested_inventory_qty'],
                         'production_qty' => $analysis['suggested_production_qty'],
@@ -180,6 +181,9 @@ class SalesOrderFulfillmentApplicationService
                         'no_delivery_qty' => 0.0,
                         'undetermined_qty' => 0.0,
                     ];
+                    $this->addPlannedAllocations($plannedByBalance, $this->inventoryAvailability->allocateBaseQuantity(
+                        $analysis, $this->salesToBaseQuantity($line, $quantities['inventory_qty']),
+                    ));
                 } else {
                     $quantities = $this->suggestQuantities($line, $confirmQty);
                 }
@@ -200,8 +204,7 @@ class SalesOrderFulfillmentApplicationService
             $bom = $this->isPhysicalLine($line) ? $this->bomMatcher->match($line->product_id, $line->sku_id, $line->item_id, $line->configuration_snapshot) : null;
             $drawing = $line->is_special_customized ? ($this->hasTechnicalAttachment($line) ? 'ready' : 'missing') : 'not_required';
             $blocking = [];
-            if ($productionQty > 0 && $bom && $bom['status'] !== 'matched') $blocking[] = $bom['block_reason'] ?: '未匹配到可用 BOM';
-            if ($productionQty > 0 && $drawing === 'missing') $blocking[] = '特殊定制订单行缺少设计图纸或技术附件';
+            // 技术条件在自动生成的工单中处理；销售确认只确定商业需求及履约数量。
             return [
                 'sales_order_line_id' => $line->id,
                 'line_no' => $line->line_no,
@@ -316,8 +319,8 @@ class SalesOrderFulfillmentApplicationService
             */
 
             $prepared = [];
-            $blocked = false;
-            foreach ($order->lines as $line) {
+            $plannedByBalance = [];
+            foreach ($order->lines->sortBy('line_no') as $line) {
                 $row = $byLine->get($line->id);
                 if (!$row) throw ValidationException::withMessages(['lines' => "缺少第 {$line->line_no} 行的备货确认结果。"]);
                 $alreadyFulfilled = SalesOrderFulfillment::where('sales_order_line_id', $line->id)
@@ -328,8 +331,13 @@ class SalesOrderFulfillmentApplicationService
                 $currentConfirmQty = (float) $quantities['inventory_qty'] + (float) $quantities['production_qty']
                     + (float) $quantities['service_qty'] + (float) $quantities['no_delivery_qty'];
                 $inventoryAnalysis = $this->isPhysicalLine($line)
-                    ? $this->inventoryAvailability->analyzeSalesOrderLine($line, $currentConfirmQty, true)
+                    ? $this->inventoryAvailability->analyzeSalesOrderLine($line, $currentConfirmQty, true, $plannedByBalance)
                     : null;
+                if ($automatic && $inventoryAnalysis) {
+                    // 自动确认在锁内按逐行剩余库存重算；同物料不同 SKU 不能重复借用同一批现货。
+                    $quantities['inventory_qty'] = $inventoryAnalysis['suggested_inventory_qty'];
+                    $quantities['production_qty'] = $inventoryAnalysis['suggested_production_qty'];
+                }
                 if ($inventoryAnalysis && (float) $quantities['inventory_qty'] > (float) $inventoryAnalysis['available_sales_qty'] + 0.00000001) {
                     throw ValidationException::withMessages([
                         'lines' => "第 {$line->line_no} 行提交时可用成品库存已不足，请重新计算备货方案。",
@@ -349,11 +357,11 @@ class SalesOrderFulfillmentApplicationService
                         $this->salesToBaseQuantity($line, (float) $quantities['inventory_qty'])
                     )
                     : [];
+                $this->addPlannedAllocations($plannedByBalance, $inventoryAllocations);
                 $productionQty = (float) $quantities['production_qty'];
                 $bom = $productionQty > 0 ? $this->bomMatcher->match($line->product_id, $line->sku_id, $line->item_id, $line->configuration_snapshot) : null;
                 $lineBlocked = ($productionQty > 0 && (($bom['status'] ?? null) !== 'matched'))
                     || ($productionQty > 0 && $line->is_special_customized && !$this->hasTechnicalAttachment($line));
-                $blocked = $blocked || $lineBlocked;
                 $prepared[$line->id] = compact(
                     'quantities', 'bom', 'lineBlocked', 'alreadyFulfilled', 'remainingSalesQty',
                     'inventoryAnalysis', 'inventoryAllocations', 'isAdjusted'
@@ -415,7 +423,7 @@ class SalesOrderFulfillmentApplicationService
                             'batch_no' => $allocation['batch_no'] ?? null,
                             'reservation_status' => $type === 'inventory' ? 'pending' : 'not_required',
                             'production_requirement_status' => $type === 'production'
-                                ? ($prepared[$line->id]['lineBlocked'] ? 'blocked' : ($blocked ? 'pending' : 'confirmed'))
+                                ? ($prepared[$line->id]['lineBlocked'] ? 'blocked' : 'confirmed')
                                 : 'not_required',
                             'demand_status' => 'confirmed',
                             'match_snapshot' => [
@@ -444,7 +452,7 @@ class SalesOrderFulfillmentApplicationService
                 $lineTotals['undetermined_qty'] = max(0, $effectiveLineQty - $confirmedLineQty);
                 $line->update([
                     'fulfillment_type' => $this->lineFulfillmentType($lineTotals),
-                    'line_status' => $blocked ? 'fulfillment_blocked' : ($lineTotals['undetermined_qty'] > 0 ? 'partially_confirmed' : 'demand_confirmed'),
+                    'line_status' => $prepared[$line->id]['lineBlocked'] ? 'fulfillment_blocked' : ($lineTotals['undetermined_qty'] > 0 ? 'partially_confirmed' : 'demand_confirmed'),
                     'inventory_fulfilled_qty' => $lineTotals['inventory_qty'],
                     'production_required_qty' => $lineTotals['production_qty'],
                     'service_fulfilled_qty' => $lineTotals['service_qty'],
@@ -586,7 +594,9 @@ class SalesOrderFulfillmentApplicationService
                 $effectiveQty = max(0, (float) $line->order_qty - (float) $line->cancelled_qty);
                 return max(0, $effectiveQty - $confirmedSalesQty);
             });
-            $productionConfirmStatus = $blocked ? 'blocked' : ($remainingAfterConfirmation > 0.00000001 ? 'pending' : 'confirmed');
+            // 分配完成即为销售生产需求确认完成。资料不足只阻断对应工单发布，
+            // 不要求销售再执行一次“生产确认”，也不连带阻断其他产品的工单。
+            $productionConfirmStatus = $remainingAfterConfirmation > 0.00000001 ? 'pending' : 'confirmed';
             $this->inventoryReservations->reserveForSalesOrder($order->fresh('fulfillments'));
             $order->update([
                 // Production confirmation allocates the fulfillment plan only. Actual
@@ -599,6 +609,16 @@ class SalesOrderFulfillmentApplicationService
                 : '订单生产确认已保存库存备货和生产需求，并建立唯一主生产工单与所需待发布生产工单。', $operatorName);
             return $order->fresh(['lines', 'fulfillments', 'productionRequirements', 'activeProductionMasterOrder.workOrders']);
         });
+    }
+
+    private function addPlannedAllocations(array &$plannedByBalance, array $allocations): void
+    {
+        // 这是当前订单事务内的预分配账，不写库存。正式占用仍由统一库存服务落账；
+        // 任一行校验失败时整单回滚，不会留下只有部分订单行被占用的中间状态。
+        foreach ($allocations as $allocation) {
+            $id = (int) $allocation['inventory_balance_id'];
+            $plannedByBalance[$id] = round(($plannedByBalance[$id] ?? 0) + (float) $allocation['base_qty'], 8);
+        }
     }
 
     private function productionDemandHasExecutionFacts(SalesOrderProductionRequirement $demand): bool

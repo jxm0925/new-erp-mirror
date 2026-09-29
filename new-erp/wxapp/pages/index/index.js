@@ -24,6 +24,10 @@ Page({
         url:"",
         icon:"/static/images/work_order.png",
         name:"工单"
+      },{
+        url:"/pages/warehouse/workbench/index",
+        icon:"/static/images/work_order.png",
+        name:"仓库"
       }]
   },
   onLoad: function () {
@@ -62,7 +66,7 @@ Page({
     
     var that = this;
     // 工单页会校验统一登录是否包含 ERP 会话，避免旧版本遗留的单边 token 阻塞首页跳转。
-    if(info.index!=1 && info.index!=3 && !wx.getStorageSync('userInfo').user_id){
+    if(info.index!=1 && info.index!=3 && info.index!=4 && !(wx.getStorageSync('userInfo') || {}).user_id){
       util.BadgePopup();
       return;
     }
@@ -91,6 +95,9 @@ Page({
           wx.navigateTo({
               url: '/pages/production/workbench/index',
           })
+          break;
+      case 4:
+          wx.navigateTo({ url: '/pages/warehouse/workbench/index' });
           break;
       default:
           wx.navigateTo({

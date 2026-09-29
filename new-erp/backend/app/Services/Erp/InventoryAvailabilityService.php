@@ -103,7 +103,7 @@ class InventoryAvailabilityService
         return max(0, $onHand - $locked - $defective - $pending);
     }
 
-    public function analyzeSalesOrderLine(SalesOrderLine $line, float $salesQty, bool $lock = false): array
+    public function analyzeSalesOrderLine(SalesOrderLine $line, float $salesQty, bool $lock = false, array $plannedByBalance = []): array
     {
         if (!$line->item_id) {
             return $this->emptyAnalysis($line, $salesQty, '当前订单行没有默认库存物料');
@@ -117,7 +117,8 @@ class InventoryAvailabilityService
         }
 
         $balances = $this->eligibleBalances((int) $line->item_id, $lock);
-        $availableBaseQty = round($balances->sum(fn (InventoryBalance $balance) => $this->safeAvailable($balance)), 8);
+        $availableBaseQty = round($balances->sum(fn (InventoryBalance $balance) => max(0,
+            $this->safeAvailable($balance) - (float) ($plannedByBalance[$balance->id] ?? 0))), 8);
         $precision = (int) (Unit::find($line->unit_id)?->decimal_places ?? 0);
         $availableSalesQty = $this->floorToPrecision($availableBaseQty / $factor, $precision);
         $inventoryQty = min(max(0, $salesQty), $availableSalesQty);
@@ -140,6 +141,7 @@ class InventoryAvailabilityService
             'suggestion_reason' => $reason,
             'fulfillment_factor' => $factor,
             'balances' => $balances,
+            'planned_by_balance' => $plannedByBalance,
         ];
     }
 
@@ -152,7 +154,7 @@ class InventoryAvailabilityService
 
         foreach ($balances as $balance) {
             if ($remaining <= 0.00000001) break;
-            $available = $this->safeAvailable($balance);
+            $available = max(0, $this->safeAvailable($balance) - (float) ($analysis['planned_by_balance'][$balance->id] ?? 0));
             $allocated = min($remaining, $available);
             if ($allocated <= 0.00000001) continue;
             $allocations[] = [

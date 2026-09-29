@@ -1,0 +1,68 @@
+<view class="warehouse-page">
+  <view wx:if="{{loading}}" class="warehouse-empty">加载中</view>
+  <view wx:if="{{error}}" class="warehouse-error">{{error}}</view>
+  <button wx:if="{{!header && !loading}}" class="warehouse-secondary" bindtap="load">重新加载</button>
+  <view wx:if="{{!header && pendingAction}}" class="warehouse-actions"><button class="warehouse-primary" disabled="{{busy || loading}}" bindtap="submit">查询原提交结果</button></view>
+  <block wx:if="{{header}}">
+    <view class="warehouse-card">
+      <view wx:if="{{mode !== 'create'}}" class="warehouse-field"><text class="warehouse-label">配送单号</text><text class="warehouse-value document-no">{{header.delivery_no}}</text><text class="delivery-status">{{statusText}}</text></view>
+      <view class="warehouse-field"><text class="warehouse-label">来源拣料单</text><text class="warehouse-value">{{picking.task_no}}</text></view>
+      <view class="warehouse-field"><text class="warehouse-label">目标工单</text><text class="warehouse-value">{{header.work_order.work_order_no}}</text></view>
+      <view class="warehouse-field"><text class="warehouse-label">目标工序</text><text class="warehouse-value">{{header.target_operation_name_snapshot || header.to_production_location_snapshot || header.production_location_name_snapshot || rows[0].target_operation_name_snapshot || '—'}}</text></view>
+      <view wx:if="{{mode === 'detail'}}" class="warehouse-field"><text class="warehouse-label">配送员</text><text class="warehouse-value">{{header.delivery_user_name || '—'}}</text></view>
+      <view wx:if="{{mode === 'create'}}" class="warehouse-field"><text class="warehouse-label">配送员 <text class="warehouse-danger">*</text></text><view class="warehouse-value"><view class="warehouse-input warehouse-kv-select" bindtap="choosePerson"><text>{{person.nickname || person.username || '请选择配送员'}}</text><text>›</text></view><view wx:if="{{personError}}" class="warehouse-error">{{personError}}</view></view></view>
+      <view wx:if="{{mode !== 'create'}}" class="warehouse-field"><text class="warehouse-label">{{canReceive || mode === 'redelivery' ? '送达时间' : '创建时间'}}</text><text class="warehouse-value">{{canReceive || mode === 'redelivery' ? header.delivered_at : header.created_at}}</text></view>
+    </view>
+    <view wx:if="{{mode === 'detail' && !canReceive && !canDispatch && !canDeliver && !canCancel && !canRedelivery}}" class="warehouse-note">当前单据仅可查看</view>
+    <view class="warehouse-title">{{mode === 'redelivery' ? '收货明细' : canReceive ? '收料明细' : mode === 'create' ? '配送明细' : '配送物料'}}</view>
+    <scroll-view wx:if="{{mode === 'redelivery'}}" scroll-x class="warehouse-table-scroll">
+      <view class="redelivery-table warehouse-card">
+        <view class="warehouse-tr warehouse-th"><view class="warehouse-td">物料名称 / 规格</view><view class="warehouse-td">批次</view><view class="warehouse-td">实送</view><view class="warehouse-td">已签收</view><view class="warehouse-td">拒收 / 原因</view></view>
+        <view wx:for="{{rows}}" wx:key="id" class="warehouse-tr"><view class="warehouse-td">{{item.name}}<view>{{item.specification}}</view></view><view class="warehouse-td">{{item.batch_no || '—'}}</view><view class="warehouse-td">{{item.deliveryText}} {{item.unit}}</view><view class="warehouse-td">{{item.receivedText}} {{item.unit}}</view><view class="warehouse-td">{{item.rejectedText}} {{item.unit}}<view>{{item.reasons}}</view></view></view>
+      </view>
+    </scroll-view>
+    <view wx:if="{{mode === 'redelivery'}}" class="warehouse-title">补送信息</view>
+    <view wx:if="{{!rows.length && !loading}}" class="warehouse-empty">暂无明细</view>
+    <block wx:for="{{rows}}" wx:key="id">
+      <view wx:if="{{mode !== 'redelivery' || item.remaining > 0}}" class="warehouse-card">
+        <view class="material-name">{{item.name}}</view><view class="material-code">{{item.code}}</view>
+        <view wx:if="{{mode === 'redelivery'}}" class="warehouse-field"><text class="warehouse-label">规格说明</text><text class="warehouse-value">{{item.specification || '—'}}</text></view>
+        <view class="warehouse-field"><text class="warehouse-label">批次号</text><text class="warehouse-value">{{item.batch_no || '—'}}</text></view>
+        <block wx:if="{{mode !== 'detail'}}">
+          <view class="warehouse-field"><text class="warehouse-label">{{mode === 'create' ? '实拣数量' : '库位'}}</text><text class="warehouse-value">{{mode === 'create' ? item.pickedText : item.location}} {{mode === 'create' ? item.unit : ''}}</text></view>
+          <view class="warehouse-field"><text class="warehouse-label">{{mode === 'create' ? '可配送数量' : '剩余补送量'}}</text><text class="warehouse-value">{{item.remainingText}} {{item.unit}}</text></view>
+          <view class="warehouse-field"><text class="warehouse-label">{{mode === 'create' ? '本次配送数量' : '本次补送数量'}} <text class="warehouse-danger">*</text></text><view class="quantity-input warehouse-value"><input type="digit" value="{{item.draft.delivery_qty}}" disabled="{{busy || pendingAction || loading || !canCreate || item.serial}}" data-id="{{item.id}}" data-field="delivery_qty" bindinput="input"/><text>{{item.unit}}</text></view></view>
+          <button wx:if="{{item.serial && item.remaining > 0 && canCreate}}" class="serial-button" disabled="{{busy || pendingAction || loading}}" data-id="{{item.id}}" bindtap="chooseSerial">选择序列号（已选 {{item.draft.serialRows.length}}） ›</button>
+        </block>
+        <block wx:else>
+          <block wx:if="{{canReceive && item.remaining > 0}}">
+            <view class="receipt-quantities"><view class="receipt-column"><view class="warehouse-muted">实送数量</view><view class="receipt-delivered">{{item.deliveryText}} {{item.unit}}</view></view><view class="receipt-column"><view class="warehouse-muted">本次签收 <text class="warehouse-danger">*</text></view><view class="quantity-input"><input type="digit" value="{{item.draft.accepted_qty}}" disabled="{{busy || pendingAction || loading || item.serial}}" data-id="{{item.id}}" data-field="accepted_qty" bindinput="input"/><text>{{item.unit}}</text></view></view><view class="receipt-column"><view class="warehouse-muted">拒收数量 <text class="warehouse-danger">*</text></view><view class="quantity-input"><input type="digit" value="{{item.draft.rejected_qty}}" disabled="{{busy || pendingAction || loading || item.serial}}" data-id="{{item.id}}" data-field="rejected_qty" bindinput="input"/><text>{{item.unit}}</text></view></view></view>
+            <view wx:if="{{item.received_qty > 0 || item.rejected_qty > 0}}" class="warehouse-field"><text class="warehouse-label">未处理数量</text><text class="warehouse-value">{{item.remainingText}} {{item.unit}}</text></view>
+            <view wx:if="{{item.draft.rejected_qty > 0 && !item.serial}}" class="warehouse-field"><text class="warehouse-label">拒收原因 <text class="warehouse-danger">*</text></text><input class="warehouse-input warehouse-value" value="{{item.draft.reject_reason}}" maxlength="500" disabled="{{busy || pendingAction || loading}}" data-id="{{item.id}}" data-field="reject_reason" bindinput="input"/></view>
+            <button wx:if="{{item.serial}}" class="serial-button" disabled="{{busy || pendingAction || loading}}" data-id="{{item.id}}" bindtap="openReceiptSerial">核对序列号（已处理 {{item.draft.receiptRows.length}}） ›</button>
+          </block>
+          <view wx:else class="warehouse-field"><text class="warehouse-label">配送数量</text><text class="warehouse-value">{{item.deliveryText}} {{item.unit}}</text></view>
+          <block wx:if="{{item.received_qty > 0 || item.rejected_qty > 0}}"><view class="warehouse-field"><text class="warehouse-label">已签收 / 拒收</text><text class="warehouse-value">{{item.receivedText}} / {{item.rejectedText}} {{item.unit}}</text></view><view wx:if="{{item.reasons}}" class="warehouse-field"><text class="warehouse-label">拒收原因</text><text class="warehouse-value">{{item.reasons}}</text></view></block>
+        </block>
+      </view>
+    </block>
+    <view wx:if="{{total > 10}}" class="warehouse-pager"><button disabled="{{loading || busy || page <= 1}}" data-delta="-1" bindtap="turnPage">上一页</button><text>{{page}} / {{lastPage}} · 共 {{total}} 项</text><button disabled="{{loading || busy || page >= lastPage}}" data-delta="1" bindtap="turnPage">下一页</button></view>
+    <block wx:if="{{mode === 'redelivery'}}"><view class="warehouse-card"><view class="warehouse-field"><text class="warehouse-label">配送员 <text class="warehouse-danger">*</text></text><view class="warehouse-value"><view class="warehouse-input warehouse-kv-select" bindtap="choosePerson"><text>{{person.nickname || person.username || '请选择配送员'}}</text><text>›</text></view><view wx:if="{{personError}}" class="warehouse-error">{{personError}}</view></view></view><view class="warehouse-note">原出库已扣减，补送不再重复扣减库存。</view><view class="warehouse-field"><text class="warehouse-label">备注</text><textarea class="warehouse-input warehouse-value" value="{{remark}}" maxlength="2000" disabled="{{busy || pendingAction || loading}}" bindinput="remarkInput"/></view></view></block>
+    <block wx:if="{{mode === 'detail' && !canReceive}}">
+      <view class="warehouse-title">配送进度</view>
+      <view class="warehouse-card timeline"><view class="timeline-step done"><view class="timeline-label">已创建</view><view class="warehouse-muted">{{header.created_at}}<view>创建配送单</view></view></view><view class="timeline-step {{header.departed_at ? 'done' : ''}}"><view class="timeline-label">{{header.departed_at ? '已发出' : '待发出'}}</view><view class="warehouse-muted">{{header.departed_at || '待确认发出'}}</view></view><view class="timeline-step {{header.delivered_at ? 'done' : ''}}"><view class="timeline-label">{{header.delivered_at ? '已送达' : '待送达'}}</view><view class="warehouse-muted">{{header.delivered_at || '待确认送达'}}</view></view></view>
+    </block>
+    <view wx:if="{{pendingAction}}" class="warehouse-actions"><button class="warehouse-primary" loading="{{busy}}" disabled="{{busy || loading}}" bindtap="submit">查询原提交结果</button></view>
+    <block wx:else>
+      <view wx:if="{{mode !== 'detail' && canCreate}}" class="warehouse-actions"><button class="warehouse-primary" disabled="{{busy || loading}}" loading="{{busy}}" bindtap="submit">{{mode === 'redelivery' ? '创建补送单' : '创建配送'}}</button></view>
+      <view wx:if="{{mode === 'detail' && canReceive}}" class="warehouse-actions"><button class="warehouse-secondary" disabled="{{busy || loading}}" bindtap="acceptAll">{{total > 10 ? '当前页全部签收' : '全部签收'}}</button><button class="warehouse-primary" disabled="{{busy || loading}}" loading="{{busy}}" bindtap="submit">确认签收</button></view>
+      <view wx:if="{{mode === 'detail' && (canDispatch || canDeliver)}}" class="warehouse-actions"><button class="warehouse-primary" disabled="{{busy || loading}}" loading="{{busy}}" data-action="{{canDispatch ? 'delivery.dispatch' : 'delivery.deliver'}}" bindtap="transition">{{canDispatch ? '确认发出' : '确认送达'}}</button></view>
+      <view wx:if="{{mode === 'detail' && canRedelivery}}" class="warehouse-actions"><button class="warehouse-primary" disabled="{{busy || loading}}" bindtap="redelivery">创建补送单</button></view>
+      <view wx:if="{{mode === 'detail' && canCancel}}" class="warehouse-actions"><button class="warehouse-secondary" disabled="{{busy || loading}}" bindtap="openCancel">取消配送</button></view>
+    </block>
+  </block>
+</view>
+<warehouse-picker open="{{pickerOpen}}" title="{{pickerTitle}}" mode="{{pickerMode}}" query="{{pickerQuery}}" selected="{{pickerSelected}}" multiple="{{pickerMultiple}}" max-count="{{pickerMax}}" bind:confirm="pickerConfirm" bind:cancel="closePicker"/>
+<warehouse-receipt-serial open="{{receiptOpen}}" delivery-id="{{id}}" line-id="{{receiptLineId}}" selected="{{receiptSelected}}" unit="{{receiptUnit}}" bind:confirm="receiptConfirm" bind:cancel="closeReceiptSerial"/>
+<view wx:if="{{cancelOpen}}" class="warehouse-overlay" catchtouchmove="stop"><view class="warehouse-dialog"><view class="warehouse-dialog-header">取消配送单</view><view class="warehouse-dialog-body"><view class="cancel-message">确认取消此配送单？</view><view class="warehouse-field">取消原因 <text class="warehouse-danger">*</text></view><input class="warehouse-input" value="{{cancelReason}}" maxlength="500" disabled="{{busy}}" bindinput="cancelReasonInput"/><view wx:if="{{cancelError}}" class="warehouse-error">{{cancelError}}</view></view><view class="warehouse-dialog-footer"><button class="warehouse-secondary" disabled="{{busy}}" bindtap="closeCancel">返回</button><button class="warehouse-primary" disabled="{{busy}}" loading="{{busy}}" bindtap="confirmCancel">确认取消</button></view></view></view>
+<view wx:if="{{conflictOpen}}" class="warehouse-overlay" catchtouchmove="stop"><view class="warehouse-dialog"><view class="warehouse-dialog-header">{{pendingAction ? '提交结果待确认' : '单据已变化'}}</view><view class="warehouse-dialog-body">{{error}}</view><view class="warehouse-dialog-footer"><button class="warehouse-secondary" bindtap="closeConflict">返回核对</button><button class="warehouse-primary" disabled="{{busy}}" bindtap="refreshConflict">{{pendingAction ? '查询结果' : '刷新单据'}}</button></view></view></view>

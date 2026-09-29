@@ -195,6 +195,7 @@ class SalesReturnController extends Controller
     public function confirm(Request $request, int $id, SalesReturnApplicationService $service)
     {
         $this->authorizePermission($request, 'sales_return.confirm');
+        $this->assertReturnVisible($request, $id);
         return response()->json([
             'message' => '销售退货单已确认，等待客户寄回',
             'data' => $service->confirm($id, ...$this->operator($request)),
@@ -204,6 +205,7 @@ class SalesReturnController extends Controller
     public function receive(Request $request, int $id, SalesReturnApplicationService $service)
     {
         $this->authorizePermission($request, 'sales_return.receive');
+        $this->assertReturnVisible($request, $id);
         $payload = $request->validate([
             'reservation_token' => 'nullable|uuid',
             'creation_session_id' => 'nullable|uuid',
@@ -220,6 +222,9 @@ class SalesReturnController extends Controller
             'items.*.location_id' => 'nullable|exists:erp_locations,id',
             'items.*.batch_no' => 'nullable|string|max:80',
             'items.*.inspection_remark' => 'nullable|string',
+            'items.*.serial_dispositions' => 'nullable|array:restock,pending,scrap,rejected',
+            'items.*.serial_dispositions.*' => 'array|max:1000',
+            'items.*.serial_dispositions.*.*' => 'integer|min:1|distinct',
         ]);
         $payload['sales_return_id'] = $id;
 
@@ -232,6 +237,7 @@ class SalesReturnController extends Controller
     public function postReceipt(Request $request, int $id, int $receiptId, SalesReturnApplicationService $service)
     {
         $this->authorizePermission($request, 'sales_return.post');
+        $this->assertReturnVisible($request, $id);
         $receipt = SalesReturnReceipt::query()->where('sales_return_id', $id)->findOrFail($receiptId);
         return response()->json([
             'message' => '销售退货重新入库完成',
@@ -242,6 +248,7 @@ class SalesReturnController extends Controller
     public function cancel(Request $request, int $id, SalesReturnApplicationService $service)
     {
         $this->authorizePermission($request, 'sales_return.cancel');
+        $this->assertReturnVisible($request, $id);
         return response()->json([
             'message' => '销售退货单已取消',
             'data' => $service->cancel($id, ...$this->operator($request)),
@@ -251,6 +258,7 @@ class SalesReturnController extends Controller
     public function close(Request $request, int $id, SalesReturnApplicationService $service)
     {
         $this->authorizePermission($request, 'sales_return.close');
+        $this->assertReturnVisible($request, $id);
         return response()->json([
             'message' => '销售退货单已关闭',
             'data' => $service->close($id, ...$this->operator($request)),
@@ -265,6 +273,13 @@ class SalesReturnController extends Controller
         abort_unless($visible->exists(), 403, '无权删除该销售退货草稿。');
         $service->deleteDraft($id);
         return response()->json(['message' => '销售退货草稿已删除。']);
+    }
+
+    private function assertReturnVisible(Request $request, int $id): void
+    {
+        $query = SalesReturn::query()->whereKey($id);
+        $this->applyOrderVisibility($query, $request);
+        abort_unless($query->exists(), 403, '当前退货单不在可操作的数据范围内。');
     }
 
     private function operator(Request $request): array
@@ -299,21 +314,7 @@ class SalesReturnController extends Controller
         $auth = app(AuthContextService::class);
         $user = $auth->currentUser($request);
         abort_unless($user, 401, '未登录或登录已过期。');
-        if ($auth->isSuperAdmin($user) || $auth->dataScope($user) === 'all') return;
-
-        if ($auth->dataScope($user) === 'department') {
-            $query->whereIn('sales_user_legacy_id', $auth->departmentUserIds($user));
-            return;
-        }
-
-        $legacyId = (int) $user->legacy_id;
-        $query->where(function (Builder $scope) use ($legacyId): void {
-            $scope->where('sales_user_legacy_id', $legacyId)
-                ->orWhere(function (Builder $fallback) use ($legacyId): void {
-                    $fallback->whereNull('sales_user_legacy_id')
-                        ->where('created_by_legacy_id', $legacyId);
-                });
-        });
+        app(\App\Services\Erp\SalesOrderVisibilityService::class)->apply($query, $user);
     }
 
     private function perPage(Request $request): int

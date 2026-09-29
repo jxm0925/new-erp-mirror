@@ -87,6 +87,20 @@ class LengthCutRequirementService
     public function resolveBomLines(Bom $bom, ?array $configuration): Collection
     {
         $baseLines = $bom->items->values();
+        if (array_key_exists('technical_bom_lines', $configuration ?? [])) {
+            $dimensions = collect($configuration['technical_bom_lines'])->keyBy('bom_item_id');
+            if ($dimensions->keys()->diff($baseLines->pluck('id'))->isNotEmpty()) {
+                throw ValidationException::withMessages(['configuration_snapshot' => '工单技术尺寸不属于当前 BOM 版本。']);
+            }
+            return $baseLines->map(function ($line) use ($dimensions): array {
+                $resolved = $this->lineArray($line);
+                if ($override = $dimensions->get($line->id)) {
+                    foreach (['cut_length_mm', 'cut_width_mm', 'cut_thickness_mm'] as $field) $resolved[$field] = $override[$field] ?? null;
+                    $resolved['cut_requirement_source'] = 'work_order_technical_version';
+                }
+                return $resolved;
+            });
+        }
         $requirements = collect((array) data_get($configuration, 'cut_requirements', []));
         if ($requirements->isEmpty()) {
             return $baseLines->map(fn ($line) => $this->lineArray($line));

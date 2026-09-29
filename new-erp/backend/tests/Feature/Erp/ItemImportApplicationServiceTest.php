@@ -46,7 +46,7 @@ class ItemImportApplicationServiceTest extends TestCase
     public function test_existing_options_are_reused_instead_of_duplicated(): void
     {
         $suffix = strtoupper(Str::random(8));
-        $unit = Unit::where('status', 'enabled')->firstOrFail();
+        $unit = Unit::create(['unit_code' => 'REUSE-'.$suffix, 'unit_name' => '复用单位-'.$suffix, 'unit_type' => 'quantity', 'status' => 'enabled', 'is_legacy' => false]);
         $supplier = Supplier::create(['supplier_code' => 'SUP-'.$suffix, 'supplier_name' => '复用供应商-'.$suffix, 'supplier_type' => 'manufacturer', 'status' => 'enabled']);
         $warehouse = Warehouse::create(['warehouse_code' => 'WH-'.$suffix, 'warehouse_name' => '复用仓库-'.$suffix, 'warehouse_type' => 'general', 'status' => 'enabled']);
 

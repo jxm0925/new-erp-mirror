@@ -14,6 +14,8 @@ final class CuttingCorrectionService
         $c = $this->commands;
         $c->permission($permissions, 'production.cutting.confirm');
         $c->assertBatchVisible($batchId, $user, $permissions, $super, 'production.cutting.confirm');
+        if (DB::table('erp_production_cutting_inputs')->where('settlement_batch_id', $batchId)->exists())
+            $c->fail('production_cost_revision_required', '已核算的工序下料须按工序成本更正处理，不能单独撤销材料事实。', 409);
 
         return $c->run('reverse_cutting_confirmation', $batchId, $payload, $user, function () use ($batchId, $payload, $user, $permissions, $super, $c): array {
             $batch = $c->batch($batchId, $user, $permissions, $super, 'production.cutting.confirm');

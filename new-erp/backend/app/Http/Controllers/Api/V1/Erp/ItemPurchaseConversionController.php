@@ -29,6 +29,7 @@ class ItemPurchaseConversionController extends Controller
 
     public function store(Request $request, int $itemId, ItemPurchaseConversionApplicationService $service)
     {
+        app(\App\Services\Erp\MasterDataAccessService::class)->authorize($request, 'items', 'edit');
         $data = $this->validated($request);
         $record = $service->save($itemId, $data, null, $this->operatorId($request), $this->operatorName($request));
         return response()->json(['message' => '采购换算关系已保存并生效。', 'data' => $record], 201);
@@ -36,6 +37,7 @@ class ItemPurchaseConversionController extends Controller
 
     public function update(Request $request, int $itemId, int $id, ItemPurchaseConversionApplicationService $service)
     {
+        app(\App\Services\Erp\MasterDataAccessService::class)->authorize($request, 'items', 'edit');
         $data = $this->validated($request);
         $record = $service->save($itemId, $data, $id, $this->operatorId($request), $this->operatorName($request));
         return response()->json(['message' => '采购换算新版本已保存，原关系已转入历史。', 'data' => $record]);
@@ -43,6 +45,7 @@ class ItemPurchaseConversionController extends Controller
 
     public function disable(Request $request, int $itemId, int $id, ItemPurchaseConversionApplicationService $service)
     {
+        app(\App\Services\Erp\MasterDataAccessService::class)->authorize($request, 'items', 'edit');
         $data = $request->validate(['change_reason' => 'required|string|max:80']);
         $record = $service->disable($itemId, $id, $data['change_reason'], $this->operatorId($request), $this->operatorName($request));
         return response()->json(['message' => '采购换算关系已停用，历史单据快照不受影响。', 'data' => $record]);

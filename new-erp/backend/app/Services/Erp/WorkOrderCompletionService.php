@@ -26,13 +26,15 @@ final class WorkOrderCompletionService
         return $this->preflightFor($workOrder);
     }
 
-    public function paginate(int $workOrderId, int $page, int $perPage, object $user, array $permissions, bool $superAdmin = false): array
+    public function paginate(int $workOrderId, int $page, int $perPage, object $user, array $permissions, bool $superAdmin = false, array $filters = []): array
     {
         $this->permission($permissions, 'production.completion.view');
         $workOrder = WorkOrder::query()->find($workOrderId);
         if (! $workOrder) $this->fail('work_order_not_found', '工单不存在。', 404);
         $this->visible($workOrder, $user, $permissions, $superAdmin);
         $query = DB::table('erp_work_order_completions')->where('work_order_id', $workOrderId);
+        if (! empty($filters['status'])) $query->where('status', $filters['status']);
+        if (! empty($filters['completion_id'])) $query->where('id', (int) $filters['completion_id']);
         $total = (clone $query)->count();
         $rows = $query->orderByDesc('id')->forPage($page, $perPage)->get()
             ->map(fn ($row) => $this->completionProjection($row, true, $permissions))->all();
@@ -236,6 +238,8 @@ final class WorkOrderCompletionService
         if (! $relations) return $data;
 
         $data['attachments'] = $row->attachment_snapshot ? json_decode($row->attachment_snapshot, true) ?: [] : [];
+        // Review shows the immutable submission checks, never a fabricated current preflight.
+        $data['preflight_snapshot'] = $row->preflight_snapshot ? json_decode($row->preflight_snapshot, true) ?: [] : [];
         $legacyUsers = DB::table('erp_legacy_admin_users')->whereIn('legacy_id', array_filter([
             $row->submitted_by_legacy_id, $row->reviewed_by_legacy_id,
         ]))->pluck('nickname', 'legacy_id');

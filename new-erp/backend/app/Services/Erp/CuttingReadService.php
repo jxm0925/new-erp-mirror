@@ -14,6 +14,15 @@ final class CuttingReadService
 
     public function orders(array $f, object $user, array $permissions, bool $super = false): array
     {
+        $q = $this->visibleOrdersQuery($user, $permissions, $super);
+        if (! empty($f['status'])) $q->where('o.status',$f['status']);
+        if (! empty($f['keyword'])) $q->where('o.cutting_order_no','like','%'.$f['keyword'].'%');
+        return $this->page($q->orderByDesc('o.id'),$f);
+    }
+
+    /** Reuse the exact order scope in warehouse discovery before counting or paging. */
+    public function visibleOrdersQuery(object $user, array $permissions, bool $super = false): Builder
+    {
         $this->commands->permission($permissions, 'production.cutting.view');
         $visible = WorkOrder::query()->select('id');
         $this->scopes->applyWorkOrderScope($visible, $this->scopes->resolve($user, 'production.cutting.view', $permissions, $super));
@@ -28,9 +37,7 @@ final class CuttingReadService
                 ->whereColumn('a.cutting_order_id','o.id')->whereNotIn('r.work_order_id',$visible->toBase()));
                 });
         });
-        if (! empty($f['status'])) $q->where('o.status',$f['status']);
-        if (! empty($f['keyword'])) $q->where('o.cutting_order_no','like','%'.$f['keyword'].'%');
-        return $this->page($q->orderByDesc('o.id'),$f);
+        return $q;
     }
 
     public function warehouseLocators(array $filters, object $user, array $permissions, bool $super = false): array
@@ -43,7 +50,9 @@ final class CuttingReadService
         if ($keyword = trim((string) ($filters['keyword'] ?? ''))) {
             $query->where(fn (Builder $q) => $q->where($prefix.'_code', 'like', '%'.$keyword.'%')->orWhere($prefix.'_name', 'like', '%'.$keyword.'%'));
         }
-        return $this->page($query->select('id', $prefix.'_code as code', $prefix.'_name as name')->orderBy('id'), $filters);
+        $columns = ['id', $prefix.'_code as code', $prefix.'_name as name', 'status'];
+        if ($location) $columns = array_merge($columns, ['warehouse_id', 'area']);
+        return $this->page($query->select($columns)->orderBy('id'), $filters);
     }
 
     public function tasks(array $f, object $user, array $permissions, bool $super = false): array
@@ -53,7 +62,8 @@ final class CuttingReadService
         $visible = CuttingTask::query()->select('id');
         $this->scopes->applyCuttingTaskScope($visible, $this->scopes->resolve($user, 'production.cutting.view', $permissions, $super), $actor);
         $q = DB::table('erp_cutting_tasks as t')->join('erp_cutting_orders as o', 'o.id', '=', 't.cutting_order_id')
-            ->whereIn('t.id', $visible->toBase());
+            ->whereIn('t.id', $visible->toBase())
+            ->whereNotExists(fn (Builder $operation) => $operation->selectRaw('1')->from('erp_production_cutting_operations as linked')->whereColumn('linked.cutting_task_id','t.id'));
         if (($f['scope'] ?? null) === 'pool') {
             $q->where('t.status', 'WAIT_CLAIM')->whereNull('t.assignee_user_legacy_id');
         } elseif (($f['scope'] ?? null) === 'mine') {
@@ -161,7 +171,11 @@ final class CuttingReadService
         $inputs = $this->page($inputQuery,$f);
         foreach ($inputs['data'] as &$input) $input['display_status'] = $this->batchStatusLabel($input['status']);
         unset($input);
-        return ['order'=>(array) $order,'task'=>(array) DB::table('erp_cutting_tasks')->where('cutting_order_id',$id)->first(),
+        $sourceWorkOrders = WorkOrder::query()->where(function ($q) use ($id): void {
+            $q->whereIn('id', DB::table('erp_cutting_plan_allocations')->where('cutting_order_id', $id)->select('work_order_id'))
+                ->orWhereIn('id', DB::table('erp_production_cutting_operations')->where('cutting_order_id', $id)->select('work_order_id'));
+        })->orderBy('id')->limit(10)->get(['id', 'work_order_no'])->toArray();
+        return ['order'=>(array) $order,'source_work_orders'=>$sourceWorkOrders,'task'=>(array) DB::table('erp_cutting_tasks')->where('cutting_order_id',$id)->first(),
             'inputs'=>$inputs,'results'=>$this->results($id,$f),'flow'=>$this->flowSummary($id),'page_title'=>'下料记录','submit_label'=>'提交加工结果',
             'page_scope'=>'ORDER_OVERVIEW','lifecycle'=>$this->lifecycle->projection($order)+[
                 'close_permitted'=>in_array('production.cutting.close',$permissions,true),
@@ -265,7 +279,7 @@ final class CuttingReadService
             $type = $f['flow'] === 'warehouse' ? 'WAREHOUSE' : 'NEXT_OPERATION';
             $q->whereExists(fn (Builder $routes) => $routes->selectRaw('1')->from('erp_cutting_result_routes as candidate')
                 ->whereColumn('candidate.result_id','r.id')->where('candidate.route_type',$type)
-                ->whereNotIn('candidate.status',['CANCELLED','RECEIVED','WAREHOUSED']));
+                ->whereNotIn('candidate.status',['CANCELLED','RECEIVED','WAREHOUSED','WAIT_OPERATION','OPERATION_COMPLETED']));
         }
         $results = $this->page($q,$f);
         $ids = array_column($results['data'],'id');
@@ -444,7 +458,8 @@ final class CuttingReadService
             ->where(fn (Builder $q) => $q->where('i.cutting_mode','length')->orWhere(fn (Builder $q) => $q->whereNull('i.cutting_mode')->where('i.is_length_cut_material',true)));
         $warehouse->selectRaw("'WAREHOUSE' AS source_type, b.id AS inventory_balance_id, NULL AS remnant_holding_id, b.item_id, b.batch_no,
             b.quantity_available AS available_root_qty, i.item_code, i.item_name, i.spec, i.category_id,
-            i.standard_stock_length_mm, l.material_form, 'WAREHOUSE' AS position_type, 'length' AS cutting_mode");
+            CASE WHEN l.material_form = 'REMNANT' THEN l.cut_length_mm ELSE i.standard_stock_length_mm END AS standard_stock_length_mm,
+            l.material_form, 'WAREHOUSE' AS position_type, 'length' AS cutting_mode");
         $remnants = DB::table('erp_material_holdings as h')->join('erp_material_lots as l', 'l.id', '=', 'h.material_lot_id')
             ->join('erp_items as i', 'i.id', '=', 'l.item_id')->whereIn('l.item_id', $itemIds)
             ->where('h.position_type', 'REMNANT_WIP')->where('h.status', 'ACTIVE')->whereNull('h.inventory_balance_id')

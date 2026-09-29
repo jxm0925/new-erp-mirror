@@ -1,29 +1,61 @@
 <view class="form-page">
-  <view class="notice">备货工单用于制造公共库存</view>
   <view class="error" wx:if="{{error}}">{{error}}</view>
-  <view class="card number-card"><text class="muted">工单编号</text><view class="number-row"><text>{{number || '尚未取得编号'}}</text><text class="status">{{statusLabel}}</text></view></view>
   <view wx:if="{{loading}}" class="state">加载中</view>
   <block wx:else>
-    <view class="card fields">
-      <view class="field" data-type="items" bindtap="openPicker"><text class="label">产出物料</text><view class="value">{{item.name || '请选择产出物料'}}<text class="muted code" wx:if="{{item.code}}">{{item.code}}</text></view><text wx:if="{{!id && editable}}" class="arrow">›</text></view>
-      <view class="field" data-type="routings" bindtap="openPicker"><text class="label">工艺路线</text><view class="value">{{routing.name || '请选择工艺路线'}}<text class="muted code" wx:if="{{routing.version}}">版本：V{{routing.version}}</text></view><text wx:if="{{editable}}" class="arrow">›</text></view>
-      <view class="field" data-type="routing_operations" bindtap="openPicker"><text class="label">目标工序</text><text class="value">{{operation.name || '请选择目标工序'}}</text><text wx:if="{{editable}}" class="arrow">›</text></view>
-      <view class="field"><text class="label">计划数量</text><input type="digit" class="value" value="{{form.target_qty}}" disabled="{{!editable || busy || pending}}" data-field="target_qty" bindinput="input" placeholder="请输入计划数量" /><text class="unit">{{item.unit_name}}</text></view>
-      <view class="field"><text class="label">计划日期</text><picker class="value" mode="date" value="{{form.planned_date}}" disabled="{{!editable || busy || pending}}" data-field="planned_date" bindchange="input"><view>{{form.planned_date || '请选择计划日期'}}</view></picker><text class="arrow">›</text></view>
-      <view class="field"><text class="label">生产地点</text><input class="value" value="{{form.production_location_name}}" disabled="{{!editable || busy || pending}}" data-field="production_location_name" bindinput="input" maxlength="160" placeholder="请输入车间 / 工位" /></view>
-      <view class="field"><text class="label">生产批次</text><input class="value" value="{{form.production_batch}}" disabled="{{!editable || busy || pending}}" data-field="production_batch" bindinput="input" maxlength="120" placeholder="请输入生产批次" /></view>
+    <view class="work-summary">
+      <text class="summary-status">{{statusLabel}}</text>
+      <view class="summary-number">{{number || '新建工单'}}</view>
+      <view class="summary-product">{{item.name || '请选择产出物料'}}</view>
+      <view class="summary-source">{{sourceLabel || (purpose==='reserved_for_work_order'?'指定工单备货':'公共库存备货')}}</view>
+      <view class="summary-metrics"><view><text class="metric-label">计划数量</text><view><text class="metric-value quantity">{{form.target_qty || '—'}}</text><text class="metric-unit">{{item.unit_name}}</text></view></view><view><text class="metric-label">技术资料</text><view class="metric-value">{{technicalVersion ? 'V'+technicalVersion : '待确认'}}</view></view></view>
     </view>
-    <view class="card overview" wx:if="{{routing.id}}"><view class="card-title">工艺路线概览</view><view class="field"><text class="label">工艺路线</text><text class="value">{{routing.name}}</text></view><view class="field"><text class="label">版本</text><text class="value">V{{routing.version}}</text></view><view class="field"><text class="label">目标工序</text><text class="value">{{operation.name || '待选择'}}</text></view><view class="route-node" wx:for="{{routeSummary}}" wx:key="id">{{item.name}}</view></view>
+    <view wx:if="{{!executionReadOnly}}" class="preparation-tabs"><view class="preparation-tab {{activeTab==='plan'?'active':''}}" data-tab="plan" bindtap="selectTab">生产计划</view><view class="preparation-tab {{activeTab==='technical'?'active':''}}" data-tab="technical" bindtap="selectTab">技术资料</view><view class="preparation-tab {{activeTab==='check'?'active':''}}" data-tab="check" bindtap="selectTab">发布检查</view></view>
+    <block wx:if="{{!executionReadOnly && activeTab==='plan'}}">
+    <view wx:if="{{!id}}" class="purpose-tabs"><view class="purpose-tab {{purpose==='common_inventory'?'active':''}}" data-purpose="common_inventory" bindtap="setPurpose">公共库存</view><view class="purpose-tab {{purpose==='reserved_for_work_order'?'active':''}}" data-purpose="reserved_for_work_order" bindtap="setPurpose">指定工单</view></view>
+    <view class="card fields">
+      <view class="field"><text class="label muted">工单编号</text><text class="value number-value">{{number || '尚未取得编号'}}</text><text class="status" wx:if="{{id}}">{{statusLabel}}</text></view>
+      <view class="field" data-type="items" bindtap="openPicker"><text class="label">产出物料</text><view class="value">{{item.name || '请选择产出物料'}}<text class="muted code" wx:if="{{item.code}}">{{item.code}}</text></view><text wx:if="{{!id && editable}}" class="arrow">›</text></view>
+      <view class="field" data-type="routings" bindtap="openPicker"><text class="label">工艺路线</text><view class="value">{{routing.name || '请选择工艺路线'}}<text class="muted code" wx:if="{{routing.version}}">版本：V{{routing.version}}</text></view><text wx:if="{{editable && !planOnly}}" class="arrow">›</text></view>
+      <view class="field" data-type="routing_operations" bindtap="openPicker"><text class="label">目标工序</text><text class="value">{{operation.name || '请选择目标工序'}}</text><text wx:if="{{editable && !planOnly}}" class="arrow">›</text></view>
+      <view class="field"><text class="label">计划数量</text><input type="digit" class="value" value="{{form.target_qty}}" disabled="{{!editable || planOnly || busy || pending}}" data-field="target_qty" bindinput="input" placeholder="请输入计划数量" /><text class="unit">{{item.unit_name}}</text></view>
+      <view class="field"><text class="label">计划日期</text><picker class="value" mode="date" value="{{form.planned_date}}" disabled="{{!editable || busy || pending}}" data-field="planned_date" bindchange="input"><view>{{form.planned_date || '请选择计划日期'}}</view></picker><text class="arrow">›</text></view>
+      <view class="field"><text class="label">生产批次</text><text class="value">{{form.production_batch || number || '保存后自动生成'}}</text></view>
+    </view>
+    <view class="card target-card" wx:if="{{purpose==='reserved_for_work_order'}}">
+      <view class="target-title">指定去向</view>
+      <view class="field" data-type="reserved_work_orders" bindtap="openPicker"><text class="label">目标工单</text><text class="value">{{targetWorkOrder.name || '请选择目标工单'}}</text><text wx:if="{{!id && editable}}" class="arrow">›</text></view>
+      <view class="field" wx:if="{{targetWorkOrder.execution_mode==='unit'}}" data-type="reserved_units" bindtap="openPicker"><text class="label">生产单元</text><text class="value">{{targetUnit.name || '请选择生产单元'}}</text><text wx:if="{{!id && editable}}" class="arrow">›</text></view>
+      <view class="field" data-type="reserved_operations" bindtap="openPicker"><text class="label">接收工序</text><text class="value">{{targetOperation.name || '请选择接收工序'}}</text><text wx:if="{{!id && editable}}" class="arrow">›</text></view>
+      <view class="target-hint muted" wx:if="{{!id && targetWorkOrder.execution_mode==='unit'}}">逐件目标请选择生产单元。</view>
+    </view>
+    <view class="card overview" wx:if="{{routing.id}}"><view class="card-title">工艺路线概览（只读）</view><view class="state" wx:if="{{routeLoading}}">加载中</view><view class="error" wx:elif="{{routeError}}" bindtap="retryRoute">{{routeError}} · 点击重试</view><view class="route-nodes"><view class="route-node" wx:for="{{routeSummary}}" wx:key="id"><text class="route-sequence">{{item.sequence}}</text><text>{{item.name}}</text></view></view><view class="pages" wx:if="{{routeLastPage>1}}"><button size="mini" disabled="{{routeLoading || routePage<=1}}" data-step="-1" bindtap="routePage">上一页</button><text>{{routePage}}/{{routeLastPage}}</text><button size="mini" disabled="{{routeLoading || routePage>=routeLastPage}}" data-step="1" bindtap="routePage">下一页</button></view></view>
+    <view class="actions" wx:if="{{!pending}}"><button wx:if="{{editable}}" class="primary" disabled="{{busy}}" loading="{{busy}}" bindtap="save">{{planOnly ? '保存生产计划' : '保存草稿'}}</button><button class="next-step" data-tab="technical" bindtap="selectTab">下一步：技术资料</button></view>
+    </block>
+    <block wx:if="{{activeTab==='technical'}}">
+      <view class="technical-section">
+        <view class="technical-heading"><view class="technical-title">技术附件<text class="attachment-count">（{{technicalFiles.length}}）</text></view><view class="drawing-version"><text>图纸版本</text><text class="drawing-reference">{{technical.drawing_reference || '—'}}</text><text wx:if="{{technicalVersion}}" class="confirmed-badge">已确认</text></view></view>
+        <view class="attachment-row" wx:for="{{technicalFiles}}" wx:key="id">
+          <view class="file-icon {{item.kind==='CAD'?'cad':''}}">{{item.kind}}</view>
+          <view class="file-info"><view class="file-name">{{item.original_name}}</view><view class="file-meta">{{item.kind}} · {{item.sizeLabel}}</view></view>
+          <button class="file-action" data-id="{{item.id}}" loading="{{attachmentBusy===item.id}}" disabled="{{attachmentBusy}}" bindtap="openAttachment">{{item.previewable?'查看':'下载'}}</button>
+        </view>
+        <view wx:if="{{!technicalFiles.length}}" class="state">暂无技术附件</view>
+      </view>
+      <view class="technical-section materials-section"><view class="technical-title">用料规格</view><view class="material-row" wx:for="{{technicalMaterials}}" wx:key="bom_item_id"><view class="material-name">{{item.component_item_name}}</view><view class="material-spec">{{item.specLabel}}</view><view class="material-quantity"><text class="metric-label">单件用量</text><view><text class="quantity">{{item.quantityLabel}}</text><text class="metric-unit">{{item.unit_name}}</text></view></view></view><view wx:if="{{!technicalMaterials.length}}" class="state">暂无已确认用料</view></view>
+    </block>
+    <block wx:if="{{!executionReadOnly && activeTab==='check'}}">
     <view class="card overview" wx:if="{{gate}}"><view class="card-title">{{gate.allowed ? '发布条件已满足' : '发布条件未满足'}}</view><view class="error" wx:for="{{gate.blockers}}" wx:key="key">{{item.message}}</view></view>
-    <view class="actions" wx:if="{{pending}}"><text class="muted">上次{{pending.label}}结果尚未确认</text><button class="primary" disabled="{{busy}}" loading="{{busy}}" bindtap="retry">继续上次操作</button></view>
-    <view class="actions" wx:else>
-      <button wx:if="{{editable}}" class="primary" disabled="{{busy}}" loading="{{busy}}" bindtap="save">保存草稿</button>
+    <view wx:if="{{!id}}" class="state">请先保存生产计划</view>
+    <view class="actions" wx:if="{{!pending}}">
       <button wx:if="{{actions.submit}}" class="primary" disabled="{{busy || dirty}}" data-action="submit" bindtap="transition">提交工单</button>
       <button wx:if="{{id && actions.view_release_gate}}" disabled="{{busy || dirty}}" bindtap="checkGate">检查发布条件</button>
-      <button wx:if="{{actions.publish}}" class="primary" disabled="{{busy}}" data-action="publish" bindtap="transition">发布工单</button>
+      <button wx:if="{{actions.publish}}" class="primary" disabled="{{busy || dirty}}" data-action="publish" bindtap="transition">发布工单</button>
       <button wx:if="{{actions.return_draft}}" disabled="{{busy}}" data-action="return-draft" bindtap="transition">退回草稿</button>
-      <button wx:if="{{released}}" disabled="{{busy}}" bindtap="openTasks">查看待接任务</button>
+      <button wx:if="{{released && actions.view_tasks}}" disabled="{{busy}}" bindtap="openTasks">查看工序任务</button>
+      <button wx:if="{{id && released}}" bindtap="openWorkOrder">查看工单</button>
     </view>
+    </block>
+    <view class="card pending-card" wx:if="{{!executionReadOnly && pending}}"><strong>原操作结果待确认</strong><text class="muted">上次{{pending.label}}结果尚未确认</text><view class="actions"><button class="primary" disabled="{{busy}}" loading="{{busy}}" bindtap="retry">重试原操作</button><button wx:if="{{id}}" bindtap="openWorkOrder">查看工单</button></view></view>
   </block>
 </view>
 <view wx:if="{{picker}}" class="mask" catchtap="closePicker" catchtouchmove="noop">
@@ -35,7 +67,8 @@
         <scroll-view scroll-y class="category-scroll"><view class="category {{!categoryId ? 'selected' : ''}}" data-id="" bindtap="category">全部分类</view><view wx:for="{{categories}}" wx:key="id" class="category {{categoryId === item.id ? 'selected' : ''}}" data-id="{{item.id}}" bindtap="category">{{item.name}}</view></scroll-view>
         <view class="category-pages"><button size="mini" disabled="{{categoryLoading || categoryPage <= 1}}" data-step="-1" bindtap="pageCategories">上页</button><text>{{categoryPage}}/{{categoryLastPage}}</text><button size="mini" disabled="{{categoryLoading || categoryPage >= categoryLastPage}}" data-step="1" bindtap="pageCategories">下页</button></view>
       </view>
-      <scroll-view scroll-y class="option-scroll"><view class="state" wx:if="{{optionLoading}}">加载中</view><view class="state" wx:elif="{{!options.length}}">暂无可选资料</view><view wx:for="{{options}}" wx:key="id" class="option {{selected.id === item.id ? 'selected' : ''}}" data-id="{{item.id}}" bindtap="select"><text>{{item.name}}</text><text class="muted">{{item.code}}</text><text class="muted" wx:if="{{item.detail}}">{{item.detail}}</text></view></scroll-view>
+      <view class="categories" wx:if="{{picker==='reserved_work_orders'}}"><view class="category {{!targetStatus?'selected':''}}" data-status="" bindtap="targetStatus">全部</view><view class="category {{targetStatus==='RELEASED'?'selected':''}}" data-status="RELEASED" bindtap="targetStatus">已发布</view><view class="category {{targetStatus==='IN_PROGRESS'?'selected':''}}" data-status="IN_PROGRESS" bindtap="targetStatus">生产中</view></view>
+      <scroll-view scroll-y class="option-scroll"><view class="state" wx:if="{{optionLoading}}">加载中…</view><view class="state error" wx:elif="{{optionError}}" bindtap="search">{{optionError}} · 点击重试</view><view class="state" wx:elif="{{!options.length}}">暂无符合条件的{{picker==='reserved_work_orders'?'工单':'资料'}}</view><view wx:for="{{options}}" wx:key="id" class="option {{selected.id === item.id ? 'selected' : ''}}" data-id="{{item.id}}" bindtap="select"><view class="option-top"><text class="radio">{{selected.id===item.id?'◉':'○'}}</text><text class="option-name">{{item.name}}</text><text class="status" wx:if="{{item.statusLabel}}">{{item.statusLabel}}</text></view><text class="muted" wx:if="{{item.code && item.code!==item.name}}">{{item.code}}</text><text class="muted" wx:if="{{item.detail}}">{{item.detail}}</text><text class="muted" wx:if="{{item.spec}}">规格：{{item.spec}}</text></view></scroll-view>
     </view>
     <view class="pages"><button size="mini" disabled="{{optionLoading || page <= 1}}" data-step="-1" bindtap="pageOptions">上一页</button><text>{{page}} / {{lastPage}}</text><button size="mini" disabled="{{optionLoading || page >= lastPage}}" data-step="1" bindtap="pageOptions">下一页</button></view>
     <view class="selection">已选：{{selected.name || '未选择'}}</view><button class="primary" bindtap="confirmSelection" disabled="{{!selected.id}}">确认选择</button>

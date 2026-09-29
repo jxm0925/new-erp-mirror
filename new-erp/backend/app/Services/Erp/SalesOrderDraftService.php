@@ -152,11 +152,7 @@ class SalesOrderDraftService
             );
             if ($line->is_special_customized) {
                 $types = $line->attachments->where('status', 'active')->pluck('attachment_type');
-                abort_if(
-                    $sku->special_custom_drawing_required && !$types->contains(fn ($type) => in_array($type, ['design_drawing', 'customer_drawing'], true)),
-                    422,
-                    "订单行 {$line->line_no} 缺少特殊定制设计图纸"
-                );
+                // 加工图纸由技术岗位在工单确认，不能阻断销售确认及自动建单。
                 abort_if(
                     $sku->special_custom_agreement_required && !$types->contains('technical_agreement'),
                     422,
@@ -220,7 +216,6 @@ class SalesOrderDraftService
             $add($prefix.'PUMP', $sku->need_pump_mode !== 'required' || !is_null($line->need_pump), "第 {$line->line_no} 行原水泵控制配置符合 SKU 要求", "第 {$line->line_no} 行必须选择原水泵控制", "lines.{$line->line_no}.need_pump");
             if (!$line->is_special_customized) continue;
             $types = $line->attachments->where('status', 'active')->pluck('attachment_type');
-            $add($prefix.'DRAWING', !$sku->special_custom_drawing_required || $types->contains(fn ($type) => in_array($type, ['design_drawing', 'customer_drawing'], true)), "第 {$line->line_no} 行特殊定制设计图纸要求已满足", "第 {$line->line_no} 行缺少特殊定制设计图纸", "lines.{$line->line_no}.attachments");
             $add($prefix.'AGREEMENT', !$sku->special_custom_agreement_required || $types->contains('technical_agreement'), "第 {$line->line_no} 行特殊定制技术协议要求已满足", "第 {$line->line_no} 行缺少特殊定制技术协议", "lines.{$line->line_no}.attachments");
             $add($prefix.'DESCRIPTION', !$sku->special_custom_description_required || filled($line->customization_description), "第 {$line->line_no} 行特殊定制说明已填写", "第 {$line->line_no} 行缺少特殊定制说明", "lines.{$line->line_no}.customization_description");
         }
@@ -256,7 +251,6 @@ class SalesOrderDraftService
             abort_if($sku->need_pump_mode === 'required' && is_null($line->need_pump), 422, "Order line {$line->line_no} requires pump-control selection.");
             if (!$line->is_special_customized) continue;
             $types = $line->attachments->where('status', 'active')->pluck('attachment_type');
-            abort_if($sku->special_custom_drawing_required && !$types->contains(fn ($type) => in_array($type, ['design_drawing', 'customer_drawing'], true)), 422, "Order line {$line->line_no} is missing a special-custom drawing.");
             abort_if($sku->special_custom_agreement_required && !$types->contains('technical_agreement'), 422, "Order line {$line->line_no} is missing a special-custom technical agreement.");
             abort_if($sku->special_custom_description_required && blank($line->customization_description), 422, "Order line {$line->line_no} is missing a special-custom description.");
         }

@@ -14,6 +14,7 @@ class ProductionUnitTraceController extends Controller
     {
         $filters = $request->validate([
             'status' => 'nullable|string|max:30',
+            'display_status' => 'nullable|in:WAITING,WAIT_MATERIAL,WAIT_HANDOVER,IN_PROGRESS,COMPLETED,EXCEPTION',
             'page' => 'nullable|integer|min:1',
             'per_page' => 'nullable|integer|min:1|max:50',
         ]);

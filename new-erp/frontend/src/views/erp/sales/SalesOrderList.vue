@@ -10,7 +10,7 @@ Do not change layout without approval.
         <div>
           <div class="sub-breadcrumb">销售管理 / 销售订单</div>
           <h1>销售订单</h1>
-          <p>集中查看销售订单草稿与确认前检查结果；本阶段不产生备货、库存、生产或发货单据。</p>
+          <p>管理销售订单，跟进生产安排与交付进度。</p>
         </div>
         <div class="heading-actions">
           <el-button v-if="$can('sales_order.create')" size="small" type="success" icon="el-icon-plus" @click="$router.push('/sales/orders/create')">新增订单</el-button>

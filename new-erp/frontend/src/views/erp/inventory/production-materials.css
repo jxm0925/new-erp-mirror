@@ -1,0 +1,90 @@
+.production-picking-page { padding: 22px 20px; color: #183565; min-width: 0; font-size: 14px; }
+.pm-page-head h1 { margin: 0 0 6px; color: #102749; font-size: 22px; line-height: 1.4; }
+.pm-page-head p { margin: 0 0 20px; font-size: 13px; color: #607595; }
+.pm-tabs .el-tabs__header { margin-bottom: 0; }
+.pm-tabs .el-tabs__item { height: 49px; padding: 0 26px !important; font-size: 15px; font-weight: 600; }
+.pm-tabs .el-tabs__active-bar { background-color: #009259; height: 3px; }
+.pm-tabs .el-tabs__item.is-active, .pm-tabs .el-tabs__item:hover { color: #008952; }
+.pm-tabs .el-tabs__content { display: none; }
+.pm-filters { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+.pm-filters .el-input { flex: 1; min-width: 180px; }
+.pm-filters .el-button + .el-button { margin-left: 0; }
+.pm-list-filters { background: #fff; border: 1px solid #e0e7f0; border-radius: 3px; padding: 20px; margin-bottom: 16px; }
+.pm-list-filters > .el-input { max-width: 350px; }
+.pm-list-filters .el-select { width: 190px; }
+.pm-list { background: white; border: 1px solid #e0e7f0; border-radius: 3px; }
+.production-picking-page .el-table, .production-material-dialog .el-table { color: #1f3e70; }
+.production-picking-page .el-table th, .production-material-dialog .el-table th { background: #f2f6fb; color: #294777; font-weight: 600; }
+.production-picking-page .el-table .cell, .production-material-dialog .el-table .cell { white-space: normal; overflow-wrap: anywhere; word-break: normal; }
+.production-picking-page .el-table td { padding: 17px 0; }
+.pm-list small, .pm-material-table small { display: block; margin-top: 4px; font-size: 12px; line-height: 1.4; color: #536e96; }
+.pm-pagination { padding: 14px 10px; display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: 3px; }
+.pm-actions { display: flex; align-items: center; flex-wrap: nowrap; gap: 14px; }
+.pm-actions .el-button + .el-button { margin: 0; }
+.production-material-dialog { max-width: calc(100vw - 48px); margin: 6vh auto !important; display: flex; flex-direction: column; max-height: 88vh; border-radius: 5px; color: #193767; }
+.production-material-dialog .el-dialog__header { padding: 20px 22px 16px; border-bottom: 1px solid #e1e7f0; flex-shrink: 0; }
+.production-material-dialog .el-dialog__title, .production-material-dialog .el-dialog__header > span { color: #102b5b; font-size: 18px; font-weight: 600; }
+.production-material-dialog .el-dialog__header .el-tag { margin-left: 12px; font-weight: 400; vertical-align: middle; }
+.production-material-dialog .el-dialog__body { overflow: auto; padding: 20px; font-size: 14px; color: #214273; }
+.production-material-dialog .el-dialog__footer { padding: 14px 20px; border-top: 1px solid #e1e7f0; flex-shrink: 0; }
+.production-material-dialog .el-dialog__footer .el-button { min-width: 94px; }
+.production-picking-page .el-button--success, .production-material-dialog .el-button--success { background: #008f55; border-color: #008f55; }
+.production-material-dialog .el-button--success.is-disabled { background: #b4bbc5; border-color: #b4bbc5; color: #fff; }
+.production-material-dialog .el-input__inner { border-color: #d4dfef; color: #203e70; }
+.pm-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px 20px; margin: 8px 6px 20px; line-height: 1.6; }
+.pm-meta > span { min-width: 0; overflow-wrap: anywhere; }
+.pm-inline-field { display: flex; align-items: center; gap: 10px; margin: 16px 6px; }
+.pm-inline-field > label { flex-shrink: 0; }
+.pm-inline-field > .el-input, .pm-inline-field > .el-select { width: 270px; }
+.pm-warning { color: #f17920 !important; }
+.pm-danger, .pm-danger.el-button { color: #e74747 !important; }
+.pm-table-scroll { overflow-x: auto; border: 1px solid #dfe7f2; border-radius: 3px; }
+.pm-material-table { width: 100%; border-collapse: collapse; table-layout: auto; min-width: 820px; font-size: 13px; }
+.pm-material-table th { background: #f1f5fa; color: #274578; font-weight: 600; white-space: nowrap; }
+.pm-material-table th, .pm-material-table td { border-right: 1px solid #e0e7f1; border-bottom: 1px solid #e0e7f1; padding: 13px 10px; text-align: center; vertical-align: middle; }
+.pm-material-table td:last-child, .pm-material-table th:last-child { border-right: 0; }
+.pm-material-table > tbody > tr:last-child > td { border-bottom: 0; }
+.pm-material-table .pm-material-name { text-align: left; min-width: 195px; max-width: 300px; overflow-wrap: anywhere; }
+.pm-material-name > strong { color: #122d5b; font-size: 14px; }
+.pm-material-table .pm-index { width: 38px; }
+.pm-material-table .pm-expand { width: 25px; }
+.pm-material-table .el-button--text { padding: 5px 0; font-size: 13px; }
+.pm-material-table .pm-quantity { min-width: 116px; max-width: 145px; }
+.pm-quantity .el-input { max-width: 136px; }
+.pm-quantity .el-input__inner { padding: 0 10px; }
+.pm-quantity .el-input-group__append { padding: 0 10px; background: #f1f5fb; color: #365580; }
+.pm-material-table .pm-sources-cell { padding: 8px 10px; background: #f9fbfe; }
+.pm-source-table { width: 100%; border-collapse: collapse; table-layout: auto; border: 1px solid #dfe7f2; }
+.pm-source-table th, .pm-source-table td { padding: 9px 10px; font-weight: normal; }
+.pm-source-table th { background: #edf3fa; }
+.pm-source-table td { background: #fbfcfe; }
+.pm-source-summary { display: flex; align-items: center; justify-content: space-between; padding: 2px 10px; }
+.pm-invalid .el-input__inner { border-color: #e74747 !important; }
+.pm-empty { padding: 30px !important; color: #8a98ac; }
+.pm-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; text-align: left; }
+.pm-footer > span:last-child { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+.pm-footer .el-button + .el-button { margin: 0; }
+.pm-stock-heading { margin: 2px 4px 17px; font-size: 16px; color: #17315d; }
+.pm-stock-layout { display: grid; grid-template-columns: 175px minmax(0, 1fr); border: 1px solid #dfe7f2; border-radius: 3px; }
+.pm-stock-layout aside { background: #f8fafe; border-right: 1px solid #dfe7f2; padding: 14px 8px; }
+.pm-stock-layout aside button { width: 100%; text-align: left; border: 0; background: transparent; padding: 12px 10px; font: inherit; color: #244775; cursor: pointer; line-height: 1.5; }
+.pm-stock-layout aside button.active { background: #d9eee6; color: #087b59; border-radius: 3px; }
+.pm-stock-layout main { min-width: 0; padding: 15px; }
+.pm-stock-layout .el-table__body-wrapper { min-height: 180px; }
+.pm-selected { padding: 13px 15px; border: 1px solid #dfe7f2; border-radius: 3px; background: #f7faff; margin-top: 8px; }
+.pm-selected > div { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.pm-selected .el-tag { margin: 7px 7px 0 0; height: auto; line-height: 1.6; padding: 7px; white-space: normal; }
+.pm-steps { padding: 8px 30px 22px; }
+.pm-steps .el-step__title { font-size: 13px; }
+.pm-steps .el-step__description { font-size: 12px; line-height: 1.5; }
+.pm-remark { margin: 16px 3px 0; }
+.pm-remark > .el-input { flex: 1; }
+.pm-remark > label { display: inline-block; margin-bottom: 7px; }
+.pm-remark p { font-size: 12px; color: #5276a6; margin: 10px 0; }
+.pm-events { margin-top: 15px; border-bottom: 0; }
+.pm-events .el-collapse-item__header { color: #2269bb; font-weight: 500; }
+.pm-related { margin-top: 15px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.pm-rejection { margin-top: 14px; }
+.pm-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+@media (max-width: 1000px) { .pm-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pm-stock-layout { grid-template-columns: 140px minmax(0, 1fr); } }
+@media (max-width: 700px) { .production-picking-page { padding: 14px 10px; } .production-material-dialog { max-width: calc(100vw - 24px); margin: 3vh auto !important; max-height: 94vh; } .production-material-dialog .el-dialog__body { padding: 12px; } .production-material-dialog .el-dialog__header { padding: 16px 14px; } .production-material-dialog .el-dialog__footer { padding: 12px; } .pm-meta { grid-template-columns: 1fr; gap: 8px; } .pm-stock-layout { grid-template-columns: 1fr; } .pm-stock-layout aside { border-right: 0; border-bottom: 1px solid #dfe7f2; display: flex; overflow-x: auto; padding: 3px; } .pm-stock-layout aside button { flex-shrink: 0; width: auto; } .pm-inline-field { flex-wrap: wrap; } .pm-inline-field > .el-input { max-width: 100%; } .pm-footer { align-items: flex-end; } .pm-footer > span:first-child { font-size: 12px; } .pm-list-filters { padding: 12px; } }

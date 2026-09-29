@@ -1,0 +1,32 @@
+<view wx:if="{{open}}" class="warehouse-overlay" catchtouchmove="stop">
+  <view class="warehouse-dialog return-serial-dialog">
+    <view class="warehouse-dialog-header"><text>核对退货序列号</text><button class="warehouse-close" disabled="{{locked}}" bindtap="cancel"><van-icon name="cross" size="22"/></button></view>
+    <scroll-view scroll-y class="return-serial-body">
+      <view class="return-serial-name">{{line.itemName || line.item_name}}</view>
+      <view class="warehouse-field"><text class="warehouse-label">原发货单</text><text class="warehouse-value">{{shipmentNos || '—'}}</text></view>
+      <view class="warehouse-field"><text class="warehouse-label">原生产批次</text><text class="warehouse-value">{{batchNo || '—'}}</text></view>
+      <view class="warehouse-note return-serial-note">同一原批次分次收货。</view>
+      <view class="warehouse-search"><view class="return-serial-search-field"><van-icon name="search"/><input value="{{keyword}}" placeholder="输入序列号" disabled="{{locked || checking}}" bindinput="keywordInput" bindconfirm="search" confirm-type="search"/></view><button disabled="{{locked || checking}}" bindtap="search">搜索</button></view>
+      <view class="return-serial-table">
+        <view class="return-serial-tr return-serial-th"><text class="return-serial-number">序列号</text><text class="return-serial-destination">处理去向</text></view>
+        <view wx:if="{{loading}}" class="warehouse-empty"><van-loading color="#ef1008"/></view>
+        <view wx:elif="{{!rows.length && !unavailableRows.length}}" class="warehouse-empty">暂无可接收序列号</view>
+        <block wx:else>
+          <view wx:for="{{rows}}" wx:for-item="row" wx:key="id" class="return-serial-tr">
+            <text class="return-serial-number">{{row.serial_no}}</text>
+            <view class="return-serial-destination">
+              <text wx:if="{{row.excluded}}" class="warehouse-muted">已用于其他退货行</text>
+              <view wx:else class="return-serial-choices"><button wx:for="{{dispositions}}" wx:for-item="choice" wx:key="key" class="{{row.disposition === choice.key ? 'selected' : ''}}" disabled="{{locked || loading || checking || conflictActive}}" data-id="{{row.id}}" data-disposition="{{choice.key}}" bindtap="choose">{{choice.label}}</button></view>
+            </view>
+          </view>
+          <view wx:for="{{unavailableRows}}" wx:key="id" class="return-serial-tr return-serial-unavailable"><text class="return-serial-number">{{item.serial_no}}</text><text class="return-serial-destination warehouse-muted">该序列号已不可接收</text></view>
+        </block>
+      </view>
+      <view class="warehouse-pager"><button disabled="{{page <= 1 || loading || checking || locked}}" data-delta="-1" bindtap="turnPage"><van-icon name="arrow-left"/> 上一页</button><text>共 {{total}} 条　{{page}} / {{lastPage}}</text><button disabled="{{page >= lastPage || loading || checking || locked}}" data-delta="1" bindtap="turnPage">下一页 <van-icon name="arrow"/></button></view>
+      <view wx:if="{{error}}" class="warehouse-error return-serial-error">{{error}}</view>
+      <view class="return-serial-summary"><view wx:if="{{conflictActive}}">已核对 <text>{{selectedCount}}</text> / 应收 <text>{{expectedCount}}</text> {{line.unit}}</view><view wx:else>实收 <text>{{selectedCount}}</text> {{line.unit}}</view><view class="return-serial-counts">重新入库 <text>{{counts.restock}}</text> / 待检 <text>{{counts.pending}}</text> / 报废 <text>{{counts.scrap}}</text> / 拒收 <text>{{counts.rejected}}</text></view></view>
+      <view class="return-serial-batch"><text>原生产批次</text><view class="warehouse-readonly">{{batchNo || '—'}}</view></view>
+    </scroll-view>
+    <view class="warehouse-dialog-footer"><button class="warehouse-secondary" disabled="{{locked}}" bindtap="cancel">返回核对</button><button wx:if="{{conflictActive}}" class="warehouse-primary" loading="{{checking || loading}}" disabled="{{locked || checking || loading}}" bindtap="refresh">刷新序列号</button><button wx:else class="warehouse-primary" loading="{{checking}}" disabled="{{locked || loading || checking}}" bindtap="confirm">确认序列号</button></view>
+  </view>
+</view>
