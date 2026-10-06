@@ -7,6 +7,9 @@ use App\Domain\Finance\Money;
 use App\Models\Erp\FinanceAllocation;
 use App\Models\Erp\FinanceCashDocument;
 use App\Models\Erp\FinanceOperationLog;
+use App\Models\Erp\PurchaseReceipt;
+use App\Models\Erp\PurchaseReturn;
+use App\Models\Erp\PurchaseSettlementSource;
 use App\Models\Erp\SalesOrder;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -18,29 +21,25 @@ class FinanceAllocationApplicationService
         private readonly FinanceBusinessSourceResolver $sources,
         private readonly PurchaseSettlementSourceApplicationService $purchaseSettlementSources,
         private readonly SalesOrderFundingGateService $fundingGates,
+        private readonly FinanceAllocationBalanceQueryService $balances,
+        private readonly FinanceCashPurchaseAllocationApplicationService $purchasePurposes,
     ) {}
 
     public function allocate(int $cashDocumentId, array $rows, ?int $operatorId, ?string $operatorName): array
     {
         try {
             return DB::transaction(function () use ($cashDocumentId, $rows, $operatorId, $operatorName): array {
-                // Sales shipment takes the sales-order lock first. Funding
-                // mutations must use the same order -> cash document ->
-                // allocation order or refund/outbound races can deadlock.
-                $salesOrderIds = $this->lockSalesOrders($rows);
+                $salesOrderIds = $this->lockSources($rows);
                 $document = FinanceCashDocument::query()->lockForUpdate()->findOrFail($cashDocumentId);
                 if ($document->status !== FinanceConstants::STATUS_CONFIRMED) throw ValidationException::withMessages(['status' => '只有已确认资金单可以核销。']);
                 $allocatedBefore = $this->activeTotalForDocument($document->id);
                 $remainingFunds = Money::sub((string) $document->amount, $allocatedBefore);
                 $created = [];
                 foreach ($rows as $row) {
-                    $amount = Money::normalize((string) $row['allocated_amount']);
-                    if (Money::compare($amount, '0') <= 0) throw ValidationException::withMessages(['allocated_amount' => '核销金额必须大于 0。']);
+                    $amount = $this->amountForRow($row);
                     if (Money::compare($amount, $remainingFunds) > 0) throw ValidationException::withMessages(['allocated_amount' => '核销总额超过资金单未核销余额。']);
-                    $source = $this->sources->resolve($row['source_business_type'], (int) $row['source_document_id']);
-                    $this->assertDirection($document->direction, $source['type']);
-                    if ($document->party_type !== $source['partyType'] || (int) $document->party_id !== $source['partyId']) throw ValidationException::withMessages(['party_id' => '资金单交易对手与业务来源不一致。']);
-                    if ($document->currency !== $source['currency']) throw ValidationException::withMessages(['currency' => '资金单币种与业务来源币种不一致。']);
+                    $source = $this->sourceForDocument($document, $row);
+                    $this->purchasePurposes->assertCanAllocate($document, $source['type'], (int) $source['id'], $amount);
                     $sourceAllocated = $this->activeTotalForSource($source['type'], $source['id']);
                     $sourceRemaining = Money::sub($source['amount'], $sourceAllocated);
                     if (Money::compare($amount, $sourceRemaining) > 0) throw ValidationException::withMessages(['allocated_amount' => '核销金额超过业务来源未结算余额。']);
@@ -66,8 +65,9 @@ class FinanceAllocationApplicationService
                     'operator_id' => $operatorId, 'operator_name' => $operatorName, 'content' => '新增资金核销事实',
                 ]);
                 foreach ($salesOrderIds as $salesOrderId) {
-                    $this->fundingGates->refreshProjection(SalesOrder::query()->findOrFail($salesOrderId));
+                    $this->fundingGates->refreshProjection(SalesOrder::query()->lockForUpdate()->findOrFail($salesOrderId));
                 }
+                $this->purchasePurposes->assertNetAvailableForCash($document->id);
                 return ['allocations' => $created, 'remaining_amount' => $remainingFunds];
             }, 5);
         } catch (QueryException $exception) {
@@ -84,8 +84,7 @@ class FinanceAllocationApplicationService
             $identity = FinanceAllocation::query()->findOrFail($allocationId, [
                 'id', 'cash_document_id', 'source_business_type', 'source_document_id',
             ]);
-            $salesOrderId = $this->salesOrderId($identity->source_business_type, (int) $identity->source_document_id);
-            if ($salesOrderId) SalesOrder::query()->whereKey($salesOrderId)->lockForUpdate()->firstOrFail();
+            $salesOrderIds = $this->lockSources([$identity->toArray()]);
             FinanceCashDocument::query()->whereKey($identity->cash_document_id)->lockForUpdate()->firstOrFail();
             $allocation = FinanceAllocation::query()->lockForUpdate()->findOrFail($allocationId);
             if ($allocation->status !== FinanceConstants::ALLOCATION_ACTIVE) throw ValidationException::withMessages(['status' => '只有有效核销可以撤销。']);
@@ -110,21 +109,51 @@ class FinanceAllocationApplicationService
             if ($allocation->source_business_type === FinanceConstants::SOURCE_PURCHASE_SETTLEMENT_SOURCE) {
                 $this->purchaseSettlementSources->refresh((int) $allocation->source_document_id, $operatorId, $operatorName);
             }
-            if ($salesOrderId) {
-                $this->fundingGates->refreshProjection(SalesOrder::query()->findOrFail($salesOrderId));
+            foreach ($salesOrderIds as $salesOrderId) {
+                $this->fundingGates->refreshProjection(SalesOrder::query()->lockForUpdate()->findOrFail($salesOrderId));
             }
+            $this->purchasePurposes->assertNetAvailableForCash((int) $allocation->cash_document_id);
             return $reversal;
         }, 5);
     }
 
     public function activeTotalForDocument(int $documentId): string
     {
-        return Money::normalize((string) FinanceAllocation::query()->where('cash_document_id', $documentId)->where('status', FinanceConstants::ALLOCATION_ACTIVE)->sum('allocated_amount'));
+        return $this->balances->forDocument($documentId);
     }
 
     public function activeTotalForSource(string $type, int $id): string
     {
-        return Money::normalize((string) FinanceAllocation::query()->where('source_business_type', $type)->where('source_document_id', $id)->where('status', FinanceConstants::ALLOCATION_ACTIVE)->whereHas('cashDocument', fn ($q) => $q->where('status', FinanceConstants::STATUS_CONFIRMED))->sum('allocated_amount'));
+        return $this->balances->forSource($type, $id);
+    }
+
+    public static function itemRules(string $field = 'items', string $presence = 'required|array|min:1|max:100'): array
+    {
+        return [
+            $field => $presence,
+            $field.'.*.source_business_type' => 'required|string|max:60',
+            $field.'.*.source_document_id' => 'required|integer|min:1',
+            $field.'.*.source_line_id' => 'nullable|integer|min:1',
+            $field.'.*.allocated_amount' => ['required', 'regex:/^\d+(\.\d{1,4})?$/'],
+            $field.'.*.idempotency_key' => 'required|string|max:100|distinct',
+        ];
+    }
+
+    public function amountForRow(array $row): string
+    {
+        $amount = Money::normalize((string) $row['allocated_amount']);
+        if (Money::compare($amount, '0') <= 0) throw ValidationException::withMessages(['allocated_amount' => '核销金额必须大于 0。']);
+        return $amount;
+    }
+
+    /** Shared by draft intent validation and real allocation; only allocate creates facts. */
+    public function sourceForDocument(FinanceCashDocument $document, array $row): array
+    {
+        $source = $this->sources->resolve($row['source_business_type'], (int) $row['source_document_id']);
+        $this->assertDirection($document->direction, $source['type']);
+        if ($document->party_type !== $source['partyType'] || (int) $document->party_id !== $source['partyId']) throw ValidationException::withMessages(['party_id' => '资金单交易对手与业务来源不一致。']);
+        if ($document->currency !== $source['currency']) throw ValidationException::withMessages(['currency' => '资金单币种与业务来源币种不一致。']);
+        return $source;
     }
 
     private function assertDirection(string $direction, string $source): void
@@ -135,6 +164,27 @@ class FinanceAllocationApplicationService
             || ($direction === FinanceConstants::DIRECTION_PAYMENT && !in_array($source, $paymentSources, true))) {
             throw ValidationException::withMessages(['source_business_type' => '资金方向与业务来源不匹配。']);
         }
+    }
+
+    public function lockSources(array $rows): array
+    {
+        // Allocation/confirmation/reversal take source roots before cash and
+        // allocation rows. Multiple roots are ordered within each source type;
+        // outer transaction retries handle remaining cross-document deadlocks.
+        // Purchasing keeps receipt -> settlement-source order.
+        $salesOrderIds = $this->lockSalesOrders($rows);
+        $sourceIds = collect($rows)->where('source_business_type', FinanceConstants::SOURCE_PURCHASE_SETTLEMENT_SOURCE)
+            ->pluck('source_document_id')->map(fn ($id) => (int) $id)->unique()->sort()->values();
+        // These immutable identities are only used to locate their root locks;
+        // eligibility, amounts and status are reread under the locks by resolve.
+        $receiptIds = PurchaseSettlementSource::query()->whereIn('id', $sourceIds)->pluck('source_receipt_id')
+            ->merge(collect($rows)->where('source_business_type', FinanceConstants::SOURCE_PURCHASE_RECEIPT)->pluck('source_document_id'))
+            ->map(fn ($id) => (int) $id)->unique()->sort()->values();
+        if ($receiptIds->isNotEmpty()) PurchaseReceipt::query()->whereIn('id', $receiptIds)->orderBy('id')->lockForUpdate()->get();
+        $returnIds = collect($rows)->where('source_business_type', FinanceConstants::SOURCE_PURCHASE_RETURN_SUPPLIER_REFUND)
+            ->pluck('source_document_id')->map(fn ($id) => (int) $id)->unique()->sort()->values();
+        if ($returnIds->isNotEmpty()) PurchaseReturn::query()->whereIn('id', $returnIds)->orderBy('id')->lockForUpdate()->get();
+        return $salesOrderIds;
     }
 
     private function lockSalesOrders(array $rows): array

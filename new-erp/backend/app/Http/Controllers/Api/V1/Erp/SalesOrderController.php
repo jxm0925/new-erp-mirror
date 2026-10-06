@@ -36,9 +36,11 @@ use App\Services\Erp\SalesOrderAttachmentService;
 use App\Services\Erp\SalesOrderFundingGateService;
 use App\Services\Erp\SalesOrderEditImpactService;
 use App\Services\Erp\SalesOrderInventoryLockService;
+use App\Services\Erp\SalesCostVisibilityService;
 use App\Services\Erp\SkuItemMatcher;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
@@ -47,6 +49,16 @@ class SalesOrderController extends Controller
 {
     private const ORDER_STATUSES = ['draft', 'confirmed', 'closed', 'cancelled'];
     private const FULFILLMENT_TYPES = ['pending', 'inventory', 'production', 'mixed', 'service', 'no_delivery'];
+
+    /** One HTTP output boundary also covers write acknowledgements and future auxiliary actions. */
+    public function callAction($method, $parameters)
+    {
+        $response = $this->{$method}(...array_values($parameters));
+        if ($response instanceof JsonResponse) {
+            $response->setData(app(SalesCostVisibilityService::class)->redact($response->getData(true)));
+        }
+        return $response;
+    }
 
     public function storeDraft(Request $request)
     {
@@ -519,6 +531,7 @@ class SalesOrderController extends Controller
         $payload = $this->attachCurrentOperator($payload, $request);
 
         return DB::transaction(function () use ($order, $payload) {
+            $order = SalesOrder::query()->lockForUpdate()->findOrFail($order->id);
             $before = $order->fresh(['lines', 'fulfillments', 'productionRequirements'])->toArray();
             $lines = $payload['lines'];
             $deletedLineIds = $payload['deleted_line_ids'] ?? [];
@@ -526,7 +539,7 @@ class SalesOrderController extends Controller
             unset($payload['lines']);
             unset($payload['draft_token'], $payload['deleted_line_ids']);
             $payload = $this->normalizeOrderPayload($payload);
-
+            $payload = app(SalesCostVisibilityService::class)->preserveStoredCosts($payload, $order->attributesToArray());
             $order->update($payload);
             $this->syncDraftLines($order, $lines, $deletedLineIds, $draftToken);
             $this->bindDraftOrderAttachments($order, $draftToken);
@@ -852,7 +865,7 @@ class SalesOrderController extends Controller
 
     private function validateOrder(Request $request, bool $isUpdate = false): array
     {
-        return $request->validate([
+        $validated = $request->validate([
             'sales_order_no' => 'nullable|string|max:80',
             'reservation_token' => 'nullable|uuid',
             'creation_session_id' => 'nullable|uuid',
@@ -908,7 +921,6 @@ class SalesOrderController extends Controller
             'share_user' => 'nullable',
             'carrier_id' => 'nullable|string|max:80',
             'default_carrier_id' => 'nullable|string|max:80',
-            'carrier_fee' => 'nullable|numeric|min:0',
             'salesperson_id' => 'nullable|integer|min:1',
             'sales_department_id' => 'nullable|integer|min:1',
             'logistics_requirement' => 'nullable|string',
@@ -975,6 +987,7 @@ class SalesOrderController extends Controller
             'lines.*.design' => 'nullable|string',
             'lines.*.remark' => 'nullable|string',
         ]);
+        return app(SalesCostVisibilityService::class)->redact($validated);
     }
 
     private function normalizeOrderPayload(array $payload): array
@@ -991,7 +1004,6 @@ class SalesOrderController extends Controller
         $payload['order_source'] = $payload['order_source'] ?? 'manual';
         $payload['currency'] = $payload['currency'] ?? 'CNY';
         $payload['freight_amount'] = $payload['freight_amount'] ?? 0;
-        $payload['carrier_fee'] = $payload['carrier_fee'] ?? 0;
         $shipping = is_array($payload['shipping_snapshot'] ?? null) ? $payload['shipping_snapshot'] : [];
         foreach (['shipment_no', 'tracking_no', 'actual_freight', 'shipped_at', 'shipment_status'] as $field) {
             unset($shipping[$field]);
@@ -1529,11 +1541,13 @@ class SalesOrderController extends Controller
 
         foreach (array_values($lines) as $index => $line) {
             $existing = null;
+            $line = app(SalesCostVisibilityService::class)->redact($line);
             if (!empty($line['id'])) {
-                $existing = SalesOrderLine::where('sales_order_id', $order->id)->find($line['id']);
+                $existing = SalesOrderLine::where('sales_order_id', $order->id)->lockForUpdate()->find($line['id']);
             }
             if ($existing) {
-                $existing->update($this->buildLinePayload($order, $line, $index, $existing));
+                $data = $this->buildLinePayload($order, $line, $index, $existing);
+                $existing->update(app(SalesCostVisibilityService::class)->preserveStoredCosts($data, $existing->attributesToArray()));
                 $this->bindDraftLineAttachments($order, $existing->fresh(), $draftToken, $existing->line_uuid);
             } else {
                 $created = SalesOrderLine::create($this->buildLinePayload($order, $line, $index));

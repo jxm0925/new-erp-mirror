@@ -30,12 +30,14 @@ class SalesOrderLineService
         $this->deleteExplicitLines($order, $deletedLineIds, $operator);
 
         foreach (array_values($lines) as $index => $line) {
+            $line = app(SalesCostVisibilityService::class)->redact($line);
             $existing = !empty($line['id'])
-                ? SalesOrderLine::query()->where('sales_order_id', $order->id)->find($line['id'])
+                ? SalesOrderLine::query()->where('sales_order_id', $order->id)->lockForUpdate()->find($line['id'])
                 : null;
             $data = $this->payload($order, $line, $index, $existing);
 
             if ($existing) {
+                $data = app(SalesCostVisibilityService::class)->preserveStoredCosts($data, $existing->attributesToArray());
                 $existing->update($data);
                 $saved = $existing->fresh();
             } else {

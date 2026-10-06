@@ -10,15 +10,36 @@ class PurchaseConversionApplicationService
 {
     public function __construct(private readonly UnitConversionDomainService $conversions) {}
 
-    public function orderLineSnapshot(array $line): array
+    public function orderLineSnapshot(array $line, ?PurchaseOrderItem $existing = null): array
     {
-        return DB::transaction(function () use ($line) {
+        return DB::transaction(function () use ($line, $existing) {
+            if ($existing && (int) $existing->item_id === (int) $line['item_id']
+                && (int) ($line['purchase_unit_id'] ?? $existing->purchase_unit_id) === (int) $existing->purchase_unit_id
+                && (float) $existing->conversion_factor_snapshot > 0) {
+                $quantity = (float) ($line['order_qty'] ?? $line['purchase_qty']);
+                $price = (float) ($line['unit_price'] ?? 0);
+                $factor = (float) $existing->conversion_factor_snapshot;
+                $this->assertExpectedFactor($line, $factor);
+                $this->conversions->assertUnitPrecision($quantity, $existing->purchaseUnit, 'order_qty');
+                $this->conversions->assertUnitPrecision($quantity * $factor, $existing->baseUnit, 'order_qty');
+                return [
+                    ...$existing->only(['purchase_unit_id', 'purchase_unit_name_snapshot', 'conversion_factor_snapshot',
+                        'allow_actual_conversion_snapshot', 'base_unit_id', 'base_unit_name_snapshot']),
+                    'purchase_qty' => $quantity, 'planned_base_qty' => round($quantity * $factor, 8),
+                    'purchase_conversion_snapshot' => $existing->purchase_conversion_snapshot ? array_replace($existing->purchase_conversion_snapshot, [
+                        'purchase_unit_price' => $price, 'base_unit_price' => $this->conversions->calculateBaseUnitPrice($price, $factor), 'amount' => round($quantity * $price, 4),
+                    ]) : null,
+                    'purchase_unit_price' => $price, 'base_unit_price' => $this->conversions->calculateBaseUnitPrice($price, $factor),
+                ];
+            }
             $item = Item::with('unit.standardUnit')->lockForUpdate()->findOrFail($line['item_id']);
             $purchaseUnitId = (int) ($line['purchase_unit_id'] ?? 0);
             $itemBaseUnit = $this->conversions->canonicalUnit($item->unit);
             if ($purchaseUnitId && $itemBaseUnit && $purchaseUnitId === (int) $itemBaseUnit->id) {
                 $quantity = (float) ($line['order_qty'] ?? $line['purchase_qty']);
                 $purchaseUnitPrice = (float) ($line['unit_price'] ?? $line['purchase_unit_price'] ?? 0);
+                $this->conversions->assertUnitPrecision($quantity, $itemBaseUnit, 'order_qty');
+                $this->assertExpectedFactor($line, 1);
                 return [
                     'purchase_unit_id' => $itemBaseUnit->id,
                     'purchase_unit_name_snapshot' => $itemBaseUnit->unit_name,
@@ -41,8 +62,11 @@ class PurchaseConversionApplicationService
                 $line['order_qty'] ?? $line['purchase_qty']
             );
             $purchaseUnitPrice = (float) ($line['unit_price'] ?? $line['purchase_unit_price'] ?? 0);
+            $this->assertExpectedFactor($line, (float) $conversion->factor);
             $purchaseUnit = $this->conversions->canonicalUnit($conversion->purchaseUnit);
             $baseUnit = $this->conversions->canonicalUnit($conversion->baseUnit);
+            $this->conversions->assertUnitPrecision($calculated['purchase_qty'], $purchaseUnit, 'order_qty');
+            $this->conversions->assertUnitPrecision($calculated['purchase_qty'] * (float) $conversion->factor, $baseUnit, 'order_qty');
             return [
                 'purchase_unit_id' => $purchaseUnit->id,
                 'purchase_unit_name_snapshot' => $purchaseUnit->unit_name,
@@ -58,66 +82,23 @@ class PurchaseConversionApplicationService
         });
     }
 
-    /**
-     * Convert a plan allocation expressed in the Item base unit into the
-     * supplier's purchase unit. Plan splits store base quantity and a
-     * comparable base-unit price; purchase orders store package quantity and
-     * package price.
-     */
     public function orderLineSnapshotFromBaseRequirement(array $line): array
     {
-        return DB::transaction(function () use ($line) {
-            $item = Item::with('unit.standardUnit')->lockForUpdate()->findOrFail($line['item_id']);
-            $baseUnit = $this->conversions->canonicalUnit($item->unit);
-            $baseQuantity = (float) ($line['base_qty'] ?? 0);
-            if ($baseQuantity <= 0) {
-                throw ValidationException::withMessages(['base_qty' => '采购计划基本数量必须大于 0。']);
-            }
+        $snapshot = app(PurchasePlanningConversionService::class)->calculate([
+            ...$line, 'required_qty' => $line['base_qty'] ?? 0,
+        ]);
+        return \Illuminate\Support\Arr::only($snapshot, [
+            'purchase_unit_id', 'purchase_unit_name_snapshot', 'conversion_factor_snapshot',
+            'allow_actual_conversion_snapshot', 'base_unit_id', 'base_unit_name_snapshot',
+            'purchase_qty', 'planned_base_qty', 'purchase_unit_price', 'base_unit_price', 'amount',
+        ]);
+    }
 
-            // Supplier quotations are recommendations only. The actual purchase
-            // price is entered on the plan/order and must never be overwritten
-            // by a reference quotation. Unit selection follows the Item's
-            // default purchase conversion, independently from quotations.
-            $conversion = $this->conversions->activePurchaseConversions($item->id)
-                ->where('is_default', true)
-                ->with(['purchaseUnit.standardUnit', 'baseUnit.standardUnit'])
-                ->lockForUpdate()
-                ->first();
-            if ($conversion) {
-                $purchaseUnit = $this->conversions->canonicalUnit($conversion->purchaseUnit);
-                $factor = (float) $conversion->factor;
-                $purchaseUnitPrice = (float) ($line['base_unit_price'] ?? 0) * $factor;
-            } else {
-                $purchaseUnit = $baseUnit;
-                $factor = 1.0;
-                $purchaseUnitPrice = (float) ($line['base_unit_price'] ?? 0);
-            }
-
-            if (!$purchaseUnit || !$baseUnit || $factor <= 0) {
-                throw ValidationException::withMessages(['purchase_unit_id' => '采购单位或换算关系无效，不能生成采购订单。']);
-            }
-
-            $purchaseQuantity = round($baseQuantity / $factor, (int) $purchaseUnit->decimal_places);
-            if ($purchaseQuantity <= 0 || abs($purchaseQuantity * $factor - $baseQuantity) > 0.00000001) {
-                throw ValidationException::withMessages([
-                    'purchase_qty' => "计划基本数量 {$baseQuantity} {$baseUnit->unit_name} 无法按 {$factor} {$baseUnit->unit_name}/{$purchaseUnit->unit_name} 精确换算，请调整计划数量。",
-                ]);
-            }
-
-            return [
-                'purchase_unit_id' => $purchaseUnit->id,
-                'purchase_unit_name_snapshot' => $purchaseUnit->unit_name,
-                'conversion_factor_snapshot' => $factor,
-                'allow_actual_conversion_snapshot' => (bool) ($conversion?->allow_actual_conversion ?? false),
-                'base_unit_id' => $baseUnit->id,
-                'base_unit_name_snapshot' => $baseUnit->unit_name,
-                'purchase_qty' => $purchaseQuantity,
-                'planned_base_qty' => $baseQuantity,
-                'purchase_unit_price' => $purchaseUnitPrice,
-                'base_unit_price' => $this->conversions->calculateBaseUnitPrice($purchaseUnitPrice, $factor),
-                'amount' => round($purchaseQuantity * $purchaseUnitPrice, 4),
-            ];
-        });
+    private function assertExpectedFactor(array $line, float $factor): void
+    {
+        if (isset($line['expected_conversion_factor']) && abs((float) $line['expected_conversion_factor'] - $factor) > 0.00000001) {
+            throw ValidationException::withMessages(['purchase_unit_id' => '采购换算已变化，请重新选择采购单位并核对数量后保存。']);
+        }
     }
 
     public function receiptLineSnapshot(array $line, bool $forceBaseUnit = false): array

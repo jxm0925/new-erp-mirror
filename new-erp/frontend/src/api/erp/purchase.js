@@ -1,7 +1,8 @@
 import api from './master'
 
 export const listPurchase = (type, params) => api.get(`/v1/erp/purchase/${type}`, { params })
-export const getPurchase = (type, id) => api.get(`/v1/erp/purchase/${type}/${id}`)
+export const getPurchase = (type, id, params) => api.get(`/v1/erp/purchase/${type}/${id}`, { params })
+export const previewPurchaseConversion = data => api.post('/v1/erp/purchase/conversion-preview', data)
 export const savePurchaseRequest = data => data.id ? api.put(`/v1/erp/purchase/requests/${data.id}`, data) : api.post('/v1/erp/purchase/requests', data)
 export const savePurchasePlan = data => data.id ? api.put(`/v1/erp/purchase/plans/${data.id}`, data) : api.post('/v1/erp/purchase/plans', data)
 export const savePurchaseOrder = data => data.id ? api.put(`/v1/erp/purchase/orders/${data.id}`, data) : api.post('/v1/erp/purchase/orders', data)

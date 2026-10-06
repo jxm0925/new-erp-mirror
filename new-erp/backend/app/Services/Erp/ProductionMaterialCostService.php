@@ -149,20 +149,32 @@ final class ProductionMaterialCostService
     /** Turn only an accepted delivery share into the target operation's consumable input cost fact. */
     public function recordDeliveryReceipt(object $delivery, object $deliveryLine, object $receiptLine, int $actor): void
     {
+        $this->recordReceipt($delivery->production_target_type, (int) $delivery->production_target_id,
+            (int) $deliveryLine->picking_task_line_id, $receiptLine, $actor);
+    }
+
+    public function recordOnsiteReceipt(object $pickLine, object $receiptLine, int $actor): void
+    {
+        $this->recordReceipt($pickLine->production_target_type, (int) $pickLine->production_target_id,
+            (int) $pickLine->id, $receiptLine, $actor);
+    }
+
+    private function recordReceipt(string $targetType, int $targetId, int $pickLineId, object $receiptLine, int $actor): void
+    {
         if (DB::transactionLevel() < 1) throw new \LogicException('Production receipt cost capture requires a transaction.');
         $quantity = CuttingDecimal::value($receiptLine->accepted_qty, 8, false);
         if (bccomp($quantity, '0', 8) <= 0) return;
         if (DB::table('erp_production_input_holdings')->where('material_receipt_line_id', $receiptLine->id)->exists()) return;
-        $pickLine = DB::table('erp_material_picking_task_lines')->where('id', $deliveryLine->picking_task_line_id)->lockForUpdate()->first();
+        $pickLine = DB::table('erp_material_picking_task_lines')->where('id', $pickLineId)->lockForUpdate()->first();
         if (! $pickLine || (int) $pickLine->component_item_id !== (int) $receiptLine->component_item_id) {
             $this->fail('production_receipt_picking_line_invalid', '生产收料行与原正式配料行不一致。');
         }
         $requirement = DB::table('erp_production_target_material_requirements')
-            ->where('target_type', $delivery->production_target_type)->where('target_id', $delivery->production_target_id)
+            ->where('target_type', $targetType)->where('target_id', $targetId)
             ->where('material_requirement_id', $pickLine->material_requirement_id)->lockForUpdate()->first();
         if (! $requirement) $this->fail('production_receipt_target_requirement_missing', '生产收料缺少正式目标物料需求，不能建立投入成本。');
-        $this->validateTargetRequirement($requirement->id, $delivery->production_target_type,
-            (int) $delivery->production_target_id, (int) $pickLine->component_item_id);
+        $this->validateTargetRequirement($requirement->id, $targetType,
+            $targetId, (int) $pickLine->component_item_id);
         $posted = DB::table('erp_inventory_transaction_items as item')
             ->join('erp_inventory_transactions as tx', 'tx.id', '=', 'item.transaction_id')
             ->where('tx.transaction_type', 'production_material_picking_outbound')
@@ -189,7 +201,7 @@ final class ProductionMaterialCostService
             if (bccomp($cost,(string) $source->total_cost,4) > 0) $this->fail('production_physical_receipt_cost_invalid','板材实物金额超过正式出库在途金额。');
         }
         $bridge = DB::table('erp_production_input_holdings')->insertGetId([
-            'target_type' => $delivery->production_target_type, 'target_id' => $delivery->production_target_id,
+            'target_type' => $targetType, 'target_id' => $targetId,
             'target_material_requirement_id' => $requirement->id, 'source_output_record_id' => $sourceOutputId,
             'inventory_transaction_item_id' => $posted->id, 'source_holding_id' => $source->id,
             'material_receipt_line_id' => $receiptLine->id, 'quantity' => $quantity, 'total_cost' => $cost,

@@ -15,7 +15,7 @@ class ErpAuthService
 
         $admin = DB::table('erp_legacy_admin_users')
             ->where('username', trim($username))
-            ->whereNotIn('status', ['hidden', 'disabled'])
+            ->whereIn('status', ['normal', 'active'])
             ->first();
 
         if (!$admin || empty($admin->password_hash) || !Hash::check($password, $admin->password_hash)) return null;

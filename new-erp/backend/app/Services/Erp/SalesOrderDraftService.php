@@ -74,6 +74,7 @@ class SalesOrderDraftService
             unset($header['reservation_token'], $header['creation_session_id']);
             $header = $this->normalize($header);
             unset($header['sales_order_no']);
+            $header = app(SalesCostVisibilityService::class)->preserveStoredCosts($header, $order->attributesToArray());
             $header['order_status'] = 'draft';
             $header['confirm_status'] = 'unconfirmed';
             $header['fulfillment_status'] = 'pending';
@@ -282,6 +283,7 @@ class SalesOrderDraftService
 
     private function normalize(array $payload): array
     {
+        $payload = app(SalesCostVisibilityService::class)->redact($payload);
         foreach (['is_urgent', 'quickly', 'is_customized', 'is_special_customized', 'is_delay', 'delay', 'need_pump', 'is_share'] as $field) {
             $payload[$field] = (bool) ($payload[$field] ?? false);
         }
@@ -292,7 +294,6 @@ class SalesOrderDraftService
         $payload['order_source'] = $payload['order_source'] ?? 'manual';
         $payload['currency'] = $payload['currency'] ?? 'CNY';
         $payload['freight_amount'] = round((float) ($payload['freight_amount'] ?? 0), 2);
-        $payload['carrier_fee'] = round((float) ($payload['carrier_fee'] ?? 0), 2);
         $payload['order_date'] = $payload['order_date'] ?? (
             !empty($payload['order_time']) ? date('Y-m-d', strtotime($payload['order_time'])) : now()->toDateString()
         );

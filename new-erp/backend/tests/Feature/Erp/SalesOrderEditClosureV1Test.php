@@ -14,7 +14,11 @@ use App\Models\Erp\SalesOrderChange;
 use App\Models\Erp\SalesOrderChangeCandidate;
 use App\Models\Erp\SalesOrderFulfillment;
 use App\Models\Erp\SalesOrderLine;
+use App\Models\Erp\SalesOrderLog;
 use App\Models\Erp\SalesOrderVersion;
+use App\Models\Erp\SalesChannel;
+use App\Models\Erp\SalesFundingPolicy;
+use App\Models\Erp\PaymentMethod;
 use App\Models\Erp\Sku;
 use App\Models\Erp\SkuItemRelation;
 use App\Models\Erp\Unit;
@@ -23,12 +27,161 @@ use App\Services\Erp\ApprovalIntegrations\SalesOrderChangeApprovalIntegration;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\SalesOrderEditImpactService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Support\Facades\DB;
 use Mockery\MockInterface;
 use Tests\TestCase;
 
 class SalesOrderEditClosureV1Test extends TestCase
 {
     use DatabaseTransactions;
+
+    public function test_order_detail_history_and_picker_hide_costs_for_sales_and_super_admin(): void
+    {
+        $fixture = $this->fixture();
+        $order = $fixture['order'];
+        $order->update(['carrier_fee' => 876543.21, 'cost_amount' => 876543.21, 'freight_amount' => 23,
+            'shipping_snapshot' => ['actual_freight_amount' => 876543.21, 'tracking_no' => 'SAFE-TRACK']]);
+        $fixture['item']->update(['last_purchase_price' => 876543.21]);
+        $snapshot = ['cost_amount' => 876543.21, 'total_amount' => 1000,
+            'legacy_payload' => json_encode(['unit_cost' => 876543.21, 'unit_price' => 100])];
+        $diffs = [['semantic_key' => 'carrier_fee', 'before' => 876543.21, 'after' => 876543.21],
+            ['semantic_key' => 'unit_price', 'before' => 100, 'after' => 110]];
+        $version = $order->versions()->firstOrFail();
+        $version->update(['before_snapshot' => $snapshot, 'after_snapshot' => $snapshot, 'structured_diffs' => $diffs]);
+        $log = SalesOrderLog::create(['sales_order_id' => $order->id, 'action' => 'cost_visibility_fixture',
+            'content' => '普通备注保留成本二字', 'operator' => '验收员', 'payload' => $snapshot]);
+        $candidate = SalesOrderChangeCandidate::create(['sales_order_id' => $order->id, 'candidate_no' => 'SAFE-'.$order->id,
+            'base_version' => 1, 'candidate_version' => 2, 'candidate_status' => 'REJECTED', 'candidate_order_snapshot' => ['header' => $snapshot, 'lines' => []],
+            'structured_diffs' => $diffs, 'impact_summary' => [], 'approval_requirements' => []]);
+        SalesOrderChange::create(['sales_order_id' => $order->id, 'change_no' => 'SAFE-CHANGE-'.$order->id,
+            'version_no' => 1, 'reason' => '成本隐藏验收', 'before_snapshot' => $snapshot, 'after_snapshot' => $snapshot, 'structured_diffs' => $diffs]);
+
+        foreach ([false, true] as $super) {
+            $this->costVisibilityAuth($super);
+            $detail = $this->getJson('/api/v1/erp/sales/orders/'.$order->id)->assertOk();
+            $this->assertSame(23.0, (float) $detail->json('freight_amount'));
+            $this->assertSame(100.0, (float) $detail->json('lines.0.unit_price'));
+            foreach ([$detail,
+                $this->getJson('/api/v1/erp/sales/orders?keyword='.$order->sales_order_no)->assertOk(),
+                $this->getJson('/api/v1/erp/sales/orders/'.$order->id.'/logs')->assertOk(),
+                $this->getJson('/api/v1/erp/sales/orders/'.$order->id.'/versions')->assertOk(),
+                $this->getJson('/api/v1/erp/sales/orders/'.$order->id.'/changes')->assertOk(),
+                $this->getJson('/api/v1/erp/sales/orders/'.$order->id.'/change-candidates')->assertOk(),
+                $this->getJson('/api/v1/erp/sales/orders/skus/search?keyword='.$fixture['sku']->sku_code)->assertOk(),
+            ] as $response) {
+                $this->assertStringNotContainsString('876543.21', $response->getContent());
+                $this->assertStringNotContainsString('carrier_fee', $response->getContent());
+                $this->assertStringNotContainsString('last_purchase_price', $response->getContent());
+            }
+            $this->getJson('/api/v1/erp/sales/orders/'.$order->id.'/logs')->assertJsonPath('data.0.content', '普通备注保留成本二字');
+            $this->getJson('/api/v1/erp/sales/orders/'.$order->id.'/versions')->assertJsonCount(1, 'data.0.structured_diffs')
+                ->assertJsonPath('data.0.structured_diffs.0.semantic_key', 'unit_price');
+        }
+        $this->assertSame(876543.21, (float) $order->fresh()->carrier_fee);
+        $this->assertSame(876543.21, (float) $version->fresh()->before_snapshot['cost_amount']);
+        $this->assertSame(876543.21, (float) $log->fresh()->payload['cost_amount']);
+        $this->assertCount(2, $candidate->fresh()->structured_diffs);
+    }
+
+    public function test_sales_draft_http_edit_preserves_hidden_costs_and_ignores_injected_values(): void
+    {
+        $fixture = $this->fixture();
+        $this->costVisibilityAuth(false);
+        $order = $fixture['order'];
+        $order->update(['order_status' => 'draft', 'confirm_status' => 'unconfirmed', 'carrier_fee' => 11, 'cost_amount' => 100,
+            'shipping_snapshot' => ['tracking_no' => 'OLD', 'actual_freight_amount' => 12],
+            'logistics_snapshot' => ['carrier_fee' => 13, 'note' => '旧备注']]);
+        $cutItem = Item::create(['item_code' => 'SAFE-CUT-'.$order->id, 'item_name' => '测试下料原材', 'item_type' => 'raw_material',
+            'unit_id' => $fixture['unit']->id, 'is_length_cut_material' => true, 'standard_stock_length_mm' => 6000, 'status' => 'enabled']);
+        $fixture['line']->update(['configuration_snapshot' => ['unit_cost' => 17, 'cut_requirements' => [[
+            'component_item_id' => $cutItem->id, 'cut_length_mm' => 1000, 'piece_qty' => 1, 'remark' => '旧下料要求',
+        ]]],
+            'drawing_snapshot' => ['unit_cost' => 18, 'drawing_no' => 'DRAW-1']]);
+        $method = PaymentMethod::create(['method_code' => 'SAFE-PAY-'.$order->id, 'method_name' => '成本隐藏测试付款方式',
+            'available_for_sales' => true, 'available_for_receipt' => false, 'available_for_payment' => false, 'status' => 'enabled']);
+        $policy = SalesFundingPolicy::create(['policy_code' => 'SAFE-POL-'.$order->id, 'policy_name' => '测试资金策略',
+            'policy_type' => 'full_prepay', 'production_threshold_type' => 'ratio', 'production_threshold_value' => 1,
+            'shipment_requires_full_payment' => true, 'status' => 'enabled']);
+        $channel = SalesChannel::create(['channel_code' => 'SAFE-CH-'.$order->id, 'channel_name' => '测试直销', 'channel_type' => 'offline_direct',
+            'transaction_mode' => 'cash_sale', 'default_funding_policy_code' => $policy->policy_code, 'requires_external_order_no' => false, 'status' => 'enabled']);
+        $payload = $this->payload($fixture, ['customer_name' => $order->customer_name, 'payment_method_id' => $method->id,
+            'sales_channel_id' => $channel->id, 'funding_policy_id' => $policy->id, 'freight_amount' => 30, 'carrier_fee' => 999,
+            'shipping_snapshot' => ['tracking_no' => 'NEW', 'actual_freight_amount' => 999],
+            'logistics_snapshot' => ['carrier_fee' => 999, 'note' => '新备注']], ['configuration_snapshot' => [
+                'unit_cost' => 999, 'cut_requirements' => [[
+                    'component_item_id' => $cutItem->id, 'cut_length_mm' => 1200, 'piece_qty' => 2, 'remark' => '新下料要求',
+                ]],
+            ]]);
+        $payload['lines'][0]['drawing_snapshot'] = ['drawing_no' => 'DRAW-2', 'unit_cost' => 999];
+        $edited = $this->putJson('/api/v1/erp/sales/orders/'.$order->id, $payload)->assertOk()
+            ->assertJsonMissingPath('data.carrier_fee')->assertJsonMissingPath('data.shipping_snapshot.actual_freight_amount')
+            ->assertJsonMissingPath('data.lines.0.configuration_snapshot.unit_cost');
+        $this->assertSame(30.0, (float) $edited->json('data.freight_amount'));
+        $this->assertSame(1030.0, (float) $edited->json('data.final_receivable_amount'));
+        $order->refresh();
+        $this->assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $order->getRawOriginal('channel_ordered_at'));
+        $this->assertSame(11.0, (float) $order->carrier_fee);
+        $this->assertSame(100.0, (float) $order->cost_amount);
+        $this->assertSame(['tracking_no' => 'NEW', 'actual_freight_amount' => 12], array_intersect_key($order->shipping_snapshot, ['tracking_no' => 1, 'actual_freight_amount' => 1]));
+        $this->assertSame(13, $order->logistics_snapshot['carrier_fee']);
+        $this->assertSame('新备注', $order->logistics_snapshot['note']);
+        $this->assertSame(17, $fixture['line']->fresh()->configuration_snapshot['unit_cost']);
+        $requirement = $fixture['line']->fresh()->configuration_snapshot['cut_requirements'][0];
+        $this->assertSame($cutItem->id, $requirement['component_item_id']);
+        $this->assertSame(1200.0, (float) $requirement['cut_length_mm']);
+        $this->assertSame(2, $requirement['piece_qty']);
+        $this->assertSame('新下料要求', $requirement['remark']);
+        $drawing = $fixture['line']->fresh()->drawing_snapshot;
+        $this->assertCount(2, $drawing);
+        $this->assertSame('DRAW-2', $drawing['drawing_no']);
+        $this->assertSame(18, $drawing['unit_cost']);
+        unset($payload['lines'][0]['id']);
+        $payload['sales_order_no'] = 'SAFE-NEW-'.$order->id;
+        $created = $this->postJson('/api/v1/erp/sales/orders', $payload)->assertCreated();
+        $newOrder = SalesOrder::findOrFail($created->json('data.id'));
+        $this->assertNotEquals(999.0, (float) $newOrder->carrier_fee);
+        $this->assertArrayNotHasKey('actual_freight_amount', $newOrder->shipping_snapshot);
+        $this->assertArrayNotHasKey('unit_cost', $newOrder->lines()->firstOrFail()->configuration_snapshot);
+        $created->assertJsonMissingPath('data.carrier_fee');
+    }
+
+    public function test_cost_only_hidden_configuration_does_not_create_an_approval_and_old_candidates_keep_current_costs(): void
+    {
+        $fixture = $this->fixture();
+        $fixture['order']->update(['carrier_fee' => 11]);
+        $fixture['line']->update(['configuration_snapshot' => ['unit_cost' => 17]]);
+        $preview = app(SalesOrderEditImpactService::class)->preview($fixture['order']->fresh(['lines', 'shipments', 'salesReturns']), $this->payload($fixture));
+        $this->assertSame([], $preview['diffs']);
+        $this->assertFalse($preview['requires_approval']);
+        $candidate = $this->candidate($fixture, ['unit_price' => 125]);
+        $snapshot = $candidate->candidate_order_snapshot;
+        $snapshot['header']['carrier_fee'] = 11;
+        $snapshot['header']['shipping_snapshot'] = ['actual_freight_amount' => 12, 'tracking_no' => 'OLD'];
+        $snapshot['lines'][0]['configuration_snapshot'] = ['unit_cost' => 17];
+        $candidate->update(['candidate_order_snapshot' => $snapshot]);
+        $fixture['order']->update(['carrier_fee' => 21, 'shipping_snapshot' => ['actual_freight_amount' => 22, 'tracking_no' => 'CURRENT']]);
+        $fixture['line']->update(['configuration_snapshot' => ['unit_cost' => 27]]);
+        $result = app(SalesOrderEditImpactService::class)->decide($candidate->id, 'business', true, '审核员', '通过');
+        $this->assertSame('APPROVED', $result->candidate_status);
+        $this->assertSame(21.0, (float) $fixture['order']->fresh()->carrier_fee);
+        $this->assertSame(22, $fixture['order']->fresh()->shipping_snapshot['actual_freight_amount']);
+        $this->assertSame(27, $fixture['line']->fresh()->configuration_snapshot['unit_cost']);
+        $this->assertSame(125.0, (float) $fixture['line']->fresh()->unit_price);
+    }
+
+    private function costVisibilityAuth(bool $super): void
+    {
+        DB::table('erp_legacy_admin_users')->updateOrInsert(['legacy_id' => 999], ['username' => 'cost_visibility_tester',
+            'nickname' => '成本隐藏验收员', 'status' => 'normal', 'auth_group_names' => '[]', 'created_at' => now(), 'updated_at' => now()]);
+        $this->mock(AuthContextService::class, function (MockInterface $mock) use ($super): void {
+            $mock->shouldReceive('currentUser')->andReturn((object) ['legacy_id' => 999, 'nickname' => '成本隐藏验收员']);
+            $mock->shouldReceive('currentLegacyId')->andReturn(999);
+            $mock->shouldReceive('isSuperAdmin')->andReturn($super);
+            $mock->shouldReceive('permissionCodes')->andReturn(['sales_order.view', 'sales_order.amount.view', 'sales_order.create', 'sales_order.edit_draft']);
+            $mock->shouldReceive('dataScope')->andReturn('all');
+            $mock->shouldReceive('departmentUserIds')->andReturn([999]);
+        });
+    }
 
     public function test_global_sku_search_supports_compact_cross_field_alias_and_returns_paged_availability(): void
     {

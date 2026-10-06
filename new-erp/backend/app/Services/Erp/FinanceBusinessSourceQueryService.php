@@ -4,7 +4,6 @@ namespace App\Services\Erp;
 
 use App\Domain\Finance\FinanceConstants;
 use App\Domain\Finance\Money;
-use App\Models\Erp\FinanceAllocation;
 use App\Models\Erp\PurchaseReceipt;
 use App\Models\Erp\PurchaseReturn;
 use App\Models\Erp\PurchaseSettlementSource;
@@ -15,6 +14,11 @@ use Illuminate\Validation\ValidationException;
 
 class FinanceBusinessSourceQueryService
 {
+    public function __construct(
+        private readonly SalesFinanceSettlementService $salesSettlements,
+        private readonly FinanceAllocationBalanceQueryService $balances,
+    ) {}
+
     public function paginate(string $type, array $filters, int $perPage): LengthAwarePaginator
     {
         $query = match ($type) {
@@ -30,6 +34,11 @@ class FinanceBusinessSourceQueryService
             default => throw ValidationException::withMessages(['type' => '该业务来源不支持列表选择。']),
         };
         $this->applyParty($query, $type, $filters);
+        if (! empty($filters['currency'])) {
+            $field = in_array($type, [FinanceConstants::SOURCE_PURCHASE_RECEIPT, FinanceConstants::SOURCE_PURCHASE_RETURN_SUPPLIER_REFUND], true)
+                ? 'currency_snapshot' : 'currency';
+            $query->whereRaw("COALESCE(NULLIF({$field}, ''), 'CNY') = ?", [strtoupper($filters['currency'])]);
+        }
         $this->applyKeyword($query, $type, trim((string) ($filters['keyword'] ?? '')));
         return $query->latest('id')->paginate($perPage)->through(fn ($row) => $this->payload($type, $row));
     }
@@ -74,25 +83,28 @@ class FinanceBusinessSourceQueryService
         } elseif ($type === FinanceConstants::SOURCE_PURCHASE_RETURN_SUPPLIER_REFUND) {
             $amount = Money::normalize((string) $row->settlement_amount);
         } else {
-            $amount = Money::normalize((string) $row->total_amount);
+            $amount = $this->salesSettlements->receivableAmount($row);
         }
-        $allocated = $this->allocated($type, (int) $row->id);
-        return [
+        return $this->withBalances([
             'type' => $type, 'id' => (int) $row->id,
             'no' => (string) ($isSales ? $row->sales_order_no : ($type === FinanceConstants::SOURCE_PURCHASE_RECEIPT ? $row->receipt_no : ($type === FinanceConstants::SOURCE_PURCHASE_SETTLEMENT_SOURCE ? $row->source_document_no : $row->return_no))),
             'partyType' => $isSales ? FinanceConstants::PARTY_CUSTOMER : FinanceConstants::PARTY_SUPPLIER,
             'partyId' => (int) ($isSales ? $row->customer_id : $row->supplier_id),
             'partyName' => (string) ($isSales ? ($row->customer_name_snapshot ?: $row->customer_name) : ($type === FinanceConstants::SOURCE_PURCHASE_SETTLEMENT_SOURCE ? $row->supplier_name_snapshot : ($row->supplier?->supplier_name ?? ''))),
             'currency' => (string) (($row->currency ?? $row->currency_snapshot) ?: 'CNY'),
-            'amount' => $amount, 'allocatedAmount' => $allocated,
-            'remainingAmount' => Money::maxZero(Money::sub($amount, $allocated)),
-        ];
+            'amount' => $amount,
+        ]);
+    }
+
+    public function withBalances(array $source): array
+    {
+        $allocated = $this->allocated($source['type'], (int) $source['id']);
+        return [...$source, 'allocatedAmount' => $allocated,
+            'remainingAmount' => Money::maxZero(Money::sub($source['amount'], $allocated))];
     }
 
     private function allocated(string $type, int $id): string
     {
-        return Money::normalize((string) FinanceAllocation::query()->where('source_business_type', $type)->where('source_document_id', $id)
-            ->where('status', FinanceConstants::ALLOCATION_ACTIVE)
-            ->whereHas('cashDocument', fn ($q) => $q->where('status', FinanceConstants::STATUS_CONFIRMED))->sum('allocated_amount'));
+        return $this->balances->forSource($type, $id);
     }
 }

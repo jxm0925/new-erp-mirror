@@ -63,6 +63,7 @@ class WarehouseMobileAccessTest extends TestCase
     public function test_sales_document_hides_amounts_but_keeps_quantities_and_owned_document(): void
     {
         [$f, $order, $return] = $this->salesFixture();
+        $order->update(['cost_amount' => 431.21, 'actual_sales_cost_amount' => 123.45, 'carrier_fee' => 67.89]);
         $service = app(WarehouseDocumentService::class);
         $read = $service->show('sales_return', $return->id, ['stage' => 'receive'], $f['user'], ['sales_return.view'], false);
         $this->assertEquals($order->id, $read['header']['order']['id']);
@@ -72,17 +73,31 @@ class WarehouseMobileAccessTest extends TestCase
         $this->assertSame('2.00000000', $read['lines']['data'][0]['remaining_receivable_qty']);
         $visible = $service->show('sales_return', $return->id, ['stage' => 'receive'], $f['user'], ['sales_return.view', 'sales_order.amount.view'], false);
         $this->assertEquals(987.65, $visible['header']['order']['total_amount']);
+        foreach (['cost_amount', 'actual_sales_cost_amount', 'carrier_fee'] as $field) {
+            $this->assertArrayNotHasKey($field, $visible['header']['order']);
+        }
+        $admin = $service->show('sales_return', $return->id, ['stage' => 'receive'], $f['user'], ['sales_return.view', 'sales_order.amount.view'], true);
+        $this->assertEquals(987.65, $admin['header']['order']['total_amount']);
+        $this->assertArrayNotHasKey('cost_amount', $admin['header']['order']);
+        $this->assertEquals(431.21, $order->fresh()->cost_amount);
     }
 
     public function test_sales_command_replay_and_result_use_current_amount_permission(): void
     {
         [$f, $order, $return, $item] = $this->salesFixture();
+        $order->update(['cost_amount' => 431.21, 'actual_sales_cost_amount' => 123.45, 'carrier_fee' => 67.89]);
         $service = app(WarehouseCommandService::class); $command = (string) Str::uuid();
         $payload = ['items' => [['sales_return_item_id' => $item->id, 'received_base_qty' => '1',
             'restock_base_qty' => '0', 'pending_base_qty' => '1', 'scrap_base_qty' => '0', 'rejected_base_qty' => '0']]];
         $write = ['sales_return.receive'];
         $first = $service->run('sales_return.receive', $return->id, $command, $payload, $f['user'], [...$write, 'sales_order.amount.view'], false);
         $this->assertEquals(987.65, $first['result']['sales_return']['order']['total_amount']);
+        $this->assertArrayNotHasKey('cost_amount', $first['result']['sales_return']['order']);
+        $withAmounts = $service->run('sales_return.receive', $return->id, $command, $payload, $f['user'], [...$write, 'sales_order.amount.view'], true);
+        $this->assertEquals(987.65, $withAmounts['result']['sales_return']['order']['total_amount']);
+        $this->assertArrayNotHasKey('actual_sales_cost_amount', $withAmounts['result']['sales_return']['order']);
+        $resultWithAmounts = $service->result($command, $f['user'], [...$write, 'sales_order.amount.view'], false);
+        $this->assertArrayNotHasKey('carrier_fee', $resultWithAmounts['response']['result']['sales_return']['order']);
         $replay = $service->run('sales_return.receive', $return->id, $command, $payload, $f['user'], $write, false);
         $this->assertArrayNotHasKey('total_amount', $replay['result']['sales_return']['order']);
         $queried = $service->result($command, $f['user'], $write, false);
@@ -93,6 +108,7 @@ class WarehouseMobileAccessTest extends TestCase
         $this->assertEquals(1, $item->fresh()->received_base_qty);
         $stored = json_decode(DB::table('erp_warehouse_commands')->where('client_command_id', $command)->value('response'), true);
         $this->assertEquals(987.65, $stored['result']['sales_return']['order']['total_amount']);
+        $this->assertEquals(431.21, $stored['result']['sales_return']['order']['cost_amount']);
     }
 
     public function test_outbound_posted_shipment_remains_pending_dispatch_without_double_posting_count(): void

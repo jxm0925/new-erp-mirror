@@ -16,6 +16,9 @@ class FinanceCashDocument extends MasterModel
         'confirmed_at' => 'datetime',
         'voided_at' => 'datetime',
         'payment_method_snapshot' => 'array',
+        'draft_allocation_items' => 'array',
+        'purchase_order_allocations' => 'array',
+        'purchase_order_allocation_version' => 'integer',
     ];
     public function account() { return $this->belongsTo(FinanceAccount::class, 'finance_account_id'); }
     public function paymentMethod() { return $this->belongsTo(PaymentMethod::class); }
@@ -23,4 +26,5 @@ class FinanceCashDocument extends MasterModel
     public function attachments() { return $this->hasMany(FinanceAttachment::class, 'document_id')->where('document_type', 'cash_document')->where('status', 'active'); }
     public function logs() { return $this->hasMany(FinanceOperationLog::class, 'document_id')->where('document_type', 'cash_document')->latest('id'); }
     public function platformFees() { return $this->hasMany(FinancePlatformFee::class, 'cash_document_id'); }
+    public function purchaseOrderAllocations() { return $this->hasMany(FinanceCashPurchaseAllocation::class, 'cash_document_id')->where('status', 'active'); }
 }

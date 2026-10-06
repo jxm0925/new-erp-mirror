@@ -4,7 +4,6 @@ namespace App\Services\Erp;
 
 use App\Domain\Finance\FinanceConstants;
 use App\Domain\Finance\Money;
-use App\Models\Erp\FinanceAllocation;
 use App\Models\Erp\FinanceInvoiceAllocation;
 use App\Models\Erp\FinanceOperationLog;
 use App\Models\Erp\PurchaseReceipt;
@@ -19,13 +18,19 @@ class PurchaseSettlementSourceApplicationService
     public const SOURCE_TYPE_RECEIPT_QUALIFIED = 'purchase_receipt_qualified';
     public const FINANCE_SOURCE_TYPE = 'purchase_settlement_source';
 
+    public function __construct(private readonly FinanceAllocationBalanceQueryService $balances) {}
+
     public function syncReceipt(int|PurchaseReceipt $receipt, ?int $operatorId = null, ?string $operatorName = null): array
     {
         $receiptId = $receipt instanceof PurchaseReceipt ? $receipt->id : $receipt;
         $receipt = PurchaseReceipt::query()
-            ->with(['supplier', 'order', 'items'])
+            ->with(['supplier', 'order'])
             ->lockForUpdate()
             ->findOrFail($receiptId);
+        // Eager-loading items uses a consistent read even after the receipt lock.
+        // Current rows are required so a prior snapshot cannot restore an amount
+        // that a concurrent quality/return operation already removed.
+        $receipt->setRelation('items', $receipt->items()->orderBy('id')->lockForUpdate()->get());
 
         if ($receipt->confirm_status !== 'confirmed' || $receipt->settlement_mode === 'replacement_no_charge') {
             return [];
@@ -42,10 +47,9 @@ class PurchaseSettlementSourceApplicationService
 
     public function refresh(int $sourceId, ?int $operatorId = null, ?string $operatorName = null): PurchaseSettlementSource
     {
-        // Keep the lock order consistent with every purchasing fact update:
-        // receipt first, then settlement source. Locking the source before its
-        // receipt would allow allocation reversal and receipt-quality updates
-        // to deadlock under concurrency.
+        // Match syncReceipt's receipt -> settlement-source order. Other
+        // purchasing entry points also lock quality/return rows, so their
+        // outer transaction retries still handle cross-document deadlocks.
         $source = PurchaseSettlementSource::query()->findOrFail($sourceId);
         $this->syncReceipt((int) $source->source_receipt_id, $operatorId, $operatorName);
 
@@ -137,32 +141,27 @@ class PurchaseSettlementSourceApplicationService
 
     private function offsetsByReceiptLine(int $receiptId): array
     {
-        return PurchaseReturnItem::query()
-            ->selectRaw('source_receipt_item_id, SUM(settlement_amount) AS amount')
-            ->whereHas('purchaseReturn', fn ($query) => $query
-                ->where('source_receipt_id', $receiptId)
-                ->where('settlement_effect_type', FinanceConstants::PURCHASE_EFFECT_AP_OFFSET)
-                // A draft, an outbound return, or a supplier-confirmation
-                // pending return is not yet a payable offset. The original
-                // receipt fact remains unchanged until the return is complete.
-                ->where('return_status', 'completed'))
-            ->groupBy('source_receipt_item_id')
-            ->pluck('amount', 'source_receipt_item_id')
-            ->map(fn ($amount) => Money::normalize((string) $amount))
-            ->all();
+        $rows = PurchaseReturnItem::query()
+            ->join('erp_purchase_returns as offset_return', 'offset_return.id', '=', 'erp_purchase_return_items.return_id')
+            ->where('offset_return.source_receipt_id', $receiptId)
+            ->where('offset_return.settlement_effect_type', FinanceConstants::PURCHASE_EFFECT_AP_OFFSET)
+            // Only completed returns are payable offsets. Read both the return
+            // status and line amounts in one current read, never snapshot SUM.
+            ->where('offset_return.return_status', 'completed')
+            ->orderBy('erp_purchase_return_items.id')->lockForUpdate()
+            ->get(['erp_purchase_return_items.source_receipt_item_id', 'erp_purchase_return_items.settlement_amount']);
+        $totals = [];
+        foreach ($rows as $row) {
+            $lineId = (int) $row->source_receipt_item_id;
+            $totals[$lineId] = Money::add($totals[$lineId] ?? '0.0000', (string) $row->settlement_amount);
+        }
+        return $totals;
     }
 
     private function activePaymentAllocated(int $sourceId): string
     {
         if ($sourceId <= 0) return '0.0000';
-        return Money::normalize((string) FinanceAllocation::query()
-            ->where('source_business_type', self::FINANCE_SOURCE_TYPE)
-            ->where('source_document_id', $sourceId)
-            ->where('status', FinanceConstants::ALLOCATION_ACTIVE)
-            ->whereHas('cashDocument', fn ($query) => $query
-                ->where('direction', FinanceConstants::DIRECTION_PAYMENT)
-                ->where('status', FinanceConstants::STATUS_CONFIRMED))
-            ->sum('allocated_amount'));
+        return $this->balances->forSource(self::FINANCE_SOURCE_TYPE, $sourceId, FinanceConstants::DIRECTION_PAYMENT);
     }
 
     private function activeInvoiceMatched(int $sourceId): string

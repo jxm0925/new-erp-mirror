@@ -5,7 +5,7 @@ namespace App\Models\Erp;
 class PurchasePlanItem extends PurchaseBaseModel
 {
     protected $table = 'erp_purchase_plan_items';
-    protected $casts = ['material_policy_snapshot' => 'array'];
+    protected $casts = ['material_policy_snapshot' => 'array', 'purchase_conversion_snapshot' => 'array'];
     public function plan() { return $this->belongsTo(PurchasePlan::class, 'plan_id'); }
     public function request() { return $this->belongsTo(PurchaseRequest::class, 'request_id'); }
     public function requestItem() { return $this->belongsTo(PurchaseRequestItem::class, 'request_item_id'); }

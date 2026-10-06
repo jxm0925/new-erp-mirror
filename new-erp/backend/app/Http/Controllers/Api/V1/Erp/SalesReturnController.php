@@ -9,6 +9,7 @@ use App\Models\Erp\SalesReturnItem;
 use App\Models\Erp\SalesReturnReceipt;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\SalesReturnApplicationService;
+use App\Services\Erp\SalesCostVisibilityService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 
@@ -57,7 +58,7 @@ class SalesReturnController extends Controller
         if ($request->filled('date_from')) $query->whereDate('return_date', '>=', $request->input('date_from'));
         if ($request->filled('date_to')) $query->whereDate('return_date', '<=', $request->input('date_to'));
 
-        return response()->json($query->paginate($this->perPage($request)));
+        return $this->costSafeJson($query->paginate($this->perPage($request)));
     }
 
     public function sources(Request $request)
@@ -125,7 +126,7 @@ class SalesReturnController extends Controller
             ];
         }));
 
-        return response()->json($paginator);
+        return $this->costSafeJson($paginator);
     }
 
     public function show(Request $request, int $id)
@@ -146,7 +147,7 @@ class SalesReturnController extends Controller
             'logs',
         ])->whereKey($id);
         $this->applyOrderVisibility($query, $request);
-        return response()->json($query->firstOrFail());
+        return $this->costSafeJson($query->firstOrFail());
     }
 
     public function orderReturns(Request $request, int $orderId)
@@ -156,7 +157,7 @@ class SalesReturnController extends Controller
         $this->applySalesOrderVisibility($orderQuery, $request);
         abort_unless($orderQuery->exists(), 403, '无权查看该订单的退货记录。');
 
-        return response()->json(
+        return $this->costSafeJson(
             SalesReturn::query()
                 ->with(['items.item', 'receipts'])
                 ->where('sales_order_id', $orderId)
@@ -186,7 +187,7 @@ class SalesReturnController extends Controller
         abort_unless($orderQuery->exists(), 403, '无权为该销售订单创建退货单。');
         [$operatorId, $operatorName] = $this->operator($request);
 
-        return response()->json([
+        return $this->costSafeJson([
             'message' => '销售退货单已保存',
             'data' => $service->create($payload, $operatorId, $operatorName),
         ], 201);
@@ -196,7 +197,7 @@ class SalesReturnController extends Controller
     {
         $this->authorizePermission($request, 'sales_return.confirm');
         $this->assertReturnVisible($request, $id);
-        return response()->json([
+        return $this->costSafeJson([
             'message' => '销售退货单已确认，等待客户寄回',
             'data' => $service->confirm($id, ...$this->operator($request)),
         ]);
@@ -228,7 +229,7 @@ class SalesReturnController extends Controller
         ]);
         $payload['sales_return_id'] = $id;
 
-        return response()->json([
+        return $this->costSafeJson([
             'message' => '销售退货到货已确认',
             'data' => $service->receive($payload, ...$this->operator($request)),
         ], 201);
@@ -239,7 +240,7 @@ class SalesReturnController extends Controller
         $this->authorizePermission($request, 'sales_return.post');
         $this->assertReturnVisible($request, $id);
         $receipt = SalesReturnReceipt::query()->where('sales_return_id', $id)->findOrFail($receiptId);
-        return response()->json([
+        return $this->costSafeJson([
             'message' => '销售退货重新入库完成',
             'data' => $service->postReceipt($receipt->id, ...$this->operator($request)),
         ]);
@@ -249,7 +250,7 @@ class SalesReturnController extends Controller
     {
         $this->authorizePermission($request, 'sales_return.cancel');
         $this->assertReturnVisible($request, $id);
-        return response()->json([
+        return $this->costSafeJson([
             'message' => '销售退货单已取消',
             'data' => $service->cancel($id, ...$this->operator($request)),
         ]);
@@ -259,7 +260,7 @@ class SalesReturnController extends Controller
     {
         $this->authorizePermission($request, 'sales_return.close');
         $this->assertReturnVisible($request, $id);
-        return response()->json([
+        return $this->costSafeJson([
             'message' => '销售退货单已关闭',
             'data' => $service->close($id, ...$this->operator($request)),
         ]);
@@ -272,7 +273,13 @@ class SalesReturnController extends Controller
         $this->applyOrderVisibility($visible, $request);
         abort_unless($visible->exists(), 403, '无权删除该销售退货草稿。');
         $service->deleteDraft($id);
-        return response()->json(['message' => '销售退货草稿已删除。']);
+        return $this->costSafeJson(['message' => '销售退货草稿已删除。']);
+    }
+
+    /** Return reads and warehouse action results must never expose cost facts. */
+    private function costSafeJson(mixed $payload, int $status = 200): \Illuminate\Http\JsonResponse
+    {
+        return response()->json(app(SalesCostVisibilityService::class)->redact($payload), $status);
     }
 
     private function assertReturnVisible(Request $request, int $id): void

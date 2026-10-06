@@ -2,8 +2,10 @@
   <div class="payable-page">
     <div class="page-head">
       <div><h1>应付管理</h1><p>基于采购到货结算事实汇总应付、付款、退货抵扣和进项发票，不允许手工改余额。</p></div>
-      <div class="head-actions"><el-button @click="$router.push('/finance/supplier-ledgers')">供应商往来</el-button><el-button type="success" @click="exportCurrent">导出</el-button></div>
+      <div v-if="activeView === 'documents'" class="head-actions"><el-button type="success" @click="exportCurrent">导出</el-button></div>
     </div>
+    <el-tabs :value="activeView" class="payable-tabs" @tab-click="changeView">
+      <el-tab-pane v-if="canViewDocuments" label="按单据" name="documents">
     <section class="metric-strip">
       <div><span>当前应付</span><b>{{ money(summary.current_payable_amount) }}</b></div>
       <div><span>未付款</span><b class="red">{{ money(summary.unpaid_amount) }}</b></div>
@@ -23,7 +25,7 @@
       </el-form>
     </section>
     <section class="table-card">
-      <el-table v-loading="loading" :data="rows" border size="small" class="payable-table">
+      <el-table ref="documentsTable" v-loading="loading" :data="rows" border size="small" class="payable-table">
         <el-table-column label="供应商" min-width="150"><template slot-scope="{row}"><div>{{ row.supplier_name }}</div><small>{{ row.supplier_code || '—' }}</small></template></el-table-column>
         <el-table-column prop="source_document_no" label="来源单据号" min-width="145" />
         <el-table-column prop="purchase_order_no" label="采购订单号" min-width="145" />
@@ -40,36 +42,115 @@
         <el-table-column label="付款状态" width="90"><template slot-scope="{row}"><el-tag size="mini" :type="paymentTag(row.payment_status)">{{ paymentLabel(row.payment_status) }}</el-tag></template></el-table-column>
         <el-table-column label="发票状态" width="90"><template slot-scope="{row}"><el-tag size="mini" :type="invoiceTag(row.invoice_status)">{{ invoiceLabel(row.invoice_status) }}</el-tag></template></el-table-column>
         <el-table-column label="财务状态" width="96"><template slot-scope="{row}"><el-tag size="mini" :type="financeTag(row.finance_status)">{{ financeLabel(row.finance_status) }}</el-tag></template></el-table-column>
-        <el-table-column label="操作" width="92" fixed="right"><template slot-scope="{row}"><el-button type="text" @click="viewSource(row)">查看明细</el-button></template></el-table-column>
+        <el-table-column label="操作" width="250" fixed="right"><template slot-scope="{row}"><div class="row-actions"><el-button type="text" @click="viewSource(row)">查看明细</el-button><el-button v-if="canPay(row)" type="text" @click="pay(row)">付款</el-button><el-button v-if="canUsePrepayment(row)" type="text" @click="usePrepayment(row)">使用预付款</el-button></div></template></el-table-column>
       </el-table>
       <el-pagination background layout="total, sizes, prev, pager, next, jumper" :current-page="page" :page-size="perPage" :page-sizes="[10,20,50,100]" :total="total" @current-change="p=>{page=p;load()}" @size-change="s=>{perPage=s;page=1;load()}" />
     </section>
+      </el-tab-pane>
+      <el-tab-pane v-if="canViewSuppliers" label="按供应商" name="suppliers">
+        <finance-supplier-ledger-list v-if="supplierVisited" embedded :active="activeView === 'suppliers'" @view-documents="viewSupplier" />
+      </el-tab-pane>
+    </el-tabs>
   </div>
 </template>
 <script>
 import Vue from 'vue'
 import { listFinancePayables } from '../../../api/erp/finance'
 import { listEntity } from '../../../api/erp/master'
+import FinanceSupplierLedgerList from './FinanceSupplierLedgerList.vue'
+const blankFilters = () => ({supplier_id:null,purchase_order_no:'',source_document_no:'',payment_status:'',invoice_status:'',has_balance:''})
 Vue.component('money-column', { props:['label','prop','strong'], template:'<el-table-column :label="label" min-width="112" align="right"><template slot-scope="{row}"><b v-if="strong" class="money-strong">{{ Number(row[prop] || 0).toLocaleString(\'zh-CN\',{minimumFractionDigits:2,maximumFractionDigits:2}) }}</b><span v-else>{{ Number(row[prop] || 0).toLocaleString(\'zh-CN\',{minimumFractionDigits:2,maximumFractionDigits:2}) }}</span></template></el-table-column>' })
 export default {
-  data:()=>({ rows:[], suppliers:[], loading:false, page:1, perPage:20, total:0, dateRange:[], filters:{supplier_id:null,purchase_order_no:'',source_document_no:'',payment_status:'',invoice_status:'',has_balance:''}, summary:{} }),
-  created(){this.restoreQuery();this.load();this.loadSuppliers()},
-  watch:{
-    $route(){
-      this.restoreQuery()
-      this.page=1
-      this.load()
+  components: { FinanceSupplierLedgerList },
+  data:()=>({ rows:[], suppliers:[], loading:false, page:1, perPage:20, total:0, dateRange:[], filters:blankFilters(), summary:{}, documentsLoaded:false, suppliersLoaded:false, supplierVisited:false, requestId:0 }),
+  computed: {
+    canViewDocuments(){return this.$can('finance.payable.view')},
+    canViewSuppliers(){return this.$can('finance.supplier-ledger.view')},
+    activeView(){
+      const requested=this.$route.query.view==='suppliers'?'suppliers':'documents'
+      if(requested==='documents'&&this.canViewDocuments)return 'documents'
+      if(requested==='suppliers'&&this.canViewSuppliers)return 'suppliers'
+      return this.canViewDocuments?'documents':this.canViewSuppliers?'suppliers':''
     }
+  },
+  created(){this.syncRoute(this.$route)},
+  watch:{
+    $route(to,from){this.syncRoute(to,from)}
   },
   methods:{
     money(v){return '¥ '+Number(v||0).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2})},
     params(){return {...this.filters,business_date_start:this.dateRange?.[0]||'',business_date_end:this.dateRange?.[1]||'',page:this.page,per_page:this.perPage,source_id:this.$route.query.source_id||''}},
-    restoreQuery(){if(this.$route.query.supplier_id)this.filters.supplier_id=Number(this.$route.query.supplier_id)},
-    async loadSuppliers(){try{const r=await listEntity('suppliers',{per_page:100,status:'enabled'});this.suppliers=r.data.data||[]}catch(e){}},
-    async load(){this.loading=true;try{const r=await listFinancePayables(this.params());this.rows=r.data.data||[];this.total=Number(r.data.total||0);this.summary=r.data.summary||{}}catch(e){this.$message.error(e.userMessage||'应付数据加载失败')}finally{this.loading=false}},
-    search(){this.page=1;this.load()}, reset(){this.filters={supplier_id:null,purchase_order_no:'',source_document_no:'',payment_status:'',invoice_status:'',has_balance:''};this.dateRange=[];this.page=1;this.$router.replace({query:{}}).catch(()=>{});this.load()},
+    syncRoute(to,from){
+      const query=to.query||{}
+      const previous=from?.query||{}
+      const contextChanged=!from||['supplier_id','source_id'].some(key=>String(query[key]||'')!==String(previous[key]||''))
+      if(contextChanged){
+        // Invalidate an older document request even while the supplier view is
+        // visible; it must not mark a different source context as already loaded.
+        this.requestId+=1
+        this.loading=false
+        this.filters.supplier_id=Number(query.supplier_id)||null
+        this.page=1
+        this.documentsLoaded=false
+      }
+      if(this.activeView==='suppliers')this.supplierVisited=true
+      if(this.activeView==='documents'){
+        if(contextChanged||(!this.documentsLoaded&&!this.loading))this.load()
+        if(!this.suppliersLoaded)this.loadSuppliers()
+        this.$nextTick(()=>this.$refs.documentsTable?.doLayout())
+      }
+    },
+    changeView(tab){
+      const view=tab.name
+      if((view==='documents'&&!this.canViewDocuments)||(view==='suppliers'&&!this.canViewSuppliers))return
+      if(view===this.activeView)return
+      return this.$router.push({path:'/finance/payables',query:{...this.$route.query,view}})
+    },
+    async loadSuppliers(){if(!this.canViewDocuments)return;this.suppliersLoaded=true;try{const r=await listEntity('suppliers',{per_page:100,status:'enabled'});this.suppliers=r.data.data||[]}catch(e){this.suppliersLoaded=false}},
+    async load(){
+      if(!this.canViewDocuments)return
+      const requestId=++this.requestId
+      this.loading=true
+      try{
+        const r=await listFinancePayables(this.params())
+        if(requestId!==this.requestId)return
+        this.rows=r.data.data||[]
+        this.total=Number(r.data.total||0)
+        this.summary=r.data.summary||{}
+        this.documentsLoaded=true
+      }catch(e){if(requestId===this.requestId)this.$message.error(e.userMessage||'应付数据加载失败')}
+      finally{if(requestId===this.requestId)this.loading=false}
+    },
+    search(){this.page=1;return this.load()},
+    reset(){
+      this.filters=blankFilters();this.dateRange=[];this.page=1
+      if(this.$route.query.supplier_id||this.$route.query.source_id){
+        const query={...this.$route.query,view:'documents'}
+        delete query.supplier_id
+        delete query.source_id
+        return this.$router.replace({path:'/finance/payables',query})
+      }
+      return this.load()
+    },
+    viewSupplier(row){
+      if(!this.canViewDocuments)return
+      this.filters={...blankFilters(),supplier_id:Number(row.supplier_id)}
+      this.dateRange=[];this.page=1;this.documentsLoaded=false
+      if(!this.suppliers.some(s=>Number(s.id)===Number(row.supplier_id)))this.suppliers.push({id:Number(row.supplier_id),supplier_code:row.supplier_code,supplier_name:row.supplier_name})
+      return this.$router.push({path:'/finance/payables',query:{view:'documents',supplier_id:row.supplier_id}})
+    },
+    canPay(row){return this.$can('finance.payment.create')&&this.$can('finance.allocation.create')&&this.$can('finance.view')&&Number(row.unpaid_amount)>0},
+    canUsePrepayment(row){return this.$can('finance.allocation.create')&&this.$can('finance.view')&&Number(row.unpaid_amount)>0},
+    pay(row){
+      if(!this.canPay(row))return
+      return this.$router.push({path:'/finance/payments/create',query:{source_type:'purchase_settlement_source',source_id:row.id}})
+    },
+    usePrepayment(row){
+      if(!this.canUsePrepayment(row))return
+      return this.$router.push({path:'/finance/payments',query:{party_type:'supplier',party_id:row.supplier_id,allocation_status:'pending',source_type:'purchase_settlement_source',source_id:row.id}})
+    },
     viewSource(row){
-      const query={source_id:row.id}
+      const query={view:'documents',supplier_id:row.supplier_id,source_id:row.id}
       if(String(this.$route.query.source_id||'')===String(row.id)){
         this.page=1
         this.load()
@@ -85,5 +166,28 @@ export default {
 }
 </script>
 <style scoped>
+.payable-tabs {
+  min-width: 0;
+}
+.payable-tabs >>> .el-tabs__item.is-active,
+.payable-tabs >>> .el-tabs__item:hover {
+  color: #008b4b;
+}
+.payable-tabs >>> .el-tabs__active-bar {
+  background-color: #008b4b;
+}
+.payable-tabs >>> .el-tabs__content,
+.payable-tabs >>> .el-tab-pane {
+  min-width: 0;
+}
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  white-space: nowrap;
+}
+.row-actions .el-button + .el-button {
+  margin-left: 0;
+}
 .payable-page{padding:22px;min-width:0;background:#f5f7fa}.page-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:15px}.page-head h1{margin:0;color:#17233d;font-size:24px;line-height:34px}.page-head p{margin:4px 0 0;color:#7b8794;font-size:13px}.head-actions{display:flex;gap:10px}.metric-strip{display:grid;grid-template-columns:repeat(4,1fr);background:#fff;border:1px solid #e5eaf1;border-radius:5px;overflow:hidden;margin-bottom:14px}.metric-strip>div{padding:15px 22px;border-right:1px solid #edf0f4}.metric-strip>div:last-child{border:0}.metric-strip span{display:block;color:#7a8798;font-size:13px}.metric-strip b{display:block;margin-top:5px;font-size:22px;color:#1f2937}.metric-strip .green{color:#059669}.metric-strip .red{color:#e34d59}.metric-strip .orange{color:#ed8b00}.filter-card,.table-card{background:#fff;border:1px solid #e5eaf1;border-radius:5px;padding:16px;margin-bottom:14px}.filter-form{display:flex;flex-wrap:wrap;align-items:center;gap:0 8px}.filter-form .el-form-item{margin:0 0 12px}.filter-form .el-input,.filter-form .el-select{width:164px}.filter-form .el-date-editor{width:230px}.table-card{padding:0;overflow:auto}.payable-table{min-width:1880px}.payable-table ::v-deep .cell{white-space:normal;overflow:visible;text-overflow:clip;line-height:20px}.payable-table small{color:#8b95a5}.money-strong{color:#e34d59}.el-pagination{padding:14px 16px;text-align:right}@media(max-width:980px){.payable-page{padding:12px}.page-head{align-items:flex-start;gap:12px;flex-direction:column}.metric-strip{grid-template-columns:repeat(2,1fr)}.metric-strip>div:nth-child(2){border-right:0}.metric-strip>div:nth-child(-n+2){border-bottom:1px solid #edf0f4}.filter-form .el-form-item,.filter-form .el-input,.filter-form .el-select,.filter-form .el-date-editor{width:100%}}
 </style>

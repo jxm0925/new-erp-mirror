@@ -18,20 +18,9 @@ use Illuminate\Validation\ValidationException;
 
 class PurchaseDraftDeletionApplicationService
 {
-    public function deleteRequest(int $id, ?string $operator = null): void
+    public function deleteRequest(int $id, ?string $operator = null, ?int $operatorId = null): void
     {
-        DB::transaction(function () use ($id, $operator): void {
-            $request = PurchaseRequest::query()->lockForUpdate()->findOrFail($id);
-            $this->assert(
-                $request->request_status === 'draft'
-                && $request->confirmed_at === null
-                && $request->cancelled_at === null,
-                '只有从未确认、未取消的采购需求草稿可以删除。'
-            );
-            $this->assert(!PurchasePlanItem::query()->where('request_id', $id)->exists(), '该采购需求已被采购计划引用，不能删除。');
-            $this->recordDeletion('purchase_request', $id, '删除从未确认的采购需求草稿', $operator);
-            $request->delete();
-        }, 5);
+        app(PurchaseRequestLifecycleApplicationService::class)->softDelete($id, $operator, $operatorId);
     }
 
     public function deletePlan(int $id, ?string $operator = null): void

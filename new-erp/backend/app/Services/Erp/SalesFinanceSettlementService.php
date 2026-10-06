@@ -4,11 +4,12 @@ namespace App\Services\Erp;
 
 use App\Domain\Finance\FinanceConstants;
 use App\Domain\Finance\Money;
-use App\Models\Erp\FinanceAllocation;
 use App\Models\Erp\SalesOrder;
 
 class SalesFinanceSettlementService
 {
+    public function __construct(private readonly FinanceAllocationBalanceQueryService $balances) {}
+
     public function status(int|SalesOrder $order): array
     {
         $order = $order instanceof SalesOrder ? $order : SalesOrder::query()->findOrFail($order);
@@ -59,10 +60,6 @@ class SalesFinanceSettlementService
 
     private function allocated(string $sourceType, int $sourceId, string $direction): string
     {
-        return Money::normalize((string) FinanceAllocation::query()
-            ->where('source_business_type', $sourceType)->where('source_document_id', $sourceId)
-            ->where('status', FinanceConstants::ALLOCATION_ACTIVE)
-            ->whereHas('cashDocument', fn ($q) => $q->where('direction', $direction)->where('status', FinanceConstants::STATUS_CONFIRMED))
-            ->sum('allocated_amount'));
+        return $this->balances->forSource($sourceType, $sourceId, $direction);
     }
 }

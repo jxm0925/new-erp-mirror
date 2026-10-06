@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Erp;
 use App\Http\Controllers\Controller;
 use App\Models\Erp\SalesShipment;
 use App\Services\Erp\SalesShipmentApplicationService;
+use App\Services\Erp\SalesCostVisibilityService;
 use App\Services\Erp\AuthContextService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -26,7 +27,7 @@ class SalesShipmentController extends Controller
             ->orderByDesc('id');
         $this->applySalesOrderVisibility($query, $request);
 
-        return response()->json(['data' => $query->paginate(min(max($request->integer('per_page', 20), 1), 100))]);
+        return $this->costSafeJson(['data' => $query->paginate(min(max($request->integer('per_page', 20), 1), 100))]);
     }
 
     public function show(Request $request, int $id)
@@ -36,7 +37,7 @@ class SalesShipmentController extends Controller
             'order.lines', 'lines.orderLine.item', 'lines.reservation', 'packages', 'logs',
         ])->whereKey($id);
         $this->applySalesOrderVisibility($query, $request);
-        return response()->json(['data' => $query->firstOrFail()]);
+        return $this->costSafeJson(['data' => $query->firstOrFail()]);
     }
 
     public function store(Request $request, SalesShipmentApplicationService $service)
@@ -45,28 +46,28 @@ class SalesShipmentController extends Controller
         $payload = $this->validateShipment($request);
         $this->assertSalesOrderVisible($request, (int) $payload['sales_order_id']);
         $shipment = $service->create((int) $payload['sales_order_id'], $payload, $this->operator($request));
-        return response()->json(['message' => '销售发货单已创建', 'data' => $shipment], 201);
+        return $this->costSafeJson(['message' => '销售发货单已创建', 'data' => $shipment], 201);
     }
 
     public function confirm(Request $request, int $id, SalesShipmentApplicationService $service)
     {
         $this->authorizePermission($request, 'sales_order.shipment.confirm');
         $shipment = $service->confirm($this->visibleShipment($request, $id), $this->operator($request));
-        return response()->json(['message' => '销售发货单已确认，等待库存出库过账', 'data' => $shipment]);
+        return $this->costSafeJson(['message' => '销售发货单已确认，等待库存出库过账', 'data' => $shipment]);
     }
 
     public function postOutbound(Request $request, int $id, SalesShipmentApplicationService $service)
     {
         $this->authorizePermission($request, 'sales_order.shipment.post');
         $shipment = $service->postOutbound($this->visibleShipment($request, $id), $this->operator($request));
-        return response()->json(['message' => '销售出库已过账', 'data' => $shipment]);
+        return $this->costSafeJson(['message' => '销售出库已过账', 'data' => $shipment]);
     }
 
     public function dispatch(Request $request, int $id, SalesShipmentApplicationService $service)
     {
         $this->authorizePermission($request, 'sales_order.shipment.dispatch');
         $shipment = $service->dispatch($this->visibleShipment($request, $id), $this->operator($request));
-        return response()->json(['message' => '物流已发运', 'data' => $shipment]);
+        return $this->costSafeJson(['message' => '物流已发运', 'data' => $shipment]);
     }
 
     public function cancel(Request $request, int $id, SalesShipmentApplicationService $service)
@@ -74,14 +75,20 @@ class SalesShipmentController extends Controller
         $this->authorizePermission($request, 'sales_order.shipment.cancel');
         $data = $request->validate(['reason' => 'required|string|max:500']);
         $shipment = $service->cancel($this->visibleShipment($request, $id), $data['reason'], $this->operator($request));
-        return response()->json(['message' => '销售发货单已取消，库存预留已释放', 'data' => $shipment]);
+        return $this->costSafeJson(['message' => '销售发货单已取消，库存预留已释放', 'data' => $shipment]);
     }
 
     public function destroyDraft(Request $request, int $id, SalesShipmentApplicationService $service)
     {
         $this->authorizePermission($request, 'sales_order.shipment.delete_draft');
         $service->deleteDraft($this->visibleShipment($request, $id));
-        return response()->json(['message' => '销售发货草稿已删除，订单库存锁定已恢复。']);
+        return $this->costSafeJson(['message' => '销售发货草稿已删除，订单库存锁定已恢复。']);
+    }
+
+    /** Shipment reads and action results share the sales cost boundary. */
+    private function costSafeJson(mixed $payload, int $status = 200): \Illuminate\Http\JsonResponse
+    {
+        return response()->json(app(SalesCostVisibilityService::class)->redact($payload), $status);
     }
 
     private function validateShipment(Request $request): array
@@ -125,7 +132,9 @@ class SalesShipmentController extends Controller
     private function assertSalesOrderVisible(Request $request, int $orderId): void
     {
         $query = \App\Models\Erp\SalesOrder::query()->whereKey($orderId);
-        $this->applySalesOrderVisibility($query, $request);
+        $user = app(AuthContextService::class)->currentUser($request);
+        abort_unless($user, 401, '未登录或登录已过期。');
+        app(\App\Services\Erp\SalesOrderVisibilityService::class)->apply($query, $user);
         abort_unless($query->exists(), 403, '无权操作该销售订单的发运单。');
     }
 

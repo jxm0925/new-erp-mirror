@@ -10,25 +10,25 @@ class BomMatcher
     {
     }
 
+    public function eligibleQuery(?string $businessDate = null): \Illuminate\Database\Eloquent\Builder
+    {
+        $date = $businessDate ?? now()->toDateString();
+        return Bom::query()->where('audit_status', 'approved')->whereIn('status', ['active', 'enabled', 'published'])
+            ->where(fn ($q) => $q->whereNull('effective_date')->orWhere('effective_date', '<=', $date))
+            ->where(fn ($q) => $q->whereNull('expire_date')->orWhere('expire_date', '>=', $date));
+    }
+
     public function match(?int $productId, ?int $skuId, ?int $itemId, ?array $configuration = null, ?int $pinnedBomId = null): array
     {
         if (!$itemId) {
             return $this->blocked('not_checked', 'Item 未匹配，不能匹配 BOM');
         }
 
-        $query = Bom::with('items')
+        $query = $this->eligibleQuery()->with('items')
             // 已确认需求引用的是具体版本。默认版本改变不得替换已选的生产资料；
             // 原版本失效则显式阻断，由技术岗位修订，不能自动回退到另一份 BOM。
             ->when($pinnedBomId !== null, fn ($q) => $q->whereKey($pinnedBomId))
-            ->where('output_item_id', $itemId)
-            ->where('audit_status', 'approved')
-            ->whereIn('status', ['active', 'enabled', 'published'])
-            ->where(function ($q) {
-                $q->whereNull('effective_date')->orWhere('effective_date', '<=', now()->toDateString());
-            })
-            ->where(function ($q) {
-                $q->whereNull('expire_date')->orWhere('expire_date', '>=', now()->toDateString());
-            });
+            ->where('output_item_id', $itemId);
 
         $matches = $query
             ->when($productId === null && $skuId === null, function ($itemOnly) {

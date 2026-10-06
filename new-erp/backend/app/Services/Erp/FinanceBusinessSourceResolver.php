@@ -5,7 +5,6 @@ namespace App\Services\Erp;
 use App\Domain\Finance\FinanceConstants;
 use App\Domain\Finance\Money;
 use App\Models\Erp\PurchaseExchangeOrder;
-use App\Models\Erp\FinanceAllocation;
 use App\Models\Erp\PurchaseReceipt;
 use App\Models\Erp\PurchaseReturn;
 use App\Models\Erp\PurchaseSettlementSource;
@@ -17,6 +16,7 @@ class FinanceBusinessSourceResolver
     public function __construct(
         private readonly PurchaseSettlementSourceApplicationService $purchaseSettlementSources,
         private readonly SalesFinanceSettlementService $salesSettlements,
+        private readonly FinanceAllocationBalanceQueryService $balances,
     ) {
     }
 
@@ -40,12 +40,7 @@ class FinanceBusinessSourceResolver
         if (!$order->customer_id) throw ValidationException::withMessages(['source_document_id' => '销售订单尚未绑定客户。']);
         $amount = $this->salesSettlements->receivableAmount($order);
         if ($type === FinanceConstants::SOURCE_SALES_ORDER_REFUND) {
-            $amount = Money::normalize((string) FinanceAllocation::query()
-                ->where('source_business_type', FinanceConstants::SOURCE_SALES_ORDER)
-                ->where('source_document_id', $order->id)
-                ->where('status', FinanceConstants::ALLOCATION_ACTIVE)
-                ->whereHas('cashDocument', fn ($q) => $q->where('status', FinanceConstants::STATUS_CONFIRMED))
-                ->sum('allocated_amount'));
+            $amount = $this->balances->forSource(FinanceConstants::SOURCE_SALES_ORDER, $order->id);
         }
         return $this->fact($type, $order->id, $order->sales_order_no, FinanceConstants::PARTY_CUSTOMER,
             (int) $order->customer_id, (string) ($order->customer_name_snapshot ?: $order->customer_name),

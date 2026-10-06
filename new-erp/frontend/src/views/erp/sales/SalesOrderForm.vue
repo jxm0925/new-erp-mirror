@@ -671,7 +671,6 @@ Do not change layout without approval.
               <div class="field-stack"><span>客户物流备注</span><el-input v-model="form.shipping_snapshot.customer_logistics_note" size="small" placeholder="客户指定承运方式、运输注意事项" /></div>
               <div class="field-stack trade-type-field"><span>贸易类型</span><el-radio-group v-model="form.trade_type" size="small"><el-radio-button label="domestic">内贸</el-radio-button><el-radio-button label="foreign">外贸</el-radio-button></el-radio-group></div>
               <div class="field-stack"><span class="required">快递选择</span><el-select v-model="form.carrier_id" size="small" placeholder="选择发货快递" clearable><el-option v-for="item in carrierOptions" :key="item.id" :label="item.name" :value="String(item.id)" /></el-select></div>
-              <div class="field-stack"><span>预估快递费</span><el-input v-model.number="form.carrier_fee" size="small" placeholder="0.00" /></div>
               <div class="field-stack"><span>快递单号</span><el-input v-model="form.logistics_snapshot.express_no" size="small" placeholder="待发货后填写" /></div>
               <template v-if="form.trade_type === 'foreign'">
                 <div class="field-stack"><span>件数（PCS）</span><el-input v-model="form.logistics_snapshot.pcs" size="small" placeholder="件数" /></div>
@@ -816,6 +815,17 @@ import PurchaseItemPicker from '@/components/purchase/PurchaseItemPicker.vue'
 import { getSalesOrder, saveSalesOrder, confirmSalesOrder, getSalesOrderOptions, uploadSalesOrderAttachment, deleteSalesOrderAttachment, downloadSalesOrderAttachment, previewSalesOrderEditImpact, submitSalesOrderEditImpact } from '@/api/erp/sales'
 import { reserveForCreatePage, clearCreatePageReservation } from '@/utils/documentNumberReservation'
 
+const withoutInternalFreight = source => {
+  const result = { ...(source || {}) }
+  delete result.carrier_fee
+  delete result.actual_freight
+  delete result.actual_freight_amount
+  for (const field of ['shipping_snapshot', 'logistics_snapshot']) {
+    if (result[field] && typeof result[field] === 'object') result[field] = withoutInternalFreight(result[field])
+  }
+  return result
+}
+
 const emptyLine = () => ({
   line_uuid: `line-${Date.now()}-${Math.random().toString(16).slice(2)}`,
   product_id: null,
@@ -911,7 +921,6 @@ export default {
       is_share: false,
       share_user: [],
       carrier_id: '',
-      carrier_fee: 0,
       shipping_snapshot: { is_self_pickup: false, customer_logistics_note: '' },
       logistics_snapshot: { express_no: '', pcs: '', gw: '', vol: '', si_date: '', cy_date: '', cargo_ready_date: '' },
       contract_attachment_snapshot: { files: [] },
@@ -1057,7 +1066,6 @@ export default {
         is_share: false,
         share_user: [],
         carrier_id: '',
-        carrier_fee: 0,
         shipping_snapshot: { is_self_pickup: false, customer_logistics_note: '' },
         logistics_snapshot: { express_no: '', pcs: '', gw: '', vol: '', si_date: '', cy_date: '', cargo_ready_date: '' },
         contract_attachment_snapshot: { files: [] },
@@ -1079,10 +1087,11 @@ export default {
     },
     async load() {
       try {
-      const { data } = await getSalesOrder(this.pageRoute.params.id)
+      const { data: responseOrder } = await getSalesOrder(this.pageRoute.params.id)
+      const data = withoutInternalFreight(responseOrder)
       this.editOrderMeta = data
       this.form = {
-        ...this.form,
+        ...withoutInternalFreight(this.form),
         ...data,
         trade_type: data.trade_type || 'domestic',
         platform: data.platform ? String(data.platform) : '',
@@ -1095,7 +1104,6 @@ export default {
         is_share: Boolean(data.is_share),
         share_user: Array.isArray(data.share_user) ? data.share_user.map(String) : String(data.share_user || '').split(',').filter(Boolean),
         carrier_id: data.carrier_id ? String(data.carrier_id) : '',
-        carrier_fee: Number(data.carrier_fee || 0),
         customer_snapshot: { remark: '', delivery_note: '', ...(data.customer_snapshot || {}) },
         shipping_snapshot: { is_self_pickup: false, customer_logistics_note: '', ...(data.shipping_snapshot || {}) },
         logistics_snapshot: { express_no: '', pcs: '', gw: '', vol: '', si_date: '', cy_date: '', cargo_ready_date: '', ...(data.logistics_snapshot || {}) },
@@ -1763,21 +1771,20 @@ export default {
       this.syncHeaderFlags()
       const carrier = this.carrierOptions.find(item => String(item.id) === String(this.form.carrier_id))
       const payload = {
-        ...this.form,
+        ...withoutInternalFreight(this.form),
         deleted_line_ids: this.deletedLineIds,
         share_user: this.form.is_share ? this.form.share_user : [],
-        carrier_fee: Number(this.form.carrier_fee || 0),
         default_carrier_id: this.form.carrier_id || null,
         order_remark: this.form.remark || null,
         logistics_requirement: (this.form.shipping_snapshot || {}).customer_logistics_note || null,
         customer_remark: (this.form.customer_snapshot || {}).remark || null,
         contract_attachments: JSON.stringify(this.contractFiles),
         shipping_snapshot: {
-          ...(this.form.shipping_snapshot || {}),
+          ...withoutInternalFreight(this.form.shipping_snapshot),
           carrier_id: this.form.carrier_id || null,
-          carrier_name: carrier ? carrier.name : null,
-          carrier_fee: Number(this.form.carrier_fee || 0)
+          carrier_name: carrier ? carrier.name : null
         },
+        logistics_snapshot: withoutInternalFreight(this.form.logistics_snapshot),
         lines: this.form.lines.map((line, index) => ({
           ...line,
           line_no: index + 1,

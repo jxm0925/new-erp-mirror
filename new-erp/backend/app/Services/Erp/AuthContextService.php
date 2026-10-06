@@ -132,9 +132,11 @@ class AuthContextService
         }
 
         return DB::table('erp_rbac_user_roles as ur')
+            ->join('erp_rbac_roles as r', 'r.id', '=', 'ur.role_id')
             ->join('erp_rbac_role_permissions as rp', 'ur.role_id', '=', 'rp.role_id')
             ->join('erp_rbac_permissions as p', 'rp.permission_id', '=', 'p.id')
             ->where('ur.user_legacy_id', $user->legacy_id)
+            ->where('r.enabled', true)
             ->where('p.enabled', true)
             ->pluck('p.code')
             ->unique()

@@ -5,6 +5,7 @@ namespace App\Models\Erp;
 class PurchasePlanSupplierSplit extends PurchaseBaseModel
 {
     protected $table = 'erp_purchase_plan_supplier_splits';
+    protected $casts = ['purchase_conversion_snapshot' => 'array'];
     public function plan() { return $this->belongsTo(PurchasePlan::class, 'plan_id'); }
     public function planItem() { return $this->belongsTo(PurchasePlanItem::class, 'plan_item_id'); }
     public function request() { return $this->belongsTo(PurchaseRequest::class, 'request_id'); }

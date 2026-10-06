@@ -93,8 +93,14 @@ final class WarehouseDocumentService
         });
         $response = ['kind' => $kind, 'header' => $header, 'lines' => $linePage->toArray(),
             'actions' => $this->allowed($actions, $permissions), 'receipt' => $receipt] + $extra;
-        return str_starts_with($kind, 'sales_') && ! $super && ! in_array('sales_order.amount.view', $permissions, true)
-            ? app(SalesAmountVisibilityService::class)->redact($response) : $response;
+        if (str_starts_with($kind, 'sales_')) {
+            // Sales amount permission authorizes customer prices, never internal costs.
+            $response = app(SalesCostVisibilityService::class)->redact($response);
+            if (! $super && ! in_array('sales_order.amount.view', $permissions, true)) {
+                $response = app(SalesAmountVisibilityService::class)->redact($response);
+            }
+        }
+        return $response;
     }
 
     private function output(int $id, array $f, object $user, array $permissions, bool $super): array

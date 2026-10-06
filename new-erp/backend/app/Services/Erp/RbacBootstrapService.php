@@ -13,7 +13,7 @@ class RbacBootstrapService
             $this->syncDepartments(true);
         }
         $permissionsChanged = $this->seedPermissions($force);
-        $this->seedRoles($force || $permissionsChanged);
+        $this->seedRoles($force, $permissionsChanged);
     }
 
     public function syncDepartments(bool $force = false): void
@@ -420,6 +420,7 @@ class RbacBootstrapService
             ['system.admin.create', '新增管理员账号', 'button', 'system.admin', null, null, 'el-icon-mouse', 2],
             ['system.admin.edit', '编辑/分配角色权限', 'button', 'system.admin', null, null, 'el-icon-mouse', 3],
             ['system.admin.toggle_status', '启用/停用管理员', 'button', 'system.admin', null, null, 'el-icon-mouse', 4],
+            ['system.admin.delete', '删除管理员账号', 'button', 'system.admin', null, null, 'el-icon-delete', 5],
 
             ['system.role.view', '查看角色权限', 'button', 'system.role', null, null, 'el-icon-mouse', 1],
             ['system.role.create', '新增角色', 'button', 'system.role', null, null, 'el-icon-mouse', 2],
@@ -433,6 +434,7 @@ class RbacBootstrapService
             ['system.department.view', '查看部门架构', 'button', 'system.department', null, null, 'el-icon-mouse', 1],
             ['system.department.save', '新增/编辑部门', 'button', 'system.department', null, null, 'el-icon-mouse', 2],
             ['system.department.set_principal', '设置部门负责人', 'button', 'system.department', null, null, 'el-icon-mouse', 3],
+            ['system.department.delete', '删除未引用部门', 'button', 'system.department', null, null, 'el-icon-delete', 4],
 
             ['document_number_rule.view', '查看编号规则', 'button', 'system.document_number_rule', null, null, 'el-icon-mouse', 1],
             ['document_number_rule.edit', '编辑编号规则', 'button', 'system.document_number_rule', null, null, 'el-icon-mouse', 2],
@@ -514,7 +516,7 @@ class RbacBootstrapService
         return true;
     }
 
-    private function seedRoles(bool $force = false): void
+    private function seedRoles(bool $force = false, bool $permissionsChanged = false): void
     {
         $roles = [
             ['admin', '系统管理员', 'all'],
@@ -525,9 +527,14 @@ class RbacBootstrapService
 
         $roles[] = ['production_manager', '生产管理员', 'all'];
         $roles[] = ['production_operator', '生产操作员', 'department'];
-        $rebuildAdminPermissions = $force || ! $this->hasSeededRoles(count($roles));
+        $existingCodes = DB::table('erp_rbac_roles')->whereIn('code', array_column($roles, 0))->pluck('code')->all();
+        $missingCodes = array_values(array_diff(array_column($roles, 0), $existingCodes));
+        $rebuildAdminPermissions = $force || in_array('admin', $missingCodes, true);
 
         foreach ($roles as [$code, $name, $scope]) {
+            // Existing configuration belongs to role management. A page read or
+            // newly added permission must not reset names, scopes or status.
+            if (in_array($code, $existingCodes, true)) continue;
             $values = ['name' => $name, 'data_scope' => $scope, 'enabled' => true, 'updated_at' => now(), 'created_at' => now()];
             if (Schema::hasColumn('erp_rbac_roles', 'is_system')) $values['is_system'] = true;
             DB::table('erp_rbac_roles')->updateOrInsert(
@@ -537,26 +544,31 @@ class RbacBootstrapService
         }
 
         $adminRoleId = DB::table('erp_rbac_roles')->where('code', 'admin')->value('id');
-        if ($adminRoleId && $rebuildAdminPermissions) {
+        if ($adminRoleId && ($rebuildAdminPermissions || $permissionsChanged)) {
             $permissionIds = DB::table('erp_rbac_permissions')->pluck('id')->all();
-            DB::table('erp_rbac_role_permissions')->where('role_id', $adminRoleId)->delete();
             $records = array_map(fn ($id) => [
                 'role_id' => $adminRoleId,
                 'permission_id' => $id,
             ], $permissionIds);
-            DB::table('erp_rbac_role_permissions')->insert($records);
+            DB::table('erp_rbac_role_permissions')->insertOrIgnore($records);
         }
-        $this->ensureProductionRolePermissions();
-        $this->ensureSalesInventoryLockPermission();
-        $this->ensureSalesAttachmentPermissions();
+        if ($force || $missingCodes) {
+            // Initializing one newly added built-in role must not restore
+            // permissions removed from other roles through local maintenance.
+            $onlyCodes = $force ? null : $missingCodes;
+            $this->ensureProductionRolePermissions($onlyCodes);
+            $this->ensureSalesInventoryLockPermission($onlyCodes);
+            $this->ensureSalesAttachmentPermissions($onlyCodes);
+        }
     }
 
-    private function ensureSalesAttachmentPermissions(): void
+    private function ensureSalesAttachmentPermissions(?array $onlyCodes = null): void
     {
         $permissionIds = DB::table('erp_rbac_permissions')->whereIn('code', [
             'sales_order.upload_attachment', 'sales_order.view_attachment', 'sales_order.delete_attachment',
         ])->pluck('id', 'code');
         foreach (['admin', 'sales_manager', 'sales_user'] as $roleCode) {
+            if ($onlyCodes !== null && ! in_array($roleCode, $onlyCodes, true)) continue;
             $roleId = DB::table('erp_rbac_roles')->where('code', $roleCode)->value('id');
             if (! $roleId) continue;
             foreach ($permissionIds as $permissionId) {
@@ -568,11 +580,12 @@ class RbacBootstrapService
         }
     }
 
-    private function ensureSalesInventoryLockPermission(): void
+    private function ensureSalesInventoryLockPermission(?array $onlyCodes = null): void
     {
         $permissionId = DB::table('erp_rbac_permissions')->where('code', 'sales_order.inventory_lock')->value('id');
         if (! $permissionId) return;
         foreach (['admin', 'sales_manager', 'sales_user'] as $roleCode) {
+            if ($onlyCodes !== null && ! in_array($roleCode, $onlyCodes, true)) continue;
             $roleId = DB::table('erp_rbac_roles')->where('code', $roleCode)->value('id');
             if (! $roleId) continue;
             DB::table('erp_rbac_role_permissions')->insertOrIgnore([
@@ -582,7 +595,7 @@ class RbacBootstrapService
         }
     }
 
-    private function ensureProductionRolePermissions(): void
+    private function ensureProductionRolePermissions(?array $onlyCodes = null): void
     {
         $permissionIds = DB::table('erp_rbac_permissions')
             ->whereIn('code', [
@@ -663,6 +676,7 @@ class RbacBootstrapService
             ],
         ];
         foreach ($matrix as $roleCode => $codes) {
+            if ($onlyCodes !== null && ! in_array($roleCode, $onlyCodes, true)) continue;
             $roleId = DB::table('erp_rbac_roles')->where('code', $roleCode)->value('id');
             if (! $roleId) continue;
             $allowedPermissionIds = collect($codes)->map(fn (string $code) => $permissionIds[$code] ?? null)->filter()->values()->all();

@@ -1,5 +1,7 @@
 import api from './master'
 
+export const getFinanceDashboard = params => api.get('/v1/erp/finance/dashboard', { params })
+
 export const listFinanceAccounts = params => api.get('/v1/erp/finance/accounts', { params })
 export const createFinanceAccount = data => api.post('/v1/erp/finance/accounts', data)
 export const updateFinanceAccount = (id, data) => api.put(`/v1/erp/finance/accounts/${id}`, data)
@@ -23,7 +25,7 @@ export const listCashDocuments = (direction, params) => api.get(`/v1/erp/finance
 export const getCashDocument = id => api.get(`/v1/erp/finance/cash-documents/show/${id}`)
 export const createCashDocument = (direction, data) => api.post(`/v1/erp/finance/cash-documents/${direction}`, data)
 export const updateCashDocument = (id, data) => api.put(`/v1/erp/finance/cash-documents/${id}`, data)
-export const confirmCashDocument = id => api.post(`/v1/erp/finance/cash-documents/${id}/confirm`)
+export const confirmCashDocument = (id, data = {}) => api.post(`/v1/erp/finance/cash-documents/${id}/confirm`, data)
 export const voidCashDocument = (id, reason) => api.post(`/v1/erp/finance/cash-documents/${id}/void`, { reason })
 export const allocateCashDocument = (id, items) => api.post(`/v1/erp/finance/cash-documents/${id}/allocations`, { items })
 export const reverseFinanceAllocation = (id, reason) => api.post(`/v1/erp/finance/allocations/${id}/reverse`, { reason })

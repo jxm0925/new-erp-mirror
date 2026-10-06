@@ -1208,7 +1208,7 @@ export default {
     }
   },
   watch: {
-    'pageRoute.path': { immediate: true, handler() { this.syncActiveView(); this.loadCurrentView() } },
+    'pageRoute.fullPath': { immediate: true, handler() { this.syncActiveView(); this.applyConsoleTarget(); this.loadCurrentView() } },
     balancePickerQuery: { deep: true, handler() { this.balancePickerPagination.page = 1 } }
   },
   mounted() {
@@ -1216,6 +1216,17 @@ export default {
     this.loadCurrentView()
   },
   methods: {
+    applyConsoleTarget() {
+      const query = this.pageRoute.query || {}
+      if (this.activeView === 'posting' && query.receipt_id && query.keyword) {
+        this.postingQuery.keyword = String(query.keyword)
+        this.postingPagination.page = 1
+      }
+      if (this.activeView === 'adjustments' && query.adjustment_no) {
+        this.adjustmentQuery.no = String(query.adjustment_no)
+        this.adjustmentPagination.page = 1
+      }
+    },
     async loadDictionaries() {
       const [items, warehouses, locations] = await Promise.all([
         listEntity('items', { per_page: 200 }),
@@ -1259,7 +1270,8 @@ export default {
       this.postingRows = (res.data.data || []).map(this.mapReceipt)
       this.postingStats = res.data.stats || { posted_today: 0 }
       this.applyPagination(this.postingPagination, res.data)
-      this.selectedReceipt = this.selectedReceipt ? this.postingRows.find(r => r.id === this.selectedReceipt.id) || null : null
+      const targetId = Number(this.pageRoute.query?.receipt_id || this.selectedReceipt?.id || 0)
+      this.selectedReceipt = this.postingRows.find(r => r.id === targetId) || null
     },
     async loadBalances() {
       const res = await listInventoryBalances(this.balanceParams())

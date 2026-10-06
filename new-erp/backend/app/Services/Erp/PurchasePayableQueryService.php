@@ -5,13 +5,10 @@ namespace App\Services\Erp;
 use App\Domain\Finance\FinanceConstants;
 use App\Domain\Finance\Money;
 use App\Models\Erp\FinanceAllocation;
-use App\Models\Erp\FinanceCashDocument;
-use App\Models\Erp\FinanceInvoice;
 use App\Models\Erp\FinanceInvoiceAllocation;
 use App\Models\Erp\PurchaseReturn;
 use App\Models\Erp\PurchaseReturnItem;
 use App\Models\Erp\PurchaseSettlementSource;
-use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 
 /**
@@ -45,61 +42,10 @@ class PurchasePayableQueryService
 
     public function supplierLedgers(array $filters, int $perPage): array
     {
-        $sourceQuery = $this->baseSourceQuery($filters);
-        $grouped = (clone $sourceQuery)
-            ->select('supplier_id', 'supplier_name_snapshot')
-            ->selectRaw('MIN(business_date) as first_business_date')
-            ->selectRaw('SUM(eligible_amount - ap_offset_amount) as payable_amount')
-            ->selectRaw('SUM(frozen_amount) as quality_frozen_amount')
-            ->selectRaw('SUM(allocated_amount) as paid_amount')
-            ->selectRaw('SUM(invoice_matched_amount) as received_invoice_amount')
-            ->selectRaw('SUM(invoice_unmatched_amount) as unreceived_invoice_amount')
-            ->groupBy('supplier_id', 'supplier_name_snapshot')
-            ->orderBy('supplier_name_snapshot')
-            ->paginate($perPage);
-
-        $supplierIds = collect($grouped->items())->pluck('supplier_id')->map(fn ($id) => (int) $id)->all();
-        $supplement = $this->supplierSupplements($supplierIds);
-        $rows = collect($grouped->items())->map(function (object $row) use ($supplement): array {
-            $supplierId = (int) $row->supplier_id;
-            $payable = Money::maxZero((string) $row->payable_amount);
-            $paid = Money::normalize((string) $row->paid_amount);
-            $receivedInvoice = Money::normalize((string) $row->received_invoice_amount);
-            $pendingRefund = $supplement[$supplierId]['pending_refund_amount'] ?? '0.0000';
-            $paymentTotal = $supplement[$supplierId]['confirmed_payment_amount'] ?? $paid;
-
-            return [
-                'supplier_id' => $supplierId,
-                'supplier_code' => $supplement[$supplierId]['supplier_code'] ?? null,
-                'supplier_name' => (string) $row->supplier_name_snapshot,
-                'current_payable_amount' => $payable,
-                'quality_frozen_amount' => Money::normalize((string) $row->quality_frozen_amount),
-                'paid_amount' => $paid,
-                'unpaid_amount' => Money::maxZero(Money::sub($payable, $paid)),
-                'prepayment_balance_amount' => Money::maxZero(Money::sub($paymentTotal, $paid)),
-                'pending_refund_amount' => $pendingRefund,
-                'received_invoice_amount' => $receivedInvoice,
-                'unreceived_invoice_amount' => Money::maxZero(Money::sub($payable, $receivedInvoice)),
-                'red_invoice_amount' => $supplement[$supplierId]['red_invoice_amount'] ?? '0.0000',
-                'payment_status' => $this->paymentStatus($payable, $paid, (string) $row->quality_frozen_amount),
-                'invoice_status' => $this->invoiceStatus($payable, $receivedInvoice),
-                'finance_status' => $this->financeStatus($payable, $paid, $receivedInvoice, (string) $row->quality_frozen_amount, $pendingRefund),
-            ];
-        })->values();
-
-        $summary = $rows->reduce(function (array $carry, array $row): array {
-            foreach (['current_payable_amount', 'prepayment_balance_amount', 'pending_refund_amount', 'unreceived_invoice_amount'] as $field) {
-                $carry[$field] = Money::add($carry[$field], $row[$field]);
-            }
-            return $carry;
-        }, [
-            'current_payable_amount' => '0.0000',
-            'prepayment_balance_amount' => '0.0000',
-            'pending_refund_amount' => '0.0000',
-            'unreceived_invoice_amount' => '0.0000',
-        ]);
-
-        return [...$grouped->toArray(), 'data' => $rows, 'summary' => $summary];
+        // Keep the public endpoint while sharing the complete supplier/currency
+        // read model with the statistics page. Payable-source pagination above
+        // retains its existing behavior and business-date filtering.
+        return app(SupplierFinanceQueryService::class)->paginate($filters, $perPage);
     }
 
     private function baseSourceQuery(array $filters): Builder
@@ -246,49 +192,6 @@ class PurchasePayableQueryService
                 'prepayment_applied_amount' => Money::normalize((string) ($prepayments[$source->id] ?? '0')),
                 'pending_refund_amount' => Money::normalize((string) ($refundsByLine[$source->source_line_id] ?? '0')),
                 'red_invoice_amount' => Money::maxZero(Money::negate((string) ($redBySource[$source->id] ?? '0'))),
-            ]];
-        })->all();
-    }
-
-    private function supplierSupplements(array $supplierIds): array
-    {
-        if ($supplierIds === []) return [];
-        $payment = FinanceCashDocument::query()
-            ->selectRaw('party_id, SUM(amount) as confirmed_payment_amount')
-            ->where('party_type', FinanceConstants::PARTY_SUPPLIER)
-            ->where('direction', FinanceConstants::DIRECTION_PAYMENT)
-            ->where('status', FinanceConstants::STATUS_CONFIRMED)
-            ->where('currency', 'CNY')->whereIn('party_id', $supplierIds)->groupBy('party_id')->pluck('confirmed_payment_amount', 'party_id');
-        $refundDue = PurchaseReturn::query()
-            ->selectRaw('supplier_id, SUM(settlement_amount) as refund_due_amount')
-            ->where('settlement_effect_type', FinanceConstants::PURCHASE_EFFECT_SUPPLIER_REFUND)
-            ->whereNotIn('return_status', ['draft', 'submitted', 'cancelled'])
-            ->whereIn('supplier_id', $supplierIds)->groupBy('supplier_id')->pluck('refund_due_amount', 'supplier_id');
-        $refundReceived = FinanceAllocation::query()
-            ->selectRaw('party_id, SUM(allocated_amount) as refund_received_amount')
-            ->where('source_business_type', FinanceConstants::SOURCE_PURCHASE_RETURN_SUPPLIER_REFUND)
-            ->where('status', FinanceConstants::ALLOCATION_ACTIVE)
-            ->whereIn('party_id', $supplierIds)
-            ->whereHas('cashDocument', fn (Builder $query) => $query->where('direction', FinanceConstants::DIRECTION_RECEIPT)->where('status', FinanceConstants::STATUS_CONFIRMED)->where('currency', 'CNY'))
-            ->groupBy('party_id')->pluck('refund_received_amount', 'party_id');
-
-        $supplierCodes = PurchaseSettlementSource::query()->with('supplier:id,supplier_code')->whereIn('supplier_id', $supplierIds)->get()->groupBy('supplier_id')
-            ->map(fn ($rows) => $rows->first()->supplier?->supplier_code);
-        $redInvoices = FinanceInvoice::query()
-            ->where('invoice_direction', FinanceConstants::INVOICE_PURCHASE)
-            ->where('party_type', FinanceConstants::PARTY_SUPPLIER)
-            ->where('currency', 'CNY')
-            ->where('status', FinanceConstants::STATUS_RED)
-            ->whereIn('party_id', $supplierIds)
-            ->groupBy('party_id')
-            ->selectRaw('party_id, SUM(amount_incl_tax) AS amount')
-            ->pluck('amount', 'party_id');
-        return collect($supplierIds)->mapWithKeys(function (int $supplierId) use ($payment, $refundDue, $refundReceived, $supplierCodes, $redInvoices): array {
-            return [$supplierId => [
-                'supplier_code' => $supplierCodes->get($supplierId),
-                'confirmed_payment_amount' => Money::normalize((string) ($payment[$supplierId] ?? '0')),
-                'pending_refund_amount' => Money::maxZero(Money::sub((string) ($refundDue[$supplierId] ?? '0'), (string) ($refundReceived[$supplierId] ?? '0'))),
-                'red_invoice_amount' => Money::normalize((string) ($redInvoices[$supplierId] ?? '0')),
             ]];
         })->all();
     }

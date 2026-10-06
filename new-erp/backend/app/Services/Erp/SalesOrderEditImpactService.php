@@ -30,7 +30,7 @@ class SalesOrderEditImpactService
         'country_id', 'province_id', 'city_id', 'area_id', 'address', 'full_address',
         'order_time', 'required_delivery_date', 'is_urgent', 'is_delay',
         'delay_date', 'freight_amount', 'currency', 'remark', 'carrier_id',
-        'default_carrier_id', 'carrier_fee', 'shipping_snapshot', 'logistics_snapshot',
+        'default_carrier_id', 'shipping_snapshot', 'logistics_snapshot',
         'customer_snapshot', 'payment_terms_snapshot', 'funding_policy_id',
         'funding_policy_snapshot', 'sales_channel_id', 'external_order_no', 'transaction_mode',
         'platform_buyer_id',
@@ -201,6 +201,7 @@ class SalesOrderEditImpactService
     private function analyse(SalesOrder $order, array $candidate): array
     {
         $diffs = [];
+        $visibility = app(SalesCostVisibilityService::class);
         $facts = $this->operationalFacts($order);
         foreach (self::HEADER_FIELDS as $field) {
             if (in_array($field, self::HIDDEN_HEADER_DIFF_FIELDS, true)) continue;
@@ -221,8 +222,8 @@ class SalesOrderEditImpactService
                 continue;
             }
             foreach (self::LINE_FIELDS as $field) {
-                $before = $this->lineValue($field, $old->getAttribute($field), $old);
-                $after = $this->lineValue($field, $line[$field] ?? $old->getAttribute($field), $line);
+                $before = $this->lineValue($field, $visibility->redact($old->getAttribute($field)), $old);
+                $after = $this->lineValue($field, $visibility->redact($line[$field] ?? $old->getAttribute($field)), $line);
                 if ($before === $after) continue;
                 $diffs[] = $this->diff('line', $old->id, $field, $before, $after, $this->lineImpacts($field, $old, $before, $after, $facts));
             }
@@ -266,7 +267,9 @@ class SalesOrderEditImpactService
     private function applyOfficial(SalesOrder $order, array $candidate, array $impact, string $operator, ?SalesOrderChangeCandidate $candidateModel, ?string $changeReason = null): void
     {
         $before = $order->fresh(['lines', 'fulfillments', 'productionRequirements'])->toArray();
-        $order->update($candidate['header']);
+        // Approval can happen after internal costs change. Restore current
+        // locked facts instead of replaying cost values from an old candidate.
+        $order->update(app(SalesCostVisibilityService::class)->preserveStoredCosts($candidate['header'], $order->attributesToArray()));
         $this->lines->sync($order, $candidate['lines'], $candidate['deleted_line_ids'], null, $operator);
         $this->amounts->refresh($order);
         $hasOperationalImpact = collect($impact['diffs'] ?? [])->contains(fn ($diff) => collect($diff['impact_types'] ?? [])->intersect(['FULFILLMENT', 'PRODUCTION'])->isNotEmpty());
@@ -326,6 +329,7 @@ class SalesOrderEditImpactService
 
     private function candidatePayload(array $payload, SalesOrder $order): array
     {
+        $payload = app(SalesCostVisibilityService::class)->redact($payload);
         $lines = array_values($payload['lines'] ?? []);
         $sentIds = collect($lines)->pluck('id')->map(fn ($id) => (int) $id)->filter()->all();
         $omittedIds = $order->lines->pluck('id')->map(fn ($id) => (int) $id)->diff($sentIds)->all();

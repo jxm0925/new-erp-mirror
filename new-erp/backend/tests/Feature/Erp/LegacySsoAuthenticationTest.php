@@ -166,6 +166,71 @@ class LegacySsoAuthenticationTest extends TestCase
         $this->assertSame(0, DB::table('erp_auth_tokens')->where('user_legacy_id', $legacyId)->count());
     }
 
+    public function test_signed_login_cannot_restore_deleted_or_disabled_locally_managed_accounts(): void
+    {
+        foreach (['hidden', 'deleted'] as $index => $status) {
+            $id = 991410 + $index;
+            $this->postJson('/api/v1/erp/auth/sso', ['ticket' => $this->ticket($this->payload($id))])->assertOk();
+            DB::table('erp_legacy_admin_users')->where('legacy_id', $id)->update([
+                'status' => $status, 'local_managed' => true, 'deleted_at' => $status === 'deleted' ? now() : null,
+            ]);
+            $retry = $this->payload($id);
+            $this->postJson('/api/v1/erp/auth/sso', ['ticket' => $this->ticket($retry)])->assertForbidden();
+            $this->assertDatabaseHas('erp_legacy_admin_users', ['legacy_id' => $id, 'status' => $status]);
+            $this->assertDatabaseMissing('erp_sso_ticket_consumptions', ['nonce' => $retry['nonce']]);
+        }
+    }
+
+    public function test_local_account_and_department_identity_collisions_are_rejected_atomically(): void
+    {
+        DB::table('erp_legacy_admin_users')->insert([
+            'legacy_id' => 991420, 'username' => 'sso-user-991420', 'status' => 'normal', 'local_managed' => true,
+            'legacy_payload' => json_encode(['auth_source' => 'local_management']), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $this->postJson('/api/v1/erp/auth/sso', ['ticket' => $this->ticket($this->payload(991420))])->assertForbidden();
+        $this->assertDatabaseMissing('erp_rbac_user_roles', ['user_legacy_id' => 991420]);
+        DB::table('erp_departments')->insert([
+            'legacy_id' => 791420, 'name' => '本地独立部门', 'local_managed' => true,
+            'legacy_payload' => json_encode(['auth_source' => 'local_management']), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $payload = $this->payload(991421, ['departments' => [['id' => 791420, 'name' => '旧 ERP 同号部门']]]);
+        $this->postJson('/api/v1/erp/auth/sso', ['ticket' => $this->ticket($payload)])->assertConflict();
+        $this->assertDatabaseMissing('erp_legacy_admin_users', ['legacy_id' => 991421]);
+        $this->assertDatabaseMissing('erp_department_users', ['user_legacy_id' => 991421]);
+        $this->assertDatabaseHas('erp_departments', ['legacy_id' => 791420, 'name' => '本地独立部门']);
+    }
+
+    public function test_signed_login_preserves_local_profile_role_and_department_edits(): void
+    {
+        $id = 991430;
+        $this->postJson('/api/v1/erp/auth/sso', ['ticket' => $this->ticket($this->payload($id))])->assertOk();
+        DB::table('erp_legacy_admin_users')->where('legacy_id', $id)->update(['local_managed' => true, 'nickname' => '本地维护姓名']);
+        DB::table('erp_department_users')->where('user_legacy_id', $id)->update(['is_principal' => true]);
+        $before = DB::table('erp_department_users')->where('user_legacy_id', $id)->get()->toJson();
+        $roles = $this->roleCodes($id);
+        $this->postJson('/api/v1/erp/auth/sso', ['ticket' => $this->ticket($this->payload($id, [
+            'nickname' => '旧资料', 'is_super_admin' => true, 'departments' => [],
+        ]))])->assertOk()->assertJsonPath('user.nickname', '本地维护姓名')->assertJsonPath('is_super_admin', false);
+        $this->assertSame($before, DB::table('erp_department_users')->where('user_legacy_id', $id)->get()->toJson());
+        $this->assertSame($roles, $this->roleCodes($id));
+    }
+
+    public function test_local_department_name_is_projected_and_deleted_department_is_not_recreated(): void
+    {
+        DB::table('erp_departments')->insert([
+            'legacy_id' => 791440, 'name' => '本地维护部门名称', 'status' => 'normal', 'local_managed' => true,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $payload = $this->payload(991440, ['departments' => [['id' => 791440, 'name' => '旧部门名称']]]);
+        $this->postJson('/api/v1/erp/auth/sso', ['ticket' => $this->ticket($payload)])->assertOk();
+        $this->assertSame(['本地维护部门名称'], json_decode(DB::table('erp_legacy_admin_users')->where('legacy_id', 991440)->value('department_names'), true));
+        $this->postJson('/api/v1/erp/auth/sso', ['ticket' => $this->ticket(array_replace($payload, ['nonce' => $this->nonce()]))])->assertOk();
+        $this->assertDatabaseHas('erp_legacy_admin_users', ['legacy_id' => 991440, 'business_version' => 2]);
+        DB::table('erp_departments')->where('legacy_id', 791440)->update(['status' => 'deleted', 'deleted_at' => now()]);
+        $this->postJson('/api/v1/erp/auth/sso', ['ticket' => $this->ticket(array_replace($payload, ['nonce' => $this->nonce()]))])->assertForbidden();
+        $this->assertDatabaseHas('erp_departments', ['legacy_id' => 791440, 'status' => 'deleted']);
+    }
+
     private function payload(int $legacyId, array $overrides = []): array
     {
         $issuedAt = time();

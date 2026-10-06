@@ -10,6 +10,7 @@ use App\Models\Erp\FinanceAccountMovement;
 use App\Models\Erp\FinanceOperationLog;
 use App\Models\Erp\FinancePlatformFee;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\ValidationException;
 
 class FinanceCashDocumentApplicationService
@@ -20,12 +21,17 @@ class FinanceCashDocumentApplicationService
         private readonly FinanceExchangeRateService $rates,
         private readonly FinanceAccountLedgerService $ledger,
         private readonly PaymentMethodApplicationService $paymentMethods,
+        private readonly FinanceAllocationApplicationService $allocations,
+        private readonly FinanceCashPurchaseAllocationApplicationService $purchasePurposes,
     ) {}
 
     public function create(string $direction, array $data, ?int $operatorId, ?string $operatorName): FinanceCashDocument
     {
         if (!in_array($direction, FinanceConstants::directions(), true)) throw ValidationException::withMessages(['direction' => '资金方向无效。']);
-        return DB::transaction(function () use ($direction, $data, $operatorId, $operatorName): FinanceCashDocument {
+        $draftItems = $this->normalizeDraftItems($data['draft_allocation_items'] ?? []);
+        $purchaseOrders = $this->purchasePurposes->normalize($data['purchase_order_allocations'] ?? []);
+        return DB::transaction(function () use ($direction, $data, $draftItems, $purchaseOrders, $operatorId, $operatorName): FinanceCashDocument {
+            $this->allocations->lockSources($draftItems);
             $account = FinanceAccount::query()->whereKey($data['finance_account_id'])->where('status', 'enabled')->lockForUpdate()->firstOrFail();
             $paymentMethod = $this->paymentMethods->resolveForFinance(
                 $data['payment_method_id'] ?? $data['payment_method'],
@@ -70,7 +76,12 @@ class FinanceCashDocumentApplicationService
                 'operator_id' => $operatorId, 'operator_name_snapshot' => $operatorName,
                 'remark' => $data['remark'] ?? null, 'status' => FinanceConstants::STATUS_DRAFT,
                 'idempotency_key' => $data['idempotency_key'] ?? null,
+                'draft_allocation_items' => $draftItems,
+                'purchase_order_allocations' => $purchaseOrders,
+                'purchase_order_allocation_reason' => $data['purchase_order_allocation_reason'] ?? null,
             ]);
+            $this->validateDraftSources($document, $draftItems);
+            $this->purchasePurposes->validateDraft($document, $purchaseOrders);
             $this->numbers->consume($data['reservation_token'], $type, $number, $operatorId, $type, $document->id);
             $this->log($document, 'create', null, FinanceConstants::STATUS_DRAFT, $operatorId, $operatorName, '创建资金单据草稿');
             return $document->fresh(['account', 'allocations', 'attachments', 'logs']);
@@ -79,10 +90,20 @@ class FinanceCashDocumentApplicationService
 
     public function updateDraft(int $id, array $data, ?int $operatorId, ?string $operatorName): FinanceCashDocument
     {
-        return DB::transaction(function () use ($id, $data, $operatorId, $operatorName): FinanceCashDocument {
+        $draftItems = array_key_exists('draft_allocation_items', $data)
+            ? $this->normalizeDraftItems($data['draft_allocation_items']) : null;
+        $purchaseOrders = array_key_exists('purchase_order_allocations', $data)
+            ? $this->purchasePurposes->normalize($data['purchase_order_allocations']) : null;
+        return DB::transaction(function () use ($id, $data, $draftItems, $purchaseOrders, $operatorId, $operatorName): FinanceCashDocument {
+            $this->allocations->lockSources($draftItems ?? []);
             $document = FinanceCashDocument::query()->lockForUpdate()->findOrFail($id);
             if ($document->status !== FinanceConstants::STATUS_DRAFT) throw ValidationException::withMessages(['status' => '只有草稿资金单可以编辑。']);
-            $changes = collect($data)->only(['business_date', 'finance_account_id', 'amount', 'external_reference_no', 'remark', 'platform_fee_amount', 'platform_fee_account_id', 'platform_fee_type'])->all();
+            $changes = collect($data)->only(['business_date', 'finance_account_id', 'amount', 'external_reference_no', 'remark', 'platform_fee_amount', 'platform_fee_account_id', 'platform_fee_type', 'purchase_order_allocation_reason'])->all();
+            if ($purchaseOrders !== null) $changes['purchase_order_allocations'] = $purchaseOrders;
+            if ($draftItems !== null) {
+                $this->validateDraftSources($document, $draftItems);
+                $changes['draft_allocation_items'] = $draftItems;
+            }
             if (array_key_exists('payment_method_id', $data) || array_key_exists('payment_method', $data)) {
                 $method = $this->paymentMethods->resolveForFinance(
                     $data['payment_method_id'] ?? $data['payment_method'],
@@ -126,15 +147,17 @@ class FinanceCashDocumentApplicationService
             } else {
                 $changes = [...$changes, 'platform_fee_currency' => null, 'platform_fee_account_id' => null, 'platform_fee_base_amount' => '0.0000', 'platform_fee_type' => null];
             }
-            $document->update($changes);
+            $document->fill($changes);
+            $this->purchasePurposes->validateDraft($document, $purchaseOrders ?? $this->purchasePurposes->normalize($document->purchase_order_allocations ?? []));
+            $document->save();
             $this->log($document, 'update_draft', FinanceConstants::STATUS_DRAFT, FinanceConstants::STATUS_DRAFT, $operatorId, $operatorName, '修改资金单据草稿');
             return $document->fresh(['account', 'allocations', 'attachments', 'logs']);
         }, 5);
     }
 
-    public function confirm(int $id, ?int $operatorId, ?string $operatorName): FinanceCashDocument
+    public function confirm(int $id, ?int $operatorId, ?string $operatorName, bool $deferPurchaseBalanceCheck = false): FinanceCashDocument
     {
-        return DB::transaction(function () use ($id, $operatorId, $operatorName): FinanceCashDocument {
+        return DB::transaction(function () use ($id, $operatorId, $operatorName, $deferPurchaseBalanceCheck): FinanceCashDocument {
             $document = FinanceCashDocument::query()->with('account')->lockForUpdate()->findOrFail($id);
             if ($document->status !== FinanceConstants::STATUS_DRAFT) throw ValidationException::withMessages(['status' => '只有草稿资金单可以确认。']);
             if ($document->account?->status !== 'enabled') throw ValidationException::withMessages(['finance_account_id' => '资金账户已停用。']);
@@ -146,6 +169,7 @@ class FinanceCashDocumentApplicationService
             // historical snapshot so later rate changes cannot recalculate it.
             $exchange = $this->rates->businessSnapshot((string) $document->currency, $document->business_date->toDateString());
             $baseAmount = $this->rates->convert((string) $document->amount, $exchange['rate']);
+            $this->purchasePurposes->freezeForConfirmation($document, $operatorId, $operatorName);
             $document->update([
                 'base_currency' => $exchange['target_currency'], 'exchange_rate_id' => $exchange['exchange_rate_id'],
                 'business_exchange_rate' => $exchange['rate'], 'exchange_rate_date' => $exchange['rate_date'],
@@ -154,6 +178,7 @@ class FinanceCashDocumentApplicationService
                 'payment_method' => $method->method_code,
                 'payment_method_id' => $method->id,
                 'payment_method_snapshot' => [...$this->paymentMethods->snapshot($method), 'frozen_at' => now()->toISOString()],
+                'draft_allocation_items' => [],
             ]);
             $this->ledger->append([
                 'finance_account_id' => $document->finance_account_id, 'movement_type' => 'cash_document', 'source_type' => 'cash_document', 'source_id' => $document->id,
@@ -170,6 +195,9 @@ class FinanceCashDocumentApplicationService
                 $document->update(['platform_fee_base_amount' => $feeBase]);
             }
             $this->log($document, 'confirm', FinanceConstants::STATUS_DRAFT, FinanceConstants::STATUS_CONFIRMED, $operatorId, $operatorName, '确认真实资金事实');
+            // A return refund may acquire its official return allocation in the
+            // same outer confirmation transaction; validate its net balance last.
+            if (! $deferPurchaseBalanceCheck) $this->purchasePurposes->assertNetAvailableForCash($document->id);
             return $document->fresh(['account', 'allocations', 'attachments', 'logs']);
         }, 5);
     }
@@ -177,9 +205,9 @@ class FinanceCashDocumentApplicationService
     public function void(int $id, string $reason, ?int $operatorId, ?string $operatorName): FinanceCashDocument
     {
         return DB::transaction(function () use ($id, $reason, $operatorId, $operatorName): FinanceCashDocument {
-            $document = FinanceCashDocument::query()->with('allocations')->lockForUpdate()->findOrFail($id);
+            $document = FinanceCashDocument::query()->lockForUpdate()->findOrFail($id);
             if ($document->status !== FinanceConstants::STATUS_CONFIRMED) throw ValidationException::withMessages(['status' => '只有已确认资金单可以作废。']);
-            if ($document->allocations->where('status', FinanceConstants::ALLOCATION_ACTIVE)->isNotEmpty()) {
+            if ($document->allocations()->where('status', FinanceConstants::ALLOCATION_ACTIVE)->lockForUpdate()->first(['id'])) {
                 throw ValidationException::withMessages(['allocations' => '资金单仍有有效核销，必须先撤销核销再作废。']);
             }
             if (trim($reason) === '') throw ValidationException::withMessages(['void_reason' => '作废必须填写原因。']);
@@ -189,6 +217,7 @@ class FinanceCashDocumentApplicationService
             FinancePlatformFee::query()->whereIn('id', $feeIds)->update(['status' => 'voided']);
             FinanceAccountMovement::query()->where('source_type', 'platform_fee')->whereIn('source_id', $feeIds)->where('status', 'confirmed')->update(['status' => 'voided']);
             $this->log($document, 'void', FinanceConstants::STATUS_CONFIRMED, FinanceConstants::STATUS_VOIDED, $operatorId, $operatorName, $reason);
+            $this->purchasePurposes->assertNetAvailableForCash($document->id);
             return $document->fresh(['account', 'allocations', 'attachments', 'logs']);
         }, 5);
     }
@@ -201,5 +230,25 @@ class FinanceCashDocumentApplicationService
             'fact_snapshot' => ['document_no' => $document->document_no, 'direction' => $document->direction, 'amount' => (string) $document->amount, 'currency' => $document->currency],
             'operator_id' => $operatorId, 'operator_name' => $operatorName, 'content' => $content,
         ]);
+    }
+
+    private function normalizeDraftItems(mixed $items): array
+    {
+        Validator::make(['draft_allocation_items' => $items], FinanceAllocationApplicationService::itemRules('draft_allocation_items', 'present|array|max:100'))->validate();
+        return array_map(fn (array $row): array => [
+            'source_business_type' => $row['source_business_type'],
+            'source_document_id' => (int) $row['source_document_id'],
+            'source_line_id' => isset($row['source_line_id']) ? (int) $row['source_line_id'] : null,
+            'allocated_amount' => $this->allocations->amountForRow($row),
+            'idempotency_key' => $row['idempotency_key'],
+        ], $items);
+    }
+
+    private function validateDraftSources(FinanceCashDocument $document, array $items): void
+    {
+        // Draft rows are intent only: validate identity and source eligibility,
+        // but reserve no balance. Allocation rechecks amounts under its locks
+        // when the caller explicitly supplies items to confirmation.
+        foreach ($items as $row) $this->allocations->sourceForDocument($document, $row);
     }
 }

@@ -5,7 +5,7 @@ namespace App\Http\Controllers\Api\V1\Erp;
 use App\Http\Controllers\Controller;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\RbacBootstrapService;
-use App\Services\Erp\RbacUserRoleOwnershipService;
+use App\Services\Erp\SystemAdministrationApplicationService;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
@@ -16,7 +16,8 @@ class RbacController extends Controller
 {
     public function permissions(Request $request, RbacBootstrapService $rbac)
     {
-        $this->authorizePermission($request, 'system.menu.view');
+        $this->authorizePermission($request, $request->boolean('tree')
+            ? ['system.menu.view', 'system.role.view', 'system.role.create', 'system.role.save_permissions'] : 'system.menu.view');
         $rbac->bootstrap();
 
         if ($request->boolean('hierarchy')) {
@@ -131,66 +132,18 @@ class RbacController extends Controller
         return $this->paginated($paginator);
     }
 
-    public function saveRole(Request $request)
+    public function saveRole(Request $request, SystemAdministrationApplicationService $service)
     {
-        $data = $request->validate([
-            'id' => 'nullable|integer',
-            'code' => 'required|string|max:80',
-            'name' => 'required|string|max:120',
-            'data_scope' => 'required|in:all,department,self',
-            'enabled' => 'nullable|boolean',
-            'remark' => 'nullable|string',
-            'permission_ids' => 'nullable|array',
-            'permission_ids.*' => 'integer',
-        ]);
-        $permissionIds = $data['permission_ids'] ?? [];
-        $id = $data['id'] ?? null;
-        $this->authorizePermission($request, $id ? 'system.role.save_permissions' : 'system.role.create');
-        unset($data['id'], $data['permission_ids']);
-        $data['enabled'] = (bool) ($data['enabled'] ?? true);
-        $data['updated_at'] = now();
-        $id = DB::transaction(function () use ($id, $data, $permissionIds): int {
-            if ($id) {
-                abort_unless(Schema::hasColumn('erp_rbac_roles', 'is_system'), 503, '角色编辑保护结构尚未部署，请先更新数据库结构。');
-                $existing = DB::table('erp_rbac_roles')->where('id', $id)->lockForUpdate()->first();
-                abort_unless($existing, 404);
-                if (($existing->is_system ?? false) && $existing->code !== $data['code']) {
-                    throw ValidationException::withMessages(['code' => '系统内置角色编码不能修改。']);
-                }
-                DB::table('erp_rbac_roles')->where('id', $id)->update($data);
-            } else {
-                if (Schema::hasColumn('erp_rbac_roles', 'is_system')) $data['is_system'] = false;
-                $data['created_at'] = now();
-                $id = DB::table('erp_rbac_roles')->insertGetId($data);
-            }
-            DB::table('erp_rbac_role_permissions')->where('role_id', $id)->delete();
-            foreach (array_unique(array_map('intval', $permissionIds)) as $permissionId) {
-                DB::table('erp_rbac_role_permissions')->insert(['role_id' => $id, 'permission_id' => $permissionId]);
-            }
-            return (int) $id;
-        });
-        return response()->json(['id' => $id, 'message' => '角色已保存']);
+        $user = $this->authorizePermission($request, $request->filled('id') ? 'system.role.save_permissions' : 'system.role.create');
+        $auth = app(AuthContextService::class);
+        return response()->json($service->saveRole($request->all(), $user, $auth->permissionCodes($user), $auth->isSuperAdmin($user)));
     }
 
-    public function deleteRole(Request $request, int $id, RbacBootstrapService $rbac)
+    public function deleteRole(Request $request, int $id, SystemAdministrationApplicationService $service)
     {
         $user = $this->authorizePermission($request, 'system.role.delete');
-        abort_unless(Schema::hasColumn('erp_rbac_roles', 'is_system'), 503, '角色删除保护结构尚未部署，请先更新数据库结构。');
-        $rbac->bootstrap();
-        DB::transaction(function () use ($id, $user): void {
-            $role = DB::table('erp_rbac_roles')->where('id', $id)->lockForUpdate()->first();
-            abort_unless($role, 404);
-            abort_if((bool) ($role->is_system ?? false), 422, '系统内置角色不能删除，只能按业务需要停用。');
-            abort_if((bool) $role->enabled, 422, '角色必须先停用，确认不再使用后才能删除。');
-            abort_if(DB::table('erp_rbac_user_roles')->where('role_id', $id)->exists()
-                || DB::table('erp_rbac_user_role_sources')->where('role_id', $id)->exists(), 422, '该角色仍关联用户或身份来源，不能删除。');
-            abort_if($this->approvalFlowUsesRole((string) $role->code), 422, '该角色已被审核流程版本引用，不能删除。');
-
-            DB::table('erp_rbac_role_permissions')->where('role_id', $id)->delete();
-            $this->auditDeletion('rbac_role', $role, $user);
-            DB::table('erp_rbac_roles')->where('id', $id)->delete();
-        }, 5);
-        return response()->json(['message' => '停用且未被引用的自定义角色已删除。']);
+        $auth = app(AuthContextService::class);
+        return response()->json($service->deleteRole($id, $request->all(), $user, $auth->permissionCodes($user), $auth->isSuperAdmin($user)));
     }
 
     public function roleUsers(Request $request)
@@ -198,6 +151,7 @@ class RbacController extends Controller
         $this->authorizePermission($request, 'system.role.view');
         $roleId = (int) $request->input('role_id');
         abort_if(!$roleId, 422, '请选择角色');
+        abort_unless(DB::table('erp_rbac_roles')->where('id', $roleId)->exists(), 404, '角色不存在或已删除。');
 
         $query = DB::table('erp_rbac_user_roles as ur')
             ->join('erp_legacy_admin_users as u', 'ur.user_legacy_id', '=', 'u.legacy_id')
@@ -223,33 +177,18 @@ class RbacController extends Controller
         $paginator = $query->paginate($this->perPage($request));
         $paginator->through(function (object $row): object {
             $row->sources = $row->source_list ? explode(',', $row->source_list) : [];
-            $row->is_manual = (bool) $row->is_manual;
+            $row->is_manual = (bool) $row->is_manual || $row->sources === [];
             unset($row->source_list);
             return $row;
         });
         return $this->paginated($paginator);
     }
 
-    public function saveRoleUsers(Request $request, RbacUserRoleOwnershipService $ownership)
+    public function saveRoleUsers(Request $request, SystemAdministrationApplicationService $service)
     {
-        $this->authorizePermission($request, 'system.role.save_permissions');
-        $data = $request->validate([
-            'role_id' => 'required|integer',
-            'user_ids' => 'nullable|array',
-            'user_ids.*' => 'integer',
-        ]);
-        DB::transaction(function () use ($data, $ownership): void {
-            $roleId = (int) $data['role_id'];
-            $selected = array_values(array_unique(array_map('intval', $data['user_ids'] ?? [])));
-            // user_ids 表达页面上的手工勾选集合，只能与 manual 所有权比较。
-            // 有效角色并集还可能由 SSO、部门或系统来源持有，绝不能在保存时认领成 manual。
-            $existing = DB::table('erp_rbac_user_role_sources')->where('role_id', $roleId)
-                ->where('assignment_source', RbacUserRoleOwnershipService::SOURCE_MANUAL)
-                ->lockForUpdate()->pluck('user_legacy_id')->map(fn ($id) => (int) $id)->all();
-            foreach (array_diff($existing, $selected) as $userId) $ownership->removeManualRole($userId, $roleId);
-            foreach (array_diff($selected, $existing) as $userId) $ownership->addManualRole($userId, $roleId);
-        });
-        return response()->json(['message' => '角色用户已保存']);
+        $user = $this->authorizePermission($request, 'system.role.save_permissions');
+        $auth = app(AuthContextService::class);
+        return response()->json($service->saveRoleMembers($request->all(), $user, $auth->permissionCodes($user), $auth->isSuperAdmin($user)));
     }
 
     private function perPage(Request $request): int
@@ -257,12 +196,12 @@ class RbacController extends Controller
         return max(1, min(100, (int) $request->input('per_page', 20)));
     }
 
-    private function authorizePermission(Request $request, string $permission): object
+    private function authorizePermission(Request $request, string|array $permission): object
     {
         $auth = app(AuthContextService::class);
         $user = $request->attributes->get('erp_user') ?: $auth->currentUser($request);
         abort_unless($user, 401, '请先登录 ERP。');
-        abort_unless($auth->isSuperAdmin($user) || in_array($permission, $auth->permissionCodes($user), true), 403, '当前用户没有系统管理权限。');
+        abort_unless($auth->isSuperAdmin($user) || array_intersect((array) $permission, $auth->permissionCodes($user)), 403, '当前用户没有系统管理权限。');
         return $user;
     }
 
@@ -349,21 +288,6 @@ class RbacController extends Controller
                 'disabled' => $permissions->where('enabled', false)->count(),
             ],
         ]);
-    }
-
-    private function approvalFlowUsesRole(string $roleCode): bool
-    {
-        return DB::table('erp_approval_flow_versions')
-            ->orderBy('id')
-            ->get(['definition_snapshot'])
-            ->contains(function (object $version) use ($roleCode): bool {
-                $definition = json_decode((string) $version->definition_snapshot, true);
-                foreach ((array) ($definition['nodes'] ?? []) as $node) {
-                    $rule = (array) ($node['approver_rule'] ?? []);
-                    if (($rule['type'] ?? null) === 'role' && (string) ($rule['value'] ?? '') === $roleCode) return true;
-                }
-                return false;
-            });
     }
 
     private function auditDeletion(string $type, object $record, object $user): void

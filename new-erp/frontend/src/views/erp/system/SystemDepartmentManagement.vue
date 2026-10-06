@@ -5,7 +5,7 @@
         <div class="system-crumb">系统管理　/　<b>部门管理</b></div>
         <h1>部门管理</h1>
       </div>
-      <el-button icon="el-icon-refresh" @click="load">刷新</el-button>
+      <div class="title-actions"><el-button icon="el-icon-refresh" :loading="loading" @click="load">刷新</el-button><el-button v-if="$can('system.department.save')" type="success" icon="el-icon-plus" @click="openDepartmentForm()">新增部门</el-button></div>
     </div>
 
     <div class="dept-workbench">
@@ -17,7 +17,8 @@
             v-for="node in filteredTree"
             :key="node.legacy_id"
             class="dept-node"
-            :class="{ active: current && current.legacy_id === node.legacy_id, child: node.parent_legacy_id }"
+            :class="{ active: current && current.legacy_id === node.legacy_id }"
+            :style="{ paddingLeft: (10 + Math.min(node.depth, 4) * 16) + 'px' }"
             @click="openDepartment(node)"
           >
             <i :class="node.parent_legacy_id ? 'el-icon-folder' : 'el-icon-office-building'" />
@@ -31,8 +32,9 @@
 
       <main v-if="current" class="dept-detail">
         <div class="detail-head">
-          <h2>部门详情 <span>公司 / {{ current.name }}</span></h2>
+          <h2>部门详情 <span>{{ current.parent_legacy_id ? parentName(current) + ' / ' : '' }}{{ current.name }}</span></h2>
         </div>
+        <div class="system-actions dept-actionbar"><el-button v-if="$can('system.department.save')" icon="el-icon-edit" @click="openDepartmentForm(current)">修改部门</el-button><el-button v-if="$can('system.department.save')" icon="el-icon-plus" @click="openDepartmentForm(null, current.legacy_id)">新增下级部门</el-button><el-button v-if="$can('system.department.delete')" class="danger-link" icon="el-icon-delete" :disabled="saving" @click="removeDepartment">删除部门</el-button></div>
 
         <section class="base-info">
           <h3>基本信息</h3>
@@ -41,24 +43,20 @@
             <dt>部门负责人：</dt><dd>{{ principalNames || '未设置' }}</dd>
             <dt>排序号：</dt><dd>{{ current.sort || 0 }}</dd>
             <dt>上级部门：</dt><dd>{{ parentName(current) }}</dd>
-            <dt>部门成员：</dt><dd>{{ memberTotal }} 名</dd>
+            <dt>部门成员：</dt><dd>{{ current.member_count || 0 }} 名</dd>
             <dt>状态：</dt><dd><el-switch :value="current.status === 'normal'" active-color="#07883f" disabled /></dd>
-            <dt>部门编码：</dt><dd>DEP-{{ String(current.legacy_id).padStart(3, '0') }}</dd>
-            <dt>创建时间：</dt><dd>2026-07-15 09:18:26</dd>
-            <dt>更新人：</dt><dd>张伟</dd>
-            <dt>更新时间：</dt><dd>2026-07-15 10:32:45</dd>
+            <dt>部门编号：</dt><dd>{{ current.legacy_id }}</dd>
+            <dt>创建时间：</dt><dd>{{ timeText(current.created_at) }}</dd>
+            <dt>更新时间：</dt><dd>{{ timeText(current.updated_at) }}</dd>
           </dl>
         </section>
 
         <section class="principals">
           <div class="section-title">
-            <h3>部门负责人 <small>部门负责人有本部门数据范围内的全部查看权限（不提升按钮权限）</small></h3>
-            <el-button icon="el-icon-edit" @click="editPrincipal = true">编辑负责人</el-button>
+            <h3>部门负责人 <small>按部门范围和角色权限访问业务</small></h3>
+            <el-button v-if="$can('system.department.set_principal')" icon="el-icon-edit" :disabled="saving" @click="principalPickerVisible = true">编辑负责人</el-button>
           </div>
-          <el-select v-model="principalIds" multiple filterable placeholder="请选择负责人（可多选）" :disabled="!editPrincipal">
-            <el-option v-for="member in members" :key="member.id" :label="displayName(member)" :value="member.id" />
-          </el-select>
-          <el-button v-if="editPrincipal" type="success" @click="savePrincipals">保存负责人</el-button>
+          <div class="principal-tags"><el-tag v-for="user in principalUsers" :key="user.id">{{ displayName(user) }}</el-tag><span v-if="!principalUsers.length">未设置</span></div>
         </section>
 
         <section class="members">
@@ -73,37 +71,44 @@
             <el-select v-model="memberRole" clearable placeholder="全部角色"><el-option label="销售人员" value="sales" /><el-option label="负责人" value="principal" /><el-option label="普通成员" value="normal" /></el-select>
             <el-select v-model="memberStatus" clearable placeholder="全部状态"><el-option label="启用" value="normal" /><el-option label="停用" value="hidden" /></el-select>
           </div>
-          <el-table :data="pagedMembers" border>
-            <el-table-column type="selection" width="42" />
+          <el-table v-loading="memberLoading" :data="pagedMembers" border>
             <el-table-column label="姓名"><template slot-scope="{ row }">{{ displayName(row) }}</template></el-table-column>
             <el-table-column prop="username" label="账号" />
             <el-table-column label="组织身份"><template slot-scope="{ row }">{{ row.is_principal ? '部门负责人' : rowIdentity(row) }}</template></el-table-column>
-            <el-table-column label="数据范围"><template slot-scope="{ row }">{{ row.is_principal ? '本部门' : rowIdentity(row) === '销售人员' ? '仅本人' : '按角色' }}</template></el-table-column>
+            <el-table-column label="数据范围"><template slot-scope="{ row }">{{ scopeText(row.data_scope) }}</template></el-table-column>
             <el-table-column label="状态"><template slot-scope="{ row }"><span class="member-status" :class="{ disabled: row.status !== 'normal' }">{{ row.status === 'normal' ? '启用' : '停用' }}</span></template></el-table-column>
           </el-table>
           <div class="pager-row"><span>共 {{ memberTotal }} 条</span><el-pagination background layout="sizes, prev, pager, next, jumper" :page-size.sync="pageSize" :current-page.sync="page" :total="memberTotal" @size-change="handleSizeChange" @current-change="handlePageChange" /></div>
         </section>
 
-        <section class="scope-impact">
-          <div>
-            <h3>数据范围影响 <small>预览</small></h3>
-            <ul>
-              <li>本部门负责人可查看本部门范围内的所有销售订单 / 库存单据 / 采购单据。</li>
-              <li>销售订单特殊规则：管理员和销售负责人看全部，销售人员只看自己的订单。</li>
-            </ul>
-          </div>
-          <div class="shield"><i class="el-icon-user-solid" /></div>
-        </section>
-
       </main>
+      <div v-else class="empty-state">暂无部门，请新增部门。</div>
     </div>
+    <el-dialog :title="departmentForm.legacy_id ? '修改部门' : '新增部门'" :visible.sync="departmentFormVisible" append-to-body width="760px" top="5vh" custom-class="system-management-dialog" :close-on-click-modal="false" :close-on-press-escape="!saving" :show-close="!saving" @closed="!departmentFormVisible && resetDepartmentForm()">
+      <el-form ref="departmentForm" :model="departmentForm" :rules="departmentRules" label-position="top">
+        <div class="form-grid">
+          <el-form-item label="部门名称" prop="name"><el-input v-model.trim="departmentForm.name" maxlength="120" /></el-form-item>
+          <el-form-item label="上级部门" prop="parent_legacy_id"><el-cascader v-model="departmentForm.parent_legacy_id" :options="parentOptions" :props="{ checkStrictly: true, emitPath: false }" placeholder="选择上级部门" /></el-form-item>
+          <el-form-item label="状态"><el-radio-group v-model="departmentForm.status"><el-radio label="normal">启用</el-radio><el-radio label="hidden">停用</el-radio></el-radio-group></el-form-item>
+          <el-form-item label="排序号"><el-input-number v-model="departmentForm.sort" controls-position="right" :min="-999999" :max="999999" /></el-form-item>
+        </div>
+      </el-form>
+      <span slot="footer"><el-button :disabled="saving" @click="departmentFormVisible = false">取消</el-button><el-button type="success" :loading="saving" @click="submitDepartmentForm">保存</el-button></span>
+    </el-dialog>
+    <system-record-picker :visible.sync="principalPickerVisible" type="users" :department-id="current ? Number(current.legacy_id) : 0" :value="principalUsers" @confirm="savePrincipals" />
   </section>
 </template>
 
 <script>
-import { listDepartments, listDepartmentMembers, saveDepartmentPrincipals } from '@/api/erp/rbac'
+import { listDepartments, listDepartmentMembers, saveDepartmentPrincipals, saveDepartment, deleteDepartment } from '@/api/erp/rbac'
+import SystemRecordPicker from '@/components/system/SystemRecordPicker.vue'
+import { departmentTree, flatDepartmentTree, newSystemCommand, systemMutation, systemTime, systemFormCommand } from '@/utils/systemManagement'
+import '@/styles/system-management.css'
+
+const emptyDepartment = () => ({ legacy_id: null, name: '', parent_legacy_id: 0, status: 'normal', sort: 0 })
 
 export default {
+  components: { SystemRecordPicker },
   data: () => ({
     departments: [],
     members: [],
@@ -119,13 +124,16 @@ export default {
     page: 1,
     pageSize: 10,
     memberTotal: 0,
-    filterTimer: null
+    filterTimer: null, loading: false, memberLoading: false, saving: false, loadSerial: 0, memberSerial: 0,
+    departmentFormVisible: false, departmentForm: emptyDepartment(), formCommand: '', formCommandState: null, principalPickerVisible: false,
+    departmentRules: { name: [{ required: true, message: '请输入部门名称', trigger: 'blur' }], parent_legacy_id: [{ required: true, message: '请选择上级部门', trigger: 'change' }] }
   }),
   computed: {
     filteredTree() {
       const keyword = this.keyword.trim()
-      return this.departments.filter(item => !keyword || item.name.includes(keyword))
+      return flatDepartmentTree(this.departments).filter(item => !keyword || item.name.includes(keyword))
     },
+    parentOptions() { return [{ value: 0, label: '无上级部门' }, ...departmentTree(this.departments, this.departmentForm.legacy_id)] },
     filteredMembers() {
       return this.members
     },
@@ -141,6 +149,7 @@ export default {
   },
   beforeDestroy() {
     if (this.filterTimer) clearTimeout(this.filterTimer)
+    this.loadSerial += 1; this.memberSerial += 1
   },
   watch: {
     memberKeyword() {
@@ -155,27 +164,36 @@ export default {
   },
   methods: {
     async load() {
-      const { data } = await listDepartments({ tree: 1 })
-      this.departments = data
-      this.memberCountMap = data.reduce((map, dept) => ({ ...map, [dept.legacy_id]: dept.member_count || 0 }), {})
-      if (!this.current && data.length) await this.selectDepartment(data[0])
-      else if (this.current) await this.selectDepartment(data.find(item => item.legacy_id === this.current.legacy_id) || data[0])
+      const serial = ++this.loadSerial; this.loading = true
+      try {
+        const { data } = await listDepartments({ tree: 1 })
+        if (serial !== this.loadSerial) return
+        this.departments = data || []
+        this.memberCountMap = this.departments.reduce((map, dept) => ({ ...map, [dept.legacy_id]: dept.member_count || 0 }), {})
+        await this.selectDepartment(this.current ? data.find(item => item.legacy_id === this.current.legacy_id) || data[0] : data[0])
+      } catch (error) {
+        if (serial !== this.loadSerial) return
+        this.departments = []; await this.selectDepartment(null); this.$message.error(error.userMessage || '部门列表加载失败')
+      } finally { if (serial === this.loadSerial) this.loading = false }
     },
     async selectDepartment(dept) {
-      if (!dept) return
-      this.current = dept
+      const serial = ++this.memberSerial
+      this.current = dept || null
+      if (!dept) { this.members = []; this.principalUsers = []; this.principalIds = []; this.memberTotal = 0; this.memberLoading = false; return }
       this.editPrincipal = false
-      const { data } = await listDepartmentMembers(dept.legacy_id, {
-        page: this.page,
-        per_page: this.pageSize,
-        keyword: this.memberKeyword,
-        role: this.memberRole,
-        status: this.memberStatus
-      })
-      this.members = (data.data || []).map(row => ({ ...row, is_principal: Boolean(row.is_principal) }))
-      this.principalUsers = (data.principals || []).map(row => ({ ...row, is_principal: Boolean(row.is_principal) }))
-      this.principalIds = this.principalUsers.map(row => row.id)
-      this.memberTotal = data.meta ? data.meta.total : this.members.length
+      this.memberLoading = true
+      try {
+        const { data } = await listDepartmentMembers(dept.legacy_id, { page: this.page, per_page: this.pageSize, keyword: this.memberKeyword, role: this.memberRole, status: this.memberStatus })
+        if (serial !== this.memberSerial) return
+        this.members = (data.data || []).map(row => ({ ...row, is_principal: Boolean(row.is_principal) }))
+        this.principalUsers = (data.principals || []).map(row => ({ ...row, is_principal: Boolean(row.is_principal) }))
+        this.principalIds = this.principalUsers.map(row => row.id)
+        this.memberTotal = data.meta ? data.meta.total : this.members.length
+        if (!this.members.length && this.page > 1) { this.page -= 1; return this.selectDepartment(dept) }
+      } catch (error) {
+        if (serial !== this.memberSerial) return
+        this.members = []; this.principalUsers = []; this.memberTotal = 0; this.$message.error(error.userMessage || '部门成员加载失败')
+      } finally { if (serial === this.memberSerial) this.memberLoading = false }
     },
     openDepartment(dept) {
       this.page = 1
@@ -190,13 +208,44 @@ export default {
       if (this.filterTimer) clearTimeout(this.filterTimer)
       this.filterTimer = setTimeout(() => this.reloadMembers(), 250)
     },
-    async savePrincipals() {
-      if (!this.current) return
-      await saveDepartmentPrincipals(this.current.legacy_id, this.principalIds)
-      this.$message.success('部门负责人已保存')
-      this.editPrincipal = false
-      await this.selectDepartment(this.current)
+    async savePrincipals(rows) {
+      if (!this.current || this.saving) return
+      this.saving = true
+      try { await saveDepartmentPrincipals(this.current.legacy_id, rows.map(row => row.id), systemMutation(this.current)); this.$message.success('部门负责人已保存'); await this.load() }
+      catch (error) { this.$message.error(error.userMessage || '负责人保存失败') }
+      finally { this.saving = false }
     },
+    resetDepartmentForm() { this.departmentForm = emptyDepartment(); this.formCommand = ''; this.formCommandState = null; this.$nextTick(() => this.$refs.departmentForm && this.$refs.departmentForm.clearValidate()) },
+    openDepartmentForm(row, parent = 0) {
+      this.resetDepartmentForm(); this.departmentForm = row ? { ...emptyDepartment(), ...row } : { ...emptyDepartment(), parent_legacy_id: parent }
+      this.formCommand = newSystemCommand(); this.departmentFormVisible = true
+    },
+    async submitDepartmentForm() {
+      if (this.saving || !(await this.$refs.departmentForm.validate().catch(() => false))) return
+      this.saving = true
+      try {
+        const payload = { ...this.departmentForm, ...(this.departmentForm.legacy_id ? { expected_version: this.departmentForm.business_version } : {}) }
+        this.formCommandState = systemFormCommand(this.formCommandState, payload, this.formCommand)
+        const { data } = await saveDepartment({ ...payload, client_command_id: this.formCommandState.id })
+        this.current = data; this.page = 1; this.$message.success('部门已保存'); this.departmentFormVisible = false; await this.load()
+      } catch (error) {
+        this.$message.error(error.userMessage || '部门保存失败')
+        if (error.response && error.response.status !== 0) { this.formCommand = newSystemCommand(); this.formCommandState = null }
+      }
+      finally { this.saving = false }
+    },
+    async removeDepartment() {
+      if (this.saving || !this.current) return
+      const row = { ...this.current }
+      try { await this.$confirm(`确定删除部门“${row.name}”？仍有下级、成员或审批引用的部门不能删除。`, '删除部门', { type: 'warning', confirmButtonText: '删除' }) }
+      catch (_) { return }
+      this.saving = true
+      try { await deleteDepartment(row.legacy_id, systemMutation(row)); this.$message.success('部门已删除'); this.current = null; this.page = 1; await this.load() }
+      catch (error) { this.$message.error(error.userMessage || '部门删除失败') }
+      finally { this.saving = false }
+    },
+    timeText: systemTime,
+    scopeText(value) { return ({ all: '全部数据', department: '本部门数据', self: '本人数据' })[value] || '本人数据' },
     handleSizeChange(size) {
       this.pageSize = size
       this.page = 1
@@ -218,8 +267,9 @@ export default {
       return row.nickname || row.username || `用户${row.id}`
     },
     parentName(row) {
+      if (!row.parent_legacy_id) return '无上级部门'
       const parent = this.departments.find(item => item.legacy_id === row.parent_legacy_id)
-      return parent ? parent.name : '公司'
+      return parent ? parent.name : '上级部门不存在'
     }
   }
 }
@@ -231,4 +281,38 @@ export default {
 .dept-detail{padding:14px 14px 10px}.detail-head{height:52px;display:flex;justify-content:space-between;align-items:flex-start;border-bottom:1px solid #e5ebf2}.detail-head h2{margin:0;font-size:16px}.detail-head span{margin-left:14px;color:#6d7785;font-size:13px;font-weight:400}.dept-detail section{padding:14px 0;border-bottom:1px solid #e5ebf2}.dept-detail h3{margin:0 0 10px;font-size:14px}.dept-detail small{font-weight:400;color:#7b8798;margin-left:6px}
 .base-info dl{display:grid;grid-template-columns:90px 1fr 90px 1fr 90px 1fr;gap:12px 18px;margin:0}.base-info dt{color:#6c788a;text-align:right}.base-info dd{margin:0}.section-title{display:flex;justify-content:space-between;align-items:center}.principals{display:grid;grid-template-columns:1fr auto;gap:12px}.principals .section-title{grid-column:1/3}.principals .el-select{width:100%}.member-help{color:#7b8798;font-size:12px}.member-filter{display:grid;grid-template-columns:1fr 190px 190px;gap:12px;margin-bottom:10px}.pager-row{height:50px;display:flex;align-items:center;gap:16px}.pager-row>span{margin-right:auto;color:#667487}
 .scope-impact{display:grid;grid-template-columns:1fr 160px;align-items:center;background:#f4f9ff;border:1px solid #d8e9ff!important;border-radius:4px;padding:16px!important}.scope-impact ul{margin:0;padding-left:18px;color:#526176;line-height:2}.shield{justify-self:center;width:106px;height:86px;display:grid;place-items:center;background:#e5f1ff;border-radius:24px;color:#2f80ed;font-size:46px}
+</style>
+
+<style scoped>
+.dept-workbench { grid-template-columns: 300px minmax(0, 1fr); }
+.dept-tree-panel,
+.dept-detail { min-width: 0; }
+.dept-node { height: auto; min-height: 42px; grid-template-columns: 22px minmax(0, 1fr) 32px 36px; }
+.dept-node > span:first-of-type { overflow-wrap: anywhere; line-height: 1.5; }
+.dept-actionbar { margin: 14px 0; }
+.base-info dl { grid-template-columns: 90px minmax(0, 1fr) 90px minmax(0, 1fr); }
+.base-info dd { overflow-wrap: anywhere; }
+.detail-head { height: auto; min-height: 52px; }
+.section-title { gap: 12px; flex-wrap: wrap; }
+.principals { display: block; }
+.principal-tags { display: flex; flex-wrap: wrap; gap: 8px; }
+.member-filter { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr); }
+.pager-row { height: auto; min-height: 50px; flex-wrap: wrap; padding: 10px 0; }
+.scope-impact { grid-template-columns: minmax(0, 1fr) 100px; }
+.scope-impact { background: #f0fdf4; border-color: #bbf7d0 !important; }
+.shield { color: #008b4b; background: #dcfce7; width: 80px; height: 70px; }
+@media (max-width: 1180px) {
+  .dept-workbench { grid-template-columns: minmax(0, 1fr); }
+  .dept-tree-panel { min-height: 0; }
+  .dept-tree { max-height: 320px; }
+}
+@media (max-width: 780px) {
+  .system-frame { padding: 14px 12px; }
+  .base-info dl { grid-template-columns: 90px minmax(0, 1fr); }
+  .member-filter { grid-template-columns: minmax(0, 1fr); }
+  .scope-impact { grid-template-columns: minmax(0, 1fr); }
+  .shield { display: none; }
+  .pager-row ::v-deep .el-pagination__sizes,
+  .pager-row ::v-deep .el-pagination__jump { display: none; }
+}
 </style>

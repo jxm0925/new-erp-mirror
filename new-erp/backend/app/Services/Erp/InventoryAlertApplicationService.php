@@ -194,7 +194,11 @@ class InventoryAlertApplicationService
         return DB::transaction(function () use ($alertId, $operatorId) {
             $alert = InventoryAlert::query()->with('item')->lockForUpdate()->findOrFail($alertId);
             if (!$alert->is_active) throw ValidationException::withMessages(['alert' => '该预警已解除，不能再生成采购需求。']);
-            if ($alert->purchase_request_id) return PurchaseRequest::query()->with(['items.item', 'items.unit', 'items.warehouse'])->findOrFail($alert->purchase_request_id);
+            if ($alert->purchase_request_id) {
+                $linked = PurchaseRequest::query()->with(['items.item', 'items.unit', 'items.warehouse'])->find($alert->purchase_request_id);
+                if ($linked) return $linked;
+                // 已软删除的需求保留历史；仍在生效的预警允许再次生成新需求，不恢复旧单。
+            }
             $exists = PurchaseRequest::query()->where('source_type', 'inventory_alert')->where('source_id', (string) $alert->id)
                 ->whereNotIn('request_status', ['cancelled', 'closed'])->first();
             if ($exists) { $alert->update(['purchase_request_id' => $exists->id]); return $exists; }

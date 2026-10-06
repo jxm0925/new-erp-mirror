@@ -11,6 +11,7 @@ class PurchaseOrder extends PurchaseBaseModel
         'amount_incl_tax' => 'decimal:4',
         'freight_amount' => 'decimal:4',
         'other_purchase_cost_amount' => 'decimal:4',
+        'payment_plan_version' => 'integer',
     ];
     public function plan() { return $this->belongsTo(PurchasePlan::class, 'plan_id'); }
     public function supplier() { return $this->belongsTo(Supplier::class); }
@@ -18,4 +19,5 @@ class PurchaseOrder extends PurchaseBaseModel
     public function receipts() { return $this->hasMany(PurchaseReceipt::class, 'order_id'); }
     public function attachments() { return $this->hasMany(PurchaseAttachment::class, 'document_id')->where('document_type', 'order'); }
     public function logs() { return $this->hasMany(PurchaseLog::class, 'target_id')->where('target_type', 'purchase_order')->latest('id'); }
+    public function paymentPlanItems() { return $this->hasMany(PurchasePaymentPlanItem::class)->where('status', 'active')->orderBy('sequence_no'); }
 }

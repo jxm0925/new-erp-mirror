@@ -79,10 +79,8 @@ import DocumentNumberRuleList from './views/erp/system/DocumentNumberRuleList.vu
 import FinanceAccountList from './views/erp/finance/FinanceAccountList.vue'
 import FinanceCashList from './views/erp/finance/FinanceCashList.vue'
 import FinanceCashForm from './views/erp/finance/FinanceCashForm.vue'
-import FinanceAllocation from './views/erp/finance/FinanceAllocation.vue'
-import FinanceAllocationList from './views/erp/finance/FinanceAllocationList.vue'
 import FinancePayableList from './views/erp/finance/FinancePayableList.vue'
-import FinanceSupplierLedgerList from './views/erp/finance/FinanceSupplierLedgerList.vue'
+import { getCashDocument } from './api/erp/finance'
 import FinanceExchangeRateHistory from './views/erp/finance/FinanceExchangeRateHistory.vue'
 import FinanceTransferForm from './views/erp/finance/FinanceTransferForm.vue'
 import FinanceTransferList from './views/erp/finance/FinanceTransferList.vue'
@@ -211,16 +209,30 @@ const router = new VueRouter({
     { path: '/finance/payments', component: FinanceCashList, props: { direction: 'payment' }, meta: { permission: 'finance.view' } },
     { path: '/finance/payments/create', component: FinanceCashForm, props: { direction: 'payment' }, meta: { permission: 'finance.payment.create' } },
     { path: '/finance/payments/:id', component: FinanceCashForm, props: { direction: 'payment' }, meta: { permission: 'finance.view' } },
-    { path: '/finance/payables', component: FinancePayableList, meta: { permission: 'finance.payable.view' } },
-    { path: '/finance/supplier-ledgers', component: FinanceSupplierLedgerList, meta: { permission: 'finance.supplier-ledger.view' } },
+    { path: '/finance/payables', component: FinancePayableList, meta: { permission: ['finance.payable.view', 'finance.supplier-ledger.view'] } },
+    { path: '/finance/supplier-ledgers', redirect: to => ({ path: '/finance/payables', query: { ...to.query, view: 'suppliers' } }) },
+    { path: '/finance/statistics', component: () => import('./views/erp/finance/FinanceDashboard.vue'), meta: { permission: 'finance.view' } },
+    { path: '/finance/purchase-payment-statistics', redirect: '/finance/statistics' },
+    { path: '/finance/supplier-statistics', redirect: '/finance/statistics' },
+    { path: '/finance/sales-order-statistics', redirect: '/finance/statistics' },
     { path: '/finance/invoices', component: FinanceInvoiceList, meta: { permission: 'finance.invoice.view' } },
     { path: '/finance/invoices/create', component: FinanceInvoiceForm, meta: { permission: 'finance.invoice.create' } },
     { path: '/finance/invoices/:id/edit', component: FinanceInvoiceForm, meta: { permission: 'finance.invoice.edit_draft' } },
     { path: '/finance/invoices/:id/match', component: FinanceInvoiceMatch, meta: { permission: 'finance.invoice.match' } },
     { path: '/finance/invoices/:id/red', component: () => import('./views/erp/finance/FinanceInvoiceRed.vue'), meta: { permission: 'finance.invoice.create' } },
     { path: '/finance/invoices/:id', component: FinanceInvoiceDetail, meta: { permission: 'finance.invoice.view' } },
-    { path: '/finance/allocations', component: FinanceAllocationList, meta: { permission: 'finance.view' } },
-    { path: '/finance/allocations/:id', component: FinanceAllocation, meta: { permission: 'finance.view' } },
+    // 保留历史书签，但所有新操作统一回到收付款页面，避免留下第二套核销入口。
+    { path: '/finance/allocations', redirect: to => ({ path: to.query.direction === 'payment' ? '/finance/payments' : '/finance/receipts', query: { ...to.query, allocation_status: 'pending' } }) },
+    { path: '/finance/allocations/:id', meta: { permission: 'finance.view' }, beforeEnter: async (to, from, next) => {
+      try {
+        const response = await getCashDocument(to.params.id)
+        const document = response.data.data
+        next({ path: `/finance/${document.direction === 'receipt' ? 'receipts' : 'payments'}/${document.id}`, query: { allocation: '1' }, replace: true })
+      } catch (error) {
+        ElementUI.Message.error(error.userMessage || '资金单加载失败')
+        next('/finance/payments')
+      }
+    } },
     { path: '/finance/accounts', component: FinanceAccountList, meta: { permission: 'finance.view' } },
     { path: '/finance/exchange-rates', redirect: { path: '/finance/account-valuations', query: { rate_maintenance: '1' } } },
     { path: '/finance/transfers', component: FinanceTransferList, meta: { permission: 'finance.view' } },
@@ -246,7 +258,15 @@ router.beforeEach((to, from, next) => {
   const requiredPermission = to.matched.map(record => record.meta.permission).find(Boolean)
   const profile = JSON.parse(localStorage.getItem('erp_me') || '{}')
   const permissions = JSON.parse(localStorage.getItem('erp_permissions') || '[]')
-  if (requiredPermission && !profile.is_super_admin && !permissions.includes(requiredPermission)) {
+  const allowed = Array.isArray(requiredPermission)
+    ? requiredPermission.some(permission => permissions.includes(permission))
+    : permissions.includes(requiredPermission)
+  const allPermissions = to.matched.flatMap(record => record.meta.allPermissions || [])
+  if (!profile.is_super_admin && !allPermissions.every(permission => permissions.includes(permission))) {
+    ElementUI.Message.error('无权访问该页面')
+    return next('/console')
+  }
+  if (requiredPermission && !profile.is_super_admin && !allowed) {
     ElementUI.Message.error('无权访问该页面')
     return next('/console')
   }

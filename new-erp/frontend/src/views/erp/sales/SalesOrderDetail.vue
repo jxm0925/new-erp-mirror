@@ -141,10 +141,6 @@ Design status: Approved (Optimized for modern ERP layout & responsive UX)
             <span class="kv-value">{{ shippingCarrierName }}</span>
           </div>
           <div class="kv-item">
-            <span class="kv-label">预估运费</span>
-            <span class="kv-value font-medium font-mono">¥{{ money(order.carrier_fee) }}</span>
-          </div>
-          <div class="kv-item">
             <span class="kv-label">物流单号</span>
             <span class="kv-value font-mono">{{ (order.logistics_snapshot && order.logistics_snapshot.express_no) || '-' }}</span>
           </div>
@@ -294,6 +290,9 @@ Design status: Approved (Optimized for modern ERP layout & responsive UX)
     <!-- 下方业务追踪与审计中心 (Tab 控制台整合散落与空态卡片) -->
     <div ref="tabSection" class="detail-card tracking-console-card">
       <el-tabs v-model="activeTab" class="tracking-tabs">
+        <el-tab-pane v-if="$can('sales_order.view') && $can('sales_order.amount.view') && $can('finance.view')" label="采购关联" name="finance">
+          <div class="tab-pane-content"><sales-order-finance-panel v-if="activeTab === 'finance' && order.id" :order-id="order.id" /></div>
+        </el-tab-pane>
         <!-- Tab 1: 工单与工序跟踪 -->
         <el-tab-pane name="work_orders">
           <span slot="label">
@@ -535,10 +534,11 @@ Design status: Approved (Optimized for modern ERP layout & responsive UX)
 <script>
 import { confirmSalesOrder, formalConfirmSalesOrder, deleteSalesOrderAttachment, deleteSalesOrderDraft, downloadSalesOrderAttachment, getSalesOrder, listSalesOrderChanges, lockSalesOrderInventory } from '@/api/erp/sales'
 import SalesOrderAttachmentPreviewDialog from '@/components/sales/SalesOrderAttachmentPreviewDialog.vue'
+import SalesOrderFinancePanel from '@/components/sales/SalesOrderFinancePanel.vue'
 import { statusTag, statusText } from '@/utils/erpStatus'
 
 export default {
-  components: { SalesOrderAttachmentPreviewDialog },
+  components: { SalesOrderAttachmentPreviewDialog, SalesOrderFinancePanel },
   data: () => ({
     activeTab: 'work_orders',
     order: {},

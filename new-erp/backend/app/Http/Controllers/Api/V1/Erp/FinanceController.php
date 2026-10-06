@@ -27,6 +27,8 @@ use App\Services\Erp\PurchasePayableQueryService;
 use App\Services\Erp\FinanceInvoiceQueryService;
 use App\Services\Erp\FinanceInvoiceApplicationService;
 use App\Services\Erp\FinanceCashDocumentApplicationService;
+use App\Services\Erp\FinanceCashConfirmationApplicationService;
+use App\Services\Erp\FinanceCashPurchaseAllocationApplicationService;
 use App\Services\Erp\FinanceCurrencyApplicationService;
 use App\Services\Erp\FinanceExchangeRateApplicationService;
 use App\Services\Erp\FinanceAccountTransferApplicationService;
@@ -379,6 +381,7 @@ class FinanceController extends Controller
     {
         $this->authorizePermission($request, 'finance.view');
         abort_unless(in_array($direction, FinanceConstants::directions(), true), 404);
+        $data = $request->validate(['allocation_status' => 'nullable|in:pending,settled']);
         $query = FinanceCashDocument::query()->with('account')->where('direction', $direction)->latest('business_date')->latest('id');
         foreach (['status', 'party_type', 'currency', 'finance_account_id'] as $field) if ($request->filled($field)) $query->where($field, $request->input($field));
         if ($request->filled('party_id')) $query->where('party_id', $request->integer('party_id'));
@@ -386,6 +389,15 @@ class FinanceController extends Controller
         if ($request->filled('business_date_start')) $query->whereDate('business_date', '>=', $request->date('business_date_start'));
         if ($request->filled('business_date_end')) $query->whereDate('business_date', '<=', $request->date('business_date_end'));
         if ($keyword = trim((string) $request->input('keyword'))) $query->where(fn ($q) => $q->where('document_no', 'like', "%{$keyword}%")->orWhere('party_name_snapshot', 'like', "%{$keyword}%")->orWhere('external_reference_no', 'like', "%{$keyword}%"));
+        if (! empty($data['allocation_status'])) {
+            $allocated = FinanceAllocation::query()->selectRaw('COALESCE(SUM(allocated_amount), 0)')
+                ->whereColumn('cash_document_id', 'erp_finance_cash_documents.id')
+                ->where('status', FinanceConstants::ALLOCATION_ACTIVE);
+            // Filter before pagination so totals and page membership reflect
+            // confirmed cash facts; saved draft intent never consumes money.
+            $query->where('status', FinanceConstants::STATUS_CONFIRMED)
+                ->where('amount', $data['allocation_status'] === 'pending' ? '>' : '=', $allocated);
+        }
         return response()->json($query->paginate($this->perPage($request))->through(fn ($doc) => $this->cashPayload($doc)));
     }
 
@@ -408,8 +420,11 @@ class FinanceController extends Controller
             'payment_method' => 'required_without:payment_method_id|string|max:60', 'external_reference_no' => 'nullable|string|max:160',
             'platform_fee_amount' => ['nullable', 'regex:/^\d+(\.\d{1,4})?$/'], 'platform_fee_account_id' => 'nullable|integer|exists:erp_finance_accounts,id', 'platform_fee_type' => 'nullable|in:platform,bank,other',
             'remark' => 'nullable|string|max:1000', 'idempotency_key' => 'nullable|string|max:100',
+            ...FinanceAllocationApplicationService::itemRules('draft_allocation_items', 'sometimes|array|max:100'),
+            ...FinanceCashPurchaseAllocationApplicationService::rules(),
+            'purchase_order_allocation_reason' => 'nullable|string|max:1000',
         ]);
-        return response()->json(['data' => $service->create($direction, $data, $user->legacy_id, $this->operatorName($user))], 201);
+        return response()->json(['data' => $this->cashPayload($service->create($direction, $data, $user->legacy_id, $this->operatorName($user)))], 201);
     }
 
     public function updateCashDocument(Request $request, int $id, FinanceCashDocumentApplicationService $service)
@@ -417,16 +432,36 @@ class FinanceController extends Controller
         $document = FinanceCashDocument::findOrFail($id);
         $permission = $document->direction === FinanceConstants::DIRECTION_RECEIPT ? 'finance.receipt.create' : 'finance.payment.create';
         $user = $this->authorizePermission($request, $permission);
-        $data = $request->validate(['business_date' => 'sometimes|date', 'finance_account_id' => 'sometimes|integer|exists:erp_finance_accounts,id', 'amount' => ['sometimes', 'regex:/^\d+(\.\d{1,4})?$/'], 'payment_method_id' => 'sometimes|integer|exists:erp_payment_methods,id', 'payment_method' => 'sometimes|string|max:60', 'external_reference_no' => 'nullable|string|max:160', 'platform_fee_amount' => ['nullable', 'regex:/^\d+(\.\d{1,4})?$/'], 'platform_fee_account_id' => 'nullable|integer|exists:erp_finance_accounts,id', 'platform_fee_type' => 'nullable|in:platform,bank,other', 'remark' => 'nullable|string|max:1000']);
-        return response()->json(['data' => $service->updateDraft($id, $data, $user->legacy_id, $this->operatorName($user))]);
+        $data = $request->validate([
+            'business_date' => 'sometimes|date', 'finance_account_id' => 'sometimes|integer|exists:erp_finance_accounts,id', 'amount' => ['sometimes', 'regex:/^\d+(\.\d{1,4})?$/'], 'payment_method_id' => 'sometimes|integer|exists:erp_payment_methods,id', 'payment_method' => 'sometimes|string|max:60', 'external_reference_no' => 'nullable|string|max:160', 'platform_fee_amount' => ['nullable', 'regex:/^\d+(\.\d{1,4})?$/'], 'platform_fee_account_id' => 'nullable|integer|exists:erp_finance_accounts,id', 'platform_fee_type' => 'nullable|in:platform,bank,other', 'remark' => 'nullable|string|max:1000',
+            ...FinanceAllocationApplicationService::itemRules('draft_allocation_items', 'sometimes|array|max:100'),
+            ...FinanceCashPurchaseAllocationApplicationService::rules(),
+            'purchase_order_allocation_reason' => 'nullable|string|max:1000',
+        ]);
+        return response()->json(['data' => $this->cashPayload($service->updateDraft($id, $data, $user->legacy_id, $this->operatorName($user)))]);
     }
 
-    public function confirmCashDocument(Request $request, int $id, FinanceCashDocumentApplicationService $service)
+    public function replacePurchaseOrderAllocations(Request $request, int $id, FinanceCashPurchaseAllocationApplicationService $service)
+    {
+        $document = FinanceCashDocument::query()->findOrFail($id);
+        $user = $this->authorizePermission($request, $document->direction === FinanceConstants::DIRECTION_PAYMENT ? 'finance.payment.confirm' : 'finance.receipt.confirm');
+        $data = $request->validate([
+            'version' => 'required|integer|min:0', 'reason' => 'required|string|max:1000', 'idempotency_key' => 'required|string|max:100',
+            ...FinanceCashPurchaseAllocationApplicationService::rules('purchase_order_allocations', 'present|array|max:100'),
+        ]);
+        return response()->json(['data' => $this->cashPayload($service->replaceConfirmed($id, (int) $data['version'],
+            $data['purchase_order_allocations'], $data['reason'], $data['idempotency_key'], $user->legacy_id, $this->operatorName($user)))]);
+    }
+
+    public function confirmCashDocument(Request $request, int $id, FinanceCashConfirmationApplicationService $service)
     {
         $document = FinanceCashDocument::findOrFail($id);
         $permission = $document->direction === FinanceConstants::DIRECTION_RECEIPT ? 'finance.receipt.confirm' : 'finance.payment.confirm';
         $user = $this->authorizePermission($request, $permission);
-        return response()->json(['data' => $service->confirm($id, $user->legacy_id, $this->operatorName($user))]);
+        $data = $request->validate(FinanceAllocationApplicationService::itemRules('items', 'sometimes|array|max:100'));
+        $items = $data['items'] ?? [];
+        if ($items !== []) $this->authorizePermission($request, 'finance.allocation.create');
+        return response()->json(['data' => $this->cashPayload($service->confirm($id, $items, $user->legacy_id, $this->operatorName($user)))]);
     }
 
     public function voidCashDocument(Request $request, int $id, FinanceCashDocumentApplicationService $service)
@@ -435,7 +470,7 @@ class FinanceController extends Controller
         $permission = $document->direction === FinanceConstants::DIRECTION_RECEIPT ? 'finance.receipt.void' : 'finance.payment.void';
         $user = $this->authorizePermission($request, $permission);
         $data = $request->validate(['reason' => 'required|string|max:255']);
-        return response()->json(['data' => $service->void($id, $data['reason'], $user->legacy_id, $this->operatorName($user))]);
+        return response()->json(['data' => $this->cashPayload($service->void($id, $data['reason'], $user->legacy_id, $this->operatorName($user)))]);
     }
 
     public function deleteCashDocumentDraft(Request $request, int $id, FinanceDraftDeletionApplicationService $service)
@@ -453,7 +488,7 @@ class FinanceController extends Controller
     public function allocate(Request $request, int $id, FinanceAllocationApplicationService $service)
     {
         $user = $this->authorizePermission($request, 'finance.allocation.create');
-        $data = $request->validate(['items' => 'required|array|min:1|max:100', 'items.*.source_business_type' => 'required|string|max:60', 'items.*.source_document_id' => 'required|integer|min:1', 'items.*.source_line_id' => 'nullable|integer|min:1', 'items.*.allocated_amount' => ['required', 'regex:/^\d+(\.\d{1,4})?$/'], 'items.*.idempotency_key' => 'required|string|max:100']);
+        $data = $request->validate(FinanceAllocationApplicationService::itemRules());
         return response()->json(['data' => $service->allocate($id, $data['items'], $user->legacy_id, $this->operatorName($user))]);
     }
 
@@ -464,11 +499,14 @@ class FinanceController extends Controller
         return response()->json(['data' => $service->reverse($id, $data['reason'], $user->legacy_id, $this->operatorName($user))]);
     }
 
-    public function source(Request $request, FinanceBusinessSourceResolver $resolver)
+    public function source(Request $request, FinanceBusinessSourceResolver $resolver, FinanceBusinessSourceQueryService $service)
     {
         $this->authorizePermission($request, 'finance.view');
         $data = $request->validate(['type' => 'required|string|max:60', 'id' => 'required|integer|min:1']);
-        return response()->json(['data' => $resolver->resolve($data['type'], $data['id'])]);
+        $source = $service->withBalances($resolver->resolve($data['type'], $data['id']));
+        $source['purchase_order_id'] = app(\App\Services\Erp\PurchasePaymentBalanceQueryService::class)
+            ->sourceOrderId($data['type'], (int) $data['id']);
+        return response()->json(['data' => $source]);
     }
 
     public function sources(Request $request, FinanceBusinessSourceQueryService $service)
@@ -476,6 +514,7 @@ class FinanceController extends Controller
         $this->authorizePermission($request, 'finance.view');
         $data = $request->validate([
             'type' => 'required|string|max:60', 'party_id' => 'nullable|integer|min:1',
+            'currency' => 'nullable|string|max:10',
             'keyword' => 'nullable|string|max:100', 'per_page' => 'nullable|integer|min:5|max:100',
         ]);
         return response()->json($service->paginate($data['type'], $data, $this->perPage($request)));
@@ -730,7 +769,9 @@ class FinanceController extends Controller
                 ->reduce(fn (string $sum, $row) => Money::add($sum, (string) $row->allocated_amount), '0.0000')
             : Money::normalize((string) FinanceAllocation::where('cash_document_id', $document->id)
                 ->where('status', FinanceConstants::ALLOCATION_ACTIVE)->sum('allocated_amount'));
-        return [...$document->toArray(), 'allocated_amount' => $active, 'unallocated_amount' => Money::sub((string) $document->amount, $active)];
+        return [...$document->toArray(), 'allocated_amount' => $active, 'unallocated_amount' => Money::sub((string) $document->amount, $active),
+            'purchase_order_allocations' => app(FinanceCashPurchaseAllocationApplicationService::class)->present($document),
+            'purchase_order_allocation_version' => (int) $document->purchase_order_allocation_version];
     }
 
     private function invoicePayload(FinanceInvoice $invoice): array

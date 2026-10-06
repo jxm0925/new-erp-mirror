@@ -15,6 +15,7 @@ use App\Services\Erp\InventorySerialApplicationService;
 use App\Services\Erp\PurchaseAttachmentApplicationService;
 use App\Services\Erp\PurchaseDefectApplicationService;
 use App\Services\Erp\PurchaseDraftDeletionApplicationService;
+use App\Services\Erp\PurchaseRequestLifecycleApplicationService;
 use App\Services\Erp\PurchaseOrderFinanceSummaryService;
 use App\Services\Erp\SupplierCapabilityService;
 use App\Services\Erp\SupplierPerformanceService;
@@ -43,17 +44,22 @@ class PurchaseController extends Controller
 
     public function requests(Request $request)
     {
-        $query = PurchaseRequest::with(['items.item.unit.standardUnit', 'items.unit.standardUnit', 'items.warehouse'])->latest('updated_at');
+        $this->authorizePermission($request, 'purchase.request.view');
+        $request->validate(['deleted' => 'nullable|in:only']);
+        $lifecycle = app(PurchaseRequestLifecycleApplicationService::class);
+        $query = $lifecycle->query()->with(['items.item.unit.standardUnit', 'items.unit.standardUnit', 'items.warehouse']);
+        if ($request->input('deleted') === 'only') $query->onlyTrashed()->latest('deleted_at');
+        else $query->latest('updated_at');
         $this->keyword($query, $request, ['request_no'], ['items.item' => ['item_code', 'item_name']]);
         if ($request->filled('status')) $query->where('request_status', $request->input('status'));
-        return response()->json($query->paginate($this->perPage($request)));
+        return response()->json($query->paginate($this->perPage($request))->through(fn ($record) => $lifecycle->present($record)));
     }
 
     public function deleteRequest(Request $request, int $id, PurchaseDraftDeletionApplicationService $service)
     {
-        $this->authorizePermission($request, 'purchase.request.delete');
-        $service->deleteRequest($id, $this->operatorName($request));
-        return response()->json(['message' => '采购需求草稿已删除']);
+        $operator = $this->authorizePermission($request, 'purchase.request.delete');
+        $service->deleteRequest($id, $this->operatorName($request), $operator->legacy_id);
+        return response()->json(['message' => '采购需求已软删除，可在已删除列表查看']);
     }
 
     public function deletePlan(Request $request, int $id, PurchaseDraftDeletionApplicationService $service)
@@ -93,10 +99,14 @@ class PurchaseController extends Controller
             'items' => 'required|array|min:1',
             'items.*.item_id' => 'required|exists:erp_items,id',
             'items.*.purchase_unit_id' => 'nullable|exists:erp_units,id',
-            'items.*.request_qty' => 'required|numeric|min:0.0001',
+            'items.*.expected_conversion_fingerprint' => 'nullable|string|size:64',
+            'items.*.id' => 'nullable|integer',
+            'items.*.request_qty' => 'required_without:items.*.purchase_quantity|numeric|min:0.0001|decimal:0,4',
+            'items.*.purchase_quantity' => 'nullable|numeric|gt:0|decimal:0,4',
             'items.*.expected_date' => 'nullable|date',
             'items.*.warehouse_id' => 'nullable|exists:erp_warehouses,id',
             'items.*.priority' => 'nullable|in:low,normal,high,urgent',
+            'items.*.spec_model' => 'nullable|string|max:255',
             'items.*.remark' => 'nullable|string',
         ]);
         $data['request_no'] = $request->input('request_no') ?: $this->nextNo('PRQ');
@@ -106,7 +116,7 @@ class PurchaseController extends Controller
         $data['status'] = 'draft';
         $data['data_source'] = $data['data_source'] ?? 'manual';
         $data['item_id'] = $data['items'][0]['item_id'];
-        $data['request_qty'] = collect($data['items'])->sum(fn ($line) => (float) $line['request_qty']);
+        $data['request_qty'] = 0; // Replaced by authoritative base quantities when the lines are saved.
         $data['planned_qty'] = 0;
         $data['required_date'] = $data['items'][0]['expected_date'] ?? null;
         $operatorId = app(AuthContextService::class)->currentUser($request)?->legacy_id;
@@ -124,15 +134,19 @@ class PurchaseController extends Controller
         });
     }
 
-    public function showRequest(int $id)
+    public function showRequest(Request $request, int $id)
     {
-        return response()->json(PurchaseRequest::with(['items.item.unit.standardUnit', 'items.unit.standardUnit', 'items.warehouse'])->findOrFail($id));
+        $this->authorizePermission($request, 'purchase.request.view');
+        $request->validate(['deleted' => 'nullable|in:only']);
+        $lifecycle = app(PurchaseRequestLifecycleApplicationService::class);
+        $query = $lifecycle->query()->with(['items.item.unit.standardUnit', 'items.unit.standardUnit', 'items.warehouse']);
+        if ($request->input('deleted') === 'only') $query->onlyTrashed();
+        return response()->json($lifecycle->present($query->findOrFail($id)));
     }
 
     public function updateRequest(Request $request, int $id)
     {
-        $record = PurchaseRequest::findOrFail($id);
-        abort_if($record->request_status !== 'draft', 422, '只有草稿采购需求可以编辑');
+        $this->authorizePermission($request, 'purchase.request.edit');
         $data = $request->validate([
             'request_date' => 'nullable|date',
             'source_type' => 'nullable|string|max:30',
@@ -141,21 +155,29 @@ class PurchaseController extends Controller
             'items' => 'required|array|min:1',
             'items.*.item_id' => 'required|exists:erp_items,id',
             'items.*.purchase_unit_id' => 'nullable|exists:erp_units,id',
-            'items.*.request_qty' => 'required|numeric|min:0.0001',
+            'items.*.expected_conversion_fingerprint' => 'nullable|string|size:64',
+            'items.*.id' => 'nullable|integer',
+            'items.*.request_qty' => 'required_without:items.*.purchase_quantity|numeric|min:0.0001|decimal:0,4',
+            'items.*.purchase_quantity' => 'nullable|numeric|gt:0|decimal:0,4',
             'items.*.expected_date' => 'nullable|date',
             'items.*.warehouse_id' => 'nullable|exists:erp_warehouses,id',
             'items.*.priority' => 'nullable|in:low,normal,high,urgent',
+            'items.*.spec_model' => 'nullable|string|max:255',
             'items.*.remark' => 'nullable|string',
         ]);
-        return DB::transaction(function () use ($record, $data, $id) {
+        return DB::transaction(function () use ($data, $id, $request) {
+            $lifecycle = app(PurchaseRequestLifecycleApplicationService::class);
+            $record = $lifecycle->query()->lockForUpdate()->findOrFail($id);
+            $lifecycle->prepareEdit($record, $this->operatorName($request));
             $items = $data['items'];
+            $priorItems = $record->items()->lockForUpdate()->get()->keyBy('id');
             unset($data['items']);
             $record->update($data);
             PurchaseRequestItem::where('request_id', $id)->delete();
-            $this->saveRequestItems($record, $items);
+            $this->saveRequestItems($record, $items, $priorItems);
             $this->log('purchase_request', $id, 'update', '编辑采购需求');
             return response()->json(['message' => '采购需求已更新', 'data' => $record->fresh(['items.item.unit.standardUnit', 'items.unit.standardUnit', 'items.warehouse'])]);
-        });
+        }, 5);
     }
 
     public function submitRequest(Request $request, int $id, PurchaseWorkflowApplicationService $workflow)
@@ -176,7 +198,7 @@ class PurchaseController extends Controller
     public function requestToPlan(int $id)
     {
         return DB::transaction(function () use ($id) {
-            $request = PurchaseRequest::with(['items.item'])->findOrFail($id);
+            $request = PurchaseRequest::with(['items.item'])->lockForUpdate()->findOrFail($id);
             abort_if(!in_array($request->request_status, ['confirmed', 'partially_planned'], true), 422, '只有已确认的采购需求可以转采购计划');
             $requestItems = $request->items->filter(fn ($line) => (float) $line->remaining_qty > 0);
             abort_if($requestItems->isEmpty(), 422, '采购需求明细已全部转计划，不能重复转换');
@@ -195,7 +217,12 @@ class PurchaseController extends Controller
                     'request_id' => $request->id,
                     'request_item_id' => $requestItem->id,
                     'item_id' => $requestItem->item_id,
+                    'spec_model' => $requestItem->spec_model ?? $requestItem->item?->spec ?? $requestItem->item?->model ?? null,
                     'unit_id' => $requestItem->unit_id,
+                    'purchase_conversion_snapshot' => $requestItem->purchase_conversion_snapshot && abs((float) $requestItem->remaining_qty - (float) $requestItem->request_qty) < 0.00000001
+                        ? $requestItem->purchase_conversion_snapshot : app(\App\Services\Erp\PurchasePlanningConversionService::class)->calculate([
+                        'item_id' => $requestItem->item_id, 'required_qty' => $requestItem->remaining_qty,
+                    ], $requestItem->purchase_conversion_snapshot),
                     'plan_qty' => $requestItem->remaining_qty,
                     'required_qty' => $requestItem->remaining_qty,
                     'allocated_qty' => 0,
@@ -273,9 +300,10 @@ class PurchaseController extends Controller
                 'plan_date' => $payload['plan_date'] ?? $plan->plan_date,
                 'remark' => $payload['remark'] ?? null,
             ]);
+            $priorItems = $plan->items()->with('splits')->lockForUpdate()->get()->keyBy('id');
             PurchasePlanSupplierSplit::where('plan_id', $plan->id)->delete();
             PurchasePlanItem::where('plan_id', $plan->id)->delete();
-            $this->savePlanItems($plan, $payload['items']);
+            $this->savePlanItems($plan, $payload['items'], $priorItems);
             $this->log('purchase_plan', $plan->id, 'update', '编辑采购计划及供应商拆分');
             return response()->json(['message' => '采购计划已更新', 'data' => $plan->fresh(['items.item.unit', 'items.splits.supplier'])]);
         }, 5);
@@ -295,15 +323,12 @@ class PurchaseController extends Controller
                 422,
                 '采购计划存在采购单价小于或等于 0 的供应商拆分，不能提交审核。供应商报价仅供参考，实际采购价必须由采购员确认。'
             );
-            $conversionService = app(\App\Services\Erp\PurchaseConversionApplicationService::class);
+            $conversionService = app(\App\Services\Erp\PurchasePlanningConversionService::class);
             foreach ($plan->items as $item) {
-                foreach ($item->splits as $split) {
-                    $conversionService->orderLineSnapshotFromBaseRequirement([
-                        'item_id' => $item->item_id,
-                        'supplier_id' => $split->supplier_id,
-                        'base_qty' => $split->purchase_qty,
-                        'base_unit_price' => $split->unit_price,
-                    ]);
+                foreach ($item->splits as $split) $conversionService->orderSnapshot($split);
+                if (($item->purchase_conversion_snapshot['input_mode'] ?? null) === 'purchase_quantity') {
+                    $actualBase = $item->splits->sum(fn ($split) => (float) $split->purchase_conversion_snapshot['planned_base_qty']);
+                    abort_if(abs($actualBase - (float) $item->purchase_conversion_snapshot['planned_base_qty']) > 0.00000001, 422, '供应商采购数量尚未分配完整');
                 }
             }
             $plan->update(['plan_status' => 'submitted', 'audit_status' => 'pending']);
@@ -334,23 +359,13 @@ class PurchaseController extends Controller
     public function generateOrdersFromPlan(int $id)
     {
         return DB::transaction(function () use ($id) {
-            $plan = PurchasePlan::with(['items.item', 'items.splits.supplier'])->findOrFail($id);
+            $plan = PurchasePlan::with(['items.item', 'items.splits.supplier'])->lockForUpdate()->findOrFail($id);
             abort_if($plan->audit_status !== 'approved', 422, '采购计划审核后才能生成采购订单');
             $groups = $this->groupPlanItemsForOrders($plan);
             abort_if(empty($groups), 422, '没有可生成订单的供应商明细');
             $orders = [];
             foreach ($groups as $group) {
-                $preparedItems = collect($group['items'])->map(function (array $line) use ($group) {
-                    $snapshot = app(\App\Services\Erp\PurchaseConversionApplicationService::class)
-                        ->orderLineSnapshotFromBaseRequirement([
-                            'item_id' => $line['item_id'],
-                            'supplier_id' => $group['supplier_id'],
-                            'base_qty' => $line['purchase_qty'],
-                            'base_unit_price' => $line['unit_price'],
-                        ]);
-
-                    return $line + ['conversion_snapshot' => $snapshot];
-                });
+                $preparedItems = collect($group['items']);
                 $lineAmount = $preparedItems->sum(fn (array $line) => (float) $line['conversion_snapshot']['amount']);
                 $taxAmount = $preparedItems->sum(function (array $line) {
                     $amount = (float) $line['conversion_snapshot']['amount'];
@@ -386,6 +401,7 @@ class PurchaseController extends Controller
                         'request_id' => $line['request_id'] ?? null,
                         'request_item_id' => $line['request_item_id'] ?? null,
                         'item_id' => $line['item_id'],
+                'spec_model' => $line['spec_model'] ?? $source?->spec_model ?? $item->spec ?? $item->model ?? null,
                         'supplier_id' => $group['supplier_id'],
                         'order_qty' => $conversion['purchase_qty'],
                         'remaining_qty' => $conversion['purchase_qty'],
@@ -525,6 +541,10 @@ class PurchaseController extends Controller
         $payload = $this->validateOrder($request);
         $this->assertSupplierValid((int) $payload['supplier_id']);
         return DB::transaction(function () use ($order, $payload) {
+            $order = PurchaseOrder::lockForUpdate()->findOrFail($order->id);
+            abort_if(!($order->purchase_status === 'draft' || $order->audit_status === 'rejected'), 422, '只有草稿或驳回的采购订单可以编辑');
+            $priorItems = $order->items()->lockForUpdate()->get()->keyBy('id');
+            app(\App\Services\Erp\PurchasePlanningConversionService::class)->assertOrderEdit($order, $payload, $priorItems);
             $order->update([
                 'supplier_id' => $payload['supplier_id'],
                 'order_date' => $payload['order_date'] ?? $order->order_date,
@@ -536,8 +556,9 @@ class PurchaseController extends Controller
                 'freight_amount' => $payload['freight_amount'] ?? 0,
                 'remark' => $payload['remark'] ?? null,
             ]);
-            PurchaseOrderItem::where('order_id', $order->id)->delete();
-            $this->saveOrderItems($order, $payload['items']);
+            $retainedIds = array_filter(array_column($payload['items'], 'id'));
+            PurchaseOrderItem::where('order_id', $order->id)->whereNotIn('id', $retainedIds)->delete();
+            $this->saveOrderItems($order, $payload['items'], $priorItems);
             app(PurchaseAttachmentApplicationService::class)->bindDraft('order', $order->id, $payload['attachment_draft_token'] ?? null);
             $this->log('purchase_order', $order->id, 'update', '编辑采购订单');
             return response()->json(['message' => '采购订单已更新', 'data' => $order->fresh(['items.item.unit', 'supplier'])]);
@@ -844,6 +865,41 @@ class PurchaseController extends Controller
         return response()->json($query->paginate($this->perPage($request)));
     }
 
+    public function conversionPreview(Request $request, \App\Services\Erp\PurchasePlanningConversionService $service)
+    {
+        $auth = app(AuthContextService::class);
+        $user = $auth->currentUser($request);
+        abort_unless($user && array_intersect($auth->permissionCodes($user), [
+            'purchase.request.create', 'purchase.request.edit', 'purchase.plan.create', 'purchase.plan.edit',
+        ]), 403, '没有采购需求或计划编辑权限');
+        $line = $request->validate([
+            'item_id' => 'required|integer|exists:erp_items,id',
+            'required_qty' => 'required_without:purchase_quantity|numeric|gt:0',
+            'purchase_unit_id' => 'nullable|integer|exists:erp_units,id',
+            'purchase_quantity' => 'nullable|numeric|gt:0',
+            'purchase_unit_price' => 'nullable|numeric|min:0',
+            'document_type' => 'required|in:request,plan',
+            'document_id' => 'nullable|integer', 'line_id' => 'nullable|integer',
+            'split_id' => 'nullable|integer',
+            'is_split' => 'nullable|boolean',
+            'request_item_id' => 'nullable|integer',
+        ]);
+        $prior = null;
+        if (!empty($line['line_id']) && !empty($line['document_id'])) {
+            $prior = $line['document_type'] === 'request'
+                ? PurchaseRequestItem::where('request_id', $line['document_id'])->findOrFail($line['line_id'])
+                : PurchasePlanItem::where('plan_id', $line['document_id'])->findOrFail($line['line_id']);
+        }
+        if ($prior instanceof PurchasePlanItem && !empty($line['split_id'])) {
+            $prior = $prior->splits()->findOrFail($line['split_id']);
+        }
+        if (!$prior && !empty($line['request_item_id'])) $prior = PurchaseRequestItem::findOrFail($line['request_item_id']);
+        $sourceRequired = $prior instanceof PurchasePlanItem && $prior->request_item_id && empty($line['split_id']) && empty($line['is_split']) ? (float) $prior->required_qty : null;
+        return response()->json(['data' => isset($line['purchase_quantity'])
+            ? $service->fromPurchaseQuantity($line, $prior?->purchase_conversion_snapshot, $sourceRequired)
+            : $service->calculate($line, $prior?->purchase_conversion_snapshot)]);
+    }
+
     private function validatePlan(Request $request): array
     {
         return $request->validate([
@@ -855,16 +911,26 @@ class PurchaseController extends Controller
             'remark' => 'nullable|string',
             'data_source' => ['nullable', Rule::in(self::DATA_SOURCES)],
             'items' => 'required|array|min:1',
-            'items.*.request_id' => 'nullable|exists:erp_purchase_requests,id',
+            'items.*.request_id' => ['nullable', Rule::exists('erp_purchase_requests', 'id')->whereNull('deleted_at')],
             'items.*.request_item_id' => 'nullable|exists:erp_purchase_request_items,id',
             'items.*.item_id' => 'required|exists:erp_items,id',
+            'items.*.spec_model' => 'nullable|string|max:255',
             'items.*.unit_id' => 'nullable|exists:erp_units,id',
-            'items.*.required_qty' => 'required|numeric|min:0.0001',
+            'items.*.id' => 'nullable|integer',
+            'items.*.purchase_unit_id' => 'nullable|exists:erp_units,id',
+            'items.*.expected_conversion_fingerprint' => 'nullable|string|size:64',
+            'items.*.required_qty' => 'required_without:items.*.purchase_quantity|numeric|min:0.0001|decimal:0,4',
+            'items.*.purchase_quantity' => 'nullable|numeric|gt:0|decimal:0,4',
             'items.*.warehouse_id' => 'nullable|exists:erp_warehouses,id',
             'items.*.expected_date' => 'nullable|date',
             'items.*.splits' => 'nullable|array',
             'items.*.splits.*.supplier_id' => 'required_with:items.*.splits|exists:erp_suppliers,id',
-            'items.*.splits.*.purchase_qty' => 'required_with:items.*.splits|numeric|min:0.0001',
+            'items.*.splits.*.id' => 'nullable|integer',
+            'items.*.splits.*.purchase_unit_id' => 'nullable|exists:erp_units,id',
+            'items.*.splits.*.expected_conversion_fingerprint' => 'nullable|string|size:64',
+            'items.*.splits.*.purchase_quantity' => 'nullable|numeric|gt:0|decimal:0,4',
+            'items.*.splits.*.purchase_unit_price' => 'nullable|numeric|min:0',
+            'items.*.splits.*.purchase_qty' => 'required_without:items.*.splits.*.purchase_quantity|numeric|min:0|decimal:0,4',
             'items.*.splits.*.unit_price' => 'nullable|numeric|min:0',
             'items.*.splits.*.tax_rate' => 'nullable|numeric|min:0|max:100',
             'items.*.splits.*.delivery_days' => 'nullable|integer|min:0|max:999',
@@ -902,8 +968,12 @@ class PurchaseController extends Controller
             'data_source' => ['nullable', Rule::in(self::DATA_SOURCES)],
             'items' => 'required|array|min:1',
             'items.*.item_id' => 'required|exists:erp_items,id',
+            'items.*.spec_model' => 'nullable|string|max:255',
             'items.*.purchase_unit_id' => 'nullable|exists:erp_units,id',
-            'items.*.order_qty' => 'required|numeric|min:0.0001',
+            'items.*.expected_conversion_fingerprint' => 'nullable|string|size:64',
+            'items.*.id' => 'nullable|integer|distinct',
+            'items.*.expected_conversion_factor' => 'nullable|numeric|gt:0',
+            'items.*.order_qty' => 'required|numeric|min:0.0001|decimal:0,4',
             'items.*.unit_price' => 'nullable|numeric|min:0',
             'items.*.tax_rate' => 'nullable|numeric|min:0|max:100',
             'items.*.expected_arrival_date' => 'nullable|date',
@@ -933,6 +1003,7 @@ class PurchaseController extends Controller
             'items.*.order_item_id' => 'nullable|exists:erp_purchase_order_items,id',
             'items.*.item_id' => 'required|exists:erp_items,id',
             'items.*.purchase_unit_id' => 'nullable|exists:erp_units,id',
+            'items.*.expected_conversion_fingerprint' => 'nullable|string|size:64',
             'items.*.warehouse_id' => 'nullable|exists:erp_warehouses,id',
             'items.*.location_id' => 'nullable|exists:erp_locations,id',
             'items.*.receipt_qty' => 'required|numeric|min:0.0001',
@@ -965,21 +1036,36 @@ class PurchaseController extends Controller
         ]);
     }
 
-    private function savePlanItems(PurchasePlan $plan, array $items): void
+    private function savePlanItems(PurchasePlan $plan, array $items, $priorItems = null): void
     {
         foreach ($items as $line) {
             $item = Item::with('unit.standardUnit')->findOrFail($line['item_id']);
             $baseUnit = app(\App\Services\Erp\UnitConversionDomainService::class)->canonicalUnit($item->unit);
-            $requiredQty = (float) $line['required_qty'];
-            $splits = $line['splits'] ?? [];
-            $allocatedQty = collect($splits)->sum(fn ($s) => (float) ($s['purchase_qty'] ?? 0));
-            abort_if($allocatedQty > $requiredQty, 422, '供应商拆分数量不能超过物料总需求数量');
+            $prior = $priorItems?->get($line['id'] ?? 0);
+            abort_if(!empty($line['id']) && !$prior, 422, '采购计划明细不属于当前计划');
+            // 与需求编辑、删除共用主单锁，避免校验后需求被删，再写入孤立的计划来源。
+            if (!empty($line['request_id'])) {
+                abort_unless(PurchaseRequest::query()->lockForUpdate()->find($line['request_id']), 422, '来源采购需求已删除，不能用于采购计划');
+            }
+            $source = !empty($line['request_item_id']) ? PurchaseRequestItem::findOrFail($line['request_item_id']) : null;
+            abort_if($source && !$source->request()->exists(), 422, '来源采购需求已删除，不能用于采购计划');
+            abort_if($prior?->request_item_id && (int) $prior->request_item_id !== (int) ($line['request_item_id'] ?? 0), 422, '需求生成的计划须保留原需求来源');
+            abort_if($source && ((int) $source->item_id !== (int) $item->id || (int) $source->request_id !== (int) ($line['request_id'] ?? 0)), 422, '采购需求来源与物料不一致');
+            $planning = app(\App\Services\Erp\PurchasePlanningConversionService::class);
+            $prepared = $planning->preparePlanLine($line, $prior?->purchase_conversion_snapshot ?? $source?->purchase_conversion_snapshot,
+                $source ? (float) ($prior?->required_qty ?? $source->request_qty) : null, $prior?->splits);
+            $snapshot = $prepared['snapshot'];
+            $requiredQty = (float) $snapshot['required_base_qty'];
+            $splits = $prepared['splits'];
+            $allocatedQty = $prepared['allocated'];
             $planItem = PurchasePlanItem::create([
                 'plan_id' => $plan->id,
                 'request_id' => $line['request_id'] ?? null,
                 'request_item_id' => $line['request_item_id'] ?? null,
                 'item_id' => $line['item_id'],
-                'unit_id' => $line['unit_id'] ?? $item->unit_id,
+                'spec_model' => $line['spec_model'] ?? $source?->spec_model ?? $item->spec ?? $item->model ?? null,
+                'unit_id' => $snapshot['base_unit_id'],
+                'purchase_conversion_snapshot' => $snapshot,
                 'plan_qty' => $requiredQty,
                 'required_qty' => $requiredQty,
                 'allocated_qty' => $allocatedQty,
@@ -998,7 +1084,8 @@ class PurchaseController extends Controller
                 $this->assertRecommendationOverride($split, (int) $split['supplier_id']);
                 abort_if(!$supplier || $this->isBadSupplierName($supplier), 422, '供应商无效或名称异常，不能保存供应商拆分');
                 $qty = (float) $split['purchase_qty'];
-                $price = (float) ($split['unit_price'] ?? 0);
+                $splitSnapshot = $split['purchase_conversion_snapshot'];
+                $price = $splitSnapshot['base_unit_price'];
                 PurchasePlanSupplierSplit::create([
                     'plan_id' => $plan->id,
                     'plan_item_id' => $planItem->id,
@@ -1007,12 +1094,13 @@ class PurchaseController extends Controller
                     'item_id' => $line['item_id'],
                     'supplier_id' => $split['supplier_id'],
                     'purchase_qty' => $qty,
+                    'purchase_conversion_snapshot' => $splitSnapshot,
                     'unit_price' => $price,
                     'tax_rate' => $split['tax_rate'] ?? 0,
                     'delivery_days' => $split['delivery_days'] ?? 0,
                     'moq_qty' => $split['moq_qty'] ?? 0,
                     'expected_date' => $split['expected_date'] ?? ($line['expected_date'] ?? null),
-                    'amount' => $qty * $price,
+                    'amount' => $splitSnapshot['amount'],
                     'status' => 'draft',
                     'split_status' => 'not_ordered',
                     'recommended_supplier_id_snapshot' => $split['recommended_supplier_id_snapshot'] ?? null,
@@ -1034,20 +1122,30 @@ class PurchaseController extends Controller
         $this->refreshPlanTotal($plan->id);
     }
 
-    private function saveRequestItems(PurchaseRequest $request, array $items): void
+    private function saveRequestItems(PurchaseRequest $request, array $items, $priorItems = null): void
     {
         $totalQty = 0;
         foreach ($items as $line) {
             $item = Item::with('unit.standardUnit')->findOrFail($line['item_id']);
             $baseUnit = app(\App\Services\Erp\UnitConversionDomainService::class)->canonicalUnit($item->unit);
-            $qty = (float) $line['request_qty'];
+            $prior = $priorItems?->get($line['id'] ?? 0);
+            abort_if(!empty($line['id']) && !$prior, 422, '采购需求明细不属于当前需求');
+            $planning = app(\App\Services\Erp\PurchasePlanningConversionService::class);
+            $snapshot = isset($line['purchase_quantity']) ? $planning->fromPurchaseQuantity($line, $prior?->purchase_conversion_snapshot)
+                : $planning->calculate([...$line, 'required_qty' => $line['request_qty']], $prior?->purchase_conversion_snapshot);
+            $qty = (float) $snapshot['required_base_qty'];
+            $specModel = isset($line['spec_model']) && trim((string) $line['spec_model']) !== ''
+                ? trim((string) $line['spec_model'])
+                : ($item->spec ?: ($item->model ?: null));
             PurchaseRequestItem::create([
                 'request_id' => $request->id,
                 'item_id' => $item->id,
                 'item_code' => $item->item_code,
                 'item_name' => $item->item_name,
-                'unit_id' => $baseUnit?->id ?: $item->unit_id,
+                'spec_model' => $specModel,
+                'unit_id' => $snapshot['base_unit_id'],
                 'request_qty' => $qty,
+                'purchase_conversion_snapshot' => $snapshot,
                 'converted_qty' => 0,
                 'remaining_qty' => $qty,
                 'expected_date' => $line['expected_date'] ?? null,
@@ -1068,7 +1166,7 @@ class PurchaseController extends Controller
         ]);
     }
 
-    private function saveOrderItems(PurchaseOrder $order, array $items): void
+    private function saveOrderItems(PurchaseOrder $order, array $items, $priorItems = null): void
     {
         $totalQty = 0; $totalAmount = 0; $taxAmount = 0;
         foreach ($items as $line) {
@@ -1080,11 +1178,12 @@ class PurchaseController extends Controller
             $amount = $qty * $price;
             $finance = app(\App\Services\Erp\PurchaseFinancialFactService::class);
             $amountFacts = $finance->amountFacts($amount, $taxRate, (string) $order->tax_mode);
-            $conversion = app(\App\Services\Erp\PurchaseConversionApplicationService::class)->orderLineSnapshot($line);
-            PurchaseOrderItem::create([
+            $conversion = app(\App\Services\Erp\PurchaseConversionApplicationService::class)->orderLineSnapshot($line, $priorItems?->get($line['id'] ?? 0));
+            PurchaseOrderItem::updateOrCreate(['id' => $priorItems?->get($line['id'] ?? 0)?->id], [
                 'order_id' => $order->id,
                 'plan_id' => $order->plan_id,
                 'item_id' => $line['item_id'],
+                'spec_model' => $line['spec_model'] ?? $priorItems?->get($line['id'] ?? 0)?->spec_model ?? $item->spec ?? $item->model ?? null,
                 'order_qty' => $qty,
                 'remaining_qty' => $qty,
                 'unit_price' => $price,
@@ -1110,7 +1209,9 @@ class PurchaseController extends Controller
                 'supplier_override_at' => !empty($line['supplier_override_reason']) ? now() : null,
                 'remark' => $line['remark'] ?? null,
                 'data_source' => 'manual',
-                ...$this->materialPolicySnapshotForOrderLine($item, $line),
+                ...($priorItems?->get($line['id'] ?? 0)?->item_id === $item->id
+                    ? $priorItems->get($line['id'])->only(['material_policy_id_snapshot', 'material_policy_version_snapshot', 'material_policy_snapshot'])
+                    : $this->materialPolicySnapshotForOrderLine($item, $line)),
             ]);
             $totalQty += $qty;
             $totalAmount += $amount;
@@ -1258,13 +1359,15 @@ class PurchaseController extends Controller
     private function groupPlanItemsForOrders(PurchasePlan $plan): array
     {
         $splits = $plan->items->flatMap->splits
-            ->filter(fn ($split) => $split->supplier_id && (float) $split->purchase_qty > (float) $split->ordered_qty);
+            ->filter(fn ($split) => $split->supplier_id && !$split->order_id && $split->split_status !== 'ordered');
         return $splits->groupBy('supplier_id')->map(function ($lines, $supplierId) {
                 $supplier = $lines->first()->supplier;
                 abort_if(!$supplier || $this->isBadSupplierName($supplier), 422, '供应商为空或名称异常，不能生成采购订单');
                 $items = $lines->map(function ($split) {
                     $qty = (float) $split->purchase_qty - (float) $split->ordered_qty;
                     $price = (float) $split->unit_price;
+                    abort_if((float) $split->ordered_qty > 0, 422, '该拆分已部分生成，请核对原订单后处理');
+                    $conversion = app(\App\Services\Erp\PurchasePlanningConversionService::class)->orderSnapshot($split);
                     return [
                         'plan_item_id' => $split->plan_item_id,
                         'plan_split_id' => $split->id,
@@ -1275,7 +1378,8 @@ class PurchaseController extends Controller
                         'purchase_qty' => $qty,
                         'unit_price' => $price,
                         'tax_rate' => (float) $split->tax_rate,
-                        'amount' => $qty * $price,
+                        'amount' => $conversion['amount'],
+                        'conversion_snapshot' => $conversion,
                         'expected_arrival_date' => $split->expected_date,
                         'recommended_supplier_id_snapshot' => $split->recommended_supplier_id_snapshot,
                         'recommended_price_snapshot' => $split->recommended_price_snapshot,

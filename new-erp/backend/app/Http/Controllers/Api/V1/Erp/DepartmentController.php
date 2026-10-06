@@ -5,7 +5,7 @@ namespace App\Http\Controllers\Api\V1\Erp;
 use App\Http\Controllers\Controller;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\RbacBootstrapService;
-use App\Services\Erp\RbacUserRoleOwnershipService;
+use App\Services\Erp\SystemAdministrationApplicationService;
 use Illuminate\Http\Request;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
@@ -22,6 +22,7 @@ class DepartmentController extends Controller
             ->groupBy('department_legacy_id');
 
         $query = DB::table('erp_departments as d')
+            ->whereNull('d.deleted_at')
             ->leftJoinSub($memberCounts, 'mc', 'mc.department_legacy_id', '=', 'd.legacy_id')
             ->when($request->filled('keyword'), function ($q) use ($request) {
                 $keyword = trim((string) $request->input('keyword'));
@@ -46,8 +47,11 @@ class DepartmentController extends Controller
         $this->authorizePermission($request, 'system.department.view');
         $rbac->bootstrap();
 
+        abort_unless(DB::table('erp_departments')->where('legacy_id', $legacyId)->whereNull('deleted_at')->exists(), 404, '部门不存在或已删除。');
+
         $base = DB::table('erp_department_users as du')
             ->join('erp_legacy_admin_users as u', 'du.user_legacy_id', '=', 'u.legacy_id')
+            ->whereNull('u.deleted_at')
             ->where('du.department_legacy_id', $legacyId);
 
         $principals = (clone $base)
@@ -60,6 +64,7 @@ class DepartmentController extends Controller
                 'u.nickname',
                 'u.mobile',
                 'u.status',
+                'u.auth_group_names',
                 'du.is_principal',
                 'du.is_owner',
             ]);
@@ -73,7 +78,7 @@ class DepartmentController extends Controller
                         ->orWhere('u.mobile', 'like', "%{$keyword}%");
                 });
             })
-            ->when($request->filled('status'), fn ($q) => $q->where('u.status', $request->input('status')))
+            ->when($request->filled('status'), fn ($q) => $q->whereIn('u.status', $request->input('status') === 'normal' ? ['normal', 'active'] : ['hidden', 'disabled']))
             ->when($request->input('role') === 'principal', fn ($q) => $q->where('du.is_principal', true))
             ->when($request->input('role') === 'normal', fn ($q) => $q->where('du.is_principal', false))
             ->when($request->input('role') === 'sales', fn ($q) => $q->where('u.is_sales', true))
@@ -90,6 +95,11 @@ class DepartmentController extends Controller
             ]);
 
         $paginator = $query->paginate($this->perPage($request));
+        $paginator->through(function (object $member): object {
+            $identity = DB::table('erp_legacy_admin_users')->where('legacy_id', $member->id)->first();
+            $member->data_scope = app(AuthContextService::class)->dataScope($identity);
+            return $member;
+        });
 
         return response()->json([
             'data' => $paginator->items(),
@@ -103,34 +113,32 @@ class DepartmentController extends Controller
         ]);
     }
 
-    public function savePrincipals(Request $request, int $legacyId, RbacBootstrapService $rbac, RbacUserRoleOwnershipService $ownership)
+    public function store(Request $request, SystemAdministrationApplicationService $service)
     {
-        $this->authorizePermission($request, 'system.department.set_principal');
-        $data = $request->validate([
-            'principal_ids' => 'nullable|array',
-            'principal_ids.*' => 'integer',
-        ]);
-        $rbac->bootstrap();
-        $principalIds = array_map('intval', $data['principal_ids'] ?? []);
+        return response()->json($service->saveDepartment(null, $request->all(), ...$this->context($request, 'system.department.save')), 201);
+    }
 
-        DB::transaction(function () use ($legacyId, $principalIds, $ownership): void {
-            $previousIds = DB::table('erp_department_users')->where('department_legacy_id', $legacyId)->where('is_principal', true)
-                ->lockForUpdate()->pluck('user_legacy_id')->map(fn ($id) => (int) $id)->all();
-            DB::table('erp_department_users')->where('department_legacy_id', $legacyId)->update(['is_principal' => false, 'updated_at' => now()]);
-            $roleId = DB::table('erp_rbac_roles')->where('code', 'department_principal')->value('id');
-            foreach (array_unique($principalIds) as $userId) {
-                DB::table('erp_department_users')->updateOrInsert(
-                    ['department_legacy_id' => $legacyId, 'user_legacy_id' => $userId],
-                    ['is_principal' => true, 'updated_at' => now(), 'created_at' => now()]
-                );
-            }
-            if ($roleId) foreach (array_unique(array_merge($previousIds, $principalIds)) as $userId) {
-                $stillPrincipal = DB::table('erp_department_users')->where('user_legacy_id', $userId)->where('is_principal', true)->exists();
-                $stillPrincipal ? $ownership->addDepartmentRole($userId, (int) $roleId) : $ownership->removeDepartmentRole($userId, (int) $roleId);
-            }
-        });
+    public function update(Request $request, int $legacyId, SystemAdministrationApplicationService $service)
+    {
+        return response()->json($service->saveDepartment($legacyId, $request->all(), ...$this->context($request, 'system.department.save')));
+    }
 
-        return response()->json(['message' => '部门负责人已保存']);
+    public function destroy(Request $request, int $legacyId, SystemAdministrationApplicationService $service)
+    {
+        return response()->json($service->deleteDepartment($legacyId, $request->all(), ...$this->context($request, 'system.department.delete')));
+    }
+
+    public function savePrincipals(Request $request, int $legacyId, SystemAdministrationApplicationService $service)
+    {
+        return response()->json($service->saveDepartmentPrincipals($legacyId, $request->all(), ...$this->context($request, 'system.department.set_principal')));
+    }
+
+    private function context(Request $request, string $permission): array
+    {
+        $this->authorizePermission($request, $permission);
+        $auth = app(AuthContextService::class);
+        $user = $request->attributes->get('erp_user') ?: $auth->currentUser($request);
+        return [$user, $auth->permissionCodes($user), $auth->isSuperAdmin($user)];
     }
 
     public function sync(Request $request, RbacBootstrapService $rbac)

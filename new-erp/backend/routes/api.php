@@ -59,6 +59,13 @@ use Illuminate\Support\Facades\Broadcast;
 
 Broadcast::routes(['middleware' => ['api']]);
 
+require __DIR__.'/erp_sales_finance.php';
+require __DIR__.'/erp_purchase_payments.php';
+require __DIR__.'/erp_supplier_finance.php';
+require __DIR__.'/erp_finance_dashboard.php';
+
+Route::get('v1/erp/console/dashboard', [\App\Http\Controllers\Api\V1\Erp\ConsoleDashboardController::class, 'show']);
+
 Route::prefix('v1/erp/approvals')->group(function () {
     Route::get('forms', [ApprovalFormController::class, 'index']);
     Route::get('forms/summary', [ApprovalFormController::class, 'summary']);
@@ -107,6 +114,7 @@ Route::prefix('v1/erp/approvals')->group(function () {
 Route::get('v1/erp/shopfloor/options/{type}', [ShopfloorOptionController::class, 'index']);
 
 Route::prefix('v1/erp/purchase')->group(function () {
+    Route::post('conversion-preview', [PurchaseController::class, 'conversionPreview']);
     Route::post('attachments/upload', [PurchaseController::class, 'uploadAttachment']);
     Route::get('attachments/{id}/preview', [PurchaseController::class, 'previewAttachment'])->whereNumber('id');
     Route::get('attachments/{id}/download', [PurchaseController::class, 'downloadAttachment'])->whereNumber('id');
@@ -579,6 +587,17 @@ Route::prefix('v1/erp/user-directory')->group(function () {
     Route::get('users', [UserDirectoryController::class, 'users']);
 });
 
+Route::prefix('v1/erp/admins')->group(function () {
+    Route::get('options', [\App\Http\Controllers\Api\V1\Erp\AdminAccountController::class, 'options']);
+    Route::get('options/roles', [\App\Http\Controllers\Api\V1\Erp\AdminAccountController::class, 'roleOptions']);
+    Route::get('options/users', [\App\Http\Controllers\Api\V1\Erp\AdminAccountController::class, 'userOptions']);
+    Route::post('', [\App\Http\Controllers\Api\V1\Erp\AdminAccountController::class, 'store']);
+    Route::get('{id}', [\App\Http\Controllers\Api\V1\Erp\AdminAccountController::class, 'show'])->whereNumber('id');
+    Route::put('{id}', [\App\Http\Controllers\Api\V1\Erp\AdminAccountController::class, 'update'])->whereNumber('id');
+    Route::post('{id}/status', [\App\Http\Controllers\Api\V1\Erp\AdminAccountController::class, 'status'])->whereNumber('id');
+    Route::delete('{id}', [\App\Http\Controllers\Api\V1\Erp\AdminAccountController::class, 'destroy'])->whereNumber('id');
+});
+
 Route::prefix('v1/erp/auth')->group(function () {
     Route::post('login', [AuthController::class, 'login']);
     Route::post('sso', [AuthController::class, 'sso']);
@@ -599,6 +618,9 @@ Route::prefix('v1/erp/rbac')->group(function () {
 
 Route::prefix('v1/erp/departments')->group(function () {
     Route::get('', [DepartmentController::class, 'index']);
+    Route::post('', [DepartmentController::class, 'store']);
+    Route::put('{legacyId}', [DepartmentController::class, 'update'])->whereNumber('legacyId');
+    Route::delete('{legacyId}', [DepartmentController::class, 'destroy'])->whereNumber('legacyId');
     Route::post('sync', [DepartmentController::class, 'sync']);
     Route::get('{legacyId}/members', [DepartmentController::class, 'members'])->whereNumber('legacyId');
     Route::post('{legacyId}/principals', [DepartmentController::class, 'savePrincipals'])->whereNumber('legacyId');

@@ -51,6 +51,7 @@ class AuthController extends Controller
         $rbac->bootstrap();
         $user = $auth->currentUser($request);
         abort_if(!$user, 401, '未登录或登录已过期');
+        unset($user->password_hash, $user->legacy_payload);
 
         return response()->json([
             'user' => $user,
@@ -73,6 +74,9 @@ class AuthController extends Controller
     {
         $user = DB::table('erp_legacy_admin_users')->where('legacy_id', $legacyId)->first();
         if (!$user) return;
+        // Managed local assignments are authoritative. Login must not add a
+        // default production role after an administrator removed it explicitly.
+        if ($user->local_managed ?? false) return;
 
         $groups = json_decode($user->auth_group_names ?: '[]', true) ?: [];
         $legacyPayload = json_decode($user->legacy_payload ?: '{}', true) ?: [];
@@ -102,6 +106,7 @@ class AuthController extends Controller
         $user = DB::table('erp_legacy_admin_users')->where('legacy_id', $legacyId)->first();
         abort_if(!$user, 409, '新 ERP 未找到当前登录身份。');
         abort_unless($authContext->isActiveUser($user), 403, '该账号已停用，不能登录。');
+        unset($user->password_hash, $user->legacy_payload);
 
         $plainToken = Str::random(64);
         DB::table('erp_auth_tokens')->insert([

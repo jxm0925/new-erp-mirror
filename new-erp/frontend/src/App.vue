@@ -150,7 +150,7 @@
         </nav>
 
         <section class="erp-content-container">
-          <router-view v-if="isRouterAlive" :key="$route.fullPath" />
+          <router-view v-if="isRouterAlive" :key="$route.path === '/finance/payables' ? $route.path : $route.fullPath" />
         </section>
       </main>
     </template>
@@ -216,12 +216,11 @@ export default {
       { name: '表单管理', path: '/approvals/forms', icon: 'el-icon-document', permission: 'approval.form.view' }
     ],
     financeMenus: [
-      { name: '收款管理', path: '/finance/receipts', icon: 'el-icon-money', permission: 'finance.receipt' },
-      { name: '付款管理', path: '/finance/payments', icon: 'el-icon-wallet', permission: 'finance.payment' },
-      { name: '应付管理', path: '/finance/payables', icon: 'el-icon-tickets', permission: 'finance.payable' },
-      { name: '供应商往来', path: '/finance/supplier-ledgers', icon: 'el-icon-office-building', permission: 'finance.supplier-ledger' },
+      { name: '收款管理', path: '/finance/receipts', icon: 'el-icon-money', permission: ['finance.receipt', 'finance.view'] },
+      { name: '付款管理', path: '/finance/payments', icon: 'el-icon-wallet', permission: ['finance.payment', 'finance.view'] },
+      { name: '应付管理', path: '/finance/payables', icon: 'el-icon-tickets', permission: ['finance.payable', 'finance.supplier-ledger', 'finance.payable.view', 'finance.supplier-ledger.view'] },
+      { name: '财务统计', path: '/finance/statistics', icon: 'el-icon-data-analysis', permission: 'finance.view' },
       { name: '发票管理', path: '/finance/invoices', icon: 'el-icon-document-copy', permission: 'finance.invoice' },
-      { name: '往来核销', path: '/finance/allocations', icon: 'el-icon-connection', permission: 'finance.allocation' },
       { name: '资金账户', path: '/finance/accounts', icon: 'el-icon-bank-card', permission: 'finance.account' },
       { name: '资金转账 / 换汇', path: '/finance/transfers', icon: 'el-icon-sort', permission: 'finance.transfer' },
       { name: '资金账户估值', path: '/finance/account-valuations', icon: 'el-icon-pie-chart', permission: 'finance.account_valuation' }
@@ -664,13 +663,14 @@ export default {
       if (path === '/finance/payments/create') return '付款管理 / 新增付款单'
       if (/^\/finance\/payments\/\d+$/.test(path)) return '付款管理 / 付款单详情'
       if (path === '/finance/payables') return '应付管理'
-      if (path === '/finance/supplier-ledgers') return '供应商往来'
+      if (path === '/finance/supplier-ledgers') return '应付管理'
+      if (['/finance/purchase-payment-statistics', '/finance/supplier-statistics', '/finance/sales-order-statistics'].includes(path)) return '财务统计'
       if (path === '/finance/invoices') return '发票管理'
       if (path === '/finance/invoices/create') return '发票管理 / 登记进项发票'
       if (path.startsWith('/finance/invoices/') && path.endsWith('/edit')) return '发票管理 / 登记进项发票'
       if (path.startsWith('/finance/invoices/') && path.endsWith('/match')) return '发票管理 / 发票匹配'
       if (path.startsWith('/finance/invoices/')) return '发票管理 / 发票详情'
-      if (path.startsWith('/finance/allocations')) return '往来核销'
+      if (path.startsWith('/finance/allocations')) return '收付款核销'
       if (path === '/finance/accounts') return '资金账户'
       if (path === '/finance/exchange-rates') return '汇率历史'
       if (path === '/finance/transfers/create') return '资金转账 / 换汇'
@@ -706,7 +706,8 @@ export default {
       if (path.startsWith('/finance/receipts')) return '/finance/receipts'
       if (path.startsWith('/finance/payments')) return '/finance/payments'
       if (path.startsWith('/finance/invoices')) return '/finance/invoices'
-      if (path.startsWith('/finance/allocations')) return '/finance/allocations'
+      if (path.startsWith('/finance/payables') || path.startsWith('/finance/supplier-ledgers')) return '/finance/payables'
+      if (['/finance/statistics', '/finance/purchase-payment-statistics', '/finance/supplier-statistics', '/finance/sales-order-statistics'].includes(path)) return '/finance/statistics'
       if (path.startsWith('/finance/transfers')) return '/finance/transfers'
       if (path.startsWith('/master/products')) return '/master/products'
       if (path.startsWith('/master/skus')) return '/master/skus'
@@ -746,10 +747,11 @@ export default {
     canMenu(permission) {
       if (!permission) return true
       if (JSON.parse(localStorage.getItem('erp_me') || '{}').is_super_admin) return true
+      if (Array.isArray(permission)) return permission.some(code => this.permissions.includes(code))
       return this.permissions.includes(permission)
     },
     visibleItems(items) {
-      return items.filter(item => item.children ? this.visibleItems(item.children).length : this.canMenu(item.permission))
+      return items.filter(item => item.children ? this.visibleItems(item.children).length : this.canMenu(item.permission) && (!item.allPermissions || item.allPermissions.every(permission => this.canMenu(permission))))
     },
     async logout() {
       try {

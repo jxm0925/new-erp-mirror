@@ -6,6 +6,7 @@ class PurchaseOrderItem extends PurchaseBaseModel
 {
     protected $table = 'erp_purchase_order_items';
     protected $casts = [
+        'purchase_conversion_snapshot' => 'array',
         'allow_actual_conversion_snapshot' => 'boolean',
         'conversion_factor_snapshot' => 'decimal:8',
         'purchase_qty' => 'decimal:8',

@@ -69,15 +69,17 @@ final class ProductionMaterialExecutionService
             ->leftJoin('erp_production_units as production_unit', 'production_unit.id', '=', 'unit_operation.production_unit_id')
             ->whereIn('demand.work_order_id', $visibleWorkOrders)
             ->whereIn('work_order.status', ['RELEASED', 'IN_PROGRESS'])
-            ->where('supply.supply_mode_snapshot', 'dedicated_delivery')
-            ->where('supply.requires_delivery_snapshot', true)
+            ->where(function ($q): void {
+                $q->where(fn ($r) => $r->where('supply.supply_mode_snapshot', 'dedicated_delivery')->where('supply.requires_delivery_snapshot', true))
+                    ->orWhereIn('item.cutting_mode', ['sheet', 'length'])->orWhere('item.is_length_cut_material', true);
+            })
             ->orderBy('demand.id')
             ->select([
                 'demand.id', 'demand.work_order_id', 'work_order.work_order_no',
                 'work_order.business_version as work_order_version', 'work_order.production_batch as production_batch_no',
                 'output.item_name as output_item_name', 'output.item_code as output_item_code',
                 'production_unit.unit_no as production_unit_no',
-                'requirement.configuration_id', 'item.category_id',
+                'requirement.configuration_id', 'item.category_id', 'work_order.business_version as work_order_version',
                 'supply.target_routing_operation_id_snapshot as target_routing_operation_id',
                 'supply.target_operation_code_snapshot as target_operation_code',
                 'supply.target_operation_name_snapshot as target_operation_name',
@@ -89,7 +91,8 @@ final class ProductionMaterialExecutionService
                 'demand.returned_base_qty', 'requirement.base_unit_name_snapshot as unit_name',
                 'demand.status', 'demand.business_version', 'demand.created_at', 'demand.updated_at',
             ])
-            ->selectRaw("{$remainingSql} as remaining_to_prepare");
+            ->selectRaw("{$remainingSql} as remaining_to_prepare")
+            ->selectRaw("CASE WHEN item.cutting_mode IN ('sheet','length') OR item.is_length_cut_material = 1 THEN 'onsite_cutting' ELSE 'delivery' END as fulfillment_mode");
 
         if (! empty($filters['status'])) {
             $query->where('demand.status', (string) $filters['status']);
@@ -138,7 +141,8 @@ final class ProductionMaterialExecutionService
         foreach ($task->lines as $line) {
             $rows = $allocated->where('picking_task_line_id', $line->id);
             $line->setAttribute('allocated_delivery_qty', (float) $rows->sum('delivery_qty'));
-            $line->setAttribute('remaining_delivery_qty', max(0, (float) $line->actual_pick_qty - (float) $rows->sum('delivery_qty')));
+            $line->setAttribute('remaining_delivery_qty', $line->fulfillment_mode_snapshot === 'onsite_cutting' ? 0 : max(0, (float) $line->actual_pick_qty - (float) $rows->sum('delivery_qty')));
+            $line->setAttribute('remaining_onsite_qty', $line->fulfillment_mode_snapshot === 'onsite_cutting' ? max(0, (float) $line->actual_pick_qty - (float) $line->received_qty) : 0);
             $used = $rows->flatMap(fn ($row) => json_decode($row->serial_snapshot ?: '{}', true)['inventory_serial_ids'] ?? [])->all();
             $line->setAttribute('available_delivery_serial_ids', array_values(array_diff($line->serial_snapshot['inventory_serial_ids'] ?? [], $used)));
         }
@@ -206,7 +210,7 @@ final class ProductionMaterialExecutionService
                         || (int) $supply->material_requirement_id !== (int) $requirement->id) {
                         $this->fail('material_supply_rule_invalid', '配料明细必须引用当前工单发布时冻结的物料供应规则。');
                     }
-                    if ($supply->supply_mode_snapshot !== 'dedicated_delivery' || ! $supply->requires_delivery_snapshot) {
+                    if (($supply->supply_mode_snapshot !== 'dedicated_delivery' || ! $supply->requires_delivery_snapshot) && ! $this->onsiteMaterial((int) $requirement->component_item_id)) {
                         $this->fail('per_order_delivery_not_required', '线边常备或无需逐单配送的物料不能生成逐单配料配送任务。');
                     }
                     $targetType = (string) ($row['production_target_type'] ?? '');
@@ -256,6 +260,7 @@ final class ProductionMaterialExecutionService
                         'target_operation_name_snapshot' => $supply->target_operation_name_snapshot,
                         'production_target_type' => $targetType, 'production_target_id' => $targetId,
                         'component_item_id' => $requirement->component_item_id,
+                        'fulfillment_mode_snapshot' => $this->onsiteMaterial((int) $requirement->component_item_id) ? 'onsite_cutting' : 'delivery',
                         'required_qty_snapshot' => $requirement->required_qty, 'planned_pick_qty' => $planned,
                         'actual_pick_qty' => 0, 'delivered_qty' => 0, 'received_qty' => 0,
                         'unit_id' => $requirement->unit_id, 'unit_name_snapshot' => $requirement->unit_name_snapshot,
@@ -463,6 +468,9 @@ final class ProductionMaterialExecutionService
                 $pickLines = MaterialPickingTaskLine::whereIn('id', $lineIds)->orderBy('id')->lockForUpdate()->get()->keyBy('id');
                 if ($pickLines->count() !== count($lineIds) || $pickLines->contains(fn ($line) => (int) $line->task_id !== $task->id || (float) $line->actual_pick_qty <= 0)) {
                     $this->fail('picking_line_invalid', '配送只能引用当前任务已确认的正式配料明细。');
+                }
+                if ($pickLines->contains(fn ($line) => $line->fulfillment_mode_snapshot === 'onsite_cutting')) {
+                    $this->fail('onsite_material_not_deliverable', '下料板材和长料在现场领料，无需创建配送单。');
                 }
                 $targetKeys = $pickLines->map(fn ($line) => $line->production_target_type.':'.$line->production_target_id.':'.$line->target_routing_operation_id_snapshot)->unique();
                 if ($targetKeys->count() !== 1) $this->fail('delivery_target_mismatch', '一张配送单只能绑定同一个生产目标和目标工序。');
@@ -718,6 +726,89 @@ final class ProductionMaterialExecutionService
             });
     }
 
+    public function onsiteCollections(array $filters, object $user, array $permissions, bool $superAdmin): LengthAwarePaginator
+    {
+        $this->permission($permissions, 'production.material_receipt.view');
+        $scope = $this->scopeResolver->resolve($user, 'production.material_receipt.view', $permissions, $superAdmin);
+        $visible = WorkOrder::query()->select('id');
+        $this->scopeResolver->applyWorkOrderScope($visible, $scope);
+        $query = DB::table('erp_material_picking_task_lines as line')
+            ->join('erp_material_picking_tasks as picking', 'picking.id', '=', 'line.task_id')
+            ->join('erp_work_orders as wo', 'wo.id', '=', 'picking.work_order_id')
+            ->join('erp_items as item', 'item.id', '=', 'line.component_item_id')
+            ->whereIn('picking.work_order_id', $visible)->where('line.fulfillment_mode_snapshot', 'onsite_cutting')
+            ->whereNotIn('picking.status', ['WAIT_PICK', 'PICKING', 'CANCELLED'])
+            ->whereColumn('line.actual_pick_qty', '>', 'line.received_qty')
+            ->whereExists(function ($q) use ($user): void {
+                $q->selectRaw('1')->from('erp_production_task_targets as target')
+                    ->join('erp_production_tasks as task', 'task.id', '=', 'target.task_id')
+                    ->whereColumn('target.target_type', 'line.production_target_type')->whereColumn('target.target_id', 'line.production_target_id')
+                    ->where('task.assignee_user_legacy_id', $this->userId($user));
+            });
+        if (! empty($filters['production_target_type'])) $query->where('line.production_target_type', $filters['production_target_type']);
+        if (! empty($filters['production_target_id'])) $query->where('line.production_target_id', (int) $filters['production_target_id']);
+        if (! empty($filters['work_order_id'])) $query->where('picking.work_order_id', (int) $filters['work_order_id']);
+        return $query->select('line.id', 'line.task_id', 'line.component_item_id', 'line.production_target_type', 'line.production_target_id',
+            'line.actual_pick_qty', 'line.received_qty', 'line.unit_name_snapshot', 'line.target_operation_name_snapshot',
+            'line.serial_snapshot', 'line.serial_control_type', 'item.item_code', 'item.item_name', 'item.spec',
+            'wo.work_order_no', 'picking.task_no', 'picking.business_version as task_version')
+            ->selectRaw('line.actual_pick_qty - line.received_qty as remaining_qty')->orderBy('line.id')
+            ->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 20))));
+    }
+
+    public function receiveOnsite(int $id, array $payload, object $user, array $permissions, bool $superAdmin): MaterialReceipt
+    {
+        $this->permission($permissions, 'production.material_receipt.confirm');
+        return $this->command('receive_onsite', 'picking_task', $id, $payload, $user, function () use ($id, $payload, $user, $permissions, $superAdmin) {
+            $task = MaterialPickingTask::with(['lines', 'workOrder'])->lockForUpdate()->findOrFail($id);
+            $this->visible($task->workOrder, $user, 'production.material_receipt.view', $permissions, $superAdmin);
+            $this->version($task, $payload);
+            if (in_array($task->status, ['WAIT_PICK', 'PICKING', 'CANCELLED'], true)) $this->fail('invalid_state', '确认拣货后才能现场领料。', 409);
+            $rows = collect($payload['lines'] ?? []);
+            if ($rows->isEmpty() || $rows->pluck('picking_task_line_id')->unique()->count() !== $rows->count()) $this->fail('validation_error', '领料明细不能为空或重复。');
+            $receipt = MaterialReceipt::create(['receipt_no' => 'TMP-'.bin2hex(random_bytes(12)), 'delivery_id' => null,
+                'picking_task_id' => $task->id, 'collection_type' => 'onsite_cutting', 'work_order_id' => $task->work_order_id,
+                'status' => 'CONFIRMED', 'received_by_legacy_id' => $this->userId($user), 'received_at' => now(),
+                'remark' => $payload['remark'] ?? null, 'business_version' => 1]);
+            $receipt->update(['receipt_no' => 'MRC'.now()->format('Ymd').str_pad((string) $receipt->id, 6, '0', STR_PAD_LEFT)]);
+            foreach ($rows as $row) {
+                $line = MaterialPickingTaskLine::where('task_id', $task->id)->where('id', $row['picking_task_line_id'])->lockForUpdate()->first();
+                if (! $line || $line->fulfillment_mode_snapshot !== 'onsite_cutting') $this->fail('onsite_line_invalid', '现场领料只能引用本次已拣货的下料物料。');
+                $target = DB::table('erp_production_task_targets as target')->join('erp_production_tasks as production_task', 'production_task.id', '=', 'target.task_id')
+                    ->where('target.target_type', $line->production_target_type)->where('target.target_id', $line->production_target_id)
+                    ->lockForUpdate()->first(['production_task.assignee_user_legacy_id']);
+                if (! $target?->assignee_user_legacy_id || (int) $target->assignee_user_legacy_id !== $this->userId($user))
+                    $this->fail('receiver_mismatch', '只有生产目标当前责任人可以确认现场领料。', 403);
+                $qty = $this->quantity($row['accepted_qty'] ?? 0, 'accepted_qty');
+                if ($qty > (float) $line->actual_pick_qty - (float) $line->received_qty + 0.00000001) $this->fail('receipt_quantity_exceeded', '领料数量不能超过当前剩余数量。');
+                $serials = array_map('intval', (array) ($row['accepted_serial_ids'] ?? []));
+                $available = (array) (($line->serial_snapshot ?? [])['inventory_serial_ids'] ?? []);
+                if (count($serials) !== count(array_unique($serials)) || array_diff($serials, $available)) $this->fail('serial_invalid', '领料序列号必须来自本次正式拣货。');
+                if ($line->serial_control_type !== 'none' && (count($serials) !== (int) $qty || abs($qty - (int) $qty) > 0.00000001))
+                    $this->fail('receipt_serial_quantity_mismatch', '领料数量必须与所选序列号数量一致。');
+                $receiptLine = $receipt->lines()->create(['delivery_line_id' => null, 'picking_task_line_id' => $line->id,
+                    'component_item_id' => $line->component_item_id, 'delivered_qty_snapshot' => $line->actual_pick_qty,
+                    'accepted_qty' => $qty, 'rejected_qty' => 0, 'unit_id' => $line->unit_id,
+                    'accepted_serial_snapshot' => $serials ? ['inventory_serial_ids' => $serials] : null]);
+                $this->materialCosts->recordOnsiteReceipt($line, $receiptLine, $this->userId($user));
+                $this->updateReceivedSerials($serials, 'production_received', $receipt, $line);
+                $line->incrementEach(['received_qty' => $qty, 'business_version' => 1]);
+                $line->requirement()->lockForUpdate()->incrementEach(['received_qty' => $qty, 'business_version' => 1]);
+                $demand = DB::table('erp_production_target_material_requirements')->where('target_type', $line->production_target_type)
+                    ->where('target_id', $line->production_target_id)->where('material_supply_rule_snapshot_id', $line->material_supply_rule_snapshot_id)->lockForUpdate()->first();
+                if (! $demand) $this->fail('production_receipt_target_requirement_missing', '缺少正式生产需求，不能现场领料。');
+                DB::table('erp_production_target_material_requirements')->where('id', $demand->id)->incrementEach(['satisfied_base_qty' => $qty, 'business_version' => 1], ['updated_at' => now()]);
+                $this->refreshPreparationStatus((int) $demand->id);
+                $this->refreshTargetReadiness($line->production_target_type, (int) $line->production_target_id);
+            }
+            $before = $task->status;
+            $this->refreshPickingDeliveryState($task->id, $user);
+            $task->refresh();
+            $this->event('picking_task', $task->id, 'onsite_receive', $before, $task->status, (int) $payload['expected_version'], $task->business_version, $payload['lines'], $payload['remark'] ?? null, $user);
+            return $receipt->fresh(['lines', 'workOrder']);
+        });
+    }
+
     private function refreshTargetReadiness(string $targetType, int $targetId): void
     {
         $link = DB::table('erp_production_task_targets')->where('target_type', $targetType)
@@ -877,7 +968,7 @@ final class ProductionMaterialExecutionService
         };
     }
 
-    private function updateReceivedSerials(array $ids, string $status, MaterialReceipt $receipt, MaterialDeliveryLine $line): void
+    private function updateReceivedSerials(array $ids, string $status, MaterialReceipt $receipt, MaterialDeliveryLine|MaterialPickingTaskLine $line): void
     {
         if ($ids === []) return;
         $serials = InventorySerial::whereIn('id', $ids)->where('serial_status', 'production_in_transit')->lockForUpdate()->get();
@@ -890,7 +981,7 @@ final class ProductionMaterialExecutionService
                 'document_no' => $receipt->receipt_no, 'from_status' => 'production_in_transit',
                 'to_status' => $status, 'warehouse_id' => $serial->warehouse_id,
                 'location_id' => $serial->location_id, 'batch_no' => $serial->batch_no,
-                'event_payload' => ['delivery_line_id' => $line->id], 'occurred_at' => now(),
+                'event_payload' => [$line instanceof MaterialDeliveryLine ? 'delivery_line_id' : 'picking_task_line_id' => $line->id], 'occurred_at' => now(),
             ]);
         }
     }
@@ -955,7 +1046,7 @@ final class ProductionMaterialExecutionService
                 ->select('demand.*', 'supply.supply_mode_snapshot', 'supply.requires_delivery_snapshot')
                 ->first();
             if (! $demand) $this->fail('preparation_demand_invalid', '系统待准备需求不存在或不属于当前工单。');
-            if ($demand->supply_mode_snapshot !== 'dedicated_delivery' || ! $demand->requires_delivery_snapshot) {
+            if (($demand->supply_mode_snapshot !== 'dedicated_delivery' || ! $demand->requires_delivery_snapshot) && ! $this->onsiteMaterial((int) $demand->component_item_id)) {
                 $this->fail('per_order_delivery_not_required', '工位常备或无需逐单配送的物料不能生成逐单配料配送任务。');
             }
             if ($demand->status === 'SATISFIED') $this->fail('preparation_demand_satisfied', '该系统待准备需求已满足，无需重复配料。');
@@ -1025,7 +1116,7 @@ final class ProductionMaterialExecutionService
             $statuses->contains('IN_TRANSIT') => 'DELIVERING',
             $statuses->contains('DELIVERED') => 'DELIVERED',
             $statuses->contains('READY') => 'WAIT_DELIVERY',
-            $statuses->isNotEmpty() && $allReceived => 'RECEIVED',
+            $allReceived && $anyReceived => 'RECEIVED',
             $anyReceived => 'PARTIALLY_RECEIVED',
             default => 'PICKED',
         };
@@ -1038,6 +1129,11 @@ final class ProductionMaterialExecutionService
     {
         $person = $id ? DB::table('erp_legacy_admin_users')->where('legacy_id', $id)->first(['nickname', 'username']) : null;
         return $person?->nickname ?: $person?->username;
+    }
+
+    private function onsiteMaterial(int $itemId): bool
+    {
+        return DB::table('erp_items')->where('id', $itemId)->where(fn ($q) => $q->whereIn('cutting_mode', ['sheet', 'length'])->orWhere('is_length_cut_material', true))->exists();
     }
 
     private function searchDocuments($query, array $filters, string $number): void

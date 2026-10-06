@@ -13,15 +13,16 @@ class ErpUserDirectoryService
 {
     public function users(array $filters = [])
     {
-        $query = DB::table('erp_legacy_admin_users')->orderByDesc('sort')->orderBy('legacy_id');
+        $query = DB::table('erp_legacy_admin_users')->whereNull('deleted_at')->orderByDesc('sort')->orderBy('legacy_id');
 
         $warehouseScope = ($filters['scope'] ?? null) === 'warehouse';
         if ($warehouseScope) {
             $query->whereIn(DB::raw('LOWER(TRIM(status))'), ['normal', 'active']);
         } elseif (($filters['status'] ?? 'normal') !== 'all') {
-            $query->where('status', $filters['status'] ?? 'normal');
+            $status = $filters['status'] ?? 'normal';
+            $query->whereIn('status', $status === 'normal' ? ['normal', 'active'] : ['hidden', 'disabled']);
         }
-        if ($warehouseScope && !empty($filters['department_id'])) {
+        if (!empty($filters['department_id'])) {
             $query->whereExists(function ($members) use ($filters): void {
                 $members->selectRaw('1')->from('erp_department_users as du')
                     ->whereColumn('du.user_legacy_id', 'erp_legacy_admin_users.legacy_id')
@@ -55,6 +56,13 @@ class ErpUserDirectoryService
             }
         }
         if (!empty($filters['department_name'])) $query->where('department_names', 'like', '%' . $filters['department_name'] . '%');
+        if (!empty($filters['role_id'])) {
+            $query->whereExists(function ($role) use ($filters): void {
+                $role->selectRaw('1')->from('erp_rbac_user_roles as ur')
+                    ->whereColumn('ur.user_legacy_id', 'erp_legacy_admin_users.legacy_id')
+                    ->where('ur.role_id', (int) $filters['role_id']);
+            });
+        }
         if (!empty($filters['group_name'])) {
             $groupName = trim((string) $filters['group_name']);
             $query->whereExists(function ($role) use ($groupName): void {
@@ -91,9 +99,9 @@ class ErpUserDirectoryService
         $productionScope = ($filters['scope'] ?? 'system') === 'production';
         $columns = $productionScope
             ? ['legacy_id as user_id', 'nickname as display_name', 'department_names as department_name', 'status']
-            : ['legacy_id as id', 'username', 'nickname', 'status', 'department_names', 'mobile', 'email', 'is_sales'];
+            : ['legacy_id as id', 'username', 'nickname', 'status', 'department_names', 'mobile', 'email', 'is_sales', 'sort', 'business_version', 'created_at', 'updated_at'];
         if ($warehouseScope) $columns = ['legacy_id as id', 'username', 'nickname', 'status', 'department_names'];
-        if ($warehouseScope || !empty($filters['per_page']) || !empty($filters['page'])) {
+        if (($filters['scope'] ?? 'system') === 'system' || $warehouseScope || !empty($filters['per_page']) || !empty($filters['page'])) {
             $paginator = $query->paginate(max(1, min(100, (int) ($filters['per_page'] ?? 20))), $columns);
             if (! $productionScope && ($filters['scope'] ?? 'system') === 'system') {
                 $paginator->setCollection($this->attachRbacRoles($paginator->getCollection()));
@@ -119,24 +127,26 @@ class ErpUserDirectoryService
         $rolesByUser = DB::table('erp_rbac_user_roles as ur')
             ->join('erp_rbac_roles as r', 'r.id', '=', 'ur.role_id')
             ->whereIn('ur.user_legacy_id', $userIds)
-            ->where('r.enabled', true)
             ->orderBy('r.id')
-            ->get(['ur.user_legacy_id', 'r.code', 'r.name', 'r.data_scope'])
+            ->get(['ur.user_legacy_id', 'r.id', 'r.code', 'r.name', 'r.enabled', 'r.data_scope'])
             ->groupBy('user_legacy_id');
+        $identities = DB::table('erp_legacy_admin_users')->whereIn('legacy_id', $userIds)
+            ->get(['legacy_id', 'username', 'auth_group_names'])->keyBy('legacy_id');
 
-        $scopeRank = ['self' => 1, 'department' => 2, 'all' => 3];
-
-        return $users->map(function ($user) use ($rolesByUser, $scopeRank) {
+        return $users->map(function ($user) use ($rolesByUser, $identities) {
             $roles = $rolesByUser->get($user->id, collect());
             $user->rbac_roles = $roles->map(static fn ($role): array => [
+                'id' => (int) $role->id,
                 'code' => (string) $role->code,
                 'name' => (string) $role->name,
+                'enabled' => (bool) $role->enabled,
                 'data_scope' => (string) $role->data_scope,
             ])->values()->all();
-            $user->data_scope = $roles
-                ->sortByDesc(static fn ($role): int => $scopeRank[$role->data_scope] ?? 0)
-                ->pluck('data_scope')
-                ->first() ?? 'self';
+            $identity = $identities->get($user->id);
+            $auth = app(AuthContextService::class);
+            $user->is_department_principal = $auth->isDepartmentPrincipal($identity);
+            $user->is_super_admin = $auth->isSuperAdmin($identity);
+            $user->data_scope = $auth->dataScope($identity);
 
             return $user;
         });

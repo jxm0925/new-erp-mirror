@@ -38,6 +38,7 @@ class UserDirectoryController extends Controller
             'department_name' => $request->input('department_name'),
             'department_id' => $request->integer('department_id'),
             'group_name' => $request->input('group_name'),
+            'role_id' => $request->integer('role_id'),
             'data_scope' => $request->input('data_scope'),
             'keyword' => $request->input('keyword'),
             'page' => $request->input('page'),
@@ -49,7 +50,7 @@ class UserDirectoryController extends Controller
                 'data' => $result->items(),
                 ...($scope === 'warehouse' && $request->boolean('include_departments') ? [
                     // 选择器明确请求部门树，仅提供真实分类，不额外授予系统账号管理权限。
-                    'departments' => DB::table('erp_departments')->orderBy('sort')->orderBy('legacy_id')
+                    'departments' => DB::table('erp_departments')->whereNull('deleted_at')->orderBy('sort')->orderBy('legacy_id')
                         ->get(['legacy_id as id', 'parent_legacy_id as parent_id', 'name']),
                 ] : []),
                 'meta' => [
