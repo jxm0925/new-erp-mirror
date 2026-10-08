@@ -294,7 +294,7 @@ class ItemCategorySupplierScopeTest extends TestCase
     public function test_frontend_uses_readonly_item_category_number_flow(): void
     {
         $source = file_get_contents(base_path('../frontend/src/views/erp/master/ItemCategoryList.vue'));
-        $this->assertStringContainsString("reserveForCreatePage('item_category'", $source);
+        $this->assertMatchesRegularExpression("/(?:reserveForCreatePage|reserve)\\('item_category'\\s*,/", $source);
         $this->assertMatchesRegularExpression('/<el-input[^>]*v-model(?:\.trim)?="form\.category_code"[^>]*\bdisabled\b/', $source);
         $this->assertStringContainsString('reservation_token', $source);
     }

@@ -271,6 +271,7 @@
 <script>
 import { deleteEntity, disableEntity, enableEntity, listEntity } from '../../../api/erp/master'
 import { legacyMediaUrl } from '../../../utils/legacyMedia'
+import { materialListPath } from '../../../utils/materialManagementScope.mjs'
 
 export default {
   name: 'SkuList',
@@ -377,7 +378,8 @@ export default {
     },
     goToItem(item) {
       if (item && item.id) {
-        this.$router.push('/master/items/' + item.id + '/edit')
+        const scope = item.management_scope || (item.item_type === 'office_consumable' ? 'office' : 'factory')
+        this.$router.push(`${materialListPath(scope)}/${item.id}/edit`)
       }
     },
     imageUrl(row) {

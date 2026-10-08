@@ -83,6 +83,67 @@ final class CuttingDemandService
         return $projection;
     }
 
+    public function producerOptions(int $id, array $filters, object $user, array $permissions, bool $super = false): array
+    {
+        $this->commands->permission($permissions, 'production.cutting.plan');
+        $demand = $this->assertDemandManageable($id, $user, $permissions, $super);
+        $projection = $this->projections(collect([$this->visibleRow($id, $user, $permissions, $super)]))[0];
+        [$page, $size] = $this->pagination($filters);
+        $scoped = WorkOrder::query()->whereIn('status', ['RELEASED', 'IN_PROGRESS']);
+        $this->scope->applyWorkOrderScope($scoped, $this->scope->resolve($user, 'production.cutting.plan', $permissions, $super));
+        $columns = ['id', 'work_order_id', 'routing_operation_id_snapshot', 'output_item_id_snapshot', 'operation_name_snapshot'];
+        $nodes = DB::table('erp_production_quantity_operations')->select($columns)->selectRaw("'quantity_operation' as target_type")
+            ->unionAll(DB::table('erp_production_unit_operations')->select($columns)->selectRaw("'unit_operation' as target_type"));
+        // Demand belongs to its consuming target. The producer and raw input are
+        // separate frozen identities; deriving them from the consumer misroutes
+        // production and can assign unrelated stock to the formal requirement.
+        $query = DB::query()->fromSub($nodes, 'node')
+            ->join('erp_work_orders as producer', 'producer.id', '=', 'node.work_order_id')
+            ->join('erp_work_order_material_supply_rules as supply', function ($join): void {
+                $join->on('supply.work_order_id', '=', 'producer.id')->on('supply.target_routing_operation_id_snapshot', '=', 'node.routing_operation_id_snapshot');
+            })
+            ->join('erp_work_order_material_requirements as raw_line', 'raw_line.id', '=', 'supply.material_requirement_id')
+            ->join('erp_items as raw', 'raw.id', '=', 'raw_line.component_item_id')
+            ->whereIn('producer.id', $scoped->select('id'))
+            ->whereRaw('COALESCE(NULLIF(node.output_item_id_snapshot,0),producer.effective_output_item_id_snapshot,producer.output_item_id) = ?', [(int) $demand->item_id])
+            ->where('raw.item_type', 'raw_material')->where('raw.status', 'enabled')
+            ->whereExists(function (Builder $target): void {
+                $target->selectRaw('1')->from('erp_production_target_material_requirements as raw_target')
+                    ->whereColumn('raw_target.work_order_id', 'producer.id')->whereColumn('raw_target.material_requirement_id', 'raw_line.id')
+                    ->whereColumn('raw_target.material_supply_rule_snapshot_id', 'supply.id')->whereColumn('raw_target.component_item_id', 'raw.id')
+                    ->whereColumn('raw_target.target_type', 'node.target_type')->whereColumn('raw_target.target_id', 'node.id');
+            })
+            ->select('producer.id as producer_work_order_id', 'producer.work_order_no', 'node.routing_operation_id_snapshot as stage_id', 'node.operation_name_snapshot as operation_name',
+                'raw_line.id as input_material_requirement_id', 'raw_line.component_item_id', 'raw_line.component_item_code_snapshot', 'raw_line.component_item_name_snapshot',
+                'raw_line.base_unit_name_snapshot', 'raw_line.base_required_qty')
+            ->distinct();
+        if (!empty($filters['keyword'])) {
+            $keyword = '%'.trim((string) $filters['keyword']).'%';
+            $query->where(fn (Builder $search) => $search->where('producer.work_order_no', 'like', $keyword)
+                ->orWhere('node.operation_name_snapshot', 'like', $keyword)->orWhere('raw_line.component_item_code_snapshot', 'like', $keyword)
+                ->orWhere('raw_line.component_item_name_snapshot', 'like', $keyword)->orWhere('raw.spec', 'like', $keyword));
+        }
+        $result = $query->orderBy('producer_work_order_id')->orderBy('stage_id')->orderBy('input_material_requirement_id')->paginate($size, ['*'], 'page', $page);
+        $rows = collect($result->items())->map(function (object $row) use ($demand, $projection, $user, $permissions, $super): array {
+            $eligible = true; $reason = null;
+            try {
+                $raw = Item::find($row->component_item_id);
+                if (!$raw || !in_array($raw->cuttingMode(), ['sheet', 'length'], true)) $this->commands->fail('input_requirement_invalid', '原料未配置板材或型材下料方式。');
+                if ($projection['revision_pending'] || $projection['status'] !== 'ACTIVE' || bccomp($projection['remaining_demand_qty'], '0', 8) <= 0) $this->commands->fail('demand_not_active', '需求已变化或没有剩余可安排数量，请先核对需求。', 409);
+                $this->generationContext(['producer_work_order_id'=>(int) $row->producer_work_order_id, 'producer_stage_id'=>(int) $row->stage_id,
+                    'source_requirement_id'=>(int) $demand->source_requirement_id, 'configuration_id'=>$demand->configuration_id ? (int) $demand->configuration_id : null], $user, $permissions, $super, false);
+            } catch (\App\Exceptions\Erp\WorkOrderDomainException $error) { $eligible = false; $reason = $error->getMessage(); }
+            return ['key'=>$row->producer_work_order_id.':'.$row->stage_id.':'.$row->input_material_requirement_id,
+                'work_order_id'=>(int) $row->producer_work_order_id, 'work_order_no'=>$row->work_order_no, 'stage_id'=>(int) $row->stage_id, 'operation_name'=>$row->operation_name,
+                'input_material_requirement_id'=>(int) $row->input_material_requirement_id, 'target_material_requirement_id'=>(int) $demand->source_requirement_id,
+                'configuration_id'=>$demand->configuration_id ? (int) $demand->configuration_id : null, 'input_item_id'=>(int) $row->component_item_id,
+                'input_item_code'=>$row->component_item_code_snapshot, 'input_item_name'=>$row->component_item_name_snapshot,
+                'input_base_unit_name'=>$row->base_unit_name_snapshot, 'input_required_base_qty'=>(string) $row->base_required_qty,
+                'remaining_demand_qty'=>$projection['remaining_demand_qty'], 'eligible'=>$eligible, 'reason'=>$reason];
+        })->all();
+        return ['data'=>$rows, 'meta'=>['current_page'=>$page, 'per_page'=>$size, 'total'=>$result->total(), 'last_page'=>$result->lastPage()]];
+    }
+
     public function generate(array $payload, object $user, array $permissions, bool $super = false): array
     {
         $c = $this->commands;
@@ -496,12 +557,14 @@ final class CuttingDemandService
             ->join('erp_production_target_material_requirements as source', 'source.id', '=', 'd.source_requirement_id')
             ->join('erp_work_orders as consumer', 'consumer.id', '=', 'source.work_order_id')
             ->join('erp_items as item', 'item.id', '=', 'd.item_id')
+            ->leftJoin('erp_work_order_material_requirements as source_line', 'source_line.id', '=', 'source.material_requirement_id')
             ->join('erp_production_routing_operations as stage', 'stage.id', '=', 'd.stage_id')
             ->join('erp_production_operations as operation', 'operation.id', '=', 'stage.operation_id')
             ->leftJoin('erp_custom_configurations as configuration', 'configuration.id', '=', 'd.configuration_id')
             ->select(
                 'd.*',
                 'source.work_order_id as consumer_work_order_id',
+                'source_line.base_unit_id as source_base_unit_id', 'source_line.base_unit_name_snapshot as source_base_unit_name',
                 'source.target_type', 'source.target_id',
                 'source.required_base_qty as current_required_base_qty',
                 'source.cut_length_mm_snapshot as current_cut_length_mm',
@@ -621,6 +684,8 @@ final class CuttingDemandService
                     'operation_name' => $row->stage_name,
                 ],
                 'required_base_qty' => $this->decimal((string) $row->required_base_qty_snapshot),
+                'base_unit_id' => $row->source_base_unit_id ? (int) $row->source_base_unit_id : null,
+                'base_unit_name' => $row->source_base_unit_name,
                 'cut_length_mm' => $row->cut_length_mm_snapshot === null ? null : $this->decimal((string) $row->cut_length_mm_snapshot, 2),
                 'required_piece_qty' => $row->required_piece_qty_snapshot === null ? null : $this->decimal((string) $row->required_piece_qty_snapshot),
                 'reported_qty' => $summary['reported_qty'],

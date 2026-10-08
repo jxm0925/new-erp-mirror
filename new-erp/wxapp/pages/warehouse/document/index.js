@@ -9,7 +9,7 @@ Page({
     page: 1, lastPage: 1, total: 0, actions: [], mainAction: '', mainLabel: '', locator: {}, locatorOpen: false, locatorTarget: '', quantity: '',
     fieldErrors: {}, allocationOpen: false, allocations: [], allocationLine: null, allocationError: '', pendingAction: '', conflictOpen: false,
     packages: [], packagesPage: 1, packagesLast: 1, receipt: null, readonly: false, relatedOpen: false,
-    returnSerialOpen: false, returnSerialLine: {}, returnSerialValue: {}, returnSerialExcluded: [], returnSerialConflict: false },
+    returnSerialOpen: false, returnSerialLine: {}, returnSerialValue: {}, returnSerialExcluded: [], returnSerialConflict: false, canPacking: false },
   onLoad(options) {
     this.drafts = {}; this.returnLineCache = {}; this.returnSerialQueue = [];
     const postedOutput = options.completed === '1' && ['output', 'cutting_product'].includes(options.kind);
@@ -43,6 +43,7 @@ Page({
         sales_shipment: ['sales_shipment.post', 'sales_shipment.dispatch'], purchase_return: ['purchase_return.post'] })[this.data.kind] || [];
       const pendingAction = known.find(action => warehouse.pending(action, this.data.id)) || '';
       this.setData({ header, headerFields: view.header(this.data.kind, header, this.data.stage), lines, total: paged.total, page: paged.page, lastPage: paged.lastPage,
+        canPacking: this.data.kind === 'sales_shipment' && (page.permissions()('sales_order.shipment.packing.execute') || page.permissions()('sales_order.shipment.packing.quality')),
         hasMaterialCost: header.material_total_cost !== undefined && header.material_total_cost !== null, actions, mainAction, mainLabel: view.actionLabels[mainAction] || '', canAllocate: actions.includes('purchase.allocate'),
         loading: false, pendingAction, receipt: result.receipt, readonly: !actions.length, item: header.item || {},
         quantity: this.data.quantity || page.quantity(header.remaining_qty), postingEligibility: result.posting_eligibility || null,
@@ -176,5 +177,6 @@ Page({
   closeConflict() { this.setData({ conflictOpen: false }); },
   refreshConflict() { this.setData({ conflictOpen: false }); if (this.data.pendingAction) return this.submit(); return this.load(); },
   openRelated() { this.setData({ relatedOpen: true }); }, closeRelated() { this.setData({ relatedOpen: false }); },
+  openPacking() { if (this.data.canPacking && !this.data.busy) wx.navigateTo({ url: `/pages/production/shipment-packing/index?shipment_id=${this.data.id}` }); },
   back: page.back, stop() {},
 });

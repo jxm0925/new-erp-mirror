@@ -1,8 +1,12 @@
 const warehouse = require('../../services/warehouse');
 const ui = require('../../utils/warehouse-page');
 const logic = require('../../utils/warehouse-picking');
-const paths = { people: 'options', warehouse: 'options', target: 'targets', stock: 'sources', physical: 'physicals', serial: 'serials', 'sales-return-serial': 'sales-return-serials' };
+const paths = { people: 'options', warehouse: 'options', target: 'targets', stock: 'sources', physical: 'physicals', serial: 'serials', 'sales-return-serial': 'sales-return-serials', 'onsite-physical': 'physicals', 'onsite-serial': 'serials', 'procurement-item': 'items', 'procurement-order': 'orders' };
 function optionView(row, mode) {
+  if (mode === 'onsite-physical') return logic.optionView(row, 'physical');
+  if (mode === 'onsite-serial') return logic.optionView(row, 'serial');
+  if (mode === 'procurement-item') return Object.assign({}, row, { key: String(row.id), title: `${row.item_code} ${row.item_name}`, subtitle: [row.spec || row.model, row.unit_name].filter(Boolean).join(' / ') });
+  if (mode === 'procurement-order') return Object.assign({}, row, { key: String(row.id), title: row.sales_order_no, subtitle: row.customer_name });
   if (mode !== 'sales-return-serial') return logic.optionView(row, mode);
   return Object.assign({}, row, { key: String(row.id), title: row.serial_no,
     subtitle: [row.batch_no ? `批次 ${row.batch_no}` : '无批次', row.shipment_no ? `原发货单 ${row.shipment_no}` : ''].filter(Boolean).join(' / ') });
@@ -17,10 +21,10 @@ Component({
     initialize() {
       this.invalidate(); this.selection = {};
       (this.properties.selected || []).forEach(row => { const item = optionView(logic.copy(row), this.properties.mode); this.selection[item.key] = item; });
-      const hasCategories = ['people', 'stock'].includes(this.properties.mode);
+      const hasCategories = ['people', 'stock', 'procurement-item'].includes(this.properties.mode);
       this.setData({ rows: [], selectedRows: [], keyword: '', page: 1, lastPage: 1, total: 0, error: '', showSelected: false,
         categories: [], categoryId: 0, categoryPage: 1, categoryLastPage: 1, categoryError: '', hasCategories,
-        isMultiple: !['people', 'warehouse', 'target'].includes(this.properties.mode) && !!this.properties.multiple });
+        isMultiple: !['people', 'warehouse', 'target', 'procurement-order'].includes(this.properties.mode) && !!this.properties.multiple });
       this.sync(); this.load(); if (hasCategories) this.loadCategories();
     },
     invalidate() { this.sequence = (this.sequence || 0) + 1; this.categorySequence = (this.categorySequence || 0) + 1; },
@@ -41,9 +45,11 @@ Component({
         this.setData({ loading: false, rows: [], error: '请指定销售退货单和退货明细' }); return Promise.resolve();
       }
       if (mode === 'people' || mode === 'warehouse') query.kind = mode === 'people' ? 'people' : 'warehouses';
-      if (this.data.categoryId) query[mode === 'stock' ? 'location_id' : 'department_id'] = this.data.categoryId;
+      if (this.data.categoryId) query[mode === 'stock' ? 'location_id' : mode === 'procurement-item' ? 'category_id' : 'department_id'] = this.data.categoryId;
       this.setData({ loading: true, error: '', rows: [] });
-      const endpoint = mode === 'sales-return-serial' ? 'inventory/warehouse-workspace/sales-return-serials' : `production/material-picking-workspace/${path}`;
+      const endpoint = mode === 'sales-return-serial' ? 'inventory/warehouse-workspace/sales-return-serials'
+        : mode.startsWith('onsite-') ? `production/onsite-collection-sources/${path}`
+          : mode.startsWith('procurement-') ? `production/material-procurement-options/${path}` : `production/material-picking-workspace/${path}`;
       return warehouse.get(endpoint, query).then(response => {
         if (sequence !== this.sequence || !this.properties.open) return;
         const result = ui.rows(response); const rows = result.rows.map(row => optionView(row, mode));
@@ -56,10 +62,11 @@ Component({
       const sequence = this.categorySequence = (this.categorySequence || 0) + 1;
       const query = Object.assign(this.requestQuery(), { kind: this.properties.mode === 'stock' ? 'locations' : 'departments', page: this.data.categoryPage, per_page: 10 });
       this.setData({ categoryLoading: true, categoryError: '' });
-      return warehouse.get('production/material-picking-workspace/options', query).then(response => {
+      const procurement = this.properties.mode === 'procurement-item';
+      return warehouse.get(procurement ? 'production/material-procurement-options/categories' : 'production/material-picking-workspace/options', query).then(response => {
         if (sequence !== this.categorySequence || !this.properties.open) return;
         const result = ui.rows(response);
-        this.setData({ categories: result.rows.map(row => Object.assign({}, row, { label: row.location_code || row.location_name || row.name })), categoryPage: result.page, categoryLastPage: result.lastPage, categoryLoading: false });
+        this.setData({ categories: result.rows.map(row => Object.assign({}, row, { label: row.category_name || row.location_code || row.location_name || row.name })), categoryPage: result.page, categoryLastPage: result.lastPage, categoryLoading: false });
       }).catch(error => { if (sequence === this.categorySequence) this.setData({ categoryLoading: false, categoryError: ui.errorText(error) }); });
     },
     sync() {

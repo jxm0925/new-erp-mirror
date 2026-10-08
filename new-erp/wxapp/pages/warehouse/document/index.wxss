@@ -14,3 +14,6 @@
 .document-related { display:flex; justify-content:space-between; gap:18rpx; }
 .document-related text { word-break:break-all; }
 .document-result { margin-bottom:22rpx; }
+.document-packing-entry {
+  margin: 20rpx 0;
+}

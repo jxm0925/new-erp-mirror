@@ -387,7 +387,7 @@ final class CuttingReadService
     {
         $this->commands->order($id,$user,$permissions,$super,'production.cutting.view');
         $q = DB::table('erp_cutting_allowed_outputs as a')->join('erp_items as i','i.id','=','a.item_id')
-            ->leftJoin('erp_custom_configurations as c','c.id','=','a.configuration_id')->where('a.cutting_order_id',$id)->where('i.status','enabled')
+            ->leftJoin('erp_custom_configurations as c','c.id','=','a.configuration_id')->where('a.cutting_order_id',$id)->where('i.management_scope','factory')->where('i.status','enabled')
             ->where(fn (Builder $q) => $q->whereNull('a.configuration_id')->orWhere('c.status','PUBLISHED'));
         $this->itemFilter($q,$f);
         return $this->page($q->select('a.*','i.item_code','i.item_name','i.spec','i.category_id','c.configuration_no','c.version_no as configuration_version','c.drawing_reference')->orderBy('a.id'),$f);
@@ -411,7 +411,7 @@ final class CuttingReadService
             $this->commands->fail('selector_mode_invalid', '请选择用料或产出分类。');
         }
 
-        return $this->page($query->where('category.status', 'enabled')
+        return $this->page($query->where('item.management_scope', 'factory')->where('category.management_scope', 'factory')->where('category.status', 'enabled')
             ->select('category.id', 'category.category_code', 'category.category_name', 'category.sort_order')
             ->distinct()->orderBy('category.sort_order')->orderBy('category.id'), $f);
     }

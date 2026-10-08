@@ -16,7 +16,7 @@ final class CuttingMaterialEligibilityService
             ->where('p.cutting_order_id',$orderId)->where('d.status','ACTIVE')->whereColumn('d.source_requirement_id','p.target_material_requirement_id')
             ->whereColumn('d.item_id','p.output_item_id')->whereColumn('d.stage_id','p.stage_id')
             ->whereRaw('d.configuration_id <=> p.configuration_id')->whereColumn('r.work_order_id','p.work_order_id')
-            ->where('raw.status','enabled')->where('raw.item_type','raw_material')
+            ->where('raw.management_scope','factory')->where('raw.status','enabled')->where('raw.item_type','raw_material')
             ->where(fn (Builder $q) => $q->whereIn('raw.cutting_mode',['sheet','length'])->orWhere(fn (Builder $q) => $q->whereNull('raw.cutting_mode')->where('raw.is_length_cut_material',true)))
             ->whereExists(fn (Builder $q) => $q->selectRaw('1')->from('erp_work_order_material_supply_rules as s')
                 ->whereColumn('s.work_order_id','p.work_order_id')->whereColumn('s.material_requirement_id','r.id')
@@ -25,6 +25,8 @@ final class CuttingMaterialEligibilityService
 
     public function assertItem(int $orderId, int $itemId): void
     {
+        if (! DB::table('erp_items')->where('id', $itemId)->where('management_scope', 'factory')->exists())
+            app(CuttingCommandService::class)->fail('office_item_not_allowed_in_production', '下料用料只能选择工厂物料，不能使用办公用品。');
         if ($link = app(ProductionCuttingOperationService::class)->linkedOrder($orderId)) {
             if (! app(ProductionCuttingOperationService::class)->requirements($link->target_type, $link->target_id)->where('target.component_item_id', $itemId)->exists())
                 app(CuttingCommandService::class)->fail('input_not_allowed', '该材料不属于本工序的冻结用料。');
@@ -47,7 +49,7 @@ final class CuttingMaterialEligibilityService
 
     public function workerMaterials(): Builder
     {
-        return DB::table('erp_items')->where('status', 'enabled')->where('item_type', 'raw_material')
+        return DB::table('erp_items')->where('management_scope', 'factory')->where('status', 'enabled')->where('item_type', 'raw_material')
             ->where(fn (Builder $q) => $q->where(fn (Builder $sheet) => $sheet->where('cutting_mode','sheet')->where('material_management_mode','physical'))
                 ->orWhere(fn (Builder $length) => $length->where('material_management_mode','quantity')
                     ->where(fn (Builder $mode) => $mode->where('cutting_mode','length')->orWhere(fn (Builder $legacy) => $legacy->whereNull('cutting_mode')->where('is_length_cut_material',true)))));

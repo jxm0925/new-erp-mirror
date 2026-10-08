@@ -23,6 +23,29 @@ page {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 8rpx;
+  gap: 12rpx;
+  flex-wrap: wrap;
+}
+
+.header-operation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8rpx;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.public-operation-tag {
+  flex-shrink: 0;
+  padding: 3rpx 10rpx;
+  border: 1rpx solid #bbf7d0;
+  border-radius: 6rpx;
+  color: #00763f;
+  background: #f0fdf4;
+  font-size: 22rpx;
+  line-height: 1.4;
+  box-sizing: border-box;
 }
 
 .header-tag {
@@ -32,6 +55,9 @@ page {
   padding: 2rpx 14rpx;
   border-radius: 6rpx;
   letter-spacing: 0.5rpx;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  box-sizing: border-box;
 }
 
 .header-no {
@@ -827,6 +853,15 @@ page {
   line-height: 64rpx !important;
   font-size: 24rpx !important;
   padding: 0 24rpx !important;
+}
+
+.collab-pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 24rpx;
+  padding: 18rpx;
+  font-size: 24rpx;
 }
 
 .btn-modal-confirm {

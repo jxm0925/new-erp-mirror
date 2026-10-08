@@ -53,12 +53,11 @@ final class ProductionCuttingOperationTest extends TestCase
         $pick = $service->assignPickingTask($pick->id,$this->payload($pick->business_version)+['assigned_picker_legacy_id'=>$user->legacy_id],$user,$p,true);
         $pick = $service->startPickingTask($pick->id,$this->payload($pick->business_version),$user,$p,true);
         $pick = $service->confirmPickingTask($pick->id,$this->payload($pick->business_version)+['lines'=>$pick->lines->map(fn ($line) => ['picking_task_line_id'=>$line->id,'actual_pick_qty'=>$multiple ? '1' : '2'])->all()],$user,$p,true);
-        $delivery = $service->createDelivery($this->payload($pick->business_version)+['picking_task_id'=>$pick->id,
-            'lines'=>$pick->lines->map(fn ($line) => ['picking_task_line_id'=>$line->id,'delivery_qty'=>$multiple ? '1' : '2'])->all()],$user,$p,true);
-        $delivery = $service->dispatchDelivery($delivery->id,$this->payload($delivery->business_version)+['delivery_user_legacy_id'=>$user->legacy_id],$user,$p,true);
-        $delivery = $service->deliverDelivery($delivery->id,$this->payload($delivery->business_version),$user,$p,true);
-        $service->receiveDelivery($delivery->id,$this->payload($delivery->business_version)+[
-            'lines'=>$delivery->lines->map(fn ($line) => ['delivery_line_id'=>$line->id,'accepted_qty'=>$multiple ? '1' : '2','rejected_qty'=>0])->all()],$user,$p,true);
+        $service->receiveOnsite($pick->id,$this->payload($pick->business_version)+[
+            'lines'=>$pick->lines->map(fn ($line) => ['picking_task_line_id'=>$line->id,'accepted_qty'=>$multiple ? '1' : '2',
+                'physical_material_ids'=>DB::table('erp_material_physicals as physical')->join('erp_material_holdings as holding','holding.id','=','physical.current_holding_id')
+                    ->join('erp_inventory_transaction_items as posted','posted.id','=','holding.position_id')
+                    ->where('holding.position_type','PRODUCTION_TRANSIT')->where('posted.source_item_id',$line->id)->pluck('physical.id')->all()])->all()],$user,$p,true);
         $target->refresh();
         app(ProductionExecutionActionService::class)->start($task->id,'quantity_operation',$target->id,$this->payload($target->business_version),$user,$p);
         return [$f,$task,$target->fresh(),$p];

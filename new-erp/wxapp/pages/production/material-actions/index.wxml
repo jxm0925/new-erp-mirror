@@ -6,6 +6,7 @@
   </view>
 
   <view class="material-tabs">
+    <view wx:if="{{canOnsite}}" class="material-tab {{activeTab==='onsite'?'active':''}}" data-tab="onsite" bindtap="switchTab">现场领料</view>
     <view class="material-tab {{activeTab==='supplement'?'active':''}}" data-tab="supplement" bindtap="switchTab">补料</view>
     <view class="material-tab {{activeTab==='return'?'active':''}}" data-tab="return" bindtap="switchTab">退料</view>
   </view>
@@ -80,6 +81,21 @@
     <button class="submit" loading="{{busy}}" bindtap="submitReturn">提交生产退料</button>
   </view>
 
+  <view class="form-card" wx:if="{{activeTab==='onsite'}}">
+    <view class="notice">下料板材和长料在现场领用，由当前生产责任人确认。</view>
+    <view wx:if="{{onsiteError}}" class="notice red">{{onsiteError}}</view>
+    <button wx:for="{{onsitePending}}" wx:key="path" class="submit" data-path="{{item.path}}" loading="{{busy}}" disabled="{{busy}}" bindtap="recoverOnsite">核对上次领料</button>
+    <view wx:if="{{onsiteLoading}}">正在查询待领物料</view>
+    <view wx:if="{{!onsiteLoading && !onsiteRows.length}}">暂无待现场领用的物料</view>
+    <view class="onsite-material" wx:for="{{onsiteRows}}" wx:key="id">
+      <view class="section-title">{{item.item_code}} {{item.item_name}}</view><view>{{item.spec}}</view><view>配料单：{{item.task_no}}</view><view>待领：{{item.remainingText}} {{item.unit_name_snapshot}}</view>
+      <view class="form-row"><text class="form-label">本次领料</text><input class="form-control input-control" type="digit" value="{{item.accepted}}" data-id="{{item.id}}" bindinput="onsiteQuantity" placeholder="填写实际数量" /></view>
+      <button wx:if="{{item.material_management_mode==='physical'}}" class="add-line" data-id="{{item.id}}" data-kind="physicals" bindtap="selectOnsiteSource">选择具体板材（{{item.physicals.length}}张）</button>
+      <button wx:if="{{item.serial_control_type!=='none'}}" class="add-line" data-id="{{item.id}}" data-kind="serials" bindtap="selectOnsiteSource">选择序列号（{{item.serials.length}}件）</button>
+      <button wx:if="{{canReceiveOnsite}}" class="submit" data-id="{{item.id}}" loading="{{busy}}" disabled="{{busy}}" bindtap="receiveOnsite">确认现场领料</button>
+    </view>
+    <view class="onsite-pages"><button disabled="{{onsitePage<=1 || busy}}" data-delta="-1" bindtap="onsitePage">上一页</button><text>{{onsitePage}} / {{onsiteLastPage}}</text><button disabled="{{onsitePage>=onsiteLastPage || busy}}" data-delta="1" bindtap="onsitePage">下一页</button></view>
+  </view>
   <view class="bottom-nav">
     <view class="nav-item" data-url="/pages/index/index" bindtap="switchRoot"><van-icon name="wap-home-o" /><text>首页</text></view>
     <view class="nav-item" data-url="/pages/mall/index/index" bindtap="switchRoot"><van-icon name="gift-o" /><text>商城</text></view>
@@ -91,3 +107,4 @@
 <view wx:else class="loading"><van-empty description="任务不存在、尚未接单或无权操作" /></view>
 <import src="../../../components/material-selector/index.wxml" />
 <template is="material-selector" data="{{...selector, mode: activeTab}}" />
+<warehouse-picker open="{{onsiteSourceOpen}}" title="选择现场领料原料" mode="{{onsiteSourceMode}}" query="{{onsiteSourceQuery}}" selected="{{onsiteSourceSelected}}" multiple="{{true}}" bindconfirm="acceptOnsiteSource" bindcancel="closeOnsiteSource" />

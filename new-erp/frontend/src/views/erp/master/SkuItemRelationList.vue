@@ -190,7 +190,7 @@
           </el-table-column>
           <el-table-column label="默认Item编码" min-width="120" show-overflow-tooltip>
             <template slot-scope="{ row }">
-              <span v-if="row.default_item && row.default_item.item_code" class="item-code-chip" @click.stop="$router.push('/master/items')">
+              <span v-if="row.default_item && row.default_item.item_code" class="item-code-chip" @click.stop="$router.push(defaultItemPath(row.default_item))">
                 <i class="el-icon-coin" />
                 <span class="code-mono">{{ row.default_item.item_code }}</span>
               </span>
@@ -787,6 +787,7 @@
 
 <script>
 import pagedScroll from '../../../directives/pagedScroll'
+import { materialListPath } from '../../../utils/materialManagementScope.mjs'
 import { createPageState, queryPage, includeSelected } from '../../../utils/pagedQuery'
 import {
   listDefaultSkuItemRelations,
@@ -916,6 +917,9 @@ export default {
     this.load()
   },
   methods: {
+    defaultItemPath(item) {
+      return materialListPath(item.management_scope || (item.item_type === 'office_consumable' ? 'office' : 'factory'))
+    },
     async loadProducts () {
       try {
         const { data } = await listEntity('products', { per_page: 100 })
@@ -1056,7 +1060,7 @@ export default {
       const state = this.setModal.itemPage
       if (!append) this.setModal.items = includeSelected([], this.setModal.chosen)
       try {
-        const data = await queryPage(state, params => listEntity('items', params), { status: 'enabled', keyword: keyword || '' }, append)
+        const data = await queryPage(state, params => listEntity('items', params), { management_scope: 'factory', status: 'enabled', keyword: keyword || '' }, append)
         if (data && state === this.setModal.itemPage) this.setModal.items = includeSelected(state.rows, this.setModal.chosen)
       } catch (e) { this.$message.error(e.userMessage || '物料候选加载失败') }
     },

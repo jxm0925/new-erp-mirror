@@ -280,17 +280,19 @@ final class CuttingRecordService
         if ($type === 'product') {
             $allowed = DB::table('erp_cutting_allowed_outputs')->where('cutting_order_id', $batch->cutting_order_id)->where('id', (int) ($row['allowed_output_id'] ?? 0))->first();
             if (! $allowed) $c->fail('output_not_allowed', '该Item、配置或阶段不属于本下料任务允许的产出集合。');
+            $item = Item::query()->whereKey($allowed->item_id)->lockForUpdate()->first();
+            if (! $item) $c->fail('output_item_invalid', '正式产出物料不存在。');
+            app(ItemManagementScopeService::class)->assertProductionAllowed($item, 'results');
             $orderPurpose = (string) (DB::table('erp_cutting_orders')->where('id', $batch->cutting_order_id)->value('purpose') ?: 'FORMAL');
             if (! in_array($orderPurpose, ['STOCK', 'WORKER'], true)) {
                 if (! $this->materials->plans($batch->cutting_order_id)->where('r.component_item_id',$batch->input_item_id)
                     ->where('p.output_item_id',$allowed->item_id)->where('p.configuration_id',$allowed->configuration_id)->where('p.stage_id',$allowed->stage_id)->exists())
                     $c->fail('output_input_mismatch','当前实际投入原料不属于这条产出的正式需求及冻结工序。');
-                $item = Item::find($allowed->item_id); $plan = DB::table('erp_cutting_plan_allocations')->where('id', $allowed->plan_id)->first();
+                $plan = DB::table('erp_cutting_plan_allocations')->where('id', $allowed->plan_id)->first();
                 if (! $plan) $c->fail('plan_missing', '正式产出缺少来源计划。');
                 $this->configuration($allowed->configuration_id, $item, $plan->work_order_id);
             } else {
-                $item = Item::find($allowed->item_id);
-                if (! $item || $item->status !== 'enabled') $c->fail('output_item_invalid', '备货产出物料未启用。');
+                if ($item->status !== 'enabled') $c->fail('output_item_invalid', '备货产出物料未启用。');
                 if ($orderPurpose === 'WORKER') {
                     $frozen = $draft ? DB::table('erp_cutting_results')->where('settlement_batch_id', $batch->id)
                         ->where('client_row_id', $row['client_row_id'] ?? '')->where('allowed_output_id', $allowed->id)
@@ -428,7 +430,7 @@ final class CuttingRecordService
             $batch = $c->batch($batchId,$user,$permissions,$super,'production.cutting.confirm'); $c->version($batch,$p);
             if (! in_array($batch->status,['WAIT_ROUTE','WAIT_CONFIRM','WAIT_QUALITY','QUALITY_FAILED'],true)) $c->fail('return_edit_invalid','只有待完善去向、待确认、待质检或质量不合格的记录可以退回修改。',409);
             if (! is_string($p['reason'] ?? null) || trim($p['reason']) === '' || mb_strlen($p['reason']) > 1000) $c->fail('reason_required','请填写退回修改原因。');
-            $this->input($batch);
+            $this->input($batch, false);
             $rows = DB::table('erp_cutting_results')->where('settlement_batch_id',$batchId)->whereNotIn('status',['VOIDED','SUPERSEDED'])->orderBy('id')->lockForUpdate()->get();
             foreach ($rows as $row) {
                 $allowed = $row->allowed_output_id ? DB::table('erp_cutting_allowed_outputs')->where('id',$row->allowed_output_id)->first() : null;
@@ -442,11 +444,11 @@ final class CuttingRecordService
         });
     }
 
-    private function input(object $batch): void
+    private function input(object $batch, bool $requireCurrentEligibility = true): void
     {
         $c = $this->commands;
         $correction = $batch->correction_of_batch_id !== null;
-        $this->materials->assertItem($batch->cutting_order_id,$batch->input_item_id);
+        if ($requireCurrentEligibility) $this->materials->assertItem($batch->cutting_order_id,$batch->input_item_id);
         if ($batch->physical_material_id) {
             $physical = DB::table('erp_material_physicals')->where('id',$batch->physical_material_id)->lockForUpdate()->first();
             if (! $physical || $physical->status !== ($correction ? 'CORRECTION' : 'ISSUED') || (int) $physical->item_id !== (int) $batch->input_item_id

@@ -67,6 +67,9 @@ final class ProductionStockPrebuildService
         float $quantity,
         object $user,
     ): array {
+        if ($workOrder->assembly_component_demand_id) {
+            return app(AssemblyProductionInventoryService::class)->reserveChildReceipt($workOrder, $output, $finishedGoodsReceiptId, $posting, $quantity, $user);
+        }
         if (! $this->isReserved($workOrder)) return ['reservation_id' => null, 'internal_issue_task_id' => null];
         $existing = DB::table('erp_production_inventory_reservations')
             ->where('finished_goods_receipt_id', $finishedGoodsReceiptId)->lockForUpdate()->first();
@@ -204,6 +207,29 @@ final class ProductionStockPrebuildService
             $this->fail('production_serial_conflict', '生产序列号已属于其他实物，禁止重复入库。', 409);
         }
         $status = $this->isReserved($workOrder) ? 'continuation_reserved' : 'available';
+        if ($serial && (int) $serial->source_document_id !== (int) $output->id) {
+            // A resumed unit keeps its identity. Rebinding is valid only after its previous
+            // stock was formally consumed, and that exact source remains in its genealogy.
+            $queue = [(int) $output->id]; $seen = []; $originFound = false;
+            while ($queue !== []) {
+                $child = array_pop($queue); if (isset($seen[$child])) continue; $seen[$child] = true;
+                foreach (DB::table('erp_production_output_lineage_links')->where('child_output_record_id', $child)->pluck('parent_output_record_id') as $parent) {
+                    if ((int) $parent === (int) $serial->source_document_id) $originFound = true;
+                    $queue[] = (int) $parent;
+                }
+            }
+            if ($serial->serial_status !== 'production_consumed' || ! $originFound) $this->fail('production_serial_conflict', '该序列号没有同源续接领用记录，禁止重复入库。', 409);
+            $previousOutput = (int) $serial->source_document_id;
+            $serial->update(['inventory_balance_id' => $balance->id, 'warehouse_id' => $balance->warehouse_id,
+                'location_id' => $balance->location_id, 'batch_no' => $balance->batch_no, 'serial_status' => $status,
+                'source_document_id' => $output->id, 'source_document_no' => $output->output_no, 'posted_at' => now()]);
+            DB::table('erp_inventory_serial_events')->insert(['inventory_serial_id' => $serial->id, 'event_type' => 'production_continuation_output_posted',
+                'document_type' => 'production_output', 'document_id' => $output->id, 'document_no' => $output->output_no,
+                'from_status' => 'production_consumed', 'to_status' => $status, 'warehouse_id' => $balance->warehouse_id,
+                'location_id' => $balance->location_id, 'batch_no' => $balance->batch_no, 'operator_id' => $this->userId($user),
+                'event_payload' => json_encode(['work_order_id' => (int) $workOrder->id, 'previous_output_record_id' => $previousOutput], JSON_THROW_ON_ERROR),
+                'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now()]);
+        }
         if (! $serial) {
             $serial = InventorySerial::create([
                 'serial_no' => $serialNo,

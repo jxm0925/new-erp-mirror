@@ -105,6 +105,25 @@ class PurchaseRequestLifecycleTest extends TestCase
         $this->assertEquals($replacement->id, $alert->fresh()->purchase_request_id);
     }
 
+    public function test_production_procurement_enters_existing_request_edit_and_plan_flow_with_source_audit(): void
+    {
+        $this->permissions = [...$this->permissions, 'production.material_procurement.create'];
+        $this->item->update(['is_purchase_item' => true]);
+        $payload = ['client_command_id' => 'procure-life-'.Str::random(20), 'remark' => '仓库缺料申购', 'items' => [['item_id' => $this->item->id, 'request_qty' => '2']]];
+        $record = $this->postJson('/api/v1/erp/production/material-procurement-requests', $payload)->assertCreated()->assertJsonPath('data.request_status', 'confirmed')->json('data');
+        $this->postJson('/api/v1/erp/production/material-procurement-requests', $payload)->assertCreated()->assertJsonPath('data.id', $record['id']);
+        $oldLine = PurchaseRequest::findOrFail($record['id'])->items()->first();
+        $url = '/api/v1/erp/purchase/requests/'.$record['id'];
+        $this->getJson($url)->assertOk()->assertJsonPath('request_status', 'confirmed');
+        $this->putJson($url, $this->payload(3))->assertOk()->assertJsonPath('data.request_status', 'draft');
+        $newLine = PurchaseRequest::findOrFail($record['id'])->items()->first();
+        $this->assertNotSame($oldLine->id, $newLine->id);
+        $this->assertDatabaseHas('erp_material_procurement_sources', ['request_id' => $record['id'], 'request_item_id' => $newLine->id, 'component_item_id' => $this->item->id, 'requested_base_qty' => 2]);
+        $this->postJson($url.'/submit')->assertOk();
+        $this->postJson($url.'/to-plan')->assertOk();
+        $this->assertDatabaseHas('erp_purchase_plan_items', ['request_id' => $record['id'], 'request_item_id' => $newLine->id, 'item_id' => $this->item->id, 'required_qty' => 3]);
+    }
+
     private function createRequest(): array
     {
         return $this->postJson('/api/v1/erp/purchase/requests', $this->payload())->assertCreated()->json('data');

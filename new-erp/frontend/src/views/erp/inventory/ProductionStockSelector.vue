@@ -1,5 +1,5 @@
 <template>
-  <el-dialog title="选择库存" :visible.sync="visible" width="1060px" custom-class="production-material-dialog" append-to-body :close-on-click-modal="false" @closed="sequence++">
+  <el-dialog title="选择库存" :visible.sync="visible" width="1060px" custom-class="production-material-dialog public-material-dialog" append-to-body :close-on-click-modal="false" @closed="sequence++">
     <template v-if="demand">
       <h3 class="pm-stock-heading">{{ demand.item_name }} · {{ demand.item_code }} · {{ demand.spec || '—' }}</h3>
       <div class="pm-meta"><span>仓库：{{ warehouse.warehouse_name }}</span><span>待配：<b class="pm-warning">{{ number(demand.remaining_to_prepare) }} {{ demand.unit_name }}</b></span></div>

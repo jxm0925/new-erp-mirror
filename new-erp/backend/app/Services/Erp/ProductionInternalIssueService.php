@@ -4,6 +4,7 @@ namespace App\Services\Erp;
 
 use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Models\Erp\ProductionExecutionCommand;
+use App\Models\Erp\Item;
 use App\Models\Erp\ProductionQuantityOperation;
 use App\Models\Erp\ProductionTask;
 use App\Models\Erp\ProductionUnitOperation;
@@ -46,8 +47,13 @@ class ProductionInternalIssueService
                 $this->fail('expected_receiver_required', '只有下一工序当前负责人可以确认接收。', 403);
             }
             $lines = DB::table('erp_production_internal_issue_lines')->where('issue_task_id', $issue->id)->lockForUpdate()->get();
+            foreach ($lines as $line) {
+                if (bccomp((string) $line->issue_base_qty, '0', 8) > 0) app(ItemManagementScopeService::class)->assertProductionAllowed(
+                    Item::query()->lockForUpdate()->findOrFail($line->item_id), 'lines');
+            }
             $this->stockPrebuild->releaseForIssue($issue, $lines);
             $this->cuttingReservations->releaseForIssue($issue, $lines);
+            app(ProductionInventoryContinuationService::class)->releaseForIssue($issue, $lines, $user);
             $transaction = $this->inventory->postProductionInternalIssue($issue, $lines, $user);
             $this->cuttingReservations->recordReceivedHoldings($issue, $lines, $transaction, $user);
             $this->materialCosts->recordInternalIssue($issue, $lines, $transaction, $this->userId($user));

@@ -40,3 +40,6 @@ page { background: #f7f8fa; color: #15171a; }
 .nav-item .van-icon { color: #989b9e; font-size: 43rpx; }.nav-item.active,.nav-item.active .van-icon { color: #d81e06; }
 .loading { min-height: 70vh; display: flex; align-items: center; justify-content: center; }
 @import "../../../components/material-selector/index.wxss";
+.onsite-material { padding: 16rpx 0 28rpx; border-bottom: 1rpx solid #e4e7ec; overflow-wrap: anywhere; }
+.onsite-pages { display: flex; align-items: center; justify-content: space-between; gap: 12rpx; padding-top: 22rpx; }
+.onsite-pages button { margin: 0; font-size: 26rpx; }

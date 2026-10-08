@@ -18,7 +18,6 @@ import SkuItemRelationDetail from './views/erp/master/SkuItemRelationDetail.vue'
 import SkuItemSetPrimary from './views/erp/master/SkuItemSetPrimary.vue'
 import SkuItemIntegrityCheck from './views/erp/master/SkuItemIntegrityCheck.vue'
 import BaseArchives from './views/erp/master/BaseArchives.vue'
-import ItemCategoryList from './views/erp/master/ItemCategoryList.vue'
 import SupplierList from './views/erp/master/SupplierList.vue'
 import WarehouseList from './views/erp/master/WarehouseList.vue'
 import LocationList from './views/erp/master/LocationList.vue'
@@ -59,6 +58,8 @@ import WorkOrderForm from './views/erp/production/WorkOrderForm.vue'
 import ProductionOperationList from './views/erp/production/ProductionOperationList.vue'
 import ProductionOperationForm from './views/erp/production/ProductionOperationForm.vue'
 import ProductionRoutingList from './views/erp/production/ProductionRoutingList.vue'
+import ProductionPerformanceBoard from './views/erp/production/ProductionPerformanceBoard.vue'
+import SalesShipmentBoard from './views/erp/sales/SalesShipmentBoard.vue'
 import ProductionRoutingForm from './views/erp/production/ProductionRoutingForm.vue'
 import ProductionExecutionMonitor from './views/erp/production/ProductionExecutionMonitor.vue'
 import CuttingList from './views/erp/production/CuttingList.vue'
@@ -115,17 +116,21 @@ const router = new VueRouter({
     { path: '/master/skus/:id/complete', component: SkuForm },
     { path: '/master/skus/:id/edit', component: SkuForm },
     { path: '/master/skus/:id', component: SkuDetail },
-    { path: '/master/items', component: ItemList },
+    { path: '/master/items', component: ItemList, meta: { permission: ['master.item.view', 'item_category.view'] } },
     { path: '/master/items/new', component: ItemForm },
     { path: '/master/items/:id/edit', component: ItemForm },
     { path: '/master/items/:id/material-policy', redirect: to => `/master/items/${to.params.id}/edit` },
+    { path: '/master/office-items', redirect: to => ({ path: '/master/items', query: { ...to.query, management_scope: 'office' } }) },
+    { path: '/master/office-items/new', redirect: to => ({ path: '/master/items/new', query: { ...to.query, management_scope: 'office' } }) },
+    { path: '/master/office-items/:id/edit', redirect: to => ({ path: `/master/items/${to.params.id}/edit`, query: { ...to.query } }) },
     { path: '/master/sku-item-relations', component: SkuItemRelationList },
     { path: '/master/sku-item-relations/integrity-check', component: SkuItemIntegrityCheck },
     { path: '/master/sku-item-relations/:skuId/set-primary', component: SkuItemSetPrimary },
     { path: '/master/sku-item-relations/:skuId', component: SkuItemRelationDetail },
     { path: '/master/base-archives', component: BaseArchives },
     { path: '/master/units', redirect: '/master/base-archives' },
-    { path: '/master/categories', component: ItemCategoryList, meta: { permission: 'item_category.view' } },
+    { path: '/master/categories', redirect: to => ({ path: '/master/items', query: { ...to.query, manage_categories: '1' } }) },
+    { path: '/master/office-categories', redirect: to => ({ path: '/master/items', query: { ...to.query, management_scope: 'office', manage_categories: '1' } }) },
     { path: '/master/suppliers', component: SupplierList },
     { path: '/master/warehouse-locations', component: WarehouseList },
     { path: '/master/warehouses', component: WarehouseList },
@@ -184,12 +189,14 @@ const router = new VueRouter({
     { path: '/production/operations/:id/edit', redirect: to => ({ path: '/production/operations', query: { edit: to.params.id } }), meta: { permission: 'production.operation.edit' } },
     { path: '/production/operations/:id', component: ProductionOperationForm, meta: { permission: 'production.operation.view' } },
     { path: '/production/routings', component: ProductionRoutingList, meta: { permission: 'production.routing.view' } },
+    { path: '/production/performance', component: ProductionPerformanceBoard, meta: { permission: 'production.performance.view' } },
+    { path: '/sales/shipments', component: SalesShipmentBoard, meta: { permission: 'sales_order.shipment.view' } },
     { path: '/production/routings/new', component: ProductionRoutingForm, meta: { permission: 'production.routing.create' } },
     { path: '/production/routings/:id/edit', component: ProductionRoutingForm, meta: { permission: 'production.routing.edit' } },
     { path: '/production/routings/:id', component: ProductionRoutingForm, meta: { permission: 'production.routing.view' } },
     { path: '/production/execution-monitor', component: ProductionExecutionMonitor, meta: { permission: 'production.unit.view' } },
     { path: '/production/cutting', component: CuttingList, meta: { permission: 'production.cutting.view' } },
-    { path: '/production/cutting/create', component: CuttingCreate, meta: { permission: 'production.cutting.publish' } },
+    { path: '/production/cutting/create', component: CuttingCreate, meta: { permission: 'production.cutting.plan' } },
     { path: '/production/cutting/:id', component: CuttingDetail, meta: { permission: 'production.cutting.view' } },
     { path: '/approvals', redirect: '/approvals/tasks' },
     { path: '/approvals/tasks', component: ApprovalWorkbench, meta: { permission: 'approval.task.view' } },

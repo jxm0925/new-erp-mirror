@@ -1,0 +1,17 @@
+<view class="warehouse-page">
+  <view wx:if="{{error}}" class="warehouse-error">{{error}}</view>
+  <view wx:if="{{result}}" class="warehouse-card"><view class="warehouse-title">采购需求已提交</view><view>{{result.request_no}}</view><view>采购端可继续编制采购计划。</view></view>
+  <view wx:if="{{!canSubmit}}" class="warehouse-empty">当前账号没有提交采购需求的权限</view>
+  <block wx:else>
+    <view class="warehouse-card">
+      <view class="procurement-modes"><button class="{{mode==='order'?'warehouse-primary':'warehouse-secondary'}}" data-mode="order" bindtap="changeMode" disabled="{{busy}}">订单缺料</button><button class="{{mode==='manual'?'warehouse-primary':'warehouse-secondary'}}" data-mode="manual" bindtap="changeMode" disabled="{{busy}}">自行选料</button></view>
+      <view wx:if="{{mode==='order'}}" class="warehouse-field" bindtap="chooseOrder"><text>来源订单</text><text>{{order.sales_order_no || '请选择订单'}} ></text></view>
+      <view class="warehouse-field"><text>需要日期</text><picker mode="date" value="{{expectedDate}}" bindchange="dateInput"><text>{{expectedDate || '选择日期'}} ></text></picker></view>
+      <button class="warehouse-secondary" disabled="{{busy}}" bindtap="chooseItems">选择缺料物料</button>
+    </view>
+    <view class="warehouse-card" wx:for="{{lines}}" wx:key="id"><view class="warehouse-title">{{item.item_code}} {{item.item_name}}</view><view>{{item.spec || item.model}}</view><view class="warehouse-field"><text>需求数量</text><input class="warehouse-input" type="digit" value="{{item.request_qty}}" data-id="{{item.id}}" bindinput="quantityInput" placeholder="填写数量"/><text>{{item.unit_name}}</text></view><button class="warehouse-secondary" data-id="{{item.id}}" bindtap="removeItem" disabled="{{busy}}">移除物料</button></view>
+    <view class="warehouse-card"><view class="warehouse-title">用途或缺料说明</view><textarea class="warehouse-input procurement-remark" value="{{remark}}" bindinput="remarkInput" maxlength="2000" placeholder="填写实际用途或缺料原因"/><view class="warehouse-hint">数量按库存单位填写，提交后进入正式采购需求流程。</view></view>
+    <button class="warehouse-primary" loading="{{busy}}" disabled="{{busy}}" bindtap="submit">{{pending?'核对上次提交':'提交采购需求'}}</button>
+  </block>
+</view>
+<warehouse-picker open="{{pickerOpen}}" title="{{pickerTitle}}" mode="{{pickerMode}}" selected="{{pickerSelected}}" multiple="{{pickerMultiple}}" max-count="{{100}}" bindconfirm="acceptPicker" bindcancel="closePicker"/>

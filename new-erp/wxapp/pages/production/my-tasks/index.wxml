@@ -4,6 +4,8 @@
     <view class="header-top-bar">
       <view class="header-title-group">
         <text class="header-title">我的生产任务</text>
+        <text bindtap="openAssignments">待接受派单 ></text>
+        <text bindtap="openJobBundles">共同加工作业 ></text>
         <view wx:if="{{teamName}}" class="team-badge">{{teamName}}</view>
       </view>
     </view>
@@ -66,6 +68,12 @@
       </view>
     </view>
 
+    <view class="public-filter" aria-label="工序分类">
+      <view class="public-filter-item {{publicFilter === '' ? 'active' : ''}}" data-value="" bindtap="onPublicFilter">全部工序</view>
+      <view class="public-filter-item {{publicFilter === '1' ? 'active' : ''}}" data-value="1" bindtap="onPublicFilter">公共工序</view>
+      <view class="public-filter-item {{publicFilter === '0' ? 'active' : ''}}" data-value="0" bindtap="onPublicFilter">非公共工序</view>
+    </view>
+
     <!-- 搜索输入框 -->
     <view class="search-box">
       <van-icon name="search" size="32rpx" color="#9ca3af" />
@@ -116,6 +124,7 @@
         <!-- 卡片第3行：工单号与物料规格 -->
         <view class="specs-row">
           <text class="work-order-chip">{{item.workOrderNo}}</text>
+          <text wx:if="{{item.showPublicBadge}}" class="public-operation-tag">公共工序</text>
           <text class="specs-text" wx:if="{{item.itemSpecification}}">{{item.itemSpecification}}</text>
         </view>
 

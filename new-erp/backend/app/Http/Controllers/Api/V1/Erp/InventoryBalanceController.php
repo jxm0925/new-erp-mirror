@@ -9,6 +9,7 @@ use App\Models\Erp\InventorySerial;
 use App\Models\Erp\InventoryTransactionItem;
 use App\Models\Erp\Item;
 use Illuminate\Http\Request;
+use App\Services\Erp\ItemManagementScopeService;
 
 class InventoryBalanceController extends Controller
 {
@@ -26,6 +27,7 @@ class InventoryBalanceController extends Controller
                     ->orWhere('quantity_pending', '<>', 0);
             })
             ->latest('last_transaction_at');
+        $this->applyManagementScope($query, $request);
 
         if ($request->filled('keyword')) {
             $keyword = $request->input('keyword');
@@ -63,14 +65,17 @@ class InventoryBalanceController extends Controller
         return response()->json([...$paginator->toArray(), 'stats' => $stats]);
     }
 
-    public function show(int $id)
+    public function show(Request $request, int $id)
     {
-        return response()->json(InventoryBalance::with(['item.unit', 'item.skuRelations.sku.product', 'warehouse', 'location'])->findOrFail($id));
+        $balance = InventoryBalance::with(['item.unit', 'item.skuRelations.sku.product', 'warehouse', 'location'])->findOrFail($id);
+        app(ItemManagementScopeService::class)->assertContext($balance->item, $this->managementScope($request));
+        return response()->json($balance);
     }
 
     public function serials(Request $request, int $id)
     {
-        InventoryBalance::query()->findOrFail($id);
+        $balance = InventoryBalance::query()->with('item')->findOrFail($id);
+        app(ItemManagementScopeService::class)->assertContext($balance->item, $this->managementScope($request));
         $query = InventorySerial::query()
             ->where('inventory_balance_id', $id)
             ->orderBy('serial_no');
@@ -88,6 +93,7 @@ class InventoryBalanceController extends Controller
     public function itemBatches(Request $request, int $itemId)
     {
         $item = Item::query()->with(['unit'])->findOrFail($itemId);
+        app(ItemManagementScopeService::class)->assertContext($item, $this->managementScope($request));
         $query = $this->activeBalanceQuery($request)->where('item_id', $itemId)
             ->selectRaw('item_id, batch_no, SUM(quantity_on_hand) as quantity_on_hand, SUM(quantity_available) as quantity_available, SUM(quantity_locked) as quantity_locked, SUM(quantity_defective) as quantity_defective, SUM(quantity_pending) as quantity_pending, SUM(inventory_value) as inventory_value, MAX(last_transaction_at) as last_transaction_at, COUNT(DISTINCT warehouse_id) as warehouse_count, COUNT(DISTINCT location_id) as location_count, COUNT(*) as balance_count')
             ->groupBy('item_id', 'batch_no')
@@ -112,6 +118,7 @@ class InventoryBalanceController extends Controller
         $batchNo = trim((string) $request->input('batch_no'));
         abort_if($batchNo === '', 422, '批次号不能为空。');
         $item = Item::query()->with(['unit', 'skuRelations.sku.product'])->findOrFail($itemId);
+        app(ItemManagementScopeService::class)->assertContext($item, $this->managementScope($request));
         $balances = InventoryBalance::query()
             ->with(['warehouse', 'location'])
             ->withCount([
@@ -179,6 +186,7 @@ class InventoryBalanceController extends Controller
     {
         $query = InventoryBalance::query()->where(fn ($q) => $q->where('quantity_on_hand', '<>', 0)
             ->orWhere('quantity_locked', '<>', 0)->orWhere('quantity_defective', '<>', 0)->orWhere('quantity_pending', '<>', 0));
+        $this->applyManagementScope($query, $request);
         if ($request->filled('warehouse_id')) $query->where('warehouse_id', $request->input('warehouse_id'));
         if ($request->filled('location_id')) $query->where('location_id', $request->input('location_id'));
         if ($request->filled('batch_no')) $query->where('batch_no', 'like', '%' . $request->input('batch_no') . '%');
@@ -192,5 +200,16 @@ class InventoryBalanceController extends Controller
     private function perPage(Request $request): int
     {
         return min(100, max(10, (int) $request->input('per_page', 20)));
+    }
+
+    private function managementScope(Request $request): ?string
+    {
+        return app(ItemManagementScopeService::class)->requestScope($request);
+    }
+
+    private function applyManagementScope($query, Request $request): void
+    {
+        $scope = $this->managementScope($request);
+        if ($scope !== null) $query->whereHas('item', fn ($item) => app(ItemManagementScopeService::class)->applyScope($item, $scope));
     }
 }

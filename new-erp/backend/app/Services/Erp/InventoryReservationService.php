@@ -179,9 +179,9 @@ class InventoryReservationService
      * The lock quantity is deliberately unchanged here: it was already locked by the
      * sales order and is consumed only by the later outbound inventory transaction.
      */
-    public function allocateToShipment(int $reservationId, float $qty, string $shipmentNo): InventoryReservation
+    public function allocateToShipment(int $reservationId, float $qty, string $shipmentNo, ?string $allocationFragment = null): InventoryReservation
     {
-        return DB::transaction(function () use ($reservationId, $qty, $shipmentNo): InventoryReservation {
+        return DB::transaction(function () use ($reservationId, $qty, $shipmentNo, $allocationFragment): InventoryReservation {
             $reservation = InventoryReservation::query()->lockForUpdate()->findOrFail($reservationId);
             if ($reservation->reservation_status !== 'active' || $qty <= 0 || $qty > (float) $reservation->reserved_qty + 0.00000001) {
                 throw new \RuntimeException('当前库存预留不可用于本次发货，或发货数量超过可用预留。');
@@ -207,7 +207,7 @@ class InventoryReservationService
                 'reserved_qty' => $qty,
                 'reservation_status' => 'converted_to_shipment',
                 'reserved_at' => $reservation->reserved_at,
-                'idempotency_key' => $reservation->idempotency_key.':shipment:'.$shipmentNo,
+                'idempotency_key' => $reservation->idempotency_key.':shipment:'.$shipmentNo.($allocationFragment === null ? '' : ':'.hash('sha256', $allocationFragment)),
                 'reservation_snapshot' => $snapshot,
             ]);
         });

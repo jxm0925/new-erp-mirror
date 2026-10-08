@@ -6,10 +6,11 @@
         <span class="head-icon"><i class="el-icon-box" /></span>
         <div class="head-title-wrap">
           <div class="title-row">
-            <h1 class="page-title">{{ isEdit ? '编辑物料档案' : '新增物料档案' }}</h1>
+            <h1 class="page-title">{{ isEdit ? '编辑' : '新增' }}物料档案</h1>
             <el-tag size="small" type="success" effect="plain" class="head-tag">
               {{ isEdit ? '编辑模式' : '录入新物料' }}
             </el-tag>
+            <el-tag size="small" :type="isOffice ? 'warning' : 'success'" effect="plain">{{ scopeLabel }}</el-tag>
             <span v-if="form.item_code" class="head-code-chip">
               <i class="el-icon-postcard" />
               <strong class="code-mono">{{ form.item_code }}</strong>
@@ -24,15 +25,16 @@
         </div>
       </div>
       <div class="head-actions">
-        <el-button size="small" icon="el-icon-back" @click="$router.push('/master/items')">返回物料列表</el-button>
+        <el-button size="small" icon="el-icon-back" @click="$router.push(entryListPath)">返回列表</el-button>
       </div>
     </header>
 
     <!-- 全局统一页面提示条 (紧凑收纳) -->
     <div class="erp-page-tip">
       <i class="el-icon-info" />
-      <span>通过下方结构化分栏高效维护物料主档案、业务控制属性与财务会计流向。系统支持单件序列号追溯及定长原料自动联动。</span>
+      <span>{{ isOffice ? '维护办公用品的基本信息，以及采购、库存、领用和责任人规则。' : '维护工厂物料的基本信息、生产与下料属性，以及采购、库存和核算规则。' }}</span>
     </div>
+    <el-alert v-if="pageError" :title="pageError" type="error" :closable="false" show-icon />
 
     <!-- 紧凑分栏切换导航 (彻底消除纵向无限滚动的冗长排版) -->
     <div class="form-tabs-header">
@@ -55,7 +57,7 @@
         @click="currentTab = 'policy'"
       >
         <i class="el-icon-money" />
-        <span class="tab-label">2. 物资归属与经济结算</span>
+        <span class="tab-label">2. {{ policyTitle }}</span>
         <span v-if="tab2Valid" class="tab-badge pass" title="归属策略校验通过"><i class="el-icon-check" /></span>
         <span v-else class="tab-badge warn" title="策略规则待确认"><i class="el-icon-warning-outline" /></span>
       </button>
@@ -73,7 +75,7 @@
       </button>
     </div>
 
-    <el-form ref="form" :model="form" :rules="rules" size="small" label-position="top" class="item-form-flow">
+    <el-form ref="form" :model="form" :rules="rules" :disabled="!!pageError || saving" size="small" label-position="top" class="item-form-flow">
       <!-- ================= 标签页 1：基础信息与业务属性 ================= -->
       <div v-show="currentTab === 'basic'" class="tab-panel-content">
         <!-- 基础主档案 -->
@@ -82,8 +84,8 @@
             <div class="header-main">
               <span class="card-icon-badge"><i class="el-icon-document" /></span>
               <div>
-                <h2 class="card-title">物料基本档案</h2>
-                <span class="card-subtitle">录入物料编码、标准名称、分类属性、库存基本单位与下料规格</span>
+                <h2 class="card-title">{{ scopeLabel }}基本档案</h2>
+                <span class="card-subtitle">{{ isOffice ? '维护名称、分类、单位和规格' : '录入物料编码、标准名称、分类属性、库存基本单位与下料规格' }}</span>
               </div>
             </div>
             <div class="header-extra">
@@ -95,6 +97,11 @@
 
           <div class="card-body">
             <div class="fields-grid-4">
+              <el-form-item label="管理类型" prop="management_scope" required>
+                <el-select v-model="form.management_scope" class="full-width" @change="changeScope">
+                  <el-option v-for="scope in managementScopes" :key="scope.value" :label="scope.label" :value="scope.value" />
+                </el-select>
+              </el-form-item>
               <!-- Item 编码 -->
               <el-form-item label="Item 编码" prop="item_code">
                 <el-input :value="form.item_code" disabled class="code-tabular-input">
@@ -109,7 +116,7 @@
                   clearable
                   maxlength="160"
                   show-word-limit
-                  placeholder="如：商务办公 A4 纸 / 304不锈钢管"
+                  :placeholder="isOffice ? '如：A4 复印纸' : '如：304 不锈钢管'"
                 />
               </el-form-item>
 
@@ -122,9 +129,10 @@
 
               <!-- Item 类目 -->
               <el-form-item label="Item 类目" prop="category_id" required>
-                <el-select v-model="form.category_id" filterable clearable class="full-width" placeholder="请选择末级类目">
-                  <el-option v-for="row in categories" :key="row.id" :label="row.full_path" :value="row.id" />
+                <el-select v-model="form.category_id" :loading="categoriesLoading" filterable clearable class="full-width" placeholder="请选择末级类目">
+                  <el-option v-for="row in categories" :key="row.id" :label="row.full_path" :value="row.id" :disabled="!!row.legacy_scope_mismatch" />
                 </el-select>
+                <el-button v-if="!categories.length && !categoriesLoading && canViewCategories" type="text" size="mini" @click="openCategories">新增{{ scopeLabel }}分类</el-button>
               </el-form-item>
 
               <!-- 库存基本单位 -->
@@ -136,11 +144,11 @@
 
               <!-- 规格型号 -->
               <el-form-item label="规格型号">
-                <el-input v-model.trim="form.spec" clearable placeholder="例如：A4 70g 500张/包" />
+                <el-input v-model.trim="form.spec" clearable :placeholder="isOffice ? '例如：A4 70g 500张/包' : '填写实际型号或尺寸'" />
               </el-form-item>
 
               <!-- 材质牌号 -->
-              <el-form-item label="材质牌号">
+              <el-form-item v-if="!isOffice" label="材质牌号">
                 <el-input v-model.trim="form.material_grade" clearable placeholder="例如：304 / 201 / Q235" />
               </el-form-item>
 
@@ -153,7 +161,7 @@
               </el-form-item>
 
               <!-- 下料原料分类 (跨2列) -->
-              <el-form-item label="下料原料分类" class="col-span-2">
+              <el-form-item v-if="!isOffice" label="下料原料分类" class="col-span-2">
                 <el-radio-group v-model="form.cutting_mode" size="small" class="cutting-radio-group" @change="normalizeCuttingMode">
                   <el-radio-button label="none">非下料原料</el-radio-button>
                   <el-radio-button label="sheet">板材</el-radio-button>
@@ -197,13 +205,13 @@
                 <span class="card-icon-badge"><i class="el-icon-s-operation" /></span>
                 <div>
                   <h2 class="card-title">业务控制属性</h2>
-                  <span class="card-subtitle">控制采购申请、仓储核算及车间工单领料</span>
+                  <span class="card-subtitle">{{ isOffice ? '控制办公用品采购、仓储核算和领用' : '控制采购申请、仓储核算及车间工单领料' }}</span>
                 </div>
               </div>
             </div>
 
             <div class="card-body">
-              <div class="prop-tri-grid">
+              <div class="prop-tri-grid" :class="{ 'office-props': isOffice }">
                 <div class="prop-option-card" :class="{ active: form.is_purchase_item }" @click="form.is_purchase_item = !form.is_purchase_item">
                   <div class="prop-card-top">
                     <el-checkbox v-model="form.is_purchase_item" @click.native.stop />
@@ -220,7 +228,7 @@
                   <p class="prop-desc">纳入仓库实物与账面管理，支持收发存及盘点</p>
                 </div>
 
-                <div class="prop-option-card" :class="{ active: form.is_production_item }" @click="form.is_production_item = !form.is_production_item">
+                <div v-if="!isOffice" class="prop-option-card" :class="{ active: form.is_production_item }" @click="form.is_production_item = !form.is_production_item">
                   <div class="prop-card-top">
                     <el-checkbox v-model="form.is_production_item" @click.native.stop />
                     <strong class="prop-title">生产使用</strong>
@@ -228,6 +236,13 @@
                   <p class="prop-desc">可作为生产 BOM 子件或工单领料来源</p>
                 </div>
               </div>
+              <el-form-item v-if="!isOffice" label="生产供给方式" class="manufacturing-strategy-field">
+                <el-select v-model="form.manufacturing_strategy" class="full-width" aria-label="生产供给方式">
+                  <el-option label="未指定" value="unspecified" />
+                  <el-option label="外购" value="purchase" />
+                  <el-option label="自制" value="make" />
+                </el-select>
+              </el-form-item>
             </div>
           </section>
 
@@ -272,9 +287,9 @@
 
         <!-- 下一步引导操作栏 -->
         <div class="tab-bottom-nav">
-          <span class="nav-hint">基础信息与属性已配置，点击下一步进行物资归属与财务配置。</span>
+          <span class="nav-hint">基础信息与属性已配置，下一步设置{{ policyTitle }}。</span>
           <el-button type="success" size="small" class="btn-step-next" @click="currentTab = 'policy'">
-            下一步：物资归属与财务配置 <i class="el-icon-right" />
+            下一步：{{ policyTitle }} <i class="el-icon-right" />
           </el-button>
         </div>
       </div>
@@ -286,8 +301,8 @@
             <div class="header-main">
               <span class="card-icon-badge"><i class="el-icon-money" /></span>
               <div>
-                <h2 class="card-title">物资归属与经济结算配置</h2>
-                <span class="card-subtitle">配置物资在采购到货、领用确认与期末财务结转时的会计归属规则</span>
+                <h2 class="card-title">{{ policyTitle }}</h2>
+                <span class="card-subtitle">{{ policySubtitle }}</span>
               </div>
             </div>
           </div>
@@ -296,9 +311,9 @@
             <!-- 快速模板与关键属性控制条 -->
             <div class="policy-quick-bar">
               <div class="quick-unit template-unit">
-                <label class="quick-label"><i class="el-icon-s-order" /> 物资管理属性模板</label>
+                <label class="quick-label"><i class="el-icon-s-order" /> {{ isOffice ? '办公用品管理方式' : '工厂物料管理方式' }}</label>
                 <el-select v-model="policy.template_code" size="small" placeholder="请选择策略模板" @change="applyTemplate">
-                  <el-option v-for="row in templates" :key="row.value" :label="row.label" :value="row.value" />
+                  <el-option v-for="row in templateOptions" :key="row.value" :label="row.label" :value="row.value" />
                 </el-select>
               </div>
 
@@ -320,7 +335,7 @@
                 </div>
 
                 <div class="switch-card-item">
-                  <span class="switch-title">固定资产化</span>
+                  <span class="switch-title">{{ isOffice ? '办公设备资产化' : '生产设备资产化' }}</span>
                   <div class="switch-box">
                     <el-switch v-model="policy.requires_capitalization" active-color="#008b4b" inactive-color="#dcdfe6" />
                     <span class="switch-status">{{ policy.requires_capitalization ? '资产' : '非资产' }}</span>
@@ -329,15 +344,26 @@
               </div>
             </div>
 
+            <el-alert
+              v-if="policyScopeConflict"
+              title="当前策略包含不适用于办公用品的工单、订单或生产配置，请重新选择适用的归属和处理方式。"
+              type="warning"
+              :closable="false"
+              show-icon
+              class="policy-scope-alert"
+            >
+              <el-button slot="description" type="text" @click="clearIncompatibleOfficePolicy">清除不适用配置</el-button>
+            </el-alert>
+
             <!-- 主体两列排布：左侧路径卡片与详细配置，右侧实时校验与业务流向 -->
             <div class="policy-columns-wrap">
               <div class="policy-left-col">
                 <!-- 4 条默认经济归属路径 -->
                 <div class="routes-container">
-                  <h3 class="inner-subtitle">默认经济归属流向</h3>
+                  <h3 class="inner-subtitle">{{ isOffice ? '办公领用与费用处理' : '工厂库存与核算处理' }}</h3>
                   <div class="routes-card-grid">
                     <div
-                      v-for="route in routes"
+                      v-for="route in routeOptions"
                       :key="route.value"
                       class="route-card-item"
                       :class="{ active: policy.future_route === route.value }"
@@ -372,46 +398,23 @@
                   </div>
                 </div>
 
-                <!-- 成本归集意向预留标签 -->
-                <div class="cost-tags-section">
-                  <span class="cost-tags-label"><i class="el-icon-guide" /> 工单/订单成本归集意向：</span>
-                  <div class="cost-tags-list">
-                    <span v-for="label in ['直接费用', '直接人工', '制造费用', '项目成本', '销售费用', '管理费用']" :key="label" class="cost-tag-pill">
-                      {{ label }} <small class="tag-badge">预留</small>
-                    </span>
-                  </div>
-                </div>
-
                 <!-- 详细归属与确认参数 -->
                 <div class="policy-detail-grid">
-                  <el-form-item label="领用后归属">
+                  <el-form-item :label="isOffice ? '办公领用归属' : '物料使用归属'">
                     <el-select v-model="policy.future_bearer_type" class="full-width" placeholder="请选择归属主体">
-                      <el-option label="公司公共" value="company" />
-                      <el-option label="部门办公费用" value="department" />
-                      <el-option label="员工责任" value="employee" />
-                      <el-option label="工单承担 (预留)" value="work_order" />
-                      <el-option label="销售订单承担 (预留)" value="sales_order" />
+                      <el-option v-for="bearer in bearerOptions" :key="bearer.value" :label="bearer.label" :value="bearer.value" :disabled="bearer.disabled" />
                     </el-select>
                   </el-form-item>
 
-                  <el-form-item label="默认承担部门">
-                    <el-input placeholder="选填，按部门权限核算">
-                      <i slot="suffix" class="el-icon-search input-search-icon" />
-                    </el-input>
-                  </el-form-item>
-
-                  <el-form-item label="采购后处理策略">
+                  <el-form-item :label="isOffice ? '办公采购后处理' : '物料采购后处理'">
                     <el-select v-model="policy.post_purchase_action" class="full-width" placeholder="请选择处理策略">
-                      <el-option v-for="action in actions" :key="action.value" :label="action.label" :value="action.value" />
+                      <el-option v-for="action in actionOptions" :key="action.value" :label="action.label" :value="action.value" :disabled="action.disabled" />
                     </el-select>
                   </el-form-item>
 
-                  <el-form-item label="消耗 / 确认方式">
+                  <el-form-item :label="isOffice ? '办公领用 / 验收确认' : '物料领用 / 验收确认'">
                     <el-select v-model="policy.consumption_confirmation_mode" class="full-width" placeholder="请选择确认方式">
-                      <el-option label="按领用确认" value="issue" />
-                      <el-option label="无需确认" value="none" />
-                      <el-option label="资产验收" value="asset_acceptance" />
-                      <el-option label="服务验收" value="service_acceptance" />
+                      <el-option v-for="confirmation in confirmationOptions" :key="confirmation.value" :label="confirmation.label" :value="confirmation.value" :disabled="confirmation.disabled" />
                     </el-select>
                   </el-form-item>
 
@@ -445,7 +448,11 @@
                     </div>
                     <div class="val-check-row" :class="routeValid && actionValid && capitalizationValid ? 'pass' : 'fail'">
                       <i :class="routeValid && actionValid && capitalizationValid ? 'el-icon-circle-check' : 'el-icon-circle-close'" class="check-icon" />
-                      <span>库存管理与归属策略一致</span>
+                      <span>{{ isOffice ? '办公费用与库存配置一致' : '工厂库存与核算配置一致' }}</span>
+                    </div>
+                    <div class="val-check-row" :class="bearerValid && !policyScopeConflict ? 'pass' : 'fail'">
+                      <i :class="bearerValid && !policyScopeConflict ? 'el-icon-circle-check' : 'el-icon-circle-close'" class="check-icon" />
+                      <span>{{ isOffice ? '办公领用归属有效' : '工厂物料归属有效' }}</span>
                     </div>
                     <div class="val-check-row" :class="returnableValid ? 'pass' : 'fail'">
                       <i :class="returnableValid ? 'el-icon-circle-check' : 'el-icon-circle-close'" class="check-icon" />
@@ -459,7 +466,7 @@
                 </div>
 
                 <div class="strategy-flow-box">
-                  <h4 class="aside-title"><i class="el-icon-s-promotion" /> 策略流向简图</h4>
+                  <h4 class="aside-title"><i class="el-icon-s-promotion" /> {{ isOffice ? '办公处理配置预览' : '工厂处理配置预览' }}</h4>
                   <div class="flowchart-steps">
                     <div class="flow-step">
                       <div class="flow-circle-icon"><i class="el-icon-shopping-cart-2" /></div>
@@ -473,7 +480,7 @@
                     <span class="flow-arrow">→</span>
                     <div class="flow-step">
                       <div class="flow-circle-icon"><i class="el-icon-user" /></div>
-                      <span class="flow-step-label">{{ preview.custodian === '是' ? '责任人领用' : '无需确认' }}</span>
+                      <span class="flow-step-label">{{ preview.next || '待选择确认方式' }}</span>
                     </div>
                     <span class="flow-arrow">→</span>
                     <div class="flow-step">
@@ -657,10 +664,18 @@
 
         <!-- 步骤切换导航 -->
         <div class="tab-bottom-nav">
-          <el-button size="small" icon="el-icon-back" @click="currentTab = 'policy'">返回上一页：物资归属与财务配置</el-button>
+          <el-button size="small" icon="el-icon-back" @click="currentTab = 'policy'">返回上一页：{{ policyTitle }}</el-button>
         </div>
       </div>
     </el-form>
+
+    <item-category-manager-dialog
+      v-model="categoryDialogVisible"
+      :management-scope="managementScope"
+      @changed="onCategoriesChanged"
+      @closed="onCategoriesClosed"
+      @select-items="showCategoryItems"
+    />
 
     <!-- 底部固定吸底操作栏 (全局唯一持久保存入口) -->
     <footer class="footer-bar">
@@ -679,9 +694,9 @@
         </div>
       </div>
       <div class="footer-actions">
-        <el-button size="small" @click="$router.push('/master/items')">取消并返回</el-button>
-        <el-button size="small" :loading="saving" @click="save(false)">保存为草稿</el-button>
-        <el-button type="primary" size="small" :loading="saving" class="btn-theme-submit" @click="save(true)">
+        <el-button size="small" @click="$router.push(entryListPath)">取消并返回</el-button>
+        <el-button size="small" :loading="saving" :disabled="loading || categoriesLoading || !!pageError" @click="save(false)">保存为草稿</el-button>
+        <el-button type="primary" size="small" :loading="saving" :disabled="loading || categoriesLoading || !!pageError" class="btn-theme-submit" @click="save(true)">
           {{ isEdit ? '保存并启用' : '保存并启用' }}
         </el-button>
       </div>
@@ -690,10 +705,13 @@
 </template>
 
 <script>
+import cachedPageRoute from '../../../utils/cachedPageRoute'
+import { materialScopes, routeMaterialScope, materialScopeLabel, materialListPath, materialTypesForScope } from '../../../utils/materialManagementScope.mjs'
 import { getItemCategoryTree, listEntity, getItemIntegratedForm, saveItemIntegratedForm } from '../../../api/erp/master'
 import { clearCreatePageReservation, reserveForCreatePage } from '../../../utils/documentNumberReservation'
 
 const blankItem = () => ({
+  management_scope: 'factory',
   item_code: '',
   item_name: '',
   item_type: '',
@@ -708,6 +726,7 @@ const blankItem = () => ({
   is_purchase_item: false,
   is_stock_item: false,
   is_production_item: false,
+  manufacturing_strategy: 'unspecified',
   serial_number_prefix: '',
   cost_method: 'weighted_average',
   status: 'disabled',
@@ -732,13 +751,26 @@ const blankPolicy = () => ({
 })
 
 export default {
+  mixins: [cachedPageRoute],
   name: 'ItemForm',
+  components: {
+    ItemCategoryManagerDialog: () => import('../../../components/master/ItemCategoryManagerDialog.vue')
+  },
   data() {
     return {
       currentTab: 'basic',
       loading: false,
+      pageError: '',
+      categoriesLoading: false,
+      categoryDialogVisible: false,
+      categoriesDirty: false,
+      lastCategoryChange: null,
+      optionsVersion: 0,
+      legacyCategory: null,
+      managementScopes: materialScopes,
       saving: false,
       pageLoadVersion: 0,
+      pageHasSaved: false,
       reservation: null,
       form: blankItem(),
       policy: blankPolicy(),
@@ -746,14 +778,6 @@ export default {
       history: [],
       categories: [],
       units: [],
-      itemTypes: [
-        { value: 'office_consumable', label: '办公耗材' },
-        { value: 'finished_product', label: '成品' },
-        { value: 'semi_finished', label: '半成品' },
-        { value: 'raw_material', label: '原材料' },
-        { value: 'packaging', label: '包装物' },
-        { value: 'service', label: '服务' }
-      ],
       templates: [
         { value: 'office_consumable', label: '消耗品 / 办公物资' },
         { value: 'inventory_material', label: '库存材料 / 产成品 / 标准件' },
@@ -817,8 +841,100 @@ export default {
     }
   },
   computed: {
+    canViewCategories() { return this.$can('item_category.view') },
+    entryScope() { return routeMaterialScope(this.pageRoute) || 'factory' },
+    managementScope() { return this.form.management_scope || this.entryScope },
+    isOffice() { return this.managementScope === 'office' },
+    scopeLabel() { return materialScopeLabel(this.managementScope) },
+    policyTitle() { return this.isOffice ? '办公用品归属与费用' : '工厂物料归属与核算' },
+    policySubtitle() {
+      return this.isOffice
+        ? '设置办公用品的备库、领用归属、责任保管与费用处理规则。'
+        : '设置工厂材料的库存、车间领用、设备保管与成本归属规则。'
+    },
+    entryListPath() { return materialListPath(this.entryScope) },
+    itemTypes() { return materialTypesForScope(this.managementScope) },
+    templateOptions() {
+      const labels = this.isOffice
+        ? { office_consumable: '办公消耗品', inventory_material: '办公用品备库', low_value_custody: '可归还办公用品', fixed_asset_pending: '办公设备资产配置', direct_non_stock: '办公采购直接费用配置' }
+        : { office_consumable: '车间消耗品', inventory_material: '材料 / 产成品 / 标准件备库', low_value_custody: '仪器 / 工具责任保管', fixed_asset_pending: '生产设备资产配置', direct_non_stock: '生产采购直接费用配置' }
+      const rows = this.templates.map(template => ({ ...template, label: labels[template.value] || template.label }))
+      if (this.policy.template_code && !rows.some(row => row.value === this.policy.template_code)) {
+        const legacy = { inventory_goods: 'inventory_material', inventory_expense: 'office_consumable' }
+        const alias = legacy[this.policy.template_code]
+        rows.push({ value: this.policy.template_code, label: alias ? `${labels[alias]}（现有配置）` : '现有自定义管理方式' })
+      }
+      return rows
+    },
+    routeOptions() {
+      const labels = this.isOffice ? {
+        inventory: ['办公用品备库', '办公用品入库，保留数量、库位和收发记录。'],
+        expense: ['办公领用消耗', '办公消耗品备库，配置领用确认和使用归属。'],
+        asset: ['办公设备资产配置', '配置办公设备的资产化与验收要求，不自动办理资产入账。'],
+        direct_expense: ['办公采购直接费用配置', '配置非库存办公采购的费用确认意向。']
+      } : {
+        inventory: ['生产材料 / 商品备库', '原材料、产成品和标准件入库，保留生产及销售的库存来源。'],
+        expense: ['车间领用消耗', '车间耗材和备件备库，配置领用确认和使用归属。'],
+        asset: ['生产设备资产配置', '配置生产设备和仪器的资产化与验收要求，不自动办理资产入账。'],
+        direct_expense: ['生产采购直接费用配置', '配置非库存生产采购的费用确认意向。']
+      }
+      return this.routes.map(route => ({ ...route, label: labels[route.value][0], help: labels[route.value][1] }))
+    },
+    bearerOptions() {
+      const rows = [
+        { value: 'company', label: this.isOffice ? '公司办公共用' : '公司共用' },
+        { value: 'department', label: this.isOffice ? '办公使用部门' : '车间 / 使用部门' },
+        { value: 'employee', label: this.isOffice ? '员工保管责任' : '人员 / 工具保管责任' }
+      ]
+      if (!this.isOffice) rows.push(
+        { value: 'work_order', label: '工单成本归属配置' },
+        { value: 'sales_order', label: '销售订单成本归属配置' }
+      )
+      // Keep an incompatible historical value visible until the operator explicitly corrects it.
+      if (this.policy.future_bearer_type && !rows.some(row => row.value === this.policy.future_bearer_type)) {
+        rows.push({ value: this.policy.future_bearer_type, label: '原归属不适用，请重新选择', disabled: true })
+      }
+      return rows
+    },
+    bearerValid() {
+      return this.bearerOptions.some(row => row.value === this.policy.future_bearer_type && !row.disabled)
+    },
+    policyScopeConflict() {
+      return this.isOffice && (
+        ['work_order', 'sales_order'].includes(this.policy.future_bearer_type) ||
+        ['work_order_cost', 'sales_order_direct_cost'].includes(this.policy.future_route) ||
+        ['work_order_cost', 'sales_order_direct_cost'].includes(this.policy.post_purchase_action) ||
+        ['production_unit_created', 'routing_operation_completed'].includes(this.policy.serial_generation_stage) ||
+        !!this.policy.serial_generation_routing_operation_id
+      )
+    },
+    actionOptions() {
+      const allowed = { inventory: 'inventory_receipt', expense: 'issue_confirmation', asset: 'asset_acceptance', direct_expense: 'expense_confirmation' }
+      const labels = {
+        inventory_receipt: this.isOffice ? '办公用品到货入库' : '生产物料到货入库',
+        issue_confirmation: this.isOffice ? '办公用品入库后领用确认' : '物料入库后领用确认',
+        asset_acceptance: this.isOffice ? '办公设备资产验收配置' : '生产设备资产验收配置',
+        expense_confirmation: this.isOffice ? '办公采购费用确认配置' : '生产采购费用确认配置'
+      }
+      const rows = this.actions.filter(action => action.value === allowed[this.policy.future_route])
+        .map(action => ({ ...action, label: labels[action.value] }))
+      if (this.policy.post_purchase_action && !rows.some(row => row.value === this.policy.post_purchase_action)) {
+        rows.push({ value: this.policy.post_purchase_action, label: '原处理方式不适用，请重新选择', disabled: true })
+      }
+      return rows
+    },
+    confirmationOptions() {
+      const allowed = { inventory: 'none', expense: 'issue', asset: 'asset_acceptance', direct_expense: 'none' }
+      const labels = { none: '无需领用确认', issue: this.isOffice ? '办公领用确认' : '物料领用确认', asset_acceptance: '资产验收配置' }
+      const value = allowed[this.policy.future_route]
+      const rows = value ? [{ value, label: labels[value] }] : []
+      if (this.policy.consumption_confirmation_mode && this.policy.consumption_confirmation_mode !== value) {
+        rows.push({ value: this.policy.consumption_confirmation_mode, label: '原确认方式不适用，请重新选择', disabled: true })
+      }
+      return rows
+    },
     isEdit() {
-      return !!this.$route.params.id
+      return !!this.pageRoute.params.id
     },
     enabled: {
       get() {
@@ -889,62 +1005,58 @@ export default {
         this.returnableValid &&
         this.policy.post_purchase_action &&
         this.policy.consumption_confirmation_mode &&
-        this.policy.future_bearer_type
+        this.bearerValid &&
+        !this.policyScopeConflict
       )
     },
     allValid() {
       return this.tab1Valid && this.tab2Valid
     },
     routeText() {
-      return (
-        {
-          inventory: '库存材料/商品',
-          expense: '库存后领用消耗',
-          asset: '固定资产待验收',
-          direct_expense: '直接非库存处理',
-          work_order_cost: '工单成本意图',
-          sales_order_direct_cost: '订单直接费用意图'
-        }[this.policy.future_route] || ''
-      )
+      return (this.routeOptions.find(row => row.value === this.policy.future_route) || {}).label || ''
     },
     preview() {
       return {
-        purpose: (this.actions.find(x => x.value === this.policy.post_purchase_action) || {}).label || '',
+        purpose: (this.actionOptions.find(row => row.value === this.policy.post_purchase_action && !row.disabled) || {}).label || '',
         stock: this.policy.is_stock_managed ? '是' : '否',
         route: this.routeText,
         custodian: this.policy.requires_custodian ? '是' : '否',
         capitalization: this.policy.requires_capitalization ? '是' : '否',
-        next:
-          {
-            none: '无需确认',
-            issue: '按领用确认',
-            asset_acceptance: '资产验收',
-            service_acceptance: '服务验收'
-          }[this.policy.consumption_confirmation_mode] || ''
+        next: (this.confirmationOptions.find(row => row.value === this.policy.consumption_confirmation_mode && !row.disabled) || {}).label || ''
       }
     }
   },
   async created() {
-    await this.loadOptions()
     await this.loadPage()
   },
+  activated() {
+    if (this.pageHasSaved) this.loadPage()
+  },
   watch: {
-    '$route.params.id'() {
+    'pageRoute.params.id'() {
+      this.loadPage()
+    },
+    'pageRoute.query.management_scope'() {
       this.loadPage()
     }
   },
   methods: {
     async loadPage() {
       const version = ++this.pageLoadVersion
-      this.form = blankItem()
+      this.pageHasSaved = false
+      this.currentTab = 'basic'
+      this.form = { ...blankItem(), management_scope: this.entryScope, item_type: this.entryScope === 'office' ? 'office_consumable' : '' }
       this.policy = blankPolicy()
       this.reservation = null
       this.balance = {}
       this.history = []
+      this.pageError = ''
+      this.legacyCategory = null
       this.loading = true
       try {
         if (this.isEdit) await this.loadEdit(version)
         else await this.reserveCode(version)
+        if (version === this.pageLoadVersion && !this.pageError) await this.loadOptions()
       } finally {
         if (version === this.pageLoadVersion) {
           this.loading = false
@@ -954,10 +1066,15 @@ export default {
       }
     },
     async loadOptions() {
-      const [tree, units] = await Promise.all([
-        getItemCategoryTree(),
+      const version = ++this.optionsVersion
+      const scope = this.managementScope
+      this.categoriesLoading = true
+      try {
+        const [tree, units] = await Promise.all([
+        this.canViewCategories ? getItemCategoryTree({ management_scope: scope }) : Promise.resolve({ data: { data: [] } }),
         listEntity('units', { page: 1, per_page: 100, status: 'enabled' })
       ])
+      if (version !== this.optionsVersion || scope !== this.managementScope) return
       const flat = []
       const visit = rows =>
         (rows || []).forEach(x => {
@@ -965,12 +1082,73 @@ export default {
           visit(x.children)
         })
       visit(tree.data.data || [])
+      if (this.legacyCategory && Number(this.form.category_id) === Number(this.legacyCategory.id) && this.form.category_scope_mismatch) {
+        flat.push({ ...this.legacyCategory, full_path: `${this.legacyCategory.category_name}（历史分类，需调整）`, legacy_scope_mismatch: true })
+      }
       this.categories = flat
       this.units = (units.data.data || []).filter(x => !x.is_legacy)
+      } catch (e) {
+        if (version === this.optionsVersion) this.$message.error(e.userMessage || '物料分类和单位加载失败')
+      } finally {
+        if (version === this.optionsVersion) this.categoriesLoading = false
+      }
+    },
+    openCategories() {
+      if (this.canViewCategories) this.categoryDialogVisible = true
+    },
+    onCategoriesChanged(change) {
+      this.categoriesDirty = true
+      this.lastCategoryChange = change
+    },
+    async onCategoriesClosed() {
+      if (!this.categoriesDirty) return
+      this.categoriesDirty = false
+      const scope = this.managementScope
+      const change = this.lastCategoryChange
+      this.lastCategoryChange = null
+      await this.loadOptions()
+      if (scope !== this.managementScope) return
+      if (this.form.category_id && !this.categories.some(row => Number(row.id) === Number(this.form.category_id))) this.form.category_id = null
+      if (!this.form.category_id && change?.action === 'saved' && change.management_scope === scope) {
+        const created = this.categories.find(row => Number(row.id) === Number(change.id))
+        if (created) this.form.category_id = created.id
+      }
+    },
+    showCategoryItems(row) {
+      if (!this.$can('master.item.view')) return
+      this.$router.push({ path: this.entryListPath, query: { category_id: row.id, management_scope: row.management_scope } })
+    },
+    changeScope(scope) {
+      this.form.category_id = null
+      this.form.category_scope_mismatch = false
+      this.legacyCategory = null
+      this.categories = []
+      if (scope === 'office') {
+        if (this.form.item_type !== 'service') this.form.item_type = 'office_consumable'
+        this.form.is_production_item = false
+        this.form.manufacturing_strategy = 'unspecified'
+        this.form.cutting_mode = 'none'
+        this.normalizeCuttingMode('none')
+        this.clearIncompatibleOfficePolicy()
+      } else if (this.form.item_type === 'office_consumable') {
+        this.form.item_type = ''
+      }
+      this.loadOptions()
+    },
+    clearIncompatibleOfficePolicy() {
+      if (!this.isOffice) return
+      // A new scope must not silently assign costs to a different bearer or replace valid custody/asset settings.
+      if (['work_order', 'sales_order'].includes(this.policy.future_bearer_type)) this.policy.future_bearer_type = ''
+      if (['work_order_cost', 'sales_order_direct_cost'].includes(this.policy.future_route)) this.policy.future_route = ''
+      if (['work_order_cost', 'sales_order_direct_cost'].includes(this.policy.post_purchase_action)) this.policy.post_purchase_action = ''
+      if (['production_unit_created', 'routing_operation_completed'].includes(this.policy.serial_generation_stage) || this.policy.serial_generation_routing_operation_id) {
+        this.policy.serial_generation_stage = 'before_finished_goods_posting'
+        this.policy.serial_generation_routing_operation_id = null
+      }
     },
     async reserveCode(version = this.pageLoadVersion) {
       try {
-        const reservation = await reserveForCreatePage('item', '/master/items/new')
+        const reservation = await reserveForCreatePage('item', `${materialListPath(this.entryScope)}/new`)
         if (version !== this.pageLoadVersion || this.isEdit) return
         this.reservation = reservation
         this.form.item_code = this.reservation.document_no
@@ -981,7 +1159,8 @@ export default {
     async loadEdit(version = this.pageLoadVersion) {
       this.loading = true
       try {
-        const { data } = await getItemIntegratedForm(this.$route.params.id)
+        const scope = routeMaterialScope(this.pageRoute)
+        const { data } = await getItemIntegratedForm(this.pageRoute.params.id, scope ? { management_scope: scope } : undefined)
         if (version !== this.pageLoadVersion) return
         this.form = {
           ...blankItem(),
@@ -989,6 +1168,7 @@ export default {
           cutting_mode: data.item.cutting_mode || (data.item.is_length_cut_material ? 'length' : 'none')
         }
         this.normalizeCuttingMode(this.form.cutting_mode)
+        this.legacyCategory = data.item.category_scope_mismatch ? data.item.category : null
         const current = data.policy.draft || data.policy.active
         this.policy = {
           ...blankPolicy(),
@@ -998,6 +1178,7 @@ export default {
         this.balance = data.balance || {}
         this.history = (data.history && data.history.data) || []
       } catch (e) {
+        if (version === this.pageLoadVersion) this.pageError = e.userMessage || '物料数据加载失败'
         this.$message.error(e.userMessage || '物料数据加载失败')
       } finally {
         if (version === this.pageLoadVersion) this.loading = false
@@ -1071,7 +1252,7 @@ export default {
       this.normalizeStock()
     },
     save(activate) {
-      if (this.saving || this.loading) return
+      if (this.saving || this.loading || this.categoriesLoading || this.pageError) return
       const error =
         !this.form.item_name
           ? '请输入物料名称'
@@ -1086,19 +1267,21 @@ export default {
           : !this.policy.serial_tracking_mode
           ? '请选择序列号追溯策略'
           : !this.policy.template_code
-          ? '请选择物资管理属性模板'
+          ? '请选择管理方式'
+          : this.policyScopeConflict
+          ? '办公用品不能使用工单、订单或生产归属配置，请重新选择'
           : !this.routeValid
-          ? '请选择与库存管理一致的默认经济归属'
+          ? '请选择与库存管理一致的处理方式'
           : !this.actionValid
-          ? '采购后处理策略与经济归属不一致'
+          ? '采购后处理或确认方式与当前处理规则不一致'
           : !this.capitalizationValid
           ? '需要资产化的物资必须选择固定资产待验收'
           : !this.policy.post_purchase_action
           ? '请选择采购后处理策略'
           : !this.policy.consumption_confirmation_mode
           ? '请选择消耗/确认方式'
-          : !this.policy.future_bearer_type
-          ? '请选择领用后归属'
+          : !this.bearerValid
+          ? '请选择适用于当前管理类型的使用归属'
           : !this.returnableValid
           ? '可归还物资必须启用责任人管理'
           : ''
@@ -1130,11 +1313,14 @@ export default {
             },
             activate
           }
-          const { data } = await saveItemIntegratedForm(this.form.id, payload)
+          const scope = routeMaterialScope(this.pageRoute)
+          const { data } = await saveItemIntegratedForm(this.form.id, payload, this.isEdit && scope ? { management_scope: scope } : undefined)
           if (!this.isEdit) clearCreatePageReservation(this.reservation)
           this.form = { ...this.form, ...data.data }
+          this.pageHasSaved = true
           this.$message.success(data.message || '保存成功')
-          if (!this.isEdit) this.$router.push(`/master/items/${data.data.id}/edit`)
+          const savedPath = `${materialListPath(data.data.management_scope || this.managementScope)}/${data.data.id}/edit`
+          if (this.pageRoute.path !== savedPath || scope) this.$router.push(savedPath)
         } catch (e) {
           if (!this.isEdit && this.reservation && e.response?.status === 422 && e.response?.data?.errors?.['item.item_code']) {
             clearCreatePageReservation(this.reservation)
@@ -1177,6 +1363,8 @@ export default {
 
 <style scoped>
 .item-form-page {
+  min-width: 0;
+  max-width: 100%;
   min-height: calc(100vh - 54px);
   padding: 14px 20px 75px;
   background: #f5f7fa;
@@ -1212,6 +1400,9 @@ export default {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+  max-width: 100%;
+  flex: 1;
 }
 
 .head-icon {
@@ -1230,6 +1421,15 @@ export default {
 .head-title-wrap {
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.title-row .el-tag {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-sizing: border-box;
 }
 
 .title-row {
@@ -1260,7 +1460,12 @@ export default {
   border-radius: 4px;
   color: #00763f;
   font-size: 13px;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
+
+.head-code-chip strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .head-actions {
   display: flex;
@@ -1516,6 +1721,10 @@ export default {
   gap: 10px;
 }
 
+.prop-tri-grid.office-props {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .prop-option-card {
   display: flex;
   flex-direction: column;
@@ -1618,6 +1827,10 @@ export default {
 }
 
 /* 模块二：物资归属与财务配置 */
+.policy-scope-alert {
+  margin-bottom: 16px;
+}
+
 .policy-quick-bar {
   display: flex;
   align-items: center;
@@ -1814,8 +2027,14 @@ export default {
 
 .policy-detail-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px 12px;
+}
+
+.policy-columns-wrap > *,
+.policy-detail-grid > *,
+.prop-serial-grid > * {
+  min-width: 0;
 }
 
 .policy-detail-grid ::v-deep .el-form-item {
@@ -1890,7 +2109,7 @@ export default {
 
 .flowchart-steps {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 4px;
   margin-top: 6px;
@@ -1898,6 +2117,8 @@ export default {
 
 .flow-step {
   display: flex;
+  flex: 1 1 0;
+  min-width: 0;
   flex-direction: column;
   align-items: center;
   gap: 4px;
@@ -1923,13 +2144,17 @@ export default {
   font-size: 10px;
   color: #4b5563;
   text-align: center;
-  white-space: nowrap;
+  max-width: 100%;
+  line-height: 1.4;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .flow-arrow {
   color: #9ca3af;
   font-size: 12px;
-  margin-bottom: 14px;
+  flex-shrink: 0;
+  margin-top: 8px;
 }
 
 /* 模块三：当前库存与履历 */
@@ -2054,12 +2279,17 @@ export default {
   align-items: center;
   gap: 14px;
   flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .footer-target-info {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
 }
 
 .footer-icon {
@@ -2071,6 +2301,9 @@ export default {
   font-size: 13px;
   font-weight: 700;
   color: #111827;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .footer-code-chip {
@@ -2139,10 +2372,10 @@ export default {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .prop-serial-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .policy-columns-wrap {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .balance-stats-strip {
     grid-template-columns: repeat(3, 1fr);
@@ -2150,6 +2383,11 @@ export default {
 }
 
 @media (max-width: 768px) {
+  .tab-bottom-nav { flex-wrap: wrap; min-width: 0; gap: 10px; }
+  .tab-bottom-nav .el-button { width: 100%; max-width: 100%; margin-left: 0; white-space: normal; }
+  .nav-hint { min-width: 0; max-width: 100%; }
+  .quick-unit { flex-wrap: wrap; min-width: 0; max-width: 100%; }
+  .quick-unit.template-unit ::v-deep .el-select { width: 100%; max-width: 100%; }
   .item-form-page {
     padding: 10px 10px 90px;
   }
@@ -2179,7 +2417,7 @@ export default {
   .col-span-full {
     grid-column: 1 / -1;
   }
-  .prop-tri-grid {
+  .prop-tri-grid, .prop-tri-grid.office-props {
     grid-template-columns: 1fr;
   }
   .serial-form-inline {
@@ -2189,7 +2427,7 @@ export default {
     grid-template-columns: 1fr;
   }
   .policy-detail-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .balance-stats-strip {
     grid-template-columns: repeat(2, 1fr);
@@ -2203,6 +2441,9 @@ export default {
   .footer-actions {
     width: 100%;
     justify-content: flex-end;
+    flex-wrap: wrap;
+    min-width: 0;
   }
+  .footer-actions .el-button { flex: 1 1 120px; max-width: 100%; margin-left: 0; }
 }
 </style>

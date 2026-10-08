@@ -3,6 +3,7 @@
 namespace App\Services\Erp;
 
 use App\Exceptions\Erp\WorkOrderDomainException;
+use App\Models\Erp\Item;
 use App\Models\Erp\ProductionExecutionCommand;
 use App\Models\Erp\ProductionQuantityOperation;
 use App\Models\Erp\ProductionTask;
@@ -62,6 +63,11 @@ class ProductionHandoverService
             $this->assertTargetTask($task, $user, $permissions, $super, $permission);
             $now = now();
             if ($accept) {
+                $output = DB::table('erp_production_output_records')->where('id', $handover->output_record_id)->lockForUpdate()->first();
+                if (! $output) $this->fail('handover_output_missing', '交接关联的生产产出不存在，禁止接收。', 409);
+                $item = Item::query()->lockForUpdate()->find($output->output_item_id);
+                if (! $item) $this->fail('handover_output_missing', '交接关联的产出物料不存在，禁止接收。', 409);
+                app(ItemManagementScopeService::class)->assertProductionAllowed($item, 'output_item_id');
                 $acceptedQty = $this->acceptTargetMaterial($handover);
                 $this->materialCosts->acceptHandover($handover, $acceptedQty, $this->userId($user));
                 DB::table('erp_production_operation_handovers')->where('id', $id)->update(['status' => 'RECEIVED',
@@ -155,22 +161,28 @@ class ProductionHandoverService
         ]);
     }
 
-    private function acceptTargetMaterial(object $handover): ?float
+    private function acceptTargetMaterial(object $handover): string
     {
         $requirementId = $handover->target_material_requirement_id;
-        if (! $requirementId) return null;
+        if (! $requirementId) {
+            $quantity = (string) (DB::table('erp_production_output_records')->where('id', $handover->output_record_id)->value('output_base_qty') ?? '0');
+            if (bccomp($quantity, '0', 8) <= 0) $this->fail('handover_output_quantity_invalid', '工序交接缺少真实产出数量。', 409);
+            return $quantity;
+        }
         $requirement = DB::table('erp_production_target_material_requirements')->where('id', $requirementId)->lockForUpdate()->first();
         if (! $requirement || $requirement->target_type !== $handover->target_target_type || (int) $requirement->target_id !== (int) $handover->target_target_id) {
             $this->fail('handover_material_requirement_invalid', '工序交接绑定的目标物料需求无效，禁止接收。', 409);
         }
-        $outputQty = (float) (DB::table('erp_production_output_records')->where('id', $handover->output_record_id)->value('output_base_qty') ?? 0);
-        $netSatisfied = max(0, (float) $requirement->satisfied_base_qty - (float) $requirement->returned_base_qty);
-        $shortage = max(0, (float) $requirement->required_base_qty - $netSatisfied);
-        $accepted = min($outputQty, $shortage);
-        if ($accepted <= 0) return 0;
+        $outputQty = (string) (DB::table('erp_production_output_records')->where('id', $handover->output_record_id)->value('output_base_qty') ?? '0');
+        $netSatisfied = bcsub((string) $requirement->satisfied_base_qty, (string) $requirement->returned_base_qty, 8);
+        if (bccomp($netSatisfied, '0', 8) < 0) $netSatisfied = '0';
+        $shortage = bcsub((string) $requirement->required_base_qty, $netSatisfied, 8);
+        if (bccomp($shortage, '0', 8) < 0) $shortage = '0';
+        $accepted = bccomp($outputQty, $shortage, 8) <= 0 ? $outputQty : $shortage;
+        if (bccomp($accepted, '0', 8) <= 0) return '0';
         DB::table('erp_production_target_material_requirements')->where('id', $requirement->id)->update([
-            'satisfied_base_qty' => (float) $requirement->satisfied_base_qty + $accepted,
-            'status' => $accepted + $netSatisfied + 0.00000001 >= (float) $requirement->required_base_qty ? 'SATISFIED' : 'PARTIAL',
+            'satisfied_base_qty' => bcadd((string) $requirement->satisfied_base_qty, $accepted, 8),
+            'status' => bccomp(bcadd($accepted, $netSatisfied, 8), (string) $requirement->required_base_qty, 8) >= 0 ? 'SATISFIED' : 'PARTIAL',
             'business_version' => (int) $requirement->business_version + 1, 'updated_at' => now(),
         ]);
         return $accepted;

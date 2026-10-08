@@ -26,6 +26,8 @@ final class CuttingController extends Controller
     { return response()->json($s->paginate($this->demandFilters($r), ...$this->context($r))); }
     public function demand(Request $r, int $id, CuttingDemandService $s)
     { return response()->json(['data'=>$s->show($id,$this->demandDetailFilters($r), ...$this->context($r))]); }
+    public function demandProducerOptions(Request $r, int $id, CuttingDemandService $s)
+    { return response()->json($s->producerOptions($id,$r->validate(['keyword'=>'nullable|string|max:100','page'=>'nullable|integer|min:1','per_page'=>'nullable|integer|min:1|max:100']), ...$this->context($r))); }
     public function generateDemand(Request $r, CuttingDemandService $s)
     { return response()->json(['message'=>'正式下料需求已生成','data'=>$s->generate($this->demandGenerationPayload($r), ...$this->context($r))],201); }
     public function reviseDemand(Request $r, int $id, CuttingDemandService $s)

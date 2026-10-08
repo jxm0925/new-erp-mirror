@@ -1,4 +1,38 @@
 .production-picking-page { padding: 22px 20px; color: #183565; min-width: 0; font-size: 14px; }
+.production-material-dialog.public-material-dialog {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  margin: 0 !important;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
+}
+.public-material-dialog .pm-inline-field,
+.public-material-dialog .pm-footer,
+.public-material-dialog .pm-footer > span {
+  flex-wrap: wrap;
+  gap: 10px;
+  min-width: 0;
+}
+.public-material-dialog .pm-inline-field > .el-input,
+.public-material-dialog .pm-inline-field > .el-date-editor {
+  min-width: 0;
+  max-width: 100%;
+}
+.public-material-dialog .pm-selected {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.public-material-dialog .pm-selected .el-tag {
+  height: auto;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .pm-page-head h1 { margin: 0 0 6px; color: #102749; font-size: 22px; line-height: 1.4; }
 .pm-page-head p { margin: 0 0 20px; font-size: 13px; color: #607595; }
 .pm-tabs .el-tabs__header { margin-bottom: 0; }

@@ -19,7 +19,7 @@ function mount(relativePath, cutting, storage = {}) {
   const source = fs.readFileSync(path.join(__dirname, '..', relativePath), 'utf8');
   vm.runInNewContext(source, {
     Page(value) { page = value; }, module, exports: module.exports,
-    require: name => name.includes('services/cutting') ? cutting : {},
+    require: name => name.includes('services/cutting') ? cutting : name.includes('utils/cutting-command') ? { pendingCommands: () => [] } : {},
     wx: {
       getStorageSync: key => storage[key] || '',
       setStorageSync(key, value) { storage[key] = JSON.parse(JSON.stringify(value)); },
@@ -241,9 +241,9 @@ test('new order selects only materials and products are selected once on the lat
   const record = mount('pages/production/cutting-record/index.js', {
     workerOutputs: async query => { queries.push(query); return { data: [{ id: 81, configuration_id: 12, item_name: '侧板', configuration_dimensions: { length_mm: '200', width_mm: '100' } }], meta: {} }; },
   });
-  record.setData({ order: { purpose: 'WORKER' }, source: { physical_material_id: 31 }, outputQty: '6' });
+  record.setData({ order: { purpose: 'WORKER' }, source: { physical_material_id: 31, input_cutting_mode: 'sheet' }, outputQty: '6' });
   await record.loadOutputs(1);
-  record.pickOutput({ currentTarget: { dataset: { key: '81:12' } } }); record.confirmOutput();
+  record.pickOutput({ currentTarget: { dataset: { key: record.data.outputCandidates[0].option_key } } }); record.confirmOutput();
   const row = record.buildResultsPayload()[0];
   assert.equal(row.item_id, 81);
   assert.equal(row.configuration_id, 12);

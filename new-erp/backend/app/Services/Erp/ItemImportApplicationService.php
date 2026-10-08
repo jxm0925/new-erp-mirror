@@ -12,18 +12,20 @@ class ItemImportApplicationService
     {
     }
 
-    public function create(array $row): Item
+    public function create(array $row, ?string $batchScope = null, ?int $operatorId = null): Item
     {
-        return DB::transaction(function () use ($row) {
+        return DB::transaction(function () use ($row, $batchScope, $operatorId) {
+            $scope = $this->validateScopeRow($row, $batchScope);
             $unit = $this->resolveUnit($row);
-            $category = $this->resolveCategory($row);
+            $category = $this->resolveCategory($row, $scope);
             $supplier = $this->resolveSupplier($row);
             $warehouse = $this->resolveWarehouse($row);
 
-            $item = Item::create([
+            $data = [
                 'item_code' => $this->required($row, ['item_code', '物料编码'], '物料编码'),
                 'item_name' => $this->required($row, ['item_name', '物料名称'], '物料名称'),
                 'item_type' => $this->itemType($this->value($row, ['item_type', '物料类型', '物料类型（中文选择）'])),
+                'management_scope' => $scope,
                 'category_id' => $category?->id,
                 'spec' => $this->value($row, ['spec', '规格']),
                 'unit_id' => $unit->id,
@@ -48,7 +50,13 @@ class ItemImportApplicationService
                 'default_warehouse_id' => $warehouse?->id,
                 'status' => $this->status($this->value($row, ['status', '状态'])),
                 'remark' => $this->value($row, ['remark', '备注']),
-            ]);
+            ];
+            $item = Item::create(app(ItemManagementScopeService::class)->prepareItem($data));
+            DB::table('erp_operation_logs')->insert(['module' => 'item', 'action' => 'import_management_scope',
+                'target_type' => 'erp_items', 'target_id' => $item->id, 'old_snapshot' => null,
+                'new_snapshot' => json_encode(['management_scope' => $scope, 'item_type' => $item->item_type, 'category_id' => $item->category_id],
+                    JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR), 'reason' => '按文件与上传批次的明确范围导入',
+                'operator_id' => $operatorId, 'created_at' => now()]);
 
             if ($supplier) {
                 SupplierItemRelation::updateOrCreate(
@@ -57,8 +65,20 @@ class ItemImportApplicationService
                 );
             }
 
-            return $item->fresh(['category', 'unit', 'defaultSupplier', 'defaultWarehouse']);
+            return app(ItemManagementScopeService::class)->exposeCategoryScope($item->fresh(['category', 'unit', 'defaultSupplier', 'defaultWarehouse']));
         }, 5);
+    }
+
+    public function validateScopeRow(array $row, ?string $batchScope = null): string
+    {
+        $scope = app(ItemManagementScopeService::class)->importScope($row, $batchScope);
+        $type = $this->itemType($this->value($row, ['item_type', '物料类型', '物料类型（中文选择）']));
+        $categoryCode = $this->value($row, ['category_code', '类目编码']);
+        $category = $categoryCode ? ItemCategory::where('category_code', $categoryCode)->first() : null;
+        if ($category) $this->assertCategory($category, $scope);
+        app(ItemManagementScopeService::class)->prepareItem(['management_scope' => $scope, 'item_type' => $type,
+            'is_production_item' => $this->boolean($this->value($row, ['is_production_item', '可生产']), false)]);
+        return $scope;
     }
 
     private function resolveUnit(array $row): Unit
@@ -86,25 +106,28 @@ class ItemImportApplicationService
         ]);
     }
 
-    private function resolveCategory(array $row): ?ItemCategory
+    private function resolveCategory(array $row, string $scope): ?ItemCategory
     {
         $code = $this->value($row, ['category_code', '类目编码']);
         $label = $this->value($row, ['category_name', '类目名称', 'Item类目']);
         if (! $code && ! $label) return null;
-        if ($code && ($existing = ItemCategory::where('category_code', $code)->first())) return $existing;
+        if ($code && ($existing = ItemCategory::where('category_code', $code)->first())) {
+            $this->assertCategory($existing, $scope); return $existing;
+        }
 
         $parts = preg_split('/\s*(?:\/|＞|>)\s*/u', (string) ($label ?: $code), -1, PREG_SPLIT_NO_EMPTY) ?: [];
         $parentId = null;
         $category = null;
         foreach ($parts as $index => $name) {
             $category = ItemCategory::where('category_type', 'item')->where('category_name', $name)
-                ->where('parent_id', $parentId)->first();
+                ->where('management_scope', $scope)->where('parent_id', $parentId)->first();
             if (! $category) {
                 $category = ItemCategory::create([
                     'category_code' => $index === count($parts) - 1 && $code ? $code : $this->numbers->next('item_category', 'IC'),
                     'category_name' => $name,
                     'parent_id' => $parentId,
                     'category_type' => 'item',
+                    'management_scope' => $scope,
                     'sort_order' => 0,
                     'status' => 'enabled',
                     'remark' => '随 Item 导入自动新增',
@@ -112,7 +135,16 @@ class ItemImportApplicationService
             }
             $parentId = $category->id;
         }
+        if ($category) $this->assertCategory($category, $scope);
         return $category;
+    }
+
+    private function assertCategory(ItemCategory $category, string $scope): void
+    {
+        if ($category->managementScope() !== $scope || $category->category_type !== 'item' || $category->status !== 'enabled'
+            || $category->children()->where('category_type', 'item')->exists()) {
+            throw ValidationException::withMessages(['category_code' => '导入类目必须是同管理范围的启用末级 Item 类目。']);
+        }
     }
 
     private function resolveSupplier(array $row): ?Supplier
@@ -158,10 +190,10 @@ class ItemImportApplicationService
 
     private function itemType(mixed $value): string
     {
-        $map = ['成品' => 'finished_product', '半成品' => 'semi_finished', '原材料' => 'raw_material', '包装物' => 'packaging', '服务' => 'service', '办公耗材' => 'office_consumable'];
+        $map = ['成品' => 'finished_product', '半成品' => 'semi_finished', '原材料' => 'raw_material', '包装物' => 'packaging', '服务' => 'service', '办公耗材' => 'office_consumable', '办公用品' => 'office_consumable'];
         $type = $map[trim((string) $value)] ?? trim((string) $value);
         if (! in_array($type, array_values($map), true)) {
-            throw ValidationException::withMessages(['item_type' => '物料类型只能填写：成品、半成品、原材料、包装物、服务、办公耗材。']);
+            throw ValidationException::withMessages(['item_type' => '物料类型只能填写：成品、半成品、原材料、包装物、服务、办公用品。']);
         }
         return $type;
     }
@@ -186,6 +218,7 @@ class ItemImportApplicationService
 
     private function boolean(mixed $value, bool $default): bool
     {
+        if (is_string($value)) $value = strtolower(trim($value));
         if ($value === null || $value === '') return $default;
         if (in_array($value, [true, 1, '1', 'true', '是', '启用'], true)) return true;
         if (in_array($value, [false, 0, '0', 'false', '否', '停用'], true)) return false;
@@ -213,7 +246,8 @@ class ItemImportApplicationService
     private function value(array $row, array $keys): mixed
     {
         foreach ($keys as $key) {
-            if (array_key_exists($key, $row) && $row[$key] !== null && trim((string) $row[$key]) !== '') return $row[$key];
+            if (array_key_exists($key, $row) && $row[$key] !== null
+                && (is_bool($row[$key]) || trim((string) $row[$key]) !== '')) return $row[$key];
         }
         return null;
     }

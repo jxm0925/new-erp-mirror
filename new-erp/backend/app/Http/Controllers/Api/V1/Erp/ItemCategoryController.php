@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Erp\ItemCategory;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\ItemCategoryApplicationService;
+use App\Services\Erp\ItemManagementScopeService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -15,8 +16,10 @@ class ItemCategoryController extends Controller
     public function index(Request $request)
     {
         $this->authorizePermission($request, 'item_category.view');
-        $all = $this->allCategories();
+        $scope = app(ItemManagementScopeService::class)->requestScope($request);
+        $all = $this->allCategories($scope);
         $query = ItemCategory::query()->where('category_type', 'item');
+        app(ItemManagementScopeService::class)->applyScope($query, $scope);
         if ($request->boolean('root_only')) $query->whereNull('parent_id');
         elseif ($request->filled('parent_id')) $query->where('parent_id', $request->integer('parent_id'));
         if ($request->filled('status')) $query->where('status', $request->input('status'));
@@ -36,7 +39,7 @@ class ItemCategoryController extends Controller
     public function tree(Request $request)
     {
         $this->authorizePermission($request, 'item_category.view');
-        $all = $this->allCategories();
+        $all = $this->allCategories(app(ItemManagementScopeService::class)->requestScope($request));
         $nodes = $all->sortBy([['sort_order', 'asc'], ['id', 'asc']]);
         $build = function (?int $parentId) use (&$build, $nodes, $all) {
             return $nodes->filter(fn ($row) => (int) ($row->parent_id ?? 0) === (int) ($parentId ?? 0))
@@ -53,7 +56,7 @@ class ItemCategoryController extends Controller
     public function show(Request $request, int $id)
     {
         $this->authorizePermission($request, 'item_category.view');
-        $all = $this->allCategories();
+        $all = $this->allCategories(app(ItemManagementScopeService::class)->requestScope($request));
         $category = $all->firstWhere('id', $id);
         abort_unless($category, 404);
 
@@ -63,8 +66,14 @@ class ItemCategoryController extends Controller
     public function store(Request $request, ItemCategoryApplicationService $service)
     {
         $user = $this->authorizePermission($request, 'item_category.manage');
+        $scope = app(ItemManagementScopeService::class)->requestScope($request);
+        $data = $request->validate($this->rules());
+        if ($scope !== null) {
+            abort_if(isset($data['management_scope']) && $data['management_scope'] !== $scope, 422, '类目管理范围与当前入口不一致。');
+            $data['management_scope'] = $scope;
+        }
         $category = $service->create(
-            $request->validate($this->rules()),
+            $data,
             (int) $user->legacy_id
         );
 
@@ -75,6 +84,7 @@ class ItemCategoryController extends Controller
     {
         $this->authorizePermission($request, 'item_category.manage');
         $category = ItemCategory::where('category_type', 'item')->findOrFail($id);
+        app(ItemManagementScopeService::class)->assertContext($category, app(ItemManagementScopeService::class)->requestScope($request));
         $updated = $service->update($category, $request->validate($this->rules($category)));
 
         return response()->json(['message' => 'Item 类目已保存。', 'data' => $updated]);
@@ -84,6 +94,7 @@ class ItemCategoryController extends Controller
     {
         $this->authorizePermission($request, 'item_category.manage');
         $category = ItemCategory::where('category_type', 'item')->findOrFail($id);
+        app(ItemManagementScopeService::class)->assertContext($category, app(ItemManagementScopeService::class)->requestScope($request));
 
         return response()->json(['message' => 'Item 类目已停用，历史关联保持不变。', 'data' => $service->disable($category)]);
     }
@@ -92,6 +103,7 @@ class ItemCategoryController extends Controller
     {
         $this->authorizePermission($request, 'item_category.manage');
         $category = ItemCategory::where('category_type', 'item')->findOrFail($id);
+        app(ItemManagementScopeService::class)->assertContext($category, app(ItemManagementScopeService::class)->requestScope($request));
 
         return response()->json(['message' => 'Item 类目已启用。', 'data' => $service->enable($category)]);
     }
@@ -99,7 +111,9 @@ class ItemCategoryController extends Controller
     public function destroy(Request $request, int $id, ItemCategoryApplicationService $service)
     {
         $this->authorizePermission($request, 'item_category.manage');
-        $service->deleteUnused(ItemCategory::where('category_type', 'item')->findOrFail($id));
+        $category = ItemCategory::where('category_type', 'item')->findOrFail($id);
+        app(ItemManagementScopeService::class)->assertContext($category, app(ItemManagementScopeService::class)->requestScope($request));
+        $service->deleteUnused($category);
 
         return response()->json(['message' => 'Item 类目已删除']);
     }
@@ -111,6 +125,7 @@ class ItemCategoryController extends Controller
                 ? ['required', 'string', 'max:60', Rule::in([(string) $category->category_code])]
                 : ['nullable', 'string', 'max:60', Rule::unique('erp_item_categories', 'category_code')],
             'category_name' => 'required|string|max:120',
+            'management_scope' => 'sometimes|required|in:factory,office',
             'parent_id' => 'nullable|integer|exists:erp_item_categories,id',
             'sort_order' => 'nullable|integer|min:0',
             'status' => 'required|in:enabled,disabled',
@@ -120,11 +135,11 @@ class ItemCategoryController extends Controller
         ];
     }
 
-    private function allCategories()
+    private function allCategories(?string $scope = null)
     {
-        return ItemCategory::where('category_type', 'item')
+        return app(ItemManagementScopeService::class)->applyScope(ItemCategory::where('category_type', 'item'), $scope)
             ->withCount([
-                'items as direct_item_count',
+                'items as direct_item_count' => fn ($query) => $query->whereColumn('erp_items.management_scope', 'erp_item_categories.management_scope'),
                 'supplierCapabilities as direct_supplier_count' => fn ($query) => $query->where('status', 'active'),
                 'children as direct_child_count' => fn ($query) => $query->where('category_type', 'item'),
             ])->get();
@@ -133,7 +148,8 @@ class ItemCategoryController extends Controller
     private function serialize(ItemCategory $category, $all): array
     {
         $descendantIds = $this->descendantIds((int) $category->id, $all);
-        $subtreeItemCount = \App\Models\Erp\Item::whereIn('category_id', array_merge([(int) $category->id], $descendantIds))->count();
+        $subtreeItemCount = \App\Models\Erp\Item::where('management_scope', $category->managementScope())
+            ->whereIn('category_id', array_merge([(int) $category->id], $descendantIds))->count();
 
         return array_merge($category->toArray(), [
             'full_path' => $this->fullPath($category, $all),

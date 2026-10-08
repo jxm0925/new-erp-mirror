@@ -8,6 +8,7 @@ use App\Services\Erp\AuthContextService;
 use App\Services\Erp\MasterDataApplicationService;
 use App\Services\Erp\MasterDataAccessService;
 use App\Services\Erp\MasterDataSummaryService;
+use App\Services\Erp\ItemManagementScopeService;
 use App\Services\Erp\ProductMatrixApplicationService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -44,6 +45,10 @@ class MasterDataController extends Controller
             $relations = ['managerUser'];
         }
         $query = $model::query()->with($relations);
+        if (in_array($request->route('entity'), ['items', 'categories'], true)) {
+            $scopes = app(ItemManagementScopeService::class);
+            $scopes->applyScope($query, $scopes->requestScope($request));
+        }
         if ($request->route('entity') === 'warehouses' && $request->boolean('include_location_summary')) {
             $query->withCount('locations')->addSelect(['area_count' => Location::query()
                 ->selectRaw("COUNT(DISTINCT NULLIF(TRIM(area), ''))")
@@ -80,6 +85,11 @@ class MasterDataController extends Controller
         }
         if ($request->route('entity') === 'locations' && $request->filled('area')) {
             $query->whereRaw('TRIM(area) = ?', [trim((string) $request->input('area'))]);
+        }
+        if ($request->route('entity') === 'items' && $request->filled('is_stock_item')) {
+            $request->validate(['is_stock_item' => 'boolean']);
+            $query->where('is_stock_item', $request->boolean('is_stock_item'));
+            if ($request->boolean('is_stock_item')) $query->where('item_type', '<>', 'service');
         }
         foreach (['status', 'product_id', 'category_id', 'unit_id', 'warehouse_id', 'item_type', 'unit_type', 'category_type', 'supplier_type', 'approval_status', 'cooperation_status', 'quality_status', 'is_purchase_item', 'is_length_cut_material'] as $field) {
             if (!$request->filled($field)) continue;
@@ -150,6 +160,9 @@ class MasterDataController extends Controller
         }
         $stats = $request->boolean('include_stats')
             ? app(MasterDataSummaryService::class)->summarize((string) $request->route('entity'), $query) : null;
+        if ($request->route('entity') === 'items' && $stats !== null) {
+            $stats['stock_managed'] = (clone $query)->where('is_stock_item', true)->count();
+        }
         $warehouseStats = $request->route('entity') === 'locations' && $request->boolean('include_stats') && $request->filled('warehouse_id')
             ? app(MasterDataSummaryService::class)->locations($request->integer('warehouse_id')) : null;
         // 稳定的次级排序保证更新时间相同的记录不会跨页重复或遗漏。
@@ -160,7 +173,7 @@ class MasterDataController extends Controller
                 $legacySupplier = $item->defaultSupplier && $item->defaultSupplier->status === 'enabled' ? $item->defaultSupplier : null;
                 $item->setRelation('defaultSupplier', $relationSupplier ?: $legacySupplier);
                 $item->unsetRelation('activeDefaultSupplierRelation');
-                return $item;
+                return app(ItemManagementScopeService::class)->exposeCategoryScope($item);
             });
         }
         return response()->json([...$data->toArray(), ...($stats === null ? [] : ['stats' => $stats]),
@@ -176,9 +189,11 @@ class MasterDataController extends Controller
         if ($warehouseSummary) $query->withCount('locations')->addSelect(['area_count' => Location::query()
             ->selectRaw("COUNT(DISTINCT NULLIF(TRIM(area), ''))")->whereColumn('warehouse_id', 'erp_warehouses.id')]);
         $record = $query->findOrFail($id);
+        $this->assertManagementContext($request, $record);
         if ($record instanceof Item) {
             $record->setAttribute('base_unit_locked', $this->itemBaseUnitLocked((int) $record->id));
             $record->load('activeMaterialPolicy');
+            app(ItemManagementScopeService::class)->exposeCategoryScope($record);
         }
         if ($record instanceof Sku) {
             $record->setAttribute('sales_unit_locked', $this->skuSalesUnitLocked((int) $record->id));
@@ -203,6 +218,8 @@ class MasterDataController extends Controller
             $this->assertStandardBusinessUnit((int) $data['unit_id']);
             $this->normalizeItemSerialTracking($data);
             $this->normalizeItemLengthCut($data);
+            $data = app(ItemManagementScopeService::class)->prepareItem($data, null,
+                app(ItemManagementScopeService::class)->requestScope($request));
         }
         if (in_array($request->route('entity'), ['products', 'skus', 'items', 'suppliers', 'warehouses', 'locations'], true)) {
             $data = array_merge($data, $request->validate([
@@ -233,6 +250,7 @@ class MasterDataController extends Controller
         app(MasterDataAccessService::class)->authorize($request, (string) $request->route('entity'), 'edit');
         [$model, $code] = $this->config($request);
         $record = $model::findOrFail($id);
+        $this->assertManagementContext($request, $record);
         $this->prepareSkuCanonicalInput($request);
         $this->prepareSkuOrderLineType($request);
         $data = $request->validate($this->rules($request, $id));
@@ -269,7 +287,8 @@ class MasterDataController extends Controller
             (string) $request->route('entity'),
             $record,
             $data,
-            app(AuthContextService::class)->currentUser($request)?->legacy_id
+            app(AuthContextService::class)->currentUser($request)?->legacy_id,
+            $record instanceof Item ? app(ItemManagementScopeService::class)->requestScope($request) : null
         );
         return response()->json(['message' => '保存成功', 'data' => $record]);
     }
@@ -287,6 +306,7 @@ class MasterDataController extends Controller
         app(MasterDataAccessService::class)->authorize($request, (string) $request->route('entity'), 'edit');
         [$model] = $this->config($request);
         $record = $model::findOrFail($id);
+        $this->assertManagementContext($request, $record);
         $this->assertCanBeDisabled($record);
         $record = $service->setStatus($record, 'disabled');
         return response()->json(['message' => '已禁用', 'data' => $record]);
@@ -297,6 +317,7 @@ class MasterDataController extends Controller
         app(MasterDataAccessService::class)->authorize($request, (string) $request->route('entity'), 'edit');
         [$model] = $this->config($request);
         $record = $model::findOrFail($id);
+        $this->assertManagementContext($request, $record);
         if ($record instanceof Sku) {
             $data = $record->getAttributes();
             $data['status'] = 'enabled';
@@ -324,9 +345,18 @@ class MasterDataController extends Controller
         };
         $this->authorizePermission($request, $permission);
         $record = $model::findOrFail($id);
+        $this->assertManagementContext($request, $record);
         $service->deleteUnused($entity, $record);
 
         return response()->json(['message' => '删除成功']);
+    }
+
+    private function assertManagementContext(Request $request, $record): void
+    {
+        if ($record instanceof Item || $record instanceof ItemCategory) {
+            $scopes = app(ItemManagementScopeService::class);
+            $scopes->assertContext($record, $scopes->requestScope($request));
+        }
     }
 
     private function authorizePermission(Request $request, string $permission): object
@@ -618,6 +648,7 @@ class MasterDataController extends Controller
             'items' => [
                 'item_code' => $unique('erp_items', 'item_code'), 'item_name' => 'required|string|max:160',
                 'item_type' => 'required|in:finished_product,semi_finished,raw_material,packaging,service,office_consumable',
+                'management_scope' => 'sometimes|required|in:factory,office',
                 'category_id' => [$id ? 'nullable' : 'required', 'integer', 'exists:erp_item_categories,id'], 'spec' => 'nullable|string|max:255',
                 'material_grade' => 'nullable|string|max:80',
                 'cutting_mode' => 'nullable|in:none,sheet,length',
@@ -626,6 +657,7 @@ class MasterDataController extends Controller
                 'is_length_cut_material' => 'boolean',
                 'unit_id' => 'required|exists:erp_units,id', 'brand' => 'nullable|string|max:100', 'model' => 'nullable|string|max:100',
                 'is_purchase_item' => 'boolean', 'is_stock_item' => 'boolean', 'is_production_item' => 'boolean',
+                'manufacturing_strategy' => 'sometimes|required|in:unspecified,purchase,make',
                 'is_batch_managed' => 'boolean', 'is_serial_managed' => 'boolean',
                 'serial_tracking_mode' => 'nullable|in:none,optional,required',
                 'serial_number_prefix' => 'nullable|string|max:30|regex:/^[A-Za-z0-9_-]+$/',

@@ -38,6 +38,7 @@ final class ProductionWorkOrderOperationQueryService
                 'routing_operation_id' => (int) $operation->routing_operation_id_snapshot,
                 'sequence' => (int) $operation->sequence_no_snapshot,
                 'operation_code' => $operation->operation_code_snapshot, 'operation_name' => $operation->operation_name_snapshot,
+                'is_public_snapshot' => (bool) $operation->is_public_snapshot,
                 'status' => $operation->status, 'business_version' => (int) $operation->business_version,
                 'quantity' => [
                     'planned_qty' => round((float) $operation->planned_base_qty / $factor, 8),

@@ -11,6 +11,8 @@ class ProductionLaborAllocationService
 {
     public function allocate(ProductionTask $task, string $targetType, int $targetId): array
     {
+        $bundleAllocation = app(ProductionJobBundleLaborService::class)->allocations((int) $task->id, $targetType, $targetId);
+        if ($bundleAllocation !== null) return $bundleAllocation;
         return DB::transaction(function () use ($task, $targetType, $targetId): array {
             $sessions = ProductionLaborSession::query()->where('task_id', $task->id)
                 ->where('target_type', $targetType)->where('target_id', $targetId)

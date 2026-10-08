@@ -1691,7 +1691,7 @@ export default {
       this.$refs.cutItemPicker.open({
         multiple: true,
         selected,
-        params: { status: 'enabled', is_purchase_item: 1, is_length_cut_material: 1 },
+        params: { management_scope: 'factory', status: 'enabled', is_purchase_item: 1, is_length_cut_material: 1 },
         title: '选择长度下料 Item',
         tip: '仅显示真实采购/库存的长度下料 Item。可跨分类、搜索和分页多选；长度与段数返回订单行后填写。'
       })

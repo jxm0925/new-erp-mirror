@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Erp\{Bom, BomItem, BomLog, InventoryBalance, Item, Product, Sku};
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\DocumentNumberService;
+use App\Services\Erp\ItemManagementScopeService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -97,6 +98,7 @@ class BomController extends Controller
         abort_if($bom->status !== 'draft', 422, '只有草稿 BOM 可以提交审核。');
         abort_if($bom->submitted_at, 422, 'BOM 已提交审核，请勿重复提交。');
         abort_if($bom->items->isEmpty(), 422, 'BOM 至少需要一行物料明细。');
+        $this->assertFactoryBom($bom);
         $this->assertNoCycle($bom);
         $bom->update(['audit_status' => 'pending', 'submitted_at' => now()]);
         $this->log($bom, 'submit', '提交审核');
@@ -107,6 +109,7 @@ class BomController extends Controller
     {
         $bom = Bom::with('items.componentItem')->findOrFail($id);
         abort_if($bom->audit_status !== 'pending' || !$bom->submitted_at, 422, '只有已提交的待审核 BOM 可以审核通过。');
+        $this->assertFactoryBom($bom);
         $this->assertNoCycle($bom);
         $bom->update(['audit_status' => 'approved']);
         $this->log($bom, 'approve', '审核通过');
@@ -127,6 +130,7 @@ class BomController extends Controller
         $bom = Bom::with('items.componentItem')->findOrFail($id);
         abort_if($bom->audit_status !== 'approved', 422, 'BOM 审核通过后才能启用。');
         abort_if($bom->status === 'archived', 422, '已归档 BOM 不能启用。');
+        $this->assertFactoryBom($bom);
         $this->assertNoCycle($bom);
         $bom->update(['status' => 'active']);
         $this->log($bom, 'activate', '启用 BOM');
@@ -152,6 +156,7 @@ class BomController extends Controller
             '只有已审核、已启用且在有效期内的 BOM 才能设为默认。'
         );
         abort_if($bom->is_default, 422, '当前 BOM 已是默认，无需重复设置。');
+        $this->assertFactoryBom($bom);
         return DB::transaction(function () use ($bom) {
             $scope = $this->productionScopeQuery(Bom::query(), $bom)->lockForUpdate()->get();
             $scope->where('id', '!=', $bom->id)->each->update(['is_default' => false]);
@@ -164,6 +169,7 @@ class BomController extends Controller
     public function copyVersion(Request $request, int $id)
     {
         $source = Bom::with('items')->findOrFail($id);
+        $this->assertFactoryBom($source);
         $data = $request->validate([
             'version' => 'nullable|string|max:40',
             'bom_name' => 'nullable|string|max:160',
@@ -354,6 +360,7 @@ class BomController extends Controller
 
     private function saveItems(Bom $bom, array $items): void
     {
+        app(ItemManagementScopeService::class)->assertProductionAllowed(Item::query()->lockForUpdate()->findOrFail($bom->output_item_id), 'output_item_id');
         $duplicates = collect($items)->countBy(function (array $line): string {
             $length = array_key_exists('cut_length_mm', $line) && $line['cut_length_mm'] !== null
                 ? number_format((float) $line['cut_length_mm'], 2, '.', '')
@@ -363,7 +370,8 @@ class BomController extends Controller
         abort_if($duplicates->isNotEmpty(), 422, '同一 BOM 中相同物料与相同下料尺寸不能重复；请合并件数。');
         foreach (array_values($items) as $index => $line) {
             abort_if((int) $line['component_item_id'] === (int) $bom->output_item_id, 422, 'BOM 组成物料不能等于产出 Item。');
-            $item = Item::with('unit')->findOrFail($line['component_item_id']);
+            $item = Item::with('unit')->lockForUpdate()->findOrFail($line['component_item_id']);
+            app(ItemManagementScopeService::class)->assertProductionAllowed($item, 'items.'.$index.'.component_item_id');
             abort_if(in_array($item->status, ['disabled', 'inactive'], true), 422, '停用物料不能作为 BOM 组成物料。');
             abort_if(!$item->unit || $item->unit->status !== 'enabled', 422, 'BOM 组成 Item 必须维护启用的库存基本单位。');
             $hasCutLength = array_key_exists('cut_length_mm', $line) && $line['cut_length_mm'] !== null;
@@ -406,6 +414,7 @@ class BomController extends Controller
         $productId = $payload['product_id'] ?? null;
         $skuId = $payload['sku_id'] ?? null;
         $outputItem = Item::whereKey($payload['output_item_id'])->where('status', 'enabled')->first();
+        if ($outputItem) app(ItemManagementScopeService::class)->assertProductionAllowed($outputItem, 'output_item_id');
 
         abort_if(
             ($productId === null) !== ($skuId === null),
@@ -434,6 +443,14 @@ class BomController extends Controller
             ->where('is_primary', true)
             ->exists();
         abort_unless($validOutput, 422, '产出 Item 必须是该 SKU 当前有效的默认生产/履约 Item。');
+    }
+
+    private function assertFactoryBom(Bom $bom): void
+    {
+        $ids = array_merge([(int) $bom->output_item_id], $bom->items->pluck('component_item_id')->all());
+        foreach (Item::query()->whereIn('id', $ids)->get() as $item) {
+            app(ItemManagementScopeService::class)->assertProductionAllowed($item, 'items');
+        }
     }
 
     private function expandBomRecursive(Bom $bom, float $plannedQty, Carbon $businessDate, array $itemPath = [], array $labelPath = [], int $level = 0): array

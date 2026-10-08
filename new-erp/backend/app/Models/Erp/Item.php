@@ -19,6 +19,10 @@ class Item extends MasterModel
     }
     public function materialManagementMode(): string { return $this->material_management_mode ?: 'quantity'; }
     public function cuttingMode(): string { return $this->cutting_mode ?: ($this->is_length_cut_material ? 'length' : 'none'); }
+    public function managementScope(): string
+    {
+        return $this->management_scope ?: ($this->item_type === 'office_consumable' ? 'office' : 'factory');
+    }
     public function category() { return $this->belongsTo(ItemCategory::class, 'category_id'); }
     public function unit() { return $this->belongsTo(Unit::class); }
     public function defaultSupplier() { return $this->belongsTo(Supplier::class, 'default_supplier_id'); }

@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp;
 
+use App\Models\Erp\Item;
 use App\Models\Erp\ProductionQuantityOperation;
 use App\Models\Erp\ProductionTask;
 use App\Models\Erp\ProductionUnitOperation;
@@ -32,6 +33,7 @@ final class CuttingHandoverService
             $quantity = CuttingDecimal::value($payload['quantity'] ?? null);
             $remaining = bcsub((string) $route->quantity, (string) $route->handed_over_qty, 8);
             if (bccomp($quantity, $remaining, 8) > 0) $this->commands->fail('dispatch_quantity_exceeded', '本次交出数量超过该去向尚未交出的数量。');
+            $this->assertProductionItem($result);
 
             [$requirement, $task, $target] = $this->targetContext($route, true);
             if (! $task->assignee_user_legacy_id || $task->status === 'WAIT_CLAIM') {
@@ -145,6 +147,11 @@ final class CuttingHandoverService
             $transit = DB::table('erp_material_holdings')->where('id', $handover->transit_holding_id)->lockForUpdate()->first();
             if (! $route || ! $transit || $transit->status !== 'ACTIVE' || bccomp((string) $transit->quantity, $quantity, 8) < 0) {
                 $this->commands->fail('handover_holding_invalid', '交接在途持有份额不足或已失效。', 409);
+            }
+            if ($accept) {
+                $result = DB::table('erp_cutting_results')->where('id', $route->result_id)->lockForUpdate()->first();
+                if (! $result) $this->commands->fail('cutting_result_missing', '交接关联的下料产出不存在。', 409);
+                $this->assertProductionItem($result);
             }
             $leftTransitQty = bcsub((string) $transit->quantity, $quantity, 8); $leftTransitCost = bcsub((string) $transit->total_cost, $cost, 4);
             DB::table('erp_material_holdings')->where('id', $transit->id)->update(['quantity' => $leftTransitQty, 'total_cost' => $leftTransitCost,
@@ -297,6 +304,13 @@ final class CuttingHandoverService
         if (bccomp($handed, $total, 8) >= 0) return 'IN_TRANSIT';
         if (bccomp($handed, '0', 8) > 0) return 'PART_DISPATCHED';
         return 'WAIT_DISPATCH';
+    }
+
+    private function assertProductionItem(object $result): void
+    {
+        $item = Item::query()->lockForUpdate()->find($result->item_id);
+        if (! $item) $this->commands->fail('cutting_output_item_invalid', '交接关联的下料产出物料不存在。', 409);
+        app(ItemManagementScopeService::class)->assertProductionAllowed($item, 'item_id');
     }
 
     private function movement(int $routeId, int $source, int $target, string $action, string $qty, string $cost, object $user): void

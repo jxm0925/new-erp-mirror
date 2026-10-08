@@ -156,7 +156,7 @@ export default {
       const [p, s, i] = await Promise.all([
         listEntity('products', { per_page: 100 }),
         listEntity('skus', { per_page: 100 }),
-        listEntity('items', { per_page: 100 })
+        listEntity('items', { per_page: 100, management_scope: 'factory' })
       ])
       this.products = p.data.data || []
       this.skus = s.data.data || []

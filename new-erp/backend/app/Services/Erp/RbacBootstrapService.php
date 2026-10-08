@@ -42,6 +42,7 @@ class RbacBootstrapService
             ['production.base', '生产基础', 'menu', 'production', null, null, 'el-icon-setting', 803],
             ['production.operation', '工序管理', 'menu', 'production.base', '/production/operations', 'ProductionOperationList', 'el-icon-set-up', 804],
             ['production.routing', '工艺路线', 'menu', 'production.base', '/production/routings', 'ProductionRoutingList', 'el-icon-guide', 805],
+            ['production.performance', '生产绩效统计', 'menu', 'production', '/production/performance', 'ProductionPerformanceBoard', 'el-icon-data-analysis', 807],
             ['production.labor_rule', '工时分配规则', 'menu', 'production.base', '/production/labor-allocation-rules', 'ProductionLaborAllocationRules', 'el-icon-timer', 806],
             // Catalog only. Existing production roles are not silently granted cutting commands.
             ['production.cutting.view', '查看下料记录', 'button', 'production.work_order', null, null, 'el-icon-view', 70],
@@ -218,6 +219,7 @@ class RbacBootstrapService
             // 5. 销售管理 二级菜单
             ['sales.customer', '客户管理', 'menu', 'sales', '/sales/customers', 'SalesCustomerList', 'el-icon-user', 501],
             ['sales.order', '销售订单', 'menu', 'sales', '/sales/orders', 'SalesOrderList', 'el-icon-s-order', 502],
+            ['sales.shipment', '销售发货', 'menu', 'sales', '/sales/shipments', 'SalesShipmentBoard', 'el-icon-truck', 503],
             ['sales.return', '销售退货', 'menu', 'sales', '/sales/returns', 'ReturnList', 'el-icon-refresh-left', 503],
 
             // 销售管理 按钮
@@ -250,6 +252,7 @@ class RbacBootstrapService
             ['production.material_delivery.cancel', '取消待发出配送单', 'button', 'production.work_order', null, null, 'el-icon-mouse', 19],
             ['production.material_receipt.view', '查看收料记录', 'button', 'production.work_order', null, null, 'el-icon-mouse', 19],
             ['production.material_receipt.confirm', '确认生产收料', 'button', 'production.work_order', null, null, 'el-icon-mouse', 20],
+            ['production.material_procurement.create', '提交配料采购需求', 'button', 'production.work_order', null, null, 'el-icon-shopping-cart-2', 21],
             ['production.task.view', '查看生产任务', 'button', 'production.work_order', null, null, 'el-icon-mouse', 21],
             ['production.task.claim', '自主接单', 'button', 'production.work_order', null, null, 'el-icon-mouse', 22],
             ['production.task.start', '开始工序', 'button', 'production.work_order', null, null, 'el-icon-mouse', 23],
@@ -285,6 +288,8 @@ class RbacBootstrapService
             ['production.trace.view', '查看逐件生产追溯', 'button', 'production.work_order', null, null, 'el-icon-mouse', 44],
             ['production.assignment.recommend', '查看派单推荐', 'button', 'production.work_order', null, null, 'el-icon-mouse', 45],
             ['production.assignment.auto', '自动派单', 'button', 'production.work_order', null, null, 'el-icon-mouse', 46],
+            ['production.performance.view', '查看生产绩效统计', 'button', 'production.performance', null, null, 'el-icon-view', 1],
+            ['production.performance.manage', '维护工艺绩效比例及个人份额', 'button', 'production.performance', null, null, 'el-icon-setting', 2],
             ['production.assignment.override', '改派生产任务', 'button', 'production.work_order', null, null, 'el-icon-mouse', 47],
             ['production.operation.view', '查看工序', 'button', 'production.operation', null, null, 'el-icon-mouse', 1],
             ['production.operation.create', '新增工序', 'button', 'production.operation', null, null, 'el-icon-mouse', 2],
@@ -328,6 +333,10 @@ class RbacBootstrapService
             ['sales_order.shipment.dispatch', '销售发运', 'button', 'sales.order', null, null, 'el-icon-mouse', 15],
             ['sales_order.shipment.cancel', '取消销售发货单', 'button', 'sales.order', null, null, 'el-icon-mouse', 16],
             ['sales_order.shipment.delete_draft', '删除销售发货草稿', 'button', 'sales.order', null, null, 'el-icon-delete', 17],
+            ['sales_order.shipment.packing.view', '查看发货包装', 'button', 'sales.shipment', null, null, 'el-icon-view', 18],
+            ['sales_order.shipment.packing.configure', '配置包装方案及内容', 'button', 'sales.shipment', null, null, 'el-icon-setting', 19],
+            ['sales_order.shipment.packing.execute', '执行发货包装工序', 'button', 'sales.shipment', null, null, 'el-icon-mouse', 20],
+            ['sales_order.shipment.packing.quality', '检验发货包装', 'button', 'sales.shipment', null, null, 'el-icon-check', 21],
 
             ['sales_return.view', '查看销售退货', 'button', 'sales.return', null, null, 'el-icon-mouse', 1],
             ['sales_return.create', '新建销售退货', 'button', 'sales.return', null, null, 'el-icon-mouse', 2],

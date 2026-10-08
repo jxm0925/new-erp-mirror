@@ -15,6 +15,7 @@ class WorkOrder extends MasterModel
         'business_version' => 'integer',
         'bom_snapshot' => 'array',
         'routing_snapshot' => 'array',
+        'inventory_continuation_plan' => 'array',
         'routing_version_snapshot' => 'integer',
         'serial_policy_snapshot' => 'array',
         'collaboration_enabled' => 'boolean',
@@ -39,6 +40,7 @@ class WorkOrder extends MasterModel
     public function reservedForProductionUnit() { return $this->belongsTo(ProductionUnit::class, 'reserved_for_production_unit_id'); }
     public function reservedForTargetOperation() { return $this->belongsTo(ProductionRoutingOperation::class, 'reserved_for_target_operation_id'); }
     public function effectiveOutputItem() { return $this->belongsTo(Item::class, 'effective_output_item_id_snapshot'); }
+    public function baseUnit() { return $this->belongsTo(Unit::class, 'base_unit_id'); }
 
     public function statusLogs()
     {
@@ -61,6 +63,8 @@ class WorkOrder extends MasterModel
     public function productionUnits() { return $this->hasMany(ProductionUnit::class, 'work_order_id')->orderBy('sequence_no'); }
     public function productionTasks() { return $this->hasMany(ProductionTask::class, 'work_order_id'); }
     public function quantityOperations() { return $this->hasMany(ProductionQuantityOperation::class, 'work_order_id')->orderBy('sequence_no_snapshot'); }
+    public function plannedOutputs() { return $this->hasMany(WorkOrderPlannedOutput::class, 'work_order_id')->orderBy('line_no')->orderBy('id'); }
+    public function plannedOutputVersions() { return $this->hasMany(WorkOrderPlannedOutputVersion::class, 'work_order_id')->orderBy('after_version'); }
 
     public function commands()
     {

@@ -119,6 +119,7 @@ final class ProductionUnitTraceService
                 'sequence' => (int) $operation->sequence_no_snapshot,
                 'operation_code' => $operation->operation_code_snapshot,
                 'operation_name' => $operation->operation_name_snapshot,
+                'is_public_snapshot' => (bool) $operation->is_public_snapshot,
                 'status' => $operation->status,
                 'status_label' => $this->operationStatusLabel((string) $operation->status),
                 'claimed_at' => optional($operation->claimed_at)->toISOString(),

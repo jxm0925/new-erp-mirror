@@ -1,0 +1,37 @@
+<view class="bundle-page">
+  <view wx:if="{{error}}" class="error-card">{{error}}<button class="secondary-button" bindtap="load">重新加载</button></view>
+  <block wx:if="{{!id}}">
+    <view class="view-tabs"><button class="{{view==='pool'?'active':''}}" data-view="pool" bindtap="changeView">待接作业</button><button class="{{view==='mine'?'active':''}}" data-view="mine" bindtap="changeView">我的作业</button></view>
+    <view class="search-bar"><input value="{{keyword}}" bindinput="keywordInput" bindconfirm="search" placeholder="搜索作业编号或名称" /><button class="primary-button" bindtap="search">查询</button></view>
+    <view wx:for="{{rows}}" wx:key="id" class="bundle-card" data-id="{{item.id}}" bindtap="openBundle"><view class="card-title"><text>{{item.bundle_no}}</text><text class="status-label">{{item.statusName}}</text></view><view>{{item.title || '共同加工'}}</view><view class="secondary-text">{{item.owner.display_name || item.owner.name || '待接单'}} · {{item.lineCount}}项任务</view></view>
+    <view wx:if="{{!loading && !rows.length && !error}}" class="empty-card">暂无共同加工作业</view>
+    <view wx:if="{{loading}}" class="empty-card">加载中</view>
+  </block>
+  <block wx:elif="{{detail}}">
+    <view class="bundle-card"><view class="card-title"><text>{{detail.bundle_no}}</text><text class="status-label">{{detail.statusName}}</text></view><view>{{detail.title || '共同加工'}}</view><view class="labor-total">实际工时 {{detail.laborText}}分钟</view></view>
+    <view wx:for="{{detail.lines}}" wx:key="id" class="bundle-card">
+      <view class="card-title"><text>{{item.item.name}}</text><text class="status-label">{{item.targetStatusName}}</text></view>
+      <view class="secondary-text">{{item.item.spec}}</view><view class="secondary-text">{{item.work_order.no}}</view>
+      <view wx:if="{{item.unit.no}}" class="secondary-text">{{item.unit.no}}</view>
+      <view class="fact-grid"><view><text class="fact-label">计划数量</text><text>{{item.plannedText}} {{item.base_unit_name}}</text></view><view><text class="fact-label">剩余报工</text><text>{{item.remainingText}} {{item.base_unit_name}}</text></view><view><text class="fact-label">分配工时</text><text>{{item.allocatedText}}分钟</text></view></view>
+      <view class="line-actions"><button class="secondary-button" data-id="{{item.id}}" bindtap="openTask">领料与齐套</button><button wx:if="{{item.allowed_actions.report}}" class="primary-button" data-id="{{item.id}}" bindtap="openReport" disabled="{{busy}}">登记报工</button><button wx:if="{{item.allowed_actions.complete}}" class="primary-button" data-id="{{item.id}}" bindtap="completeLine" disabled="{{busy}}">完成此项</button></view>
+    </view>
+    <view class="job-actions">
+      <button wx:if="{{detail.allowed_actions.claim}}" class="primary-button" data-action="claim" bindtap="action" loading="{{busy}}">本人接单</button>
+      <button wx:if="{{detail.allowed_actions.start}}" class="primary-button" data-action="start" bindtap="action" loading="{{busy}}">开始共同加工</button>
+      <button wx:if="{{detail.allowed_actions.pause}}" class="secondary-button" data-action="pause" bindtap="action" loading="{{busy}}">暂停作业</button>
+      <button wx:if="{{detail.allowed_actions.resume}}" class="primary-button" data-action="resume" bindtap="action" loading="{{busy}}">继续作业</button>
+      <button wx:if="{{detail.allowed_actions.finish}}" class="primary-button" data-action="finish" bindtap="action" loading="{{busy}}">结束共同加工</button>
+    </view>
+  </block>
+
+  <view wx:if="{{reportVisible}}" class="report-overlay">
+    <view class="report-dialog"><view class="report-title">登记报工 · {{reportLine.item.name}}</view><scroll-view scroll-y class="report-body">
+      <view class="report-field"><text>合格数量</text><input type="digit" value="{{reportDraft.qualified_base_qty}}" data-field="qualified_base_qty" bindinput="reportInput" disabled="{{reportPending}}" placeholder="请输入数量" /></view>
+      <view class="report-field"><text>不合格数量</text><input type="digit" value="{{reportDraft.unqualified_base_qty}}" data-field="unqualified_base_qty" bindinput="reportInput" disabled="{{reportPending}}" placeholder="没有则填0" /></view>
+      <view class="report-field"><text>报废数量</text><input type="digit" value="{{reportDraft.scrapped_base_qty}}" data-field="scrapped_base_qty" bindinput="reportInput" disabled="{{reportPending}}" placeholder="没有则填0" /></view>
+      <view class="report-field"><text>不合格或报废原因</text><input value="{{reportDraft.defect_reason}}" data-field="defect_reason" bindinput="reportInput" disabled="{{reportPending}}" maxlength="500" /></view>
+      <view class="report-field"><text>备注</text><input value="{{reportDraft.remark}}" data-field="remark" bindinput="reportInput" disabled="{{reportPending}}" maxlength="500" /></view>
+    </scroll-view><view class="report-footer"><button class="secondary-button" bindtap="closeReport" disabled="{{busy}}">取消</button><button class="primary-button" bindtap="submitReport" loading="{{busy}}">{{reportPending ? '重试原报工' : '提交报工'}}</button></view></view>
+  </view>
+</view>

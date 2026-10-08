@@ -83,6 +83,7 @@ final class ProductionWorkOrderQueryService
                 'demand.line:id,product_snapshot,sku_snapshot,item_snapshot,product_name,sku_name,item_name,unit_name_snapshot',
                 'demand.line.item:id,item_name,spec,unit_id',
             ])->withCount('materialRequirements')->orderByDesc('id');
+        $this->loadPlannedOutputRelations($query);
         $this->scopeResolver->applyWorkOrderScope(
             $query,
             $this->scopeResolver->resolve($user, 'production.work_order.view', $permissions, $superAdmin),
@@ -133,13 +134,21 @@ final class ProductionWorkOrderQueryService
             'demand.line.item:id,item_name,spec,unit_id',
             'statusLogs:id,work_order_id,before_status,after_status,reason,operator_name,occurred_at',
             'releaseGateChecks:id,work_order_id,work_order_version,check_key,status,reason_code,message,evidence,evaluated_at',
-        ])->withCount('materialRequirements')->find($id);
+        ])->withCount('materialRequirements');
+        $this->loadPlannedOutputRelations($workOrder);
+        $workOrder = $workOrder->find($id);
         if (! $workOrder) throw new WorkOrderDomainException('not_found', 'Work order not found.', 404);
         $this->assertWorkOrderVisible($workOrder, $user, $permissions, $superAdmin);
         $workOrder->setAttribute('field_audit_summary', $this->fieldAuditSummary($workOrder));
         $this->attachExecutionProjections(collect([$workOrder]), $user, $permissions, $superAdmin);
         $this->attachWorkOrderUserProjections(collect([$workOrder]));
         return $workOrder;
+    }
+
+    private function loadPlannedOutputRelations(Builder $query): void
+    {
+        if (app(WorkOrderPlannedOutputService::class)->tableAvailable()) $query->with('plannedOutputs');
+        $query->with(['outputItem.unit.standardUnit', 'effectiveOutputItem.unit.standardUnit', 'baseUnit.standardUnit']);
     }
 
     private function applyDemandFilters(Builder $query, array $filters): void

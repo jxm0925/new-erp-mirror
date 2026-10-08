@@ -1,10 +1,26 @@
 <view class="queue-page">
+  <view wx:if="{{showPublicFilter}}" class="public-filter" aria-label="工序分类">
+    <view class="public-filter-item {{publicFilter === '' ? 'active' : ''}}" data-value="" bindtap="onPublicFilter">全部工序</view>
+    <view class="public-filter-item {{publicFilter === '1' ? 'active' : ''}}" data-value="1" bindtap="onPublicFilter">公共工序</view>
+    <view class="public-filter-item {{publicFilter === '0' ? 'active' : ''}}" data-value="0" bindtap="onPublicFilter">非公共工序</view>
+  </view>
+  <view class="card" wx:if="{{canPacking}}"><button class="primary" bindtap="openPacking">发货包装与质检</button></view>
+  <view wx:if="{{type==='assignments'}}" class="card" wx:for="{{rows}}" wx:key="id">
+    <view class="head"><strong>{{item.task_no}}</strong><text>待接受派单</text></view>
+    <view class="product">{{item.productName}}</view>
+    <view class="meta"><text>工单 {{item.workOrderNo}}</text><text>工序 {{item.operation_name}}</text><text>提出时间 {{item.offered_at}}</text></view>
+    <button class="outline" data-id="{{item.id}}" bindtap="openAssignmentTask">查看任务详情</button>
+    <view class="actions">
+      <button class="outline" data-id="{{item.id}}" bindtap="rejectAssignment" disabled="{{!item.allowed_actions.reject}}" loading="{{busy}}">拒绝</button>
+      <button class="primary" data-id="{{item.id}}" bindtap="acceptAssignment" disabled="{{!item.allowed_actions.accept}}" loading="{{busy}}">接受并接单</button>
+    </view>
+  </view>
   <view wx:if="{{loading}}" class="state"><van-loading color="#d81e06">正在加载</van-loading></view>
   <view wx:elif="{{type==='trace' && trace}}" class="trace-card"><view wx:for="{{trace}}" wx:key="id"><text>{{item.type || item.serial_no || item.unit_no}}</text><text>{{item.status || item.event || '-'}}</text></view></view>
   <view wx:elif="{{loaded && !rows.length}}" class="state"><van-empty description="当前没有待处理记录" /></view>
 
   <view wx:if="{{type==='pool' || type==='collaboration' || type==='kitting' || type==='work_order'}}" class="card" wx:for="{{rows}}" wx:key="id" data-id="{{item.id}}" bindtap="openTask">
-    <view class="head"><strong>{{item.task_no}}</strong><text>{{item.statusLabel}}</text></view><view class="product">{{item.productName}}</view><view class="meta"><text>工单 {{item.workOrderNo}}</text><text>工序 {{item.sequence_no_snapshot}} - {{item.operation_name_snapshot}}</text><text>{{item.unitLabel}}</text></view>
+    <view class="head"><strong>{{item.task_no}}</strong><text>{{item.statusLabel}}</text></view><view class="product">{{item.productName}}</view><view class="meta"><text>工单 {{item.workOrderNo}}</text><view class="operation-line"><text>工序 {{item.sequence_no_snapshot}} - {{item.operation_name_snapshot}}</text><text wx:if="{{item.showPublicBadge}}" class="public-operation-tag">公共工序</text></view><text>{{item.unitLabel}}</text></view>
     <button wx:if="{{type==='pool'}}" class="primary" data-id="{{item.id}}" catchtap="claim" loading="{{busy}}">自主接单</button><button wx:else class="outline">查看任务详情</button>
   </view>
 

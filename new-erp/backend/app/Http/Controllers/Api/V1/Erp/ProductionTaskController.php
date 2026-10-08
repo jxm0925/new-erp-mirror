@@ -9,6 +9,7 @@ use App\Services\Erp\AuthContextService;
 use App\Services\Erp\ProductionTaskAssignmentService;
 use App\Services\Erp\ProductionTaskQueryService;
 use App\Services\Erp\ProductionTaskCollaborationService;
+use App\Services\Erp\ProductionFinancialProjectionService;
 use Illuminate\Http\Request;
 
 class ProductionTaskController extends Controller
@@ -22,16 +23,17 @@ class ProductionTaskController extends Controller
             'keyword' => 'nullable|string|max:120',
             'execution_filter' => 'nullable|in:all,running,waiting,completed,kitting,current',
             'include_stats' => 'nullable|boolean',
+            'is_public' => 'nullable|boolean',
         ]);
         $context = $this->context($request);
         $result = $service->paginate($filters, ...$context)->toArray();
         if ($request->boolean('include_stats')) $result['stats'] = $service->summary($filters, ...$context);
-        return response()->json($result);
+        return response()->json(app(ProductionFinancialProjectionService::class)->redact($result));
     }
 
     public function show(Request $request, int $id, ProductionTaskQueryService $service)
     {
-        return response()->json(['data' => $service->show($id, ...$this->context($request))]);
+        return response()->json(['data' => app(ProductionFinancialProjectionService::class)->redact($service->show($id, ...$this->context($request)))]);
     }
 
     public function workbenchSummary(Request $request, ProductionTaskQueryService $service)
@@ -49,15 +51,49 @@ class ProductionTaskController extends Controller
             'expected_version' => 'required|integer|min:1',
             'user_id' => 'prohibited', 'assignee_user_id' => 'prohibited', 'assignee_user_legacy_id' => 'prohibited',
         ]);
-        [$user, $permissions] = $this->writeContext($request);
-        return response()->json(['message' => '接单成功。', 'data' => $service->claim($id, $payload, $user, $permissions)]);
+        return response()->json(['message' => '接单成功。', 'data' => $service->claim($id, $payload, ...$this->context($request))]);
     }
 
     public function autoAssign(Request $request, int $id, ProductionTaskAssignmentService $service)
     {
+        $payload = $request->validate(['client_command_id' => 'required|string|max:120', 'expected_version' => 'required|integer|min:1']);
+        $result = $service->autoAssign($id, $payload, ...$this->context($request));
+        return response()->json(['message' => $result['message'] ?? '已发出派单，等待本人接受。', 'data' => $result]);
+    }
+
+    public function assignmentCandidates(Request $request, int $id, ProductionTaskAssignmentService $service)
+    {
+        $filters = $request->validate(['keyword' => 'nullable|string|max:120', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50']);
+        return response()->json($service->candidates($id, $filters, ...$this->context($request))->toArray());
+    }
+
+    public function assignments(Request $request, ProductionTaskAssignmentService $service)
+    {
+        $filters = $request->validate(['view' => 'nullable|in:mine,all', 'status' => 'nullable|in:PENDING,ACCEPTED,REJECTED,CANCELLED',
+            'task_id' => 'nullable|integer|min:1', 'keyword' => 'nullable|string|max:120', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50']);
+        return response()->json($service->assignments($filters, ...$this->context($request))->toArray());
+    }
+
+    public function acceptAssignment(Request $request, int $id, ProductionTaskAssignmentService $service)
+    { return $this->assignmentDecision($request, $id, $service, true); }
+
+    public function rejectAssignment(Request $request, int $id, ProductionTaskAssignmentService $service)
+    { return $this->assignmentDecision($request, $id, $service, false); }
+
+    private function assignmentDecision(Request $request, int $id, ProductionTaskAssignmentService $service, bool $accept)
+    {
+        $payload = $request->validate(['client_command_id' => 'required|string|max:120', 'expected_version' => 'required|integer|min:1',
+            'expected_task_version' => 'required|integer|min:1', 'reason' => 'nullable|string|max:500',
+            'user_id' => 'prohibited', 'assignee_user_legacy_id' => 'prohibited']);
         [$user, $permissions] = $this->writeContext($request);
-        if (! in_array('production.assignment.auto', $permissions, true)) throw new WorkOrderDomainException('permission_denied', '当前用户没有自动派单权限。', 403);
-        $service->autoAssign(ProductionTask::findOrFail($id));
+        $result = $accept ? $service->accept($id, $payload, $user, $permissions) : $service->reject($id, $payload, $user, $permissions);
+        return response()->json(['message' => $accept ? '已接受派单并接单。' : '已拒绝派单，任务已回到接单池。', 'data' => $result]);
+    }
+
+    public function collaboratorCandidates(Request $request, int $id, ProductionTaskCollaborationService $service)
+    {
+        $filters = $request->validate(['keyword' => 'nullable|string|max:120', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50']);
+        return response()->json($service->candidates($id, $filters, ...$this->writeContext($request))->toArray());
     }
 
     public function join(Request $request, int $id, ProductionTaskCollaborationService $service)

@@ -168,8 +168,7 @@ export default {
     masterMenus: [
       { name: '商品管理', path: '/master/products', icon: 'el-icon-goods', permission: 'master.product' },
       { name: 'SKU管理', path: '/master/skus', icon: 'el-icon-box', permission: 'master.sku' },
-      { name: '物料管理', path: '/master/items', icon: 'el-icon-coin', permission: 'master.item' },
-      { name: '物料类目', path: '/master/categories', icon: 'el-icon-folder-opened', permission: 'item_category.view' },
+      { name: '物料管理', path: '/master/items', icon: 'el-icon-coin', permission: ['master.item', 'master.item.view', 'item_category.view'] },
       { name: 'SKU-物料默认关系', path: '/master/sku-item-relations', icon: 'el-icon-connection', permission: 'master.sku_item_relation' },
       { name: '基础档案', path: '/master/base-archives', icon: 'el-icon-files', permission: 'master.base_archive' },
       { name: '供应商管理', path: '/master/suppliers', icon: 'el-icon-truck', permission: 'master.supplier' },
@@ -198,6 +197,7 @@ export default {
     salesMenus: [
       { name: '客户管理', path: '/sales/customers', icon: 'el-icon-user', permission: 'sales.customer' },
       { name: '销售订单', path: '/sales/orders', icon: 'el-icon-s-order', permission: 'sales.order' },
+      { name: '销售发货单', path: '/sales/shipments', icon: 'el-icon-truck', permission: 'sales_order.shipment.view' },
       { name: '销售退货', path: '/sales/returns', icon: 'el-icon-refresh-left', permission: 'sales.return' }
     ],
     productionMenus: [
@@ -206,9 +206,10 @@ export default {
         { name: '工艺路线', path: '/production/routings', icon: 'el-icon-guide', permission: 'production.routing' }
       ] },
       { name: '生产执行监管', path: '/production/execution-monitor', icon: 'el-icon-monitor', permission: 'production.unit.view' },
+      { name: '生产绩效统计', path: '/production/performance', icon: 'el-icon-data-analysis', permission: 'production.performance.view' },
       { name: '生产需求', path: '/production/demands', icon: 'el-icon-document', permission: 'production.demand' },
       { name: '工单管理', path: '/production/work-orders', icon: 'el-icon-s-order', permission: 'production.work_order' },
-      { name: '下料管理', path: '/production/cutting', icon: 'el-icon-scissors', permission: 'production.cutting' }
+      { name: '下料管理', path: '/production/cutting', icon: 'el-icon-scissors', permission: 'production.cutting.view' }
     ],
     approvalMenus: [
       { name: '审核工作台', path: '/approvals/tasks', icon: 'el-icon-circle-check', permission: 'approval.task.view' },
@@ -638,7 +639,7 @@ export default {
       if (path.startsWith('/master/items/new')) return '物料管理 / 新增'
       if (path.startsWith('/master/items/') && path.endsWith('/edit')) return '物料管理 / 编辑'
       if (path.startsWith('/master/items/')) return '物料管理 / 详情'
-      if (path === '/master/categories') return '物料类目'
+      if (path === '/master/categories') return '物料分类'
       if (path.startsWith('/master/sku-item-relations')) return 'SKU-物料默认关系'
       if (path === '/master/base-archives' || path === '/master/units') return '基础档案'
       if (path === '/master/suppliers') return '供应商管理'

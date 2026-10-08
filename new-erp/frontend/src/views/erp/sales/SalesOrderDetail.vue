@@ -27,6 +27,7 @@ Design status: Approved (Optimized for modern ERP layout & responsive UX)
       </div>
       <div class="header-actions">
         <el-button size="small" icon="el-icon-back" @click="$router.push('/sales/orders')">返回列表</el-button>
+        <el-button v-if="$can('sales_order.shipment.view')" size="small" icon="el-icon-truck" @click="$router.push({ path: '/sales/shipments', query: { sales_order_id: order.id } })">发货单</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.edit" size="small" icon="el-icon-edit" @click="$router.push(`/sales/orders/${order.id}/edit`)">编辑订单</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.submit_confirmation" size="small" type="success" icon="el-icon-check" @click="doConfirm">确认前检查</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.formal_confirm" size="small" type="success" icon="el-icon-circle-check" @click="doFormalConfirm">正式确认</el-button>

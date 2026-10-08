@@ -123,6 +123,7 @@
       </div>
 
       <section class="filter-panel balance-filter">
+        <label>管理范围<el-select v-model="balanceQuery.management_scope" size="small" clearable placeholder="全部" @change="changeBalanceScope"><el-option label="工厂物料" value="factory" /><el-option label="办公用品" value="office" /></el-select></label>
         <label>Item编码/名称<el-input v-model="balanceQuery.keyword" size="small" placeholder="支持编码、名称模糊查询" /></label>
         <label>仓库<el-select v-model="balanceQuery.warehouse" size="small" clearable placeholder="全部"><el-option v-for="w in warehouses" :key="w.id" :label="w.warehouse_name" :value="w.id" /></el-select></label>
         <label>库位<el-select v-model="balanceQuery.location" size="small" clearable placeholder="全部"><el-option v-for="l in locations" :key="l.id" :label="l.location_name" :value="l.id" /></el-select></label>
@@ -168,6 +169,7 @@
             <el-table-column type="selection" width="45" align="center" />
             <el-table-column prop="item_code" label="Item编码" min-width="120" />
             <el-table-column prop="item_name" label="Item名称" min-width="150" />
+            <el-table-column label="管理范围" width="95"><template slot-scope="{ row }">{{ scopeLabel(row.management_scope) }}</template></el-table-column>
             <el-table-column prop="unit" label="单位" width="60" align="center" />
             <el-table-column prop="batch_count" label="批次数" width="72" align="right" />
             <el-table-column prop="balance_count" label="库位余额数" width="96" align="right" />
@@ -221,6 +223,7 @@
             <div class="sec-kv-grid">
               <div class="kv-item"><span class="kv-lbl">Item编码</span><strong class="kv-val">{{ selectedBalance.item_code }}</strong></div>
               <div class="kv-item"><span class="kv-lbl">Item名称</span><strong class="kv-val">{{ selectedBalance.item_name }}</strong></div>
+              <div class="kv-item"><span class="kv-lbl">管理范围</span><strong class="kv-val">{{ scopeLabel(selectedBalance.management_scope) }}</strong></div>
               <div class="kv-item"><span class="kv-lbl">单位</span><strong class="kv-val">{{ selectedBalance.unit || '-' }}</strong></div>
               <div class="kv-item"><span class="kv-lbl">物料类别</span><strong class="kv-val">{{ selectedBalance.category || '-' }}</strong></div>
               <div class="kv-item"><span class="kv-lbl">批次数</span><strong class="kv-val">{{ quantityNumber(selectedBalance.batch_count) }}</strong></div>
@@ -1023,7 +1026,8 @@ export default {
       postingRepairVisible: false,
       postingRepairCandidate: null,
       postingRepairSaving: false,
-      balanceQuery: { keyword: '', warehouse: '', location: '', batch: '', status: '' },
+      balanceQuery: { management_scope: '', keyword: '', warehouse: '', location: '', batch: '', status: '' },
+      balanceRequestSeq: 0,
       balancePagination: { page: 1, per_page: 20, total: 0 },
       selectedBalance: null,
       balanceDetailVisible: false,
@@ -1274,7 +1278,9 @@ export default {
       this.selectedReceipt = this.postingRows.find(r => r.id === targetId) || null
     },
     async loadBalances() {
+      const seq = ++this.balanceRequestSeq
       const res = await listInventoryBalances(this.balanceParams())
+      if (seq !== this.balanceRequestSeq) return
       this.balanceRows = (res.data.data || []).map(this.mapBalance)
       this.balanceStats = res.data.stats || this.balanceStats
       this.applyPagination(this.balancePagination, res.data)
@@ -1290,7 +1296,8 @@ export default {
           warehouse_id: this.balanceQuery.warehouse,
           location_id: this.balanceQuery.location,
           batch_no: this.balanceQuery.batch,
-          inventory_status: this.balanceQuery.status
+          inventory_status: this.balanceQuery.status,
+          management_scope: this.balanceQuery.management_scope || undefined
         })
         this.batchRows = (res.data.data || []).map(row => ({
           ...row,
@@ -1394,7 +1401,8 @@ export default {
         warehouse_id: this.balanceQuery.warehouse,
         location_id: this.balanceQuery.location,
         batch_no: this.balanceQuery.batch,
-        inventory_status: this.balanceQuery.status
+        inventory_status: this.balanceQuery.status,
+        management_scope: this.balanceQuery.management_scope || undefined
       }
     },
     balancePickerParams() {
@@ -1425,9 +1433,20 @@ export default {
       this.balancePagination.page = 1
       this.loadBalances()
     },
-    resetBalanceQuery() {
-      this.balanceQuery = { keyword: '', warehouse: '', location: '', batch: '', status: '' }
+    scopeLabel(scope) { return scope === 'office' ? '办公用品' : '工厂物料' },
+    changeBalanceScope() {
+      this.selectedBalance = null
+      this.balanceSelectedRows = []
+      this.balanceDetailVisible = false
+      this.batchDialogVisible = false
+      this.balanceDetailBatches = []
+      this.balanceRecentTransactions = []
+      this.$refs.balanceTable?.clearSelection()
       this.searchBalances()
+    },
+    resetBalanceQuery() {
+      this.balanceQuery = { management_scope: '', keyword: '', warehouse: '', location: '', batch: '', status: '' }
+      this.changeBalanceScope()
     },
     handleBalanceSizeChange(size) {
       this.balancePagination.per_page = size
@@ -1532,6 +1551,7 @@ export default {
         item_id: row.item_id,
         item_code: row.item?.item_code || '',
         item_name: row.item?.item_name || '',
+        management_scope: row.item?.management_scope || 'factory',
         serial_tracking_mode: row.item?.serial_tracking_mode || (row.item?.is_serial_managed ? 'required' : 'none'),
         is_serial_managed: Boolean(row.item?.is_serial_managed),
         unit_id: row.unit_id || row.item?.unit_id || null,
@@ -2659,6 +2679,10 @@ export default {
   .alert-config-check { border-top:1px solid #e0e7ed; border-left:0; }
 }
 @media (max-width: 760px) {
+  .balance-filter label { flex-direction: column; align-items: stretch; width: 100%; min-width: 0; }
+  .balance-filter .el-input, .balance-filter .el-select { width: 100%; min-width: 0; max-width: 100%; }
+  .inventory-view >>> .el-pagination { display: flex; flex-wrap: wrap; max-width: 100%; white-space: normal; }
+  .inventory-view >>> .el-pagination__sizes, .inventory-view >>> .el-pagination__jump { margin: 0; }
   .serial-locator-summary { grid-template-columns:1fr 1fr; }
   .item-batch-dialog .el-dialog__body { padding: 0 12px 10px; }
   .batch-item-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }

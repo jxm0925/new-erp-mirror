@@ -1,6 +1,6 @@
 <view class="warehouse-tabs"><view class="{{statusGroup === 'pending' ? 'selected' : ''}}" data-status="pending" bindtap="switchStatus">待办理</view><view class="{{statusGroup === 'completed' ? 'selected' : ''}}" data-status="completed" bindtap="switchStatus">已完成</view></view>
 <view class="warehouse-page">
-  <button wx:if="{{canCreatePicking}}" class="warehouse-primary" bindtap="createPicking">创建生产配料</button>
+  <button wx:if="{{canCreatePicking}}" class="warehouse-primary" bindtap="createPicking">公共配料</button>
   <view class="warehouse-search"><van-icon name="search" color="#63718a"/><input value="{{keyword}}" placeholder="请输入单号 / 物料 / 工单" bindinput="keywordInput" bindconfirm="search" confirm-type="search"/><button bindtap="search">搜索</button></view>
   <view class="warehouse-filter"><text>业务类型</text><picker mode="selector" range="{{types}}" range-key="name" value="{{typeIndex}}" bindchange="changeType"><view>{{types[typeIndex].name}} <van-icon name="arrow-down"/></view></picker><view class="warehouse-filter-button" bindtap="openFilter"><van-icon name="filter-o"/> 筛选</view></view>
   <view wx:if="{{loading}}" class="warehouse-empty"><van-loading color="#ed1609"/></view>

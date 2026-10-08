@@ -196,7 +196,7 @@ export default {
       this.loadItems()
     },
     async loadItems() {
-      const { data } = await listEntity('items', { keyword: this.picker.keyword, item_type: this.picker.item_type, page: this.picker.page, per_page: this.picker.perPage })
+      const { data } = await listEntity('items', { management_scope: 'factory', keyword: this.picker.keyword, item_type: this.picker.item_type, page: this.picker.page, per_page: this.picker.perPage })
       this.picker.rows = data.data || []
       this.picker.total = data.total || 0
     },

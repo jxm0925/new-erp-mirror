@@ -73,6 +73,7 @@ final class CuttingWorkerOrderService
         $order = DB::table('erp_cutting_orders')->where('id',$batch->cutting_order_id)->lockForUpdate()->first();
         if ($order->purpose !== 'WORKER') $this->commands->fail('output_source_invalid','计划下料必须使用已冻结的正式产出。');
         $item = Item::query()->whereKey((int) ($row['item_id'] ?? 0))->lockForUpdate()->first();
+        if ($item) app(ItemManagementScopeService::class)->assertProductionAllowed($item, 'item_id');
         if (! $item || $item->status !== 'enabled' || ! $item->is_production_item || ! $item->is_stock_item)
             $this->commands->fail('output_item_invalid','请选择已启用、可生产且可入库的产品物料。');
         $configId = isset($row['configuration_id']) ? (int) $row['configuration_id'] : null;
@@ -140,7 +141,7 @@ final class CuttingWorkerOrderService
     {
         $visible = WorkOrder::query()->select('id');
         $this->scopes->applyWorkOrderScope($visible,$this->scopes->resolve($user,'production.cutting.record',$permissions,$super));
-        $query = DB::table('erp_items as i')->where('i.status','enabled')->where('i.is_stock_item',true)->where('i.is_production_item',true)
+        $query = DB::table('erp_items as i')->where('i.management_scope','factory')->where('i.status','enabled')->where('i.is_stock_item',true)->where('i.is_production_item',true)
             ->leftJoin('erp_custom_configurations as c',fn ($join) => $join->on('c.item_id','=','i.id')->where('i.is_custom_item',true)->where('c.status','PUBLISHED'))
             ->where(fn (Builder $q) => $q->where('i.is_custom_item',false)->orWhere(fn (Builder $custom) => $custom->whereNotNull('c.id')
                 ->where(fn (Builder $scope) => $scope->where('c.scope_mode','PUBLIC')->orWhereExists(fn (Builder $s) => $s->selectRaw('1')

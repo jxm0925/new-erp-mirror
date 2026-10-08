@@ -33,7 +33,7 @@ class ReleaseGateApplicationService
 
         return DB::transaction(function () use ($workOrderId, $user, $permissions, $superAdmin): array {
             $locked = WorkOrder::query()->lockForUpdate()->findOrFail($workOrderId);
-            if ($locked->status === WorkOrderApplicationService::RELEASED) {
+            if (app(WorkOrderOutputPlanService::class)->historical($locked)) {
                 return $this->releasedResult($locked);
             }
 
@@ -43,7 +43,7 @@ class ReleaseGateApplicationService
 
     public function evaluateLocked(WorkOrder $workOrder, object $user, bool $persist = true, ?array $permissions = null, ?bool $superAdmin = null): array
     {
-        if ($workOrder->status === WorkOrderApplicationService::RELEASED) {
+        if (app(WorkOrderOutputPlanService::class)->historical($workOrder)) {
             return $this->releasedResult($workOrder);
         }
 
@@ -71,9 +71,18 @@ class ReleaseGateApplicationService
         $executionMode = (string) ($outputItem?->production_execution_mode ?: 'unit');
         $unitQuantityValid = $executionMode !== 'unit' || $this->isPositiveIntegerDecimal((string) $workOrder->target_base_qty);
         $supplyCoverage = $this->materialSupplyCoverage($workOrder, $bom);
-        $funding = $demand?->order ? $this->fundingGates->status($demand->order) : null;
+        $fundingOrder = $demand?->order;
+        if (! $fundingOrder && $workOrder->assembly_root_work_order_id) {
+            $fundingOrder = WorkOrder::with('demand.order')->find($workOrder->assembly_root_work_order_id)?->demand?->order;
+        }
+        $funding = $fundingOrder ? $this->fundingGates->status($fundingOrder) : null;
+        $outputPlan = app(WorkOrderOutputPlanService::class)->prepare($workOrder, true);
+        $additionalOutputCount = app(WorkOrderPlannedOutputService::class)->additionalCount($workOrder);
 
         $checks = [
+            $this->check('planned_outputs', $additionalOutputCount === 0,
+                'multi_output_execution_not_available', '工单包含多项计划产出，当前尚未开放多产出执行，不能发布。',
+                ['additional_output_count' => $additionalOutputCount]),
             $this->check('work_order_state', $workOrder->status === WorkOrderApplicationService::WAIT_RELEASE, 'state_not_wait_release', '工单必须处于待发布状态。', ['status' => $workOrder->status]),
             $this->check(
                 'production_funding',
@@ -118,6 +127,36 @@ class ReleaseGateApplicationService
             $this->check('material_supply_rules', $supplyCoverage['valid'], 'material_supply_rule_incomplete', '工艺路线没有完整配置 BOM 物料的目标工序和供应规则。', $supplyCoverage),
         ];
 
+        // Current eligibility gates new publication; released orders returned above keep their frozen facts.
+        $scopeItemIds = collect($workOrder->routing_snapshot['operations'] ?? [])->flatMap(fn ($node) => array_merge(
+            ! empty($node['output_item_id']) ? [(int) $node['output_item_id']] : [],
+            array_column($node['output_rules'] ?? [], 'item_id'),
+            array_column($node['material_supply_rules'] ?? [], 'component_item_id'),
+            array_column($node['packaging_materials'] ?? [], 'component_item_id'),
+        ))->merge($bom?->items?->pluck('component_item_id') ?? [])
+            ->merge([$workOrder->output_item_id, $workOrder->effective_output_item_id_snapshot, $bom?->output_item_id])
+            ->filter()->unique()->all();
+        $officeItems = Item::query()->whereIn('id', $scopeItemIds)->orderBy('id')->lockForUpdate()->get()
+            ->filter(fn (Item $item): bool => $item->managementScope() !== 'factory');
+        if ($officeItems->isNotEmpty()) $checks[] = $this->check('production_management_scope', false,
+            'office_item_not_allowed_in_production', '工单、BOM 和工艺路线只能使用工厂物料，不能使用办公用品。',
+            ['item_ids' => $officeItems->pluck('id')->all(), 'item_codes' => $officeItems->pluck('item_code')->all()]);
+
+        // Legacy routes retain their established checks and executor. Declared yield rules require
+        // exact matching plus explicit compatibility; taking the first output would silently drop
+        // by-products, quantities or row-level quality/destination policy from the released plan.
+        if ($outputPlan['has_explicit_rules'] || $outputPlan['issues'] !== []) {
+            $outputProblems = array_merge($outputPlan['issues'], $outputPlan['execution_blockers']);
+            $firstProblem = $outputProblems[0] ?? null;
+            $checks[] = $this->check('operation_output_plan', $outputProblems === [],
+                $firstProblem['code'] ?? 'operation_output_plan_invalid',
+                $firstProblem['message'] ?? '工序产出计划未通过完整预检。',
+                ['issues' => $outputPlan['issues'], 'execution_blockers' => $outputPlan['execution_blockers']]);
+        }
+
+        $assembly = app(AssemblyProductionApplicationService::class)->releaseCheck($workOrder, $bom);
+        if ($assembly !== null) $checks[] = $this->check('assembly_component_plan', $assembly['valid'], $assembly['code'], $assembly['message'], $assembly);
+
         if ($workOrder->source_type === 'stock_prebuild') {
             try {
                 app(StockPrebuildEligibilityService::class)->assertWorkOrder($workOrder);
@@ -146,6 +185,7 @@ class ReleaseGateApplicationService
             'work_order_id' => (int) $workOrder->id,
             'work_order_version' => (int) $workOrder->business_version,
             'bom' => $this->bomProjection($bom, $match['bom_snapshot'] ?? null),
+            'output_plan' => $outputPlan,
             'checks' => $checks,
             'blockers' => array_values(array_filter($checks, fn (array $check): bool => $check['status'] !== 'passed')),
             'evaluated_at' => now()->toISOString(),
@@ -281,6 +321,7 @@ class ReleaseGateApplicationService
                 'version' => $bomSnapshot['version'] ?? $workOrder->bom_version,
                 'line_count' => isset($bomSnapshot['material_line_count']) ? (int) $bomSnapshot['material_line_count'] : null,
             ],
+            'output_plan' => app(WorkOrderOutputPlanService::class)->projection($workOrder),
             'checks' => $checks,
             'blockers' => array_values(array_filter($checks, fn (array $check): bool => $check['status'] !== 'passed')),
             'evaluated_at' => optional($rows->first()?->evaluated_at)->toISOString() ?: optional($workOrder->release_gate_checked_at)->toISOString(),
@@ -368,7 +409,8 @@ class ReleaseGateApplicationService
             return ['valid' => false, 'missing_component_item_ids' => [], 'invalid_component_item_ids' => [],
                 'schema_missing' => true];
         }
-        $operationRows = collect((array) data_get($workOrder->routing_snapshot, 'operations', []))->sortBy('sequence')->values();
+        $operationRows = collect((array) data_get($workOrder->routing_snapshot, 'operations', []))
+            ->filter(fn ($row) => ($row['execution_context'] ?? 'production') === 'production')->sortBy('sequence')->values();
         if ($workOrder->source_type === 'stock_prebuild' && $workOrder->target_routing_operation_id) {
             $target = $operationRows->firstWhere('routing_operation_id', (int) $workOrder->target_routing_operation_id);
             if ($target) $operationRows = $operationRows->where('sequence', '<=', (int) $target['sequence'])->values();

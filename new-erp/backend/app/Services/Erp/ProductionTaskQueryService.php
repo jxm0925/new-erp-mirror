@@ -23,7 +23,7 @@ class ProductionTaskQueryService
     public function paginate(array $filters, object $user, array $permissions, bool $superAdmin): LengthAwarePaginator
     {
         $query = $this->filteredQuery($filters, $user, $permissions, $superAdmin);
-        $page = $query->with(['workOrder.outputItem', 'workOrder.productionMasterOrder', 'targets', 'collaborators', 'laborSessions'])->orderByDesc('id')
+        $page = $query->with(['workOrder.outputItem', 'workOrder.productionMasterOrder', 'targets', 'collaborators', 'laborSessions', 'pendingAssignment'])->orderByDesc('id')
             ->paginate(min(20, max(1, (int) ($filters['per_page'] ?? 20))));
         $this->enrichTargets(collect($page->items()), $permissions, $user);
         collect($page->items())->each(fn (ProductionTask $task) => $this->enrichPeople($task));
@@ -38,14 +38,17 @@ class ProductionTaskQueryService
         $this->scopeResolver->applyProductionTaskScope($query, $scope, (int) $user->legacy_id);
         if (! empty($filters['status'])) $query->where('status', $filters['status']);
         if (! empty($filters['work_order_id'])) $query->where('work_order_id', (int) $filters['work_order_id']);
+        if (isset($filters['is_public']) && $filters['is_public'] !== '') $query->where('is_public_snapshot', (bool) $filters['is_public']);
         if (($filters['view'] ?? null) === 'pool') $query->where('status', 'WAIT_CLAIM')->whereNull('assignee_user_legacy_id');
         if (($filters['view'] ?? null) === 'mine') {
             $userId = (int) $user->legacy_id;
             $query->where(fn ($q) => $q->where('assignee_user_legacy_id', $userId)
-                ->orWhereHas('collaborators', fn ($c) => $c->where('employee_legacy_id', $userId)->whereNull('left_at')));
+                ->orWhereHas('collaborators', fn ($c) => $c->where('employee_legacy_id', $userId)->whereNull('left_at'))
+                ->orWhereHas('pendingAssignment', fn ($a) => $a->where('offered_to_legacy_id', $userId)));
         }
         if (($filters['view'] ?? null) === 'owned') {
-            $query->where('assignee_user_legacy_id', (int) $user->legacy_id);
+            $query->where(fn ($q) => $q->where('assignee_user_legacy_id', (int) $user->legacy_id)
+                ->orWhereHas('pendingAssignment', fn ($a) => $a->where('offered_to_legacy_id', (int) $user->legacy_id)));
         }
         if (($filters['view'] ?? null) === 'collaboration') {
             $userId = (int) $user->legacy_id;
@@ -196,7 +199,7 @@ class ProductionTaskQueryService
     public function show(int $id, object $user, array $permissions, bool $superAdmin): ProductionTask
     {
         $this->permission($permissions, 'production.task.view');
-        $query = ProductionTask::query()->with(['workOrder.outputItem', 'workOrder.productionMasterOrder', 'targets', 'collaborators', 'laborSessions'])->whereKey($id);
+        $query = ProductionTask::query()->with(['workOrder.outputItem', 'workOrder.productionMasterOrder', 'targets', 'collaborators', 'laborSessions', 'pendingAssignment'])->whereKey($id);
         $scope = $this->scopeResolver->resolve($user, 'production.task.view', $permissions, $superAdmin);
         $this->scopeResolver->applyProductionTaskScope($query, $scope, (int) $user->legacy_id);
         $task = $query->first();
@@ -226,6 +229,12 @@ class ProductionTaskQueryService
      */
     private function enrichTargets(Collection $tasks, array $permissions, object $user): void
     {
+        $bundles = \App\Models\Erp\ProductionJobBundle::query()->whereIn('id', $tasks->pluck('active_job_bundle_id')->filter()->unique())->get()->keyBy('id');
+        foreach ($tasks as $task) {
+            $bundle = $bundles->get((int) $task->active_job_bundle_id);
+            $task->setAttribute('active_job_bundle', $bundle ? ['id' => (int) $bundle->id, 'no' => $bundle->bundle_no,
+                'bundle_no' => $bundle->bundle_no, 'status' => $bundle->status, 'business_version' => (int) $bundle->business_version] : null);
+        }
         $serverNow = now();
         $links = $tasks->flatMap(fn (ProductionTask $task) => $task->targets);
         $unitIds = $links->where('target_type', 'unit_operation')->pluck('target_id')->map(fn ($id) => (int) $id)->unique()->values();
@@ -285,6 +294,7 @@ class ProductionTaskQueryService
                     'primary_action' => $actionProjection['primary_action'],
                     'secondary_actions' => $actionProjection['secondary_actions'],
                     'business_version' => (int) $target->business_version,
+                    'is_public_snapshot' => (bool) $target->is_public_snapshot,
                     'production_unit_id' => $link->target_type === 'unit_operation' ? (int) $target->production_unit_id : null,
                     'production_unit_no' => $link->target_type === 'unit_operation' ? $target->productionUnit?->unit_no : null,
                     'serial_no' => $link->target_type === 'unit_operation' ? $target->productionUnit?->deviceSerial?->serial_no : null,
@@ -340,9 +350,21 @@ class ProductionTaskQueryService
             $task->setAttribute('my_role', $roles->contains('owner') ? 'owner' : ($roles->contains('collaborator') ? 'collaborator' : 'viewer'));
             $task->setAttribute('server_now', $serverNow->toISOString());
             $task->setAttribute('allowed_actions', [
-                'claim' => (int) ($task->assignee_user_legacy_id ?? 0) === 0
+                'claim' => ! $task->active_job_bundle_id && (int) ($task->assignee_user_legacy_id ?? 0) === 0
                     && $task->status === 'WAIT_CLAIM'
                     && in_array('production.task.claim', $permissions, true),
+                'accept_assignment' => $task->status === 'WAIT_ACCEPT' && $task->pendingAssignment
+                    && (int) $task->pendingAssignment->offered_to_legacy_id === (int) $user->legacy_id
+                    && in_array('production.task.claim', $permissions, true),
+                'reject_assignment' => $task->status === 'WAIT_ACCEPT' && $task->pendingAssignment
+                    && (int) $task->pendingAssignment->offered_to_legacy_id === (int) $user->legacy_id
+                    && in_array('production.task.claim', $permissions, true),
+                'auto_assign' => ! $task->active_job_bundle_id && $task->status === 'WAIT_CLAIM' && ! $task->assignee_user_legacy_id
+                    && in_array('production.assignment.auto', $permissions, true),
+                'add_collaborators' => ! $task->active_job_bundle_id && (int) $task->assignee_user_legacy_id === (int) $user->legacy_id
+                    && (bool) $task->workOrder?->collaboration_enabled
+                    && in_array($task->status, ['CLAIMED', 'WAIT_MATERIAL', 'WAIT_HANDOVER', 'READY', 'IN_PROGRESS', 'PAUSED', 'REWORK'], true)
+                    && in_array('production.task.collaborate', $permissions, true),
             ]);
         }
     }
@@ -352,7 +374,7 @@ class ProductionTaskQueryService
     {
         return match ($status) {
             'WAIT_PREVIOUS', 'WAIT_PREDECESSOR' => '待前工序可交接',
-            'WAIT_CLAIM' => '待接单', 'CLAIMED' => '已接单',
+            'WAIT_CLAIM' => '待接单', 'WAIT_ACCEPT' => '待接受派单', 'CLAIMED' => '已接单',
             'WAIT_MATERIAL' => '待齐套', 'WAIT_HANDOVER' => '待交接确认',
             'READY' => '待开工', 'IN_PROGRESS' => '进行中', 'PAUSED' => '已暂停',
             'WAIT_QUALITY' => '待质检', 'WAIT_WAREHOUSE' => '待入库',

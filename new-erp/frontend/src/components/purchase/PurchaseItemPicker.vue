@@ -3,6 +3,7 @@
     class="purchase-item-picker"
     :title="dialogTitle"
     :visible.sync="visible"
+    :custom-class="dialogClass"
     width="1100px"
     append-to-body
     :close-on-click-modal="false"
@@ -17,12 +18,13 @@
         @keyup.enter.native="search"
         @clear="search"
       />
+      <el-select v-model="query.management_scope" :disabled="!!extraParams.management_scope" size="small" placeholder="管理范围" @change="changeScope">
+        <el-option label="全部范围" value="" />
+        <el-option label="工厂物料" value="factory" />
+        <el-option label="办公用品" value="office" />
+      </el-select>
       <el-select v-model="query.item_type" size="small" clearable placeholder="物料类型" @change="search">
-        <el-option label="成品" value="finished_product" />
-        <el-option label="半成品" value="semi_finished" />
-        <el-option label="原材料" value="raw_material" />
-        <el-option label="包装物" value="packaging" />
-        <el-option label="服务" value="service" />
+        <el-option v-for="type in itemTypes" :key="type.value" :label="type.label" :value="type.value" />
       </el-select>
       <div class="filter-btns">
         <el-button size="small" type="success" icon="el-icon-search" @click="search">查询</el-button>
@@ -98,6 +100,9 @@
               <el-tag size="mini" type="info">{{ itemTypeText(row.item_type) }}</el-tag>
             </template>
           </el-table-column>
+          <el-table-column label="管理范围" width="100" align="center">
+            <template slot-scope="{row}">{{ scopeLabel(row.management_scope) }}</template>
+          </el-table-column>
           <el-table-column label="分类" width="120" show-overflow-tooltip>
             <template slot-scope="{row}">{{ categoryName(row) }}</template>
           </el-table-column>
@@ -130,6 +135,7 @@
         >
           <span class="chip-code">{{ row.item_code }}</span>
           <span class="chip-name" :title="row.item_name">{{ row.item_name }}</span>
+          <span class="chip-scope">{{ scopeLabel(row.management_scope) }}</span>
           <i class="el-icon-close chip-close" @click.stop="removeSelected(row)" />
         </div>
       </div>
@@ -164,12 +170,19 @@
 
 <script>
 import { getItemCategoryTree, listEntity } from '@/api/erp/master'
+import { materialScopeLabel, materialTypesForScope } from '@/utils/materialManagementScope.mjs'
 
 export default {
   name: 'PurchaseItemPicker',
+  props: {
+    dialogClass: { type: String, default: '' }
+  },
   data: () => ({
     visible: false,
     loading: false,
+    loadVersion: 0,
+    categoryVersion: 0,
+    openVersion: 0,
     rows: [],
     total: 0,
     current: null,
@@ -179,9 +192,14 @@ export default {
     selectedById: {},
     categoryTree: [],
     extraParams: {},
-    query: { keyword: '', item_type: '', category_id: null, page: 1, per_page: 20 }
+    query: { keyword: '', item_type: '', category_id: null, management_scope: '', page: 1, per_page: 20 }
   }),
   computed: {
+    itemTypes() {
+      return this.query.management_scope
+        ? materialTypesForScope(this.query.management_scope)
+        : [...materialTypesForScope('factory'), { value: 'office_consumable', label: '办公用品' }]
+    },
     selectedRows() { return Object.values(this.selectedById) },
     currentId: {
       get() { return this.current && this.current.id },
@@ -198,47 +216,64 @@ export default {
   },
   methods: {
     async open({ currentId = null, params = {}, multiple = false, selected = [], title = '选择采购物料' } = {}) {
+      const version = ++this.openVersion
+      this.loadVersion += 1
       this.preferredId = currentId
       this.multiple = multiple
       this.dialogTitle = title
       this.selectedById = Object.fromEntries((selected || []).filter(row => row && row.id).map(row => [row.id, row]))
       this.extraParams = { status: 'enabled', is_purchase_item: 1, ...params }
-      this.query = { keyword: '', item_type: '', category_id: null, page: 1, per_page: 20 }
+      this.query = { keyword: '', item_type: '', category_id: null, management_scope: params.management_scope || '', page: 1, per_page: 20 }
       this.current = null
       this.visible = true
-      if (!this.categoryTree.length) {
-        try {
-          const { data } = await getItemCategoryTree()
-          this.categoryTree = data.data || []
-        } catch (e) {
-          // ignore error
-        }
-      }
+      await this.loadCategories()
+      if (version !== this.openVersion || !this.visible) return
       await this.load()
+    },
+    async loadCategories() {
+      const version = ++this.categoryVersion
+      try {
+        const { data } = await getItemCategoryTree(this.query.management_scope ? { management_scope: this.query.management_scope } : undefined)
+        if (version === this.categoryVersion) this.categoryTree = data.data || []
+      } catch (e) {
+        if (version === this.categoryVersion) this.$message.error(e.userMessage || '物料分类加载失败')
+      }
+    },
+    changeScope() {
+      this.query.category_id = null
+      this.query.item_type = ''
+      this.current = null
+      this.categoryTree = []
+      this.loadCategories()
+      this.search()
     },
     tableRowClassName({ row }) {
       return this.selectedById[row.id] ? 'row-selected-highlight' : ''
     },
     async load() {
+      const version = ++this.loadVersion
       this.loading = true
       try {
-        const params = { ...this.extraParams, ...this.query }
+        const params = { ...this.extraParams, ...this.query, management_scope: this.extraParams.management_scope || this.query.management_scope }
         if (!params.keyword) delete params.keyword
         if (!params.item_type) delete params.item_type
+        if (!params.management_scope) delete params.management_scope
         const { data } = await listEntity('items', params)
+        if (version !== this.loadVersion) return
         this.rows = data.data || []
         this.total = Number(data.total || 0)
         this.current = this.rows.find(row => Number(row.id) === Number(this.preferredId)) || null
       } catch (error) {
-        this.$message.error(error.userMessage || '采购物料加载失败')
+        if (version === this.loadVersion) this.$message.error(error.userMessage || '采购物料加载失败')
       } finally {
-        this.loading = false
+        if (version === this.loadVersion) this.loading = false
       }
     },
     search() { this.query.page = 1; this.preferredId = null; this.load() },
     reset() {
-      this.query = { keyword: '', item_type: '', category_id: null, page: 1, per_page: this.query.per_page }
+      this.query = { keyword: '', item_type: '', category_id: null, management_scope: this.extraParams.management_scope || '', page: 1, per_page: this.query.per_page }
       this.preferredId = null
+      this.loadCategories()
       this.load()
     },
     changeSize() { this.query.page = 1; this.load() },
@@ -300,9 +335,10 @@ export default {
       return ({
         finished_product: '成品', finished_good: '成品',
         semi_finished: '半成品', raw_material: '原材料',
-        packaging: '包装物', service: '服务'
+        packaging: '包装物', service: '服务', office_consumable: '办公用品'
       })[value] || value || '-'
     },
+    scopeLabel(scope) { return materialScopeLabel(scope) },
     statusText(value) { return ({ enabled: '启用', active: '启用', disabled: '停用' })[value] || value || '-' }
   }
 }
@@ -455,6 +491,9 @@ export default {
 /* 高对比度独立物料标签 */
 .selected-chip {
   display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
   background: #ffffff;
   border: 1px solid #cbd5e1;
@@ -470,6 +509,11 @@ export default {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
 }
 .chip-code {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: monospace;
   font-weight: 700;
   color: #008b4b;
@@ -484,6 +528,12 @@ export default {
   max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chip-scope {
+  flex-shrink: 0;
+  margin-left: 6px;
+  color: #64748b;
   white-space: nowrap;
 }
 .chip-close {
@@ -571,7 +621,7 @@ export default {
     width: 100%;
   }
   .picker-body {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .category-panel {
     height: 140px;
@@ -582,6 +632,15 @@ export default {
   }
   .picker-actions {
     justify-content: flex-end;
+  }
+  .picker-footer ::v-deep .el-pagination {
+    display: flex;
+    flex-wrap: wrap;
+    max-width: 100%;
+    white-space: normal;
+  }
+  .picker-footer ::v-deep .el-pagination__sizes {
+    margin-right: 0;
   }
 }
 </style>

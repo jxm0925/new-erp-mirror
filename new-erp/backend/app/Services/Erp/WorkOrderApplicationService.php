@@ -89,6 +89,31 @@ class WorkOrderApplicationService
         return $workOrder;
     }
 
+    public function savePlannedOutputs(int $id, array $payload, object $user, array $permissions, bool $superAdmin = false): WorkOrder
+    {
+        $this->assertPermission($permissions, 'production.work_order.edit', $superAdmin);
+        $this->assertPermission($permissions, 'production.work_order.view', $superAdmin);
+        $visible = WorkOrder::find($id);
+        if (! $visible) $this->fail('not_found', '工单不存在。', 404);
+        // Replay is also a present-day read: never return cached facts after rights, scope or state change.
+        $this->assertWorkOrderVisible($visible, $user, $permissions, $superAdmin);
+        if ($visible->status !== self::DRAFT) $this->fail('state_conflict', '只有草稿工单可以维护计划产出。', 409);
+        $payload = app(WorkOrderPlannedOutputService::class)->validatePayload($payload);
+        return $this->withCommand('save_planned_outputs', $id, $payload, $user, function () use ($id, $payload, $user, $permissions, $superAdmin): WorkOrder {
+            $workOrder = $this->lockWorkOrder($id);
+            $this->assertWorkOrderVisible($workOrder, $user, $permissions, $superAdmin);
+            if ($workOrder->status !== self::DRAFT) $this->fail('state_conflict', '只有草稿工单可以维护计划产出。', 409);
+            $this->assertExpectedVersion($workOrder, $payload);
+            app(AssemblyProductionApplicationService::class)->assertMutable($workOrder);
+            $beforeVersion = (int) $workOrder->business_version;
+            app(WorkOrderPlannedOutputService::class)->replaceLocked($workOrder, $payload, $user, $beforeVersion, $beforeVersion + 1);
+            $workOrder->business_version = $beforeVersion + 1;
+            $workOrder->save();
+            $this->recordStatus($workOrder, self::DRAFT, self::DRAFT, '更新工单计划产出', $beforeVersion, $beforeVersion + 1, $user);
+            return $workOrder;
+        }, true);
+    }
+
     public function createDraft(array $payload, object $user, array $permissions, bool $superAdmin = false): WorkOrder
     {
         $this->assertPermission($permissions, 'production.work_order.create', $superAdmin);
@@ -151,10 +176,51 @@ class WorkOrderApplicationService
         $this->recordStatus($workOrder, null, self::WAIT_RELEASE, '销售订单确认后自动建立待发布生产工单', 0, 1, $operator);
         $this->refreshDemandProjection($demand);
 
+        app(AssemblyProductionApplicationService::class)->prepareAutomatic($workOrder, $operator);
+
         // Persist every missing condition immediately. The WO remains visible in
         // WAIT_RELEASE and the condition projection—not its lifecycle—is blocked.
         $this->releaseGate->evaluateLocked($workOrder, $operator, true);
         return $workOrder->fresh(['demand.order', 'demand.line', 'statusLogs', 'releaseGateChecks']);
+    }
+
+    /** The assembly preparation transaction is the sole creator of these linked replenishment orders. */
+    public function createAssemblyChildLocked(WorkOrder $root, WorkOrder $parent, \App\Models\Erp\AssemblyComponentDemand $demand, array $row, object $user): WorkOrder
+    {
+        if (DB::transactionLevel() < 1) $this->fail('transaction_required', '关联子工单必须在自产部件准备事务中建立。', 409);
+        $item = Item::with('unit')->whereKey($row['item_id'])->lockForUpdate()->firstOrFail();
+        app(ItemManagementScopeService::class)->assertProductionAllowed($item, 'item_id');
+        $routing = ProductionRouting::with('operations.operation')->whereKey($row['child_routing_id'])->lockForUpdate()->firstOrFail();
+        $target = $routing->operations->firstWhere('id', $row['child_target_routing_operation_id']);
+        if (! $target || $routing->status !== 'active' || (int) $routing->output_item_id !== (int) $item->id
+            || $item->manufacturing_strategy !== 'make' || ! $item->is_production_item || ! $item->is_stock_item) {
+            $this->fail('assembly_child_master_changed', '自产部件路线或制造策略在准备时发生变化。', 409);
+        }
+        $number = $this->documentNumbers->next('work_order');
+        $snapshot = $this->productionMasterData->snapshot($routing);
+        app(StockPrebuildEligibilityService::class)->assertSnapshot($snapshot, (int) $target->id);
+        $child = WorkOrder::create([
+            'work_order_no' => $number, 'source_type' => 'stock_prebuild', 'source_id' => $demand->id,
+            'source_no_snapshot' => $root->work_order_no, 'source_title_snapshot' => '自产部件需求',
+            'stocking_purpose' => 'common_inventory', 'configured_output_mode_snapshot' => $target->output_mode,
+            'effective_output_mode_snapshot' => 'warehouse_required', 'effective_output_item_id_snapshot' => $item->id,
+            'assembly_root_work_order_id' => $root->id, 'assembly_parent_work_order_id' => $parent->id,
+            'assembly_component_demand_id' => $demand->id, 'production_master_order_id' => $root->production_master_order_id,
+            'output_item_id' => $item->id, 'production_routing_id' => $routing->id,
+            'routing_version_snapshot' => $routing->version, 'routing_snapshot' => $snapshot,
+            'target_operation_id' => $target->operation_id, 'target_routing_operation_id' => $target->id,
+            'origin_command_id' => 'assembly-demand:'.$demand->id,
+            'target_unit_id' => $item->unit_id, 'target_unit_name_snapshot' => $item->unit->unit_name,
+            'target_qty' => $row['production_base_qty'], 'target_base_qty' => $row['production_base_qty'],
+            'base_unit_id' => $item->unit_id, 'base_unit_name_snapshot' => $item->unit->unit_name,
+            'bom_id' => $row['child_bom_id'], 'bom_version_id' => $row['child_bom_id'],
+            'planned_date' => $root->planned_date?->format('Y-m-d'), 'production_batch' => $number,
+            'responsible_user_legacy_id' => $parent->responsible_user_legacy_id, 'status' => self::WAIT_RELEASE,
+            'business_version' => 1, 'organization_code' => $root->organization_code,
+            'created_by_legacy_id' => $this->userId($user), 'updated_by_legacy_id' => $this->userId($user),
+        ]);
+        $this->recordStatus($child, null, self::WAIT_RELEASE, '自产部件库存不足，建立关联补足工单', 0, 1, $user);
+        return $child;
     }
 
     public function updateDraft(int $id, array $payload, object $user, array $permissions, bool $superAdmin = false): WorkOrder
@@ -172,6 +238,7 @@ class WorkOrderApplicationService
             $this->assertWorkOrderVisible($workOrder, $user, $permissions, $superAdmin);
             $this->assertExpectedVersion($workOrder, $payload);
             $this->assertState($workOrder, [self::DRAFT]);
+            app(AssemblyProductionApplicationService::class)->assertMutable($workOrder);
             $this->assertDemandVisible($demand, $user, $permissions, $superAdmin);
             $this->assertUnitContract($demand, $payload);
             if (array_key_exists('target_qty', $payload)) $this->assertQuantityPrecision($payload['target_qty']);
@@ -192,6 +259,7 @@ class WorkOrderApplicationService
             $editPayload['production_batch'] = $workOrder->production_batch ?: $workOrder->work_order_no;
             $editPayload['production_location_name'] = $workOrder->production_location_name;
             $workOrder->fill($this->editableAttributes($editPayload, $quantity, $demand));
+            app(ProductionInventoryContinuationService::class)->assertPlanQuantity($workOrder);
             $workOrder->business_version = (int) $workOrder->business_version + 1;
             $workOrder->updated_by_legacy_id = $this->userId($user);
             $workOrder->save();
@@ -248,6 +316,7 @@ class WorkOrderApplicationService
             if ($workOrder->technical_version > 0 && trim((string) ($payload['reason'] ?? '')) === '') {
                 $this->fail('technical_revision_reason_required', '修订已确认生产资料必须填写原因。');
             }
+            app(AssemblyProductionApplicationService::class)->assertMutable($workOrder);
             $snapshot = app(WorkOrderTechnicalService::class)->prepare($workOrder, $payload);
             $attachmentIds = $payload['attachment_ids'] ?? array_column($workOrder->technical_snapshot['attachments'] ?? [], 'id');
             $snapshot['attachments'] = app(WorkOrderTechnicalAttachmentApplicationService::class)->snapshot($workOrder, $attachmentIds, $user);
@@ -304,6 +373,7 @@ class WorkOrderApplicationService
             if ($workOrder->source_type !== 'sales_order' || ! in_array($workOrder->status, [self::DRAFT, self::WAIT_RELEASE], true)) {
                 $this->fail('routing_rematch_not_allowed', '只有草稿或待发布的销售来源工单可以重新匹配工艺路线。', 422);
             }
+            app(AssemblyProductionApplicationService::class)->assertMutable($workOrder);
             if ($workOrder->production_routing_id || $workOrder->routing_snapshot) {
                 $this->fail('routing_already_frozen', '工单已经冻结工艺路线，禁止重新覆盖历史快照。', 409);
             }
@@ -356,6 +426,9 @@ class WorkOrderApplicationService
                 ]);
             }
 
+            app(WorkOrderOutputPlanService::class)->freezeLocked($workOrder, $gate['output_plan'], $user,
+                (int) $workOrder->business_version + 1);
+
             $bom = $this->releaseGate->loadMatchedBom($gate);
             $executionPolicy = $this->productionExecution->policySnapshot($workOrder);
             $this->productionExecution->assertReleaseQuantity($workOrder, $executionPolicy);
@@ -364,6 +437,7 @@ class WorkOrderApplicationService
             }
             $configurationSnapshot = app(WorkOrderTechnicalService::class)->effectiveConfiguration($workOrder);
             $materialRows = $this->releaseGate->buildMaterialRows($workOrder, $bom, $configurationSnapshot);
+            $materialRows = app(ProductionInventoryContinuationService::class)->materialRows($workOrder, $materialRows);
             if ($materialRows === []) {
                 $this->fail('bom_incomplete', 'BOM 没有可发布的物料需求行。', 422);
             }
@@ -408,6 +482,8 @@ class WorkOrderApplicationService
             $workOrder->save();
 
             $this->productionExecution->initializePublished($workOrder, $executionPolicy);
+            app(AssemblyProductionInventoryService::class)->bindPublished($workOrder);
+            app(ProductionInventoryContinuationService::class)->reservePublished($workOrder, $user);
             // Order preparation documents belong to a production master order.
             // Independent stock-prebuild work orders deliberately have no master
             // order and publish directly into their configured inventory flow.
@@ -432,6 +508,7 @@ class WorkOrderApplicationService
             $this->assertExpectedVersion($workOrder, $payload);
             $this->assertState($workOrder, [self::DRAFT, self::WAIT_RELEASE]);
             if ($demand) $this->assertDemandVisible($demand, $user, $permissions, $superAdmin);
+            app(AssemblyProductionApplicationService::class)->cancelLocked($workOrder, $user, (string) ($payload['reason'] ?? '业务取消'));
             $before = (string) $workOrder->status;
             $version = (int) $workOrder->business_version;
             $workOrder->status = self::CANCELLED;
@@ -441,6 +518,7 @@ class WorkOrderApplicationService
             $workOrder->cancelled_at = now();
             $workOrder->updated_by_legacy_id = $this->userId($user);
             $workOrder->save();
+            app(ProductionTaskAssignmentService::class)->cancelPendingForWorkOrder((int) $workOrder->id, $user);
             $this->recordStatus($workOrder, $before, self::CANCELLED, $workOrder->cancel_reason, $version, $version + 1, $user);
             if ($demand) $this->refreshDemandProjection($demand);
             return $workOrder->fresh(['demand.order', 'demand.line', 'statusLogs']);
@@ -480,7 +558,7 @@ class WorkOrderApplicationService
      * recovery_required 或 last_command_id 逻辑会重新引入重复建单风险。WO-05 高频
      * 命令不得沿用完整聚合快照，只允许保存业务事实 ID、编号、状态、版本和小结果。
      */
-    private function withCommand(string $command, ?int $aggregateId, array $payload, object $user, \Closure $operation): WorkOrder
+    private function withCommand(string $command, ?int $aggregateId, array $payload, object $user, \Closure $operation, bool $bindActor = false): WorkOrder
     {
         $clientCommandId = (string) ($payload['client_command_id'] ?? '');
         if ($clientCommandId === '') $this->fail('validation_error', 'client_command_id 不能为空。');
@@ -492,6 +570,7 @@ class WorkOrderApplicationService
             'command_type' => $command,
             'payload' => $this->sortPayload($hashPayload),
         ];
+        if ($bindActor) $identity['actor_legacy_id'] = $this->userId($user);
         $requestHash = hash('sha256', json_encode($identity, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
         try {
@@ -507,8 +586,9 @@ class WorkOrderApplicationService
             if ($testDelayMs > 0) usleep($testDelayMs * 1000);
 
             try {
-                $workOrder = DB::transaction(function () use ($operation, $clientCommandId): WorkOrder {
+                $workOrder = DB::transaction(function () use ($operation, $clientCommandId, $command, $user): WorkOrder {
                     $result = $operation();
+                    app(WorkOrderPlannedOutputService::class)->synchronizeReferenceIfPersisted($result, $user, $clientCommandId, $command);
                     // The command marker is part of the same commit as the
                     // business facts. Without it, a process crash after this
                     // commit leaves publish/transition commands impossible to
@@ -684,6 +764,7 @@ class WorkOrderApplicationService
             if (! $item || ! $item->is_production_item || $item->status !== 'enabled') {
                 $this->fail('validation_error', '产出物料不存在、已停用或不是生产物料。', 422);
             }
+            app(ItemManagementScopeService::class)->assertProductionAllowed($item, 'output_item_id');
             $routing = ProductionRouting::with(['outputItem', 'product', 'sku', 'operations.operation'])
                 ->whereKey((int) $payload['production_routing_id'])->lockForUpdate()->first();
             if (! $routing || $routing->status !== 'active' || (int) $routing->output_item_id !== (int) $item->id) {
@@ -770,6 +851,7 @@ class WorkOrderApplicationService
     private function updateIndependentDraft(int $id, array $payload, object $user, array $permissions, bool $superAdmin): WorkOrder
     {
         $workOrder = $this->lockWorkOrder($id);
+        app(AssemblyProductionApplicationService::class)->assertMutable($workOrder);
         $this->assertWorkOrderVisible($workOrder, $user, $permissions, $superAdmin);
         $this->assertExpectedVersion($workOrder, $payload);
         $this->assertState($workOrder, [self::DRAFT]);
@@ -829,6 +911,9 @@ class WorkOrderApplicationService
 
     private function assertDemandReady(ProductionDemand $demand): void
     {
+        $itemId = (int) ($demand->item_id ?: $demand->line?->item_id);
+        $item = $itemId > 0 ? Item::query()->lockForUpdate()->find($itemId) : null;
+        if ($item) app(ItemManagementScopeService::class)->assertProductionAllowed($item, 'production_demand_id');
         // is_ready_for_work_order 是“已有有效工单分配”的投影，不是来源门禁；门禁由
         // active + ready/confirmed + BOM matched 组成，避免销售确认阶段的 false 被误当成阻断。
         if (! $demand->is_active || ! in_array((string) $demand->requirement_status, ['ready', 'confirmed'], true)) {
@@ -887,6 +972,8 @@ class WorkOrderApplicationService
         $productionQty = (float) ($demand->production_qty ?: 0);
         $targetBaseQty = $productionQty > 0 && $baseFactor > 0 ? $quantity * $baseFactor / $productionQty : $quantity;
         $outputItemId = (int) (($demand->item_id ?: $line?->item_id) ?? 0);
+        $outputItem = $outputItemId > 0 ? Item::query()->lockForUpdate()->find($outputItemId) : null;
+        if ($outputItem) app(ItemManagementScopeService::class)->assertProductionAllowed($outputItem, 'production_demand_id');
         $routingMatches = $outputItemId > 0 ? $this->productionMasterData->defaultRoutingMatches(
             $outputItemId, $demand->product_id, $demand->sku_id,
         ) : collect();

@@ -1,7 +1,9 @@
 const production = require('../../../services/production');
+const decisionCommand = require('../../../utils/production-decision-command');
 
 const STATUS_CONFIG = {
   WAIT_CLAIM: { label: '待接单', theme: 'gray', color: '#8f959e', bg: '#f2f3f5' },
+  WAIT_ACCEPT: { label: '待接受派单', theme: 'amber', color: '#ff7d00', bg: '#fff7e8' },
   CLAIMED: { label: '已接单', theme: 'blue', color: '#3370ff', bg: '#eef2f8' },
   WAIT_MATERIAL: { label: '待齐套', theme: 'amber', color: '#ff7d00', bg: '#fff7e8' },
   WAIT_HANDOVER: { label: '待交接', theme: 'purple', color: '#722ed1', bg: '#f9f0ff' },
@@ -127,11 +129,15 @@ Page({
     userId: 0,
     userName: '',
     workersList: [],
-    totalWorkersCount: 1,
+    totalWorkersCount: 0,
     showCollabModal: false,
     collabSearchKeyword: '',
     selectedCollabIds: [],
     collabCandidates: [],
+    collabPage: 1,
+    collabTotal: 0,
+    collabLoading: false,
+    collabHasNext: false,
   },
 
   timerId: null,
@@ -163,6 +169,11 @@ Page({
     this.load().finally(() => {
       wx.stopPullDownRefresh();
     });
+  },
+
+  openJobBundle() {
+    const bundle = this.data.task && this.data.task.active_job_bundle;
+    if (bundle && bundle.id) wx.navigateTo({ url: `/pages/production/job-bundles/index?id=${bundle.id}` });
   },
 
   stopTimer() {
@@ -208,6 +219,7 @@ Page({
       const conf = STATUS_CONFIG[task.status] || { label: task.status, theme: 'gray', color: '#8f959e', bg: '#f2f3f5' };
       task.statusConfig = conf;
       task.statusLabel = conf.label;
+      task.showPublicBadge = task.is_public_snapshot === true || task.is_public_snapshot === 1 || task.is_public_snapshot === '1';
 
       const item = (task.work_order && task.work_order.output_item) || {};
       task.productName = item.item_name || item.name || '未指定产品';
@@ -234,11 +246,11 @@ Page({
     const laborFor = employeeId => sessions.filter(s => Number(s.employee_legacy_id) === Number(employeeId))
       .reduce((total, session) => total + Number(session.actual_labor_minutes || 0), 0);
     const owner = task.assignee_user || {};
-    const ownerId = Number(task.assignee_user_legacy_id || this.data.userId || 0);
+    const ownerId = Number(task.assignee_user_legacy_id || 0);
     const ownerName = owner.display_name || (ownerId === this.data.userId ? this.data.userName : '') || `负责人 #${ownerId}`;
 
     // 1. Primary Owner
-    list.push({
+    if (ownerId > 0) list.push({
       id: ownerId,
       name: ownerName,
       avatar: ownerName.slice(0, 1),
@@ -314,11 +326,15 @@ Page({
     );
     this.collectWorkstationStock(workstationRows, 0, []).then((confirmations) => {
       const clientCommandId = production.newCommandId('kitting');
-      this.runWithLaborSwitch((switchPayload) => production.confirmKitting(this.data.id, t.target_type, t.target_id, Object.assign({
+      const confirm = (switchPayload) => production.confirmKitting(this.data.id, t.target_type, t.target_id, Object.assign({
         client_command_id: clientCommandId,
         expected_version: t.business_version,
         workstation_stock_confirmations: confirmations,
-      }, switchPayload)), '齐套确认成功');
+      }, switchPayload));
+      // Bundle material preparation only reaches READY. Actual labor begins from
+      // the shared job, so a per-task kitting confirmation must not switch labor.
+      if (this.data.task && this.data.task.active_job_bundle) this.run(() => confirm({}), '齐套确认成功');
+      else this.runWithLaborSwitch(confirm, '齐套确认成功');
     }).catch(() => null);
   },
 
@@ -398,20 +414,26 @@ Page({
     const t = this.findTarget(event);
     if (!t) return;
     if (t.cutting_required) return this.openCutting(t);
-    const payload = { expected_version: t.business_version, disposition: 'direct_handover' };
+    const payload = { expected_version: t.business_version, disposition: t.output_mode_snapshot === 'warehouse_required' ? 'warehouse' : 'direct_handover' };
     if (t.target_type === 'quantity_operation' && !t.readyForCompletion) {
       return wx.showToast({ title: '请先完成剩余数量报工', icon: 'none' });
     }
-    wx.showModal({
+    const confirm = disposition => wx.showModal({
       title: '确认完成工序',
       content: '完成后将生成正式工序产出并推进后续交接或质检。',
       confirmColor: '#d81e06',
       success: (result) => {
         if (result.confirm) {
+          payload.disposition = disposition;
           this.run(() => production.complete(this.data.id, t.target_type, t.target_id, payload), '工序已完成');
         }
       },
     });
+    if (t.output_mode_snapshot === 'warehouse_optional' && (!t.quality_mode_snapshot || t.quality_mode_snapshot === 'none')) {
+      return wx.showActionSheet({ itemList: ['直接交接下一工序', '先入库再领用'],
+        success: result => confirm(result.tapIndex === 0 ? 'direct_handover' : 'warehouse') });
+    }
+    return confirm(payload.disposition);
   },
 
   openReport(event) {
@@ -446,6 +468,23 @@ Page({
     wx.navigateTo({ url: '/pages/production/queue/index?type=handover' });
   },
 
+  acceptAssignment() { return this.decideAssignment(true); },
+  rejectAssignment() {
+    if (this.data.busy || !this.data.task || !this.data.task.allowed_actions.reject_assignment) return;
+    wx.showModal({ title: '拒绝派单', editable: true, placeholderText: '拒绝原因（可选）',
+      content: '拒绝后任务回到接单池，记录本人账号与时间。',
+      success: result => { if (result.confirm) this.decideAssignment(false, String(result.content || '').trim()); } });
+  },
+  decideAssignment(accept, reason) {
+    const task = this.data.task || {}; const offer = task.pending_assignment;
+    if (!offer || this.data.busy || !(task.allowed_actions || {})[accept ? 'accept_assignment' : 'reject_assignment']) return;
+    const key = (accept ? 'accept_' : 'reject_') + offer.id;
+    return this.run(() => decisionCommand.execute(key, {
+      expected_version: offer.business_version, expected_task_version: task.business_version, reason: reason || '',
+    }, payload => accept ? production.acceptAssignment(offer.id, payload) : production.rejectAssignment(offer.id, payload)),
+    accept ? '已接受派单并接单' : '已拒绝，任务已回池');
+  },
+
   openOutputAction(event) {
     const target = this.findTarget(event);
     const output = target && target.output_record;
@@ -458,7 +497,7 @@ Page({
     const target = this.findTarget(event);
     if (!target) return;
     wx.navigateTo({
-      url: `/pages/production/material-actions/index?taskId=${this.data.id}&targetType=${target.target_type}&targetId=${target.target_id}`,
+      url: `/pages/production/material-actions/index?taskId=${this.data.id}&targetType=${target.target_type}&targetId=${target.target_id}&tab=${event.currentTarget.dataset.tab || 'supplement'}`,
     });
   },
 
@@ -476,22 +515,33 @@ Page({
     if (!(this.data.task.work_order && this.data.task.work_order.collaboration_enabled)) {
       return wx.showToast({ title: '该工单未开启协同生产', icon: 'none' });
     }
-    if (this.data.task.status === 'WAIT_CLAIM') {
+    if (['WAIT_CLAIM', 'WAIT_ACCEPT', 'COMPLETED', 'CANCELLED'].includes(this.data.task.status)) {
       return wx.showToast({ title: '任务尚未接单，不能添加协同', icon: 'none' });
     }
-    production.collaborationCandidates({ page: 1, per_page: 100 }).then((response) => {
+    this.setData({ showCollabModal: true, collabSearchKeyword: '', selectedCollabIds: [], collabCandidates: [], collabPage: 1, collabTotal: 0 });
+    return this.loadCollabCandidates(1);
+  },
+
+  loadCollabCandidates(page) {
+    const sequence = this.collabRequestSequence = (this.collabRequestSequence || 0) + 1;
+    this.setData({ collabLoading: true });
+    return production.collaborationCandidates(this.data.id, { page, per_page: 20, keyword: this.data.collabSearchKeyword.trim() }).then((response) => {
+      if (sequence !== this.collabRequestSequence || !this.data.showCollabModal) return;
       const rows = response.data || [];
       this.allCollabCandidates = rows.filter(row => Number(row.user_id) !== Number(this.data.userId)).map(row => ({
         id: Number(row.user_id), name: row.display_name || `人员 #${row.user_id}`,
         empNo: String(row.user_id), dept: row.department_name || '未配置部门',
       }));
-      this.setData({ showCollabModal: true, collabSearchKeyword: '', selectedCollabIds: [],
-        collabCandidates: this.filterCandidates('') });
-    }).catch(error => wx.showToast({ title: error.message || '协同人员加载失败', icon: 'none' }));
+      this.setData({ collabPage: page, collabTotal: Number(response.total || rows.length),
+        collabHasNext: page * 20 < Number(response.total || rows.length), collabCandidates: this.filterCandidates('') });
+    }).catch(error => { if (sequence === this.collabRequestSequence) wx.showToast({ title: error.message || '协同人员加载失败', icon: 'none' }); })
+      .finally(() => { if (sequence === this.collabRequestSequence) this.setData({ collabLoading: false }); });
   },
 
   closeCollabModal() {
-    this.setData({ showCollabModal: false, selectedCollabIds: [] });
+    this.collabRequestSequence = (this.collabRequestSequence || 0) + 1;
+    this.allCollabCandidates = [];
+    this.setData({ showCollabModal: false, selectedCollabIds: [], collabSearchKeyword: '', collabCandidates: [], collabTotal: 0, collabPage: 1, collabLoading: false, collabHasNext: false });
   },
 
   filterCandidates(keyword) {
@@ -510,21 +560,26 @@ Page({
       : ((event.detail && event.detail.value) || '');
     this.setData({
       collabSearchKeyword: keyword,
-      collabCandidates: this.filterCandidates(keyword),
     });
+    return this.loadCollabCandidates(1);
   },
 
   onCollabClear() {
     this.setData({
       collabSearchKeyword: '',
-      collabCandidates: this.filterCandidates(''),
     });
+    return this.loadCollabCandidates(1);
   },
+
+  collabPreviousPage() { if (!this.data.collabLoading && this.data.collabPage > 1) return this.loadCollabCandidates(this.data.collabPage - 1); },
+  collabNextPage() { if (!this.data.collabLoading && this.data.collabHasNext) return this.loadCollabCandidates(this.data.collabPage + 1); },
 
   onCheckboxChange(event) {
     const rawList = event.detail || [];
     const selected = rawList.map(Number);
-    this.setData({ selectedCollabIds: selected });
+    const pageIds = this.data.collabCandidates.map(row => Number(row.id));
+    const retained = this.data.selectedCollabIds.filter(id => !pageIds.includes(Number(id)));
+    this.setData({ selectedCollabIds: Array.from(new Set(retained.concat(selected))) });
   },
 
   toggleCollabSelect(event) {
@@ -540,21 +595,23 @@ Page({
   },
 
   submitAddCollaborators() {
+    if (this.data.busy) return;
     const ids = this.data.selectedCollabIds;
     if (!ids || ids.length === 0) {
       return wx.showToast({ title: '请至少勾选一位协同人员', icon: 'none' });
     }
+    if (ids.length > 20) return wx.showToast({ title: '每次最多添加20位协同人员', icon: 'none' });
     this.setData({ busy: true });
-    production.addCollaborators(this.data.id, {
+    return decisionCommand.execute('collaborators_' + this.data.id, {
       expected_version: this.data.task.business_version,
       employee_legacy_ids: ids,
-    }).then(() => {
+    }, payload => production.addCollaborators(this.data.id, payload)).then(() => {
       wx.showToast({ title: `已成功添加 ${ids.length} 位协同人员`, icon: 'success' });
       this.closeCollabModal();
       return this.load();
     }).catch((err) => {
       wx.showToast({ title: err.message || '协同人员添加失败', icon: 'none' });
-      this.closeCollabModal();
+      // Keep selection and the same command after an unacknowledged write.
       return this.load();
     }).finally(() => {
       this.setData({ busy: false });

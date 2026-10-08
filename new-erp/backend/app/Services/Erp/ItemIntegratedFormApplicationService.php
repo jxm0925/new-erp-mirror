@@ -18,9 +18,9 @@ class ItemIntegratedFormApplicationService
     ) {
     }
 
-    public function save(?Item $item, array $itemPayload, array $policyPayload, bool $activate, ?int $operatorLegacyId): Item
+    public function save(?Item $item, array $itemPayload, array $policyPayload, bool $activate, ?int $operatorLegacyId, ?string $managementContext = null): Item
     {
-        return DB::transaction(function () use ($item, $itemPayload, $policyPayload, $activate, $operatorLegacyId) {
+        return DB::transaction(function () use ($item, $itemPayload, $policyPayload, $activate, $operatorLegacyId, $managementContext) {
             $itemPayload['is_stock_item'] = (bool) $policyPayload['is_stock_managed'];
             $itemPayload['serial_tracking_mode'] = $policyPayload['serial_tracking_mode'];
             $itemPayload['is_serial_managed'] = $policyPayload['serial_tracking_mode'] !== 'none';
@@ -31,7 +31,7 @@ class ItemIntegratedFormApplicationService
             if ($activate) $itemPayload['status'] = 'enabled';
 
             $saved = $item
-                ? $this->masterData->update('items', $item, $itemPayload, $operatorLegacyId)
+                ? $this->masterData->update('items', $item, $itemPayload, $operatorLegacyId, $managementContext)
                 : $this->masterData->create('items', Item::class, $itemPayload, $operatorLegacyId);
 
             if ($activate) {
@@ -40,10 +40,11 @@ class ItemIntegratedFormApplicationService
                 $this->materialPolicy->saveDraft($saved, $policyPayload, $operatorLegacyId);
             }
 
-            return $saved->fresh([
+            $result = $saved->fresh([
                 'category', 'unit.standardUnit', 'activeMaterialPolicy',
                 'materialPolicies' => fn ($query) => $query->latest('version_no')->limit(5),
             ]);
+            return app(ItemManagementScopeService::class)->exposeCategoryScope($result);
         });
     }
 }

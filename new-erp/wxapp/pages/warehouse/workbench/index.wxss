@@ -4,8 +4,8 @@
 .workspace-total { display: flex; align-items: baseline; justify-content: center; gap: 14rpx; margin-top: 14rpx; }
 .workspace-total text:first-child { font-size: 68rpx; font-weight: 600; line-height: 1; }
 .workspace-divider { height: 84rpx; border-left: 2rpx solid rgba(255,255,255,.75); }
-.workspace-shortcuts { display: flex; gap: 18rpx; margin-bottom: 44rpx; }
-.workspace-shortcut { flex: 1; padding: 42rpx 6rpx; background: #fff; border-radius: 16rpx; display: flex; flex-direction: column; gap: 24rpx; align-items: center; font-size: 30rpx; }
+.workspace-shortcuts { display: flex; flex-wrap: wrap; gap: 18rpx; margin-bottom: 44rpx; }
+.workspace-shortcut { flex: 1 1 180rpx; min-width: 0; padding: 42rpx 6rpx; background: #fff; border-radius: 16rpx; display: flex; flex-direction: column; gap: 24rpx; align-items: center; font-size: 30rpx; }
 .workspace-section { display: flex; justify-content: space-between; align-items: center; margin-bottom: 28rpx; }
 .workspace-section > text { font-size: 34rpx; font-weight: 600; }
 .workspace-section > view { font-size: 26rpx; color: #5b6881; }

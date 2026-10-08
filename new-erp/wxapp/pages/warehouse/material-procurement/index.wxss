@@ -1,0 +1,6 @@
+@import "../shared.wxss";
+.procurement-modes { display: flex; gap: 16rpx; margin-bottom: 20rpx; }
+.procurement-modes button { flex: 1; min-width: 0; margin: 0; }
+.warehouse-field { flex-wrap: wrap; gap: 14rpx; overflow-wrap: anywhere; }
+.warehouse-field input { flex: 1 1 160rpx; min-width: 0; }
+.procurement-remark { width: 100%; min-height: 160rpx; box-sizing: border-box; }

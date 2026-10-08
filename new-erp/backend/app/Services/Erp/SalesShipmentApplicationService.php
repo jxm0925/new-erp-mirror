@@ -3,6 +3,7 @@
 namespace App\Services\Erp;
 
 use App\Models\Erp\InventoryReservation;
+use App\Models\Erp\InventorySerial;
 use App\Models\Erp\SalesOrder;
 use App\Models\Erp\SalesOrderFulfillment;
 use App\Models\Erp\SalesOrderLine;
@@ -22,6 +23,7 @@ class SalesShipmentApplicationService
         private readonly InventoryReservationService $reservations,
         private readonly InventoryService $inventory,
         private readonly SalesOrderActualCostService $actualCosts,
+        private readonly ShipmentPackingApplicationService $packing,
     ) {}
 
     public function create(int $orderId, array $payload, string $operator): SalesShipment
@@ -44,6 +46,7 @@ class SalesShipmentApplicationService
                 'created_by' => $operator,
             ]);
 
+            $usedSerialIds = [];
             foreach ($payload['lines'] ?? [] as $index => $row) {
                 $fulfillment = SalesOrderFulfillment::query()
                     ->where('sales_order_id', $order->id)
@@ -74,6 +77,10 @@ class SalesShipmentApplicationService
                 }
                 $line = SalesOrderLine::query()->findOrFail($fulfillment->sales_order_line_id);
                 $serialIds = array_values(array_unique(array_map('intval', (array) ($row['inventory_serial_ids'] ?? []))));
+                if (array_intersect($usedSerialIds, $serialIds) !== []) {
+                    throw ValidationException::withMessages(['lines.'.$index.'.inventory_serial_ids' => '同一设备编号/序列号不能分配到多个发货行。']);
+                }
+                $usedSerialIds = array_merge($usedSerialIds, $serialIds);
                 $trackingMode = $parents->first()->item?->serialTrackingMode() ?? 'none';
                 if ($trackingMode === 'required'
                     && (abs($baseQty - round($baseQty)) > 0.00000001 || count($serialIds) !== (int) round($baseQty))) {
@@ -86,16 +93,44 @@ class SalesShipmentApplicationService
                         'lines.'.$index.'.inventory_serial_ids' => '当前物料未启用序列号管理，不允许填写设备编号/序列号。',
                     ]);
                 }
+                $serialsByBalance = $serialIds === [] ? collect() : InventorySerial::query()->whereIn('id', $serialIds)
+                    ->whereIn('inventory_balance_id', $parents->pluck('inventory_balance_id'))->where('serial_status', 'available')
+                    ->where('item_id', $line->item_id)->lockForUpdate()->get()->groupBy('inventory_balance_id');
+                if ($serialIds !== [] && $serialsByBalance->flatten(1)->count() !== count($serialIds)) {
+                    throw ValidationException::withMessages(['lines.'.$index.'.inventory_serial_ids' => '所选序列号不属于该订单行预留的真实库存来源，或已被其他业务使用。']);
+                }
                 $factor = (float) ($line->fulfillment_factor_snapshot ?: 1);
                 $remainingQty = $baseQty; $serialOffset = 0;
+                if ($trackingMode === 'optional' && $serialIds !== []) {
+                    $parents = $parents->sortByDesc(fn ($parent) => ($serialsByBalance->get($parent->inventory_balance_id) ?? collect())->isNotEmpty())->values();
+                }
                 foreach ($parents as $parent) {
                     if ($remainingQty <= 0.00000001) break;
                     $sliceQty = min($remainingQty, (float) $parent->reserved_qty);
-                    $reserved = $this->reservations->allocateToShipment($parent->id, $sliceQty, $shipment->shipment_no);
-                    $sliceSerialIds = $trackingMode === 'required'
-                        ? array_slice($serialIds, $serialOffset, (int) round($sliceQty)) : [];
+                    $parentSerialIds = ($serialsByBalance->get($parent->inventory_balance_id) ?? collect())->pluck('id')->map(fn ($id) => (int) $id)->all();
+                    if ($trackingMode === 'optional' && $serialIds !== []) {
+                        $otherIdentities = $serialsByBalance->flatten(1)->count() - count($parentSerialIds);
+                        $sliceQty = min($sliceQty, max(0, $remainingQty - $otherIdentities));
+                        if ($sliceQty <= 0) continue;
+                    }
+                    if ($trackingMode === 'required') {
+                        $sliceQty = min($sliceQty, (float) count($parentSerialIds));
+                        if ($sliceQty <= 0) continue;
+                    }
+                    // Serial identities are grouped by their factual balance. Sequentially slicing
+                    // a request across unrelated parents can place another batch's device into this line.
+                    $sliceSerialIds = array_slice($parentSerialIds, 0, (int) floor($sliceQty + 0.00000001));
+                    $serialsByBalance->put($parent->inventory_balance_id,
+                        ($serialsByBalance->get($parent->inventory_balance_id) ?? collect())->slice(count($sliceSerialIds))->values());
                     $serialOffset += count($sliceSerialIds);
-                    SalesShipmentLine::create([
+                    $identityGroups = InventorySerial::query()->whereIn('id', $sliceSerialIds)->get()
+                        ->groupBy(fn ($serial) => ($serial->source_document_type ?? 'unknown').':'.($serial->source_document_id ?? 0))
+                        ->map(fn ($rows) => ['base_qty' => (float) $rows->count(), 'serial_ids' => $rows->pluck('id')->map(fn ($id) => (int) $id)->all()])->values();
+                    $quantityWithoutIdentity = round($sliceQty - count($sliceSerialIds), 8);
+                    if ($quantityWithoutIdentity > 0.00000001) $identityGroups->push(['base_qty' => $quantityWithoutIdentity, 'serial_ids' => []]);
+                    foreach ($identityGroups as $groupIndex => $group) {
+                        $reserved = $this->reservations->allocateToShipment($parent->id, $group['base_qty'], $shipment->shipment_no, $index.'-'.$parent->id.'-'.$groupIndex);
+                        SalesShipmentLine::create([
                         'shipment_id' => $shipment->id,
                         'sales_order_line_id' => $line->id,
                         'sales_order_fulfillment_id' => $fulfillment->id,
@@ -105,17 +140,22 @@ class SalesShipmentApplicationService
                         'location_id' => $reserved->location_id,
                         'batch_no' => $reserved->batch_no,
                         'unit_id' => $line->item_base_unit_id ?: $line->unit_id,
-                        'sales_qty' => round($sliceQty / $factor, 8),
-                        'base_qty' => $sliceQty,
-                        'serial_snapshot' => ['inventory_serial_ids' => $sliceSerialIds],
+                        'sales_qty' => round($group['base_qty'] / $factor, 8),
+                        'base_qty' => $group['base_qty'],
+                        'serial_snapshot' => ['inventory_serial_ids' => $group['serial_ids']],
                         'line_status' => 'draft',
                         'remark' => $row['remark'] ?? null,
                     ]);
+                    }
                     $remainingQty = round($remainingQty - $sliceQty, 8);
+                }
+                if ($remainingQty > 0.00000001 || $serialsByBalance->flatten(1)->isNotEmpty()) {
+                    throw ValidationException::withMessages(['serial_ids' => '发货数量或序列号未能完整匹配订单行的实际库存预留。']);
                 }
             }
             if (!$shipment->lines()->exists()) throw ValidationException::withMessages(['lines' => '发货单至少需要一行有库存预留的订单明细。']);
             $this->syncPackages($shipment, (array) ($payload['packages'] ?? []));
+            $this->packing->freezeRequirements($shipment);
             $this->log($shipment, 'create', null, 'draft', $operator, '创建销售发货单草稿。');
             return $shipment->fresh(['lines', 'packages', 'order']);
         });
@@ -159,6 +199,7 @@ class SalesShipmentApplicationService
         return DB::transaction(function () use ($shipment, $operator): SalesShipment {
             $shipment = SalesShipment::query()->lockForUpdate()->findOrFail($shipment->id);
             if ($shipment->shipment_status !== 'outbound_posted') throw ValidationException::withMessages(['shipment' => '只有已出库的发货单可以发运。']);
+            $this->packing->assertReady($shipment);
             $shipment->update(['shipment_status' => 'shipped', 'shipped_at' => now()]);
             $shipment->packages()->update(['package_status' => 'shipped']);
             $this->log($shipment, 'dispatch', 'outbound_posted', 'shipped', $operator, '物流已发运。');
@@ -173,6 +214,7 @@ class SalesShipmentApplicationService
             if (!in_array($shipment->shipment_status, ['draft', 'pending_outbound'], true)) {
                 throw ValidationException::withMessages(['shipment' => '已出库或已发运的发货单不能取消，应进入销售退货/红冲流程。']);
             }
+            $this->packing->assertCanCancel($shipment);
             $this->reservations->restoreShipmentReservationToOrder($shipment->lines->pluck('inventory_reservation_id')->filter()->all(), '发货单取消，恢复原销售订单库存锁定：'.$reason);
             $before = $shipment->shipment_status;
             $shipment->update(['shipment_status' => 'cancelled', 'cancelled_at' => now(), 'cancel_reason' => $reason]);
@@ -189,6 +231,7 @@ class SalesShipmentApplicationService
             if ($shipment->shipment_status !== 'draft' || $shipment->confirmed_at !== null) {
                 throw ValidationException::withMessages(['shipment' => '只有从未确认、未出库的销售发货草稿可以删除。']);
             }
+            $this->packing->assertCanCancel($shipment);
             if (DB::table('erp_inventory_transactions')
                 ->where('source_type', 'sales_shipment')->where('source_id', $shipment->id)->exists()) {
                 throw ValidationException::withMessages(['shipment' => '该发货单已产生库存流水，不能删除；请走取消、退货或红冲流程。']);

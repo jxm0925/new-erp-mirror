@@ -1,0 +1,9 @@
+@import "../shared.wxss";
+.public-tabs, .public-pages, .public-actions { display: flex; gap: 16rpx; flex-wrap: wrap; align-items: center; margin: 20rpx 0; }
+.public-tabs button, .public-pages button, .public-actions button { flex: 1 1 160rpx; margin: 0; min-width: 0; }
+.public-pages { flex-wrap: nowrap; }
+.public-pages text { flex: none; }
+.public-selected { display: flex; align-items: flex-start; justify-content: space-between; gap: 20rpx; padding: 16rpx 0; overflow-wrap: anywhere; }
+.public-selected text:first-child { min-width: 0; flex: 1; }
+.public-selected text:last-child { flex: none; }
+.warehouse-card { overflow-wrap: anywhere; }

@@ -38,14 +38,11 @@ class ProductionMaterialReturnService
                 if (! $belongsToTarget) $this->fail('material_requirement_target_invalid', '退料明细不属于当前生产目标。');
                 $qty = (float) $line['return_base_qty'];
                 $batchNo = (string) ($line['batch_no'] ?? '');
-                $sourceReceived = (float) DB::table('erp_material_receipt_lines as receipt_line')
-                    ->join('erp_material_delivery_lines as delivery_line', 'delivery_line.id', '=', 'receipt_line.delivery_line_id')
-                    ->join('erp_material_deliveries as delivery', 'delivery.id', '=', 'delivery_line.delivery_id')
-                    ->join('erp_material_picking_task_lines as pick_line', 'pick_line.id', '=', 'delivery_line.picking_task_line_id')
-                    ->where('delivery_line.material_requirement_id', $requirement->id)
-                    ->where('delivery.production_target_type', $payload['target_type'])->where('delivery.production_target_id', $payload['target_id'])
+                $sourceReceived = (float) app(ProductionMaterialReceiptQueryService::class)->query()
+                    ->where('pick_line.material_requirement_id', $requirement->id)
+                    ->where('pick_line.production_target_type', $payload['target_type'])->where('pick_line.production_target_id', $payload['target_id'])
                     ->where('pick_line.warehouse_id', (int) $line['warehouse_id'])->where('pick_line.location_id', (int) $line['location_id'])
-                    ->whereRaw('COALESCE(delivery_line.batch_no, \'\') = ?', [$batchNo])->sum('receipt_line.accepted_qty');
+                    ->whereRaw('COALESCE(pick_line.batch_no, \'\') = ?', [$batchNo])->sum('receipt_line.accepted_qty');
                 $already = (float) DB::table('erp_production_material_return_lines as return_line')
                     ->join('erp_production_material_returns as material_return', 'material_return.id', '=', 'return_line.return_id')
                     ->where('return_line.material_requirement_id', $requirement->id)

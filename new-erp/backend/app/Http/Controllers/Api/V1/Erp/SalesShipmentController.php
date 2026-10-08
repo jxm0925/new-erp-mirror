@@ -12,6 +12,52 @@ use Illuminate\Http\Request;
 
 class SalesShipmentController extends Controller
 {
+    public function sources(Request $request)
+    {
+        $this->authorizePermission($request, 'sales_order.shipment.create');
+        $request->validate(['sales_order_id' => 'required|integer']);
+        $orderId = $request->integer('sales_order_id');
+        $this->assertSalesOrderVisible($request, $orderId);
+        $page = \App\Models\Erp\SalesOrderFulfillment::query()->with(['line', 'item'])->where('sales_order_id', $orderId)
+            ->whereIn('fulfillment_type', ['inventory', 'production'])->where('demand_status', 'confirmed')
+            ->whereExists(function ($q): void {
+                $q->selectRaw('1')->from('erp_inventory_reservations as r')->whereColumn('r.source_order_id', 'erp_sales_order_fulfillments.sales_order_id')
+                    ->whereColumn('r.source_order_line_id', 'erp_sales_order_fulfillments.sales_order_line_id')
+                    ->where('r.source_type', 'sales_order')->where('r.reservation_status', 'active')
+                    ->where(fn ($w) => $w->whereColumn('r.sales_order_fulfillment_id', 'erp_sales_order_fulfillments.id')
+                        ->orWhere(fn ($legacy) => $legacy->whereNull('r.sales_order_fulfillment_id')->whereColumn('r.inventory_balance_id', 'erp_sales_order_fulfillments.inventory_balance_id')));
+            })->orderBy('sales_order_line_id')->orderBy('id')->paginate(min(max($request->integer('per_page', 20), 1), 100));
+        $page->setCollection($page->getCollection()->map(function ($row): array {
+            $parents = $this->sourceReservations($row);
+            return ['id' => (int) $row->id, 'sales_order_line_id' => (int) $row->sales_order_line_id,
+                'item_id' => (int) $row->item_id, 'item_name' => $row->line?->item_name,
+                'product_name' => $row->line?->product_name, 'available_base_qty' => (string) $parents->sum('reserved_qty'),
+                'serial_tracking_mode' => $row->item?->serialTrackingMode() ?? 'none',
+                'batch_nos' => $parents->pluck('batch_no')->unique()->values()->all()];
+        }));
+        return response()->json(['data' => $page]);
+    }
+
+    public function sourceSerials(Request $request, int $fulfillmentId)
+    {
+        $this->authorizePermission($request, 'sales_order.shipment.create');
+        $fulfillment = \App\Models\Erp\SalesOrderFulfillment::query()->findOrFail($fulfillmentId);
+        $this->assertSalesOrderVisible($request, (int) $fulfillment->sales_order_id);
+        $parents = $this->sourceReservations($fulfillment);
+        return response()->json(['data' => \App\Models\Erp\InventorySerial::query()->whereIn('inventory_balance_id', $parents->pluck('inventory_balance_id'))
+            ->where('item_id', $fulfillment->item_id)->where('serial_status', 'available')
+            ->when($request->filled('keyword'), fn ($q) => $q->where('serial_no', 'like', '%'.trim((string) $request->input('keyword')).'%'))
+            ->orderBy('id')->paginate(min(max($request->integer('per_page', 20), 1), 100), ['id', 'serial_no', 'batch_no', 'inventory_balance_id'])]);
+    }
+
+    private function sourceReservations(object $fulfillment)
+    {
+        return \App\Models\Erp\InventoryReservation::query()->where('source_type', 'sales_order')
+            ->where('source_order_id', $fulfillment->sales_order_id)->where('source_order_line_id', $fulfillment->sales_order_line_id)
+            ->where('reservation_status', 'active')->where(fn ($q) => $q->where('sales_order_fulfillment_id', $fulfillment->id)
+                ->orWhere(fn ($legacy) => $legacy->whereNull('sales_order_fulfillment_id')->where('inventory_balance_id', $fulfillment->inventory_balance_id)))->get();
+    }
+
     public function index(Request $request)
     {
         $this->authorizePermission($request, 'sales_order.shipment.view');

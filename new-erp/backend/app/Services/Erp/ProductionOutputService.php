@@ -3,6 +3,7 @@
 namespace App\Services\Erp;
 
 use App\Exceptions\Erp\WorkOrderDomainException;
+use App\Models\Erp\Item;
 use App\Models\Erp\ProductionExecutionCommand;
 use App\Models\Erp\ProductionOutputRecord;
 use App\Models\Erp\ProductionQualityInspection;
@@ -74,6 +75,8 @@ class ProductionOutputService
             if ($output->quality_mode_snapshot !== 'none' && ! ProductionQualityInspection::query()->where('output_record_id', $output->id)->where('result', 'passed')->exists())
                 $this->fail('quality_not_passed', '生产产出尚未通过独立生产质检，不能入库。', 409);
             if (! in_array($output->status, ['CREATED', 'WAIT_WAREHOUSE'], true)) $this->fail('output_not_wait_warehouse', '该生产产出不处于待入库状态。', 409);
+            app(ItemManagementScopeService::class)->assertProductionAllowed(
+                Item::query()->lockForUpdate()->findOrFail($output->output_item_id), 'output_item_id');
             $terminal = $this->isTerminalOutput($output);
             $completionLine = $terminal ? $this->completions->approvedLineForOutput((int) $output->id) : null;
             if ($terminal && ! $completionLine) {
@@ -252,6 +255,7 @@ class ProductionOutputService
     {
         $ids = DB::table('erp_production_target_material_requirements')
             ->where('target_type', $targetType)->where('target_id', $targetId)->where('component_item_id', $itemId)
+            ->where('requirement_kind', '!=', 'stock_continuation')
             ->whereRaw('GREATEST(0, satisfied_base_qty - returned_base_qty) < required_base_qty')->pluck('id');
         if ($ids->count() > 1) $this->fail('target_material_requirement_ambiguous', '下一工序存在多条相同物料需求，无法确定半成品领用对应项。', 409);
         return $ids->isEmpty() ? null : (int) $ids->first();
@@ -304,6 +308,7 @@ class ProductionOutputService
                 ]);
             }
         }
+        app(ProductionTaskAssignmentService::class)->tryOfferReadyTask($task);
     }
 
     private function syncSourceTarget(ProductionOutputRecord $output, string $status): void

@@ -11,13 +11,14 @@
           <label><span>工序编码 / 名称</span><el-input v-model.trim="filters.keyword" clearable prefix-icon="el-icon-search" placeholder="请输入工序编码或名称" @keyup.enter.native="search" /></label>
           <label><span>状态</span><el-select v-model="filters.status" clearable placeholder="全部"><el-option label="已启用" value="enabled"/><el-option label="已停用" value="disabled"/></el-select></label>
           <label><span>引用状态</span><el-select v-model="filters.reference_status" clearable placeholder="全部"><el-option label="被生效路线引用" value="referenced"/><el-option label="未被生效路线引用" value="unreferenced"/></el-select></label>
+          <label><span>公共工序</span><el-select v-model="filters.is_public" clearable placeholder="全部"><el-option label="公共工序" value="1"/><el-option label="非公共工序" value="0"/></el-select></label>
           <div class="filter-actions"><el-button type="success" @click="search">查询</el-button><el-button @click="reset">重置</el-button></div>
         </section>
 
         <section class="table-card operation-table-card">
           <el-table :data="rows" border highlight-current-row :row-class-name="rowClass" @row-click="selectRow">
             <el-table-column prop="operation_no" label="工序编码" width="110"/>
-            <el-table-column prop="operation_name" label="工序名称" min-width="84"/>
+            <el-table-column prop="operation_name" label="工序名称" min-width="84"><template slot-scope="s"><span class="operation-name">{{ s.row.operation_name }}</span><el-tag v-if="booleanFlag(s.row.is_public)" size="mini" type="success" class="public-operation-tag">公共工序</el-tag></template></el-table-column>
             <el-table-column label="状态" width="60"><template slot-scope="s"><el-tag size="mini" :type="s.row.status==='enabled'?'success':'info'">{{ s.row.status==='enabled'?'启用':'停用' }}</el-tag></template></el-table-column>
             <el-table-column prop="sort" label="排序" width="48" align="center"/>
             <el-table-column label="使用中的路线数量" width="92" align="center"><template slot-scope="s"><button class="reference-count" :class="{ active:Number(s.row.active_routing_count)>0 }" @click.stop="selectRow(s.row)">{{ Number(s.row.active_routing_count || 0) }}</button></template></el-table-column>
@@ -32,7 +33,7 @@
       <aside class="operation-inspector" v-loading="detailLoading">
         <template v-if="selected">
           <header><h2>工序详情</h2><el-button type="text" icon="el-icon-close" aria-label="关闭工序详情" @click="selected=null"/></header>
-          <dl class="operation-facts"><div><dt>工序编码</dt><dd>{{ selected.operation_no }}</dd></div><div><dt>工序名称</dt><dd>{{ selected.operation_name }}</dd></div><div><dt>状态</dt><dd><el-tag size="mini" :type="selected.status==='enabled'?'success':'info'">{{ selected.status==='enabled'?'启用':'停用' }}</el-tag></dd></div><div><dt>排序</dt><dd>{{ selected.sort }}</dd></div><div><dt>使用中的路线数量</dt><dd>{{ selected.active_routing_count || 0 }}</dd></div><div class="wide"><dt>说明</dt><dd>{{ selected.description || '-' }}</dd></div><div><dt>更新时间</dt><dd>{{ time(selected.updated_at) }}</dd></div><div><dt>更新人</dt><dd>{{ selected.updated_by_legacy_id ? `用户 #${selected.updated_by_legacy_id}` : '-' }}</dd></div></dl>
+          <dl class="operation-facts"><div><dt>工序编码</dt><dd>{{ selected.operation_no }}</dd></div><div><dt>工序名称</dt><dd>{{ selected.operation_name }}</dd></div><div><dt>状态</dt><dd><el-tag size="mini" :type="selected.status==='enabled'?'success':'info'">{{ selected.status==='enabled'?'启用':'停用' }}</el-tag></dd></div><div><dt>排序</dt><dd>{{ selected.sort }}</dd></div><div><dt>公共工序</dt><dd><el-tag size="mini" :type="booleanFlag(selected.is_public)?'success':'info'">{{ booleanFlag(selected.is_public)?'是':'否' }}</el-tag></dd></div><div><dt>效率优先派工</dt><dd>{{ booleanFlag(selected.auto_assignment_enabled)?'启用':'关闭' }}</dd></div><div><dt>使用中的路线数量</dt><dd>{{ selected.active_routing_count || 0 }}</dd></div><div class="wide"><dt>说明</dt><dd>{{ selected.description || '-' }}</dd></div><div><dt>更新时间</dt><dd>{{ time(selected.updated_at) }}</dd></div><div><dt>更新人</dt><dd>{{ selected.updated_by_legacy_id ? `用户 #${selected.updated_by_legacy_id}` : '-' }}</dd></div></dl>
           <section class="routing-references"><h3>已生效路线引用</h3><p>该工序当前被以下已生效路线引用：</p><el-table :data="selected.active_routings || []" size="mini" border empty-text="当前没有已生效路线引用"><el-table-column prop="routing_no" label="路线编码" width="92"/><el-table-column prop="routing_name" label="路线名称" min-width="86"/><el-table-column label="版本" width="48"><template slot-scope="s">V{{ s.row.version }}</template></el-table-column><el-table-column label="产出物料" min-width="90"><template slot-scope="s">{{ s.row.output_item && (s.row.output_item.item_name || s.row.output_item.item_code) || '-' }}</template></el-table-column></el-table></section>
           <el-alert v-if="Number(selected.active_routing_count)>0 && selected.status==='enabled'" title="该工序正被已生效路线引用，暂不可停用" type="warning" :closable="false" show-icon/>
           <div class="inspector-actions"><el-button @click="$router.push(`/production/operations/${selected.id}`)">查看</el-button><el-button v-if="$can('production.operation.edit')" type="primary" plain @click="openEdit(selected)">编辑</el-button><el-button v-if="$can('production.operation.toggle')" type="danger" plain :disabled="selected.status!=='enabled' || Number(selected.active_routing_count)>0" @click="toggle(selected)">停用</el-button><el-button v-if="$can('production.operation.toggle')" type="success" plain :disabled="selected.status==='enabled'" @click="toggle(selected)">启用</el-button></div>
@@ -49,6 +50,8 @@
             <el-form-item label="工序名称" prop="operation_name"><el-input v-model.trim="createForm.operation_name" maxlength="160" placeholder="请输入工序名称" /></el-form-item>
             <el-form-item label="排序" prop="sort"><el-input-number v-model="createForm.sort" controls-position="right" :min="0" :max="999999" /><p class="field-help">数值越小越靠前</p></el-form-item>
             <el-form-item label="状态" prop="status"><el-radio-group v-model="createForm.status" :disabled="statusRadioDisabled"><el-radio label="enabled">启用</el-radio><el-radio label="disabled">停用</el-radio></el-radio-group><p v-if="statusLockReason" class="field-help status-lock-help"><i class="el-icon-warning"/> {{ statusLockReason }}</p></el-form-item>
+            <el-form-item label="公共工序"><el-switch v-model="createForm.is_public" active-color="#008b4b" active-text="是" inactive-text="否" /><p class="field-help">工序只需建立一份，可被多条物料路线引用</p></el-form-item>
+            <el-form-item label="效率优先派工"><el-switch v-model="createForm.auto_assignment_enabled" active-color="#008b4b" active-text="启用" inactive-text="关闭" /><p class="field-help">按相同产品、工艺、数量的独立合格历史推荐，本人接受后接单。没有可比历史时保留手动接单。</p></el-form-item>
           </div>
           <el-form-item label="说明"><el-input v-model="createForm.description" type="textarea" :rows="3" maxlength="2000" show-word-limit placeholder="请输入说明（选填）" /></el-form-item>
         </el-form>
@@ -62,11 +65,12 @@
 import { listProductionOperations, getProductionOperation, createProductionOperation, updateProductionOperation, enableProductionOperation, disableProductionOperation } from '../../../api/erp/production'
 import { reserveForCreatePage, clearCreatePageReservation } from '../../../utils/documentNumberReservation'
 
-const blankCreateForm = () => ({ operation_no: '', operation_name: '', sort: 0, status: 'enabled', description: '' })
+const asBoolean = value => value === true || value === 1 || value === '1'
+const blankCreateForm = () => ({ operation_no: '', operation_name: '', sort: 0, status: 'enabled', description: '', is_public: false, auto_assignment_enabled: false })
 
 export default {
   name: 'ProductionOperationList',
-  data: () => ({ loading: false, detailLoading: false, rows: [], selected: null, total: 0, page: 1, perPage: 10, filters: { keyword: '', status: '', reference_status: '' }, createDialog: false, createLoading: false, createSaving: false, createReservation: null, createFormKey: 0, dialogMode: 'create', createForm: blankCreateForm(), createRules: { operation_name: [{ required: true, message: '请输入工序名称', trigger: 'blur' }] } }),
+  data: () => ({ loading: false, detailLoading: false, rows: [], selected: null, total: 0, page: 1, perPage: 10, filters: { keyword: '', status: '', reference_status: '', is_public: '' }, createDialog: false, createLoading: false, createSaving: false, createReservation: null, createFormKey: 0, dialogMode: 'create', createForm: blankCreateForm(), createRules: { operation_name: [{ required: true, message: '请输入工序名称', trigger: 'blur' }] } }),
   computed: {
     statusRadioDisabled() { return this.dialogMode === 'edit' && !this.createForm.status_editable },
     statusLockReason() { return this.dialogMode === 'edit' && !this.createForm.status_editable ? this.createForm.status_lock_reason || '当前工序状态不可修改' : '' }
@@ -100,7 +104,7 @@ export default {
       } catch (error) { this.$message.error(error.userMessage || '工序详情加载失败') } finally { if (this.selected && this.selected.id === requestedId) this.detailLoading = false }
     },
     search() { this.page = 1; this.load() },
-    reset() { this.filters = { keyword: '', status: '', reference_status: '' }; this.search() },
+    reset() { this.filters = { keyword: '', status: '', reference_status: '', is_public: '' }; this.search() },
     changePage(value) { this.page = value; this.load() },
     changePageSize(value) { this.perPage = value; this.page = 1; this.load() },
     rowClass({ row }) { return this.selected && this.selected.id === row.id ? 'selected-operation-row' : '' },
@@ -131,7 +135,7 @@ export default {
       this.$nextTick(() => this.$refs.createForm && this.$refs.createForm.clearValidate())
       try {
         const response = await getProductionOperation(row.id)
-        this.createForm = { ...blankCreateForm(), ...response.data.data }
+        this.createForm = { ...blankCreateForm(), ...response.data.data, is_public: asBoolean(response.data.data.is_public), auto_assignment_enabled: asBoolean(response.data.data.auto_assignment_enabled) }
       } catch (error) {
         this.createDialog = false
         this.$message.error(error.userMessage || '工序加载失败')
@@ -154,6 +158,8 @@ export default {
               operation_name: this.createForm.operation_name,
               sort: this.createForm.sort,
               status: this.createForm.status,
+              is_public: Boolean(this.createForm.is_public),
+              auto_assignment_enabled: Boolean(this.createForm.auto_assignment_enabled),
               description: this.createForm.description || null
             })
             : await createProductionOperation({
@@ -163,6 +169,8 @@ export default {
               operation_name: this.createForm.operation_name,
               sort: this.createForm.sort,
               status: this.createForm.status,
+              is_public: Boolean(this.createForm.is_public),
+              auto_assignment_enabled: Boolean(this.createForm.auto_assignment_enabled),
               description: this.createForm.description || null
             })
           const saved = response.data.data
@@ -186,6 +194,7 @@ export default {
         await this.load()
       } catch (error) { if (error !== 'cancel' && error !== 'close') this.$message.error(error.userMessage || '操作失败') }
     },
+    booleanFlag(value) { return asBoolean(value) },
     time(value) { return value ? String(value).replace('T', ' ').replace(/\.\d+Z$/, '').slice(0, 16) : '-' }
   }
 }
@@ -197,6 +206,35 @@ export default {
 .operation-create-body{min-height:0}.operation-create-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}.operation-create-grid .el-input-number{width:100%}.field-help{margin:6px 0 0;color:#8a96a6;font-size:12px;line-height:1.3}.operation-page ::v-deep .operation-create-dialog{top:50%;margin:0 auto!important;transform:translateY(-50%);border-radius:5px}.operation-page ::v-deep .operation-create-dialog .el-dialog__header{padding:18px 26px 13px;border-bottom:1px solid #e9edf1}.operation-page ::v-deep .operation-create-dialog .el-dialog__title{font-size:18px;font-weight:600;color:#1d3048}.operation-page ::v-deep .operation-create-dialog .el-dialog__body{padding:16px 26px 6px}.operation-page ::v-deep .operation-create-dialog .el-dialog__footer{padding:13px 26px 18px;border-top:1px solid #edf0f3}.operation-page ::v-deep .operation-create-dialog .el-form-item{margin-bottom:15px}.operation-page ::v-deep .operation-create-dialog .el-form-item__label{padding-bottom:6px;color:#35465c;font-weight:600;line-height:20px}.operation-page ::v-deep .operation-create-dialog .el-textarea__inner{resize:none}
 .operation-page ::v-deep .operation-create-dialog .el-radio-group{display:flex;align-items:center;height:40px}.status-lock-help{color:#d89020;white-space:normal}.status-lock-help i{margin-right:2px}
 .operation-page ::v-deep .operation-create-dialog .el-radio__input.is-checked .el-radio__inner{background:#008b4b;border-color:#008b4b}.operation-page ::v-deep .operation-create-dialog .el-radio__input.is-checked+.el-radio__label{color:#008b4b}
+.operation-filters {
+  grid-template-columns: minmax(0, 1.1fr) repeat(3, minmax(0, .7fr)) auto;
+}
+.operation-filters > label {
+  min-width: 0;
+}
+.operation-name {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.public-operation-tag {
+  margin-top: 4px;
+}
+.operation-page ::v-deep .operation-create-dialog {
+  display: flex;
+  flex-direction: column;
+  max-height: 85vh;
+}
+.operation-page ::v-deep .operation-create-dialog .el-dialog__header,
+.operation-page ::v-deep .operation-create-dialog .el-dialog__footer {
+  flex-shrink: 0;
+}
+.operation-page ::v-deep .operation-create-dialog .el-dialog__body {
+  min-height: 0;
+  overflow-y: auto;
+}
+.operation-page .operation-create-body {
+  min-height: 0;
+}
 @media(max-width:1200px){.operation-layout{grid-template-columns:1fr}.operation-inspector{min-height:340px}.operation-filters{grid-template-columns:repeat(3,minmax(0,1fr))}.operation-filters .filter-actions{grid-column:1/-1;justify-content:flex-end}.inspector-actions{margin-top:10px}}
 @media(max-width:767px){.operation-page{padding:12px}.operation-main{padding:14px 12px}.operation-filters{grid-template-columns:1fr}.operation-filters .filter-actions{grid-column:auto}.operation-table-card{overflow-x:auto}.operation-table-card .el-table{min-width:1120px}.operation-table-card .table-footer{min-width:760px}.operation-inspector{padding-bottom:12px}.operation-facts,.operation-create-grid{grid-template-columns:1fr}.operation-facts .wide{grid-column:auto}.operation-page ::v-deep .operation-create-dialog{top:0;width:calc(100% - 24px)!important;margin-top:4vh!important;transform:none}.operation-create-body{min-height:510px}}
 </style>

@@ -42,6 +42,7 @@ final class ProductionReportService
                 $this->fail('task_target_not_found', '任务中不存在该数量型生产目标。', 404);
             }
             $this->participant($task, $user);
+            ProductionJobBundleExecutionContext::assertTask($task);
             $target = ProductionQuantityOperation::query()->lockForUpdate()->find($targetId);
             if (! $target) $this->fail('task_target_not_found', '数量型生产目标不存在。', 404);
             if (app(ProductionCuttingOperationService::class)->required('quantity_operation', $targetId))
@@ -141,6 +142,10 @@ final class ProductionReportService
 
     private function laborSnapshot(ProductionTask $task, ProductionQuantityOperation $target, int $userId): array
     {
+        if ($task->active_job_bundle_id) {
+            return [['execution_task_type' => 'JOB_BUNDLE', 'job_bundle_id' => (int) $task->active_job_bundle_id,
+                'allocation' => app(ProductionJobBundleLaborService::class)->allocations((int) $task->id, 'quantity_operation', (int) $target->id)]];
+        }
         return ProductionLaborSession::query()->where('task_id', $task->id)->where('target_type', 'quantity_operation')
             ->where('target_id', $target->id)->where('employee_legacy_id', $userId)->orderBy('id')->get()
             ->map(fn (ProductionLaborSession $session) => [

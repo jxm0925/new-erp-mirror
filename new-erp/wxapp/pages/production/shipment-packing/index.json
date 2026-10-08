@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "包装作业",
+  "navigationBarBackgroundColor": "#ffffff",
+  "navigationBarTextStyle": "black",
+  "enablePullDownRefresh": true,
+  "usingComponents": {}
+}

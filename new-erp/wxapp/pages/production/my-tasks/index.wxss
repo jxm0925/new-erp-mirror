@@ -223,6 +223,31 @@ page {
   margin-top: 14rpx;
 }
 
+.public-filter {
+  display: flex;
+  gap: 8rpx;
+  margin-top: 14rpx;
+  box-sizing: border-box;
+}
+
+.public-filter-item {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 12rpx 4rpx;
+  border-radius: 8rpx;
+  color: #64748b;
+  text-align: center;
+  font-size: 24rpx;
+  line-height: 1.4;
+  box-sizing: border-box;
+}
+
+.public-filter-item.active {
+  color: #00763f;
+  background: #f0fdf4;
+  font-weight: 600;
+}
+
 .search-input {
   flex: 1 1 auto;
   min-width: 0;
@@ -408,10 +433,23 @@ page {
 /* 工单与规格 */
 .specs-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12rpx;
   margin-top: 10rpx;
   min-width: 0;
+}
+
+.public-operation-tag {
+  flex-shrink: 0;
+  padding: 3rpx 10rpx;
+  border: 1rpx solid #bbf7d0;
+  border-radius: 6rpx;
+  color: #00763f;
+  background: #f0fdf4;
+  font-size: 22rpx;
+  line-height: 1.4;
+  box-sizing: border-box;
 }
 
 .work-order-chip {

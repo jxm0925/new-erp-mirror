@@ -1163,6 +1163,103 @@ class InventoryService
         }, 5);
     }
 
+    /** A persisted packing material line owns one outbound fact; retries never consume it twice. */
+    public function postShipmentPackingMaterials(object $operation, iterable $materials, object $actor): InventoryTransaction
+    {
+        return DB::transaction(function () use ($operation, $materials, $actor): InventoryTransaction {
+            $op = DB::table('erp_shipment_packing_operations')->where('id', $operation->id)->lockForUpdate()->first();
+            if (! $op) throw ValidationException::withMessages(['operation' => '包装工序不存在。']);
+            $ids = collect($materials)->pluck('id')->map(fn ($id) => (int) $id)->all();
+            if ($ids === [] || count($ids) !== count(array_unique($ids))) throw ValidationException::withMessages(['materials' => '请选择不重复的正式包装用料明细。']);
+            $rows = DB::table('erp_shipment_packing_materials')->where('operation_id', $op->id)->whereIn('id', $ids)->orderBy('inventory_balance_id')->orderBy('id')->lockForUpdate()->get();
+            if ($rows->count() !== count($ids)) throw ValidationException::withMessages(['materials' => '用料明细不属于当前包装工序。']);
+            $posted = $rows->pluck('inventory_transaction_id')->filter()->unique();
+            if ($posted->isNotEmpty()) {
+                if ($posted->count() !== 1 || $rows->contains(fn ($row) => ! $row->inventory_transaction_id)) throw ValidationException::withMessages(['materials' => '不可混合已过账与未过账包装用料。']);
+                return InventoryTransaction::with('items')->findOrFail($posted->first());
+            }
+            // A job may record several actual consumptions. Its persisted material row
+            // identifies this posting batch, while detail facts still identify the job;
+            // using the job as the header source would collide on the second batch.
+            $sourceMaterialId = min($ids);
+            $transaction = InventoryTransaction::create(['transaction_no' => $this->nextNo('ITX'), 'transaction_type' => 'shipment_packing_material_outbound',
+                'source_type' => 'shipment_packing_material', 'source_id' => $sourceMaterialId, 'source_no' => 'PACK-'.$op->id.'-MAT-'.$sourceMaterialId,
+                'posting_status' => 'posted', 'transaction_date' => now()->toDateString(), 'posted_at' => now(),
+                'posted_by' => (int) ($actor->legacy_id ?? $actor->id), 'remark' => '发货包装材料正式耗用']);
+            foreach ($rows as $row) {
+                $balance = InventoryBalance::query()->whereKey($row->inventory_balance_id)->lockForUpdate()->firstOrFail();
+                $item = Item::findOrFail($row->item_id);
+                $quantity = (string) $row->base_qty;
+                if ((int) $balance->item_id !== (int) $row->item_id || (int) $balance->unit_id !== (int) $row->unit_id
+                    || bccomp($quantity, '0', 8) <= 0 || bccomp((string) $balance->quantity_available, $quantity, 8) < 0) throw ValidationException::withMessages(['materials' => '包装材料的物料、基础单位或可用库存不匹配。']);
+                $snapshot = json_decode($row->serial_snapshot ?: '{}', true, 512, JSON_THROW_ON_ERROR);
+                $serialIds = array_map('intval', $snapshot['inventory_serial_ids'] ?? []);
+                $physicalIds = array_map('intval', $snapshot['physical_material_ids'] ?? []);
+                $physicalCost = null;
+                if ($item->materialManagementMode() === 'physical') {
+                    if ($physicalIds === [] || count($physicalIds) !== count(array_unique($physicalIds)) || bccomp($quantity, (string) count($physicalIds), 8) !== 0) throw ValidationException::withMessages(['materials' => '板料耗用必须选择数量一致的整张真实实物。']);
+                    $physicalCost = '0';
+                    foreach ($physicalIds as $physicalId) {
+                        if (! $this->physicalAtBalance($physicalId, (int) $item->id, (int) $balance->id)) throw ValidationException::withMessages(['materials' => '包装板料实物不属于当前可用批次，或已被占用。']);
+                        $physicalCost = bcadd($physicalCost, (string) DB::table('erp_material_physicals')->where('id', $physicalId)->value('total_cost'), 4);
+                    }
+                } elseif ($physicalIds !== []) throw ValidationException::withMessages(['materials' => '普通数量物料不能提交板料实物身份。']);
+                $serials = collect();
+                $trackingMode = $item->serialTrackingMode();
+                if ($trackingMode !== 'none') {
+                    if (count($serialIds) !== count(array_unique($serialIds))
+                        || bccomp($quantity, (string) count($serialIds), 8) < 0
+                        || ($trackingMode === 'required' && bccomp($quantity, (string) count($serialIds), 8) !== 0)) throw ValidationException::withMessages(['materials' => '包装材料序列号不能重复或超过实耗，必需编号物料须逐件选择真实身份。']);
+                    $serials = InventorySerial::whereIn('id', $serialIds)->where('inventory_balance_id', $balance->id)
+                        ->where('item_id', $item->id)->where('warehouse_id', $balance->warehouse_id)
+                        ->where('location_id', $balance->location_id)->where('batch_no', $balance->batch_no)
+                        ->where('serial_status', 'available')->lockForUpdate()->get();
+                    if ($serials->count() !== count($serialIds)) throw ValidationException::withMessages(['materials' => '所选包装材料序列号不可用。']);
+                    if ($trackingMode === 'optional') {
+                        // A quantity without selected identities may consume only unnumbered
+                        // stock, matching formal adjustment rules; otherwise live SN facts
+                        // would remain in this balance after their physical stock was used.
+                        $availableSerialCount = InventorySerial::where('inventory_balance_id', $balance->id)->where('serial_status', 'available')->count();
+                        $unnumberedAvailable = bcsub((string) $balance->quantity_available, (string) $availableSerialCount, 8);
+                        if (bccomp($unnumberedAvailable, '0', 8) < 0) $unnumberedAvailable = '0';
+                        if (bccomp(bcsub($quantity, (string) count($serialIds), 8), $unnumberedAvailable, 8) > 0) throw ValidationException::withMessages(['materials' => '包装材料无编号可用数量不足，请补选本次实际耗用的序列号。']);
+                    }
+                } elseif ($serialIds !== []) throw ValidationException::withMessages(['materials' => '非序列物料不能提交序列号。']);
+                $cost = $physicalCost ?? ($balance->material_lot_id
+                    ? CuttingDecimal::share((string) $balance->inventory_value, (string) $balance->quantity_on_hand, $quantity)
+                    : bcmul($quantity, (string) $balance->average_unit_cost, 4));
+                $fact = $this->applyInventoryChange($transaction, ['item_id' => $item->id, 'warehouse_id' => $balance->warehouse_id,
+                    'location_id' => $balance->location_id, 'batch_no' => $balance->batch_no, 'unit_id' => $balance->unit_id,
+                    'change_qty' => bcsub('0', $quantity, 8), 'unit_cost' => bcdiv($cost, $quantity, 8), 'cost_amount' => bcsub('0', $cost, 4),
+                    'cost_source_type' => $physicalCost !== null ? 'shipment_packing_physical_total' : 'shipment_packing_material_fact',
+                    'source_type' => 'shipment_packing_operation', 'source_id' => $op->id, 'source_item_id' => $row->id, 'remark' => '包装实际材料耗用']);
+                foreach ($physicalIds as $physicalId) {
+                    $physical = DB::table('erp_material_physicals')->where('id', $physicalId)->first();
+                    $sourceHolding = DB::table('erp_material_holdings')->where('id', $physical->current_holding_id)->lockForUpdate()->first();
+                    // Warehouse holdings are shared by the other plates in this balance.
+                    // Move only the consumed identity; closing that holding would disable
+                    // every remaining plate even though its stock and cost remain available.
+                    $physicalMaterials = app(MaterialPhysicalService::class);
+                    $targetHoldingId = $physicalMaterials->nonWarehouseHolding((int) $physical->material_lot_id,
+                        'SHIPMENT_PACKING', (int) $row->id, (string) $physical->total_cost, 'CONSUMED');
+                    $physicalMaterials->movePhysical($physical, $sourceHolding, $targetHoldingId, 'PACKING_CONSUME', 'CONSUMED',
+                        (int) $transaction->id, (int) ($actor->legacy_id ?? $actor->id));
+                }
+                foreach ($serials as $serial) {
+                    $serial->update(['serial_status' => 'packing_consumed', 'outbound_at' => now()]);
+                    InventorySerialEvent::create(['inventory_serial_id' => $serial->id, 'event_type' => 'packing_material_consumed',
+                        'document_type' => 'shipment_packing_operation', 'document_id' => $op->id, 'document_no' => 'PACK-'.$op->id,
+                        'from_status' => 'available', 'to_status' => 'packing_consumed', 'warehouse_id' => $balance->warehouse_id,
+                        'location_id' => $balance->location_id, 'batch_no' => $balance->batch_no, 'occurred_at' => now()]);
+                }
+                DB::table('erp_shipment_packing_materials')->where('id', $row->id)->update(['inventory_transaction_id' => $transaction->id,
+                    'inventory_transaction_item_id' => $fact->id, 'cost_amount_snapshot' => bcsub('0', (string) $fact->cost_amount, 4),
+                    'posted_at' => now(), 'updated_at' => now()]);
+            }
+            return $transaction->fresh('items');
+        }, 5);
+    }
+
     public function postProductionInternalIssue(object $issue, iterable $lines, object $operator): InventoryTransaction
     {
         return DB::transaction(function () use ($issue, $lines, $operator): InventoryTransaction {
@@ -1399,7 +1496,12 @@ class InventoryService
                     throw ValidationException::withMessages(['cost_amount' => '专用库存出库必须引用正式领用单的权威总金额。']);
                 }
             }
-            if ((float) $line['change_qty'] < 0 && $transaction->source_type !== 'cutting_settlement' && ! $cuttingReservedTotal) {
+            $packingPhysicalTotal = ($line['cost_source_type'] ?? null) === 'shipment_packing_physical_total';
+            if ($packingPhysicalTotal && ($transaction->source_type !== 'shipment_packing_material'
+                || $transaction->transaction_type !== 'shipment_packing_material_outbound'
+                || ($line['source_type'] ?? null) !== 'shipment_packing_operation'
+                || $item->materialManagementMode() !== 'physical')) throw ValidationException::withMessages(['cost_amount' => '包装实物总成本仅能来自正式包装用料及实物身份。']);
+            if ((float) $line['change_qty'] < 0 && $transaction->source_type !== 'cutting_settlement' && ! $cuttingReservedTotal && ! $packingPhysicalTotal) {
                 $consumedQty = number_format(abs((float) $line['change_qty']), 8, '.', '');
                 $costAmount = bcsub('0', CuttingDecimal::share((string) $balance->inventory_value, (string) $balance->quantity_on_hand, $consumedQty), 4);
             }
@@ -1641,6 +1743,25 @@ class InventoryService
                 && bccomp((string) $entry->posted_cost, (string) ($line['cost_amount'] ?? '-1'), 4) === 0
                 && bccomp((string) $entry->posted_cost, (string) $entry->holding_cost, 4) === 0
                 && bccomp((string) $entry->posted_cost, (string) $entry->physical_cost, 4) === 0) return;
+        }
+
+        if ($transaction->source_type === 'shipment_packing_material' && $transaction->transaction_type === 'shipment_packing_material_outbound') {
+            $anchor = DB::table('erp_shipment_packing_materials')->where('id', $transaction->source_id)
+                ->where('operation_id', (int) ($line['source_id'] ?? 0))->lockForUpdate()->first();
+            $material = $anchor && ($line['source_type'] ?? null) === 'shipment_packing_operation'
+                && (! $anchor->inventory_transaction_id || (int) $anchor->inventory_transaction_id === (int) $transaction->id)
+                ? DB::table('erp_shipment_packing_materials')->where('id', (int) ($line['source_item_id'] ?? 0))
+                    ->where('operation_id', $anchor->operation_id)->where('inventory_balance_id', $balance->id)->where('item_id', $item->id)->lockForUpdate()->first()
+                : null;
+            $ids = $material ? (json_decode($material->serial_snapshot ?: '{}', true)['physical_material_ids'] ?? []) : [];
+            $valid = $material && ! $material->inventory_transaction_id && count($ids) > 0 && count($ids) === count(array_unique($ids))
+                && bccomp((string) $material->base_qty, (string) count($ids), 8) === 0 && bccomp($quantity, bcsub('0', (string) count($ids), 8), 8) === 0;
+            $total = '0';
+            foreach ($ids as $id) {
+                if (! $this->physicalAtBalance((int) $id, (int) $item->id, (int) $balance->id)) { $valid = false; break; }
+                $total = bcadd($total, (string) DB::table('erp_material_physicals')->where('id', $id)->value('total_cost'), 4);
+            }
+            if ($valid && bccomp((string) ($line['cost_amount'] ?? '0'), bcsub('0', $total, 4), 4) === 0) return;
         }
         if (app(ProductionPhysicalMaterialReturnService::class)->validPosting($transaction, $line, $quantity, (int) $item->id)) return;
         throw ValidationException::withMessages([

@@ -96,6 +96,7 @@ export default {
       this.itemsLoading = true
       try {
         const { data } = await listEntity('items', {
+          management_scope: 'factory',
           page: this.itemPage,
           per_page: this.itemPerPage,
           status: 'enabled',

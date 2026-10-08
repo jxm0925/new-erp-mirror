@@ -53,6 +53,44 @@ class MasterDataLogicRegressionTest extends TestCase
         $this->putJson('/api/v1/erp/master/products/999999999', [])->assertForbidden();
     }
 
+    public function test_manufacturing_strategy_is_explicit_and_rejects_incompatible_item_flags(): void
+    {
+        $this->permissions = ['master.item.create', 'master.item.edit'];
+        $unit = $this->unit();
+        $category = ItemCategory::create(['category_code' => $this->code(), 'category_name' => $this->prefix,
+            'category_type' => 'item', 'status' => 'enabled']);
+        $payload = ['item_code' => $this->code(), 'item_name' => $this->prefix.'自制架子', 'item_type' => 'semi_finished',
+            'category_id' => $category->id, 'unit_id' => $unit->id, 'status' => 'enabled',
+            'is_stock_item' => true, 'is_production_item' => true, 'is_purchase_item' => false, 'cost_method' => 'weighted_average'];
+        $url = '/api/v1/erp/master/items';
+        $legacyId = $this->postJson($url, $payload)->assertCreated()->assertJsonPath('data.manufacturing_strategy', 'unspecified')->json('data.id');
+        $made = $this->putJson($url.'/'.$legacyId, [...$payload, 'manufacturing_strategy' => 'make'])
+            ->assertOk()->assertJsonPath('data.manufacturing_strategy', 'make')->json('data.id');
+        $this->putJson($url.'/'.$made, [...$payload, 'is_stock_item' => false])->assertUnprocessable();
+        $this->putJson($url.'/'.$made, [...$payload, 'is_production_item' => false])->assertUnprocessable();
+        $this->putJson($url.'/'.$made, [...$payload, 'manufacturing_strategy' => 'purchase'])->assertUnprocessable();
+        $this->putJson($url.'/'.$made, [...$payload, 'manufacturing_strategy' => null])->assertUnprocessable();
+        $this->assertDatabaseHas('erp_items', ['id' => $made, 'manufacturing_strategy' => 'make', 'is_stock_item' => true, 'is_production_item' => true]);
+        $this->putJson($url.'/'.$made, [...$payload, 'manufacturing_strategy' => 'purchase', 'is_purchase_item' => true])
+            ->assertOk()->assertJsonPath('data.manufacturing_strategy', 'purchase');
+        $this->putJson($url.'/'.$made, [...$payload, 'manufacturing_strategy' => 'unspecified'])
+            ->assertOk()->assertJsonPath('data.manufacturing_strategy', 'unspecified');
+    }
+
+    public function test_service_items_cannot_become_self_manufactured_inventory_by_setting_strategy(): void
+    {
+        $this->permissions = ['master.item.create'];
+        $unit = $this->unit();
+        $category = ItemCategory::create(['category_code' => $this->code(), 'category_name' => $this->prefix,
+            'category_type' => 'item', 'status' => 'enabled']);
+        $code = $this->code();
+        $this->postJson('/api/v1/erp/master/items', ['item_code' => $code, 'item_name' => $this->prefix.'服务',
+            'item_type' => 'service', 'category_id' => $category->id, 'unit_id' => $unit->id, 'status' => 'enabled',
+            'is_stock_item' => true, 'is_production_item' => true, 'manufacturing_strategy' => 'make'])
+            ->assertUnprocessable();
+        $this->assertDatabaseMissing('erp_items', ['item_code' => $code]);
+    }
+
     public function test_product_draft_is_saved_inactive_and_cannot_deactivate_enabled_child_skus(): void
     {
         $this->permissions = ['master.product.create', 'master.product.edit'];
@@ -235,6 +273,18 @@ class MasterDataLogicRegressionTest extends TestCase
     }
 
     private function code(): string { return 'LOGIC-'.Str::upper(Str::random(18)); }
+    public function test_stock_item_candidates_are_filtered_before_server_pagination(): void
+    {
+        $this->permissions = ['master.item.view'];
+        $unit = $this->unit();
+        $stock = $this->item($unit, ['is_stock_item' => true]);
+        $nonStock = $this->item($unit, ['is_stock_item' => false]);
+        $this->item($unit, ['is_stock_item' => true, 'item_type' => 'service']);
+        $url = '/api/v1/erp/master/items?keyword='.$this->prefix.'&status=enabled&per_page=10';
+        $this->getJson($url.'&is_stock_item=1')->assertOk()->assertJsonPath('total', 1)->assertJsonPath('data.0.id', $stock->id);
+        $this->getJson($url.'&is_stock_item=0')->assertOk()->assertJsonPath('total', 1)->assertJsonPath('data.0.id', $nonStock->id);
+        $this->getJson($url.'&is_stock_item=unknown')->assertUnprocessable();
+    }
     private function unit(array $values = []): Unit
     {
         return Unit::create([...['unit_code' => $this->code(), 'unit_name' => $this->prefix, 'unit_type' => 'quantity', 'status' => 'enabled', 'is_legacy' => false], ...$values]);

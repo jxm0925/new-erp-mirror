@@ -24,10 +24,11 @@ class SkuItemDefaultRelationService
         return DB::transaction(function () use ($skuId, $itemId, $factor, $reason, $remark, $operatorId, $operatorName) {
             $sku = Sku::with('salesUnit')->lockForUpdate()->findOrFail($skuId);
             $this->ensurePhysical($sku);
-            $item = Item::with('unit')->whereKey($itemId)->where('status', 'enabled')->first();
+            $item = Item::with('unit')->whereKey($itemId)->where('status', 'enabled')->lockForUpdate()->first();
             if (!$item || !$item->unit || $item->unit->status !== 'enabled') {
                 throw ValidationException::withMessages(['item_id' => '默认履约 Item 及其库存基本单位必须处于启用状态。']);
             }
+            app(ItemManagementScopeService::class)->assertProductionAllowed($item, 'item_id');
 
             $active = SkuItemRelation::where('sku_id', $sku->id)->where('status', 'active')->where('is_primary', true)->lockForUpdate()->get();
             if ($active->count() > 1) throw ValidationException::withMessages(['sku_id' => '该 SKU 存在多个有效默认 Item，请先在完整性检查中修复。']);
@@ -61,6 +62,8 @@ class SkuItemDefaultRelationService
             $this->ensurePhysical($sku);
             $relations = SkuItemRelation::where('sku_id', $sku->id)->where('status', 'active')->where('is_primary', true)->lockForUpdate()->get();
             if (!$relations->contains('id', $keepRelationId)) throw ValidationException::withMessages(['keep_relation_id' => '保留关系不是该 SKU 的有效默认关系。']);
+            $keptItem = Item::query()->lockForUpdate()->findOrFail($relations->firstWhere('id', $keepRelationId)->item_id);
+            app(ItemManagementScopeService::class)->assertProductionAllowed($keptItem, 'keep_relation_id');
             foreach ($relations->where('id', '!=', $keepRelationId) as $relation) {
                 $relation->update(['status' => 'inactive', 'is_primary' => false, 'expired_at' => now(), 'operator_name' => $operatorName, 'change_reason' => $reason]);
                 $this->log($sku->id, $relation->id, $relation->item_id, null, 'resolve_duplicate', $reason, $remark, $operatorId, $operatorName);

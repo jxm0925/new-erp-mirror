@@ -11,7 +11,7 @@ final class StockPrebuildEligibilityService
 {
     public function items(): Builder
     {
-        return Item::query()->where('status', 'enabled')->where('is_production_item', true)
+        return app(ItemManagementScopeService::class)->applyScope(Item::query(), 'factory')->where('status', 'enabled')->where('is_production_item', true)
             ->whereRaw("COALESCE(NULLIF(cutting_mode, ''), IF(is_length_cut_material, 'length', 'none')) = 'none'");
     }
 
@@ -20,7 +20,7 @@ final class StockPrebuildEligibilityService
         foreach (array_unique($itemIds) as $itemId) {
             if ($itemId <= 0 || ! $this->items()->whereKey($itemId)->exists()) {
                 throw new WorkOrderDomainException('stock_prebuild_cutting_item_forbidden',
-                    '请选择已启用的生产产出物料；整板和定长原料应作为用料，不能作为本工序产出。',
+                    '请选择已启用的工厂生产产出物料；办公用品、整板和定长原料不能作为本工序产出。',
                     422, ['item_id' => $itemId]);
             }
         }

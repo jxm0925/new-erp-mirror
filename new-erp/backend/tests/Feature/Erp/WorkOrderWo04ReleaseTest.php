@@ -62,8 +62,9 @@ class WorkOrderWo04ReleaseTest extends TestCase
         $this->assertSame('passed', $gate['status']);
         $this->assertFalse($gate['immutable']);
         $this->assertSame($bom->id, $gate['bom']['bom_id']);
-        $this->assertCount(15, $gate['checks']);
-        $this->assertSame(15, DB::table('erp_work_order_release_gate_checks')
+        $this->assertCount(16, $gate['checks']);
+        $this->assertSame('passed', collect($gate['checks'])->firstWhere('key', 'planned_outputs')['status']);
+        $this->assertSame(16, DB::table('erp_work_order_release_gate_checks')
             ->where('work_order_id', $waiting->id)
             ->count());
 
@@ -787,6 +788,7 @@ class WorkOrderWo04ReleaseTest extends TestCase
     public function test_required_kitting_immediately_starts_owner_labor_and_is_idempotent(): void
     {
         [$user, $demand] = $this->fixture(7533);
+        $this->grantRole($user->legacy_id, ['production.task.claim']);
         $service = app(WorkOrderApplicationService::class);
         $draft = $service->createDraft(['client_command_id' => 'phase6b-facts-create', 'production_demand_id' => $demand->id,
             'expected_demand_version' => 1, 'target_qty' => 2, 'planned_date' => '2026-09-18',
@@ -939,13 +941,14 @@ class WorkOrderWo04ReleaseTest extends TestCase
             'nickname' => '协作者', 'status' => 'normal', 'auth_group_names' => '[]', 'created_at' => now(), 'updated_at' => now()]);
         DB::table('erp_work_orders')->where('id', $released->id)->update(['collaboration_enabled' => true, 'updated_at' => now()]);
         $collaborator = DB::table('erp_legacy_admin_users')->where('legacy_id', $collaboratorId)->first();
-        $this->grantRole($user->legacy_id, ['production.task.view', 'production.task.resume', 'production.task.pause']);
+        $this->grantRole($user->legacy_id, ['production.task.view', 'production.task.resume', 'production.task.pause', 'production.task.collaborate']);
         $this->grantRole($collaboratorId, ['production.task.view', 'production.task.collaborate', 'production.task.resume']);
         $ownerToken = $this->token($user->legacy_id);
         $collaboratorToken = $this->token($collaboratorId);
-        app(ProductionTaskCollaborationService::class)->join($task->id,
-            ['client_command_id' => 'phase6b-facts-collaborator-join', 'expected_version' => 4],
-            $collaborator, ['production.task.collaborate']);
+        app(ProductionTaskCollaborationService::class)->add($task->id,
+            ['client_command_id' => 'phase6b-facts-collaborator-add', 'expected_version' => 4,
+                'employee_legacy_ids' => [$collaboratorId]],
+            $user, ['production.task.collaborate']);
         $this->assertSame(0, DB::table('erp_production_labor_sessions')->where('target_id', $target->id)->where('status', 'ACTIVE')->count(),
             '加入协同不得自动给协作者启动计时');
         $collaboratorStarted = app(ProductionTaskCollaborationService::class)->startLabor($task->id, 'unit_operation', $target->id,

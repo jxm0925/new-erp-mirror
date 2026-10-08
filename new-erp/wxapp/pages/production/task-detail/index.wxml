@@ -2,7 +2,7 @@
   <!-- Compact Red Brand Hero Header -->
   <view class="header-bg">
     <view class="header-top">
-      <view class="header-tag">{{task.sequence_no_snapshot}} · {{task.operation_name_snapshot}}</view>
+      <view class="header-operation"><view class="header-tag">{{task.sequence_no_snapshot}} · {{task.operation_name_snapshot}}</view><text wx:if="{{task.showPublicBadge}}" class="public-operation-tag">公共工序</text></view>
       <view class="header-no" data-text="{{task.workOrderNo}}" bindtap="copyText">{{task.workOrderNo}}</view>
     </view>
     <view class="header-title">{{task.productName}}</view>
@@ -15,8 +15,14 @@
 
   <!-- Main Content Container -->
   <view class="page-scroll">
+    <view class="card" wx:if="{{task.status === 'WAIT_ACCEPT'}}">
+      <view class="card-title"><view class="card-title-left">待接受派单</view></view>
+      <view>系统按相同产品、工艺、数量的独立合格历史用时提出派单，接受后正式接单。</view>
+      <view wx:if="{{!task.allowed_actions.accept_assignment}}">等待被派单人处理。</view>
+    </view>
 
     <!-- Targets Loop -->
+    <view wx:if="{{task.active_job_bundle}}" class="task-bundle-entry"><button class="btn-outline" bindtap="openJobBundle">返回共同加工 {{task.active_job_bundle.bundle_no}}</button></view>
     <block wx:for="{{targets}}" wx:key="target_id">
 
       <!-- Hero Card: Workstation Unit, Compact Live Timer & 4-Step Stepper -->
@@ -53,7 +59,7 @@
             <button wx:elif="{{item.allowed_actions.resume}}" class="btn-resume-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="resume">恢复我的作业</button>
             <button wx:elif="{{item.allowed_actions.start_rework}}" class="btn-start-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="start">开始返工</button>
             <button wx:elif="{{item.allowed_actions.start}}" class="btn-start-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="start">开始加工</button>
-            <button wx:elif="{{item.allowed_actions.confirm_kitting}}" class="btn-kitting-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="confirmKitting">确认齐套并开工</button>
+            <button wx:elif="{{item.allowed_actions.confirm_kitting}}" class="btn-kitting-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="confirmKitting">{{task.active_job_bundle ? '确认齐套' : '确认齐套并开工'}}</button>
             <button wx:elif="{{item.allowed_actions.start_collaborator_labor}}" class="btn-start-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="startCollaboratorLabor">开始协同计时</button>
             <button wx:elif="{{item.allowed_actions.pause_collaborator_labor}}" class="btn-pause-sm" data-id="{{item.target_id}}" loading="{{busy}}" bindtap="pauseCollaboratorLabor">暂停协同计时</button>
           </view>
@@ -112,6 +118,7 @@
           <view class="card-title-right">
             <text class="card-title-badge" style="margin-right: 6px;">{{item.materialStatusText || '加载中'}}</text>
             <text class="card-link" data-id="{{item.target_id}}" bindtap="openMaterialActions">物料处理 ></text>
+            <text class="card-link" data-id="{{item.target_id}}" data-tab="onsite" bindtap="openMaterialActions">现场领料 ></text>
           </view>
         </view>
 
@@ -164,7 +171,7 @@
     <view class="card">
       <view class="card-title">
         <view class="card-title-left">现场作业人员 ({{totalWorkersCount}}人)</view>
-        <view wx:if="{{task.assignee_user_legacy_id === userId && task.work_order.collaboration_enabled}}" class="btn-add-collab-head" bindtap="openAddCollaborator">+ 添加协同</view>
+        <view wx:if="{{task.allowed_actions.add_collaborators}}" class="btn-add-collab-head" bindtap="openAddCollaborator">+ 添加协同</view>
       </view>
       <view class="personnel-list">
         <view class="person-item" wx:for="{{workersList}}" wx:key="id">
@@ -191,13 +198,21 @@
   <!-- Bottom Fixed Action Dock -->
   <view class="bottom-dock">
     <button class="btn-outline" wx:if="{{task.assignee_user_legacy_id === userId && targets[0].status !== 'COMPLETED' && targets[0].status !== 'CANCELLED'}}" data-id="{{targets[0].target_id}}" bindtap="openMaterialActions">物料处理</button>
+    <button class="btn-outline" wx:if="{{task.assignee_user_legacy_id === userId && targets[0].status !== 'COMPLETED' && targets[0].status !== 'CANCELLED'}}" data-id="{{targets[0].target_id}}" data-tab="onsite" bindtap="openMaterialActions">现场领料</button>
 
     <!-- State Driven CTA Buttons -->
-    <block wx:if="{{task.allowed_actions.claim}}">
+    <block wx:if="{{task.allowed_actions.accept_assignment}}">
+      <button class="btn-outline" loading="{{busy}}" bindtap="rejectAssignment">拒绝派单</button>
+      <button class="btn-primary" loading="{{busy}}" bindtap="acceptAssignment">接受并接单</button>
+    </block>
+    <block wx:elif="{{task.status === 'WAIT_ACCEPT'}}">
+      <button class="btn-disabled" disabled>等待本人接受派单</button>
+    </block>
+    <block wx:elif="{{task.allowed_actions.claim}}">
       <button class="btn-primary" loading="{{busy}}" bindtap="claim">自主接单</button>
     </block>
     <block wx:elif="{{targets[0].allowed_actions.confirm_kitting}}">
-      <button class="btn-primary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="confirmKitting">确认齐套并开工</button>
+      <button class="btn-primary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="confirmKitting">{{task.active_job_bundle ? '确认齐套' : '确认齐套并开工'}}</button>
     </block>
     <block wx:elif="{{targets[0].allowed_actions.accept_handover}}">
       <button class="btn-primary" bindtap="openHandover">接收工序交接</button>
@@ -236,18 +251,18 @@
       <button wx:else class="btn-disabled" disabled>本工序已完工</button>
     </block>
     <block wx:else>
-      <button class="btn-primary" data-id="{{targets[0].target_id}}" loading="{{busy}}" bindtap="start">开始作业</button>
+      <button class="btn-disabled" disabled>当前暂无可执行操作</button>
     </block>
   </view>
 
   <!-- Collaborator Selection Modal (Popup) using Vant Weapp -->
   <van-popup
     show="{{ showCollabModal }}"
-    position="bottom"
+    position="center"
     round
     closeable
     bind:close="closeCollabModal"
-    custom-style="max-height: 80%; display: flex; flex-direction: column;"
+    custom-style="width: 90%; max-width: 640px; max-height: 80%; display: flex; flex-direction: column;"
   >
     <view class="modal-head">
       <view class="modal-title-box">
@@ -268,11 +283,12 @@
     <!-- Candidate Group Title -->
     <view class="group-title">
       <text>可协同生产人员</text>
-      <text class="group-count">共 {{collabCandidates.length}} 人可选</text>
+      <text class="group-count">共 {{collabTotal}} 人可选</text>
     </view>
 
     <!-- Candidate List with Vant Checkbox Group & Cells -->
     <scroll-view scroll-y class="candidate-list">
+      <view wx:if="{{collabLoading}}"><van-loading color="#d81e06">加载人员</van-loading></view>
       <van-checkbox-group value="{{ selectedCollabIds }}" bind:change="onCheckboxChange">
         <van-cell-group border="{{ false }}">
           <block wx:for="{{ collabCandidates }}" wx:key="id">
@@ -304,6 +320,11 @@
         </van-cell-group>
       </van-checkbox-group>
     </scroll-view>
+    <view class="collab-pagination">
+      <van-button size="small" disabled="{{collabLoading || collabPage <= 1}}" bind:click="collabPreviousPage">上一页</van-button>
+      <text>第 {{collabPage}} 页</text>
+      <van-button size="small" disabled="{{collabLoading || !collabHasNext}}" bind:click="collabNextPage">下一页</van-button>
+    </view>
 
     <!-- Modal Footer -->
     <view class="modal-foot">

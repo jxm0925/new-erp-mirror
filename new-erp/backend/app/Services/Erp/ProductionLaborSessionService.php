@@ -16,7 +16,14 @@ class ProductionLaborSessionService
 
     public function start(ProductionTask $task, object $target, string $type, int $employeeId, string $role, float $weight, $now, array $switchContext = []): ProductionLaborSession
     {
+        ProductionJobBundleExecutionContext::assertTask($task);
+        if (ProductionJobBundleExecutionContext::contains($task)) {
+            // Original start/resume still own target transitions, while one real session belongs to the shared job.
+            return ProductionLaborSession::query()->where('job_bundle_id', $task->active_job_bundle_id)
+                ->where('employee_legacy_id', $employeeId)->where('status', 'ACTIVE')->firstOrFail();
+        }
         $this->lockEmployee($employeeId);
+        $this->assertNoActivePacking($employeeId);
         $previous = ProductionLaborSession::query()
             ->where('employee_legacy_id', $employeeId)
             ->where('status', 'ACTIVE')
@@ -50,6 +57,7 @@ class ProductionLaborSessionService
     public function startCutting(CuttingTask $task, int $employeeId, string $role, float $weight, $now, array $switchContext = []): ProductionLaborSession
     {
         $this->lockEmployee($employeeId);
+        $this->assertNoActivePacking($employeeId);
         $previous = ProductionLaborSession::query()
             ->where('employee_legacy_id', $employeeId)
             ->where('status', 'ACTIVE')
@@ -84,6 +92,7 @@ class ProductionLaborSessionService
     public function assertStartAllowed(string $type, int $targetId, int $employeeId, array $switchContext): void
     {
         $this->lockEmployee($employeeId);
+        $this->assertNoActivePacking($employeeId);
         $previous = ProductionLaborSession::query()->where('employee_legacy_id', $employeeId)
             ->where('status', 'ACTIVE')->lockForUpdate()->first();
         if (! $previous) return;
@@ -95,6 +104,8 @@ class ProductionLaborSessionService
 
     public function end(ProductionTask $task, object $target, string $type, int $employeeId, string $reason, $now, bool $required = true, bool $recalculate = true, bool $incrementTargetVersion = true): ?ProductionLaborSession
     {
+        ProductionJobBundleExecutionContext::assertTask($task);
+        if (ProductionJobBundleExecutionContext::contains($task)) return null;
         $this->lockEmployee($employeeId);
         $session = ProductionLaborSession::query()
             ->where('task_id', $task->id)
@@ -197,6 +208,10 @@ class ProductionLaborSessionService
 
     private function assertSwitchConfirmed(ProductionLaborSession $previous, array $context): void
     {
+        if ($previous->execution_task_type === 'JOB_BUNDLE') {
+            $this->fail('job_bundle_pause_required', '当前人员正在共同加工，请先在原共同加工作业中暂停。', 409,
+                ['job_bundle_id' => (int) $previous->job_bundle_id]);
+        }
         if (($context['switch_active_labor'] ?? false) === true
             && (int) ($context['expected_active_labor_session_id'] ?? 0) === (int) $previous->id) return;
 
@@ -256,6 +271,14 @@ class ProductionLaborSessionService
     private function lockEmployee(int $employeeId): void
     {
         DB::table('erp_legacy_admin_users')->where('legacy_id', $employeeId)->lockForUpdate()->first();
+    }
+
+    private function assertNoActivePacking(int $employeeId): void
+    {
+        if (DB::table('erp_shipment_packing_labor_sessions')->where('employee_legacy_id', $employeeId)
+            ->where('status', 'ACTIVE')->lockForUpdate()->first()) {
+            $this->fail('labor_session_active', '当前人员已有包装加工计时，请先暂停原包装作业。', 409);
+        }
     }
 
     private function fail(string $code, string $message, int $status, array $details = []): never

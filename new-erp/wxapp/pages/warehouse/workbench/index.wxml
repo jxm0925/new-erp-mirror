@@ -12,6 +12,8 @@
       <view wx:if="{{canInbound}}" class="workspace-shortcut" data-direction="inbound" bindtap="openList"><van-icon name="down" size="72rpx" color="#ed1609"/><text>入库办理</text></view>
       <view wx:if="{{canOutbound}}" class="workspace-shortcut" data-direction="outbound" bindtap="openList"><van-icon name="up" size="72rpx" color="#ed1609"/><text>出库办理</text></view>
       <view wx:if="{{summary.can_delivery}}" class="workspace-shortcut" bindtap="openDelivery"><van-icon name="logistics" size="72rpx" color="#ed1609"/><text>配送管理</text></view>
+      <view wx:if="{{canPrepare}}" class="workspace-shortcut" bindtap="openPreparation"><van-icon name="bag-o" size="72rpx" color="#ed1609"/><text>公共配料</text></view>
+      <view wx:if="{{canProcure}}" class="workspace-shortcut" bindtap="openProcurement"><van-icon name="orders-o" size="72rpx" color="#ed1609"/><text>采购需求</text></view>
     </view>
     <view class="workspace-section"><text>我的待办</text><view data-direction="all" bindtap="openList">查看更多 <van-icon name="arrow"/></view></view>
     <view wx:if="{{!todos.length}}" class="warehouse-card warehouse-empty">暂无待办理单据</view>

@@ -18,6 +18,14 @@ class ItemIntegratedFormPayloadTest extends TestCase
 
     public function test_create_ignores_read_only_fields_sent_by_item_form(): void
     {
+        // This payload test calls the controller directly; permission behavior
+        // is verified through real HTTP accounts in ItemManagementScopeTest.
+        $auth = \Mockery::mock(AuthContextService::class);
+        $auth->shouldReceive('currentUser')->andReturn((object) ['legacy_id' => 1001]);
+        $auth->shouldReceive('isSuperAdmin')->andReturn(false);
+        $auth->shouldReceive('permissionCodes')->andReturn(['master.item.create']);
+        $auth->shouldReceive('currentLegacyId')->andReturn(null);
+        $this->app->instance(AuthContextService::class, $auth);
         $suffix = strtoupper(Str::random(8));
         $category = ItemCategory::create([
             'category_code' => 'CAT-'.$suffix,
@@ -36,6 +44,8 @@ class ItemIntegratedFormPayloadTest extends TestCase
                 'category_id' => $category->id,
                 'unit_id' => $unit->id,
                 'spec' => 'TEST',
+                'cutting_mode' => 'none',
+                'material_management_mode' => 'quantity',
                 'is_length_cut_material' => false,
                 'is_purchase_item' => false,
                 'is_stock_item' => true,

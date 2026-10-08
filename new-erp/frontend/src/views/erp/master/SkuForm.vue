@@ -519,7 +519,7 @@ export default {
       if (!this.products.some(item => item.id === row.id)) this.products.push(row)
     },
     async loadItems () {
-      const r = await listEntity('items', { ...this.itemQuery, status: 'enabled' })
+      const r = await listEntity('items', { ...this.itemQuery, status: 'enabled', management_scope: 'factory' })
       this.items = r.data.data || []
       this.itemTotal = r.data.total || 0
     },

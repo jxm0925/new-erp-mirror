@@ -16,6 +16,46 @@ use Illuminate\Validation\ValidationException;
 
 class ProductionWorkOrderController extends Controller
 {
+    public function plannedOutputs(Request $request, int $id, ProductionWorkOrderQueryService $query, \App\Services\Erp\WorkOrderPlannedOutputService $plans)
+    {
+        [$user, $permissions, $superAdmin] = $this->context($request);
+        $workOrder = $query->workOrder($id, $user, $permissions, $superAdmin);
+        return response()->json(['data' => app(\App\Services\Erp\WorkOrderOutputPlanService::class)->plannedOutputProjection($workOrder, in_array('production.work_order.edit', $permissions, true))]);
+    }
+
+    public function savePlannedOutputs(Request $request, int $id, WorkOrderApplicationService $service, \App\Services\Erp\WorkOrderPlannedOutputService $plans)
+    {
+        $payload = $plans->validatePayload($request->all());
+        [$user, $permissions, $superAdmin] = $this->context($request);
+        $workOrder = $service->savePlannedOutputs($id, $payload, $user, $permissions, $superAdmin);
+        return response()->json(['message' => '工单计划产出已保存。', 'data' => $plans->projection($workOrder, true)]);
+    }
+
+    public function plannedOutputOptions(Request $request, int $id, \App\Services\Erp\WorkOrderPlannedOutputOptionService $service)
+    {
+        $filters = $request->validate(['type' => 'nullable|in:items,categories', 'keyword' => 'nullable|string|max:160',
+            'category_id' => 'nullable|integer|min:1', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50']);
+        return response()->json($service->options($id, $filters, ...$this->context($request)));
+    }
+
+    public function continuationCandidates(Request $request, int $id, \App\Services\Erp\ProductionInventoryContinuationService $service)
+    {
+        $filters = $request->validate(['keyword' => 'nullable|string|max:160', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50']);
+        return response()->json($service->candidates($id, $filters, ...$this->context($request)));
+    }
+    public function configureContinuation(Request $request, int $id, \App\Services\Erp\ProductionInventoryContinuationService $service)
+    {
+        $payload = $request->validate(['client_command_id' => 'required|string|max:120', 'expected_version' => 'required|integer|min:1',
+            'sources' => 'present|array|max:200', 'sources.*.inventory_balance_id' => 'required|integer|min:1',
+            'sources.*.inventory_serial_id' => 'nullable|integer|min:1', 'sources.*.source_output_record_id' => 'nullable|integer|min:1', 'sources.*.base_qty' => 'required|numeric|gt:0']);
+        return response()->json(['data' => $service->configure($id, $payload, ...$this->context($request))]);
+    }
+    public function continuationSerials(Request $request, int $id, \App\Services\Erp\ProductionInventoryContinuationService $service)
+    {
+        $filters = $request->validate(['inventory_balance_id' => 'required|integer|min:1', 'source_output_record_id' => 'nullable|integer|min:1', 'keyword' => 'nullable|string|max:160',
+            'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50']);
+        return response()->json($service->serials($id, $filters, ...$this->context($request)));
+    }
     public function demands(Request $request, ProductionWorkOrderQueryService $service)
     {
         $context = $this->context($request);
@@ -55,6 +95,11 @@ class ProductionWorkOrderController extends Controller
     {
         $context = $this->context($request);
         return response()->json(['data' => $service->evaluate($id, ...$context)]);
+    }
+
+    public function outputPlanPreview(Request $request, int $id, \App\Services\Erp\WorkOrderOutputPlanService $service)
+    {
+        return response()->json(['data' => $service->preview($id, ...$this->context($request))]);
     }
 
     public function materialRequirements(Request $request, int $id, ReleaseGateApplicationService $service)
@@ -148,9 +193,9 @@ class ProductionWorkOrderController extends Controller
         $workOrder = $service->showWorkOrder($id, ...$this->context($request));
         $technical = app(\App\Services\Erp\WorkOrderTechnicalService::class);
         if ($request->filled('type')) {
-            return response()->json($technical->options($workOrder, (string) $request->input('type'), $request->only(['keyword', 'item_id', 'bom_id', 'category_id', 'per_page'])));
+            return response()->json(app(\App\Services\Erp\ProductionFinancialProjectionService::class)->redact($technical->options($workOrder, (string) $request->input('type'), $request->only(['keyword', 'item_id', 'bom_id', 'category_id', 'per_page']))));
         }
-        return response()->json(['data' => $technical->preview($workOrder, $request->filled('bom_id') ? (int) $request->input('bom_id') : null)]);
+        return response()->json(['data' => app(\App\Services\Erp\ProductionFinancialProjectionService::class)->redact($technical->preview($workOrder, $request->filled('bom_id') ? (int) $request->input('bom_id') : null))]);
     }
 
     public function confirmTechnical(Request $request, int $id, WorkOrderApplicationService $service)
@@ -203,7 +248,7 @@ class ProductionWorkOrderController extends Controller
             $row->snapshot = json_decode($row->snapshot, true, 512, JSON_THROW_ON_ERROR);
             return $row;
         });
-        return response()->json($rows);
+        return response()->json(app(\App\Services\Erp\ProductionFinancialProjectionService::class)->redact($rows));
     }
 
     private function context(Request $request): array

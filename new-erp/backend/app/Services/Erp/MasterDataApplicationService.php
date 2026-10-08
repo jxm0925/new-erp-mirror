@@ -2,7 +2,7 @@
 
 namespace App\Services\Erp;
 
-use App\Models\Erp\{ItemCategory, Product, Sku};
+use App\Models\Erp\{Item, ItemCategory, Product, Sku};
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -12,7 +12,8 @@ class MasterDataApplicationService
 {
     public function __construct(
         private readonly DocumentNumberService $numbers,
-        private readonly SupplierCapabilityService $supplierCapabilities
+        private readonly SupplierCapabilityService $supplierCapabilities,
+        private readonly ItemManagementScopeService $itemScopes,
     ) {
     }
 
@@ -20,7 +21,9 @@ class MasterDataApplicationService
     {
         return DB::transaction(function () use ($entity, $modelClass, $data, $operatorLegacyId) {
             if ($entity === 'warehouses') $data = $this->warehouseManagerData($data);
+            if ($entity === 'items') $data = $this->itemScopes->prepareItem($data);
             if ($entity === 'items') $this->assertItemCategory($data['category_id'] ?? null, false);
+            if ($entity === 'items') $this->assertManufacturingStrategy($data);
             $categoryIds = $data['category_ids'] ?? [];
             $reservationToken = $data['reservation_token'] ?? null;
             unset($data['category_ids'], $data['reservation_token'], $data['creation_session_id']);
@@ -53,13 +56,25 @@ class MasterDataApplicationService
                 $this->logWarehouseManager($record, null, $operatorLegacyId);
                 return $record->fresh(['managerUser']);
             }
+            if ($record instanceof Item) {
+                $this->logItemScope($record, null, $operatorLegacyId);
+                return $this->itemScopes->exposeCategoryScope($record->fresh('category'));
+            }
             return $record->fresh();
         });
     }
 
-    public function update(string $entity, Model $record, array $data, ?int $operatorLegacyId): Model
+    public function update(string $entity, Model $record, array $data, ?int $operatorLegacyId, ?string $managementContext = null): Model
     {
-        return DB::transaction(function () use ($entity, $record, $data, $operatorLegacyId) {
+        return DB::transaction(function () use ($entity, $record, $data, $operatorLegacyId, $managementContext) {
+            $oldItemScope = null;
+            if ($record instanceof Item) {
+                $record = Item::whereKey($record->id)->lockForUpdate()->firstOrFail();
+                $this->itemScopes->assertContext($record, $managementContext);
+                $oldItemScope = ['management_scope' => $record->managementScope(), 'item_type' => $record->item_type,
+                    'category_id' => $record->category_id];
+                $data = $this->itemScopes->prepareItem($data, $record);
+            }
             // 编辑入口与停用入口保持同一父商品状态约束，不能用“保存草稿”绕过。
             if ($record instanceof Product) {
                 $record = $record->newQuery()->lockForUpdate()->findOrFail($record->getKey());
@@ -82,6 +97,7 @@ class MasterDataApplicationService
             }
             if ($entity === 'items') $this->assertItemCategory($data['category_id'] ?? $record->category_id, true);
             if ($entity === 'items') $this->assertItemBaseUnitChangeAllowed($record, $data['unit_id'] ?? null);
+            if ($entity === 'items') $this->assertManufacturingStrategy($data, $record);
             if ($entity === 'skus') $this->assertSkuSalesUnitChangeAllowed($record, $data['sales_unit_id'] ?? null);
             $categoryIds = $data['category_ids'] ?? null;
             unset($data['category_ids'], $data['reservation_token'], $data['creation_session_id']);
@@ -100,8 +116,45 @@ class MasterDataApplicationService
                 $this->logWarehouseManager($record, $oldManager, $operatorLegacyId);
                 return $record->fresh(['managerUser']);
             }
+            if ($record instanceof Item) {
+                $this->logItemScope($record, $oldItemScope, $operatorLegacyId);
+                return $this->itemScopes->exposeCategoryScope($record->fresh('category'));
+            }
             return $record->fresh();
         });
+    }
+
+    private function logItemScope(Item $item, ?array $before, ?int $operatorId): void
+    {
+        $after = ['management_scope' => $item->managementScope(), 'item_type' => $item->item_type, 'category_id' => $item->category_id];
+        if ($before === $after) return;
+        DB::table('erp_operation_logs')->insert(['module' => 'item', 'action' => 'set_management_scope',
+            'target_type' => 'erp_items', 'target_id' => $item->id,
+            'old_snapshot' => $before ? json_encode($before, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR) : null,
+            'new_snapshot' => json_encode($after, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+            'reason' => $before ? '人工更正物料管理范围或归属类目' : '建立物料管理范围',
+            'operator_id' => $operatorId, 'created_at' => now()]);
+    }
+
+    private function assertManufacturingStrategy(array $data, ?Model $record = null): void
+    {
+        $strategy = $data['manufacturing_strategy'] ?? $record?->manufacturing_strategy ?? 'unspecified';
+        if (!in_array($strategy, ['unspecified', 'purchase', 'make'], true)) {
+            throw ValidationException::withMessages(['manufacturing_strategy' => '请选择有效的生产供给方式。']);
+        }
+        if ($strategy === 'unspecified') return;
+        // A BOM is also valid for purchased assemblies. Only an explicit, valid
+        // strategy may create child production; unrelated item flags cannot infer it.
+        if ($strategy === 'make' && (
+            ($data['item_type'] ?? $record?->item_type) === 'service'
+            || !(bool) ($data['is_stock_item'] ?? $record?->is_stock_item)
+            || !(bool) ($data['is_production_item'] ?? $record?->is_production_item)
+        )) {
+            throw ValidationException::withMessages(['manufacturing_strategy' => '自制物料必须启用库存管理和生产使用，且不能是服务物料。']);
+        }
+        if ($strategy === 'purchase' && !(bool) ($data['is_purchase_item'] ?? $record?->is_purchase_item)) {
+            throw ValidationException::withMessages(['manufacturing_strategy' => '外购物料必须启用可采购。']);
+        }
     }
 
     private function warehouseManagerData(array $data, ?Model $record = null): array

@@ -48,7 +48,7 @@ final class ProductionPickingWorkspaceService
         });
         $page = $query->orderBy('location_id')->orderBy('id')->paginate($this->pageSize($filters));
         $page->getCollection()->transform(function ($balance) use ($requirement) {
-            $balance->setAttribute('picking_available_qty', $this->stock->eligible($balance, $requirement) ? $this->stock->available($balance) : 0);
+            $balance->setAttribute('picking_available_qty', $this->stock->eligible($balance, $requirement) ? $this->stock->available($balance, null, [(int) $requirement->id]) : 0);
             $balance->setAttribute('serial_tracking_mode', $balance->item?->serialTrackingMode() ?? 'none');
             return $balance;
         });

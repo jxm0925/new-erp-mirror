@@ -35,6 +35,10 @@ class ProductionTaskActionProjectionService
             'pause_collaborator_labor' => $isCollaborator && $myActive
                 && in_array($status, ['IN_PROGRESS', 'PAUSED'], true) && $has('production.task.collaborate'),
         ];
+        if ($task->active_job_bundle_id) {
+            foreach (['start', 'start_rework', 'pause', 'resume', 'complete', 'start_collaborator_labor', 'pause_collaborator_labor'] as $key) $allowed[$key] = false;
+        }
+        $allowed['open_job_bundle'] = (bool) $task->active_job_bundle_id;
         $labels = [
             'confirm_kitting' => ['code' => 'confirm_kitting_and_start', 'label' => '确认齐套并开工'],
             'start' => ['code' => 'start', 'label' => '开始加工'],
@@ -45,8 +49,11 @@ class ProductionTaskActionProjectionService
             'start_collaborator_labor' => ['code' => 'start_collaborator_labor', 'label' => '开始协同计时'],
             'pause_collaborator_labor' => ['code' => 'pause_collaborator_labor', 'label' => '暂停协同计时'],
             'complete' => ['code' => 'complete', 'label' => '完成本工序'],
+            'open_job_bundle' => ['code' => 'open_job_bundle', 'label' => '查看共同加工作业'],
         ];
+        if ($task->active_job_bundle_id) $labels['confirm_kitting'] = ['code' => 'confirm_kitting_and_start', 'label' => '确认本条齐套'];
         $ordered = ['confirm_kitting', 'start', 'start_rework', 'pause', 'resume', 'accept_handover', 'start_collaborator_labor', 'pause_collaborator_labor', 'complete'];
+        $ordered[] = 'open_job_bundle';
         $actions = collect($ordered)->filter(fn (string $key): bool => $allowed[$key])->map(fn (string $key): array => $labels[$key])->values()->all();
 
         return [

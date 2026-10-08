@@ -6,30 +6,31 @@
         <span class="head-icon"><i class="el-icon-coin" /></span>
         <div class="head-title-wrap">
           <div class="title-row">
-            <h1 class="page-title">物料档案</h1>
-            <el-tag size="small" type="success" effect="plain" class="head-tag total-tag">共 {{ total.toLocaleString() }} 种物料</el-tag>
+            <h1 class="page-title">物料管理</h1>
+            <el-tag v-if="canViewItems" size="small" type="success" effect="plain" class="head-tag total-tag">共 {{ total.toLocaleString() }} 种物料</el-tag>
           </div>
         </div>
       </div>
       <div class="head-actions">
-        <el-button size="small" icon="el-icon-refresh" class="btn-refresh" @click="load">刷新</el-button>
-        <el-button size="small" icon="el-icon-upload2" class="btn-import" @click="$router.push({ path: '/master/imports', query: { type: 'Item' } })">导入物料</el-button>
-        <el-button size="small" type="success" icon="el-icon-plus" class="btn-theme-create" @click="openCreate">新增物料</el-button>
+        <el-button v-if="canViewItems" size="small" icon="el-icon-refresh" class="btn-refresh" @click="load">刷新</el-button>
+        <el-button v-if="canViewCategories" size="small" icon="el-icon-folder-opened" @click="openCategories">管理分类</el-button>
+        <el-button v-if="canViewItems" size="small" icon="el-icon-upload2" class="btn-import" @click="openImport">导入物料</el-button>
+        <el-button v-if="canViewItems" size="small" type="success" icon="el-icon-plus" class="btn-theme-create" @click="openCreate">新增物料</el-button>
       </div>
     </header>
 
     <!-- 全局统一页面提示条 (遵照用户指令：所有页面统一采用此tip) -->
-    <div class="erp-page-tip">
+    <div v-if="canViewItems" class="erp-page-tip">
       <i class="el-icon-info" />
-      <span>维护生产物料档案（原材料、半成品、辅料等），统一管理基本单位、下料属性、采购单位换算与单件序列号追溯规则。</span>
+      <span>统一管理工厂物料和办公用品；列表标签区分管理类型，新增和编辑时选择类型并配置对应属性。</span>
     </div>
 
     <!-- 顶部概览指标卡片 -->
-    <section class="metric-overview-grid">
+    <section v-if="canViewItems" class="metric-overview-grid">
       <div class="metric-card metric-all">
         <div class="metric-icon-box"><i class="el-icon-coin" /></div>
         <div class="metric-info">
-          <span class="metric-label">全部物料档案</span>
+          <span class="metric-label">{{ scopeLabel }}</span>
           <strong class="metric-val">{{ total }}</strong>
         </div>
       </div>
@@ -50,16 +51,20 @@
       <div class="metric-card metric-cutting">
         <div class="metric-icon-box"><i class="el-icon-c-scale-to-original" /></div>
         <div class="metric-info">
-          <span class="metric-label">定长/下料物料</span>
-          <strong class="metric-val">{{ cuttingCount }}</strong>
+          <span class="metric-label">{{ isOffice ? '管理库存用品' : '定长/下料物料' }}</span>
+          <strong class="metric-val">{{ isOffice ? Number(stats.stock_managed || 0) : cuttingCount }}</strong>
         </div>
       </div>
     </section>
 
     <!-- 筛选工具栏与主表格卡片 -->
-    <section class="table-container-card">
+    <section v-if="canViewItems" class="table-container-card">
       <div class="filter-toolbar">
         <div class="filter-fields">
+          <el-select v-model="query.management_scope" size="small" clearable placeholder="管理类型：全部" class="filter-select-md" @change="changeScope">
+            <el-option label="工厂物料" value="factory" />
+            <el-option label="办公用品" value="office" />
+          </el-select>
           <el-input
             v-model.trim="query.keyword"
             size="small"
@@ -135,7 +140,7 @@
         >
           <el-table-column prop="item_code" label="Item编码" min-width="200">
             <template slot-scope="{ row }">
-              <span class="item-code-link" @click="openDetail(row)">
+              <span class="item-code-link" :title="row.item_code" @click="openDetail(row)">
                 <i class="el-icon-coin" /> {{ row.item_code }}
               </span>
             </template>
@@ -158,33 +163,41 @@
             </template>
           </el-table-column>
 
+          <el-table-column label="管理类型" width="100" align="center">
+            <template slot-scope="{ row }">
+              <el-tag size="mini" :type="recordScope(row) === 'office' ? 'warning' : 'success'" effect="plain">{{ recordScopeLabel(row) }}</el-tag>
+            </template>
+          </el-table-column>
+
           <el-table-column label="所属分类" min-width="115">
             <template slot-scope="{ row }">
-              <span v-if="row.category" class="category-name"><i class="el-icon-folder" /> {{ row.category.category_name }}</span>
+              <span v-if="row.category" class="category-name" :title="row.category.category_name"><i class="el-icon-folder" /> {{ row.category.category_name }}</span>
               <span v-else class="text-muted">—</span>
             </template>
           </el-table-column>
 
           <el-table-column label="基本单位" width="88" align="center">
             <template slot-scope="{ row }">
-              <span class="unit-badge">{{ canonicalUnitSymbol(row.unit) }}</span>
+              <span class="unit-badge" :title="canonicalUnitSymbol(row.unit)">{{ canonicalUnitSymbol(row.unit) }}</span>
             </template>
           </el-table-column>
 
-          <el-table-column label="下料属性" min-width="115">
+          <el-table-column v-if="!isOffice" label="下料属性" min-width="115">
             <template slot-scope="{ row }">
-              <el-tag size="mini" :type="isCuttingMaterial(row) ? 'warning' : 'info'" effect="plain">
+              <el-tag v-if="recordScope(row) === 'factory'" size="mini" :type="isCuttingMaterial(row) ? 'warning' : 'info'" effect="plain">
                 {{ cuttingModeText(row) }}
                 <span v-if="cuttingMode(row) === 'length'"> · {{ Number(row.standard_stock_length_mm).toLocaleString('zh-CN') }}mm</span>
               </el-tag>
+              <span v-else class="text-muted">—</span>
             </template>
           </el-table-column>
 
-          <el-table-column label="关联SKU" width="88" align="center">
+          <el-table-column v-if="!isOffice" label="关联SKU" width="88" align="center">
             <template slot-scope="{ row }">
-              <span class="sku-count-chip">
+              <span v-if="recordScope(row) === 'factory'" class="sku-count-chip">
                 <i class="el-icon-connection" /> {{ Number(row.active_sku_relation_count || 0) }}
               </span>
+              <span v-else class="text-muted">—</span>
             </template>
           </el-table-column>
 
@@ -241,6 +254,14 @@
       </div>
     </section>
 
+    <item-category-manager-dialog
+      v-model="categoryDialogVisible"
+      :management-scope="categoryDialogScope"
+      @changed="onCategoriesChanged"
+      @closed="onCategoriesClosed"
+      @select-items="showCategoryItems"
+    />
+
     <!-- 物料详情居中弹窗 (严格遵循 2026-09-24 规则：所有侧页全面改为四周留边居中弹窗) -->
     <el-dialog
       :visible.sync="detailDialogVisible"
@@ -259,11 +280,12 @@
               <h2>{{ selected.item_name }}</h2>
               <span class="status-pill" :class="selected.status">{{ statusText(selected.status) }}</span>
               <el-tag size="mini" type="success" effect="plain">{{ itemTypeText(selected.item_type) }}</el-tag>
+              <el-tag size="mini" :type="selectedIsOffice ? 'warning' : 'success'" effect="plain">{{ recordScopeLabel(selected) }}</el-tag>
             </div>
             <div class="banner-sub-meta">
               <span>Item编码：<strong>{{ selected.item_code }}</strong></span>
               <span>基本单位：<strong>{{ unitLabel(selected.unit) }}</strong></span>
-              <span>分类：<strong>{{ categoryPath(selected.category_id) || '-' }}</strong></span>
+              <span>分类：<strong>{{ categoryPath(selected.category_id) || selected.category?.category_name || '-' }}</strong></span>
             </div>
           </div>
         </div>
@@ -276,10 +298,12 @@
               <h3>基础规格信息</h3>
             </div>
             <div class="info-grid">
-              <div class="info-item"><span class="info-label">材质牌号</span><span class="info-val">{{ selected.material_grade || '-' }}</span></div>
-              <div class="info-item"><span class="info-label">下料分类</span><span class="info-val">{{ cuttingModeText(selected) }}</span></div>
-              <div v-if="cuttingMode(selected) === 'length'" class="info-item"><span class="info-label">标准定长</span><span class="info-val">{{ Number(selected.standard_stock_length_mm).toLocaleString('zh-CN') }} mm</span></div>
-              <div class="info-item"><span class="info-label">关联SKU数</span><span class="info-val">{{ (selected.sku_relations || []).length }} 款</span></div>
+              <div class="info-item"><span class="info-label">管理类型</span><span class="info-val">{{ recordScopeLabel(selected) }}</span></div>
+              <div class="info-item"><span class="info-label">规格型号</span><span class="info-val">{{ selected.spec || '-' }}</span></div>
+              <div v-if="!selectedIsOffice" class="info-item"><span class="info-label">材质牌号</span><span class="info-val">{{ selected.material_grade || '-' }}</span></div>
+              <div v-if="!selectedIsOffice" class="info-item"><span class="info-label">下料分类</span><span class="info-val">{{ cuttingModeText(selected) }}</span></div>
+              <div v-if="!selectedIsOffice && cuttingMode(selected) === 'length'" class="info-item"><span class="info-label">标准定长</span><span class="info-val">{{ Number(selected.standard_stock_length_mm).toLocaleString('zh-CN') }} mm</span></div>
+              <div v-if="!selectedIsOffice" class="info-item"><span class="info-label">关联SKU数</span><span class="info-val">{{ (selected.sku_relations || []).length }} 款</span></div>
               <div class="info-item"><span class="info-label">更新时间</span><span class="info-val">{{ formatDate(selected.updated_at) }}</span></div>
               <div class="info-item full-width"><span class="info-label">备注说明</span><span class="info-val">{{ selected.remark || selected.spec || '-' }}</span></div>
             </div>
@@ -365,7 +389,7 @@
           </section>
 
           <!-- 属性卡片 5：关联 SKU 档案 -->
-          <section class="detail-card">
+          <section v-if="!selectedIsOffice" class="detail-card">
             <div class="card-title-bar">
               <span class="card-icon-badge"><i class="el-icon-connection" /></span>
               <h3>关联商品 SKU 列表</h3>
@@ -394,7 +418,7 @@
       <div slot="footer" class="dialog-footer">
         <el-button size="small" @click="detailDialogVisible = false">关闭</el-button>
         <el-button size="small" icon="el-icon-edit" @click="openEdit(selected)">编辑物料</el-button>
-        <el-button size="small" type="primary" class="btn-theme-primary" @click="$router.push('/master/sku-item-relations')">
+        <el-button v-if="!selectedIsOffice" size="small" type="primary" class="btn-theme-primary" @click="$router.push('/master/sku-item-relations')">
           去关联SKU
         </el-button>
       </div>
@@ -472,6 +496,7 @@
 
 <script>
 import cachedPageRoute from '../../../utils/cachedPageRoute'
+import { routeMaterialScope, materialRecordScope, materialScopeLabel, materialListPath, materialTypesForScope } from '../../../utils/materialManagementScope.mjs'
 import {
   deleteEntity,
   disableEntity,
@@ -499,11 +524,21 @@ const emptyConversion = () => ({
 export default {
   mixins: [cachedPageRoute],
   name: 'ItemList',
+  components: {
+    ItemCategoryManagerDialog: () => import('../../../components/master/ItemCategoryManagerDialog.vue')
+  },
   data () {
     return {
       loading: false,
+      loadVersion: 0,
+      optionsVersion: 0,
+      detailVersion: 0,
+      listLoaded: false,
       saving: false,
       detailDialogVisible: false,
+      categoryDialogVisible: false,
+      categoryDialogScope: '',
+      categoriesDirty: false,
       conversionDialogVisible: false,
       rows: [],
       total: 0,
@@ -519,6 +554,7 @@ export default {
       units: [],
       suppliers: [],
       query: {
+        management_scope: routeMaterialScope(this.$route),
         keyword: '',
         item_type: '',
         category_id: Number(this.$route.query.category_id) || '',
@@ -527,13 +563,6 @@ export default {
         page: 1,
         per_page: 20
       },
-      itemTypes: [
-        { value: 'finished_product', label: '成品' },
-        { value: 'semi_finished', label: '半成品' },
-        { value: 'raw_material', label: '原材料' },
-        { value: 'packaging', label: '包装物' },
-        { value: 'service', label: '服务' }
-      ],
       conversionReasons: [
         '新增采购换算',
         '包装规格调整',
@@ -550,6 +579,14 @@ export default {
     }
   },
   computed: {
+    canViewItems () { return this.$can('master.item.view') },
+    canViewCategories () { return this.$can('item_category.view') },
+    managementScope () { return this.query.management_scope || '' },
+    isOffice () { return this.managementScope === 'office' },
+    scopeLabel () { return materialScopeLabel(this.managementScope) },
+    listPath () { return materialListPath(this.managementScope) },
+    itemTypes () { return materialTypesForScope(this.managementScope) },
+    selectedIsOffice () { return materialRecordScope(this.selected) === 'office' },
     selectableCategories () {
       return this.categories.filter(row => row.is_leaf && row.status === 'enabled')
     },
@@ -574,6 +611,10 @@ export default {
     }
   },
   watch: {
+    'pageRoute.query.management_scope' () {
+      this.query.management_scope = routeMaterialScope(this.pageRoute)
+      this.changeScope()
+    },
     'pageRoute.query.category_id' (id) {
       this.query.category_id = Number(id) || ''
       this.query.page = 1
@@ -583,27 +624,43 @@ export default {
   created () {
     this.load()
     this.loadOptions()
+    if (this.canViewCategories && (!this.canViewItems || this.pageRoute.query.manage_categories === '1')) this.openCategories()
+  },
+  activated () {
+    if (this.listLoaded) {
+      this.load()
+      this.loadOptions()
+    }
   },
   methods: {
     async load () {
+      if (!this.canViewItems) return
+      const version = ++this.loadVersion
       this.loading = true
       try {
-        const { data } = await listEntity('items', { ...this.query, include_stats: 1 })
+        const params = { ...this.query, include_stats: 1 }
+        if (!params.management_scope) delete params.management_scope
+        const { data } = await listEntity('items', params)
+        if (version !== this.loadVersion) return
         this.rows = data.data || []
         this.total = Number(data.total || 0)
         this.stats = data.stats || {}
+        this.listLoaded = true
       } catch (e) {
-        this.$message.error(e.userMessage || '物料列表加载失败')
+        if (version === this.loadVersion) this.$message.error(e.userMessage || '物料列表加载失败')
       } finally {
-        this.loading = false
+        if (version === this.loadVersion) this.loading = false
       }
     },
     async loadOptions () {
+      if (!this.canViewItems) return
+      const version = ++this.optionsVersion
       const [categories, units, suppliers] = await Promise.all([
-        getItemCategoryTree(),
+        this.canViewCategories ? getItemCategoryTree(this.scopeParams()) : Promise.resolve({ data: { data: [] } }),
         listEntity('units', { page: 1, per_page: 100, status: 'enabled' }),
         listEntity('suppliers', { page: 1, per_page: 100, status: 'enabled' })
       ])
+      if (version !== this.optionsVersion) return
       this.categoryTree = categories.data.data || []
       this.categories = this.flatten(this.categoryTree)
       this.units = units.data.data || []
@@ -622,8 +679,25 @@ export default {
       this.query.page = 1
       this.load()
     },
+    scopeParams () {
+      return this.managementScope ? { management_scope: this.managementScope } : {}
+    },
+    changeScope () {
+      this.detailVersion++
+      this.query.category_id = ''
+      this.query.item_type = ''
+      this.categories = []
+      this.categoryTree = []
+      this.selected = {}
+      this.selectedId = null
+      this.detailDialogVisible = false
+      this.loadOptions()
+      this.search()
+    },
     reset () {
+      this.detailVersion++
       this.query = {
+        management_scope: '',
         keyword: '',
         item_type: '',
         category_id: '',
@@ -632,6 +706,7 @@ export default {
         page: 1,
         per_page: this.query.per_page
       }
+      this.loadOptions()
       this.load()
     },
     sizeChange () {
@@ -639,30 +714,76 @@ export default {
       this.load()
     },
     async fetchItem (row) {
-      const { data } = await getEntity('items', row.id)
+      const { data } = await getEntity('items', row.id, { management_scope: materialRecordScope(row) })
       return data
     },
     async openDetail (row) {
+      if (!this.canViewItems) return
+      const version = ++this.detailVersion
       this.selectedId = row.id
+      this.selected = { ...row }
+      this.conversions = []
+      this.conversionTotal = 0
       this.detailDialogVisible = true
       try {
-        this.selected = await this.fetchItem(row)
+        const selected = await this.fetchItem(row)
+        // 范围或当前记录变化后，旧请求不能替换新弹窗的物料和采购换算。
+        if (version !== this.detailVersion || this.selectedId !== row.id || !this.detailDialogVisible) return
+        this.selected = selected
         this.conversionQuery.page = 1
         await this.loadConversions()
       } catch (e) {
-        this.$message.error(e.userMessage || '物料详情加载失败')
+        if (version === this.detailVersion && this.selectedId === row.id && this.detailDialogVisible) {
+          this.$message.error(e.userMessage || '物料详情加载失败')
+        }
       }
     },
     openEdit (row) {
+      if (!this.canViewItems) return
       this.detailDialogVisible = false
-      this.$router.push(`/master/items/${row.id}/edit`)
+      this.$router.push(`${this.listPath}/${row.id}/edit`)
     },
     openCreate () {
-      this.$router.push('/master/items/new')
+      if (!this.canViewItems) return
+      this.$router.push({ path: `${this.listPath}/new`, query: this.scopeParams() })
+    },
+    openCategories () {
+      if (!this.canViewCategories) return
+      this.categoryDialogScope = this.managementScope
+      this.categoryDialogVisible = true
+    },
+    onCategoriesChanged () {
+      this.categoriesDirty = true
+    },
+    async onCategoriesClosed () {
+      if (!this.categoriesDirty || !this.canViewItems) return
+      this.categoriesDirty = false
+      await this.loadOptions()
+      if (this.query.category_id && !this.categories.some(row => Number(row.id) === Number(this.query.category_id))) {
+        this.query.category_id = ''
+      }
+      await this.load()
+    },
+    showCategoryItems (row) {
+      if (!this.canViewItems) return
+      this.query.management_scope = materialRecordScope(row)
+      this.query.category_id = row.id
+      this.query.item_type = ''
+      this.query.page = 1
+      this.loadOptions()
+      this.load()
+    },
+    openImport () {
+      if (!this.canViewItems) return
+      this.$router.push({ path: '/master/imports', query: { type: 'Item', ...this.scopeParams() } })
     },
     async loadConversions () {
+      if (!this.canViewItems) return
       if (!this.selected.id) return
-      const { data } = await listItemPurchaseConversions(this.selected.id, this.conversionQuery)
+      const itemId = this.selected.id
+      const version = this.detailVersion
+      const { data } = await listItemPurchaseConversions(itemId, this.conversionQuery)
+      if (version !== this.detailVersion || this.selected.id !== itemId || !this.detailDialogVisible) return
       this.conversions = data.data || []
       this.conversionTotal = Number(data.total || 0)
     },
@@ -715,12 +836,13 @@ export default {
       }
     },
     async toggleStatus (row) {
+      if (!this.canViewItems) return
       const enabling = row.status !== 'enabled'
       try {
         await this.$confirm(enabling ? '确认启用该物料？' : '确认停用该物料？', enabling ? '启用确认' : '停用确认', {
           type: enabling ? 'success' : 'warning'
         })
-        await (enabling ? enableEntity : disableEntity)('items', row.id)
+        await (enabling ? enableEntity : disableEntity)('items', row.id, { management_scope: materialRecordScope(row) })
         this.$message.success(enabling ? '物料已启用' : '物料已停用')
         await this.load()
       } catch (e) {
@@ -728,13 +850,14 @@ export default {
       }
     },
     async deleteItem (row) {
+      if (!this.canViewItems) return
       try {
         await this.$confirm(
           `确认删除物料 ${row.item_code} / ${row.item_name}？仅从未被 SKU、采购、库存、BOM 或供应商关系引用的停用物料可以删除。`,
           '删除物料',
           { type: 'warning', confirmButtonText: '确认删除' }
         )
-        await deleteEntity('items', row.id)
+        await deleteEntity('items', row.id, { management_scope: materialRecordScope(row) })
         this.$message.success('物料已删除')
         await this.load()
       } catch (e) {
@@ -747,8 +870,10 @@ export default {
     categoryPath (id) {
       return (this.categories.find(row => Number(row.id) === Number(id)) || {}).full_path || ''
     },
+    recordScope (row) { return materialRecordScope(row) },
+    recordScopeLabel (row) { return materialScopeLabel(materialRecordScope(row)) },
     itemTypeText (value) {
-      return (this.itemTypes.find(type => type.value === value) || {}).label || value || '-'
+      return (materialTypesForScope('').find(type => type.value === value) || {}).label || value || '-'
     },
     cuttingMode (row) {
       return row && (row.cutting_mode || (row.is_length_cut_material ? 'length' : null))
@@ -850,6 +975,7 @@ export default {
 .head-title-wrap {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .title-row {
@@ -995,6 +1121,7 @@ export default {
   gap: 10px;
   flex-wrap: wrap;
   flex: 1;
+  min-width: 0;
 }
 
 .filter-input-search {
@@ -1044,7 +1171,11 @@ export default {
   font-variant-numeric: tabular-nums;
   color: #00763f;
   cursor: pointer;
-  display: inline-flex;
+  display: block;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
   align-items: center;
   gap: 5px;
   padding: 3px 8px;
@@ -1078,6 +1209,9 @@ export default {
 .item-name-text {
   font-weight: 600;
   color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .item-spec-sub {
@@ -1101,7 +1235,11 @@ export default {
 .category-name {
   color: #475569;
   font-size: 12px;
-  display: inline-flex;
+  display: block;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   align-items: center;
   gap: 4px;
 }
@@ -1113,6 +1251,10 @@ export default {
   border-radius: 4px;
   font-size: 11px;
   border: 1px solid #e2e8f0;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .sku-count-chip {
@@ -1302,12 +1444,15 @@ export default {
   align-items: center;
   gap: 10px;
   margin-bottom: 4px;
+  flex-wrap: wrap;
 }
 
 .banner-title-line h2 {
   margin: 0;
   font-size: 16px;
   font-weight: 700;
+  min-width: 0;
+  overflow-wrap: anywhere;
   color: #0f172a;
 }
 
@@ -1482,6 +1627,19 @@ export default {
 }
 
 @media (max-width: 768px) {
+  .table-pagination-footer { min-width: 0; }
+  .table-pagination-footer ::v-deep .el-pagination {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    max-width: 100%;
+    padding: 0;
+    white-space: normal;
+  }
+  .table-pagination-footer ::v-deep .el-pagination__sizes,
+  .table-pagination-footer ::v-deep .el-pagination__jump { margin: 0; }
   .item-page-container {
     padding: 10px 12px;
   }

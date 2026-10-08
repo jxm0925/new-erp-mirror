@@ -53,6 +53,7 @@ class ItemCategoryApplicationService
 
                 $data['category_type'] = 'item';
                 $this->assertParent($data['parent_id'] ?? null);
+                $data = app(ItemManagementScopeService::class)->prepareCategory($data);
                 $category = ItemCategory::create($data);
 
                 if ($reservationToken) {
@@ -94,6 +95,7 @@ class ItemCategoryApplicationService
             $parentId = $data['parent_id'] ?? null;
             $this->assertParent($parentId, $locked->id);
             abort_if($parentId && in_array($parentId, $this->descendantIds($locked->id), true), 422, '父级类目不能选择当前类目的下级。');
+            $data = app(ItemManagementScopeService::class)->prepareCategory($data, $locked);
             $locked->update($data);
 
             return $locked->fresh('parent');

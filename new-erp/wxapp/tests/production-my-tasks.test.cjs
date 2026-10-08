@@ -162,3 +162,48 @@ test('switching tabs changes active state and reloads data with execution_filter
   assert.equal(page.data.active, 'running');
   assert.equal(queriedFilter, 'running');
 });
+
+test('public classification preserves a zero filter, execution state and server pagination', async () => {
+  const requests = [];
+  const page = mount({ myTasks: async params => {
+    requests.push(params);
+    return { data: [{ id: params.page, status: 'READY', is_public_snapshot: params.is_public === '1',
+      operation: { is_public: params.is_public !== '1' }, target_details: [] }], total: 42,
+      stats: { today_total: 42, running: 3, waiting: 9, completed_today: 4 } };
+  } });
+  page.data.active = 'running';
+  page.data.keyword = '装配';
+  await page.onPublicFilter({ currentTarget: { dataset: { value: 0 } } });
+  assert.equal(requests[0].is_public, '0');
+  assert.equal(requests[0].execution_filter, 'running');
+  assert.equal(requests[0].keyword, '装配');
+  assert.equal(requests[0].page, 1);
+  assert.equal(requests[0].per_page, 20);
+  assert.equal(page.data.rows[0].showPublicBadge, false);
+  await page.load(true);
+  assert.equal(requests[1].is_public, '0');
+  assert.equal(requests[1].page, 2);
+  await page.onPublicFilter({ currentTarget: { dataset: { value: '1' } } });
+  assert.equal(requests[2].page, 1);
+  assert.equal(page.data.rows.length, 1);
+  assert.equal(page.data.rows[0].showPublicBadge, true);
+  assert.equal(page.data.total, 42);
+  assert.equal(page.data.stats.running, 3);
+});
+
+test('changing public classification ignores an earlier append response', async () => {
+  const pending = [];
+  const page = mount({ myTasks: params => new Promise(resolve => pending.push({ params, resolve })) });
+  page.data.page = 1;
+  page.data.rows = [{ id: 1 }];
+  const append = page.load(true);
+  const latest = page.onPublicFilter({ currentTarget: { dataset: { value: '0' } } });
+  pending[1].resolve({ data: [{ id: 3, status: 'READY', is_public_snapshot: false }], total: 1, stats: {} });
+  await latest;
+  pending[0].resolve({ data: [{ id: 2, status: 'READY', is_public_snapshot: true }], total: 60, stats: {} });
+  await append;
+  assert.deepEqual(Array.from(page.data.rows, row => row.id), [3]);
+  assert.equal(page.data.page, 1);
+  assert.equal(page.data.total, 1);
+  assert.equal(page.data.publicFilter, '0');
+});

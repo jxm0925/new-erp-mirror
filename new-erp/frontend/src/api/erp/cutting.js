@@ -26,6 +26,7 @@ export const listAllowedOutputs = (id, params) => api.get(`/v1/erp/production/cu
 export const listSelectorCategories = (id, params) => api.get(`/v1/erp/production/cutting/orders/${id}/selector-categories`, { params })
 export const listMaterialPhysicals = params => api.get('/v1/erp/production/cutting/material-physicals', { params })
 export const publishCuttingOrder = data => api.post('/v1/erp/production/cutting/orders/publish', { ...data, client_command_id: data.client_command_id || cmd('cut-publish') })
+export const listCuttingDemandProducers = (id, params) => api.get(`/v1/erp/production/cutting/demands/${id}/producer-options`, { params })
 export const closeCuttingOrder = (id, data = {}) => api.post(`/v1/erp/production/cutting/orders/${id}/close`, { ...data, client_command_id: data.client_command_id || cmd('cut-close') })
 export const cancelCuttingOrder = (id, data = {}) => api.post(`/v1/erp/production/cutting/orders/${id}/cancel`, { ...data, client_command_id: data.client_command_id || cmd('cut-cancel') })
 export const claimCuttingTask = (id, data = {}) => api.post(`/v1/erp/production/cutting/tasks/${id}/claim`, { ...data, client_command_id: data.client_command_id || cmd('cut-claim') })

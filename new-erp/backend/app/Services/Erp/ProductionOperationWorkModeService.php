@@ -16,6 +16,9 @@ class ProductionOperationWorkModeService
             ->where('target_id', $target->id)
             ->where('status', 'ACTIVE')
             ->exists();
+        if ($task->active_job_bundle_id) {
+            $active = ProductionLaborSession::query()->where('job_bundle_id', $task->active_job_bundle_id)->where('status', 'ACTIVE')->exists();
+        }
         $automatic = ($target->work_mode_snapshot ?: 'manual') === 'automatic';
         $status = $automatic || $active ? 'IN_PROGRESS' : 'PAUSED';
 

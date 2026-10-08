@@ -1,5 +1,5 @@
 <template>
-  <section class="category-page">
+  <section class="category-page" :class="{ 'is-embedded': embedded }">
     <div class="category-workspace">
       <!-- 页面全局头部：图标、标题、统计标签与主要操作 -->
       <header class="page-head">
@@ -7,11 +7,11 @@
           <span class="head-icon"><i class="el-icon-folder-opened" /></span>
           <div class="head-title-wrap">
             <div class="title-row">
-              <h1 class="page-title">物料类目档案</h1>
+              <h1 class="page-title">物料分类</h1>
               <el-tag size="small" type="success" effect="plain" class="head-tag">
                 共 {{ flatRows.length }} 个类目
               </el-tag>
-              <el-tag v-if="selected.id" size="small" type="info" effect="plain" class="head-tag">
+              <el-tag v-if="selected.id" size="small" type="info" effect="plain" class="head-tag selected-tag">
                 当前选中：{{ selected.category_name }}
               </el-tag>
             </div>
@@ -34,6 +34,14 @@
       <!-- 顶部筛选与检索栏 -->
       <div class="filter-card">
         <div class="filter-inputs">
+          <div class="filter-item">
+            <span class="filter-label">管理范围</span>
+            <el-select v-model="query.management_scope" size="small" class="scope-select" @change="changeManagementScope">
+              <el-option label="全部范围" value="" />
+              <el-option label="工厂物料" value="factory" />
+              <el-option label="办公用品" value="office" />
+            </el-select>
+          </div>
           <div class="filter-item">
             <span class="filter-label">类目检索</span>
             <el-input
@@ -74,7 +82,7 @@
               <span class="card-icon-badge"><i class="el-icon-s-operation" /></span>
               <h2 class="card-title">类目层级树</h2>
             </div>
-            <el-button type="text" size="mini" icon="el-icon-refresh" class="btn-refresh-tree" @click="loadTree">刷新树</el-button>
+            <el-button type="text" size="mini" icon="el-icon-refresh" class="btn-refresh-tree" @click="loadTree()">刷新树</el-button>
           </div>
 
           <div class="tree-search-wrap">
@@ -105,6 +113,9 @@
                   <span class="node-name" :title="data.category_name">{{ data.category_name }}</span>
                 </div>
                 <div class="node-badges">
+                  <el-tag size="mini" :type="categoryScope(data) === 'office' ? 'warning' : 'success'" effect="plain" class="scope-tag">
+                    {{ scopeName(data) }}
+                  </el-tag>
                   <span v-if="data.subtree_item_count !== undefined && data.subtree_item_count !== null" class="count-badge" title="关联物料数">
                     {{ data.subtree_item_count }}
                   </span>
@@ -123,6 +134,9 @@
               <div class="head-title-box">
                 <div class="title-with-badge">
                   <h2 class="detail-title">{{ selected.category_name }}</h2>
+                  <el-tag size="mini" :type="categoryScope(selected) === 'office' ? 'warning' : 'success'" effect="plain" class="scope-tag">
+                    {{ scopeName(selected) }}
+                  </el-tag>
                   <el-tag size="mini" :type="selected.status === 'enabled' ? 'success' : 'info'" effect="plain">
                     {{ selected.status === 'enabled' ? '正常启用' : '已停用' }}
                   </el-tag>
@@ -193,7 +207,7 @@
 
           <!-- 三项统计指标卡片 (支持点击快速穿透跳转) -->
           <div v-if="selected.id" class="stat-row">
-            <div class="stat-card linkable" @click="goItems">
+            <div class="stat-card linkable" @click="goItems(selected)">
               <div class="stat-icon-box item-icon">
                 <i class="el-icon-box" />
               </div>
@@ -207,7 +221,7 @@
               <i class="el-icon-arrow-right stat-arrow" />
             </div>
 
-            <div class="stat-card linkable" @click="goSuppliers">
+            <div class="stat-card linkable" @click="goSuppliers(selected)">
               <div class="stat-icon-box supplier-icon">
                 <i class="el-icon-truck" />
               </div>
@@ -275,6 +289,14 @@
                       <i :class="row.is_leaf ? 'el-icon-document leaf-icon' : 'el-icon-folder folder-icon'" />
                       <strong>{{ row.category_name }}</strong>
                     </span>
+                  </template>
+                </el-table-column>
+
+                <el-table-column label="管理范围" width="104" align="center">
+                  <template slot-scope="{ row }">
+                    <el-tag size="mini" :type="categoryScope(row) === 'office' ? 'warning' : 'success'" effect="plain" class="scope-tag">
+                      {{ scopeName(row) }}
+                    </el-tag>
                   </template>
                 </el-table-column>
 
@@ -362,9 +384,14 @@
       :title="form.id ? '编辑物料类目' : '新增物料类目'"
       :visible.sync="drawerVisible"
       width="580px"
+      top="5vh"
       append-to-body
       destroy-on-close
       class="category-dialog"
+      :close-on-click-modal="false"
+      :close-on-press-escape="false"
+      :before-close="beforeCloseForm"
+      @closed="closeForm"
     >
       <div class="dialog-subtitle-chip">
         <i class="el-icon-folder" />
@@ -372,6 +399,12 @@
       </div>
 
       <el-form ref="form" :model="form" :rules="rules" label-position="top" size="small" class="dialog-form">
+        <el-form-item label="管理范围" prop="management_scope" required>
+          <el-select v-model="form.management_scope" class="full-width" :disabled="formScopeLocked || saving || numberLoading" @change="changeFormScope">
+            <el-option label="工厂物料" value="factory" />
+            <el-option label="办公用品" value="office" />
+          </el-select>
+        </el-form-item>
         <div class="dialog-grid-2">
           <el-form-item label="类目编码" prop="category_code">
             <el-input v-model.trim="form.category_code" disabled placeholder="系统预占生成" class="code-mono">
@@ -380,12 +413,12 @@
           </el-form-item>
 
           <el-form-item label="类目名称" prop="category_name" required>
-            <el-input v-model.trim="form.category_name" clearable maxlength="80" placeholder="如：不锈钢材料 / 工业阀门" />
+            <el-input v-model.trim="form.category_name" clearable maxlength="80" :placeholder="isOffice ? '如：办公文具 / 纸张' : '如：不锈钢材料 / 工业阀门'" />
           </el-form-item>
         </div>
 
         <el-form-item label="上级父级类目">
-          <el-select v-model="form.parent_id" clearable filterable class="full-width" placeholder="不选择则自动作为一级根类目">
+          <el-select v-model="form.parent_id" clearable filterable class="full-width" :disabled="saving || numberLoading" placeholder="不选择则自动作为一级根类目" @change="changeParent">
             <el-option v-for="row in parentOptions" :key="row.id" :label="row.full_path" :value="row.id" />
           </el-select>
         </el-form-item>
@@ -423,7 +456,7 @@
       </el-form>
 
       <span slot="footer" class="dialog-footer">
-        <el-button size="small" @click="drawerVisible = false">取消</el-button>
+        <el-button size="small" :disabled="saving" @click="drawerVisible = false">取消</el-button>
         <el-button
           v-if="canManage"
           size="small"
@@ -441,6 +474,8 @@
 </template>
 
 <script>
+import cachedPageRoute from '../../../utils/cachedPageRoute'
+import { routeMaterialScope, materialRecordScope, materialScopeLabel, materialListPath, materialCategoryPath } from '../../../utils/materialManagementScope.mjs'
 import {
   listItemCategories,
   getItemCategoryTree,
@@ -456,8 +491,13 @@ import {
   clearCreatePageReservation
 } from '../../../utils/documentNumberReservation'
 
+const validScope = value => ['factory', 'office'].includes(value) ? value : ''
+const initialScope = route => routeMaterialScope(route)
+  || (route?.path === '/master/office-categories' ? 'office' : '')
+const flattenCategories = tree => (tree || []).flatMap(row => [row, ...flattenCategories(row.children)])
 const emptyForm = () => ({
   id: null,
+  management_scope: 'factory',
   category_code: '',
   category_name: '',
   parent_id: null,
@@ -467,102 +507,192 @@ const emptyForm = () => ({
 })
 
 export default {
+  mixins: [cachedPageRoute],
   name: 'ItemCategoryList',
+  props: {
+    embedded: { type: Boolean, default: false },
+    initialManagementScope: { type: String, default: '' }
+  },
   data() {
     return {
+      isDisposed: false,
       loading: false,
       saving: false,
       numberLoading: false,
       reservation: null,
       drawerVisible: false,
       tree: [],
+      scopeTrees: { factory: [], office: [] },
+      loadedScopes: { factory: false, office: false },
+      treeLoadVersion: 0,
+      listLoadVersion: 0,
+      selectionVersion: 0,
+      numberVersion: 0,
+      lockedFormScope: 'factory',
       treeKeyword: '',
       rows: [],
       total: 0,
       selected: {},
       form: emptyForm(),
       query: {
+        management_scope: this.embedded ? validScope(this.initialManagementScope) : initialScope(this.pageRoute || this.$route),
         keyword: '',
         status: '',
         page: 1,
         per_page: 20
       },
       rules: {
+        management_scope: [{ required: true, message: '请选择管理范围', trigger: 'change' }],
         category_code: [{ required: true, message: '系统编号生成失败，请重新打开新增页', trigger: 'change' }],
         category_name: [{ required: true, message: '请输入类目名称', trigger: 'blur' }]
       }
     }
   },
   computed: {
-    flatRows() {
-      const rows = []
-      const visit = list =>
-        (list || []).forEach(row => {
-          rows.push(row)
-          visit(row.children)
-        })
-      visit(this.tree)
-      return rows
-    },
+    managementScope() { return this.query.management_scope },
+    isOffice() { return this.form.management_scope === 'office' },
+    scopeLabel() { return materialScopeLabel(this.form.management_scope) },
+    formScopeLocked() { return !!(this.form.id || this.form.parent_id) },
+    flatRows() { return flattenCategories(this.tree) },
     parentOptions() {
-      return this.flatRows.filter(row => Number(row.id) !== Number(this.form.id))
+      const rows = flattenCategories(this.scopeTrees[this.form.management_scope])
+      const self = rows.find(row => Number(row.id) === Number(this.form.id))
+      const excluded = new Set(self ? flattenCategories([self]).map(row => Number(row.id)) : [])
+      return rows.filter(row => this.categoryScope(row) === this.form.management_scope && !excluded.has(Number(row.id)))
     },
     canManage() {
       const profile = JSON.parse(localStorage.getItem('erp_me') || '{}')
       const permissions = JSON.parse(localStorage.getItem('erp_permissions') || '[]')
       return !!profile.is_super_admin || permissions.includes('item_category.manage')
+    },
+    canViewItems() {
+      const profile = JSON.parse(localStorage.getItem('erp_me') || '{}')
+      const permissions = JSON.parse(localStorage.getItem('erp_permissions') || '[]')
+      return !!profile.is_super_admin || permissions.includes('master.item.view')
+    }
+  },
+  watch: {
+    'pageRoute.query.management_scope'(scope) {
+      if (this.embedded) return
+      if (validScope(scope) === this.query.management_scope) return
+      this.query.management_scope = validScope(scope)
+      this.changeManagementScope()
     }
   },
   created() {
     this.initialize()
   },
+  beforeDestroy() {
+    // 弹窗重开会创建新实例；使旧请求失效，避免旧树、详情或编号进入下一次维护。
+    this.isDisposed = true
+    this.treeLoadVersion++
+    this.listLoadVersion++
+    this.selectionVersion++
+    this.drawerVisible = false
+    this.closeForm()
+  },
   methods: {
-    async initialize() {
-      await this.loadTree()
-      if (this.tree.length) await this.selectCategory(this.tree[0])
-      else await this.loadChildren()
+    categoryScope(row = {}) {
+      const known = this.flatRows.find(value => Number(value.id) === Number(row.id))
+      return validScope(row.management_scope) || validScope(known?.management_scope)
+        || validScope(this.query.management_scope) || materialRecordScope(known || row)
     },
-    async loadTree() {
+    scopeName(row) { return materialScopeLabel(this.categoryScope(row)) },
+    scopeParams(scope) { return validScope(scope) ? { management_scope: scope } : {} },
+    scopeVisible(scope) { return !this.query.management_scope || this.query.management_scope === scope },
+    async initialize() {
+      if (await this.loadTree() === false) return
+      const current = this.flatRows.find(row => Number(row.id) === Number(this.selected.id))
+      if (current) await this.selectCategory(current)
+      else {
+        this.selected = {}
+        await this.loadChildren()
+      }
+    },
+    async loadTree(scope = this.query.management_scope) {
+      if (this.isDisposed) return false
+      const version = ++this.treeLoadVersion
+      const filterScope = this.query.management_scope
       try {
-        const { data } = await getItemCategoryTree()
-        this.tree = data.data || []
+        const { data } = await getItemCategoryTree(this.scopeParams(scope))
+        if (version !== this.treeLoadVersion || filterScope !== this.query.management_scope) return false
+        const rows = data.data || []
+        if (scope) {
+          this.scopeTrees = { ...this.scopeTrees, [scope]: rows }
+          this.loadedScopes = { ...this.loadedScopes, [scope]: true }
+        } else {
+          this.scopeTrees = {
+            factory: rows.filter(row => this.categoryScope(row) === 'factory'),
+            office: rows.filter(row => this.categoryScope(row) === 'office')
+          }
+          this.loadedScopes = { factory: true, office: true }
+        }
+        // 合并入口只重载被维护的范围，避免覆盖另一范围仍在使用的层级状态。
+        if (!filterScope && scope) {
+          this.tree = [...this.tree.filter(row => this.categoryScope(row) !== scope), ...rows]
+            .sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0) || Number(a.id) - Number(b.id))
+        } else if (!scope || scope === filterScope) this.tree = rows
+        return true
       } catch (e) {
-        this.$message.error(e.userMessage || 'Item类目树加载失败')
+        if (version === this.treeLoadVersion) this.$message.error(e.userMessage || '物料分类树加载失败')
+        return false
       }
     },
     async loadChildren() {
+      if (this.isDisposed) return
+      const version = ++this.listLoadVersion
       this.loading = true
+      const params = { ...this.query }
+      if (!params.management_scope) delete params.management_scope
+      if (this.selected.id) {
+        params.parent_id = this.selected.id
+        params.management_scope = this.categoryScope(this.selected)
+      } else params.root_only = 1
       try {
-        const params = { ...this.query }
-        if (this.selected.id) params.parent_id = this.selected.id
-        else params.root_only = 1
         const { data } = await listItemCategories(params)
+        if (version !== this.listLoadVersion) return
         this.rows = data.data || []
         this.total = data.total || 0
       } catch (e) {
-        this.$message.error(e.userMessage || '类目列表加载失败')
+        if (version === this.listLoadVersion) this.$message.error(e.userMessage || '类目列表加载失败')
       } finally {
-        this.loading = false
+        if (version === this.listLoadVersion) this.loading = false
       }
     },
     async selectCategory(row) {
+      if (this.isDisposed) return
+      const version = ++this.selectionVersion
+      const scope = this.categoryScope(row)
+      const filterScope = this.query.management_scope
       try {
-        const { data } = await getItemCategory(row.id)
-        this.selected = data.data || row
+        const { data } = await getItemCategory(row.id, this.scopeParams(scope))
+        if (version !== this.selectionVersion || filterScope !== this.query.management_scope || !this.scopeVisible(scope)) return
+        this.selected = { ...row, ...(data.data || {}), management_scope: scope }
         this.query.page = 1
         await this.loadChildren()
         this.$refs.categoryTree && this.$refs.categoryTree.setCurrentKey(row.id)
       } catch (e) {
-        this.$message.error(e.userMessage || '类目详情加载失败')
+        if (version === this.selectionVersion) this.$message.error(e.userMessage || '类目详情加载失败')
       }
+    },
+    async changeManagementScope() {
+      this.query.management_scope = validScope(this.query.management_scope)
+      this.query.page = 1
+      this.selected = {}
+      this.rows = []
+      this.total = 0
+      this.selectionVersion++
+      this.listLoadVersion++
+      if (await this.loadTree() !== false) await this.loadChildren()
     },
     search() {
       this.query.page = 1
-      this.loadChildren()
+      return this.loadChildren()
     },
     reset() {
-      this.query = { keyword: '', status: '', page: 1, per_page: 20 }
-      this.loadChildren()
+      this.query = { management_scope: '', keyword: '', status: '', page: 1, per_page: 20 }
+      this.treeKeyword = ''
+      return this.changeManagementScope()
     },
     filterTree(value) {
       this.$refs.categoryTree && this.$refs.categoryTree.filter(value)
@@ -570,49 +700,123 @@ export default {
     filterNode(value, data) {
       if (!value) return true
       const q = String(value).toLowerCase()
-      return `${data.category_code}${data.category_name}${data.full_path}`.toLowerCase().includes(q)
+      return (String(data.category_code) + data.category_name + data.full_path).toLowerCase().includes(q)
     },
-    async openCreate(parent) {
-      this.form = { ...emptyForm(), parent_id: parent?.id || null }
-      this.reservation = null
-      this.drawerVisible = true
-      this.numberLoading = true
+    async ensureParentOptions(scope) {
+      if (this.isDisposed) return
+      if (this.loadedScopes[scope]) return
       try {
-        this.reservation = await reserveForCreatePage('item_category', '/master/categories#create')
-        this.form.category_code = this.reservation.document_no
+        const { data } = await getItemCategoryTree(this.scopeParams(scope))
+        if (this.isDisposed) return
+        this.scopeTrees = { ...this.scopeTrees, [scope]: data.data || [] }
+        this.loadedScopes = { ...this.loadedScopes, [scope]: true }
       } catch (e) {
-        this.$message.error(e.userMessage || 'Item类目编号预生成失败，请重新打开新增页')
-      } finally {
-        this.numberLoading = false
+        if (!this.isDisposed) this.$message.error(e.userMessage || '上级类目加载失败')
       }
     },
-    openEdit(row) {
-      this.reservation = null
-      this.form = { ...emptyForm(), ...row }
+    async openCreate(parent) {
+      const scope = parent ? this.categoryScope(parent) : validScope(this.query.management_scope) || 'factory'
+      this.form = { ...emptyForm(), management_scope: scope, parent_id: parent?.id || null }
+      this.lockedFormScope = scope
       this.drawerVisible = true
+      this.$nextTick(() => this.$refs.form && this.$refs.form.clearValidate())
+      await Promise.all([this.ensureParentOptions(scope), this.generateNumber()])
+    },
+    async openEdit(row) {
+      this.numberVersion++
+      clearCreatePageReservation(this.reservation)
+      this.reservation = null
+      this.numberLoading = false
+      const scope = this.categoryScope(row)
+      this.form = { ...emptyForm(), ...row, management_scope: scope }
+      this.lockedFormScope = scope
+      this.drawerVisible = true
+      this.$nextTick(() => this.$refs.form && this.$refs.form.clearValidate())
+      await this.ensureParentOptions(scope)
+    },
+    async changeFormScope(scope) {
+      if (this.formScopeLocked) {
+        this.form.management_scope = this.lockedFormScope
+        return
+      }
+      this.form.management_scope = validScope(scope) || 'factory'
+      this.form.parent_id = null
+      this.lockedFormScope = this.form.management_scope
+      await Promise.all([this.ensureParentOptions(this.form.management_scope), this.generateNumber()])
+    },
+    changeParent(id) {
+      const parent = this.parentOptions.find(row => Number(row.id) === Number(id))
+      this.form.parent_id = parent?.id || null
+      if (parent) this.form.management_scope = this.categoryScope(parent)
+      this.lockedFormScope = this.form.management_scope
+    },
+    async generateNumber(fresh = false) {
+      if (this.isDisposed || !this.drawerVisible) return
+      const version = ++this.numberVersion
+      const scope = this.form.management_scope
+      clearCreatePageReservation(this.reservation)
+      this.reservation = null
+      this.form.category_code = ''
+      this.numberLoading = true
+      try {
+        const reserve = fresh ? reserveFreshDocumentNumber : reserveForCreatePage
+        const candidate = await reserve('item_category', materialCategoryPath(scope) + '#create:' + scope)
+        if (version !== this.numberVersion || !this.drawerVisible || scope !== this.form.management_scope || this.isDisposed) {
+          clearCreatePageReservation(candidate)
+          return
+        }
+        this.reservation = candidate
+        this.form.category_code = candidate.document_no
+      } catch (e) {
+        if (version === this.numberVersion) this.$message.error(e.userMessage || '物料分类编号生成失败')
+      } finally {
+        if (version === this.numberVersion) this.numberLoading = false
+      }
+    },
+    closeForm() {
+      this.numberVersion++
+      clearCreatePageReservation(this.reservation)
+      this.reservation = null
+      this.numberLoading = false
+    },
+    beforeCloseForm(done) {
+      if (this.saving) {
+        this.$message.warning('分类正在保存，请稍后关闭')
+        return
+      }
+      done()
     },
     save() {
-      this.$refs.form.validate(async valid => {
-        if (!valid) return
+      if (this.saving || this.isDisposed) return
+      return this.$refs.form.validate(async valid => {
+        if (!valid || this.isDisposed || this.saving) return
         this.saving = true
+        const payload = { ...this.form }
+        const scope = payload.management_scope
+        // 预占凭据仅用于创建；新建后选中同一行再编辑时也不能带入更新请求。
+        if (payload.id) {
+          delete payload.reservation_token
+          delete payload.creation_session_id
+        } else if (this.reservation) {
+          payload.reservation_token = this.reservation.reservation_token
+          payload.creation_session_id = this.reservation.creation_session_id
+        }
         try {
-          const payload = { ...this.form }
-          if (!this.form.id && this.reservation) {
-            payload.reservation_token = this.reservation.reservation_token
-            payload.creation_session_id = this.reservation.creation_session_id
-          }
-          const { data } = await saveItemCategory(payload)
-          if (!this.form.id) clearCreatePageReservation(this.reservation)
-          this.$message.success('Item类目保存成功')
+          const { data } = await saveItemCategory(payload, this.scopeParams(scope))
+          if (!payload.id) clearCreatePageReservation(this.reservation)
+          delete payload.reservation_token
+          delete payload.creation_session_id
+          if (this.isDisposed) return
+          this.$message.success('物料分类保存成功')
           this.drawerVisible = false
-          await this.loadTree()
-          if (data?.data?.id) await this.selectCategory({ id: data.data.id })
-          else if (this.form.id) await this.selectCategory({ id: this.form.id })
-          else if (this.form.parent_id) await this.selectCategory({ id: this.form.parent_id })
-          else await this.initialize()
+          if (!this.scopeVisible(scope)) this.query.management_scope = scope
+          await this.loadTree(scope)
+          await this.selectCategory({ ...payload, ...(data?.data || {}), management_scope: scope })
+          this.$emit('changed', { management_scope: scope, id: data?.data?.id || payload.id, action: 'saved' })
         } catch (e) {
+          if (this.isDisposed) return
           const errors = e.response?.data?.errors || {}
-          if (!this.form.id && (errors.category_code || errors.reservation_token || errors.creation_session_id)) {
+          if (!payload.id && (errors.category_code || errors.reservation_token || errors.creation_session_id)) {
             await this.refreshGeneratedNumber(e)
             return
           }
@@ -623,64 +827,78 @@ export default {
       })
     },
     async refreshGeneratedNumber(error) {
-      const old = this.reservation
-      clearCreatePageReservation(old)
-      this.reservation = null
-      this.form.category_code = ''
-      this.numberLoading = true
-      try {
-        this.reservation = await reserveFreshDocumentNumber('item_category', '/master/categories#create')
-        this.form.category_code = this.reservation.document_no
-        const errors = error.response?.data?.errors || {}
-        const first = Object.values(errors)[0]
-        this.$message.error(
-          `${Array.isArray(first) ? first[0] : first || '编号冲突'}，系统已刷新编号，请重新确认保存。`
-        )
-      } catch (e) {
-        this.$message.error(e.userMessage || '新编号生成失败，请关闭并重新打开新增页')
-      } finally {
-        this.numberLoading = false
-      }
+      if (this.isDisposed) return
+      await this.generateNumber(true)
+      if (!this.reservation) return
+      const first = Object.values(error.response?.data?.errors || {})[0]
+      this.$message.error((Array.isArray(first) ? first[0] : first || '编号冲突') + '，系统已刷新编号，请重新确认保存。')
     },
     async toggleStatus(row) {
+      if (this.saving || this.isDisposed) return
       const enabling = row.status !== 'enabled'
+      const scope = this.categoryScope(row)
+      this.saving = true
       try {
         await this.$confirm(
-          enabling
-            ? '启用前系统会检查全部上级类目，确认继续？'
-            : '停用前系统会检查启用的子类目；历史 Item 与供应商关系不会删除。',
+          enabling ? '启用前系统会检查全部上级类目，确认继续？' : '停用前系统会检查启用的子类目；历史物料与供应商关系不会删除。',
           enabling ? '启用类目' : '停用类目',
           { type: 'warning' }
         )
-        await (enabling ? enableItemCategory : disableItemCategory)(row.id)
+        if (this.isDisposed) return
+        await (enabling ? enableItemCategory : disableItemCategory)(row.id, this.scopeParams(scope))
+        if (this.isDisposed) return
         this.$message.success(enabling ? '类目已启用' : '类目已停用')
-        await this.loadTree()
-        await this.selectCategory({ id: row.id })
+        await this.loadTree(scope)
+        if (this.scopeVisible(scope)) await this.selectCategory({ ...row, management_scope: scope })
+        this.$emit('changed', { management_scope: scope, id: row.id, action: enabling ? 'enabled' : 'disabled' })
       } catch (e) {
-        if (e !== 'cancel') this.$message.error(e.userMessage || '操作失败')
+        if (!this.isDisposed && e !== 'cancel' && e !== 'close') this.$message.error(e.userMessage || '操作失败')
+      } finally {
+        this.saving = false
       }
     },
     async deleteCategory(row) {
+      if (this.saving || this.isDisposed) return
+      const scope = this.categoryScope(row)
+      this.saving = true
       try {
         await this.$confirm(
-          `确认删除 Item 类目 ${row.category_code} / ${row.category_name}？仅无子类目且未被 Item 或供应商引用的停用类目可以删除。`,
+          '确认删除物料分类 ' + row.category_code + ' / ' + row.category_name + '？仅无子类目且未被物料或供应商引用的停用类目可以删除。',
           '删除类目',
           { type: 'warning', confirmButtonText: '确认删除' }
         )
-        await deleteItemCategory(row.id)
-        this.$message.success('Item 类目已删除')
-        this.selected = {}
-        await this.loadTree()
-        await this.initialize()
+        if (this.isDisposed) return
+        await deleteItemCategory(row.id, this.scopeParams(scope))
+        if (this.isDisposed) return
+        this.$message.success('物料分类已删除')
+        await this.loadTree(scope)
+        if (this.scopeVisible(scope) && (!this.selected.id || this.categoryScope(this.selected) === scope)) {
+          const current = this.flatRows.find(value => Number(value.id) === Number(this.selected.id))
+          if (current) await this.selectCategory(current)
+          else {
+            this.selected = {}
+            await this.loadChildren()
+          }
+        }
+        this.$emit('changed', { management_scope: scope, id: row.id, action: 'deleted' })
       } catch (e) {
-        if (e !== 'cancel' && e !== 'close') this.$message.error(e.userMessage || '类目删除失败')
+        if (!this.isDisposed && e !== 'cancel' && e !== 'close') this.$message.error(e.userMessage || '类目删除失败')
+      } finally {
+        this.saving = false
       }
     },
     parentName(id) {
-      return (this.flatRows.find(row => Number(row.id) === Number(id)) || {}).category_name || '-'
+      const rows = [...this.flatRows, ...flattenCategories(this.scopeTrees[this.form.management_scope])]
+      return (rows.find(row => Number(row.id) === Number(id)) || {}).category_name || '-'
     },
     goItems(row = this.selected) {
-      this.$router.push({ path: '/master/items', query: { category_id: row.id } })
+      if (!this.canViewItems) return
+      const scope = this.categoryScope(row)
+      if (this.embedded) {
+        this.$emit('select-items', { ...row, management_scope: scope })
+        return
+      }
+      this.$router.push({ path: materialListPath(scope), query: { category_id: row.id, management_scope: scope } })
     },
     goSuppliers(row = this.selected) {
       this.$router.push({ path: '/master/suppliers', query: { category_id: row.id } })
@@ -704,6 +922,15 @@ export default {
 
 .category-workspace {
   padding: 16px 20px 30px;
+}
+
+.category-page.is-embedded {
+  min-height: 0;
+  background: transparent;
+}
+
+.is-embedded .category-workspace {
+  padding: 0;
 }
 
 /* 高清等宽数字与编码字体规范 */
@@ -731,6 +958,8 @@ export default {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .head-icon {
@@ -749,6 +978,7 @@ export default {
 .head-title-wrap {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .title-row {
@@ -768,6 +998,14 @@ export default {
 .head-tag {
   border-radius: 4px;
   font-weight: 500;
+}
+
+.selected-tag {
+  height: auto;
+  max-width: 100%;
+  line-height: 20px;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .head-actions {
@@ -860,6 +1098,16 @@ export default {
 
 .status-select {
   width: 130px;
+}
+
+.scope-select {
+  width: 140px;
+  min-width: 0;
+}
+
+.scope-tag {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .filter-actions {
@@ -1351,6 +1599,10 @@ export default {
 .category-dialog ::v-deep .el-dialog {
   border-radius: 8px;
   overflow: hidden;
+  width: min(580px, calc(100vw - 24px)) !important;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
 }
 
 .category-dialog ::v-deep .el-dialog__header {
@@ -1367,6 +1619,13 @@ export default {
 
 .category-dialog ::v-deep .el-dialog__body {
   padding: 18px 22px 10px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.category-dialog ::v-deep .el-dialog__header,
+.category-dialog ::v-deep .el-dialog__footer {
+  flex-shrink: 0;
 }
 
 .category-dialog ::v-deep .el-dialog__footer {
@@ -1506,8 +1765,10 @@ export default {
     width: 100%;
   }
   .filter-item .el-input,
+  .scope-select,
   .status-select {
     width: 100%;
+    min-width: 0;
   }
   .filter-actions {
     width: 100%;

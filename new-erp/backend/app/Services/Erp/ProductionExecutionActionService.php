@@ -3,6 +3,7 @@
 namespace App\Services\Erp;
 
 use App\Exceptions\Erp\WorkOrderDomainException;
+use App\Models\Erp\Item;
 use App\Models\Erp\ProductionExecutionCommand;
 use App\Models\Erp\ProductionLaborSession;
 use App\Models\Erp\ProductionQuantityOperation;
@@ -27,7 +28,11 @@ class ProductionExecutionActionService
         $this->permission($permissions, 'production.task.start');
         return $this->mutate('start_target', $taskId, $type, $targetId, $payload, $user, function ($task, $target, int $userId) use ($type, $payload): array {
             if ($target->status !== 'READY') $this->fail('target_not_ready', '只有已完成前置条件并处于待开工状态的生产目标可以开工。', 409);
-            if ($target->kitting_required) $this->fail('ordinary_start_not_allowed', '该工序需要齐套确认，必须通过齐套确认命令正式开工。', 409);
+            if ($target->kitting_required && ! (ProductionJobBundleExecutionContext::contains($task) && $target->kitting_confirmed_at)) $this->fail('ordinary_start_not_allowed', '该工序需要齐套确认，必须通过齐套确认命令正式开工。', 409);
+            $readiness = app(ProductionTargetReadinessService::class)->project($type, $target);
+            if (! $readiness['ready']) {
+                $this->fail($readiness['reason_code'] ?: 'target_not_ready', $readiness['reason_message'] ?: '生产目标的开工条件尚未满足。', 409);
+            }
             if ($target->started_at) $this->fail('operation_already_started_use_resume', '该工序已经正式开工，请使用恢复我的作业。', 409);
             $now = now();
             $target->fill(['status' => 'IN_PROGRESS', 'started_at' => $target->started_at ?: $now,
@@ -93,9 +98,9 @@ class ProductionExecutionActionService
             if (ProductionLaborSession::query()->where('target_type', $type)->where('target_id', $target->id)->where('status', 'ACTIVE')->exists())
                 $this->fail('collaborator_labor_active', '仍有协作者处于加工计时中，必须先结束全部协同计时。', 409);
             $this->laborAllocation->allocate($task, $type, (int) $target->id);
-            if ($type === 'quantity_operation') $this->completeQuantity($task, $target, $payload, $userId, $now);
-
             $terminal = $this->isTerminalTarget($type, $target, (int) $task->work_order_id);
+            if ($type === 'quantity_operation') $this->completeQuantity($task, $target, $payload, $userId, $now, $terminal);
+
             $output = $this->createOutput($type, $target, $userId, $payload, $now, $terminal);
             $output = $this->materialCosts->consume($output, $target, $type, $payload, $userId, $permissions);
             $output = app(ProductionCuttingOperationService::class)->attachOutputCosts($output, $target, $type, $userId);
@@ -128,6 +133,7 @@ class ProductionExecutionActionService
                     'aggregate_type' => $type, 'aggregate_id' => $targetId, 'request_hash' => $hash, 'status' => 'processing',
                     'initiated_by_legacy_id' => $this->userId($user), 'processing_started_at' => now()]);
                 [$task, $target] = $this->lockedTarget($taskId, $type, $targetId);
+                ProductionJobBundleExecutionContext::assertTask($task);
                 $this->owner($task, $user);
                 if ((int) $target->business_version !== (int) ($payload['expected_version'] ?? 0)) {
                     $this->fail('version_conflict', '生产目标版本已变化，请刷新后重试。', 409, ['current_version' => (int) $target->business_version]);
@@ -164,7 +170,7 @@ class ProductionExecutionActionService
         return [$task, $target];
     }
 
-    private function completeQuantity(ProductionTask $task, ProductionQuantityOperation $target, array $payload, int $userId, $now): void
+    private function completeQuantity(ProductionTask $task, ProductionQuantityOperation $target, array $payload, int $userId, $now, bool $terminal): void
     {
         $completed = (float) ($payload['completed_base_qty'] ?? 0); $scrapped = (float) ($payload['scrapped_base_qty'] ?? 0);
         if ($completed < 0 || $scrapped < 0) $this->fail('completion_quantity_invalid', '完成量与报废量必须为非负数。');
@@ -200,6 +206,17 @@ class ProductionExecutionActionService
         if ((float) $target->completed_base_qty <= 0.00000001) {
             $this->fail('qualified_output_required', '没有可形成工序产出的良品数量，不能提交完工。', 409);
         }
+        // Scrap cannot supply the good product required by a later operation. A terminal
+        // target may settle its fully reported losses; consume() still requires authorized,
+        // exact material cost allocation before that completion transaction can succeed.
+        $remainingQualified = max(0, (float) $target->planned_base_qty - (float) $target->completed_base_qty);
+        if (! $terminal && $remainingQualified > 0.00000001) {
+            $this->fail('qualified_quantity_not_complete', '合格完成数量尚未达到目标，请先提交分批报工并补足良品数量，再提交完工。', 409, [
+                'planned_base_qty' => (float) $target->planned_base_qty,
+                'qualified_completed_base_qty' => (float) $target->completed_base_qty,
+                'remaining_required_qualified_base_qty' => $remainingQualified,
+            ]);
+        }
     }
 
     private function createOutput(string $type, object $target, int $userId, array $payload, $now, bool $terminal): object
@@ -208,6 +225,8 @@ class ProductionExecutionActionService
         $unitId = $type === 'unit_operation' ? (int) $target->production_unit_id : null;
         $existing = DB::table('erp_production_output_records')->where('source_target_type', $type)->where('source_target_id', $target->id)->first();
         if ($existing) {
+            app(ItemManagementScopeService::class)->assertProductionAllowed(
+                Item::query()->lockForUpdate()->findOrFail($existing->output_item_id), 'output_item_id');
             if (! in_array($existing->status, ['QUALITY_FAILED', 'HANDOVER_REJECTED'], true)) return $existing;
             $status = $target->quality_mode_snapshot !== 'none' ? 'WAIT_QUALITY'
                 : ($terminal ? 'WAIT_COMPLETION'
@@ -229,6 +248,8 @@ class ProductionExecutionActionService
         if (! $outputItemId) {
             $this->fail('production_output_item_required', '当前工序缺少正式产出物料，禁止回退为生产工单最终成品。', 409);
         }
+        app(ItemManagementScopeService::class)->assertProductionAllowed(
+            Item::query()->lockForUpdate()->findOrFail($outputItemId), 'output_item_id');
         $productionSerial = $this->serialForOutput($unitId, $target, $workOrder, $outputItemId, $terminal);
         $id = DB::table('erp_production_output_records')->insertGetId([
                 'output_no' => $this->numbers->next('production_output', 'POU'), 'work_order_id' => $target->work_order_id,
@@ -297,18 +318,22 @@ class ProductionExecutionActionService
         $parents = DB::table('erp_production_operation_handovers')
             ->where('target_target_type', $targetType)->where('target_target_id', $targetId)
             ->where('status', 'RECEIVED')->whereNotNull('output_record_id')
-            ->pluck('output_record_id')->map(fn ($id) => ['id' => (int) $id, 'type' => 'direct_handover']);
+            ->get(['output_record_id', 'accepted_base_qty'])->map(fn ($row) => ['id' => (int) $row->output_record_id, 'qty' => $row->accepted_base_qty, 'type' => 'direct_handover']);
         $issued = DB::table('erp_production_internal_issue_tasks as issue')
             ->join('erp_production_internal_issue_lines as line', 'line.issue_task_id', '=', 'issue.id')
             ->where('issue.target_type', $targetType)->where('issue.target_id', $targetId)
             ->where('issue.status', 'RECEIVED')->whereNotNull('line.output_record_id')
-            ->pluck('line.output_record_id')->map(fn ($id) => ['id' => (int) $id, 'type' => 'internal_issue']);
-        foreach ($parents->concat($issued)->unique('id') as $parent) {
+            ->get(['line.output_record_id', 'line.issue_base_qty'])->map(fn ($row) => ['id' => (int) $row->output_record_id, 'qty' => $row->issue_base_qty, 'type' => 'internal_issue']);
+        $child = DB::table('erp_production_output_records')->where('id', $childOutputId)->first();
+        foreach ($parents->concat($issued)->groupBy('id') as $sameParent) {
+            $parent = $sameParent->first();
             if ($parent['id'] === $childOutputId) continue;
             DB::table('erp_production_output_lineage_links')->insertOrIgnore([
                 'parent_output_record_id' => $parent['id'],
                 'child_output_record_id' => $childOutputId,
                 'relation_type' => $parent['type'],
+                'parent_base_qty' => $sameParent->contains(fn ($row) => $row['qty'] === null) ? null : $sameParent->sum('qty'),
+                'child_base_qty' => $child?->output_base_qty,
                 'parent_inventory_serial_id' => DB::table('erp_production_output_records')->where('id', $parent['id'])->value('inventory_serial_id'),
                 'child_inventory_serial_id' => DB::table('erp_production_output_records')->where('id', $childOutputId)->value('inventory_serial_id'),
                 'created_at' => now(),
@@ -351,6 +376,7 @@ class ProductionExecutionActionService
         if ($needsHandover) {
             $requirementIds = DB::table('erp_production_target_material_requirements')
                 ->where('target_type', $nextType)->where('target_id', $next->id)->where('component_item_id', $output->output_item_id)
+                ->where('requirement_kind', '!=', 'stock_continuation')
                 ->whereRaw('GREATEST(0, satisfied_base_qty - returned_base_qty) < required_base_qty')->pluck('id');
             if ($requirementIds->count() > 1) $this->fail('target_material_requirement_ambiguous', '下一工序存在多条相同物料需求，无法确定工序交接对应项。', 409);
             DB::table('erp_production_operation_handovers')->insert([
@@ -362,6 +388,7 @@ class ProductionExecutionActionService
             'business_version' => 1, 'created_at' => now(), 'updated_at' => now(),
             ]);
         }
+        app(ProductionTaskAssignmentService::class)->tryOfferReadyTask($task);
     }
 
     private function refreshTask(ProductionTask $task): void

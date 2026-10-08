@@ -8,6 +8,7 @@ class ProductionUnitOperation extends MasterModel
     protected $casts = [
         'sequence_no_snapshot' => 'integer',
         'kitting_required' => 'boolean',
+        'is_public_snapshot' => 'boolean',
         'allow_continue_without_warehouse_snapshot' => 'boolean',
         'claimed_at' => 'datetime',
         'kitting_confirmed_at' => 'datetime',

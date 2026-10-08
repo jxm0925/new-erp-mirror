@@ -16,6 +16,41 @@ class CuttingDemandTest extends TestCase
     use CuttingTestFixtures;
     use DatabaseTransactions;
 
+    public function test_producer_options_reference_the_real_frozen_source_and_raw_input_not_the_consumer(): void
+    {
+        $f = $this->fixture('none', '10', '10', false, false);
+        $token = $this->token($f['user']);
+        $generated = app(CuttingDemandService::class)->generate($this->payload(0) + ['source_requirement_id'=>$f['targetRequirement'],
+            'producer_work_order_id'=>$f['wo']->id, 'producer_stage_id'=>$f['stage']], $f['user'], self::PERMISSIONS, true);
+        $url = '/api/v1/erp/production/cutting/demands/'.$generated['id'].'/producer-options';
+        $response = $this->withToken($token)->getJson($url.'?per_page=1')->assertOk()->assertJsonPath('meta.per_page', 1);
+        $option = $response->json('data.0');
+        $this->assertSame($f['wo']->id, $option['work_order_id']);
+        $this->assertNotSame($f['consumerWo']->id, $option['work_order_id']);
+        $this->assertSame($f['inputRequirement']->id, $option['input_material_requirement_id']);
+        $this->assertSame($f['targetRequirement'], $option['target_material_requirement_id']);
+        $this->assertTrue($option['eligible']);
+        $this->assertSame('10.00000000', $option['remaining_demand_qty']);
+        $this->withToken($token)->getJson($url.'?page=0')->assertUnprocessable();
+        $f['wo']->update(['status'=>'CANCELLED']);
+        $this->withToken($token)->getJson($url)->assertOk()->assertJsonPath('meta.total', 0);
+    }
+
+    public function test_producer_options_enforce_both_consumer_and_producer_scope_and_reject_raw_identity_changes(): void
+    {
+        $f = $this->fixture('none', '10', '10', false, false); $token = $this->token($f['user'], 'self');
+        $generated = app(CuttingDemandService::class)->generate($this->payload(0) + ['source_requirement_id'=>$f['targetRequirement'],
+            'producer_work_order_id'=>$f['wo']->id, 'producer_stage_id'=>$f['stage']], $f['user'], self::PERMISSIONS, true);
+        $url = '/api/v1/erp/production/cutting/demands/'.$generated['id'].'/producer-options';
+        $this->withToken($token)->getJson($url)->assertOk()->assertJsonPath('meta.total', 1);
+        $f['wo']->update(['responsible_user_legacy_id'=>$f['user']->legacy_id + 999]);
+        $this->withToken($token)->getJson($url)->assertOk()->assertJsonPath('meta.total', 0);
+        $f['wo']->update(['responsible_user_legacy_id'=>$f['user']->legacy_id]); $f['raw']->update(['status'=>'disabled']);
+        $this->withToken($token)->getJson($url)->assertOk()->assertJsonPath('meta.total', 0);
+        $f['consumerWo']->update(['responsible_user_legacy_id'=>$f['user']->legacy_id + 999]);
+        $this->withToken($token)->getJson($url)->assertForbidden();
+    }
+
     public function test_http_generation_is_source_idempotent_and_read_projection_is_paginated(): void
     {
         $fixture = $this->fixture('none', '10', '10', false, false);

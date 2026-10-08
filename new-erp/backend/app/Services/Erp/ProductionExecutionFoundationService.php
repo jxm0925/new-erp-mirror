@@ -57,6 +57,7 @@ class ProductionExecutionFoundationService
 
     public function initializePublished(WorkOrder $workOrder, array $policy): void
     {
+        app(ProductionInventoryContinuationService::class)->assertPlanQuantity($workOrder, $policy['production_execution_mode']);
         if (ProductionUnit::query()->where('work_order_id', $workOrder->id)->exists()
             || ProductionQuantityOperation::query()->where('work_order_id', $workOrder->id)->exists()) {
             $this->fail('production_execution_exists', '该工单已经存在生产执行底座，禁止重复展开。', 409);
@@ -82,6 +83,7 @@ class ProductionExecutionFoundationService
         $count = (int) ((string) $workOrder->target_base_qty);
         if ($count < 1) $this->fail('production_unit_quantity_invalid', '逐件生产工单至少需要一个生产单元。');
         for ($sequence = 1; $sequence <= $count; $sequence++) {
+            $continuation = app(ProductionInventoryContinuationService::class)->unitPlan($workOrder, $sequence);
             $unit = ProductionUnit::create([
                 'unit_no' => $this->numbers->next('production_unit', 'PU'),
                 'work_order_id' => $workOrder->id,
@@ -99,14 +101,36 @@ class ProductionExecutionFoundationService
                 'business_version' => 1,
             ]);
 
-            if (($policy['serial_tracking_mode'] ?? 'none') !== 'none'
+            $sourceOutput = $continuation ? DB::table('erp_production_output_records')->where('id', $continuation['source_output_record_id'])->first() : null;
+            $originalUnit = $sourceOutput?->production_unit_id ? ProductionUnit::find($sourceOutput->production_unit_id) : null;
+            $originalSerial = $originalUnit?->device_serial_id ? ProductionSerial::find($originalUnit->device_serial_id) : null;
+            if (! $originalSerial && $continuation && $continuation['inventory_serial_id'] && (int) $continuation['item_id'] === (int) $workOrder->output_item_id) {
+                $inventorySerial = DB::table('erp_inventory_serials')->where('id', $continuation['inventory_serial_id'])->first();
+                $originalSerial = ProductionSerial::firstOrCreate(['serial_no' => $inventorySerial->serial_no], [
+                    'item_id' => $workOrder->output_item_id, 'serial_type' => 'finished_device', 'generation_stage' => 'inventory_continuation',
+                    'status' => 'inventory_bound', 'inventory_serial_id' => $inventorySerial->id,
+                    'source_type' => 'inventory_serial', 'source_id' => $inventorySerial->id, 'generated_at' => now()]);
+            }
+            if ($originalSerial) {
+                if ((int) $originalSerial->item_id !== (int) $workOrder->output_item_id) $this->fail('continuation_serial_item_mismatch', '库存来源产品序列号与本工单物料不一致。');
+                $unit->update(['device_serial_id' => $originalSerial->id, 'device_no_snapshot' => $originalSerial->serial_no]);
+            } elseif (($policy['serial_tracking_mode'] ?? 'none') !== 'none'
                 && ($policy['serial_generation_stage'] ?? null) === 'production_unit_created') {
                 $serial = $this->createSerial($workOrder, $unit, $policy);
                 $unit->update(['device_serial_id' => $serial->id, 'device_no_snapshot' => $serial->serial_no]);
             }
             $this->createEquipmentIdentity($unit, $policy);
-
-            foreach ($operations as $index => $operation) {
+            if ($originalUnit?->equipmentIdentity && $originalUnit->equipmentIdentity->status === 'BOUND') {
+                DB::table('erp_production_unit_equipment_identities')->where('production_unit_id', $unit->id)->update([
+                    'status' => 'BOUND', 'source_type' => 'production_unit_identity', 'source_id' => $originalUnit->equipmentIdentity->id,
+                    'bound_by_legacy_id' => $originalUnit->equipmentIdentity->bound_by_legacy_id, 'bound_at' => $originalUnit->equipmentIdentity->bound_at,
+                    'updated_at' => now()]);
+            }
+            $unitOperations = $continuation ? $operations->where('sequence', '>=', $continuation['start_sequence'])->values() : $operations;
+            $unit->update(['current_routing_operation_id' => $unitOperations->first()['routing_operation_id'],
+                'current_operation_code_snapshot' => $unitOperations->first()['operation_code'],
+                'current_operation_name_snapshot' => $unitOperations->first()['operation_name']]);
+            foreach ($unitOperations as $index => $operation) {
                 $targetStatus = $index === 0 ? 'WAIT_CLAIM' : 'WAIT_PREDECESSOR';
                 $target = $unit->operations()->create($this->operationAttributes(
                     $workOrder,
@@ -121,17 +145,19 @@ class ProductionExecutionFoundationService
 
     private function createQuantityExecution(WorkOrder $workOrder, Collection $operations): void
     {
+        $operations = $operations->filter(fn ($operation) => app(ProductionInventoryContinuationService::class)->plannedQuantity($workOrder, $operation['sequence']) > 0)->values();
         foreach ($operations as $index => $operation) {
+            $quantity = app(ProductionInventoryContinuationService::class)->plannedQuantity($workOrder, $operation['sequence']);
             $targetStatus = $index === 0 ? 'WAIT_CLAIM' : 'WAIT_PREDECESSOR';
             $target = ProductionQuantityOperation::create($this->operationAttributes(
                 $workOrder,
                 $operation,
                 $targetStatus,
             ) + [
-                'planned_base_qty' => $workOrder->target_base_qty,
+                'planned_base_qty' => $quantity,
                 'completed_base_qty' => 0,
                 'scrapped_base_qty' => 0,
-                'remaining_base_qty' => $workOrder->target_base_qty,
+                'remaining_base_qty' => $quantity,
             ]);
             $this->createTargetMaterialRequirements($workOrder, 'quantity_operation', $target->id, $operation['routing_operation_id']);
             $this->createTask($workOrder, 'quantity', $operation, 'quantity_operation', $target, $targetStatus);
@@ -152,6 +178,11 @@ class ProductionExecutionFoundationService
             'operation_code_snapshot' => $operation['operation_code'],
             'operation_name_snapshot' => $operation['operation_name'],
             'sequence_no_snapshot' => $operation['sequence'],
+            'production_stage_id_snapshot' => $operation['production_stage_id'],
+            'stage_code_snapshot' => $operation['stage_code'], 'stage_name_snapshot' => $operation['stage_name'],
+            'performance_rate_snapshot' => $operation['performance_rate'],
+            'auto_assignment_enabled_snapshot' => $operation['auto_assignment_enabled'],
+            'is_public_snapshot' => $operation['is_public'],
             'status' => $status,
             'labor_allocation_rule_id' => $laborRule['id'],
             'labor_allocation_rule_version' => $laborRule['version_no'],
@@ -164,6 +195,7 @@ class ProductionExecutionFoundationService
             'target_id' => $target->id,
             'status_snapshot' => $status,
         ]);
+        if ($status === 'WAIT_CLAIM') app(ProductionTaskAssignmentService::class)->tryOfferReadyTask($task);
     }
 
     private function operationAttributes(WorkOrder $workOrder, array $operation, string $status): array
@@ -177,7 +209,7 @@ class ProductionExecutionFoundationService
         $mode = (string) ($workOrder->production_execution_mode_snapshot ?: 'unit');
         $setup = (float) ($operation['setup_standard_minutes'] ?? 0);
         $unit = $operation['unit_standard_minutes'] === null ? null : (float) $operation['unit_standard_minutes'];
-        $quantity = $mode === 'unit' ? 1.0 : (float) $workOrder->target_base_qty;
+        $quantity = $mode === 'unit' ? 1.0 : app(ProductionInventoryContinuationService::class)->plannedQuantity($workOrder, $operation['sequence']);
         $standard = $unit === null ? null : ($mode === 'unit' ? $unit : $setup + $unit * $quantity);
         $isStockPrebuildTarget = $workOrder->source_type === 'stock_prebuild'
             && (int) $workOrder->target_routing_operation_id === (int) $operation['routing_operation_id'];
@@ -185,9 +217,13 @@ class ProductionExecutionFoundationService
             'work_order_id' => $workOrder->id,
             'routing_operation_id_snapshot' => $operation['routing_operation_id'],
             'operation_id_snapshot' => $operation['operation_id'],
+            'is_public_snapshot' => $operation['is_public'],
             'operation_code_snapshot' => $operation['operation_code'],
             'operation_name_snapshot' => $operation['operation_name'],
             'sequence_no_snapshot' => $operation['sequence'],
+            'production_stage_id_snapshot' => $operation['production_stage_id'],
+            'stage_code_snapshot' => $operation['stage_code'], 'stage_name_snapshot' => $operation['stage_name'],
+            'performance_rate_snapshot' => $operation['performance_rate'],
             'status' => $status,
             'standard_minutes_snapshot' => $standard,
             'setup_standard_minutes_snapshot' => $setup,
@@ -211,12 +247,19 @@ class ProductionExecutionFoundationService
     private function executionOperations(WorkOrder $workOrder): Collection
     {
         $rows = collect((array) data_get($workOrder->routing_snapshot, 'operations', []))
+            ->filter(fn ($row) => ($row['execution_context'] ?? 'production') === 'production')
             ->map(fn (array $row): array => [
                 'routing_operation_id' => (int) ($row['routing_operation_id'] ?? 0),
                 'operation_id' => (int) ($row['operation_id'] ?? 0),
                 'operation_code' => (string) ($row['operation_no'] ?? $row['operation_code'] ?? ''),
                 'operation_name' => (string) ($row['operation_name'] ?? ''),
                 'sequence' => (int) ($row['sequence'] ?? 0),
+                'production_stage_id' => $row['production_stage_id'] ?? null,
+                'stage_code' => $row['stage_code'] ?? null, 'stage_name' => $row['stage_name'] ?? null,
+                'performance_rate' => $row['performance_rate'] ?? null,
+                'auto_assignment_enabled' => (bool) ($row['auto_assignment_enabled'] ?? false),
+                // 分类与执行规则同源冻结；旧快照没有该字段时保持默认非公共，不能回读当前工序档案。
+                'is_public' => (bool) ($row['is_public'] ?? false),
                 'standard_minutes' => $row['standard_minutes'] ?? null,
                 'setup_standard_minutes' => $row['setup_standard_minutes'] ?? 0,
                 'unit_standard_minutes' => $row['unit_standard_minutes'] ?? ($row['standard_minutes'] ?? null),
@@ -245,7 +288,25 @@ class ProductionExecutionFoundationService
             ->groupBy('component_item_id');
 
         foreach ($workOrder->materialRequirements()->lockForUpdate()->get() as $requirement) {
+            if ($requirement->requirement_kind === 'stock_continuation') {
+                $quantities = json_decode((string) $requirement->remaining_supply_snapshot, true) ?: [];
+                foreach ($quantities as $nodeId => $quantity) {
+                    $node = $operationById->get((int) $nodeId);
+                    DB::table('erp_work_order_material_supply_rules')->insert([
+                        'work_order_id' => $workOrder->id, 'material_requirement_id' => $requirement->id,
+                        'component_item_id' => $requirement->component_item_id, 'target_routing_operation_id_snapshot' => $nodeId,
+                        'target_operation_code_snapshot' => $node['operation_code'], 'target_operation_name_snapshot' => $node['operation_name'],
+                        'required_base_qty_snapshot' => $quantity, 'supply_mode_snapshot' => 'warehouse_picking',
+                        'requires_delivery_snapshot' => false, 'participates_in_kitting_snapshot' => true,
+                        'allow_partial_delivery_snapshot' => false, 'delivery_location_type_snapshot' => 'operation_station',
+                        'rule_snapshot' => json_encode(['requirement_kind' => 'stock_continuation', 'required_qty_ratio' => 1], JSON_THROW_ON_ERROR),
+                        'created_at' => now(), 'updated_at' => now()]);
+                }
+                continue;
+            }
+            $remaining = $requirement->remaining_supply_snapshot ? json_decode((string) $requirement->remaining_supply_snapshot, true) : null;
             foreach ($rules->get($requirement->component_item_id, collect()) as $rule) {
+                if ($remaining !== null && ! isset($remaining['rule:'.$rule->rule_id])) continue;
                 $target = $operationById->get((int) $rule->target_routing_operation_id);
                 DB::table('erp_work_order_material_supply_rules')->insert([
                     'work_order_id' => $workOrder->id,
@@ -255,7 +316,7 @@ class ProductionExecutionFoundationService
                     'target_routing_operation_id_snapshot' => $rule->target_routing_operation_id,
                     'target_operation_code_snapshot' => $target['operation_code'],
                     'target_operation_name_snapshot' => $target['operation_name'],
-                    'required_base_qty_snapshot' => round((float) $requirement->base_required_qty * (float) $rule->required_qty_ratio, 8),
+                    'required_base_qty_snapshot' => $remaining['rule:'.$rule->rule_id] ?? round((float) $requirement->base_required_qty * (float) $rule->required_qty_ratio, 8),
                     'supply_mode_snapshot' => $rule->supply_mode,
                     'requires_delivery_snapshot' => (bool) $rule->requires_delivery,
                     'participates_in_kitting_snapshot' => (bool) $rule->participates_in_kitting,
@@ -316,13 +377,27 @@ class ProductionExecutionFoundationService
         foreach ($rows as $row) {
             $rule = json_decode((string) $row->rule_snapshot, true) ?: [];
             $ratio = (float) ($rule['required_qty_ratio'] ?? 1);
+            $firstUnitSequence = 1;
+            if ($unitSequence !== null && $workOrder->inventory_continuation_plan) {
+                $nodeSequence = (int) collect(data_get($workOrder->routing_snapshot, 'operations', []))->firstWhere('routing_operation_id', $routingOperationId)['sequence'];
+                for ($candidate = 1; $candidate <= (int) $workOrder->target_base_qty; $candidate++) {
+                    $plan = app(ProductionInventoryContinuationService::class)->unitPlan($workOrder, $candidate);
+                    if (! $plan || $plan['start_sequence'] <= $nodeSequence) { $firstUnitSequence = $candidate; break; }
+                }
+            }
             $required = $unitSequence === null
                 ? (float) $row->required_base_qty_snapshot
-                : ((float) $row->per_output_qty * (1 + (float) $row->loss_rate / 100) + ($unitSequence === 1 ? (float) $row->fixed_qty : 0)) * $ratio;
+                : ((float) $row->per_output_qty * (1 + (float) $row->loss_rate / 100) + ($unitSequence === $firstUnitSequence ? (float) $row->fixed_qty : 0)) * $ratio;
+            $kind = $rule['requirement_kind'] ?? 'standard';
+            if ($kind === 'stock_continuation' && $unitSequence !== null) {
+                $plan = app(ProductionInventoryContinuationService::class)->unitPlan($workOrder, $unitSequence);
+                $required = $plan && (int) $plan['start_routing_operation_id'] === $routingOperationId && (int) $plan['item_id'] === (int) $row->component_item_id ? 1 : 0;
+            }
+            if ($required <= 0) continue;
             $requiredPieces = $row->per_output_piece_qty === null
                 ? null
                 : ($unitSequence === null
-                    ? (float) $row->required_piece_qty * $ratio
+                    ? app(ProductionInventoryContinuationService::class)->plannedQuantity($workOrder, (int) $this->executionOperations($workOrder)->firstWhere('routing_operation_id', $routingOperationId)['sequence']) * (float) $row->per_output_piece_qty * $ratio
                     : (float) $row->per_output_piece_qty * $ratio);
             DB::table('erp_production_target_material_requirements')->insert([
                 'work_order_id' => $workOrder->id,
@@ -334,7 +409,7 @@ class ProductionExecutionFoundationService
                 'cut_length_mm_snapshot' => $row->cut_length_mm_snapshot,
                 'cutting_requirement_snapshot' => $row->cutting_requirement_snapshot,
                 'required_piece_qty_snapshot' => $requiredPieces === null ? null : round($requiredPieces, 8),
-                'requirement_kind' => 'standard',
+                'requirement_kind' => $kind,
                 'required_base_qty' => round($required, 8),
                 'satisfied_base_qty' => 0,
                 'consumed_base_qty' => 0,

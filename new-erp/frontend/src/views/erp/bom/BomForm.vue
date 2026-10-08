@@ -421,7 +421,7 @@ export default {
         listEntity('products', { per_page: 100 }),
         listEntity('skus', { per_page: 100 }),
         listEntity('units', { per_page: 100 }),
-        listEntity('categories', { per_page: 100, category_type: 'item' }),
+        listEntity('categories', { per_page: 100, category_type: 'item', management_scope: 'factory' }),
         listBoms({ per_page: 100, bom_type: 'standard' })
       ])
       this.products = p.data.data || []
@@ -476,6 +476,7 @@ export default {
       this.picker.loading = true
       try {
         const { data } = await listEntity('items', {
+          management_scope: 'factory',
           keyword: this.picker.keyword,
           category_id: this.picker.category_id,
           item_type: this.picker.item_type,

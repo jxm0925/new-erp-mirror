@@ -1030,6 +1030,218 @@ class ProductionMaterialExecutionTest extends TestCase
         $this->assertEquals(14, $sources->items()[0]->picking_available_qty);
     }
 
+    public function test_public_preparation_merges_work_orders_preserves_line_sources_and_posts_each_once(): void
+    {
+        [$user, $wo, $requirement, $balance] = $this->fixture();
+        [, $other, $otherRequirement, $otherBalance] = $this->fixture();
+        $otherBalance->location->update(['warehouse_id' => $balance->warehouse_id]);
+        $otherBalance->update(['warehouse_id' => $balance->warehouse_id]);
+        $demand = DB::table('erp_production_target_material_requirements')->where('work_order_id', $wo->id)->first();
+        $second = DB::table('erp_production_target_material_requirements')->where('work_order_id', $other->id)->first();
+        $service = app(\App\Services\Erp\PublicMaterialPreparationApplicationService::class);
+        $payload = ['client_command_id' => $this->id('public'), 'warehouse_id' => $balance->warehouse_id,
+            'work_order_versions' => [$wo->id => 1, $other->id => 1], 'lines' => [
+                ['target_material_requirement_id' => $demand->id, 'inventory_balance_id' => $balance->id, 'planned_pick_qty' => '5'],
+                ['target_material_requirement_id' => $second->id, 'inventory_balance_id' => $otherBalance->id, 'planned_pick_qty' => '7']]];
+        $job = $service->create($payload, $user, self::PERMISSIONS, true);
+        $this->assertCount(2, $job['children']);
+        $this->assertSame($job['id'], $service->create($payload, $user, self::PERMISSIONS, true)['id']);
+        $body = fn ($job) => ['client_command_id' => $this->id('public-action'), 'expected_version' => $job['business_version'],
+            'child_versions' => array_column($job['children'], 'business_version', 'id')];
+        $job = $service->transition($job['id'], 'claim', $body($job), $user, self::PERMISSIONS, true);
+        $job = $service->transition($job['id'], 'start', $body($job), $user, self::PERMISSIONS, true);
+        $confirm = $body($job) + ['lines' => array_map(fn ($line) => ['picking_task_line_id' => $line->id, 'actual_pick_qty' => $line->planned_pick_qty], $job['lines']['data'])];
+        $picked = $service->transition($job['id'], 'confirm', $confirm, $user, self::PERMISSIONS, true);
+        $this->assertSame('PREPARED', $picked['status']);
+        $service->transition($job['id'], 'confirm', $confirm, $user, self::PERMISSIONS, true);
+        $this->assertEquals(15, $balance->fresh()->quantity_on_hand);
+        $this->assertEquals(13, $otherBalance->fresh()->quantity_on_hand);
+        $this->assertSame(2, DB::table('erp_inventory_transactions')->where('source_type', 'material_picking_task')->whereIn('source_id', array_column($job['children'], 'id'))->count());
+        $this->assertEqualsCanonicalizing([$requirement->id, $otherRequirement->id], array_map(fn ($line) => $line->material_requirement_id, $picked['lines']['data']));
+    }
+
+    public function test_public_preparation_rolls_back_all_children_when_a_later_source_is_invalid(): void
+    {
+        [$user, $wo, , $balance] = $this->fixture();
+        [, $other, , $otherBalance] = $this->fixture();
+        $before = DB::table('erp_public_material_preparation_tasks')->count();
+        $count = DB::table('erp_material_picking_tasks')->count();
+        $demands = DB::table('erp_production_target_material_requirements')->whereIn('work_order_id', [$wo->id, $other->id])->orderBy('id')->get();
+        try {
+            app(\App\Services\Erp\PublicMaterialPreparationApplicationService::class)->create(['client_command_id' => $this->id('public-invalid'),
+                'warehouse_id' => $balance->warehouse_id, 'work_order_versions' => [$wo->id => 1, $other->id => 1],
+                'lines' => [['target_material_requirement_id' => $demands[0]->id, 'inventory_balance_id' => $balance->id, 'planned_pick_qty' => '2'],
+                    ['target_material_requirement_id' => $demands[1]->id, 'inventory_balance_id' => $otherBalance->id, 'planned_pick_qty' => '2']]], $user, self::PERMISSIONS, true);
+            $this->fail('Cross-warehouse source must be rejected.');
+        } catch (WorkOrderDomainException $e) { $this->assertNotEmpty($e->getMessage()); }
+        $this->assertSame($before, DB::table('erp_public_material_preparation_tasks')->count());
+        $this->assertSame($count, DB::table('erp_material_picking_tasks')->count());
+        $this->assertEquals(20, $balance->fresh()->quantity_on_hand);
+    }
+
+    public function test_onsite_cutting_receipt_requires_the_actual_owner_and_preserves_posted_cost_without_delivery(): void
+    {
+        [$user, $wo, $requirement, $balance] = $this->fixture();
+        $requirement->componentItem->update(['cutting_mode' => 'length']);
+        DB::table('erp_work_order_material_supply_rules')->where('id', $wo->test_supply_id)->update(['supply_mode_snapshot' => 'no_per_order_delivery', 'requires_delivery_snapshot' => false]);
+        $service = app(ProductionMaterialExecutionService::class);
+        $task = $service->createPickingTask(['client_command_id' => $this->id('onsite'), 'work_order_id' => $wo->id,
+            'expected_version' => 1, 'warehouse_id' => $balance->warehouse_id, 'lines' => [$this->pickLine($wo, $requirement, $balance, 4)]], $user, self::PERMISSIONS, true);
+        $this->assertSame('onsite_cutting', $task->lines->first()->fulfillment_mode_snapshot);
+        $task = $service->assignPickingTask($task->id, ['client_command_id' => $this->id('onsite-assign'), 'expected_version' => $task->business_version, 'assigned_picker_legacy_id' => $user->legacy_id], $user, self::PERMISSIONS, true);
+        $task = $service->startPickingTask($task->id, ['client_command_id' => $this->id('onsite-start'), 'expected_version' => $task->business_version], $user, self::PERMISSIONS, true);
+        $task = $service->confirmPickingTask($task->id, ['client_command_id' => $this->id('onsite-pick'), 'expected_version' => $task->business_version,
+            'lines' => [['picking_task_line_id' => $task->lines->first()->id, 'actual_pick_qty' => 4]]], $user, self::PERMISSIONS, true);
+        $body = ['client_command_id' => $this->id('onsite-receive'), 'expected_version' => $task->business_version,
+            'lines' => [['picking_task_line_id' => $task->lines->first()->id, 'accepted_qty' => 4]]];
+        $outsider = (object) ['legacy_id' => $user->legacy_id + 1, 'username' => 'wrong-receiver'];
+        try { $service->receiveOnsite($task->id, $body, $outsider, self::PERMISSIONS, true); $this->fail('Wrong receiver cannot collect.'); }
+        catch (WorkOrderDomainException $e) { $this->assertSame('receiver_mismatch', $e->errorCode); }
+        $receipt = $service->receiveOnsite($task->id, $body, $user, self::PERMISSIONS, true);
+        $this->assertSame($receipt->id, $service->receiveOnsite($task->id, $body, $user, self::PERMISSIONS, true)->id);
+        $this->assertNull($receipt->delivery_id);
+        $this->assertSame('onsite_cutting', $receipt->collection_type);
+        $this->assertSame(0, DB::table('erp_material_deliveries')->where('picking_task_id', $task->id)->count());
+        $this->assertEquals(16, $balance->fresh()->quantity_on_hand);
+        $this->assertEquals(4, $requirement->fresh()->received_qty);
+        $this->assertSame('RECEIVED', $task->fresh()->status);
+        $holding = DB::table('erp_production_input_holdings')->where('material_receipt_line_id', $receipt->lines->first()->id)->first();
+        $this->assertEquals('12.0000', $holding->total_cost);
+        $this->assertNotNull($holding->inventory_transaction_item_id);
+        $this->assertSame(1, DB::table('erp_production_input_holdings')->where('material_receipt_line_id', $receipt->lines->first()->id)->count());
+    }
+
+    public function test_cutting_material_cannot_create_a_new_delivery_even_after_it_is_picked(): void
+    {
+        [$user, $wo, $requirement, $balance] = $this->fixture();
+        $requirement->componentItem->update(['cutting_mode' => 'length']);
+        $service = app(ProductionMaterialExecutionService::class);
+        $task = $service->createPickingTask(['client_command_id' => $this->id('no-delivery'), 'work_order_id' => $wo->id, 'expected_version' => 1,
+            'warehouse_id' => $balance->warehouse_id, 'lines' => [$this->pickLine($wo, $requirement, $balance, 2)]], $user, self::PERMISSIONS, true);
+        $task->update(['status' => 'PICKED']); $task->lines->first()->update(['actual_pick_qty' => 2]);
+        $this->expectException(WorkOrderDomainException::class);
+        $this->expectExceptionMessage('现场领料');
+        $service->createDelivery(['client_command_id' => $this->id('bad-delivery'), 'picking_task_id' => $task->id, 'expected_version' => $task->business_version,
+            'lines' => [['picking_task_line_id' => $task->lines->first()->id, 'delivery_qty' => 2]]], $user, self::PERMISSIONS, true);
+    }
+
+    public function test_warehouse_procurement_creates_confirmed_request_with_order_trace_and_replays_once(): void
+    {
+        [$user, $wo, $requirement] = $this->fixture();
+        $requirement->componentItem->update(['is_purchase_item' => true]);
+        $order = SalesOrder::create(['sales_order_no' => $this->id('procurement-source'), 'customer_name' => '申购来源客户', 'order_status' => 'confirmed']);
+        DB::table('erp_work_orders')->where('id', $wo->id)->update(['source_type' => 'sales_order', 'source_id' => $order->id]);
+        $permissions = [...self::PERMISSIONS, 'production.material_procurement.create'];
+        $demand = DB::table('erp_production_target_material_requirements')->where('work_order_id', $wo->id)->first();
+        $service = app(\App\Services\Erp\ProductionMaterialProcurementApplicationService::class);
+        $payload = ['client_command_id' => $this->id('procurement'), 'sales_order_id' => $order->id, 'remark' => '生产缺料',
+            'items' => [['item_id' => $requirement->component_item_id, 'target_material_requirement_id' => $demand->id, 'request_qty' => '3.5']]];
+        $result = $service->create($payload, $user, $permissions, true);
+        $this->assertSame($result, $service->create($payload, $user, $permissions, true));
+        $this->assertSame('confirmed', $result['request_status']);
+        $request = \App\Models\Erp\PurchaseRequest::with('items')->findOrFail($result['id']);
+        $this->assertEquals(3.5, $request->items->first()->request_qty);
+        $this->assertEquals($requirement->base_unit_id, $request->items->first()->unit_id);
+        $this->assertSame($order->sales_order_no, $request->source_no);
+        $this->assertDatabaseHas('erp_material_procurement_sources', ['request_id' => $request->id, 'sales_order_id' => $order->id, 'target_material_requirement_id' => $demand->id]);
+        $this->assertSame(1, $request->items->count());
+        try { $service->create([...$payload, 'client_command_id' => $this->id('too-much'), 'items' => [[...$payload['items'][0], 'request_qty' => '7']]], $user, $permissions, true); $this->fail('Duplicate shortage must be limited.'); }
+        catch (WorkOrderDomainException $e) { $this->assertSame('procurement_quantity_exceeded', $e->errorCode); }
+    }
+
+    public function test_manual_procurement_needs_no_order_and_does_not_grant_purchase_privileges(): void
+    {
+        [$user, , $requirement] = $this->fixture();
+        $requirement->componentItem->update(['is_purchase_item' => true]);
+        $service = app(\App\Services\Erp\ProductionMaterialProcurementApplicationService::class);
+        $payload = ['client_command_id' => $this->id('manual-buy'), 'remark' => '仓库常用缺料', 'items' => [['item_id' => $requirement->component_item_id, 'request_qty' => '2']]];
+        try { $service->create($payload, $user, self::PERMISSIONS, true); $this->fail('Permission is required.'); }
+        catch (WorkOrderDomainException $e) { $this->assertSame('permission_denied', $e->errorCode); }
+        $result = $service->create($payload, $user, ['production.material_procurement.create'], true);
+        $this->assertSame('confirmed', $result['request_status']);
+        $this->assertNull($result['source_no']);
+        $this->assertSame(0, DB::table('erp_purchase_order_items')->where('request_id', $result['id'])->count());
+    }
+
+    public function test_public_partial_pick_releases_zero_child_and_keeps_shortages_available(): void
+    {
+        [$user, $first, $second, $balance, $otherBalance, $service, $job] = $this->publicPair();
+        $command = fn ($job) => ['client_command_id' => $this->id('public-partial'), 'expected_version' => $job['business_version'], 'child_versions' => array_column($job['children'], 'business_version', 'id')];
+        $job = $service->transition($job['id'], 'claim', $command($job), $user, self::PERMISSIONS, true);
+        $job = $service->transition($job['id'], 'start', $command($job), $user, self::PERMISSIONS, true);
+        $payload = $command($job) + ['lines' => array_map(fn ($line) => ['picking_task_line_id' => $line->id, 'actual_pick_qty' => $line->work_order_no === $first->work_order_no ? '2' : '0'], $job['lines']['data'])];
+        $result = $service->transition($job['id'], 'confirm', $payload, $user, self::PERMISSIONS, true);
+        $this->assertSame('PARTIALLY_PREPARED', $result['status']);
+        $this->assertEquals(18, $balance->fresh()->quantity_on_hand);
+        $this->assertEquals(20, $otherBalance->fresh()->quantity_on_hand);
+        $this->assertSame('CANCELLED', collect($result['children'])->firstWhere('work_order_id', $second->id)['status']);
+        $this->assertSame(1, DB::table('erp_inventory_transactions')->where('source_type', 'material_picking_task')->whereIn('source_id', array_column($job['children'], 'id'))->count());
+        $demands = app(ProductionMaterialExecutionService::class)->paginatePreparationDemands(['work_order_id' => $second->id], $user, self::PERMISSIONS, true);
+        $this->assertEquals(10, $demands->items()[0]->remaining_to_prepare);
+        $service->transition($job['id'], 'confirm', $payload, $user, self::PERMISSIONS, true);
+        $this->assertEquals(18, $balance->fresh()->quantity_on_hand);
+    }
+
+    public function test_public_pick_rejects_wrong_picker_and_stale_child_without_any_inventory_posting(): void
+    {
+        [$user, , , $balance, $otherBalance, $service, $job] = $this->publicPair();
+        $command = fn ($job) => ['client_command_id' => $this->id('public-version'), 'expected_version' => $job['business_version'], 'child_versions' => array_column($job['children'], 'business_version', 'id')];
+        $job = $service->transition($job['id'], 'claim', $command($job), $user, self::PERMISSIONS, true);
+        $outsider = (object) ['legacy_id' => $user->legacy_id + 1, 'username' => 'other-picker'];
+        try { $service->transition($job['id'], 'start', $command($job), $outsider, self::PERMISSIONS, true); $this->fail('Only the assigned picker may start.'); }
+        catch (WorkOrderDomainException $error) { $this->assertSame('picker_mismatch', $error->errorCode); }
+        $job = $service->transition($job['id'], 'start', $command($job), $user, self::PERMISSIONS, true);
+        $payload = $command($job) + ['lines' => array_map(fn ($line) => ['picking_task_line_id' => $line->id, 'actual_pick_qty' => '2'], $job['lines']['data'])];
+        DB::table('erp_material_picking_tasks')->where('id', $job['children'][1]['id'])->increment('business_version');
+        try { $service->transition($job['id'], 'confirm', $payload, $user, self::PERMISSIONS, true); $this->fail('Stale child must roll back earlier postings.'); }
+        catch (WorkOrderDomainException $error) { $this->assertSame('version_conflict', $error->errorCode); }
+        $this->assertEquals(20, $balance->fresh()->quantity_on_hand);
+        $this->assertEquals(20, $otherBalance->fresh()->quantity_on_hand);
+        $this->assertSame(0, DB::table('erp_inventory_transactions')->where('source_type', 'material_picking_task')->whereIn('source_id', array_column($job['children'], 'id'))->count());
+        $this->assertSame('PICKING', DB::table('erp_public_material_preparation_tasks')->where('id', $job['id'])->value('status'));
+        $this->assertSame(0, $service->paginate([], $outsider, self::PERMISSIONS, false)->total());
+    }
+
+    public function test_partial_onsite_receipts_update_only_owned_line_and_conserve_stock_and_cost(): void
+    {
+        [$user, $wo, $requirement, $balance] = $this->fixture();
+        [$otherUser, $otherWo, $otherRequirement, $otherBalance] = $this->fixture();
+        $requirement->componentItem->update(['cutting_mode' => 'length']);
+        $service = app(ProductionMaterialExecutionService::class);
+        $unrelated = $service->createPickingTask(['client_command_id' => $this->id('unrelated'), 'work_order_id' => $otherWo->id, 'expected_version' => 1,
+            'warehouse_id' => $otherBalance->warehouse_id, 'lines' => [$this->pickLine($otherWo, $otherRequirement, $otherBalance, 1)]], $otherUser, self::PERMISSIONS, true);
+        $task = $service->createPickingTask(['client_command_id' => $this->id('partial-onsite'), 'work_order_id' => $wo->id, 'expected_version' => 1,
+            'warehouse_id' => $balance->warehouse_id, 'lines' => [$this->pickLine($wo, $requirement, $balance, 6)]], $user, self::PERMISSIONS, true);
+        $task = $service->assignPickingTask($task->id, ['client_command_id' => $this->id('partial-assign'), 'expected_version' => $task->business_version, 'assigned_picker_legacy_id' => $user->legacy_id], $user, self::PERMISSIONS, true);
+        $task = $service->startPickingTask($task->id, ['client_command_id' => $this->id('partial-start'), 'expected_version' => $task->business_version], $user, self::PERMISSIONS, true);
+        $task = $service->confirmPickingTask($task->id, ['client_command_id' => $this->id('partial-pick'), 'expected_version' => $task->business_version, 'lines' => [['picking_task_line_id' => $task->lines->first()->id, 'actual_pick_qty' => 6]]], $user, self::PERMISSIONS, true);
+        $payload = ['client_command_id' => $this->id('partial-receive'), 'expected_version' => $task->business_version, 'lines' => [['picking_task_line_id' => $task->lines->first()->id, 'accepted_qty' => 2]]];
+        $first = $service->receiveOnsite($task->id, $payload, $user, self::PERMISSIONS, true);
+        $this->assertSame('PARTIALLY_RECEIVED', $task->fresh()->status);
+        $this->assertEquals(2, $requirement->fresh()->received_qty);
+        $this->assertSame($first->id, $service->receiveOnsite($task->id, $payload, $user, self::PERMISSIONS, true)->id);
+        $second = $service->receiveOnsite($task->id, ['client_command_id' => $this->id('partial-rest'), 'expected_version' => $task->fresh()->business_version, 'lines' => [['picking_task_line_id' => $task->lines->first()->id, 'accepted_qty' => 4]]], $user, self::PERMISSIONS, true);
+        $this->assertSame('RECEIVED', $task->fresh()->status);
+        $this->assertEquals(6, $requirement->fresh()->received_qty);
+        $this->assertEquals(0, $unrelated->lines->first()->fresh()->received_qty);
+        $this->assertEquals(14, $balance->fresh()->quantity_on_hand);
+        $this->assertEquals(18, DB::table('erp_production_input_holdings')->whereIn('material_receipt_line_id', [$first->lines->first()->id, $second->lines->first()->id])->sum('total_cost'));
+        $this->assertSame(1, DB::table('erp_inventory_transactions')->where('source_type', 'material_picking_task')->where('source_id', $task->id)->count());
+    }
+
+    private function publicPair(): array
+    {
+        [$user, $first, , $balance] = $this->fixture();
+        [, $second, , $otherBalance] = $this->fixture();
+        $otherBalance->location->update(['warehouse_id' => $balance->warehouse_id]);
+        $otherBalance->update(['warehouse_id' => $balance->warehouse_id]);
+        $service = app(\App\Services\Erp\PublicMaterialPreparationApplicationService::class);
+        $job = $service->create(['client_command_id' => $this->id('public-pair'), 'warehouse_id' => $balance->warehouse_id, 'work_order_versions' => [$first->id => 1, $second->id => 1], 'lines' => [
+            ['target_material_requirement_id' => DB::table('erp_production_target_material_requirements')->where('work_order_id', $first->id)->value('id'), 'inventory_balance_id' => $balance->id, 'planned_pick_qty' => '5'],
+            ['target_material_requirement_id' => DB::table('erp_production_target_material_requirements')->where('work_order_id', $second->id)->value('id'), 'inventory_balance_id' => $otherBalance->id, 'planned_pick_qty' => '5']]], $user, self::PERMISSIONS, true);
+        return [$user, $first, $second, $balance, $otherBalance, $service, $job];
+    }
+
     private function fixture(): array
     {
         $suffix = strtoupper(substr(uniqid(), -8));

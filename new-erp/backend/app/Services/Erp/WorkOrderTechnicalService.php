@@ -221,6 +221,7 @@ final class WorkOrderTechnicalService
     private function configuration(WorkOrder $workOrder, ?Item $item, mixed $id): ?array
     {
         if (! $item) $this->fail('technical_item_missing', '生产资料引用的物料不存在。');
+        app(ItemManagementScopeService::class)->assertProductionAllowed($item, 'materials');
         if (! $item->is_custom_item) {
             if ($id) $this->fail('technical_standard_configuration', '标准物料使用固定规格，不能指定定制配置。');
             return null;

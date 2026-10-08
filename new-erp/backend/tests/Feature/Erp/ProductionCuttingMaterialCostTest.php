@@ -152,6 +152,14 @@ class ProductionCuttingMaterialCostTest extends TestCase
         $result = $this->complete($f, $receiver, $task, true);
         $id = $result['output_record_id'];
         $output = DB::table('erp_production_output_records')->find($id);
+        $this->assertSame('COMPLETED', $result['target_status']);
+        $this->assertSame('9.00000000', $output->output_base_qty);
+        $target = ProductionQuantityOperation::findOrFail($f['consumerOperation']);
+        $this->assertSame(9.0, (float) $target->completed_base_qty);
+        $this->assertSame(1.0, (float) $target->scrapped_base_qty);
+        $this->assertSame(0.0, (float) $target->remaining_base_qty);
+        $this->assertSame(0, DB::table('erp_production_operation_handovers')
+            ->where('source_target_type', 'quantity_operation')->where('source_target_id', $target->id)->count());
         $this->assertSame('2400.0001', $output->material_total_cost);
         $this->assertSame('599.9999', $output->material_loss_cost);
         $this->assertSame(1, DB::table('erp_production_material_consumptions')->where('output_record_id', $id)->count());

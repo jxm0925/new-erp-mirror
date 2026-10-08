@@ -24,9 +24,10 @@ final class WorkOrderDto
             ? (int) $workOrder->getAttribute('material_requirements_count')
             : ($workOrder->relationLoaded('materialRequirements') ? $workOrder->materialRequirements->count() : null);
 
-        return [
+        return app(\App\Services\Erp\ProductionFinancialProjectionService::class)->redact([
             'id' => (int) $workOrder->id,
             'technical_version' => (int) $workOrder->technical_version,
+            'inventory_continuation_plan' => $workOrder->inventory_continuation_plan ?? [],
             'technical_snapshot' => $workOrder->technical_snapshot,
             'output_configuration_id' => $workOrder->output_configuration_id ? (int) $workOrder->output_configuration_id : null,
             'work_order_no' => $workOrder->work_order_no,
@@ -66,7 +67,7 @@ final class WorkOrderDto
                 'no' => $workOrder->routing?->routing_no,
                 'name' => $workOrder->routing?->routing_name,
                 'version' => $workOrder->routing_version_snapshot,
-                'snapshot' => $workOrder->routing_snapshot,
+                'snapshot' => app(\App\Services\Erp\ProductionFinancialProjectionService::class)->redact($workOrder->routing_snapshot),
                 'target_operation_id' => $workOrder->target_operation_id ? (int) $workOrder->target_operation_id : null,
                 'target_operation_name' => $workOrder->targetOperation?->operation_name,
                 'target_routing_operation_id' => $workOrder->target_routing_operation_id ? (int) $workOrder->target_routing_operation_id : null,
@@ -100,6 +101,8 @@ final class WorkOrderDto
             'display_status' => $workOrder->getAttribute('display_status_projection'),
             'execution_summary' => $workOrder->getAttribute('execution_summary'),
             'business_version' => (int) $workOrder->business_version,
+            'planned_outputs' => app(\App\Services\Erp\WorkOrderOutputPlanService::class)->plannedOutputProjection($workOrder, in_array('production.work_order.edit', $permissions, true)),
+            'output_plan' => app(\App\Services\Erp\WorkOrderOutputPlanService::class)->projection($workOrder),
             'release' => [
                 'gate_status' => $workOrder->release_gate_status,
                 'gate_checked_at' => optional($workOrder->release_gate_checked_at)->toISOString(),
@@ -149,7 +152,7 @@ final class WorkOrderDto
                 'view_master_order' => self::allowed($permissions, 'production.work_order.view'),
                 'cancel' => in_array((string) $workOrder->status, ['DRAFT', 'WAIT_RELEASE'], true) && self::allowed($permissions, 'production.work_order.cancel'),
             ],
-        ];
+        ]);
     }
 
     private static function allowed(array $permissions, string $permission): bool

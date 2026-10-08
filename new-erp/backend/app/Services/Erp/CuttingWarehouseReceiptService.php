@@ -47,8 +47,9 @@ final class CuttingWarehouseReceiptService
                 $this->commands->fail('warehouse_holding_invalid', '该去向没有足量、有效且唯一的待入库持有份额。', 409);
             }
             [$warehouse, $location, $batchNo] = $this->locator($payload);
-            $item = Item::query()->find($result->item_id);
+            $item = Item::query()->lockForUpdate()->find($result->item_id);
             if (! $item || ! $item->is_stock_item) $this->commands->fail('warehouse_item_invalid', '该下料产出不是可入库物料。', 409);
+            app(ItemManagementScopeService::class)->assertProductionAllowed($item, 'item_id');
             $this->assertBatchIdentity((int) $item->id, $batchNo, (int) $source->material_lot_id);
 
             [$segments, $cost] = $this->allocationSegments((int) $route->id, $quantity);

@@ -164,8 +164,9 @@ class SkuItemRelationController extends Controller
         $relation = DB::transaction(function () use ($data, $request) {
             $sku = Sku::lockForUpdate()->findOrFail($data['sku_id']);
             abort_if($this->orderLineType($sku) !== 'physical', 422, '服务或无需发货 SKU 无需默认 Item');
-            $itemEnabled = \App\Models\Erp\Item::whereKey($data['item_id'])->where('status', 'enabled')->exists();
-            abort_unless($itemEnabled, 422, '默认 Item 必须处于启用状态');
+            $item = \App\Models\Erp\Item::whereKey($data['item_id'])->where('status', 'enabled')->lockForUpdate()->first();
+            abort_unless($item, 422, '默认 Item 必须处于启用状态');
+            app(\App\Services\Erp\ItemManagementScopeService::class)->assertProductionAllowed($item, 'item_id');
             SkuItemRelation::where('sku_id', $sku->id)->where('status', 'active')->where('is_primary', true)->lockForUpdate()->get();
             SkuItemRelation::where('sku_id', $sku->id)->where('status', 'active')->where('is_primary', true)->update(['is_primary' => false, 'status' => 'inactive', 'expired_at' => now(), 'operator_name' => $this->operatorName($request)]);
             return SkuItemRelation::create([
@@ -200,6 +201,8 @@ class SkuItemRelationController extends Controller
             $data['is_primary'] = false;
         } else {
             abort_if(empty($data['item_id']), 422, '请选择 Item');
+            $item = \App\Models\Erp\Item::query()->lockForUpdate()->findOrFail($data['item_id']);
+            app(\App\Services\Erp\ItemManagementScopeService::class)->assertProductionAllowed($item, 'item_id');
         }
         return $data;
     }

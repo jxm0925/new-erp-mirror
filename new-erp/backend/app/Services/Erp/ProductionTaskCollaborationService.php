@@ -8,6 +8,7 @@ use App\Models\Erp\ProductionQuantityOperation;
 use App\Models\Erp\ProductionTask;
 use App\Models\Erp\ProductionUnitOperation;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Pagination\LengthAwarePaginator;
 
 class ProductionTaskCollaborationService
 {
@@ -17,7 +18,7 @@ class ProductionTaskCollaborationService
     ) {}
 
     public function join(int $taskId, array $payload, object $user, array $permissions): array
-    { $this->permission($permissions); return $this->change($taskId, $payload, $user, true); }
+    { $this->fail('collaboration_owner_required', '协同人员由接单负责人选择，不能自行加入。', 403); }
     public function leave(int $taskId, array $payload, object $user, array $permissions): array
     { $this->permission($permissions); return $this->change($taskId, $payload, $user, false); }
 
@@ -34,19 +35,20 @@ class ProductionTaskCollaborationService
         sort($employeeIds);
         if ($employeeIds === []) $this->fail('collaborators_required', '请至少选择一位协同人员。');
         $commandId = trim((string) ($payload['client_command_id'] ?? ''));
-        $hash = hash('sha256', json_encode([$taskId, (int) ($payload['expected_version'] ?? 0), $employeeIds], JSON_UNESCAPED_UNICODE));
+        if ($commandId === '') $this->fail('client_command_id_required', '写操作必须提供 client_command_id。');
+        $hash = hash('sha256', json_encode([$taskId, $this->userId($user), (int) ($payload['expected_version'] ?? 0), $employeeIds], JSON_UNESCAPED_UNICODE));
 
         return DB::transaction(function () use ($taskId, $payload, $user, $employeeIds, $commandId, $hash): array {
+            $task = ProductionTask::query()->with('workOrder')->lockForUpdate()->find($taskId);
+            if (! $task) $this->fail('task_not_found', '生产任务不存在。', 404);
             $existing = ProductionExecutionCommand::query()->where('client_command_id', $commandId)->lockForUpdate()->first();
             if ($existing) return $this->replay($existing, 'add_task_collaborators', $hash);
             $ledger = ProductionExecutionCommand::create(['client_command_id' => $commandId, 'command_type' => 'add_task_collaborators',
                 'aggregate_type' => 'production_task', 'aggregate_id' => $taskId, 'request_hash' => $hash, 'status' => 'processing',
                 'initiated_by_legacy_id' => $this->userId($user), 'processing_started_at' => now()]);
-            $task = ProductionTask::query()->with('workOrder')->lockForUpdate()->find($taskId);
-            if (! $task) $this->fail('task_not_found', '生产任务不存在。', 404);
             if ((int) $task->business_version !== (int) ($payload['expected_version'] ?? 0)) $this->fail('version_conflict', '任务版本已变化，请刷新后重试。', 409);
             if (! $task->workOrder?->collaboration_enabled) $this->fail('collaboration_not_enabled', '该工单未开启协同生产。', 409);
-            if (! $task->assignee_user_legacy_id || $task->status === 'WAIT_CLAIM') $this->fail('task_not_claimed', '生产任务尚未接单，不能添加协同。', 409);
+            $this->assertOwnerTask($task, $user);
             if ((int) $task->assignee_user_legacy_id !== $this->userId($user)) $this->fail('task_owner_required', '只有任务负责人可以添加协同人员。', 403);
             if (in_array($this->userId($user), $employeeIds, true)) $this->fail('task_owner_not_collaborator', '任务负责人不能重复添加为协同人员。');
 
@@ -79,11 +81,42 @@ class ProductionTaskCollaborationService
         }, 5);
     }
 
+    public function candidates(int $taskId, array $filters, object $user, array $permissions): LengthAwarePaginator
+    {
+        $this->permission($permissions);
+        $task = ProductionTask::query()->with('workOrder')->find($taskId);
+        if (! $task) $this->fail('task_not_found', '生产任务不存在。', 404);
+        $this->assertOwnerTask($task, $user);
+        $activeIds = $task->collaborators()->whereNull('left_at')->pluck('employee_legacy_id')->map(fn ($id) => (int) $id)->all();
+        $query = DB::table('erp_legacy_admin_users as u')->where('u.status', 'normal')->where('u.legacy_id', '<>', $this->userId($user))
+            ->whereExists(fn ($permission) => $permission->selectRaw('1')->from('erp_rbac_user_roles as ur')
+                ->join('erp_rbac_roles as r', 'r.id', '=', 'ur.role_id')->join('erp_rbac_role_permissions as rp', 'rp.role_id', '=', 'r.id')
+                ->join('erp_rbac_permissions as p', 'p.id', '=', 'rp.permission_id')->whereColumn('ur.user_legacy_id', 'u.legacy_id')
+                ->where('r.enabled', true)->where('p.enabled', true)->where('p.code', 'production.task.collaborate'));
+        if ($keyword = trim((string) ($filters['keyword'] ?? ''))) $query->where(fn ($q) => $q
+            ->where('u.nickname', 'like', "%{$keyword}%")->orWhere('u.username', 'like', "%{$keyword}%")->orWhere('u.legacy_id', 'like', "%{$keyword}%"));
+        $page = $query->orderBy('u.legacy_id')->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 20))), ['u.legacy_id']);
+        $people = app(ErpUserProjectionService::class)->many($page->getCollection()->pluck('legacy_id')->all());
+        $page->setCollection($page->getCollection()->map(fn ($row) => ($people[(int) $row->legacy_id] ?? ['user_id' => (int) $row->legacy_id])
+            + ['already_joined' => in_array((int) $row->legacy_id, $activeIds, true)]));
+        return $page;
+    }
+
+    private function assertOwnerTask(ProductionTask $task, object $user): void
+    {
+        ProductionJobBundleExecutionContext::assertTask($task);
+        if (! $task->workOrder?->collaboration_enabled) $this->fail('collaboration_not_enabled', '该工单未开启协同生产。', 409);
+        if ((int) $task->assignee_user_legacy_id !== $this->userId($user)) $this->fail('task_owner_required', '只有任务负责人可以选择协同人员。', 403);
+        if (! in_array($task->status, ['CLAIMED', 'WAIT_MATERIAL', 'WAIT_HANDOVER', 'READY', 'IN_PROGRESS', 'PAUSED', 'REWORK'], true)
+            || ! in_array($task->workOrder?->status, ['RELEASED', 'IN_PROGRESS'], true)) $this->fail('task_not_collaboratable', '当前任务或工单状态不能添加协同人员。', 409);
+    }
+
     private function change(int $taskId, array $payload, object $user, bool $join): array
     {
         $commandType = $join ? 'join_task_collaboration' : 'leave_task_collaboration';
         $commandId = trim((string) ($payload['client_command_id'] ?? ''));
-        $hash = hash('sha256', json_encode([$taskId, (int) ($payload['expected_version'] ?? 0)], JSON_UNESCAPED_UNICODE));
+        if ($commandId === '') $this->fail('client_command_id_required', '写操作必须提供 client_command_id。');
+        $hash = hash('sha256', json_encode([$taskId, $this->userId($user), (int) ($payload['expected_version'] ?? 0)], JSON_UNESCAPED_UNICODE));
         return DB::transaction(function () use ($taskId, $payload, $user, $join, $commandType, $commandId, $hash): array {
             $existing = ProductionExecutionCommand::query()->where('client_command_id', $commandId)->lockForUpdate()->first();
             if ($existing) return $this->replay($existing, $commandType, $hash);
@@ -92,6 +125,7 @@ class ProductionTaskCollaborationService
                 'initiated_by_legacy_id' => $this->userId($user), 'processing_started_at' => now()]);
             $task = ProductionTask::query()->with('workOrder')->lockForUpdate()->find($taskId);
             if (! $task) $this->fail('task_not_found', '生产任务不存在。', 404);
+            ProductionJobBundleExecutionContext::assertTask($task);
             if ((int) $task->business_version !== (int) ($payload['expected_version'] ?? 0)) $this->fail('version_conflict', '任务版本已变化，请刷新后重试。', 409);
             if (! $task->workOrder?->collaboration_enabled) $this->fail('collaboration_not_enabled', '该工单未开启协同生产。', 409);
             if (! $task->assignee_user_legacy_id || $task->status === 'WAIT_CLAIM') $this->fail('task_not_claimed', '生产任务尚未接单，不能加入协同。', 409);
@@ -121,7 +155,8 @@ class ProductionTaskCollaborationService
     {
         $commandType = $start ? 'start_collaborator_labor' : 'pause_collaborator_labor';
         $commandId = trim((string) ($payload['client_command_id'] ?? ''));
-        $hash = hash('sha256', json_encode([$taskId, $targetType, $targetId, (int) ($payload['expected_version'] ?? 0)], JSON_UNESCAPED_UNICODE));
+        if ($commandId === '') $this->fail('client_command_id_required', '写操作必须提供 client_command_id。');
+        $hash = hash('sha256', json_encode([$taskId, $this->userId($user), $targetType, $targetId, $payload], JSON_UNESCAPED_UNICODE));
         return DB::transaction(function () use ($taskId, $targetType, $targetId, $payload, $user, $start, $commandType, $commandId, $hash): array {
             $existing = ProductionExecutionCommand::query()->where('client_command_id', $commandId)->lockForUpdate()->first();
             if ($existing) return $this->replay($existing, $commandType, $hash);
@@ -130,6 +165,7 @@ class ProductionTaskCollaborationService
                 'initiated_by_legacy_id' => $this->userId($user), 'processing_started_at' => now()]);
             $task = ProductionTask::query()->with(['workOrder', 'targets'])->lockForUpdate()->find($taskId);
             if (! $task || ! $task->targets->contains(fn ($row) => $row->target_type === $targetType && (int) $row->target_id === $targetId)) $this->fail('task_target_not_found', '任务中不存在该生产执行目标。', 404);
+            ProductionJobBundleExecutionContext::assertTask($task);
             if (! $task->workOrder?->collaboration_enabled) $this->fail('collaboration_not_enabled', '该工单未开启协同生产。', 409);
             $userId = $this->userId($user);
             $collaborator = $task->collaborators()->where('employee_legacy_id', $userId)->where('role', 'collaborator')->whereNull('left_at')->lockForUpdate()->first();

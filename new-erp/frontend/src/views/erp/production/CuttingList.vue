@@ -6,7 +6,7 @@
         <h1>下料单列表</h1>
       </div>
       <div class="heading-actions">
-        <el-button v-if="$can('production.cutting.publish') || $can('production.cutting.view')" type="success" @click="$router.push('/production/cutting/create')">新增下料单</el-button>
+        <el-button v-if="$can('production.cutting.plan')" type="success" @click="$router.push('/production/cutting/create')">安排正式需求下料</el-button>
       </div>
     </div>
 

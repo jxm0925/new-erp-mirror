@@ -31,7 +31,7 @@ Page({
   previous() { if (this.data.page > 1 && !this.data.loading) { this.setData({ page: this.data.page - 1 }); this.load(); } },
   next() { if (this.data.page < this.data.lastPage && !this.data.loading) { this.setData({ page: this.data.page + 1 }); this.load(); } },
   openDocument(event) { const row = this.data.rows.find(row => row.key === event.currentTarget.dataset.key); if (row) page.openDocument(row); },
-  createPicking() { wx.navigateTo({ url: '/pages/warehouse/picking/index?mode=create' }); },
+  createPicking() { wx.navigateTo({ url: '/pages/warehouse/public-preparation/index' }); },
   openFilter() { this.setData({ filterOpen: true, draftFrom: this.data.dateFrom, draftTo: this.data.dateTo, filterError: '' }); },
   closeFilter() { this.setData({ filterOpen: false }); },
   filterDate(event) { this.setData({ [event.currentTarget.dataset.field]: event.detail.value }); },

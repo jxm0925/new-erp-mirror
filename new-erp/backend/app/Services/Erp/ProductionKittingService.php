@@ -41,14 +41,11 @@ class ProductionKittingService
         if ($mode === 'return') {
             // A selectable return is an actual receipt source, not just an item. Subtract
             // active return reservations per warehouse/location/batch before counting pages.
-            $received = DB::table('erp_material_receipt_lines as receipt_line')
-                ->join('erp_material_delivery_lines as delivery_line', 'delivery_line.id', '=', 'receipt_line.delivery_line_id')
-                ->join('erp_material_deliveries as delivery', 'delivery.id', '=', 'delivery_line.delivery_id')
-                ->join('erp_material_picking_task_lines as pick_line', 'pick_line.id', '=', 'delivery_line.picking_task_line_id')
-                ->where('delivery.production_target_type', $targetType)->where('delivery.production_target_id', $targetId)
+            $received = app(ProductionMaterialReceiptQueryService::class)->query()
+                ->where('pick_line.production_target_type', $targetType)->where('pick_line.production_target_id', $targetId)
                 ->where('receipt_line.accepted_qty', '>', 0)
-                ->selectRaw("delivery_line.material_requirement_id, pick_line.warehouse_id, pick_line.location_id, COALESCE(delivery_line.batch_no, '') as batch_no, SUM(receipt_line.accepted_qty) as received_base_qty")
-                ->groupBy('delivery_line.material_requirement_id', 'pick_line.warehouse_id', 'pick_line.location_id', DB::raw("COALESCE(delivery_line.batch_no, '')"));
+                ->selectRaw("pick_line.material_requirement_id, pick_line.warehouse_id, pick_line.location_id, COALESCE(pick_line.batch_no, '') as batch_no, SUM(receipt_line.accepted_qty) as received_base_qty")
+                ->groupBy('pick_line.material_requirement_id', 'pick_line.warehouse_id', 'pick_line.location_id', DB::raw("COALESCE(pick_line.batch_no, '')"));
             $returned = DB::table('erp_production_material_return_lines as return_line')
                 ->join('erp_production_material_returns as material_return', 'material_return.id', '=', 'return_line.return_id')
                 ->where('material_return.target_type', $targetType)->where('material_return.target_id', $targetId)
@@ -160,6 +157,10 @@ class ProductionKittingService
             if ($pendingHandover || $pendingCuttingHandover) $this->fail('handover_not_received', '上一工序或下料产出尚未完成交接接收，不能确认齐套。');
 
             if (! $target->kitting_required) $this->fail('kitting_not_required', '当前工序不需要齐套确认。');
+            $readiness = app(ProductionTargetReadinessService::class)->project($targetType, $target);
+            if ($readiness['reason_code'] === 'materials_not_ready') {
+                $this->fail('materials_not_ready', $readiness['reason_message'], 422, ['shortages' => $readiness['shortages']]);
+            }
             $this->applyWorkstationStockFacts($task, $targetType, $targetId, $commandId);
 
             $rows = $this->materialRows($targetType, $targetId);
@@ -193,24 +194,25 @@ class ProductionKittingService
 
             $target->kitting_confirmed_at = $confirmation->confirmed_at;
             $target->kitting_confirmed_by_legacy_id = $this->userId($user);
-            // 对需要齐套的工序，负责人亲自确认齐套就是接受现场输入并开始实际加工的业务动作。
-            // 此处必须与齐套事实共用同一事务，避免出现“已齐套但未开始计时”的半完成状态。
-            $target->started_at = $target->started_at ?: $confirmation->confirmed_at;
+            // A bundled detail confirms its own material identity without starting a second employee timer.
+            // The bundle command atomically starts every prepared detail and the single actual session.
+            $bundled = (bool) $task->active_job_bundle_id;
+            if (! $bundled) $target->started_at = $target->started_at ?: $confirmation->confirmed_at;
             $target->paused_at = null;
-            $target->status = 'IN_PROGRESS';
+            $target->status = $bundled ? 'READY' : 'IN_PROGRESS';
             $target->business_version = (int) $target->business_version + 1;
             $target->save();
-            $task->targets()->where('target_type', $targetType)->where('target_id', $targetId)->update(['status_snapshot' => 'IN_PROGRESS']);
-            if ($task->status !== 'IN_PROGRESS') {
-                $task->update(['status' => 'IN_PROGRESS', 'business_version' => (int) $task->business_version + 1]);
+            $task->targets()->where('target_type', $targetType)->where('target_id', $targetId)->update(['status_snapshot' => $target->status]);
+            if ($task->status !== $target->status) {
+                $task->update(['status' => $target->status, 'business_version' => (int) $task->business_version + 1]);
             }
-            $this->laborSessions->start($task, $target, $targetType, $this->userId($user), 'owner', 1, $confirmation->confirmed_at, $payload);
+            if (! $bundled) $this->laborSessions->start($task, $target, $targetType, $this->userId($user), 'owner', 1, $confirmation->confirmed_at, $payload);
 
             $result = ['id' => (int) $confirmation->id, 'confirmation_no' => $confirmation->confirmation_no,
                 'status' => $confirmation->status, 'target_status' => $target->status,
                 'target_business_version' => (int) $target->business_version,
                 'confirmed_at' => $confirmation->confirmed_at->toISOString(),
-                'started_at' => $target->started_at->toISOString()];
+                'started_at' => optional($target->started_at)->toISOString(), 'job_bundle_id' => $task->active_job_bundle_id];
             $ledger->update(['result_type' => 'kitting_confirmation', 'result_id' => $confirmation->id,
                 'response_snapshot' => $result, 'status' => 'succeeded', 'processing_finished_at' => now()]);
             return $result;
@@ -242,17 +244,14 @@ class ProductionKittingService
             ->orderBy('requirement.id')->get();
 
         $requirementIds = $rows->pluck('material_requirement_id')->map(fn ($id) => (int) $id)->unique()->values();
-        $returnSources = DB::table('erp_material_receipt_lines as receipt_line')
-            ->join('erp_material_delivery_lines as delivery_line', 'delivery_line.id', '=', 'receipt_line.delivery_line_id')
-            ->join('erp_material_deliveries as delivery', 'delivery.id', '=', 'delivery_line.delivery_id')
-            ->join('erp_material_picking_task_lines as pick_line', 'pick_line.id', '=', 'delivery_line.picking_task_line_id')
+        $returnSources = app(ProductionMaterialReceiptQueryService::class)->query()
             ->join('erp_warehouses as warehouse', 'warehouse.id', '=', 'pick_line.warehouse_id')
             ->join('erp_locations as location', 'location.id', '=', 'pick_line.location_id')
-            ->whereIn('delivery_line.material_requirement_id', $requirementIds)
-            ->where('delivery.production_target_type', $targetType)->where('delivery.production_target_id', $targetId)
+            ->whereIn('pick_line.material_requirement_id', $requirementIds)
+            ->where('pick_line.production_target_type', $targetType)->where('pick_line.production_target_id', $targetId)
             ->where('receipt_line.accepted_qty', '>', 0)
-            ->selectRaw('delivery_line.material_requirement_id, pick_line.warehouse_id, pick_line.location_id, delivery_line.batch_no, warehouse.warehouse_code, warehouse.warehouse_name, location.location_code, location.location_name, SUM(receipt_line.accepted_qty) as received_base_qty')
-            ->groupBy('delivery_line.material_requirement_id', 'pick_line.warehouse_id', 'pick_line.location_id', 'delivery_line.batch_no', 'warehouse.warehouse_code', 'warehouse.warehouse_name', 'location.location_code', 'location.location_name')
+            ->selectRaw('pick_line.material_requirement_id, pick_line.warehouse_id, pick_line.location_id, pick_line.batch_no, warehouse.warehouse_code, warehouse.warehouse_name, location.location_code, location.location_name, SUM(receipt_line.accepted_qty) as received_base_qty')
+            ->groupBy('pick_line.material_requirement_id', 'pick_line.warehouse_id', 'pick_line.location_id', 'pick_line.batch_no', 'warehouse.warehouse_code', 'warehouse.warehouse_name', 'location.location_code', 'location.location_name')
             ->get()->groupBy(fn ($row) => (int) $row->material_requirement_id);
 
         $activeReturns = DB::table('erp_production_material_return_lines as return_line')

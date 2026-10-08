@@ -3,7 +3,7 @@
     <view class="warehouse-dialog-header"><text>{{title || '请选择'}}</text><button class="warehouse-close" bindtap="cancel"><van-icon name="cross" size="20"/></button></view>
     <view class="picker-content">
       <view wx:if="{{hasCategories}}" class="picker-categories">
-        <view class="picker-category-title">{{mode === 'stock' ? '库位' : '所属部门'}}</view>
+        <view class="picker-category-title">{{mode === 'stock' ? '库位' : mode === 'procurement-item' ? '物料分类' : '所属部门'}}</view>
         <scroll-view scroll-y class="picker-category-scroll">
           <view class="picker-category {{categoryId === 0 ? 'active' : ''}}" data-id="0" bindtap="chooseCategory">全部</view>
           <view wx:for="{{categories}}" wx:key="id" class="picker-category {{categoryId === item.id ? 'active' : ''}}" data-id="{{item.id}}" bindtap="chooseCategory">{{item.label}}</view>
@@ -19,7 +19,7 @@
           <view wx:elif="{{!rows.length && !error}}" class="warehouse-empty">暂无可选记录</view>
           <view wx:elif="{{error && !rows.length}}" class="warehouse-error">{{error}}<button class="warehouse-secondary" bindtap="load">重新加载</button></view>
           <block wx:else>
-            <view class="picker-table-head"><text class="picker-check">选择</text><text class="picker-col-name">{{mode === 'stock' ? '批次 / 库位' : mode === 'physical' ? '实物编号 / 规格' : mode === 'serial' ? '序列号' : mode === 'people' ? '姓名 / 用户名' : mode === 'target' ? '工单 / 目标工序' : '仓库'}}</text><text wx:if="{{quantity}}" class="picker-col-quantity">可用 / 本次数量</text><text wx:elif="{{mode === 'physical' || mode === 'serial'}}" class="picker-col-status">状态</text></view>
+            <view class="picker-table-head"><text class="picker-check">选择</text><text class="picker-col-name">{{mode === 'stock' ? '批次 / 库位' : mode === 'physical' || mode === 'onsite-physical' ? '实物编号 / 规格' : mode === 'serial' || mode === 'onsite-serial' ? '序列号' : mode === 'people' ? '姓名 / 用户名' : mode === 'target' ? '工单 / 目标工序' : mode === 'procurement-item' ? '物料 / 规格' : mode === 'procurement-order' ? '订单 / 客户' : '仓库'}}</text><text wx:if="{{quantity}}" class="picker-col-quantity">可用 / 本次数量</text><text wx:elif="{{mode === 'physical' || mode === 'serial' || mode === 'onsite-physical' || mode === 'onsite-serial'}}" class="picker-col-status">状态</text></view>
             <view wx:for="{{rows}}" wx:key="key" class="picker-row">
               <view class="picker-check"><van-checkbox value="{{item.checked}}" shape="{{multiple ? 'square' : 'round'}}" checked-color="#ef1008" data-key="{{item.key}}" bind:change="toggle"/></view>
               <view class="picker-col-name" data-key="{{item.key}}" bindtap="toggle"><view>{{item.title}}</view><view wx:if="{{item.subtitle}}" class="warehouse-muted">{{item.subtitle}}{{mode === 'physical' ? ' mm' : ''}}</view></view>

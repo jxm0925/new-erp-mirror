@@ -71,6 +71,16 @@ class InventoryAvailabilityService
         return max(0, min((float) $balance->quantity_available, $calculated));
     }
 
+    /** Exact decimal projection for planning; eligibility remains governed by the shared outbound boundary. */
+    public function availableForOutboundDecimal(InventoryBalance $balance): string
+    {
+        if ($this->availableForOutbound($balance) <= 0) return '0.00000000';
+        $calculated = bcsub(bcsub(bcsub((string) $balance->quantity_on_hand, (string) $balance->quantity_locked, 8),
+            (string) $balance->quantity_defective, 8), (string) $balance->quantity_pending, 8);
+        $available = bccomp($calculated, (string) $balance->quantity_available, 8) < 0 ? $calculated : (string) $balance->quantity_available;
+        return bccomp($available, '0', 8) > 0 ? bcadd($available, '0', 8) : '0.00000000';
+    }
+
     private function isPublicFinishedProductionLot(InventoryBalance $balance, object $lot): bool
     {
         if ($lot->source_type !== 'production_output_record' || $lot->material_form !== 'PRODUCT' || $lot->configuration_id
@@ -177,7 +187,7 @@ class InventoryAvailabilityService
         return $allocations;
     }
 
-    private function eligibleBalances(int $itemId, bool $lock): Collection
+    public function eligibleBalances(int $itemId, bool $lock = false): Collection
     {
         $query = InventoryBalance::query()
             ->select('erp_inventory_balances.*')

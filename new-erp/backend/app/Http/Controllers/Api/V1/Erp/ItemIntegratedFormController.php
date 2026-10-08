@@ -9,14 +9,19 @@ use App\Models\Erp\ItemCategory;
 use App\Models\Erp\Unit;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\ItemIntegratedFormApplicationService;
+use App\Services\Erp\ItemManagementScopeService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
 class ItemIntegratedFormController extends Controller
 {
-    public function show(int $id)
+    public function show(Request $request, int $id)
     {
+        app(\App\Services\Erp\MasterDataAccessService::class)->authorize($request, 'items', 'view');
         $item = Item::query()->with(['category', 'unit.standardUnit', 'activeMaterialPolicy'])->findOrFail($id);
+        $scopes = app(ItemManagementScopeService::class);
+        $scopes->assertContext($item, $scopes->requestScope($request));
+        $scopes->exposeCategoryScope($item);
 
         return response()->json([
             'item' => $item,
@@ -33,6 +38,7 @@ class ItemIntegratedFormController extends Controller
     {
         app(\App\Services\Erp\MasterDataAccessService::class)->authorize($request, 'items', 'create');
         [$item, $policy, $activate] = $this->validated($request);
+        $item = app(ItemManagementScopeService::class)->prepareItem($item, null, app(ItemManagementScopeService::class)->requestScope($request));
         $saved = $service->save(null, $item, $policy, $activate, $auth->currentLegacyId($request));
         return response()->json(['message' => $activate ? '物料与归属策略已启用' : '物料与归属策略草稿已保存', 'data' => $saved], 201);
     }
@@ -40,8 +46,11 @@ class ItemIntegratedFormController extends Controller
     public function update(Request $request, int $id, ItemIntegratedFormApplicationService $service, AuthContextService $auth)
     {
         app(\App\Services\Erp\MasterDataAccessService::class)->authorize($request, 'items', 'edit');
+        $existing = Item::query()->findOrFail($id);
+        $managementContext = app(ItemManagementScopeService::class)->requestScope($request);
+        app(ItemManagementScopeService::class)->assertContext($existing, $managementContext);
         [$item, $policy, $activate] = $this->validated($request, $id);
-        $saved = $service->save(Item::query()->findOrFail($id), $item, $policy, $activate, $auth->currentLegacyId($request));
+        $saved = $service->save($existing, $item, $policy, $activate, $auth->currentLegacyId($request), $managementContext);
         return response()->json(['message' => $activate ? '物料与归属策略已启用' : '物料与归属策略草稿已保存', 'data' => $saved]);
     }
 
@@ -53,6 +62,7 @@ class ItemIntegratedFormController extends Controller
             'item.item_code' => ['required', 'string', 'max:120', Rule::unique('erp_items', 'item_code')->ignore($id)],
             'item.item_name' => 'required|string|max:160',
             'item.item_type' => 'required|in:finished_product,semi_finished,raw_material,packaging,service,office_consumable',
+            'item.management_scope' => 'sometimes|required|in:factory,office',
             'item.category_id' => 'required|integer|exists:erp_item_categories,id',
             'item.spec' => 'nullable|string|max:255',
             'item.material_grade' => 'nullable|string|max:80',
@@ -62,6 +72,7 @@ class ItemIntegratedFormController extends Controller
             'item.is_length_cut_material' => 'required|boolean',
             'item.unit_id' => 'required|integer|exists:erp_units,id',
             'item.is_purchase_item' => 'boolean', 'item.is_stock_item' => 'boolean', 'item.is_production_item' => 'boolean',
+            'item.manufacturing_strategy' => 'sometimes|required|in:unspecified,purchase,make',
             'item.serial_tracking_mode' => 'nullable|in:none,optional,required',
             'item.serial_number_prefix' => 'nullable|string|max:30|regex:/^[A-Za-z0-9_-]+$/',
             'item.equipment_identity_requirement' => 'nullable|in:not_applicable,required',

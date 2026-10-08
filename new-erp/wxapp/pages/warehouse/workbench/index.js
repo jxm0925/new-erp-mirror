@@ -9,7 +9,7 @@ Page({
   load() {
     const sequence = this.sequence = (this.sequence || 0) + 1;
     if (!wx.getStorageSync('erp_token')) { this.setData({ authenticated: false, loading: false, summary: null, todos: [], error: '' }); return Promise.resolve(); }
-    this.setData({ authenticated: true, loading: true, error: '' });
+    this.setData({ authenticated: true, loading: true, error: '', canPrepare: page.permissions()('production.material_picking.view'), canProcure: page.permissions()('production.material_procurement.create') });
     return warehouse.summary().then(response => {
       if (sequence !== this.sequence) return;
       const summary = response.data || response;
@@ -19,6 +19,8 @@ Page({
   },
   openList(event) { wx.navigateTo({ url: `/pages/warehouse/list/index?direction=${event.currentTarget.dataset.direction || 'all'}` }); },
   openDelivery() { wx.navigateTo({ url: '/pages/warehouse/deliveries/index' }); },
+  openPreparation() { wx.navigateTo({ url: '/pages/warehouse/public-preparation/index' }); },
+  openProcurement() { wx.navigateTo({ url: '/pages/warehouse/material-procurement/index' }); },
   openTodo(event) { const row = this.data.todos.find(row => row.key === event.currentTarget.dataset.key); if (row) page.openDocument(row); },
   openTasks() { wx.navigateTo({ url: '/pages/production/tasks/index' }); },
   openTodos() { wx.navigateTo({ url: '/pages/production/todos/index' }); },

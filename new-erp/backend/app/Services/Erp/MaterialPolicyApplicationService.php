@@ -17,6 +17,13 @@ class MaterialPolicyApplicationService
         'consumption_confirmation_mode', 'future_route', 'future_bearer_type',
     ];
 
+    private const ROUTE_SETTINGS = [
+        'inventory' => [true, 'standard', 'inventory_receipt', 'none'],
+        'expense' => [true, 'standard', 'issue_confirmation', 'issue'],
+        'asset' => [false, 'none', 'asset_acceptance', 'asset_acceptance'],
+        'direct_expense' => [false, 'none', 'expense_confirmation', 'none'],
+    ];
+
     public function saveDraft(Item $item, array $attributes, ?int $operatorLegacyId): ItemMaterialPolicy
     {
         return DB::transaction(function () use ($item, $attributes, $operatorLegacyId) {
@@ -120,6 +127,14 @@ class MaterialPolicyApplicationService
         $executionMode = (string) ($attributes['production_execution_mode'] ?? 'unit');
         $serialStage = (string) ($attributes['serial_generation_stage'] ?? 'before_finished_goods_posting');
 
+        if ($item->managementScope() === 'office') {
+            abort_unless(in_array((string) $attributes['future_bearer_type'], ['company', 'department', 'employee'], true), 422, '办公物资的承担主体只能选择公司、部门或员工。');
+            abort_unless(isset(self::ROUTE_SETTINGS[$route]) && in_array($action, ['inventory_receipt', 'issue_confirmation', 'asset_acceptance', 'expense_confirmation'], true), 422, '办公物资不能选择工单成本或销售直记成本。');
+            // Validate the submitted production reference before the common
+            // normalization below can clear it for the default serial stage.
+            abort_if($serialStage !== 'before_finished_goods_posting' || filled($attributes['serial_generation_routing_operation_id'] ?? null), 422, '办公物资不能设置生产编号生成节点或指定生产工序。');
+        }
+
         abort_unless(in_array($executionMode, ['unit', 'quantity'], true), 422, '生产执行模式只能选择逐件生产或按数量生产。');
         abort_unless(in_array($serialStage, ['production_unit_created', 'routing_operation_completed', 'before_finished_goods_posting'], true), 422, '设备编号生成节点无效。');
         if ($serialStage === 'routing_operation_completed') {
@@ -137,6 +152,14 @@ class MaterialPolicyApplicationService
         abort_if($stockManaged && !in_array($route, ['inventory', 'expense'], true), 422, '库存管理物资当前只能选择库存或库存后领用费用意图。');
         abort_if(!$stockManaged && $route === 'inventory', 422, '非库存管理物资不能选择库存处理意图。');
         abort_if($stockManaged && !in_array($action, ['inventory_receipt', 'issue_confirmation'], true), 422, '库存管理物资的采购后处理必须进入库存或领用确认。');
+        if (isset(self::ROUTE_SETTINGS[$route])) {
+            [$expectedStock, $expectedMode, $expectedAction, $expectedConfirmation] = self::ROUTE_SETTINGS[$route];
+            abort_if($stockManaged !== $expectedStock
+                || (string) $attributes['inventory_management_mode'] !== $expectedMode
+                || $action !== $expectedAction
+                || (string) $attributes['consumption_confirmation_mode'] !== $expectedConfirmation,
+                422, '库存管理、采购后处理和确认方式必须与所选处理意图一致。');
+        }
         abort_if($route === 'direct_expense' && $stockManaged, 422, '直接非库存处理不能启用库存管理。');
         abort_if($route === 'direct_expense' && $action !== 'expense_confirmation', 422, '直接非库存处理的采购后处理必须为费用确认。');
         abort_if($route === 'direct_expense' && (string) $attributes['consumption_confirmation_mode'] !== 'none', 422, '直接非库存处理不应进入库存领用确认。');

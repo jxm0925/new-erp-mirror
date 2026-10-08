@@ -11,7 +11,7 @@
         <template v-if="activeView!=='technical'">
         <el-button v-if="workOrder.source && workOrder.source.demand_id" @click="openSource">查看生产需求</el-button>
         <el-button v-if="canRematchRouting" type="warning" plain @click="rematchRouting">重新匹配工艺路线</el-button>
-        <el-button v-if="canEdit" type="success" @click="save">保存</el-button>
+        <el-button v-if="canEdit && activeView==='detail'" type="success" @click="save">保存</el-button>
         <el-button v-if="canSubmit" type="success" @click="submit">提交</el-button>
         <el-button v-if="canPublish" type="success" @click="publish">发布工单</el-button>
         <el-button v-if="canReturn" @click="returnDraft">退回草稿</el-button>
@@ -28,11 +28,17 @@
     <nav class="work-order-tabs">
       <button :class="{active:activeView==='detail'}" @click="activeView='detail'">工单详情</button>
       <button :class="{active:activeView==='technical'}" @click="activeView='technical'">技术准备</button>
+      <button :class="{active:activeView==='outputs'}" @click="activeView='outputs'">产出计划</button>
+      <button :class="{active:activeView==='assembly'}" @click="activeView='assembly'">部件生产准备</button>
+      <button v-if="$can('production.task.view')" :class="{active:activeView==='bundles'}" @click="activeView='bundles'">共同加工</button>
       <button v-if="canViewCompletion" :class="{active:activeView==='completion'}" @click="activeView='completion'">完工与入库</button>
     </nav>
 
     <WorkOrderCompletionPanel v-if="activeView==='completion'" :work-order="workOrder" @updated="fetchWorkOrder" />
     <WorkOrderTechnicalPanel v-if="activeView==='technical'" ref="technical" :key="workOrder.id" :work-order="workOrder" @updated="fetchWorkOrder" @saving="technicalSaving=$event" />
+    <WorkOrderOutputPlanPanel v-if="activeView==='outputs'" :key="`outputs-${workOrder.id}`" :work-order="workOrder" @updated="fetchWorkOrder" />
+    <WorkOrderAssemblyPanel v-if="activeView==='assembly'" :key="`assembly-${workOrder.id}`" :work-order="workOrder" @updated="fetchWorkOrder" />
+    <ProductionJobBundlePanel v-if="activeView==='bundles'" :key="`bundles-${workOrder.id}`" :work-order="workOrder" @updated="fetchWorkOrder" />
     <div v-show="activeView==='detail'">
 
     <section class="trace-card card">
@@ -102,6 +108,9 @@
       </aside>
     </div>
 
+    <ProductionInventoryContinuationPanel :key="`continuation-${workOrder.id}`" :work-order="workOrder" @updated="fetchWorkOrder" />
+    <ProductionAssignmentPanel v-if="['RELEASED', 'IN_PROGRESS', 'COMPLETED'].includes(workOrder.status)" :key="`assignments-${workOrder.id}`" :work-order="workOrder" @updated="fetchWorkOrder" />
+
     <section class="card timeline-card">
       <h3>7. 工单状态时间线</h3>
       <div class="timeline">
@@ -120,11 +129,16 @@ import { getWorkOrder, updateWorkOrderDraft, submitWorkOrder, getWorkOrderReleas
 import { listUsers } from '../../../api/erp/rbac'
 import WorkOrderCompletionPanel from './WorkOrderCompletionPanel.vue'
 import WorkOrderTechnicalPanel from './WorkOrderTechnicalPanel.vue'
+import ProductionInventoryContinuationPanel from './ProductionInventoryContinuationPanel.vue'
+import ProductionAssignmentPanel from './ProductionAssignmentPanel.vue'
+import WorkOrderOutputPlanPanel from './WorkOrderOutputPlanPanel.vue'
+import WorkOrderAssemblyPanel from './WorkOrderAssemblyPanel.vue'
+import ProductionJobBundlePanel from './ProductionJobBundlePanel.vue'
 
 export default {
   mixins: [cachedPageRoute],
   name: 'WorkOrderDetail',
-  components: { WorkOrderCompletionPanel, WorkOrderTechnicalPanel },
+  components: { WorkOrderCompletionPanel, WorkOrderTechnicalPanel, ProductionInventoryContinuationPanel, ProductionAssignmentPanel, WorkOrderOutputPlanPanel, WorkOrderAssemblyPanel, ProductionJobBundlePanel },
   data: () => ({ technicalSaving: false, loading: false, gateLoading: false, activeView: 'detail', workOrder: {}, gate: null, materials: [], materialTotal: 0, materialPage: 1, materialPerPage: 20, productionUsers: [], form: { target_qty: '', planned_date: '', production_batch: '', responsible_user_legacy_id: '', production_location_name: '' } }),
   computed: {
     canPrepareTechnical() { return ['DRAFT','WAIT_RELEASE'].includes(this.workOrder.status) && this.$can('production.technical.prepare') },
@@ -221,7 +235,7 @@ export default {
     displayUser(user) { return user.display_name || '未命名用户' },
     number(value) { return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 8 }) },
     materialStatus(status) { return ({ OPEN: '已计算' })[status] || status || '-' },
-    gateName(key) { return ({ work_order_state: '工单状态', demand_active: '生产需求', source_valid: '工单来源', routing_snapshot: '工艺路线快照', quantity: '计划数量', responsible_user: '负责人', production_location: '生产地点 / 车间', bom_match: 'BOM 匹配', bom_effective: 'BOM 生效状态', bom_complete: 'BOM 完整性', custom_documents: '定制附件', technical_confirmation:'技术资料确认', production_funding:'生产资金条件', stock_prebuild_output:'备货产出去向', production_execution_mode:'生产执行方式', production_unit_quantity:'逐件生产数量', material_supply_rules:'工序供料规则', stock_prebuild_material:'备货物料资格', stock_prebuild_reserved_target:'指定供给对象', release_evidence:'历史发布记录' })[key] || '其他发布条件' },
+    gateName(key) { return ({ assembly_component_plan: '部件生产准备', planned_outputs: '产出计划', operation_output_plan:'工序产出计划', work_order_state: '工单状态', demand_active: '生产需求', source_valid: '工单来源', routing_snapshot: '工艺路线快照', quantity: '计划数量', responsible_user: '负责人', production_location: '生产地点 / 车间', bom_match: 'BOM 匹配', bom_effective: 'BOM 生效状态', bom_complete: 'BOM 完整性', custom_documents: '定制附件', technical_confirmation:'技术资料确认', production_funding:'生产资金条件', stock_prebuild_output:'备货产出去向', production_execution_mode:'生产执行方式', production_unit_quantity:'逐件生产数量', material_supply_rules:'工序供料规则', stock_prebuild_material:'备货物料资格', stock_prebuild_reserved_target:'指定供给对象', release_evidence:'历史发布记录' })[key] || '其他发布条件' },
     statusText(status) { return ({ DRAFT: '草稿', WAIT_RELEASE: '待发布', RELEASED: '已发布', IN_PROGRESS: '生产中', COMPLETED: '已完成', CANCELLED: '已取消' })[status] || status || '-' },
     statusType(status) { return status === 'CANCELLED' ? 'danger' : status === 'WAIT_RELEASE' ? 'warning' : ['RELEASED', 'COMPLETED'].includes(status) ? 'success' : '' }
   }
@@ -231,6 +245,7 @@ export default {
 <style scoped>
 .production-page{padding:24px 28px;background:#f7f9fb;min-height:calc(100vh - 54px);color:#27384e}.page-heading{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:18px}.page-heading h1{margin:3px 0 0;font-size:22px;color:#152941}.eyebrow{margin:0;color:#008b4b;font-weight:600}.title-line,.heading-actions{display:flex;align-items:center;gap:9px}.version{padding:4px 9px;color:#1677d2;background:#edf6ff;border-radius:4px;font-weight:600}.card,.trace-card{background:#fff;border:1px solid #e6ebf0;border-radius:5px;margin-bottom:14px;padding:17px 20px}.card h3,.trace-card h3{margin:0 0 15px;color:#1d3048;font-size:14px}.trace-row{display:flex;align-items:center;gap:18px}.trace-row>span{font-size:24px;color:#9aa8b7}.trace-row>div{flex:1;display:grid;grid-template-columns:34px 1fr;align-items:center;padding:10px 13px;border:1px solid #e7edf2;border-radius:4px}.trace-row i{grid-row:span 2;font-size:22px;color:#98a5b3}.trace-row small{color:#66758a;margin-top:4px}.trace-row .active-trace{border-color:#7bd5a4;background:#f2fbf6}.trace-row .active-trace i{color:#008b4b}.detail-grid{display:grid;grid-template-columns:minmax(0,3fr) minmax(280px,1fr);gap:14px}.detail-grid>main,.detail-grid>aside{min-width:0}.overview-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px 28px}.overview-grid p,.info-grid p{min-width:0;margin:0;display:flex;flex-direction:column;gap:6px}.overview-grid label,.info-grid label,.release-state label,.release-reason label{color:#8794a4;font-size:12px}.overview-grid strong,.info-grid strong{font-weight:500;color:#33455d}.overview-grid .el-input,.overview-grid .el-select,.overview-grid .el-date-editor{width:100%}.split-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.info-grid{display:grid;grid-template-columns:1.5fr 1.2fr;gap:18px}.info-grid.three{grid-template-columns:repeat(3,1fr)}.section-title{display:flex;align-items:center;justify-content:space-between}.section-title h3{margin-bottom:12px}.section-title span{color:#8a97a7;font-size:12px}.fact-tabs{border-bottom:1px solid #e8edf2;margin-bottom:14px}.fact-tabs button{border:0;background:transparent;color:#008b4b;border-bottom:2px solid #008b4b;padding:0 14px 10px;font-weight:600}.material-summary{display:flex;gap:10px;align-items:center;margin:4px 0 10px}.material-summary span{color:#7f8da0}.material-page{display:flex;justify-content:flex-end;margin-top:12px}.gate-card{margin-bottom:14px}.release-state{padding:4px 0 13px;border-bottom:1px solid #edf1f4}.release-state strong,.release-state small{display:block;margin-top:6px}.release-state small{color:#7f8da0}.gate-result{margin:14px 0;padding:11px;border-radius:4px;display:flex;align-items:center;gap:8px}.gate-result.passed{background:#effaf4;color:#069552}.gate-result.blocked{background:#fff7ed;color:#d97706}.gate-result small{margin-left:auto}.gate-list{list-style:none;margin:0;padding:0}.gate-list li{display:flex;gap:8px;padding:8px 0;border-bottom:1px solid #f0f3f5}.gate-list li.passed i{color:#08a25b}.gate-list li.blocked i{color:#dc3d43}.gate-list b,.gate-list small{display:block}.gate-list small{color:#8290a1;margin-top:3px;line-height:1.45}.permission-empty{padding:20px 0;color:#8b97a6;text-align:center}.release-reason{margin-top:14px;padding:11px;background:#f7fafc}.release-reason p{margin:5px 0 0;line-height:1.5}.timeline{display:flex;align-items:flex-start}.timeline-step{position:relative;display:flex;gap:10px;flex:1;color:#9aa5b2}.timeline-step:not(:last-child):after{content:'';position:absolute;left:38px;right:12px;top:10px;height:1px;background:#cfd8e3}.timeline-dot{position:relative;z-index:1;width:20px;height:20px;border-radius:50%;border:2px solid #bac5d0;background:#fff;display:flex;align-items:center;justify-content:center}.timeline-step.done{color:#087f48}.timeline-step.done .timeline-dot{background:#0aa15a;border-color:#0aa15a;color:#fff}.timeline-step.current .timeline-dot{box-shadow:0 0 0 4px #d9f5e6}.timeline-step strong,.timeline-step small{display:block}.timeline-step small{margin-top:5px;font-size:12px}@media(max-width:1200px){.detail-grid{grid-template-columns:1fr}.overview-grid{grid-template-columns:repeat(2,1fr)}}
 .work-order-tabs{display:flex;gap:28px;border-bottom:1px solid #dfe6ed;margin:-2px 0 18px}.work-order-tabs button{border:0;border-bottom:2px solid transparent;background:transparent;padding:12px 4px;color:#3c5068;font-weight:600;cursor:pointer}.work-order-tabs button.active{color:#079452;border-bottom-color:#079452}
+@media(max-width:767px){.work-order-tabs{min-width:0;flex-wrap:wrap;gap:0 12px}.work-order-tabs button{white-space:nowrap}}
 @media(max-width:1100px){.page-heading{align-items:flex-start;flex-direction:column;gap:12px}.heading-actions{width:100%;flex-wrap:wrap}}
 @media(max-width:767px){.production-page{padding:16px 12px}.page-heading{height:auto;min-height:120px;align-items:flex-start;flex-direction:column;justify-content:flex-start;gap:12px}.title-line{flex-wrap:wrap}.heading-actions{width:100%;flex-wrap:wrap}.trace-row{overflow-x:auto;padding-bottom:6px}.trace-row>div{flex:0 0 170px}.overview-grid{gap:16px}.split-grid{grid-template-columns:1fr}.info-grid,.info-grid.three{grid-template-columns:1fr 1fr}.timeline{min-width:430px}.timeline-card{overflow-x:auto}.card,.trace-card{padding:15px 14px}}
 

@@ -20,6 +20,12 @@ class ProductionTargetReadinessService
         if ($pendingHandover || $pendingCuttingHandover) {
             return $this->result('handover_confirmation_required', '上一工序或下料产出尚未接收，必须先完成交接。', [], false);
         }
+        $pendingInternalIssue = DB::table('erp_production_internal_issue_tasks')
+            ->where('target_type', $targetType)->where('target_id', $target->id)
+            ->whereIn('status', ['WAIT_ISSUE', 'ISSUED'])->exists();
+        if ($pendingInternalIssue) {
+            return $this->result('materials_not_ready', '内部领用物料尚未全部发出并接收，不能开工。', [], false);
+        }
         if (! $eligibleState) {
             return $this->result(null, null, [], false, true);
         }
@@ -87,7 +93,15 @@ class ProductionTargetReadinessService
     public function refresh(string $targetType, object $target, ProductionTask $task, $now = null): array
     {
         $readiness = $this->project($targetType, $target);
+        // An offer reserves the task only. Material refresh must not turn it into a claimed or publicly claimable task.
+        if (! $task->assignee_user_legacy_id && $task->pendingAssignment()->exists()) {
+            return $this->refreshResult($target, $task, $readiness);
+        }
         if ((string) $target->status === 'WAIT_CLAIM' && ! $task->assignee_user_legacy_id) {
+            if ($task->status === 'WAIT_CLAIM') {
+                app(ProductionTaskAssignmentService::class)->tryOfferReadyTask($task);
+                $task->refresh();
+            }
             return $this->refreshResult($target, $task, $readiness);
         }
         if (! in_array((string) $target->status, self::PRE_START_STATUSES, true)) {
@@ -100,6 +114,7 @@ class ProductionTargetReadinessService
             'kitting_confirmation_required' => 'WAIT_MATERIAL',
             default => $readiness['ready'] ? 'READY' : 'WAIT_MATERIAL',
         };
+        if ($task->active_job_bundle_id && $target->kitting_confirmed_at && $readiness['ready']) $nextStatus = 'READY';
         $now ??= now();
         if ((string) $target->status !== $nextStatus) {
             $target->status = $nextStatus;

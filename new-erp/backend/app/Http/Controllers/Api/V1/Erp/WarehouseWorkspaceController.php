@@ -17,17 +17,17 @@ final class WarehouseWorkspaceController extends Controller
             'keyword' => 'nullable|string|max:120', 'date_from' => 'nullable|date',
             'date_to' => 'nullable|date'.($request->filled('date_from') ? '|after_or_equal:date_from' : ''),
             'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
-        return response()->json($service->paginate($filters, ...$this->context($request)));
+        return response()->json(app(\App\Services\Erp\ProductionFinancialProjectionService::class)->redact($service->paginate($filters, ...$this->context($request))));
     }
 
     public function summary(Request $request, WarehouseWorkspaceService $service)
-    { return response()->json(['data' => $service->summary(...$this->context($request))]); }
+    { return response()->json(['data' => app(\App\Services\Erp\ProductionFinancialProjectionService::class)->redact($service->summary(...$this->context($request)))]); }
 
     public function document(Request $request, string $kind, int $id, \App\Services\Erp\WarehouseDocumentService $service)
     {
         $filters = $request->validate(['stage' => 'nullable|in:post,receive', 'receipt_id' => 'nullable|integer|min:1',
             'page' => 'nullable|integer|min:1', 'packages_page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
-        return response()->json(['data' => $service->show($kind, $id, $filters, ...$this->context($request))]);
+        return response()->json(['data' => app(\App\Services\Erp\ProductionFinancialProjectionService::class)->redact($service->show($kind, $id, $filters, ...$this->context($request)))]);
     }
 
     public function salesReturnSerials(Request $request, \App\Services\Erp\SalesReturnIdentityService $service)
@@ -49,13 +49,13 @@ final class WarehouseWorkspaceController extends Controller
     {
         $data = $request->validate(['action' => 'required|string|max:60', 'aggregate_id' => 'required|integer|min:1',
             'client_command_id' => 'required|string|max:120', 'payload' => 'present|array']);
-        return response()->json(['data' => $service->run($data['action'], $data['aggregate_id'], $data['client_command_id'], $data['payload'], ...$this->context($request))]);
+        return response()->json(['data' => app(\App\Services\Erp\ProductionFinancialProjectionService::class)->redact($service->run($data['action'], $data['aggregate_id'], $data['client_command_id'], $data['payload'], ...$this->context($request)))]);
     }
 
     public function commandResult(Request $request, \App\Services\Erp\WarehouseCommandService $service)
     {
         $data = $request->validate(['client_command_id' => 'required|string|max:120']);
-        return response()->json(['data' => $service->result($data['client_command_id'], ...$this->context($request))]);
+        return response()->json(['data' => app(\App\Services\Erp\ProductionFinancialProjectionService::class)->redact($service->result($data['client_command_id'], ...$this->context($request)))]);
     }
 
     public function locators(Request $request)

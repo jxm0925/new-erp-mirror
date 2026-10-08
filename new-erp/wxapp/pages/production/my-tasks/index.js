@@ -26,7 +26,7 @@ function targetOf(task) {
 
 function enrichTaskView(task, now) {
   const target = targetOf(task);
-  const targetStatus = target.status || task.status || 'UNKNOWN';
+  const targetStatus = task.status === 'WAIT_ACCEPT' ? 'WAIT_ACCEPT' : (target.status || task.status || 'UNKNOWN');
   const item = (task.work_order && task.work_order.output_item) || {};
   const planned = (task.target_details || []).reduce((sum, row) => sum + Number(row.planned_base_qty || 0), 0) || Number(task.planned_qty || 1);
   const completed = (task.target_details || []).reduce((sum, row) => sum + Number(row.completed_base_qty || 0), 0) || Number(task.completed_qty || 0);
@@ -42,7 +42,9 @@ function enrichTaskView(task, now) {
   let statusCategory = 'waiting';
   let statusTagText = target.status_label || '状态异常，请刷新';
 
-  if (targetStatus === 'IN_PROGRESS') {
+  if (targetStatus === 'WAIT_ACCEPT') {
+    statusTagText = '待接受派单';
+  } else if (targetStatus === 'IN_PROGRESS') {
     statusCategory = 'running';
     statusTagText = '加工中 ' + formatElapsed(target.started_at, now);
   } else if (targetStatus === 'WAIT_MATERIAL') {
@@ -102,7 +104,7 @@ function enrichTaskView(task, now) {
   }
 
   // 作业人员信息
-  const operatorName = (task.assignee_user && (task.assignee_user.name || task.assignee_user.nickname || task.assignee_user.username)) || '—';
+  const operatorName = (task.assignee_user && (task.assignee_user.display_name || task.assignee_user.name || task.assignee_user.nickname || task.assignee_user.username)) || '—';
   const avatarChar = operatorName.slice(0, 1) || '—';
   const collabCount = (task.collaborators && task.collaborators.length) || 0;
   const workerDesc = collabCount > 0 ? `负责人 ${operatorName} · 协同 ${collabCount}人` : `负责人 ${operatorName}`;
@@ -111,7 +113,10 @@ function enrichTaskView(task, now) {
   const actions = target.allowed_actions || {};
   let ctaText = '查看状态 ➔';
   let ctaClass = 'cta-outline';
-  if (actions.confirm_kitting) {
+  if (targetStatus === 'WAIT_ACCEPT') {
+    ctaText = '处理派单 ➔';
+    ctaClass = 'cta-warning';
+  } else if (actions.confirm_kitting) {
     ctaText = '确认齐套并开工 ➔';
     ctaClass = 'cta-warning';
   } else if (actions.accept_handover) {
@@ -132,6 +137,7 @@ function enrichTaskView(task, now) {
   }
 
   return Object.assign({}, task, {
+    showPublicBadge: task.is_public_snapshot === true || task.is_public_snapshot === 1 || task.is_public_snapshot === '1',
     targetStatus,
     statusCategory,
     statusTagText,
@@ -163,6 +169,7 @@ Page({
     filteredRows: [],
     active: 'all',
     keyword: '',
+    publicFilter: '',
     page: 0,
     total: 0,
     loadingMore: false,
@@ -179,6 +186,9 @@ Page({
   onLoad(options) {
     if (options && options.execution_filter) {
       this.setData({ active: options.execution_filter });
+    }
+    if (options && ['1', '0'].includes(String(options.is_public))) {
+      this.setData({ publicFilter: String(options.is_public) });
     }
     const erpUser = wx.getStorageSync('erp_user') || {};
     const teamName = Array.isArray(erpUser.department_names) ? (erpUser.department_names[0] || '') : '';
@@ -245,6 +255,7 @@ Page({
         per_page: 20,
         keyword: this.data.keyword.trim(),
         execution_filter: this.data.active,
+        is_public: this.data.publicFilter,
         include_stats: 1,
       })
       .then((response) => {
@@ -289,6 +300,14 @@ Page({
     this.load();
   },
 
+  onPublicFilter(event) {
+    const value = String(event.currentTarget.dataset.value);
+    if (!['', '1', '0'].includes(value) || value === this.data.publicFilter) return;
+    clearTimeout(this.searchTimer);
+    this.setData({ publicFilter: value });
+    return this.load();
+  },
+
   onSearch(event) {
     this.setData({ keyword: event.detail.value || '' });
     clearTimeout(this.searchTimer);
@@ -307,6 +326,14 @@ Page({
     wx.navigateTo({
       url: `/pages/production/task-detail/index?id=${id}`,
     });
+  },
+
+  openAssignments() {
+    wx.navigateTo({ url: '/pages/production/queue/index?type=assignments' });
+  },
+
+  openJobBundles() {
+    wx.navigateTo({ url: '/pages/production/job-bundles/index' });
   },
 
   scan() {

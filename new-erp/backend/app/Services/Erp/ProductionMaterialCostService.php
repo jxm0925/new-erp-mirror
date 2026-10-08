@@ -11,7 +11,7 @@ final class ProductionMaterialCostService
     public function __construct(private readonly DocumentNumberService $numbers) {}
 
     /** Move one traceable upstream output directly into the next operation without touching warehouse stock. */
-    public function acceptHandover(object $handover, ?float $acceptedQuantity, int $actor): void
+    public function acceptHandover(object $handover, ?string $acceptedQuantity, int $actor): void
     {
         if (DB::transactionLevel() < 1) throw new \LogicException('Production handover material transfer requires a transaction.');
         $output = DB::table('erp_production_output_records')->where('id', $handover->output_record_id)->lockForUpdate()->first();
@@ -149,17 +149,17 @@ final class ProductionMaterialCostService
     /** Turn only an accepted delivery share into the target operation's consumable input cost fact. */
     public function recordDeliveryReceipt(object $delivery, object $deliveryLine, object $receiptLine, int $actor): void
     {
-        $this->recordReceipt($delivery->production_target_type, (int) $delivery->production_target_id,
+        $this->recordProductionReceipt($delivery->production_target_type, (int) $delivery->production_target_id,
             (int) $deliveryLine->picking_task_line_id, $receiptLine, $actor);
     }
 
-    public function recordOnsiteReceipt(object $pickLine, object $receiptLine, int $actor): void
+    public function recordOnsiteReceipt(object $pickLine, object $receiptLine, int $actor, array $physicalIds = []): void
     {
-        $this->recordReceipt($pickLine->production_target_type, (int) $pickLine->production_target_id,
-            (int) $pickLine->id, $receiptLine, $actor);
+        $this->recordProductionReceipt($pickLine->production_target_type, (int) $pickLine->production_target_id,
+            (int) $pickLine->id, $receiptLine, $actor, $physicalIds);
     }
 
-    private function recordReceipt(string $targetType, int $targetId, int $pickLineId, object $receiptLine, int $actor): void
+    private function recordProductionReceipt(string $targetType, int $targetId, int $pickLineId, object $receiptLine, int $actor, ?array $physicalIds = null): void
     {
         if (DB::transactionLevel() < 1) throw new \LogicException('Production receipt cost capture requires a transaction.');
         $quantity = CuttingDecimal::value($receiptLine->accepted_qty, 8, false);
@@ -196,10 +196,17 @@ final class ProductionMaterialCostService
         if ($physicals->isNotEmpty()) {
             if (bccomp($quantity,bcadd($quantity,'0',0),8) !== 0 || $physicals->count() < (int) $quantity)
                 $this->fail('production_physical_receipt_invalid','板材收料必须逐张对应本次配料出库实物。');
-            $physicals = $physicals->take((int) $quantity); $cost = '0';
+            if ($physicalIds !== null) {
+                $physicalIds = array_map('intval', $physicalIds);
+                if (count($physicalIds) !== count(array_unique($physicalIds)) || count($physicalIds) !== (int) $quantity
+                    || array_diff($physicalIds, $physicals->pluck('id')->map(fn ($id) => (int) $id)->all()))
+                    $this->fail('production_physical_receipt_invalid', '现场领料必须选择本次正式配料中尚未领用的具体板材，数量需与所选实物一致。');
+                $physicals = $physicals->whereIn('id', $physicalIds);
+            } else $physicals = $physicals->take((int) $quantity);
+            $cost = '0';
             foreach ($physicals as $physical) $cost = bcadd($cost,(string) $physical->total_cost,4);
             if (bccomp($cost,(string) $source->total_cost,4) > 0) $this->fail('production_physical_receipt_cost_invalid','板材实物金额超过正式出库在途金额。');
-        }
+        } elseif ($physicalIds) $this->fail('production_physical_receipt_invalid', '当前领料行没有所选的正式出库板材。');
         $bridge = DB::table('erp_production_input_holdings')->insertGetId([
             'target_type' => $targetType, 'target_id' => $targetId,
             'target_material_requirement_id' => $requirement->id, 'source_output_record_id' => $sourceOutputId,

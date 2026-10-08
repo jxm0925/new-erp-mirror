@@ -37,7 +37,8 @@ return new class extends Migration
         Schema::create('erp_material_procurement_sources', function (Blueprint $table): void {
             $table->id();
             $table->foreignId('request_id')->constrained('erp_purchase_requests')->restrictOnDelete();
-            $table->foreignId('request_item_id')->constrained('erp_purchase_request_items')->cascadeOnDelete();
+            $table->foreignId('request_item_id')->nullable()->constrained('erp_purchase_request_items')->nullOnDelete();
+            $table->foreignId('component_item_id')->constrained('erp_items')->restrictOnDelete();
             $table->foreignId('sales_order_id')->nullable()->constrained('erp_sales_orders')->restrictOnDelete();
             $table->foreignId('work_order_id')->nullable()->constrained('erp_work_orders')->restrictOnDelete();
             $table->foreignId('target_material_requirement_id')->nullable()->constrained('erp_production_target_material_requirements', 'id', 'erp_procurement_demand_fk')->restrictOnDelete();
@@ -52,10 +53,10 @@ return new class extends Migration
     {
         // Retain nullable receipt references: existing onsite receipts must never be discarded.
         Schema::dropIfExists('erp_material_procurement_sources');
-        Schema::table('erp_material_receipt_lines', fn (Blueprint $t) => $t->dropConstrainedForeignId('picking_task_line_id'));
-        Schema::table('erp_material_receipts', function (Blueprint $t): void { $t->dropConstrainedForeignId('picking_task_id'); $t->dropColumn('collection_type'); });
+        Schema::table('erp_material_receipt_lines', function (Blueprint $t): void { $t->dropForeign('erp_receipt_pick_line_fk'); $t->dropColumn('picking_task_line_id'); });
+        Schema::table('erp_material_receipts', function (Blueprint $t): void { $t->dropForeign('erp_receipt_pick_fk'); $t->dropColumn(['picking_task_id', 'collection_type']); });
         Schema::table('erp_material_picking_task_lines', fn (Blueprint $t) => $t->dropColumn('fulfillment_mode_snapshot'));
-        Schema::table('erp_material_picking_tasks', fn (Blueprint $t) => $t->dropConstrainedForeignId('public_preparation_task_id'));
+        Schema::table('erp_material_picking_tasks', function (Blueprint $t): void { $t->dropForeign('erp_mpt_public_task_fk'); $t->dropColumn('public_preparation_task_id'); });
         Schema::dropIfExists('erp_public_material_preparation_tasks');
     }
 };

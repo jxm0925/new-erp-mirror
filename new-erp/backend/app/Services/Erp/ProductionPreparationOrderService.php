@@ -47,6 +47,8 @@ final class ProductionPreparationOrderService
 
         $inserted = false;
         foreach ($requirements as $requirement) {
+            // Stock continuation is already locked and routed through internal issue; it is not new procurement demand.
+            if ($requirement->requirement_kind === 'stock_continuation') continue;
             $line = ProductionPreparationOrderLine::query()->where('material_requirement_id', $requirement->id)->first();
             if ($line) {
                 if ((int) $line->preparation_order_id !== (int) $order->id || (int) $line->work_order_id !== (int) $workOrder->id) {

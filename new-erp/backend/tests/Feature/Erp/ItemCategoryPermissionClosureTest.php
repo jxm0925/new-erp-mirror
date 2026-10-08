@@ -124,13 +124,18 @@ class ItemCategoryPermissionClosureTest extends TestCase
         $page = file_get_contents(base_path('../frontend/src/views/erp/master/ItemCategoryList.vue'));
         $app = file_get_contents(base_path('../frontend/src/App.vue'));
         $router = file_get_contents(base_path('../frontend/src/main.js'));
+        $dialog = file_get_contents(base_path('../frontend/src/components/master/ItemCategoryManagerDialog.vue'));
         $bootstrap = file_get_contents(app_path('Services/Erp/RbacBootstrapService.php'));
 
         $this->assertStringContainsString("permissions.includes('item_category.manage')", $page);
         $this->assertStringContainsString('v-if="canManage"', $page);
         $this->assertStringNotContainsString('item_category.edit', $page.$app.$router.$bootstrap);
-        $this->assertStringContainsString("permission: 'item_category.view'", $app);
-        $this->assertStringContainsString("meta: { permission: 'item_category.view' }", $router);
+        $this->assertMatchesRegularExpression("~name: '物料管理'[^\n]*permission: \\[[^]]*'item_category.view'~", $app);
+        $this->assertStringNotContainsString("name: '物料分类'", $app);
+        $this->assertMatchesRegularExpression("~path: '/master/items'[^\n]*meta: \\{[^}]*permission: \\['master.item.view', 'item_category.view'\\]~", $router);
+        $this->assertMatchesRegularExpression("~path: '/master/categories'[^\n]*redirect:[^\n]*path: '/master/items'[^\n]*manage_categories: '1'~", $router);
+        $this->assertMatchesRegularExpression("~path: '/master/office-categories'[^\n]*redirect:[^\n]*path: '/master/items'[^\n]*management_scope: 'office'[^\n]*manage_categories: '1'~", $router);
+        $this->assertStringContainsString("permissions.includes('item_category.view')", $dialog);
         $this->assertStringContainsString('requiredPermission', $router);
         $this->assertStringContainsString("['item_category.manage', '管理 Item 类目'", $bootstrap);
     }
