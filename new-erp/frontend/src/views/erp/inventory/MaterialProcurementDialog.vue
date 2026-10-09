@@ -2,15 +2,15 @@
   <div>
     <el-dialog title="提交采购需求" :visible.sync="visible" width="980px" custom-class="production-material-dialog public-material-dialog" append-to-body :close-on-click-modal="false" :before-close="close">
       <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
-      <div class="pm-inline-field"><label>来源：</label><el-radio-group v-model="mode" @change="changeMode"><el-radio label="order">订单缺料</el-radio><el-radio label="manual">自行选料</el-radio></el-radio-group></div>
+      <div class="pm-inline-field"><label>来源：</label><el-radio-group v-model="mode" :disabled="!!sourceDemand" @change="changeMode"><el-radio label="order">订单缺料</el-radio><el-radio label="manual">{{ sourceDemand ? '工单缺料' : '自行选料' }}</el-radio></el-radio-group></div>
       <div v-if="mode === 'order'" class="pm-inline-field"><label>订单：</label><el-input :value="order && order.sales_order_no" readonly size="small" placeholder="选择来源订单" @click.native="openPicker('orders')" /><el-button size="small" @click="openPicker('orders')">选择订单</el-button></div>
       <div class="pm-inline-field"><label>需要日期：</label><el-date-picker v-model="expectedDate" size="small" type="date" value-format="yyyy-MM-dd" /></div>
-      <el-button size="small" @click="openPicker('items')">选择缺料物料</el-button>
+      <el-button size="small" :disabled="!!sourceDemand" @click="openPicker('items')">选择缺料物料</el-button>
       <el-table :data="lines" border size="small" empty-text="请选择需要采购的物料">
         <el-table-column prop="item_code" label="编码" min-width="125" />
         <el-table-column prop="item_name" label="物料" min-width="150" />
         <el-table-column prop="spec" label="规格" min-width="120" />
-        <el-table-column label="需求数量" width="145"><template slot-scope="{row}"><el-input v-model="row.request_qty" size="small" inputmode="decimal" placeholder="填写数量" /></template></el-table-column>
+        <el-table-column label="需求数量" width="145"><template slot-scope="{row}"><el-input v-model="row.request_qty" size="small" inputmode="decimal" placeholder="填写数量" /><small v-if="row.procureable_qty !== undefined">可申购 {{ row.procureable_qty }} {{ row.unit_name }}</small></template></el-table-column>
         <el-table-column prop="unit_name" label="库存单位" width="95" />
         <el-table-column label="操作" width="75"><template slot-scope="{row}"><el-button type="text" @click="lines = lines.filter(line => line.id !== row.id)">移除</el-button></template></el-table-column>
       </el-table>
@@ -42,20 +42,24 @@
 import { procurementOptions, createMaterialProcurement, materialWrite, pendingMaterialWrite } from '@/api/erp/public-materials'
 const blankPicker = () => ({ visible: false, kind: 'items', keyword: '', category_id: null, page: 1, total: 0, rows: [], selected: {}, current: null, loading: false, error: '', sequence: 0 })
 export default {
-  data: () => ({ visible: false, mode: 'manual', order: null, lines: [], expectedDate: '', remark: '', busy: false, error: '', pending: false, categories: [], categoryPage: 1, categoryTotal: 0, categorySequence: 0, picker: blankPicker() }),
+  data: () => ({ visible: false, mode: 'manual', order: null, sourceDemand: null, lines: [], expectedDate: '', remark: '', busy: false, error: '', pending: false, categories: [], categoryPage: 1, categoryTotal: 0, categorySequence: 0, picker: blankPicker() }),
   computed: {
-    valid() { return this.lines.length > 0 && this.lines.length <= 100 && this.remark && (this.mode !== 'order' || this.order) && this.lines.every(row => /^\d+(\.\d{1,4})?$/.test(row.request_qty) && Number(row.request_qty) > 0 && row.unit_name) }
+    valid() { return this.lines.length > 0 && this.lines.length <= 100 && this.remark && (this.mode !== 'order' || this.order) && this.lines.every(row => /^\d+(\.\d{1,4})?$/.test(row.request_qty) && Number(row.request_qty) > 0 && row.unit_name && (row.procureable_qty === undefined || Number(row.request_qty) <= Number(row.procureable_qty))) }
   },
   methods: {
     open(demand) {
       this.picker.sequence++
-      Object.assign(this, { visible: true, mode: 'manual', order: null, lines: [], expectedDate: '', remark: '', error: '' })
+      Object.assign(this, { visible: true, mode: 'manual', order: null, sourceDemand: demand || null, lines: [], expectedDate: '', remark: '', error: '' })
       this.pending = !!pendingMaterialWrite('procurement-new')
-      if (demand) this.lines = [{ id: demand.component_item_id, item_code: demand.item_code, item_name: demand.item_name, spec: demand.spec, unit_name: demand.unit_name, request_qty: '', target_material_requirement_id: demand.id }]
+      if (demand) this.lines = [{ id: demand.component_item_id, item_code: demand.item_code, item_name: demand.item_name, spec: demand.spec, unit_name: demand.unit_name, request_qty: '', procureable_qty: demand.procureable_qty,
+        ...(demand.demand_stage === 'preparation'
+          ? { preparation_material_requirement_id: demand.preparation_material_requirement_id, preparation_version: demand.preparation_version, work_order_version: demand.work_order_version }
+          : { target_material_requirement_id: demand.id }) }]
     },
     close(done) { if (!this.busy) done() },
     changeMode() { this.order = null },
     async openPicker(kind) {
+      if (this.sourceDemand) return
       const sequence = this.picker.sequence + 1
       this.picker = { ...blankPicker(), sequence, kind, visible: true, selected: Object.fromEntries(this.lines.map(row => [row.id, row])) }
       if (kind === 'items') { this.categoryPage = 1; this.loadCategories() }
@@ -94,7 +98,10 @@ export default {
       this.busy = true; this.error = ''
       try {
         const payload = { sales_order_id: this.mode === 'order' && this.order ? this.order.id : undefined, expected_date: this.expectedDate || undefined, remark: this.remark,
-          items: this.lines.map(row => ({ item_id: row.id, request_qty: row.request_qty, target_material_requirement_id: row.target_material_requirement_id })) }
+          items: this.lines.map(row => ({ item_id: row.id, request_qty: row.request_qty,
+            ...(row.preparation_material_requirement_id
+              ? { preparation_material_requirement_id: row.preparation_material_requirement_id, preparation_version: row.preparation_version, work_order_version: row.work_order_version }
+              : { target_material_requirement_id: row.target_material_requirement_id }) })) }
         const result = await materialWrite('procurement-new', payload, body => createMaterialProcurement(body))
         this.visible = false; this.$message.success(`${result.recoveredCommand ? '已确认上次提交：' : '已提交采购需求：'}${result.data.data.request_no}`); this.$emit('submitted', result.data.data)
       } catch (e) { this.error = e.userMessage || '提交结果尚未确认，请重试确认上次提交。' }

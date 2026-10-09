@@ -3,7 +3,7 @@
 namespace App\Services\Erp;
 
 use App\Exceptions\Erp\WorkOrderDomainException;
-use App\Models\Erp\{Item, ItemCategory, PurchaseRequest, SalesOrder, WorkOrder};
+use App\Models\Erp\{Item, ItemCategory, PurchaseRequest, SalesOrder, WorkOrder, WorkOrderPreparationMaterial};
 use Illuminate\Support\Facades\DB;
 
 /** Warehouse may request purchasing; it receives no purchasing approval or order privileges. */
@@ -48,8 +48,17 @@ final class ProductionMaterialProcurementApplicationService
             $rows = collect($payload['items']);
             if ($rows->pluck('item_id')->unique()->count() !== $rows->count()) throw new WorkOrderDomainException('validation_error', '同一物料请合并数量后提交。', 422);
             $sources = [];
+            $preparationService = app(WorkOrderPreparationMaterialService::class);
+            $preparationIds = $rows->pluck('preparation_material_requirement_id')->filter()->sort()->values();
+            if ($preparationIds->isNotEmpty() && ! $preparationService->schemaReady()) throw new WorkOrderDomainException('schema_not_ready', '发布前物料准备结构尚未就绪。', 409);
             $demandIds = $rows->pluck('target_material_requirement_id')->filter()->sort()->values();
+            // Work-order lock serializes preparation updates, publication and all target-level
+            // procurement under the same parent requirement. Lock before either source row.
+            $workOrderIds = DB::table('erp_production_target_material_requirements')->whereIn('id', $demandIds)->pluck('work_order_id');
+            if ($preparationIds->isNotEmpty()) $workOrderIds = $workOrderIds->merge(WorkOrderPreparationMaterial::whereIn('id', $preparationIds)->pluck('work_order_id'));
+            $workOrders = WorkOrder::whereIn('id', $workOrderIds->unique()->sort()->values())->orderBy('id')->lockForUpdate()->get()->keyBy('id');
             $demands = DB::table('erp_production_target_material_requirements')->whereIn('id', $demandIds)->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+            $preparations = $preparationIds->isEmpty() ? collect() : WorkOrderPreparationMaterial::whereIn('id', $preparationIds)->orderBy('id')->lockForUpdate()->get()->keyBy('id');
             $items = [];
             foreach ($rows as $line) {
                 $item = Item::with('unit.standardUnit')->lockForUpdate()->findOrFail($line['item_id']);
@@ -58,31 +67,42 @@ final class ProductionMaterialProcurementApplicationService
                 $unit = app(UnitConversionDomainService::class)->canonicalUnit($item->unit);
                 if (! $unit) throw new WorkOrderDomainException('unit_missing', '物料缺少库存单位，请先维护单位。', 422);
                 $qty = (string) $line['request_qty'];
+                if (! preg_match('/^\d+(?:\.\d{1,4})?$/', $qty) || bccomp($qty, '0', 8) <= 0) throw new WorkOrderDomainException('validation_error', '申购数量必须大于零且不超过四位小数。', 422);
                 $source = null;
+                $preparation = null;
+                if (! empty($line['preparation_material_requirement_id'])) {
+                    if (! empty($line['target_material_requirement_id'])) throw new WorkOrderDomainException('preparation_source_ambiguous', '准备需求和正式生产目标不能同时作为采购来源。', 422);
+                    $preparation = $preparations->get($line['preparation_material_requirement_id']);
+                    $wo = $preparation ? $workOrders->get($preparation->work_order_id) : null;
+                    if (! $preparation || ! $wo || (int) $preparation->component_item_id !== (int) $item->id
+                        || ! $this->scope->workOrderVisible($wo, $this->scope->resolve($user, 'production.material_requirement.view', $permissions, $admin)))
+                        throw new WorkOrderDomainException('preparation_demand_invalid', '采购物料与所选准备需求不一致或不在当前数据范围内。', 403);
+                    if ($order && ! $this->workOrdersForOrder($order->id, $user, $permissions, $admin)->whereKey($wo->id)->exists())
+                        throw new WorkOrderDomainException('source_order_mismatch', '所选准备需求不属于当前来源订单。', 422);
+                    $preparationService->assertProcurementLocked($preparation, $wo, $line);
+                }
                 if (! empty($line['target_material_requirement_id'])) {
                     $source = $demands->get($line['target_material_requirement_id']);
-                    $wo = $source ? WorkOrder::find($source->work_order_id) : null;
+                    $wo = $source ? $workOrders->get($source->work_order_id) : null;
                     if (! $source || ! $wo || (int) $source->component_item_id !== (int) $item->id
                         || ! $this->scope->workOrderVisible($wo, $this->scope->resolve($user, 'production.material_requirement.view', $permissions, $admin)))
                         throw new WorkOrderDomainException('preparation_demand_invalid', '采购物料与所选生产需求不一致。', 403);
+                    if (! in_array($wo->status, ['RELEASED', 'IN_PROGRESS'], true)) throw new WorkOrderDomainException('invalid_state', '只有有效的已发布工单可以按正式需求申购。', 409);
                     if ($order && ! $this->workOrdersForOrder($order->id, $user, $permissions, $admin)->whereKey($wo->id)->exists())
                         throw new WorkOrderDomainException('source_order_mismatch', '所选需求不属于当前来源订单。', 422);
-                    $pending = DB::table('erp_material_procurement_sources as source')->join('erp_purchase_requests as request', 'request.id', '=', 'source.request_id')
-                        ->join('erp_purchase_request_items as line', 'line.id', '=', 'source.request_item_id')
-                        ->where('source.target_material_requirement_id', $source->id)->whereNull('request.deleted_at')
-                        ->whereNotIn('request.request_status', ['cancelled', 'closed'])->sum('line.request_qty');
+                    $balance = $preparationService->formalProcurementBalance($source);
                     $allocated = DB::table('erp_material_picking_task_lines as line')->join('erp_material_picking_tasks as task', 'task.id', '=', 'line.task_id')
                         ->where('line.production_target_type', $source->target_type)->where('line.production_target_id', $source->target_id)
                         ->where('line.material_supply_rule_snapshot_id', $source->material_supply_rule_snapshot_id)->where('task.status', '<>', 'CANCELLED')
                         ->sum(DB::raw("CASE WHEN task.status IN ('WAIT_PICK','PICKING') THEN line.planned_pick_qty ELSE GREATEST(line.actual_pick_qty-line.received_qty,0) END"));
-                    $remaining = max(0, (float) $source->required_base_qty - max(0, (float) $source->satisfied_base_qty - (float) $source->returned_base_qty) - (float) $pending - (float) $allocated);
+                    $remaining = min((float) $balance['procureable_qty'], max(0, (float) $source->required_base_qty - max(0, (float) $source->satisfied_base_qty - (float) $source->returned_base_qty) - (float) $allocated));
                     if ((float) $qty > $remaining + 0.00000001) throw new WorkOrderDomainException('procurement_quantity_exceeded', '采购需求数量超过尚未申购的生产缺料数量。', 422);
                 }
                 // This form explicitly enters stock units, avoiding an implicit purchase conversion.
                 $items[] = ['item_id' => $item->id, 'request_qty' => $qty, 'purchase_unit_id' => $unit->id,
                     'expected_date' => $payload['expected_date'] ?? null, 'warehouse_id' => $payload['warehouse_id'] ?? null,
                     'remark' => $line['remark'] ?? null];
-                $sources[] = ['demand' => $source, 'item' => $item];
+                $sources[] = ['demand' => $source, 'preparation' => $preparation, 'item' => $item];
             }
             $operator = $user->nickname ?? $user->username;
             $request = $this->requests->create(['request_no' => app(DocumentNumberService::class)->next('purchase_request', 'PRQ'),
@@ -93,21 +113,33 @@ final class ProductionMaterialProcurementApplicationService
                 $source = $sources[$index];
                 DB::table('erp_material_procurement_sources')->insert(['request_id' => $request->id, 'request_item_id' => $line->id,
                     'component_item_id' => $source['item']->id,
-                    'sales_order_id' => $order?->id, 'work_order_id' => $source['demand']?->work_order_id,
+                    'sales_order_id' => $order?->id, 'work_order_id' => $source['preparation']?->work_order_id ?? $source['demand']?->work_order_id,
                     'target_material_requirement_id' => $source['demand']?->id, 'requested_base_qty' => $line->request_qty,
+                    ...($preparationService->schemaReady() ? ['preparation_material_requirement_id' => $source['preparation']?->id,
+                        'preparation_version' => $source['preparation']?->preparation_version] : []),
                     'source_snapshot' => json_encode(['sales_order_no' => $order?->sales_order_no, 'item_code' => $source['item']->item_code,
-                        'item_name' => $source['item']->item_name, 'spec' => $source['item']->spec, 'purpose' => $payload['remark'] ?? null], JSON_UNESCAPED_UNICODE),
+                        'item_name' => $source['item']->item_name, 'spec' => $source['item']->spec, 'purpose' => $payload['remark'] ?? null,
+                        'preparation_version' => $source['preparation']?->preparation_version,
+                        'preparation_material_snapshot' => $source['preparation']?->material_snapshot], JSON_UNESCAPED_UNICODE),
                     'created_by_legacy_id' => (int) ($user->legacy_id ?? $user->id), 'created_at' => now(), 'updated_at' => now()]);
             }
             $this->workflow->confirmRequest($request->id, $operator);
-            return $this->result($request->id, $user);
-        }, fn ($id) => $this->result($id, $user));
+            return $this->result($request->id, $user, $permissions, $admin);
+        }, fn ($id) => $this->result($id, $user, $permissions, $admin));
     }
 
-    private function result(int $id, object $user): array
+    private function result(int $id, object $user, array $permissions, bool $admin): array
     {
         if (! DB::table('erp_material_procurement_sources')->where('request_id', $id)->where('created_by_legacy_id', (int) ($user->legacy_id ?? $user->id))->exists())
             throw new WorkOrderDomainException('permission_denied', '不能查看其他人的申购提交结果。', 403);
+        // Replays restore a historical result, but must still obey today's visibility.
+        $sources = DB::table('erp_material_procurement_sources')->where('request_id', $id)->get();
+        foreach ($sources as $source) {
+            if ($source->work_order_id && ! $this->visibleWorkOrders($user, $permissions, $admin)->whereKey($source->work_order_id)->exists())
+                throw new WorkOrderDomainException('data_scope_denied', '当前用户已不在来源工单的数据范围内。', 403);
+            if ($source->sales_order_id && ! $this->orders($user, $permissions, $admin)->whereKey($source->sales_order_id)->exists())
+                throw new WorkOrderDomainException('data_scope_denied', '当前用户已不在来源订单的数据范围内。', 403);
+        }
         $request = PurchaseRequest::withTrashed()->findOrFail($id);
         return $request->only(['id', 'request_no', 'request_status', 'requester', 'source_no']);
     }

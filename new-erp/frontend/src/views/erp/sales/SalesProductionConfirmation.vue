@@ -11,7 +11,7 @@
       </div>
     </header>
 
-    <el-alert class="top-alert" type="info" :closable="false" show-icon title="本页仅确认订单备货方式与生产资料，保存生产需求契约；不创建生产工单、工序任务或生产排程。" />
+    <el-alert class="top-alert" type="info" :closable="false" show-icon title="确认订单备货方式后，生产需求将建立根工单并自动准备；资料或物料阻塞可在工单中查看和处理。" />
 
     <div v-if="order" class="page-grid">
       <main>
@@ -104,7 +104,7 @@
         <section class="side-card blue"><h3>Item基本需求合计 <small>（按单位分组）</small></h3><p v-for="row in baseGroups" :key="row.unit_id || row.unit_name"><b>{{ row.unit_name || '未配置单位' }}：{{ number(row.quantity) }}</b></p><p v-if="!baseGroups.length">暂无 Item 基本需求</p></section>
         <section class="side-card blue"><h3>服务项目：{{ summary.service || 0 }} 项</h3></section>
         <section class="side-card result"><h3>提交结果预览 <small>（确认通过后将执行）</small></h3><p v-for="text in submitResults" :key="text"><i class="el-icon-success" /> {{ text }}</p></section>
-        <section class="side-card warn"><b><i class="el-icon-warning" /> 服务及无需发货行不进入库存备货或生产安排；</b><p>本阶段不创建生产工单、工序任务或排程。</p></section>
+        <section class="side-card warn"><b><i class="el-icon-warning" /> 服务及无需发货行不进入库存备货或生产安排；</b><p>生产安排行会建立根工单，准备结果在订单的工单执行跟踪中查看。</p></section>
       </aside>
     </div>
 
@@ -141,7 +141,7 @@ export default {
     resultText () { return this.order.production_confirm_status === 'confirmed' ? '已确认并锁定' : (this.blocked ? '待处理' : '待确认') },
     countRows () { return [{ label: '订单总行数', value: this.summary.total }, { label: '库存备货行数', value: this.summary.inventory }, { label: '生产安排行数', value: this.summary.production }, { label: '服务项目行数', value: this.summary.service }, { label: '无需发货行数', value: this.summary.no_delivery }] },
     quantityRows () { return [{ label: '库存备货', value: this.groupQuantity('inventory_qty') }, { label: '生产安排', value: this.groupQuantity('production_qty') }, { label: '服务项目', value: this.groupQuantity('service_qty') }, { label: '无需发货', value: this.groupQuantity('no_delivery_qty') }, { label: '尚未确定', value: this.groupQuantity('undetermined_qty') }] },
-    submitResults () { const rows = ['保存订单生产确认结果']; if (this.summary.inventory) rows.push('生成库存备货需求（Item基本数量）'); if (this.summary.production) rows.push('生成生产需求契约（销售/基本数量双口径）'); if (this.summary.service) rows.push('生成服务项目记录'); if (this.summary.no_delivery) rows.push('保存无需发货结果'); rows.push('锁定本次确认所使用的生产资料'); return rows }
+    submitResults () { const rows = ['保存订单生产确认结果']; if (this.summary.inventory) rows.push('生成库存备货需求（Item基本数量）'); if (this.summary.production) rows.push('生成生产需求与根工单（销售/基本数量双口径）'); if (this.summary.service) rows.push('生成服务项目记录'); if (this.summary.no_delivery) rows.push('保存无需发货结果'); rows.push('锁定本次确认所使用的生产资料'); return rows }
   },
   created () { this.load() },
   watch: {
@@ -167,11 +167,11 @@ export default {
     async submit () {
       if (!this.validateAll(false)) return this.$message.warning('请先完成全部订单行的备货数量配置和资料检查')
       if (this.hasManualAdjustment && !this.adjustmentReason) return this.$message.warning('手工修改系统备货建议时必须填写调整原因')
-      await this.$confirm('确认保存本订单的库存备货、生产安排、服务项目及无需发货结果？本操作不会创建生产工单。', '提交订单生产确认', { type: 'warning' })
+      await this.$confirm('确认保存本订单的库存备货、生产安排、服务项目及无需发货结果？生产安排行将建立根工单并自动准备。', '提交订单生产确认', { type: 'warning' })
       this.submitting = true
       try {
         await confirmProduction(this.order.id, { adjustment_reason: this.adjustmentReason || null, lines: this.lines.map(row => ({ sales_order_line_id: row.sales_order_line_id, confirm_qty: row.confirm_qty, inventory_qty: row.inventory_qty, production_qty: row.production_qty, service_qty: row.service_qty, no_delivery_qty: row.no_delivery_qty })) })
-        this.$message.success('订单生产确认已提交，未创建生产工单'); await this.load()
+        this.$message.success('订单生产确认已提交，请在工单执行跟踪中查看准备结果'); await this.load()
       } catch (error) { this.$message.error(error.userMessage || '订单生产确认提交失败') } finally { this.submitting = false }
     },
     normalizeAllocation (row) { row.undetermined_qty = this.remainingUndetermined(row) },

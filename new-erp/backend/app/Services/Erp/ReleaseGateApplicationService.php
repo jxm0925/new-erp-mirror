@@ -156,6 +156,8 @@ class ReleaseGateApplicationService
 
         $assembly = app(AssemblyProductionApplicationService::class)->releaseCheck($workOrder, $bom);
         if ($assembly !== null) $checks[] = $this->check('assembly_component_plan', $assembly['valid'], $assembly['code'], $assembly['message'], $assembly);
+        $preparation = app(WorkOrderPreparationMaterialService::class)->releaseCheck($workOrder);
+        if ($preparation !== null) $checks[] = $this->check('material_preparation', $preparation['valid'], $preparation['code'], $preparation['message'], $preparation);
 
         if ($workOrder->source_type === 'stock_prebuild') {
             try {

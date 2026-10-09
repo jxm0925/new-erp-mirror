@@ -46,8 +46,21 @@ final class ProductionMaterialExecutionService
 
     public function paginatePreparationDemands(array $filters, object $user, array $permissions, bool $superAdmin): LengthAwarePaginator
     {
-        return $this->preparationDemandQuery($filters, $user, $permissions, $superAdmin)
+        if (($filters['demand_stage'] ?? 'execution') === 'preparation') {
+            return app(PublicMaterialPreparationQueryService::class)->paginate($filters, $user, $permissions, $superAdmin);
+        }
+        $page = $this->preparationDemandQuery($filters, $user, $permissions, $superAdmin)
             ->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 20))));
+        $page->getCollection()->transform(function ($row) {
+            $balance = app(WorkOrderPreparationMaterialService::class)->formalProcurementBalance($row);
+            $row->demand_stage = 'execution';
+            $row->can_pick = true;
+            $row->pending_procurement_qty = $balance['pending_procurement_qty'];
+            $row->procureable_qty = min((float) $row->remaining_to_prepare, (float) $balance['procureable_qty']);
+            $row->can_procure = $row->procureable_qty > 0;
+            return $row;
+        });
+        return $page;
     }
 
     public function preparationDemandQuery(array $filters, object $user, array $permissions, bool $superAdmin)

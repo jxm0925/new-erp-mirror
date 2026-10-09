@@ -1,7 +1,7 @@
 import api from './master'
 
 export const listSalesOrders = params => api.get('/v1/erp/sales/orders', { params })
-export const getSalesOrder = id => api.get(`/v1/erp/sales/orders/${id}`)
+export const getSalesOrder = (id, params) => api.get(`/v1/erp/sales/orders/${id}`, { params })
 export const saveSalesOrder = data => data.id
   ? api.put(`/v1/erp/sales/orders/${data.id}`, data)
   : api.post('/v1/erp/sales/orders', data)

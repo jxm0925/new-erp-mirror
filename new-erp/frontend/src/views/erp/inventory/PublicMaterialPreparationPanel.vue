@@ -1,18 +1,18 @@
 <template>
   <section class="public-preparation-panel">
-    <div class="pm-filters"><el-radio-group v-model="view" size="small" @change="search"><el-radio-button v-if="$can('production.material_requirement.view')" label="demands">公共待配需求</el-radio-button><el-radio-button label="tasks">公共配料任务</el-radio-button></el-radio-group><el-input v-model.trim="query.keyword" size="small" clearable placeholder="输入单号、物料名称或规格" @keyup.enter.native="search" /><el-button size="small" @click="search">查询</el-button><el-button v-if="view === 'demands' && $can('production.material_picking.create')" size="small" type="success" @click="openDraft">合并配料</el-button></div>
+    <div class="pm-filters"><el-radio-group v-model="view" size="small" @change="search"><el-radio-button v-if="$can('production.material_requirement.view')" label="demands">公共待配需求</el-radio-button><el-radio-button v-if="$can('production.material_requirement.view')" label="preparation">发布前缺料</el-radio-button><el-radio-button label="tasks">公共配料任务</el-radio-button></el-radio-group><el-input v-model.trim="query.keyword" size="small" clearable placeholder="输入单号、物料名称或规格" @keyup.enter.native="search" /><el-button size="small" @click="search">查询</el-button><el-button v-if="view === 'demands' && $can('production.material_picking.create')" size="small" type="success" @click="openDraft">合并配料</el-button></div>
     <el-alert v-if="error" :title="error" type="error" :closable="false" />
     <el-button v-if="pendingCreate" size="small" type="warning" :loading="busy" @click="recoverCreate">核对上次创建</el-button>
-    <p class="pm-muted">可以合并不同工单的物料需求。板材和长料在现场领料，其他物料按接收工序配送。</p>
+    <p class="pm-muted">{{ view === 'preparation' ? '发布前缺料按有效准备版本申购，库存参考量不代表已保障。工单发布后才能拣货出库。' : '可以合并不同工单的物料需求。板材和长料在现场领料，其他物料按接收工序配送。' }}</p>
     <el-table :key="view" :data="rows" v-loading="loading" border size="small">
-      <template v-if="view === 'demands'">
+      <template v-if="view !== 'tasks'">
         <el-table-column prop="work_order_no" label="来源工单" min-width="175" />
         <el-table-column prop="item_name" label="物料" min-width="150" />
         <el-table-column prop="spec" label="规格" min-width="120" />
-        <el-table-column label="待准备" width="110"><template slot-scope="{row}">{{ row.remaining_to_prepare }} {{ row.unit_name }}</template></el-table-column>
-        <el-table-column prop="target_operation_name" label="接收工序" min-width="110" />
+        <el-table-column :label="view === 'preparation' ? '缺口数量' : '待准备'" min-width="165"><template slot-scope="{row}">{{ row.remaining_to_prepare }} {{ row.unit_name }}<template v-if="view === 'preparation'"><div>需求 {{ row.required_qty }} · 已保障 {{ row.secured_qty }}</div><div>库存参考 {{ row.available_stock_qty }}</div><div>申购中 {{ row.pending_procurement_qty }} · 可申购 {{ row.procureable_qty }}</div></template></template></el-table-column>
+        <el-table-column v-if="view !== 'preparation'" prop="target_operation_name" label="接收工序" min-width="110" />
         <el-table-column label="领料方式" width="110"><template slot-scope="{row}">{{ mode(row.fulfillment_mode) }}</template></el-table-column>
-        <el-table-column label="操作" width="125"><template slot-scope="{row}"><el-button v-if="$can('production.material_procurement.create')" type="text" @click="$emit('procurement', row)">提交采购需求</el-button></template></el-table-column>
+        <el-table-column label="操作" width="125"><template slot-scope="{row}"><el-button v-if="canProcure(row)" type="text" @click="$emit('procurement', row)">提交采购需求</el-button></template></el-table-column>
       </template>
       <template v-else>
         <el-table-column prop="task_no" label="公共配料单号" min-width="180" />
@@ -97,21 +97,22 @@ export default {
   beforeDestroy() { this.listSequence++; this.draftSequence++; this.detailSequence++ },
   methods: {
     status(value) { return ({ WAIT_PICK: '待拣货', PICKING: '拣货中', PREPARED: '已配料', PARTIALLY_PREPARED: '部分配料', CANCELLED: '已取消' })[value] || value },
-    mode(value) { return value === 'onsite_cutting' ? '现场领料' : '工序配送' },
+    mode(value) { return value === 'procurement_only' ? '发布前申购' : (value === 'onsite_cutting' ? '现场领料' : '工序配送') },
+    canProcure(row) { return this.$can('production.material_procurement.create') && row.can_procure === true },
     sum(sources) { return sources.reduce((total, row) => total + Number(row.quantity), 0) },
     close(done) { if (!this.busy) done() },
     search() { this.query.page = 1; this.load() },
     async load() {
       const sequence = ++this.listSequence; this.loading = true; this.error = ''
-      try { const { data } = await (this.view === 'demands' ? materialDemands(this.query) : publicPreparations(this.query)); if (sequence === this.listSequence) { this.rows = data.data; this.total = data.total } }
+      try { const { data } = await (this.view !== 'tasks' ? materialDemands({ ...this.query, demand_stage: this.view === 'preparation' ? 'preparation' : 'execution' }) : publicPreparations(this.query)); if (sequence === this.listSequence) { this.rows = data.data; this.total = data.total } }
       catch (e) { if (sequence === this.listSequence) this.error = e.userMessage || e.message }
       finally { if (sequence === this.listSequence) this.loading = false }
     },
-    openDraft() { this.draftSequence++; this.draft = { ...blankDraft(), visible: true }; this.loadDraft() },
+    openDraft() { if (this.view !== 'demands') return; this.draftSequence++; this.draft = { ...blankDraft(), visible: true }; this.loadDraft() },
     searchDraft() { this.draft.page = 1; this.loadDraft() },
     async loadDraft() {
       const sequence = ++this.draftSequence; this.draft.loading = true
-      try { const { data } = await materialDemands({ keyword: this.draft.keyword, page: this.draft.page, per_page: 20 }); if (sequence === this.draftSequence) { this.draft.rows = data.data; this.draft.total = data.total } }
+      try { const { data } = await materialDemands({ demand_stage: 'execution', keyword: this.draft.keyword, page: this.draft.page, per_page: 20 }); if (sequence === this.draftSequence) { this.draft.rows = data.data; this.draft.total = data.total } }
       catch (e) { if (sequence === this.draftSequence) this.draft.error = e.userMessage || e.message }
       finally { if (sequence === this.draftSequence) this.draft.loading = false }
     },
@@ -125,12 +126,14 @@ export default {
       })
     },
     stock(demand) {
+      if (demand.demand_stage === 'preparation' || demand.can_pick === false) return
       if (!this.draft.warehouse.id) { this.$message.warning('请先选择仓库'); return }
       this.$set(this.draft.selected, demand.id, this.draft.selected[demand.id] || { demand, sources: [] })
       this.$refs.stock.open(demand, this.draft.warehouse, this.draft.selected[demand.id].sources)
     },
     acceptStock({ demandId, sources }) { if (this.draft.selected[demandId]) this.draft.selected[demandId].sources = sources },
     async create() {
+      if (this.chosen.some(row => row.demand.demand_stage === 'preparation' || row.demand.can_pick === false)) { this.draft.error = '发布前需求不能生成配料任务。'; return }
       const lines = this.chosen.flatMap(row => row.sources.map(source => ({ target_material_requirement_id: row.demand.id, inventory_balance_id: source.id, planned_pick_qty: source.quantity })))
       if (!lines.length || lines.length > 100) { this.draft.error = '单次公共配料请选择1至100条库存来源。'; return }
       const versions = Object.fromEntries(this.chosen.map(row => [row.demand.work_order_id, row.demand.work_order_version]))

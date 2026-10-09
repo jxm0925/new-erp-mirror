@@ -2,7 +2,7 @@
   <section class="assembly-panel" v-loading="loading">
     <div class="assembly-heading">
       <div><h3>部件生产准备</h3><el-tag v-if="plan" size="small" :type="plan.status==='blocked'?'warning':'success'">{{ statusName }}</el-tag></div>
-      <div class="assembly-actions"><el-button size="small" :disabled="busy" @click="load">刷新</el-button><el-button v-if="canPrepare || pending" size="small" type="success" :loading="busy" @click="prepare">{{ pending ? '重试生产准备' : '确认部件生产准备' }}</el-button></div>
+      <div class="assembly-actions"><el-button size="small" :disabled="busy" @click="load">刷新</el-button><el-button v-if="canPrepare || canRetry || canRecover" size="small" type="success" :loading="busy" @click="prepare">{{ canRecover ? '核对上次生产准备' : (canRetry ? '重试生产准备' : '确认部件生产准备') }}</el-button></div>
     </div>
     <el-alert v-if="error" :title="error" type="error" :closable="false" />
     <el-alert v-for="(issue,index) in issues" :key="`${issue.code || 'issue'}-${index}`" :title="issue.message || issue" type="warning" :closable="false" />
@@ -27,9 +27,11 @@ export default {
   data: () => ({ loading: false, busy: false, plan: null, error: '', pending: null }),
   computed: {
     components () { return this.plan?.components || [] },
-    issues () { return this.plan?.issues || [] },
-    statusName () { return ({ preview: '待确认', prepared: '已准备', blocked: '资料未齐', not_required: '无需自产部件准备', legacy_snapshot: '历史工单', cancelled: '已取消' })[this.plan?.status] || '—' },
-    canPrepare () { return this.$can('production.work_order.edit') && ['DRAFT', 'WAIT_RELEASE'].includes(this.workOrder.status) && this.plan?.status === 'preview' && !this.plan?.immutable && !this.issues.length && this.components.length > 0 }
+    issues () { return [...(this.plan?.issues || []), ...(this.plan?.material_preparation?.issues || [])].filter((issue, index, rows) => rows.findIndex(row => (row.message || row) === (issue.message || issue)) === index) },
+    statusName () { return ({ pending: '待准备', preview: '待确认', prepared: '部件已准备', blocked: '准备受阻', not_required: '无需自产部件准备', legacy_snapshot: '历史工单', cancelled: '已取消' })[this.plan?.status] || '—' },
+    canPrepare () { return this.plan?.actions?.can_prepare === true },
+    canRetry () { return this.plan?.actions?.can_retry === true },
+    canRecover () { return !!this.pending && this.$can('production.work_order.view') && this.$can('production.work_order.edit') }
   },
   mounted () { this.load() },
   watch: { 'workOrder.id' () { this.load() } },
@@ -60,11 +62,11 @@ export default {
       finally { if (sequence === this.sequence) this.loading = false }
     },
     async prepare () {
-      if (this.busy || (!this.canPrepare && !this.pending)) return
+      if (this.busy || (!this.canPrepare && !this.canRetry && !this.canRecover)) return
       const id = this.workOrder.id
       this.busy = true
       try {
-        await executeAssemblyCommand(`prepare-${id}`, { expected_version: this.pending?.payload?.expected_version || this.plan?.work_order_version }, data => prepareAssembly(id, data))
+        await executeAssemblyCommand(`prepare-${id}`, { expected_version: this.pending?.payload?.expected_version ?? this.plan?.work_order_version }, data => prepareAssembly(id, data))
         this.$message.success('部件生产准备已确认'); await this.load(); this.$emit('updated')
       } catch (error) { this.$message.error(error.userMessage || '生产准备失败，请重试原操作'); await this.load() }
       finally { this.busy = false }

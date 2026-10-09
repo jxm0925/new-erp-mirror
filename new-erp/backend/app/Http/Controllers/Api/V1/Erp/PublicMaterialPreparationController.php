@@ -47,6 +47,8 @@ final class PublicMaterialPreparationController extends Controller
         $payload = $request->validate(['client_command_id' => 'required|string|max:120', 'sales_order_id' => 'nullable|integer|min:1',
             'warehouse_id' => 'nullable|integer|exists:erp_warehouses,id', 'expected_date' => 'nullable|date', 'remark' => 'required|string|max:2000',
             'items' => 'required|array|min:1|max:100', 'items.*.item_id' => 'required|integer|min:1|distinct',
+            'items.*.preparation_material_requirement_id' => 'nullable|integer|min:1',
+            'items.*.preparation_version' => 'nullable|integer|min:1', 'items.*.work_order_version' => 'nullable|integer|min:1',
             'items.*.target_material_requirement_id' => 'nullable|integer|min:1', 'items.*.request_qty' => 'required|numeric|gt:0|decimal:0,4', 'items.*.remark' => 'nullable|string|max:500']);
         return response()->json(['message' => '采购需求已提交，可进入采购计划。', 'data' => $service->create($payload, ...$this->context($request))], 201);
     }

@@ -74,23 +74,23 @@
         </section>
 
         <section class="card facts-card">
-          <div class="section-title"><h3>6. 业务事实</h3><span v-if="workOrder.status !== 'RELEASED'">工单发布后生成正式物料需求</span></div>
+          <div class="section-title"><h3>6. 业务事实</h3><span v-if="beforeRelease">发布前有效核料需求，发布后生成正式执行需求</span></div>
           <div class="fact-tabs"><button class="active">BOM / 物料需求</button></div>
           <div class="material-summary">
             <strong>物料明细</strong><span>共 {{ materialTotal }} 条</span>
           </div>
-          <el-table :data="materials" border size="small" empty-text="当前工单尚未生成正式物料需求">
+          <el-table :data="materials" border size="small" :empty-text="beforeRelease ? '尚无有效核料需求，请查看生产准备结果' : '当前工单尚未生成正式物料需求'">
             <el-table-column prop="line_no" label="行号" width="70" align="center" />
             <el-table-column label="物料编码" min-width="135"><template slot-scope="scope">{{ scope.row.component && scope.row.component.code || '-' }}</template></el-table-column>
             <el-table-column label="物料名称" min-width="150"><template slot-scope="scope">{{ scope.row.component && scope.row.component.name || '-' }}</template></el-table-column>
             <el-table-column label="规格型号" min-width="130"><template slot-scope="scope">{{ scope.row.component && scope.row.component.specification || '-' }}</template></el-table-column>
-            <el-table-column label="下料要求" width="160"><template slot-scope="scope">{{ scope.row.cutting ? scope.row.cutting.display : '无需下料' }}</template></el-table-column>
+            <el-table-column v-if="!beforeRelease" label="下料要求" width="160"><template slot-scope="scope">{{ scope.row.cutting ? scope.row.cutting.display : '无需下料' }}</template></el-table-column>
             <el-table-column label="计量单位" width="95"><template slot-scope="scope">{{ scope.row.unit && scope.row.unit.name || '-' }}</template></el-table-column>
-            <el-table-column label="单位用量" width="100"><template slot-scope="scope">{{ number(scope.row.formula && scope.row.formula.per_output_qty) }}</template></el-table-column>
-            <el-table-column label="损耗率" width="90"><template slot-scope="scope">{{ number(scope.row.formula && scope.row.formula.loss_rate) }}%</template></el-table-column>
+            <el-table-column v-if="!beforeRelease" label="单位用量" width="100"><template slot-scope="scope">{{ number(scope.row.formula && scope.row.formula.per_output_qty) }}</template></el-table-column>
+            <el-table-column v-if="!beforeRelease" label="损耗率" width="90"><template slot-scope="scope">{{ number(scope.row.formula && scope.row.formula.loss_rate) }}%</template></el-table-column>
             <el-table-column label="需求数量" width="110"><template slot-scope="scope">{{ number(scope.row.quantity && scope.row.quantity.required_qty) }}</template></el-table-column>
-            <el-table-column label="已领数量" width="100"><template slot-scope="scope">{{ number(scope.row.quantity && scope.row.quantity.issued_qty) }}</template></el-table-column>
-            <el-table-column label="待领数量" width="100"><template slot-scope="scope">{{ number(scope.row.quantity && scope.row.quantity.remaining_qty) }}</template></el-table-column>
+            <el-table-column :label="beforeRelease ? '已保障数量' : '已领数量'" width="100"><template slot-scope="scope">{{ number(scope.row.quantity && scope.row.quantity.issued_qty) }}</template></el-table-column>
+            <el-table-column :label="beforeRelease ? '缺口数量' : '待领数量'" width="100"><template slot-scope="scope">{{ number(scope.row.quantity && scope.row.quantity.remaining_qty) }}</template></el-table-column>
             <el-table-column label="状态" width="90"><template slot-scope="scope"><el-tag size="mini" type="success">{{ materialStatus(scope.row.status) }}</el-tag></template></el-table-column>
           </el-table>
           <div v-if="materialTotal > materialPerPage" class="material-page"><el-pagination small layout="prev, pager, next" :current-page="materialPage" :page-size="materialPerPage" :total="materialTotal" @current-change="changeMaterialPage" /></div>
@@ -101,7 +101,7 @@
         <div class="section-title"><h3>5. 发布状态、检查、风险</h3><el-button v-if="canViewGate && workOrder.status === 'WAIT_RELEASE'" type="text" :loading="gateLoading" @click="fetchGate(true)">重新检查</el-button></div>
         <div class="release-state"><label>发布基线</label><strong>{{ workOrder.status === 'RELEASED' ? '已发布 / BOM 与物料已冻结' : '待发布检查' }}</strong><small v-if="workOrder.release && workOrder.release.released_at">{{ workOrder.release.released_at }}</small></div>
         <div v-if="gate" class="gate-result" :class="gate.allowed ? 'passed' : 'blocked'"><i :class="gate.allowed ? 'el-icon-success' : 'el-icon-warning'" /><span>{{ gate.allowed ? '发布检查通过' : '发布检查未通过' }}</span><small v-if="gate.immutable">历史发布证据（不可变）</small></div>
-        <ul v-if="gate && gate.checks && gate.checks.length" class="gate-list"><li v-for="item in gate.checks" :key="item.key" :class="item.status"><i :class="item.status === 'passed' ? 'el-icon-circle-check' : 'el-icon-circle-close'" /><div><b>{{ gateName(item.key) }}</b><small>{{ item.message }}</small></div></li></ul>
+        <ul v-if="gateChecks.length" class="gate-list"><li v-for="item in gateChecks" :key="item.key" :class="item.status"><i :class="item.status === 'passed' ? 'el-icon-circle-check' : 'el-icon-circle-close'" /><div><b>{{ gateName(item.key) }}</b><small>{{ item.message }}</small></div></li></ul>
         <el-empty v-else-if="canViewGate" :image-size="55" description="尚未执行发布检查" />
         <div v-else class="permission-empty">当前账号没有查看发布检查的权限。</div>
         <div v-if="workOrder.release && workOrder.release.reason" class="release-reason"><label>发布原因</label><p>{{ workOrder.release.reason }}</p></div>
@@ -125,6 +125,8 @@
 
 <script>
 import cachedPageRoute from '@/utils/cachedPageRoute'
+import { getAssemblyPlan } from '../../../api/erp/assembly-production'
+import { materialDemands } from '../../../api/erp/production-materials'
 import { getWorkOrder, updateWorkOrderDraft, submitWorkOrder, getWorkOrderReleaseGate, publishWorkOrder, listWorkOrderMaterialRequirements, returnWorkOrderToDraft, cancelWorkOrder, rematchWorkOrderRouting } from '../../../api/erp/production'
 import { listUsers } from '../../../api/erp/rbac'
 import WorkOrderCompletionPanel from './WorkOrderCompletionPanel.vue'
@@ -139,8 +141,10 @@ export default {
   mixins: [cachedPageRoute],
   name: 'WorkOrderDetail',
   components: { WorkOrderCompletionPanel, WorkOrderTechnicalPanel, ProductionInventoryContinuationPanel, ProductionAssignmentPanel, WorkOrderOutputPlanPanel, WorkOrderAssemblyPanel, ProductionJobBundlePanel },
-  data: () => ({ technicalSaving: false, loading: false, gateLoading: false, activeView: 'detail', workOrder: {}, gate: null, materials: [], materialTotal: 0, materialPage: 1, materialPerPage: 20, productionUsers: [], form: { target_qty: '', planned_date: '', production_batch: '', responsible_user_legacy_id: '', production_location_name: '' } }),
+  data: () => ({ technicalSaving: false, loading: false, gateLoading: false, activeView: 'detail', workOrder: {}, gate: null, preparation: null, materialSequence: 0, materials: [], materialTotal: 0, materialPage: 1, materialPerPage: 20, productionUsers: [], form: { target_qty: '', planned_date: '', production_batch: '', responsible_user_legacy_id: '', production_location_name: '' } }),
   computed: {
+    beforeRelease() { return ['DRAFT', 'WAIT_RELEASE'].includes(this.workOrder.status) },
+    gateChecks() { const checks = this.gate?.checks || []; const issues = [...(this.preparation?.issues || []), ...(this.preparation?.material_preparation?.issues || [])]; return [...checks, ...issues.filter((issue, index) => issues.findIndex(row => row.message === issue.message) === index && !checks.some(row => row.message === issue.message)).map((issue, index) => ({ key: 'preparation-' + index, status: 'blocked', message: issue.message }))] },
     canPrepareTechnical() { return ['DRAFT','WAIT_RELEASE'].includes(this.workOrder.status) && this.$can('production.technical.prepare') },
     canEdit() { return Boolean(this.workOrder.actions && this.workOrder.actions.edit) && this.pageRoute.query.mode === 'edit' },
     canSubmit() { return Boolean(this.workOrder.actions && this.workOrder.actions.submit) },
@@ -167,6 +171,8 @@ export default {
       if (nextId === previousId) return
       this.workOrder = {}
       this.gate = null
+      this.preparation = null
+      this.materialSequence++
       this.materials = []
       this.materialTotal = 0
       this.materialPage = 1
@@ -185,7 +191,8 @@ export default {
         this.form = { target_qty: this.workOrder.target_qty, planned_date: this.workOrder.planned_date, production_batch: this.workOrder.production_batch, responsible_user_legacy_id: this.workOrder.responsible_user && this.workOrder.responsible_user.user_id, production_location_name: this.workOrder.production_location_name }
         const tasks = []
         if (this.canViewGate && ['WAIT_RELEASE', 'RELEASED'].includes(this.workOrder.status)) tasks.push(this.fetchGate(false, this.workOrder.id))
-        if (this.canViewMaterials && this.workOrder.status === 'RELEASED') tasks.push(this.fetchMaterials(this.workOrder.id))
+        if (this.beforeRelease) tasks.push(this.fetchPreparation(this.workOrder.id))
+        if ((this.beforeRelease && this.$can('production.material_requirement.view')) || (!this.beforeRelease && this.canViewMaterials)) tasks.push(this.fetchMaterials(this.workOrder.id))
         await Promise.all(tasks)
       } catch (error) { if (String(this.pageRoute.params.id) === requestedId) this.$message.error(error.userMessage || '工单加载失败') } finally { if (String(this.pageRoute.params.id) === requestedId) this.loading = false }
     },
@@ -199,8 +206,28 @@ export default {
         if (showMessage) this.$message[this.gate.allowed ? 'success' : 'warning'](this.gate.allowed ? '发布检查已通过' : '发布检查未通过，请处理阻断项')
       } catch (error) { if (String(this.pageRoute.params.id) === String(workOrderId)) this.$message.error(error.userMessage || '发布检查失败') } finally { if (String(this.pageRoute.params.id) === String(workOrderId)) this.gateLoading = false }
     },
+    async fetchPreparation(workOrderId) {
+      try { const response = await getAssemblyPlan(workOrderId); if (String(this.pageRoute.params.id) === String(workOrderId)) this.preparation = response.data.data || null }
+      catch (error) { if (String(this.pageRoute.params.id) === String(workOrderId)) { this.preparation = null; this.$message.error(error.userMessage || '生产准备加载失败') } }
+    },
     async fetchMaterials(workOrderId = this.workOrder.id) {
-      try { const response = await listWorkOrderMaterialRequirements(workOrderId, { page: this.materialPage, per_page: this.materialPerPage }); if (String(this.pageRoute.params.id) !== String(workOrderId)) return; this.materials = response.data.data || []; this.materialTotal = response.data.total || 0 } catch (error) { if (String(this.pageRoute.params.id) !== String(workOrderId)) return; this.materials = []; this.materialTotal = 0; this.$message.error(error.userMessage || '物料需求加载失败') }
+      const sequence = ++this.materialSequence
+      const preparation = this.beforeRelease
+      try {
+        const response = await (preparation
+          ? materialDemands({ work_order_id: workOrderId, demand_stage: 'preparation', page: this.materialPage, per_page: this.materialPerPage })
+          : listWorkOrderMaterialRequirements(workOrderId, { page: this.materialPage, per_page: this.materialPerPage }))
+        if (sequence !== this.materialSequence || String(this.pageRoute.params.id) !== String(workOrderId)) return
+        this.materials = (response.data.data || []).map((row, index) => preparation ? { ...row,
+          line_no: (this.materialPage - 1) * this.materialPerPage + index + 1,
+          component: { code: row.item_code, name: row.item_name, specification: row.spec }, unit: { name: row.unit_name },
+          quantity: { required_qty: row.required_qty, issued_qty: row.secured_qty, remaining_qty: row.shortage_qty }
+        } : row)
+        this.materialTotal = response.data.total || 0
+      } catch (error) {
+        if (sequence !== this.materialSequence || String(this.pageRoute.params.id) !== String(workOrderId)) return
+        this.materials = []; this.materialTotal = 0; this.$message.error(error.userMessage || '物料需求加载失败')
+      }
     },
     async save() { try { await updateWorkOrderDraft(this.workOrder.id, { ...this.form, client_command_id: this.command('edit'), expected_version: this.workOrder.business_version }); this.$message.success('工单草稿已保存'); this.fetchWorkOrder() } catch (error) { this.$message.error(error.userMessage || '保存失败') } },
     async submit() { try { await submitWorkOrder(this.workOrder.id, { client_command_id: this.command('submit'), expected_version: this.workOrder.business_version, reason: '提交工单草稿' }); this.$message.success('已提交，等待发布'); this.fetchWorkOrder() } catch (error) { this.$message.error(error.userMessage || '提交失败') } },
@@ -234,8 +261,8 @@ export default {
     openSource() { if (this.workOrder.source && this.workOrder.source.demand_id) this.$router.push(`/production/demands/${this.workOrder.source.demand_id}`) },
     displayUser(user) { return user.display_name || '未命名用户' },
     number(value) { return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 8 }) },
-    materialStatus(status) { return ({ OPEN: '已计算' })[status] || status || '-' },
-    gateName(key) { return ({ assembly_component_plan: '部件生产准备', planned_outputs: '产出计划', operation_output_plan:'工序产出计划', work_order_state: '工单状态', demand_active: '生产需求', source_valid: '工单来源', routing_snapshot: '工艺路线快照', quantity: '计划数量', responsible_user: '负责人', production_location: '生产地点 / 车间', bom_match: 'BOM 匹配', bom_effective: 'BOM 生效状态', bom_complete: 'BOM 完整性', custom_documents: '定制附件', technical_confirmation:'技术资料确认', production_funding:'生产资金条件', stock_prebuild_output:'备货产出去向', production_execution_mode:'生产执行方式', production_unit_quantity:'逐件生产数量', material_supply_rules:'工序供料规则', stock_prebuild_material:'备货物料资格', stock_prebuild_reserved_target:'指定供给对象', release_evidence:'历史发布记录' })[key] || '其他发布条件' },
+    materialStatus(status) { return ({ OPEN: '已计算', ACTIVE: '有效准备', active: '有效准备', PUBLISHED: '已发布', published: '已发布' })[status] || status || '-' },
+    gateName(key) { if (key.startsWith('preparation-')) return '生产准备'; return ({ assembly_component_plan: '部件生产准备', planned_outputs: '产出计划', operation_output_plan:'工序产出计划', work_order_state: '工单状态', demand_active: '生产需求', source_valid: '工单来源', routing_snapshot: '工艺路线快照', quantity: '计划数量', responsible_user: '负责人', production_location: '生产地点 / 车间', bom_match: 'BOM 匹配', bom_effective: 'BOM 生效状态', bom_complete: 'BOM 完整性', custom_documents: '定制附件', technical_confirmation:'技术资料确认', production_funding:'生产资金条件', stock_prebuild_output:'备货产出去向', production_execution_mode:'生产执行方式', production_unit_quantity:'逐件生产数量', material_supply_rules:'工序供料规则', stock_prebuild_material:'备货物料资格', stock_prebuild_reserved_target:'指定供给对象', release_evidence:'历史发布记录' })[key] || '其他发布条件' },
     statusText(status) { return ({ DRAFT: '草稿', WAIT_RELEASE: '待发布', RELEASED: '已发布', IN_PROGRESS: '生产中', COMPLETED: '已完成', CANCELLED: '已取消' })[status] || status || '-' },
     statusType(status) { return status === 'CANCELLED' ? 'danger' : status === 'WAIT_RELEASE' ? 'warning' : ['RELEASED', 'COMPLETED'].includes(status) ? 'success' : '' }
   }

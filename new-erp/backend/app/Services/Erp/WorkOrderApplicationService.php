@@ -176,11 +176,9 @@ class WorkOrderApplicationService
         $this->recordStatus($workOrder, null, self::WAIT_RELEASE, '销售订单确认后自动建立待发布生产工单', 0, 1, $operator);
         $this->refreshDemandProjection($demand);
 
-        app(AssemblyProductionApplicationService::class)->prepareAutomatic($workOrder, $operator);
-
-        // Persist every missing condition immediately. The WO remains visible in
-        // WAIT_RELEASE and the condition projection—not its lifecycle—is blocked.
-        $this->releaseGate->evaluateLocked($workOrder, $operator, true);
+        // Sales acceptance commits before preparation. Deep component or database
+        // failures cannot erase its root, and PENDING survives a stopped worker.
+        app(AssemblyProductionApplicationService::class)->scheduleAutomaticLocked($workOrder, $operator);
         return $workOrder->fresh(['demand.order', 'demand.line', 'statusLogs', 'releaseGateChecks']);
     }
 
@@ -483,6 +481,7 @@ class WorkOrderApplicationService
 
             $this->productionExecution->initializePublished($workOrder, $executionPolicy);
             app(AssemblyProductionInventoryService::class)->bindPublished($workOrder);
+            app(WorkOrderPreparationMaterialService::class)->bindPublishedLocked($workOrder);
             app(ProductionInventoryContinuationService::class)->reservePublished($workOrder, $user);
             // Order preparation documents belong to a production master order.
             // Independent stock-prebuild work orders deliberately have no master

@@ -503,8 +503,8 @@ class SalesOrderController extends Controller
         $order->lines->each(function ($line) use ($allowedActions): void {
             $line->attachments->each(fn (SalesOrderAttachment $attachment) => $this->decorateAttachment($attachment, $allowedActions));
         });
-        // 第五阶段不创建工单；生产阶段接入真实工单表后只替换本投影来源。
-        $order->setAttribute('work_order_tracking', $this->workOrderTrackingProjection($order));
+        // 只读返回订单根工单准备与实际执行摘要，详情链接单独检查生产权限。
+        $order->setAttribute('work_order_tracking', $this->workOrderTrackingProjection($order, $request));
         $auth = app(AuthContextService::class);
         $user = $auth->currentUser($request);
         $permissions = $user ? $auth->permissionCodes($user) : [];
@@ -1296,43 +1296,65 @@ class SalesOrderController extends Controller
         ], true);
     }
 
-    private function workOrderTrackingProjection(SalesOrder $order): array
+    private function workOrderTrackingProjection(SalesOrder $order, Request $request): array
     {
         $masterIds = DB::table('erp_production_master_orders')
-            ->where('sales_order_id', $order->id)
-            ->orWhere('active_sales_order_id', $order->id)
-            ->pluck('id');
-        if ($masterIds->isEmpty()) return [];
-
-        $statusLabels = [
-            'DRAFT' => '草稿',
-            'WAIT_RELEASE' => '待发布',
-            'RELEASED' => '已发布',
-            'IN_PROGRESS' => '生产中',
-            'COMPLETED' => '已完成',
-            'CANCELLED' => '已取消',
-        ];
-
-        return WorkOrder::query()
-            ->with(['demand.line', 'targetOperation'])
-            ->whereIn('production_master_order_id', $masterIds)
-            ->orderBy('id')
-            ->get()
-            ->map(function (WorkOrder $workOrder) use ($statusLabels): array {
-                $operations = (array) data_get($workOrder->routing_snapshot, 'operations', []);
-                $firstOperation = $operations[0] ?? [];
-                return [
-                    'work_order_no' => $workOrder->work_order_no,
-                    'line_no' => $workOrder->demand?->line?->line_no,
-                    'current_process_name' => $workOrder->targetOperation?->operation_name
-                        ?: ($firstOperation['operation_name'] ?? null),
-                    'progress_text' => $statusLabels[$workOrder->status] ?? $workOrder->status,
-                ];
-            })
-            ->values()
-            ->all();
+            ->where('sales_order_id', $order->id)->orWhere('active_sales_order_id', $order->id)->pluck('id');
+        // Sales visibility permits this limited order-owned summary, never the
+        // production details or costs. Each link separately requires production scope.
+        $orders = WorkOrder::query()->with('demand.line')->whereNull('assembly_component_demand_id')
+            ->where(function (Builder $query) use ($masterIds, $order): void {
+                $query->whereIn('production_master_order_id', $masterIds)
+                    ->orWhere(fn (Builder $source) => $source->where('source_type', 'sales_order')->where('source_id', $order->id));
+            })->orderBy('id')->paginate(
+                min(50, max(1, (int) $request->input('tracking_per_page', 10))), ['*'], 'tracking_page',
+                max(1, (int) $request->input('tracking_page', 1))
+            );
+        $order->setAttribute('work_order_tracking_pagination', [
+            'current_page' => $orders->currentPage(), 'per_page' => $orders->perPage(), 'total' => $orders->total(),
+        ]);
+        $auth = app(AuthContextService::class);
+        $user = $auth->currentUser($request);
+        $permissions = $user ? $auth->permissionCodes($user) : [];
+        $scopeResolver = app(\App\Services\Erp\ProductionDataScopeResolver::class);
+        $scope = $user ? $scopeResolver->resolve($user, 'production.work_order.view', $permissions, $auth->isSuperAdmin($user)) : ['mode' => 'deny'];
+        $visibleIds = WorkOrder::query()->whereIn('id', $orders->pluck('id'));
+        $scopeResolver->applyWorkOrderScope($visibleIds, $scope);
+        $visibleIds = $visibleIds->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $statusLabels = ['DRAFT' => '草稿', 'WAIT_RELEASE' => '待发布', 'RELEASED' => '已发布',
+            'IN_PROGRESS' => '生产中', 'COMPLETED' => '已完成', 'CANCELLED' => '已取消'];
+        // Count real execution targets, not the planned routing nodes. A route's
+        // first node does not establish that any worker has started that process.
+        $operations = DB::table('erp_production_unit_operations')->whereIn('work_order_id', $orders->pluck('id'))
+            ->select('work_order_id', 'operation_name_snapshot', 'status', 'started_at', 'completed_at')
+            ->unionAll(DB::table('erp_production_quantity_operations')->whereIn('work_order_id', $orders->pluck('id'))
+                ->select('work_order_id', 'operation_name_snapshot', 'status', 'started_at', 'completed_at'))
+            ->get()->groupBy('work_order_id');
+        return $orders->getCollection()->map(function (WorkOrder $workOrder) use ($statusLabels, $operations, $visibleIds): array {
+            $plan = app(\App\Services\Erp\AssemblyProductionApplicationService::class)->projection($workOrder);
+            $material = $plan['material_preparation'] ?? [];
+            $issues = collect(array_merge($plan['issues'] ?? [], $material['issues'] ?? []))
+                ->map(fn ($issue) => ['code' => (string) ($issue['code'] ?? 'preparation_blocked'), 'message' => (string) ($issue['message'] ?? '')])
+                ->filter(fn ($issue) => $issue['message'] !== '')->unique('message')->values()->all();
+            $targets = ($operations->get($workOrder->id) ?? collect())->where('status', '<>', 'CANCELLED');
+            $completed = $targets->where('status', 'COMPLETED')->count();
+            $current = $targets->filter(fn ($target) => in_array($target->status, ['IN_PROGRESS', 'PAUSED'], true)
+                || ($target->started_at && ! $target->completed_at && $target->status !== 'COMPLETED'))
+                ->pluck('operation_name_snapshot')->filter()->unique()->implode('、');
+            $statusText = $statusLabels[$workOrder->status] ?? $workOrder->status;
+            return [
+                'work_order_id' => (int) $workOrder->id, 'root_work_order_id' => (int) $workOrder->id,
+                'work_order_no' => $workOrder->work_order_no, 'line_no' => $workOrder->demand?->line?->line_no,
+                'status' => $workOrder->status, 'can_view' => in_array((int) $workOrder->id, $visibleIds, true),
+                'current_process_name' => $current ?: null,
+                'progress_text' => $statusText.($targets->isNotEmpty() ? ' · 工序完成 '.$completed.'/'.$targets->count() : ''),
+                'completed_operation_count' => $completed, 'total_operation_count' => $targets->count(),
+                'preparation_status' => $plan['status'] ?? ($workOrder->status === 'CANCELLED' ? 'cancelled' : ($workOrder->released_at ? 'legacy_snapshot' : 'pending')),
+                'material_preparation_status' => $material['status'] ?? null,
+                'preparation_issues' => $issues,
+            ];
+        })->values()->all();
     }
-
     /** 订单详情只读展示下单时的 Item 快照，不允许借详情页改写历史关联。 */
     private function orderLineItemProjection($line): array
     {

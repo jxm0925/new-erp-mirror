@@ -307,22 +307,29 @@ Design status: Approved (Optimized for modern ERP layout & responsive UX)
             <div v-if="(order.work_order_tracking || []).length" class="work-order-grid">
               <div v-for="work in order.work_order_tracking" :key="work.work_order_no" class="work-order-card-item">
                 <div class="wo-head">
-                  <span class="wo-no font-mono font-semibold">{{ work.work_order_no }}</span>
+                  <el-button v-if="work.can_view" type="text" class="wo-no font-mono font-semibold" @click="openTrackedWorkOrder(work)">{{ work.work_order_no }}</el-button><span v-else class="wo-no font-mono font-semibold">{{ work.work_order_no }}</span>
                   <el-tag size="mini" type="info">订单行 {{ work.line_no }}</el-tag>
                 </div>
                 <div class="wo-body">
                   <div class="wo-field">
                     <span class="label">当前工序</span>
-                    <b class="value">{{ work.current_process_name || '-' }}</b>
+                    <b class="value">{{ work.current_process_name || '尚无进行中的工序' }}</b>
                   </div>
                   <div class="wo-field">
                     <span class="label">工单进度</span>
                     <el-tag size="mini" type="success" effect="plain">{{ work.progress_text || '-' }}</el-tag>
                   </div>
+                  <div class="wo-field">
+                    <span class="label">生产准备</span>
+                    <b class="value">{{ preparationText(work.preparation_status) }}<template v-if="work.material_preparation_status"> · {{ materialPreparationText(work.material_preparation_status) }}</template></b>
+                  </div>
+                  <div v-for="(issue, index) in (work.preparation_issues || [])" :key="index" class="wo-field">
+                    <span class="label">阻塞原因</span><b class="value">{{ issue.message }}</b>
+                  </div>
                 </div>
               </div>
             </div>
-            <el-empty v-else :image-size="48" description="当前订单尚未生成生产工单" />
+            <el-empty v-else :image-size="48" description="当前订单尚未生成生产工单" /><el-pagination v-if="tracking.total > tracking.per_page" background layout="total, prev, pager, next" :current-page="tracking.current_page" :page-size="tracking.per_page" :total="tracking.total" @current-change="loadTracking" />
           </div>
         </el-tab-pane>
 
@@ -542,6 +549,8 @@ export default {
   components: { SalesOrderAttachmentPreviewDialog, SalesOrderFinancePanel },
   data: () => ({
     activeTab: 'work_orders',
+    tracking: { current_page: 1, per_page: 10, total: 0 },
+    trackingSequence: 0,
     order: {},
     previewVisible: false,
     previewFile: null,
@@ -599,6 +608,7 @@ export default {
     async load() {
       const { data } = await getSalesOrder(this.$route.params.id)
       this.order = data
+      this.tracking = data.work_order_tracking_pagination || { current_page: 1, per_page: 10, total: (data.work_order_tracking || []).length }
       await this.loadChanges(1)
       if (this.$route.query.tab === 'logs') {
         this.activeTab = 'logs'
@@ -607,6 +617,19 @@ export default {
         this.activeTab = 'changes'
         this.scrollToChanges()
       }
+    },
+    preparationText(value) { return ({ pending: '待准备', blocked: '准备受阻', prepared: '部件已准备', not_required: '无需自产部件', cancelled: '已取消', legacy_snapshot: '历史工单' })[value] || '待核对' },
+    materialPreparationText(value) { return ({ ready: '核料完成', prepared: '核料完成', blocked: '核料受阻', pending: '待核料', not_required: '无需用料', released: '已发布' })[value] || '待核料' },
+    openTrackedWorkOrder(work) { if (work.can_view === true && work.work_order_id) this.$router.push(`/production/work-orders/${work.work_order_id}`) },
+    async loadTracking(page) {
+      const id = this.order.id
+      const sequence = ++this.trackingSequence
+      try {
+        const { data } = await getSalesOrder(id, { tracking_page: page, tracking_per_page: this.tracking.per_page })
+        if (sequence !== this.trackingSequence || id !== this.order.id) return
+        this.$set(this.order, 'work_order_tracking', data.work_order_tracking || [])
+        this.tracking = data.work_order_tracking_pagination || this.tracking
+      } catch (error) { if (sequence === this.trackingSequence) this.$message.error(error.userMessage || '工单跟踪加载失败') }
     },
     async doConfirm() {
       const response = await confirmSalesOrder(this.order.id)

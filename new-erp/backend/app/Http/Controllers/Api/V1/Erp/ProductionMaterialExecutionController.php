@@ -41,6 +41,8 @@ class ProductionMaterialExecutionController extends Controller
     public function preparationDemands(Request $request, ProductionMaterialExecutionService $service)
     {
         $filters = $request->validate([
+            'demand_stage' => ['nullable', 'in:preparation,execution'],
+            'category_id' => ['nullable', 'integer', 'min:1'],
             'status' => ['nullable', 'string', 'max:40'],
             'work_order_id' => ['nullable', 'integer', 'min:1'],
             'target_routing_operation_id' => ['nullable', 'integer', 'min:1'],

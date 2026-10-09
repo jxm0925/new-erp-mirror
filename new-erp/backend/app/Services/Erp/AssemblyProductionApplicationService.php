@@ -8,6 +8,7 @@ use App\Models\Erp\AssemblyProductionPlan;
 use App\Models\Erp\Bom;
 use App\Models\Erp\Item;
 use App\Models\Erp\ProductionRouting;
+use App\Models\Erp\ProductionExecutionCommand;
 use App\Models\Erp\WorkOrder;
 use App\Models\Erp\WorkOrderStatusLog;
 use Illuminate\Support\Facades\DB;
@@ -32,60 +33,234 @@ final class AssemblyProductionApplicationService
         if (! $wo) $this->fail('not_found', '工单不存在。', 404);
         $this->visible($wo, $user, $permissions, $superAdmin);
         $stored = $this->projection($wo);
-        if ($stored) return $stored;
+        if ($stored) return $this->withActions($stored, $wo, $permissions);
         if ($wo->released_at || ! in_array($wo->status, ['DRAFT', 'WAIT_RELEASE'], true)) return $this->empty($wo, 'legacy_snapshot', true);
-        return DB::transaction(fn () => $this->build($wo, false));
+        return $this->withActions(DB::transaction(fn () => $this->build($wo, false)), $wo, $permissions);
     }
 
     public function prepare(int $id, array $payload, object $user, array $permissions, bool $superAdmin = false): array
     {
         $this->permission($permissions, 'production.work_order.view');
         $this->permission($permissions, 'production.work_order.edit');
-        $command = trim((string) ($payload['client_command_id'] ?? ''));
-        if ($command === '' || strlen($command) > 120) $this->fail('validation_error', '必须提供有效的操作命令号。');
-        $hash = $this->hash(['work_order_id' => $id, 'expected_version' => $payload['expected_version'] ?? null, 'actor' => $this->actor($user)]);
-        return DB::transaction(function () use ($id, $payload, $user, $permissions, $superAdmin, $command, $hash): array {
-            $wo = WorkOrder::whereKey($id)->lockForUpdate()->first();
-            if (! $wo) $this->fail('not_found', '工单不存在。', 404);
-            $this->visible($wo, $user, $permissions, $superAdmin);
-            $this->editable($wo);
-            if ($wo->assembly_component_demand_id) $this->fail('assembly_child_prepare_forbidden', '关联子工单由根工单统一准备，不能重复拆分。', 409);
-            $existing = AssemblyProductionPlan::where('root_work_order_id', $id)->lockForUpdate()->first();
-            if ($existing?->status === 'PREPARED') {
-                if ($existing->command_id === $command && $existing->request_hash !== $hash) $this->fail('idempotency_conflict', '同一操作命令号不能用于不同的准备内容。', 409);
-                if ($existing->command_id !== $command && (int) ($payload['expected_version'] ?? 0) !== (int) $wo->business_version) $this->fail('version_conflict', '工单已变化，请刷新后重试。', 409);
-                return $this->projection($wo);
-            }
-            if ((int) ($payload['expected_version'] ?? 0) !== (int) $wo->business_version) $this->fail('version_conflict', '工单已变化，请刷新后重试。', 409);
-            if (AssemblyProductionPlan::where('command_id', $command)->where('root_work_order_id', '<>', $id)->exists()) $this->fail('idempotency_conflict', '操作命令号已用于另一张工单。', 409);
-            return $this->prepareLocked($wo, $user, $command, $hash, false);
-        }, 5);
+        $result = $this->runPreparation($id, $payload, $user, $permissions, $superAdmin);
+        if ($result['failure'] ?? null) {
+            $failure = $result['failure'];
+            $this->fail($failure['code'], $failure['message'], $failure['status'], ['issues' => $result['plan']['issues']]);
+        }
+        return $this->withActions($result['plan'], WorkOrder::findOrFail($id), $permissions);
     }
 
-    /** Sales confirmation already owns the order/WO transaction and grants this narrowly scoped automatic action. */
+    /**
+     * The durable pending row belongs to the accepted sales transaction. The
+     * callback runs only after its outermost commit; a stopped worker therefore
+     * leaves an observable, retryable root rather than an unrecorded intention.
+     */
+    public function scheduleAutomaticLocked(WorkOrder $wo, object $user): void
+    {
+        if (DB::transactionLevel() < 1) $this->fail('transaction_required', '自动准备必须由销售确认事务登记。', 409);
+        if (! Schema::hasTable('erp_assembly_production_plans') || $wo->assembly_component_demand_id) return;
+        AssemblyProductionPlan::firstOrCreate(['root_work_order_id' => $wo->id], [
+            'status' => 'PENDING', 'plan_version' => 1, 'work_order_version' => $wo->business_version,
+            'organization_code' => $wo->organization_code, 'plan_snapshot' => $this->empty($wo, 'pending', false),
+        ]);
+        DB::afterCommit(fn () => $this->prepareAutomatic($wo, $user));
+    }
+
+    /** A best-effort follow-up must never turn an already committed sale into an HTTP failure. */
     public function prepareAutomatic(WorkOrder $wo, object $user): void
     {
-        if (! Schema::hasTable('erp_assembly_production_plans') || $wo->assembly_component_demand_id) return;
-        if (AssemblyProductionPlan::where('root_work_order_id', $wo->id)->where('status', 'PREPARED')->exists()) return;
-        $this->prepareLocked($wo, $user, 'sales-assembly:'.$wo->id, $this->hash(['automatic' => $wo->id]), true);
+        try {
+            $current = WorkOrder::find($wo->id);
+            if (! $current || $current->assembly_component_demand_id || $current->source_type !== 'sales_order'
+                || ! in_array($current->status, ['DRAFT', 'WAIT_RELEASE'], true) || $current->released_at) return;
+            if (! Schema::hasTable('erp_assembly_production_plans')) return;
+            if (AssemblyProductionPlan::where('root_work_order_id', $wo->id)->whereIn('status', ['PREPARED', 'NOT_REQUIRED'])->exists()) return;
+            $this->runPreparation((int) $current->id, [
+                'client_command_id' => 'sales-assembly:'.$current->id.':v'.$current->business_version,
+                'expected_version' => (int) $current->business_version,
+            ], $user, [], false, true);
+        } catch (\Throwable $exception) {
+            // A deadlock may invalidate an entire MySQL transaction, so never
+            // try to repair it inside its savepoint. Record only after rollback;
+            // if the database is unavailable the committed PENDING row remains.
+            try {
+                DB::transaction(function () use ($wo, $user, $exception): void {
+                    $current = WorkOrder::whereKey($wo->id)->lockForUpdate()->first();
+                    if (! $current || ! in_array($current->status, ['DRAFT', 'WAIT_RELEASE'], true) || $current->released_at) return;
+                    $record = AssemblyProductionPlan::where('root_work_order_id', $wo->id)->lockForUpdate()->first();
+                    if ($record && in_array($record->status, ['PREPARED', 'NOT_REQUIRED', 'CANCELLED'], true)) return;
+                    $this->recordFailure($current, $user, $this->safeFailure($exception), $record);
+                }, 3);
+            } catch (\Throwable) {
+                // Do not expose database errors or throw through the sales commit.
+            }
+        }
     }
 
-    private function prepareLocked(WorkOrder $wo, object $user, string $command, string $hash, bool $automatic): array
+    private function runPreparation(int $id, array $payload, object $user, array $permissions, bool $superAdmin, bool $automatic = false): array
+    {
+        $command = trim((string) ($payload['client_command_id'] ?? ''));
+        if ($command === '' || strlen($command) > 120) $this->fail('validation_error', '必须提供有效的操作命令号。');
+        $hash = $this->hash(['work_order_id' => $id, 'expected_version' => $payload['expected_version'] ?? null,
+            'actor' => $this->actor($user), 'automatic' => $automatic]);
+        try {
+            return DB::transaction(function () use ($id, $payload, $user, $permissions, $superAdmin, $automatic, $command, $hash): array {
+                $wo = WorkOrder::whereKey($id)->lockForUpdate()->first();
+                if (! $wo) $this->fail('not_found', '工单不存在。', 404);
+                if (! $automatic) $this->visible($wo, $user, $permissions, $superAdmin);
+                $this->editable($wo);
+                if ($wo->assembly_component_demand_id) $this->fail('assembly_child_prepare_forbidden', '关联子工单由根工单统一准备，不能重复拆分。', 409);
+                if ($automatic && ($wo->source_type !== 'sales_order' || ! $wo->production_demand_id)) {
+                    $this->fail('automatic_preparation_source_invalid', '自动准备只能处理销售确认形成的根工单。', 409);
+                }
+                $existing = ProductionExecutionCommand::where('client_command_id', $command)->lockForUpdate()->first();
+                if ($existing) {
+                    if ($existing->command_type !== 'prepare_assembly' || $existing->aggregate_type !== 'work_order'
+                        || (int) $existing->aggregate_id !== $id || (int) $existing->initiated_by_legacy_id !== $this->actor($user)
+                        || ! hash_equals((string) $existing->request_hash, $hash)) {
+                        $this->fail('idempotency_conflict', '同一操作命令号不能用于不同的准备内容。', 409);
+                    }
+                    // An exact replay may carry the version consumed by its own
+                    // success, but never bypass a later edit or lifecycle change.
+                    $replayVersion = (int) data_get($existing->response_snapshot, 'plan.work_order_version', 0);
+                    if ($replayVersion !== (int) $wo->business_version) $this->fail('version_conflict', '工单已变化，请刷新后重试。', 409);
+                    if (! in_array($existing->status, ['succeeded', 'failed'], true)) $this->fail('command_processing', '准备操作尚未完成，请稍后重试。', 409);
+                    return $existing->response_snapshot;
+                }
+                $record = AssemblyProductionPlan::where('root_work_order_id', $id)->lockForUpdate()->first();
+                $legacyReplay = false;
+                // Legacy success predates the separate command ledger. Its
+                // exact actor/hash may replay the version it consumed, provided
+                // the prepared result is still the current work-order version.
+                if ($record?->command_id === $command) {
+                    $legacyHash = $this->hash(['work_order_id' => $id, 'expected_version' => $payload['expected_version'] ?? null, 'actor' => $this->actor($user)]);
+                    if ($record->request_hash !== $hash && $record->request_hash !== $legacyHash) {
+                        $this->fail('idempotency_conflict', '同一操作命令号不能用于不同的准备内容。', 409);
+                    }
+                    $legacyReplay = $record->status === 'PREPARED'
+                        && (int) $record->work_order_version === (int) $wo->business_version;
+                }
+                if (! $legacyReplay && (int) ($payload['expected_version'] ?? 0) !== (int) $wo->business_version) {
+                    $this->fail('version_conflict', '工单已变化，请刷新后重试。', 409);
+                }
+                if (AssemblyProductionPlan::where('command_id', $command)->where('root_work_order_id', '<>', $id)->exists()) {
+                    $this->fail('idempotency_conflict', '操作命令号已用于另一张工单。', 409);
+                }
+                $ledger = ProductionExecutionCommand::create([
+                    'client_command_id' => $command, 'command_type' => 'prepare_assembly', 'aggregate_type' => 'work_order',
+                    'aggregate_id' => $id, 'request_hash' => $hash, 'status' => 'processing',
+                    'initiated_by_legacy_id' => $this->actor($user), 'processing_started_at' => now(),
+                ]);
+                if ($legacyReplay) {
+                    $result = ['plan' => $this->projection($wo), 'failure' => null];
+                } else {
+                try {
+                    $result = DB::transaction(function () use ($wo, $user, $command, $hash, $record): array {
+                        // Existing prepared assemblies retain their exact child
+                        // and reservation facts; only missing material preparation
+                        // is reconciled for an explicit new command.
+                        $plan = $record?->status === 'PREPARED'
+                            ? $this->projection($wo) : $this->prepareLocked($wo, $user, $command, $hash);
+                        $materials = app(WorkOrderPreparationMaterialService::class);
+                        $plan['material_preparation'] = $materials->synchronizeLocked($wo, $user);
+                        foreach (WorkOrder::where('assembly_root_work_order_id', $wo->id)->whereIn('status', ['DRAFT', 'WAIT_RELEASE'])->orderBy('id')->lockForUpdate()->get() as $child) {
+                            $materials->synchronizeLocked($child, $user);
+                        }
+                        app(ReleaseGateApplicationService::class)->evaluateLocked($wo, $user, true);
+                        AssemblyProductionPlan::where('root_work_order_id', $wo->id)->firstOrFail()->update(['plan_snapshot' => $plan]);
+                        return ['plan' => $plan, 'failure' => null];
+                    });
+                } catch (\PDOException $exception) {
+                    // Laravel retries the whole root transaction, not an
+                    // invalidated savepoint. No partial tree can survive.
+                    throw $exception;
+                } catch (\Throwable $exception) {
+                    $wo->refresh();
+                    $failure = $this->safeFailure($exception);
+                    if ($record?->status === 'PREPARED') {
+                        $record->refresh();
+                        $plan = $this->projection($wo);
+                        $plan['material_preparation'] = ['status' => 'blocked', 'ready' => false, 'version' => null, 'rows' => [],
+                            'issues' => $failure['issues'] ?: [['code' => $failure['code'], 'message' => $failure['message']]]];
+                        $record->update(['plan_snapshot' => $plan]);
+                        $this->log($wo, '物料准备未完成：'.$failure['message'], (int) $wo->business_version, (int) $wo->business_version, $user);
+                        $result = ['plan' => $plan, 'failure' => $failure];
+                    } else {
+                        $result = ['plan' => $this->recordFailure($wo, $user, $failure, $record), 'failure' => $failure];
+                    }
+                }
+                }
+                $ledger->fill(['status' => $result['failure'] ? 'failed' : 'succeeded', 'result_type' => 'work_order',
+                    'result_id' => $id, 'response_snapshot' => $result, 'processing_finished_at' => now(),
+                    'error_code' => $result['failure']['code'] ?? null, 'error_message' => $result['failure']['message'] ?? null])->save();
+                return $result;
+            }, 5);
+        } catch (\PDOException $exception) {
+            // A duplicate global command key from another root is a stable
+            // command conflict. Other persistence failures remain retryable.
+            if ((int) ($exception->errorInfo[1] ?? 0) === 1062) $this->fail('idempotency_conflict', '操作命令号已被使用，请刷新后重试。', 409);
+            $this->fail('assembly_preparation_unavailable', '生产准备暂时无法完成，根工单已保留，请刷新后重试。', 503);
+        }
+    }
+
+    private function recordFailure(WorkOrder $wo, object $user, array $failure, ?AssemblyProductionPlan $existing): array
+    {
+        $plan = $this->empty($wo, 'blocked', false);
+        $plan['issues'] = $failure['issues'] ?: [['code' => $failure['code'], 'message' => $failure['message']]];
+        $plan['plan_version'] = (int) ($existing?->plan_version ?? 0) + 1;
+        $plan['attempted_at'] = now()->toISOString();
+        $plan['attempted_by_legacy_id'] = $this->actor($user);
+        $record = AssemblyProductionPlan::updateOrCreate(['root_work_order_id' => $wo->id], [
+            'status' => 'BLOCKED', 'plan_version' => $plan['plan_version'], 'work_order_version' => $wo->business_version,
+            'organization_code' => $wo->organization_code, 'plan_snapshot' => $plan,
+        ]);
+        $plan['plan_id'] = (int) $record->id;
+        $record->update(['plan_snapshot' => $plan]);
+        $this->log($wo, '生产准备未完成：'.$failure['message'], (int) $wo->business_version, (int) $wo->business_version, $user);
+        return $plan;
+    }
+
+    private function safeFailure(\Throwable $exception): array
+    {
+        $business = $exception instanceof WorkOrderDomainException;
+        $code = $business ? $exception->errorCode : 'assembly_preparation_failed';
+        $message = $business ? $exception->getMessage() : '生产准备未完成，根工单已保留，请核对生产资料后重试。';
+        // Only business messages reach the UI. SQL, stack traces and driver
+        // messages are never stored in a user-visible snapshot or audit reason.
+        $sanitize = static fn (string $text): string => preg_match('/SQLSTATE|password|credential|stack trace|PDOException|[A-Z]:\\\\/i', $text)
+            ? '生产准备未完成，请联系管理员核对后重试。' : mb_substr($text, 0, 500);
+        $issues = [];
+        if ($business) foreach ((array) ($exception->details['issues'] ?? []) as $issue) {
+            if (! is_array($issue)) continue;
+            $issues[] = ['code' => preg_replace('/[^a-z0-9_]/i', '', (string) ($issue['code'] ?? $code)),
+                'message' => $sanitize((string) ($issue['message'] ?? $message))];
+            if (count($issues) >= 50) break;
+        }
+        return ['code' => preg_replace('/[^a-z0-9_]/i', '', $code), 'message' => $sanitize($message),
+            'status' => $business ? $exception->status : 422, 'issues' => $issues];
+    }
+
+    private function prepareLocked(WorkOrder $wo, object $user, string $command, string $hash): array
     {
         $plan = $this->build($wo, true);
-        if (! $plan['required']) return $plan;
-        if ($plan['issues'] !== []) {
-            if (! $automatic) $this->fail('assembly_plan_blocked', $plan['issues'][0]['message'], 422, ['issues' => $plan['issues']]);
-            AssemblyProductionPlan::updateOrCreate(['root_work_order_id' => $wo->id], [
-                'status' => 'BLOCKED', 'work_order_version' => $wo->business_version, 'plan_snapshot' => $plan,
-                'organization_code' => $wo->organization_code,
+        if ($plan['issues'] !== []) $this->fail('assembly_plan_blocked', $plan['issues'][0]['message'], 422, ['issues' => $plan['issues']]);
+        $existing = AssemblyProductionPlan::where('root_work_order_id', $wo->id)->first();
+        $planVersion = (int) ($existing?->plan_version ?? 0) + 1;
+        if (! $plan['required']) {
+            // A no-child result is still a recorded preparation attempt. It is
+            // mutable; subsequent technical edits must rebuild its material rows.
+            $plan = array_replace($plan, ['status' => 'not_required', 'plan_version' => $planVersion]);
+            $record = AssemblyProductionPlan::updateOrCreate(['root_work_order_id' => $wo->id], [
+                'status' => 'NOT_REQUIRED', 'plan_version' => $planVersion, 'work_order_version' => $wo->business_version,
+                'command_id' => $command, 'request_hash' => $hash, 'plan_snapshot' => $plan, 'organization_code' => $wo->organization_code,
             ]);
+            $plan['plan_id'] = (int) $record->id;
+            $record->update(['plan_snapshot' => $plan]);
             return $plan;
         }
-        // A single transaction commits every child, allocation and version. A failed deep component
-        // cannot leave a partial tree or an inventory lock behind; a repeated command sees this root row.
+        // Every child, reservation and preparation material commits together.
         $record = AssemblyProductionPlan::updateOrCreate(['root_work_order_id' => $wo->id], [
-            'status' => 'PREPARED', 'work_order_version' => (int) $wo->business_version + 1,
+            'status' => 'PREPARED', 'plan_version' => $planVersion, 'work_order_version' => (int) $wo->business_version + 1,
             'input_hash' => $plan['input_hash'], 'command_id' => $command, 'request_hash' => $hash,
             'prepared_by_legacy_id' => $this->actor($user), 'prepared_at' => now(),
             'organization_code' => $wo->organization_code, 'plan_snapshot' => $plan,
@@ -120,8 +295,8 @@ final class AssemblyProductionApplicationService
         $wo->updated_by_legacy_id = $this->actor($user);
         $wo->save();
         $this->log($wo, '准备自产部件：库存净算及建立关联子工单', $version, $wo->business_version, $user);
-        $plan = array_replace($plan, ['status' => 'prepared', 'immutable' => true, 'plan_id' => (int) $record->id,
-            'plan_version' => 1, 'work_order_version' => (int) $wo->business_version, 'prepared_at' => now()->toISOString(),
+        $plan = array_replace($plan, ['status' => 'prepared', 'immutable' => true, 'retryable' => false, 'plan_id' => (int) $record->id,
+            'plan_version' => $planVersion, 'work_order_version' => (int) $wo->business_version, 'prepared_at' => now()->toISOString(),
             'prepared_by_legacy_id' => $this->actor($user)]);
         $record->update(['plan_snapshot' => $plan]);
         return $plan;
@@ -132,11 +307,18 @@ final class AssemblyProductionApplicationService
         if (! Schema::hasTable('erp_assembly_production_plans')) return null;
         $rootId = (int) ($wo->assembly_root_work_order_id ?: $wo->id);
         $record = AssemblyProductionPlan::where('root_work_order_id', $rootId)->first();
-        if (! $record || $record->status === 'BLOCKED') return null;
+        if (! $record) return null;
         $result = $record->plan_snapshot;
-        $result['status'] = $record->status === 'CANCELLED' ? 'cancelled' : 'prepared';
+        $result['material_preparation'] ??= ['status' => 'not_prepared', 'ready' => false, 'issues' => [], 'version' => null, 'rows' => []];
+        $result['status'] = strtolower((string) $record->status);
+        $result['plan_id'] = (int) $record->id;
+        $result['plan_version'] = (int) $record->plan_version;
+        $result['attempt_work_order_version'] = (int) $record->work_order_version;
+        $result['work_order_version'] = (int) $wo->business_version;
+        $result['retryable'] = in_array($record->status, ['PENDING', 'BLOCKED'], true)
+            && in_array($wo->status, ['DRAFT', 'WAIT_RELEASE'], true) && ! $wo->released_at && ! $wo->assembly_component_demand_id;
         $result['view_work_order_id'] = (int) $wo->id;
-        $result['immutable'] = true;
+        $result['immutable'] = in_array($record->status, ['PREPARED', 'CANCELLED'], true);
         if ($wo->assembly_component_demand_id) {
             // A child's visibility does not grant access to its root or sibling branches.
             // Keep the persisted plan intact and project only this child's downstream BOM.
@@ -161,8 +343,9 @@ final class AssemblyProductionApplicationService
         $hasMake = $bom->items->contains(fn ($line) => $line->componentItem?->manufacturing_strategy === 'make');
         $rootId = (int) ($wo->assembly_root_work_order_id ?: $wo->id);
         $record = AssemblyProductionPlan::where('root_work_order_id', $rootId)->lockForUpdate()->first();
-        if (! $hasMake && ! $record) return null;
-        if ($record?->status !== 'PREPARED') return ['valid' => false, 'code' => 'assembly_preparation_required', 'message' => '自产部件必须先完成库存净算和关联子工单准备。'];
+        if (! $hasMake && (! $record || $record->status === 'NOT_REQUIRED')) return null;
+        if ($record?->status !== 'PREPARED') return ['valid' => false, 'code' => 'assembly_preparation_required',
+            'message' => data_get($record?->plan_snapshot, 'issues.0.message') ?: ($hasMake ? '自产部件必须先完成库存净算和关联子工单准备。' : '生产准备尚未完成，请核对准备原因后重试。')];
         $snapshot = $record->plan_snapshot;
         $expected = $wo->assembly_component_demand_id
             ? collect($snapshot['components'])->firstWhere('component_demand_id', (int) $wo->assembly_component_demand_id)
@@ -346,11 +529,27 @@ final class AssemblyProductionApplicationService
         }
     }
 
+    private function withActions(array $plan, WorkOrder $wo, array $permissions): array
+    {
+        $editable = in_array('production.work_order.view', $permissions, true)
+            && in_array('production.work_order.edit', $permissions, true)
+            && in_array($wo->status, ['DRAFT', 'WAIT_RELEASE'], true) && ! $wo->released_at && ! $wo->assembly_component_demand_id;
+        $materialReady = (bool) data_get($plan, 'material_preparation.ready', false);
+        $sameVersion = (int) ($plan['attempt_work_order_version'] ?? $plan['work_order_version'] ?? 0) === (int) $wo->business_version;
+        $complete = in_array($plan['status'] ?? '', ['prepared', 'not_required'], true) && $materialReady && $sameVersion;
+        $retry = in_array($plan['status'] ?? '', ['pending', 'blocked'], true)
+            || data_get($plan, 'material_preparation.status') === 'blocked';
+        $plan['actions'] = ['can_prepare' => $editable && ! $complete, 'can_retry' => $editable && ! $complete && $retry];
+        $plan['retryable'] = $plan['actions']['can_retry'];
+        $plan['work_order_version'] = (int) $wo->business_version;
+        return $plan;
+    }
+
     private function empty(WorkOrder $wo, string $status, bool $immutable): array
     {
         return ['schema_version' => 1, 'root_work_order_id' => (int) ($wo->assembly_root_work_order_id ?: $wo->id),
             'work_order_id' => (int) $wo->id, 'work_order_version' => (int) $wo->business_version,
-            'plan_version' => null, 'status' => $status, 'immutable' => $immutable, 'required' => false, 'issues' => [], 'components' => []];
+            'plan_version' => null, 'status' => $status, 'immutable' => $immutable, 'retryable' => in_array($status, ['pending', 'blocked'], true), 'required' => false, 'issues' => [], 'components' => []];
     }
 
     private function bomHash(Bom $bom): string
@@ -387,8 +586,10 @@ final class AssemblyProductionApplicationService
     {
         if (! $this->scope->workOrderVisible($wo, $this->scope->resolve($user, 'production.work_order.view', $permissions, $superAdmin))) $this->fail('data_scope_denied', '当前用户不在该工单的数据范围内。', 403);
     }
-    private function editable(WorkOrder $wo): void { if (! in_array($wo->status, ['DRAFT', 'WAIT_RELEASE'], true)) $this->fail('state_conflict', '只有草稿或待发布工单可以准备自产部件。', 409); }
+    private function editable(WorkOrder $wo): void { if ($wo->released_at || ! in_array($wo->status, ['DRAFT', 'WAIT_RELEASE'], true)) $this->fail('state_conflict', '只有草稿或待发布工单可以准备自产部件。', 409); }
     private function permission(array $permissions, string $code): void { if (! in_array($code, $permissions, true)) $this->fail('permission_denied', '没有该工单操作权限。', 403); }
     private function actor(object $user): int { return (int) ($user->legacy_id ?? $user->id ?? 0); }
     private function fail(string $code, string $message, int $status = 422, array $details = []): never { throw new WorkOrderDomainException($code, $message, $status, $details); }
 }
+
+
