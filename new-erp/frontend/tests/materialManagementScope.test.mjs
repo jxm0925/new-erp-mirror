@@ -58,6 +58,61 @@ test('all materials share one paginated query, and a scope change clears incompa
   vm.openEdit({id:8,management_scope:'office'}); assert.equal(vm.routes.at(-1),'/master/items/8/edit')
 })
 
+test('scopeTabs navigation allows clicking tags to switch factory, office and all materials directly', async () => {
+  const requests = []
+  const vm = mount('ItemList', { listEntity: async (entity, query) => { requests.push(query); return itemResponse(1, query.management_scope) } }, '')
+  assert.deepEqual(vm.scopeTabs.map(t => ({ value: t.value, label: t.label })), [
+    { value: '', label: '全部物料' },
+    { value: 'factory', label: '工厂物料' },
+    { value: 'office', label: '办公用品' }
+  ])
+  vm.loadOptions = async () => {}
+  await vm.selectScopeTab('factory')
+  assert.equal(vm.query.management_scope, 'factory')
+  assert.equal(requests.at(-1).management_scope, 'factory')
+
+  await vm.selectScopeTab('office')
+  assert.equal(vm.query.management_scope, 'office')
+  assert.equal(requests.at(-1).management_scope, 'office')
+
+  await vm.selectScopeTab('')
+  assert.equal(vm.query.management_scope, '')
+  assert.equal(vm.activeScopeTab, 'all')
+  assert.equal(Object.hasOwn(requests.at(-1), 'management_scope'), false)
+
+  vm.handleScopeTabClick({ name: 'office' })
+  assert.equal(vm.query.management_scope, 'office')
+  assert.equal(vm.activeScopeTab, 'office')
+
+  vm.handleScopeTabClick({ name: 'all' })
+  assert.equal(vm.query.management_scope, '')
+  assert.equal(vm.activeScopeTab, 'all')
+})
+
+test('itemList loads scope counts from stats and exposes badges for all, factory, and office unconditionally', async () => {
+  const vm = mount('ItemList', {
+    listEntity: async () => ({
+      data: {
+        data: [{ id: 1, management_scope: 'factory' }],
+        total: 21,
+        stats: { factory_total: 18, office_total: 3, all_total: 21 }
+      }
+    })
+  }, '')
+  assert.equal(vm.activeScopeTab, 'all')
+  await vm.load()
+  assert.equal(vm.scopeCount('all'), '21')
+  assert.equal(vm.scopeCount('factory'), '18')
+  assert.equal(vm.scopeCount('office'), '3')
+
+  // When keyword is searched on the active tab, filtered total is reflected on current tab
+  vm.query.keyword = '钢板'
+  vm.total = 5
+  assert.equal(vm.scopeCount('all'), '5')
+  assert.equal(vm.scopeCount('factory'), '18')
+  assert.equal(vm.scopeCount('office'), '3')
+})
+
 test('mixed-list detail uses the selected item identity rather than the current filter', async () => {
   let params
   const vm=mount('ItemList',{getEntity:async(entity,id,query)=>{params=query;return {data:{id,management_scope:'office'}}}},'')

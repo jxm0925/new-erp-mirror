@@ -22,7 +22,36 @@
     <!-- 全局统一页面提示条 (遵照用户指令：所有页面统一采用此tip) -->
     <div v-if="canViewItems" class="erp-page-tip">
       <i class="el-icon-info" />
-      <span>统一管理工厂物料和办公用品；列表标签区分管理类型，新增和编辑时选择类型并配置对应属性。</span>
+      <span>统一管理工厂物料和办公用品；顶部 Tag 快捷切换管理类型，新增和编辑时选择类型并配置对应属性。</span>
+    </div>
+
+    <!-- 模块选项卡容器 (对齐基础档案 archive-tabs 标签切换规范) -->
+    <div v-if="canViewItems" class="tabs-card">
+      <el-tabs v-model="activeScopeTab" class="archive-tabs" @tab-click="handleScopeTabClick">
+        <el-tab-pane name="all">
+          <span slot="label" class="custom-tab-item">
+            <i class="el-icon-collection" />
+            <span>全部物料</span>
+            <span class="tab-badge code-mono">{{ scopeCount('all') }}</span>
+          </span>
+        </el-tab-pane>
+
+        <el-tab-pane name="factory">
+          <span slot="label" class="custom-tab-item">
+            <i class="el-icon-office-building" />
+            <span>工厂物料</span>
+            <span class="tab-badge code-mono">{{ scopeCount('factory') }}</span>
+          </span>
+        </el-tab-pane>
+
+        <el-tab-pane name="office">
+          <span slot="label" class="custom-tab-item">
+            <i class="el-icon-document" />
+            <span>办公用品</span>
+            <span class="tab-badge code-mono">{{ scopeCount('office') }}</span>
+          </span>
+        </el-tab-pane>
+      </el-tabs>
     </div>
 
     <!-- 顶部概览指标卡片 -->
@@ -61,10 +90,6 @@
     <section v-if="canViewItems" class="table-container-card">
       <div class="filter-toolbar">
         <div class="filter-fields">
-          <el-select v-model="query.management_scope" size="small" clearable placeholder="管理类型：全部" class="filter-select-md" @change="changeScope">
-            <el-option label="工厂物料" value="factory" />
-            <el-option label="办公用品" value="office" />
-          </el-select>
           <el-input
             v-model.trim="query.keyword"
             size="small"
@@ -521,6 +546,12 @@ const emptyConversion = () => ({
   remark: ''
 })
 
+const scopeCountsCache = {
+  all: 0,
+  factory: 0,
+  office: 0
+}
+
 export default {
   mixins: [cachedPageRoute],
   name: 'ItemList',
@@ -553,6 +584,12 @@ export default {
       categories: [],
       units: [],
       suppliers: [],
+      scopeCounts: { ...scopeCountsCache },
+      scopeTabs: [
+        { value: '', label: '全部物料', icon: 'el-icon-collection' },
+        { value: 'factory', label: '工厂物料', icon: 'el-icon-office-building' },
+        { value: 'office', label: '办公用品', icon: 'el-icon-document' }
+      ],
       query: {
         management_scope: routeMaterialScope(this.$route),
         keyword: '',
@@ -582,6 +619,15 @@ export default {
     canViewItems () { return this.$can('master.item.view') },
     canViewCategories () { return this.$can('item_category.view') },
     managementScope () { return this.query.management_scope || '' },
+    activeScopeTab: {
+      get () {
+        return this.query.management_scope || 'all'
+      },
+      set (val) {
+        const scope = val === 'all' ? '' : val
+        this.selectScopeTab(scope)
+      }
+    },
     isOffice () { return this.managementScope === 'office' },
     scopeLabel () { return materialScopeLabel(this.managementScope) },
     listPath () { return materialListPath(this.managementScope) },
@@ -608,6 +654,15 @@ export default {
     },
     cuttingCount () {
       return Number(this.stats.cutting || 0)
+    },
+    hasSearchFilters () {
+      return Boolean(
+        this.query.keyword ||
+        this.query.item_type ||
+        this.query.category_id ||
+        this.query.unit_id ||
+        this.query.status
+      )
     }
   },
   watch: {
@@ -645,12 +700,50 @@ export default {
         this.rows = data.data || []
         this.total = Number(data.total || 0)
         this.stats = data.stats || {}
+        if (this.stats.factory_total !== undefined && this.stats.factory_total !== null) {
+          this.$set(this.scopeCounts, 'factory', Number(this.stats.factory_total || 0))
+        }
+        if (this.stats.office_total !== undefined && this.stats.office_total !== null) {
+          this.$set(this.scopeCounts, 'office', Number(this.stats.office_total || 0))
+        }
+        if (this.stats.all_total !== undefined && this.stats.all_total !== null) {
+          this.$set(this.scopeCounts, 'all', Number(this.stats.all_total || 0))
+        }
+        const currentScope = this.managementScope || 'all'
+        if (!this.hasSearchFilters) {
+          this.$set(this.scopeCounts, currentScope, this.total)
+        }
+        Object.assign(scopeCountsCache, this.scopeCounts)
         this.listLoaded = true
       } catch (e) {
         if (version === this.loadVersion) this.$message.error(e.userMessage || '物料列表加载失败')
       } finally {
         if (version === this.loadVersion) this.loading = false
       }
+    },
+    async loadScopeCounts () {
+      if (!this.canViewItems) return
+      try {
+        const [factoryRes, officeRes] = await Promise.allSettled([
+          listEntity('items', { management_scope: 'factory', per_page: 1, include_stats: 1 }),
+          listEntity('items', { management_scope: 'office', per_page: 1, include_stats: 1 })
+        ])
+        if (factoryRes.status === 'fulfilled' && factoryRes.value && factoryRes.value.data) {
+          const factoryCount = Number(factoryRes.value.data.total || 0)
+          this.$set(this.scopeCounts, 'factory', factoryCount)
+          scopeCountsCache.factory = factoryCount
+        }
+        if (officeRes.status === 'fulfilled' && officeRes.value && officeRes.value.data) {
+          const officeCount = Number(officeRes.value.data.total || 0)
+          this.$set(this.scopeCounts, 'office', officeCount)
+          scopeCountsCache.office = officeCount
+        }
+        if (!this.scopeCounts.all) {
+          const total = (this.scopeCounts.factory || 0) + (this.scopeCounts.office || 0)
+          this.$set(this.scopeCounts, 'all', total)
+          scopeCountsCache.all = total
+        }
+      } catch (_) {}
     },
     async loadOptions () {
       if (!this.canViewItems) return
@@ -681,6 +774,22 @@ export default {
     },
     scopeParams () {
       return this.managementScope ? { management_scope: this.managementScope } : {}
+    },
+    handleScopeTabClick (tab) {
+      const scope = tab.name === 'all' ? '' : tab.name
+      this.selectScopeTab(scope)
+    },
+    scopeCount (scope) {
+      if (this.hasSearchFilters && (this.query.management_scope || 'all') === scope) {
+        return this.total.toLocaleString()
+      }
+      const val = this.scopeCounts[scope]
+      return (val !== null && val !== undefined ? Number(val) : 0).toLocaleString()
+    },
+    selectScopeTab (scope) {
+      if ((this.query.management_scope || '') === (scope || '')) return
+      this.query.management_scope = scope || ''
+      this.changeScope()
     },
     changeScope () {
       this.detailVersion++
@@ -1034,6 +1143,100 @@ export default {
 .btn-theme-create:hover {
   background: #00763f !important;
   border-color: #00763f !important;
+}
+
+/* 模块选项卡容器 (完全对齐基础档案 archive-tabs 视觉与交互规范) */
+.tabs-card {
+  min-width: 0;
+  margin-bottom: 14px;
+}
+
+.archive-tabs {
+  min-width: 0;
+}
+
+.archive-tabs ::v-deep .el-tabs__header {
+  margin: 0;
+  background: #ffffff;
+  padding: 6px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+}
+
+.archive-tabs ::v-deep .el-tabs__nav-wrap::after {
+  display: none;
+}
+
+.archive-tabs ::v-deep .el-tabs__item {
+  height: 40px;
+  line-height: 40px;
+  padding: 0 18px !important;
+  font-size: 14px;
+  font-weight: 500;
+  color: #475569;
+  border-radius: 6px;
+  transition: color 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.archive-tabs ::v-deep .el-tabs__item:hover {
+  color: #008b4b;
+  background: #f0fdf4;
+}
+
+.archive-tabs ::v-deep .el-tabs__item.is-active {
+  color: #008b4b;
+  font-weight: 600;
+}
+
+.archive-tabs ::v-deep .el-tabs__active-bar {
+  background: #008b4b;
+  height: 3px;
+  border-radius: 2px;
+  transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1), width 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.archive-tabs ::v-deep .el-tabs__content {
+  display: none;
+}
+
+.custom-tab-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+}
+
+.custom-tab-item i {
+  font-size: 15px;
+}
+
+.tab-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 18px;
+  line-height: 18px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  background: #f1f5f9;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #64748b;
+  margin-left: 2px;
+  transition: background-color 0.2s, color 0.2s;
+}
+
+.archive-tabs ::v-deep .el-tabs__item.is-active .tab-badge {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.code-mono {
+  font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, Courier, monospace;
+  font-variant-numeric: tabular-nums;
 }
 
 /* 概览统计指标卡 */
@@ -1642,6 +1845,10 @@ export default {
   .table-pagination-footer ::v-deep .el-pagination__jump { margin: 0; }
   .item-page-container {
     padding: 10px 12px;
+  }
+  .archive-tabs ::v-deep .el-tabs__item {
+    padding: 0 12px !important;
+    font-size: 13px;
   }
   .page-head {
     flex-direction: column;

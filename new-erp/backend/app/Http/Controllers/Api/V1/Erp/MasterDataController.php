@@ -169,6 +169,23 @@ class MasterDataController extends Controller
             ? app(MasterDataSummaryService::class)->summarize((string) $request->route('entity'), $query) : null;
         if ($request->route('entity') === 'items' && $stats !== null) {
             $stats['stock_managed'] = (clone $query)->where('is_stock_item', true)->count();
+            $scopeBase = Item::query();
+            if (!$request->boolean('include_test_data')) {
+                $scopeBase->whereDoesntHave('category', fn (Builder $category) => $category->whereIn('category_name', [
+                    '权限闭环一级类目', '权限闭环子类目（已编辑）', '最终收口一级类目',
+                ]));
+            }
+            $stats['factory_total'] = (clone $scopeBase)->where(function ($q) {
+                $q->where('management_scope', 'factory')
+                    ->orWhere(fn ($sub) => $sub->where(fn ($null) => $null->whereNull('management_scope')->orWhere('management_scope', ''))
+                        ->where('item_type', '<>', 'office_consumable'));
+            })->count();
+            $stats['office_total'] = (clone $scopeBase)->where(function ($q) {
+                $q->where('management_scope', 'office')
+                    ->orWhere(fn ($sub) => $sub->where(fn ($null) => $null->whereNull('management_scope')->orWhere('management_scope', ''))
+                        ->where('item_type', 'office_consumable'));
+            })->count();
+            $stats['all_total'] = (clone $scopeBase)->count();
         }
         $warehouseStats = $request->route('entity') === 'locations' && $request->boolean('include_stats') && $request->filled('warehouse_id')
             ? app(MasterDataSummaryService::class)->locations($request->integer('warehouse_id')) : null;
