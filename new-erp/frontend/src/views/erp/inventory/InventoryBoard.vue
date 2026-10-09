@@ -1,10 +1,10 @@
 <template>
   <div class="inventory-page">
-    <section v-if="activeView === 'posting'" class="inventory-view">
+    <section v-if="activeView === 'posting'" class="inventory-view posting-view">
       <div class="page-head">
         <div>
           <h1>库存过账工作台</h1>
-          <p>承接采购到货的待库存过账，只将合格数量写入正常库存。</p>
+          <p>承接采购到货的待库存过账，按到货确认的库存管理要求写入正常库存。</p>
         </div>
         <el-button size="small" type="success" icon="el-icon-refresh" @click="resetPostingRows">刷新待过账</el-button>
       </div>
@@ -91,17 +91,17 @@
             </el-table-column>
             <el-table-column label="入库分配" min-width="126"><template slot-scope="{row}">{{ postingAllocationSummary(row) }}</template></el-table-column>
             <el-table-column prop="batch_no" label="批次号" width="112" />
-            <el-table-column prop="qualified_display" label="合格入库数量" width="104" align="right" />
+            <el-table-column prop="stockable_display" label="实际入库数量" width="104" align="right" />
             <el-table-column label="不入库数量说明" min-width="120">
-              <template slot-scope="{ row }">不合格 {{ row.defective_display }} / 待处理 {{ row.pending_display }}</template>
+              <template slot-scope="{ row }"><span v-if="row.is_stock_item_snapshot === false">无需入库 {{ row.non_stock_display }}</span><span v-else>不合格 {{ row.defective_display }} / 待处理 {{ row.pending_display }}</span></template>
             </el-table-column>
           </el-table>
-          <el-alert class="rule-alert" title="不合格品与待处理数量不进入正常库存。" type="warning" :closable="false" show-icon />
+          <el-alert class="rule-alert" title="非库存物料、不合格品与待处理数量不进入正常库存。" type="warning" :closable="false" show-icon />
           <el-alert class="rule-alert" title="已过账单据不可重复过账。" type="info" :closable="false" show-icon />
           <div class="operation-note">
             <b>操作说明</b>
             <p>1. 仓库、库位及设备编号在到货入库环节确定；库存过账只核对并引用。</p>
-            <p>2. 合格数量写入正常库存，不合格和待处理数量留在采购侧处理。</p>
+            <p>2. 按到货确认的库存管理要求入库，非库存物料不产生库存；不合格和待处理数量留在采购侧处理。</p>
             <p>3. 过账成功后生成库存流水，并更新库存余额。</p>
           </div>
         </aside>
@@ -680,7 +680,7 @@
 
     <el-dialog title="确认入库过账" :visible.sync="postingDialogVisible" width="760px" class="posting-dialog">
       <div v-if="postingCandidate">
-        <el-alert title="本次只将合格数量写入正常库存。不合格数量和待处理数量不会进入正常库存。过账后会生成库存流水，并更新库存余额。同一到货单不能重复过账。" type="warning" :closable="false" show-icon />
+        <el-alert title="本次按到货确认的库存管理要求入库。非库存物料、不合格和待处理数量不会进入正常库存。过账后会生成库存流水，并更新库存余额。同一到货单不能重复过账。" type="warning" :closable="false" show-icon />
         <dl class="confirm-grid">
           <dt>到货单号</dt><dd>{{ postingCandidate.receipt_no }}</dd>
           <template v-if="postingCandidate.has_purchase_order">
@@ -695,21 +695,22 @@
           <dt>合格数量</dt><dd>{{ postingCandidate.qualified_display }}</dd>
           <dt>不合格数量</dt><dd>{{ postingCandidate.defective_display }}</dd>
           <dt>待处理数量</dt><dd>{{ postingCandidate.pending_display }}</dd>
-          <dt>本次进入正常库存数量</dt><dd class="green-text">{{ postingCandidate.qualified_display }}</dd>
+          <dt>本次进入正常库存数量</dt><dd class="green-text">{{ postingCandidate.stockable_display }}</dd>
           <dt>本次不进入正常库存数量</dt><dd class="orange-text">{{ postingCandidate.non_stock_display }}</dd>
         </dl>
         <div class="posting-assignment-list">
           <section v-for="line in postingCandidate.items" :key="line.id" class="posting-assignment-line">
             <strong>{{ line.item_code }} / {{ line.item_name }}</strong>
-            <div v-if="!(line.allocations || []).length" class="posting-allocation-missing">未完成入库库位分配，禁止过账</div>
-            <label>批次号<el-input :value="line.batch_no" size="small" disabled /></label>
-            <div v-if="(line.allocations || []).length" class="posting-allocation-review">
+            <div v-if="line.is_stock_item_snapshot === false">无需入库，实际入库 {{ line.stockable_display }}</div>
+            <div v-if="postingLineNeedsAllocation(line) && !(line.allocations || []).length" class="posting-allocation-missing">未完成入库库位分配，禁止过账</div>
+            <label v-if="postingLineNeedsAllocation(line)">批次号<el-input :value="line.batch_no" size="small" disabled /></label>
+            <div v-if="postingLineNeedsAllocation(line) && (line.allocations || []).length" class="posting-allocation-review">
               <div v-for="allocation in line.allocations" :key="allocation.id || `${allocation.warehouse_id}-${allocation.location_id}`">
                 <strong>{{ allocation.warehouse ? allocation.warehouse.warehouse_name : '-' }} / {{ allocation.location ? allocation.location.location_name : '-' }}</strong>
                 <span>{{ quantityNumber(allocation.base_qty) }} {{ line.base_unit }} · {{ (allocation.serial_nos || []).length }} 个编号</span>
               </div>
             </div>
-            <div v-if="line.is_serial_managed" class="posting-serial-field">
+            <div v-if="postingLineNeedsAllocation(line) && line.is_serial_managed" class="posting-serial-field">
               <span>已在实物入库环节登记的设备编号</span>
               <div class="posting-serial-tags"><el-tag v-for="serial in serialNumberList(line.serial_text)" :key="serial" size="mini" type="success">{{ serial }}</el-tag></div>
               <small>库存过账仅关联已登记编号，不允许在此首次录入。</small>
@@ -732,18 +733,18 @@
         </div>
         <section v-for="line in postingRepairCandidate.items" :key="line.id" class="posting-repair-line">
           <header>
-            <div><strong>{{ line.item_code }} / {{ line.item_name }}</strong><span>合格入库 {{ quantityNumber(line.qualified_qty) }} {{ line.base_unit }}　批次 {{ line.batch_no || '-' }}</span></div>
+            <div><strong>{{ line.item_code }} / {{ line.item_name }}</strong><span>实际入库 {{ line.stockable_display }}　批次 {{ line.batch_no || '-' }}</span></div>
             <el-button size="mini" type="success" plain @click="addPostingRepairAllocation(line)">添加库位</el-button>
           </header>
           <div v-for="(allocation,index) in line.allocations" :key="index" class="posting-repair-allocation">
             <label>仓库<el-select v-model="allocation.warehouse_id" size="small" placeholder="请选择仓库" @change="allocation.location_id = null"><el-option v-for="w in warehouses" :key="w.id" :label="w.warehouse_name" :value="w.id" /></el-select></label>
             <label>库位<el-select v-model="allocation.location_id" size="small" placeholder="请选择库位"><el-option v-for="l in filteredPostingLocations(allocation.warehouse_id)" :key="l.id" :label="l.location_name" :value="l.id" /></el-select></label>
-            <label>分配基本数量<el-input-number v-model="allocation.base_qty" size="small" :min="0.00000001" :max="line.qualified_qty" :precision="4" controls-position="right" /></label>
+            <label>分配基本数量<el-input-number v-model="allocation.base_qty" size="small" :min="0.00000001" :max="line.stockable_qty" :precision="4" controls-position="right" /></label>
             <label v-if="line.serial_tracking_mode !== 'none'" class="posting-repair-serials">设备编号<el-select v-model="allocation.serial_nos" size="small" multiple filterable placeholder="选择分配到该库位的编号"><el-option v-for="serial in serialNumberList(line.serial_text)" :key="serial" :label="serial" :value="serial" :disabled="postingSerialAssignedElsewhere(line, allocation, serial)" /></el-select></label>
             <el-button size="mini" type="text" class="posting-repair-remove" :disabled="line.allocations.length === 1" @click="removePostingRepairAllocation(line,index)">删除</el-button>
           </div>
           <div class="posting-repair-progress" :class="{ danger: !postingRepairLineComplete(line) }">
-            已分配 {{ quantityNumber((line.allocations || []).reduce((sum,row) => sum + Number(row.base_qty || 0), 0)) }} / {{ quantityNumber(line.qualified_qty) }} {{ line.base_unit }}
+            已分配 {{ quantityNumber((line.allocations || []).reduce((sum,row) => sum + Number(row.base_qty || 0), 0)) }} / {{ line.stockable_display }}
           </div>
         </section>
       </div>
@@ -1499,7 +1500,17 @@ export default {
         const defectiveBase = Number(line.unqualified_base_qty ?? line.unqualified_qty ?? 0)
         const pending = Math.max(0, actualBase - qualifiedBase - defectiveBase)
         const baseUnit = line.base_unit_name_snapshot || line.item?.unit?.unit_name || ''
+        const snapshot = {
+          item_code: line.item?.item_code || '',
+          actual_base_qty: actualBase,
+          is_stock_item_snapshot: this.postingStockSnapshot(line.is_stock_item_snapshot),
+          final_stockable_base_qty: line.final_stockable_base_qty ?? null
+        }
+        const policyIssue = this.postingPolicyIssue(snapshot)
+        const stockableQty = policyIssue ? null : this.postingFrozenQuantity(snapshot.final_stockable_base_qty)
+        const nonStockQty = policyIssue ? null : Math.max(0, actualBase - stockableQty)
         return {
+          ...snapshot,
           id: line.id,
           item_id: line.item_id,
           item_code: line.item?.item_code || '',
@@ -1517,6 +1528,10 @@ export default {
           qualified_qty: qualifiedBase,
           defective_qty: defectiveBase,
           pending_qty: pending,
+          stockable_qty: stockableQty,
+          non_stock_qty: nonStockQty,
+          stockable_display: policyIssue ? '待校验' : `${this.quantityNumber(stockableQty)} ${baseUnit}`.trim(),
+          non_stock_display: policyIssue ? '待校验' : `${this.quantityNumber(nonStockQty)} ${baseUnit}`.trim(),
           qualified_display: `${this.quantityNumber(qualifiedBase)} ${baseUnit}`.trim(),
           defective_display: `${this.quantityNumber(defectiveBase)} ${baseUnit}`.trim(),
           pending_display: `${this.quantityNumber(pending)} ${baseUnit}`.trim()
@@ -1525,6 +1540,8 @@ export default {
       const qualifiedQty = items.reduce((n, i) => n + i.qualified_qty, 0)
       const defectiveQty = items.reduce((n, i) => n + i.defective_qty, 0)
       const pendingQty = items.reduce((n, i) => n + i.pending_qty, 0)
+      const policyUnknown = items.some(line => this.postingPolicyIssue(line))
+      const stockableQty = policyUnknown ? null : items.reduce((n, line) => n + line.stockable_qty, 0)
       return {
         id: row.id || `item-${row.item_id}`,
         receipt_no: row.receipt_no,
@@ -1535,10 +1552,12 @@ export default {
         qualified_qty: qualifiedQty,
         defective_qty: defectiveQty,
         pending_qty: pendingQty,
+        stockable_qty: stockableQty,
         qualified_display: this.quantityBreakdown(items, 'qualified_qty'),
         defective_display: this.quantityBreakdown(items, 'defective_qty'),
         pending_display: this.quantityBreakdown(items, 'pending_qty'),
-        non_stock_display: this.quantityBreakdown(items, ['defective_qty', 'pending_qty']),
+        stockable_display: policyUnknown ? '待校验' : this.quantityBreakdown(items, 'stockable_qty'),
+        non_stock_display: policyUnknown ? '待校验' : this.quantityBreakdown(items, 'non_stock_qty'),
         posting_status: row.stock_post_status || 'pending',
         posting_eligibility: row.posting_eligibility || null,
         items
@@ -1953,7 +1972,7 @@ export default {
       this.$message.success('待过账列表已刷新')
     },
     postingStatusText(status) {
-      return ({ pending: '待库存过账', posted: '已库存过账', failed: '过账失败', cancelled: '已取消' })[status] || '未知'
+      return ({ pending: '待库存过账', posted: '已库存过账', not_required: '无需库存过账', failed: '过账失败', cancelled: '已取消' })[status] || '未知'
     },
     postingStatusType(status) {
       return ({ pending: 'warning', posted: 'success', failed: 'danger', cancelled: 'info' })[status] || 'info'
@@ -1967,25 +1986,55 @@ export default {
     openPostingConfirm(row) {
       this.selectReceipt(row)
       if (row.posting_status !== 'pending') return this.$message.warning('该到货单已过账，不能重复过账。')
-      if (Number(row.qualified_qty || 0) <= 0) return this.$message.warning('合格数量必须大于 0 才能产生正常入库流水。')
       const blocked = this.postingBlockedReason(row)
       if (blocked) return this.$message.warning(blocked)
       this.postingCandidate = { ...row, items: row.items.map(item => ({ ...item })) }
       this.postingDialogVisible = true
     },
+    postingStockSnapshot(value) {
+      if (value === true || value === 1 || value === '1') return true
+      if (value === false || value === 0 || value === '0') return false
+      return null
+    },
+    postingFrozenQuantity(value) {
+      if (typeof value !== 'number' && !(typeof value === 'string' && /^\d+(?:\.\d+)?$/.test(value.trim()))) return null
+      const quantity = Number(value)
+      return Number.isFinite(quantity) && quantity >= 0 ? quantity : null
+    },
+    postingPolicyIssue(line) {
+      const name = line.item_code || '该物料'
+      const stock = this.postingStockSnapshot(line.is_stock_item_snapshot)
+      if (stock === null) return `${name} 库存管理要求待校验，请核对到货确认记录`
+      const quantity = this.postingFrozenQuantity(line.final_stockable_base_qty)
+      if (quantity === null || (stock === false && quantity !== 0)
+        || !Number.isFinite(line.actual_base_qty) || quantity - line.actual_base_qty > 0.00000001) {
+        return `${name} 实际入库数量待校验，请核对到货确认记录`
+      }
+      return ''
+    },
+    postingLineNeedsAllocation(line) {
+      return this.postingStockSnapshot(line.is_stock_item_snapshot) === true
+        && !this.postingPolicyIssue(line) && Number(line.stockable_qty) > 0
+    },
     postingBlockedReason(row) {
-      if (!row || row.posting_status !== 'pending') return row && row.posting_status !== 'pending' ? '该到货单已过账' : ''
+      if (!row || row.posting_status !== 'pending') return row && row.posting_status !== 'pending' ? (row.posting_status === 'not_required' ? '该到货单无需库存过账' : '该到货单已过账') : ''
       if (row.posting_eligibility && row.posting_eligibility.can_post === false) return row.posting_eligibility.reason_text || '到货入库资料不完整'
-      const missing = (row.items || []).find(item => Number(item.qualified_qty || 0) > 0 && !(item.allocations || []).length)
+      const unknown = (row.items || []).find(line => this.postingPolicyIssue(line))
+      if (unknown) return this.postingPolicyIssue(unknown)
+      if (!(row.items || []).some(line => this.postingLineNeedsAllocation(line))) return '本次没有需要进入正常库存的数量，无需库存过账'
+      const missing = (row.items || []).find(item => this.postingLineNeedsAllocation(item) && !(item.allocations || []).length)
       return missing ? `${missing.item_code || '该物料'} 尚未完成入库库位分配` : ''
     },
     openPostingRepair(row) {
       this.selectReceipt(row)
+      const unknown = (row.items || []).find(line => this.postingPolicyIssue(line))
+      if (unknown) return this.$message.warning(this.postingBlockedReason(row) || this.postingPolicyIssue(unknown))
       const candidate = JSON.parse(JSON.stringify(row))
-      candidate.items = (candidate.items || []).filter(line => Number(line.qualified_qty || 0) > 0).map(line => ({
+      candidate.items = (candidate.items || []).filter(line => this.postingLineNeedsAllocation(line)).map(line => ({
         ...line,
-        allocations: (line.allocations || []).length ? line.allocations.map(allocation => ({ ...allocation, serial_nos: [...(allocation.serial_nos || [])] })) : [{ warehouse_id: null, location_id: null, base_qty: Number(line.qualified_qty || 0), serial_nos: [] }]
+        allocations: (line.allocations || []).length ? line.allocations.map(allocation => ({ ...allocation, serial_nos: [...(allocation.serial_nos || [])] })) : [{ warehouse_id: null, location_id: null, base_qty: line.stockable_qty, serial_nos: [] }]
       }))
+      if (!candidate.items.length) return this.$message.warning('该到货单没有需要补充分配的库存物料。')
       this.postingRepairCandidate = candidate
       this.postingRepairVisible = true
     },
@@ -1999,10 +2048,11 @@ export default {
       return (line.allocations || []).some(allocation => allocation !== current && (allocation.serial_nos || []).includes(serial))
     },
     postingRepairLineComplete(line) {
+      if (!this.postingLineNeedsAllocation(line)) return false
       const allocations = line.allocations || []
       if (!allocations.length || allocations.some(row => !row.warehouse_id || !row.location_id || Number(row.base_qty || 0) <= 0)) return false
       const allocated = allocations.reduce((sum, row) => sum + Number(row.base_qty || 0), 0)
-      if (Math.abs(allocated - Number(line.qualified_qty || 0)) > 0.00000001) return false
+      if (Math.abs(allocated - line.stockable_qty) > 0.00000001) return false
       if (line.serial_tracking_mode !== 'none' && this.serialNumberList(line.serial_text).length) {
         const assigned = allocations.reduce((all, row) => all.concat(row.serial_nos || []), [])
         if (new Set(assigned).size !== assigned.length || assigned.length !== this.serialNumberList(line.serial_text).length) return false
@@ -2032,6 +2082,8 @@ export default {
       }
     },
     postingAllocationSummary(line) {
+      if (this.postingPolicyIssue(line)) return '待校验'
+      if (line.is_stock_item_snapshot === false || line.stockable_qty === 0) return '无需入库'
       const allocations = line.allocations || []
       if (!allocations.length) return `${line.warehouse_name || '-'} / ${line.location_name || '-'}`
       return `${allocations.length} 个库位 / ${allocations.reduce((sum, row) => sum + Number(row.base_qty || 0), 0)} ${line.base_unit}`
@@ -2060,7 +2112,7 @@ export default {
       }
       const blocked = this.postingBlockedReason(row)
       if (blocked) return this.$message.warning(blocked)
-      if (row.items.some(item => !String(item.batch_no || '').trim())) return this.$message.warning('到货明细缺少批次号，不能过账。')
+      if (row.items.some(item => this.postingLineNeedsAllocation(item) && !String(item.batch_no || '').trim())) return this.$message.warning('库存物料缺少批次号，不能过账。')
       try {
         await postPostingReceipt(row.id)
         this.postingDialogVisible = false
@@ -2900,5 +2952,21 @@ export default {
   .alert-config-item-card>div:nth-child(2) { border-right:0; }
   .alert-config-item-card>div:nth-child(-n+2) { border-bottom:1px solid #e8edf1; }
   .alert-threshold-grid { grid-template-columns:1fr; }
+}
+.posting-dialog >>> .el-dialog, .posting-repair-dialog >>> .el-dialog { max-width: calc(100vw - 24px); }
+.posting-dialog .confirm-grid dt, .posting-dialog .confirm-grid dd { min-width: 0; overflow-wrap: anywhere; }
+.posting-dialog .posting-assignment-line > *, .posting-dialog .posting-allocation-review > div { min-width: 0; }
+.posting-dialog .posting-assignment-line strong { overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .posting-dialog >>> .el-dialog__body, .posting-repair-dialog >>> .el-dialog__body { padding: 14px 12px; }
+  .posting-dialog .confirm-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .posting-dialog .posting-assignment-line { grid-template-columns: minmax(0, 1fr); }
+  .posting-dialog .posting-allocation-review { grid-template-columns: minmax(0, 1fr); }
+  .posting-dialog .posting-allocation-review > div { flex-direction: column; align-items: flex-start; }
+  .posting-view .posting-filter label { flex-direction: column; align-items: stretch; width: 100%; min-width: 0; white-space: normal; }
+  .posting-view .posting-filter .el-input, .posting-view .posting-filter .el-select, .posting-view .posting-filter .el-date-editor { width: 100%; min-width: 0; }
+}
+@media (max-width: 600px) {
+  .posting-view .metric-grid.four { grid-template-columns: minmax(0, 1fr); }
 }
 </style>

@@ -52,6 +52,10 @@
               prefix-icon="el-icon-search"
               placeholder="搜索编码 / 名称 / 负责人..."
             />
+            <el-select v-model="warehouseManagementScope" size="small" clearable placeholder="管理范围" @change="changeWarehouseScope">
+              <el-option label="工厂物料仓" value="factory" />
+              <el-option label="办公用品仓" value="office" />
+            </el-select>
           </div>
 
           <!-- 视图 A：卡片式列表（默认推荐：每个字段完整呈现，无截断、无横向滚动条） -->
@@ -72,6 +76,7 @@
                 </div>
                 <div class="wh-card-badges-row">
                   <span class="font-tabular code-chip">{{ wh.warehouse_code }}</span>
+                  <el-tag size="mini" :type="wh.management_scope === 'office' ? 'warning' : 'info'" effect="plain">{{ scopeText(wh.management_scope) }}</el-tag>
                   <el-tag size="mini" :type="warehouseTypeTag(wh.warehouse_type)" effect="plain">
                     {{ whTypeText(wh.warehouse_type) }}
                   </el-tag>
@@ -157,6 +162,7 @@
                   </el-tag>
                 </template>
               </el-table-column>
+              <el-table-column label="管理范围" width="105" align="center"><template slot-scope="{ row }">{{ scopeText(row.management_scope) }}</template></el-table-column>
 
               <el-table-column label="库区" width="65" align="right">
                 <template slot-scope="{ row }">
@@ -288,6 +294,7 @@
                     <span class="spec-k">业务分类</span>
                     <span class="spec-v">{{ whTypeText(selectedWarehouse.warehouse_type) }}</span>
                   </div>
+                  <div class="spec-row"><span class="spec-k">管理范围</span><span class="spec-v">{{ scopeText(selectedWarehouse.management_scope) }}</span></div>
                   <div class="spec-row">
                     <span class="spec-k">实体状态</span>
                     <span class="spec-v" :class="selectedWarehouse.status === 'enabled' ? 'text-success' : 'text-muted'">
@@ -613,6 +620,13 @@
           </el-form-item>
         </div>
 
+        <el-form-item label="管理范围" prop="management_scope">
+          <el-select v-model="warehouseForm.management_scope" class="full" placeholder="选择工厂物料仓或办公用品仓" :disabled="warehouseScopeLocked">
+            <el-option label="工厂物料仓" value="factory" />
+            <el-option label="办公用品仓" value="office" />
+          </el-select>
+        </el-form-item>
+
         <el-form-item label="仓库启用状态">
           <el-radio-group v-model="warehouseForm.status" class="status-radio-compact">
             <el-radio label="enabled"><span class="text-success"><i class="el-icon-circle-check" /> 正常启用</span></el-radio>
@@ -725,6 +739,7 @@ const emptyWh = () => ({
   warehouse_code: '',
   warehouse_name: '',
   warehouse_type: 'general',
+  management_scope: 'factory',
   manager: '',
   manager_user_id: null,
   manager_user: null,
@@ -769,8 +784,11 @@ export default {
       locations: [],
       selectedWarehouse: {},
       warehouseForm: emptyWh(),
+      warehouseOriginalScope: null,
       locationForm: emptyLoc(),
       warehouseKeyword: '',
+      warehouseManagementScope: '',
+      warehouseScopeSequence: 0,
       filters: { keyword: '', area: '', status: '' },
       inventoryLoading: false,
       inventoryStats: {
@@ -781,7 +799,8 @@ export default {
       },
       warehouseRules: {
         warehouse_code: [{ required: true, message: '请输入仓库编码', trigger: 'blur' }],
-        warehouse_name: [{ required: true, message: '请输入仓库名称', trigger: 'blur' }]
+        warehouse_name: [{ required: true, message: '请输入仓库名称', trigger: 'blur' }],
+        management_scope: [{ required: true, message: '请选择仓库管理范围', trigger: 'change' }]
       },
       locationRules: {
         location_code: [{ required: true, message: '请输入库位编码', trigger: 'blur' }],
@@ -790,6 +809,9 @@ export default {
     }
   },
   computed: {
+    warehouseScopeLocked () {
+      return !!this.warehouseForm.id && ['factory', 'office'].includes(this.warehouseOriginalScope)
+    },
     locationStats () { return this.locationPage.warehouseStats },
     managerSelection () {
       return this.warehouseForm.manager_user ? { ...this.warehouseForm.manager_user, id: this.warehouseForm.manager_user_id } : null
@@ -867,6 +889,21 @@ export default {
     this.fetchAll()
   },
   methods: {
+    scopeText (scope) { return scope === 'office' ? '办公用品仓' : scope === 'factory' ? '工厂物料仓' : '待明确范围' },
+    async changeWarehouseScope () {
+      const sequence = ++this.warehouseScopeSequence
+      clearTimeout(this.warehouseSearchTimer)
+      this.warehousePage = createPageState(50)
+      this.warehouses = []
+      this.selectedWarehouse = {}
+      this.locations = []
+      this.locationPage = createPageState(50)
+      ++this.inventorySequence
+      this.inventoryStats = { item_count: 0, balance_line_count: 0, total_qty: 0, inventory_value: 0 }
+      this.inventoryLoading = false
+      await this.loadWarehouses()
+      if (sequence === this.warehouseScopeSequence) await this.selectWarehouse(this.warehouses[0] || {})
+    },
     managerName (warehouse) {
       if (!warehouse) return ''
       const account = warehouse.manager_user
@@ -881,11 +918,12 @@ export default {
       this.warehouseForm.manager_user_id = null; this.warehouseForm.manager_user = null; this.warehouseForm.manager = ''
     },
     async loadWarehouses (append = false) {
+      const state = this.warehousePage
       try {
-        const data = await queryPage(this.warehousePage, params => listEntity('warehouses', params), {
-          keyword: this.warehouseKeyword, include_location_summary: 1
+        const data = await queryPage(state, params => listEntity('warehouses', params), {
+          keyword: this.warehouseKeyword, management_scope: this.warehouseManagementScope || undefined, include_location_summary: 1
         }, append)
-        if (data) this.warehouses = this.warehousePage.rows
+        if (data && state === this.warehousePage) this.warehouses = state.rows
       } catch (e) { this.$message.error(e.userMessage || '仓库列表加载失败') }
     },
     loadMoreWarehouses () { return this.loadWarehouses(true) },
@@ -963,11 +1001,13 @@ export default {
       this.filters = { keyword: '', area: '', status: '' }
     },
     openWarehouseCreate () {
-      this.warehouseForm = emptyWh()
+      this.warehouseOriginalScope = null
+      this.warehouseForm = { ...emptyWh(), management_scope: this.warehouseManagementScope || 'factory' }
       this.warehouseDialogVisible = true
       this.$nextTick(() => { if (this.$refs.warehouseForm) this.$refs.warehouseForm.clearValidate() })
     },
     editWarehouse (row) {
+      this.warehouseOriginalScope = row.management_scope || null
       this.warehouseForm = { ...emptyWh(), ...row, expected_manager_user_id: row.manager_user_id || null }
       this.warehouseDialogVisible = true
       this.$nextTick(() => { if (this.$refs.warehouseForm) this.$refs.warehouseForm.clearValidate() })
@@ -1276,10 +1316,14 @@ export default {
 }
 
 .card-search-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
   padding: 10px 14px;
   background: #ffffff;
   border-bottom: 1px solid #f1f5f9;
 }
+.card-search-bar .el-input, .card-search-bar .el-select { width: 100%; min-width: 0; }
 
 .view-toggle ::v-deep .el-radio-button__inner {
   padding: 5px 8px;

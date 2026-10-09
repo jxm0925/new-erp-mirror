@@ -15,10 +15,12 @@ class SalesOrderFinanceLinkTest extends TestCase
     use DatabaseTransactions;
     private array $permissions = ['sales_order.view', 'sales_order.amount.view', 'finance.view', 'purchase.order.edit'];
     private string $scope = 'all';
+    private string $prefix;
 
     protected function setUp(): void
     {
         parent::setUp();
+        $this->prefix = 'SOFIN-'.Str::upper(Str::random(10));
         $this->mock(AuthContextService::class, function ($mock): void {
             $mock->shouldReceive('currentUser')->andReturn((object) ['legacy_id' => 71, 'nickname' => '销售采购关联测试员']);
             $mock->shouldReceive('isSuperAdmin')->andReturn(false);
@@ -113,13 +115,14 @@ class SalesOrderFinanceLinkTest extends TestCase
             $this->add($order, $item, '10')->assertOk();
         }
         $this->sales();
-        $response = $this->getJson('/api/v1/erp/finance/sales-order-statistics?per_page=1&purchase_link_status=linked')->assertOk()->assertJsonPath('total', 3);
+        $statisticsUrl = '/api/v1/erp/finance/sales-order-statistics?keyword='.$this->prefix;
+        $response = $this->getJson($statisticsUrl.'&per_page=1&purchase_link_status=linked')->assertOk()->assertJsonPath('total', 3);
         $response->assertJsonMissingPath('summary_by_currency')->assertJsonPath('summary.order_count', 3)
             ->assertJsonPath('summary.linked_order_count', 3)->assertJsonPath('summary.purchase_order_count', 3)
             ->assertJsonPath('summary.link_count', 3)->assertJsonMissingPath('data.0.cost_facts')
             ->assertJsonMissingPath('data.0.procurement_by_currency');
-        $this->getJson('/api/v1/erp/finance/sales-order-statistics?purchase_link_status=unlinked')->assertOk()->assertJsonPath('total', 1);
-        $this->getJson('/api/v1/erp/finance/sales-order-statistics?order_date_start=2099-01-01')->assertOk()->assertJsonPath('total', 0)
+        $this->getJson($statisticsUrl.'&purchase_link_status=unlinked')->assertOk()->assertJsonPath('total', 1);
+        $this->getJson($statisticsUrl.'&order_date_start=2099-01-01')->assertOk()->assertJsonPath('total', 0)
             ->assertJsonPath('summary.order_count', 0)->assertJsonPath('summary.link_count', 0);
     }
 
@@ -188,7 +191,7 @@ class SalesOrderFinanceLinkTest extends TestCase
         $supplier = Supplier::create(['supplier_code' => $this->code('SUPPLIER'), 'supplier_name' => '测试供应商', 'supplier_type' => 'manufacturer', 'status' => 'enabled']);
         $unit = Unit::create(['unit_code' => $this->code('UNIT'), 'unit_name' => '根', 'decimal_places' => 8, 'status' => 'enabled']);
         $item = Item::create(['item_code' => $this->code('ITEM'), 'item_name' => '采购管材', 'spec' => '40x40x2', 'item_type' => 'raw_material', 'unit_id' => $unit->id, 'status' => 'enabled']);
-        $purchase = PurchaseOrder::create(['purchase_order_no' => $this->code('PO'), 'supplier_id' => $supplier->id, 'order_date' => now()->toDateString(), 'purchase_status' => 'processing', 'audit_status' => 'approved', 'currency' => $currency, 'total_amount' => $amount ?? 0]);
+        $purchase = PurchaseOrder::create(['purchase_order_no' => $this->code('PO'), 'supplier_id' => $supplier->id, 'management_scope' => 'factory', 'order_date' => now()->toDateString(), 'purchase_status' => 'processing', 'audit_status' => 'approved', 'currency' => $currency, 'total_amount' => $amount ?? 0]);
         return PurchaseOrderItem::create(['order_id' => $purchase->id, 'item_id' => $item->id, 'purchase_unit_id' => $unit->id, 'base_unit_id' => $unit->id,
             'purchase_qty' => $qty, 'order_qty' => $qty, 'amount' => $amount ?? 0, 'contract_amount_snapshot' => $amount, 'currency_snapshot' => $currency]);
     }
@@ -198,5 +201,5 @@ class SalesOrderFinanceLinkTest extends TestCase
             'idempotency_key' => $key ?? (string) Str::uuid(), 'reason' => '本批采购用于该销售订单']);
     }
     private function url(SalesOrder $order): string { return '/api/v1/erp/sales/orders/'.$order->id.'/finance'; }
-    private function code(string $prefix): string { return 'SOFIN-'.$prefix.'-'.Str::upper(Str::random(10)); }
+    private function code(string $prefix): string { return $this->prefix.'-'.$prefix.'-'.Str::upper(Str::random(10)); }
 }

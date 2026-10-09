@@ -408,6 +408,7 @@ class PurchaseReturnFlowTest extends TestCase
         [$unit, $item, $supplier, $warehouse, $location] = $this->masterFixture();
         $receipt = PurchaseReceipt::create([
             'receipt_no' => 'PRC-RETURN-001',
+            'management_scope' => 'factory',
             'supplier_id' => $supplier->id,
             'receipt_date' => now()->toDateString(),
             'receipt_status' => 'confirmed',
@@ -417,6 +418,8 @@ class PurchaseReturnFlowTest extends TestCase
             'total_qualified_qty' => $quantity,
         ]);
         $line = PurchaseReceiptItem::create([
+            'management_scope_snapshot' => 'factory',
+            'is_stock_item_snapshot' => true,
             'receipt_id' => $receipt->id,
             'item_id' => $item->id,
             'warehouse_id' => $warehouse->id,
@@ -448,6 +451,7 @@ class PurchaseReturnFlowTest extends TestCase
         [$unit, $item, $supplier] = $this->masterFixture();
         $receipt = PurchaseReceipt::create([
             'receipt_no' => 'PRC-REJECT-001',
+            'management_scope' => 'factory',
             'supplier_id' => $supplier->id,
             'receipt_date' => now()->toDateString(),
             'receipt_status' => 'confirmed',
@@ -458,6 +462,8 @@ class PurchaseReturnFlowTest extends TestCase
             'total_unqualified_qty' => 10,
         ]);
         $line = PurchaseReceiptItem::create([
+            'management_scope_snapshot' => 'factory',
+            'is_stock_item_snapshot' => true,
             'receipt_id' => $receipt->id,
             'item_id' => $item->id,
             'purchase_unit_id' => $unit->id,
@@ -497,6 +503,7 @@ class PurchaseReturnFlowTest extends TestCase
             'status' => 'enabled',
         ]);
         $warehouse = Warehouse::create([
+            'management_scope' => 'factory',
             'warehouse_code' => 'WH-RETURN',
             'warehouse_name' => '采购退货测试仓',
             'status' => 'enabled',

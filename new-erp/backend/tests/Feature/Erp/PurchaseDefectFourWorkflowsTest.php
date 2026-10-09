@@ -240,6 +240,7 @@ class PurchaseDefectFourWorkflowsTest extends TestCase
             'supplier_type' => 'manufacturer', 'status' => 'enabled',
         ]);
         $warehouse = Warehouse::create([
+            'management_scope' => 'factory',
             'warehouse_code' => 'WH-DEFECT', 'warehouse_name' => '不合格品测试仓', 'status' => 'enabled',
         ]);
         $location = Location::create([
@@ -252,6 +253,7 @@ class PurchaseDefectFourWorkflowsTest extends TestCase
             'is_purchase_item' => true, 'is_stock_item' => true, 'status' => 'enabled',
         ]);
         $receipt = PurchaseReceipt::create([
+            'management_scope' => 'factory',
             'receipt_no' => 'PRC-DEFECT-'.strtoupper($confirmStatus),
             'supplier_id' => $supplier->id,
             'receipt_date' => now()->toDateString(),
@@ -264,6 +266,7 @@ class PurchaseDefectFourWorkflowsTest extends TestCase
             'total_amount' => 500,
         ]);
         $line = PurchaseReceiptItem::create([
+            'management_scope_snapshot' => 'factory',
             'receipt_id' => $receipt->id,
             'item_id' => $item->id,
             'warehouse_id' => $warehouse->id,

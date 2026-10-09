@@ -6,6 +6,7 @@
         <el-button size="small" icon="el-icon-arrow-left" circle @click="$router.push('/purchase/plans')" />
         <div class="head-text">
           <div class="title-row">
+            <el-tag size="mini" :type="plan.management_scope === 'office' ? 'info' : 'success'">{{ scopeLabel(plan.management_scope) }}</el-tag>
             <h1>{{ plan.plan_no }}</h1>
             <span class="page-type-tag">采购计划详情</span>
             <el-tag size="mini" :type="tagType(plan.plan_status)">{{ labelOf(plan.plan_status) }}</el-tag>
@@ -77,6 +78,8 @@
         </div>
       </div>
     </div>
+
+    <el-alert v-if="scopeIssue" :title="scopeIssue" type="warning" :closable="false" show-icon />
 
     <!-- 基础信息卡片 -->
     <section class="form-card basic-info-card">
@@ -338,6 +341,7 @@
 </template>
 
 <script>
+import { purchaseScopeLabel, purchaseScopeIssue } from '@/utils/purchaseManagementScope.mjs'
 import { planAllocation, planAllocationLabel, planAllocationTag } from '@/utils/purchasePlanAllocation'
 import { getPurchase, previewPlanOrders, generatePlanOrders, submitPlan } from '@/api/erp/purchase'
 
@@ -370,14 +374,15 @@ export default {
     isAllExpanded: false
   }),
   computed: {
+    scopeIssue() { return purchaseScopeIssue(this.plan) },
     canEdit() {
       return this.plan && (this.plan.plan_status === 'draft' || this.plan.audit_status === 'rejected') && this.$can(['purchase.plan.edit', 'purchase.plan'])
     },
     canSubmit() {
-      return this.plan && (this.plan.plan_status === 'draft' || this.plan.audit_status === 'rejected') && this.$can(['purchase.plan.edit', 'purchase.plan'])
+      return this.plan && !this.scopeIssue && (this.plan.plan_status === 'draft' || this.plan.audit_status === 'rejected') && this.$can(['purchase.plan.edit', 'purchase.plan'])
     },
     canGenerate() {
-      return this.plan && this.plan.audit_status === 'approved' && ['not_ordered', 'partially_ordered'].includes(this.plan.order_status) && !['closed', 'cancelled'].includes(this.plan.plan_status) && this.$can(['purchase.order.generate', 'purchase.plan'])
+      return this.plan && !this.scopeIssue && this.plan.audit_status === 'approved' && ['not_ordered', 'partially_ordered'].includes(this.plan.order_status) && !['closed', 'cancelled'].includes(this.plan.plan_status) && this.$can(['purchase.order.generate', 'purchase.plan'])
     },
     generatedOrders() {
       return Array.from(new Map((this.plan?.items || []).flatMap(i => i.splits || []).filter(s => s.order).map(s => [s.order.id, s.order])).values())
@@ -441,6 +446,7 @@ export default {
     await this.load()
   },
   methods: {
+    scopeLabel(scope) { return purchaseScopeLabel(scope) },
     orderQuantitySummary(lines) {
       const groups = new Map()
       lines.forEach(line => groups.set(line.unit, Number(groups.get(line.unit) || 0) + Number(line.qty || 0)))
@@ -453,6 +459,7 @@ export default {
       try {
         const res = await getPurchase('plans', this.$route.params.id)
         this.plan = res.data
+        if (this.scopeIssue) { this.preview = []; return }
         const pre = await previewPlanOrders(this.plan.id).catch(() => ({ data: { data: [] } }))
         this.preview = pre.data?.data || []
       } catch (e) {
@@ -460,6 +467,7 @@ export default {
       }
     },
     async generate() {
+      if (this.scopeIssue) return this.$message.warning(this.scopeIssue)
       try {
         await this.$confirm('确定按供应商分组生成采购订单？', '生成采购订单确认', { type: 'warning' })
         this.generateLoading = true
@@ -474,6 +482,7 @@ export default {
       }
     },
     async submitForAudit() {
+      if (this.scopeIssue) return this.$message.warning(this.scopeIssue)
       try {
         await this.$confirm(`确认提交采购计划 ${this.plan.plan_no} 进行审核？`, '提交审核确认', { type: 'warning' })
         this.submitLoading = true

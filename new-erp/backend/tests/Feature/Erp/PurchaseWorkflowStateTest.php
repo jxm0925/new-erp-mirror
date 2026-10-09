@@ -48,6 +48,7 @@ class PurchaseWorkflowStateTest extends TestCase
     {
         [, $item] = $this->orderFixture();
         $request = PurchaseRequest::create([
+            'management_scope' => 'factory',
             'request_no' => 'PRQ-WORKFLOW-001',
             'item_id' => $item->id,
             'request_status' => 'confirmed',
@@ -67,6 +68,7 @@ class PurchaseWorkflowStateTest extends TestCase
         $item = Item::create(['item_code' => 'ITEM-WF', 'item_name' => '状态机测试物料', 'item_type' => 'raw_material', 'unit_id' => $unit->id, 'is_purchase_item' => true, 'status' => 'enabled']);
         $supplier = Supplier::create(['supplier_code' => 'SUP-WF', 'supplier_name' => '状态机测试供应商', 'status' => 'enabled', 'approval_status' => 'approved']);
         $order = PurchaseOrder::create([
+            'management_scope' => 'factory',
             'purchase_order_no' => 'PO-WORKFLOW-001',
             'supplier_id' => $supplier->id,
             'purchase_status' => 'draft',

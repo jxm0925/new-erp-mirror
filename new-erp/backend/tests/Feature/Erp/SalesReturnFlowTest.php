@@ -204,6 +204,7 @@ class SalesReturnFlowTest extends TestCase
             'status' => 'enabled',
         ]);
         $warehouse = Warehouse::create([
+            'management_scope' => 'factory',
             'warehouse_code' => 'WH-SALES-RETURN',
             'warehouse_name' => '销售退货仓',
             'status' => 'enabled',

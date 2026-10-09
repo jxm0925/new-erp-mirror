@@ -51,11 +51,13 @@ class PurchaseReceiptPostingRepairApplicationService
             if ($receipt->stock_post_status !== 'pending') {
                 throw ValidationException::withMessages(['receipt' => '只有待库存过账的到货单允许补充入库分配。']);
             }
+            app(PurchaseReceiptManagementScopeService::class)->assertReceipt($receipt);
 
             $payload = collect($lines)->keyBy(fn (array $line) => (int) ($line['receipt_item_id'] ?? 0));
             if ($payload->isEmpty() || $payload->count() !== count($lines) || $payload->keys()->diff($receipt->items->pluck('id'))->isNotEmpty())
                 throw ValidationException::withMessages(['allocations' => '入库分配明细重复或不属于当前收货单。']);
             foreach ($receipt->items as $line) {
+                if (!(bool) $line->is_stock_item_snapshot) continue;
                 $qualified = round((float) ($line->qualified_base_qty ?: $line->qualified_qty), 8);
                 if ($qualified <= 0) continue;
                 $submitted = $payload->get($line->id);

@@ -37,6 +37,7 @@ class PurchaseReceiptConfirmationApplicationService
             if ($receipt->confirm_status !== 'draft') {
                 throw ValidationException::withMessages(['receipt' => '只有草稿到货单可以确认。']);
             }
+            $pendingDraftScopeLineIds = app(PurchaseReceiptManagementScopeService::class)->prepareDraftConfirmation($receipt);
 
             $isReplacement = $receipt->settlement_mode === 'replacement_no_charge';
             if (!$isReplacement && !$receipt->order_id && blank($receipt->remark)) {
@@ -55,7 +56,7 @@ class PurchaseReceiptConfirmationApplicationService
             $replacementTotal = 0.0;
 
             foreach ($receipt->items as $line) {
-                $this->confirmLine($receipt, $line, $isReplacement, $operatorId);
+                $this->confirmLine($receipt, $line, $isReplacement, $operatorId, $pendingDraftScopeLineIds);
                 $line->refresh();
                 $hasStockItems = $hasStockItems || (bool) $line->is_stock_item_snapshot;
                 $physicalTotal += (float) $line->physical_received_base_qty;
@@ -64,8 +65,9 @@ class PurchaseReceiptConfirmationApplicationService
             }
 
             $receipt->refresh()->load(['items.item', 'items.allocations', 'order']);
-            $this->allocations->ensureForConfirmation($receipt);
+            $this->allocations->ensureForConfirmation($receipt, $pendingDraftScopeLineIds);
             $this->serials->registerAcceptedReceipt($receipt);
+            app(PurchaseReceiptManagementScopeService::class)->completeDraftScopeSnapshots($receipt, $pendingDraftScopeLineIds);
 
             $requiresPosting = $receipt->items->contains(
                 fn (PurchaseReceiptItem $line) => $line->is_stock_item_snapshot && (float) $line->final_stockable_base_qty > 0
@@ -104,7 +106,7 @@ class PurchaseReceiptConfirmationApplicationService
         }, 5);
     }
 
-    private function confirmLine(PurchaseReceipt $receipt, PurchaseReceiptItem $line, bool $isReplacement, ?int $operatorId): void
+    private function confirmLine(PurchaseReceipt $receipt, PurchaseReceiptItem $line, bool $isReplacement, ?int $operatorId, array $pendingDraftScopeLineIds): void
     {
         if ((float) $line->receipt_qty <= 0) {
             throw ValidationException::withMessages(['items' => '到货数量必须大于 0。']);
@@ -128,7 +130,8 @@ class PurchaseReceiptConfirmationApplicationService
             $base['actual_base_qty'],
             $line->baseUnit,
         );
-        $stockManaged = (bool) $line->item?->is_stock_item;
+        app(PurchaseReceiptManagementScopeService::class)->assertLine($line, $receipt->management_scope, $pendingDraftScopeLineIds);
+        $stockManaged = (bool) $line->is_stock_item_snapshot;
         $physicalBase = (float) $base['actual_base_qty'];
         $qualifiedBase = (float) $quality['qualified_base_qty'];
 
@@ -136,7 +139,6 @@ class PurchaseReceiptConfirmationApplicationService
             ...$base,
             ...$quality,
             ...$this->finance->freezeReceiptLine($receipt, $line),
-            'is_stock_item_snapshot' => $stockManaged,
             'quality_fact_origin' => 'original_inspection',
             'original_received_qty' => $line->receipt_qty,
             'original_qualified_qty' => $line->qualified_qty,

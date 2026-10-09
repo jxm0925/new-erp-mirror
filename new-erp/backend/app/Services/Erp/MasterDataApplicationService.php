@@ -2,7 +2,7 @@
 
 namespace App\Services\Erp;
 
-use App\Models\Erp\{Item, ItemCategory, Product, Sku};
+use App\Models\Erp\{Item, ItemCategory, Location, Product, Sku, Warehouse};
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -20,7 +20,10 @@ class MasterDataApplicationService
     public function create(string $entity, string $modelClass, array $data, ?int $operatorLegacyId): Model
     {
         return DB::transaction(function () use ($entity, $modelClass, $data, $operatorLegacyId) {
-            if ($entity === 'warehouses') $data = $this->warehouseManagerData($data);
+            if ($entity === 'warehouses') {
+                $data = $this->warehouseScopeData($data);
+                $data = $this->warehouseManagerData($data);
+            }
             if ($entity === 'items') $data = $this->itemScopes->prepareItem($data);
             if ($entity === 'items') $this->assertItemCategory($data['category_id'] ?? null, false);
             if ($entity === 'items') $this->assertManufacturingStrategy($data);
@@ -54,6 +57,7 @@ class MasterDataApplicationService
 
             if ($entity === 'warehouses') {
                 $this->logWarehouseManager($record, null, $operatorLegacyId);
+                $this->logWarehouseScope($record, null, $operatorLegacyId);
                 return $record->fresh(['managerUser']);
             }
             if ($record instanceof Item) {
@@ -81,8 +85,11 @@ class MasterDataApplicationService
                 $this->assertProductStatus($record, $data['status'] ?? $record->status);
             }
             $oldManager = null;
+            $oldWarehouseScope = null;
             if ($entity === 'warehouses') {
                 $record = $record->newQuery()->lockForUpdate()->findOrFail($record->getKey());
+                $oldWarehouseScope = $record->management_scope;
+                $data = $this->warehouseScopeData($data, $record);
                 $oldManager = ['manager_user_id' => $record->manager_user_id, 'manager' => $record->manager];
                 if (array_key_exists('manager_user_id', $data)
                     && (int) $data['manager_user_id'] !== (int) $record->manager_user_id
@@ -94,6 +101,16 @@ class MasterDataApplicationService
                     throw ValidationException::withMessages(['manager_user_id' => '仓管负责人已被修改，请刷新后重试。']);
                 }
                 $data = $this->warehouseManagerData($data, $record);
+            }
+            if ($record instanceof Location && array_key_exists('warehouse_id', $data)
+                && (int) $data['warehouse_id'] !== (int) $record->warehouse_id) {
+                $record = $record->newQuery()->lockForUpdate()->findOrFail($record->getKey());
+                foreach (['erp_inventory_balances', 'erp_inventory_location_balances', 'erp_inventory_transactions',
+                    'erp_purchase_receipt_items', 'erp_purchase_receipt_item_allocations', 'erp_inventory_reservations'] as $table) {
+                    if (Schema::hasColumn($table, 'location_id') && DB::table($table)->where('location_id', $record->id)->exists()) {
+                        throw ValidationException::withMessages(['warehouse_id' => '该库位已有库存或业务引用，不能改变所属仓库。']);
+                    }
+                }
             }
             if ($entity === 'items') $this->assertItemCategory($data['category_id'] ?? $record->category_id, true);
             if ($entity === 'items') $this->assertItemBaseUnitChangeAllowed($record, $data['unit_id'] ?? null);
@@ -114,6 +131,7 @@ class MasterDataApplicationService
 
             if ($entity === 'warehouses') {
                 $this->logWarehouseManager($record, $oldManager, $operatorLegacyId);
+                $this->logWarehouseScope($record, $oldWarehouseScope, $operatorLegacyId);
                 return $record->fresh(['managerUser']);
             }
             if ($record instanceof Item) {
@@ -155,6 +173,51 @@ class MasterDataApplicationService
         if ($strategy === 'purchase' && !(bool) ($data['is_purchase_item'] ?? $record?->is_purchase_item)) {
             throw ValidationException::withMessages(['manufacturing_strategy' => '外购物料必须启用可采购。']);
         }
+    }
+
+    private function warehouseScopeData(array $data, ?Model $record = null): array
+    {
+        // Old clients creating a factory warehouse keep their established default;
+        // explicit null/invalid values never turn an unknown warehouse into factory.
+        $scope = array_key_exists('management_scope', $data) ? $data['management_scope']
+            : ($record ? $record->management_scope : 'factory');
+        if ($scope === null && $record && !array_key_exists('management_scope', $data)) return $data;
+        if (!in_array($scope, ['factory', 'office'], true)) {
+            throw ValidationException::withMessages(['management_scope' => '请选择工厂物料仓或办公用品仓。']);
+        }
+        if ($record && in_array($record->management_scope, ['factory', 'office'], true) && $scope !== $record->management_scope) {
+            throw ValidationException::withMessages(['management_scope' => '仓库管理范围确定后不能更改，请为另一类型建立独立仓库。']);
+        }
+        if ($record && $record->management_scope === null) {
+            // A historical unknown warehouse can be classified only when all live
+            // stock identities agree. Never reclassify mixed stock by warehouse name.
+            foreach (['erp_inventory_balances', 'erp_inventory_location_balances'] as $table) {
+                $balances = DB::table($table)->where('warehouse_id', $record->id)->orderBy('id')->lockForUpdate()->get();
+                foreach ($balances as $balance) {
+                    if ((float) $balance->quantity_on_hand == 0 && (float) $balance->quantity_locked == 0
+                        && (float) $balance->quantity_pending == 0) continue;
+                    // Live stock already blocks Item reclassification. Reading its
+                    // committed identity here avoids reversing inventory's Item →
+                    // Warehouse lock order while classifying an unknown warehouse.
+                    $item = Item::whereKey($balance->item_id)->first();
+                    if (!$item || $item->management_scope !== $scope) {
+                        throw ValidationException::withMessages(['management_scope' => '现有库存与所选仓库范围不一致，请先按实际库存拆分处理。']);
+                    }
+                }
+            }
+        }
+        return [...$data, 'management_scope' => $scope];
+    }
+
+    private function logWarehouseScope(Model $record, ?string $old, ?int $operatorId): void
+    {
+        if ($old === $record->management_scope) return;
+        DB::table('erp_operation_logs')->insert(['module' => 'warehouse', 'action' => 'set_management_scope',
+            'target_type' => 'erp_warehouses', 'target_id' => $record->getKey(),
+            'old_snapshot' => json_encode(['management_scope' => $old], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+            'new_snapshot' => json_encode(['management_scope' => $record->management_scope], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR),
+            'reason' => $old === null ? '确定仓库管理范围' : '维护仓库管理范围',
+            'operator_id' => $operatorId, 'created_at' => now()]);
     }
 
     private function warehouseManagerData(array $data, ?Model $record = null): array

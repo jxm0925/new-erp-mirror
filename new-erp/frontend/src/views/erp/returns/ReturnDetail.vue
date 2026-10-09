@@ -3,13 +3,14 @@
     <p class="breadcrumb">{{ kind === 'purchase' ? '采购管理 / 采购退货 / 退货详情' : '销售管理 / 销售退货 / 退货详情' }}</p>
     <div class="page-head">
       <div class="title-line"><h1>{{ row.return_no || `${title}详情` }}</h1><el-tag size="small" :type="statusType(row.return_status)">{{ statusText(row.return_status) }}</el-tag><el-tag v-if="kind==='purchase'" size="small" :type="row.stock_post_status==='posted'?'success':'info'">{{ purchasePostText }}</el-tag></div>
-      <div class="head-actions"><el-button size="small" @click="$router.push(basePath)">返回列表</el-button><el-button v-if="canCancel" size="small" type="danger" plain @click="cancelReturn">取消退货单</el-button><el-button v-if="canClose" size="small" plain @click="closeReturn">关闭</el-button><el-button v-if="kind==='purchase'&&row.return_status==='draft'&&$can('purchase_return.submit')" size="small" type="success" @click="submitPurchase">提交审核</el-button><el-button v-if="kind==='purchase'&&row.return_status==='submitted'&&$can('purchase_return.approve')" size="small" type="success" @click="approve">审核通过</el-button><el-button v-if="kind==='purchase'&&row.return_status==='pending_outbound'&&$can('purchase_return.post')" size="small" type="success" @click="postPurchase">{{ isRejectedBeforePosting ? '确认已退回供应商' : '退货出库过账' }}</el-button><el-button v-if="kind==='sales'&&['pending_receipt','partial_received'].includes(row.return_status)&&$can('sales_return.receive')" size="small" type="success" icon="el-icon-plus" @click="openReceive">登记退货到货</el-button></div>
+      <div class="head-actions"><el-button size="small" @click="$router.push(basePath)">返回列表</el-button><el-button v-if="canCancel" size="small" type="danger" plain @click="cancelReturn">取消退货单</el-button><el-button v-if="canClose" size="small" plain @click="closeReturn">关闭</el-button><el-button v-if="kind==='purchase'&&!managementScopeIssue&&row.return_status==='draft'&&$can('purchase_return.submit')" size="small" type="success" @click="submitPurchase">提交审核</el-button><el-button v-if="kind==='purchase'&&!managementScopeIssue&&row.return_status==='submitted'&&$can('purchase_return.approve')" size="small" type="success" @click="approve">审核通过</el-button><el-button v-if="kind==='purchase'&&!managementScopeIssue&&row.return_status==='pending_outbound'&&$can('purchase_return.post')" size="small" type="success" @click="postPurchase">{{ isRejectedBeforePosting ? '确认已退回供应商' : '退货出库过账' }}</el-button><el-button v-if="kind==='sales'&&['pending_receipt','partial_received'].includes(row.return_status)&&$can('sales_return.receive')" size="small" type="success" icon="el-icon-plus" @click="openReceive">登记退货到货</el-button></div>
     </div>
 
+    <el-alert v-if="managementScopeIssue" :title="managementScopeIssue" type="warning" :closable="false" show-icon />
     <div class="summary-grid">
       <div class="card summary-card">
         <h3>退货单信息</h3>
-        <dl><dt>退货单号</dt><dd>{{ row.return_no || '-' }}</dd><template v-if="kind==='purchase'"><dt>退货范围</dt><dd>{{ purchaseScopeText }}</dd></template><template v-else><dt>退货类型</dt><dd>客户退货</dd></template><dt>退货原因</dt><dd>{{ row.return_reason || '-' }}</dd><dt>{{ kind==='purchase'?'退货数量':'申请日期' }}</dt><dd>{{ kind==='purchase'?totalRequested():dateOnly(row.return_date) }}</dd><dt>{{ kind==='purchase'?'本币金额':'申请人' }}</dt><dd>{{ kind==='purchase'?money(totalAmount()):(row.created_by_name||creatorName()) }}</dd><dt>备注</dt><dd>{{ row.remark || '-' }}</dd></dl>
+        <dl><dt>退货单号</dt><dd>{{ row.return_no || '-' }}</dd><template v-if="kind==='purchase'"><dt>管理类型</dt><dd><el-tag size="mini" :type="row.management_scope==='office'?'info':'success'">{{ scopeLabel(row.management_scope) }}</el-tag></dd><dt>退货范围</dt><dd>{{ purchaseScopeText }}</dd></template><template v-else><dt>退货类型</dt><dd>客户退货</dd></template><dt>退货原因</dt><dd>{{ row.return_reason || '-' }}</dd><dt>{{ kind==='purchase'?'退货数量':'申请日期' }}</dt><dd>{{ kind==='purchase'?totalRequested():dateOnly(row.return_date) }}</dd><dt>{{ kind==='purchase'?'本币金额':'申请人' }}</dt><dd>{{ kind==='purchase'?money(totalAmount()):(row.created_by_name||creatorName()) }}</dd><dt>备注</dt><dd>{{ row.remark || '-' }}</dd></dl>
       </div>
       <div class="card summary-card">
         <h3>{{ kind==='purchase'?'来源与供应商':'原销售订单与客户' }}</h3>
@@ -73,6 +74,7 @@
 </template>
 
 <script>
+import { purchaseScopeLabel, purchaseScopeIssue } from '@/utils/purchaseManagementScope.mjs'
 import { approvePurchaseReturn, cancelPurchaseReturn, closePurchaseReturn, getPurchaseReturn, postPurchaseReturn, submitPurchaseReturn } from '@/api/erp/purchase'
 import { cancelSalesReturn, closeSalesReturn, getSalesReturn, postSalesReturnReceipt, receiveSalesReturn } from '@/api/erp/sales'
 import { listEntity } from '@/api/erp/master'
@@ -80,6 +82,7 @@ export default {
   props:{kind:{type:String,required:true}},
   data:()=>({loading:false,saving:false,row:{},receiveVisible:false,receiveItems:[],warehouses:[],locations:[]}),
   computed:{
+    managementScopeIssue(){return this.kind==='purchase'?purchaseScopeIssue(this.row):''},
     title(){return this.kind==='purchase'?'采购退货':'销售退货'},
     basePath(){return this.kind==='purchase'?'/purchase/returns':'/sales/returns'},
     isRejectedBeforePosting(){return this.kind==='purchase'&&this.row.return_scope==='rejected_before_posting'},
@@ -94,6 +97,7 @@ export default {
   },
   created(){this.load()},
   methods:{
+    scopeLabel(scope){return purchaseScopeLabel(scope)},
     async load(){this.loading=true;try{const{data}=await(this.kind==='purchase'?getPurchaseReturn(this.$route.params.id):getSalesReturn(this.$route.params.id));this.row=data.data||data;if(this.kind==='sales'&&this.$route.query.receive==='1')this.$nextTick(this.openReceive)}finally{this.loading=false}},
     statusText(v){if(v==='pending_outbound'&&this.isRejectedBeforePosting)return '待退回供应商';return({draft:'草稿',submitted:'待审核',approved:'已审核',pending_outbound:'待出库',pending_receipt:'待收货',partial_received:'部分收货',received:'已收货',completed:'已完成',cancelled:'已取消',closed:'已关闭'})[v]||v||'-'},
     statusType(v){return({completed:'success',approved:'success',received:'success',cancelled:'danger',closed:'info',submitted:'warning',pending_outbound:'warning',pending_receipt:'warning',partial_received:'warning'})[v]||''},
@@ -112,9 +116,9 @@ export default {
     receiptLocation(r){const i=(r.items||[])[0]||{};return `${i.warehouse&&i.warehouse.warehouse_name||'-'} / ${i.location&&i.location.location_name||'-'} / ${i.batch_no||'-'}`},
     async cancelReturn(){await this.$confirm('取消后不会产生库存流水，确认取消该退货单？','取消退货单',{type:'warning'});await(this.kind==='purchase'?cancelPurchaseReturn(this.row.id):cancelSalesReturn(this.row.id));this.$message.success('退货单已取消');this.load()},
     async closeReturn(){await this.$confirm('确认关闭剩余未执行数量？已发生的业务事实不会被删除。','关闭未完成数量',{type:'warning'});await(this.kind==='purchase'?closePurchaseReturn(this.row.id):closeSalesReturn(this.row.id));this.$message.success('退货单已关闭');this.load()},
-    async submitPurchase(){await this.$confirm('确认提交该采购退货单进入审核？','提交审核');await submitPurchaseReturn(this.row.id);this.$message.success('已提交审核');this.load()},
-    async approve(){await this.$confirm('确认审核通过该采购退货单？','审核确认');await approvePurchaseReturn(this.row.id);this.$message.success('审核通过');this.load()},
-    async postPurchase(){const rejected=this.isRejectedBeforePosting;await this.$confirm(rejected?'确认不合格实物已经退回供应商？本操作不产生库存出库。':'确认按原仓库、库位和批次执行退货出库？',rejected?'确认退回供应商':'出库过账',{type:'warning'});await postPurchaseReturn(this.row.id);this.$message.success(rejected?'已确认退回供应商':'出库过账完成');this.load()},
+    async submitPurchase(){if(this.managementScopeIssue)return this.$message.warning(this.managementScopeIssue);await this.$confirm('确认提交该采购退货单进入审核？','提交审核');await submitPurchaseReturn(this.row.id);this.$message.success('已提交审核');this.load()},
+    async approve(){if(this.managementScopeIssue)return this.$message.warning(this.managementScopeIssue);await this.$confirm('确认审核通过该采购退货单？','审核确认');await approvePurchaseReturn(this.row.id);this.$message.success('审核通过');this.load()},
+    async postPurchase(){if(this.managementScopeIssue)return this.$message.warning(this.managementScopeIssue);const rejected=this.isRejectedBeforePosting;await this.$confirm(rejected?'确认不合格实物已经退回供应商？本操作不产生库存出库。':'确认按原仓库、库位和批次执行退货出库？',rejected?'确认退回供应商':'出库过账',{type:'warning'});await postPurchaseReturn(this.row.id);this.$message.success(rejected?'已确认退回供应商':'出库过账完成');this.load()},
     async postReceipt(r){await this.$confirm('确认仅将检验合格的可重新入库数量过账？','入库过账');await postSalesReturnReceipt(this.row.id,r.id);this.$message.success('退货入库已过账');this.load()},
     openReceive(){this.receiveItems=(this.row.items||[]).map(item=>{const remain=Math.max(0,Number(item.requested_base_qty)-Number(item.received_base_qty||0));return{sales_return_item_id:item.id,item_label:`${item.item&&item.item.item_code||''} / ${item.item&&item.item.item_name||''}`,max_qty:remain,received_base_qty:remain,restock_base_qty:remain,pending_base_qty:0,scrap_base_qty:0,rejected_base_qty:0,warehouse_id:null,location_id:null,batch_no:''}}).filter(i=>i.max_qty>0);if(!this.receiveItems.length)return this.$message.info('没有剩余待收数量');this.receiveVisible=true;this.searchWarehouses('');this.searchLocations('')},
     async searchWarehouses(keyword){const{data}=await listEntity('warehouses',{keyword,status:'active',page:1,per_page:20});this.warehouses=data.data||[]}, async searchLocations(keyword){const{data}=await listEntity('locations',{keyword,status:'active',page:1,per_page:20});this.locations=data.data||[]},
@@ -126,4 +130,17 @@ export default {
 <style scoped>
 .return-detail-page{padding:16px 20px 24px;min-height:calc(100vh - 52px);background:#f7f9fb;color:#172033}.breadcrumb{margin:0 0 15px;color:#6d7888;font-size:13px}.page-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.title-line,.head-actions{display:flex;align-items:center;gap:9px}.title-line h1{margin:0;font-size:24px}.summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}.card{background:#fff;border:1px solid #dde4ec;border-radius:5px;padding:14px 16px;margin-bottom:14px;min-width:0}.card h3{margin:0 0 14px;font-size:15px}.summary-card dl{display:grid;grid-template-columns:95px minmax(0,1fr);gap:10px 8px;margin:0;font-size:13px}.summary-card dt{color:#667384}.summary-card dd{margin:0;overflow-wrap:anywhere}.link-text{color:#1677e8}.rule-alert{margin-bottom:14px}.detail-card{padding:0}.detail-card h3{padding:14px 16px;margin:0}.table-total{height:40px;display:flex;align-items:center;justify-content:flex-end;gap:45px;padding:0 18px;border-top:1px solid #ebeef5;font-size:13px}.table-total strong{margin-right:auto}.lower-grid{display:grid;grid-template-columns:.85fr 1.15fr;gap:14px}.timeline,.trace-list{list-style:none;padding:0;margin:0}.timeline li,.trace-list li{display:grid;grid-template-columns:28px 110px 1fr 150px;align-items:center;min-height:44px;font-size:13px}.timeline li i{width:20px;height:20px;border-radius:50%;background:#d8dee7;color:#637082;text-align:center;line-height:20px;font-style:normal}.timeline li.done i{background:#f08a14;color:#fff}.timeline time,.trace-list time{color:#647184}.trace-list li{grid-template-columns:170px 1fr 140px;border-bottom:1px solid #eef1f5}.trace-list li:last-child{border-bottom:0}.progress-track{display:flex;align-items:flex-start;justify-content:space-between;margin:22px 18px 8px}.progress-node{position:relative;flex:1;text-align:center}.progress-node:after{content:'';position:absolute;top:14px;left:55%;right:-45%;height:2px;background:#e0e5eb}.progress-node:last-child:after{display:none}.progress-node i{position:relative;z-index:1;width:28px;height:28px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:#e5e9ee;color:#fff}.progress-node.done i{background:#159a58}.progress-node span{display:block;margin-top:9px;font-weight:600;font-size:12px}.progress-meta{display:grid;grid-template-columns:repeat(4,1fr);text-align:center;color:#697587;font-size:11px}.progress-meta span{display:flex;flex-direction:column}.progress-meta small{margin-top:4px}.return-detail-page :deep(.el-table th){background:#f7f9fb;color:#344054;font-weight:600}.return-detail-page :deep(.el-button--success),.drawer-body :deep(.el-button--success){background:#008d48;border-color:#008d48}.drawer-body{padding:0 20px 20px}.receipt-line{padding:16px 0;border-bottom:1px solid #e7ebf0}.receipt-line h4{margin:0 0 14px}.receipt-line .el-select{width:100%}.drawer-actions{position:sticky;bottom:0;padding:14px 0;background:#fff;text-align:right}@media(max-width:1200px){.summary-grid{grid-template-columns:1fr 1fr}.summary-card:last-child{grid-column:span 2}.lower-grid{grid-template-columns:1fr}}@media(max-width:850px){.summary-grid{grid-template-columns:1fr}.summary-card:last-child{grid-column:auto}.page-head{align-items:flex-start;gap:12px}.head-actions{flex-wrap:wrap;justify-content:flex-end}}
 .serial-tag{margin:2px 4px 2px 0}
+
+@media (max-width: 780px) {
+  .page-head {
+    flex-wrap: wrap;
+  }
+  .title-line {
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+  .head-actions {
+    justify-content: flex-start;
+  }
+}
 </style>

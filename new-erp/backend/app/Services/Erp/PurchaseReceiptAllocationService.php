@@ -6,7 +6,6 @@ use App\Models\Erp\Location;
 use App\Models\Erp\PurchaseReceipt;
 use App\Models\Erp\PurchaseReceiptItem;
 use App\Models\Erp\PurchaseReceiptItemAllocation;
-use App\Models\Erp\Warehouse;
 use Illuminate\Support\Collection;
 use Illuminate\Validation\ValidationException;
 
@@ -16,9 +15,15 @@ class PurchaseReceiptAllocationService
 
     public function replace(PurchaseReceiptItem $line, array $allocations): void
     {
+        app(PurchaseReceiptManagementScopeService::class)->assertLine($line);
+        foreach ($allocations as $allocation) {
+            if ((bool) $line->is_stock_item_snapshot && !empty($allocation['warehouse_id']) && !empty($allocation['location_id'])
+                && (float) ($allocation['base_qty'] ?? 0) > 0) {
+                $this->assertLocator($line, (int) $allocation['warehouse_id'], (int) $allocation['location_id']);
+            }
+        }
         $line->allocations()->delete();
-        $line->loadMissing('item');
-        if (!$line->item?->is_stock_item) {
+        if (!(bool) $line->is_stock_item_snapshot) {
             $line->update(['warehouse_id' => null, 'location_id' => null]);
             return;
         }
@@ -27,7 +32,7 @@ class PurchaseReceiptAllocationService
             $locationId = (int) ($allocation['location_id'] ?? 0);
             $quantity = round((float) ($allocation['base_qty'] ?? 0), 8);
             if (!$warehouseId || !$locationId || $quantity <= 0) continue;
-            $this->assertLocator($warehouseId, $locationId);
+            $this->assertLocator($line, $warehouseId, $locationId);
             $stored = PurchaseReceiptItemAllocation::create([
                 'receipt_item_id' => $line->id,
                 'warehouse_id' => $warehouseId,
@@ -47,11 +52,13 @@ class PurchaseReceiptAllocationService
         if ($first) $line->update(['warehouse_id' => $first->warehouse_id, 'location_id' => $first->location_id]);
     }
 
-    public function ensureForConfirmation(PurchaseReceipt $receipt): void
+    public function ensureForConfirmation(PurchaseReceipt $receipt, array $pendingDraftScopeLineIds = []): void
     {
+        app(PurchaseReceiptManagementScopeService::class)->assertReceipt($receipt, $pendingDraftScopeLineIds);
         $receipt->load(['items.item', 'items.allocations.physicalEntries']);
         foreach ($receipt->items as $line) {
-            if (!(bool) ($line->is_stock_item_snapshot ?? $line->item?->is_stock_item)) continue;
+            app(PurchaseReceiptManagementScopeService::class)->assertLine($line, $receipt->management_scope, $pendingDraftScopeLineIds);
+            if (!(bool) $line->is_stock_item_snapshot) continue;
             $qualified = round((float) $line->qualified_base_qty, 8);
             if ($qualified <= 0) continue;
 
@@ -59,7 +66,7 @@ class PurchaseReceiptAllocationService
                 if (!$line->warehouse_id || !$line->location_id) {
                     throw ValidationException::withMessages(['allocations' => "物料 {$line->item?->item_code} 必须完成入库库位分配。"]);
                 }
-                $this->assertLocator((int) $line->warehouse_id, (int) $line->location_id);
+                $this->assertLocator($line, (int) $line->warehouse_id, (int) $line->location_id, $receipt->management_scope);
                 PurchaseReceiptItemAllocation::create([
                     'receipt_item_id' => $line->id,
                     'warehouse_id' => $line->warehouse_id,
@@ -77,7 +84,7 @@ class PurchaseReceiptAllocationService
             if ($duplicates->isNotEmpty()) {
                 throw ValidationException::withMessages(['allocations' => "物料 {$line->item?->item_code} 的同一库位不能重复分配。"]);
             }
-            foreach ($line->allocations as $allocation) $this->assertLocator((int) $allocation->warehouse_id, (int) $allocation->location_id);
+            foreach ($line->allocations as $allocation) $this->assertLocator($line, (int) $allocation->warehouse_id, (int) $allocation->location_id, $receipt->management_scope);
 
             $allocated = round((float) $line->allocations->sum('base_qty'), 8);
             if (abs($allocated - $qualified) > 0.00000001) {
@@ -116,11 +123,9 @@ class PurchaseReceiptAllocationService
             ->pluck('serial_no')->map(fn ($no) => trim((string) $no))->filter()->unique()->values();
     }
 
-    private function assertLocator(int $warehouseId, int $locationId): void
+    private function assertLocator(PurchaseReceiptItem $line, int $warehouseId, int $locationId, ?string $expectedScope = null): void
     {
-        if (!Warehouse::query()->whereKey($warehouseId)->whereIn('status', ['active', 'enabled'])->exists()) {
-            throw ValidationException::withMessages(['allocations' => '入库分配所选仓库已停用。']);
-        }
+        app(WarehouseManagementScopeService::class)->assertWarehouseItem((int) $line->item_id, $warehouseId, 'allocations', $expectedScope ?? $line->management_scope_snapshot);
         if (!Location::query()->whereKey($locationId)->where('warehouse_id', $warehouseId)->whereIn('status', ['active', 'enabled'])->exists()) {
             throw ValidationException::withMessages(['allocations' => '入库分配所选库位不属于该仓库或已停用。']);
         }

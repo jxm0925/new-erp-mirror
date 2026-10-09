@@ -10,6 +10,9 @@ final class PurchaseRequestCreationApplicationService
     public function create(array $data, array $items): PurchaseRequest
     {
         return DB::transaction(function () use ($data, $items) {
+            $scopes = app(PurchaseManagementScopeService::class);
+            $data['management_scope'] = $scopes->resolveDocumentScope($items, $data,
+                requiredScope: $scopes->requiredScopeForSource($data['source_type'] ?? null));
             $record = PurchaseRequest::create([...$data, 'request_status' => 'draft', 'status' => 'draft',
                 'item_id' => $items[0]['item_id'], 'request_qty' => 0, 'planned_qty' => 0]);
             $this->saveItems($record, $items);
@@ -21,7 +24,10 @@ final class PurchaseRequestCreationApplicationService
     {
         $totalQty = 0;
         foreach ($items as $line) {
-            $item = Item::with('unit.standardUnit')->findOrFail($line['item_id']);
+            $item = app(PurchaseManagementScopeService::class)->assertItemScope((int) $line['item_id'], $request->management_scope)->load('unit.standardUnit');
+            $line['management_scope'] = $request->management_scope;
+            if (!empty($line['warehouse_id'])) app(WarehouseManagementScopeService::class)
+                ->assertWarehouseItem($item, (int) $line['warehouse_id'], 'warehouse_id', $request->management_scope);
             $prior = $priorItems?->get($line['id'] ?? 0);
             abort_if(! empty($line['id']) && ! $prior, 422, '采购需求明细不属于当前需求');
             $planning = app(PurchasePlanningConversionService::class);

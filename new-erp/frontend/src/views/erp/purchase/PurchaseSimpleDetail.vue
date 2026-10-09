@@ -6,6 +6,7 @@
         <el-button size="small" icon="el-icon-arrow-left" circle @click="$router.back()" />
         <div class="head-text">
           <div class="title-row">
+            <el-tag size="mini" :type="doc.management_scope === 'office' ? 'info' : 'success'">{{ scopeLabel(doc.management_scope) }}</el-tag>
             <h1>{{ title }}</h1>
             <el-tag size="mini" type="success">{{ type === 'requests' ? '采购需求' : '采购订单' }}</el-tag>
             <el-tag size="mini" :type="tagType(mainStatus)">{{ statusText(mainStatus) }}</el-tag>
@@ -28,6 +29,8 @@
         </el-button>
       </div>
     </div>
+
+    <el-alert v-if="scopeIssue" :title="scopeIssue" type="warning" :closable="false" show-icon />
 
     <!-- 基础信息卡片（全宽展示，不压缩表格横向宽度） -->
     <div class="detail-card info-card">
@@ -234,6 +237,7 @@
 </template>
 
 <script>
+import { purchaseScopeLabel, purchaseScopeIssue } from '@/utils/purchaseManagementScope.mjs'
 import { getPurchase } from '@/api/erp/purchase'
 
 const statusMap = {
@@ -264,6 +268,7 @@ export default {
   props: { type: { type: String, required: true } },
   data: () => ({ doc: null, paymentPlanVisible: false }),
   computed: {
+    scopeIssue() { return purchaseScopeIssue(this.doc) },
     title() { return `${this.no} ${this.type === 'requests' ? '采购需求详情' : '采购订单详情'}` },
     no() { return this.doc?.request_no || this.doc?.purchase_order_no || '--' },
     mainStatus() { return this.doc?.request_status || this.doc?.purchase_status || this.doc?.confirm_status || this.doc?.receipt_status || '' },
@@ -302,6 +307,7 @@ export default {
     }
   },
   methods: {
+    scopeLabel(scope) { return purchaseScopeLabel(scope) },
     itemCode(row) { return row.item_code || (row.item && row.item.item_code) || '-' },
     itemName(row) { return row.item_name || (row.item && row.item.item_name) || '-' },
     itemSpec(row) {

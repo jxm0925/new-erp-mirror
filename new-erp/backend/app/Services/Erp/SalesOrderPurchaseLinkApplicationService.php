@@ -29,6 +29,9 @@ class SalesOrderPurchaseLinkApplicationService
             if ($purchase->audit_status !== 'approved' || in_array($purchase->purchase_status, ['cancelled', 'voided'], true)) {
                 $this->fail('purchase_order_item_id', '请选择已审核且未取消的采购订单明细。');
             }
+            if (app(PurchaseManagementScopeService::class)->assertDocumentScope($purchase) !== 'factory') {
+                $this->fail('purchase_order_item_id', '销售订单只能关联工厂物料采购订单，办公用品须单独采购。');
+            }
             // Locking current reads remain correct after waiting under MySQL REPEATABLE READ.
             $active = SalesOrderPurchaseLink::where('purchase_order_item_id', $item->id)->where('status', 'active')->lockForUpdate()->get();
             $allocated = $active->reduce(fn ($sum, $row) => bcadd($sum, $row->purchase_qty, 8), '0');
@@ -45,6 +48,7 @@ class SalesOrderPurchaseLinkApplicationService
                 'sales_order_id' => $orderId, 'purchase_order_id' => $purchase->id, 'purchase_order_item_id' => $item->id,
                 'purchase_qty' => $quantity, 'contract_amount' => $amount, 'currency' => $item->currency_snapshot ?: $purchase->currency,
                 'source_snapshot' => ['order_no' => $purchase->purchase_order_no, 'supplier_id' => $purchase->supplier_id,
+                    'management_scope' => $purchase->management_scope,
                     'supplier_name' => $purchase->supplier?->supplier_name, 'item_id' => $item->item_id,
                     'item_code' => $item->item?->item_code, 'item_name' => $item->item?->item_name,
                     'spec_model' => $item->spec_model ?: ($item->item?->spec ?: $item->item?->model),

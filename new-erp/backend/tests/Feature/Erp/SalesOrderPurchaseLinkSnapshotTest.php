@@ -175,7 +175,7 @@ class SalesOrderPurchaseLinkSnapshotTest extends TestCase
         $supplier = Supplier::create(['supplier_code' => $this->code('SUPPLIER'), 'supplier_name' => '旧快照采购关联测试供应商', 'supplier_type' => 'manufacturer', 'status' => 'enabled']);
         $unit = Unit::create(['unit_code' => $this->code('UNIT'), 'unit_name' => '根', 'decimal_places' => 8, 'status' => 'enabled']);
         $item = Item::create(['item_code' => $this->code('ITEM'), 'item_name' => '旧快照采购关联测试管材', 'spec' => '40x40x2', 'item_type' => 'raw_material', 'unit_id' => $unit->id, 'status' => 'enabled']);
-        $purchase = PurchaseOrder::create(['purchase_order_no' => $this->code('PO'), 'supplier_id' => $supplier->id,
+        $purchase = PurchaseOrder::create(['management_scope' => 'factory', 'purchase_order_no' => $this->code('PO'), 'supplier_id' => $supplier->id,
             'order_date' => now()->toDateString(), 'purchase_status' => 'processing', 'audit_status' => 'approved', 'currency' => 'CNY', 'total_amount' => '100']);
         return PurchaseOrderItem::create(['order_id' => $purchase->id, 'item_id' => $item->id, 'purchase_unit_id' => $unit->id, 'base_unit_id' => $unit->id,
             'purchase_qty' => '10', 'order_qty' => '10', 'amount' => '100', 'contract_amount_snapshot' => '100', 'currency_snapshot' => 'CNY']);

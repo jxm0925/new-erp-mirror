@@ -13,12 +13,15 @@ class PurchaseReceiptPostingEligibilityService
     {
         $receipt->loadMissing([
             'items.item',
+            'items.warehouse',
+            'items.location',
             'items.allocations.warehouse',
             'items.allocations.location',
         ]);
 
         $reasons = collect();
         $this->checkDocumentState($receipt, $reasons);
+        $this->checkScope($receipt, $reasons);
         $this->checkLines($receipt, $reasons);
 
         $reasons = $reasons->unique('code')->values();
@@ -29,8 +32,8 @@ class PurchaseReceiptPostingEligibilityService
             'reason_code' => $primary['code'] ?? null,
             'reason_text' => $primary['message'] ?? '过账检查通过',
             'reasons' => $reasons->all(),
-            'action_label' => $reasons->isEmpty() ? null : '补充入库分配',
-            'action_type' => $reasons->isEmpty() ? null : 'repair_receipt_allocation',
+            'action_label' => $reasons->isEmpty() || str_starts_with($primary['code'] ?? '', 'scope_') ? null : '补充入库分配',
+            'action_type' => $reasons->isEmpty() || str_starts_with($primary['code'] ?? '', 'scope_') ? null : 'repair_receipt_allocation',
         ];
     }
 
@@ -55,7 +58,7 @@ class PurchaseReceiptPostingEligibilityService
     {
         $qualifiedTotal = 0.0;
         foreach ($receipt->items as $line) {
-            if (!(bool) ($line->is_stock_item_snapshot ?? $line->item?->is_stock_item)) continue;
+            if (!(bool) $line->is_stock_item_snapshot) continue;
             $qualified = round((float) ($line->final_stockable_base_qty ?? $line->qualified_base_qty ?? $line->qualified_qty), 8);
             if ($qualified <= 0) continue;
             $qualifiedTotal += $qualified;
@@ -80,6 +83,7 @@ class PurchaseReceiptPostingEligibilityService
                     $this->reason($reasons, "allocation_missing_{$line->id}", "物料 {$code} 合格数量 {$this->number($qualified)} 尚未分配仓库和库位。", $line->id);
                     continue;
                 }
+                $this->checkLocatorScope($receipt, $line, $line->warehouse, $line->location, (int) $line->warehouse_id, $reasons);
             } else {
                 $duplicateLocator = $allocations
                     ->groupBy(fn ($row) => $row->warehouse_id.'-'.$row->location_id)
@@ -89,6 +93,7 @@ class PurchaseReceiptPostingEligibilityService
                 }
 
                 foreach ($allocations as $allocation) {
+                    $this->checkLocatorScope($receipt, $line, $allocation->warehouse, $allocation->location, (int) $allocation->warehouse_id, $reasons);
                     if (!$allocation->warehouse || !in_array($allocation->warehouse->status, ['active', 'enabled'], true)) {
                         $this->reason($reasons, "warehouse_disabled_{$line->id}", "物料 {$code} 的入库仓库不存在或已停用。", $line->id);
                     }
@@ -151,6 +156,42 @@ class PurchaseReceiptPostingEligibilityService
             ->count();
         if ($registered !== $parsed->unique()->count()) {
             $this->reason($reasons, "serial_not_registered_{$line->id}", "物料 {$code} 的设备编号尚未在到货入库环节完整建档。", $line->id);
+        }
+    }
+
+    private function checkScope(PurchaseReceipt $receipt, Collection $reasons): void
+    {
+        if (!in_array($receipt->management_scope, ['factory', 'office'], true)) {
+            $this->reason($reasons, 'scope_document_unknown', '历史到货单管理范围未确定或含混合物料，请核对并分开重建后再办理新入库。');
+        }
+        foreach ($receipt->items as $line) {
+            if ($line->management_scope_snapshot !== $receipt->management_scope
+                || !in_array($line->management_scope_snapshot, ['factory', 'office'], true)
+                || !$line->item || $line->item->management_scope !== $line->management_scope_snapshot) {
+                $this->reason($reasons, 'scope_item_changed_'.$line->id, '到货单范围、明细快照或当前物料范围不一致，请核对来源单据。', $line->id);
+            }
+            if ($line->is_stock_item_snapshot === null || !$line->item
+                || (bool) $line->is_stock_item_snapshot !== (bool) $line->item->is_stock_item
+                || (is_array($line->material_policy_snapshot)
+                    && array_key_exists('is_stock_managed', $line->material_policy_snapshot)
+                    && (bool) $line->material_policy_snapshot['is_stock_managed'] !== (bool) $line->is_stock_item_snapshot)) {
+                $this->reason($reasons, 'scope_stock_policy_changed_'.$line->id, '库存政策与到货单冻结快照不一致，请核对原政策后重建草稿。', $line->id);
+            }
+        }
+    }
+
+    private function checkLocatorScope(PurchaseReceipt $receipt, object $line, ?object $warehouse, ?object $location, int $warehouseId, Collection $reasons): void
+    {
+        if (!$warehouse || !in_array($warehouse->status, ['active', 'enabled'], true)) {
+            $this->reason($reasons, 'warehouse_disabled_'.$line->id, '入库仓库不存在或已停用。', $line->id);
+        }
+        if (!$warehouse || !in_array($warehouse->management_scope, ['factory', 'office'], true)
+            || $warehouse->management_scope !== $receipt->management_scope
+            || $warehouse->management_scope !== $line->management_scope_snapshot) {
+            $this->reason($reasons, 'scope_warehouse_mismatch_'.$line->id, '入库仓库与到货单管理范围不一致或仓库范围未确定。', $line->id);
+        }
+        if (!$location || (int) $location->warehouse_id !== $warehouseId || !in_array($location->status, ['active', 'enabled'], true)) {
+            $this->reason($reasons, 'location_disabled_'.$line->id, '入库库位不属于所选仓库或已停用。', $line->id);
         }
     }
 

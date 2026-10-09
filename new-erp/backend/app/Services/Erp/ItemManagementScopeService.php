@@ -2,7 +2,7 @@
 
 namespace App\Services\Erp;
 
-use App\Models\Erp\{Item, ItemCategory};
+use App\Models\Erp\{Item, ItemCategory, Warehouse};
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -81,6 +81,13 @@ final class ItemManagementScopeService
         }
         $data['management_scope'] = $scope;
         $this->assertCategory($data['category_id'] ?? $existing?->category_id, $scope, $existing);
+        $warehouseId = array_key_exists('default_warehouse_id', $data) ? $data['default_warehouse_id'] : $existing?->default_warehouse_id;
+        if ($warehouseId) {
+            $warehouse = Warehouse::whereKey($warehouseId)->lockForUpdate()->first();
+            if (!$warehouse || $warehouse->managementScope() !== $scope) {
+                throw ValidationException::withMessages(['default_warehouse_id' => '默认仓库必须与物料管理范围一致。']);
+            }
+        }
         return $data;
     }
 
@@ -139,6 +146,9 @@ final class ItemManagementScopeService
         // Preserve identifiers and stock on a manual correction, but do not
         // reclassify Items that already define factory production or sales.
         $references = [
+            ['erp_purchase_request_items', 'item_id'], ['erp_purchase_plan_items', 'item_id'],
+            ['erp_purchase_order_items', 'item_id'], ['erp_purchase_receipt_items', 'item_id'],
+            ['erp_purchase_return_items', 'item_id'], ['erp_purchase_exchange_orders', 'item_id'],
             ['erp_boms', 'output_item_id'], ['erp_bom_items', 'component_item_id'],
             ['erp_production_routings', 'output_item_id'], ['erp_production_routing_operations', 'output_item_id'],
             ['erp_routing_operation_output_rules', 'item_id'], ['erp_routing_operation_output_rules', 'reference_item_id'],
@@ -149,7 +159,16 @@ final class ItemManagementScopeService
         ];
         foreach ($references as [$table, $column]) if (Schema::hasTable($table) && Schema::hasColumn($table, $column)
             && DB::table($table)->where($column, $item->id)->exists()) {
-            throw ValidationException::withMessages(['management_scope' => '该物料已有商品、BOM、工艺或生产工单引用，不能直接更改管理范围。']);
+            throw ValidationException::withMessages(['management_scope' => '该物料已有采购、商品、BOM、工艺或生产引用，不能直接更改管理范围。']);
+        }
+        // Reclassifying live stock would place office Items in a factory warehouse
+        // without a real inventory move. Keep identities and stock facts unchanged.
+        foreach (['erp_inventory_balances', 'erp_inventory_location_balances'] as $table) {
+            if (DB::table($table)->where('item_id', $item->id)
+                ->where(fn ($q) => $q->where('quantity_on_hand', '!=', 0)->orWhere('quantity_locked', '!=', 0)->orWhere('quantity_pending', '!=', 0))
+                ->lockForUpdate()->exists()) {
+                throw ValidationException::withMessages(['management_scope' => '该物料已有库存或库存占用，不能直接改换工厂、办公范围。']);
+            }
         }
     }
 

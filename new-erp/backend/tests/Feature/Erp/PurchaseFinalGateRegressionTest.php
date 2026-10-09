@@ -33,12 +33,14 @@ class PurchaseFinalGateRegressionTest extends TestCase
             'serial_tracking_mode' => 'none', 'status' => 'enabled',
         ]);
         $receipt = PurchaseReceipt::create([
+            'management_scope' => 'factory',
             'receipt_no' => $this->code('PRC-NS'), 'supplier_id' => $supplier->id,
             'receipt_date' => now()->toDateString(), 'receipt_status' => 'draft', 'confirm_status' => 'draft',
             'stock_post_status' => 'pending', 'total_receipt_qty' => 2, 'total_qualified_qty' => 2,
             'total_unqualified_qty' => 0, 'total_amount' => 20, 'remark' => '非库存手工到货自动化验收',
         ]);
         $line = PurchaseReceiptItem::create([
+            'management_scope_snapshot' => 'factory', 'is_stock_item_snapshot' => false,
             'receipt_id' => $receipt->id, 'item_id' => $item->id,
             'purchase_unit_id' => $unit->id, 'purchase_unit_name_snapshot' => '件',
             'conversion_factor_snapshot' => 1, 'base_unit_id' => $unit->id, 'base_unit_name_snapshot' => '件',
@@ -66,7 +68,7 @@ class PurchaseFinalGateRegressionTest extends TestCase
     public function test_p08_serial_quality_return_creates_return_item_before_serial_link(): void
     {
         [$unit, $supplier] = $this->masters();
-        $warehouse = Warehouse::create(['warehouse_code' => $this->code('WH'), 'warehouse_name' => '门禁仓', 'status' => 'enabled']);
+        $warehouse = Warehouse::create(['management_scope' => 'factory', 'warehouse_code' => $this->code('WH'), 'warehouse_name' => '门禁仓', 'status' => 'enabled']);
         $location = Location::create(['location_code' => $this->code('LOC'), 'location_name' => '门禁库位', 'warehouse_id' => $warehouse->id, 'status' => 'enabled']);
         $item = Item::create([
             'item_code' => $this->code('SER'), 'item_name' => '序列号质量退货设备', 'item_type' => 'finished_goods',
@@ -74,12 +76,14 @@ class PurchaseFinalGateRegressionTest extends TestCase
             'is_serial_managed' => true, 'serial_tracking_mode' => 'required', 'status' => 'enabled',
         ]);
         $receipt = PurchaseReceipt::create([
+            'management_scope' => 'factory',
             'receipt_no' => $this->code('PRC-SER'), 'supplier_id' => $supplier->id,
             'receipt_date' => now()->toDateString(), 'receipt_status' => 'confirmed', 'confirm_status' => 'confirmed',
             'stock_post_status' => 'posted', 'total_receipt_qty' => 1, 'total_qualified_qty' => 1,
             'total_unqualified_qty' => 0, 'total_amount' => 100, 'currency_snapshot' => 'CNY',
         ]);
         $line = PurchaseReceiptItem::create([
+            'management_scope_snapshot' => 'factory',
             'receipt_id' => $receipt->id, 'item_id' => $item->id, 'warehouse_id' => $warehouse->id, 'location_id' => $location->id,
             'purchase_unit_id' => $unit->id, 'purchase_unit_name_snapshot' => '台', 'conversion_factor_snapshot' => 1,
             'base_unit_id' => $unit->id, 'base_unit_name_snapshot' => '台', 'receipt_qty' => 1,

@@ -8,6 +8,7 @@ use App\Models\Erp\InventoryQualityEvent;
 use App\Models\Erp\InventorySerial;
 use App\Models\Erp\PurchaseDefectHandling;
 use App\Models\Erp\PurchaseReceiptItem;
+use App\Models\Erp\PurchaseReceipt;
 use App\Models\Erp\PurchaseReturn;
 use App\Models\Erp\PurchaseReturnItem;
 use App\Models\Erp\PurchaseReturnLog;
@@ -58,6 +59,12 @@ class PurchaseReturnApplicationService
             if ($scope !== 'posted_inventory') {
                 throw ValidationException::withMessages(['return_scope' => '人工新增采购退货只允许选择已正式入库的采购批次；未入库拒收请从不合格品处理发起。']);
             }
+            $originalReceipt = PurchaseReceipt::query()->whereKey($sourceLines->first()->receipt_id)->lockForUpdate()->firstOrFail();
+            $managementScope = $originalReceipt->management_scope;
+            if (array_key_exists('management_scope', $payload)
+                && app(PurchaseManagementScopeService::class)->assertScope($payload['management_scope']) !== $managementScope) {
+                throw ValidationException::withMessages(['management_scope' => '采购退货必须保留原到货单的管理范围，不能改为其他范围。']);
+            }
 
             $returnNo = !empty($payload['reservation_token'])
                 ? $this->numbers->reservedNumber(
@@ -70,6 +77,7 @@ class PurchaseReturnApplicationService
 
             $purchaseReturn = PurchaseReturn::create([
                 'return_no' => $returnNo,
+                'management_scope' => $managementScope,
                 'return_scope' => $scope,
                 'source_receipt_id' => $payload['source_receipt_id'],
                 'source_order_id' => $sourceLines->first()?->receipt?->order_id,
@@ -168,6 +176,7 @@ class PurchaseReturnApplicationService
             $purchaseReturn = PurchaseReturn::create([
                 'return_no' => $this->nextReturnNo(),
                 'return_scope' => 'rejected_before_posting',
+                'management_scope' => $source->receipt->management_scope,
                 'source_receipt_id' => $source->receipt_id,
                 'source_order_id' => $source->receipt->order_id,
                 'supplier_id' => $source->receipt->supplier_id,
@@ -247,6 +256,7 @@ class PurchaseReturnApplicationService
             $purchaseReturn = PurchaseReturn::create([
                 'return_no' => $this->nextReturnNo(),
                 'return_scope' => 'posted_inventory',
+                'management_scope' => $source->receipt->management_scope,
                 'source_receipt_id' => $source->receipt_id,
                 'source_order_id' => $source->receipt->order_id,
                 'supplier_id' => $source->receipt->supplier_id,

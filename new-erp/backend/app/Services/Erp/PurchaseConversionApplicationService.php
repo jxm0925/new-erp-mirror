@@ -13,6 +13,10 @@ class PurchaseConversionApplicationService
     public function orderLineSnapshot(array $line, ?PurchaseOrderItem $existing = null): array
     {
         return DB::transaction(function () use ($line, $existing) {
+            $item = Item::with('unit.standardUnit')->lockForUpdate()->findOrFail($line['item_id']);
+            app(PurchaseManagementScopeService::class)->assertScope($item->management_scope);
+            if (array_key_exists('management_scope', $line)) app(PurchaseManagementScopeService::class)->assertItemScope($item,
+                app(PurchaseManagementScopeService::class)->assertScope($line['management_scope']));
             if ($existing && (int) $existing->item_id === (int) $line['item_id']
                 && (int) ($line['purchase_unit_id'] ?? $existing->purchase_unit_id) === (int) $existing->purchase_unit_id
                 && (float) $existing->conversion_factor_snapshot > 0) {
@@ -32,7 +36,6 @@ class PurchaseConversionApplicationService
                     'purchase_unit_price' => $price, 'base_unit_price' => $this->conversions->calculateBaseUnitPrice($price, $factor),
                 ];
             }
-            $item = Item::with('unit.standardUnit')->lockForUpdate()->findOrFail($line['item_id']);
             $purchaseUnitId = (int) ($line['purchase_unit_id'] ?? 0);
             $itemBaseUnit = $this->conversions->canonicalUnit($item->unit);
             if ($purchaseUnitId && $itemBaseUnit && $purchaseUnitId === (int) $itemBaseUnit->id) {
@@ -104,6 +107,10 @@ class PurchaseConversionApplicationService
     public function receiptLineSnapshot(array $line, bool $forceBaseUnit = false): array
     {
         return DB::transaction(function () use ($line, $forceBaseUnit) {
+            $item = Item::with('unit.standardUnit')->lockForUpdate()->findOrFail($line['item_id']);
+            app(PurchaseManagementScopeService::class)->assertScope($item->management_scope);
+            if (array_key_exists('management_scope', $line)) app(PurchaseManagementScopeService::class)->assertItemScope($item,
+                app(PurchaseManagementScopeService::class)->assertScope($line['management_scope']));
             $orderLine = !$forceBaseUnit && !empty($line['order_item_id'])
                 ? PurchaseOrderItem::with(['purchaseUnit.standardUnit', 'baseUnit.standardUnit'])->lockForUpdate()->findOrFail($line['order_item_id'])
                 : null;
@@ -113,7 +120,6 @@ class PurchaseConversionApplicationService
                 $factor = (float) $orderLine->conversion_factor_snapshot;
                 $allowActual = (bool) $orderLine->allow_actual_conversion_snapshot;
             } else {
-                $item = Item::with('unit.standardUnit')->lockForUpdate()->findOrFail($line['item_id']);
                 $itemBaseUnit = $this->conversions->canonicalUnit($item->unit);
                 if (!empty($line['purchase_unit_id']) && $itemBaseUnit && (int) $line['purchase_unit_id'] === (int) $itemBaseUnit->id) {
                     $purchaseUnit = $itemBaseUnit;

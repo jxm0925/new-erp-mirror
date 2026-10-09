@@ -28,6 +28,7 @@ class PurchaseWorkflowApplicationService
             if ($plan->plan_status !== 'submitted' || $plan->audit_status !== 'pending') {
                 throw ValidationException::withMessages(['plan_status' => '只有已提交且待审核的采购计划可以审核通过。']);
             }
+            app(PurchaseManagementScopeService::class)->assertDocumentScope($plan);
             $plan->update([
                 'plan_status' => 'approved',
                 'audit_status' => 'approved',
@@ -88,6 +89,8 @@ class PurchaseWorkflowApplicationService
                 throw ValidationException::withMessages(['items' => '采购订单存在未确认采购单价的明细，请补全单价后再提交。']);
             }
 
+            app(PurchaseManagementScopeService::class)->assertDocumentScope($order);
+
             $order = $this->updateOrder($order, ['purchase_status' => 'submitted', 'audit_status' => 'pending'], 'submit', '采购订单已提交审批', $operator);
             if ($initiator) $order->setAttribute('approval_task', $this->approvalIntegration->submitted($order, $initiator));
             return $order;
@@ -104,6 +107,8 @@ class PurchaseWorkflowApplicationService
             if ($order->receipt_status !== 'not_received') {
                 throw ValidationException::withMessages(['receipt_status' => '该订单已经发生到货，不能重复审核。']);
             }
+
+            app(PurchaseManagementScopeService::class)->assertDocumentScope($order);
 
             foreach ($order->items as $line) {
                 $facts = $this->finance->amountFacts((float) $line->amount, (float) $line->tax_rate, (string) $order->tax_mode);
@@ -222,6 +227,8 @@ class PurchaseWorkflowApplicationService
             if ($action === 'close' && (float) $request->planned_qty >= (float) $request->request_qty) {
                 throw ValidationException::withMessages(['request_status' => '采购需求已经全部进入采购计划，不能再关闭。']);
             }
+
+            if ($action === 'confirm') app(PurchaseManagementScopeService::class)->assertDocumentScope($request);
 
             $updates = ['request_status' => $to, 'status' => $to];
             if ($to === 'confirmed') $updates += ['confirmed_by' => $operator, 'confirmed_at' => now()];

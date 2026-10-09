@@ -58,6 +58,7 @@ class InventoryService
             if (InventoryTransaction::where('source_type', 'purchase_receipt')->where('source_id', $receipt->id)->where('transaction_type', 'purchase_receipt_posting')->exists()) {
                 throw ValidationException::withMessages(['receipt' => '该到货单已过账，不能重复过账。']);
             }
+            app(PurchaseReceiptManagementScopeService::class)->assertReceipt($receipt);
 
             $receipt->load(['items.item', 'items.allocations', 'supplier', 'order']);
             app(PurchaseReceiptAllocationService::class)->ensureForConfirmation($receipt);
@@ -428,6 +429,10 @@ class InventoryService
                 $restock = (float) $line->restock_base_qty;
                 if ($restock <= 0) continue;
                 foreach ($this->consumeSalesReturnCostAllocations($line, $restock) as $segment) {
+                    $originalReturn = $this->originalReturnProof((int) ($segment['outbound_transaction_item_id'] ?? 0), [
+                        'item_id' => $line->item_id, 'warehouse_id' => $line->warehouse_id,
+                        'location_id' => $line->location_id, 'batch_no' => $line->batch_no,
+                    ], (float) $segment['base_qty']);
                     $transactionItem = $this->applyInventoryChange($transaction, [
                         'item_id' => $line->item_id,
                         'warehouse_id' => $line->warehouse_id,
@@ -435,6 +440,7 @@ class InventoryService
                         'batch_no' => $line->batch_no,
                         'unit_id' => $line->base_unit_id ?: $line->item?->unit_id,
                         'change_qty' => $segment['base_qty'],
+                        'original_return_transaction_items' => $originalReturn,
                         'unit_cost' => $segment['unit_cost'],
                         'cost_amount' => $segment['cost_amount'],
                         'cost_source_type' => 'sales_return_frozen_cost',
@@ -1024,6 +1030,7 @@ class InventoryService
             $warehouseId = (int) ($posting['warehouse_id'] ?? 0); $locationId = (int) ($posting['location_id'] ?? 0);
             $batchNo = trim((string) ($posting['batch_no'] ?? ''));
             if ($warehouseId < 1 || $locationId < 1 || $batchNo === '') throw ValidationException::withMessages(['posting' => '生产入库必须指定仓库、库位和批次号。']);
+            $this->assertForwardStockLocator(['item_id' => $output->output_item_id, 'warehouse_id' => $warehouseId, 'location_id' => $locationId]);
             $materialAmount = app(ProductionMaterialCostService::class)->receiptAmount($output, (string) $output->output_base_qty);
             $transaction = InventoryTransaction::create(['transaction_no' => $this->nextNo('ITX'),
                 'transaction_type' => 'production_output_receipt', 'source_type' => 'production_output_record',
@@ -1063,6 +1070,7 @@ class InventoryService
             if ($warehouseId < 1 || $locationId < 1 || $batchNo === '' || $quantity <= 0) {
                 throw ValidationException::withMessages(['posting' => '成品入库必须指定正数数量、仓库、库位和批次号。']);
             }
+            $this->assertForwardStockLocator(['item_id' => $output->output_item_id, 'warehouse_id' => $warehouseId, 'location_id' => $locationId]);
             $materialAmount = app(ProductionMaterialCostService::class)->receiptAmount($output, (string) $receipt->posted_base_qty);
             $transaction = InventoryTransaction::create(['transaction_no' => $this->nextNo('ITX'),
                 'transaction_type' => 'finished_goods_receipt', 'source_type' => 'work_order_finished_goods_receipt',
@@ -1102,9 +1110,14 @@ class InventoryService
             foreach ($lines as $line) {
                 $cost = $costs[(int) $line->id] ?? null;
                 if (! $cost) throw ValidationException::withMessages(['cost_amount' => '生产退料必须引用原生产投入的真实数量和金额。']);
+                $originalReturn = DB::table('erp_production_material_return_cost_allocations as allocation')
+                    ->join('erp_production_input_holdings as input', 'input.input_holding_id', '=', 'allocation.source_input_holding_id')
+                    ->where('allocation.return_line_id', $line->id)->orderBy('allocation.id')->lockForUpdate()
+                    ->get(['input.inventory_transaction_item_id as id', 'allocation.quantity']);
                 $this->applyInventoryChange($transaction, ['item_id' => $line->component_item_id, 'warehouse_id' => $line->warehouse_id,
                     'location_id' => $line->location_id, 'batch_no' => $line->batch_no ?: 'PROD-RETURN-'.$return->id,
                     'unit_id' => Item::findOrFail($line->component_item_id)->unit_id, 'change_qty' => (float) $line->return_base_qty,
+                    'original_return_transaction_items' => $originalReturn->map(fn ($row) => ['id' => (int) $row->id, 'quantity' => (string) $row->quantity])->all(),
                     'unit_cost' => $cost['unit_cost'], 'cost_amount' => $cost['cost_amount'],
                     'cost_source_type' => 'production_material_return_input_cost', 'source_type' => 'production_material_return',
                     'source_id' => $return->id, 'source_item_id' => $line->id, 'remark' => '生产退料 '.$return->return_no]);
@@ -1314,6 +1327,9 @@ class InventoryService
         $existing = InventoryTransaction::query()->where('transaction_type', 'cutting_material_return')
             ->where('source_type', 'cutting_settlement')->where('source_id', $batch->id)->first();
         if ($existing) return $existing;
+        $source = InventoryTransactionItem::query()->where('source_type', 'cutting_settlement')->where('source_id', $batch->id)
+            ->where('change_qty', '<', 0)->whereHas('transaction', fn ($query) => $query->where('transaction_type', 'cutting_material_issue'))
+            ->lockForUpdate()->firstOrFail();
         $transaction = InventoryTransaction::create(['transaction_no' => $this->nextNo('ITX'), 'transaction_type' => 'cutting_material_return',
             'source_type' => 'cutting_settlement', 'source_id' => $batch->id, 'source_no' => $batch->batch_no,
             'posting_status' => 'posted', 'warehouse_id' => $balance->warehouse_id, 'location_id' => $balance->location_id,
@@ -1321,6 +1337,7 @@ class InventoryService
         $this->applyInventoryChange($transaction, ['item_id' => $batch->input_item_id, 'warehouse_id' => $balance->warehouse_id,
             'location_id' => $balance->location_id, 'batch_no' => $balance->batch_no, 'unit_id' => $balance->unit_id,
             'change_qty' => (string) $batch->input_qty, 'cost_amount' => (string) $batch->original_total_cost,
+            'original_return_transaction_items' => [['id' => $source->id, 'quantity' => (string) $batch->input_qty]],
             'unit_cost' => bcdiv((string) $batch->original_total_cost, (string) $batch->input_qty, 8),
             'material_lot_id' => $balance->material_lot_id, 'cutting_physical_id' => $batch->physical_material_id,
             'source_type' => 'cutting_settlement', 'source_id' => $batch->id, 'source_item_id' => $batch->id,
@@ -1458,7 +1475,34 @@ class InventoryService
 
     private function applyInventoryChange(InventoryTransaction $transaction, array $line): InventoryTransactionItem
     {
-        $item = Item::findOrFail($line['item_id']);
+        $item = Item::query()->whereKey($line['item_id'])->lockForUpdate()->firstOrFail();
+        if ((float) $line['change_qty'] > 0) {
+            if (!empty($line['original_return_transaction_items']) && in_array($transaction->transaction_type, [
+                'cutting_material_return', 'sales_return_inbound', 'production_material_return_receipt', 'production_material_quality_return_quarantine',
+            ], true)) {
+                $proofs = collect($line['original_return_transaction_items'])->groupBy('id')
+                    ->map(fn ($rows) => $rows->reduce(fn ($sum, $row) => bcadd($sum, (string) $row['quantity'], 8), '0.00000000'));
+                $restored = '0.00000000';
+                foreach ($proofs as $sourceId => $quantity) {
+                    $source = InventoryTransactionItem::query()->with('transaction')->whereKey($sourceId)->lockForUpdate()->first();
+                    $originalType = match ($transaction->transaction_type) {
+                        'cutting_material_return' => 'cutting_material_issue',
+                        'sales_return_inbound' => 'sales_shipment_outbound',
+                        default => 'production_material_picking_outbound',
+                    };
+                    if (!$source || $source->transaction?->transaction_type !== $originalType) {
+                        throw ValidationException::withMessages(['stock' => '历史退回缺少对应业务的原出库流水证明。']);
+                    }
+                    $item = app(WarehouseManagementScopeService::class)->assertOriginalReturn($source, array_replace($line, ['change_qty' => $quantity]));
+                    $restored = bcadd($restored, $quantity, 8);
+                }
+                if (bccomp($restored, (string) $line['change_qty'], 8) !== 0) {
+                    throw ValidationException::withMessages(['stock' => '历史退回数量必须与原出库事实分配完全一致。']);
+                }
+            } else {
+                $item = $this->assertForwardStockLocator($line);
+            }
+        }
         $balance = InventoryBalance::firstOrNew([
             'item_id' => $line['item_id'],
             'warehouse_id' => $line['warehouse_id'],
@@ -1590,6 +1634,22 @@ class InventoryService
         );
 
         return $transactionItem;
+    }
+
+    private function assertForwardStockLocator(array $line): Item
+    {
+        $validated = app(WarehouseManagementScopeService::class)->assertForward((int) $line['item_id'], (int) $line['warehouse_id']);
+        $location = Location::query()->whereKey((int) $line['location_id'])->lockForUpdate()->first();
+        if (!$location || !in_array($location->status, ['active', 'enabled'], true)) {
+            throw ValidationException::withMessages(['location_id' => '所选库位不存在或已停用。']);
+        }
+        if ((int) $location->warehouse_id !== (int) $validated['warehouse']->id) {
+            throw ValidationException::withMessages(['location_id' => '所选库位必须属于当前入库仓库，不能使用其他仓库的库位。']);
+        }
+        if (!(bool) $validated['item']->is_stock_item) {
+            throw ValidationException::withMessages(['stock' => '非库存物料不能建立新库存；历史原事实退回须提供真实原出库证明。']);
+        }
+        return $validated['item'];
     }
 
     private function assertPhysicalInventoryChange(
@@ -1834,6 +1894,7 @@ class InventoryService
                 'unit_cost' => (float) $allocation->unit_cost_snapshot,
                 'cost_amount' => round($quantity * (float) $allocation->unit_cost_snapshot, 4),
                 'shipment_line_id' => $allocation->sales_shipment_line_id,
+                'outbound_transaction_item_id' => $allocation->outbound_transaction_item_id,
             ];
             $remaining -= $quantity;
         }
@@ -1844,6 +1905,16 @@ class InventoryService
         }
 
         return $segments;
+    }
+
+    private function originalReturnProof(int $sourceId, array $locator, float $quantity): array
+    {
+        $source = InventoryTransactionItem::query()->whereKey($sourceId)->lockForUpdate()->first();
+        if (!$source || (int) $source->item_id !== (int) $locator['item_id']
+            || (int) $source->warehouse_id !== (int) $locator['warehouse_id']
+            || (int) $source->location_id !== (int) $locator['location_id']
+            || (string) $source->batch_no !== (string) $locator['batch_no']) return [];
+        return [['id' => $source->id, 'quantity' => number_format($quantity, 8, '.', '')]];
     }
 
     private function registerReceiptSerials(PurchaseReceipt $receipt, object $line, PurchaseReceiptItemAllocation $allocation): void

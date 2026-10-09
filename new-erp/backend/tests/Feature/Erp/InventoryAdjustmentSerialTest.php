@@ -132,7 +132,7 @@ class InventoryAdjustmentSerialTest extends TestCase
     private function fixture(): array
     {
         $unit = Unit::create(['unit_code' => 'PCS-ADJ', 'unit_name' => '件', 'unit_type' => 'count', 'decimal_places' => 0, 'is_base' => true, 'status' => 'enabled']);
-        $warehouse = Warehouse::create(['warehouse_code' => 'WH-ADJ', 'warehouse_name' => '调整测试仓', 'status' => 'enabled']);
+        $warehouse = Warehouse::create(['warehouse_code' => 'WH-ADJ', 'warehouse_name' => '调整测试仓', 'management_scope' => 'factory', 'status' => 'enabled']);
         $location = Location::create(['location_code' => 'LOC-ADJ-A', 'location_name' => 'A库位', 'warehouse_id' => $warehouse->id, 'status' => 'enabled']);
         $otherLocation = Location::create(['location_code' => 'LOC-ADJ-B', 'location_name' => 'B库位', 'warehouse_id' => $warehouse->id, 'status' => 'enabled']);
 

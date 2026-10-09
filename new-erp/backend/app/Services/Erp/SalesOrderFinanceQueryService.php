@@ -2,7 +2,7 @@
 
 namespace App\Services\Erp;
 
-use App\Models\Erp\{ItemCategory, PurchaseOrderItem, SalesOrder, SalesOrderPurchaseLink};
+use App\Models\Erp\{ItemCategory, PurchaseOrder, PurchaseOrderItem, PurchasePlan, SalesOrder, SalesOrderPurchaseLink};
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Arr;
@@ -19,7 +19,11 @@ class SalesOrderFinanceQueryService
     public function candidates(array $filters)
     {
         $query = PurchaseOrderItem::query()->with(['order.supplier', 'item', 'purchaseUnit'])
-            ->whereHas('order', fn ($q) => $q->where('audit_status', 'approved')->whereNotIn('purchase_status', ['cancelled', 'voided']))
+            ->whereHas('order', function (Builder $q): void {
+                $q->where('audit_status', 'approved')->whereNotIn('purchase_status', ['cancelled', 'voided']);
+                $this->factoryPurchaseDocument($q);
+            })
+            ->whereHas('item', fn ($q) => $q->where('management_scope', 'factory'))
             ->select('erp_purchase_order_items.*')->selectSub(
                 SalesOrderPurchaseLink::selectRaw('COALESCE(SUM(purchase_qty),0)')
                     ->whereColumn('purchase_order_item_id', 'erp_purchase_order_items.id')->where('status', 'active'), 'assigned_purchase_qty');
@@ -33,6 +37,7 @@ class SalesOrderFinanceQueryService
         if (!empty($filters['category_id'])) {
             $ids = [(int) $filters['category_id']];
             $categories = $this->categories();
+            if (! $categories->contains('id', $ids[0])) $ids = [];
             do {
                 $previous = $ids;
                 $ids = array_values(array_unique([...$ids, ...$categories->whereIn('parent_id', $ids)->pluck('id')->all()]));
@@ -52,7 +57,35 @@ class SalesOrderFinanceQueryService
 
     public function categories()
     {
-        return ItemCategory::where('category_type', 'item')->orderBy('sort_order')->orderBy('id')->get(['id', 'parent_id', 'category_name']);
+        return ItemCategory::where('category_type', 'item')->where('management_scope', 'factory')
+            ->orderBy('sort_order')->orderBy('id')->get(['id', 'parent_id', 'category_name']);
+    }
+
+    private function factoryPurchaseDocument(Builder $query): void
+    {
+        $query->where($query->getModel()->qualifyColumn('management_scope'), 'factory')->whereHas('items')
+            ->whereDoesntHave('items', fn (Builder $lines) => $lines->whereDoesntHave('item', fn (Builder $item) => $item->where('management_scope', 'factory')));
+        $model = $query->getModel();
+        $sources = [];
+        if ($model instanceof PurchasePlan || $model instanceof PurchaseOrder) {
+            $sources = ['request_id' => 'request', 'request_item_id' => 'requestItem.request'];
+        }
+        if ($model instanceof PurchaseOrder) {
+            $sources += ['plan_id' => 'plan', 'plan_item_id' => 'planItem.plan'];
+            $query->where(fn (Builder $head) => $head->whereNull($model->qualifyColumn('plan_id'))
+                ->orWhereHas('plan', fn (Builder $plan) => $this->factoryPurchaseDocument($plan)));
+        }
+        if ($sources === []) return;
+        // Match the write guard's linked request/plan ownership before pagination,
+        // including source heads reached through a source line ID.
+        $query->whereDoesntHave('items', function (Builder $lines) use ($sources): void {
+            $lines->where(function (Builder $invalid) use ($sources): void {
+                foreach ($sources as $column => $relation) {
+                    $invalid->orWhere(fn (Builder $source) => $source->whereNotNull($source->getModel()->qualifyColumn($column))
+                        ->whereDoesntHave($relation, fn (Builder $head) => $this->factoryPurchaseDocument($head)));
+                }
+            });
+        });
     }
 
     public function overview(SalesOrder $order): array

@@ -3,18 +3,21 @@
     <header class="page-heading">
       <div>
         <h1>{{ isEdit ? '编辑到货单' : '新增到货单' }}</h1>
+        <el-tag size="mini" :type="form.management_scope === 'office' ? 'info' : 'success'">{{ scopeLabel(form.management_scope) }}</el-tag>
       </div>
       <div class="heading-actions">
         <el-button size="small" @click="goBack">返回列表</el-button>
-        <el-button size="small" :loading="saving" @click="save(true)">保存草稿</el-button>
-        <el-button size="small" type="success" :loading="saving" @click="save(false)">保存</el-button>
+        <el-button size="small" :loading="saving" :disabled="!!scopeIssue || scopeChanging" @click="save(true)">保存草稿</el-button>
+        <el-button size="small" type="success" :loading="saving" :disabled="!!scopeIssue || scopeChanging" @click="save(false)">保存</el-button>
       </div>
     </header>
 
+    <el-alert v-if="scopeIssue" :title="scopeIssue" type="warning" :closable="false" show-icon />
     <el-alert class="posting-alert" type="info" :closable="false" show-icon :title="isReplacement ? '本单为换货免费补发到货单：供应商、来源物料、采购数量、单位及价格已锁定；只登记验收、库位和编号，不新增应付。' : '到货确认只生成待过账记录，库存过账仅关联已登记编号。'" />
 
     <section class="basic-panel">
       <div class="basic-grid">
+        <label class="field-block required"><span>管理类型</span><el-select :value="form.management_scope" :disabled="scopeLocked" size="small" placeholder="请选择管理类型" @change="changeManagementScope"><el-option v-for="scope in scopeOptions" :key="scope.value" :label="scope.label" :value="scope.value" /></el-select></label>
         <label class="field-block receipt-no-field">
           <span>到货单号</span>
           <el-input v-model="form.receipt_no" size="small" disabled>
@@ -103,7 +106,7 @@
             <label class="compact-field required"><span>不合格数量</span><el-input v-model.number="activeLine.unqualified_qty" type="number" size="small" min="0" /></label>
             <template v-if="isStockManaged(activeLine)">
               <label class="compact-field required"><span>批次号</span><el-input :value="activeLine.batch_no || '保存时系统自动生成'" size="small" disabled /></label>
-              <label class="compact-field" :class="{ required: qualifiedBaseQty(activeLine) > 0 }"><span>默认仓库</span><el-select v-model="activeLine.warehouse_id" size="small" placeholder="无需入库" :disabled="qualifiedBaseQty(activeLine) <= 0" @change="onDefaultWarehouseChange(activeLine)"><el-option v-for="warehouse in warehouses" :key="warehouse.id" :value="warehouse.id" :label="warehouse.warehouse_name" /></el-select></label>
+              <label class="compact-field" :class="{ required: qualifiedBaseQty(activeLine) > 0 }"><span>默认仓库</span><el-select v-model="activeLine.warehouse_id" size="small" placeholder="无需入库" :disabled="qualifiedBaseQty(activeLine) <= 0" @change="onDefaultWarehouseChange(activeLine)"><el-option v-for="warehouse in scopedWarehouses" :key="warehouse.id" :value="warehouse.id" :label="warehouse.warehouse_name" /></el-select></label>
               <label class="compact-field" :class="{ required: qualifiedBaseQty(activeLine) > 0 }"><span>默认库位</span><el-select v-model="activeLine.location_id" size="small" placeholder="无需入库" :disabled="qualifiedBaseQty(activeLine) <= 0" @change="onDefaultLocationChange(activeLine)"><el-option v-for="location in filteredLocations(activeLine.warehouse_id)" :key="location.id" :value="location.id" :label="location.location_name" /></el-select></label>
               <div class="allocation-entry"><span>入库库位分配</span><div><el-button size="mini" type="success" plain icon="el-icon-s-grid" :disabled="qualifiedBaseQty(activeLine) <= 0" @click="openAllocationDialog(activeLine)">多库位分配</el-button><small>{{ allocationProgressText(activeLine) }}</small></div></div>
             </template>
@@ -169,7 +172,7 @@
         <div class="allocation-toolbar"><strong>{{ activeAllocationItemName }}</strong><el-button size="mini" type="success" icon="el-icon-plus" @click="addAllocationRow">添加库位</el-button></div>
         <el-table :data="allocationDialog.rows" size="mini" border>
           <el-table-column type="index" label="序号" width="52" align="center" />
-          <el-table-column label="仓库" width="132"><template slot-scope="{row}"><el-select v-model="row.warehouse_id" size="small" placeholder="选择仓库" @change="row.location_id=null"><el-option v-for="warehouse in warehouses" :key="warehouse.id" :value="warehouse.id" :label="warehouse.warehouse_name" /></el-select></template></el-table-column>
+          <el-table-column label="仓库" width="132"><template slot-scope="{row}"><el-select v-model="row.warehouse_id" size="small" placeholder="选择仓库" @change="row.location_id=null"><el-option v-for="warehouse in scopedWarehouses" :key="warehouse.id" :value="warehouse.id" :label="warehouse.warehouse_name" /></el-select></template></el-table-column>
           <el-table-column label="库位" width="142"><template slot-scope="{row}"><el-select v-model="row.location_id" size="small" placeholder="选择库位"><el-option v-for="location in filteredLocations(row.warehouse_id)" :key="location.id" :value="location.id" :label="location.location_name" /></el-select></template></el-table-column>
           <el-table-column label="基本数量" width="105"><template slot-scope="{row}"><el-input-number v-model="row.base_qty" size="small" :min="0" :precision="allocationPrecision" :controls="false" :disabled="allocationUsesSerials" /></template></el-table-column>
           <el-table-column v-if="allocationUsesSerials" label="设备编号 / 序列号" min-width="235"><template slot-scope="{row}"><el-select v-model="row.serial_nos" size="small" multiple filterable collapse-tags placeholder="分配已录入编号" @change="row.base_qty=row.serial_nos.length"><el-option v-for="entry in allocationSerialOptions" :key="entry.serial_no" :value="entry.serial_no" :label="entry.serial_no" :disabled="serialAssignedElsewhere(entry.serial_no,row)" /></el-select></template></el-table-column>
@@ -180,7 +183,7 @@
       <span slot="footer"><el-button size="small" @click="allocationDialog.visible=false">取消</el-button><el-button size="small" type="success" @click="confirmAllocationDialog">确认分配</el-button></span>
     </el-dialog>
 
-    <footer class="bottom-actions"><el-button @click="goBack">返回列表</el-button><el-button :loading="saving" @click="save(true)">保存草稿</el-button><el-button type="success" :loading="saving" @click="save(false)">保存</el-button></footer>
+    <footer class="bottom-actions"><el-button @click="goBack">返回列表</el-button><el-button :loading="saving" :disabled="!!scopeIssue || scopeChanging" @click="save(true)">保存草稿</el-button><el-button type="success" :loading="saving" :disabled="!!scopeIssue || scopeChanging" @click="save(false)">保存</el-button></footer>
   </section>
 </template>
 
@@ -190,16 +193,22 @@ import { generateReceiptSerials, getPurchase, savePurchaseReceipt } from '@/api/
 import { reserveForCreatePage, clearCreatePageReservation } from '@/utils/documentNumberReservation'
 import PurchaseItemPicker from '@/components/purchase/PurchaseItemPicker.vue'
 import PurchaseAttachmentPanel from '@/components/purchase/PurchaseAttachmentPanel.vue'
+import { purchaseScopes, purchaseScopeLabel, purchaseScopeIssue, purchaseSourceLocked, purchaseScopeMatches, validPurchaseScope } from '@/utils/purchaseManagementScope.mjs'
 import ReceiptPhysicalEntries from '@/components/purchase/ReceiptPhysicalEntries.vue'
 
 export default {
   components: { PurchaseItemPicker, PurchaseAttachmentPanel, ReceiptPhysicalEntries },
   data: () => ({
-    form: { receipt_no: '', supplier_id: null, receipt_date: '', confirm_status: 'draft', stock_post_status: 'pending', remark: '', items: [] },
+    form: { management_scope: 'factory', receipt_no: '', supplier_id: null, receipt_date: '', confirm_status: 'draft', stock_post_status: 'pending', remark: '', items: [] },
     items: [], suppliers: [], warehouses: [], locations: [], activeIndex: 0, reservation: null, saving: false, pickerTarget: null, attachmentDraftToken: '',
+    documentRevision: 0, warehouseRevision: 0, scopeChanging: false,
     allocationDialog: { visible: false, line: null, rows: [] }
   }),
   computed: {
+    scopeOptions() { return purchaseScopes },
+    scopeIssue() { return purchaseScopeIssue(this.form, this.items) },
+    scopeLocked() { return this.scopeChanging || this.saving || purchaseSourceLocked(this.form) },
+    scopedWarehouses() { return this.warehouses.filter(row => purchaseScopeMatches(row, this.form.management_scope)) },
     isEdit() { return Boolean(this.$route.params.id) },
     isReplacement() { return this.form.settlement_mode === 'replacement_no_charge' },
     activeLine() { return this.form.items[this.activeIndex] || null },
@@ -212,6 +221,7 @@ export default {
     allocationPrecision() { return 6 },
     allocationDialogValid() {
       if (!this.allocationDialog.line || !this.allocationDialog.rows.length) return false
+      if (this.allocationDialog.rows.some(row => !this.warehouseMatches(row.warehouse_id))) return false
       if (this.allocationDialog.rows.some(row => !row.warehouse_id || !row.location_id || Number(row.base_qty || 0) <= 0)) return false
       const locators = this.allocationDialog.rows.map(row => `${row.warehouse_id}-${row.location_id}`)
       if (new Set(locators).size !== locators.length || Math.abs(this.allocationDialogTotal - this.qualifiedBaseQty(this.allocationDialog.line)) > 0.000001) return false
@@ -239,38 +249,75 @@ export default {
   },
   watch: { '$route.fullPath'(next, previous) { if (next !== previous) this.initializeDocument() } },
   async mounted() {
-    // A missing auxiliary lookup must never prevent an existing receipt from
-    // being loaded.  The receipt itself is the primary document; warehouse
-    // and location options are only required when the user edits an
-    // allocation.
-    const [suppliers, warehouses, locations] = await Promise.allSettled([
+    const [suppliers, locations] = await Promise.allSettled([
       listEntity('suppliers', { status: 'enabled', page: 1, per_page: 100 }),
-      listEntity('warehouses', { page: 1, per_page: 100 }),
       listEntity('locations', { page: 1, per_page: 100 })
     ])
-    this.suppliers = suppliers.status === 'fulfilled' ? (suppliers.value.data.data || []) : []
-    this.warehouses = warehouses.status === 'fulfilled' ? (warehouses.value.data.data || []).filter(row => ['active', 'enabled'].includes(row.status)) : []
+    this.suppliers = suppliers.status === 'fulfilled' ? suppliers.value.data.data || [] : []
     this.locations = locations.status === 'fulfilled' ? (locations.value.data.data || []).filter(row => ['active', 'enabled'].includes(row.status)) : []
     await this.initializeDocument()
   },
   methods: {
+    scopeLabel(scope) { return purchaseScopeLabel(scope) },
+    warehouseMatches(id) { return this.scopedWarehouses.some(row => Number(row.id) === Number(id)) },
+    async loadScopedWarehouses() {
+      const revision = ++this.warehouseRevision
+      const scope = this.form.management_scope
+      this.warehouses = []
+      if (!validPurchaseScope(scope)) return
+      try {
+        const { data } = await listEntity('warehouses', { management_scope: scope, page: 1, per_page: 100 })
+        if (revision !== this.warehouseRevision || scope !== this.form.management_scope) return
+        this.warehouses = (data.data || []).filter(row => ['enabled', 'active'].includes(row.status) && purchaseScopeMatches(row, scope))
+      } catch (error) { if (revision === this.warehouseRevision) this.$message.error(error.userMessage || '仓库加载失败') }
+    },
+    async changeManagementScope(scope) {
+      if (scope === this.form.management_scope || !validPurchaseScope(scope) || this.scopeLocked) return
+      this.scopeChanging = true
+      const document = this.form
+      try {
+        if (document.items.some(row => row.item_id || row.warehouse_id || (row._allocations || []).length)) await this.$confirm('切换管理类型将清空全部到货明细、仓库、库位及编号，是否继续？', '切换管理类型', { type: 'warning', confirmButtonText: '清空并切换' })
+        if (this.form !== document) return
+        this.documentRevision++
+        this.pickerTarget = null
+        if (this.$refs.itemPicker) this.$refs.itemPicker.visible = false
+        this.allocationDialog = { visible: false, line: null, rows: [] }
+        this.$set(document, 'management_scope', scope)
+        this.$set(document, 'items', [this.blankLine()])
+        this.activeIndex = 0
+        await this.loadScopedWarehouses()
+      } catch (error) { if (error !== 'cancel' && error !== 'close') this.$message.error(error.userMessage || '管理类型切换失败') }
+      finally { this.scopeChanging = false }
+    },
     blankLine() { return { item_id: null, qty: 1, purchase_unit_id: null, qualified_qty: 1, unqualified_qty: 0, actual_base_qty: 0, unit_price: 0, tax_rate: 13, difference_reason: '', batch_no: '', expected_arrival_date: this.form.receipt_date, warehouse_id: null, location_id: null, remark: '', serial_text: '', serial_number_source: 'supplier', _conversionOptions: [], _serialEntries: [], _allocations: [], _physicalEntries: [], _scanInput: '', _serialError: '' } },
     async initializeDocument() {
+      const revision = ++this.documentRevision
+      this.warehouseRevision++
+      this.pickerTarget = null
+      this.items = []
+      this.warehouses = []
+      this.allocationDialog = { visible: false, line: null, rows: [] }
+      if (this.$refs.itemPicker) this.$refs.itemPicker.visible = false
       this.activeIndex = 0
       this.reservation = null
-      if (this.isEdit) return this.loadExisting()
+      if (this.isEdit) { await this.loadExisting(); if (revision === this.documentRevision) await this.loadScopedWarehouses(); return }
       this.attachmentDraftToken = this.newDraftToken()
       const today = new Date().toISOString().slice(0, 10)
-      this.form = { receipt_no: '', supplier_id: null, receipt_date: today, confirm_status: 'draft', stock_post_status: 'pending', remark: '', items: [] }
+      this.form = { management_scope: validPurchaseScope(this.$route.query?.management_scope) ? this.$route.query.management_scope : 'factory', receipt_no: '', supplier_id: null, receipt_date: today, confirm_status: 'draft', stock_post_status: 'pending', remark: '', items: [] }
       this.form.items.push(this.blankLine())
       try {
-        this.reservation = await reserveForCreatePage('purchase_receipt', this.$route.path)
-        this.form.receipt_no = this.reservation.document_no
+        const reservation = await reserveForCreatePage('purchase_receipt', this.$route.path)
+        if (revision !== this.documentRevision) return
+        this.reservation = reservation
+        this.form.receipt_no = reservation.document_no
       } catch (error) { this.$message.error(error.userMessage || '单据编号预生成失败') }
+      if (revision === this.documentRevision) await this.loadScopedWarehouses()
     },
     async loadExisting() {
+      const revision = this.documentRevision
       try {
         const response = await getPurchase('receipts', this.$route.params.id)
+        if (revision !== this.documentRevision) return
         const data = response.data
         this.attachmentDraftToken = ''
         ;(data.items || []).forEach(line => this.rememberItem(line.item))
@@ -291,17 +338,27 @@ export default {
     selectLine(row) { this.activeIndex = this.form.items.indexOf(row) },
     lineRowClass({ rowIndex }) { return rowIndex === this.activeIndex ? 'selected-receipt-row' : '' },
     openItemPicker(line) {
+      if (!validPurchaseScope(this.form.management_scope)) return this.$message.warning('请先明确单据管理类型')
       if (this.isReplacement) return this.$message.info('换货补发到货单的来源物料已锁定')
       this.pickerTarget = line
-      this.$refs.itemPicker.open({ currentId: line && line.item_id, params: { status: 'enabled', is_purchase_item: 1 } })
+      this.$refs.itemPicker.open({ currentId: line && line.item_id, params: { status: 'enabled', is_purchase_item: 1, management_scope: this.form.management_scope } })
     },
     async applyPickedItem(item) {
       const line = this.pickerTarget
-      if (!line || !item) return
+      if (!line || !item || !this.form.items.includes(line)) return
+      if (!purchaseScopeMatches(item, this.form.management_scope)) return this.$message.warning('请选择与到货单管理类型一致的物料')
       const changed = Number(line.item_id || 0) !== Number(item.id)
       this.rememberItem(item)
       this.$set(line, 'item_id', item.id)
       if (changed) {
+        this.$delete(line, 'management_scope_snapshot')
+        this.$delete(line, 'is_stock_item_snapshot')
+        this.$delete(line, 'purchase_conversion_snapshot')
+        this.$delete(line, 'conversion_factor_snapshot')
+        this.$delete(line, 'purchase_unit_name_snapshot')
+        this.$delete(line, 'base_unit_name_snapshot')
+        this.$set(line, 'warehouse_id', null)
+        this.$set(line, 'location_id', null)
         this.$set(line, 'purchase_unit_id', null)
         this.$set(line, '_conversionOptions', [])
         this.$set(line, '_physicalEntries', [])
@@ -324,7 +381,10 @@ export default {
     async onItemChange(line) { line._serialEntries = []; line.serial_text = ''; await this.loadLineConversions(line, true) },
     async loadLineConversions(line, chooseDefault = true) {
       if (!line.item_id) return this.$set(line, '_conversionOptions', [])
-      const { data } = await listItemPurchaseConversionOptions(line.item_id, { page: 1, per_page: 100 })
+      const revision = this.documentRevision
+      const itemId = line.item_id
+      const { data } = await listItemPurchaseConversionOptions(itemId, { page: 1, per_page: 100 })
+      if (revision !== this.documentRevision || line.item_id !== itemId || !this.form.items.includes(line)) return
       const item = this.itemById(line.item_id)
       const itemUnit = item && (item.unit?.standard_unit || item.unit?.standardUnit || item.unit)
       const options = [...(data.data || [])]
@@ -383,8 +443,8 @@ export default {
       if (!this.isStockManaged(line)) return true
       if (this.qualifiedBaseQty(line) <= 0) return true
       const rows = this.allocations(line)
-      if (!rows.length) return Boolean(line.warehouse_id && line.location_id)
-      if (rows.some(row => !row.warehouse_id || !row.location_id || Number(row.base_qty || 0) <= 0)) return false
+      if (!rows.length) return Boolean(this.warehouseMatches(line.warehouse_id) && line.location_id)
+      if (rows.some(row => !this.warehouseMatches(row.warehouse_id) || !row.location_id || Number(row.base_qty || 0) <= 0)) return false
       const locators = rows.map(row => `${row.warehouse_id}-${row.location_id}`)
       if (new Set(locators).size !== locators.length || Math.abs(rows.reduce((sum,row)=>sum+Number(row.base_qty||0),0)-this.qualifiedBaseQty(line))>0.000001) return false
       const serials = rows.flatMap(row => row.serial_nos || [])
@@ -469,7 +529,8 @@ export default {
       const labels = serials.map(value => `<article><div class="title">设备编号 / 序列号</div><div class="serial">${escapeHtml(value)}</div><div class="meta">物料：${escapeHtml(item.item_code || '-')} / ${escapeHtml(item.item_name || '-')}</div><div class="meta">到货单：${escapeHtml(this.form.receipt_no || '-')}</div></article>`).join('')
       const popup = window.open('', '_blank', 'width=760,height=640')
       if (!popup) return this.$message.error('打印窗口被浏览器拦截，请允许弹出窗口')
-      popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>设备编号标签</title><style>@page{size:70mm 40mm;margin:3mm}*{box-sizing:border-box}body{margin:0;font-family:Arial,"Microsoft YaHei"}article{width:64mm;height:34mm;padding:4mm;border:1px solid #222;page-break-after:always}.title{font-size:10pt}.serial{margin:3mm 0;font-size:16pt;font-weight:700;word-break:break-all}.meta{font-size:8.5pt;line-height:1.5}article:last-child{page-break-after:auto}</style></head><body>${labels}</body></html>`)
+      popup.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>设备编号标签</title><style>@page{size:70mm 40mm;margin:3mm}*{box-sizing:border-box}body{margin:0;font-family:Arial,"Microsoft YaHei"}article{width:64mm;height:34mm;padding:4mm;border:1px solid #222;page-break-after:always}.title{font-size:10pt}.serial{margin:3mm 0;font-size:16pt;font-weight:700;word-break:break-all}.meta{font-size:8.5pt;line-height:1.5}article:last-child{page-break-after:auto}
+</style></head><body>${labels}</body></html>`)
       popup.document.close(); popup.focus(); window.setTimeout(() => popup.print(), 250)
     },
     lineAmount(line) { return Number(line.qty || 0) * Number(line.unit_price || 0) },
@@ -487,6 +548,8 @@ export default {
       return ''
     },
     async save(draft) {
+      if (this.scopeChanging) return
+      if (this.scopeIssue) return this.$message.error(this.scopeIssue)
       const message = this.validate(!draft)
       if (message) return this.$message.error(message)
       this.saving = true
@@ -506,10 +569,59 @@ export default {
 </script>
 
 <style scoped>
-.receipt-form-page{min-height:calc(100vh - 52px);padding:14px 16px 68px;background:#f7f8fa;color:#26313b;overflow-x:hidden}.page-heading{height:48px;display:flex;align-items:flex-start;justify-content:space-between}.page-heading h1{margin:3px 0 0;font-size:18px;color:#17212b}.heading-actions{display:flex;gap:9px}.posting-alert{margin-bottom:10px}.basic-panel,.lines-section,.line-editor,.document-summary{background:#fff;border:1px solid #e4e9ed;border-radius:5px}.basic-panel{padding:14px 16px;margin-bottom:12px}.basic-grid{display:grid;grid-template-columns:1.15fr 1.15fr 1.15fr .65fr .8fr;gap:26px;align-items:end}.field-block,.compact-field,.scan-label{display:grid;gap:6px;color:#3d4852;font-size:11px}.field-block.required>span:after,.compact-field.required>span:after{content:' *';color:#e14d50}.field-block .el-select,.field-block .el-date-editor,.compact-field .el-select,.compact-field .el-date-editor{width:100%}.status-field{display:grid;align-content:center;justify-items:start;gap:9px;min-height:55px;color:#3d4852;font-size:11px}.remark-field{display:grid;grid-template-columns:72px minmax(0,1fr);align-items:start;margin-top:12px;color:#3d4852}.remark-field>span{padding-top:8px}.lines-section{margin-bottom:12px;overflow:hidden}.section-heading{height:54px;padding:0 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #edf0f2}.section-heading h2{margin:0;font-size:14px}.section-heading h2 small{color:#77818a;font-weight:400}.line-table-shell{width:100%;overflow:hidden}.line-table-shell ::v-deep .el-table th.el-table__cell{height:36px;background:#fafbfc;color:#303b45}.line-table-shell ::v-deep .el-table td.el-table__cell{height:48px;padding:5px 0}.line-table-shell ::v-deep .selected-receipt-row td{background:#edf9f2!important}.item-cell{display:grid}.item-cell strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}.item-cell span{color:#79838d;font-size:10px}.serial-progress{display:grid;gap:3px}.serial-progress i{width:70px;height:4px;border-radius:3px;background:#e6e9ec;overflow:hidden}.serial-progress b{display:block;height:100%;background:#07883f}.danger-link{color:#e34b4f!important}.detail-layout{display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:12px}.line-editor{min-width:0;overflow:hidden}.line-editor>header{height:40px;padding:0 14px;display:flex;align-items:center;border-bottom:1px solid #edf0f2;font-size:13px;font-weight:600}.line-editor>header span{margin-left:7px;color:#66727c;font-weight:400}.editor-columns{display:grid;grid-template-columns:1fr 1fr 1.18fr;min-height:350px}.editor-group{min-width:0;padding:13px 14px;border-right:1px solid #edf0f2}.editor-group:last-child{border-right:0}.editor-group h3{margin:0 0 12px;font-size:12px}.compact-field{grid-template-columns:96px minmax(0,1fr);align-items:center;margin-bottom:9px}.compact-field>span{white-space:nowrap}.remark-compact{align-items:start}.remark-compact>span{padding-top:7px}.serial-title{display:flex;align-items:center;justify-content:space-between}.serial-title h3{margin-bottom:9px}.generate-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:end}.generate-row label{display:grid;grid-template-columns:68px 70px;align-items:center;gap:6px;font-size:11px}.scan-label{margin-top:10px}.serial-helper,.serial-error{height:17px;margin:4px 0 0;font-size:10px}.serial-helper{color:#8a949c}.serial-error{color:#e34b4f;font-weight:600}.serial-list-heading{height:28px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #e8ecef;color:#53606a;font-size:11px}.serial-records{max-height:126px;overflow-y:auto}.serial-record{height:31px;display:grid;grid-template-columns:24px minmax(0,1fr) 54px 48px 18px;align-items:center;border-bottom:1px solid #edf0f2;font-size:10px}.serial-index{text-align:center}.serial-record strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:Consolas,monospace}.serial-record em{color:#6f7a83;font-style:normal}.serial-record .el-button{padding:0}.serial-delete{border:0;background:transparent;color:#ef4b4f;font-size:16px;cursor:pointer}.document-summary{padding:16px}.document-summary h3{margin:0 0 15px;font-size:13px}.document-summary dl{display:grid;grid-template-columns:1fr auto;gap:13px;margin:0}.document-summary dt{color:#6e7983}.document-summary dd{margin:0;font-weight:600}.document-summary hr{margin:16px 0;border:0;border-top:1px solid #e9edf0}.validation-state{color:#07883f;line-height:1.7}.validation-state.invalid{color:#dd8b1d}.validation-state i{margin-right:5px}.bottom-actions{position:fixed;left:192px;right:0;bottom:0;z-index:20;height:56px;padding:9px 16px;display:flex;justify-content:flex-end;gap:9px;background:#fff;border-top:1px solid #e2e7eb}
+.receipt-form-page{min-height:calc(100vh - 52px);padding:14px 16px 68px;background:#f7f8fa;color:#26313b;overflow-x:hidden}.page-heading{height:48px;display:flex;align-items:flex-start;justify-content:space-between}.page-heading h1{margin:3px 0 0;font-size:18px;color:#17212b}.heading-actions{display:flex;gap:9px}.posting-alert{margin-bottom:10px}.basic-panel,.lines-section,.line-editor,.document-summary{background:#fff;border:1px solid #e4e9ed;border-radius:5px}.basic-panel{padding:14px 16px;margin-bottom:12px}.basic-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr) minmax(0,1.15fr) minmax(0,1.15fr) minmax(0,.65fr) minmax(0,.8fr);gap:26px;align-items:end}.field-block,.compact-field,.scan-label{display:grid;gap:6px;color:#3d4852;font-size:11px}.field-block.required>span:after,.compact-field.required>span:after{content:' *';color:#e14d50}.field-block .el-select,.field-block .el-date-editor,.compact-field .el-select,.compact-field .el-date-editor{width:100%}.status-field{display:grid;align-content:center;justify-items:start;gap:9px;min-height:55px;color:#3d4852;font-size:11px}.remark-field{display:grid;grid-template-columns:72px minmax(0,1fr);align-items:start;margin-top:12px;color:#3d4852}.remark-field>span{padding-top:8px}.lines-section{margin-bottom:12px;overflow:hidden}.section-heading{height:54px;padding:0 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #edf0f2}.section-heading h2{margin:0;font-size:14px}.section-heading h2 small{color:#77818a;font-weight:400}.line-table-shell{width:100%;overflow:hidden}.line-table-shell ::v-deep .el-table th.el-table__cell{height:36px;background:#fafbfc;color:#303b45}.line-table-shell ::v-deep .el-table td.el-table__cell{height:48px;padding:5px 0}.line-table-shell ::v-deep .selected-receipt-row td{background:#edf9f2!important}.item-cell{display:grid}.item-cell strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}.item-cell span{color:#79838d;font-size:10px}.serial-progress{display:grid;gap:3px}.serial-progress i{width:70px;height:4px;border-radius:3px;background:#e6e9ec;overflow:hidden}.serial-progress b{display:block;height:100%;background:#07883f}.danger-link{color:#e34b4f!important}.detail-layout{display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:12px}.line-editor{min-width:0;overflow:hidden}.line-editor>header{height:40px;padding:0 14px;display:flex;align-items:center;border-bottom:1px solid #edf0f2;font-size:13px;font-weight:600}.line-editor>header span{margin-left:7px;color:#66727c;font-weight:400}.editor-columns{display:grid;grid-template-columns:1fr 1fr 1.18fr;min-height:350px}.editor-group{min-width:0;padding:13px 14px;border-right:1px solid #edf0f2}.editor-group:last-child{border-right:0}.editor-group h3{margin:0 0 12px;font-size:12px}.compact-field{grid-template-columns:96px minmax(0,1fr);align-items:center;margin-bottom:9px}.compact-field>span{white-space:nowrap}.remark-compact{align-items:start}.remark-compact>span{padding-top:7px}.serial-title{display:flex;align-items:center;justify-content:space-between}.serial-title h3{margin-bottom:9px}.generate-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:end}.generate-row label{display:grid;grid-template-columns:68px 70px;align-items:center;gap:6px;font-size:11px}.scan-label{margin-top:10px}.serial-helper,.serial-error{height:17px;margin:4px 0 0;font-size:10px}.serial-helper{color:#8a949c}.serial-error{color:#e34b4f;font-weight:600}.serial-list-heading{height:28px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #e8ecef;color:#53606a;font-size:11px}.serial-records{max-height:126px;overflow-y:auto}.serial-record{height:31px;display:grid;grid-template-columns:24px minmax(0,1fr) 54px 48px 18px;align-items:center;border-bottom:1px solid #edf0f2;font-size:10px}.serial-index{text-align:center}.serial-record strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:Consolas,monospace}.serial-record em{color:#6f7a83;font-style:normal}.serial-record .el-button{padding:0}.serial-delete{border:0;background:transparent;color:#ef4b4f;font-size:16px;cursor:pointer}.document-summary{padding:16px}.document-summary h3{margin:0 0 15px;font-size:13px}.document-summary dl{display:grid;grid-template-columns:1fr auto;gap:13px;margin:0}.document-summary dt{color:#6e7983}.document-summary dd{margin:0;font-weight:600}.document-summary hr{margin:16px 0;border:0;border-top:1px solid #e9edf0}.validation-state{color:#07883f;line-height:1.7}.validation-state.invalid{color:#dd8b1d}.validation-state i{margin-right:5px}.bottom-actions{position:fixed;left:192px;right:0;bottom:0;z-index:20;height:56px;padding:9px 16px;display:flex;justify-content:flex-end;gap:9px;background:#fff;border-top:1px solid #e2e7eb}
 .item-picker-cell{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;min-height:34px;padding:2px 6px;border:1px solid #d9e6dd;border-radius:4px;background:#fbfefc;cursor:pointer}.item-picker-cell:hover{border-color:#07883f;background:#f2faf5}.item-picker-cell .item-cell{min-width:0}.item-picker-cell .item-cell strong,.item-picker-cell .item-cell span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.item-picker-cell .el-button{padding:4px 0;color:#07883f}
 .item-picker-cell.locked{border-color:#e2e6ea;background:#f7f8f9;cursor:default}.item-picker-cell.locked:hover{border-color:#e2e6ea;background:#f7f8f9}.item-picker-cell.locked .el-button{color:#7c8790}.document-summary .no-payable{color:#07883f}
 .allocation-entry{display:grid;grid-template-columns:96px minmax(0,1fr);align-items:center;margin:-1px 0 9px;color:#3d4852;font-size:11px}.allocation-entry>div{display:flex;align-items:center;gap:8px;min-width:0}.allocation-entry small{overflow:hidden;color:#6f7a83;text-overflow:ellipsis;white-space:nowrap}.serial-allocation-tip{margin:7px 0 0;padding:5px 7px;border-radius:3px;background:#eef8f2;color:#087b3d;font-size:10px}.allocation-dialog-body{display:grid;gap:12px}.allocation-toolbar{display:flex;align-items:center;justify-content:space-between}.allocation-dialog-body ::v-deep .el-select,.allocation-dialog-body ::v-deep .el-input-number{width:100%}.allocation-total{display:flex;align-items:center;justify-content:flex-end;gap:18px;padding:10px 12px;border:1px solid #cce8d7;border-radius:4px;background:#f1faf5;color:#087b3d}.allocation-total.invalid{border-color:#f0cf9a;background:#fff8ed;color:#c4770e}.allocation-total strong{min-width:70px;text-align:right}
 @media(max-width:1180px){.basic-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.detail-layout{grid-template-columns:minmax(0,1fr)}.document-summary{display:grid;grid-template-columns:150px 1fr 1px 130px 1fr;align-items:center;gap:12px}.document-summary h3,.document-summary dl,.document-summary hr,.document-summary p{margin:0}.document-summary dl{grid-template-columns:repeat(4,auto);gap:8px 16px}.document-summary hr{height:50px;border-left:1px solid #e9edf0}}
 @media(max-width:900px){.editor-columns{grid-template-columns:minmax(0,1fr)}.editor-group{border-right:0;border-bottom:1px solid #edf0f2}.basic-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.document-summary{display:block}.document-summary dl{grid-template-columns:1fr auto}.document-summary hr{height:auto;border-left:0;border-top:1px solid #e9edf0}.bottom-actions{left:0}}
+.page-heading > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.basic-grid > * {
+  min-width: 0;
+}
+@media (max-width: 780px) {
+  .page-heading {
+    height: auto;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .heading-actions {
+    flex-wrap: wrap;
+    max-width: 100%;
+    gap: 8px;
+  }
+  .basic-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .section-heading {
+    height: auto;
+    padding: 12px;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .section-heading > div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .line-editor > header {
+    height: auto;
+    padding: 12px;
+    flex-wrap: wrap;
+  }
+}
+@media (max-width: 780px) {
+  .receipt-form-page { padding-bottom: 110px; }
+  .heading-actions .el-button, .bottom-actions .el-button, .section-heading .el-button { margin-left: 0; }
+  .heading-actions .el-button { padding: 9px 12px; }
+  .bottom-actions { left: 64px; height: auto; min-height: 56px; flex-wrap: wrap; }
+  .bottom-actions .el-button { padding: 9px 10px; }
+}
 </style>

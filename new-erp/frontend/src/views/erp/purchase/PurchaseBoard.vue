@@ -27,6 +27,7 @@
 
       <div class="filter-card">
         <div class="filter-inputs">
+          <el-select v-model="filters.management_scope" size="small" clearable placeholder="全部管理类型" @change="changeScopeFilter"><el-option v-for="scope in scopeOptions" :key="scope.value" :label="scope.label" :value="scope.value" /></el-select>
           <el-input v-model="filters.keyword" size="small" :placeholder="`请输入${meta.short}单号 / 物料 / 供应商`" clearable @keyup.enter.native="load" prefix-icon="el-icon-search" />
           <el-select v-model="filters.status" size="small" clearable placeholder="请选择状态">
             <el-option v-for="s in meta.statuses" :key="s.value" :label="s.label" :value="s.value" />
@@ -54,6 +55,7 @@
 
       <div class="table-panel purchase-table">
         <el-table :data="rows" size="mini" highlight-current-row @row-click="selectRow" :row-class-name="rowClass" border stripe>
+          <el-table-column label="管理类型" width="110"><template slot-scope="{row}"><el-tag size="mini" :type="row.management_scope === 'office' ? 'info' : row.management_scope === 'factory' ? 'success' : 'warning'">{{ scopeLabel(row.management_scope) }}</el-tag></template></el-table-column>
           <el-table-column v-for="col in columns" :key="`${col.prop}-${col.label}`" :label="col.label" :min-width="col.width || 90" show-overflow-tooltip>
             <template slot-scope="{row}">
               <el-tag v-if="col.tag" size="mini" :type="tagType(valueOf(row, col.prop), col.prop)">{{ labelOf(valueOf(row, col.prop), col.prop) }}</el-tag>
@@ -94,6 +96,7 @@
           <i class="el-icon-document-copy header-icon"></i>
           <span class="dialog-main-title">{{ detailNo(selected) }}</span>
           <span class="dialog-sub-title">{{ meta.short }}详情</span>
+          <el-tag size="mini" :type="selected.management_scope === 'office' ? 'info' : 'success'">{{ scopeLabel(selected.management_scope) }}</el-tag>
           <el-tag size="mini" :type="tagType(mainStatus(selected))">{{ labelOf(mainStatus(selected)) }}</el-tag>
           <el-tag v-if="selected.deleted_at" size="mini" type="info">已删除</el-tag>
           <el-tag v-if="mode==='orders' && selected.audit_status" size="mini" :type="tagType(selected.audit_status)">{{ labelOf(selected.audit_status, 'audit_status') }}</el-tag>
@@ -101,6 +104,7 @@
       </div>
 
       <div v-if="selected" class="detail-dialog-body">
+        <el-alert v-if="scopeIssue(selected)" :title="scopeIssue(selected)" type="warning" :closable="false" show-icon />
         <div v-if="selected.deleted_at" class="erp-page-tip" style="margin-bottom: 14px;">
           <i class="el-icon-info" />
           <span>该需求已软删除（删除时间：{{ timeText(selected.deleted_at) }}，删除人：{{ selected.deleted_by || '-' }}）。保留原单据及明细仅供追溯查阅。</span>
@@ -552,6 +556,7 @@ import {
   submitOrder, approveOrder, orderToReceipt, confirmReceipt,
   closeRequest, cancelRequest, rejectOrder, cancelOrder, closeOrder, deletePurchaseDraft
 } from '@/api/erp/purchase'
+import { purchaseScopes, purchaseScopeLabel, purchaseScopeIssue } from '@/utils/purchaseManagementScope.mjs'
 import PurchaseConversionFacts from '@/components/purchase/PurchaseConversionFacts.vue'
 import PurchaseAttachmentPanel from '@/components/purchase/PurchaseAttachmentPanel.vue'
 
@@ -622,7 +627,7 @@ export default {
     perPage: 10,
     listRevision: 0,
     detailRevision: 0,
-    filters: { keyword: '', status: '', dateRange: [] },
+    filters: { management_scope: '', keyword: '', status: '', dateRange: [] },
     selected: null,
     paymentPlanVisible: false,
     paymentPlanOrderId: 0,
@@ -645,6 +650,7 @@ export default {
     }
   }),
   computed: {
+    scopeOptions() { return purchaseScopes },
     meta() { return metaMap[this.mode] },
     columns() {
       if (this.mode === 'requests') return [
@@ -713,9 +719,12 @@ export default {
   },
   mounted() { this.bootstrap() },
   watch: {
-    mode() { this.page = 1; this.selected = null; this.paymentPlanVisible = false; this.paymentPlanOrderId = 0; this.bootstrap() }
+    mode() { this.listRevision++; this.detailRevision++; this.page = 1; this.selected = null; this.paymentPlanVisible = false; this.paymentPlanOrderId = 0; this.bootstrap() }
   },
   methods: {
+    scopeLabel(scope) { return purchaseScopeLabel(scope) },
+    scopeIssue(document) { return purchaseScopeIssue(document) },
+    changeScopeFilter() { this.page = 1; this.detailRevision++; this.selected = null; this.orderPreview = []; this.load() },
     openPaymentPlan(row) {
       if (this.mode !== 'orders' || !row?.id || !(this.$can('purchase.order.view') || this.$can('finance.view'))) return
       this.paymentPlanOrderId = Number(row.id)
@@ -735,6 +744,7 @@ export default {
       try {
         const params = {
           deleted: 'only',
+          management_scope: this.filters.management_scope || undefined,
           page: this.deletedDialog.page,
           per_page: this.deletedDialog.perPage
         }
@@ -824,7 +834,7 @@ export default {
     },
     async load() {
       const revision = ++this.listRevision
-      const params = { keyword: this.filters.keyword, status: this.filters.status, page: this.page, per_page: this.perPage }
+      const params = { keyword: this.filters.keyword, status: this.filters.status, management_scope: this.filters.management_scope || undefined, page: this.page, per_page: this.perPage }
       if (this.filters.dateRange && this.filters.dateRange.length === 2) {
         params.start_date = this.filters.dateRange[0]
         params.end_date = this.filters.dateRange[1]
@@ -841,17 +851,18 @@ export default {
     async reloadDetail(id) {
       if (!id) return
       const revision = ++this.detailRevision
+      const mode = this.mode
       const isDeleted = Boolean(this.selected && this.selected.deleted_at)
       const res = await getPurchase(this.mode, id, isDeleted ? { deleted: 'only' } : undefined)
-      if (revision !== this.detailRevision) return
+      if (revision !== this.detailRevision || mode !== this.mode) return
       this.selected = res.data
-      if (this.mode === 'plans') this.preview(this.selected)
+      if (this.mode === 'plans' && !this.scopeIssue(this.selected)) this.preview(this.selected)
     },
     async afterBusinessAction(id) {
       await this.load()
       if (id && this.rows.find(r => Number(r.id) === Number(id))) await this.reloadDetail(id)
     },
-    reset() { this.filters = { keyword: '', status: '', dateRange: [] }; this.page = 1; this.load() },
+    reset() { this.filters = { management_scope: '', keyword: '', status: '', dateRange: [] }; this.page = 1; this.load() },
     hasItemAllocatedSupplier(row) {
       return (row?.splits || []).some(s => Boolean(s.supplier_id || s.supplier))
     },
@@ -928,10 +939,10 @@ export default {
     },
     selectRow(row) { this.reloadDetail(row.id) },
     openEditor(row) {
-      if (this.mode === 'requests') return this.$router.push(row ? `/purchase/requests/${row.id}/edit` : '/purchase/requests/create')
-      if (this.mode === 'plans') return this.$router.push(row ? `/purchase/plans/${row.id}/edit` : '/purchase/plans/create')
-      if (this.mode === 'orders') return this.$router.push(row ? `/purchase/orders/${row.id}/edit` : '/purchase/orders/create')
-      if (this.mode === 'receipts') return this.$router.push(row ? `/purchase/receipts/${row.id}/edit` : '/purchase/receipts/create')
+      if (this.mode === 'requests') return this.$router.push(row ? `/purchase/requests/${row.id}/edit` : { path: '/purchase/requests/create', query: this.filters.management_scope ? { management_scope: this.filters.management_scope } : {} })
+      if (this.mode === 'plans') return this.$router.push(row ? `/purchase/plans/${row.id}/edit` : { path: '/purchase/plans/create', query: this.filters.management_scope ? { management_scope: this.filters.management_scope } : {} })
+      if (this.mode === 'orders') return this.$router.push(row ? `/purchase/orders/${row.id}/edit` : { path: '/purchase/orders/create', query: this.filters.management_scope ? { management_scope: this.filters.management_scope } : {} })
+      if (this.mode === 'receipts') return this.$router.push(row ? `/purchase/receipts/${row.id}/edit` : { path: '/purchase/receipts/create', query: this.filters.management_scope ? { management_scope: this.filters.management_scope } : {} })
       const firstSupplier = this.suppliers[0] || {}
       this.form = row ? this.toForm(row) : { supplier_id: firstSupplier.id, items: [this.blankLine()] }
       this.drawer = true
@@ -999,6 +1010,7 @@ export default {
     },
     async runAction(command, row = this.selected) {
       if (!row) return
+      if (['submitRequest', 'requestToPlan', 'submitPlan', 'approvePlan', 'generatePlanOrders', 'submitOrder', 'approveOrder', 'orderToReceipt', 'confirmReceipt'].includes(command) && this.scopeIssue(row)) return this.$message.warning(this.scopeIssue(row))
       const map = { submitRequest, requestToPlan, submitPlan, approvePlan, rejectPlan, generatePlanOrders, submitOrder, approveOrder, orderToReceipt, confirmReceipt, closeRequest, cancelRequest, rejectOrder, cancelOrder, closeOrder }
       if (command === 'previewPlanOrders') return this.preview(row)
       if (command === 'goPlan') return this.$router.push('/purchase/plans')
@@ -1027,8 +1039,9 @@ export default {
       }
     },
     async preview(row) {
-      if (!row || this.mode !== 'plans') return
-      try { const res = await previewPlanOrders(row.id); this.orderPreview = res.data.data || [] } catch (e) { this.orderPreview = [] }
+      if (!row || this.mode !== 'plans' || this.scopeIssue(row)) return
+      const revision = this.detailRevision
+      try { const res = await previewPlanOrders(row.id); if (revision === this.detailRevision && this.mode === 'plans' && Number(this.selected?.id) === Number(row.id)) this.orderPreview = res.data.data || [] } catch (e) { if (revision === this.detailRevision) this.orderPreview = [] }
     },
     rowActions(row) {
       if (!row || row.deleted_at) return []
@@ -1064,7 +1077,8 @@ export default {
     },
     visibleRowActions(row) {
       const permissions = { approvePlan: 'purchase.plan.approve', rejectPlan: 'purchase.plan.approve', approveOrder: 'purchase.order.approve', rejectOrder: 'purchase.order.approve', confirmReceipt: 'purchase.receipt.confirm' }
-      return this.rowActions(row).filter(action => !permissions[action.command] || this.$can(permissions[action.command]))
+      const forward = ['submitRequest', 'requestToPlan', 'submitPlan', 'approvePlan', 'generatePlanOrders', 'submitOrder', 'approveOrder', 'orderToReceipt', 'confirmReceipt']
+      return this.rowActions(row).filter(action => !(forward.includes(action.command) && this.scopeIssue(row)) && (!permissions[action.command] || this.$can(permissions[action.command])))
     },
     primaryActions(row) { return this.visibleRowActions(row).slice(0, 2) },
     canEdit(row) {
@@ -1129,6 +1143,7 @@ export default {
     },
     mainStatus(row) { return row.request_status || row.plan_status || row.purchase_status || row.confirm_status || row.receipt_status },
     labelOf(v, prop = '') {
+      if (prop === 'management_scope') return this.scopeLabel(v)
       if (prop === 'audit_status' && v === 'pending') return '待审核'
       return statusLabelMap[v] || v || '--'
     },

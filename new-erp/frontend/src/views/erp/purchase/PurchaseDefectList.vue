@@ -13,6 +13,7 @@
     </div>
 
     <section class="defect-filter">
+      <el-select v-model="query.management_scope" size="small" clearable placeholder="全部管理类型" @change="search"><el-option v-for="scope in scopeOptions" :key="scope.value" :label="scope.label" :value="scope.value" /></el-select>
       <el-input v-model="query.receipt_no" size="small" placeholder="到货单号" clearable />
       <el-input v-model="query.purchase_order_no" size="small" placeholder="采购订单号" clearable />
       <el-select v-model="query.supplier_id" size="small" clearable filterable placeholder="供应商">
@@ -41,6 +42,7 @@
     <div class="defect-table-card">
       <el-alert title="退供应商会生成正式采购退货单；让步接收会真实转入待过账合格数量；换货、返修和报废会生成处理中业务单，不能直接标记完成。已入库后的质量问题请从库存余额发起。" type="warning" :closable="false" show-icon class="defect-tip" />
       <el-table v-loading="loading" :data="defectRows" size="mini" border empty-text="暂无不合格或待处理到货明细">
+<el-table-column label="管理类型" width="110"><template slot-scope="{row}"><el-tag size="mini" :type="row.management_scope==='office'?'info':'success'">{{ scopeLabel(row.management_scope) }}</el-tag></template></el-table-column>
         <el-table-column prop="receipt_no" label="到货单号" min-width="150" />
         <el-table-column prop="purchase_order_no" label="采购订单" min-width="150" />
         <el-table-column prop="supplier_name" label="供应商" min-width="170" />
@@ -148,6 +150,7 @@
 
 <script>
 import { listEntity } from '@/api/erp/master'
+import { purchaseScopes, purchaseScopeLabel, validPurchaseScope } from '@/utils/purchaseManagementScope.mjs'
 import { actionDefectHandling, listDefectHandlings, saveDefectHandling } from '@/api/erp/purchase'
 
 export default {
@@ -155,9 +158,10 @@ export default {
   data() {
     return {
       loading: false,
+      listRevision: 0,
       rows: [],
       suppliers: [],
-      query: { receipt_no: '', purchase_order_no: '', supplier_id: '', keyword: '', handling_status: '', handling_method: '', dateRange: [] },
+      query: { management_scope: '', receipt_no: '', purchase_order_no: '', supplier_id: '', keyword: '', handling_status: '', handling_method: '', dateRange: [] },
       pagination: { page: 1, per_page: 20, total: 0 },
       drawerVisible: false,
       selectedRow: {},
@@ -165,6 +169,7 @@ export default {
     }
   },
   computed: {
+    scopeOptions() { return purchaseScopes },
     defectRows() {
       return this.rows.map(row => {
         const latest = row.latest_handling || {}
@@ -180,7 +185,7 @@ export default {
       return Number(this.selectedRow.remaining_qty || 0)
     },
     canHandleSelected() {
-      return this.$can('purchase.quality.handle') && Number(this.selectedRow.remaining_qty || 0) > 0
+      return validPurchaseScope(this.selectedRow.management_scope) && this.$can('purchase.quality.handle') && Number(this.selectedRow.remaining_qty || 0) > 0
     },
     methodTip() {
       return ({
@@ -199,16 +204,19 @@ export default {
     this.load()
   },
   methods: {
+    scopeLabel(scope) { return purchaseScopeLabel(scope) },
     async loadSuppliers() {
       const res = await listEntity('suppliers', { per_page: 200 })
       this.suppliers = res.data.data || []
     },
     async load() {
+      const revision = ++this.listRevision
       this.loading = true
       try {
         const res = await listDefectHandlings({
           page: this.pagination.page,
           per_page: this.pagination.per_page,
+          management_scope: this.query.management_scope || undefined,
           receipt_no: this.query.receipt_no,
           purchase_order_no: this.query.purchase_order_no,
           supplier_id: this.query.supplier_id,
@@ -218,6 +226,7 @@ export default {
           date_from: this.query.dateRange?.[0] || '',
           date_to: this.query.dateRange?.[1] || ''
         })
+        if (revision !== this.listRevision) return
         this.rows = res.data.data || []
         this.pagination.page = Number(res.data.current_page || 1)
         this.pagination.per_page = Number(res.data.per_page || this.pagination.per_page)
@@ -225,7 +234,7 @@ export default {
       } catch (e) {
         this.$message.error(e.userMessage || '不合格品数据加载失败')
       } finally {
-        this.loading = false
+        if (revision === this.listRevision) this.loading = false
       }
     },
     search() {
@@ -233,7 +242,7 @@ export default {
       this.load()
     },
     resetQuery() {
-      this.query = { receipt_no: '', purchase_order_no: '', supplier_id: '', keyword: '', handling_status: '', handling_method: '', dateRange: [] }
+      this.query = { management_scope: '', receipt_no: '', purchase_order_no: '', supplier_id: '', keyword: '', handling_status: '', handling_method: '', dateRange: [] }
       this.search()
     },
     handleSizeChange(size) {
@@ -301,6 +310,7 @@ export default {
       this.handleForm.handling_qty = Number(value || 0)
     },
     async saveHandle() {
+      if (!validPurchaseScope(this.selectedRow.management_scope)) return this.$message.warning('来源到货单管理类型未明确，请拆分或纠正后再处理')
       if (!this.selectedRow.id) return
       const visibleInput = this.$refs.handleQtyInput && this.$refs.handleQtyInput.$el && this.$refs.handleQtyInput.$el.querySelector('input')
       this.handleForm.handling_qty = Number(visibleInput ? visibleInput.value : this.handleForm.handling_qty || 0)

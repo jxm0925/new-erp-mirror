@@ -49,6 +49,13 @@ class MasterDataController extends Controller
             $scopes = app(ItemManagementScopeService::class);
             $scopes->applyScope($query, $scopes->requestScope($request));
         }
+        if (in_array($request->route('entity'), ['warehouses', 'locations'], true)) {
+            $scope = app(ItemManagementScopeService::class)->requestScope($request);
+            if ($scope !== null) {
+                if ($request->route('entity') === 'warehouses') $query->where('management_scope', $scope);
+                else $query->whereHas('warehouse', fn (Builder $warehouse) => $warehouse->where('management_scope', $scope));
+            }
+        }
         if ($request->route('entity') === 'warehouses' && $request->boolean('include_location_summary')) {
             $query->withCount('locations')->addSelect(['area_count' => Location::query()
                 ->selectRaw("COUNT(DISTINCT NULLIF(TRIM(area), ''))")
@@ -356,6 +363,13 @@ class MasterDataController extends Controller
         if ($record instanceof Item || $record instanceof ItemCategory) {
             $scopes = app(ItemManagementScopeService::class);
             $scopes->assertContext($record, $scopes->requestScope($request));
+        }
+        if ($record instanceof Warehouse || $record instanceof Location) {
+            $scope = app(ItemManagementScopeService::class)->requestScope($request);
+            $actual = $record instanceof Warehouse ? $record->managementScope() : $record->warehouse?->managementScope();
+            if ($scope !== null && $actual !== $scope) {
+                throw \Illuminate\Validation\ValidationException::withMessages(['management_scope' => '该仓库或库位不属于所选管理范围。']);
+            }
         }
     }
 
@@ -713,6 +727,7 @@ class MasterDataController extends Controller
             'warehouses' => [
                 'warehouse_code' => $unique('erp_warehouses', 'warehouse_code'), 'warehouse_name' => 'required|string|max:120',
                 'warehouse_type' => 'required|string|max:40', 'manager' => 'prohibited',
+                'management_scope' => 'sometimes|required|in:factory,office',
                 'manager_user_id' => 'nullable|integer|min:1',
                 'expected_manager_user_id' => 'nullable|integer|min:1',
                 'status' => 'required|in:enabled,disabled', 'remark' => 'nullable|string',

@@ -51,6 +51,7 @@ class WarehouseCommandTest extends TestCase
         $f = $this->fixture();
         $source = PurchaseReceipt::findOrFail(DB::table('erp_purchase_receipt_items')->where('item_id', $f['raw']->id)->value('receipt_id'));
         $receipt = PurchaseReceipt::create(['receipt_no' => 'W-CMD-'.Str::ulid(), 'supplier_id' => $source->supplier_id,
+            'management_scope' => 'factory',
             'receipt_date' => now()->toDateString(), 'receipt_status' => 'draft', 'confirm_status' => 'pending', 'stock_post_status' => 'pending']);
         $service = app(WarehouseCommandService::class); $command = (string) Str::uuid(); $permissions = ['inventory.post.execute'];
         $count = DB::table('erp_inventory_transactions')->count();

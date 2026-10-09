@@ -68,7 +68,7 @@ class PurchaseRequestLifecycleTest extends TestCase
     public function test_plan_line_reference_blocks_edit_and_delete_even_when_header_status_is_stale(): void
     {
         $record = $this->createRequest();
-        $plan = PurchasePlan::create(['plan_no' => 'LIFE-'.Str::random(10), 'plan_status' => 'draft']);
+        $plan = PurchasePlan::create(['management_scope' => 'factory', 'plan_no' => 'LIFE-'.Str::random(10), 'plan_status' => 'draft']);
         PurchasePlanItem::create(['plan_id' => $plan->id, 'request_item_id' => $record['items'][0]['id'], 'item_id' => $this->item->id, 'plan_qty' => 1, 'required_qty' => 1]);
         $url = '/api/v1/erp/purchase/requests/'.$record['id'];
         $this->getJson($url)->assertOk()->assertJsonPath('can_edit', false)->assertJsonPath('can_delete', false);
@@ -93,7 +93,7 @@ class PurchaseRequestLifecycleTest extends TestCase
 
     public function test_active_inventory_alert_can_recreate_a_deleted_request_without_reviving_it(): void
     {
-        $warehouse = Warehouse::create(['warehouse_code' => 'LIFE-'.Str::random(10), 'warehouse_name' => '需求生命周期测试仓', 'status' => 'enabled']);
+        $warehouse = Warehouse::create(['management_scope' => 'factory', 'warehouse_code' => 'LIFE-'.Str::random(10), 'warehouse_name' => '需求生命周期测试仓', 'status' => 'enabled']);
         $alert = InventoryAlert::create(['item_id' => $this->item->id, 'warehouse_id' => $warehouse->id, 'is_active' => true, 'suggested_replenishment_qty_snapshot' => 2]);
         $service = app(InventoryAlertApplicationService::class);
         $original = $service->createPurchaseRequestFromAlert($alert->id, 1);

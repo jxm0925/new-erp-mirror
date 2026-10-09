@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import * as scope from '../src/utils/materialManagementScope.mjs'
+import * as purchaseScope from '../src/utils/purchaseManagementScope.mjs'
 const require = createRequire(import.meta.url)
 const compiler = require('vue-template-compiler')
 const paths = {
@@ -13,7 +14,7 @@ const paths = {
 }
 const sources = Object.fromEntries(await Promise.all(Object.entries(paths).map(async ([name,path]) => [name, await readFile(new URL('../src/' + path, import.meta.url), 'utf8')])))
 function mount(name, dependencies = {}, routeScope = 'office') {
-  const bindings = { ...scope, cachedPageRoute: {}, pagedScroll: {},
+  const bindings = { ...purchaseScope, ...scope, cachedPageRoute: {}, pagedScroll: {},
     createPageState: per_page => ({ per_page, rows: [] }), invalidatePage() {},
     ...dependencies }
   const script = compiler.parseComponent(sources[name]).script.content.replace(/import[\s\S]*?from ['"][^'"]+['"]\s*/g, '').replace('export default', 'return')
@@ -115,12 +116,12 @@ test('a mismatched edit entry reports a read-only error and cannot save', async 
   vm.pageRoute.params.id=8; await vm.loadEdit(); vm.save(false)
   assert.equal(vm.pageError,'管理范围不一致'); assert.equal(writes,0)
 })
-test('shared purchase picker retains multi-selection across scope and pagination, then resets on reopening', async () => {
+test('shared purchase picker clears cross-scope selection, keeps fixed scope and resets on reopening', async () => {
   const requests=[]
   const vm=mount('PurchaseItemPicker',{getItemCategoryTree:async()=>({data:{data:[]}}),listEntity:async(entity,query)=>{requests.push(query);return itemResponse(query.management_scope==='office'?2:1,query.management_scope||'factory')}})
   await vm.open({multiple:true}); vm.toggleRow(vm.rows[0])
   vm.query.management_scope='office'; vm.changeScope(); await vm.load(); vm.toggleRow(vm.rows[0])
-  assert.deepEqual(vm.selectedRows.map(row=>row.id),[1,2]); assert.equal(requests.at(-1).management_scope,'office')
+  assert.deepEqual(vm.selectedRows.map(row=>row.id),[2]); assert.equal(requests.at(-1).management_scope,'office')
   await vm.open({multiple:false,params:{management_scope:'factory'}})
   vm.query.management_scope='office'; await vm.load()
   assert.equal(requests.at(-1).management_scope,'factory'); assert.equal(vm.selectedRows.length,0); assert.equal(vm.multiple,false)

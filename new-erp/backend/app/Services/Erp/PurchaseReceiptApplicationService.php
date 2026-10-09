@@ -30,6 +30,7 @@ class PurchaseReceiptApplicationService
                 ->get();
 
             $this->assertOrderCanGenerate($order);
+            $scope = app(PurchaseManagementScopeService::class)->assertDocumentScope($order);
             $openDraft = $this->normalDrafts($order->id)->lockForUpdate()->first();
             if ($openDraft) {
                 throw ValidationException::withMessages([
@@ -47,6 +48,7 @@ class PurchaseReceiptApplicationService
 
             $receipt = PurchaseReceipt::create([
                 'receipt_no' => $this->numbers->next('purchase_receipt', 'PRC'),
+                'management_scope' => $scope,
                 'order_id' => $order->id,
                 'supplier_id' => $order->supplier_id,
                 'receipt_date' => now()->toDateString(),
@@ -61,22 +63,36 @@ class PurchaseReceiptApplicationService
             foreach ($items as $line) {
                 $quantity = (float) ($available[$line->id] ?? 0);
                 if ($quantity <= 0.00000001) continue;
+                $item = app(PurchaseManagementScopeService::class)->assertItemScope((int) $line->item_id, $scope);
+                $policy = is_array($line->material_policy_snapshot) && $line->material_policy_snapshot !== []
+                    ? [
+                        'material_policy_id_snapshot' => $line->material_policy_id_snapshot,
+                        'material_policy_version_snapshot' => $line->material_policy_version_snapshot,
+                        'material_policy_snapshot' => $line->material_policy_snapshot,
+                    ] : app(MaterialPolicySnapshotService::class)->fromItem($item);
+                $stockManaged = (bool) ($policy['material_policy_snapshot']['is_stock_managed'] ?? $item->is_stock_item);
+                if ($stockManaged !== (bool) $item->is_stock_item) {
+                    throw ValidationException::withMessages(['items' => '采购订单冻结库存政策与当前物料不一致，请先核对来源订单，不能生成改变库存口径的到货单。']);
+                }
                 $conversion = $this->conversions->receiptLineSnapshot([
                     'order_item_id' => $line->id,
                     'item_id' => $line->item_id,
-                    'is_stock_item_snapshot' => (bool) $line->item?->is_stock_item,
+                    'is_stock_item_snapshot' => $stockManaged,
                     'receipt_qty' => $quantity,
                 ]);
                 PurchaseReceiptItem::create([
                     'receipt_id' => $receipt->id,
                     'order_item_id' => $line->id,
                     'item_id' => $line->item_id,
+                    'management_scope_snapshot' => $scope,
+                    ...$policy,
                     'receipt_qty' => $quantity,
                     'qualified_qty' => $quantity,
                     'unit_price' => $line->unit_price,
                     'receipt_cost' => $quantity * (float) $line->unit_price,
-                    'inventory_posting_status' => $line->item?->is_stock_item ? 'pending' : 'not_required',
+                    'inventory_posting_status' => $stockManaged ? 'pending' : 'not_required',
                     ...$conversion,
+                    'is_stock_item_snapshot' => $stockManaged,
                     'data_source' => 'manual',
                 ]);
             }
@@ -103,6 +119,7 @@ class PurchaseReceiptApplicationService
             if (collect($payload['items'] ?? [])->contains(fn (array $line) => !empty($line['order_item_id']))) {
                 throw ValidationException::withMessages(['order_id' => '填写采购订单明细时必须同时关联采购订单。']);
             }
+            app(PurchaseManagementScopeService::class)->resolveDocumentScope($payload['items'] ?? [], $payload, $currentReceipt);
             return;
         }
 
@@ -114,6 +131,7 @@ class PurchaseReceiptApplicationService
             ->keyBy('id');
 
         $this->assertOrderCanGenerate($order);
+        app(PurchaseManagementScopeService::class)->resolveDocumentScope($payload['items'] ?? [], $payload, $currentReceipt, $order);
         if ((int) $payload['supplier_id'] !== (int) $order->supplier_id) {
             throw ValidationException::withMessages(['supplier_id' => '到货单供应商必须与采购订单供应商一致。']);
         }
@@ -178,10 +196,13 @@ class PurchaseReceiptApplicationService
             'conversion_factor_snapshot', 'base_unit_id', 'base_unit_name_snapshot',
             'receipt_qty', 'unit_price', 'tax_rate', 'receipt_cost', 'batch_no',
             'standard_base_qty', 'allow_actual_conversion', 'data_source',
+            'management_scope_snapshot', 'is_stock_item_snapshot', 'material_policy_id_snapshot',
+            'material_policy_version_snapshot', 'material_policy_snapshot',
         ];
 
         $payload['order_id'] = $receipt->order_id;
         $payload['supplier_id'] = $receipt->supplier_id;
+        $payload['management_scope'] = $receipt->management_scope;
         $payload['items'] = $storedLines->map(function (PurchaseReceiptItem $stored) use ($submitted, $lockedFields): array {
             $line = $submitted->get($stored->id, []);
             foreach ($lockedFields as $field) $line[$field] = $stored->getAttribute($field);

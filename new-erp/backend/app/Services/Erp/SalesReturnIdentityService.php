@@ -242,7 +242,8 @@ class SalesReturnIdentityService
             if (bccomp($posted, (string) $allocation->allocated_base_qty, 8) > 0) $this->fail('所选序列号没有足额的原发货成本分配。');
             $allocation->update(['posted_base_qty' => $posted, 'allocation_status' => bccomp($posted, (string) $allocation->allocated_base_qty, 8) === 0 ? 'posted' : 'reserved']);
             $segments[] = ['base_qty' => 1, 'unit_cost' => $identity->cost_amount_snapshot, 'cost_amount' => $identity->cost_amount_snapshot,
-                'shipment_line_id' => $identity->sales_shipment_line_id, 'return_serial_identity_id' => $identity->id];
+                'shipment_line_id' => $identity->sales_shipment_line_id, 'return_serial_identity_id' => $identity->id,
+                'outbound_transaction_item_id' => $identity->outbound_transaction_item_id];
         }
         return $segments;
     }

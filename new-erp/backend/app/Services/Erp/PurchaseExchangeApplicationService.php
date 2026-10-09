@@ -43,6 +43,7 @@ class PurchaseExchangeApplicationService
             $cost = (float) $facts['return_amount_excl_tax'];
             $order = PurchaseExchangeOrder::create([
                 'exchange_no' => $this->nextExchangeNo(),
+                'management_scope' => $source->receipt?->management_scope,
                 'defect_handling_id' => null,
                 'inventory_quality_event_id' => $event->id,
                 'source_receipt_id' => $source->receipt_id,
@@ -95,6 +96,7 @@ class PurchaseExchangeApplicationService
             $exchangeNo = $this->nextExchangeNo($handling->business_doc_no);
             $order = PurchaseExchangeOrder::create([
                 'exchange_no' => $exchangeNo,
+                'management_scope' => $handling->receipt?->management_scope,
                 'defect_handling_id' => $handling->id,
                 'source_receipt_id' => $handling->receipt_id,
                 'source_receipt_item_id' => $handling->receipt_item_id,
@@ -334,7 +336,7 @@ class PurchaseExchangeApplicationService
         if (!$receipt || $receipt->confirm_status !== 'confirmed') {
             throw ValidationException::withMessages(['replacement_receipt_id' => '替换品到货单尚未验收确认。']);
         }
-        if ($receipt->stock_post_status !== 'posted') {
+        if (!in_array($receipt->stock_post_status, ['posted', 'not_required'], true)) {
             throw ValidationException::withMessages(['replacement_receipt_id' => '替换品到货单尚未完成库存过账，不能完成换货。']);
         }
         $qualified = (float) $receipt->items()->sum('qualified_base_qty');
@@ -392,11 +394,17 @@ class PurchaseExchangeApplicationService
     {
         if ($order->replacement_receipt_id) return PurchaseReceipt::findOrFail($order->replacement_receipt_id);
         $source = $order->sourceReceiptItem;
+        $scope = app(PurchaseManagementScopeService::class)->assertDocumentScope($order);
+        $item = app(PurchaseReceiptManagementScopeService::class)->assertLine($source, $scope);
+        if ($source->warehouse_id && (bool) $source->is_stock_item_snapshot) {
+            app(WarehouseManagementScopeService::class)->assertWarehouseItem($item, (int) $source->warehouse_id, 'warehouse_id', $scope);
+        }
         $purchaseQty = round((float) $order->exchange_base_qty, 8);
         $baseUnitId = $source->base_unit_id ?: $source->item?->unit_id;
         $baseUnitName = $source->base_unit_name_snapshot ?: $source->item?->unit?->unit_name;
         $receipt = PurchaseReceipt::create([
             'receipt_no' => $this->numbers->next('purchase_receipt', 'PRC'),
+            'management_scope' => $scope,
             'order_id' => $order->purchase_order_id,
             'supplier_id' => $order->supplier_id,
             'receipt_date' => now()->toDateString(),
@@ -414,6 +422,10 @@ class PurchaseExchangeApplicationService
         ]);
         PurchaseReceiptItem::create([
             'receipt_id' => $receipt->id, 'order_item_id' => $source->order_item_id, 'item_id' => $source->item_id,
+            'management_scope_snapshot' => $scope,
+            'material_policy_id_snapshot' => $source->material_policy_id_snapshot,
+            'material_policy_version_snapshot' => $source->material_policy_version_snapshot,
+            'material_policy_snapshot' => $source->material_policy_snapshot,
             'purchase_unit_id' => $baseUnitId, 'purchase_unit_name_snapshot' => $baseUnitName,
             'conversion_factor_snapshot' => 1, 'base_unit_id' => $baseUnitId,
             'base_unit_name_snapshot' => $baseUnitName, 'warehouse_id' => $source->warehouse_id,

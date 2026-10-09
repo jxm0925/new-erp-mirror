@@ -194,17 +194,20 @@ class InventoryAlertApplicationService
         return DB::transaction(function () use ($alertId, $operatorId) {
             $alert = InventoryAlert::query()->with('item')->lockForUpdate()->findOrFail($alertId);
             if (!$alert->is_active) throw ValidationException::withMessages(['alert' => '该预警已解除，不能再生成采购需求。']);
+            $item = Item::query()->lockForUpdate()->findOrFail($alert->item_id);
+            $scope = app(PurchaseManagementScopeService::class)->resolveDocumentScope([['item_id' => $item->id]]);
+            app(WarehouseManagementScopeService::class)->assertWarehouseItem($item, (int) $alert->warehouse_id, 'warehouse_id', $scope);
             if ($alert->purchase_request_id) {
-                $linked = PurchaseRequest::query()->with(['items.item', 'items.unit', 'items.warehouse'])->find($alert->purchase_request_id);
-                if ($linked) return $linked;
+                $linked = PurchaseRequest::query()->with(['items.item', 'items.unit', 'items.warehouse'])->lockForUpdate()->find($alert->purchase_request_id);
+                if ($linked) { app(PurchaseManagementScopeService::class)->assertDocumentScope($linked); return $linked; }
                 // 已软删除的需求保留历史；仍在生效的预警允许再次生成新需求，不恢复旧单。
             }
             $exists = PurchaseRequest::query()->where('source_type', 'inventory_alert')->where('source_id', (string) $alert->id)
-                ->whereNotIn('request_status', ['cancelled', 'closed'])->first();
-            if ($exists) { $alert->update(['purchase_request_id' => $exists->id]); return $exists; }
-            $item = $alert->item ?: Item::query()->findOrFail($alert->item_id);
+                ->whereNotIn('request_status', ['cancelled', 'closed'])->lockForUpdate()->first();
+            if ($exists) { app(PurchaseManagementScopeService::class)->assertDocumentScope($exists); $alert->update(['purchase_request_id' => $exists->id]); return $exists; }
             $qty = max(0.000001, (float) ($alert->suggested_replenishment_qty_snapshot ?: 0));
             $request = PurchaseRequest::query()->create([
+                'management_scope' => $scope,
                 'request_no' => 'PRQ'.now()->format('YmdHis').random_int(100, 999), 'request_date' => now()->toDateString(),
                 'source_type' => 'inventory_alert', 'source_id' => (string) $alert->id, 'source_no' => 'ALERT-'.$alert->id,
                 'request_status' => 'draft', 'status' => 'draft', 'data_source' => 'manual', 'item_id' => $item->id,

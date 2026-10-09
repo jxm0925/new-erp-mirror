@@ -12,6 +12,7 @@ use App\Models\Erp\PurchaseReturnItem;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\InventoryAvailabilityService;
 use App\Services\Erp\PurchaseReturnApplicationService;
+use App\Services\Erp\PurchaseManagementScopeService;
 use Illuminate\Http\Request;
 
 class PurchaseReturnController extends Controller
@@ -22,6 +23,8 @@ class PurchaseReturnController extends Controller
         $query = PurchaseReturn::query()
             ->with(['supplier', 'receipt.order', 'items.item', 'items.baseUnit', 'items.returnUnit'])
             ->latest('updated_at');
+        $scopes = app(PurchaseManagementScopeService::class);
+        $scopes->applyFilter($query, $scopes->requestScope($request));
 
         if ($request->filled('keyword')) {
             $keyword = trim((string) $request->input('keyword'));
@@ -75,6 +78,10 @@ class PurchaseReturnController extends Controller
             ->where('source_type', 'purchase_receipt')
             ->where('change_qty', '>', 0)
             ->latest('id');
+        $scope = app(PurchaseManagementScopeService::class)->requestScope($request);
+        if ($scope !== null) {
+            $query->whereHas('purchaseReceiptItem.receipt', fn ($receipt) => $receipt->where('management_scope', $scope));
+        }
 
         if ($request->filled('keyword')) {
             $keyword = trim((string) $request->input('keyword'));
@@ -156,6 +163,7 @@ class PurchaseReturnController extends Controller
                 'inventory_transaction_item_id' => $row->id,
                 'source_receipt_id' => $receiptItem?->receipt_id,
                 'source_receipt_item_id' => $row->source_item_id,
+                'management_scope' => $receiptItem?->receipt?->management_scope,
                 'receipt_no' => $receiptItem?->receipt?->receipt_no,
                 'purchase_order_no' => $receiptItem?->receipt?->order?->purchase_order_no,
                 'supplier_id' => $receiptItem?->receipt?->supplier_id,
@@ -286,6 +294,7 @@ class PurchaseReturnController extends Controller
             'reservation_token' => 'nullable|uuid',
             'creation_session_id' => 'nullable|uuid',
             'return_scope' => 'required|in:posted_inventory',
+            'management_scope' => 'sometimes|required|in:factory,office',
             'source_receipt_id' => 'required|exists:erp_purchase_receipts,id',
             'supplier_id' => 'required|exists:erp_suppliers,id',
             'return_date' => 'nullable|date',

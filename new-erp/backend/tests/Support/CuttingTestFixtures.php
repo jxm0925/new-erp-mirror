@@ -79,12 +79,12 @@ trait CuttingTestFixtures
             'cutting_mode'=>$rawMode,'standard_stock_length_mm'=>$rawMode === 'length' ? '6000' : null,'serial_tracking_mode'=>'none']);
         $output = Item::create(['item_code'=>'CUT-OUT-'.$s,'item_name'=>'电箱侧板','item_type'=>'semi_finished','unit_id'=>$unit->id,'is_stock_item'=>true,'is_production_item'=>true,'status'=>'enabled']);
         $supplier = Supplier::create(['supplier_code'=>'CUT-SUP-'.$s,'supplier_name'=>'板材供应商','supplier_type'=>'manufacturer','status'=>'enabled']);
-        $warehouse = Warehouse::create(['warehouse_code'=>'CUT-WH-'.$s,'warehouse_name'=>'板材仓库','status'=>'enabled']);
+        $warehouse = Warehouse::create(['warehouse_code'=>'CUT-WH-'.$s,'warehouse_name'=>'板材仓库','management_scope'=>'factory','status'=>'enabled']);
         $location = Location::create(['location_code'=>'CUT-LOC-'.$s,'location_name'=>'板材库位','warehouse_id'=>$warehouse->id,'status'=>'enabled']);
-        $receipt = PurchaseReceipt::create(['receipt_no'=>'CUT-PRC-'.$s,'supplier_id'=>$supplier->id,'receipt_date'=>now()->toDateString(),
+        $receipt = PurchaseReceipt::create(['receipt_no'=>'CUT-PRC-'.$s,'management_scope'=>'factory','supplier_id'=>$supplier->id,'receipt_date'=>now()->toDateString(),
             'receipt_status'=>'confirmed','confirm_status'=>'confirmed','stock_post_status'=>'pending','total_receipt_qty'=>2,'total_qualified_qty'=>2,
             'total_amount'=>bcmul($rawUnitCost,'2',4)]);
-        $line = PurchaseReceiptItem::create(['receipt_id'=>$receipt->id,'item_id'=>$raw->id,'purchase_unit_id'=>$unit->id,'purchase_unit_name_snapshot'=>'件',
+        $line = PurchaseReceiptItem::create(['receipt_id'=>$receipt->id,'item_id'=>$raw->id,'management_scope_snapshot'=>'factory','purchase_unit_id'=>$unit->id,'purchase_unit_name_snapshot'=>'件',
             'conversion_factor_snapshot'=>1,'base_unit_id'=>$unit->id,'base_unit_name_snapshot'=>'件','receipt_qty'=>2,'qualified_qty'=>2,'unqualified_qty'=>0,
             'standard_base_qty'=>2,'actual_base_qty'=>2,'qualified_base_qty'=>2,'unqualified_base_qty'=>0,'is_stock_item_snapshot'=>true,
             'quality_fact_origin'=>'current','original_received_qty'=>2,'original_qualified_qty'=>2,'original_unqualified_qty'=>0,

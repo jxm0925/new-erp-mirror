@@ -171,6 +171,7 @@
 <script>
 import { getItemCategoryTree, listEntity } from '@/api/erp/master'
 import { materialScopeLabel, materialTypesForScope } from '@/utils/materialManagementScope.mjs'
+import { purchaseScopeMatches } from '@/utils/purchaseManagementScope.mjs'
 
 export default {
   name: 'PurchaseItemPicker',
@@ -221,10 +222,13 @@ export default {
       this.preferredId = currentId
       this.multiple = multiple
       this.dialogTitle = title
-      this.selectedById = Object.fromEntries((selected || []).filter(row => row && row.id).map(row => [row.id, row]))
+      this.selectedById = Object.fromEntries((selected || []).filter(row => row && row.id && (!params.management_scope || purchaseScopeMatches(row, params.management_scope))).map(row => [row.id, row]))
       this.extraParams = { status: 'enabled', is_purchase_item: 1, ...params }
       this.query = { keyword: '', item_type: '', category_id: null, management_scope: params.management_scope || '', page: 1, per_page: 20 }
       this.current = null
+      this.rows = []
+      this.categoryTree = []
+      this.total = 0
       this.visible = true
       await this.loadCategories()
       if (version !== this.openVersion || !this.visible) return
@@ -240,6 +244,9 @@ export default {
       }
     },
     changeScope() {
+      this.selectedById = {}
+      this.preferredId = null
+      this.rows = []
       this.query.category_id = null
       this.query.item_type = ''
       this.current = null
@@ -260,7 +267,7 @@ export default {
         if (!params.management_scope) delete params.management_scope
         const { data } = await listEntity('items', params)
         if (version !== this.loadVersion) return
-        this.rows = data.data || []
+        this.rows = (data.data || []).filter(row => !params.management_scope || purchaseScopeMatches(row, params.management_scope))
         this.total = Number(data.total || 0)
         this.current = this.rows.find(row => Number(row.id) === Number(this.preferredId)) || null
       } catch (error) {
@@ -283,6 +290,7 @@ export default {
       this.search()
     },
     selectRow(row) {
+      if (this.extraParams.management_scope && !purchaseScopeMatches(row, this.extraParams.management_scope)) return
       if (this.multiple) {
         this.toggleRow(row)
       } else {
@@ -290,6 +298,7 @@ export default {
       }
     },
     toggleRow(row) {
+      if (this.extraParams.management_scope && !purchaseScopeMatches(row, this.extraParams.management_scope)) return
       if (this.selectedById[row.id]) {
         this.$delete(this.selectedById, row.id)
       } else {
@@ -309,6 +318,8 @@ export default {
     },
     removeSelected(row) { this.$delete(this.selectedById, row.id) },
     confirm(row) {
+      const scope = this.extraParams.management_scope || this.query.management_scope
+      if (scope && ((row && !purchaseScopeMatches(row, scope)) || this.selectedRows.some(item => !purchaseScopeMatches(item, scope)) || (!this.multiple && this.current && !purchaseScopeMatches(this.current, scope)))) return this.$message.warning('只能选择当前管理类型的物料，请重新选择')
       if (row && this.multiple) {
         if (!this.selectedById[row.id]) {
           this.$set(this.selectedById, row.id, row)

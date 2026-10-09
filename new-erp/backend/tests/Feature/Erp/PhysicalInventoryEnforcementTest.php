@@ -99,7 +99,7 @@ class PhysicalInventoryEnforcementTest extends TestCase
     {
         $fixture = $this->fixture();
         $suffix = strtoupper(substr((string) Str::ulid(), -8));
-        $warehouse = Warehouse::create(['warehouse_code' => 'PHY-T-'.$suffix, 'warehouse_name' => '实物调拨目标仓', 'status' => 'enabled']);
+        $warehouse = Warehouse::create(['warehouse_code' => 'PHY-T-'.$suffix, 'warehouse_name' => '实物调拨目标仓', 'management_scope' => 'factory', 'status' => 'enabled']);
         $location = Location::create(['location_code' => 'PHY-L-'.$suffix, 'location_name' => '实物调拨目标库位', 'warehouse_id' => $warehouse->id, 'status' => 'enabled']);
         $service = app(PhysicalInventoryApplicationService::class);
         $transferPayload = [
@@ -189,6 +189,7 @@ class PhysicalInventoryEnforcementTest extends TestCase
         $sourceLine = PurchaseReceiptItem::with('receipt')->findOrFail($sourceTransactionLine->source_item_id);
         $receipt = PurchaseReceipt::create([
             'receipt_no' => 'PHY-MISSING-'.Str::ulid(),
+            'management_scope' => 'factory',
             'supplier_id' => $sourceLine->receipt->supplier_id,
             'receipt_date' => now()->toDateString(),
             'receipt_status' => 'confirmed',
@@ -198,7 +199,7 @@ class PhysicalInventoryEnforcementTest extends TestCase
         $line = PurchaseReceiptItem::create([
             ...$sourceLine->only([
                 'item_id', 'purchase_unit_id', 'purchase_unit_name_snapshot', 'conversion_factor_snapshot',
-                'base_unit_id', 'base_unit_name_snapshot', 'is_stock_item_snapshot', 'unit_price',
+                'base_unit_id', 'base_unit_name_snapshot', 'is_stock_item_snapshot', 'management_scope_snapshot', 'unit_price',
             ]),
             'receipt_id' => $receipt->id,
             'receipt_qty' => 1,

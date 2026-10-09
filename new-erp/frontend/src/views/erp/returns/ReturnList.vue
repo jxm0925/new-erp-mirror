@@ -27,7 +27,7 @@
       <main class="main-column">
         <div class="filter-card" :class="`filter-card--${kind}`">
           <template v-if="kind === 'purchase'">
-            <label>退货单号<el-input v-model="query.return_no" clearable size="small" placeholder="请输入退货单号" @keyup.enter.native="reload" /></label>
+            <label v-if="kind==='purchase'">管理类型<el-select v-model="query.management_scope" size="small" clearable placeholder="全部管理类型" @change="reload"><el-option v-for="scope in scopeOptions" :key="scope.value" :label="scope.label" :value="scope.value" /></el-select></label><label>退货单号<el-input v-model="query.return_no" clearable size="small" placeholder="请输入退货单号" @keyup.enter.native="reload" /></label>
             <label>到货单<el-input v-model="query.receipt_no" clearable size="small" placeholder="请输入到货单号" @keyup.enter.native="reload" /></label>
             <label>采购订单关键字<el-input v-model="query.purchase_keyword" clearable size="small" suffix-icon="el-icon-search" placeholder="采购订单号 / 物料名称 / 物料编码" @keyup.enter.native="reload" /></label>
             <label>供应商<el-select v-model="query.supplier_id" clearable filterable size="small" placeholder="请选择供应商"><el-option v-for="item in suppliers" :key="item.id" :label="item.supplier_name" :value="item.id" /></el-select></label>
@@ -55,7 +55,7 @@
 
         <div class="table-card">
           <el-table v-loading="loading" :data="rows" border size="mini">
-            <el-table-column prop="return_no" label="退货单号" width="150" fixed />
+            <el-table-column v-if="kind === 'purchase'" label="管理类型" width="110"><template slot-scope="{row}"><el-tag size="mini" :type="row.management_scope === 'office' ? 'info' : 'success'">{{ scopeLabel(row.management_scope) }}</el-tag></template></el-table-column><el-table-column prop="return_no" label="退货单号" width="150" fixed />
             <template v-if="kind === 'purchase'">
               <el-table-column label="来源到货单" width="142"><template slot-scope="{row}">{{ row.receipt && row.receipt.receipt_no || '-' }}</template></el-table-column>
               <el-table-column label="采购订单" width="142"><template slot-scope="{row}">{{ row.receipt && row.receipt.order && row.receipt.order.purchase_order_no || '-' }}</template></el-table-column>
@@ -77,8 +77,8 @@
             <el-table-column label="操作" class-name="operation-column" :width="kind === 'purchase' ? 178 : 130" fixed="right">
               <template slot-scope="{row}">
                 <el-button type="text" size="mini" @click="$router.push(`${basePath}/${row.id}/detail`)">查看</el-button>
-                <el-button v-if="row.return_status === 'draft' && $can(kind === 'purchase' ? 'purchase_return.submit' : 'sales_return.confirm')" type="text" size="mini" @click="advance(row)">{{ kind === 'purchase' ? '提交' : '确认' }}</el-button>
-                <el-button v-if="kind === 'purchase' && row.return_status === 'pending_outbound' && $can('purchase_return.post')" type="text" size="mini" @click="post(row)">{{ row.return_scope === 'rejected_before_posting' ? '确认退回' : '出库过账' }}</el-button>
+                <el-button v-if="row.return_status === 'draft' && !scopeIssue(row) && $can(kind === 'purchase' ? 'purchase_return.submit' : 'sales_return.confirm')" type="text" size="mini" @click="advance(row)">{{ kind === 'purchase' ? '提交' : '确认' }}</el-button>
+                <el-button v-if="kind === 'purchase' && !scopeIssue(row) && row.return_status === 'pending_outbound' && $can('purchase_return.post')" type="text" size="mini" @click="post(row)">{{ row.return_scope === 'rejected_before_posting' ? '确认退回' : '出库过账' }}</el-button>
                 <el-button v-if="kind === 'sales' && ['pending_receipt','partial_received'].includes(row.return_status) && $can('sales_return.receive')" type="text" size="mini" @click="$router.push(`${basePath}/${row.id}/detail?receive=1`)">退货收货</el-button>
               </template>
             </el-table-column>
@@ -96,17 +96,19 @@
 </template>
 
 <script>
+import { purchaseScopes, purchaseScopeLabel, purchaseScopeIssue } from '@/utils/purchaseManagementScope.mjs'
 import { listPurchaseReturns, submitPurchaseReturn, postPurchaseReturn } from '@/api/erp/purchase'
 import { listSalesReturns, confirmSalesReturn, listSalesCustomers } from '@/api/erp/sales'
 import { listEntity } from '@/api/erp/master'
 import { listUsers } from '@/api/erp/rbac'
 
-const baseQuery = () => ({ keyword: '', return_no: '', receipt_no: '', purchase_keyword: '', supplier_id: '', customer_id: '', sales_user_legacy_id: '', return_scope: '', return_status: '', page: 1, per_page: 20 })
+const baseQuery = () => ({ management_scope: '', keyword: '', return_no: '', receipt_no: '', purchase_keyword: '', supplier_id: '', customer_id: '', sales_user_legacy_id: '', return_scope: '', return_status: '', page: 1, per_page: 20 })
 
 export default {
   props: { kind: { type: String, required: true } },
-  data: () => ({ loading: false, rows: [], total: 0, dateRange: [], suppliers: [], customers: [], salesUsers: [], query: baseQuery() }),
+  data: () => ({ listRevision: 0, loading: false, rows: [], total: 0, dateRange: [], suppliers: [], customers: [], salesUsers: [], query: baseQuery() }),
   computed: {
+    scopeOptions() { return purchaseScopes },
     title() { return this.kind === 'purchase' ? '采购退货' : '销售退货' },
     basePath() { return this.kind === 'purchase' ? '/purchase/returns' : '/sales/returns' },
     createPermission() { return this.kind === 'purchase' ? 'purchase_return.create' : 'sales_return.create' },
@@ -144,6 +146,8 @@ export default {
   },
   created() { this.loadOptions(); this.load() },
   methods: {
+    scopeLabel(scope) { return purchaseScopeLabel(scope) },
+    scopeIssue(row) { return this.kind === 'purchase' ? purchaseScopeIssue(row) : '' },
     async loadOptions() {
       if (this.kind === 'purchase') {
         const { data } = await listEntity('suppliers', { status: 'enabled', page: 1, per_page: 100 })
@@ -155,13 +159,15 @@ export default {
       this.salesUsers = users.data.data || users.data || []
     },
     async load() {
+      const revision = ++this.listRevision
       this.loading = true
       try {
         const params = { ...this.query, date_from: this.dateRange && this.dateRange[0], date_to: this.dateRange && this.dateRange[1] }
         const { data } = await (this.kind === 'purchase' ? listPurchaseReturns(params) : listSalesReturns(params))
+        if (revision !== this.listRevision) return
         this.rows = data.data || []
         this.total = Number(data.total || 0)
-      } finally { this.loading = false }
+      } finally { if (revision === this.listRevision) this.loading = false }
     },
     reload() { this.query.page = 1; this.load() },
     reset() { this.dateRange = []; this.query = baseQuery(); this.load() },
@@ -173,8 +179,10 @@ export default {
     statusText(value) { return ({ draft:'草稿', submitted:'待审核', approved:'已审核', pending_outbound:'待执行', pending_receipt:'待收货', partial_received:'部分收货', received:'已收货', completed:'已完成', cancelled:'已取消', closed:'已关闭' })[value] || value || '-' },
     statusType(value) { return ({ completed:'success', approved:'success', received:'success', cancelled:'danger', closed:'info', submitted:'warning', pending_outbound:'warning', pending_receipt:'warning', partial_received:'warning' })[value] || '' },
     fmt(value) { return value ? String(value).replace('T',' ').slice(0,16) : '-' },
-    async advance(row) { await this.$confirm(`确认${this.kind === 'purchase' ? '提交审核' : '提交确认'}？`, '操作确认'); await (this.kind === 'purchase' ? submitPurchaseReturn(row.id) : confirmSalesReturn(row.id)); this.$message.success('操作成功'); this.load() },
-    async post(row) { const rejected = row.return_scope === 'rejected_before_posting'; await this.$confirm(rejected ? '确认不合格实物已经退回供应商？本操作不产生库存出库。' : '确认按原仓库、库位和批次执行退货出库过账？', rejected ? '确认退回供应商' : '出库过账', { type:'warning' }); await postPurchaseReturn(row.id); this.$message.success(rejected ? '已确认退回供应商' : '退货出库已过账'); this.load() },
+    async advance(row) {
+      if (this.scopeIssue(row)) return this.$message.warning(this.scopeIssue(row)); await this.$confirm(`确认${this.kind === 'purchase' ? '提交审核' : '提交确认'}？`, '操作确认'); await (this.kind === 'purchase' ? submitPurchaseReturn(row.id) : confirmSalesReturn(row.id)); this.$message.success('操作成功'); this.load() },
+    async post(row) {
+      if (this.scopeIssue(row)) return this.$message.warning(this.scopeIssue(row)); const rejected = row.return_scope === 'rejected_before_posting'; await this.$confirm(rejected ? '确认不合格实物已经退回供应商？本操作不产生库存出库。' : '确认按原仓库、库位和批次执行退货出库过账？', rejected ? '确认退回供应商' : '出库过账', { type:'warning' }); await postPurchaseReturn(row.id); this.$message.success(rejected ? '已确认退回供应商' : '退货出库已过账'); this.load() },
     exportCurrent() {
       const header = ['退货单号','销售订单','平台原始单号','客户','退货数量','退货原因','状态','更新时间']
       const lines = this.rows.map(row => [row.return_no, row.order && row.order.sales_order_no, row.order && row.order.origin_order_no, row.customer_name_snapshot || row.order && row.order.customer_name, this.totalQty(row), row.return_reason, this.statusText(row.return_status), this.fmt(row.updated_at)])
@@ -190,4 +198,23 @@ export default {
 <style scoped>
 .return-page{padding:18px 20px 24px;min-height:calc(100vh - 52px);background:#f7f9fb;color:#172033}.page-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}.page-head h1{margin:0;font-size:23px;line-height:1.2}.page-head .subtitle{margin:6px 0 0;color:#7a8696;font-size:13px}.breadcrumb{margin:0 0 18px;color:#6f7c8f;font-size:13px}.head-actions{display:flex;gap:8px}.work-grid{display:grid;grid-template-columns:minmax(0,1fr) 258px;gap:14px;align-items:stretch}.main-column{min-width:0}.filter-card{background:#fff;border:1px solid #dde4ec;border-radius:5px;padding:16px;display:grid;gap:16px 20px}.filter-card--purchase{grid-template-columns:repeat(4,minmax(0,1fr))}.filter-card--sales{grid-template-columns:1.25fr 1fr 1fr 1fr}.filter-card label{display:flex;flex-direction:column;gap:7px;font-size:12px;font-weight:600;color:#344054}.filter-card label :deep(.el-select),.filter-card label :deep(.el-date-editor){width:100%}.filter-card .date-field{grid-column:span 2}.filter-actions{display:flex;align-items:flex-end;justify-content:flex-end;gap:8px}.metric-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:14px 0}.metric-grid--sales{grid-template-columns:repeat(5,minmax(0,1fr));margin:0 272px 14px 0}.metric-card{height:78px;padding:0 18px;background:#fff;border:1px solid #dde4ec;border-radius:5px;display:flex;align-items:center;gap:14px}.metric-card i{width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:23px}.metric-card div{display:flex;flex-direction:column;gap:4px}.metric-card span{font-size:13px;color:#5d697a}.metric-card strong{font-size:23px;line-height:1}.metric-card--green i{background:#eaf8f1;color:#079650}.metric-card--orange i{background:#fff1e6;color:#ff7a00}.metric-card--blue i{background:#eaf2ff;color:#2478ee}.metric-card--amber i{background:#fff3dc;color:#f1a600}.metric-card--purple i{background:#f2eaff;color:#8047df}.table-card,.rule-card{background:#fff;border:1px solid #dde4ec;border-radius:5px;overflow:hidden}.table-card .el-pagination{padding:17px 12px;text-align:center}.rule-card{grid-column:2;grid-row:1 / span 3;padding:20px 18px}.rule-card h3{margin:0 0 22px;padding-bottom:16px;border-bottom:1px solid #e4e8ee;font-size:17px}.rule-card h3 i{margin-right:7px;color:#099853}.rule-card ol{list-style:none;margin:0;padding:0}.rule-card li{display:flex;gap:12px;margin-bottom:22px;line-height:1.65;font-size:13px}.rule-card li>span{flex:0 0 20px;height:20px;border-radius:50%;background:#12a158;color:white;text-align:center;line-height:20px}.rule-card li strong{display:block;margin-bottom:5px;font-size:13px}.rule-card li p{margin:0;color:#5d697a}.return-page :deep(.el-table th){background:#f7f9fb;color:#344054;font-weight:600}.return-page :deep(.el-button--success){background:#008d48;border-color:#008d48}.return-page :deep(.el-tag--success){background:#e8f7ef;color:#078647;border-color:#c7ead6}.return-page :deep(.el-pagination.is-background .el-pager li:not(.disabled).active){background:#008d48}@media(max-width:1350px){.work-grid{grid-template-columns:minmax(0,1fr) 230px}.metric-grid--sales{margin-right:244px}.filter-card{gap:12px}.return-page{padding:14px}.rule-card{padding:16px 13px}}@media(max-width:1050px){.work-grid{grid-template-columns:1fr}.rule-card{grid-column:auto;grid-row:auto}.metric-grid--sales{margin-right:0}.filter-card--purchase,.filter-card--sales{grid-template-columns:repeat(2,minmax(0,1fr))}.metric-grid,.metric-grid--sales{grid-template-columns:repeat(2,1fr)}}@media print{.head-actions,.filter-card,.rule-card{display:none}.work-grid{display:block}.return-page{padding:0;background:#fff}}
 .table-card :deep(.el-table .cell){white-space:normal;word-break:break-word;line-height:1.5}.table-card :deep(.operation-column .cell){white-space:nowrap}
+
+@media (max-width: 780px) {
+  .filter-card--purchase {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .filter-card .date-field {
+    grid-column: auto;
+  }
+  .head-actions {
+    flex-wrap: wrap;
+  }
+  .metric-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .page-head {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+}
 </style>

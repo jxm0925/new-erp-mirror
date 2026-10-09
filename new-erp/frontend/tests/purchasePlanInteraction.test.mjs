@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import * as purchaseScope from '../src/utils/purchaseManagementScope.mjs'
 
 const allocationSource = await readFile(new URL('../src/utils/purchasePlanAllocation.js', import.meta.url), 'utf8')
 const allocation = await import(`data:text/javascript;base64,${Buffer.from(allocationSource).toString('base64')}`)
@@ -12,7 +13,7 @@ async function page(file, dependencies = {}) {
     .replace(/import\s+(?:\{[\s\S]*?\}|[^{};\n]+)\s+from\s+['"][^'"]+['"];?/g, '')
     .replace(/^import .*$/gm, '')
     .replace('export default', 'return')
-  const deps = { ...allocation, PurchaseItemPicker: {}, PurchaseAttachmentPanel: {}, PurchaseConversionFacts: {}, ...dependencies }
+  const deps = { ...purchaseScope, ...allocation, PurchaseItemPicker: {}, PurchaseAttachmentPanel: {}, PurchaseConversionFacts: {}, ...dependencies }
   const options = new Function(...Object.keys(deps), script)(...Object.values(deps))
   const messages = []
   const vm = { ...options.data(), type: 'plan', $refs: {},
@@ -31,7 +32,7 @@ test('确认原物料保留手工规格、供应商、行ID和换算快照', asy
   vm.form.items = [line]
   vm.pickerTarget = line
   vm.initializeMissingPlanningLines = async () => {}
-  await vm.applyPickedMultipleItems([{ id: 34, spec_model: 'DN20' }])
+  await vm.applyPickedMultipleItems([{ id: 34, management_scope: 'factory', spec_model: 'DN20' }])
   assert.equal(line.id, 51)
   assert.equal(line.spec_model, '采购员确认规格')
   assert.equal(line.purchase_conversion_snapshot, snapshot)
@@ -44,7 +45,7 @@ test('换成另一物料清除旧供应商和换算事实，新增其他物料�
   vm.form.items = [line]
   vm.pickerTarget = line
   vm.initializeMissingPlanningLines = async () => {}
-  await vm.applyPickedMultipleItems([{ id: 35, unit_id: 2, spec_model: 'DN25' }, { id: 36, unit_id: 2 }])
+  await vm.applyPickedMultipleItems([{ id: 35, management_scope: 'factory', unit_id: 2, spec_model: 'DN25' }, { id: 36, management_scope: 'factory', unit_id: 2 }])
   assert.equal(line.item_id, 35)
   assert.equal(line.id, undefined)
   assert.equal(line.purchase_conversion_snapshot, undefined)
@@ -101,7 +102,7 @@ test('空物料及未选供应商的分配在保存接口之前被拦截', async
   vm.form.items = []
   await vm.save(false)
   assert.match(messages.at(-1).message, /至少添加/)
-  vm.form.items = [{ item_id: 34, splits: [{ supplier_id: null }] }]
+  vm.form.items = [{ item_id: 34, item: { id: 34, management_scope: 'factory' }, splits: [{ supplier_id: null }] }]
   await vm.save(false)
   assert.match(messages.at(-1).message, /选择供应商/)
 })

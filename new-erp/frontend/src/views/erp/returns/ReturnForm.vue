@@ -10,7 +10,7 @@
         <main class="purchase-main">
           <div class="card purchase-header-card">
             <el-form label-position="top" size="small" class="purchase-header-form">
-              <el-form-item label="退货单号"><el-input value="保存时按编号规则生成" disabled /></el-form-item>
+              <el-form-item label="管理类型" required><el-select :value="form.management_scope" :disabled="saving || scopeChanging" @change="changeManagementScope"><el-option v-for="scope in scopeOptions" :key="scope.value" :label="scope.label" :value="scope.value" /></el-select></el-form-item><el-form-item label="退货单号"><el-input value="保存时按编号规则生成" disabled /></el-form-item>
               <el-form-item label="退货日期"><el-date-picker v-model="form.return_date" value-format="yyyy-MM-dd" style="width:100%" /></el-form-item>
               <el-form-item label="供应商" required><el-input :value="selectedSource && selectedSource.supplier_name" placeholder="选择原到货批次后带出" disabled /></el-form-item>
               <el-form-item label="退货原因" required><el-select v-model="form.return_reason" placeholder="请选择退货原因" style="width:100%"><el-option v-for="reason in purchaseReasons" :key="reason" :label="reason" :value="reason" /></el-select></el-form-item>
@@ -23,7 +23,7 @@
             <div class="source-toolbar"><el-input v-model="sourceQuery.keyword" size="small" clearable prefix-icon="el-icon-search" placeholder="请输入到货单号/采购订单号/物料编码/物料名称进行搜索" @keyup.enter.native="reloadSources" /><el-button size="small" icon="el-icon-refresh" @click="reloadSources">刷新</el-button></div>
             <el-table v-loading="loading" :data="sources" border size="mini" highlight-current-row>
               <el-table-column label="选择" width="58" align="center"><template slot-scope="{row}"><el-tooltip :disabled="!purchaseSourceBlocked(row)" :content="purchaseSourceBlockedReason(row)" placement="top"><span><el-checkbox :value="isPurchaseSourceSelected(row)" :disabled="purchaseSourceBlocked(row)" @change="togglePurchaseSource(row,$event)" /></span></el-tooltip></template></el-table-column>
-              <el-table-column prop="receipt_no" label="到货单" min-width="128" />
+              <el-table-column label="管理类型" width="105"><template slot-scope="{row}">{{ scopeLabel(row.management_scope) }}</template></el-table-column><el-table-column prop="receipt_no" label="到货单" min-width="128" />
               <el-table-column prop="purchase_order_no" label="采购订单" min-width="128" />
               <el-table-column label="物料编码/名称" min-width="190"><template slot-scope="{row}"><div>{{ row.item_code }} / {{ row.item_name }}</div><div v-if="row.serial_tracking_mode==='required'" :class="['source-serial-hint',{blocked:purchaseSourceSerialBlocked(row)}]">可用编号 {{ row.available_serial_count }} 个</div></template></el-table-column>
               <el-table-column prop="warehouse_name" label="仓库" min-width="92" />
@@ -41,7 +41,7 @@
             <div class="section-heading"><h3>已选择的退货明细</h3></div>
             <el-table :data="selectedLines" border size="mini">
               <el-table-column type="index" label="序号" width="56" align="center" />
-              <el-table-column prop="receipt_no" label="到货单" min-width="125" />
+              <el-table-column label="管理类型" width="105"><template slot-scope="{row}">{{ scopeLabel(row.management_scope) }}</template></el-table-column><el-table-column prop="receipt_no" label="到货单" min-width="125" />
               <el-table-column prop="purchase_order_no" label="采购订单" min-width="125" />
               <el-table-column label="物料编码/名称" min-width="190"><template slot-scope="{row}">{{ row.item_code }} / {{ row.item_name }}</template></el-table-column>
               <el-table-column label="仓库" min-width="86"><template slot-scope="{row}">{{ row.warehouse_name }}</template></el-table-column>
@@ -108,12 +108,14 @@
 </template>
 
 <script>
+import { purchaseScopes, purchaseScopeLabel, purchaseScopeMatches, validPurchaseScope } from '@/utils/purchaseManagementScope.mjs'
 import { createPurchaseReturn, listPurchaseReturnSources, listPurchaseReturnSourceSerials, submitPurchaseReturn } from '@/api/erp/purchase'
 import { confirmSalesReturn, createSalesReturn, listSalesReturnSources } from '@/api/erp/sales'
 export default {
   props:{ kind:{type:String,required:true} },
-  data:()=>({ saving:false,loading:false,sources:[],sourceTotal:0,selectedSource:null,selectedSourceId:null,selectedLines:[],sourceDateRange:[],sourceQuery:{keyword:'',order_no:'',customer_keyword:'',shipment_status:'',page:1,per_page:10},serialDialog:{visible:false,loading:false,line:null,rows:[],total:0,keyword:'',page:1,per_page:10,draftEntries:[]},purchaseReasons:['质量问题','采购错误','规格不符','包装破损','供应商责任','其他'],salesReasons:['商品质量问题','客户多发','包装破损','发错商品','客户拒收','其他'],form:{return_date:(()=>{const date=new Date();const offset=date.getTimezoneOffset()*60000;return new Date(date.getTime()-offset).toISOString().slice(0,10)})(),return_reason:'',remark:''} }),
+  data:()=>({ saving:false,loading:false,sourceRevision:0,scopeChanging:false,sources:[],sourceTotal:0,selectedSource:null,selectedSourceId:null,selectedLines:[],sourceDateRange:[],sourceQuery:{keyword:'',order_no:'',customer_keyword:'',shipment_status:'',page:1,per_page:10},serialDialog:{visible:false,loading:false,line:null,rows:[],total:0,keyword:'',page:1,per_page:10,draftEntries:[]},purchaseReasons:['质量问题','采购错误','规格不符','包装破损','供应商责任','其他'],salesReasons:['商品质量问题','客户多发','包装破损','发错商品','客户拒收','其他'],form:{management_scope:'factory',return_date:(()=>{const date=new Date();const offset=date.getTimezoneOffset()*60000;return new Date(date.getTime()-offset).toISOString().slice(0,10)})(),return_reason:'',remark:''} }),
   computed:{
+    scopeOptions(){return purchaseScopes},
     title(){return this.kind==='purchase'?'采购退货':'销售退货'}, basePath(){return this.kind==='purchase'?'/purchase/returns':'/sales/returns'},
     activeLines(){return this.kind==='sales'?this.selectedLines.filter(r=>r.selected):this.selectedLines},
     checks(){return [{text:this.kind==='purchase'?'已选择同一供应商的原采购批次':'原订单已发货',hint:this.kind==='sales'?'订单已完成发货，可发起退货。':'',ok:!!this.selectedSource},{text:this.kind==='purchase'?'已选择至少一条退货明细':'使用原履约 Item 快照',hint:this.kind==='sales'?'基于原履约 Item 信息进行退货。':'',ok:this.activeLines.length>0&&this.activeLines.every(r=>this.kind==='purchase'||r.item_id)},{text:'退货数量为正数',hint:this.kind==='sales'?'本次退货数量均大于 0。':'',ok:this.activeLines.length>0&&this.activeLines.every(r=>Number(r.requested_qty)>0)},{text:'累计退货数量未超出已发货',hint:this.kind==='sales'?'所选商品累计退货数量未超出已发货数量。':'',ok:this.activeLines.length>0&&this.activeLines.every(r=>this.kind==='purchase'?this.purchaseRequestedBaseQty(r)<=Number(r.available_return_base_qty):Number(r.requested_qty)<=Number(r.available_return_qty))},{text:'不存在重复明细',hint:this.kind==='sales'?'所选商品在退货单中未重复添加。':'',ok:new Set(this.activeLines.map(r=>this.kind==='purchase'?r.inventory_transaction_item_id:r.sales_order_line_id)).size===this.activeLines.length}]},
@@ -121,16 +123,33 @@ export default {
     purchaseAvailableTotal(){return this.selectedLines.reduce((sum,row)=>sum+Number(row.available_return_base_qty||0),0).toFixed(2)},
     purchaseRequestedTotal(){return this.selectedLines.reduce((sum,row)=>sum+this.purchaseRequestedBaseQty(row),0).toFixed(2)}
   },
-  created(){this.loadSources()},
+  created(){if(this.kind==='purchase'&&validPurchaseScope(this.$route.query.management_scope))this.form.management_scope=this.$route.query.management_scope;this.loadSources()},
   methods:{
-    async loadSources(){this.loading=true;try{const params={...this.sourceQuery,order_date_from:this.sourceDateRange&&this.sourceDateRange[0],order_date_to:this.sourceDateRange&&this.sourceDateRange[1]};const {data}=await(this.kind==='purchase'?listPurchaseReturnSources(params):listSalesReturnSources(params));this.sources=data.data||[];this.sourceTotal=data.total||0}finally{this.loading=false}}, reloadSources(){this.sourceQuery.page=1;this.loadSources()},
+    async changeManagementScope(scope){
+      if(this.kind!=='purchase'||scope===this.form.management_scope||this.saving||this.scopeChanging)return
+      this.scopeChanging=true
+      try{
+        if(this.selectedLines.length)await this.$confirm('切换管理类型将清空已选择的退货批次及设备编号，是否继续？','切换管理类型',{type:'warning',confirmButtonText:'清空并切换'})
+        this.sourceRevision++
+        this.form.management_scope=scope
+        this.selectedSource=null
+        this.selectedLines=[]
+        this.serialDialog.visible=false
+        this.serialDialog.line=null
+        this.sources=[]
+        await this.reloadSources()
+      }catch(error){if(error!=='cancel'&&error!=='close')this.$message.error(error.userMessage||'管理类型切换失败')}
+      finally{this.scopeChanging=false}
+    },
+    scopeLabel(scope){return purchaseScopeLabel(scope)},
+    async loadSources(){const revision=++this.sourceRevision;this.loading=true;try{const params={...this.sourceQuery,order_date_from:this.sourceDateRange&&this.sourceDateRange[0],order_date_to:this.sourceDateRange&&this.sourceDateRange[1]};if(this.kind==='purchase')params.management_scope=this.form.management_scope;const {data}=await(this.kind==='purchase'?listPurchaseReturnSources(params):listSalesReturnSources(params));if(revision!==this.sourceRevision)return;this.sources=(data.data||[]).filter(row=>this.kind!=='purchase'||purchaseScopeMatches(row,this.form.management_scope));this.sourceTotal=data.total||0}finally{if(revision===this.sourceRevision)this.loading=false}}, reloadSources(){this.sourceQuery.page=1;this.loadSources()},
     resetSourceFilters(){this.sourceDateRange=[];this.sourceQuery={keyword:'',order_no:'',customer_keyword:'',shipment_status:'',page:1,per_page:10};this.loadSources()},
     chooseSource(row){if(!row||this.kind==='purchase')return;this.selectedSource=row;this.selectedSourceId=row.id;this.selectedLines=(row.lines||[]).filter(line=>Number(line.available_return_qty)>0).map(line=>({...line,selected:true,requested_qty:Number(line.available_return_qty),remark:''}))},
     isPurchaseSourceSelected(row){return this.selectedLines.some(line=>Number(line.inventory_transaction_item_id)===Number(row.inventory_transaction_item_id))},
     togglePurchaseSource(row,checked){const index=this.selectedLines.findIndex(line=>Number(line.inventory_transaction_item_id)===Number(row.inventory_transaction_item_id));if(!checked){if(index>=0)this.removePurchaseLine(index);return}if(index>=0)return;if(this.purchaseSourceBlocked(row))return this.$message.error(this.purchaseSourceBlockedReason(row));if(this.selectedLines.length&&Number(this.selectedLines[0].source_receipt_id)!==Number(row.source_receipt_id)){this.$message.error('一张采购退货单只能选择同一张原到货单的明细');return}const units=row.return_units||[];const base=units.find(unit=>unit.unit_type==='base')||units[0];const line={...row,return_unit_id:base&&base.unit_id,return_conversion_factor:Number(base&&base.conversion_factor||1),requested_qty:null,requested_qty_input:'',serial_entries:[],remark:''};this.selectedLines.push(line);this.selectedSource=this.selectedLines[0]},
     purchaseSourceSerialBlocked(row){return !!row&&row.serial_tracking_mode==='required'&&Number(row.available_serial_count||0)<=0},
-    purchaseSourceBlocked(row){return Number(row&&row.available_return_base_qty||0)<=0||this.purchaseSourceSerialBlocked(row)},
-    purchaseSourceBlockedReason(row){if(this.purchaseSourceSerialBlocked(row))return '当前批次没有可用设备编号，不能直接退货';return '当前批次库存已被订单、工单或质量处理占用，没有可退数量'},
+    purchaseSourceBlocked(row){return !purchaseScopeMatches(row,this.form.management_scope)||Number(row&&row.available_return_base_qty||0)<=0||this.purchaseSourceSerialBlocked(row)},
+    purchaseSourceBlockedReason(row){if(!purchaseScopeMatches(row,this.form.management_scope))return '来源批次管理类型与退货单不一致或未明确';if(this.purchaseSourceSerialBlocked(row))return '当前批次没有可用设备编号，不能直接退货';return '当前批次库存已被订单、工单或质量处理占用，没有可退数量'},
     removePurchaseLine(index){this.selectedLines.splice(index,1);this.selectedSource=this.selectedLines[0]||null},
     changePurchaseReturnUnit(row,unitId){const hadQuantity=Number(row.requested_qty)>0;const previousBase=this.purchaseRequestedBaseQty(row);const unit=(row.return_units||[]).find(item=>Number(item.unit_id)===Number(unitId));const factor=Number(unit&&unit.conversion_factor||1);this.$set(row,'return_conversion_factor',factor);if(!hadQuantity){this.$set(row,'requested_qty',null);this.$set(row,'requested_qty_input','');return}const precision=this.returnUnitPrecision(row);const converted=this.floorToPrecision(previousBase/factor,precision);const next=Math.min(this.purchaseReturnMax(row),converted);this.$set(row,'requested_qty',next);this.$set(row,'requested_qty_input',String(next))},
     purchaseRequestedBaseQty(row){return this.roundToPrecision(Number(row.requested_qty||0)*Number(row.return_conversion_factor||1),this.baseUnitPrecision(row))},
@@ -161,7 +180,7 @@ export default {
     handlePurchaseQtyChange(row){if(!row||row.serial_tracking_mode==='none')return;const required=this.serialRequiredCount(row);if((row.serial_entries||[]).length>required)this.$set(row,'serial_entries',row.serial_entries.slice(0,required))},
     payload(){if(this.kind==='purchase')return{...this.form,return_scope:'posted_inventory',source_receipt_id:this.selectedSource&&this.selectedSource.source_receipt_id,supplier_id:this.selectedSource&&this.selectedSource.supplier_id,items:this.selectedLines.map(row=>({source_receipt_item_id:row.source_receipt_item_id,warehouse_id:row.warehouse_id,location_id:row.location_id,batch_no:row.batch_no,requested_return_qty:row.requested_qty,return_unit_id:row.return_unit_id,serial_ids:(row.serial_entries||[]).map(entry=>entry.id),remark:row.remark||null}))};return{...this.form,sales_order_id:this.selectedSource&&this.selectedSource.id,items:this.activeLines.map(row=>({sales_order_line_id:row.sales_order_line_id,requested_sales_qty:row.requested_qty,remark:row.remark||null}))}},
     money(value){return `¥ ${Number(value||0).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2})}`},
-    async save(advance){const validations=this.kind==='purchase'?this.purchaseChecks:this.checks;if(!this.form.return_reason||!validations.every(item=>item.ok))return this.$message.error('请先补全退货原因、业务来源、合法数量和设备编号');this.saving=true;try{const response=await(this.kind==='purchase'?createPurchaseReturn(this.payload()):createSalesReturn(this.payload()));const row=response.data.data||response.data;if(advance)await(this.kind==='purchase'?submitPurchaseReturn(row.id):confirmSalesReturn(row.id));this.$message.success(advance?'已保存并进入下一状态':'草稿已保存');this.$router.replace(`${this.basePath}/${row.id}/detail`)}finally{this.saving=false}}
+    async save(advance){if(this.scopeChanging)return;if(this.kind==='purchase'&&(!validPurchaseScope(this.form.management_scope)||this.selectedLines.some(row=>!purchaseScopeMatches(row,this.form.management_scope))))return this.$message.error('采购退货明细必须与单据管理类型一致');const validations=this.kind==='purchase'?this.purchaseChecks:this.checks;if(!this.form.return_reason||!validations.every(item=>item.ok))return this.$message.error('请先补全退货原因、业务来源、合法数量和设备编号');this.saving=true;try{const response=await(this.kind==='purchase'?createPurchaseReturn(this.payload()):createSalesReturn(this.payload()));const row=response.data.data||response.data;if(advance)await(this.kind==='purchase'?submitPurchaseReturn(row.id):confirmSalesReturn(row.id));this.$message.success(advance?'已保存并进入下一状态':'草稿已保存');this.$router.replace(`${this.basePath}/${row.id}/detail`)}finally{this.saving=false}}
   }
 }
 </script>
@@ -172,4 +191,33 @@ export default {
 .qty-conversion-hint{margin-top:3px;color:#8a5b12;font-size:11px;line-height:1.35;white-space:normal}
 .serial-dialog-summary{display:flex;justify-content:space-between;gap:16px;padding:10px 12px;margin-bottom:10px;background:#f6f8fa;border-radius:4px}.serial-dialog-summary b{color:#078d4e}.serial-dialog-toolbar{display:flex;gap:10px;margin-bottom:10px}.serial-dialog-toolbar .el-input{flex:1}.serial-dialog-summary+.serial-dialog-toolbar+.el-table+.el-pagination{padding-top:14px;text-align:right}
 .source-serial-hint{margin-top:3px;color:#078d4e;font-size:11px}.source-serial-hint.blocked{color:#d93025}.serial-empty-alert{margin:10px 0}
+
+@media (max-width: 780px) {
+  .purchase-header-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .design-action-row {
+    height: auto;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .design-action-row > div {
+    flex-wrap: wrap;
+  }
+  .source-toolbar {
+    gap: 8px;
+  }
+  .source-toolbar .el-input {
+    width: auto;
+    flex: 1;
+    min-width: 0;
+  }
+  .selected-summary {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .selected-summary span:nth-child(2) {
+    margin: 0;
+  }
+}
 </style>

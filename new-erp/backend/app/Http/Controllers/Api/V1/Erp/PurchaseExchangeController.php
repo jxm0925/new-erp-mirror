@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Erp\PurchaseExchangeOrder;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\PurchaseExchangeApplicationService;
+use App\Services\Erp\PurchaseManagementScopeService;
 use Illuminate\Http\Request;
 
 class PurchaseExchangeController extends Controller
@@ -16,6 +17,8 @@ class PurchaseExchangeController extends Controller
         $query = PurchaseExchangeOrder::query()
             ->with(['handling', 'sourceReceipt', 'purchaseOrder', 'supplier', 'item.unit', 'replacementReceipt'])
             ->latest('updated_at');
+        $scopes = app(PurchaseManagementScopeService::class);
+        $scopes->applyFilter($query, $scopes->requestScope($request));
 
         foreach (['exchange_no', 'current_step'] as $field) {
             if ($request->filled($field)) $query->where($field, $request->input($field));

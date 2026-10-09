@@ -6,6 +6,7 @@
         <div class="head-text">
           <div class="title-row">
             <h1>{{ title }}</h1>
+            <el-tag size="mini" :type="form.management_scope === 'office' ? 'info' : 'success'">{{ scopeLabel(form.management_scope) }}</el-tag>
             <el-tag size="mini" type="success">{{ type === 'request' ? '采购需求' : type === 'plan' ? '采购计划' : type === 'order' ? '采购订单' : '到货单' }}</el-tag>
             <el-tag v-if="$route.params.id" size="mini" type="info">ID: {{ $route.params.id }}</el-tag>
           </div>
@@ -13,10 +14,12 @@
       </div>
       <div class="head-actions">
         <el-button size="small" @click="$router.back()">取消返回</el-button>
-        <el-button size="small" @click="save(false)">保存草稿</el-button>
-        <el-button size="small" type="success" icon="el-icon-check" @click="save(true)">{{ type==='request' ? '确认需求' : type==='receipt' ? '保存' : '提交审核' }}</el-button>
+        <el-button size="small" :disabled="!!scopeIssue || scopeChanging || saving" @click="save(false)">保存草稿</el-button>
+        <el-button size="small" type="success" icon="el-icon-check" :disabled="!!scopeIssue || scopeChanging || saving" @click="save(true)">{{ type==='request' ? '确认需求' : type==='receipt' ? '保存' : '提交审核' }}</el-button>
       </div>
     </div>
+
+    <el-alert v-if="scopeIssue" :title="scopeIssue" type="warning" :closable="false" show-icon />
 
     <!-- 全局统一页面提示条 (对齐主数据中心规范) -->
     <div v-if="type==='request' && form.id && form.request_status!=='draft'" class="erp-page-tip">
@@ -35,6 +38,11 @@
           <h3>基础信息</h3>
         </div>
         <el-form label-width="96px" size="small">
+          <el-form-item label="管理类型" required>
+            <el-select :value="form.management_scope" :disabled="scopeLocked" placeholder="请选择管理类型" style="width:100%" @change="changeManagementScope">
+              <el-option v-for="scope in scopeOptions" :key="scope.value" :label="scope.label" :value="scope.value" />
+            </el-select>
+          </el-form-item>
           <div class="grid-4" v-if="type==='request'">
             <el-form-item label="需求单号">
               <el-input v-model="form.request_no" disabled placeholder="系统预占生成">
@@ -47,8 +55,8 @@
             <el-form-item label="来源类型">
               <el-select v-model="form.source_type" placeholder="请选择来源类型" style="width: 100%">
                 <el-option label="手工创建" value="manual" />
-                <el-option label="生产需求" value="production" />
-                <el-option label="销售订单" value="sales" />
+                <el-option v-if="form.management_scope === 'factory'" label="生产需求" value="production" />
+                <el-option v-if="form.management_scope === 'factory'" label="销售订单" value="sales" />
                 <el-option label="库存预警" value="inventory_alert" />
               </el-select>
             </el-form-item>
@@ -160,7 +168,7 @@
             </el-table-column>
             <el-table-column label="采购数量" width="125">
               <template slot-scope="{row}">
-                <el-input-number v-model="row.purchase_quantity" :min="purchaseStep(row)" :step="purchaseStep(row)" :disabled="!row.item_id" @change="refreshPlanning(row)" size="small" controls-position="right" style="width: 100%" />
+                <el-input-number :key="`${row.item_id || 'empty'}:${row.purchase_unit_id || 'unit'}`" v-model="row.purchase_quantity" :min="purchaseStep(row)" :step="purchaseStep(row)" :disabled="!row.item_id" @change="refreshPlanning(row)" size="small" controls-position="right" style="width: 100%" />
               </template>
             </el-table-column>
             <el-table-column label="采购单位" width="175">
@@ -200,7 +208,7 @@
             <el-table-column label="目标仓库" width="160">
               <template slot-scope="{row}">
                 <el-select v-model="row.warehouse_id" clearable placeholder="请选择仓库" size="small" style="width: 100%">
-                  <el-option v-for="w in warehouses" :key="w.id" :label="w.warehouse_name" :value="w.id" />
+                  <el-option v-for="w in scopedWarehouses" :key="w.id" :label="w.warehouse_name" :value="w.id" />
                 </el-select>
               </template>
             </el-table-column>
@@ -235,7 +243,7 @@
                   批量设仓库 <i class="el-icon-arrow-down el-icon--right" />
                 </el-button>
                 <el-dropdown-menu slot="dropdown">
-                  <el-dropdown-item v-for="w in warehouses" :key="w.id" :command="w.id">{{ w.warehouse_name }}</el-dropdown-item>
+                  <el-dropdown-item v-for="w in scopedWarehouses" :key="w.id" :command="w.id">{{ w.warehouse_name }}</el-dropdown-item>
                 </el-dropdown-menu>
               </el-dropdown>
             </div>
@@ -506,7 +514,7 @@
               </div>
               <span v-else>无需单件编号</span>
             </template></el-table-column>
-            <el-table-column v-if="type==='receipt'" label="目标仓库" width="150"><template slot-scope="{row}"><el-select v-model="row.warehouse_id" clearable><el-option v-for="w in warehouses" :key="w.id" :label="w.warehouse_name" :value="w.id" /></el-select></template></el-table-column>
+            <el-table-column v-if="type==='receipt'" label="目标仓库" width="150"><template slot-scope="{row}"><el-select v-model="row.warehouse_id" clearable><el-option v-for="w in scopedWarehouses" :key="w.id" :label="w.warehouse_name" :value="w.id" /></el-select></template></el-table-column>
             <el-table-column v-if="type==='receipt'" label="目标库位" width="150"><template slot-scope="{row}"><el-select v-model="row.location_id" clearable><el-option v-for="l in filteredLocations(row.warehouse_id)" :key="l.id" :label="l.location_name" :value="l.id" /></el-select></template></el-table-column>
             <el-table-column label="预计到货" width="158"><template slot-scope="{row}"><el-date-picker v-model="row.expected_arrival_date" value-format="yyyy-MM-dd" /></template></el-table-column>
             <el-table-column label="备注" width="147"><template slot-scope="{row}"><el-input v-model="row.remark" /></template></el-table-column>
@@ -781,8 +789,8 @@
 
     <footer class="bottom-actions">
       <el-button size="small" @click="$router.back()">取消返回</el-button>
-      <el-button size="small" @click="save(false)">保存草稿</el-button>
-      <el-button size="small" type="success" icon="el-icon-check" @click="save(true)">{{ type==='request' ? '确认需求' : type==='receipt' ? '保存' : '提交审核' }}</el-button>
+      <el-button size="small" :disabled="!!scopeIssue || scopeChanging || saving" @click="save(false)">保存草稿</el-button>
+      <el-button size="small" type="success" icon="el-icon-check" :disabled="!!scopeIssue || scopeChanging || saving" @click="save(true)">{{ type==='request' ? '确认需求' : type==='receipt' ? '保存' : '提交审核' }}</el-button>
     </footer>
   </section>
 </template>
@@ -794,13 +802,14 @@ import { reserveForCreatePage, clearCreatePageReservation } from '@/utils/docume
 import PurchaseItemPicker from '@/components/purchase/PurchaseItemPicker.vue'
 import PurchaseConversionFacts from '@/components/purchase/PurchaseConversionFacts.vue'
 import PurchaseAttachmentPanel from '@/components/purchase/PurchaseAttachmentPanel.vue'
+import { purchaseScopes, purchaseScopeLabel, purchaseScopeIssue, purchaseSourceLocked, purchaseScopeMatches, validPurchaseScope } from '@/utils/purchaseManagementScope.mjs'
 import { planAllocation, planAllocationLabel, planAllocationTag, planTargetBaseQty, planAllocatedBaseQty } from '@/utils/purchasePlanAllocation'
 
 export default {
   components: { PurchaseItemPicker, PurchaseAttachmentPanel, PurchaseConversionFacts },
   props: { type: { type: String, required: true } },
   data: () => ({
-    form: { items: [] }, items: [], suppliers: [], warehouses: [], locations: [], activeIndex: 0,
+    form: { management_scope: 'factory', items: [] }, documentRevision: 0, warehouseRevision: 0, scopeChanging: false, saving: false, items: [], suppliers: [], warehouses: [], locations: [], activeIndex: 0,
     reservation: null, recommendations: [], recommendLoading: false, recommendationRevision: 0, pickerTarget: null, attachmentDraftToken: '',
     selectedRequestRows: [],
     selectedPlanRows: [],
@@ -811,6 +820,10 @@ export default {
     isPlanAllExpanded: false
   }),
   computed: {
+    scopeOptions() { return purchaseScopes },
+    scopeIssue() { return purchaseScopeIssue(this.form, this.items) },
+    scopeLocked() { return this.scopeChanging || this.saving || purchaseSourceLocked(this.form) || (this.type === 'request' && ['production', 'sales'].includes(this.form.source_type)) },
+    scopedWarehouses() { return this.warehouses.filter(row => purchaseScopeMatches(row, this.form.management_scope)) },
     validPlanItems() {
       return (this.form.items || []).filter(i => i.item_id)
     },
@@ -924,13 +937,58 @@ export default {
     }
   },
   async mounted() {
-    const [suppliers, warehouses, locations] = await Promise.all([listEntity('suppliers', { status: 'enabled', per_page: 100 }), listEntity('warehouses', { per_page: 100 }), listEntity('locations', { per_page: 100 })])
-    this.suppliers = suppliers.data.data || []
-    this.warehouses = (warehouses.data.data || []).filter(row => ['active', 'enabled'].includes(row.status))
-    this.locations = (locations.data.data || []).filter(row => ['active', 'enabled'].includes(row.status))
+    const [suppliers, locations] = await Promise.allSettled([listEntity('suppliers', { status: 'enabled', per_page: 100 }), listEntity('locations', { per_page: 100 })])
+    this.suppliers = suppliers.status === 'fulfilled' ? suppliers.value.data.data || [] : []
+    this.locations = locations.status === 'fulfilled' ? (locations.value.data.data || []).filter(row => ['active', 'enabled'].includes(row.status)) : []
     await this.initializeDocument()
   },
   methods: {
+    scopeLabel(scope) { return purchaseScopeLabel(scope) },
+    async loadScopedWarehouses() {
+      const revision = ++this.warehouseRevision
+      const scope = this.form.management_scope
+      this.warehouses = []
+      if (!validPurchaseScope(scope)) return
+      try {
+        const { data } = await listEntity('warehouses', { management_scope: scope, page: 1, per_page: 100 })
+        if (revision !== this.warehouseRevision || scope !== this.form.management_scope) return
+        this.warehouses = (data.data || []).filter(row => ['enabled', 'active'].includes(row.status) && purchaseScopeMatches(row, scope))
+      } catch (error) { if (revision === this.warehouseRevision) this.$message.error(error.userMessage || '仓库加载失败') }
+    },
+    async changeManagementScope(scope) {
+      if (scope === this.form.management_scope || !validPurchaseScope(scope) || this.scopeLocked) return
+      this.scopeChanging = true
+      const document = this.form
+      try {
+        if (document.items.some(row => row.item_id || row.warehouse_id)) await this.$confirm('切换管理类型将清空全部采购明细、供应商分配及目标仓库，是否继续？', '切换管理类型', { type: 'warning', confirmButtonText: '清空并切换' })
+        if (this.form !== document) return
+        this.documentRevision++
+        this.recommendationRevision++
+        this.pickerTarget = null
+        if (this.$refs.itemPicker) this.$refs.itemPicker.visible = false
+        this.supplierDialogVisible = false
+        this.activeSplitRow = null
+        this.selectedPlanRows = []
+        this.selectedRequestRows = []
+        this.recommendations = []
+        this.recommendLoading = false
+        this.$set(document, 'management_scope', scope)
+        this.$set(document, 'items', [])
+        if (this.type === 'request') this.addRequestLine()
+        else if (this.type === 'plan') this.addPlanItem()
+        else this.addLine()
+        this.activeIndex = 0
+        await this.loadScopedWarehouses()
+      } catch (error) { if (error !== 'cancel' && error !== 'close') this.$message.error(error.userMessage || '管理类型切换失败') }
+      finally { this.scopeChanging = false }
+    },
+    canPickScope(items) {
+      if (!validPurchaseScope(this.form.management_scope) || items.some(item => !purchaseScopeMatches(item, this.form.management_scope))) {
+        this.$message.warning('请选择与单据管理类型一致的物料')
+        return false
+      }
+      return true
+    },
     planningSnapshot(line) { return line._planningPreview || line.purchase_conversion_snapshot },
     planningUnitName(line) { return this.canonicalUnit(this.selectedConversion(line)?.purchase_unit)?.unit_name || this.planningSnapshot(line)?.purchase_unit_name_snapshot || '-' },
     purchaseStep(line) {
@@ -976,6 +1034,7 @@ export default {
     },
     async changePlanUnit(line) { await this.refreshPlanning(line) },
     async refreshPlanning(line, split = null) {
+      const documentRevision = this.documentRevision
       const target = split || line
       const revision = Number(target._planningRevision || 0) + 1
       this.$set(target, '_planningRevision', revision)
@@ -1023,7 +1082,7 @@ export default {
           line_id: line.id || null, split_id: split?.id || null,
           request_item_id: line.request_item_id || null
         })
-        if (target._planningRevision !== revision) return
+        if (target._planningRevision !== revision || documentRevision !== this.documentRevision) return
         this.$set(target, '_planningPreview', data.data)
         this.$set(target, 'purchase_unit_id', data.data.purchase_unit_id)
         this.$set(target, '_conversionOptions', this.withSnapshotOption(target._conversionOptions || line._conversionOptions || [], data.data))
@@ -1144,6 +1203,7 @@ export default {
       }
     },
     batchSetWarehouse(warehouseId) {
+      if (!this.scopedWarehouses.some(row => Number(row.id) === Number(warehouseId))) return this.$message.warning('只能选择当前管理类型的仓库')
       if (!this.selectedRequestRows.length) return this.$message.warning('请先勾选物料行')
       this.selectedRequestRows.forEach(row => {
         this.$set(row, 'warehouse_id', warehouseId)
@@ -1151,6 +1211,12 @@ export default {
       this.$message.success(`已为 ${this.selectedRequestRows.length} 行更新目标仓库`)
     },
     async initializeDocument() {
+      const revision = ++this.documentRevision
+      this.warehouseRevision++
+      this.pickerTarget = null
+      this.items = []
+      this.warehouses = []
+      if (this.$refs.itemPicker) this.$refs.itemPicker.visible = false
       this.supplierDialogVisible = false
       this.activeSplitRow = null
       this.selectedPlanRows = []
@@ -1165,28 +1231,36 @@ export default {
         this.initBlank()
         await this.reserveNumber()
       }
+      if (revision === this.documentRevision) await this.loadScopedWarehouses()
     },
     initBlank() {
       const today = new Date().toISOString().slice(0, 10)
       this.attachmentDraftToken = this.newDraftToken()
-      if (this.type === 'request') this.form = { request_no: '', request_date: today, source_type: 'manual', items: [{ item_id: null, spec_model: '', purchase_quantity: 1, expected_date: '', priority: 'normal' }] }
-      if (this.type === 'plan') this.form = { plan_no: '', plan_date: today, items: [{ _rowKey: Date.now(), item_id: null, spec_model: '', unit_id: null, purchase_quantity: 1, expected_date: '', splits: [] }] }
-      if (this.type === 'order') this.form = { purchase_order_no: '', supplier_id: null, order_date: today, currency: 'CNY', tax_mode: 'tax_included', freight_amount: 0, items: [{ item_id: null, qty: 1, unit_price: 0, tax_rate: 13, expected_arrival_date: '' }] }
-      if (this.type === 'receipt') this.form = { receipt_no: '', supplier_id: null, receipt_date: today, items: [{ item_id: null, qty: 1, qualified_qty: 1, unqualified_qty: 0, actual_base_qty: 0, unit_price: 0, batch_no: '', serial_text: '', serial_number_source: 'supplier', warehouse_id: null, location_id: null }] }
+      if (this.type === 'request') this.form = { management_scope: validPurchaseScope(this.$route.query?.management_scope) ? this.$route.query.management_scope : 'factory', request_no: '', request_date: today, source_type: 'manual', items: [{ item_id: null, spec_model: '', purchase_quantity: 1, expected_date: '', priority: 'normal' }] }
+      if (this.type === 'plan') this.form = { management_scope: validPurchaseScope(this.$route.query?.management_scope) ? this.$route.query.management_scope : 'factory', plan_no: '', plan_date: today, items: [{ _rowKey: Date.now(), item_id: null, spec_model: '', unit_id: null, purchase_quantity: 1, expected_date: '', splits: [] }] }
+      if (this.type === 'order') this.form = { management_scope: validPurchaseScope(this.$route.query?.management_scope) ? this.$route.query.management_scope : 'factory', purchase_order_no: '', supplier_id: null, order_date: today, currency: 'CNY', tax_mode: 'tax_included', freight_amount: 0, items: [{ item_id: null, qty: 1, unit_price: 0, tax_rate: 13, expected_arrival_date: '' }] }
+      if (this.type === 'receipt') this.form = { management_scope: validPurchaseScope(this.$route.query?.management_scope) ? this.$route.query.management_scope : 'factory', receipt_no: '', supplier_id: null, receipt_date: today, items: [{ item_id: null, qty: 1, qualified_qty: 1, unqualified_qty: 0, actual_base_qty: 0, unit_price: 0, batch_no: '', serial_text: '', serial_number_source: 'supplier', warehouse_id: null, location_id: null }] }
     },
     async reserveNumber() {
+      const revision = this.documentRevision
+      const type = this.type
+      const path = this.$route.path
       const documentTypes = { request: 'purchase_request', plan: 'purchase_plan', order: 'purchase_order', receipt: 'purchase_receipt' }
       const fields = { request: 'request_no', plan: 'plan_no', order: 'purchase_order_no', receipt: 'receipt_no' }
       try {
-        this.reservation = await reserveForCreatePage(documentTypes[this.type], this.$route.path)
-        this.$set(this.form, fields[this.type], this.reservation.document_no)
+        const reservation = await reserveForCreatePage(documentTypes[type], path)
+        if (revision !== this.documentRevision || path !== this.$route.path) return
+        this.reservation = reservation
+        this.$set(this.form, fields[type], reservation.document_no)
       } catch (e) {
         this.$message.error(e.userMessage || '单据编号预生成失败，请重新打开新增页面')
       }
     },
     async loadExisting() {
+      const revision = this.documentRevision
       const map = { request: 'requests', plan: 'plans', order: 'orders', receipt: 'receipts' }
       const res = await getPurchase(map[this.type], this.$route.params.id)
+      if (revision !== this.documentRevision) return
       const data = res.data
       this.attachmentDraftToken = ''
       ;(data.items || []).forEach(line => this.rememberItem(line.item))
@@ -1225,6 +1299,8 @@ export default {
     },
     addLine() { if (this.type === 'order' && this.form.plan_id) return this.$message.warning('计划生成订单须保留计划明细'); this.form.items.push({ item_id: null, qty: 1, unit_price: 0, tax_rate: 13, qualified_qty: 1, unqualified_qty: 0, actual_base_qty: 0, serial_text: '', serial_number_source: 'supplier', warehouse_id: null, location_id: null, purchase_unit_id: null, _conversionOptions: [] }); this.activeIndex = this.form.items.length - 1; this.recommendations = [] },
     openItemPicker(line) {
+      if (!validPurchaseScope(this.form.management_scope)) return this.$message.warning('请先明确单据管理类型')
+      if (purchaseSourceLocked(this.form)) return this.$message.warning('来源单据物料已锁定，请保留原来源明细')
       this.pickerTarget = line
       const isMulti = ['request', 'plan'].includes(this.type)
       this.$refs.itemPicker.open({
@@ -1232,12 +1308,12 @@ export default {
         multiple: isMulti,
         selected: isMulti ? this.currentSelectedItems() : (line && line.item_id ? [this.getItem(line.item_id)].filter(Boolean) : []),
         title: isMulti ? '选择采购物料 (支持多选)' : '选择采购物料',
-        params: { status: 'enabled', is_purchase_item: 1 }
+        params: { status: 'enabled', is_purchase_item: 1, management_scope: this.form.management_scope }
       })
     },
     async applyPickedItem(item) {
       const line = this.pickerTarget
-      if (!line || !item) return
+      if (!line || !item || !this.form.items.includes(line) || !this.canPickScope([item])) return
       const changed = Number(line.item_id || 0) !== Number(item.id)
       this.rememberItem(item)
       this.$set(line, 'item_id', item.id)
@@ -1259,16 +1335,17 @@ export default {
       this.pickerTarget = null
     },
     openBatchItemPicker() {
+      if (!validPurchaseScope(this.form.management_scope)) return this.$message.warning('请先明确单据管理类型')
       this.pickerTarget = null
       this.$refs.itemPicker.open({
         multiple: true,
         selected: this.currentSelectedItems(),
         title: '选择采购物料 (支持多选)',
-        params: { status: 'enabled', is_purchase_item: 1 }
+        params: { status: 'enabled', is_purchase_item: 1, management_scope: this.form.management_scope }
       })
     },
     async applyPickedMultipleItems(items) {
-      if (!items || !items.length) return
+      if (!items || !items.length || !this.canPickScope(items)) return
 
       // 若从某一行点击“更换”触发
       if (this.pickerTarget) {
@@ -1377,9 +1454,10 @@ export default {
     },
     async loadLineConversions(line, chooseDefault = true) {
       if (!line.item_id) return this.$set(line, '_conversionOptions', [])
+      const documentRevision = this.documentRevision
       const itemId = line.item_id
       const { data } = await listItemPurchaseConversionOptions(itemId, { page: 1, per_page: 100 })
-      if (line.item_id !== itemId) return
+      if (line.item_id !== itemId || documentRevision !== this.documentRevision || !this.form.items.includes(line)) return
       const item = this.items.find(row => Number(row.id) === Number(line.item_id))
       const itemUnit = item && (item.unit?.standard_unit || item.unit?.standardUnit || item.unit)
       let options = [...(data.data || [])]
@@ -1788,6 +1866,9 @@ export default {
     },
     newDraftToken() { return window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : `purchase-${Date.now()}-${Math.random().toString(16).slice(2)}` },
     async save(submit) {
+      if (this.scopeChanging || this.saving) return
+      if (this.scopeIssue) return this.$message.error(this.scopeIssue)
+      if (this.form.items.some(line => line.warehouse_id && !this.scopedWarehouses.some(row => Number(row.id) === Number(line.warehouse_id)))) return this.$message.error('目标仓库与单据管理类型不一致或不可用，请重新选择')
       if (!this.form.items.length) return this.$message.error('请至少添加一行采购物料')
       if (this.type === 'plan' && this.form.items.some(line => (line.splits || []).some(split => !split.supplier_id))) return this.$message.error('请为每条供应商分配选择供应商，或删除空白分配行')
       if (!['plan', 'request'].includes(this.type) && !this.form.supplier_id) return this.$message.error('供应商不能为空')
@@ -1800,35 +1881,41 @@ export default {
         if (rows.some(row => row._planningPending)) return this.$message.warning('采购换算正在计算，请稍候保存')
         if (rows.some(row => row._planningError || !row._planningPreview)) return this.$message.error('请先完成采购单位及数量换算')
       }
+      const revision = this.documentRevision
+      const document = this.form
+      this.saving = true
       try {
-        await this.ensureRecommendationOverrides()
-      } catch (e) {
-        if (e === 'cancel') return
-        throw e
-      }
-      const api = this.type === 'request' ? savePurchaseRequest : this.type === 'plan' ? savePurchasePlan : this.type === 'order' ? savePurchaseOrder : savePurchaseReceipt
-      let res
-      try { res = await api(this.payload()) } catch (e) { this.$message.error(e.userMessage || '保存失败'); return }
-      const savedId = res.data.data.id
-      const created = !this.$route.params.id
-      if (created) {
-        clearCreatePageReservation(this.reservation)
-        this.reservation = null
-        if (submit) {
-          const path = this.type === 'request' ? `/purchase/requests/${savedId}/edit` : this.type === 'plan' ? `/purchase/plans/${savedId}/edit` : this.type === 'order' ? `/purchase/orders/${savedId}/edit` : `/purchase/receipts/${savedId}/edit`
-          await this.$router.replace(path)
+        try {
+          await this.ensureRecommendationOverrides()
+        } catch (e) {
+          if (e === 'cancel') return
+          throw e
         }
-      }
-      try {
-        if (submit && this.type === 'request') await submitRequest(savedId)
-        if (submit && this.type === 'plan') await submitPlan(savedId)
-        if (submit && this.type === 'order') await submitOrder(savedId)
-      } catch (e) {
-        this.$message.error(e.userMessage || '提交失败，请检查当前状态和必填信息')
-        return
-      }
-      this.$message.success(submit && this.type === 'request' ? '需求已确认，已锁定需求，可转采购计划' : submit && this.type !== 'receipt' ? '已保存并提交审核' : '保存成功')
-      this.$router.push(this.type === 'request' ? '/purchase/requests' : this.type === 'plan' ? '/purchase/plans' : this.type === 'order' ? '/purchase/orders' : '/purchase/receipts')
+        if (revision !== this.documentRevision || document !== this.form || this.scopeIssue) return
+        const api = this.type === 'request' ? savePurchaseRequest : this.type === 'plan' ? savePurchasePlan : this.type === 'order' ? savePurchaseOrder : savePurchaseReceipt
+        let res
+        try { res = await api(this.payload()) } catch (e) { this.$message.error(e.userMessage || '保存失败'); return }
+        const savedId = res.data.data.id
+        const created = !this.$route.params.id
+        if (created) {
+          clearCreatePageReservation(this.reservation)
+          this.reservation = null
+          if (submit) {
+            const path = this.type === 'request' ? `/purchase/requests/${savedId}/edit` : this.type === 'plan' ? `/purchase/plans/${savedId}/edit` : this.type === 'order' ? `/purchase/orders/${savedId}/edit` : `/purchase/receipts/${savedId}/edit`
+            await this.$router.replace(path)
+          }
+        }
+        try {
+          if (submit && this.type === 'request') await submitRequest(savedId)
+          if (submit && this.type === 'plan') await submitPlan(savedId)
+          if (submit && this.type === 'order') await submitOrder(savedId)
+        } catch (e) {
+          this.$message.error(e.userMessage || '提交失败，请检查当前状态和必填信息')
+          return
+        }
+        this.$message.success(submit && this.type === 'request' ? '需求已确认，已锁定需求，可转采购计划' : submit && this.type !== 'receipt' ? '已保存并提交审核' : '保存成功')
+        this.$router.push(this.type === 'request' ? '/purchase/requests' : this.type === 'plan' ? '/purchase/plans' : this.type === 'order' ? '/purchase/orders' : '/purchase/receipts')
+      } finally { this.saving = false }
     },
     money(v) { return Number(v || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }
   }
@@ -2769,9 +2856,27 @@ export default {
   }
   .head-left {
     align-items: flex-start;
+    min-width: 0;
+  }
+  .head-text {
+    min-width: 0;
+  }
+  .title-row {
+    flex-wrap: wrap;
+  }
+  .title-row h1 {
+    flex-basis: 100%;
+    font-size: 18px;
   }
   .head-actions {
-    justify-content: flex-end;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+  .head-actions ::v-deep .el-button,
+  .bottom-actions ::v-deep .el-button {
+    margin-left: 0;
+    padding-left: 12px;
+    padding-right: 12px;
   }
   .grid-3,
   .grid-4,

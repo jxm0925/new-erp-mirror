@@ -86,6 +86,7 @@ final class ProductionMaterialProcurementApplicationService
             }
             $operator = $user->nickname ?? $user->username;
             $request = $this->requests->create(['request_no' => app(DocumentNumberService::class)->next('purchase_request', 'PRQ'),
+                'management_scope' => 'factory',
                 'request_date' => now()->toDateString(), 'source_type' => 'production_material', 'source_id' => $order?->id,
                 'source_no' => $order?->sales_order_no, 'requester' => $operator, 'remark' => $payload['remark'] ?? null, 'data_source' => 'manual'], $items);
             foreach ($request->items->values() as $index => $line) {

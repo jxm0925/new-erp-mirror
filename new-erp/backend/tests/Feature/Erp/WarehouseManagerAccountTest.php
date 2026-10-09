@@ -37,7 +37,7 @@ class WarehouseManagerAccountTest extends TestCase
         $this->getJson('/api/v1/erp/master/warehouses?keyword='.$payload['warehouse_code'])->assertOk()->assertJsonPath('data.0.manager_user.legacy_id', $id);
         $this->putJson('/api/v1/erp/master/warehouses/'.$row['id'], [...$payload, 'manager_user_id' => null, 'expected_manager_user_id' => $id])
             ->assertOk()->assertJsonPath('data.manager_user_id', null)->assertJsonPath('data.manager', null);
-        $this->assertSame(2, DB::table('erp_operation_logs')->where('module', 'warehouse')->where('target_id', $row['id'])->count());
+        $this->assertSame(2, DB::table('erp_operation_logs')->where('module', 'warehouse')->where('action', 'set_manager')->where('target_id', $row['id'])->count());
     }
 
     public function test_fake_names_unknown_ids_and_disabled_new_assignments_are_rejected(): void

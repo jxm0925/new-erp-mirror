@@ -804,7 +804,7 @@ class ProductionItemManagementScopeTest extends TestCase
 
     private function stock(Item $item, string $qty, ?int $warehouse = null): InventoryBalance
     {
-        $warehouse ??= DB::table('erp_warehouses')->insertGetId(['warehouse_code' => $this->code('WH'), 'warehouse_name' => '测试仓', 'status' => 'enabled', 'created_at' => now(), 'updated_at' => now()]);
+        $warehouse ??= DB::table('erp_warehouses')->insertGetId(['warehouse_code' => $this->code('WH'), 'warehouse_name' => '测试仓', 'management_scope' => $item->management_scope, 'status' => 'enabled', 'created_at' => now(), 'updated_at' => now()]);
         $location = DB::table('erp_locations')->insertGetId(['warehouse_id' => $warehouse, 'location_code' => $this->code('LOC'), 'location_name' => '实际库位', 'status' => 'enabled', 'created_at' => now(), 'updated_at' => now()]);
         return InventoryBalance::create(['item_id' => $item->id, 'warehouse_id' => $warehouse, 'location_id' => $location,
             'batch_no' => $this->code('BATCH'), 'unit_id' => $item->unit_id, 'quantity_on_hand' => $qty, 'quantity_available' => $qty,

@@ -21,6 +21,11 @@ class PurchasePlanningConversionService
     {
         return DB::transaction(function () use ($line, $trustedSnapshot, $direct, $requiredBase) {
             $item = Item::with('unit.standardUnit')->lockForUpdate()->findOrFail($line['item_id']);
+            $scope = app(PurchaseManagementScopeService::class)->assertScope($item->management_scope);
+            if (array_key_exists('management_scope', $line)) {
+                app(PurchaseManagementScopeService::class)->assertItemScope($item,
+                    app(PurchaseManagementScopeService::class)->assertScope($line['management_scope']));
+            }
             $unitId = (int) ($line['purchase_unit_id'] ?? 0);
             $snapshot = $trustedSnapshot;
             if (!$snapshot || (int) ($snapshot['item_id'] ?? 0) !== (int) $item->id
@@ -80,6 +85,7 @@ class PurchasePlanningConversionService
                 throw ValidationException::withMessages(['purchase_unit_id' => '采购换算已变化，请重新选择采购单位并核对数量后保存。']);
             }
             return array_replace($snapshot, [
+                'management_scope' => $scope,
                 'conversion_fingerprint' => $fingerprint,
                 'input_mode' => $direct ? 'purchase_quantity' : 'base_requirement',
                 'rounding_rule' => $direct ? 'none' : 'ceil_purchase_unit_precision',
@@ -106,6 +112,7 @@ class PurchasePlanningConversionService
             $prior = $priorSplits?->firstWhere('id', $split['id'] ?? 0);
             abort_if(!empty($split['id']) && !$prior, 422, '供应商拆分不属于当前计划明细');
             $input = [...$split, 'item_id' => $line['item_id'], 'required_qty' => $split['purchase_qty'] ?? 0,
+                'management_scope' => $snapshot['management_scope'],
                 'purchase_unit_id' => $split['purchase_unit_id'] ?? $snapshot['purchase_unit_id'], 'base_unit_price' => $split['unit_price'] ?? 0];
             $facts = $direct ? $this->fromPurchaseQuantity($input, $prior?->purchase_conversion_snapshot ?? $snapshot)
                 : $this->calculate($input, $prior?->purchase_conversion_snapshot ?? $snapshot);
@@ -129,6 +136,9 @@ class PurchasePlanningConversionService
 
     public function orderSnapshot(PurchasePlanSupplierSplit $split): array
     {
+        $plan = $split->plan()->lockForUpdate()->firstOrFail();
+        app(PurchaseManagementScopeService::class)->assertItemScope((int) $split->item_id,
+            app(PurchaseManagementScopeService::class)->assertScope($plan->management_scope));
         $snapshot = $split->purchase_conversion_snapshot;
         // Historical approved plans cannot be silently repriced or rounded using current masters.
         // They must be reopened and confirmed through the plan editor before generating orders.

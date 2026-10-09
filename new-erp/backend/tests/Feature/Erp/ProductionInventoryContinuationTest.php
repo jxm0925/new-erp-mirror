@@ -31,7 +31,7 @@ class ProductionInventoryContinuationTest extends TestCase
             'is_stock_item' => true, 'is_production_item' => true, 'production_execution_mode' => 'quantity', 'serial_tracking_mode' => 'none', 'status' => 'enabled']);
         $raw = Item::create(['item_code' => 'IC-R-'.$suffix, 'item_name' => '前序焊接原料', 'item_type' => 'raw_material', 'unit_id' => $unit->id, 'is_stock_item' => true, 'status' => 'enabled']);
         $seal = Item::create(['item_code' => 'IC-S-'.$suffix, 'item_name' => '水检密封用料', 'item_type' => 'raw_material', 'unit_id' => $unit->id, 'is_stock_item' => true, 'status' => 'enabled']);
-        $warehouse = Warehouse::create(['warehouse_code' => 'IC-WH-'.$suffix, 'warehouse_name' => '正式总装库存仓', 'status' => 'enabled']);
+        $warehouse = Warehouse::create(['warehouse_code' => 'IC-WH-'.$suffix, 'warehouse_name' => '正式总装库存仓', 'management_scope' => 'factory', 'status' => 'enabled']);
         $location = Location::create(['warehouse_id' => $warehouse->id, 'location_code' => 'IC-LOC-'.$suffix, 'location_name' => '总装待水检库位', 'status' => 'enabled']);
         $routing = ProductionRouting::create(['routing_no' => 'IC-RT-'.$suffix, 'routing_name' => '焊接总装水检包装', 'output_item_id' => $item->id,
             'version' => 1, 'status' => 'active', 'is_default' => true, 'default_scope_key' => $item->id, 'business_version' => 1]);

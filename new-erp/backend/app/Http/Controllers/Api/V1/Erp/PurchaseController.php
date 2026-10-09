@@ -11,6 +11,7 @@ use App\Services\Erp\PurchaseReceiptApplicationService;
 use App\Services\Erp\PurchaseReceiptConfirmationApplicationService;
 use App\Services\Erp\PurchaseReceiptAllocationService;
 use App\Services\Erp\PurchaseWorkflowApplicationService;
+use App\Services\Erp\PurchaseManagementScopeService;
 use App\Services\Erp\InventorySerialApplicationService;
 use App\Services\Erp\PurchaseAttachmentApplicationService;
 use App\Services\Erp\PurchaseDefectApplicationService;
@@ -52,6 +53,7 @@ class PurchaseController extends Controller
         else $query->latest('updated_at');
         $this->keyword($query, $request, ['request_no'], ['items.item' => ['item_code', 'item_name']]);
         if ($request->filled('status')) $query->where('request_status', $request->input('status'));
+        $this->filterManagementScope($query, $request);
         return response()->json($query->paginate($this->perPage($request))->through(fn ($record) => $lifecycle->present($record)));
     }
 
@@ -87,6 +89,7 @@ class PurchaseController extends Controller
     {
         $data = $request->validate([
             'request_no' => 'nullable|string|max:80',
+            'management_scope' => 'sometimes|required|string|in:factory,office',
             'reservation_token' => 'nullable|uuid',
             'creation_session_id' => 'nullable|uuid',
             'request_date' => 'nullable|date',
@@ -148,6 +151,7 @@ class PurchaseController extends Controller
         $this->authorizePermission($request, 'purchase.request.edit');
         $data = $request->validate([
             'request_date' => 'nullable|date',
+            'management_scope' => 'sometimes|required|string|in:factory,office',
             'source_type' => 'nullable|string|max:30',
             'requester' => 'nullable|string|max:80',
             'remark' => 'nullable|string',
@@ -170,6 +174,11 @@ class PurchaseController extends Controller
             $lifecycle->prepareEdit($record, $this->operatorName($request));
             $items = $data['items'];
             $priorItems = $record->items()->lockForUpdate()->get()->keyBy('id');
+            $scopes = app(PurchaseManagementScopeService::class);
+            $data['management_scope'] = $scopes->resolveDocumentScope($items, $data, $record,
+                requiredScope: $scopes->requiredScopeForSource($record->source_type));
+            // Source ownership is fixed when a demand is created.
+            unset($data['source_type']);
             unset($data['items']);
             $record->update($data);
             PurchaseRequestItem::where('request_id', $id)->delete();
@@ -201,7 +210,9 @@ class PurchaseController extends Controller
             abort_if(!in_array($request->request_status, ['confirmed', 'partially_planned'], true), 422, '只有已确认的采购需求可以转采购计划');
             $requestItems = $request->items->filter(fn ($line) => (float) $line->remaining_qty > 0);
             abort_if($requestItems->isEmpty(), 422, '采购需求明细已全部转计划，不能重复转换');
+            $scope = app(PurchaseManagementScopeService::class)->assertDocumentScope($request);
             $plan = PurchasePlan::create([
+                'management_scope' => $scope,
                 'plan_no' => $this->nextNo('PPL'),
                 'plan_date' => now()->toDateString(),
                 'plan_status' => 'draft',
@@ -258,6 +269,7 @@ class PurchaseController extends Controller
         $query = PurchasePlan::with(['items.item.unit', 'items.request', 'items.requestItem', 'items.splits.supplier', 'items.splits.item', 'items.splits.order'])->latest('updated_at');
         $this->keyword($query, $request, ['plan_no']);
         if ($request->filled('status')) $query->where('plan_status', $request->input('status'));
+        $this->filterManagementScope($query, $request);
         return response()->json($query->paginate($this->perPage($request)));
     }
 
@@ -267,6 +279,7 @@ class PurchaseController extends Controller
         $operatorId = app(AuthContextService::class)->currentUser($request)?->legacy_id;
         return DB::transaction(function () use ($payload, $numbers, $operatorId) {
             $plan = PurchasePlan::create([
+                'management_scope' => app(PurchaseManagementScopeService::class)->resolveDocumentScope($payload['items'], $payload),
                 'plan_no' => $payload['plan_no'] ?? $this->nextNo('PPL'),
                 'plan_date' => $payload['plan_date'] ?? now()->toDateString(),
                 'plan_status' => 'draft',
@@ -296,6 +309,7 @@ class PurchaseController extends Controller
             $plan = PurchasePlan::query()->lockForUpdate()->findOrFail($id);
             abort_if($plan->plan_status !== 'draft', 422, '只有草稿采购计划可以编辑');
             $plan->update([
+                'management_scope' => app(PurchaseManagementScopeService::class)->resolveDocumentScope($payload['items'], $payload, $plan),
                 'plan_date' => $payload['plan_date'] ?? $plan->plan_date,
                 'remark' => $payload['remark'] ?? null,
             ]);
@@ -315,6 +329,7 @@ class PurchaseController extends Controller
             $plan = PurchasePlan::query()->with('items.splits.supplier')->lockForUpdate()->findOrFail($id);
             abort_if($plan->plan_status !== 'draft', 422, '只有草稿采购计划可以提交');
             abort_if($plan->items->isEmpty(), 422, '采购计划至少需要一行明细');
+            app(PurchaseManagementScopeService::class)->assertDocumentScope($plan);
             abort_if($plan->items->contains(fn ($i) => (float) $i->remaining_qty > 0), 422, '采购计划存在未分配数量，不能提交审核');
             abort_if($plan->items->contains(fn ($i) => $i->splits->isEmpty()), 422, '采购计划必须完成供应商拆分');
             abort_if(
@@ -351,8 +366,11 @@ class PurchaseController extends Controller
 
     public function previewPlanOrders(int $id)
     {
-        $plan = PurchasePlan::with(['items.item', 'items.splits.supplier'])->findOrFail($id);
-        return response()->json(['data' => $this->groupPlanItemsForOrders($plan)]);
+        return DB::transaction(function () use ($id) {
+            $plan = PurchasePlan::with(['items.item', 'items.splits.supplier'])->lockForUpdate()->findOrFail($id);
+            app(PurchaseManagementScopeService::class)->assertDocumentScope($plan);
+            return response()->json(['data' => $this->groupPlanItemsForOrders($plan)]);
+        });
     }
 
     public function generateOrdersFromPlan(int $id)
@@ -360,6 +378,7 @@ class PurchaseController extends Controller
         return DB::transaction(function () use ($id) {
             $plan = PurchasePlan::with(['items.item', 'items.splits.supplier'])->lockForUpdate()->findOrFail($id);
             abort_if($plan->audit_status !== 'approved', 422, '采购计划审核后才能生成采购订单');
+            $scope = app(PurchaseManagementScopeService::class)->assertDocumentScope($plan);
             $groups = $this->groupPlanItemsForOrders($plan);
             abort_if(empty($groups), 422, '没有可生成订单的供应商明细');
             $orders = [];
@@ -373,6 +392,7 @@ class PurchaseController extends Controller
                     return $taxRate > 0 ? $amount * $taxRate / (100 + $taxRate) : 0;
                 });
                 $order = PurchaseOrder::create([
+                    'management_scope' => $scope,
                     'purchase_order_no' => $this->nextNo('POD'),
                     'plan_id' => $plan->id,
                     'source_type' => 'purchase_plan',
@@ -400,7 +420,7 @@ class PurchaseController extends Controller
                         'request_id' => $line['request_id'] ?? null,
                         'request_item_id' => $line['request_item_id'] ?? null,
                         'item_id' => $line['item_id'],
-                'spec_model' => $line['spec_model'] ?? $source?->spec_model ?? $item->spec ?? $item->model ?? null,
+                        'spec_model' => $line['spec_model'] ?? null,
                         'supplier_id' => $group['supplier_id'],
                         'order_qty' => $conversion['purchase_qty'],
                         'remaining_qty' => $conversion['purchase_qty'],
@@ -448,6 +468,7 @@ class PurchaseController extends Controller
         $query = PurchaseOrder::with(['supplier', 'plan', 'items.item.unit'])->latest('updated_at');
         $this->keyword($query, $request, ['purchase_order_no'], ['supplier' => ['supplier_code', 'supplier_name']]);
         if ($request->filled('status')) $query->where('purchase_status', $request->input('status'));
+        $this->filterManagementScope($query, $request);
         $page = $query->paginate($this->perPage($request));
         $orders = $receipts->decorateOrders($page->getCollection());
         $taskMap = ApprovalTask::query()
@@ -473,6 +494,7 @@ class PurchaseController extends Controller
         $operatorId = app(AuthContextService::class)->currentUser($request)?->legacy_id;
         return DB::transaction(function () use ($payload, $numbers, $operatorId) {
             $order = PurchaseOrder::create([
+                'management_scope' => app(PurchaseManagementScopeService::class)->resolveDocumentScope($payload['items'], $payload),
                 'purchase_order_no' => $payload['purchase_order_no'] ?? $this->nextNo('POD'),
                 'supplier_id' => $payload['supplier_id'],
                 'order_date' => $payload['order_date'] ?? now()->toDateString(),
@@ -545,6 +567,8 @@ class PurchaseController extends Controller
             $priorItems = $order->items()->lockForUpdate()->get()->keyBy('id');
             app(\App\Services\Erp\PurchasePlanningConversionService::class)->assertOrderEdit($order, $payload, $priorItems);
             $order->update([
+                'management_scope' => app(PurchaseManagementScopeService::class)->resolveDocumentScope($payload['items'], $payload, $order,
+                    $order->plan_id ? PurchasePlan::query()->lockForUpdate()->findOrFail($order->plan_id) : null),
                 'supplier_id' => $payload['supplier_id'],
                 'order_date' => $payload['order_date'] ?? $order->order_date,
                 'expected_arrival_date' => $payload['expected_arrival_date'] ?? null,
@@ -606,6 +630,7 @@ class PurchaseController extends Controller
         $query = PurchaseReceipt::with(['supplier', 'order', 'items.item.unit', 'items.orderItem', 'items.warehouse', 'items.location', 'items.defectHandlings'])->latest('updated_at');
         $this->keyword($query, $request, ['receipt_no'], ['supplier' => ['supplier_code', 'supplier_name']]);
         if ($request->filled('status')) $query->where('confirm_status', $request->input('status'));
+        $this->filterManagementScope($query, $request);
         return response()->json($query->paginate($this->perPage($request)));
     }
 
@@ -748,6 +773,9 @@ class PurchaseController extends Controller
             })
             ->latest('updated_at');
 
+        $scope = app(PurchaseManagementScopeService::class)->requestScope($request);
+        if ($scope !== null) $query->whereHas('receipt', fn ($q) => $q->where('management_scope', $scope));
+
         if ($request->filled('receipt_no')) {
             $query->whereHas('receipt', fn ($q) => $q->where('receipt_no', 'like', '%' . $request->input('receipt_no') . '%'));
         }
@@ -792,6 +820,8 @@ class PurchaseController extends Controller
                 'receipt_id' => $receipt->id,
                 'receipt_item_id' => $line->id,
                 'receipt_no' => $receipt->receipt_no,
+                'management_scope' => $receipt->management_scope,
+                'management_scope_snapshot' => $line->management_scope_snapshot,
                 'purchase_order_no' => $receipt->order?->purchase_order_no ?: '--',
                 'supplier_id' => $receipt->supplier_id,
                 'supplier_name' => $receipt->supplier?->supplier_name ?: '--',
@@ -851,6 +881,8 @@ class PurchaseController extends Controller
     public function priceHistories(Request $request)
     {
         $query = PurchasePriceHistory::with(['supplier', 'item.unit'])->latest('effective_date')->latest();
+        $scope = app(PurchaseManagementScopeService::class)->requestScope($request);
+        if ($scope !== null) $query->whereHas('item', fn ($q) => $q->where('management_scope', $scope));
         if ($request->filled('supplier_id')) $query->where('supplier_id', $request->input('supplier_id'));
         if ($request->filled('item_id')) $query->where('item_id', $request->input('item_id'));
         return response()->json($query->paginate($this->perPage($request)));
@@ -859,6 +891,8 @@ class PurchaseController extends Controller
     public function supplierItemStats(Request $request)
     {
         $query = SupplierItemStat::with(['supplier', 'item.unit'])->latest('updated_at');
+        $scope = app(PurchaseManagementScopeService::class)->requestScope($request);
+        if ($scope !== null) $query->whereHas('item', fn ($q) => $q->where('management_scope', $scope));
         if ($request->filled('supplier_id')) $query->where('supplier_id', $request->input('supplier_id'));
         if ($request->filled('item_id')) $query->where('item_id', $request->input('item_id'));
         return response()->json($query->paginate($this->perPage($request)));
@@ -873,6 +907,7 @@ class PurchaseController extends Controller
         ]), 403, '没有采购需求或计划编辑权限');
         $line = $request->validate([
             'item_id' => 'required|integer|exists:erp_items,id',
+            'management_scope' => 'sometimes|required|string|in:factory,office',
             'required_qty' => 'required_without:purchase_quantity|numeric|gt:0',
             'purchase_unit_id' => 'nullable|integer|exists:erp_units,id',
             'purchase_quantity' => 'nullable|numeric|gt:0',
@@ -903,6 +938,7 @@ class PurchaseController extends Controller
     {
         return $request->validate([
             'plan_no' => 'nullable|string|max:80',
+            'management_scope' => 'sometimes|required|string|in:factory,office',
             'reservation_token' => 'nullable|uuid',
             'creation_session_id' => 'nullable|uuid',
             'attachment_draft_token' => 'nullable|string|max:120',
@@ -950,6 +986,7 @@ class PurchaseController extends Controller
     {
         return $request->validate([
             'purchase_order_no' => 'nullable|string|max:80',
+            'management_scope' => 'sometimes|required|string|in:factory,office',
             'reservation_token' => 'nullable|uuid',
             'creation_session_id' => 'nullable|uuid',
             'attachment_draft_token' => 'nullable|string|max:120',
@@ -991,6 +1028,7 @@ class PurchaseController extends Controller
     {
         return $request->validate([
             'receipt_no' => 'nullable|string|max:80',
+            'management_scope' => 'sometimes|required|string|in:factory,office',
             'reservation_token' => 'nullable|uuid',
             'creation_session_id' => 'nullable|uuid',
             'order_id' => 'nullable|exists:erp_purchase_orders,id',
@@ -1038,13 +1076,19 @@ class PurchaseController extends Controller
     private function savePlanItems(PurchasePlan $plan, array $items, $priorItems = null): void
     {
         foreach ($items as $line) {
-            $item = Item::with('unit.standardUnit')->findOrFail($line['item_id']);
+            $item = app(PurchaseManagementScopeService::class)->assertItemScope((int) $line['item_id'], $plan->management_scope)->load('unit.standardUnit');
+            $line['management_scope'] = $plan->management_scope;
+            if (!empty($line['warehouse_id'])) app(\App\Services\Erp\WarehouseManagementScopeService::class)
+                ->assertWarehouseItem($item, (int) $line['warehouse_id'], 'warehouse_id', $plan->management_scope);
             $baseUnit = app(\App\Services\Erp\UnitConversionDomainService::class)->canonicalUnit($item->unit);
             $prior = $priorItems?->get($line['id'] ?? 0);
             abort_if(!empty($line['id']) && !$prior, 422, '采购计划明细不属于当前计划');
             // 与需求编辑、删除共用主单锁，避免校验后需求被删，再写入孤立的计划来源。
             if (!empty($line['request_id'])) {
-                abort_unless(PurchaseRequest::query()->lockForUpdate()->find($line['request_id']), 422, '来源采购需求已删除，不能用于采购计划');
+                $sourceRequest = PurchaseRequest::query()->lockForUpdate()->find($line['request_id']);
+                abort_unless($sourceRequest, 422, '来源采购需求已删除，不能用于采购计划');
+                abort_if(app(PurchaseManagementScopeService::class)->assertDocumentScope($sourceRequest) !== $plan->management_scope,
+                    422, '采购计划管理范围必须与来源采购需求一致');
             }
             $source = !empty($line['request_item_id']) ? PurchaseRequestItem::findOrFail($line['request_item_id']) : null;
             abort_if($source && !$source->request()->exists(), 422, '来源采购需求已删除，不能用于采购计划');
@@ -1131,7 +1175,10 @@ class PurchaseController extends Controller
         $totalQty = 0; $totalAmount = 0; $taxAmount = 0;
         foreach ($items as $line) {
             $this->assertRecommendationOverride($line, (int) $order->supplier_id);
-            $item = Item::with('activeMaterialPolicy')->findOrFail($line['item_id']);
+            $item = app(PurchaseManagementScopeService::class)->assertItemScope((int) $line['item_id'], $order->management_scope)->load('activeMaterialPolicy');
+            $line['management_scope'] = $order->management_scope;
+            if (!empty($line['target_warehouse_id'])) app(\App\Services\Erp\WarehouseManagementScopeService::class)
+                ->assertWarehouseItem($item, (int) $line['target_warehouse_id'], 'target_warehouse_id', $order->management_scope);
             $qty = (float) $line['order_qty'];
             $price = (float) ($line['unit_price'] ?? 0);
             $taxRate = (float) ($line['tax_rate'] ?? 0);
@@ -1193,11 +1240,31 @@ class PurchaseController extends Controller
     private function persistReceipt(array $payload, ?PurchaseReceipt $receipt)
     {
         $receiptService = app(PurchaseReceiptApplicationService::class);
+        $scopes = app(PurchaseManagementScopeService::class);
+        $priorLines = collect();
+        if ($receipt) {
+            $receipt = PurchaseReceipt::query()->lockForUpdate()->findOrFail($receipt->id);
+            abort_if($receipt->confirm_status !== 'draft', 422, '只有草稿到货单可以编辑');
+            $priorLines = $receipt->items()->lockForUpdate()->get()->keyBy('id');
+            if (array_key_exists('management_scope', $payload)) {
+                $submittedScope = $scopes->assertScope($payload['management_scope']);
+                abort_if($receipt->management_scope !== null && $submittedScope !== $receipt->management_scope,
+                    422, '到货单管理范围不能改变');
+            }
+            if ($receipt->order_id) {
+                abort_if(array_key_exists('order_id', $payload) && (int) $payload['order_id'] !== (int) $receipt->order_id,
+                    422, '到货单必须保留原采购订单来源');
+                $payload['order_id'] = $receipt->order_id;
+            }
+        }
         if ($receipt) $payload = $receiptService->protectReplacementDraft($receipt, $payload);
         $receiptService->assertDraftAllocation($payload, $receipt);
+        $sourceOrder = !empty($payload['order_id']) ? PurchaseOrder::query()->lockForUpdate()->findOrFail($payload['order_id']) : null;
+        $scope = $scopes->resolveDocumentScope($payload['items'], $payload, $receipt, $sourceOrder);
         $created = !$receipt;
         if (!$receipt) {
             $receipt = PurchaseReceipt::create([
+                'management_scope' => $scope,
                 'receipt_no' => $payload['receipt_no'] ?? $this->nextNo('PRC'),
                 'order_id' => $payload['order_id'] ?? null,
                 'supplier_id' => $payload['supplier_id'],
@@ -1211,6 +1278,7 @@ class PurchaseController extends Controller
             $action = 'create';
         } else {
             $receipt->update([
+                'management_scope' => $scope,
                 'order_id' => $receipt->settlement_mode === 'replacement_no_charge' ? $receipt->order_id : ($payload['order_id'] ?? null),
                 'supplier_id' => $receipt->settlement_mode === 'replacement_no_charge' ? $receipt->supplier_id : $payload['supplier_id'],
                 'receipt_date' => $payload['receipt_date'] ?? $receipt->receipt_date,
@@ -1230,19 +1298,28 @@ class PurchaseController extends Controller
             );
         }
         foreach ($payload['items'] as $line) {
-            $item = Item::query()->findOrFail($line['item_id']);
+            $item = $scopes->assertItemScope((int) $line['item_id'], $scope);
+            $line['management_scope'] = $scope;
+            $priorLine = $priorLines->get($line['id'] ?? 0);
+            abort_if(!empty($line['id']) && (!$priorLine || (int) $priorLine->item_id !== (int) $item->id), 422, '到货明细不属于当前单据或物料已改变');
             $orderItem = !empty($line['order_item_id'])
-                ? PurchaseOrderItem::query()->find($line['order_item_id'])
+                ? PurchaseOrderItem::query()->lockForUpdate()->find($line['order_item_id'])
                 : null;
-            $materialPolicy = $orderItem
+            $policySource = $priorLine ?: $orderItem;
+            $materialPolicy = $policySource
                 ? $this->materialPolicySnapshot(
                     $item,
-                    $orderItem->material_policy_snapshot,
-                    $orderItem->material_policy_id_snapshot,
-                    $orderItem->material_policy_version_snapshot,
+                    $policySource->material_policy_snapshot,
+                    $policySource->material_policy_id_snapshot,
+                    $policySource->material_policy_version_snapshot,
                 )
                 : app(\App\Services\Erp\MaterialPolicySnapshotService::class)->fromItem($item);
-            $stockManaged = (bool) data_get($materialPolicy, 'material_policy_snapshot.is_stock_managed');
+            $stockManaged = $priorLine ? (bool) $priorLine->is_stock_item_snapshot
+                : (bool) data_get($materialPolicy, 'material_policy_snapshot.is_stock_managed');
+            abort_if($stockManaged !== (bool) $item->is_stock_item, 422, '冻结库存政策与当前物料不一致，请核对物料档案和来源单据');
+            $line['is_stock_item_snapshot'] = $stockManaged;
+            if ($stockManaged && !empty($line['warehouse_id'])) app(\App\Services\Erp\WarehouseManagementScopeService::class)
+                ->assertWarehouseItem($item, (int) $line['warehouse_id'], 'warehouse_id', $scope);
             $qty = (float) $line['receipt_qty'];
             $price = (float) ($line['unit_price'] ?? 0);
             $batchNo = $stockManaged ? trim((string) ($line['batch_no'] ?? '')) : null;
@@ -1257,6 +1334,7 @@ class PurchaseController extends Controller
                 'receipt_id' => $receipt->id,
                 'order_item_id' => $line['order_item_id'] ?? null,
                 'item_id' => $line['item_id'],
+                'management_scope_snapshot' => $scope,
                 'is_stock_item_snapshot' => $stockManaged,
                 'warehouse_id' => $stockManaged ? ($line['warehouse_id'] ?? null) : null,
                 'location_id' => $stockManaged ? ($line['location_id'] ?? null) : null,
@@ -1334,6 +1412,7 @@ class PurchaseController extends Controller
                         'request_id' => $split->request_id,
                         'request_item_id' => $split->request_item_id,
                         'item_id' => $split->item_id,
+                        'spec_model' => $split->planItem?->spec_model ?? $split->item?->spec ?? $split->item?->model ?? null,
                         'item_name' => $split->item->item_name ?? '',
                         'purchase_qty' => $qty,
                         'unit_price' => $price,
@@ -1489,7 +1568,9 @@ class PurchaseController extends Controller
         $query->where(function (Builder $q) use ($keyword, $columns, $relations) {
             foreach ($columns as $column) $q->orWhere($column, 'like', "%{$keyword}%");
             foreach ($relations as $relation => $fields) {
-                $q->orWhereHas($relation, fn (Builder $r) => collect($fields)->each(fn ($field) => $r->orWhere($field, 'like', "%{$keyword}%")));
+                $q->orWhereHas($relation, fn (Builder $r) => $r->where(function (Builder $matches) use ($fields, $keyword) {
+                    foreach ($fields as $field) $matches->orWhere($field, 'like', "%{$keyword}%");
+                }));
             }
         });
     }
@@ -1497,6 +1578,12 @@ class PurchaseController extends Controller
     private function perPage(Request $request): int
     {
         return min(100, max(5, (int) $request->input('per_page', 20)));
+    }
+
+    private function filterManagementScope(Builder $query, Request $request): void
+    {
+        $scopes = app(PurchaseManagementScopeService::class);
+        $scopes->applyFilter($query, $scopes->requestScope($request));
     }
 
     private function nextNo(string $prefix): string

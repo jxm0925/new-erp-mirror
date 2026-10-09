@@ -126,6 +126,7 @@ class PurchaseReceiptAllocationBoundaryTest extends TestCase
         $item = Item::create(['item_code' => 'ITEM-ALLOC', 'item_name' => '到货占用测试物料', 'item_type' => 'raw_material', 'unit_id' => $unit->id, 'is_purchase_item' => true, 'status' => 'enabled']);
         $supplier = Supplier::create(['supplier_code' => 'SUP-ALLOC', 'supplier_name' => '到货占用测试供应商', 'status' => 'enabled', 'approval_status' => 'approved']);
         $order = PurchaseOrder::create([
+            'management_scope' => 'factory',
             'purchase_order_no' => 'PO-ALLOC-001', 'supplier_id' => $supplier->id,
             'purchase_status' => 'processing', 'audit_status' => 'approved', 'receipt_status' => 'not_received',
             'total_qty' => 10,

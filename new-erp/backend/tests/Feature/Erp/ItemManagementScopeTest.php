@@ -146,7 +146,7 @@ class ItemManagementScopeTest extends TestCase
             ->assertOk()->assertJsonPath('data.direct_item_count', 0)->assertJsonPath('data.subtree_item_count', 0);
     }
 
-    public function test_manual_scope_correction_preserves_item_identity_inventory_and_audits_the_change(): void
+    public function test_manual_scope_correction_without_live_stock_preserves_identity_zero_balance_and_audits_the_change(): void
     {
         $item = $this->item('factory', $this->category('factory'), ['item_type' => 'service', 'is_production_item' => false]);
         $warehouse = DB::table('erp_warehouses')->insertGetId(['warehouse_code' => $this->code('WH'),
@@ -154,7 +154,7 @@ class ItemManagementScopeTest extends TestCase
         $location = DB::table('erp_locations')->insertGetId(['warehouse_id' => $warehouse, 'location_code' => $this->code('LOC'),
             'location_name' => '范围测试库位', 'status' => 'enabled', 'created_at' => now(), 'updated_at' => now()]);
         $balance = InventoryBalance::create(['item_id' => $item->id, 'warehouse_id' => $warehouse, 'location_id' => $location, 'batch_no' => $this->code('B'),
-            'unit_id' => $this->unit->id, 'quantity_on_hand' => '7', 'quantity_available' => '7', 'inventory_value' => '21']);
+            'unit_id' => $this->unit->id, 'quantity_on_hand' => '0', 'quantity_available' => '0', 'inventory_value' => '0']);
         $before = $balance->refresh()->getRawOriginal();
         $payload = array_replace($this->payload($item), ['management_scope' => 'office', 'item_type' => 'office_consumable',
             'category_id' => $this->category('office')->id]);
