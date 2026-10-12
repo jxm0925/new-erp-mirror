@@ -187,6 +187,7 @@ export default {
         const response = await getWorkOrder(requestedId)
         if (String(this.pageRoute.params.id) !== requestedId) return
         this.workOrder = response.data.data || {}
+        if (!this.beforeRelease) this.preparation = null
         if (this.canViewCompletion && (this.pageRoute.query.tab === 'completion' || this.workOrder.status === 'COMPLETED')) this.activeView = 'completion'
         this.form = { target_qty: this.workOrder.target_qty, planned_date: this.workOrder.planned_date, production_batch: this.workOrder.production_batch, responsible_user_legacy_id: this.workOrder.responsible_user && this.workOrder.responsible_user.user_id, production_location_name: this.workOrder.production_location_name }
         const tasks = []
@@ -207,7 +208,7 @@ export default {
       } catch (error) { if (String(this.pageRoute.params.id) === String(workOrderId)) this.$message.error(error.userMessage || '发布检查失败') } finally { if (String(this.pageRoute.params.id) === String(workOrderId)) this.gateLoading = false }
     },
     async fetchPreparation(workOrderId) {
-      try { const response = await getAssemblyPlan(workOrderId); if (String(this.pageRoute.params.id) === String(workOrderId)) this.preparation = response.data.data || null }
+      try { const response = await getAssemblyPlan(workOrderId); if (String(this.pageRoute.params.id) === String(workOrderId) && this.beforeRelease) this.preparation = response.data.data || null }
       catch (error) { if (String(this.pageRoute.params.id) === String(workOrderId)) { this.preparation = null; this.$message.error(error.userMessage || '生产准备加载失败') } }
     },
     async fetchMaterials(workOrderId = this.workOrder.id) {

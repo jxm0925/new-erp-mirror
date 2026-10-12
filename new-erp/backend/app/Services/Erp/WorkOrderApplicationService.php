@@ -307,15 +307,22 @@ class WorkOrderApplicationService
         // 重放成功命令前同样校验当前可见范围，避免命令号成为绕过权限的读取入口。
         $this->assertWorkOrderVisible($visible, $user, $permissions, $superAdmin);
         return $this->withCommand('confirm_technical', $id, $payload, $user, function () use ($id, $payload, $user, $permissions, $superAdmin): WorkOrder {
+            // Root preparation and cancellation lock root before descendants.
+            // Technical completion uses the same order to avoid reverse locking.
+            $rootId = (int) WorkOrder::whereKey($id)->value('assembly_root_work_order_id');
+            if ($rootId > 0) $this->lockWorkOrder($rootId);
             $workOrder = $this->lockWorkOrder($id);
+            if ((int) $workOrder->assembly_root_work_order_id !== $rootId) $this->fail('state_conflict', '子工单关联已变化，请刷新后重试。', 409);
             $this->assertWorkOrderVisible($workOrder, $user, $permissions, $superAdmin);
             $this->assertExpectedVersion($workOrder, $payload);
             $this->assertState($workOrder, [self::DRAFT, self::WAIT_RELEASE]);
             if ($workOrder->technical_version > 0 && trim((string) ($payload['reason'] ?? '')) === '') {
                 $this->fail('technical_revision_reason_required', '修订已确认生产资料必须填写原因。');
             }
-            app(AssemblyProductionApplicationService::class)->assertMutable($workOrder);
+            $assembly = app(AssemblyProductionApplicationService::class);
+            if (! $workOrder->assembly_component_demand_id) $assembly->assertMutable($workOrder);
             $snapshot = app(WorkOrderTechnicalService::class)->prepare($workOrder, $payload);
+            $assembly->assertInitialChildTechnicalLocked($workOrder, $snapshot);
             $attachmentIds = $payload['attachment_ids'] ?? array_column($workOrder->technical_snapshot['attachments'] ?? [], 'id');
             $snapshot['attachments'] = app(WorkOrderTechnicalAttachmentApplicationService::class)->snapshot($workOrder, $attachmentIds, $user);
             $version = (int) $workOrder->technical_version + 1;
@@ -341,6 +348,7 @@ class WorkOrderApplicationService
                 'release_gate_checked_at' => null,
                 'updated_by_legacy_id' => $this->userId($user),
             ])->save();
+            $assembly->recordInitialChildTechnicalLocked($workOrder, $user);
             $reason = trim((string) ($payload['reason'] ?? ''));
             $this->recordStatus($workOrder, $workOrder->status, $workOrder->status,
                 '确认生产资料 V'.$version.($reason ? '：'.$reason : ''), $beforeVersion, $beforeVersion + 1, $user);

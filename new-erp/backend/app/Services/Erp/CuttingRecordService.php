@@ -256,12 +256,12 @@ final class CuttingRecordService
             if ($batch->status !== 'WAIT_QUALITY' || $row->quality_status !== 'WAIT_QUALITY' || $row->status !== 'SUBMITTED') $c->fail('quality_not_waiting', '该结果不处于当前待质检状态。', 409);
             if (! in_array($p['result'] ?? '', ['passed','failed'], true)) $c->fail('quality_invalid', '质检只接受整行合格或不合格；混合结果须先退回拆行。');
             $quality = $p['result'] === 'passed' ? 'PASSED' : 'FAILED';
-            DB::table('erp_production_quality_inspections')->insert(['inspection_no' => $this->numbers->next('production_quality_inspection', 'PQI'),
+            DB::table('erp_production_quality_inspections')->insert(ProductionQualitySubject::attributes(['inspection_no' => $this->numbers->next('production_quality_inspection', 'PQI'),
                 'output_record_id' => null, 'cutting_result_id' => $resultId, 'status' => 'COMPLETED', 'result' => $p['result'],
                 'inspected_base_qty' => $row->actual_qty, 'qualified_base_qty' => $quality === 'PASSED' ? $row->actual_qty : '0',
                 'unqualified_base_qty' => $quality === 'FAILED' ? $row->actual_qty : '0', 'reason' => $p['reason'] ?? null,
                 'inspection_snapshot' => json_encode(['settlement_batch_id' => $batch->id, 'result_business_version' => $row->business_version,'result_snapshot'=>(array) $row], JSON_THROW_ON_ERROR),
-                'inspector_legacy_id' => $c->actor($user), 'inspected_at' => now(), 'business_version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+                'inspector_legacy_id' => $c->actor($user), 'inspected_at' => now(), 'business_version' => 1, 'created_at' => now(), 'updated_at' => now()]));
             DB::table('erp_cutting_results')->where('id', $resultId)->update(['quality_status' => $quality, 'business_version' => $row->business_version + 1, 'updated_at' => now()]);
             $waiting = DB::table('erp_cutting_results')->where('settlement_batch_id', $batch->id)->where('status','SUBMITTED')->where('quality_status', 'WAIT_QUALITY')->exists();
             $failed = DB::table('erp_cutting_results')->where('settlement_batch_id', $batch->id)->where('status','SUBMITTED')->where('quality_status', 'FAILED')->exists();

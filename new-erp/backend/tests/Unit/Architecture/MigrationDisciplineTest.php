@@ -23,21 +23,24 @@ class MigrationDisciplineTest extends TestCase
         $this->assertSame([], $violations, '业务运行时代码禁止建表或修改表结构，必须使用 database/migrations。');
     }
 
-    public function test_purchase_foundation_schema_is_defined_by_a_formal_migration(): void
+    public function test_purchase_foundation_schema_is_defined_by_formal_initial_migrations(): void
     {
-        $migration = __DIR__.'/../../../database/migrations/2026_08_14_180000_freeze_purchase_finance_and_quality_facts.php';
-        $contents = file_get_contents($migration);
-
-        $this->assertFileExists($migration);
+        $base = __DIR__.'/../../../database';
+        $manifest = json_decode(file_get_contents($base.'/schema/baseline.json'), true, 512, JSON_THROW_ON_ERROR);
         foreach ([
-            'original_qualified_base_qty',
-            'is_stock_item_snapshot',
-            'replacement_received_base_qty',
-            'return_amount_excl_tax',
-            'purchase_amount_snapshot',
-            'source_document_no',
-        ] as $column) {
-            $this->assertStringContainsString($column, $contents);
+            'erp_purchase_receipt_items' => ['original_qualified_base_qty', 'is_stock_item_snapshot'],
+            'erp_purchase_exchange_orders' => ['replacement_received_base_qty'],
+            'erp_purchase_return_items' => ['return_amount_excl_tax'],
+            'erp_inventory_transaction_items' => ['purchase_amount_snapshot'],
+            'erp_inventory_reservations' => ['source_document_no'],
+        ] as $table => $columns) {
+            $migration = $base.'/migrations/'.$manifest['tables'][$table].'.php';
+            $this->assertFileExists($migration);
+            $contents = file_get_contents($migration);
+            foreach ($columns as $column) {
+                $this->assertStringContainsString(chr(96).$column.chr(96), $contents);
+            }
         }
     }
+
 }

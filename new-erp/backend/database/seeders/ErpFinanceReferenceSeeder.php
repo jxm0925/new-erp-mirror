@@ -3,15 +3,24 @@
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
+use Database\Seeders\Support\RunsSafeSeed;
+use Database\Seeders\Support\SeedSafety;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 class ErpFinanceReferenceSeeder extends Seeder
 {
-    public function run(): void
+    use RunsSafeSeed;
+
+    private function seed(): void
     {
         if (!Schema::hasTable('erp_finance_currencies')) {
             return;
+        }
+
+        if (!DB::table('erp_finance_currencies')->where('currency_code', 'CNY')->exists()
+            && DB::table('erp_finance_currencies')->where('is_base', true)->exists()) {
+            throw new \RuntimeException('已有人工作为本位币的币种，不能自动补入第二个本位币；请通过币种维护明确配置。');
         }
 
         foreach ([
@@ -34,12 +43,7 @@ class ErpFinanceReferenceSeeder extends Seeder
 
     private function upsert(string $table, array $key, array $values): void
     {
-        $exists = DB::table($table)->where($key)->exists();
-        $payload = $values + ['updated_at' => now()];
-        if (!$exists) {
-            $payload['created_at'] = now();
-        }
-        DB::table($table)->updateOrInsert($key, $payload);
+        SeedSafety::insertMissing($table, $key, $values);
     }
 }
 

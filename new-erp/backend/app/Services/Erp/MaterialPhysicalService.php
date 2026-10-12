@@ -347,6 +347,7 @@ final class MaterialPhysicalService
             || ($balanceId && (int) $holding->inventory_balance_id !== $balanceId)) {
             throw ValidationException::withMessages(['physical_material_id' => '所选实物不在指定仓库余额中、不可用或已经发生其他流转。']);
         }
+        $this->holdingAttributes((array) $holding);
         return $physical;
     }
 
@@ -375,7 +376,7 @@ final class MaterialPhysicalService
         }
         $holding = DB::table('erp_material_holdings')->where('inventory_balance_id', $balance->id)->lockForUpdate()->first();
         if (!$holding) {
-            $id = DB::table('erp_material_holdings')->insertGetId([
+            $id = DB::table('erp_material_holdings')->insertGetId($this->holdingAttributes([
                 'material_lot_id' => $lotId,
                 'position_type' => 'WAREHOUSE',
                 'position_id' => $balance->warehouse_id,
@@ -386,18 +387,21 @@ final class MaterialPhysicalService
                 'business_version' => 1,
                 'created_at' => now(),
                 'updated_at' => now(),
-            ]);
+            ]));
             $holding = DB::table('erp_material_holdings')->where('id', $id)->first();
         }
         if ((int) $holding->material_lot_id !== $lotId || $holding->position_type !== 'WAREHOUSE' || $holding->status !== 'ACTIVE') {
             throw ValidationException::withMessages(['holding' => '仓库实物持有位置与库存余额不一致。']);
         }
+        $this->holdingAttributes((array) $holding);
         return $holding;
     }
 
     public function nonWarehouseHolding(int $lotId, string $positionType, int $positionId, string $cost, string $status): int
     {
-        return DB::table('erp_material_holdings')->insertGetId([
+        $this->holdingAttributes(['position_type' => $positionType, 'inventory_balance_id' => null,
+            'quantity' => '1', 'total_cost' => $cost]);
+        return DB::table('erp_material_holdings')->insertGetId($this->holdingAttributes([
             'material_lot_id' => $lotId,
             'position_type' => $positionType,
             'position_id' => $positionId,
@@ -408,7 +412,7 @@ final class MaterialPhysicalService
             'business_version' => 1,
             'created_at' => now(),
             'updated_at' => now(),
-        ]);
+        ]));
     }
 
     public function movePhysical(
@@ -458,6 +462,15 @@ final class MaterialPhysicalService
             ->exists();
         if ($adjustment || $purchaseReturn) {
             throw ValidationException::withMessages(['physical_material_id' => '该实物已被另一张未完成的调整单或采购退货单占用。']);
+        }
+    }
+
+    private function holdingAttributes(array $attributes): array
+    {
+        try {
+            return MaterialHoldingInvariant::attributes($attributes);
+        } catch (\App\Exceptions\Erp\WorkOrderDomainException $exception) {
+            throw ValidationException::withMessages(['holding' => $exception->getMessage()]);
         }
     }
 

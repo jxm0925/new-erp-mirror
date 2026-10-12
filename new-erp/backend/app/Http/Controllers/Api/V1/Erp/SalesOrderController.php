@@ -1302,7 +1302,7 @@ class SalesOrderController extends Controller
             ->where('sales_order_id', $order->id)->orWhere('active_sales_order_id', $order->id)->pluck('id');
         // Sales visibility permits this limited order-owned summary, never the
         // production details or costs. Each link separately requires production scope.
-        $orders = WorkOrder::query()->with('demand.line')->whereNull('assembly_component_demand_id')
+        $orders = WorkOrder::query()->with('demand.line')->whereNull('assembly_component_demand_id')->whereNull('assembly_root_work_order_id')
             ->where(function (Builder $query) use ($masterIds, $order): void {
                 $query->whereIn('production_master_order_id', $masterIds)
                     ->orWhere(fn (Builder $source) => $source->where('source_type', 'sales_order')->where('source_id', $order->id));
@@ -1323,34 +1323,93 @@ class SalesOrderController extends Controller
         $visibleIds = $visibleIds->pluck('id')->map(fn ($id) => (int) $id)->all();
         $statusLabels = ['DRAFT' => '草稿', 'WAIT_RELEASE' => '待发布', 'RELEASED' => '已发布',
             'IN_PROGRESS' => '生产中', 'COMPLETED' => '已完成', 'CANCELLED' => '已取消'];
-        // Count real execution targets, not the planned routing nodes. A route's
-        // first node does not establish that any worker has started that process.
-        $operations = DB::table('erp_production_unit_operations')->whereIn('work_order_id', $orders->pluck('id'))
-            ->select('work_order_id', 'operation_name_snapshot', 'status', 'started_at', 'completed_at')
-            ->unionAll(DB::table('erp_production_quantity_operations')->whereIn('work_order_id', $orders->pluck('id'))
-                ->select('work_order_id', 'operation_name_snapshot', 'status', 'started_at', 'completed_at'))
-            ->get()->groupBy('work_order_id');
-        return $orders->getCollection()->map(function (WorkOrder $workOrder) use ($statusLabels, $operations, $visibleIds): array {
+        // Aggregate target instances in SQL: one unit can have many operations,
+        // and sales needs counts and active names, not every execution record.
+        $operationGroups = function (string $table, $ids) {
+            return DB::table($table)->whereIn('work_order_id', $ids)->where('status', '<>', 'CANCELLED')
+                ->select('work_order_id', 'operation_name_snapshot', 'status')
+                ->selectRaw('COUNT(*) as target_count')
+                ->selectRaw("SUM(CASE WHEN status IN ('IN_PROGRESS', 'PAUSED') OR (started_at IS NOT NULL AND completed_at IS NULL AND status <> 'COMPLETED') THEN 1 ELSE 0 END) as active_count")
+                ->groupBy('work_order_id', 'operation_name_snapshot', 'status');
+        };
+        $operations = $operationGroups('erp_production_unit_operations', $orders->pluck('id'))
+            ->unionAll($operationGroups('erp_production_quantity_operations', $orders->pluck('id')))->get()->groupBy('work_order_id');
+        // Only descendants with the persisted root/demand/child relationship are
+        // part of this sale. Unrelated work orders and inventory prebuilds never enter.
+        $children = DB::table('erp_work_orders as child')
+            ->join('erp_assembly_component_demands as demand', function ($join): void {
+                $join->on('demand.id', '=', 'child.assembly_component_demand_id')
+                    ->on('demand.child_work_order_id', '=', 'child.id')
+                    ->on('demand.root_work_order_id', '=', 'child.assembly_root_work_order_id');
+            })->whereIn('child.assembly_root_work_order_id', $orders->pluck('id'));
+        $childStates = (clone $children)->select('child.assembly_root_work_order_id', 'child.status')
+            ->selectRaw('COUNT(*) as work_order_count')->groupBy('child.assembly_root_work_order_id', 'child.status')
+            ->get()->groupBy('assembly_root_work_order_id');
+        $childOperationGroups = function (string $table) use ($children) {
+            return (clone $children)->join($table.' as execution', 'execution.work_order_id', '=', 'child.id')
+                ->where('child.status', '<>', 'CANCELLED')->where('execution.status', '<>', 'CANCELLED')
+                ->select('child.assembly_root_work_order_id', 'execution.operation_name_snapshot', 'execution.status')
+                ->selectRaw('COUNT(*) as target_count')
+                ->selectRaw("SUM(CASE WHEN execution.status IN ('IN_PROGRESS', 'PAUSED') OR (execution.started_at IS NOT NULL AND execution.completed_at IS NULL AND execution.status <> 'COMPLETED') THEN 1 ELSE 0 END) as active_count")
+                ->groupBy('child.assembly_root_work_order_id', 'execution.operation_name_snapshot', 'execution.status');
+        };
+        $childOperations = $childOperationGroups('erp_production_unit_operations')
+            ->unionAll($childOperationGroups('erp_production_quantity_operations'))->get()->groupBy('assembly_root_work_order_id');
+        // Persisted checks are evidence only for the exact current business
+        // version. Reading this sales summary must never evaluate or write a gate.
+        $gateIssues = DB::table('erp_work_order_release_gate_checks as gate')
+            ->join('erp_work_orders as wo', 'wo.id', '=', 'gate.work_order_id')
+            ->whereIn('wo.id', $orders->pluck('id'))->whereIn('wo.status', ['DRAFT', 'WAIT_RELEASE'])
+            ->whereColumn('gate.work_order_version', 'wo.business_version')->where('gate.status', 'blocked')
+            ->get(['gate.work_order_id', 'gate.check_key', 'gate.message'])->groupBy('work_order_id');
+        return $orders->getCollection()->map(function (WorkOrder $workOrder) use ($statusLabels, $operations, $visibleIds, $childStates, $childOperations, $gateIssues, $children): array {
             $plan = app(\App\Services\Erp\AssemblyProductionApplicationService::class)->projection($workOrder);
             $material = $plan['material_preparation'] ?? [];
-            $issues = collect(array_merge($plan['issues'] ?? [], $material['issues'] ?? []))
+            // A released legacy order has no evidence of the new preparation workflow.
+            // Keep that unknown distinct from both a current blocker and current readiness.
+            $legacyPreparation = ($workOrder->released_at || in_array($workOrder->status, ['RELEASED', 'IN_PROGRESS', 'COMPLETED'], true))
+                && ($material === [] || in_array($material['status'] ?? null, ['schema_not_ready', 'not_prepared', 'historical_published'], true));
+            $childSummaries = collect($plan['child_material_preparations'] ?? []);
+            $childNames = $childSummaries->isEmpty() ? collect() : (clone $children)
+                ->where('child.assembly_root_work_order_id', $workOrder->id)->where('child.status', '<>', 'CANCELLED')
+                ->whereIn('child.id', $childSummaries->pluck('work_order_id'))->pluck('child.work_order_no', 'child.id');
+            $childIssues = $childSummaries->filter(fn ($child) => $childNames->has($child['work_order_id'] ?? 0))
+                ->flatMap(fn ($child) => collect($child['issues'] ?? [])->filter(fn ($issue) => ! empty($issue['message']))
+                    ->map(fn ($issue) => ['code' => $issue['code'] ?? 'preparation_blocked',
+                        'message' => '部件 '.$childNames->get($child['work_order_id']).'：'.$issue['message']]))->all();
+            $issues = collect(array_merge($plan['issues'] ?? [], $material['issues'] ?? [], $childIssues,
+                ($gateIssues->get($workOrder->id) ?? collect())->map(fn ($gate) => ['code' => $gate->check_key, 'message' => $gate->message])->all()))
                 ->map(fn ($issue) => ['code' => (string) ($issue['code'] ?? 'preparation_blocked'), 'message' => (string) ($issue['message'] ?? '')])
-                ->filter(fn ($issue) => $issue['message'] !== '')->unique('message')->values()->all();
-            $targets = ($operations->get($workOrder->id) ?? collect())->where('status', '<>', 'CANCELLED');
-            $completed = $targets->where('status', 'COMPLETED')->count();
-            $current = $targets->filter(fn ($target) => in_array($target->status, ['IN_PROGRESS', 'PAUSED'], true)
-                || ($target->started_at && ! $target->completed_at && $target->status !== 'COMPLETED'))
+                ->filter(fn ($issue) => $issue['message'] !== '' && (! $legacyPreparation || ! in_array($issue['code'], ['schema_not_ready', 'not_prepared'], true)))
+                ->unique('message')->values()->all();
+            $targets = $operations->get($workOrder->id) ?? collect();
+            $completed = (int) $targets->where('status', 'COMPLETED')->sum('target_count');
+            $total = (int) $targets->sum('target_count');
+            $current = $targets->filter(fn ($target) => (int) $target->active_count > 0)
                 ->pluck('operation_name_snapshot')->filter()->unique()->implode('、');
+            $componentStates = ($childStates->get($workOrder->id) ?? collect())->map(fn ($state) => [
+                'status' => $state->status, 'status_label' => $statusLabels[$state->status] ?? $state->status,
+                'count' => (int) $state->work_order_count,
+            ])->values();
+            $componentTargets = $childOperations->get($workOrder->id) ?? collect();
             $statusText = $statusLabels[$workOrder->status] ?? $workOrder->status;
             return [
                 'work_order_id' => (int) $workOrder->id, 'root_work_order_id' => (int) $workOrder->id,
                 'work_order_no' => $workOrder->work_order_no, 'line_no' => $workOrder->demand?->line?->line_no,
                 'status' => $workOrder->status, 'can_view' => in_array((int) $workOrder->id, $visibleIds, true),
                 'current_process_name' => $current ?: null,
-                'progress_text' => $statusText.($targets->isNotEmpty() ? ' · 工序完成 '.$completed.'/'.$targets->count() : ''),
-                'completed_operation_count' => $completed, 'total_operation_count' => $targets->count(),
-                'preparation_status' => $plan['status'] ?? ($workOrder->status === 'CANCELLED' ? 'cancelled' : ($workOrder->released_at ? 'legacy_snapshot' : 'pending')),
-                'material_preparation_status' => $material['status'] ?? null,
+                'progress_text' => $statusText.($total > 0 ? ' · 工序完成 '.$completed.'/'.$total : ''),
+                'completed_operation_count' => $completed, 'total_operation_count' => $total,
+                'component_progress' => [
+                    'work_order_count' => (int) $componentStates->sum('count'), 'states' => $componentStates->all(),
+                    'completed_operation_count' => (int) $componentTargets->where('status', 'COMPLETED')->sum('target_count'),
+                    'total_operation_count' => (int) $componentTargets->sum('target_count'),
+                    'current_process_name' => $componentTargets->filter(fn ($target) => (int) $target->active_count > 0)
+                        ->pluck('operation_name_snapshot')->filter()->unique()->implode('、') ?: null,
+                ],
+                'preparation_status' => $legacyPreparation ? 'legacy_snapshot' : ($plan['status'] ?? ($workOrder->status === 'CANCELLED' ? 'cancelled' : ($workOrder->released_at ? 'legacy_snapshot' : 'pending'))),
+                'preparation_ready' => $legacyPreparation ? null : (bool) ($plan['preparation_ready'] ?? ($material['ready'] ?? false)),
+                'material_preparation_status' => $legacyPreparation ? null : ($material['status'] ?? null),
                 'preparation_issues' => $issues,
             ];
         })->values()->all();

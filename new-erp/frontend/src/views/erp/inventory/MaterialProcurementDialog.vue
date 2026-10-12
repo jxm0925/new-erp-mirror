@@ -44,7 +44,13 @@ const blankPicker = () => ({ visible: false, kind: 'items', keyword: '', categor
 export default {
   data: () => ({ visible: false, mode: 'manual', order: null, sourceDemand: null, lines: [], expectedDate: '', remark: '', busy: false, error: '', pending: false, categories: [], categoryPage: 1, categoryTotal: 0, categorySequence: 0, picker: blankPicker() }),
   computed: {
-    valid() { return this.lines.length > 0 && this.lines.length <= 100 && this.remark && (this.mode !== 'order' || this.order) && this.lines.every(row => /^\d+(\.\d{1,4})?$/.test(row.request_qty) && Number(row.request_qty) > 0 && row.unit_name && (row.procureable_qty === undefined || Number(row.request_qty) <= Number(row.procureable_qty))) }
+    validSource() {
+      if (!this.sourceDemand) return true
+      if (this.sourceDemand.can_procure !== true) return false
+      if (this.sourceDemand.demand_stage !== 'preparation') return !!this.sourceDemand.id
+      return ['preparation_material_requirement_id', 'preparation_version', 'work_order_version'].every(key => Number.isInteger(Number(this.sourceDemand[key])) && Number(this.sourceDemand[key]) > 0)
+    },
+    valid() { return this.validSource && this.lines.length > 0 && this.lines.length <= 100 && this.remark && (this.mode !== 'order' || this.order) && this.lines.every(row => /^\d+(\.\d{1,4})?$/.test(row.request_qty) && Number(row.request_qty) > 0 && row.unit_name && (row.procureable_qty === undefined || Number(row.request_qty) <= Number(row.procureable_qty))) }
   },
   methods: {
     open(demand) {

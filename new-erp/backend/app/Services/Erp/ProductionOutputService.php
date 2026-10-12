@@ -42,12 +42,12 @@ class ProductionOutputService
                 || ($result === 'failed' && ($qualified > 0.00000001 || abs($unqualified - $fullQty) > 0.00000001))) {
                 $this->fail('partial_quality_not_supported', '当前生产产出按整批质检；混合合格结果必须先拆分产出批次，禁止将不合格量随合格量入库或交接。');
             }
-            $inspection = ProductionQualityInspection::create(['inspection_no' => $this->numbers->next('production_quality', 'PQA'),
+            $inspection = ProductionQualityInspection::create(ProductionQualitySubject::attributes(['inspection_no' => $this->numbers->next('production_quality', 'PQA'),
                 'output_record_id' => $output->id, 'status' => 'COMPLETED', 'result' => $result,
                 'inspected_base_qty' => (float) $output->output_base_qty, 'qualified_base_qty' => $qualified,
                 'unqualified_base_qty' => $unqualified, 'reason' => $payload['reason'] ?? null,
                 'inspection_snapshot' => $payload['inspection_snapshot'] ?? null, 'inspector_legacy_id' => $this->userId($user),
-                'inspected_at' => now(), 'business_version' => 1]);
+                'inspected_at' => now(), 'business_version' => 1]));
             $terminal = $this->isTerminalOutput($output);
             $direct = $result === 'passed' && ! $terminal
                 && (($payload['next_step'] ?? null) === 'direct_handover' || $output->output_mode_snapshot === 'flow_only');

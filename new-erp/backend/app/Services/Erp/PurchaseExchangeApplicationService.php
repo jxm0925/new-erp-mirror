@@ -39,11 +39,12 @@ class PurchaseExchangeApplicationService
             }
 
             $source = PurchaseReceiptItem::query()->with(['receipt.order', 'item.unit'])->lockForUpdate()->findOrFail($source->id);
+            $managementScope = InheritedManagementScopeGuard::nullable($source->receipt?->management_scope);
             $facts = $this->finance->proportionalFacts($source, (float) $event->issue_qty);
             $cost = (float) $facts['return_amount_excl_tax'];
             $order = PurchaseExchangeOrder::create([
                 'exchange_no' => $this->nextExchangeNo(),
-                'management_scope' => $source->receipt?->management_scope,
+                'management_scope' => $managementScope,
                 'defect_handling_id' => null,
                 'inventory_quality_event_id' => $event->id,
                 'source_receipt_id' => $source->receipt_id,
@@ -90,13 +91,14 @@ class PurchaseExchangeApplicationService
             $existing = PurchaseExchangeOrder::where('defect_handling_id', $handling->id)->lockForUpdate()->first();
             if ($existing) return $this->load($existing);
 
+            $managementScope = InheritedManagementScopeGuard::nullable($handling->receipt?->management_scope);
             $line = $handling->receiptItem;
             $facts = $this->finance->proportionalFacts($line, (float) $handling->handling_qty);
             $cost = (float) $facts['return_amount_excl_tax'];
             $exchangeNo = $this->nextExchangeNo($handling->business_doc_no);
             $order = PurchaseExchangeOrder::create([
                 'exchange_no' => $exchangeNo,
-                'management_scope' => $handling->receipt?->management_scope,
+                'management_scope' => $managementScope,
                 'defect_handling_id' => $handling->id,
                 'source_receipt_id' => $handling->receipt_id,
                 'source_receipt_item_id' => $handling->receipt_item_id,

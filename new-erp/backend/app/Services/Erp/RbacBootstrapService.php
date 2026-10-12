@@ -23,9 +23,37 @@ class RbacBootstrapService
         // reopen an old-system database connection.
     }
 
-    private function seedPermissions(bool $force = false): bool
+    /** Seeder专用：只补目录定义，不设置已有is_system、不授予或回收任何权限。 */
+    public function seedDefinitionsOnly(): void
     {
-        $permissions = [
+        $permissions = $this->permissionDefinitions();
+        $available = DB::table('erp_rbac_permissions')->pluck('id', 'code')->all();
+        foreach ($permissions as [$code, $name, $type, $parentCode]) {
+            if ($parentCode && !array_key_exists($parentCode, $available)) {
+                throw new \RuntimeException('权限目录缺少先行父定义：'.$parentCode);
+            }
+            $available[$code] = true;
+        }
+        foreach ($permissions as [$code, $name, $type, $parentCode, $path, $component, $icon, $sort]) {
+            $parentId = $parentCode ? DB::table('erp_rbac_permissions')->where('code', $parentCode)->value('id') : null;
+            if ($parentCode && !$parentId) throw new \RuntimeException('权限目录父身份缺失：'.$parentCode);
+            \Database\Seeders\Support\SeedSafety::insertMissing('erp_rbac_permissions', ['code' => $code], [
+                'parent_id' => $parentId, 'name' => $name, 'type' => $type, 'path' => $path,
+                'component' => $component, 'icon' => $icon, 'sort' => $sort, 'enabled' => true, 'is_system' => true,
+            ]);
+        }
+        foreach ([['admin', '系统管理员', 'all'], ['department_principal', '部门负责人', 'department'],
+            ['sales_manager', '销售负责人', 'department'], ['sales_user', '销售人员', 'self'],
+            ['production_manager', '生产管理员', 'all'], ['production_operator', '生产操作员', 'department']] as [$code, $name, $scope]) {
+            \Database\Seeders\Support\SeedSafety::insertMissing('erp_rbac_roles', ['code' => $code], [
+                'name' => $name, 'data_scope' => $scope, 'enabled' => true, 'is_system' => true,
+            ]);
+        }
+    }
+
+    private function permissionDefinitions(): array
+    {
+        return [
             // 一级模块 (7 大模块)
             ['master', '主数据中心', 'menu', null, null, null, 'el-icon-s-grid', 100],
             ['production', '生产管理', 'menu', null, null, null, 'el-icon-s-operation', 800],
@@ -449,6 +477,11 @@ class RbacBootstrapService
             ['document_number_rule.edit', '编辑编号规则', 'button', 'system.document_number_rule', null, null, 'el-icon-mouse', 2],
             ['document_number_rule.delete', '删除未使用编号规则', 'button', 'system.document_number_rule', null, null, 'el-icon-delete', 3],
         ];
+    }
+
+    private function seedPermissions(bool $force = false): bool
+    {
+        $permissions = $this->permissionDefinitions();
 
         // Normal page reads must never reseed every permission.  The old
         // implementation updateOrInsert-ed the full tree on every RBAC page

@@ -21,7 +21,7 @@ class UnitConversionSystemTest extends TestCase
 
     public function test_unit_code_has_database_and_request_uniqueness(): void
     {
-        $this->assertStringContainsString("unit_code', 40)->unique()", $this->source('database/migrations/2026_07_09_100000_create_erp_master_data_tables.php'));
+        $this->assertStringContainsString('UNIQUE KEY `erp_units_unit_code_unique` (`unit_code`)', $this->migrationSource('erp_units'));
         $this->assertStringContainsString("'unit_code' => \$unique('erp_units', 'unit_code')", $this->source('app/Http/Controllers/Api/V1/Erp/MasterDataController.php'));
     }
 
@@ -85,8 +85,13 @@ class UnitConversionSystemTest extends TestCase
 
     public function test_physical_sku_primary_item_is_unique(): void
     {
-        $source = $this->source('database/migrations/2026_07_24_120000_enforce_single_enabled_primary_item_per_sku.php');
-        $this->assertStringContainsString('erp_sku_item_one_enabled_primary', $source);
+        $source = $this->migrationSource('erp_sku_item_relations');
+        $this->assertStringContainsString('UNIQUE KEY `erp_sku_item_one_enabled_primary` (`enabled_primary_sku_id`)', $source);
+        // The later relation migration changed the active-row predicate from enabled to active.
+        $this->assertMatchesRegularExpression(
+            "/`enabled_primary_sku_id`[^\\r\\n]*GENERATED ALWAYS AS[^\\r\\n]*`status`\\s*=\\s*(?:_utf8mb4)?'active'[^\\r\\n]*\\band\\b[^\\r\\n]*`is_primary`\\s*=\\s*1[^\\r\\n]*then\\s+`sku_id`\\s+else\\s+NULL[^\\r\\n]*VIRTUAL/i",
+            $source,
+        );
     }
 
     public function test_sales_requirement_and_bom_use_base_units(): void
@@ -139,6 +144,14 @@ class UnitConversionSystemTest extends TestCase
         $noDelivery = new SalesOrderLine(['line_type' => 'no_delivery', 'order_qty' => 2, 'item_base_required_qty' => 999]);
         $this->assertSame(['type' => 'service', 'quantity' => 3.0], $this->service->demandForLine($service));
         $this->assertSame(['type' => 'no_delivery', 'quantity' => 0.0], $this->service->demandForLine($noDelivery));
+    }
+
+    private function migrationSource(string $table): string
+    {
+        $baseline = json_decode($this->source('database/schema/baseline.json'), true, 512, JSON_THROW_ON_ERROR);
+        $this->assertArrayHasKey($table, $baseline['tables']);
+
+        return $this->source('database/migrations/'.$baseline['tables'][$table].'.php');
     }
 
     private function source(string $path): string

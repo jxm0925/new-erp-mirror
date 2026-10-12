@@ -321,7 +321,10 @@ Design status: Approved (Optimized for modern ERP layout & responsive UX)
                   </div>
                   <div class="wo-field">
                     <span class="label">生产准备</span>
-                    <b class="value">{{ preparationText(work.preparation_status) }}<template v-if="work.material_preparation_status"> · {{ materialPreparationText(work.material_preparation_status) }}</template></b>
+                    <b class="value">{{ preparationText(work.preparation_status, work.preparation_ready) }}<template v-if="work.material_preparation_status"> · {{ materialPreparationText(work.material_preparation_status) }}</template></b>
+                  </div>
+                  <div v-if="work.component_progress && work.component_progress.work_order_count" class="wo-field">
+                    <span class="label">部件进度</span><b class="value">{{ componentProgressText(work.component_progress) }}</b>
                   </div>
                   <div v-for="(issue, index) in (work.preparation_issues || [])" :key="index" class="wo-field">
                     <span class="label">阻塞原因</span><b class="value">{{ issue.message }}</b>
@@ -618,8 +621,14 @@ export default {
         this.scrollToChanges()
       }
     },
-    preparationText(value) { return ({ pending: '待准备', blocked: '准备受阻', prepared: '部件已准备', not_required: '无需自产部件', cancelled: '已取消', legacy_snapshot: '历史工单' })[value] || '待核对' },
-    materialPreparationText(value) { return ({ ready: '核料完成', prepared: '核料完成', blocked: '核料受阻', pending: '待核料', not_required: '无需用料', released: '已发布' })[value] || '待核料' },
+    preparationText(value, ready) { if (value === 'prepared' && ready === false) return '准备未齐'; return ({ pending: '待准备', blocked: '准备受阻', prepared: '部件已准备', not_required: '无需自产部件', cancelled: '已取消', legacy_snapshot: '历史工单' })[value] || '待核对' },
+    materialPreparationText(value) { return ({ active: '核料完成', published: '已发布', schema_not_ready: '准备结构未就绪', not_prepared: '待核料', ready: '核料完成', prepared: '核料完成', blocked: '核料受阻', pending: '待核料', not_required: '无需用料', released: '已发布' })[value] || '待核料' },
+    componentProgressText(progress) {
+      const states = (progress.states || []).map(row => `${row.status_label} ${row.count}`).join('、')
+      const operations = progress.total_operation_count ? `；工序完成 ${progress.completed_operation_count}/${progress.total_operation_count}` : ''
+      const current = progress.current_process_name ? `；正在进行：${progress.current_process_name}` : ''
+      return `${progress.work_order_count} 张部件工单${states ? '（' + states + '）' : ''}${operations}${current}`
+    },
     openTrackedWorkOrder(work) { if (work.can_view === true && work.work_order_id) this.$router.push(`/production/work-orders/${work.work_order_id}`) },
     async loadTracking(page) {
       const id = this.order.id

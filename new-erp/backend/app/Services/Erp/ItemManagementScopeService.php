@@ -58,8 +58,10 @@ final class ItemManagementScopeService
         if (array_key_exists('management_scope', $data)) {
             $scope = $this->requiredScope($data['management_scope']);
         } else {
-            $scope = $existing?->managementScope() ?? $this->validateScope($creationScope)
-                ?? ($type === 'office_consumable' ? 'office' : 'factory');
+            // Validate stored non-null values before the legacy getter can hide an empty string.
+            $scope = $existing
+                ? $this->requiredScope($existing->management_scope ?? $existing->managementScope())
+                : ($this->validateScope($creationScope) ?? ($type === 'office_consumable' ? 'office' : 'factory'));
         }
         if (! $existing && $creationScope !== null && $scope !== $creationScope) {
             throw ValidationException::withMessages(['management_scope' => '新建物料的管理范围与当前入口不一致。']);
@@ -95,8 +97,10 @@ final class ItemManagementScopeService
     {
         $parentId = array_key_exists('parent_id', $data) ? $data['parent_id'] : $existing?->parent_id;
         $parent = $parentId ? ItemCategory::whereKey($parentId)->lockForUpdate()->first() : null;
-        $scope = array_key_exists('management_scope', $data) ? $this->requiredScope($data['management_scope'])
-            : ($existing?->managementScope() ?? $parent?->managementScope() ?? 'factory');
+        // An inherited parent or existing value needs the same validation as an explicit value.
+        $scope = $this->requiredScope(array_key_exists('management_scope', $data) ? $data['management_scope']
+            : ($existing ? ($existing->management_scope ?? $existing->managementScope())
+                : ($parent ? ($parent->management_scope ?? $parent->managementScope()) : 'factory')));
         if ($existing && $scope !== $existing->managementScope()) {
             throw ValidationException::withMessages(['management_scope' => '类目管理范围创建后不可更改，请在新范围建立类目后人工迁移物料。']);
         }

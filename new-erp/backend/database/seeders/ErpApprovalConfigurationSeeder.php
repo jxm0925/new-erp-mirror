@@ -3,29 +3,82 @@
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
+use Database\Seeders\Support\RunsSafeSeed;
+use Database\Seeders\Support\SeedSafety;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 class ErpApprovalConfigurationSeeder extends Seeder
 {
-    public function run(): void
+    use RunsSafeSeed;
+
+    private function seed(): void
     {
         if (!Schema::hasTable('erp_approval_flow_templates')) {
             return;
         }
 
+        $this->assertDependencies();
         $this->seedBusinessObjects();
         $this->seedBusinessEventsAndActions();
         $this->seedSalesOrderChangeFlow();
     }
 
-    private function seedBusinessObjects(): void
+    private function assertDependencies(): void
     {
-        if (!Schema::hasTable('erp_approval_business_objects') || !Schema::hasTable('erp_approval_business_object_fields')) {
-            return;
+        foreach ($this->businessObjects() as $code => $config) {
+            $columns = Schema::getColumnListing($config['table']);
+            foreach (array_unique(array_merge($config['display_fields'], $config['search_fields'], $config['display'], $config['condition'], $config['reference'], $config['writable'])) as $field) {
+                if (!in_array($field, $columns, true)) throw new \RuntimeException("审批来源字段缺失：{$code}.{$field}");
+            }
+            if (!class_exists($config['provider'])) throw new \RuntimeException("审批来源Provider不存在：{$code}");
+            $existing = DB::table('erp_approval_business_objects')->where('object_code', $code)->first();
+            if ($existing && ($existing->source_table !== $config['table'] || $existing->primary_key !== 'id' || $existing->source_type !== 'database')) {
+                throw new \RuntimeException("审批对象代码与来源身份冲突：{$code}，请通过正式配置升级处理。");
+            }
         }
+        foreach ($this->businessActions() as [$objectCode, $actionCode, $actionName, $resultEvent, $handlerClass]) {
+            if (!class_exists($handlerClass)) throw new \RuntimeException('审批动作处理器不存在：'.$actionCode);
+            $action = DB::table('erp_approval_business_actions')->where('action_code', $actionCode)->first();
+            if (!$action) continue;
+            $objectId = $objectCode === null ? null : DB::table('erp_approval_business_objects')->where('object_code', $objectCode)->value('id');
+            if (($action->business_object_id === null ? null : (int) $action->business_object_id) !== ($objectId === null ? null : (int) $objectId)) {
+                throw new \RuntimeException('审批动作代码与业务对象身份冲突：'.$actionCode);
+            }
+        }
+        $flow = DB::table('erp_approval_flow_templates')->where('flow_code', 'SALES_ORDER_CHANGE')->first();
+        if ($flow) {
+            if ($flow->business_type !== 'SALES_ORDER_CHANGE') throw new \RuntimeException('审批模板代码与业务身份冲突。');
+            $current = (int) $flow->current_version;
+            $version = $current > 0 ? DB::table('erp_approval_flow_versions')->where(['flow_template_id' => $flow->id, 'version_no' => $current])->first() : null;
+            if (($current > 0 && !$version) || ($flow->status === 'enabled' && (!$version || $version->version_status !== 'published'))) {
+                throw new \RuntimeException('既有审批模板当前版本缺失或未发布，不能由安装Seeder伪造版本；请通过流程维护修复。');
+            }
+        } else {
+            $object = DB::table('erp_approval_business_objects')->where('object_code', 'SALES_ORDER_CHANGE')->first();
+            if ($object && (!$object->enabled || $object->provider_class !== $this->businessObjects()['SALES_ORDER_CHANGE']['provider'])) {
+                throw new \RuntimeException('新审批模板依赖的既有业务对象已停用或Provider不同，请通过流程维护明确配置。');
+            }
+            if ($object) {
+                $event = DB::table('erp_approval_business_events')->where(['business_object_id' => $object->id, 'event_code' => 'submit_change'])->first();
+                if ($event && (!$event->enabled || !$event->event_trigger_allowed)) throw new \RuntimeException('新审批模板依赖的既有事件不允许触发。');
+            }
+            $action = DB::table('erp_approval_business_actions')->where('action_code', 'sales_order_change.decide')->first();
+            if ($action && (!$action->enabled || $action->handler_class !== 'App\\Services\\Erp\\ApprovalActions\\SalesOrderChangeAction')) throw new \RuntimeException('新审批模板依赖的既有动作已停用或处理器不同。');
+            foreach (['sales_manager', 'finance_manager'] as $role) {
+                $definition = DB::table('erp_rbac_roles')->where('code', $role)->first();
+                if (!$definition || !$definition->enabled) throw new \RuntimeException("新审批模板缺少启用角色定义：{$role}，请先补齐RBAC定义。");
+            }
+            foreach (['sales_order.change.approve_business', 'sales_order.change.approve_finance', 'sales_order.change.approve_fulfillment'] as $permission) {
+                $definition = DB::table('erp_rbac_permissions')->where('code', $permission)->first();
+                if (!$definition || !$definition->enabled) throw new \RuntimeException("新审批模板缺少启用权限定义：{$permission}");
+            }
+        }
+    }
 
-        $objects = [
+    private function businessObjects(): array
+    {
+        return [
             'PURCHASE_ORDER' => [
                 'name' => '采购订单',
                 'module' => '采购管理',
@@ -66,6 +119,15 @@ class ErpApprovalConfigurationSeeder extends Seeder
                 'writable' => [],
             ],
         ];
+    }
+
+    private function seedBusinessObjects(): void
+    {
+        if (!Schema::hasTable('erp_approval_business_objects') || !Schema::hasTable('erp_approval_business_object_fields')) {
+            return;
+        }
+
+        $objects = $this->businessObjects();
 
         foreach ($objects as $code => $config) {
             if (!Schema::hasTable($config['table'])) {
@@ -84,15 +146,11 @@ class ErpApprovalConfigurationSeeder extends Seeder
                 'provider_class' => $config['provider'],
                 'context_provider_class' => $config['provider'],
                 'enabled' => true,
+                'view_permission_code' => $code === 'PURCHASE_ORDER' ? 'purchase.order.view' : null,
             ]);
 
             $objectId = (int) DB::table('erp_approval_business_objects')->where('object_code', $code)->value('id');
-            if ($code === 'PURCHASE_ORDER') {
-                // 只补缺失权限，保留管理员后续收紧的来源权限配置。
-                DB::table('erp_approval_business_objects')->where('id', $objectId)
-                    ->where(fn ($query) => $query->whereNull('view_permission_code')->orWhere('view_permission_code', ''))
-                    ->update(['view_permission_code' => 'purchase.order.view']);
-            }
+
             $this->syncObjectFields($objectId, $config['table'], $config);
         }
     }
@@ -139,6 +197,19 @@ class ErpApprovalConfigurationSeeder extends Seeder
         }
     }
 
+    private function businessActions(): array
+    {
+        return [
+            [null, 'approval.complete', '完成审核并保留申请结果', 'approved', 'App\\Services\\Erp\\ApprovalActions\\CompleteApplicationAction'],
+            [null, 'approval.reject', '驳回申请并保留审核记录', 'rejected', 'App\\Services\\Erp\\ApprovalActions\\CompleteApplicationAction'],
+            [null, 'generic.approve.update_fields', '审核通过后更新允许字段', 'approved', 'App\\Services\\Erp\\ApprovalActions\\UpdateRegisteredFieldsAction'],
+            [null, 'generic.reject.update_fields', '审核驳回后更新允许字段', 'rejected', 'App\\Services\\Erp\\ApprovalActions\\UpdateRegisteredFieldsAction'],
+            ['PURCHASE_ORDER', 'purchase_order.approve', '确认采购订单并进入待到货', 'approved', 'App\\Services\\Erp\\ApprovalActions\\PurchaseOrderAction'],
+            ['PURCHASE_ORDER', 'purchase_order.reject', '退回采购订单草稿', 'rejected', 'App\\Services\\Erp\\ApprovalActions\\PurchaseOrderAction'],
+            ['SALES_ORDER_CHANGE', 'sales_order_change.decide', '执行销售订单变更节点决策', 'node_decision', 'App\\Services\\Erp\\ApprovalActions\\SalesOrderChangeAction'],
+        ];
+    }
+
     private function seedBusinessEventsAndActions(): void
     {
         if (!Schema::hasTable('erp_approval_business_events') || !Schema::hasTable('erp_approval_business_actions')) {
@@ -168,15 +239,7 @@ class ErpApprovalConfigurationSeeder extends Seeder
             ]);
         }
 
-        $actions = [
-            [null, 'approval.complete', '完成审核并保留申请结果', 'approved', 'App\\Services\\Erp\\ApprovalActions\\CompleteApplicationAction'],
-            [null, 'approval.reject', '驳回申请并保留审核记录', 'rejected', 'App\\Services\\Erp\\ApprovalActions\\CompleteApplicationAction'],
-            [null, 'generic.approve.update_fields', '审核通过后更新允许字段', 'approved', 'App\\Services\\Erp\\ApprovalActions\\UpdateRegisteredFieldsAction'],
-            [null, 'generic.reject.update_fields', '审核驳回后更新允许字段', 'rejected', 'App\\Services\\Erp\\ApprovalActions\\UpdateRegisteredFieldsAction'],
-            ['PURCHASE_ORDER', 'purchase_order.approve', '确认采购订单并进入待到货', 'approved', 'App\\Services\\Erp\\ApprovalActions\\PurchaseOrderAction'],
-            ['PURCHASE_ORDER', 'purchase_order.reject', '退回采购订单草稿', 'rejected', 'App\\Services\\Erp\\ApprovalActions\\PurchaseOrderAction'],
-            ['SALES_ORDER_CHANGE', 'sales_order_change.decide', '执行销售订单变更节点决策', 'node_decision', 'App\\Services\\Erp\\ApprovalActions\\SalesOrderChangeAction'],
-        ];
+        $actions = $this->businessActions();
 
         foreach ($actions as [$objectCode, $actionCode, $actionName, $resultEvent, $handlerClass]) {
             $objectId = $objectCode === null ? null : ($objectIds[$objectCode] ?? null);
@@ -201,7 +264,22 @@ class ErpApprovalConfigurationSeeder extends Seeder
             return;
         }
 
+        // 既有模板的当前版和所有历史版都属于配置事实；缺版必须正式修复，不能补造已发布快照。
+        if (DB::table('erp_approval_flow_templates')->where('flow_code', 'SALES_ORDER_CHANGE')->exists()) return;
+
+        // 安装补缺只提供当前格式草稿；发布必须走正式验证和冲突检查。
         $definition = [
+            'schema_version' => 2,
+            'source_mode' => 'existing',
+            'business_object_code' => 'SALES_ORDER_CHANGE',
+            'event_code' => 'submit_change',
+            'trigger_mode' => 'EVENT_TRIGGER',
+            'execution_mode' => 'BEFORE_ACTION',
+            'priority' => 100,
+            'match_strategy' => 'FIRST_MATCH',
+            'start_conditions' => [],
+            // 完成动作需要业务负责人确认，不能从旧版回调字符串猜测当前执行语义。
+            'completion_actions' => [],
             'processing_mode' => 'sequential',
             'source_table' => 'erp_sales_order_change_candidates',
             'applicable_scope' => [
@@ -229,14 +307,10 @@ class ErpApprovalConfigurationSeeder extends Seeder
                 'internal' => true,
                 'email' => false,
             ],
-            'callbacks' => [
-                'approved' => 'sales_order_change.activate',
-                'rejected' => 'sales_order_change.reject',
-            ],
             'allow_self_approval' => false,
         ];
 
-        $this->upsert('erp_approval_flow_templates', ['flow_code' => 'SALES_ORDER_CHANGE'], [
+        if (!SeedSafety::insertMissing('erp_approval_flow_templates', ['flow_code' => 'SALES_ORDER_CHANGE'], [
             'flow_name' => '销售订单变更审核',
             'business_module' => '销售管理',
             'business_type' => 'SALES_ORDER_CHANGE',
@@ -248,12 +322,12 @@ class ErpApprovalConfigurationSeeder extends Seeder
             'execution_mode' => 'BEFORE_ACTION',
             'priority' => 100,
             'match_strategy' => 'FIRST_MATCH',
-            'status' => 'enabled',
-            'current_version' => 1,
-            'description' => '销售订单正式版本变更的业务、财务和履约审核。',
+            'status' => 'draft',
+            'current_version' => 0,
+            'description' => '销售订单变更审核草稿；请确认完成动作并通过正式流程验证后发布。',
             'created_by' => '系统',
             'updated_by' => '系统',
-        ]);
+        ])) return;
 
         $templateId = (int) DB::table('erp_approval_flow_templates')
             ->where('flow_code', 'SALES_ORDER_CHANGE')
@@ -263,11 +337,11 @@ class ErpApprovalConfigurationSeeder extends Seeder
             'flow_template_id' => $templateId,
             'version_no' => 1,
         ], [
-            'version_status' => 'published',
+            'version_status' => 'draft',
             'definition_snapshot' => json_encode($definition, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
-            'validation_snapshot' => json_encode(['valid' => true, 'errors' => [], 'warnings' => []], JSON_UNESCAPED_UNICODE),
-            'published_by' => '系统',
-            'published_at' => now(),
+            'validation_snapshot' => null,
+            'published_by' => null,
+            'published_at' => null,
             'updated_by' => '系统',
         ]);
     }
@@ -282,6 +356,7 @@ class ErpApprovalConfigurationSeeder extends Seeder
 
         return [
             'key' => $key,
+            'node_type' => 'APPROVAL',
             'name' => $name,
             'approval_type' => $approvalType,
             'permission_code' => $permissionCode,
@@ -300,11 +375,6 @@ class ErpApprovalConfigurationSeeder extends Seeder
 
     private function upsert(string $table, array $key, array $values): void
     {
-        $exists = DB::table($table)->where($key)->exists();
-        $payload = $values + ['updated_at' => now()];
-        if (!$exists) {
-            $payload['created_at'] = now();
-        }
-        DB::table($table)->updateOrInsert($key, $payload);
+        SeedSafety::insertMissing($table, $key, $values);
     }
 }

@@ -3,12 +3,16 @@
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
+use Database\Seeders\Support\RunsSafeSeed;
+use Database\Seeders\Support\SeedSafety;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 class ErpDocumentNumberRuleSeeder extends Seeder
 {
-    public function run(): void
+    use RunsSafeSeed;
+
+    private function seed(): void
     {
         if (!Schema::hasTable('erp_document_number_rules')) {
             return;
@@ -87,11 +91,6 @@ class ErpDocumentNumberRuleSeeder extends Seeder
 
     private function upsert(string $table, array $key, array $values): void
     {
-        $exists = DB::table($table)->where($key)->exists();
-        $payload = $values + ['updated_at' => now()];
-        if (!$exists) {
-            $payload['created_at'] = now();
-        }
-        DB::table($table)->updateOrInsert($key, $payload);
+        SeedSafety::insertMissing($table, $key, $values);
     }
 }

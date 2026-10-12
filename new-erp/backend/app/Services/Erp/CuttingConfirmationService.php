@@ -28,6 +28,9 @@ final class CuttingConfirmationService
                 $c->fail('automatic_cost_scope_invalid','此自动规则仅用于工人自主下料，不改变既有计划核算。');
             if ($batch->status !== 'WAIT_CONFIRM') $c->fail('batch_not_confirmable','用料批次尚未通过申报和质量确认，或已核算。',409);
             $this->records->assertInput($batch);
+            $wipHolding = DB::table('erp_material_holdings')->where('id', $batch->wip_holding_id)->lockForUpdate()->first();
+            if (!$wipHolding) $c->fail('input_holding_missing', '下料投入持有记录不存在。');
+            MaterialHoldingInvariant::attributes((array) $wipHolding);
             $rows = DB::table('erp_cutting_results')->where('settlement_batch_id',$batchId)->whereNotIn('status',['VOIDED','SUPERSEDED'])->orderBy('id')->lockForUpdate()->get();
             if ($rows->isEmpty()) $c->fail('results_missing','没有可核算的实际结果。');
             if (DB::table('erp_cutting_orders')->where('id', $batch->cutting_order_id)->where('purpose', 'WORKER')->exists()) {
@@ -85,7 +88,7 @@ final class CuttingConfirmationService
                 DB::table('erp_cutting_results')->where('id',$row->id)->update(['total_cost'=>$cost,'material_lot_id'=>$lotId,
                     'physical_material_id'=>$physicalId,'status'=>'CONFIRMED','business_version'=>$row->business_version+1,'updated_at'=>now()]);
             }
-            DB::table('erp_material_holdings')->where('id',$batch->wip_holding_id)->update(['quantity'=>'0','total_cost'=>'0','status'=>'CONSUMED','business_version'=>DB::raw('business_version+1'),'updated_at'=>now()]);
+            DB::table('erp_material_holdings')->where('id',$batch->wip_holding_id)->update(MaterialHoldingInvariant::changes($wipHolding, ['quantity'=>'0','total_cost'=>'0','status'=>'CONSUMED','business_version'=>DB::raw('business_version+1'),'updated_at'=>now()]));
             if ($batch->physical_material_id) {
                 DB::table('erp_material_physicals')->where('id',$batch->physical_material_id)->update(['status'=>'CONSUMED','first_cut_at'=>DB::raw('COALESCE(first_cut_at,CURRENT_TIMESTAMP)'),
                     'business_version'=>DB::raw('business_version+1'),'updated_at'=>now()]);
@@ -239,8 +242,8 @@ final class CuttingConfirmationService
         'stage_id'=>$stageId,'material_form'=>$form,'cut_length_mm'=>$length,'source_type'=>'cutting_result','source_id'=>$resultId,'parent_lot_id'=>$parent,'created_at'=>now(),'updated_at'=>now()]); }
 
     private function holding(int $lotId, string $position, int $id, string $qty, string $cost): int
-    { return DB::table('erp_material_holdings')->insertGetId(['material_lot_id'=>$lotId,'position_type'=>$position,'position_id'=>$id,'quantity'=>$qty,'total_cost'=>$cost,
-        'status'=>'ACTIVE','business_version'=>1,'created_at'=>now(),'updated_at'=>now()]); }
+    { return DB::table('erp_material_holdings')->insertGetId(MaterialHoldingInvariant::attributes(['material_lot_id'=>$lotId,'position_type'=>$position,'position_id'=>$id,'quantity'=>$qty,'total_cost'=>$cost,
+        'status'=>'ACTIVE','business_version'=>1,'created_at'=>now(),'updated_at'=>now()])); }
 
     private function movement(object $batch, int $target, ?int $routeId, string $qty, string $cost, object $user): void
     { DB::table('erp_material_movements')->insert(['movement_no'=>$this->numbers->next('material_movement','MM'),'route_id'=>$routeId,

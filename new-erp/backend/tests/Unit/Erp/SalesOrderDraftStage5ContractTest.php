@@ -10,7 +10,9 @@ class SalesOrderDraftStage5ContractTest extends TestCase
     #[DataProvider('contractCases')]
     public function test_stage5_draft_contract_is_present(string $relativeFile, string $needle): void
     {
-        $contents = file_get_contents(base_path($relativeFile));
+        $contents = str_starts_with($relativeFile, 'schema:')
+            ? $this->migrationSource(substr($relativeFile, strlen('schema:')))
+            : file_get_contents(base_path($relativeFile));
         $this->assertIsString($contents);
         $this->assertStringContainsString($needle, $contents);
     }
@@ -18,13 +20,13 @@ class SalesOrderDraftStage5ContractTest extends TestCase
     public static function contractCases(): array
     {
         return [
-            '01 order date schema' => ['database/migrations/2026_07_25_120000_complete_stage5_sales_order_draft_foundation.php', "'order_date'"],
-            '02 salesperson schema' => ['database/migrations/2026_07_25_120000_complete_stage5_sales_order_draft_foundation.php', "'salesperson_id'"],
-            '03 sales department schema' => ['database/migrations/2026_07_25_120000_complete_stage5_sales_order_draft_foundation.php', "'sales_department_id'"],
-            '04 carrier snapshot schema' => ['database/migrations/2026_07_25_120000_complete_stage5_sales_order_draft_foundation.php', "'default_carrier_name_snapshot'"],
-            '05 line sort schema' => ['database/migrations/2026_07_25_120000_complete_stage5_sales_order_draft_foundation.php', "'sort_order'"],
-            '06 attachment version schema' => ['database/migrations/2026_07_25_120000_complete_stage5_sales_order_draft_foundation.php', "'version_no'"],
-            '07 attachment replacement schema' => ['database/migrations/2026_07_25_120000_complete_stage5_sales_order_draft_foundation.php', "'replaced_attachment_id'"],
+            '01 order date schema' => ['schema:erp_sales_orders', '`order_date`'],
+            '02 salesperson schema' => ['schema:erp_sales_orders', '`salesperson_id`'],
+            '03 sales department schema' => ['schema:erp_sales_orders', '`sales_department_id`'],
+            '04 carrier snapshot schema' => ['schema:erp_sales_orders', '`default_carrier_name_snapshot`'],
+            '05 line sort schema' => ['schema:erp_sales_order_lines', '`sort_order`'],
+            '06 attachment version schema' => ['schema:erp_sales_order_attachments', '`version_no`'],
+            '07 attachment replacement schema' => ['schema:erp_sales_order_attachments', '`replaced_attachment_id`'],
             '08 draft service exists' => ['app/Services/Erp/SalesOrderDraftService.php', 'class SalesOrderDraftService'],
             '09 generated formal number' => ['app/Services/Erp/SalesOrderDraftService.php', "\$this->numbers->next('sales_order', 'SO')"],
             '10 draft order status' => ['app/Services/Erp/SalesOrderDraftService.php', "'order_status'] = 'draft'"],
@@ -70,6 +72,14 @@ class SalesOrderDraftStage5ContractTest extends TestCase
         $this->assertStringNotContainsString('SalesOrderFulfillment::create', $submit);
         $this->assertStringNotContainsString('SalesOrderProductionRequirement::create', $submit);
         $this->assertStringNotContainsString('InventoryReservation::create', $submit);
+    }
+
+    private function migrationSource(string $table): string
+    {
+        $baseline = json_decode(file_get_contents(base_path('database/schema/baseline.json')), true, 512, JSON_THROW_ON_ERROR);
+        $this->assertArrayHasKey($table, $baseline['tables']);
+
+        return file_get_contents(base_path('database/migrations/'.$baseline['tables'][$table].'.php'));
     }
 
     private function methodSource(string $source, string $startNeedle, string $endNeedle): string

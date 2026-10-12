@@ -91,7 +91,7 @@ class AssemblyProductionPlanTest extends TestCase
         $this->assertFalse($plan['required']);
         $this->assertSame('not_required', $plan['status']);
         $this->assertSame(0, WorkOrder::where('assembly_root_work_order_id', $f['wo']->id)->count());
-        $this->assertSame(0, AssemblyProductionPlan::where('root_work_order_id', $f['wo']->id)->count());
+        $this->assertSame('NOT_REQUIRED', AssemblyProductionPlan::where('root_work_order_id', $f['wo']->id)->value('status'));
         $this->submit($f); $this->assertTrue($this->gate($f)['allowed']);
     }
 
@@ -116,9 +116,9 @@ class AssemblyProductionPlanTest extends TestCase
         BomItem::create(['bom_id' => $f['frame_bom']->id, 'line_no' => 30, 'component_item_id' => $f['machine']->id,
             'component_item_code' => $f['machine']->item_code, 'component_item_name' => $f['machine']->item_name,
             'qty' => 1, 'unit_id' => $f['unit']->id, 'loss_rate' => 0, 'fixed_qty' => 0]);
+        $this->expectCode('assembly_plan_blocked', fn () => $this->prepare($f));
         $preview = $this->preview($f);
         $this->assertContains('assembly_bom_cycle', array_column($preview['issues'], 'code'));
-        $this->expectCode('assembly_plan_blocked', fn () => $this->prepare($f));
         $this->assertSame(0, WorkOrder::where('assembly_root_work_order_id', $f['wo']->id)->count());
     }
 
@@ -206,7 +206,7 @@ class AssemblyProductionPlanTest extends TestCase
         $this->assertSame('2.00000000', (string) DB::table('erp_assembly_inventory_reservations')->where('work_order_id', $published->id)->value('consumed_base_qty'));
     }
 
-    public function test_automatic_sales_work_order_prepares_components_in_the_confirmation_transaction(): void
+    public function test_automatic_sales_work_order_prepares_components_after_the_confirmation_transaction(): void
     {
         $f = $this->fixture(); $stock = $this->stock($f['frame'], '1');
         $order = SalesOrder::create(['sales_order_no' => $this->code('SO'), 'customer_name' => '整机客户',
@@ -219,7 +219,13 @@ class AssemblyProductionPlanTest extends TestCase
             'item_id' => $f['machine']->id, 'production_qty' => 2, 'base_unit_id' => $f['unit']->id, 'base_unit_name_snapshot' => '件',
             'item_base_required_qty' => 2, 'requirement_status' => 'ready', 'is_active' => true, 'requirement_version' => 1, 'business_version' => 1,
             'is_ready_for_work_order' => true, 'bom_id' => $f['root_bom']->id]);
-        $created = DB::transaction(fn () => app(WorkOrderApplicationService::class)->ensureAutomaticSalesDraft($demand, $f['user']));
+        $created = DB::transaction(function () use ($demand, $f, $stock) {
+            $root = app(WorkOrderApplicationService::class)->ensureAutomaticSalesDraft($demand, $f['user']);
+            $this->assertSame('PENDING', AssemblyProductionPlan::where('root_work_order_id', $root->id)->value('status'));
+            $this->assertSame(0, WorkOrder::where('assembly_root_work_order_id', $root->id)->count());
+            $this->assertSame('0.0000', (string) $stock->fresh()->quantity_locked);
+            return $root;
+        });
         $again = DB::transaction(fn () => app(WorkOrderApplicationService::class)->ensureAutomaticSalesDraft($demand, $f['user']));
         $this->assertSame($created->id, $again->id);
         $this->assertSame('WAIT_RELEASE', $created->status);
@@ -323,7 +329,7 @@ class AssemblyProductionPlanTest extends TestCase
         $this->expectCode('assembly_plan_blocked', fn () => $this->prepare($f));
         $this->assertSame(0, WorkOrder::where('assembly_root_work_order_id', $f['wo']->id)->count());
         $this->assertSame(0, AssemblyComponentDemand::where('root_work_order_id', $f['wo']->id)->count());
-        $this->assertSame(0, AssemblyProductionPlan::where('root_work_order_id', $f['wo']->id)->count());
+        $this->assertSame('BLOCKED', AssemblyProductionPlan::where('root_work_order_id', $f['wo']->id)->value('status'));
         $this->assertSame('0.0000', (string) $boxStock->fresh()->quantity_locked);
         $this->assertSame(1, $f['wo']->fresh()->business_version);
     }
@@ -342,7 +348,7 @@ class AssemblyProductionPlanTest extends TestCase
         $this->assertSame('0.0000', (string) $first->fresh()->quantity_locked);
         $this->assertSame('0.0000', (string) $second->fresh()->quantity_locked);
         $this->assertSame(0, AssemblyComponentDemand::where('root_work_order_id', $f['wo']->id)->count());
-        $this->assertSame(0, AssemblyProductionPlan::where('root_work_order_id', $f['wo']->id)->count());
+        $this->assertSame('BLOCKED', AssemblyProductionPlan::where('root_work_order_id', $f['wo']->id)->value('status'));
         $this->assertSame(0, WorkOrder::where('assembly_root_work_order_id', $f['wo']->id)->count());
     }
 
@@ -369,7 +375,7 @@ class AssemblyProductionPlanTest extends TestCase
         $this->assertCount(500, $plan['components']);
         $this->assertContains('assembly_tree_limit', array_column($plan['issues'], 'code'));
         $this->expectCode('assembly_plan_blocked', fn () => $this->prepare($f));
-        $this->assertSame(0, AssemblyProductionPlan::where('root_work_order_id', $f['wo']->id)->count());
+        $this->assertSame('BLOCKED', AssemblyProductionPlan::where('root_work_order_id', $f['wo']->id)->value('status'));
         $this->assertSame(0, AssemblyComponentDemand::where('root_work_order_id', $f['wo']->id)->count());
         $this->assertSame('0.0000', (string) $frameStock->fresh()->quantity_locked);
         $this->assertSame('0.0000', (string) $boxStock->fresh()->quantity_locked);

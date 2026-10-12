@@ -33,9 +33,9 @@ final class AssemblyProductionApplicationService
         if (! $wo) $this->fail('not_found', '工单不存在。', 404);
         $this->visible($wo, $user, $permissions, $superAdmin);
         $stored = $this->projection($wo);
-        if ($stored) return $this->withActions($stored, $wo, $permissions);
+        if ($stored) return $this->withActions($stored, $wo, $permissions, $user, $superAdmin);
         if ($wo->released_at || ! in_array($wo->status, ['DRAFT', 'WAIT_RELEASE'], true)) return $this->empty($wo, 'legacy_snapshot', true);
-        return $this->withActions(DB::transaction(fn () => $this->build($wo, false)), $wo, $permissions);
+        return $this->withActions(DB::transaction(fn () => $this->build($wo, false)), $wo, $permissions, $user, $superAdmin);
     }
 
     public function prepare(int $id, array $payload, object $user, array $permissions, bool $superAdmin = false): array
@@ -47,7 +47,8 @@ final class AssemblyProductionApplicationService
             $failure = $result['failure'];
             $this->fail($failure['code'], $failure['message'], $failure['status'], ['issues' => $result['plan']['issues']]);
         }
-        return $this->withActions($result['plan'], WorkOrder::findOrFail($id), $permissions);
+        $current = WorkOrder::findOrFail($id);
+        return $this->withActions($this->projection($current) ?? $result['plan'], $current, $permissions, $user, $superAdmin);
     }
 
     /**
@@ -163,9 +164,26 @@ final class AssemblyProductionApplicationService
                             ? $this->projection($wo) : $this->prepareLocked($wo, $user, $command, $hash);
                         $materials = app(WorkOrderPreparationMaterialService::class);
                         $plan['material_preparation'] = $materials->synchronizeLocked($wo, $user);
+                        $plan['child_material_preparations'] = [];
                         foreach (WorkOrder::where('assembly_root_work_order_id', $wo->id)->whereIn('status', ['DRAFT', 'WAIT_RELEASE'])->orderBy('id')->lockForUpdate()->get() as $child) {
-                            $materials->synchronizeLocked($child, $user);
+                            try {
+                                $childMaterial = $materials->synchronizeLocked($child, $user);
+                                $plan['child_material_preparations'][(string) $child->id] = $this->childMaterialSummary($child, $childMaterial);
+                            } catch (WorkOrderDomainException $exception) {
+                                // This specific pre-write condition is normal planning: the
+                                // complete child tree exists so its technical owner can act.
+                                // Every other failure still rolls back this entire attempt.
+                                if ($exception->errorCode !== 'technical_confirmation_required' || (int) $child->technical_version !== 0) throw $exception;
+                                $plan['child_material_preparations'][(string) $child->id] = $this->childMaterialSummary($child, [
+                                    'status' => 'blocked', 'ready' => false, 'version' => null, 'rows' => [],
+                                    'issues' => [['code' => $exception->errorCode, 'message' => '请先完成该子工单首次技术确认，再由根工单重新核料。']],
+                                ]) + ['requires_technical_confirmation' => true];
+                            }
                         }
+                        $plan['children_ready'] = collect($plan['child_material_preparations'])->every(fn ($row) => $row['ready']);
+                        $plan['preparation_ready'] = (bool) $plan['material_preparation']['ready'] && $plan['children_ready'];
+                        // Gate reads the complete plan including technical holds in this same transaction.
+                        AssemblyProductionPlan::where('root_work_order_id', $wo->id)->firstOrFail()->update(['plan_snapshot' => $plan]);
                         app(ReleaseGateApplicationService::class)->evaluateLocked($wo, $user, true);
                         AssemblyProductionPlan::where('root_work_order_id', $wo->id)->firstOrFail()->update(['plan_snapshot' => $plan]);
                         return ['plan' => $plan, 'failure' => null];
@@ -179,7 +197,8 @@ final class AssemblyProductionApplicationService
                     $failure = $this->safeFailure($exception);
                     if ($record?->status === 'PREPARED') {
                         $record->refresh();
-                        $plan = $this->projection($wo);
+                        $plan = $record->plan_snapshot;
+                        $plan['work_order_version'] = (int) $wo->business_version;
                         $plan['material_preparation'] = ['status' => 'blocked', 'ready' => false, 'version' => null, 'rows' => [],
                             'issues' => $failure['issues'] ?: [['code' => $failure['code'], 'message' => $failure['message']]]];
                         $record->update(['plan_snapshot' => $plan]);
@@ -309,19 +328,19 @@ final class AssemblyProductionApplicationService
         $record = AssemblyProductionPlan::where('root_work_order_id', $rootId)->first();
         if (! $record) return null;
         $result = $record->plan_snapshot;
-        $result['material_preparation'] ??= ['status' => 'not_prepared', 'ready' => false, 'issues' => [], 'version' => null, 'rows' => []];
+        // Stored plans are audit evidence, not present-day buying authority.
+        // Always compute the requested WO's material projection, never its root's.
+        $materials = app(WorkOrderPreparationMaterialService::class);
+        $result['material_preparation'] = $this->historicalMaterialProjection($wo, $materials->projection($wo));
         $result['status'] = strtolower((string) $record->status);
         $result['plan_id'] = (int) $record->id;
         $result['plan_version'] = (int) $record->plan_version;
         $result['attempt_work_order_version'] = (int) $record->work_order_version;
         $result['work_order_version'] = (int) $wo->business_version;
-        $result['retryable'] = in_array($record->status, ['PENDING', 'BLOCKED'], true)
-            && in_array($wo->status, ['DRAFT', 'WAIT_RELEASE'], true) && ! $wo->released_at && ! $wo->assembly_component_demand_id;
         $result['view_work_order_id'] = (int) $wo->id;
         $result['immutable'] = in_array($record->status, ['PREPARED', 'CANCELLED'], true);
+        $storedChildren = (array) ($result['child_material_preparations'] ?? []);
         if ($wo->assembly_component_demand_id) {
-            // A child's visibility does not grant access to its root or sibling branches.
-            // Keep the persisted plan intact and project only this child's downstream BOM.
             $components = collect($result['components'] ?? []);
             $ownDemand = $components->firstWhere('component_demand_id', (int) $wo->assembly_component_demand_id);
             $paths = $ownDemand ? [$ownDemand['path_key'] => true] : [];
@@ -333,8 +352,56 @@ final class AssemblyProductionApplicationService
             }
             $result['work_order_id'] = (int) $wo->id;
             $result['components'] = $downstream;
+            $result['material_preparation'] = $this->applyTechnicalHold($wo, $result['material_preparation'], $storedChildren[(string) $wo->id] ?? []);
+            // A child viewer is not authorized to read sibling/root material,
+            // technical issues or aggregate preparation facts via this resource.
+            $result['issues'] = $result['material_preparation']['issues'];
+            unset($result['child_material_preparations'], $result['root_base_qty'], $result['root_bom_hash'], $result['input_hash']);
+            $result['children_ready'] = true;
+        } else {
+            $result['child_material_preparations'] = [];
+            foreach (WorkOrder::where('assembly_root_work_order_id', $wo->id)->where('status', '<>', 'CANCELLED')->orderBy('id')->get() as $child) {
+                $childMaterial = $this->applyTechnicalHold($child, $this->historicalMaterialProjection($child, $materials->projection($child)), $storedChildren[(string) $child->id] ?? []);
+                $result['child_material_preparations'][(string) $child->id] = $this->childMaterialSummary($child, $childMaterial);
+            }
+            $result['children_ready'] = collect($result['child_material_preparations'])->every(fn ($row) => $row['ready']);
         }
+        $result['preparation_ready'] = (bool) $result['material_preparation']['ready'] && $result['children_ready'];
+        $result['retryable'] = ! $result['preparation_ready'] && in_array($wo->status, ['DRAFT', 'WAIT_RELEASE'], true)
+            && ! $wo->released_at && ! $wo->assembly_component_demand_id;
         return $result;
+    }
+
+    private function historicalMaterialProjection(WorkOrder $wo, array $material): array
+    {
+        // Released legacy orders use their frozen formal requirements. Never
+        // recalculate historical BOM/routing or grant pre-release buying rights.
+        if (($material['status'] ?? null) !== 'not_prepared' || ! $wo->released_at
+            || in_array($wo->status, ['DRAFT', 'WAIT_RELEASE', 'CANCELLED'], true)
+            || ! $wo->materialRequirements()->exists()) return $material;
+        return ['status' => 'historical_published', 'ready' => true, 'issues' => [],
+            'version' => null, 'rows' => [], 'can_procure' => false];
+    }
+    private function childMaterialSummary(WorkOrder $child, array $material): array
+    {
+        return ['work_order_id' => (int) $child->id, 'work_order_no' => $child->work_order_no,
+            'work_order_version' => (int) $child->business_version, 'technical_version' => (int) $child->technical_version,
+            'status' => $material['status'], 'ready' => (bool) $material['ready'],
+            'issues' => $material['issues'], 'version' => $material['version'] ?? null];
+    }
+
+    private function applyTechnicalHold(WorkOrder $child, array $material, array $stored): array
+    {
+        if (empty($stored['requires_technical_confirmation'])) return $material;
+        $message = (int) $child->technical_version === 0
+            ? '请先完成该子工单首次技术确认，再由根工单重新核料。'
+            : '子工单技术资料已确认，请由根工单重新核料。';
+        $material['status'] = 'blocked';
+        $material['ready'] = false;
+        $material['issues'] = [['code' => 'assembly_child_preparation_required', 'message' => $message]];
+        foreach ($material['rows'] as &$row) { $row['can_procure'] = false; $row['procureable_qty'] = '0.00000000'; }
+        unset($row);
+        return $material;
     }
 
     public function releaseCheck(WorkOrder $wo, ?Bom $bom): ?array
@@ -347,6 +414,10 @@ final class AssemblyProductionApplicationService
         if ($record?->status !== 'PREPARED') return ['valid' => false, 'code' => 'assembly_preparation_required',
             'message' => data_get($record?->plan_snapshot, 'issues.0.message') ?: ($hasMake ? '自产部件必须先完成库存净算和关联子工单准备。' : '生产准备尚未完成，请核对准备原因后重试。')];
         $snapshot = $record->plan_snapshot;
+        $holds = collect($snapshot['child_material_preparations'] ?? [])->filter(fn ($row) => ! empty($row['requires_technical_confirmation']));
+        // A sibling cannot publish while a held child still requires the whole tree to be unstarted.
+        if ($holds->isNotEmpty()) return ['valid' => false, 'code' => 'assembly_child_preparation_required',
+            'message' => '关联子工单需完成首次技术确认并由根工单重新核料，当前不能发布。'];
         $expected = $wo->assembly_component_demand_id
             ? collect($snapshot['components'])->firstWhere('component_demand_id', (int) $wo->assembly_component_demand_id)
             : null;
@@ -355,6 +426,10 @@ final class AssemblyProductionApplicationService
         $valid = $expectedBomHash === $this->bomHash($bom) && $expectedQty !== null
             && bccomp((string) $expectedQty, (string) $wo->target_base_qty, 8) === 0;
         if (! $wo->assembly_component_demand_id) $valid = $valid && $record->input_hash === $this->inputHash($wo, $bom);
+        elseif (isset($expected['child_technical_snapshot_hash'])) {
+            $valid = $valid && (int) ($expected['child_technical_version'] ?? 0) === (int) $wo->technical_version
+                && $expected['child_technical_snapshot_hash'] === $this->hash((array) $wo->technical_snapshot);
+        }
         foreach (collect($snapshot['components'])->where('parent_work_order_id', (int) $wo->id)->where('manufacturing_strategy', 'make') as $row) {
             $current = Item::with('unit')->whereKey($row['item_id'])->lockForUpdate()->first();
             $valid = $valid && $current && $current->managementScope() === 'factory' && $current->status === 'enabled' && $current->is_production_item && $current->is_stock_item
@@ -365,6 +440,81 @@ final class AssemblyProductionApplicationService
         return ['valid' => $valid, 'code' => $valid ? '' : 'assembly_plan_changed',
             'message' => $valid ? '' : '工单数量、BOM 或技术资料与已准备的自产部件计划不一致，禁止发布。',
             'plan_id' => (int) $record->id];
+    }
+
+    /**
+     * A linked child may fill in its first technical confirmation only while
+     * the entire prepared tree is still unstarted. This is not permission to
+     * revise the BOM, route, output identity, cutting plan or component demand.
+     */
+    public function assertInitialChildTechnicalLocked(WorkOrder $child, array $snapshot): void
+    {
+        if (! $child->assembly_component_demand_id) return;
+        if (DB::transactionLevel() < 1) $this->fail('transaction_required', '子工单技术确认必须在事务内进行。', 409);
+        $root = WorkOrder::whereKey($child->assembly_root_work_order_id)->lockForUpdate()->first();
+        $plan = AssemblyProductionPlan::where('root_work_order_id', $child->assembly_root_work_order_id)->lockForUpdate()->first();
+        $row = collect($plan?->plan_snapshot['components'] ?? [])->firstWhere('component_demand_id', (int) $child->assembly_component_demand_id);
+        $hold = data_get($plan?->plan_snapshot, 'child_material_preparations.'.$child->id.'.requires_technical_confirmation', false);
+        if (! $root || ! $plan || $plan->status !== 'PREPARED' || ! $row || ! $hold
+            || $root->released_at || ! in_array($root->status, ['DRAFT', 'WAIT_RELEASE'], true)
+            || $child->released_at || ! in_array($child->status, ['DRAFT', 'WAIT_RELEASE'], true)
+            || (int) $child->technical_version !== 0
+            || WorkOrder::where('assembly_root_work_order_id', $root->id)->where(fn ($q) => $q->whereNotIn('status', ['DRAFT', 'WAIT_RELEASE'])->orWhereNotNull('released_at'))->exists()) {
+            $this->fail('assembly_plan_immutable', '仅尚未发布整树中待技术确认的子工单可首次补全资料；已确认或已执行的计划不能直接修订。', 409);
+        }
+        $bom = Bom::with('items.componentItem.unit')->whereKey($child->bom_id)->lockForUpdate()->first();
+        $routing = (array) $child->routing_snapshot; unset($routing['output_plan']);
+        $candidateRouting = (array) ($snapshot['routing_snapshot'] ?? []); unset($candidateRouting['output_plan']);
+        if (! $bom || (int) ($snapshot['bom_id'] ?? 0) !== (int) $child->bom_id
+            || (int) $row['child_bom_id'] !== (int) $child->bom_id || $row['child_bom_hash'] !== $this->bomHash($bom)
+            || (int) ($snapshot['production_routing_id'] ?? 0) !== (int) $child->production_routing_id
+            || (int) $row['child_routing_id'] !== (int) $child->production_routing_id
+            || $this->hash($routing) !== $this->hash($candidateRouting)
+            || (int) $row['item_id'] !== (int) $child->output_item_id
+            || (int) $row['base_unit_id'] !== (int) $child->base_unit_id
+            || bccomp((string) $row['production_base_qty'], (string) $child->target_base_qty, 8) !== 0
+            || bccomp((string) $child->target_qty, (string) $child->target_base_qty, 8) !== 0
+            || ! empty($snapshot['output_configuration']) || ! empty($snapshot['configuration_snapshot'])) {
+            $this->fail('assembly_technical_facts_changed', '首次技术确认不能改变子工单既定 BOM、路线、产出、数量或切割需求，请取消根计划后重新建立。', 409);
+        }
+        $resolved = $this->boms->match(null, null, (int) $child->output_item_id, null, (int) $bom->id);
+        if ($this->hash((array) data_get($resolved, 'bom_snapshot.items', []))
+            !== $this->hash((array) data_get($snapshot, 'bom_snapshot.items', []))) {
+            $this->fail('assembly_technical_facts_changed', '首次技术确认不能改变已准备的解析用料事实。', 409);
+        }
+        $makeIds = collect($plan->plan_snapshot['components'])->where('parent_work_order_id', (int) $child->id)
+            ->where('manufacturing_strategy', 'make')->pluck('bom_item_id');
+        foreach ($snapshot['materials'] ?? [] as $material) {
+            $item = Item::whereKey($material['component_item_id'])->lockForUpdate()->first();
+            if (! empty($material['configuration']) && ($makeIds->contains((int) $material['bom_item_id']) || $item?->manufacturing_strategy === 'make')) {
+                $this->fail('assembly_technical_facts_changed', '关联自产部件不能在首次技术确认时改为新的配置身份。', 409);
+            }
+        }
+    }
+
+    /** The permitted first confirmation advances the existing plan; it creates no children or stock ownership. */
+    public function recordInitialChildTechnicalLocked(WorkOrder $child, object $user): void
+    {
+        if (! $child->assembly_component_demand_id) return;
+        $root = WorkOrder::whereKey($child->assembly_root_work_order_id)->lockForUpdate()->firstOrFail();
+        $record = AssemblyProductionPlan::where('root_work_order_id', $root->id)->lockForUpdate()->firstOrFail();
+        $snapshot = $record->plan_snapshot;
+        foreach ($snapshot['components'] as &$row) {
+            if ((int) ($row['component_demand_id'] ?? 0) !== (int) $child->assembly_component_demand_id) continue;
+            $row['child_technical_version'] = (int) $child->technical_version;
+            $row['child_technical_snapshot_hash'] = $this->hash((array) $child->technical_snapshot);
+        }
+        unset($row);
+        $before = (int) $root->business_version;
+        $root->update(['business_version' => $before + 1, 'updated_by_legacy_id' => $this->actor($user), 'release_gate_checked_at' => null]);
+        $snapshot['plan_version'] = (int) $record->plan_version + 1;
+        $snapshot['work_order_version'] = (int) $root->business_version;
+        $snapshot['children_ready'] = false;
+        $snapshot['preparation_ready'] = false;
+        // Keep the technical hold until a new root command has validated and
+        // materialized the child's now-complete material preparation.
+        $record->update(['plan_version' => $snapshot['plan_version'], 'work_order_version' => $root->business_version, 'plan_snapshot' => $snapshot]);
+        $this->log($root, '关联子工单完成首次技术确认，等待重新核料', $before, (int) $root->business_version, $user);
     }
 
     public function assertMutable(WorkOrder $wo): void
@@ -529,16 +679,24 @@ final class AssemblyProductionApplicationService
         }
     }
 
-    private function withActions(array $plan, WorkOrder $wo, array $permissions): array
+    private function withActions(array $plan, WorkOrder $wo, array $permissions, object $user, bool $superAdmin): array
     {
         $editable = in_array('production.work_order.view', $permissions, true)
             && in_array('production.work_order.edit', $permissions, true)
             && in_array($wo->status, ['DRAFT', 'WAIT_RELEASE'], true) && ! $wo->released_at && ! $wo->assembly_component_demand_id;
         $materialReady = (bool) data_get($plan, 'material_preparation.ready', false);
         $sameVersion = (int) ($plan['attempt_work_order_version'] ?? $plan['work_order_version'] ?? 0) === (int) $wo->business_version;
-        $complete = in_array($plan['status'] ?? '', ['prepared', 'not_required'], true) && $materialReady && $sameVersion;
+        $complete = in_array($plan['status'] ?? '', ['prepared', 'not_required'], true) && $materialReady && ($plan['children_ready'] ?? true) && $sameVersion;
         $retry = in_array($plan['status'] ?? '', ['pending', 'blocked'], true)
-            || data_get($plan, 'material_preparation.status') === 'blocked';
+            || ! $materialReady || ! ($plan['children_ready'] ?? true);
+        $scope = $this->scope->resolve($user, 'production.work_order.view', $permissions, $superAdmin);
+        $childIds = collect($plan['components'] ?? [])->pluck('child_work_order_id')->filter()->unique()->all();
+        $children = WorkOrder::whereIn('id', $childIds)->get()->keyBy('id');
+        foreach ($plan['components'] as &$row) {
+            $child = $children->get((int) ($row['child_work_order_id'] ?? 0));
+            $row['can_view_child'] = $child && $this->scope->workOrderVisible($child, $scope);
+        }
+        unset($row);
         $plan['actions'] = ['can_prepare' => $editable && ! $complete, 'can_retry' => $editable && ! $complete && $retry];
         $plan['retryable'] = $plan['actions']['can_retry'];
         $plan['work_order_version'] = (int) $wo->business_version;
@@ -591,5 +749,3 @@ final class AssemblyProductionApplicationService
     private function actor(object $user): int { return (int) ($user->legacy_id ?? $user->id ?? 0); }
     private function fail(string $code, string $message, int $status = 422, array $details = []): never { throw new WorkOrderDomainException($code, $message, $status, $details); }
 }
-
-

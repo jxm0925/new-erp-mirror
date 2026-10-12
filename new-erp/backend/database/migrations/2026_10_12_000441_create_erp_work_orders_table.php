@@ -1,0 +1,128 @@
+<?php
+
+declare(strict_types=1);
+
+use Database\Schema\InitialTableMigration;
+
+require_once __DIR__.'/../schema/InitialTableMigration.php';
+
+// 本表唯一完整初始定义；历史变更已合并。修改前先核对实际库，禁止另加 ALTER 迁移。
+// MySQL 精确类型、生成列、索引、外键及删除策略保留在同一处；不含数据回填。
+return new class extends InitialTableMigration
+{
+    public const TABLE = 'erp_work_orders';
+
+    public const CREATE_SQL = <<<'SQL'
+CREATE TABLE `erp_work_orders` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `work_order_no` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `source_type` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'sales_order',
+  `source_id` bigint(20) unsigned DEFAULT NULL,
+  `source_no_snapshot` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `source_title_snapshot` varchar(200) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `stocking_purpose` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `reserved_for_work_order_id` bigint(20) unsigned DEFAULT NULL,
+  `reserved_for_production_unit_id` bigint(20) unsigned DEFAULT NULL,
+  `reserved_for_target_operation_id` bigint(20) unsigned DEFAULT NULL,
+  `configured_output_mode_snapshot` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `effective_output_mode_snapshot` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `effective_output_item_id_snapshot` bigint(20) unsigned DEFAULT NULL,
+  `production_demand_id` bigint(20) unsigned DEFAULT NULL,
+  `production_master_order_id` bigint(20) unsigned DEFAULT NULL,
+  `output_item_id` bigint(20) unsigned DEFAULT NULL,
+  `production_routing_id` bigint(20) unsigned DEFAULT NULL,
+  `routing_version_snapshot` int(10) unsigned DEFAULT NULL,
+  `routing_snapshot` json DEFAULT NULL,
+  `production_execution_mode_snapshot` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `serial_policy_snapshot` json DEFAULT NULL,
+  `target_operation_id` bigint(20) unsigned DEFAULT NULL,
+  `target_routing_operation_id` bigint(20) unsigned DEFAULT NULL,
+  `origin_command_id` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `last_command_id` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `target_unit_id` bigint(20) unsigned DEFAULT NULL,
+  `target_unit_name_snapshot` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `target_qty` decimal(14,4) NOT NULL,
+  `target_base_qty` decimal(18,8) NOT NULL DEFAULT '0.00000000',
+  `base_unit_id` bigint(20) unsigned DEFAULT NULL,
+  `base_unit_name_snapshot` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `planned_date` date DEFAULT NULL,
+  `production_batch` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `responsible_user_legacy_id` bigint(20) unsigned DEFAULT NULL,
+  `collaboration_enabled` tinyint(1) NOT NULL DEFAULT '0',
+  `production_location_name` varchar(160) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `bom_id` bigint(20) unsigned DEFAULT NULL,
+  `bom_version_id` bigint(20) unsigned DEFAULT NULL,
+  `bom_version` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `status` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'DRAFT',
+  `business_version` int(10) unsigned NOT NULL DEFAULT '1',
+  `organization_code` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `created_by_legacy_id` bigint(20) unsigned DEFAULT NULL,
+  `updated_by_legacy_id` bigint(20) unsigned DEFAULT NULL,
+  `cancelled_by_legacy_id` bigint(20) unsigned DEFAULT NULL,
+  `cancel_reason` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  `submitted_at` timestamp NULL DEFAULT NULL,
+  `cancelled_at` timestamp NULL DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL,
+  `bom_snapshot` json DEFAULT NULL,
+  `release_gate_status` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `release_gate_checked_at` timestamp NULL DEFAULT NULL,
+  `released_by_legacy_id` bigint(20) unsigned DEFAULT NULL,
+  `released_at` timestamp NULL DEFAULT NULL,
+  `release_reason` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `technical_version` int(10) unsigned NOT NULL DEFAULT '0',
+  `technical_snapshot` json DEFAULT NULL,
+  `output_configuration_id` bigint(20) unsigned DEFAULT NULL,
+  `inventory_continuation_plan` json DEFAULT NULL,
+  `assembly_root_work_order_id` bigint(20) unsigned DEFAULT NULL,
+  `assembly_parent_work_order_id` bigint(20) unsigned DEFAULT NULL,
+  `assembly_component_demand_id` bigint(20) unsigned DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `erp_work_orders_work_order_no_unique` (`work_order_no`),
+  UNIQUE KEY `erp_work_orders_assembly_component_demand_id_unique` (`assembly_component_demand_id`),
+  KEY `erp_work_order_demand_status_idx` (`production_demand_id`,`status`),
+  KEY `erp_work_order_responsible_status_idx` (`responsible_user_legacy_id`,`status`),
+  KEY `erp_work_order_origin_command_idx` (`origin_command_id`),
+  KEY `erp_work_order_last_command_idx` (`last_command_id`),
+  KEY `erp_work_order_target_unit_fk` (`target_unit_id`),
+  KEY `erp_work_order_base_unit_fk` (`base_unit_id`),
+  KEY `erp_work_order_bom_fk` (`bom_id`),
+  KEY `erp_work_order_source_idx` (`source_type`,`source_id`),
+  KEY `erp_work_order_routing_target_idx` (`production_routing_id`,`target_operation_id`),
+  KEY `erp_work_order_output_item_fk` (`output_item_id`),
+  KEY `erp_work_order_target_operation_fk` (`target_operation_id`),
+  KEY `erp_work_order_route_node_idx` (`production_routing_id`,`target_routing_operation_id`),
+  KEY `erp_work_order_route_node_fk` (`target_routing_operation_id`),
+  KEY `erp_wo_exec_mode_status_idx` (`production_execution_mode_snapshot`,`status`),
+  KEY `erp_wo_stocking_purpose_status_idx` (`stocking_purpose`,`status`),
+  KEY `erp_wo_reserved_target_idx` (`reserved_for_work_order_id`,`reserved_for_target_operation_id`),
+  KEY `erp_wo_reserved_unit_fk` (`reserved_for_production_unit_id`),
+  KEY `erp_wo_reserved_operation_fk` (`reserved_for_target_operation_id`),
+  KEY `erp_wo_effective_output_item_fk` (`effective_output_item_id_snapshot`),
+  KEY `erp_wo_master_status_idx` (`production_master_order_id`,`status`),
+  KEY `erp_work_orders_output_configuration_id_index` (`output_configuration_id`),
+  KEY `erp_work_orders_assembly_root_work_order_id_foreign` (`assembly_root_work_order_id`),
+  KEY `erp_work_orders_assembly_parent_work_order_id_foreign` (`assembly_parent_work_order_id`),
+  CONSTRAINT `erp_wo_effective_output_item_fk` FOREIGN KEY (`effective_output_item_id_snapshot`) REFERENCES `erp_items` (`id`),
+  CONSTRAINT `erp_wo_master_fk` FOREIGN KEY (`production_master_order_id`) REFERENCES `erp_production_master_orders` (`id`),
+  CONSTRAINT `erp_wo_reserved_operation_fk` FOREIGN KEY (`reserved_for_target_operation_id`) REFERENCES `erp_production_routing_operations` (`id`),
+  CONSTRAINT `erp_wo_reserved_unit_fk` FOREIGN KEY (`reserved_for_production_unit_id`) REFERENCES `erp_production_units` (`id`),
+  CONSTRAINT `erp_wo_reserved_work_order_fk` FOREIGN KEY (`reserved_for_work_order_id`) REFERENCES `erp_work_orders` (`id`),
+  CONSTRAINT `erp_work_order_base_unit_fk` FOREIGN KEY (`base_unit_id`) REFERENCES `erp_units` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `erp_work_order_bom_fk` FOREIGN KEY (`bom_id`) REFERENCES `erp_boms` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `erp_work_order_demand_fk` FOREIGN KEY (`production_demand_id`) REFERENCES `erp_sales_order_production_requirements` (`id`),
+  CONSTRAINT `erp_work_order_output_item_fk` FOREIGN KEY (`output_item_id`) REFERENCES `erp_items` (`id`),
+  CONSTRAINT `erp_work_order_route_node_fk` FOREIGN KEY (`target_routing_operation_id`) REFERENCES `erp_production_routing_operations` (`id`),
+  CONSTRAINT `erp_work_order_routing_fk` FOREIGN KEY (`production_routing_id`) REFERENCES `erp_production_routings` (`id`),
+  CONSTRAINT `erp_work_order_target_operation_fk` FOREIGN KEY (`target_operation_id`) REFERENCES `erp_production_operations` (`id`),
+  CONSTRAINT `erp_work_order_target_unit_fk` FOREIGN KEY (`target_unit_id`) REFERENCES `erp_units` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `erp_work_orders_assembly_component_demand_id_foreign` FOREIGN KEY (`assembly_component_demand_id`) REFERENCES `erp_assembly_component_demands` (`id`),
+  CONSTRAINT `erp_work_orders_assembly_parent_work_order_id_foreign` FOREIGN KEY (`assembly_parent_work_order_id`) REFERENCES `erp_work_orders` (`id`),
+  CONSTRAINT `erp_work_orders_assembly_root_work_order_id_foreign` FOREIGN KEY (`assembly_root_work_order_id`) REFERENCES `erp_work_orders` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+SQL;
+
+    // 8.0.12 忽略 CHECK；原约束意图仍集中保留，支持约束的新库由 helper 纳入 CREATE。
+    public const DECLARED_CHECKS = [
+    ];
+};

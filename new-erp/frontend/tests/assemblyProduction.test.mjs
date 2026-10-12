@@ -45,12 +45,31 @@ test('decimal display preserves large stock quantities without floating point co
   assert.equal(subject.productionQuantity('99999999999999999.00010000'), '99999999999999999.0001')
   assert.equal(subject.productionQuantity('0.00000000'), '0'); assert.equal(subject.productionQuantity(null), '—')
 })
-test('prepared or blocked assembly cannot repeat preparation and component paths use names', () => {
+test('preparation uses authoritative actions and keeps component paths by name', () => {
   const vm = mount('WorkOrderAssemblyPanel')
-  vm.plan = { status: 'preview', components: [{ path_key: 'frame', parent_path: 'root', item: { name: '架子' } }, { parent_path: 'frame', item: { name: '管件' } }], issues: [] }
+  vm.plan = { status: 'pending', actions: { can_prepare: true, can_retry: false }, components: [{ path_key: 'frame', parent_path: 'root', item: { name: '架子' } }, { parent_path: 'frame', item: { name: '管件' } }], issues: [] }
   assert.equal(vm.canPrepare, true); assert.equal(vm.componentPath(vm.components[1]), '架子 → 管件')
-  vm.plan.immutable = true; assert.equal(vm.canPrepare, false)
-  vm.plan.immutable = false; vm.plan.issues = [{ message: '单位不完整' }]; assert.equal(vm.canPrepare, false)
+  vm.plan.actions = { can_prepare: false, can_retry: false }; vm.plan.status = 'prepared'; assert.equal(vm.canPrepare, false)
+  vm.plan.status = 'blocked'; vm.plan.retryable = true; assert.equal(vm.canRetry, false)
+  vm.plan.actions.can_retry = true; assert.equal(vm.canRetry, true)
+  vm.plan.actions = undefined; assert.equal(vm.canPrepare, false); assert.equal(vm.canRetry, false)
+})
+
+test('prepared tree with a blocked child remains incomplete and child links require their own scope', () => {
+  const vm = mount('WorkOrderAssemblyPanel'); const opened = []; vm.$router.push = path => opened.push(path)
+  vm.plan = { status: 'prepared', preparation_ready: false, issues: [{ message: '电箱技术资料未齐' }], actions: { can_prepare: false, can_retry: true } }
+  assert.equal(vm.preparationBlocked, true); assert.equal(vm.statusName, '准备未齐'); assert.equal(vm.canRetry, true)
+  vm.openChild({ child_work_order_id: 12, can_view_child: false }); assert.deepEqual(opened, [])
+  vm.openChild({ child_work_order_id: 12, can_view_child: true }); assert.deepEqual(opened, ['/production/work-orders/12'])
+})
+test('confirmed preparation failure clears the original command and permits a fresh versioned retry', async () => {
+  const subject = api(); const seen = []
+  await assert.rejects(subject.executeAssemblyCommand('prepare-10', { expected_version: 4 }, body => {
+    seen.push(structuredClone(body)); return Promise.reject({ response: { status: 422, data: { error_code: 'assembly_plan_blocked' } } })
+  }))
+  assert.equal(subject.pendingAssemblyCommand('prepare-10'), null)
+  await subject.executeAssemblyCommand('prepare-10', { expected_version: 5 }, body => { seen.push(structuredClone(body)); return Promise.resolve({}) })
+  assert.equal(seen[1].expected_version, 5); assert.notEqual(seen[1].client_command_id, seen[0].client_command_id)
 })
 test('lost preparation response can retry its stored version even while preview is unavailable', async () => {
   let observed

@@ -3,13 +3,35 @@
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
+use Database\Seeders\Support\RunsSafeSeed;
+use Database\Seeders\Support\SeedSafety;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 class ErpSalesReferenceSeeder extends Seeder
 {
-    public function run(): void
+    use RunsSafeSeed;
+
+    private function seed(): void
     {
+        if (!DB::table('erp_sales_channels')->where('channel_code', 'OFFLINE_DIRECT')->exists()
+            && DB::table('erp_sales_channels')->where('is_default', true)->exists()) {
+            throw new \RuntimeException('已有默认销售渠道，不能自动补入第二个默认渠道；请通过渠道维护明确配置。');
+        }
+
+        // 只在将创建渠道时校验它要引用的既有政策，不能把同名人工政策当成默认语义。
+        foreach ([
+            ['OFFLINE_DIRECT', 'FULL_PREPAY', 'full_prepay'],
+            ['OFFLINE_CONTRACT', 'CONTRACT_INSTALLMENT', 'installment_contract'],
+            ['ONLINE_PLATFORM', 'FULL_PREPAY', 'full_prepay'],
+        ] as [$channel, $policyCode, $policyType]) {
+            if (DB::table('erp_sales_channels')->where('channel_code', $channel)->exists()) continue;
+            $policy = DB::table('erp_sales_funding_policies')->where('policy_code', $policyCode)->first();
+            if ($policy && ($policy->policy_type !== $policyType || $policy->status !== 'enabled')) {
+                throw new \RuntimeException('新渠道引用的既有政策语义或状态冲突：'.$policyCode.'；请通过渠道/政策维护明确配置。');
+            }
+        }
+
         if (Schema::hasTable('erp_payment_methods')) {
             foreach ([
                 ['BANK_TRANSFER', '银行转账', true, true, true, 10],
@@ -88,11 +110,6 @@ class ErpSalesReferenceSeeder extends Seeder
 
     private function upsert(string $table, array $key, array $values): void
     {
-        $exists = DB::table($table)->where($key)->exists();
-        $payload = $values + ['updated_at' => now()];
-        if (!$exists) {
-            $payload['created_at'] = now();
-        }
-        DB::table($table)->updateOrInsert($key, $payload);
+        SeedSafety::insertMissing($table, $key, $values);
     }
 }

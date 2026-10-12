@@ -36,11 +36,11 @@ final class ProductionMaterialCostService
             'operation_handover_id' => $handover->id, 'quantity' => $quantity, 'total_cost' => $cost,
             'status' => 'ACTIVE', 'created_at' => now(), 'updated_at' => now(),
         ]);
-        $input = DB::table('erp_material_holdings')->insertGetId([
+        $input = DB::table('erp_material_holdings')->insertGetId(MaterialHoldingInvariant::attributes([
             'material_lot_id' => $output->material_lot_id, 'position_type' => 'PRODUCTION_INPUT', 'position_id' => $bridge,
             'quantity' => $quantity, 'total_cost' => $cost, 'status' => 'ACTIVE', 'business_version' => 1,
             'created_at' => now(), 'updated_at' => now(),
-        ]);
+        ]));
         DB::table('erp_production_input_holdings')->where('id', $bridge)->update(['input_holding_id' => $input, 'updated_at' => now()]);
         $this->reduceHolding($source, $quantity, $cost);
         DB::table('erp_material_movements')->insert([
@@ -85,11 +85,11 @@ final class ProductionMaterialCostService
                 'internal_issue_line_id' => $line->id, 'quantity' => $quantity, 'total_cost' => $cost,
                 'status' => 'ACTIVE', 'created_at' => now(), 'updated_at' => now(),
             ]);
-            $input = DB::table('erp_material_holdings')->insertGetId([
+            $input = DB::table('erp_material_holdings')->insertGetId(MaterialHoldingInvariant::attributes([
                 'material_lot_id' => $output->material_lot_id, 'position_type' => 'PRODUCTION_INPUT', 'position_id' => $bridge,
                 'quantity' => $quantity, 'total_cost' => $cost, 'status' => 'ACTIVE', 'business_version' => 1,
                 'created_at' => now(), 'updated_at' => now(),
-            ]);
+            ]));
             DB::table('erp_production_input_holdings')->where('id', $bridge)->update(['input_holding_id' => $input, 'updated_at' => now()]);
             DB::table('erp_material_movements')->insert([
                 'movement_no' => $this->numbers->next('material_movement', 'MM'), 'source_holding_id' => $source->id,
@@ -134,11 +134,11 @@ final class ProductionMaterialCostService
                     'created_at' => now(), 'updated_at' => now(),
                 ]);
             }
-            $transitHoldingId = DB::table('erp_material_holdings')->insertGetId([
+            $transitHoldingId = DB::table('erp_material_holdings')->insertGetId(MaterialHoldingInvariant::attributes([
                 'material_lot_id' => $lotId, 'position_type' => 'PRODUCTION_TRANSIT', 'position_id' => $posted->id,
                 'quantity' => $line->actual_pick_qty, 'total_cost' => bcsub('0', (string) $posted->cost_amount, 4),
                 'status' => 'ACTIVE', 'business_version' => 1, 'created_at' => now(), 'updated_at' => now(),
-            ]);
+            ]));
             $physicalSnapshot = DB::table('erp_material_picking_task_lines')->where('id',$line->id)->value('serial_snapshot');
             $physicalIds = $physicalSnapshot ? (json_decode($physicalSnapshot,true)['physical_material_ids'] ?? []) : [];
             if ($physicalIds) DB::table('erp_material_physicals')->whereIn('id',$physicalIds)->where('status','PRODUCTION_TRANSIT')
@@ -214,11 +214,11 @@ final class ProductionMaterialCostService
             'material_receipt_line_id' => $receiptLine->id, 'quantity' => $quantity, 'total_cost' => $cost,
             'status' => 'ACTIVE', 'created_at' => now(), 'updated_at' => now(),
         ]);
-        $input = DB::table('erp_material_holdings')->insertGetId([
+        $input = DB::table('erp_material_holdings')->insertGetId(MaterialHoldingInvariant::attributes([
             'material_lot_id' => $source->material_lot_id, 'position_type' => 'PRODUCTION_INPUT', 'position_id' => $bridge,
             'quantity' => $quantity, 'total_cost' => $cost, 'status' => 'ACTIVE', 'business_version' => 1,
             'created_at' => now(), 'updated_at' => now(),
-        ]);
+        ]));
         DB::table('erp_production_input_holdings')->where('id', $bridge)->update(['input_holding_id' => $input, 'updated_at' => now()]);
         if ($physicals->isNotEmpty()) DB::table('erp_material_physicals')->whereIn('id',$physicals->pluck('id'))
             ->update(['status'=>'PRODUCTION_RECEIVED','current_holding_id'=>$input,'business_version'=>DB::raw('business_version+1'),'updated_at'=>now()]);
@@ -378,7 +378,10 @@ final class ProductionMaterialCostService
             // A mixed traced/unpriced input cannot produce a deceptively complete zero/partial cost.
             if (bccomp($required, $received, 8) !== 0) $this->fail('production_material_cost_coverage_incomplete', '可追溯材料到位数量与尚未消耗需求不一致，禁止缺失材料成本的完工。');
         }
-        foreach ($holdings as $holding) $total = bcadd($total, (string) $holding->total_cost, 4);
+        foreach ($holdings as $holding) {
+            MaterialHoldingInvariant::attributes((array) $holding);
+            $total = bcadd($total, (string) $holding->total_cost, 4);
+        }
         $hasLoss = bccomp((string) ($target->scrapped_base_qty ?? '0'), '0', 8) > 0
             || bccomp((string) ($target->unqualified_base_qty ?? '0'), '0', 8) > 0;
         $allocation = $payload['material_cost_allocation'] ?? null;
@@ -400,9 +403,9 @@ final class ProductionMaterialCostService
             'item_id' => $output->output_item_id, 'stage_id' => $target->routing_operation_id_snapshot,
             'material_form' => 'PRODUCT', 'source_type' => 'production_output_record', 'source_id' => $output->id,
             'created_at' => $now, 'updated_at' => $now]);
-        $outputHolding = DB::table('erp_material_holdings')->insertGetId(['material_lot_id' => $lot,
+        $outputHolding = DB::table('erp_material_holdings')->insertGetId(MaterialHoldingInvariant::attributes(['material_lot_id' => $lot,
             'position_type' => 'OUTPUT_WIP', 'position_id' => $output->id, 'quantity' => $output->output_base_qty,
-            'total_cost' => $outputCost, 'status' => 'ACTIVE', 'business_version' => 1, 'created_at' => $now, 'updated_at' => $now]);
+            'total_cost' => $outputCost, 'status' => 'ACTIVE', 'business_version' => 1, 'created_at' => $now, 'updated_at' => $now]));
         $unallocatedInput = $total; $unallocatedOutput = $outputCost;
         foreach ($holdings as $holding) {
             DB::table('erp_production_material_consumptions')->insert(['output_record_id' => $output->id,
@@ -410,8 +413,8 @@ final class ProductionMaterialCostService
                 'source_material_lot_id' => $holding->material_lot_id, 'quantity' => $holding->quantity,
                 'total_cost' => $holding->total_cost, 'operator_legacy_id' => $actor, 'occurred_at' => $now,
                 'created_at' => $now, 'updated_at' => $now]);
-            DB::table('erp_material_holdings')->where('id', $holding->id)->update(['quantity' => '0', 'total_cost' => '0',
-                'status' => 'CONSUMED', 'business_version' => (int) $holding->business_version + 1, 'updated_at' => $now]);
+            DB::table('erp_material_holdings')->where('id', $holding->id)->update(MaterialHoldingInvariant::changes($holding, ['quantity' => '0', 'total_cost' => '0',
+                'status' => 'CONSUMED', 'business_version' => (int) $holding->business_version + 1, 'updated_at' => $now]));
             if ($holding->input_bridge_id) DB::table('erp_production_input_holdings')->where('id', $holding->input_bridge_id)
                 ->update(['status' => 'CONSUMED', 'updated_at' => $now]);
             $share = bccomp((string) $holding->total_cost, '0', 4) === 0 ? '0.0000'
@@ -444,11 +447,13 @@ final class ProductionMaterialCostService
             || bccomp($quantity, '0', 8) <= 0 || bccomp($quantity, (string) $holding->quantity, 8) > 0) {
             $this->fail('production_output_material_holding_invalid', '生产产出持有份额或待入库数量不一致。');
         }
+        MaterialHoldingInvariant::attributes((array) $holding);
         $cost = CuttingDecimal::share((string) $holding->total_cost, (string) $holding->quantity, $quantity);
-        $left = bcsub((string) $holding->quantity, $quantity, 8);
-        DB::table('erp_material_holdings')->where('id', $holding->id)->update(['quantity' => $left,
-            'total_cost' => bcsub((string) $holding->total_cost, $cost, 4), 'status' => bccomp($left, '0', 8) === 0 ? 'TRANSFERRED' : 'ACTIVE',
-            'business_version' => (int) $holding->business_version + 1, 'updated_at' => now()]);
+        $remaining = MaterialHoldingInvariant::debit($holding, $quantity, $cost);
+        $left = $remaining['quantity'];
+        DB::table('erp_material_holdings')->where('id', $holding->id)->update(MaterialHoldingInvariant::changes($holding, ['quantity' => $left,
+            'total_cost' => $remaining['total_cost'], 'status' => bccomp($left, '0', 8) === 0 ? 'TRANSFERRED' : 'ACTIVE',
+            'business_version' => (int) $holding->business_version + 1, 'updated_at' => now()]));
         return ['material_lot_id' => $output->material_lot_id, 'cost_amount' => $cost,
             'unit_cost' => bcdiv($cost, $quantity, 8), 'cost_source_type' => 'production_material_total'];
     }
@@ -459,10 +464,12 @@ final class ProductionMaterialCostService
         foreach ($transaction->items as $line) {
             $balance = DB::table('erp_inventory_balances')->where('item_id', $line->item_id)->where('warehouse_id', $line->warehouse_id)
                 ->where('location_id', $line->location_id)->where('batch_no', $line->batch_no)->first();
-            $holding = DB::table('erp_material_holdings')->where('inventory_balance_id', $balance->id)->value('id');
-            if (! $holding) $holding = DB::table('erp_material_holdings')->insertGetId(['material_lot_id' => $output->material_lot_id,
+            $holding = DB::table('erp_material_holdings')->where('inventory_balance_id', $balance->id)->first();
+            if ($holding) MaterialHoldingInvariant::attributes((array) $holding);
+            $holding = $holding?->id;
+            if (! $holding) $holding = DB::table('erp_material_holdings')->insertGetId(MaterialHoldingInvariant::attributes(['material_lot_id' => $output->material_lot_id,
                 'position_type' => 'WAREHOUSE', 'position_id' => $balance->warehouse_id, 'inventory_balance_id' => $balance->id,
-                'status' => 'ACTIVE', 'business_version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+                'status' => 'ACTIVE', 'business_version' => 1, 'created_at' => now(), 'updated_at' => now()]));
             DB::table('erp_material_movements')->insert(['movement_no' => $this->numbers->next('material_movement', 'MM'),
                 'source_holding_id' => $output->material_holding_id, 'target_holding_id' => $holding, 'action' => 'PRODUCTION_RECEIPT',
                 'quantity' => $line->change_qty, 'total_cost' => $line->cost_amount, 'inventory_transaction_id' => $transaction->id,
@@ -484,13 +491,14 @@ final class ProductionMaterialCostService
 
     private function reduceHolding(object $holding, string $quantity, string $cost): void
     {
-        $leftQty = bcsub((string) $holding->quantity, $quantity, 8);
-        $leftCost = bcsub((string) $holding->total_cost, $cost, 4);
-        DB::table('erp_material_holdings')->where('id', $holding->id)->update([
+        $remaining = MaterialHoldingInvariant::debit($holding, $quantity, $cost);
+        $leftQty = $remaining['quantity'];
+        $leftCost = $remaining['total_cost'];
+        DB::table('erp_material_holdings')->where('id', $holding->id)->update(MaterialHoldingInvariant::changes($holding, [
             'quantity' => $leftQty, 'total_cost' => $leftCost,
             'status' => bccomp($leftQty, '0', 8) === 0 ? 'TRANSFERRED' : 'ACTIVE',
             'business_version' => (int) $holding->business_version + 1, 'updated_at' => now(),
-        ]);
+        ]));
     }
 
     public static function presentOutput(object $output, array $permissions): array

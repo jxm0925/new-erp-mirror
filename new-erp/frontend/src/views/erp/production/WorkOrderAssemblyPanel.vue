@@ -1,7 +1,7 @@
 <template>
   <section class="assembly-panel" v-loading="loading">
     <div class="assembly-heading">
-      <div><h3>部件生产准备</h3><el-tag v-if="plan" size="small" :type="plan.status==='blocked'?'warning':'success'">{{ statusName }}</el-tag></div>
+      <div><h3>部件生产准备</h3><el-tag v-if="plan" size="small" :type="preparationBlocked ? 'warning' : 'success'">{{ statusName }}</el-tag></div>
       <div class="assembly-actions"><el-button size="small" :disabled="busy" @click="load">刷新</el-button><el-button v-if="canPrepare || canRetry || canRecover" size="small" type="success" :loading="busy" @click="prepare">{{ canRecover ? '核对上次生产准备' : (canRetry ? '重试生产准备' : '确认部件生产准备') }}</el-button></div>
     </div>
     <el-alert v-if="error" :title="error" type="error" :closable="false" />
@@ -11,7 +11,7 @@
         <div class="component-title"><strong>{{ row.item && row.item.name || '—' }}</strong><span>{{ row.item && row.item.code }}</span><el-tag size="mini">{{ strategyName(row.manufacturing_strategy) }}</el-tag></div>
         <p v-if="row.item && row.item.spec" class="component-spec">{{ row.item.spec }}</p>
         <p class="component-path">{{ componentPath(row) }}</p>
-        <dl class="component-facts"><div><dt>需求数量</dt><dd>{{ quantity(row.required_base_qty) }} {{ unit(row) }}</dd></div><div><dt>库存预留</dt><dd>{{ quantity(row.inventory_reserved_base_qty) }} {{ unit(row) }}</dd></div><div><dt>安排生产</dt><dd>{{ quantity(row.production_base_qty) }} {{ unit(row) }}</dd></div><div><dt>部件工单</dt><dd><el-button v-if="row.child_work_order_id" type="text" @click="openChild(row)">{{ row.child_work_order_no }}</el-button><span v-else>—</span></dd></div></dl>
+        <dl class="component-facts"><div><dt>需求数量</dt><dd>{{ quantity(row.required_base_qty) }} {{ unit(row) }}</dd></div><div><dt>库存预留</dt><dd>{{ quantity(row.inventory_reserved_base_qty) }} {{ unit(row) }}</dd></div><div><dt>安排生产</dt><dd>{{ quantity(row.production_base_qty) }} {{ unit(row) }}</dd></div><div><dt>部件工单</dt><dd><el-button v-if="row.child_work_order_id && row.can_view_child === true" type="text" @click="openChild(row)">{{ row.child_work_order_no }}</el-button><span v-else>{{ row.child_work_order_no || '—' }}</span></dd></div></dl>
       </article>
     </div>
     <el-empty v-else-if="!loading && !error" :image-size="60" description="当前工单没有需要准备的自制部件" />
@@ -28,7 +28,8 @@ export default {
   computed: {
     components () { return this.plan?.components || [] },
     issues () { return [...(this.plan?.issues || []), ...(this.plan?.material_preparation?.issues || [])].filter((issue, index, rows) => rows.findIndex(row => (row.message || row) === (issue.message || issue)) === index) },
-    statusName () { return ({ pending: '待准备', preview: '待确认', prepared: '部件已准备', blocked: '准备受阻', not_required: '无需自产部件准备', legacy_snapshot: '历史工单', cancelled: '已取消' })[this.plan?.status] || '—' },
+    preparationBlocked () { return this.plan?.preparation_ready === false || this.issues.length > 0 },
+    statusName () { if (this.plan?.status === 'prepared' && this.preparationBlocked) return '准备未齐'; return ({ pending: '待准备', preview: '待确认', prepared: '部件已准备', blocked: '准备受阻', not_required: '无需自产部件准备', legacy_snapshot: '历史工单', cancelled: '已取消' })[this.plan?.status] || '—' },
     canPrepare () { return this.plan?.actions?.can_prepare === true },
     canRetry () { return this.plan?.actions?.can_retry === true },
     canRecover () { return !!this.pending && this.$can('production.work_order.view') && this.$can('production.work_order.edit') }
@@ -51,7 +52,7 @@ export default {
       }
       return names.join(' → ')
     },
-    openChild (row) { this.$router.push(`/production/work-orders/${row.child_work_order_id}`) },
+    openChild (row) { if (row.can_view_child === true && row.child_work_order_id) this.$router.push(`/production/work-orders/${row.child_work_order_id}`) },
     async load () {
       const id = this.workOrder.id
       if (!id) return

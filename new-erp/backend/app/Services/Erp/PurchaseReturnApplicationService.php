@@ -60,7 +60,7 @@ class PurchaseReturnApplicationService
                 throw ValidationException::withMessages(['return_scope' => '人工新增采购退货只允许选择已正式入库的采购批次；未入库拒收请从不合格品处理发起。']);
             }
             $originalReceipt = PurchaseReceipt::query()->whereKey($sourceLines->first()->receipt_id)->lockForUpdate()->firstOrFail();
-            $managementScope = $originalReceipt->management_scope;
+            $managementScope = InheritedManagementScopeGuard::nullable($originalReceipt->management_scope);
             if (array_key_exists('management_scope', $payload)
                 && app(PurchaseManagementScopeService::class)->assertScope($payload['management_scope']) !== $managementScope) {
                 throw ValidationException::withMessages(['management_scope' => '采购退货必须保留原到货单的管理范围，不能改为其他范围。']);
@@ -160,6 +160,7 @@ class PurchaseReturnApplicationService
     ): PurchaseReturn {
         return DB::transaction(function () use ($source, $handling, $baseQuantity, $operatorId, $operatorName): PurchaseReturn {
             $source = PurchaseReceiptItem::query()->with(['receipt', 'item'])->lockForUpdate()->findOrFail($source->id);
+            $managementScope = InheritedManagementScopeGuard::nullable($source->receipt->management_scope);
 
             $activeRejected = (float) PurchaseReturnItem::query()
                 ->join('erp_purchase_returns', 'erp_purchase_returns.id', '=', 'erp_purchase_return_items.return_id')
@@ -176,7 +177,7 @@ class PurchaseReturnApplicationService
             $purchaseReturn = PurchaseReturn::create([
                 'return_no' => $this->nextReturnNo(),
                 'return_scope' => 'rejected_before_posting',
-                'management_scope' => $source->receipt->management_scope,
+                'management_scope' => $managementScope,
                 'source_receipt_id' => $source->receipt_id,
                 'source_order_id' => $source->receipt->order_id,
                 'supplier_id' => $source->receipt->supplier_id,
@@ -240,6 +241,7 @@ class PurchaseReturnApplicationService
             if ($existing) return $this->load($existing->purchaseReturn);
 
             $source = PurchaseReceiptItem::query()->with(['receipt', 'item'])->lockForUpdate()->findOrFail($source->id);
+            $managementScope = InheritedManagementScopeGuard::nullable($source->receipt->management_scope);
             if ($source->item?->materialManagementMode() === 'physical') {
                 throw ValidationException::withMessages([
                     'physical_material_id' => '实物管理板材的质量退供应商必须逐张选择具体实物，不能只按质量事件数量生成退货。',
@@ -256,7 +258,7 @@ class PurchaseReturnApplicationService
             $purchaseReturn = PurchaseReturn::create([
                 'return_no' => $this->nextReturnNo(),
                 'return_scope' => 'posted_inventory',
-                'management_scope' => $source->receipt->management_scope,
+                'management_scope' => $managementScope,
                 'source_receipt_id' => $source->receipt_id,
                 'source_order_id' => $source->receipt->order_id,
                 'supplier_id' => $source->receipt->supplier_id,

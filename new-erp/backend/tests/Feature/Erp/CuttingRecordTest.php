@@ -930,10 +930,11 @@ class CuttingRecordTest extends TestCase
         app(CuttingTaskExecutionService::class)->claim(
             $taskId, $this->payload(1), $f['user'], self::PERMISSIONS, true,
         );
-        $migration = require database_path('migrations/2026_09_16_220000_add_cutting_task_execution_and_shared_labor.php');
+        $manifest = json_decode(file_get_contents(database_path('schema/baseline.json')), true, 512, JSON_THROW_ON_ERROR);
+        $migration = require database_path('migrations/'.$manifest['tables']['erp_cutting_task_participants'].'.php');
 
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('已有正式下料参与人或劳动事实，不允许通过结构回退删除业务历史。');
+        $this->expectExceptionMessage('Automatic rollback');
         $migration->down();
     }
 

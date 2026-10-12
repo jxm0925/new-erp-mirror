@@ -3,17 +3,23 @@
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
+use Database\Seeders\Support\RunsSafeSeed;
+use Database\Seeders\Support\SeedSafety;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
 class ErpApprovedMasterDataSeeder extends Seeder
 {
-    public function run(): void
+    use RunsSafeSeed;
+
+    private function seed(): void
     {
         // These two exports were approved as permanent reset baselines on
         // 2026-09-21. Explicit IDs also preserve category parent references.
         $categories = $this->loadRows('erp_item_categories', 'category_code');
         $suppliers = $this->loadRows('erp_suppliers', 'supplier_code');
+
+        $this->assertDependencies($categories, $suppliers);
 
         DB::transaction(function () use ($categories, $suppliers) {
             $pending = array_column($categories, null, 'id');
@@ -40,6 +46,36 @@ class ErpApprovedMasterDataSeeder extends Seeder
             $this->advanceCounter('item_category', 'erp_item_categories', 'category_code', 'IC');
             $this->advanceCounter('supplier', 'erp_suppliers', 'supplier_code', 'SUP');
         });
+    }
+
+    private function assertDependencies(array $categories, array $suppliers): void
+    {
+        $categoryIds = array_column($categories, null, 'id');
+        foreach ($categories as $row) {
+            $seen = [];
+            $parent = $row['parent_id'];
+            while ($parent !== null) {
+                if (isset($seen[$parent]) || !isset($categoryIds[$parent])) throw new RuntimeException('基础分类存在循环或缺失父分类。');
+                $seen[$parent] = true;
+                $parent = $categoryIds[$parent]['parent_id'];
+            }
+        }
+        foreach ([['erp_item_categories', 'category_code', 'item_category', 'IC', $categories], ['erp_suppliers', 'supplier_code', 'supplier', 'SUP', $suppliers]] as [$table, $code, $type, $prefix, $rows]) {
+            foreach ($rows as $row) {
+                foreach (DB::table($table)->where('id', $row['id'])->orWhere($code, $row[$code])->lockForUpdate()->get(['id', $code]) as $existing) {
+                    if ((int) $existing->id !== $row['id'] || $existing->{$code} !== $row[$code]) throw new RuntimeException($table.' 基础ID/编码冲突。');
+                }
+            }
+            $rule = DB::table('erp_document_number_rules')->where('document_type', $type)->lockForUpdate()->first();
+            if (!$rule) throw new RuntimeException('基础资料缺少编号规则：'.$type.'，请先补齐编号规则。');
+            if ($rule->prefix !== $prefix || $rule->date_format !== '' || $rule->reset_cycle !== 'none') continue;
+            $maximum = 0;
+            foreach (array_merge(array_column($rows, $code), DB::table($table)->pluck($code)->all()) as $value) {
+                if (preg_match('/^'.preg_quote($prefix, '/').'(\d+)$/D', $value, $m)) $maximum = max($maximum, (int) $m[1]);
+            }
+            $counter = DB::table('erp_document_numbers')->where(['document_type' => $type, 'number_date' => '1970-01-01'])->lockForUpdate()->first();
+            if ($counter && (int) $counter->current_sequence < $maximum) throw new RuntimeException('现有编号计数不足，请通过编号维护处理；Seeder不改已有计数。');
+        }
     }
 
     private function loadRows(string $table, string $code): array
@@ -84,9 +120,8 @@ class ErpApprovedMasterDataSeeder extends Seeder
             return;
         }
 
-        // Imported codes have no reservation history. Raise only the matching
-        // default counter so the next create page cannot allocate an old code.
-        // With no rule yet, this prepares the default rule's future counter.
+        // Only a missing counter may be initialized. Existing counters are user data;
+        // an insufficient sequence requires explicit number-rule maintenance.
         $maximum = 0;
         foreach (DB::table($table)->pluck($code) as $value) {
             if (preg_match('/^'.preg_quote($prefix, '/').'(\d+)$/D', $value, $match)) {
@@ -100,9 +135,7 @@ class ErpApprovedMasterDataSeeder extends Seeder
                 'current_sequence' => $maximum, 'created_at' => now(), 'updated_at' => now(),
             ]);
         } elseif ((int) $counter->current_sequence < $maximum) {
-            DB::table('erp_document_numbers')->where('id', $counter->id)->update([
-                'current_sequence' => $maximum, 'updated_at' => now(),
-            ]);
+            throw new RuntimeException('现有编号计数不足，请通过编号维护处理；Seeder不改已有计数。');
         }
     }
 }

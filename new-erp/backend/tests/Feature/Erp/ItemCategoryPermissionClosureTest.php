@@ -19,7 +19,8 @@ class ItemCategoryPermissionClosureTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        // 用例事务内准备真实编号规则，不依赖测试库残留的种子数据。
+        // 需要已完整迁移并通过严格结构预检的测试库；部分表夹具应被Seeder拒绝。
+        // 用例事务内补缺编号规则，已有配置保持不变。
         $this->seed(\Database\Seeders\ErpDocumentNumberRuleSeeder::class);
     }
 
@@ -82,7 +83,7 @@ class ItemCategoryPermissionClosureTest extends TestCase
             ->assertJsonPath('data.status', 'enabled');
     }
 
-    public function test_legacy_edit_role_grants_are_merged_into_manage_permission(): void
+    public function test_seeder_preserves_legacy_permission_and_does_not_expand_grants(): void
     {
         $roleId = DB::table('erp_rbac_roles')->insertGetId([
             'code' => 'legacy_item_category_manager',
@@ -112,11 +113,15 @@ class ItemCategoryPermissionClosureTest extends TestCase
 
         $manageId = DB::table('erp_rbac_permissions')->where('code', 'item_category.manage')->value('id');
         $this->assertNotNull($manageId);
-        $this->assertDatabaseHas('erp_rbac_role_permissions', [
+        $this->assertDatabaseMissing('erp_rbac_role_permissions', [
             'role_id' => $roleId,
             'permission_id' => $manageId,
         ]);
-        $this->assertDatabaseMissing('erp_rbac_permissions', ['code' => 'item_category.edit']);
+        $this->assertDatabaseHas('erp_rbac_role_permissions', [
+            'role_id' => $roleId,
+            'permission_id' => $legacyId,
+        ]);
+        $this->assertDatabaseHas('erp_rbac_permissions', ['id' => $legacyId, 'code' => 'item_category.edit']);
     }
 
     public function test_frontend_menu_route_and_buttons_use_the_final_permission_names(): void

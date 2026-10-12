@@ -1,0 +1,125 @@
+<?php
+
+declare(strict_types=1);
+
+use Database\Schema\InitialTableMigration;
+
+require_once __DIR__.'/../schema/InitialTableMigration.php';
+
+// 本表唯一完整初始定义；历史变更已合并。修改前先核对实际库，禁止另加 ALTER 迁移。
+// MySQL 精确类型、生成列、索引、外键及删除策略保留在同一处；不含数据回填。
+return new class extends InitialTableMigration
+{
+    public const TABLE = 'erp_purchase_receipt_items';
+
+    public const CREATE_SQL = <<<'SQL'
+CREATE TABLE `erp_purchase_receipt_items` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+  `receipt_id` bigint(20) unsigned NOT NULL,
+  `order_item_id` bigint(20) unsigned DEFAULT NULL,
+  `item_id` bigint(20) unsigned NOT NULL,
+  `is_stock_item_snapshot` tinyint(1) NOT NULL DEFAULT '1',
+  `quality_fact_origin` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'current',
+  `purchase_unit_id` bigint(20) unsigned DEFAULT NULL,
+  `purchase_unit_name_snapshot` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `conversion_factor_snapshot` decimal(18,8) NOT NULL DEFAULT '1.00000000',
+  `base_unit_id` bigint(20) unsigned DEFAULT NULL,
+  `base_unit_name_snapshot` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `warehouse_id` bigint(20) unsigned DEFAULT NULL,
+  `location_id` bigint(20) unsigned DEFAULT NULL,
+  `receipt_qty` decimal(14,4) NOT NULL,
+  `qualified_qty` decimal(14,4) NOT NULL DEFAULT '0.0000',
+  `unqualified_qty` decimal(14,4) NOT NULL DEFAULT '0.0000',
+  `original_received_qty` decimal(18,8) DEFAULT NULL,
+  `original_qualified_qty` decimal(18,8) DEFAULT NULL,
+  `original_unqualified_qty` decimal(18,8) DEFAULT NULL,
+  `standard_base_qty` decimal(18,8) NOT NULL DEFAULT '0.00000000',
+  `actual_base_qty` decimal(18,8) DEFAULT NULL,
+  `qualified_base_qty` decimal(18,8) NOT NULL DEFAULT '0.00000000',
+  `unqualified_base_qty` decimal(18,8) NOT NULL DEFAULT '0.00000000',
+  `original_received_base_qty` decimal(18,8) DEFAULT NULL,
+  `original_qualified_base_qty` decimal(18,8) DEFAULT NULL,
+  `original_unqualified_base_qty` decimal(18,8) DEFAULT NULL,
+  `rework_qualified_base_qty` decimal(18,8) NOT NULL DEFAULT '0.00000000',
+  `concession_accepted_base_qty` decimal(18,8) NOT NULL DEFAULT '0.00000000',
+  `replacement_qualified_base_qty` decimal(18,8) NOT NULL DEFAULT '0.00000000',
+  `rejected_base_qty` decimal(18,8) NOT NULL DEFAULT '0.00000000',
+  `scrapped_base_qty` decimal(18,8) NOT NULL DEFAULT '0.00000000',
+  `final_stockable_base_qty` decimal(18,8) NOT NULL DEFAULT '0.00000000',
+  `physical_received_base_qty` decimal(18,8) NOT NULL DEFAULT '0.00000000',
+  `contract_fulfilled_base_qty` decimal(18,8) NOT NULL DEFAULT '0.00000000',
+  `replacement_received_base_qty` decimal(18,8) NOT NULL DEFAULT '0.00000000',
+  `difference_qty` decimal(18,8) NOT NULL DEFAULT '0.00000000',
+  `difference_reason` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `allow_actual_conversion` tinyint(1) NOT NULL DEFAULT '0',
+  `inventory_posting_status` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
+  `inventory_posting_log_id` bigint(20) unsigned DEFAULT NULL,
+  `unit_price` decimal(14,4) NOT NULL DEFAULT '0.0000',
+  `tax_rate` decimal(8,4) NOT NULL DEFAULT '13.0000',
+  `currency_snapshot` varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `tax_mode_snapshot` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `receipt_cost` decimal(14,4) NOT NULL DEFAULT '0.0000',
+  `amount_excl_tax` decimal(18,4) DEFAULT NULL,
+  `tax_amount_snapshot` decimal(18,4) DEFAULT NULL,
+  `amount_incl_tax` decimal(18,4) DEFAULT NULL,
+  `qualified_payable_amount` decimal(18,4) NOT NULL DEFAULT '0.0000',
+  `settlement_amount` decimal(18,4) NOT NULL DEFAULT '0.0000',
+  `quality_hold_amount` decimal(18,4) NOT NULL DEFAULT '0.0000',
+  `rejected_claim_amount` decimal(18,4) NOT NULL DEFAULT '0.0000',
+  `inventory_cost_amount` decimal(18,4) NOT NULL DEFAULT '0.0000',
+  `freight_allocated_amount` decimal(18,4) NOT NULL DEFAULT '0.0000',
+  `other_purchase_cost_amount` decimal(18,4) NOT NULL DEFAULT '0.0000',
+  `settlement_status` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending_inspection',
+  `finance_fact_status` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
+  `facts_frozen_at` timestamp NULL DEFAULT NULL,
+  `batch_no` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `expected_arrival_date` date DEFAULT NULL,
+  `serial_text` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  `serial_entries` json DEFAULT NULL,
+  `serial_number_source` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `remark` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  `legacy_system` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `legacy_table` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `legacy_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `legacy_code` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `legacy_status` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `data_source` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'manual',
+  `sync_batch_no` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `last_synced_at` timestamp NULL DEFAULT NULL,
+  `created_at` timestamp NULL DEFAULT NULL,
+  `updated_at` timestamp NULL DEFAULT NULL,
+  `material_policy_id_snapshot` bigint(20) unsigned DEFAULT NULL,
+  `material_policy_version_snapshot` int(10) unsigned DEFAULT NULL,
+  `material_policy_snapshot` json DEFAULT NULL,
+  `management_scope_snapshot` varchar(16) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `erp_purchase_receipt_items_legacy_unique` (`legacy_system`,`legacy_table`,`legacy_id`),
+  KEY `erp_purchase_receipt_items_receipt_id_foreign` (`receipt_id`),
+  KEY `erp_purchase_receipt_items_order_item_id_foreign` (`order_item_id`),
+  KEY `erp_purchase_receipt_items_item_id_foreign` (`item_id`),
+  KEY `erp_purchase_receipt_items_warehouse_id_foreign` (`warehouse_id`),
+  KEY `erp_purchase_receipt_items_location_id_foreign` (`location_id`),
+  KEY `erp_purchase_receipt_items_purchase_unit_id_foreign` (`purchase_unit_id`),
+  KEY `erp_purchase_receipt_items_base_unit_id_foreign` (`base_unit_id`),
+  KEY `erp_purchase_receipt_items_inventory_posting_log_id_foreign` (`inventory_posting_log_id`),
+  KEY `erp_purchase_receipt_items_inventory_posting_status_index` (`inventory_posting_status`),
+  KEY `epri_stock_item_idx` (`is_stock_item_snapshot`),
+  KEY `epri_quality_origin_idx` (`quality_fact_origin`),
+  KEY `epri_finance_fact_status_idx` (`finance_fact_status`),
+  KEY `erp_purchase_receipt_items_material_policy_id_snapshot_index` (`material_policy_id_snapshot`),
+  CONSTRAINT `erp_purchase_receipt_items_base_unit_id_foreign` FOREIGN KEY (`base_unit_id`) REFERENCES `erp_units` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `erp_purchase_receipt_items_inventory_posting_log_id_foreign` FOREIGN KEY (`inventory_posting_log_id`) REFERENCES `erp_inventory_posting_logs` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `erp_purchase_receipt_items_item_id_foreign` FOREIGN KEY (`item_id`) REFERENCES `erp_items` (`id`),
+  CONSTRAINT `erp_purchase_receipt_items_location_id_foreign` FOREIGN KEY (`location_id`) REFERENCES `erp_locations` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `erp_purchase_receipt_items_order_item_id_foreign` FOREIGN KEY (`order_item_id`) REFERENCES `erp_purchase_order_items` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `erp_purchase_receipt_items_purchase_unit_id_foreign` FOREIGN KEY (`purchase_unit_id`) REFERENCES `erp_units` (`id`) ON DELETE SET NULL,
+  CONSTRAINT `erp_purchase_receipt_items_receipt_id_foreign` FOREIGN KEY (`receipt_id`) REFERENCES `erp_purchase_receipts` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `erp_purchase_receipt_items_warehouse_id_foreign` FOREIGN KEY (`warehouse_id`) REFERENCES `erp_warehouses` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+SQL;
+
+    // 8.0.12 忽略 CHECK；原约束意图仍集中保留，支持约束的新库由 helper 纳入 CREATE。
+    public const DECLARED_CHECKS = [
+        'erp_purchase_receipt_items_scope_ck' => 'management_scope_snapshot IS NULL OR management_scope_snapshot IN (\'factory\',\'office\')',
+    ];
+};
