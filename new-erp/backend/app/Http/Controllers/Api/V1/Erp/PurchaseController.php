@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Erp;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Concerns\AuthorizesErpPermissions;
 use App\Models\Erp\{ApprovalTask, Item, PurchaseAttachment, PurchaseDefectHandling, PurchaseExchangeOrder, PurchaseLog, PurchaseOrder, PurchaseOrderItem, PurchasePlan, PurchasePlanItem, PurchasePlanSupplierSplit, PurchasePriceHistory, PurchaseReceipt, PurchaseReceiptItem, PurchaseRequest, PurchaseRequestItem, Supplier, SupplierItemStat};
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\DocumentNumberService;
@@ -28,6 +29,8 @@ use Illuminate\Validation\Rule;
 
 class PurchaseController extends Controller
 {
+    use AuthorizesErpPermissions;
+
     private const DATA_SOURCES = ['manual', 'import', 'legacy_sync', 'api', 'system'];
     private const INLINE_PREVIEW_MIME_TYPES = [
         'application/pdf',
@@ -87,6 +90,7 @@ class PurchaseController extends Controller
 
     public function storeRequest(Request $request, DocumentNumberService $numbers)
     {
+        $this->erpAuthorize($request, 'purchase.request.create');
         $data = $request->validate([
             'request_no' => 'nullable|string|max:80',
             'management_scope' => 'sometimes|required|string|in:factory,office',
@@ -122,6 +126,9 @@ class PurchaseController extends Controller
         $data['request_qty'] = 0; // Replaced by authoritative base quantities when the lines are saved.
         $data['planned_qty'] = 0;
         $data['required_date'] = $data['items'][0]['expected_date'] ?? null;
+        // 记录制单人；未填需求人时默认为制单人（此前两项均为空，列表和控制台无法显示经办人）。
+        $data['created_by'] = $this->operatorName($request);
+        $data['requester'] = ($data['requester'] ?? null) ?: $data['created_by'];
         $operatorId = app(AuthContextService::class)->currentUser($request)?->legacy_id;
         return DB::transaction(function () use ($data, $numbers, $operatorId) {
             $items = $data['items'];
@@ -190,22 +197,27 @@ class PurchaseController extends Controller
 
     public function submitRequest(Request $request, int $id, PurchaseWorkflowApplicationService $workflow)
     {
+        $this->erpAuthorize($request, 'purchase.request.submit');
         return response()->json(['message' => '采购需求已确认，可进入采购计划', 'data' => $workflow->confirmRequest($id, $this->operatorName($request))]);
     }
 
     public function closeRequest(Request $request, int $id, PurchaseWorkflowApplicationService $workflow)
     {
+        $this->erpAuthorize($request, 'purchase.request.edit');
         return response()->json(['message' => '采购需求已关闭', 'data' => $workflow->closeRequest($id, $this->operatorName($request))]);
     }
 
     public function cancelRequest(Request $request, int $id, PurchaseWorkflowApplicationService $workflow)
     {
+        $this->erpAuthorize($request, 'purchase.request.edit');
         return response()->json(['message' => '采购需求已取消', 'data' => $workflow->cancelRequest($id, $this->operatorName($request))]);
     }
 
-    public function requestToPlan(int $id)
+    public function requestToPlan(Request $request, int $id)
     {
-        return DB::transaction(function () use ($id) {
+        $this->erpAuthorize($request, 'purchase.plan.create');
+        $operator = $this->operatorName($request);
+        return DB::transaction(function () use ($id, $operator) {
             $request = PurchaseRequest::with(['items.item'])->lockForUpdate()->findOrFail($id);
             abort_if(!in_array($request->request_status, ['confirmed', 'partially_planned'], true), 422, '只有已确认的采购需求可以转采购计划');
             $requestItems = $request->items->filter(fn ($line) => (float) $line->remaining_qty > 0);
@@ -220,6 +232,7 @@ class PurchaseController extends Controller
                 'order_status' => 'not_ordered',
                 'data_source' => 'manual',
                 'remark' => "由采购需求 {$request->request_no} 生成",
+                'created_by' => $operator,
             ]);
             foreach ($requestItems as $requestItem) {
                 PurchasePlanItem::create([
@@ -266,6 +279,7 @@ class PurchaseController extends Controller
 
     public function plans(Request $request)
     {
+        $this->erpAuthorize($request, 'purchase.plan.view');
         $query = PurchasePlan::with(['items.item.unit', 'items.request', 'items.requestItem', 'items.splits.supplier', 'items.splits.item', 'items.splits.order'])->latest('updated_at');
         $this->keyword($query, $request, ['plan_no']);
         if ($request->filled('status')) $query->where('plan_status', $request->input('status'));
@@ -275,10 +289,13 @@ class PurchaseController extends Controller
 
     public function storePlan(Request $request, DocumentNumberService $numbers)
     {
+        $this->erpAuthorize($request, 'purchase.plan.create');
         $payload = $this->validatePlan($request);
         $operatorId = app(AuthContextService::class)->currentUser($request)?->legacy_id;
-        return DB::transaction(function () use ($payload, $numbers, $operatorId) {
+        $operator = $this->operatorName($request);
+        return DB::transaction(function () use ($payload, $numbers, $operatorId, $operator) {
             $plan = PurchasePlan::create([
+                'created_by' => $operator,
                 'management_scope' => app(PurchaseManagementScopeService::class)->resolveDocumentScope($payload['items'], $payload),
                 'plan_no' => $payload['plan_no'] ?? $this->nextNo('PPL'),
                 'plan_date' => $payload['plan_date'] ?? now()->toDateString(),
@@ -296,13 +313,15 @@ class PurchaseController extends Controller
         });
     }
 
-    public function showPlan(int $id)
+    public function showPlan(Request $request, int $id)
     {
+        $this->erpAuthorize($request, 'purchase.plan.view');
         return response()->json(PurchasePlan::with(['items.item.unit', 'items.request', 'items.requestItem', 'items.splits.supplier', 'items.splits.item', 'items.splits.order', 'items.splits.orderItem', 'orders.supplier', 'orders.items'])->findOrFail($id));
     }
 
     public function updatePlan(Request $request, int $id)
     {
+        $this->erpAuthorize($request, 'purchase.plan.edit');
         $payload = $this->validatePlan($request);
         return DB::transaction(function () use ($id, $payload) {
             // 与提交/删除共用计划行锁，等待后重新读取，不能凭事务外的草稿快照改明细。
@@ -322,33 +341,10 @@ class PurchaseController extends Controller
         }, 5);
     }
 
-    public function submitPlan(int $id)
+    public function submitPlan(Request $request, int $id, PurchaseWorkflowApplicationService $workflow)
     {
-        return DB::transaction(function () use ($id) {
-            // 状态、明细验证和submit日志与删除互斥提交，避免删除后追加孤立提交日志。
-            $plan = PurchasePlan::query()->with('items.splits.supplier')->lockForUpdate()->findOrFail($id);
-            abort_if($plan->plan_status !== 'draft', 422, '只有草稿采购计划可以提交');
-            abort_if($plan->items->isEmpty(), 422, '采购计划至少需要一行明细');
-            app(PurchaseManagementScopeService::class)->assertDocumentScope($plan);
-            abort_if($plan->items->contains(fn ($i) => (float) $i->remaining_qty > 0), 422, '采购计划存在未分配数量，不能提交审核');
-            abort_if($plan->items->contains(fn ($i) => $i->splits->isEmpty()), 422, '采购计划必须完成供应商拆分');
-            abort_if(
-                PurchasePlanSupplierSplit::where('plan_id', $id)->where('unit_price', '<=', 0)->exists(),
-                422,
-                '采购计划存在采购单价小于或等于 0 的供应商拆分，不能提交审核。供应商报价仅供参考，实际采购价必须由采购员确认。'
-            );
-            $conversionService = app(\App\Services\Erp\PurchasePlanningConversionService::class);
-            foreach ($plan->items as $item) {
-                foreach ($item->splits as $split) $conversionService->orderSnapshot($split);
-                if (($item->purchase_conversion_snapshot['input_mode'] ?? null) === 'purchase_quantity') {
-                    $actualBase = $item->splits->sum(fn ($split) => (float) $split->purchase_conversion_snapshot['planned_base_qty']);
-                    abort_if(abs($actualBase - (float) $item->purchase_conversion_snapshot['planned_base_qty']) > 0.00000001, 422, '供应商采购数量尚未分配完整');
-                }
-            }
-            $plan->update(['plan_status' => 'submitted', 'audit_status' => 'pending']);
-            $this->log('purchase_plan', $id, 'submit', '提交采购计划');
-            return response()->json(['message' => '采购计划已提交', 'data' => $plan->fresh(['items.item', 'items.splits.supplier'])]);
-        }, 5);
+        $this->erpAuthorize($request, 'purchase.plan.edit');
+        return response()->json(['message' => '采购计划已提交', 'data' => $workflow->submitPlan($id, $this->operatorName($request))]);
     }
 
     public function approvePlan(Request $request, int $id, PurchaseWorkflowApplicationService $workflow)
@@ -364,8 +360,9 @@ class PurchaseController extends Controller
         return response()->json(['message' => '采购计划已驳回，可修改后重新提交', 'data' => $workflow->rejectPlan($id, $payload['reason'], $this->operatorName($request))]);
     }
 
-    public function previewPlanOrders(int $id)
+    public function previewPlanOrders(Request $request, int $id)
     {
+        $this->erpAuthorize($request, ['purchase.plan.generate_order', 'purchase.order.generate']);
         return DB::transaction(function () use ($id) {
             $plan = PurchasePlan::with(['items.item', 'items.splits.supplier'])->lockForUpdate()->findOrFail($id);
             app(PurchaseManagementScopeService::class)->assertDocumentScope($plan);
@@ -373,8 +370,9 @@ class PurchaseController extends Controller
         });
     }
 
-    public function generateOrdersFromPlan(int $id)
+    public function generateOrdersFromPlan(Request $request, int $id)
     {
+        $this->erpAuthorize($request, ['purchase.plan.generate_order', 'purchase.order.generate']);
         return DB::transaction(function () use ($id) {
             $plan = PurchasePlan::with(['items.item', 'items.splits.supplier'])->lockForUpdate()->findOrFail($id);
             abort_if($plan->audit_status !== 'approved', 422, '采购计划审核后才能生成采购订单');
@@ -465,9 +463,13 @@ class PurchaseController extends Controller
 
     public function orders(Request $request, PurchaseReceiptApplicationService $receipts)
     {
+        $this->erpAuthorize($request, 'purchase.order.view');
         $query = PurchaseOrder::with(['supplier', 'plan', 'items.item.unit'])->latest('updated_at');
         $this->keyword($query, $request, ['purchase_order_no'], ['supplier' => ['supplier_code', 'supplier_name']]);
-        if ($request->filled('status')) $query->where('purchase_status', $request->input('status'));
+        // “逾期未到货”：已审核、未全部到货、未关闭取消，且预计到货日期早于今天。
+        if ($request->input('status') === 'overdue') $query->where('audit_status', 'approved')->whereNotIn('purchase_status', ['draft', 'closed', 'cancelled', 'received'])
+            ->whereIn('receipt_status', ['not_received', 'partial'])->whereNotNull('expected_arrival_date')->whereDate('expected_arrival_date', '<', now()->toDateString());
+        elseif ($request->filled('status')) $query->where('purchase_status', $request->input('status'));
         $this->filterManagementScope($query, $request);
         $page = $query->paginate($this->perPage($request));
         $orders = $receipts->decorateOrders($page->getCollection());
@@ -489,6 +491,7 @@ class PurchaseController extends Controller
 
     public function storeOrder(Request $request, DocumentNumberService $numbers)
     {
+        $this->erpAuthorize($request, 'purchase.order.create');
         $payload = $this->validateOrder($request);
         $this->assertSupplierValid((int) $payload['supplier_id']);
         $operatorId = app(AuthContextService::class)->currentUser($request)?->legacy_id;
@@ -521,11 +524,13 @@ class PurchaseController extends Controller
     }
 
     public function showOrder(
+        Request $request,
         int $id,
         PurchaseReceiptApplicationService $receipts,
         PurchaseOrderFinanceSummaryService $financeSummary,
     )
     {
+        $this->erpAuthorize($request, 'purchase.order.view');
         $order = PurchaseOrder::with([
             'supplier',
             'plan',
@@ -557,6 +562,7 @@ class PurchaseController extends Controller
 
     public function updateOrder(Request $request, int $id)
     {
+        $this->erpAuthorize($request, 'purchase.order.edit');
         $order = PurchaseOrder::findOrFail($id);
         abort_if(!($order->purchase_status === 'draft' || $order->audit_status === 'rejected'), 422, '只有草稿或驳回的采购订单可以编辑');
         $payload = $this->validateOrder($request);
@@ -590,6 +596,7 @@ class PurchaseController extends Controller
 
     public function submitOrder(Request $request, int $id, PurchaseWorkflowApplicationService $workflow)
     {
+        $this->erpAuthorize($request, 'purchase.order.edit');
         return DB::transaction(function () use ($request, $id, $workflow) {
             $user = app(AuthContextService::class)->currentUser($request);
             $order = $workflow->submitOrder($id, $this->operatorName($request), $user);
@@ -611,22 +618,26 @@ class PurchaseController extends Controller
     }
     public function cancelOrder(Request $request, int $id, PurchaseWorkflowApplicationService $workflow)
     {
+        $this->erpAuthorize($request, 'purchase.order.cancel');
         return response()->json(['message' => '采购订单已取消', 'data' => $workflow->cancelOrder($id, $this->operatorName($request))]);
     }
 
     public function closeOrder(Request $request, int $id, PurchaseWorkflowApplicationService $workflow)
     {
+        $this->erpAuthorize($request, 'purchase.order.cancel');
         return response()->json(['message' => '采购订单已关闭', 'data' => $workflow->closeOrder($id, $this->operatorName($request))]);
     }
 
     public function orderToReceipt(Request $request, int $id, PurchaseReceiptApplicationService $receipts)
     {
+        $this->erpAuthorize($request, 'purchase.receipt.create');
         $receipt = $receipts->generateFromOrder($id, $this->operatorName($request));
         return response()->json(['message' => '到货单已生成；该草稿确认前不能重复生成', 'data' => $receipt]);
     }
 
     public function receipts(Request $request)
     {
+        $this->erpAuthorize($request, 'purchase.receipt.view');
         $query = PurchaseReceipt::with(['supplier', 'order', 'items.item.unit', 'items.orderItem', 'items.warehouse', 'items.location', 'items.defectHandlings'])->latest('updated_at');
         $this->keyword($query, $request, ['receipt_no'], ['supplier' => ['supplier_code', 'supplier_name']]);
         if ($request->filled('status')) $query->where('confirm_status', $request->input('status'));
@@ -636,13 +647,15 @@ class PurchaseController extends Controller
 
     public function storeReceipt(Request $request)
     {
+        $this->erpAuthorize($request, 'purchase.receipt.create');
         $payload = $this->validateReceipt($request);
         $payload['_operator_id'] = app(AuthContextService::class)->currentUser($request)?->legacy_id;
         return DB::transaction(fn () => $this->persistReceipt($payload, null));
     }
 
-    public function showReceipt(int $id)
+    public function showReceipt(Request $request, int $id)
     {
+        $this->erpAuthorize($request, 'purchase.receipt.view');
         return response()->json(PurchaseReceipt::with([
             'supplier', 'order', 'items.item.unit', 'items.orderItem', 'items.warehouse', 'items.location', 'items.allocations.warehouse', 'items.allocations.location', 'items.allocations.physicalEntries', 'items.defectHandlings',
             'attachments' => fn ($query) => $query->where('status', 'active')->latest('id'),
@@ -660,6 +673,11 @@ class PurchaseController extends Controller
             'attachment_type' => ['nullable', Rule::in(['contract', 'quotation', 'delivery_note', 'inspection_report', 'invoice', 'technical', 'other'])],
         ]);
         abort_if(empty($payload['document_id']) && empty($payload['draft_token']), 422, '采购附件必须关联单据或当前新增草稿');
+        $this->erpAuthorize($request, match ($payload['document_type']) {
+            'order' => ['purchase.order.create', 'purchase.order.edit'],
+            'receipt' => ['purchase.receipt.create', 'purchase.receipt.edit'],
+            'exchange' => ['purchase.exchange.manage'],
+        });
 
         if (!empty($payload['document_id'])) {
             $document = match ($payload['document_type']) {
@@ -727,6 +745,7 @@ class PurchaseController extends Controller
 
     public function generateReceiptSerials(Request $request, InventorySerialApplicationService $serials)
     {
+        $this->erpAuthorize($request, ['purchase.receipt.create', 'purchase.receipt.edit']);
         $data = $request->validate([
             'item_id' => 'required|exists:erp_items,id',
             'quantity' => 'required|integer|min:1|max:500',
@@ -741,6 +760,7 @@ class PurchaseController extends Controller
 
     public function updateReceipt(Request $request, int $id)
     {
+        $this->erpAuthorize($request, 'purchase.receipt.edit');
         $receipt = PurchaseReceipt::findOrFail($id);
         abort_if($receipt->confirm_status !== 'draft', 422, '只有草稿到货单可以编辑');
         $payload = $this->validateReceipt($request);
@@ -874,12 +894,35 @@ class PurchaseController extends Controller
             'result_description' => 'nullable|string|max:1000',
         ]);
         $operator = app(AuthContextService::class)->currentUser($request);
-        $handling = $service->action($id, $data['action'], $data, $operator?->nickname ?: $operator?->username);
+        $handling = $service->action($id, $data['action'], $data, $operator?->nickname ?: $operator?->username, $operator?->legacy_id);
         return response()->json(['message' => '不合格品后续动作已完成', 'data' => $handling]);
+    }
+
+    /** 采购价格预警：表单提交前按当前明细比较历史价（尚未保存的数据）。 */
+    public function priceCheck(Request $request, AppServicesErpPurchasePriceCheckService $service)
+    {
+        $this->erpAuthorize($request, ['purchase.order.view', 'purchase.order.create', 'purchase.order.edit', 'purchase.plan.view']);
+        $data = $request->validate([
+            'supplier_id' => 'nullable|integer',
+            'exclude_order_id' => 'nullable|integer',
+            'lines' => 'required|array|max:200',
+            'lines.*.item_id' => 'required|integer',
+            'lines.*.base_unit_price' => 'required|numeric|min:0',
+            'lines.*.line_key' => 'nullable',
+        ]);
+        return response()->json(['data' => $service->check($data['supplier_id'] ?? null, $data['lines'], $data['exclude_order_id'] ?? null)]);
+    }
+
+    /** 采购价格预警：订单详情、审核任务里查看本订单与历史价的对比。 */
+    public function orderPriceCheck(Request $request, int $id, AppServicesErpPurchasePriceCheckService $service)
+    {
+        $this->erpAuthorize($request, ['purchase.order.view', 'approval.task.view']);
+        return response()->json(['data' => $service->checkOrder(PurchaseOrder::with('items')->findOrFail($id))]);
     }
 
     public function priceHistories(Request $request)
     {
+        $this->erpAuthorize($request, ['purchase.order.view', 'purchase.plan.view', 'master.supplier.view']);
         $query = PurchasePriceHistory::with(['supplier', 'item.unit'])->latest('effective_date')->latest();
         $scope = app(PurchaseManagementScopeService::class)->requestScope($request);
         if ($scope !== null) $query->whereHas('item', fn ($q) => $q->where('management_scope', $scope));
@@ -890,6 +933,7 @@ class PurchaseController extends Controller
 
     public function supplierItemStats(Request $request)
     {
+        $this->erpAuthorize($request, ['purchase.order.view', 'purchase.plan.view', 'master.supplier.view']);
         $query = SupplierItemStat::with(['supplier', 'item.unit'])->latest('updated_at');
         $scope = app(PurchaseManagementScopeService::class)->requestScope($request);
         if ($scope !== null) $query->whereHas('item', fn ($q) => $q->where('management_scope', $scope));
@@ -1369,6 +1413,11 @@ class PurchaseController extends Controller
     private function visibleAttachment(Request $request, int $id): PurchaseAttachment
     {
         $attachment = PurchaseAttachment::where('status', 'active')->findOrFail($id);
+        $this->erpAuthorize($request, match ($attachment->document_type) {
+            'receipt' => 'purchase.receipt.view',
+            'exchange' => 'purchase.exchange.view',
+            default => 'purchase.order.view',
+        });
         if (!$attachment->document_id) {
             $user = app(AuthContextService::class)->currentUser($request);
             abort_unless($user && ((int) $attachment->uploaded_by_legacy_id === (int) $user->legacy_id || app(AuthContextService::class)->isSuperAdmin($user)), 403, '无权访问该临时采购附件');

@@ -93,7 +93,7 @@ class SalesOrderLineService
         $qty = round((float) $line['order_qty'], 4);
         $match = $this->matcher->match(['product_id' => $product->id, 'sku_id' => $sku->id]);
         if ($lineType === 'physical') {
-            abort_if($match['match_status'] !== 'matched', 422, $match['block_reason'] ?: '实物 SKU 未维护唯一有效默认 Item');
+            abort_if($match['match_status'] !== 'matched', 422, $match['block_reason'] ?: '实物 SKU 未维护唯一有效默认物料');
         }
         $requirement = $this->conversions->calculateSalesRequirement($sku, $qty);
         $item = $requirement['item'];

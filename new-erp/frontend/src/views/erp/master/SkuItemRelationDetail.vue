@@ -1,7 +1,7 @@
 <template>
   <section class="detail-page" v-loading="loading">
     <header>
-      <div class="crumb">主数据中心　/　SKU–Item默认关系　/　<b>关系详情</b></div>
+      <div class="crumb">主数据中心　/　SKU-物料默认关系　/　<b>关系详情</b></div>
       <div>
         <el-button @click="back">← 返回列表</el-button>
         <el-button
@@ -25,31 +25,31 @@
         </section>
 
         <section class="info-card">
-          <h3>当前默认Item</h3>
+          <h3>当前默认物料</h3>
           <template v-if="current">
-            <p><span>Item编码</span><b>{{ current.item_code }}</b></p>
-            <p><span>Item名称</span><b>{{ current.item_name }}</b></p>
+            <p><span>物料编码</span><b>{{ current.item_code }}</b></p>
+            <p><span>物料名称</span><b>{{ current.item_name }}</b></p>
             <p><span>规格型号</span><b>{{ current.spec || '—' }}</b></p>
-            <p><span>Item状态</span><b :class="['tag', { bad: current.status !== 'enabled' }]">{{ current.status === 'enabled' ? '启用' : '停用' }}</b></p>
+            <p><span>物料状态</span><b :class="['tag', { bad: current.status !== 'enabled' }]">{{ current.status === 'enabled' ? '启用' : '停用' }}</b></p>
             <p><span>关系状态</span><b :class="['tag', { bad: audit.check_status !== 'normal' }]">{{ audit.check_status === 'normal' ? '正常' : '异常' }}</b></p>
             <p><span>生效时间</span><b>{{ currentRelation && currentRelation.effective_at || '—' }}</b></p>
             <p v-if="audit.check_status !== 'normal'"><span>异常原因</span><b class="danger">{{ audit.reason || '关系完整性检查未通过' }}</b></p>
-            <el-button v-if="audit.check_status === 'item_disabled' && $can('sku_item_relation.change')" type="success" @click="$router.push(`/master/sku-item-relations/${sku.id}/set-primary`)">⟳ 更换默认Item</el-button>
+            <el-button v-if="audit.check_status === 'item_disabled' && $can('sku_item_relation.change')" type="success" @click="$router.push(`/master/sku-item-relations/${sku.id}/set-primary`)">⟳ 更换默认物料</el-button>
           </template>
-          <p v-else>当前未设置默认Item</p>
+          <p v-else>当前未设置默认物料</p>
         </section>
       </div>
 
       <!-- 只在重复关系异常时出现，正常状态与已通过基准稿保持不变。 -->
       <section v-if="audit.check_status === 'duplicate'" class="block repair-block">
         <div class="repair-heading">
-          <div><h3>关系异常：存在多个默认Item</h3><p>请选择要保留的唯一默认Item，其他关系将失效并写入操作日志。</p></div>
+          <div><h3>关系异常：存在多个默认物料</h3><p>请选择要保留的唯一默认物料，其他关系将失效并写入操作日志。</p></div>
           <el-tag type="warning">待修复</el-tag>
         </div>
         <el-alert title="处理后立即生效；历史关系和历史订单快照不会被删除。" type="warning" :closable="false" show-icon />
         <div class="repair-form">
           <div class="field wide">
-            <label>保留默认Item <em>*</em></label>
+            <label>保留默认物料<em>*</em></label>
             <el-select v-model="repairForm.keep_relation_id" placeholder="请选择要保留的关系" filterable>
               <el-option v-for="relation in duplicateRelations" :key="relation.id" :label="relationLabel(relation)" :value="relation.id" />
             </el-select>
@@ -71,10 +71,10 @@
       </section>
 
       <section class="block">
-        <h3>默认Item关系历史</h3>
+        <h3>默认物料关系历史</h3>
         <el-table :data="history.relations" border size="small">
-          <el-table-column label="Item编码" prop="item.item_code" />
-          <el-table-column label="Item名称" prop="item.item_name" />
+          <el-table-column label="物料编码" prop="item.item_code" />
+          <el-table-column label="物料名称" prop="item.item_name" />
           <el-table-column label="规格型号"><template slot-scope="{ row }">{{ row.item && row.item.spec || '—' }}</template></el-table-column>
           <el-table-column label="生效时间" prop="effective_at" />
           <el-table-column label="失效时间" prop="expired_at" />
@@ -82,7 +82,7 @@
           <el-table-column label="操作人" prop="operator_name" />
           <el-table-column label="变更原因" prop="change_reason" />
         </el-table>
-        <p class="tip">ⓘ 说明：历史记录反映每一段默认Item关系在业务上的有效状态；历史销售订单将继续使用下单时保存的Item快照，不受后续关系变更影响。</p>
+        <p class="tip">ⓘ 说明：历史记录反映每一段默认物料关系在业务上的有效状态；历史销售订单将继续使用下单时保存的物料快照，不受后续关系变更影响。</p>
       </section>
 
       <section class="block">
@@ -113,7 +113,7 @@ export default {
       audit: {},
       history: { relations: [], logs: [] },
       repairForm: { keep_relation_id: null, change_reason: '', remark: '' },
-      reasons: ['首次设置', '产品升级', '规格调整', '主数据修正', '原Item停用', '历史数据补全', '其他']
+      reasons: ['首次设置', '产品升级', '规格调整', '主数据修正', '原物料停用', '历史数据补全', '其他']
     }
   },
   computed: {
@@ -121,7 +121,7 @@ export default {
     current () { return this.currentRelation && this.currentRelation.item },
     duplicateRelations () { return (this.audit.relations || []).filter(x => x.status === 'active' && x.is_primary) },
     physical () { return this.sku && this.sku.line_type === 'physical' },
-    actionLabel () { return this.current ? '更换默认Item' : '设置默认Item' },
+    actionLabel () { return this.current ? '更换默认物料' : '设置默认物料' },
     product () { return this.sku && this.sku.product ? `${this.sku.product.product_code || '-'}｜${this.sku.product.product_name}` : '—' },
     lineType () { return ({ physical: '实物', service: '服务', no_delivery: '无需发货' })[this.sku && this.sku.line_type] || '—' }
   },
@@ -144,12 +144,12 @@ export default {
       } finally { this.loading = false }
     },
     async resolveDuplicate () {
-      if (!this.repairForm.keep_relation_id || !this.repairForm.change_reason) return this.$message.warning('请选择保留的默认Item和变更原因')
+      if (!this.repairForm.keep_relation_id || !this.repairForm.change_reason) return this.$message.warning('请选择保留的默认物料和变更原因')
       if (this.repairForm.change_reason === '其他' && !this.repairForm.remark.trim()) return this.$message.warning('变更原因选择“其他”时必须填写备注')
       this.repairing = true
       try {
         await resolveDuplicateSkuItemRelation(this.$route.params.skuId, this.repairForm)
-        this.$message.success('重复关系已处理，已保留唯一默认Item')
+        this.$message.success('重复关系已处理，已保留唯一默认物料')
         await this.load()
       } catch (e) { this.$message.error(e.userMessage || '重复关系处理失败') } finally { this.repairing = false }
     },

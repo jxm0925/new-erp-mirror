@@ -6,7 +6,7 @@
         <span class="head-icon"><i class="el-icon-connection" /></span>
         <div class="head-title-wrap">
           <div class="title-row">
-            <h1 class="page-title">SKU–Item默认关系</h1>
+            <h1 class="page-title">SKU-物料默认关系</h1>
             <el-tag size="small" type="success" effect="plain" class="head-tag">共 {{ total }} 项关系</el-tag>
           </div>
         </div>
@@ -28,7 +28,7 @@
     <!-- 全局统一业务提示条 -->
     <div class="erp-page-tip">
       <i class="el-icon-info" />
-      <span>维护实物 SKU 唯一有效默认 Item（物料）映射绑定，打通采购、库存结存、BOM 分解及工单履约主数据链路。</span>
+      <span>维护实物 SKU 唯一有效默认物料（物料）映射绑定，打通采购、库存结存、BOM 分解及工单履约主数据链路。</span>
     </div>
 
     <!-- 概览指标卡片网格 -->
@@ -49,12 +49,12 @@
       <div
         class="metric-card metric-configured"
         :class="{ active: filters.relation_status === 'normal' }"
-        title="点击筛选正常已绑定默认 Item 的 SKU"
+        title="点击筛选正常已绑定默认物料的 SKU"
         @click="filterCard('physical', 'normal')"
       >
         <div class="metric-icon-box"><i class="el-icon-circle-check" /></div>
         <div class="metric-info">
-          <span class="metric-label">已设置默认 Item</span>
+          <span class="metric-label">已设置默认物料</span>
           <strong class="metric-val code-mono text-success">{{ summary.configured || 0 }}</strong>
         </div>
       </div>
@@ -62,12 +62,12 @@
       <div
         class="metric-card metric-missing"
         :class="{ active: filters.relation_status === 'missing' }"
-        title="点击筛选缺少默认 Item 的实物 SKU"
+        title="点击筛选缺少默认物料的实物 SKU"
         @click="filterCard('physical', 'missing')"
       >
         <div class="metric-icon-box"><i class="el-icon-warning-outline" /></div>
         <div class="metric-info">
-          <span class="metric-label">缺少默认 Item</span>
+          <span class="metric-label">缺少默认物料</span>
           <strong class="metric-val code-mono text-warning">{{ summary.missing || 0 }}</strong>
         </div>
       </div>
@@ -88,7 +88,7 @@
       <div
         class="metric-card metric-not-required"
         :class="{ active: filters.relation_status === 'not_required' }"
-        title="点击筛选无需设置 Item 的服务与虚拟 SKU"
+        title="点击筛选无需设置物料 的服务与虚拟 SKU"
         @click="filterCard('', 'not_required')"
       >
         <div class="metric-icon-box"><i class="el-icon-remove-outline" /></div>
@@ -132,7 +132,7 @@
           </el-select>
         </div>
         <div class="filter-item">
-          <span class="filter-label">Item状态</span>
+          <span class="filter-label">物料状态</span>
           <el-select v-model="filters.item_status" size="small" clearable placeholder="全部" class="filter-select-xs">
             <el-option label="启用" value="enabled" />
             <el-option label="停用" value="disabled" />
@@ -144,7 +144,7 @@
             <el-option label="正常" value="normal" />
             <el-option label="缺失" value="missing" />
             <el-option label="异常" value="abnormal" />
-            <el-option label="无需Item" value="not_required" />
+            <el-option label="无需物料" value="not_required" />
           </el-select>
         </div>
       </div>
@@ -188,7 +188,7 @@
               <span :class="['type-badge', `type-${row.line_type}`]">{{ lineType(row.line_type) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="默认Item编码" min-width="120" show-overflow-tooltip>
+          <el-table-column label="默认物料编码" min-width="120" show-overflow-tooltip>
             <template slot-scope="{ row }">
               <span v-if="row.default_item && row.default_item.item_code" class="item-code-chip" @click.stop="$router.push(defaultItemPath(row.default_item))">
                 <i class="el-icon-coin" />
@@ -197,12 +197,12 @@
               <span v-else class="text-placeholder">—</span>
             </template>
           </el-table-column>
-          <el-table-column label="默认Item名称" min-width="140" show-overflow-tooltip>
+          <el-table-column label="默认物料名称" min-width="140" show-overflow-tooltip>
             <template slot-scope="{ row }">
               <span class="item-name-text">{{ row.default_item && row.default_item.item_name || '—' }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="Item状态" width="85" align="center">
+          <el-table-column label="物料状态" width="85" align="center">
             <template slot-scope="{ row }">
               <span v-if="row.default_item" :class="['status-badge', row.default_item.status]">
                 <i :class="row.default_item.status === 'enabled' ? 'el-icon-circle-check' : 'el-icon-circle-close'" />
@@ -238,7 +238,7 @@
                   class="btn-action-primary"
                   @click.stop="openSetItemModal(row)"
                 >
-                  {{ row.default_item ? '更换默认Item' : '设置默认Item' }}
+                  {{ row.default_item ? '更换默认物料' : '设置默认物料' }}
                 </el-button>
                 <el-button type="text" size="small" class="btn-action-view" @click.stop="openHistoryModal(row)">
                   查看历史
@@ -264,9 +264,9 @@
       </div>
     </section>
 
-    <!-- 弹窗 1：更换 / 设置默认Item弹窗 -->
+    <!-- 弹窗 1：更换 / 设置默认物料弹窗 -->
     <el-dialog
-      :title="setModal.isChange ? '更换默认Item' : '设置默认Item'"
+      :title="setModal.isChange ? '更换默认物料' : '设置默认物料'"
       :visible.sync="setModal.visible"
       width="780px"
       custom-class="relation-modal"
@@ -276,7 +276,7 @@
       <div v-loading="setModal.loading" class="modal-body-wrap">
         <div class="modal-tip-notice">
           <i class="el-icon-info" />
-          <span>实物 SKU 必须设置唯一、启用的默认 Item；服务和无需发货 SKU 无需设置。变更将记录审计历史。</span>
+          <span>实物 SKU 必须设置唯一、启用的默认物料；服务和无需发货 SKU 无需设置。变更将记录审计历史。</span>
         </div>
 
         <!-- SKU 基础信息只读网格 -->
@@ -313,14 +313,14 @@
           </div>
         </section>
 
-        <!-- 新默认 Item 搜索选择栏（居顶独立，左右卡片高度完全对称） -->
+        <!-- 新默认物料搜索选择栏（居顶独立，左右卡片高度完全对称） -->
         <section class="item-search-section">
           <div class="search-label-row">
             <span class="search-label">
               <i class="el-icon-search" />
-              选择新默认 Item <b class="text-danger">*</b>
+              选择新默认物料<b class="text-danger">*</b>
             </span>
-            <span class="search-tip">支持按 Item 编码、名称、规格型号检索（仅限启用状态 Item）</span>
+            <span class="search-tip">支持按物料编码、名称、规格型号检索（仅限启用状态的物料）</span>
           </div>
           <el-select
             v-model="setModal.form.item_id"
@@ -330,7 +330,7 @@
             clearable
             :remote-method="searchModalItems"
             :loading="setModal.itemPage.loading"
-            placeholder="输入 Item 编码 / 名称 / 规格型号快速搜索并选定"
+            placeholder="输入 物料编码 / 名称 / 规格型号快速搜索并选定"
             class="full-width-select"
             size="small"
             @change="onSelectModalItem"
@@ -344,18 +344,18 @@
           </el-select>
         </section>
 
-        <!-- 默认 Item 左右对称对比配置网格 -->
+        <!-- 默认物料左右对称对比配置网格 -->
         <section class="item-compare-card">
-          <!-- 左侧：当前默认 Item -->
+          <!-- 左侧：当前默认物料-->
           <div class="compare-col current-item-col">
             <div class="col-head">
-              <span class="col-title"><i class="el-icon-time" /> 当前默认 Item（旧 Item）</span>
+              <span class="col-title"><i class="el-icon-time" /> 当前默认物料（旧）</span>
               <span v-if="setModal.current" class="pill-tag pill-current">当前绑定</span>
               <span v-else class="pill-tag pill-none">未配置</span>
             </div>
             <div v-if="setModal.current" class="item-details-box">
-              <div class="item-row"><span class="lbl">Item编码</span><b class="val code-mono">{{ setModal.current.item_code }}</b></div>
-              <div class="item-row"><span class="lbl">Item名称</span><span class="val">{{ setModal.current.item_name }}</span></div>
+              <div class="item-row"><span class="lbl">物料编码</span><b class="val code-mono">{{ setModal.current.item_code }}</b></div>
+              <div class="item-row"><span class="lbl">物料名称</span><span class="val">{{ setModal.current.item_name }}</span></div>
               <div class="item-row"><span class="lbl">规格型号</span><span class="val">{{ setModal.current.spec || '—' }}</span></div>
               <div class="item-row"><span class="lbl">Item类型</span><span class="val">{{ itemType(setModal.current.item_type) }}</span></div>
               <div class="item-row"><span class="lbl">库存单位</span><span class="val">{{ setModal.current.unit && setModal.current.unit.unit_name || '—' }}</span></div>
@@ -364,7 +364,7 @@
             </div>
             <div v-else class="empty-item-box">
               <i class="el-icon-warning-outline" />
-              <span>当前尚未配置默认 Item</span>
+              <span>当前尚未配置默认物料</span>
             </div>
           </div>
 
@@ -372,16 +372,16 @@
             <i class="el-icon-right" />
           </div>
 
-          <!-- 右侧：已选择的新默认 Item -->
+          <!-- 右侧：已选择的新默认物料-->
           <div class="compare-col new-item-col">
             <div class="col-head">
-              <span class="col-title"><i class="el-icon-circle-check" /> 变更后新默认 Item（新 Item）</span>
+              <span class="col-title"><i class="el-icon-circle-check" /> 变更后新默认物料（新）</span>
               <span v-if="setModal.chosen" class="pill-tag pill-chosen">已选定</span>
               <span v-else class="pill-tag pill-none">待选定</span>
             </div>
             <div v-if="setModal.chosen" class="item-details-box chosen-box">
-              <div class="item-row"><span class="lbl">Item编码</span><b class="val code-mono text-success">{{ setModal.chosen.item_code }}</b></div>
-              <div class="item-row"><span class="lbl">Item名称</span><span class="val">{{ setModal.chosen.item_name }}</span></div>
+              <div class="item-row"><span class="lbl">物料编码</span><b class="val code-mono text-success">{{ setModal.chosen.item_code }}</b></div>
+              <div class="item-row"><span class="lbl">物料名称</span><span class="val">{{ setModal.chosen.item_name }}</span></div>
               <div class="item-row"><span class="lbl">规格型号</span><span class="val">{{ setModal.chosen.spec || '—' }}</span></div>
               <div class="item-row"><span class="lbl">Item类型</span><span class="val">{{ itemType(setModal.chosen.item_type) }}</span></div>
               <div class="item-row"><span class="lbl">库存单位</span><span class="val">{{ setModal.chosen.unit && setModal.chosen.unit.unit_name || '—' }}</span></div>
@@ -391,7 +391,7 @@
             <div v-else class="empty-item-box awaiting">
               <i class="el-icon-search" />
               <span>请在上方搜索并选定新 Item</span>
-              <small class="empty-sub">选定后右侧将对称展示新 Item 完整属性</small>
+              <small class="empty-sub">选定后右侧将对称展示新物料完整属性</small>
             </div>
           </div>
         </section>
@@ -513,7 +513,7 @@
     <!-- Element UI 的 destroy-on-close 会通过修改 key 重建内容；此处嵌套 Tabs/Table
          在关闭重建时可导致渲染进程卡死。保留组件实例，数据由 openHistoryModal 每次重置并重取。 -->
     <el-dialog
-      title="SKU 默认Item关系历史与审计日志"
+      title="SKU 默认物料关系历史与审计日志"
       :visible.sync="historyModal.visible"
       width="900px"
       custom-class="relation-modal"
@@ -527,7 +527,7 @@
             <el-tag size="mini" type="info">{{ historyModalSkuProduct }}</el-tag>
           </div>
           <div class="header-right">
-            <span class="lbl">当前默认 Item：</span>
+            <span class="lbl">当前默认物料：</span>
             <span v-if="historyModalCurrent" class="current-item-chip">
               <b class="code-mono">{{ historyModalCurrent.item_code }}</b> ({{ historyModalCurrent.item_name }})
             </span>
@@ -539,13 +539,13 @@
         <div v-if="historyModal.audit && historyModal.audit.check_status === 'duplicate'" class="duplicate-repair-alert">
           <div class="repair-alert-title">
             <i class="el-icon-warning" />
-            <span>检测到重复默认 Item 异常：该 SKU 存在多个启用的默认关系，请选择保留项</span>
+            <span>检测到重复默认物料异常：该 SKU 存在多个启用的默认关系，请选择保留项</span>
           </div>
           <div class="repair-form-row">
             <el-select
               v-model="historyModal.repairForm.keep_relation_id"
               size="small"
-              placeholder="选择保留的有效默认 Item"
+              placeholder="选择保留的有效默认物料"
               class="repair-select"
             >
               <el-option
@@ -582,14 +582,14 @@
 
         <!-- 历史切换 Tabs -->
         <el-tabs v-model="historyModal.activeTab" class="history-tabs">
-          <el-tab-pane label="默认Item关系版本历史" name="relations">
+          <el-tab-pane label="默认物料关系版本历史" name="relations">
             <el-table :data="historyModal.relations" border size="small" class="history-table">
-              <el-table-column label="Item编码" prop="item.item_code" width="130" show-overflow-tooltip>
+              <el-table-column label="物料编码" prop="item.item_code" width="130" show-overflow-tooltip>
                 <template slot-scope="{ row }">
                   <span class="code-mono">{{ row.item && row.item.item_code || '—' }}</span>
                 </template>
               </el-table-column>
-              <el-table-column label="Item名称" prop="item.item_name" min-width="140" show-overflow-tooltip />
+              <el-table-column label="物料名称" prop="item.item_name" min-width="140" show-overflow-tooltip />
               <el-table-column label="规格型号" min-width="120" show-overflow-tooltip>
                 <template slot-scope="{ row }">
                   <span>{{ row.item && (row.item.spec) || '—' }}</span>
@@ -631,12 +631,12 @@
               </el-table-column>
               <el-table-column label="操作人" prop="operator_name" width="100" show-overflow-tooltip />
               <el-table-column label="操作类型" prop="action" width="110" align="center" />
-              <el-table-column label="旧Item编码" width="125" show-overflow-tooltip>
+              <el-table-column label="旧物料编码" width="125" show-overflow-tooltip>
                 <template slot-scope="{ row }">
                   <span class="code-mono">{{ row.old_item && row.old_item.item_code || '—' }}</span>
                 </template>
               </el-table-column>
-              <el-table-column label="新Item编码" width="125" show-overflow-tooltip>
+              <el-table-column label="新物料编码" width="125" show-overflow-tooltip>
                 <template slot-scope="{ row }">
                   <span class="code-mono">{{ row.new_item && row.new_item.item_code || '—' }}</span>
                 </template>
@@ -655,7 +655,7 @@
 
     <!-- 弹窗 3：关系完整性检查弹窗 -->
     <el-dialog
-      title="SKU–Item 默认关系完整性检查"
+      title="SKU-物料 默认关系完整性检查"
       :visible.sync="integrityModal.visible"
       width="1040px"
       custom-class="relation-modal"
@@ -677,7 +677,7 @@
             <strong class="int-val code-mono text-warning">{{ integrityModal.summary.fix || 0 }}</strong>
           </div>
           <div class="int-card gray">
-            <span class="int-label">无需Item</span>
+            <span class="int-label">无需物料</span>
             <strong class="int-val code-mono text-muted">{{ integrityModal.summary.none || 0 }}</strong>
           </div>
         </div>
@@ -688,7 +688,7 @@
             <el-radio-button label="all">全部 ({{ integrityModal.summary.checked || 0 }})</el-radio-button>
             <el-radio-button label="fix">待修复 ({{ integrityModal.summary.fix || 0 }})</el-radio-button>
             <el-radio-button label="normal">正常 ({{ integrityModal.summary.normal || 0 }})</el-radio-button>
-            <el-radio-button label="not_required">无需Item ({{ integrityModal.summary.none || 0 }})</el-radio-button>
+            <el-radio-button label="not_required">无需物料 ({{ integrityModal.summary.none || 0 }})</el-radio-button>
           </el-radio-group>
           <el-button
             size="small"
@@ -720,7 +720,7 @@
               <span :class="['type-badge', `type-${row.sku && row.sku.line_type}`]">{{ lineType(row.sku && row.sku.line_type) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="当前默认Item" min-width="130" show-overflow-tooltip>
+          <el-table-column label="当前默认物料" min-width="130" show-overflow-tooltip>
             <template slot-scope="{ row }">
               <span class="code-mono">{{ getIntegrityItemsText(row) }}</span>
             </template>
@@ -741,12 +741,12 @@
             <template slot-scope="{ row }">
               <template v-if="row.audit && row.audit.check_status === 'missing'">
                 <el-button type="text" size="small" class="btn-action-primary" @click="handleIntegrityFix(row)">
-                  设置默认Item
+                  设置默认物料
                 </el-button>
               </template>
               <template v-else-if="row.audit && row.audit.check_status === 'item_disabled'">
                 <el-button type="text" size="small" class="btn-action-primary" @click="handleIntegrityFix(row)">
-                  更换默认Item
+                  更换默认物料
                 </el-button>
               </template>
               <template v-else-if="row.audit && row.audit.check_status === 'duplicate'">
@@ -786,6 +786,7 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import pagedScroll from '../../../directives/pagedScroll'
 import { materialListPath } from '../../../utils/materialManagementScope.mjs'
 import { createPageState, queryPage, includeSelected } from '../../../utils/pagedQuery'
@@ -822,7 +823,7 @@ export default {
         relation_status: ''
       },
 
-      // 弹窗 1：更换 / 设置默认Item
+      // 弹窗 1：更换 / 设置默认物料
       setModal: {
         visible: false,
         loading: false,
@@ -842,7 +843,7 @@ export default {
           change_reason: '',
           remark: ''
         },
-        reasons: ['首次设置', '产品升级', '规格调整', '主数据修正', '原Item停用', '历史数据补全', '其他']
+        reasons: ['首次设置', '产品升级', '规格调整', '主数据修正', '原物料停用', '历史数据补全', '其他']
       },
 
       // 弹窗 2：查看历史与变更日志
@@ -860,7 +861,7 @@ export default {
           change_reason: '',
           remark: ''
         },
-        reasons: ['首次设置', '产品升级', '规格调整', '主数据修正', '原Item停用', '历史数据补全', '其他']
+        reasons: ['首次设置', '产品升级', '规格调整', '主数据修正', '原物料停用', '历史数据补全', '其他']
       },
 
       // 弹窗 3：关系完整性检查
@@ -889,11 +890,11 @@ export default {
     },
     setModalSalesUnitText () {
       const u = this.setModal.sku && this.setModal.sku.sales_unit
-      return u ? (u.symbol || u.unit_name) : '件'
+      return u ? (u.unit_name || u.symbol) : '件'
     },
     setModalItemUnitText () {
       const u = this.setModal.chosen && this.setModal.chosen.unit
-      return u ? (u.symbol || u.unit_name) : '个'
+      return u ? (u.unit_name || u.symbol) : '个'
     },
     historyModalSkuProduct () {
       if (!this.historyModal.sku || !this.historyModal.sku.product) return '—'
@@ -977,7 +978,7 @@ export default {
       return ({ physical: '实物', service: '服务', no_delivery: '无需发货' })[v] || '—'
     },
     relationLabel (v) {
-      return ({ normal: '正常', missing: '缺失', duplicate: '异常', item_disabled: '异常', wrong_binding: '异常', abnormal: '异常', not_required: '无需Item' })[v] || '—'
+      return ({ normal: '正常', missing: '缺失', duplicate: '异常', item_disabled: '异常', wrong_binding: '异常', abnormal: '异常', not_required: '无需物料' })[v] || '—'
     },
     relationStatusClass (status) {
       if (status === 'normal') return 'status-normal'
@@ -987,7 +988,7 @@ export default {
       return ''
     },
     date (v) {
-      return v ? String(v).slice(0, 16).replace('T', ' ') : '—'
+      return v ? erpDateTime(v, 16) : '—'
     },
     formatNumber (val) {
       return Number(val || 0).toFixed(8).replace(/0+$/, '').replace(/\.$/, '')
@@ -1006,7 +1007,7 @@ export default {
     },
 
     // ==========================================
-    // 弹窗 1：更换 / 设置默认Item相关方法
+    // 弹窗 1：更换 / 设置默认物料相关方法
     // ==========================================
     async openSetItemModal (row) {
       const skuId = row.sku ? row.sku.id : row.id
@@ -1031,7 +1032,7 @@ export default {
         const d = detail.data.data
         this.setModal.sku = d.sku
         if (this.setModal.sku.line_type !== 'physical') {
-          this.$message.warning('服务或无需发货 SKU 不允许设置默认 Item')
+          this.$message.warning('服务或无需发货 SKU 不允许设置默认物料')
           this.setModal.visible = false
           return
         }
@@ -1043,7 +1044,7 @@ export default {
         this.setModal.form.factor = Number(this.setModal.currentRelation?.qty || 1)
         this.setModal.form.change_reason = this.setModal.current ? '' : '首次设置'
 
-        // 默认预加载启用的 Item 列表
+        // 默认预加载启用的物料 列表
         await this.fetchModalItems('')
       } catch (e) {
         this.$message.error(e.userMessage || '加载 SKU 关系详情失败')
@@ -1073,34 +1074,34 @@ export default {
     },
     async saveSetItem () {
       const { form, current, currentRelation, activeRelationCount, sku } = this.setModal
-      if (!form.item_id) return this.$message.warning('请选择新的默认 Item')
+      if (!form.item_id) return this.$message.warning('请选择新的默认物料')
       if (!(Number(form.factor) > 0)) return this.$message.warning('履约数量换算因子必须大于 0')
       if (
         current &&
         current.id === form.item_id &&
         Math.abs(Number(currentRelation?.qty || 0) - Number(form.factor)) < 0.00000001
       ) {
-        return this.$message.error('新 Item 和履约因子不能与当前关系完全相同')
+        return this.$message.error('新物料和履约因子不能与当前关系完全相同')
       }
       if (!form.change_reason) return this.$message.warning('请选择变更原因')
       if (form.change_reason === '其他' && !String(form.remark || '').trim()) {
         return this.$message.warning('变更原因选择“其他”时必须填写备注说明')
       }
       if (activeRelationCount > 1) {
-        return this.$message.error('当前存在多个启用默认 Item，请先在完整性检查中处理重复关系')
+        return this.$message.error('当前存在多个启用默认物料，请先在完整性检查中处理重复关系')
       }
 
       this.setModal.saving = true
       try {
         await setDefaultSkuItem(sku.id, form)
-        this.$message.success('默认 Item 已保存并立即生效')
+        this.$message.success('默认物料已保存并立即生效')
         this.setModal.visible = false
         this.load()
         if (this.integrityModal.visible) {
           this.loadIntegrityData()
         }
       } catch (e) {
-        this.$message.error(e.userMessage || '保存默认 Item 失败')
+        this.$message.error(e.userMessage || '保存默认物料失败')
       } finally {
         this.setModal.saving = false
       }
@@ -1142,7 +1143,7 @@ export default {
     async resolveDuplicateInHistory () {
       const { keep_relation_id, change_reason, remark } = this.historyModal.repairForm
       if (!keep_relation_id || !change_reason) {
-        return this.$message.warning('请选择保留的默认 Item 及变更原因')
+        return this.$message.warning('请选择保留的默认物料及变更原因')
       }
       if (change_reason === '其他' && !String(remark || '').trim()) {
         return this.$message.warning('变更原因选择“其他”时必须填写备注说明')
@@ -1151,7 +1152,7 @@ export default {
       this.historyModal.repairing = true
       try {
         await resolveDuplicateSkuItemRelation(this.historyModal.sku.id, this.historyModal.repairForm)
-        this.$message.success('重复关系已修复，已保留唯一有效默认 Item')
+        this.$message.success('重复关系已修复，已保留唯一有效默认物料')
         // 重新拉取历史弹窗数据与主列表
         const [detailRes, historyRes] = await Promise.all([
           getDefaultSkuItemRelation(this.historyModal.sku.id),
@@ -1216,7 +1217,7 @@ export default {
         duplicate: '待修复',
         item_disabled: '待修复',
         wrong_binding: '待修复',
-        not_required: '无需Item'
+        not_required: '无需物料'
       })[v] || '—'
     },
     integrityStatusClass (status) {
@@ -1229,7 +1230,7 @@ export default {
     },
     async repairWrongBinding (row) {
       try {
-        await this.$confirm('确认解除该服务/无需发货 SKU 的错误 Item 绑定？处理后立即生效并记录操作日志。', '解除错误绑定', {
+        await this.$confirm('确认解除该服务/无需发货 SKU 的错误物料绑定？处理后立即生效并记录操作日志。', '解除错误绑定', {
           type: 'warning',
           confirmButtonText: '确定解除',
           cancelButtonText: '取消'
@@ -1883,7 +1884,7 @@ export default {
   width: fit-content;
 }
 
-/* 新默认 Item 搜索选择栏 */
+/* 新默认物料搜索选择栏 */
 .item-search-section {
   background: #f8fafc;
   border: 1px solid #e2e8f0;

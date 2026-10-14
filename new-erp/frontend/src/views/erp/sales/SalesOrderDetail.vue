@@ -199,14 +199,14 @@ Design status: Approved (Optimized for modern ERP layout & responsive UX)
             <span class="sku-subtitle">{{ row.sku_name }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="系统Item编码" min-width="120" show-overflow-tooltip>
+        <el-table-column label="系统物料编码" min-width="120" show-overflow-tooltip>
           <template slot-scope="{row}">
             <span v-if="lineItem(row).status === 'matched'" class="font-mono item-code-text">{{ lineItem(row).item_code }}</span>
             <el-tag v-else-if="lineItem(row).status === 'not_required'" size="mini" type="info">无需 Item</el-tag>
             <el-tag v-else size="mini" type="danger">Item 异常</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="系统Item名称" min-width="130" show-overflow-tooltip>
+        <el-table-column label="系统物料名称" min-width="130" show-overflow-tooltip>
           <template slot-scope="{row}">
             <span v-if="lineItem(row).status === 'matched'">{{ lineItem(row).item_name }}</span>
             <span v-else-if="lineItem(row).status === 'not_required'" class="text-muted">—</span>
@@ -543,6 +543,7 @@ Design status: Approved (Optimized for modern ERP layout & responsive UX)
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import { confirmSalesOrder, formalConfirmSalesOrder, deleteSalesOrderAttachment, deleteSalesOrderDraft, downloadSalesOrderAttachment, getSalesOrder, listSalesOrderChanges, lockSalesOrderInventory } from '@/api/erp/sales'
 import SalesOrderAttachmentPreviewDialog from '@/components/sales/SalesOrderAttachmentPreviewDialog.vue'
 import SalesOrderFinancePanel from '@/components/sales/SalesOrderFinancePanel.vue'
@@ -751,7 +752,7 @@ export default {
     },
     numberText(v) { return Number(v || 0).toLocaleString('zh-CN', { maximumFractionDigits: 8 }) },
     date(v) {
-      return v ? String(v).replace('T', ' ').slice(0, 16) : '-'
+      return v ? erpDateTime(v, 16) : '-'
     },
     dateOnly(v) {
       return v ? String(v).slice(0, 10) : '-'

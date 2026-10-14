@@ -13,6 +13,7 @@
             >刷新</el-button
           >
           <el-button
+            v-if="$can('approval.task.submit')"
             size="small"
             type="primary"
             icon="el-icon-plus"
@@ -20,6 +21,7 @@
             >发起申请</el-button
           >
           <el-button
+            v-if="$can('approval.task.batch_decide')"
             size="small"
             type="success"
             :disabled="!selected.length || scope !== 'todo'"
@@ -157,7 +159,7 @@
           <el-table-column prop="task_no" label="审核任务号" min-width="148" />
           <el-table-column label="审核业务" min-width="128"
             ><template slot-scope="{ row }">{{
-              businessTypeText(row.business_type)
+              row.business_object_name || businessTypeText(row.business_type)
             }}</template></el-table-column
           >
           <el-table-column
@@ -516,6 +518,7 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import {
   batchDecideApprovalTasks,
   decideApprovalTask,
@@ -698,8 +701,17 @@ export default {
       this.summary = data.data || {};
     },
     async loadLaunchOptions() {
-      const { data } = await getApprovalLaunchOptions();
-      this.launchOptions = data.data || [];
+      // 没有发起权限的岗位不需要发起选项；同时不能让 403 变成未处理异常拖垮整个工作台。
+      if (!this.$can('approval.task.submit')) {
+        this.launchOptions = [];
+        return;
+      }
+      try {
+        const { data } = await getApprovalLaunchOptions();
+        this.launchOptions = data.data || [];
+      } catch (error) {
+        this.launchOptions = [];
+      }
     },
     search() {
       this.page = 1;
@@ -893,10 +905,7 @@ export default {
     },
     formatTime(v) {
       return v
-        ? String(v)
-            .replace("T", " ")
-            .replace(/\.\d+Z$/, "")
-            .slice(0, 16)
+        ? erpDateTime(v, 16)
         : "-";
     },
     waitingText(minutes) {

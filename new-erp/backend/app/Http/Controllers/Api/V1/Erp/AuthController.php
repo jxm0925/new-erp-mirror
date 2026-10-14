@@ -108,7 +108,14 @@ class AuthController extends Controller
         abort_unless($authContext->isActiveUser($user), 403, '该账号已停用，不能登录。');
         unset($user->password_hash, $user->legacy_payload);
 
+        // 顺手清理该账号已过期的令牌，避免令牌表无限增长。
+        DB::table('erp_auth_tokens')->where('user_legacy_id', $legacyId)->whereNotNull('expires_at')->where('expires_at', '<', now())->delete();
         $plainToken = Str::random(64);
+        DB::table('erp_operation_logs')->insert([
+            'module' => 'auth', 'action' => 'login', 'target_type' => 'admin_user', 'target_id' => $legacyId,
+            'reason' => mb_substr('登录 IP '.(request()->ip() ?: '未知'), 0, 200),
+            'operator_id' => $legacyId, 'operator_name' => $user->nickname ?: $user->username, 'created_at' => now(),
+        ]);
         DB::table('erp_auth_tokens')->insert([
             'user_legacy_id' => $legacyId,
             'token_hash' => hash('sha256', $plainToken),

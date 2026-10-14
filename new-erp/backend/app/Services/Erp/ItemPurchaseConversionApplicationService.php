@@ -47,7 +47,7 @@ class ItemPurchaseConversionApplicationService
                 ->when($to, fn ($q) => $q->where(fn ($period) => $period->whereNull('effective_from')->orWhere('effective_from', '<', $to)))
                 ->lockForUpdate()->exists();
             if ($overlap) {
-                throw ValidationException::withMessages(['effective_from' => '同一 Item、同一采购单位的有效期不能重叠。']);
+                throw ValidationException::withMessages(['effective_from' => '同一物料、同一采购单位的有效期不能重叠。']);
             }
 
             if ($current) {

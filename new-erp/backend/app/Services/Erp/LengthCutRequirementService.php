@@ -43,7 +43,7 @@ class LengthCutRequirementService
             $item = $items->get($itemId);
 
             if (! $item || $item->status !== 'enabled') {
-                throw ValidationException::withMessages(["{$path}.component_item_id" => '下料要求必须引用已启用的真实 Item。']);
+                throw ValidationException::withMessages(["{$path}.component_item_id" => '下料要求必须引用已启用的真实物料。']);
             }
             if (! $item->is_length_cut_material) {
                 throw ValidationException::withMessages(["{$path}.component_item_id" => '普通物料不能填写下料长度。']);

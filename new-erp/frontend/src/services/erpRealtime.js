@@ -52,7 +52,8 @@ function ensureEcho () {
       wsPort: current.port,
       wssPort: current.port,
       forceTLS: false,
-      enabledTransports: ['ws', 'wss'],
+      // 同时启用 ws/wss 时，Reverb 未启动会每轮各失败一次；按页面协议只保留一种，减少无效重连。
+      enabledTransports: window.location.protocol === 'https:' ? ['wss'] : ['ws'],
       authEndpoint: `${process.env.VUE_APP_BASE_API}/broadcasting/auth`,
       auth: { headers: { Authorization: `Bearer ${current.token}` } }
     })

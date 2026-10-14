@@ -126,3 +126,14 @@ test('普通列表就地打开核销，使用预付款成功返回原应付', as
   contextual.vm.allocationChanged()
   assert.deepEqual(contextual.routes[0], { path: '/finance/payables', query: { view: 'documents', source_id: 7 } })
 })
+
+test('查看付款单就地打开详情弹窗，不触发路由跳转', async () => {
+  const { vm, routes } = page()
+  assert.equal(vm.detailDialogVisible, false)
+  await vm.view({ id: 10, document_no: 'PAY-10', amount: '500', unallocated_amount: '200', status: 'confirmed' })
+  assert.equal(vm.detailDialogVisible, true)
+  assert.equal(vm.detailDoc.id, 10)
+  assert.equal(vm.detailDoc.document_no, 'PAY-10')
+  assert.equal(routes.length, 0)
+})
+

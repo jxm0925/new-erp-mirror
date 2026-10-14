@@ -102,8 +102,8 @@
                   <el-option v-for="scope in managementScopes" :key="scope.value" :label="scope.label" :value="scope.value" />
                 </el-select>
               </el-form-item>
-              <!-- Item 编码 -->
-              <el-form-item label="Item 编码" prop="item_code">
+              <!-- 物料编码 -->
+              <el-form-item label="物料编码" prop="item_code">
                 <el-input :value="form.item_code" disabled class="code-tabular-input">
                   <template slot="append">系统预占</template>
                 </el-input>
@@ -127,8 +127,8 @@
                 </el-select>
               </el-form-item>
 
-              <!-- Item 类目 -->
-              <el-form-item label="Item 类目" prop="category_id" required>
+              <!-- 物料类目 -->
+              <el-form-item label="物料类目" prop="category_id" required>
                 <el-select v-model="form.category_id" :loading="categoriesLoading" filterable clearable class="full-width" placeholder="请选择末级类目">
                   <el-option v-for="row in categories" :key="row.id" :label="row.full_path" :value="row.id" :disabled="!!row.legacy_scope_mismatch" />
                 </el-select>
@@ -705,6 +705,7 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import cachedPageRoute from '../../../utils/cachedPageRoute'
 import { materialScopes, routeMaterialScope, materialScopeLabel, materialListPath, materialTypesForScope } from '../../../utils/materialManagementScope.mjs'
 import { getItemCategoryTree, listEntity, getItemIntegratedForm, saveItemIntegratedForm } from '../../../api/erp/master'
@@ -820,10 +821,10 @@ export default {
         }
       ],
       rules: {
-        item_code: [{ required: true, message: '系统未取得 Item 编码' }],
+        item_code: [{ required: true, message: '系统未取得 物料编码' }],
         item_name: [{ required: true, message: '请输入物料名称', trigger: 'blur' }],
         item_type: [{ required: true, message: '请选择物料类型', trigger: 'change' }],
-        category_id: [{ required: true, message: '请选择末级 Item 类目', trigger: 'change' }],
+        category_id: [{ required: true, message: '请选择末级 物料类目', trigger: 'change' }],
         unit_id: [{ required: true, message: '请选择库存基本单位', trigger: 'change' }],
         standard_stock_length_mm: [
           {
@@ -1153,7 +1154,7 @@ export default {
         this.reservation = reservation
         this.form.item_code = this.reservation.document_no
       } catch (e) {
-        this.$message.error(e.userMessage || 'Item 编码预生成失败')
+        this.$message.error(e.userMessage || '物料编码预生成失败')
       }
     },
     async loadEdit(version = this.pageLoadVersion) {
@@ -1259,7 +1260,7 @@ export default {
           : !this.form.item_type
           ? '请选择物料类型'
           : !this.form.category_id
-          ? '请选择末级 Item 类目'
+          ? '请选择末级 物料类目'
           : !this.form.unit_id
           ? '请选择库存基本单位'
           : this.form.cutting_mode === 'length' && !(Number(this.form.standard_stock_length_mm) > 0)
@@ -1343,7 +1344,7 @@ export default {
       return Number.isFinite(numeric) ? numeric.toFixed(2) : ''
     },
     date(value) {
-      return value ? String(value).replace('T', ' ').slice(0, 16) : '-'
+      return value ? erpDateTime(value, 16) : '-'
     },
     routeLabel(value) {
       return (

@@ -308,6 +308,7 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import { deleteEntity, disableEntity, enableEntity, listEntity, saveEntity } from '../../../api/erp/master'
 
 const emptyForm = () => ({
@@ -533,7 +534,7 @@ export default {
       return value === 'enabled' ? '启用' : '停用'
     },
     formatDate (value) {
-      return value ? String(value).replace('T', ' ').slice(0, 16) : '-'
+      return value ? erpDateTime(value, 16) : '-'
     }
   }
 }

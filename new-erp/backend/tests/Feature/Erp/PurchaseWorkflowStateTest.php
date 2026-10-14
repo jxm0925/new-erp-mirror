@@ -70,6 +70,7 @@ class PurchaseWorkflowStateTest extends TestCase
         $order = PurchaseOrder::create([
             'management_scope' => 'factory',
             'purchase_order_no' => 'PO-WORKFLOW-001',
+            'expected_arrival_date' => now()->addDays(7)->toDateString(),
             'supplier_id' => $supplier->id,
             'purchase_status' => 'draft',
             'audit_status' => 'pending',

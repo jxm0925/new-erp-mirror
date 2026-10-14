@@ -46,7 +46,7 @@ class SupplierCapabilityController extends Controller
         $service->syncCategories($supplierId, $data['category_ids'] ?? [], $this->operatorId($request), $data['remark'] ?? null);
 
         return response()->json([
-            'message' => '可供Item类目已保存。',
+            'message' => '可供物料类目已保存。',
             'data' => SupplierCategoryCapability::with('category')
                 ->where('supplier_id', $supplierId)->where('status', 'active')->get(),
         ]);

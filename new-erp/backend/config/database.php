@@ -1,5 +1,11 @@
 <?php
 
+// 数据库会话时区必须与 APP_TIMEZONE 一致：Laravel 按应用时区写入时间字符串，
+// MySQL 再按会话时区换算后存入 TIMESTAMP 列。两者不一致会让时间整体偏移。
+// 本机 MySQL 未加载命名时区表，只能用偏移量；这里按应用时区实时计算，夏令时切换也能跟随。
+// 需要固定偏移时仍可在 .env 写 DB_TIMEZONE。注意：执行 config:cache 后偏移会被固定。
+$sessionTimeZone = env('DB_TIMEZONE') ?: (new DateTimeImmutable('now', new DateTimeZone(env('APP_TIMEZONE', 'America/New_York'))))->format('P');
+
 use Illuminate\Support\Str;
 use Pdo\Mysql;
 
@@ -60,7 +66,7 @@ return [
             'strict' => true,
             'engine' => 'InnoDB',
             'options' => extension_loaded('pdo_mysql') ? array_filter([
-                \PDO::MYSQL_ATTR_INIT_COMMAND => env('DB_TIMEZONE') ? "SET time_zone = '".env('DB_TIMEZONE')."'" : null,
+                \PDO::MYSQL_ATTR_INIT_COMMAND => "SET time_zone = '".$sessionTimeZone."'",
                 (PHP_VERSION_ID >= 80500 ? Mysql::ATTR_SSL_CA : PDO::MYSQL_ATTR_SSL_CA) => env('MYSQL_ATTR_SSL_CA'),
             ]) : [],
         ],
@@ -81,7 +87,7 @@ return [
             'strict' => true,
             'engine' => null,
             'options' => extension_loaded('pdo_mysql') ? array_filter([
-                \PDO::MYSQL_ATTR_INIT_COMMAND => env('DB_TIMEZONE') ? "SET time_zone = '".env('DB_TIMEZONE')."'" : null,
+                \PDO::MYSQL_ATTR_INIT_COMMAND => "SET time_zone = '".$sessionTimeZone."'",
                 (PHP_VERSION_ID >= 80500 ? Mysql::ATTR_SSL_CA : PDO::MYSQL_ATTR_SSL_CA) => env('MYSQL_ATTR_SSL_CA'),
             ]) : [],
         ],

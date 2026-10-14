@@ -12,7 +12,7 @@
     <div v-if="selectedRows.length" class="selected-paths">
       <el-tag v-for="row in selectedRows" :key="row.id" size="mini" closable @close="remove(row.id)">{{ row.full_path }}</el-tag>
     </div>
-    <p v-else class="empty-note">尚未选择 Item 类目</p>
+    <p v-else class="empty-note">尚未选择 物料类目</p>
   </div>
 </template>
 

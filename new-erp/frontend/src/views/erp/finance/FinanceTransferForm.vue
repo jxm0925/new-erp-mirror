@@ -454,6 +454,7 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import {
   listFinanceAccounts,
   getFinanceTransfer,
@@ -757,7 +758,7 @@ export default {
       return `${n > 0 ? '+' : ''}${this.money(n)}`
     },
     formatDate(v) {
-      return v ? String(v).replace('T', ' ').slice(0, 19) : '—'
+      return v ? erpDateTime(v, 19) : '—'
     }
   }
 }

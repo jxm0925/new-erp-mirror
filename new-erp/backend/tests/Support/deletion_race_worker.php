@@ -2,7 +2,7 @@
 
 use App\Http\Controllers\Api\V1\Erp\PurchaseController;
 use App\Models\Erp\Supplier;
-use App\Services\Erp\{FinanceCashDocumentApplicationService, FinanceInvoiceApplicationService, MasterDataApplicationService, PurchaseDraftDeletionApplicationService, SalesCustomerDeletionApplicationService};
+use App\Services\Erp\{AuthContextService, FinanceCashDocumentApplicationService, FinanceInvoiceApplicationService, MasterDataApplicationService, PurchaseDraftDeletionApplicationService, PurchaseWorkflowApplicationService, SalesCustomerDeletionApplicationService};
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
@@ -59,8 +59,15 @@ try {
         'invoice_create' => $app->make(FinanceInvoiceApplicationService::class)->create($payload, null),
         'supplier_delete' => $app->make(MasterDataApplicationService::class)->deleteUnused('suppliers', Supplier::findOrFail($id)),
         'customer_delete' => $app->make(SalesCustomerDeletionApplicationService::class)->delete($id),
-        'plan_submit' => $app->make(PurchaseController::class)->submitPlan($id),
-        'plan_update' => $app->make(PurchaseController::class)->updatePlan(Request::create('/race', 'PUT', $payload), $id),
+        'plan_submit' => $app->make(PurchaseWorkflowApplicationService::class)->submitPlan($id, '并发测试'),
+        // 直接调用控制器不经过登录中间件；这里只验证行锁顺序，用测试替身放行按钮权限。
+        'plan_update' => (function () use ($app, $payload, $id) {
+            $app->instance(AuthContextService::class, new class extends AuthContextService {
+                public function currentUser(Request $request): ?object { return (object) ['legacy_id' => 0, 'username' => 'admin', 'status' => 'normal']; }
+                public function isSuperAdmin(object $user): bool { return true; }
+            });
+            return $app->make(PurchaseController::class)->updatePlan(Request::create('/race', 'PUT', $payload), $id);
+        })(),
         'plan_delete' => $app->make(PurchaseDraftDeletionApplicationService::class)->deletePlan($id, '并发测试'),
         default => throw new InvalidArgumentException('unknown race action'),
     };

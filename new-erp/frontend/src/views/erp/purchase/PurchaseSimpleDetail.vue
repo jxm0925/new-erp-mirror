@@ -74,6 +74,28 @@
       </el-descriptions>
     </div>
 
+    <!-- 业务进度：需求 → 计划 → 订单 → 到货 → 入库 → 付款，可点击跳到上下游单据（仅采购订单）。 -->
+    <section v-if="type==='orders'" class="detail-card progress-card">
+      <div class="card-head-title">
+        <div class="title-text-group"><span class="bar-accent"></span><h3>业务进度</h3></div>
+      </div>
+      <div class="order-progress">
+        <div v-for="(step, index) in orderProgress" :key="step.title" :class="['progress-step', `is-${step.status}`]">
+          <div class="progress-dot"><i v-if="step.status === 'finish'" class="el-icon-check" /><span v-else>{{ index + 1 }}</span></div>
+          <div class="progress-body">
+            <strong>{{ step.title }}</strong>
+            <small>{{ step.desc }}</small>
+            <div v-if="step.links.length" class="progress-links">
+              <a v-for="link in step.links" :key="link.text" @click="$router.push(link.to)">{{ link.text }}</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 采购价格预警：与历史采购价对比（仅采购订单）。 -->
+    <purchase-price-check-panel v-if="type==='orders'" :result="priceCheck" />
+
     <!-- 审核流进度（仅采购订单） -->
     <section v-if="type==='orders' && doc.approval_task" class="approval-card">
       <div class="card-head-title">
@@ -238,7 +260,8 @@
 
 <script>
 import { purchaseScopeLabel, purchaseScopeIssue } from '@/utils/purchaseManagementScope.mjs'
-import { getPurchase } from '@/api/erp/purchase'
+import { getPurchase, getOrderPriceCheck } from '@/api/erp/purchase'
+import PurchasePriceCheckPanel from '@/components/purchase/PurchasePriceCheckPanel.vue'
 
 const statusMap = {
   draft: '草稿',
@@ -268,6 +291,38 @@ export default {
   props: { type: { type: String, required: true } },
   data: () => ({ doc: null, paymentPlanVisible: false }),
   computed: {
+    orderProgress() {
+      const doc = this.doc || {}
+      const items = doc.items || []
+      const unique = (rows, key) => rows.filter((row, index) => row && rows.findIndex(other => other && other[key] === row[key]) === index)
+      const requests = unique(items.map(line => line.request || (line.request_item && line.request_item.request) || (line.requestItem && line.requestItem.request)), 'id')
+      const plans = unique([doc.plan, ...items.map(line => line.plan || (line.plan_item && line.plan_item.plan))], 'id')
+      const receipts = (doc.receipts || []).filter(row => row.receipt_status !== 'cancelled')
+      const confirmed = receipts.filter(row => row.confirm_status === 'confirmed')
+      const posted = confirmed.filter(row => ['posted', 'not_required'].includes(row.stock_post_status))
+      const finance = doc.finance_summary || {}
+      const payable = Number(finance.current_payable_amount || 0)
+      const paid = Number(finance.paid_amount || 0)
+      const approved = doc.audit_status === 'approved'
+      const received = doc.receipt_status === 'received'
+      const money = value => Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      const canFinance = this.$can(['finance.payable.view', 'finance.payable'])
+      return [
+        { title: '采购需求', status: requests.length ? 'finish' : 'skip', desc: requests.length ? `${requests.length} 张需求` : '直接下单，无需求',
+          links: requests.map(row => ({ text: row.request_no, to: `/purchase/requests/${row.id}/detail` })) },
+        { title: '采购计划', status: plans.length ? 'finish' : 'skip', desc: plans.length ? '已审核' : '未经计划',
+          links: plans.map(row => ({ text: row.plan_no, to: `/purchase/plans/${row.id}/detail` })) },
+        { title: '采购订单', status: approved ? 'finish' : 'process', desc: approved ? '审核通过' : (doc.audit_status === 'rejected' ? '已驳回' : doc.purchase_status === 'draft' ? '草稿' : '待审核'), links: [] },
+        { title: '到货验收', status: received ? 'finish' : confirmed.length ? 'process' : approved ? 'process' : 'wait',
+          desc: received ? '已全部到货' : confirmed.length ? '部分到货' : approved ? (doc.expected_arrival_date ? `预计 ${String(doc.expected_arrival_date).slice(0, 10)}` : '等待到货') : '订单审核后到货',
+          links: receipts.map(row => ({ text: row.receipt_no, to: { path: '/purchase/receipts', query: { keyword: row.receipt_no } } })) },
+        { title: '入库过账', status: confirmed.length && posted.length === confirmed.length && received ? 'finish' : posted.length ? 'process' : 'wait',
+          desc: confirmed.length ? `${posted.length}/${confirmed.length} 张到货单已入库` : '到货确认后入库', links: [] },
+        { title: '付款', status: payable > 0 && paid + 0.005 >= payable && received ? 'finish' : paid > 0 ? 'process' : 'wait',
+          desc: payable > 0 ? `已付 ¥${money(paid)} / 应付 ¥${money(payable)}` : '到货确认后形成应付',
+          links: canFinance && payable > 0 ? [{ text: '查看应付', to: { path: '/finance/payables', query: { view: 'documents', purchase_order_no: doc.purchase_order_no } } }] : [] }
+      ]
+    },
     scopeIssue() { return purchaseScopeIssue(this.doc) },
     title() { return `${this.no} ${this.type === 'requests' ? '采购需求详情' : '采购订单详情'}` },
     no() { return this.doc?.request_no || this.doc?.purchase_order_no || '--' },
@@ -383,6 +438,23 @@ export default {
 </script>
 
 <style scoped>
+.progress-card { margin-top: 12px; }
+.order-progress { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; padding: 6px 4px 2px; }
+.progress-step { position: relative; display: flex; gap: 8px; align-items: flex-start; }
+.progress-step:not(:last-child)::after { content: ''; position: absolute; top: 13px; left: 32px; right: -4px; height: 2px; background: #e3e8ec; }
+.progress-step.is-finish:not(:last-child)::after { background: #2f9e6a; }
+.progress-dot { position: relative; z-index: 1; flex: 0 0 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; background: #fff; border: 2px solid #c9d2d9; color: #8a94a0; }
+.is-finish .progress-dot { background: #2f9e6a; border-color: #2f9e6a; color: #fff; }
+.is-process .progress-dot { border-color: #e6a23c; color: #e6a23c; }
+.is-skip .progress-dot { border-style: dashed; }
+.progress-body { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; padding-top: 3px; background: #fff; padding-right: 6px; }
+.progress-body strong { font-size: 13px; color: #25313b; }
+.progress-body small { font-size: 12px; color: #6f7b86; line-height: 1.35; }
+.is-skip .progress-body strong, .is-skip .progress-body small { color: #a3acb5; }
+.progress-links { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.progress-links a { font-size: 12px; color: #1f8f5f; cursor: pointer; }
+.progress-links a:hover { text-decoration: underline; }
+@media (max-width: 900px) { .order-progress { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 14px; } .progress-step::after { display: none; } }
 .simple-detail {
   min-height: calc(100vh - 52px);
   background: #f7f9fa;

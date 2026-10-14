@@ -71,6 +71,7 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import { materialWorkspace, materialDemands, materialList, materialDetail, materialCommand, materialEvents } from '@/api/erp/production-materials'
 import MaterialLines from './ProductionMaterialLines.vue'
 import StockSelector from './ProductionStockSelector.vue'
@@ -104,7 +105,7 @@ export default {
   beforeDestroy() { this.listSequence++; this.detailSequence++; this.draftSequence++ },
   methods: {
     number(value) { return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 8 }) },
-    date(value) { return value ? String(value).replace('T', ' ').slice(0, 16) : '—' },
+    date(value) { return value ? erpDateTime(value, 16) : '—' },
     status(value, kind) { return (kind === 'delivery' ? DELIVERY : PICK)[value] || value },
     tagType(value) { return ['RECEIVED','PICKED'].includes(value) ? 'success' : ['CANCELLED'].includes(value) ? 'info' : ['PICKING','IN_TRANSIT','DELIVERING'].includes(value) ? '' : 'warning' },
     personLabel(person) { return person.nickname || person.username || person.name || '' },

@@ -106,7 +106,7 @@ class MaterialPolicyApplicationService
     {
         if ($policy->serial_tracking_mode === 'none') {
             $hasSerialHistory = DB::table('erp_inventory_serials')->where('item_id', $item->id)->exists();
-            abort_if($hasSerialHistory, 422, '该 Item 已存在单件追溯档案，策略不能改为无需逐件编号。');
+            abort_if($hasSerialHistory, 422, '该物料已存在单件追溯档案，策略不能改为无需逐件编号。');
         }
 
         $item->update([

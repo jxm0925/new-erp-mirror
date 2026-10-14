@@ -219,7 +219,20 @@ class ApprovalTaskApplicationService
         $page = $query->orderByRaw("FIELD(risk_level, 'high', 'medium', 'low')")
             ->orderByDesc('submitted_at')->paginate(min(max((int) ($filters['per_page'] ?? 20), 1), 100));
         $page->getCollection()->transform(fn (ApprovalTask $task) => $this->decorate($task, $user, $permissionCodes, $isSuperAdmin));
+        // 列表展示业务对象中文名，避免直接露出 PURCHASE_ORDER 之类的编码。
+        $objectNames = DB::table('erp_approval_business_objects')
+            ->whereIn('object_code', $page->getCollection()->pluck('business_object_code')->filter()->unique()->values())
+            ->pluck('object_name', 'object_code');
+        $page->getCollection()->each(fn (ApprovalTask $task) => $task->setAttribute('business_object_name', $objectNames[$task->business_object_code] ?? null));
         return $page;
+    }
+
+    /** 当前账号可处理的待审任务（控制台待办使用，与审核工作台“我的待审”同一口径）。 */
+    public function actionableQuery(object $user, array $permissionCodes, bool $isSuperAdmin): Builder
+    {
+        $query = ApprovalTask::query();
+        $this->applyActionableTaskScope($query, $user, $permissionCodes, $isSuperAdmin);
+        return $query;
     }
 
     public function summary(object $user, array $permissionCodes, bool $isSuperAdmin): array
@@ -234,7 +247,7 @@ class ApprovalTaskApplicationService
         return [
             'todo' => (clone $todo)->count(), 'high_risk' => (clone $todo)->where('risk_level', 'high')->count(),
             'today_new' => (clone $todo)->whereDate('submitted_at', today())->count(),
-            'near_timeout' => (clone $todo)->whereHas('nodes', fn ($q) => $q->where('node_status', 'PENDING')->whereBetween('due_at', [now(), now()->addHours(4)]))->count(),
+            'near_timeout' => (clone $todo)->whereHas('nodes', fn ($q) => $q->where('node_status', 'PENDING')->whereBetween('due_at', [now(), now()->addHour()]))->count(),
             'processed' => (clone $processed)->count(),
             'initiated' => (clone $initiated)->count(),
             'all' => ($isSuperAdmin || in_array('approval.all', $permissionCodes, true)) ? ApprovalTask::query()->count() : null,
@@ -615,7 +628,8 @@ class ApprovalTaskApplicationService
             && ($isSuperAdmin || ($current->permission_code && in_array($current->permission_code, $permissionCodes, true)))
             && ($isSuperAdmin || $current->assignees->contains(fn ($assignee) => (int) $assignee->user_id === (int) $user->legacy_id && $assignee->status === 'PENDING'))
             && !$alreadyDecided
-            && ($isSuperAdmin || !$task->initiator_id || (int) $task->initiator_id !== (int) $user->legacy_id));
+            && ($isSuperAdmin || !$task->initiator_id || (int) $task->initiator_id !== (int) $user->legacy_id
+                || (bool) data_get($task->flow_snapshot, 'definition.allow_self_approval', false)));
         $nodeDefinition = $current ? collect(data_get($task->flow_snapshot, 'definition.nodes', []))->firstWhere('key', $current->node_key) : [];
         $task->setAttribute('can_reject', (bool) $task->can_decide && (($nodeDefinition['allow_reject'] ?? true) !== false));
         $task->setAttribute('can_transfer', (bool) $task->can_decide && (($nodeDefinition['allow_transfer'] ?? true) !== false));

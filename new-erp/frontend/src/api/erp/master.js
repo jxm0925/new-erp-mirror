@@ -1,26 +1,6 @@
-import axios from 'axios'
+import { createErpApi } from './http'
 
-// 与 training 项目一致：前端直连后端固定 API 入口，不使用 Vue dev-server 代理。
-// VUE_APP_BASE_API 是唯一配置来源，避免迁移目录后仍误连旧 Nginx 站点。
-const api = axios.create({ baseURL: process.env.VUE_APP_BASE_API, timeout: 20000 })
-api.interceptors.request.use(config => {
-  const token = localStorage.getItem('erp_token')
-  if (token) config.headers.Authorization = `Bearer ${token}`
-  return config
-})
-api.interceptors.response.use(response => response, error => {
-  if (error.response?.status === 401) {
-    localStorage.removeItem('erp_token')
-    localStorage.removeItem('erp_user')
-    localStorage.removeItem('erp_me')
-    localStorage.removeItem('erp_permissions')
-    if (window.location.hash !== '#/login') window.location.hash = '#/login'
-  }
-  const validationErrors = error.response?.data?.errors
-  const firstValidationMessage = validationErrors && Object.values(validationErrors).flat().find(Boolean)
-  const message = firstValidationMessage || error.response?.data?.message || '请求失败，请稍后重试'
-  return Promise.reject(Object.assign(error, { userMessage: message }))
-})
+const api = createErpApi()
 
 export const listEntity = (entity, params) => api.get(`/v1/erp/master/${entity}`, { params })
 export const getEntity = (entity, id, params) => api.get(`/v1/erp/master/${entity}/${id}`, { params })

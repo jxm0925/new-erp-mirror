@@ -68,7 +68,7 @@ test('应付入口只信任权威来源，预填剩余300而非总额1000或URL�
   await vm.loadInitialSource({ source_type: 'purchase_settlement_source', source_id: '12', amount: '999999', supplier_id: '999' }, 0)
   assert.deepEqual(calls, [{ type: 'purchase_settlement_source', id: 12 }])
   assert.equal(vm.doc.party_id, 8)
-  assert.equal(vm.doc.amount, '300.0000')
+  assert.equal(vm.doc.amount, '300.00') // 界面去掉无意义的尾随 0
   assert.equal(vm.pending[0].allocated_amount, '300.0000')
   assert.equal(vm.doc.currency, 'CNY')
 })

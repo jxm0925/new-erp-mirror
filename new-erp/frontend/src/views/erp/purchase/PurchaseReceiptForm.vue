@@ -50,7 +50,7 @@
           <el-tag v-if="isReplacement" size="small" type="warning">换货来源明细已锁定</el-tag>
           <template v-else>
             <el-button size="small" type="success" icon="el-icon-plus" @click="addLine">添加明细</el-button>
-            <el-button size="small" icon="el-icon-delete" :disabled="!activeLine" @click="removeActiveLine">删除明细（已选 1 行）</el-button>
+            <el-button size="small" icon="el-icon-delete" :disabled="!activeLine" @click="removeActiveLine">删除当前行{{ activeLine ? `（行号 ${activeIndex + 1}）` : '' }}</el-button>
           </template>
         </div>
       </div>
@@ -102,12 +102,12 @@
 
           <section class="editor-group">
             <h3>{{ isStockManaged(activeLine) ? '质量与入库' : '验收与履约' }}</h3>
-            <label class="compact-field required"><span>合格数量</span><el-input v-model.number="activeLine.qualified_qty" type="number" size="small" min="0" /></label>
-            <label class="compact-field required"><span>不合格数量</span><el-input v-model.number="activeLine.unqualified_qty" type="number" size="small" min="0" /></label>
+            <label class="compact-field required"><span>合格数量</span><el-input v-model.number="activeLine.qualified_qty" type="number" size="small" min="0" @change="syncQualityQty(activeLine, 'qualified_qty')" /></label>
+            <label class="compact-field required"><span>不合格数量</span><el-input v-model.number="activeLine.unqualified_qty" type="number" size="small" min="0" @change="syncQualityQty(activeLine, 'unqualified_qty')" /></label>
             <template v-if="isStockManaged(activeLine)">
               <label class="compact-field required"><span>批次号</span><el-input :value="activeLine.batch_no || '保存时系统自动生成'" size="small" disabled /></label>
-              <label class="compact-field" :class="{ required: qualifiedBaseQty(activeLine) > 0 }"><span>默认仓库</span><el-select v-model="activeLine.warehouse_id" size="small" placeholder="无需入库" :disabled="qualifiedBaseQty(activeLine) <= 0" @change="onDefaultWarehouseChange(activeLine)"><el-option v-for="warehouse in scopedWarehouses" :key="warehouse.id" :value="warehouse.id" :label="warehouse.warehouse_name" /></el-select></label>
-              <label class="compact-field" :class="{ required: qualifiedBaseQty(activeLine) > 0 }"><span>默认库位</span><el-select v-model="activeLine.location_id" size="small" placeholder="无需入库" :disabled="qualifiedBaseQty(activeLine) <= 0" @change="onDefaultLocationChange(activeLine)"><el-option v-for="location in filteredLocations(activeLine.warehouse_id)" :key="location.id" :value="location.id" :label="location.location_name" /></el-select></label>
+              <label class="compact-field" :class="{ required: qualifiedBaseQty(activeLine) > 0 }"><span>默认仓库</span><el-select v-model="activeLine.warehouse_id" size="small" :placeholder="qualifiedBaseQty(activeLine) > 0 ? '请选择仓库' : '无需入库'" :disabled="qualifiedBaseQty(activeLine) <= 0" @change="onDefaultWarehouseChange(activeLine)"><el-option v-for="warehouse in scopedWarehouses" :key="warehouse.id" :value="warehouse.id" :label="warehouse.warehouse_name" /></el-select></label>
+              <label class="compact-field" :class="{ required: qualifiedBaseQty(activeLine) > 0 }"><span>默认库位</span><el-select v-model="activeLine.location_id" size="small" :placeholder="qualifiedBaseQty(activeLine) > 0 ? '请选择库位' : '无需入库'" :disabled="qualifiedBaseQty(activeLine) <= 0" @change="onDefaultLocationChange(activeLine)"><el-option v-for="location in filteredLocations(activeLine.warehouse_id)" :key="location.id" :value="location.id" :label="location.location_name" /></el-select></label>
               <div class="allocation-entry"><span>入库库位分配</span><div><el-button size="mini" type="success" plain icon="el-icon-s-grid" :disabled="qualifiedBaseQty(activeLine) <= 0" @click="openAllocationDialog(activeLine)">多库位分配</el-button><small>{{ allocationProgressText(activeLine) }}</small></div></div>
             </template>
             <el-alert v-else title="该物料按非库存方式采购：验收完成后直接形成履约与结算事实，不要求仓库、库位、批次或库存过账。" type="info" :closable="false" />
@@ -418,6 +418,14 @@ export default {
     isStockManaged(line) { const item = this.itemById(line && line.item_id); return line && line.is_stock_item_snapshot != null ? Boolean(line.is_stock_item_snapshot) : Boolean(item.is_stock_item) },
     warehouseName(id) { return this.warehouses.find(row => Number(row.id) === Number(id))?.warehouse_name || '-' },
     locationName(id) { return this.locations.find(row => Number(row.id) === Number(id))?.location_name || '-' },
+    // 合格 + 不合格 必须等于到货数量：改其中一个时自动算出另一个，避免用户手工凑数。
+    syncQualityQty(line, changed) {
+      const received = Number(line.qty || 0)
+      const value = Math.min(Math.max(Number(line[changed] || 0), 0), received)
+      line[changed] = value
+      const other = changed === 'qualified_qty' ? 'unqualified_qty' : 'qualified_qty'
+      line[other] = Math.round((received - value) * 1000000) / 1000000
+    },
     qualifiedBaseQty(line) { const received = Number(line.qty || 0); const actual = Number(line.actual_base_qty == null ? this.standardBaseQtyNumber(line) : line.actual_base_qty); return received > 0 ? actual * Number(line.qualified_qty || 0) / received : 0 },
     allocations(line) { return Array.isArray(line._allocations) ? line._allocations : [] },
     isPhysicalManaged(line) { const item = this.itemById(line.item_id); return this.isStockManaged(line) && item.material_management_mode === 'physical' && item.cutting_mode === 'sheet' },

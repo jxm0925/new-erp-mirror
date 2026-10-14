@@ -1155,3 +1155,54 @@ select {
 .el-pagination__editor.el-input .el-input__inner:focus {
   border-color: #008b4b !important;
 }
+
+
+/* 确认框主按钮统一使用系统主题绿，避免默认浅蓝看起来像不可点击 */
+.el-message-box__btns .el-button--primary {
+  background-color: #008b4b;
+  border-color: #008b4b;
+}
+.el-message-box__btns .el-button--primary:hover,
+.el-message-box__btns .el-button--primary:focus {
+  background-color: #00a85a;
+  border-color: #00a85a;
+}
+
+/* 窄屏（平板竖屏/手机）下取消表格固定列：固定的操作列会盖住整张表，看不到单号和内容；
+   改为跟随表格横向滚动，所有列都能看到。 */
+@media (max-width: 768px) {
+  .el-table__fixed,
+  .el-table__fixed-right,
+  .el-table__fixed-right-patch {
+    display: none !important;
+  }
+  .el-table th.is-hidden > *,
+  .el-table td.is-hidden > * {
+    visibility: visible !important;
+  }
+}
+
+/* 窄屏下弹窗与确认框不超出屏幕：固定宽度（如 740px）的弹窗收窄到屏幕宽度，两侧各留 12px。 */
+@media (max-width: 800px) {
+  .el-dialog {
+    width: calc(100vw - 24px) !important;
+    margin-top: 4vh !important;
+  }
+  .el-dialog .el-col-12 {
+    width: 100%;
+  }
+  .el-message-box {
+    width: calc(100vw - 24px);
+    max-width: 420px;
+  }
+}
+
+/* 列表“更多”下拉中的危险操作（取消、关闭、删除）标红。下拉挂在 body 上，必须写全局样式。 */
+.el-dropdown-menu__item.row-op-danger,
+.el-dropdown-menu__item.row-op-danger i {
+  color: #d03050;
+}
+.el-dropdown-menu__item.row-op-danger:hover {
+  background: #fdecee;
+  color: #b4233c;
+}

@@ -19,6 +19,6 @@ class ConsoleDashboardController extends Controller
             'type' => 'nullable|in:requests,plans,orders,receipts,adjustments,boms',
             'priority' => 'nullable|in:high',
         ]);
-        return response()->json(['data' => $query->dashboard($filters, $auth->permissionCodes($user), $auth->isSuperAdmin($user))]);
+        return response()->json(['data' => $query->dashboard($filters, $auth->permissionCodes($user), $auth->isSuperAdmin($user), (int) $user->legacy_id)]);
     }
 }

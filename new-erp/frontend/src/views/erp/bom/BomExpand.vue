@@ -13,7 +13,7 @@
         <el-radio-group v-model="mode" size="small">
           <el-radio-button label="bom">按 BOM</el-radio-button>
           <el-radio-button label="sku">按 SKU</el-radio-button>
-          <el-radio-button label="item">按产出 Item</el-radio-button>
+          <el-radio-button label="item">按产出物料</el-radio-button>
         </el-radio-group>
       </div>
       <div class="expand-form">
@@ -30,7 +30,7 @@
           </el-select>
         </label>
         <label>
-          产出Item
+          产出物料
           <div class="picked" :class="{disabled:mode!=='item'}">
             <span>{{ outputItemLabel }}</span>
             <el-button :disabled="mode!=='item'" size="mini" type="success" plain @click="openPicker">选择</el-button>
@@ -56,7 +56,7 @@
       <el-tabs v-model="activeTab" type="card" class="expand-tabs">
         <el-tab-pane label="汇总结果" name="summary">
           <el-table :data="result.lines" border size="small">
-            <el-table-column prop="component_item_code" label="物料Item" width="135" />
+            <el-table-column prop="component_item_code" label="物料编码" width="135" />
             <el-table-column prop="component_item_name" label="物料名称" min-width="160" show-overflow-tooltip />
             <el-table-column label="下料要求" width="155"><template slot-scope="{row}">{{ cutRequirement(row, true) }}</template></el-table-column>
             <el-table-column prop="unit_name" label="单位" width="70" />
@@ -84,7 +84,7 @@
             <el-table-column prop="child_bom_no" label="子级BOM" width="145" show-overflow-tooltip>
               <template slot-scope="{row}">{{ row.child_bom_no || '-' }}</template>
             </el-table-column>
-            <el-table-column prop="component_item_code" label="物料Item" width="135" />
+            <el-table-column prop="component_item_code" label="物料编码" width="135" />
             <el-table-column prop="component_item_name" label="物料名称" min-width="140" show-overflow-tooltip />
             <el-table-column label="下料要求" width="155"><template slot-scope="{row}">{{ cutRequirement(row, false) }}</template></el-table-column>
             <el-table-column prop="unit_qty" label="单位用量" width="90" />
@@ -105,9 +105,9 @@
       </div>
     </section>
 
-    <el-dialog :visible.sync="picker.visible" title="选择产出 Item" width="860px">
+    <el-dialog :visible.sync="picker.visible" title="选择产出物料" width="860px">
       <div class="picker-filter">
-        <el-input v-model="picker.keyword" size="small" clearable placeholder="Item编码/名称" @keyup.enter.native="searchItems" />
+        <el-input v-model="picker.keyword" size="small" clearable placeholder="物料编码/名称" @keyup.enter.native="searchItems" />
         <el-select v-model="picker.item_type" size="small" clearable placeholder="类型">
           <el-option label="成品" value="finished_product" />
           <el-option label="半成品" value="semi_finished" />
@@ -148,7 +148,7 @@ export default {
   }),
   computed: {
     outputItemLabel() {
-      return this.outputItem ? `${this.outputItem.item_code} / ${this.outputItem.item_name}` : '按产出 Item 展开时选择'
+      return this.outputItem ? `${this.outputItem.item_code} / ${this.outputItem.item_name}` : '按产出物料展开时选择'
     }
   },
   async created() {

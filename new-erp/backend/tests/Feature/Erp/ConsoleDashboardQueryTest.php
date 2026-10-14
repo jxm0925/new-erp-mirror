@@ -61,7 +61,7 @@ class ConsoleDashboardQueryTest extends TestCase
         $this->receipt([], ['final_stockable_base_qty' => 0]);
         PurchaseLog::create(['target_type' => 'purchase_receipt', 'target_id' => $receipt->id, 'action' => 'confirm', 'operator' => '库管', 'content' => '确认到货', 'created_at' => '2026-10-05 14:42:00']);
         $data = $this->getJson('/api/v1/erp/console/dashboard')->assertOk()->json('data');
-        $this->assertSame(['requests' => 0, 'plans' => 1, 'orders' => 1, 'receipts' => 1, 'adjustments' => 0, 'boms' => 0], $data['counts']);
+        $this->assertSame(['requests' => 0, 'plans' => 1, 'orders' => 1, 'receipts' => 1, 'adjustments' => 0, 'boms' => 0, 'approvals' => 0, 'cash' => 0], $data['counts']);
         $this->assertSame(3, $data['total_todo']);
         $this->assertSame(3, $data['todos']['total']);
         $rows = collect($data['todos']['data'])->keyBy('kind');
@@ -148,7 +148,8 @@ class ConsoleDashboardQueryTest extends TestCase
         $this->order(['purchase_status' => 'submitted', 'audit_status' => 'pending']);
         $this->receipt();
         $this->super = false;
-        $this->permissions = ['inventory.post.view'];
+        // 待办只给能处理的人：查看 + 执行过账权限。
+        $this->permissions = ['inventory.post.view', 'inventory.post.execute'];
         $data = $this->getJson('/api/v1/erp/console/dashboard')->assertOk()->json('data');
         $this->assertNull($data['counts']['orders']);
         $this->assertSame(1, $data['counts']['receipts']);

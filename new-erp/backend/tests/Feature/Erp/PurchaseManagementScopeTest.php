@@ -371,7 +371,7 @@ class PurchaseManagementScopeTest extends TestCase
         return match ($kind) {
             'requests' => ['request_no' => $this->code('R'), 'items' => [[...$line, 'request_qty' => 2]]],
             'plans' => ['plan_no' => $this->code('P'), 'items' => [[...$line, 'required_qty' => 2]]],
-            'orders' => ['purchase_order_no' => $this->code('O'), 'supplier_id' => $this->supplier->id, 'items' => [[...$line, 'order_qty' => 2, 'unit_price' => 10]]],
+            'orders' => ['purchase_order_no' => $this->code('O'), 'supplier_id' => $this->supplier->id, 'expected_arrival_date' => now()->addDays(7)->toDateString(), 'items' => [[...$line, 'order_qty' => 2, 'unit_price' => 10]]],
             'receipts' => ['receipt_no' => $this->code('C'), 'supplier_id' => $this->supplier->id, 'items' => [[...$line, 'receipt_qty' => 2, 'unit_price' => 10]]],
         };
     }

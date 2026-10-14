@@ -1,3 +1,4 @@
+import { erpDateTime } from './dateTime'
 export const newSystemCommand = () => {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID()
   return `system-${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`
@@ -57,7 +58,7 @@ export const flatDepartmentTree = rows => {
 
 export const systemMutation = (row, command = newSystemCommand()) => ({ expected_version: Number(row.business_version || 1), client_command_id: command })
 
-export const systemTime = value => value ? String(value).replace('T', ' ').slice(0, 19) : '-'
+export const systemTime = value => value ? erpDateTime(value, 19) : '-'
 
 export const permissionClosure = (ids, permissions) => {
   const map = new Map(permissions.map(item => [Number(item.id), item]))

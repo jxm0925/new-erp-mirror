@@ -173,6 +173,8 @@ Route::prefix('v1/erp/purchase')->group(function () {
     Route::post('exchange-orders/{id}/actions', [PurchaseExchangeController::class, 'action'])->whereNumber('id');
 
     Route::get('price-histories', [PurchaseController::class, 'priceHistories']);
+    Route::post('price-check', [PurchaseController::class, 'priceCheck']);
+    Route::get('orders/{id}/price-check', [PurchaseController::class, 'orderPriceCheck'])->whereNumber('id');
     Route::get('supplier-item-stats', [PurchaseController::class, 'supplierItemStats']);
 
     Route::get('returns/sources', [PurchaseReturnController::class, 'sources']);

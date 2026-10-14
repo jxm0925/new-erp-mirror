@@ -728,6 +728,7 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import pagedScroll from '../../../directives/pagedScroll'
 import { createPageState, queryPage } from '../../../utils/pagedQuery'
 import { deleteEntity, disableEntity, enableEntity, getEntity, listEntity, saveEntity } from '../../../api/erp/master'
@@ -1164,7 +1165,7 @@ export default {
       return v === 'disabled' ? '停用' : '启用'
     },
     formatDate (v) {
-      return v ? String(v).replace('T', ' ').slice(0, 16) : '-'
+      return v ? erpDateTime(v, 16) : '-'
     },
     formatCurrency (val) {
       const num = Number(val || 0)

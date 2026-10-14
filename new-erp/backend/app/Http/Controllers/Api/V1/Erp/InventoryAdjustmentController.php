@@ -13,19 +13,16 @@ use Illuminate\Http\Request;
 
 class InventoryAdjustmentController extends Controller
 {
-    public function reasons()
+    public function reasons(Request $request)
     {
-        return response()->json([
-            ['value' => 'stocktaking_difference', 'label' => '盘点差异'],
-            ['value' => 'quality_recheck', 'label' => '质检复核修正'],
-            ['value' => 'warehouse_correction', 'label' => '仓储录入修正'],
-            ['value' => 'system_correction', 'label' => '系统数据修正'],
-            ['value' => 'other', 'label' => '其他'],
-        ]);
+        $this->authorizePermission($request, 'inventory.adjustment.view');
+        return response()->json(collect(InventoryAdjustmentApplicationService::REASONS)
+            ->map(fn (string $label, string $value) => ['value' => $value, 'label' => $label])->values());
     }
 
     public function index(Request $request)
     {
+        $this->authorizePermission($request, 'inventory.adjustment.view');
         $query = InventoryAdjustment::with(['items.item.unit', 'items.warehouse', 'items.location', 'items.serials', 'items.physicalEntries'])->latest('updated_at');
         if ($request->filled('adjustment_no')) $query->where('adjustment_no', 'like', '%' . $request->input('adjustment_no') . '%');
         if ($request->filled('reason')) $query->where('reason', $request->input('reason'));
@@ -43,17 +40,20 @@ class InventoryAdjustmentController extends Controller
         ];
         if ($request->filled('status')) $query->where('adjustment_status', $request->input('status'));
         $paginator = $query->paginate($this->perPage($request));
+        $this->attachOperatorNames($paginator->getCollection());
         return response()->json([...$paginator->toArray(), 'stats' => $stats]);
     }
 
     public function store(Request $request, InventoryAdjustmentApplicationService $service)
     {
+        $user = $this->authorizePermission($request, 'inventory.adjustment.create');
         $payload = $this->validatePayload($request);
-        return response()->json(['message' => '调整单已保存', 'data' => $service->save($payload)], 201);
+        return response()->json(['message' => '调整单已保存', 'data' => $service->save($payload, null, (int) $user->legacy_id)], 201);
     }
 
     public function generateSerials(Request $request, InventorySerialApplicationService $serials)
     {
+        $this->authorizePermission($request, 'inventory.adjustment.create');
         $data = $request->validate([
             'item_id' => 'required|exists:erp_items,id',
             'quantity' => 'required|integer|min:1|max:500',
@@ -64,31 +64,37 @@ class InventoryAdjustmentController extends Controller
         ]);
     }
 
-    public function show(int $id)
+    public function show(Request $request, int $id)
     {
+        $this->authorizePermission($request, 'inventory.adjustment.view');
         return response()->json(InventoryAdjustment::with(['items.item.unit', 'items.warehouse', 'items.location', 'items.serials', 'items.physicalEntries'])->findOrFail($id));
     }
 
     public function update(Request $request, int $id, InventoryAdjustmentApplicationService $service)
     {
+        $user = $this->authorizePermission($request, 'inventory.adjustment.create');
         $payload = $this->validatePayload($request);
-        return response()->json(['message' => '调整单已更新', 'data' => $service->save($payload, $id)]);
+        return response()->json(['message' => '调整单已更新', 'data' => $service->save($payload, $id, (int) $user->legacy_id)]);
     }
 
-    public function submit(int $id, InventoryAdjustmentApplicationService $service)
+    public function submit(Request $request, int $id, InventoryAdjustmentApplicationService $service)
     {
-        return response()->json(['message' => '调整单已提交', 'data' => $service->submit($id)]);
+        $user = $this->authorizePermission($request, 'inventory.adjustment.create');
+        return response()->json(['message' => '调整单已提交', 'data' => $service->submit($id, (int) $user->legacy_id)]);
     }
 
-    public function post(int $id, InventoryService $service)
+    public function post(Request $request, int $id, InventoryService $service)
     {
-        $transaction = $service->postAdjustment($id);
+        // 过账直接改变库存余额，必须单独授权，不能只凭能建调整单就过账。
+        $user = $this->authorizePermission($request, 'inventory.adjustment.confirm');
+        $transaction = $service->postAdjustment($id, (int) $user->legacy_id);
         return response()->json(['message' => '调整已过账', 'data' => $transaction]);
     }
 
-    public function cancel(int $id, InventoryAdjustmentApplicationService $service)
+    public function cancel(Request $request, int $id, InventoryAdjustmentApplicationService $service)
     {
-        return response()->json(['message' => '调整单已取消', 'data' => $service->cancel($id)]);
+        $user = $this->authorizeAnyPermission($request, ['inventory.adjustment.create', 'inventory.adjustment.confirm']);
+        return response()->json(['message' => '调整单已取消', 'data' => $service->cancel($id, (int) $user->legacy_id)]);
     }
 
     public function destroy(Request $request, int $id, InventoryAdjustmentApplicationService $service)
@@ -130,6 +136,33 @@ class InventoryAdjustmentController extends Controller
     private function perPage(Request $request): int
     {
         return min(100, max(10, (int) $request->input('per_page', 20)));
+    }
+
+    // 列表与详情展示制单、提交、过账、取消人的姓名，便于追溯“谁改了库存”。
+    private function attachOperatorNames($adjustments): void
+    {
+        $ids = collect($adjustments)->flatMap(fn ($row) => [$row->created_by, $row->submitted_by, $row->posted_by, $row->cancelled_by])->filter()->unique()->values();
+        $names = $ids->isEmpty() ? collect() : \Illuminate\Support\Facades\DB::table('erp_legacy_admin_users')->whereIn('legacy_id', $ids)
+            ->get(['legacy_id', 'nickname', 'username'])->mapWithKeys(fn ($user) => [(int) $user->legacy_id => $user->nickname ?: $user->username]);
+        foreach ($adjustments as $row) {
+            foreach (['created_by', 'submitted_by', 'posted_by', 'cancelled_by'] as $field) {
+                $row->setAttribute($field.'_name', $row->{$field} ? ($names[(int) $row->{$field}] ?? null) : null);
+            }
+        }
+    }
+
+    private function authorizeAnyPermission(Request $request, array $permissions): object
+    {
+        $auth = app(AuthContextService::class);
+        $user = $auth->currentUser($request);
+        abort_unless($user, 401, '未登录或登录已过期。');
+        abort_unless(
+            $auth->isSuperAdmin($user) || array_intersect($permissions, $auth->permissionCodes($user)),
+            403,
+            '无按钮权限：'.implode(' 或 ', $permissions),
+        );
+
+        return $user;
     }
 
     private function authorizePermission(Request $request, string $permission): object

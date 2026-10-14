@@ -11,12 +11,12 @@ class SkuItemRelationAuditService
         $type = $sku->line_type;
         $relations = $sku->itemRelations->where('status', 'active')->where('is_primary', true)->values();
         if (in_array($type, ['service', 'no_delivery'], true)) {
-            return $this->result($relations->isEmpty() ? 'not_required' : 'wrong_binding', $relations, $relations->isEmpty() ? null : '服务或无需发货 SKU 不应绑定默认 Item');
+            return $this->result($relations->isEmpty() ? 'not_required' : 'wrong_binding', $relations, $relations->isEmpty() ? null : '服务或无需发货 SKU 不应绑定默认物料');
         }
-        if ($relations->isEmpty()) return $this->result('missing', $relations, '实物 SKU 缺少默认 Item');
-        if ($relations->count() > 1) return $this->result('duplicate', $relations, '实物 SKU 存在多个启用默认 Item');
+        if ($relations->isEmpty()) return $this->result('missing', $relations, '实物 SKU 缺少默认物料');
+        if ($relations->count() > 1) return $this->result('duplicate', $relations, '实物 SKU 存在多个启用默认物料');
         $item = $relations->first()->item;
-        if (!$item || $item->status !== 'enabled') return $this->result('item_disabled', $relations, '默认 Item 已停用或不存在');
+        if (!$item || $item->status !== 'enabled') return $this->result('item_disabled', $relations, '默认物料已停用或不存在');
         return $this->result('normal', $relations, null);
     }
 

@@ -91,8 +91,8 @@ class InventoryPostingController extends Controller
 
     public function postReceipt(Request $request, int $id, InventoryService $service)
     {
-        $this->authorizePermission($request, 'inventory.post.execute');
-        $transaction = $service->postPurchaseReceipt($id);
+        $user = $this->authorizePermission($request, 'inventory.post.execute');
+        $transaction = $service->postPurchaseReceipt($id, (int) $user->legacy_id);
         return response()->json(['message' => '库存过账成功', 'data' => $transaction]);
     }
 

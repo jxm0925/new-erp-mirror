@@ -196,7 +196,13 @@ class FinanceController extends Controller
     public function accounts(Request $request)
     {
         $this->authorizePermission($request, 'finance.view');
-        $query = FinanceAccount::query()->withExists('movements')->orderBy('sort')->orderByDesc('id');
+        // 余额由已确认的账户流水实时汇总（与 FinanceAccountLedgerService::carryingBalance 口径一致），不另存余额字段。
+        $query = FinanceAccount::query()->withExists('movements')
+            ->addSelect(['current_balance' => DB::table('erp_finance_account_movements')
+                ->selectRaw("COALESCE(SUM(CASE WHEN direction = 'in' THEN original_amount ELSE -original_amount END), 0)")
+                ->whereColumn('finance_account_id', 'erp_finance_accounts.id')
+                ->where('status', 'confirmed')])
+            ->orderBy('sort')->orderByDesc('id');
         if ($request->filled('status')) $query->where('status', $request->string('status'));
         if ($request->filled('account_type')) $query->where('account_type', $request->string('account_type'));
         if ($request->filled('currency')) $query->where('currency', $request->string('currency'));
@@ -417,7 +423,7 @@ class FinanceController extends Controller
             'business_date' => 'required|date', 'finance_account_id' => 'required|integer|exists:erp_finance_accounts,id',
             'currency' => 'required|string|max:10', 'amount' => ['required', 'regex:/^\d+(\.\d{1,4})?$/'],
             'payment_method_id' => 'required_without:payment_method|integer|exists:erp_payment_methods,id',
-            'payment_method' => 'required_without:payment_method_id|string|max:60', 'external_reference_no' => 'nullable|string|max:160',
+            'payment_method' => 'nullable|required_without:payment_method_id|string|max:60', 'external_reference_no' => 'nullable|string|max:160',
             'platform_fee_amount' => ['nullable', 'regex:/^\d+(\.\d{1,4})?$/'], 'platform_fee_account_id' => 'nullable|integer|exists:erp_finance_accounts,id', 'platform_fee_type' => 'nullable|in:platform,bank,other',
             'remark' => 'nullable|string|max:1000', 'idempotency_key' => 'nullable|string|max:100',
             ...FinanceAllocationApplicationService::itemRules('draft_allocation_items', 'sometimes|array|max:100'),
@@ -433,7 +439,7 @@ class FinanceController extends Controller
         $permission = $document->direction === FinanceConstants::DIRECTION_RECEIPT ? 'finance.receipt.create' : 'finance.payment.create';
         $user = $this->authorizePermission($request, $permission);
         $data = $request->validate([
-            'business_date' => 'sometimes|date', 'finance_account_id' => 'sometimes|integer|exists:erp_finance_accounts,id', 'amount' => ['sometimes', 'regex:/^\d+(\.\d{1,4})?$/'], 'payment_method_id' => 'sometimes|integer|exists:erp_payment_methods,id', 'payment_method' => 'sometimes|string|max:60', 'external_reference_no' => 'nullable|string|max:160', 'platform_fee_amount' => ['nullable', 'regex:/^\d+(\.\d{1,4})?$/'], 'platform_fee_account_id' => 'nullable|integer|exists:erp_finance_accounts,id', 'platform_fee_type' => 'nullable|in:platform,bank,other', 'remark' => 'nullable|string|max:1000',
+            'business_date' => 'sometimes|date', 'finance_account_id' => 'sometimes|integer|exists:erp_finance_accounts,id', 'amount' => ['sometimes', 'regex:/^\d+(\.\d{1,4})?$/'], 'payment_method_id' => 'sometimes|integer|exists:erp_payment_methods,id', 'payment_method' => 'sometimes|nullable|string|max:60', 'external_reference_no' => 'nullable|string|max:160', 'platform_fee_amount' => ['nullable', 'regex:/^\d+(\.\d{1,4})?$/'], 'platform_fee_account_id' => 'nullable|integer|exists:erp_finance_accounts,id', 'platform_fee_type' => 'nullable|in:platform,bank,other', 'remark' => 'nullable|string|max:1000',
             ...FinanceAllocationApplicationService::itemRules('draft_allocation_items', 'sometimes|array|max:100'),
             ...FinanceCashPurchaseAllocationApplicationService::rules(),
             'purchase_order_allocation_reason' => 'nullable|string|max:1000',
@@ -769,7 +775,18 @@ class FinanceController extends Controller
                 ->reduce(fn (string $sum, $row) => Money::add($sum, (string) $row->allocated_amount), '0.0000')
             : Money::normalize((string) FinanceAllocation::where('cash_document_id', $document->id)
                 ->where('status', FinanceConstants::ALLOCATION_ACTIVE)->sum('allocated_amount'));
-        return [...$document->toArray(), 'allocated_amount' => $active, 'unallocated_amount' => Money::sub((string) $document->amount, $active),
+        $payload = $document->toArray();
+        if (isset($payload['allocations']) && is_array($payload['allocations'])) {
+            // 核销记录只存操作人 ID，详情里补上姓名，页面“操作人”列不再为空。
+            $ids = collect($payload['allocations'])->flatMap(fn ($row) => [$row['allocated_by'] ?? null, $row['reversed_by'] ?? null])->filter()->unique()->values();
+            $names = $ids->isEmpty() ? collect() : DB::table('erp_legacy_admin_users')->whereIn('legacy_id', $ids)
+                ->get(['legacy_id', 'nickname', 'username'])->mapWithKeys(fn ($user) => [(int) $user->legacy_id => $user->nickname ?: $user->username]);
+            $payload['allocations'] = array_map(fn ($row) => [...$row,
+                'operator_name' => $names[(int) ($row['allocated_by'] ?? 0)] ?? null,
+                'reversed_by_name' => $names[(int) ($row['reversed_by'] ?? 0)] ?? null,
+            ], $payload['allocations']);
+        }
+        return [...$payload, 'allocated_amount' => $active, 'unallocated_amount' => Money::sub((string) $document->amount, $active),
             'purchase_order_allocations' => app(FinanceCashPurchaseAllocationApplicationService::class)->present($document),
             'purchase_order_allocation_version' => (int) $document->purchase_order_allocation_version];
     }

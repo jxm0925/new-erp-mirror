@@ -31,10 +31,10 @@ class SkuItemDefaultRelationService
             app(ItemManagementScopeService::class)->assertProductionAllowed($item, 'item_id');
 
             $active = SkuItemRelation::where('sku_id', $sku->id)->where('status', 'active')->where('is_primary', true)->lockForUpdate()->get();
-            if ($active->count() > 1) throw ValidationException::withMessages(['sku_id' => '该 SKU 存在多个有效默认 Item，请先在完整性检查中修复。']);
+            if ($active->count() > 1) throw ValidationException::withMessages(['sku_id' => '该 SKU 存在多个有效默认物料，请先在完整性检查中修复。']);
             $old = $active->first();
             if ($old && (int) $old->item_id === $item->id && abs((float) $old->qty - $factor) < 0.00000001) {
-                throw ValidationException::withMessages(['item_id' => '新默认 Item 和履约因子与当前关系相同，无需保存。']);
+                throw ValidationException::withMessages(['item_id' => '新默认物料和履约因子与当前关系相同，无需保存。']);
             }
 
             if ($old) {
@@ -76,7 +76,7 @@ class SkuItemDefaultRelationService
         $this->ensureReasonRemark($reason, $remark);
         DB::transaction(function () use ($skuId, $reason, $remark, $operatorId, $operatorName) {
             $sku = Sku::lockForUpdate()->findOrFail($skuId);
-            if ($sku->line_type === 'physical') throw ValidationException::withMessages(['sku_id' => '实物 SKU 不允许解除默认 Item，请更换为可用的默认履约 Item。']);
+            if ($sku->line_type === 'physical') throw ValidationException::withMessages(['sku_id' => '实物 SKU 不允许解除默认物料，请更换为可用的默认履约 Item。']);
             $relations = SkuItemRelation::where('sku_id', $sku->id)->where('status', 'active')->where('is_primary', true)->lockForUpdate()->get();
             foreach ($relations as $relation) {
                 $relation->update(['status' => 'inactive', 'is_primary' => false, 'expired_at' => now(), 'operator_name' => $operatorName, 'change_reason' => $reason]);

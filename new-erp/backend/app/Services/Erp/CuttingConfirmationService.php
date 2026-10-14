@@ -148,7 +148,7 @@ final class CuttingConfirmationService
             if ($type === 'PLAN') {
                 $plan = $plans->get($planId);
                 if (! $plan || (int) $plan->output_item_id !== (int) $row->item_id || $plan->configuration_id != $row->configuration_id || (int) $plan->stage_id !== (int) $row->stage_id)
-                    $c->fail('allocation_identity_invalid','分配计划的Item、配置或阶段与该结果不一致。');
+                    $c->fail('allocation_identity_invalid','分配计划的物料、配置或阶段与该结果不一致。');
                 if ($route->route_type === 'NEXT_OPERATION' && (int) $plan->target_material_requirement_id !== (int) $route->target_material_requirement_id) $c->fail('target_not_planned','下一工序不属于分配计划的正式需求。');
                 $this->records->configuration($row->configuration_id,Item::findOrFail($row->item_id),$plan->work_order_id);
                 $planAdded[$planId] = bcadd($planAdded[$planId] ?? '0',$qty,8);

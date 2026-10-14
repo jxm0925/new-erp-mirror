@@ -28,6 +28,7 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../utils/dateTime'
 import { actionDefectHandling, listDefectHandlings, saveDefectHandling } from '@/api/erp/purchase'
 
 export default {
@@ -68,7 +69,7 @@ export default {
     methodText(v) { return ({ return_supplier: '退供应商', exchange: '换货', concession: '让步接收', repair: '返修', scrap: '报废', pending: '待决定' })[v] || v },
     statusText(v) { return ({ pending: '待处理', processing: '处理中', completed: '已完成', cancelled: '已取消' })[v] || v },
     stepText(v) { return ({ return_pending_approval: '退货单待审核', return_pending_outbound: '待退回供应商', return_completed: '已退回供应商', exchange_pending_original_return: '待退回原件', exchange_pending_replacement_receipt: '待替换品到货验收', exchange_completed: '换货完成', concession_pending_approval: '让步接收待审批', concession_completed: '让步接收完成', repair_pending_start: '待开始返修', repair_in_progress: '返修中', repair_completed: '返修完成', scrap_pending_approval: '报废待审批', scrap_pending_confirmation: '待确认实物报废', scrap_completed: '报废完成', pending_decision: '待决定' })[v] || v || '--' },
-    timeText(v) { return v ? String(v).replace('T', ' ').replace(/\.\d+Z?$/, '').replace(/Z$/, '').slice(0, 19) : '--' }
+    timeText(v) { return v ? erpDateTime(v, 19) : '--' }
   }
 }
 </script>

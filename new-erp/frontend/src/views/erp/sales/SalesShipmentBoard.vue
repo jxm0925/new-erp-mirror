@@ -55,6 +55,7 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import ShipmentPackingPanel from './ShipmentPackingPanel.vue'
 import { listShipments, getShipment, createShipment, actShipment, listShipmentSources, listShipmentSourceSerials } from '@/api/erp/shipment-packing'
 import { listSalesOrders, getSalesOrder } from '@/api/erp/sales'
@@ -72,7 +73,7 @@ export default {
   beforeDestroy () { this.loadSequence++ },
   methods: {
     qty (value) { return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 8 }) },
-    time (value) { return value ? String(value).replace('T', ' ').slice(0, 19) : '—' },
+    time (value) { return value ? erpDateTime(value, 19) : '—' },
     statusText (value) { const status = this.states.find(row => row.value === value); return status ? status.label : value || '—' },
     async load () { const sequence = ++this.loadSequence; this.loading = true; this.error = ''; try { const { data } = await listShipments(this.query); if (sequence !== this.loadSequence) return; this.rows = data.data.data; this.total = data.data.total } catch (e) { this.error = e.userMessage || '发货单读取失败' } finally { if (sequence === this.loadSequence) this.loading = false } },
     search () { this.query.page = 1; this.load() },

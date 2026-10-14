@@ -283,6 +283,7 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import {
   deleteApprovalAttachment,
   decideApprovalTask,
@@ -572,10 +573,7 @@ export default {
     },
     time(v) {
       return v
-        ? String(v)
-            .replace("T", " ")
-            .replace(/\.\d+Z$/, "")
-            .slice(0, 16)
+        ? erpDateTime(v, 16)
         : "-";
     },
     dueText(v) {

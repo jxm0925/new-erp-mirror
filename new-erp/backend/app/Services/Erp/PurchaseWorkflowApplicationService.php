@@ -21,6 +21,36 @@ class PurchaseWorkflowApplicationService
     {
     }
 
+    public function submitPlan(int $id, ?string $operator): PurchasePlan
+    {
+        return DB::transaction(function () use ($id, $operator): PurchasePlan {
+            // 状态、明细验证和submit日志与删除互斥提交，避免删除后追加孤立提交日志。
+            $plan = PurchasePlan::query()->with('items.splits.supplier')->lockForUpdate()->findOrFail($id);
+            abort_if($plan->plan_status !== 'draft', 422, '只有草稿采购计划可以提交');
+            abort_if($plan->items->isEmpty(), 422, '采购计划至少需要一行明细');
+            app(PurchaseManagementScopeService::class)->assertDocumentScope($plan);
+            abort_if($plan->items->contains(fn ($i) => (float) $i->remaining_qty > 0), 422, '采购计划存在未分配数量，不能提交审核');
+            abort_if($plan->items->contains(fn ($i) => $i->splits->isEmpty()), 422, '采购计划必须完成供应商拆分');
+            abort_if(
+                PurchasePlanSupplierSplit::where('plan_id', $id)->where('unit_price', '<=', 0)->exists(),
+                422,
+                '采购计划存在采购单价小于或等于 0 的供应商拆分，不能提交审核。供应商报价仅供参考，实际采购价必须由采购员确认。'
+            );
+            $conversionService = app(PurchasePlanningConversionService::class);
+            foreach ($plan->items as $item) {
+                foreach ($item->splits as $split) $conversionService->orderSnapshot($split);
+                if (($item->purchase_conversion_snapshot['input_mode'] ?? null) === 'purchase_quantity') {
+                    $actualBase = $item->splits->sum(fn ($split) => (float) $split->purchase_conversion_snapshot['planned_base_qty']);
+                    abort_if(abs($actualBase - (float) $item->purchase_conversion_snapshot['planned_base_qty']) > 0.00000001, 422, '供应商采购数量尚未分配完整');
+                }
+            }
+            $plan->update(['plan_status' => 'submitted', 'audit_status' => 'pending']);
+            $this->log('purchase_plan', $id, 'submit', '提交采购计划', $operator);
+
+            return $plan->fresh(['items.item', 'items.splits.supplier']);
+        }, 5);
+    }
+
     public function approvePlan(int $id, ?string $operator): PurchasePlan
     {
         return DB::transaction(function () use ($id, $operator): PurchasePlan {
@@ -87,6 +117,14 @@ class PurchaseWorkflowApplicationService
             }
             if ($order->items->contains(fn ($item) => (float) $item->unit_price <= 0)) {
                 throw ValidationException::withMessages(['items' => '采购订单存在未确认采购单价的明细，请补全单价后再提交。']);
+            }
+            // 交期跟踪：提交审核前必须有预计到货日期；订单头未填时取明细中最早的日期。
+            if (!$order->expected_arrival_date) {
+                $lineDates = $order->items->pluck('expected_arrival_date')->filter();
+                if ($lineDates->count() !== $order->items->count()) {
+                    throw ValidationException::withMessages(['expected_arrival_date' => '提交审核前请填写预计到货日期，便于跟踪交期和逾期提醒。']);
+                }
+                $order->update(['expected_arrival_date' => $lineDates->map(fn ($date) => (string) IlluminateSupportCarbon::parse($date)->toDateString())->min()]);
             }
 
             app(PurchaseManagementScopeService::class)->assertDocumentScope($order);

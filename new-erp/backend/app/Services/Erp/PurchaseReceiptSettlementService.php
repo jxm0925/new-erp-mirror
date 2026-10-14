@@ -42,8 +42,12 @@ class PurchaseReceiptSettlementService
         float $stockableBase,
         float $qualityHoldAmount,
     ): array {
-        if ($receipt->confirm_status !== 'confirmed' || $receipt->stock_post_status === 'posted') {
+        if ($receipt->confirm_status !== 'confirmed') {
             return [];
+        }
+
+        if ($receipt->stock_post_status === 'posted') {
+            return ['fulfillment_status' => $qualityHoldAmount > 0.0001 ? 'pending_quality' : 'fulfilled'];
         }
 
         if (! $hasStockItems) {

@@ -53,3 +53,6 @@ export const approvePurchaseReturn = id => api.post(`/v1/erp/purchase/returns/${
 export const postPurchaseReturn = id => api.post(`/v1/erp/purchase/returns/${id}/post`)
 export const cancelPurchaseReturn = id => api.post(`/v1/erp/purchase/returns/${id}/cancel`)
 export const closePurchaseReturn = id => api.post(`/v1/erp/purchase/returns/${id}/close`)
+// 采购价格预警：与历史采购价比较（按库存基本单位）
+export const checkPurchasePrices = data => api.post('/v1/erp/purchase/price-check', data)
+export const getOrderPriceCheck = id => api.get(`/v1/erp/purchase/orders/${id}/price-check`)

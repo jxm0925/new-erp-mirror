@@ -27,7 +27,7 @@ class UnitConversionDomainService
             ->first();
         if (!$conversion) {
             throw ValidationException::withMessages([
-                'purchase_unit_id' => '该 Item 尚未维护默认采购单位换算，请先完成换算关系后再继续。',
+                'purchase_unit_id' => '该物料尚未维护默认采购单位换算，请先完成换算关系后再继续。',
             ]);
         }
         return $conversion;

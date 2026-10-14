@@ -130,10 +130,10 @@ export default {
     shortCategory(value) { return value.replace('商品 / SKU / 物料', '三层主数据').replace('权限 / 页面', '角色权限') },
     factFor(id) {
       const facts = {
-        'Q-003': '旧库包含 77 个商品和 1,631 个 SKU；订单与工单引用 SKU，BOM 主表及明细也引用旧 SKU，但新 BOM 必须落到 Item。',
+        'Q-003': '旧库包含 77 个商品和 1,631 个 SKU；订单与工单引用 SKU，BOM 主表及明细也引用旧 SKU，但新 BOM 必须落到物料。',
         'Q-011': 'SKU type 绝大多数为空；工单存在 customized 与 special_customized，必须结合历史履约判断。',
         'Q-012': '旧库有 25 个组装成品、21 个 BOM；BOM 不覆盖全部组装成品，且没有版本字段。',
-        'Q-015': '订单、工单、BOM、采购、库存对 SKU 的角色不同；服务、运费和差价不应污染 Item。',
+        'Q-015': '订单、工单、BOM、采购、库存对 SKU 的角色不同；服务、运费和差价不应污染物料。',
         'Q-017': '非空 SKU 编码无重复，但有 100 条空编码；迁移幂等不能只依赖新编码。',
         'Q-034': 'product_suppliers 29 行、stock_supplier 11 行；两表无同编码但 11 个同名，采购全部引用前者。',
         'Q-061': '旧 FastAdmin 权限节点不能直接代表新 ERP 职责分离；编码、合并和禁用属于高风险操作。'
@@ -147,8 +147,8 @@ export default {
         { key: 'C', title: '业务人员直改', description: '相关负责人均可直接修改。', pro: '灵活', con: '冲突与审计风险高' }
       ]
       return [
-        { key: 'A', title: '一 SKU 一 Item', description: '所有销售 SKU 强制创建 Item。', pro: '迁移规则简单', con: '服务和虚拟项污染物料库' },
-        { key: 'B', title: '按业务角色生成', description: '参与采购、库存、BOM、生产或成本的 SKU 才生成 Item。', pro: '业务边界清晰', con: '需要处理边界记录', recommended: true },
+        { key: 'A', title: '一个 SKU 对应一个物料', description: '所有销售 SKU 强制创建物料。', pro: '迁移规则简单', con: '服务和虚拟项污染物料库' },
+        { key: 'B', title: '按业务角色生成', description: '参与采购、库存、BOM、生产或成本的 SKU 才生成物料。', pro: '业务边界清晰', con: '需要处理边界记录', recommended: true },
         { key: 'C', title: '全部人工维护', description: 'SKU 先迁移，Item 后续逐条建立。', pro: '最保守', con: '后续流程无法承接' }
       ]
     }

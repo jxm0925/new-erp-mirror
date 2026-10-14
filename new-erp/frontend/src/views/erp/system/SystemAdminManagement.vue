@@ -259,9 +259,10 @@
               </template>
             </el-table-column>
 
-            <el-table-column label="最近登录" width="90" align="center">
-              <template>
-                <span class="text-muted">-</span>
+            <el-table-column label="最近登录" width="132" align="center">
+              <template slot-scope="{ row }">
+                <span v-if="row.last_login_at">{{ erpDateTime(row.last_login_at, 16) }}</span>
+                <span v-else class="text-muted">暂无记录</span>
               </template>
             </el-table-column>
 
@@ -564,6 +565,7 @@ import { listUsers, getSystemOptions, getAdmin, saveAdmin, deleteAdmin, setAdmin
 import SystemRecordPicker from '@/components/system/SystemRecordPicker.vue'
 import { departmentTree, newSystemCommand, systemMutation, systemFormCommand } from '@/utils/systemManagement'
 import '@/styles/system-management.css'
+import { erpDateTime } from '@/utils/dateTime'
 
 const emptyAdmin = () => ({
   id: null,
@@ -672,6 +674,7 @@ export default {
     this.loadSerial += 1
   },
   methods: {
+    erpDateTime,
     async load() {
       const serial = ++this.loadSerial
       this.loading = true

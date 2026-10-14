@@ -474,6 +474,7 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import cachedPageRoute from '../../../utils/cachedPageRoute'
 import { routeMaterialScope, materialRecordScope, materialScopeLabel, materialListPath, materialCategoryPath } from '../../../utils/materialManagementScope.mjs'
 import {
@@ -904,7 +905,7 @@ export default {
       this.$router.push({ path: '/master/suppliers', query: { category_id: row.id } })
     },
     formatDate(v) {
-      return v ? String(v).replace('T', ' ').slice(0, 16) : '-'
+      return v ? erpDateTime(v, 16) : '-'
     }
   }
 }

@@ -467,6 +467,13 @@ const today = () => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
 }
 
+// 金额以 4 位小数存储，界面只保留有意义的位数：65.0000 显示为 65.00，54.8673 保持原样。
+const trimMoney = value => {
+  const text = value === null || value === undefined ? '' : String(value)
+  const match = text.match(/^(-?\d+)\.(\d{2})(\d*?)0*$/)
+  return match ? `${match[1]}.${match[2]}${match[3]}` : text
+}
+
 const blank = () => ({
   id: null,
   document_no: "",
@@ -528,13 +535,13 @@ export default {
         { required: true, message: "请选择日期", trigger: "change" },
       ],
       party_type: [
-        { required: true, message: "请选择交易对手类型", trigger: "change" },
+        { required: true, message: "请选择交易对手类型", trigger: ["change", "blur"] },
       ],
       party_id: [
-        { required: true, message: "请选择交易对手", trigger: "change" },
+        { required: true, message: "请选择交易对手", trigger: ["change", "blur"] },
       ],
       finance_account_id: [
-        { required: true, message: "请选择资金账户", trigger: "change" },
+        { required: true, message: "请选择资金账户", trigger: ["change", "blur"] },
       ],
       amount: [
         { required: true, message: "请输入金额", trigger: "blur" },
@@ -545,7 +552,7 @@ export default {
         },
       ],
       payment_method_id: [
-        { required: true, message: "请选择方式", trigger: "change" },
+        { required: true, message: "请选择方式", trigger: ["change", "blur"] },
       ],
     },
   }),
@@ -603,6 +610,21 @@ export default {
     },
   },
   watch: {
+    // 只有一条待核销 / 一条采购用途且金额仍等于原实付金额时才跟随，
+    // 用户手工改过分配金额（多条或与实付不同）就不覆盖，避免悄悄改掉人工分配。
+    'doc.amount'(next, previous) {
+      if (this.doc.status !== 'draft' || !this.canEdit) return
+      const nextUnits = amountUnits(next)
+      const previousUnits = amountUnits(previous)
+      if (!(nextUnits > 0) || !(previousUnits > 0)) return
+      if (this.pending.length === 1 && amountUnits(this.pending[0].allocated_amount) === previousUnits) {
+        this.$set(this.pending[0], 'allocated_amount', String(next))
+      }
+      const links = this.doc.purchase_order_allocations || []
+      if (links.length === 1 && amountUnits(links[0].amount) === previousUnits) {
+        this.doc.purchase_order_allocations = [{ ...links[0], amount: String(next) }]
+      }
+    },
     direction() {
       this.init()
     },
@@ -697,6 +719,8 @@ export default {
           if (revision !== this.initRevision) return
           if (response.data.data.direction !== this.direction) throw new Error('资金单方向与当前页面不一致，请从对应列表打开')
           this.doc = { ...blank(), ...response.data.data }
+          this.doc.amount = trimMoney(this.doc.amount)
+          this.doc.platform_fee_amount = trimMoney(this.doc.platform_fee_amount)
           this.ensureParty()
           await this.restorePending(revision)
         } else {
@@ -729,7 +753,7 @@ export default {
         this.doc.party_id = Number(source.partyId)
         this.doc.party_name_snapshot = source.partyName
         this.doc.currency = source.currency
-        this.doc.amount = String(source.remainingAmount)
+        this.doc.amount = trimMoney(source.remainingAmount)
         this.sourceContext = { type: source.type, id: source.id }
         this.ensureParty()
         this.pending = [pendingFromSource(source, this.doc.amount)]
@@ -764,7 +788,7 @@ export default {
         this.doc.party_id = Number(order.supplier_id)
         this.doc.party_name_snapshot = order.supplier_name
         this.doc.currency = order.currency
-        this.doc.amount = amount
+        this.doc.amount = trimMoney(amount)
         this.doc.purchase_order_allocations = [{ purchase_order_id: orderId, purchase_order_no: order.purchase_order_no, payment_plan_id: planId, sequence_no: plan?.sequence_no || null, trigger_type: plan?.trigger_type || null, due_date: plan?.due_date || null, amount }]
         this.purchaseOrderContext = { purchase_order_id: orderId, payment_plan_id: planId }
         this.ensureParty()
@@ -840,7 +864,7 @@ export default {
         if (mismatch) { this.$message.warning(mismatch); return false }
         return !this.pending.some(row => sourceKey(row) === sourceKey(source)) && amountUnits(source.remainingAmount) > 0
       })
-      if (!this.doc.amount && validSources.length) this.doc.amount = (validSources.reduce((sum, row) => sum + amountUnits(row.remainingAmount), 0) / 10000).toFixed(4)
+      if (!this.doc.amount && validSources.length) this.doc.amount = trimMoney((validSources.reduce((sum, row) => sum + amountUnits(row.remainingAmount), 0) / 10000).toFixed(4))
       for (const source of validSources) {
         this.pending.push(pendingFromSource(source, this.draftRemaining.toFixed(4)))
       }
@@ -897,7 +921,12 @@ export default {
       try {
         if (!await this.validateDraft()) return
         if (this.pending.length && !this.$can('finance.allocation.create')) throw new Error('当前账号没有核销权限，不能确认带有待核销业务的资金单')
-        await this.$confirm(`确认${this.title}单后金额不可编辑${this.pending.length ? '，并同时核销所选业务' : ''}，是否继续？`, '确认资金事实', { type: 'warning' })
+        // 资金确认不可撤回修改：确认框写清对手、金额、账户和本次核销，避免点错单据。
+        const account = this.accounts.find(row => Number(row.id) === Number(this.doc.finance_account_id))
+        const party = this.doc.party_name_snapshot || (this.parties.find(row => Number(row.id) === Number(this.doc.party_id)) || {}).name || ''
+        const verb = this.direction === 'payment' ? '付款给' : '收到'
+        const allocationText = this.pending.length ? `，同时核销 ${this.pending.map(row => row.source_document_no || row.source_no).filter(Boolean).join('、') || '所选业务'} 共 ${this.money(this.pendingTotal)} ${this.doc.currency}` : ''
+        await this.$confirm(`${verb} ${party || '交易对手'} ${this.money(this.doc.amount)} ${this.doc.currency}（资金账户：${account ? account.account_name : '未选择'}）${allocationText}。确认后金额不可编辑，是否继续？`, `确认${this.title}`, { type: 'warning', confirmButtonText: `确认${this.title}` })
         if (revision !== this.initRevision) return
         if (this.canEdit && !await this.persistDraft(revision, { navigate: false })) return
         const response = await confirmCashDocument(this.doc.id, { items: serializeAllocationItems(this.pending) })

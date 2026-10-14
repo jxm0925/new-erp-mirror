@@ -2,7 +2,7 @@
   <div id="app" class="erp-layout" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
     <router-view v-if="$route.path === '/login'" />
     <template v-else>
-      <aside class="erp-sidebar">
+      <aside class="erp-sidebar" @click.capture="markShellNavigation">
         <div class="erp-brand">
           <svg class="brand-logo-icon" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
             <polygon points="12,1 22,7 12,13 2,7" fill="#12d39a" />
@@ -66,7 +66,7 @@
       </aside>
 
       <main class="erp-shell">
-        <header class="erp-topbar">
+        <header class="erp-topbar" @click.capture="markShellNavigation">
           <div class="topbar-left">
             <button
               class="sidebar-toggle-btn"
@@ -116,7 +116,7 @@
         </header>
 
         <!-- 多标签页导航 TagsView -->
-        <nav class="erp-tags-bar" aria-label="页面标签导航">
+        <nav class="erp-tags-bar" aria-label="页面标签导航" @click.capture="markShellNavigation">
           <div ref="tagsContainer" class="tags-scroll-container">
             <div
               v-for="(tag, index) in visitedViews"
@@ -217,8 +217,8 @@ export default {
       { name: '表单管理', path: '/approvals/forms', icon: 'el-icon-document', permission: 'approval.form.view' }
     ],
     financeMenus: [
-      { name: '收款管理', path: '/finance/receipts', icon: 'el-icon-money', permission: ['finance.receipt', 'finance.view'] },
-      { name: '付款管理', path: '/finance/payments', icon: 'el-icon-wallet', permission: ['finance.payment', 'finance.view'] },
+      { name: '收款管理', path: '/finance/receipts', icon: 'el-icon-money', permission: ['finance.receipt', 'finance.view'], allPermissions: ['finance.view'] },
+      { name: '付款管理', path: '/finance/payments', icon: 'el-icon-wallet', permission: ['finance.payment', 'finance.view'], allPermissions: ['finance.view'] },
       { name: '应付管理', path: '/finance/payables', icon: 'el-icon-tickets', permission: ['finance.payable', 'finance.supplier-ledger', 'finance.payable.view', 'finance.supplier-ledger.view'] },
       { name: '财务统计', path: '/finance/statistics', icon: 'el-icon-data-analysis', permission: 'finance.view' },
       { name: '发票管理', path: '/finance/invoices', icon: 'el-icon-document-copy', permission: 'finance.invoice' },
@@ -237,6 +237,8 @@ export default {
     sidebarCollapsed: false,
     currentUser: JSON.parse(localStorage.getItem('erp_user') || '{}'),
     permissions: JSON.parse(localStorage.getItem('erp_permissions') || '[]'),
+    // 登录身份（超级管理员、数据范围）放进响应式数据：切换账号后菜单立即按新账号重算，不沿用上一个账号的显示。
+    profile: JSON.parse(localStorage.getItem('erp_me') || '{}'),
     inventoryAlertCount: 0,
     inventoryAlerts: [],
     approvalNotificationCount: 0,
@@ -245,6 +247,7 @@ export default {
     stopApprovalRealtime: null,
     realtimeToken: null,
     visitedViews: [],
+    shellNavigationAt: 0,
     isRouterAlive: true
   }),
   computed: {
@@ -269,8 +272,7 @@ export default {
       return (this.currentUser.nickname || this.currentUser.username || '用').slice(0, 1)
     },
     dataScopeText() {
-      const meta = JSON.parse(localStorage.getItem('erp_me') || '{}')
-      return ({ all: '全部数据', department: '部门数据', self: '本人数据' })[meta.data_scope] || '权限用户'
+      return ({ all: '全部数据', department: '部门数据', self: '本人数据' })[this.profile.data_scope] || '权限用户'
     },
     currentModule() {
       if (this.$route.path.startsWith('/production')) return '生产管理'
@@ -328,9 +330,13 @@ export default {
   watch: {
     '$route': {
       immediate: true,
-      handler(to) {
+      handler(to, from) {
+        this.closeFinishedFormTag(to, from)
+        // 浏览器标签页标题跟随当前页面，便于多开标签时区分。
+        document.title = to && to.path === '/login' ? '登录 - 简谈ERP' : `${this.titleForPath(to && to.path)} - 简谈ERP`
         this.currentUser = JSON.parse(localStorage.getItem('erp_user') || '{}')
         this.permissions = JSON.parse(localStorage.getItem('erp_permissions') || '[]')
+        this.profile = JSON.parse(localStorage.getItem('erp_me') || '{}')
         this.ensureRealtimeSubscriptions()
         if (to && to.path !== '/login') {
           this.addVisitedView(to)
@@ -403,11 +409,12 @@ export default {
         this.permissions = data.permissions || []
         localStorage.setItem('erp_user', JSON.stringify(this.currentUser))
         localStorage.setItem('erp_permissions', JSON.stringify(this.permissions))
-        localStorage.setItem('erp_me', JSON.stringify({
+        this.profile = {
           data_scope: data.data_scope,
           is_super_admin: !!data.is_super_admin,
           is_department_principal: !!data.is_department_principal
-        }))
+        }
+        localStorage.setItem('erp_me', JSON.stringify(this.profile))
         this.ensureRealtimeSubscriptions()
       } catch (e) {
         // Route guard keeps the current page responsive if the session has expired.
@@ -499,6 +506,23 @@ export default {
         this.$router.push(tag.fullPath).catch(() => {})
       }
     },
+    // 新增/编辑表单保存后会跳回所属列表（或刚建好的单据），此时表单标签已完成使命，自动关闭，
+    // 避免每办一张单据就多留一个“新增/编辑”标签。用户主动切换到无关页面时不关闭，保留未保存内容。
+    closeFinishedFormTag(to, from) {
+      if (!to || !from || !from.path) return
+      // 通过菜单、标签或面包屑主动切换页面时，表单可能还有未保存内容，不自动关闭。
+      if (Date.now() - this.shellNavigationAt < 1500) return
+      const match = from.path.match(/^(.*?)\/(?:create|new|\d+\/edit)$/)
+      if (!match) return
+      const listPath = match[1]
+      if (to.path !== listPath && !to.path.startsWith(listPath + '/')) return
+      const index = this.visitedViews.findIndex(v => v.path === from.path)
+      if (index > -1 && !this.visitedViews[index].affix) {
+        this.visitedViews.splice(index, 1)
+        this.saveVisitedViews()
+      }
+    },
+    markShellNavigation() { this.shellNavigationAt = Date.now() },
     closeTag(tag, index) {
       if (tag.affix) return
       this.visitedViews.splice(index, 1)
@@ -747,7 +771,7 @@ export default {
     },
     canMenu(permission) {
       if (!permission) return true
-      if (JSON.parse(localStorage.getItem('erp_me') || '{}').is_super_admin) return true
+      if (this.profile.is_super_admin) return true
       if (Array.isArray(permission)) return permission.some(code => this.permissions.includes(code))
       return this.permissions.includes(permission)
     },
@@ -768,6 +792,9 @@ export default {
         localStorage.removeItem('erp_user')
         localStorage.removeItem('erp_me')
         localStorage.removeItem('erp_permissions')
+        // 页面标签属于当前账号，换账号登录后不能残留上一个人打开过的单据页面。
+        try { sessionStorage.removeItem('erp_visited_views') } catch (e) {}
+        this.visitedViews = [{ title: '运营控制台', path: '/console', fullPath: '/console', affix: true }]
         this.$router.replace('/login')
       }
     }

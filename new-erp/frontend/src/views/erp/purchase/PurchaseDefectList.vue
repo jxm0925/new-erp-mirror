@@ -40,7 +40,7 @@
     </section>
 
     <div class="defect-table-card">
-      <el-alert title="退供应商会生成正式采购退货单；让步接收会真实转入待过账合格数量；换货、返修和报废会生成处理中业务单，不能直接标记完成。已入库后的质量问题请从库存余额发起。" type="warning" :closable="false" show-icon class="defect-tip" />
+      <el-alert title="退供应商会生成正式采购退货单；让步接收会转为合格数量（到货单已先过账合格部分的，审批通过后自动补入库）；换货、返修和报废会生成处理中业务单，不能直接标记完成。已入库货物的质量问题请从库存余额发起。" type="warning" :closable="false" show-icon class="defect-tip" />
       <el-table v-loading="loading" :data="defectRows" size="mini" border empty-text="暂无不合格或待处理到货明细">
 <el-table-column label="管理类型" width="110"><template slot-scope="{row}"><el-tag size="mini" :type="row.management_scope==='office'?'info':'success'">{{ scopeLabel(row.management_scope) }}</el-tag></template></el-table-column>
         <el-table-column prop="receipt_no" label="到货单号" min-width="150" />
@@ -149,6 +149,7 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import { listEntity } from '@/api/erp/master'
 import { purchaseScopes, purchaseScopeLabel, validPurchaseScope } from '@/utils/purchaseManagementScope.mjs'
 import { actionDefectHandling, listDefectHandlings, saveDefectHandling } from '@/api/erp/purchase'
@@ -191,8 +192,8 @@ export default {
       return ({
         return_supplier: '退供应商：立即生成正式采购退货单；未入库不合格品不伪造库存出入库流水。',
         exchange: '换货：生成正式采购换货单，逐步登记原货退回、供应商收货、补发物流、替换验收及序列号对应；替换品不新增应付。',
-        concession: '让步接收：库存未过账前可把处理数量转为合格数量，后续库存过账进入正常库存。',
-        repair: '返修：生成返修处理单并进入处理中，返修完成和复检通过后才能完成。',
+        concession: '让步接收：审批通过后处理数量转为合格数量；到货单未过账的随过账入库，合格部分已先过账的自动补入库。',
+        repair: '返修：生成返修处理单并进入处理中，返修完成和复检通过后才能完成；合格部分已先过账的，返修合格数量自动补入库。',
         scrap: '报废：生成报废审批单并进入处理中，审批和损失确认完成前不会标记完成。',
         pending: '待决定：只记录原因和说明，不关闭待处理数量。'
       })[this.handleForm.handling_method] || ''
@@ -271,7 +272,7 @@ export default {
       return ({ create: '创建处理单', create_return: '生成采购退货单', approve_concession: '批准让步接收', start_repair: '开始返修', complete_repair: '返修完成', approve_scrap: '批准报废', confirm_scrap: '确认实物报废', confirm_exchange_return: '确认原件已退回', complete_exchange: '确认换货完成' })[v] || v || '-'
     },
     dateTime(value) {
-      return value ? String(value).replace('T', ' ').replace(/\.\d+Z?$/, '').replace(/Z$/, '').slice(0, 19) : '--'
+      return value ? erpDateTime(value, 19) : '--'
     },
     handlingActions(h) {
       const map = {
@@ -318,9 +319,17 @@ export default {
       if (!this.handleForm.responsible_party) return this.$message.warning('请输入责任方')
       if (Number(this.handleForm.handling_qty || 0) <= 0) return this.$message.warning('请输入处理数量')
       try {
-        await saveDefectHandling(this.handleForm)
-        this.$message.success('处理已执行，已生成对应业务单据')
+        const res = await saveDefectHandling(this.handleForm)
+        const handling = (res && res.data && res.data.data) || {}
         this.drawerVisible = false
+        // 告诉用户生成了哪张单据，并可一键跳转继续办理（如退货单还需审核、确认退回）。
+        if (handling.business_doc_type === 'purchase_return' && handling.business_doc_no) {
+          this.$confirm(`已生成采购退货单 ${handling.business_doc_no}，需继续审核并确认退回供应商。`, '处理已执行', { type: 'success', confirmButtonText: '去处理退货单', cancelButtonText: '留在本页' })
+            .then(() => this.$router.push({ path: '/purchase/returns', query: { return_no: handling.business_doc_no } }))
+            .catch(() => {})
+        } else {
+          this.$message.success(handling.business_doc_no ? `处理已执行，已生成单据 ${handling.business_doc_no}` : '处理已执行')
+        }
         this.pagination.page = 1
         await this.load()
       } catch (e) {
@@ -332,6 +341,8 @@ export default {
 </script>
 
 <style scoped>
-.defect-page{position:relative;min-height:calc(100vh - 52px);min-width:960px;padding:16px 18px;background:#f7f8f9;transition:padding-right .18s}.defect-page.drawer-open{padding-right:408px}.defect-head{height:64px;display:flex;justify-content:space-between;align-items:flex-start}.defect-head h1{margin:0;font-size:17px}.defect-head h1 em{margin-left:7px;color:#6c7882;font-style:normal;font-size:12px;font-weight:400}.defect-head p{margin:4px 0 0;color:#77828c;font-size:10px}.defect-head>div:last-child{display:flex;gap:8px}.defect-filter{min-height:58px;margin-bottom:12px;padding:10px 12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#fff;border:1px solid #dfe5e9;border-radius:4px}.defect-filter .el-input{width:180px}.defect-filter .el-select{width:170px}.defect-filter .el-date-editor{width:260px}.defect-table-card{background:#fff;border:1px solid #dfe5e9;border-radius:4px;overflow:hidden}.defect-table-card ::v-deep .el-table__body-wrapper{overflow-x:auto}.defect-table-card ::v-deep .cell{overflow-wrap:anywhere}.defect-tip{margin:10px}.defect-pager{height:46px;padding:0 12px;display:flex;align-items:center;justify-content:space-between;color:#69747d;border-top:1px solid #edf0f2}.defect-method-tip{margin-bottom:10px}.history-line{display:grid;gap:3px;padding:8px 0;border-bottom:1px solid #eef2f5}.history-line:last-child{border-bottom:0}.history-line span{color:#66717c}.history-line small{color:#8a96a3}.defect-drawer{position:fixed;top:52px;right:0;bottom:0;width:390px;background:#fff;border-left:1px solid #dfe5e9;z-index:9;box-shadow:-8px 0 24px rgba(25,43,58,.08)}.drawer-head{height:58px;padding:0 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #e2e7eb}.drawer-head h2{font-size:16px}.drawer-head i{cursor:pointer;color:#65717b}.drawer-body{height:calc(100% - 122px);padding:10px 12px 84px;overflow:auto}.drawer-card{min-width:0;margin-bottom:8px;padding:12px;border:1px solid #e1e7eb;border-radius:4px}.drawer-card h3{margin:0 0 10px;font-size:12px}.drawer-card dl{display:grid;grid-template-columns:86px minmax(0,1fr);gap:9px 10px;margin:0}.drawer-card dt{color:#76818b}.drawer-card dd{min-width:0;margin:0;color:#2d3842;overflow-wrap:anywhere}.full,.drawer-card .el-input,.drawer-card .el-select,.drawer-card .el-input-number{width:100%;max-width:100%}.drawer-card ::v-deep .el-input__inner{width:100%;padding-right:30px}.drawer-card ::v-deep .el-input-number .el-input__inner{padding-left:10px;padding-right:42px;text-align:left}.drawer-card ::v-deep textarea{width:100%;box-sizing:border-box}.drawer-footer{position:absolute;left:0;right:0;bottom:0;height:64px;padding:12px;display:flex;gap:10px;background:#fff;border-top:1px solid #e2e7eb}.drawer-footer .el-button{flex:1}@media(max-width:1180px){.defect-page.drawer-open{padding-right:18px}.defect-drawer{width:390px}}
+.defect-page{position:relative;min-height:calc(100vh - 52px);min-width:960px;padding:16px 18px;background:#f7f8f9;transition:padding-right .18s}.defect-page.drawer-open{padding-right:18px}.defect-head{height:64px;display:flex;justify-content:space-between;align-items:flex-start}.defect-head h1{margin:0;font-size:17px}.defect-head h1 em{margin-left:7px;color:#6c7882;font-style:normal;font-size:12px;font-weight:400}.defect-head p{margin:4px 0 0;color:#77828c;font-size:10px}.defect-head>div:last-child{display:flex;gap:8px}.defect-filter{min-height:58px;margin-bottom:12px;padding:10px 12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#fff;border:1px solid #dfe5e9;border-radius:4px}.defect-filter .el-input{width:180px}.defect-filter .el-select{width:170px}.defect-filter .el-date-editor{width:260px}.defect-table-card{background:#fff;border:1px solid #dfe5e9;border-radius:4px;overflow:hidden}.defect-table-card ::v-deep .el-table__body-wrapper{overflow-x:auto}.defect-table-card ::v-deep .cell{overflow-wrap:anywhere}.defect-tip{margin:10px}.defect-pager{height:46px;padding:0 12px;display:flex;align-items:center;justify-content:space-between;color:#69747d;border-top:1px solid #edf0f2}.defect-method-tip{margin-bottom:10px}.history-line{display:grid;gap:3px;padding:8px 0;border-bottom:1px solid #eef2f5}.history-line:last-child{border-bottom:0}.history-line span{color:#66717c}.history-line small{color:#8a96a3}.defect-drawer{position:fixed;top:52px;right:0;bottom:0;width:390px;background:#fff;border-left:1px solid #dfe5e9;z-index:9;box-shadow:-8px 0 24px rgba(25,43,58,.08)}.drawer-head{height:58px;padding:0 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #e2e7eb}.drawer-head h2{font-size:16px}.drawer-head i{cursor:pointer;color:#65717b}.drawer-body{height:calc(100% - 122px);padding:10px 12px 84px;overflow:auto}.drawer-card{min-width:0;margin-bottom:8px;padding:12px;border:1px solid #e1e7eb;border-radius:4px}.drawer-card h3{margin:0 0 10px;font-size:12px}.drawer-card dl{display:grid;grid-template-columns:86px minmax(0,1fr);gap:9px 10px;margin:0}.drawer-card dt{color:#76818b}.drawer-card dd{min-width:0;margin:0;color:#2d3842;overflow-wrap:anywhere}.full,.drawer-card .el-input,.drawer-card .el-select,.drawer-card .el-input-number{width:100%;max-width:100%}.drawer-card ::v-deep .el-input__inner{width:100%;padding-right:30px}.drawer-card ::v-deep .el-input-number .el-input__inner{padding-left:10px;padding-right:42px;text-align:left}.drawer-card ::v-deep textarea{width:100%;box-sizing:border-box}.drawer-footer{position:absolute;left:0;right:0;bottom:0;height:64px;padding:12px;display:flex;gap:10px;background:#fff;border-top:1px solid #e2e7eb}.drawer-footer .el-button{flex:1}@media(max-width:1180px){.defect-page.drawer-open{padding-right:18px}}
+/* 按“侧页统一改居中弹窗”规则：处理面板居中显示，四周留边并带遮罩，内容在弹窗内滚动。 */
+.defect-drawer{top:50%;left:50%;right:auto;bottom:auto;transform:translate(-50%,-50%);width:min(560px,calc(100vw - 32px));height:min(760px,calc(100vh - 64px));border:1px solid #dfe5e9;border-radius:8px;overflow:hidden;z-index:1500;box-shadow:0 0 0 100vmax rgba(15,23,42,.45),0 18px 48px rgba(15,23,42,.22)}
 .history-title{display:flex;align-items:center;justify-content:space-between;gap:8px}.handling-logs{margin-top:3px;padding:7px 8px;background:#f7f9fa;border-radius:3px;color:#687680;font-size:11px}.handling-logs div{padding:3px 0}.handling-logs i{display:inline-block;width:5px;height:5px;margin-right:6px;border-radius:50%;background:#13a063;vertical-align:middle}.history-actions{display:flex;gap:10px;flex-wrap:wrap}
 </style>

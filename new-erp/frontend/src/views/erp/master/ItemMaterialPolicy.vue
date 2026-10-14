@@ -1,13 +1,13 @@
 <template>
   <section class="policy-page" v-loading="loading">
     <header class="page-header">
-      <div><h1>物资归属配置</h1><p>维护 Item 的库存管理、领用责任与默认经济归属；采购单据自动带出，历史业务不被覆盖。</p></div>
+      <div><h1>物资归属配置</h1><p>维护物料的库存管理、领用责任与默认经济归属；采购单据自动带出，历史业务不被覆盖。</p></div>
       <div class="header-actions"><el-button @click="$router.push('/master/items')">返回物料列表</el-button><el-button :loading="saving" @click="saveDraft">保存草稿</el-button><el-button type="success" :loading="saving" @click="activate">保存并启用</el-button></div>
     </header>
     <el-alert class="policy-alert" title="库存管理与经济归属独立配置；采购员只使用处理策略，不维护会计科目。" type="info" :closable="false" show-icon />
 
     <main class="policy-grid">
-      <section class="card item-readonly"><h2>物料只读信息</h2><dl><dt>Item编码</dt><dd>{{ item.item_code || '-' }}</dd><dt>物料名称</dt><dd>{{ item.item_name || '-' }}</dd><dt>物料类型</dt><dd>{{ itemTypeText(item.item_type) }}</dd><dt>Item类目</dt><dd>{{ item.category && item.category.category_name || '-' }}</dd><dt>基本单位</dt><dd>{{ item.unit && (item.unit.symbol || item.unit.unit_name) || '-' }}</dd><dt>当前状态</dt><dd><el-tag size="mini" type="success">{{ item.status === 'enabled' ? '启用' : '停用' }}</el-tag></dd></dl><el-button type="text" icon="el-icon-arrow-right" @click="$router.push(`/inventory/balances?item_id=${item.id}`)">查看库存余额</el-button><el-button v-if="form.is_stock_managed" type="text" icon="el-icon-bell" @click="$router.push(`/inventory/alerts/config?item_id=${item.id}`)">配置库存预警</el-button></section>
+      <section class="card item-readonly"><h2>物料只读信息</h2><dl><dt>物料编码</dt><dd>{{ item.item_code || '-' }}</dd><dt>物料名称</dt><dd>{{ item.item_name || '-' }}</dd><dt>物料类型</dt><dd>{{ itemTypeText(item.item_type) }}</dd><dt>物料类目</dt><dd>{{ item.category && item.category.category_name || '-' }}</dd><dt>基本单位</dt><dd>{{ item.unit && (item.unit.symbol || item.unit.unit_name) || '-' }}</dd><dt>当前状态</dt><dd><el-tag size="mini" type="success">{{ item.status === 'enabled' ? '启用' : '停用' }}</el-tag></dd></dl><el-button type="text" icon="el-icon-arrow-right" @click="$router.push(`/inventory/balances?item_id=${item.id}`)">查看库存余额</el-button><el-button v-if="form.is_stock_managed" type="text" icon="el-icon-bell" @click="$router.push(`/inventory/alerts/config?item_id=${item.id}`)">配置库存预警</el-button></section>
 
       <section class="card policy-form"><h2>默认管理属性</h2>
         <div class="attribute-grid">

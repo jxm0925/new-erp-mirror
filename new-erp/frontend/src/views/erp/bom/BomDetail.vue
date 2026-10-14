@@ -26,7 +26,7 @@
         <section class="detail-card"><h3>通用信息 / 来源追溯</h3><dl class="info-grid">
           <dt>归属商品</dt><dd>{{ bom.product ? `${bom.product.product_code} / ${bom.product.product_name}` : '-' }}</dd>
           <dt>关联SKU</dt><dd>{{ bom.sku ? `${bom.sku.sku_code} / ${bom.sku.sku_name}` : '-' }}</dd>
-          <dt>产出Item</dt><dd>{{ bom.output_item ? `${bom.output_item.item_code} / ${bom.output_item.item_name}` : '-' }}</dd>
+          <dt>产出物料</dt><dd>{{ bom.output_item ? `${bom.output_item.item_code} / ${bom.output_item.item_name}` : '-' }}</dd>
           <dt>计量单位</dt><dd>{{ bom.output_item && bom.output_item.unit ? bom.output_item.unit.unit_name : '-' }}</dd>
           <dt>来源商品</dt><dd>{{ bom.source_product ? bom.source_product.product_name : '-' }}</dd>
           <dt>来源SKU</dt><dd>{{ bom.source_sku ? bom.source_sku.sku_name : '-' }}</dd>
@@ -34,7 +34,7 @@
           <dt>描述</dt><dd>{{ bom.custom_description || '-' }}</dd>
         </dl></section>
         <section class="detail-card"><h3>BOM明细</h3><el-table :data="bom.items || []" border size="small">
-          <el-table-column prop="line_no" label="行号" width="70" /><el-table-column prop="component_item_code" label="物料Item" width="135" /><el-table-column prop="component_item_name" label="物料名称" min-width="170" show-overflow-tooltip /><el-table-column label="下料要求" width="150"><template slot-scope="{row}">{{ cutRequirement(row) }}</template></el-table-column><el-table-column prop="qty" label="用量" width="90" /><el-table-column label="单位" width="80"><template slot-scope="{row}">{{ row.unit ? row.unit.unit_name : '-' }}</template></el-table-column><el-table-column prop="loss_rate" label="损耗率(%)" width="100" /><el-table-column prop="fixed_qty" label="固定用量" width="95" /><el-table-column label="可替代" width="80"><template slot-scope="{row}">{{ row.replaceable ? '是' : '否' }}</template></el-table-column><el-table-column prop="remark" label="备注" min-width="130" show-overflow-tooltip />
+          <el-table-column prop="line_no" label="行号" width="70" /><el-table-column prop="component_item_code" label="物料编码" width="135" /><el-table-column prop="component_item_name" label="物料名称" min-width="170" show-overflow-tooltip /><el-table-column label="下料要求" width="150"><template slot-scope="{row}">{{ cutRequirement(row) }}</template></el-table-column><el-table-column prop="qty" label="用量" width="90" /><el-table-column label="单位" width="80"><template slot-scope="{row}">{{ row.unit ? row.unit.unit_name : '-' }}</template></el-table-column><el-table-column prop="loss_rate" label="损耗率(%)" width="100" /><el-table-column prop="fixed_qty" label="固定用量" width="95" /><el-table-column label="可替代" width="80"><template slot-scope="{row}">{{ row.replaceable ? '是' : '否' }}</template></el-table-column><el-table-column prop="remark" label="备注" min-width="130" show-overflow-tooltip />
         </el-table></section>
       </main>
       <aside>

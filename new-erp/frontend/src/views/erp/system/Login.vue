@@ -8,8 +8,7 @@
       <div class="auth-form-pane">
         <div class="env-switch">
           <i class="el-icon-platform-eleme" />
-          <span>当前环境：生产环境</span>
-          <i class="el-icon-arrow-down" />
+          <span>当前环境：{{ envText }}</span>
         </div>
 
         <el-form class="auth-form" autocomplete="off" @submit.native.prevent="submit">
@@ -17,15 +16,29 @@
           <p>请使用您的账号登录系统</p>
 
           <el-form-item label="用户名">
-            <el-input v-model="form.username" prefix-icon="el-icon-user" placeholder="请输入用户名" />
+            <el-input
+              ref="usernameInput"
+              v-model="form.username"
+              prefix-icon="el-icon-user"
+              placeholder="请输入用户名"
+              clearable
+            />
           </el-form-item>
 
           <el-form-item label="密码">
-            <el-input v-model="form.password" type="password" prefix-icon="el-icon-lock" placeholder="请输入密码" show-password />
+            <el-input
+              ref="passwordInput"
+              v-model="form.password"
+              type="password"
+              prefix-icon="el-icon-lock"
+              placeholder="请输入密码"
+              show-password
+              @keyup.enter.native="submit"
+            />
           </el-form-item>
 
           <div class="auth-options">
-            <el-checkbox v-model="remember">记住我</el-checkbox>
+            <el-checkbox v-model="remember" @change="handleRememberChange">记住我</el-checkbox>
             <span class="password-help">忘记密码请联系系统管理员</span>
           </div>
 
@@ -65,6 +78,9 @@
 import { login } from '@/api/erp/auth'
 import visual from '@/assets/erp-login-visual.png'
 
+const REMEMBER_KEY = 'erp_remember_username'
+const REMEMBER_FLAG = 'erp_remember'
+
 export default {
   data: () => ({
     visual,
@@ -74,14 +90,66 @@ export default {
   }),
   computed: {
     currentYear() { return new Date().getFullYear() },
+    // 按实际运行环境显示，避免本地/测试环境误显示为“生产环境”；可用 VUE_APP_ENV_NAME 覆盖。
+    envText() {
+      if (process.env.VUE_APP_ENV_NAME) return process.env.VUE_APP_ENV_NAME
+      const host = window.location.hostname
+      if (process.env.NODE_ENV !== 'production' || /^(localhost|127.0.0.1|[::1])$/.test(host) || /.(localhost|test)$/.test(host)) return '开发环境'
+      return '生产环境'
+    },
     todayText() { return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'long' }).format(new Date()) }
   },
+  mounted() {
+    this.restoreRemembered()
+  },
   methods: {
+    restoreRemembered() {
+      try {
+        const isRemembered = localStorage.getItem(REMEMBER_FLAG) === 'true'
+        const savedUsername = localStorage.getItem(REMEMBER_KEY)
+        if (isRemembered && savedUsername) {
+          this.form.username = savedUsername
+          this.remember = true
+          this.$nextTick(() => {
+            this.$refs.passwordInput?.focus()
+          })
+        } else {
+          this.$nextTick(() => {
+            this.$refs.usernameInput?.focus()
+          })
+        }
+      } catch (e) {
+        // ignore storage error
+      }
+    },
+    handleRememberChange(val) {
+      if (!val) {
+        try {
+          localStorage.removeItem(REMEMBER_KEY)
+          localStorage.removeItem(REMEMBER_FLAG)
+        } catch (e) {
+          // ignore
+        }
+      }
+    },
     async submit() {
       if (!this.form.username || !this.form.password) return this.$message.error('请输入用户名和密码')
       this.loading = true
       try {
         const { data } = await login(this.form)
+
+        try {
+          if (this.remember) {
+            localStorage.setItem(REMEMBER_KEY, this.form.username)
+            localStorage.setItem(REMEMBER_FLAG, 'true')
+          } else {
+            localStorage.removeItem(REMEMBER_KEY)
+            localStorage.removeItem(REMEMBER_FLAG)
+          }
+        } catch (e) {
+          // ignore storage error
+        }
+
         localStorage.setItem('erp_token', data.token)
         localStorage.setItem('erp_user', JSON.stringify(data.user || {}))
         localStorage.setItem('erp_me', JSON.stringify({
@@ -102,36 +170,242 @@ export default {
 </script>
 
 <style scoped>
-.password-help{color:#7b8794;font-size:13px}
-.auth-page{box-sizing:border-box;width:100%;min-height:100vh;padding:24px;background:#f4f7fa;color:#0f1f33;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px}
-.auth-shell{width:min(1320px,calc(100vw - 48px));height:calc(100vh - 82px);min-height:660px;max-height:860px;margin:0 auto;background:#fff;border-radius:8px;box-shadow:0 12px 36px rgba(15,31,51,.12);overflow:hidden;display:grid;grid-template-columns:47% 53%;grid-template-rows:minmax(500px,1fr) 150px}
-.auth-visual{background:#06192c;overflow:hidden}
-.auth-visual img{width:100%;height:100%;object-fit:cover;display:block}
-.auth-form-pane{position:relative;background:#fff;display:flex;align-items:center;justify-content:center}
-.env-switch{position:absolute;right:56px;top:30px;height:32px;display:flex;align-items:center;gap:8px;color:#2d3b4d;font-size:13px}
-.env-switch i:first-child{color:#07883f;font-size:18px}
-.auth-form{width:430px;margin-top:0}
-.auth-form h1{margin:0 0 12px;text-align:center;font-size:28px;line-height:1.2;font-weight:700;color:#102033}
-.auth-form p{margin:0 0 28px;text-align:center;color:#657184;font-size:16px}
-.auth-form ::v-deep .el-form-item{margin-bottom:20px}
-.auth-form ::v-deep .el-form-item__label{float:none;display:block;text-align:left;color:#15263b;font-size:14px;font-weight:600;line-height:22px;padding-bottom:8px}
-.auth-form ::v-deep .el-input__inner{height:48px;border-color:#d8dee7;border-radius:4px;font-size:14px}
-.auth-form ::v-deep .el-input--prefix .el-input__inner{padding-left:44px!important}
-.auth-form ::v-deep .el-input__prefix{left:12px;width:22px;color:#6f7c8d;font-size:18px;z-index:1}
-.auth-form ::v-deep .el-input__prefix .el-input__icon{line-height:48px}
-.auth-options{display:flex;justify-content:space-between;align-items:center;margin:0 0 24px}
-.auth-options ::v-deep .el-checkbox__input.is-checked .el-checkbox__inner{background:#07883f;border-color:#07883f}
-.auth-options ::v-deep .el-checkbox__label,.auth-options .el-button{font-size:14px}
-.auth-options .el-button{color:#07883f}
-.login-button{width:100%;height:52px;font-size:18px;font-weight:700;border-radius:4px;background:#07883f;border-color:#07883f;box-shadow:0 8px 16px rgba(7,136,63,.18)}
-.security-note{margin-top:20px;display:flex;justify-content:center;align-items:center;gap:8px;color:#687686;font-size:13px}
-.security-note i{color:#60778d}
-.auth-capabilities{grid-column:1/3;display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid #e6ebf0;background:#fff}
-.auth-capabilities>div{display:grid;grid-template-columns:64px 1fr;grid-template-rows:auto auto;column-gap:16px;align-content:center;padding:0 52px;border-right:1px solid #dfe5eb}
-.auth-capabilities>div:last-child{border-right:0}
-.auth-capabilities i{grid-row:1/3;width:58px;height:58px;border-radius:50%;display:grid;place-items:center;background:#e8f6ef;color:#07883f;font-size:26px}
-.auth-capabilities strong{margin-bottom:8px;font-size:18px;color:#102033}
-.auth-capabilities span{color:#5d697a;font-size:14px;line-height:1.7}
-footer{font-size:13px;color:#6f7b8b}
-@media(max-width:1100px){.auth-shell{grid-template-columns:1fr;grid-template-rows:260px 1fr auto}.auth-capabilities{grid-column:1;grid-template-columns:1fr}.auth-capabilities>div{padding:20px 36px}.env-switch{right:36px}.auth-form{width:min(440px,calc(100% - 48px))}}
+.password-help {
+  color: #7b8794;
+  font-size: 13px;
+}
+.auth-page {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 100vh;
+  padding: 24px;
+  background: #f4f7fa;
+  color: #0f1f33;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+}
+.auth-shell {
+  width: min(1320px, calc(100vw - 48px));
+  height: calc(100vh - 82px);
+  min-height: 660px;
+  max-height: 860px;
+  margin: 0 auto;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 12px 36px rgba(15, 31, 51, 0.12);
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: 47% 53%;
+  grid-template-rows: minmax(500px, 1fr) 150px;
+}
+.auth-visual {
+  background: #06192c;
+  overflow: hidden;
+}
+.auth-visual img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.auth-form-pane {
+  position: relative;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.env-switch {
+  position: absolute;
+  right: 56px;
+  top: 30px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #2d3b4d;
+  font-size: 13px;
+}
+.env-switch i:first-child {
+  color: #008b4b;
+  font-size: 18px;
+}
+.auth-form {
+  width: 430px;
+  margin-top: 0;
+}
+.auth-form h1 {
+  margin: 0 0 12px;
+  text-align: center;
+  font-size: 28px;
+  line-height: 1.2;
+  font-weight: 700;
+  color: #102033;
+}
+.auth-form p {
+  margin: 0 0 28px;
+  text-align: center;
+  color: #657184;
+  font-size: 16px;
+}
+.auth-form ::v-deep .el-form-item {
+  margin-bottom: 20px;
+}
+.auth-form ::v-deep .el-form-item__label {
+  float: none;
+  display: block;
+  text-align: left;
+  color: #15263b;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 22px;
+  padding-bottom: 8px;
+}
+.auth-form ::v-deep .el-input__inner {
+  height: 48px;
+  border-color: #d8dee7;
+  border-radius: 4px;
+  font-size: 14px;
+}
+.auth-form ::v-deep .el-input--prefix .el-input__inner {
+  padding-left: 44px !important;
+}
+.auth-form ::v-deep .el-input__prefix {
+  left: 12px;
+  width: 22px;
+  color: #6f7c8d;
+  font-size: 18px;
+  z-index: 1;
+}
+.auth-form ::v-deep .el-input__prefix .el-input__icon {
+  line-height: 48px;
+}
+.auth-form ::v-deep .el-input.is-active .el-input__inner,
+.auth-form ::v-deep .el-input__inner:focus {
+  border-color: #008b4b !important;
+  box-shadow: 0 0 0 2px rgba(0, 139, 75, 0.12);
+}
+.auth-options {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 0 0 24px;
+}
+.auth-options ::v-deep .el-checkbox__input.is-checked .el-checkbox__inner {
+  background: #008b4b !important;
+  border-color: #008b4b !important;
+}
+.auth-options ::v-deep .el-checkbox__input.is-focus .el-checkbox__inner,
+.auth-options ::v-deep .el-checkbox__inner:hover {
+  border-color: #008b4b !important;
+}
+.auth-options ::v-deep .el-checkbox__input.is-checked + .el-checkbox__label {
+  color: #008b4b !important;
+}
+.auth-options ::v-deep .el-checkbox__label {
+  font-size: 14px;
+}
+.login-button {
+  width: 100%;
+  height: 52px;
+  font-size: 18px;
+  font-weight: 700;
+  border-radius: 4px;
+  background: #008b4b !important;
+  border-color: #008b4b !important;
+  box-shadow: 0 8px 16px rgba(0, 139, 75, 0.18);
+}
+.login-button:hover,
+.login-button:focus {
+  background: #00763f !important;
+  border-color: #00763f !important;
+}
+.security-note {
+  margin-top: 20px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  color: #687686;
+  font-size: 13px;
+}
+.security-note i {
+  color: #60778d;
+}
+.auth-capabilities {
+  grid-column: 1 / 3;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-top: 1px solid #e6ebf0;
+  background: #fff;
+}
+.auth-capabilities > div {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 16px;
+  align-content: center;
+  padding: 0 52px;
+  border-right: 1px solid #dfe5eb;
+}
+.auth-capabilities > div:last-child {
+  border-right: 0;
+}
+.auth-capabilities i {
+  grid-row: 1 / 3;
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #eaf7ef;
+  color: #008b4b;
+  font-size: 26px;
+}
+.auth-capabilities strong {
+  margin-bottom: 8px;
+  font-size: 18px;
+  color: #102033;
+}
+.auth-capabilities span {
+  color: #5d697a;
+  font-size: 14px;
+  line-height: 1.7;
+}
+footer {
+  font-size: 13px;
+  color: #6f7b8b;
+}
+@media (max-width: 1100px) {
+  .auth-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: 260px 1fr auto;
+  }
+  .auth-capabilities {
+    grid-column: 1;
+    grid-template-columns: 1fr;
+  }
+  .auth-capabilities > div {
+    padding: 20px 36px;
+  }
+  .env-switch {
+    right: 36px;
+  }
+}
+/* 窄屏时环境标识改为表单上方独立一行，不再与标题重叠。 */
+@media (max-width: 1100px), (max-height: 720px) {
+  .auth-form-pane {
+    flex-direction: column;
+  }
+  .env-switch {
+    position: static;
+    margin: 0 0 16px;
+  }
+  .auth-form {
+    width: min(440px, calc(100% - 48px));
+  }
+}
 </style>

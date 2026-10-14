@@ -23,8 +23,10 @@ final class PurchaseManagementScopeService
 
     public function requestScope(Request $request): ?string
     {
-        return array_key_exists('management_scope', $request->query())
-            ? $this->assertScope($request->query('management_scope')) : null;
+        // 列表筛选“全部管理类型”会带上空的 management_scope（空串会被转成 null），表示不按范围过滤；
+        // 只有给了具体值时才校验，否则采购退货等列表会直接 422 并显示为空。
+        $value = $request->query('management_scope');
+        return $value === null || $value === '' ? null : $this->assertScope($value);
     }
 
     public function applyFilter(Builder|QueryBuilder $query, ?string $scope, string $column = 'management_scope'): void

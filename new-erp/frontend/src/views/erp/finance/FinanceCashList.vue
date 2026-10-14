@@ -169,7 +169,7 @@
               <span class="operator-text">{{ row.operator_name_snapshot || row.operator_name || '—' }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" :width="hasSourceReference ? 320 : 300" fixed="right" align="center">
+          <el-table-column label="操作" :width="hasSourceReference ? 250 : 230" fixed="right" align="center">
             <template slot-scope="{ row }">
               <div class="row-actions">
                 <el-button type="text" size="mini" class="btn-action-view" @click="view(row)">查看</el-button>
@@ -177,8 +177,14 @@
                 <el-button v-if="row.status !== 'draft'" type="text" size="mini" :class="hasSourceReference ? 'btn-action-use-prepay' : 'btn-action-alloc'" :disabled="hasSourceReference && !canUseSource(row)" @click="openAllocation(row)">
                   {{ allocationLabel(row) }}
                 </el-button>
-                <el-button v-if="row.party_type === 'supplier' && row.status !== 'draft'" type="text" size="mini" class="btn-action-link" @click="openPurchaseLinks(row)">采购关联</el-button>
-                <el-button v-if="row.status === 'confirmed' && $can(voidPermission)" type="text" size="mini" class="btn-action-void danger" @click="voidDoc(row)">作废</el-button>
+                <!-- 次要操作收进“更多”：采购关联、作废（危险操作标红）。 -->
+                <el-dropdown v-if="(row.party_type === 'supplier' && row.status !== 'draft') || (row.status === 'confirmed' && $can(voidPermission))" trigger="click" size="small" @command="command => command === 'void' ? voidDoc(row) : openPurchaseLinks(row)">
+                  <el-button type="text" size="mini" class="btn-action-link">更多<i class="el-icon-arrow-down el-icon--right" /></el-button>
+                  <el-dropdown-menu slot="dropdown">
+                    <el-dropdown-item v-if="row.party_type === 'supplier' && row.status !== 'draft'" command="links" icon="el-icon-connection">采购关联</el-dropdown-item>
+                    <el-dropdown-item v-if="row.status === 'confirmed' && $can(voidPermission)" command="void" icon="el-icon-delete" class="row-op-danger" divided>作废</el-dropdown-item>
+                  </el-dropdown-menu>
+                </el-dropdown>
               </div>
             </template>
           </el-table-column>
@@ -207,11 +213,277 @@
 
     <!-- 采购付款关联弹窗 -->
     <purchase-payment-link-dialog :visible.sync="purchaseLinksVisible" :cash-id="purchaseLinksCashId" @changed="load" />
+
+    <!-- 收付款单据详情居中弹窗 (对齐居中弹窗规范 el-dialog) -->
+    <el-dialog
+      :title="title + '单据详情'"
+      :visible.sync="detailDialogVisible"
+      width="880px"
+      top="5vh"
+      custom-class="cash-detail-dialog"
+      :close-on-click-modal="true"
+      append-to-body
+    >
+      <div v-if="detailDoc" v-loading="detailLoading" class="detail-dialog-body">
+        <!-- 弹窗顶端横幅 -->
+        <div class="modal-summary-banner">
+          <div class="banner-icon">
+            <i :class="direction === 'receipt' ? 'el-icon-bottom-left' : 'el-icon-wallet'" />
+          </div>
+          <div class="banner-main">
+            <div class="banner-title-line">
+              <h2 class="font-tabular">{{ detailDoc.document_no }}</h2>
+              <el-tag size="mini" :type="tagType(detailDoc.status)" effect="plain">
+                {{ statusLabel(detailDoc) }}
+              </el-tag>
+              <el-tag size="mini" type="info" effect="plain">
+                {{ detailDoc.party_type === 'supplier' ? '供应商' : '客户' }}
+              </el-tag>
+              <el-tag v-if="detailDoc.status === 'confirmed'" size="mini" :type="Number(detailDoc.unallocated_amount) <= 0 ? 'success' : 'warning'" effect="light">
+                {{ Number(detailDoc.unallocated_amount) <= 0 ? '已全部核销' : (Number(detailDoc.allocated_amount) > 0 ? '已部分核销' : '待核销') }}
+              </el-tag>
+            </div>
+            <div class="banner-sub-meta">
+              <span>交易对手：<strong class="party-name-strong">{{ detailDoc.party_name_snapshot || '—' }}</strong></span>
+              <span>资金账户：<span class="account-name-badge">{{ detailDoc.account ? detailDoc.account.account_name : '—' }}</span></span>
+              <span>结算方式：<strong>{{ paymentMethodName(detailDoc) }}</strong></span>
+              <span>业务日期：<strong class="font-tabular">{{ dateText(detailDoc.business_date) }}</strong></span>
+              <span>经办人：<strong>{{ detailDoc.operator_name_snapshot || detailDoc.operator_name || '—' }}</strong></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4 项重点金额快报 KPI Cards -->
+        <div class="detail-kpi-grid">
+          <div class="kpi-mini-card is-primary">
+            <span class="kpi-label">实{{ title }}金额</span>
+            <strong class="kpi-val font-tabular">{{ money(detailDoc.amount) }} <span class="kpi-currency">{{ detailDoc.currency }}</span></strong>
+          </div>
+          <div class="kpi-mini-card is-success">
+            <span class="kpi-label">已核销金额</span>
+            <strong class="kpi-val font-tabular text-success">{{ money(detailDoc.allocated_amount) }} <span class="kpi-currency">{{ detailDoc.currency }}</span></strong>
+          </div>
+          <div class="kpi-mini-card" :class="Number(detailDoc.unallocated_amount) > 0 ? 'is-warning' : 'is-muted'">
+            <span class="kpi-label">未核销余额</span>
+            <strong :class="['kpi-val font-tabular', Number(detailDoc.unallocated_amount) > 0 ? 'text-amber' : 'text-muted']">
+              {{ money(detailDoc.unallocated_amount) }} <span class="kpi-currency">{{ detailDoc.currency }}</span>
+            </strong>
+          </div>
+          <div class="kpi-mini-card is-fee">
+            <span class="kpi-label">手续费 ({{ feeTypeLabel(detailDoc.platform_fee_type) }})</span>
+            <strong class="kpi-val font-tabular">{{ money(detailDoc.platform_fee_amount || 0) }} <span class="kpi-currency">{{ detailDoc.currency }}</span></strong>
+          </div>
+        </div>
+
+        <!-- 卡片式分块详情 -->
+        <div class="detail-cards-stack">
+          <!-- 卡片 1：基础单据与结算要素 -->
+          <div class="detail-card">
+            <div class="card-title-bar">
+              <i class="el-icon-document" />
+              <span>基础单据与结算要素</span>
+            </div>
+            <div class="kv-grid">
+              <div class="kv-item"><span class="kv-label">{{ title }}单号</span><span class="kv-val font-tabular code-mono font-bold">{{ detailDoc.document_no }}</span></div>
+              <div class="kv-item"><span class="kv-label">业务日期</span><span class="kv-val font-tabular">{{ dateText(detailDoc.business_date) }}</span></div>
+              <div class="kv-item"><span class="kv-label">交易对手</span><span class="kv-val font-bold">{{ detailDoc.party_name_snapshot || '—' }}</span></div>
+              <div class="kv-item"><span class="kv-label">资金账户</span><span class="kv-val">{{ detailDoc.account ? `${detailDoc.account.account_name} (${detailDoc.account.currency})` : '—' }}</span></div>
+              <div class="kv-item"><span class="kv-label">结算币种</span><span class="kv-val font-tabular">{{ detailDoc.currency }}</span></div>
+              <div class="kv-item"><span class="kv-label">结算方式</span><span class="kv-val">{{ paymentMethodName(detailDoc) }}</span></div>
+              <div class="kv-item"><span class="kv-label">外部流水号</span><span class="kv-val font-tabular code-mono">{{ detailDoc.external_reference_no || '—' }}</span></div>
+              <div class="kv-item"><span class="kv-label">经办人</span><span class="kv-val">{{ detailDoc.operator_name_snapshot || detailDoc.operator_name || '—' }}</span></div>
+              <div class="kv-item"><span class="kv-label">制单时间</span><span class="kv-val font-tabular">{{ formatDateTime(detailDoc.created_at) }}</span></div>
+              <div class="kv-item full-width-kv"><span class="kv-label">业务备注</span><span class="kv-val remark-text">{{ detailDoc.remark || '—' }}</span></div>
+            </div>
+          </div>
+
+          <!-- 卡片 2：采购订单用途关联 -->
+          <div v-if="detailDoc.party_type === 'supplier' || (detailDoc.purchase_order_allocations && detailDoc.purchase_order_allocations.length)" class="detail-card">
+            <div class="card-title-bar">
+              <i class="el-icon-goods" />
+              <span>采购订单用途关联</span>
+              <el-tag size="mini" type="info" class="card-title-tag">
+                {{ (detailDoc.purchase_order_allocations && detailDoc.purchase_order_allocations.length) ? `已关联 ${detailDoc.purchase_order_allocations.length} 笔订单` : '未指定具体采购用途' }}
+              </el-tag>
+            </div>
+            <div v-if="detailDoc.purchase_order_allocations && detailDoc.purchase_order_allocations.length" class="table-wrap">
+              <el-table :data="detailDoc.purchase_order_allocations" border stripe size="mini" class="enterprise-table">
+                <el-table-column label="采购订单号" min-width="160">
+                  <template slot-scope="{ row }">
+                    <span class="font-tabular font-bold code-mono">{{ row.purchase_order_no || ('#' + row.purchase_order_id) }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="款项期次 / 阶段" min-width="130" align="center">
+                  <template slot-scope="{ row }">
+                    <el-tag size="mini" effect="plain" type="info">{{ row.payment_plan_stage || '全款/自由款' }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="到期日期" width="115" align="center">
+                  <template slot-scope="{ row }">
+                    <span class="font-tabular">{{ row.payment_plan_due_date || '—' }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="用途金额" width="130" align="right">
+                  <template slot-scope="{ row }">
+                    <strong class="font-tabular money-text">{{ money(row.amount) }} {{ detailDoc.currency }}</strong>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+            <div v-else class="empty-section-tip">
+              <i class="el-icon-info" /> 本单据为通用款项，未绑定具体采购订单期次。
+            </div>
+            <div v-if="detailDoc.purchase_order_allocation_reason" class="purpose-reason-bar">
+              <i class="el-icon-chat-dot-round" />
+              <span>用途说明：{{ detailDoc.purchase_order_allocation_reason }}</span>
+            </div>
+          </div>
+
+          <!-- 卡片 3：核销明细流水 -->
+          <div class="detail-card">
+            <div class="card-title-bar">
+              <i class="el-icon-connection" />
+              <span>核销明细流水</span>
+              <el-tag size="mini" type="info" class="card-title-tag">
+                {{ (detailDoc.allocations && detailDoc.allocations.length) ? `共 ${detailDoc.allocations.length} 笔核销` : '暂无对账冲减流水' }}
+              </el-tag>
+            </div>
+            <div v-if="detailDoc.allocations && detailDoc.allocations.length" class="table-wrap">
+              <el-table :data="detailDoc.allocations" border stripe size="mini" class="enterprise-table">
+                <el-table-column label="来源类型" min-width="130">
+                  <template slot-scope="{ row }">{{ sourceLabel(row.source_business_type) }}</template>
+                </el-table-column>
+                <el-table-column prop="source_document_no" label="业务单号" min-width="160">
+                  <template slot-scope="{ row }">
+                    <span class="font-tabular code-mono">{{ row.source_document_no }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="核销金额" width="130" align="right">
+                  <template slot-scope="{ row }">
+                    <strong class="font-tabular money-text">{{ money(row.allocated_amount) }}</strong>
+                  </template>
+                </el-table-column>
+                <el-table-column label="核销状态" width="95" align="center">
+                  <template slot-scope="{ row }">
+                    <el-tag :type="row.status === 'active' ? 'success' : 'info'" size="mini" effect="plain">
+                      {{ row.status === 'active' ? '已核销' : '已撤销' }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="核销时间" min-width="155" align="center">
+                  <template slot-scope="{ row }">
+                    <span class="font-tabular">{{ formatDateTime(row.allocated_at) }}</span>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+            <div v-else class="empty-section-tip">
+              <i class="el-icon-info" /> 暂无核销记录。
+            </div>
+          </div>
+
+          <!-- 卡片 4：单据附件 (若有附件) -->
+          <div v-if="detailDoc.attachments && detailDoc.attachments.length" class="detail-card">
+            <div class="card-title-bar">
+              <i class="el-icon-paperclip" />
+              <span>单据附件 ({{ detailDoc.attachments.length }})</span>
+            </div>
+            <div class="table-wrap">
+              <el-table :data="detailDoc.attachments" border stripe size="mini" class="enterprise-table">
+                <el-table-column prop="original_name" label="文件名" min-width="200" show-overflow-tooltip />
+                <el-table-column label="大小" width="100" align="center">
+                  <template slot-scope="{ row }">{{ fileSize(row.file_size) }}</template>
+                </el-table-column>
+                <el-table-column prop="uploaded_at" label="上传时间" min-width="150" align="center" />
+              </el-table>
+            </div>
+          </div>
+
+          <!-- 卡片 5：单据流转审计日志 (若有日志) -->
+          <div v-if="detailDoc.logs && detailDoc.logs.length" class="detail-card">
+            <div class="card-title-bar">
+              <i class="el-icon-time" />
+              <span>单据流转日志 ({{ detailDoc.logs.length }})</span>
+            </div>
+            <div class="table-wrap">
+              <el-table :data="detailDoc.logs" border stripe size="mini" max-height="180" class="enterprise-table">
+                <el-table-column label="操作时间" width="155" align="center">
+                  <template slot-scope="{ row }">{{ formatDateTime(row.created_at) }}</template>
+                </el-table-column>
+                <el-table-column prop="operator_name" label="操作人" width="100" align="center">
+                  <template slot-scope="{ row }">{{ row.operator_name || '系统' }}</template>
+                </el-table-column>
+                <el-table-column label="动作" width="110" align="center">
+                  <template slot-scope="{ row }">
+                    <el-tag size="mini" type="info" effect="plain">{{ logLabel(row.action) }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="content" label="操作内容" min-width="240" show-overflow-tooltip />
+                <el-table-column prop="remark" label="备注" min-width="120" show-overflow-tooltip />
+              </el-table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div slot="footer" class="dialog-footer">
+        <el-button size="small" @click="detailDialogVisible = false">关闭</el-button>
+        <el-button
+          v-if="detailDoc && detailDoc.status === 'draft' && $can(createPermission)"
+          size="small"
+          type="primary"
+          icon="el-icon-edit"
+          class="btn-detail-edit"
+          @click="editDraftFromDetail"
+        >
+          编辑草稿
+        </el-button>
+        <el-button
+          v-if="detailDoc && detailDoc.status === 'draft' && $can(confirmPermission)"
+          size="small"
+          type="success"
+          icon="el-icon-check"
+          class="btn-detail-confirm"
+          @click="confirmFromDetail"
+        >
+          确认{{ title }}
+        </el-button>
+        <el-button
+          v-if="detailDoc && detailDoc.status !== 'draft'"
+          size="small"
+          icon="el-icon-connection"
+          :class="hasSourceReference ? 'btn-detail-prepay' : 'btn-detail-alloc'"
+          :disabled="hasSourceReference && !canUseSource(detailDoc)"
+          @click="openAllocationFromDetail"
+        >
+          {{ allocationLabel(detailDoc) }}
+        </el-button>
+        <el-button
+          v-if="detailDoc && detailDoc.party_type === 'supplier' && detailDoc.status !== 'draft'"
+          size="small"
+          icon="el-icon-goods"
+          class="btn-detail-link"
+          @click="openPurchaseLinksFromDetail"
+        >
+          采购关联
+        </el-button>
+        <el-button
+          v-if="detailDoc && detailDoc.status === 'confirmed' && $can(voidPermission)"
+          size="small"
+          type="danger"
+          icon="el-icon-delete"
+          plain
+          @click="voidFromDetail"
+        >
+          作废
+        </el-button>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
 <script>
-import { listCashDocuments, confirmCashDocument, voidCashDocument, listFinanceAccounts, resolveFinanceSource } from '../../../api/erp/finance'
+import { listCashDocuments, confirmCashDocument, voidCashDocument, listFinanceAccounts, resolveFinanceSource, getCashDocument } from '../../../api/erp/finance'
 import FinanceAllocation from './FinanceAllocation.vue'
 
 const blankQuery = () => ({ keyword: '', party_keyword: '', finance_account_id: '', status: '', allocation_status: '', date_range: [] })
@@ -225,6 +497,7 @@ export default {
     query: blankQuery(), partyFilter: {}, sourceContext: null, sourceLoading: false, sourceError: '',
     allocationVisible: false, allocationId: null, contextRevision: 0, loadRevision: 0,
     purchaseLinksVisible: false, purchaseLinksCashId: 0,
+    detailDialogVisible: false, detailLoading: false, detailDoc: null,
   }),
   computed: {
     title() { return this.direction === 'receipt' ? '收款' : '付款' },
@@ -346,7 +619,99 @@ export default {
     statusChanged() { if (this.query.status && this.query.status !== 'confirmed') this.query.allocation_status = ''; return this.search() },
     allocationStatusChanged() { if (this.query.allocation_status) this.query.status = 'confirmed'; return this.search() },
     create() { this.$router.push({ path: this.basePath + '/create', query: this.sourceContext ? { source_type: this.sourceContext.type, source_id: this.sourceContext.id } : {} }) },
-    view(row) { this.$router.push(this.basePath + '/' + row.id) },
+    async view(row) {
+      this.detailDoc = {
+        ...row,
+        allocations: row.allocations || [],
+        purchase_order_allocations: row.purchase_order_allocations || [],
+        attachments: row.attachments || [],
+        logs: row.logs || [],
+      }
+      this.detailDialogVisible = true
+      this.detailLoading = true
+      try {
+        const fetchFn = typeof getCashDocument === 'function' ? getCashDocument : null
+        if (fetchFn && row.id) {
+          const res = await fetchFn(row.id)
+          const data = res?.data?.data || res?.data
+          if (data) {
+            this.detailDoc = {
+              ...data,
+              allocations: data.allocations || [],
+              purchase_order_allocations: data.purchase_order_allocations || [],
+              attachments: data.attachments || [],
+              logs: data.logs || [],
+            }
+          }
+        }
+      } catch (error) {
+        console.error('加载单据详情失败:', error)
+      } finally {
+        this.detailLoading = false
+      }
+    },
+    editDraftFromDetail() {
+      const id = this.detailDoc?.id
+      this.detailDialogVisible = false
+      if (id) this.$router.push(this.basePath + '/' + id)
+    },
+    confirmFromDetail() {
+      const row = this.detailDoc
+      this.detailDialogVisible = false
+      if (row) this.confirm(row)
+    },
+    openAllocationFromDetail() {
+      const row = this.detailDoc
+      this.detailDialogVisible = false
+      if (row) this.openAllocation(row)
+    },
+    openPurchaseLinksFromDetail() {
+      const row = this.detailDoc
+      this.detailDialogVisible = false
+      if (row) this.openPurchaseLinks(row)
+    },
+    voidFromDetail() {
+      const row = this.detailDoc
+      this.detailDialogVisible = false
+      if (row) this.voidDoc(row)
+    },
+    feeTypeLabel(type) {
+      return { platform: '平台手续费', bank: '银行手续费', other: '其他费用' }[type] || '无'
+    },
+    formatDateTime(value) {
+      if (!value) return '—'
+      const d = new Date(value)
+      if (isNaN(d.getTime())) return String(value)
+      const pad = n => String(n).padStart(2, '0')
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+    },
+    fileSize(value) {
+      const n = Number(value || 0)
+      if (n <= 0) return '0 B'
+      return n > 1048576 ? (n / 1048576).toFixed(2) + ' MB' : (n / 1024).toFixed(1) + ' KB'
+    },
+    sourceLabel(value) {
+      return {
+        sales_order: '销售订单',
+        sales_order_refund: '销售订单退款',
+        purchase_receipt: '采购到货',
+        purchase_settlement_source: '采购结算来源',
+        purchase_return_ap_offset: '采购退货冲应付',
+        purchase_return_supplier_refund: '供应商退款',
+      }[value] || value || '—'
+    },
+    logLabel(value) {
+      return {
+        create: '创建',
+        update_draft: '修改草稿',
+        confirm: '确认',
+        allocate: '核销',
+        reverse_allocation: '撤销核销',
+        freeze_purchase_order_purposes: '确认采购用途',
+        revise_purchase_order_purposes: '调整采购用途',
+        void: '作废',
+      }[value] || value || '—'
+    },
     purchaseOrderSummary(row) {
       return [...new Set((row.purchase_order_allocations || []).map(link => link.purchase_order_no || `#${link.purchase_order_id}`))].join('、') || '—'
     },
@@ -370,9 +735,11 @@ export default {
     },
     async confirm(row) {
       // 草稿清单只表示待核销意向，列表不能跳过逐项核对直接把它当成预付款确认。
-      if (row.draft_allocation_items?.length || row.purchase_order_allocations?.length) return this.view(row)
+      if (row.draft_allocation_items?.length || row.purchase_order_allocations?.length) {
+        return this.$router.push(this.basePath + '/' + row.id)
+      }
       try {
-        await this.$confirm('确认' + this.title + '单 ' + row.document_no + '？确认后金额不可编辑。', '确认资金事实', { type: 'warning' })
+        await this.$confirm(`确认${this.title}单 ${row.document_no}：${row.party_name_snapshot || ''} ${Number(row.amount || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${row.currency || ''}。确认后金额不可编辑，是否继续？`, '确认资金事实', { type: 'warning' })
         await confirmCashDocument(row.id)
         this.$message.success('已确认')
         await this.load()
@@ -924,6 +1291,285 @@ export default {
   .table-pagination-row >>> .el-pagination {
     white-space: normal;
     text-align: center;
+  }
+}
+
+/* 详情居中弹窗样式 (完全对齐设计规范) */
+::v-deep .cash-detail-dialog {
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+}
+
+::v-deep .cash-detail-dialog .el-dialog__header {
+  padding: 16px 20px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+::v-deep .cash-detail-dialog .el-dialog__title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+::v-deep .cash-detail-dialog .el-dialog__body {
+  padding: 18px 20px;
+  background: #f8fafc;
+  max-height: 74vh;
+  overflow-y: auto;
+}
+
+.modal-summary-banner {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.banner-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: #eaf7ef;
+  color: #008b4b;
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  flex-shrink: 0;
+}
+
+.banner-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.banner-title-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+
+.banner-title-line h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.banner-sub-meta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 12px;
+  color: #64748b;
+  flex-wrap: wrap;
+}
+
+.banner-sub-meta strong {
+  color: #1e293b;
+}
+
+.detail-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.kpi-mini-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+}
+
+.kpi-mini-card.is-primary {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.kpi-mini-card.is-primary .kpi-val {
+  color: #008b4b;
+}
+
+.kpi-mini-card.is-warning {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.kpi-label {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.kpi-val {
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+  margin-top: 2px;
+}
+
+.kpi-currency {
+  font-size: 12px;
+  font-weight: 500;
+  color: #64748b;
+  margin-left: 2px;
+}
+
+.detail-cards-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.detail-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+
+.card-title-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.card-title-bar i {
+  color: #008b4b;
+}
+
+.card-title-tag {
+  margin-left: auto;
+}
+
+.kv-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px 16px;
+}
+
+.kv-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.kv-item.full-width-kv {
+  grid-column: 1 / -1;
+}
+
+.kv-label {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.kv-val {
+  font-size: 13px;
+  color: #1e293b;
+  overflow-wrap: anywhere;
+}
+
+.remark-text {
+  color: #475569;
+  line-height: 1.5;
+}
+
+.empty-section-tip {
+  padding: 14px 16px;
+  background: #f8fafc;
+  border-radius: 6px;
+  color: #94a3b8;
+  font-size: 12px;
+  text-align: center;
+}
+
+.purpose-reason-bar {
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #166534;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-detail-edit {
+  background: #008b4b !important;
+  border-color: #008b4b !important;
+  color: #ffffff !important;
+}
+
+.btn-detail-edit:hover {
+  background: #00763f !important;
+  border-color: #00763f !important;
+}
+
+.btn-detail-confirm {
+  background: #10b981 !important;
+  border-color: #10b981 !important;
+  color: #ffffff !important;
+}
+
+.btn-detail-alloc {
+  color: #008b4b !important;
+  border-color: #bbf7d0 !important;
+}
+
+.btn-detail-alloc:hover {
+  background: #eaf7ef !important;
+}
+
+.btn-detail-prepay {
+  background: #008b4b !important;
+  border-color: #008b4b !important;
+  color: #ffffff !important;
+}
+
+.btn-detail-link {
+  color: #0284c7 !important;
+  border-color: #bae6fd !important;
+}
+
+.btn-detail-link:hover {
+  background: #f0f9ff !important;
+}
+
+@media (max-width: 768px) {
+  .detail-kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .kv-grid {
+    grid-template-columns: 1fr;
+  }
+  ::v-deep .cash-detail-dialog {
+    width: 95vw !important;
+    margin: 0 auto;
+  }
+  ::v-deep .cash-detail-dialog .el-dialog__body {
+    padding: 12px 14px;
+  }
+}
+
+@media (max-width: 520px) {
+  .detail-kpi-grid {
+    grid-template-columns: 1fr;
   }
 }
 

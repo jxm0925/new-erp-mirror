@@ -3,13 +3,17 @@
 namespace App\Http\Controllers\Api\V1\Erp;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Concerns\AuthorizesErpPermissions;
 use App\Models\Erp\{InventoryAdjustment, InventoryTransaction, InventoryTransactionItem};
 use Illuminate\Http\Request;
 
 class InventoryTransactionController extends Controller
 {
+    use AuthorizesErpPermissions;
+
     public function index(Request $request)
     {
+        $this->erpAuthorize($request, 'inventory.transaction.view');
         if ($request->input('view') === 'lines') {
             return $this->lineIndex($request);
         }
@@ -63,19 +67,27 @@ class InventoryTransactionController extends Controller
         $stats = [
             'today_in_count' => (clone $statsQuery)->whereHas('transaction', fn ($q) => $q
                 ->whereDate('transaction_date', now()->toDateString())
-                ->where('transaction_type', 'purchase_receipt_posting'))->count(),
+                ->whereIn('transaction_type', ['purchase_receipt_posting', 'purchase_receipt_quality_release']))->count(),
             'today_adjust_count' => (clone $statsQuery)->whereHas('transaction', fn ($q) => $q
                 ->whereDate('transaction_date', now()->toDateString())
                 ->where('transaction_type', 'manual_adjustment'))->count(),
             'pending_adjustment_count' => InventoryAdjustment::query()->where('adjustment_status', 'submitted')->count(),
             'reversed_count' => InventoryTransaction::query()->where('posting_status', 'reversed')->count(),
+            'today_out_count' => (clone $statsQuery)->where('change_qty', '<', 0)->whereHas('transaction', fn ($q) => $q
+                ->whereDate('transaction_date', now()->toDateString()))->count(),
         ];
         $paginator = $query->paginate($this->perPage($request));
+        // 流水行展示过账人姓名；历史流水未记录操作人时前端显示“未记录”。
+        $ids = $paginator->getCollection()->map(fn ($line) => $line->transaction?->posted_by)->filter()->unique()->values();
+        $names = $ids->isEmpty() ? collect() : \Illuminate\Support\Facades\DB::table('erp_legacy_admin_users')->whereIn('legacy_id', $ids)
+            ->get(['legacy_id', 'nickname', 'username'])->mapWithKeys(fn ($user) => [(int) $user->legacy_id => $user->nickname ?: $user->username]);
+        $paginator->getCollection()->each(fn ($line) => $line->setAttribute('posted_by_name', $line->transaction?->posted_by ? ($names[(int) $line->transaction->posted_by] ?? null) : null));
         return response()->json([...$paginator->toArray(), 'stats' => $stats]);
     }
 
-    public function show(int $id)
+    public function show(Request $request, int $id)
     {
+        $this->erpAuthorize($request, 'inventory.transaction.view');
         return response()->json(InventoryTransaction::with(['items.item.unit', 'items.warehouse', 'items.location'])->findOrFail($id));
     }
 

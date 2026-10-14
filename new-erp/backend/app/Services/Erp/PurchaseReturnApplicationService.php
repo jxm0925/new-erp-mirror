@@ -577,7 +577,7 @@ class PurchaseReturnApplicationService
             || (float) $event->issue_qty + 0.00000001 < $requested
             || (float) $balance->quantity_on_hand + 0.00000001 < $requested
             || (float) $balance->quantity_pending + 0.00000001 < $requested) {
-            throw ValidationException::withMessages(['return_status' => '质量退货单的冻结库存与原 Item、仓库、库位、批次或数量不一致，不能继续处理。']);
+            throw ValidationException::withMessages(['return_status' => '质量退货单的冻结库存与原物料、仓库、库位、批次或数量不一致，不能继续处理。']);
         }
     }
 

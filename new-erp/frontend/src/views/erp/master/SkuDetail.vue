@@ -77,12 +77,12 @@
           </div>
         </section>
 
-        <!-- 默认 Item 物料关系与履历卡片 -->
+        <!-- 默认物料关系与履历卡片 -->
         <section class="detail-card">
           <div class="card-header">
             <div class="header-title">
               <i class="el-icon-connection" />
-              <h2>默认物料（Item）关系与履历</h2>
+              <h2>默认物料关系与履历</h2>
             </div>
             <el-button
               v-if="(sku.line_type || sku.order_line_type) === 'physical'"
@@ -97,12 +97,12 @@
 
           <div class="table-wrap">
             <el-table :data="relations" size="small" border class="relation-table" empty-text="当前尚未配置关联物料">
-              <el-table-column label="Item 编码" min-width="140" show-overflow-tooltip>
+              <el-table-column label="物料编码" min-width="140" show-overflow-tooltip>
                 <template slot-scope="{ row }">
                   <span class="code-mono font-medium text-success">{{ row.item && row.item.item_code || '—' }}</span>
                 </template>
               </el-table-column>
-              <el-table-column label="Item 名称" min-width="160" show-overflow-tooltip>
+              <el-table-column label="物料名称" min-width="160" show-overflow-tooltip>
                 <template slot-scope="{ row }">
                   <span>{{ row.item && row.item.item_name || '—' }}</span>
                 </template>
@@ -110,7 +110,7 @@
               <el-table-column label="关系类型" width="110" align="center">
                 <template slot-scope="{ row }">
                   <el-tag size="mini" :type="row.is_primary ? 'success' : 'info'" effect="plain">
-                    {{ row.is_primary ? '默认 Item' : (row.relation_type || '辅料') }}
+                    {{ row.is_primary ? '默认物料' : (row.relation_type || '辅料') }}
                   </el-tag>
                 </template>
               </el-table-column>
@@ -294,6 +294,7 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import { getEntity, listRelations } from '../../../api/erp/master'
 import { legacyMediaUrl } from '../../../utils/legacyMedia'
 
@@ -338,10 +339,10 @@ export default {
     },
     itemNotice () {
       return this.lineType !== 'physical'
-        ? '当前订单行类型为非实物类（服务/无需发货），无需配置默认 Item。'
+        ? '当前订单行类型为非实物类（服务/无需发货），无需配置默认物料。'
         : this.valid
-          ? '当前 SKU 已成功绑定有效默认 Item 物料，可正常投入采购、销售下单、BOM 分解与工单排产。'
-          : '当前实物 SKU 尚未绑定有效默认 Item，暂不可在销售订单中履约排产，请前往关系维护中心进行配置。'
+          ? '当前 SKU 已成功绑定有效默认物料，可正常投入采购、销售下单、BOM 分解与工单排产。'
+          : '当前实物 SKU 尚未绑定有效默认物料，暂不可在销售订单中履约排产，请前往关系维护中心进行配置。'
     },
     attrs () {
       const map = value => ({
@@ -390,7 +391,7 @@ export default {
       return ({ draft: '草稿', enabled: '启用', disabled: '停用' })[value] || value || '—'
     },
     date (v) {
-      return v ? String(v).slice(0, 16).replace('T', ' ') : '—'
+      return v ? erpDateTime(v, 16) : '—'
     },
     money (value) {
       return value === null || value === undefined || value === '' ? '—' : `¥ ${Number(value).toFixed(2)}`

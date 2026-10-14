@@ -24,7 +24,7 @@
       <!-- 全局统一页面提示条（用户指令：无需综合指标卡片，聚焦业务列表） -->
       <div class="erp-page-tip">
         <i class="el-icon-info" />
-        <span>维护企业上游供应商主档案、供货能力资质与采购价格协议。支持维护供应商关联 Item 供货目录、换算阶梯报价及采购履约对账记录。</span>
+        <span>维护企业上游供应商主档案、供货能力资质与采购价格协议。支持维护供应商关联物料供货目录、换算阶梯报价及采购履约对账记录。</span>
       </div>
 
       <!-- 筛选工具栏与主表格卡片 -->
@@ -519,7 +519,7 @@
                   <item-category-tree-picker v-model="selectedCategoryIds" :tree="categoryTree" multiple />
                   <div class="category-scope-tip">
                     <i class="el-icon-info" />
-                    <span>品类用于采购寻源候选筛选；具体供货以物料 Item 供货关系与阶梯报价为准。</span>
+                    <span>品类用于采购寻源候选筛选；具体供货以物料供货关系与阶梯报价为准。</span>
                   </div>
                 </el-form-item>
               </div>
@@ -558,16 +558,16 @@
       </div>
     </el-dialog>
 
-    <!-- 弹窗 2：新增 Item 供货关系 -->
+    <!-- 弹窗 2：新增物料供货关系 -->
     <el-dialog
       :visible.sync="relationDialogVisible"
-      title="新增 Item 供货关系"
+      title="新增物料供货关系"
       width="580px"
       custom-class="erp-supplier-dialog"
       :close-on-click-modal="false"
     >
       <el-form ref="relationForm" :model="relationForm" :rules="relationRules" label-position="top" size="small">
-        <el-form-item label="具体物料 Item" prop="item_id">
+        <el-form-item label="具体物料" prop="item_id">
           <el-select v-model="relationForm.item_id" v-paged-scroll="loadMoreSupplierItems" filterable remote :remote-method="searchSupplierItems" :loading="itemPage.loading" class="full" placeholder="请选择已启用采购物料">
             <el-option v-for="item in items" :key="item.id" :label="`${item.item_code} / ${item.item_name}`" :value="item.id" />
           </el-select>
@@ -612,7 +612,7 @@
     >
       <el-form ref="quoteForm" :model="quoteForm" :rules="quoteRules" label-position="top" size="small">
         <div class="form-grid-2">
-          <el-form-item label="具体物料 Item" prop="item_id">
+          <el-form-item label="具体物料" prop="item_id">
             <el-select v-model="quoteForm.item_id" v-paged-scroll="loadMoreSupplierItems" filterable remote :remote-method="searchSupplierItems" :loading="itemPage.loading" class="full" placeholder="请选择物料 Item" @change="loadQuoteConversions">
               <el-option v-for="item in items" :key="item.id" :label="`${item.item_code} / ${item.item_name}`" :value="item.id" />
             </el-select>
@@ -632,9 +632,9 @@
         <div class="conversion-box">
           <div class="conversion-head">
             <b>单位换算关系</b>
-            <span class="text-xs text-muted">自动读取 Item 采购单位换算</span>
+            <span class="text-xs text-muted">自动读取物料的采购单位换算</span>
           </div>
-          <p class="conversion-p">Item默认：1 {{ quotePurchaseUnit }} = {{ quoteStandardFactor }} {{ quoteBaseUnit }}</p>
+          <p class="conversion-p">物料默认换算：1 {{ quotePurchaseUnit }} = {{ quoteStandardFactor }} {{ quoteBaseUnit }}</p>
           <div class="quote-formula font-tabular">{{ quoteFormulaText }}</div>
           <div class="factor-result">
             <span>基本单位：<strong>{{ quoteBaseUnit }}</strong></span>
@@ -686,6 +686,7 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import pagedScroll from '../../../directives/pagedScroll'
 import { createPageState, queryPage, includeSelected } from '../../../utils/pagedQuery'
 import {
@@ -801,12 +802,12 @@ export default {
         supplier_name: [{ required: true, message: '请输入供应商名称', trigger: 'blur' }]
       },
       relationRules: {
-        item_id: [{ required: true, message: '请选择具体 Item', trigger: 'change' }],
+        item_id: [{ required: true, message: '请选择具体物料', trigger: 'change' }],
         capability_source: [{ required: true, message: '请选择能力来源', trigger: 'change' }],
         change_reason: [{ required: true, message: '请输入变更原因', trigger: 'blur' }]
       },
       quoteRules: {
-        item_id: [{ required: true, message: '请选择具体 Item', trigger: 'change' }],
+        item_id: [{ required: true, message: '请选择具体物料', trigger: 'change' }],
         unit_id: [{ required: true, message: '请选择采购单位', trigger: 'change' }],
         price: [{ required: true, message: '请输入大于 0 的有效报价', trigger: 'blur' }]
       }
@@ -847,7 +848,7 @@ export default {
     },
     quoteFormulaText () {
       if (!this.quoteConversion || this.quoteFinalFactor <= 0 || Number(this.quoteForm.price || 0) <= 0) {
-        return '请先选择 Item、采购单位并填写有效报价'
+        return '请先选择 物料、采购单位并填写有效报价'
       }
       const price = Number(this.quoteForm.price).toLocaleString('zh-CN', { maximumFractionDigits: 4 })
       const factor = Number(this.quoteFinalFactor).toLocaleString('zh-CN', { maximumFractionDigits: 8 })
@@ -1096,11 +1097,11 @@ export default {
         this.saving = true
         try {
           await saveSupplierItemRelation(this.selectedSupplier.id, { ...this.relationForm, relation_status: 'active' })
-          this.$message.success('具体 Item 供货关系已保存')
+          this.$message.success('物料供货关系已保存')
           this.relationDialogVisible = false
           await this.loadRelations(1)
         } catch (e) {
-          this.$message.error(e.userMessage || 'Item 供货关系保存失败')
+          this.$message.error(e.userMessage || '物料供货关系保存失败')
         } finally {
           this.saving = false
         }
@@ -1149,12 +1150,12 @@ export default {
     },
     async disableRelation (row) {
       try {
-        const result = await this.$prompt('停用后不会删除历史。请输入停用原因：', '停用 Item 关系', {
+        const result = await this.$prompt('停用后不会删除历史。请输入停用原因：', '停用 物料关系', {
           inputPattern: /\S+/,
           inputErrorMessage: '必须填写原因'
         })
         await disableSupplierItemRelation(this.selectedSupplier.id, row.id, { reason: result.value })
-        this.$message.success('Item 关系已停用')
+        this.$message.success('物料关系已停用')
         await this.loadSupplierDetail()
       } catch (e) {
         if (e !== 'cancel') this.$message.error(e.userMessage || '停用失败')
@@ -1234,7 +1235,7 @@ export default {
       return v ? String(v).replace(/(\d{3})\d+(\d{4})/, '$1****$2') : '-'
     },
     formatDate (v) {
-      return v ? String(v).replace('T', ' ').slice(0, 16) : '-'
+      return v ? erpDateTime(v, 16) : '-'
     },
     formatDateOnly (v) {
       return v ? String(v).slice(0, 10) : '长期'

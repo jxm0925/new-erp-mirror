@@ -128,7 +128,7 @@ class SeederPreservationTest extends TestCase
     {
         self::assertEmpty($this->db->rows['erp_rbac_roles'] ?? []);
         (new TestRbac)->run();
-        foreach (['sales_manager', 'finance_manager', 'fulfillment_manager'] as $code) {
+        foreach (['sales_manager', 'finance_manager', 'fulfillment_manager', 'purchaser', 'warehouse_manager'] as $code) {
             $role = DB::table('erp_rbac_roles')->where('code', $code)->first();
             self::assertNotNull($role, $code);
             self::assertTrue($role->enabled);

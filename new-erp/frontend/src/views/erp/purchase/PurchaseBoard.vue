@@ -10,9 +10,9 @@
           <p class="subtitle">{{ meta.subtitle }}</p>
         </div>
         <div class="head-actions">
-          <el-button v-if="mode==='orders' && $can(['purchase.order.generate', 'purchase.order.create', 'purchase.order'])" size="small" type="success" icon="el-icon-download" @click="$router.push('/purchase/plans')">从计划生成订单</el-button>
-          <el-button v-if="mode==='receipts' && $can(['purchase.receipt.create', 'purchase.receipt'])" size="small" type="success" icon="el-icon-truck" @click="$router.push('/purchase/orders')">从采购订单生成到货单</el-button>
-          <el-button v-if="$can([`purchase.${mode.replace(/s$/, '')}.create`, `purchase.${mode.replace(/s$/, '')}`])" size="small" type="success" icon="el-icon-plus" @click="openEditor()">新增{{ meta.short }}</el-button>
+          <el-button v-if="mode==='orders' && $can(['purchase.order.generate', 'purchase.plan.generate_order'])" size="small" type="success" icon="el-icon-download" @click="$router.push('/purchase/plans')">从计划生成订单</el-button>
+          <el-button v-if="mode==='receipts' && $can('purchase.receipt.create')" size="small" type="success" icon="el-icon-truck" @click="$router.push('/purchase/orders')">从采购订单生成到货单</el-button>
+          <el-button v-if="$can(`purchase.${mode.replace(/s$/, '')}.create`)" size="small" type="success" icon="el-icon-plus" @click="openEditor()">新增{{ meta.short }}</el-button>
           <el-button v-if="mode==='requests' && $can(['purchase.request.view', 'purchase.request'])" size="small" icon="el-icon-delete" @click="openDeletedDialog">已删除需求</el-button>
           <el-button v-if="mode==='receipts' && $can(['purchase.quality.view', 'purchase.defect.view', 'purchase.receipt'])" size="small" icon="el-icon-warning-outline" @click="$router.push('/purchase/defects')">不合格品处理</el-button>
           <el-button size="small" plain icon="el-icon-refresh" @click="load">刷新</el-button>
@@ -58,7 +58,11 @@
           <el-table-column label="管理类型" width="110"><template slot-scope="{row}"><el-tag size="mini" :type="row.management_scope === 'office' ? 'info' : row.management_scope === 'factory' ? 'success' : 'warning'">{{ scopeLabel(row.management_scope) }}</el-tag></template></el-table-column>
           <el-table-column v-for="col in columns" :key="`${col.prop}-${col.label}`" :label="col.label" :min-width="col.width || 90" show-overflow-tooltip>
             <template slot-scope="{row}">
-              <el-tag v-if="col.tag" size="mini" :type="tagType(valueOf(row, col.prop), col.prop)">{{ labelOf(valueOf(row, col.prop), col.prop) }}</el-tag>
+              <el-tag v-if="col.tag" size="mini" :type="tagType(statusValue(row, col.prop), col.prop)">{{ labelOf(statusValue(row, col.prop), col.prop) }}</el-tag>
+              <div v-else-if="col.main" class="main-status-cell">
+                <el-tag size="mini" :type="mainStatus(row).type" :effect="mainStatus(row).type === 'danger' ? 'dark' : 'light'">{{ mainStatus(row).text }}</el-tag>
+                <small v-if="mainStatus(row).sub" :class="['main-status-sub', mainStatus(row).type === 'danger' ? 'is-danger' : '']">{{ mainStatus(row).sub }}</small>
+              </div>
               <div v-else-if="col.prop === 'allocation_summary'">
                 <el-tag size="mini" :type="planAllocationStatusTag(row)" effect="plain">
                   <i :class="planAllocationStatusIcon(row)" />
@@ -68,12 +72,19 @@
               <span v-else>{{ displayValue(row, col) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" :width="mode==='requests' ? 400 : 310" fixed="right">
+          <!-- 操作列：详情 + 一个主操作，其余（编辑、取消、关闭、删除等）收进“更多”，危险操作标红。 -->
+          <el-table-column label="操作" width="220" fixed="right">
             <template slot-scope="{row}">
-              <el-button v-if="$can([`purchase.${mode.replace(/s$/, '')}.view`, `purchase.${mode.replace(/s$/, '')}`])" class="action-link-theme" type="text" size="mini" icon="el-icon-view" @click.stop="openDetail(row)">详情</el-button>
-              <el-button v-if="canEdit(row) && $can([`purchase.${mode.replace(/s$/, '')}.edit`, `purchase.${mode.replace(/s$/, '')}`])" class="action-link-theme" type="text" size="mini" icon="el-icon-edit" @click.stop="openEditor(row)">编辑</el-button>
-              <el-button v-for="action in visibleRowActions(row)" :key="action.command" :class="actionBtnClass(action.command)" type="text" size="mini" :icon="actionIcon(action.command)" @click.stop="runAction(action.command,row)">{{ action.label }}</el-button>
-              <el-button v-if="canDelete(row) && $can([`purchase.${mode.replace(/s$/, '')}.delete`, `purchase.${mode.replace(/s$/, '')}`])" class="danger-link" type="text" size="mini" icon="el-icon-delete" @click.stop="deleteDraft(row)">{{ mode==='requests' ? '软删除' : '删除' }}</el-button>
+              <div class="row-op-group">
+                <el-button v-if="$can(`purchase.${mode.replace(/s$/, '')}.view`)" class="action-link-theme" type="text" size="mini" icon="el-icon-view" @click.stop="openDetail(row)">详情</el-button>
+                <el-button v-for="action in rowMenu(row).primary" :key="action.command" :class="actionBtnClass(action.command)" type="text" size="mini" :icon="actionIcon(action.command)" @click.stop="runRowCommand(action.command, row)">{{ action.label }}</el-button>
+                <el-dropdown v-if="rowMenu(row).more.length" trigger="click" size="small" @command="command => runRowCommand(command, row)" @click.native.stop>
+                  <el-button class="action-link-theme" type="text" size="mini">更多<i class="el-icon-arrow-down el-icon--right" /></el-button>
+                  <el-dropdown-menu slot="dropdown">
+                    <el-dropdown-item v-for="action in rowMenu(row).more" :key="action.command" :command="action.command" :icon="actionIcon(action.command)" :class="{ 'row-op-danger': action.danger }" :divided="action.command === 'delete'">{{ action.label }}</el-dropdown-item>
+                  </el-dropdown-menu>
+                </el-dropdown>
+              </div>
             </template>
           </el-table-column>
         </el-table>
@@ -124,7 +135,7 @@
             <div class="spec-item" v-if="mode==='plans'"><span class="spec-label">计划总量</span><strong class="spec-value highlight-qty">{{ quantityByUnit(selected.items || [], 'purchase_quantity', false) }}</strong></div>
             <div class="spec-item" v-if="mode==='plans'"><span class="spec-label">预计总额</span><strong class="spec-value grand-total">¥{{ money(selected.total_amount) }}</strong></div>
             <div class="spec-item" v-if="mode==='orders'"><span class="spec-label">预计到货</span><span class="spec-value">{{ selected.expected_arrival_date || '--' }}</span></div>
-            <div class="spec-item"><span class="spec-label">单据来源</span><span class="spec-value">{{ sourceText(selected.source_type || selected.data_source) }}</span></div>
+            <div class="spec-item"><span class="spec-label">单据来源</span><span class="spec-value">{{ docSourceText(selected) }}</span></div>
             <div class="spec-item" v-if="selected.source_no"><span class="spec-label">来源单号</span><span class="spec-value">{{ selected.source_no }}</span></div>
             <div class="spec-item spec-full"><span class="spec-label">备注说明</span><span class="spec-value text-muted">{{ selected.remark || '无备注' }}</span></div>
           </div>
@@ -549,6 +560,7 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import { listEntity } from '@/api/erp/master'
 import {
   generateReceiptSerials, listPurchase, getPurchase, savePurchaseRequest, savePurchasePlan, savePurchaseOrder, savePurchaseReceipt,
@@ -590,7 +602,7 @@ const metaMap = {
   requests: {
     title: '采购需求',
     short: '需求',
-    subtitle: '采购对象是 Item，确认需求不代表审批。',
+    subtitle: '登记需要采购的物料和数量，确认后可转为采购计划。',
     tip: '未转计划的需求可编辑或软删除；编辑保存后回到草稿，重新确认后可转采购计划。',
     statuses: [{ label: '草稿', value: 'draft' }, { label: '已确认', value: 'confirmed' }, { label: '部分计划', value: 'partially_planned' }, { label: '已计划', value: 'planned' }, { label: '已关闭', value: 'closed' }]
   },
@@ -606,7 +618,7 @@ const metaMap = {
     short: '订单',
     subtitle: '一张采购订单只能对应一个供应商。',
     tip: '采购订单审核通过后才能生成到货单；已到货、已关闭、已取消订单只读。',
-    statuses: [{ label: '草稿', value: 'draft' }, { label: '已提交', value: 'submitted' }, { label: '处理中', value: 'processing' }, { label: '部分到货', value: 'partially_received' }, { label: '已到货', value: 'received' }]
+    statuses: [{ label: '草稿', value: 'draft' }, { label: '已提交', value: 'submitted' }, { label: '处理中', value: 'processing' }, { label: '部分到货', value: 'partially_received' }, { label: '已到货', value: 'received' }, { label: '逾期未到货', value: 'overdue' }]
   },
   receipts: {
     title: '采购到货',
@@ -654,7 +666,7 @@ export default {
     meta() { return metaMap[this.mode] },
     columns() {
       if (this.mode === 'requests') return [
-        { label: '需求单号', prop: 'request_no', width: 140 },
+        { label: '需求单号', prop: 'request_no', width: 160 },
         { label: '首个物料编码', prop: 'request_summary.item_code', width: 130 },
         { label: '首个物料名称', prop: 'request_summary.item_name', width: 160 },
         { label: '明细行数', prop: 'request_summary.line_count', width: 85 },
@@ -664,30 +676,27 @@ export default {
         { label: '状态', prop: 'request_status', tag: true, width: 95 }
       ]
       if (this.mode === 'plans') return [
-        { label: '计划单号', prop: 'plan_no', width: 126 },
+        { label: '计划单号', prop: 'plan_no', width: 160 },
         { label: '计划日期', prop: 'plan_date', width: 104 },
         { label: '物料行数', prop: 'items.length', width: 82 },
         { label: '供应商分配', prop: 'allocation_summary', width: 145 },
         { label: '预计金额', prop: 'total_amount', width: 106 },
-        { label: '计划状态', prop: 'plan_status', tag: true, width: 88 },
-        { label: '审核状态', prop: 'audit_status', tag: true, width: 88 },
-        { label: '订单状态', prop: 'order_status', tag: true, width: 104 }
+        { label: '状态', prop: '_main_status', main: true, width: 130 }
       ]
       if (this.mode === 'orders') return [
-        { label: '采购订单号', prop: 'purchase_order_no', width: 132 },
+        { label: '采购订单号', prop: 'purchase_order_no', width: 160 },
         { label: '供应商', prop: 'supplier.supplier_name', width: 150 },
         { label: '订单日期', prop: 'order_date', width: 104 },
         { label: '预计金额', prop: 'total_amount', width: 106 },
-        { label: '审核状态', prop: 'audit_status', tag: true, width: 88 },
-        { label: '采购状态', prop: 'purchase_status', tag: true, width: 90 },
-        { label: '到货状态', prop: 'receipt_status', tag: true, width: 98 }
+        { label: '预计到货', prop: 'expected_arrival_date', width: 104 },
+        { label: '状态', prop: '_main_status', main: true, width: 130 }
       ]
       return [
-        { label: '到货单号', prop: 'receipt_no', width: 132 },
-        { label: '采购订单', prop: 'order.purchase_order_no', width: 132 },
+        { label: '到货单号', prop: 'receipt_no', width: 160 },
+        { label: '采购订单', prop: 'order.purchase_order_no', width: 160 },
         { label: '供应商', prop: 'supplier.supplier_name', width: 150 },
         { label: '到货日期', prop: 'receipt_date', width: 104 },
-        { label: '到货汇总', prop: 'receipt_quantity_summary', width: 112 },
+        { label: '到货汇总', prop: 'receipt_quantity_summary', width: 140 },
         { label: '确认状态', prop: 'confirm_status', tag: true, width: 90 }
       ]
     },
@@ -719,6 +728,9 @@ export default {
   },
   mounted() { this.bootstrap() },
   watch: {
+    '$route.query.keyword'(value) {
+      if (value && String(value) !== this.filters.keyword) { this.filters.keyword = String(value); this.page = 1; this.load() }
+    },
     mode() { this.listRevision++; this.detailRevision++; this.page = 1; this.selected = null; this.paymentPlanVisible = false; this.paymentPlanOrderId = 0; this.bootstrap() }
   },
   methods: {
@@ -818,6 +830,8 @@ export default {
       return `换算规则：1 ${pUnit} = ${factor} ${bUnit}`
     },
     async bootstrap() {
+      // 从订单详情“业务进度”等处带单号跳转时，直接按单号筛选。
+      if (this.$route.query.keyword) this.filters.keyword = String(this.$route.query.keyword)
       await Promise.all([this.load(), this.loadOptions()])
     },
     async loadOptions() {
@@ -910,6 +924,9 @@ export default {
     },
     actionIcon(command) {
       const map = {
+        edit: 'el-icon-edit',
+        delete: 'el-icon-delete',
+        requestToOrder: 'el-icon-s-order',
         submitRequest: 'el-icon-check',
         requestToPlan: 'el-icon-right',
         cancelRequest: 'el-icon-close',
@@ -1029,6 +1046,10 @@ export default {
         await this.$confirm(this.confirmSummary(command, row), '业务确认', { type: 'warning', dangerouslyUseHTMLString: true, confirmButtonText: this.confirmButtonText(command) })
         const res = await map[command](row.id)
         this.$message.success(this.successMessage(command, res))
+        const nextId = res && res.data && res.data.data && res.data.data.id
+        if (command === 'requestToPlan' && nextId) return this.$router.push(`/purchase/plans/${nextId}/edit`)
+        if (command === 'orderToReceipt' && nextId) return this.$router.push(`/purchase/receipts/${nextId}/edit`)
+        if (command === 'generatePlanOrders') return this.$router.push('/purchase/orders')
         await this.afterBusinessAction(row.id)
       } catch (error) {
         if (error === 'cancel' || error === 'close') return
@@ -1076,13 +1097,43 @@ export default {
       return []
     },
     visibleRowActions(row) {
-      const permissions = { approvePlan: 'purchase.plan.approve', rejectPlan: 'purchase.plan.approve', approveOrder: 'purchase.order.approve', rejectOrder: 'purchase.order.approve', confirmReceipt: 'purchase.receipt.confirm' }
+      // 与后端按钮权限一一对应：没有权限的动作不显示，避免点了才提示无权限。
+      const permissions = {
+        submitRequest: 'purchase.request.submit', cancelRequest: 'purchase.request.edit', closeRequest: 'purchase.request.edit',
+        requestToPlan: 'purchase.plan.create', goPlan: 'purchase.plan.view',
+        submitPlan: 'purchase.plan.edit', approvePlan: 'purchase.plan.approve', rejectPlan: 'purchase.plan.approve',
+        previewPlanOrders: ['purchase.plan.generate_order', 'purchase.order.generate'], generatePlanOrders: ['purchase.plan.generate_order', 'purchase.order.generate'], goOrders: 'purchase.order.view',
+        submitOrder: 'purchase.order.edit', cancelOrder: 'purchase.order.cancel', closeOrder: 'purchase.order.cancel',
+        approveOrder: 'purchase.order.approve', rejectOrder: 'purchase.order.approve', viewApproval: 'approval.task.view',
+        orderToReceipt: 'purchase.receipt.create', goOpenReceipt: 'purchase.receipt.view', confirmReceipt: 'purchase.receipt.confirm'
+      }
       const forward = ['submitRequest', 'requestToPlan', 'submitPlan', 'approvePlan', 'generatePlanOrders', 'submitOrder', 'approveOrder', 'orderToReceipt', 'confirmReceipt']
       return this.rowActions(row).filter(action => !(forward.includes(action.command) && this.scopeIssue(row)) && (!permissions[action.command] || this.$can(permissions[action.command])))
     },
     primaryActions(row) { return this.visibleRowActions(row).slice(0, 2) },
+    rowMenu(row) {
+      const dangerous = ['cancelRequest', 'closeRequest', 'rejectPlan', 'cancelOrder', 'closeOrder', 'rejectOrder']
+      const business = this.visibleRowActions(row).map(action => ({ ...action, danger: dangerous.includes(action.command) }))
+      const all = [
+        ...(this.canEdit(row) ? [{ command: 'edit', label: '编辑' }] : []),
+        ...business,
+        ...(this.canDelete(row) ? [{ command: 'delete', label: this.mode === 'requests' ? '软删除' : '删除', danger: true }] : [])
+      ]
+      // 主操作：第一个推进流程的业务动作；没有时用“编辑”。只剩一个次要操作时直接平铺，不必再点“更多”。
+      const primary = business.find(action => !action.danger) || all.find(action => action.command === 'edit')
+      const more = all.filter(action => action !== primary)
+      if (more.length === 1 && !more[0].danger) return { primary: [primary, more[0]].filter(Boolean), more: [] }
+      return { primary: primary ? [primary] : [], more }
+    },
+    runRowCommand(command, row) {
+      if (command === 'edit') return this.openEditor(row)
+      if (command === 'delete') return this.deleteDraft(row)
+      return this.runAction(command, row)
+    },
     canEdit(row) {
       if (!row || row.deleted_at) return false
+      const editPermission = { requests: 'purchase.request.edit', plans: 'purchase.plan.edit', orders: 'purchase.order.edit', receipts: 'purchase.receipt.edit' }[this.mode]
+      if (editPermission && !this.$can(editPermission)) return false
       if (this.mode === 'requests') return row.can_edit === true
       if (this.mode === 'plans') return row.plan_status === 'draft' || row.audit_status === 'rejected'
       if (this.mode === 'orders') return row.purchase_status === 'draft' || row.audit_status === 'rejected'
@@ -1091,6 +1142,8 @@ export default {
     },
     canDelete(row) {
       if (!row || row.deleted_at) return false
+      const deletePermission = { requests: 'purchase.request.delete', plans: 'purchase.plan.delete', orders: 'purchase.order.delete', receipts: 'purchase.receipt.delete' }[this.mode]
+      if (deletePermission && !this.$can(deletePermission)) return false
       if (this.mode === 'requests') return row.can_delete === true
       if (this.mode === 'plans') return row.plan_status === 'draft'
       if (this.mode === 'orders') return row.purchase_status === 'draft' && !row.open_receipt_id
@@ -1120,10 +1173,17 @@ export default {
     displayValue(row, col) {
       const value = this.valueOf(row, col.prop)
       if (col.prop === 'deleted_at') return this.timeText(value)
+      if (col.prop === 'total_amount') return value == null || value === '' ? '--' : `¥${this.money(value)}`
       if (this.mode === 'receipts' && col.prop === 'order.purchase_order_no' && !value) {
         return row.settlement_mode === 'replacement_no_charge' ? '换货免费补发' : '手工到货（未关联订单）'
       }
       return value == null || value === '' ? '--' : value
+    },
+    docSourceText(doc) {
+      // 采购计划无独立来源字段：明细关联了采购需求即显示“采购需求转入”及需求单号。
+      const requestNos = [...new Set(((doc && doc.items) || []).map(row => row.request && row.request.request_no).filter(Boolean))]
+      if (this.mode === 'plans' && requestNos.length) return `采购需求转入（${requestNos.join('、')}）`
+      return this.sourceText(doc && (doc.source_type || doc.data_source))
     },
     sourceText(value) { return ({ manual: '手工创建', purchase_plan: '采购计划', system: '系统生成', import: '导入', api: '接口', legacy_sync: '旧系统一次性同步' })[value] || value || '手工创建' },
     requestSummary(row) {
@@ -1142,7 +1202,14 @@ export default {
       }
     },
     mainStatus(row) { return row.request_status || row.plan_status || row.purchase_status || row.confirm_status || row.receipt_status },
+    // 草稿单据的审核状态在库里默认是 pending，但还没提交，列表上显示“未提交”，避免与“草稿”矛盾。
+    statusValue(row, prop) {
+      const value = this.valueOf(row, prop)
+      const draft = row.purchase_status === 'draft' || row.plan_status === 'draft'
+      return prop === 'audit_status' && value === 'pending' && draft ? 'not_submitted' : value
+    },
     labelOf(v, prop = '') {
+      if (v === 'not_submitted') return '未提交'
       if (prop === 'management_scope') return this.scopeLabel(v)
       if (prop === 'audit_status' && v === 'pending') return '待审核'
       return statusLabelMap[v] || v || '--'
@@ -1151,6 +1218,40 @@ export default {
       return ['approved', 'received', 'confirmed', 'low'].includes(v) ? 'success' : ['cancelled', 'rejected', 'high'].includes(v) ? 'danger' : ['partial', 'partially_received', 'pending', 'normal', 'partially_planned', 'partially_ordered'].includes(v) ? 'warning' : 'info'
     },
     detailNo(row) { return row.request_no || row.plan_no || row.purchase_order_no || row.receipt_no },
+    // 计划、订单原来分别有 3 个状态列，合并成一个主状态，次要信息放在下方小字。
+    mainStatus(row) {
+      if (!row) return { text: '--', type: 'info' }
+      if (this.mode === 'plans') {
+        if (row.plan_status === 'cancelled') return { text: '已取消', type: 'info' }
+        if (row.plan_status === 'closed') return { text: '已关闭', type: 'info' }
+        if (row.audit_status === 'rejected') return { text: '已驳回', type: 'danger', sub: '修改后可重新提交' }
+        if (row.plan_status === 'draft') return { text: '草稿', type: 'info', sub: '未提交审核' }
+        if (row.audit_status === 'pending') return { text: '待审核', type: 'warning' }
+        if (row.order_status === 'partially_ordered') return { text: '部分生成订单', type: 'warning' }
+        if (['order_generated', 'ordered'].includes(row.order_status)) return { text: '已生成订单', type: 'success' }
+        return { text: '待生成订单', type: 'primary', sub: '审核已通过' }
+      }
+      if (this.mode === 'orders') {
+        if (row.purchase_status === 'cancelled') return { text: '已取消', type: 'info' }
+        if (row.purchase_status === 'closed') return { text: '已关闭', type: 'info', sub: row.receipt_status === 'partial' ? '部分到货后关闭' : '' }
+        if (row.audit_status === 'rejected') return { text: '已驳回', type: 'danger', sub: '修改后可重新提交' }
+        if (row.purchase_status === 'draft') return { text: '草稿', type: 'info', sub: '未提交审核' }
+        if (row.audit_status === 'pending') return { text: '待审核', type: 'warning' }
+        if (row.receipt_status === 'received' || row.purchase_status === 'received') return { text: '已到货', type: 'success' }
+        const overdue = this.overdueDays(row)
+        const partial = row.receipt_status === 'partial'
+        if (overdue > 0) return { text: partial ? '部分到货·逾期' : '逾期未到货', type: 'danger', sub: `已超预计到货 ${overdue} 天` }
+        if (partial) return { text: '部分到货', type: 'warning', sub: row.expected_arrival_date ? `预计 ${String(row.expected_arrival_date).slice(5, 10)} 到齐` : '' }
+        return { text: '待到货', type: 'primary', sub: row.expected_arrival_date ? `预计 ${String(row.expected_arrival_date).slice(5, 10)} 到货` : '未填写预计到货' }
+      }
+      return { text: this.labelOf(row.status), type: 'info' }
+    },
+    overdueDays(row) {
+      if (!row || !row.expected_arrival_date) return 0
+      const due = new Date(`${String(row.expected_arrival_date).slice(0, 10)}T00:00:00`)
+      const today = new Date(); today.setHours(0, 0, 0, 0)
+      return Math.max(0, Math.round((today - due) / 86400000))
+    },
     selectedTitle(row) {
       if (['requests', 'plans'].includes(this.mode)) {
         const lines = row.items || row.request_items || []
@@ -1166,7 +1267,7 @@ export default {
       if (['orders', 'receipts'].includes(this.mode) && line.purchase_unit_name_snapshot) return line.purchase_unit_name_snapshot
       const unit = line.unit || (line.item && line.item.unit) || null
       const canonical = unit && (unit.standard_unit || unit.standardUnit || unit)
-      return (canonical && (canonical.symbol || canonical.unit_name || canonical.unit_code)) || '-'
+      return (canonical && (canonical.unit_name || canonical.symbol || canonical.unit_code)) || '-'
     },
     confirmButtonText(command) {
       return ({ submitRequest: '确认需求', requestToPlan: '转采购计划', approvePlan: '审核通过', submitOrder: '提交审核', approveOrder: '审核通过', confirmReceipt: '确认到货' })[command] || '确认执行'
@@ -1183,6 +1284,13 @@ export default {
         submitOrder: `<p>提交采购订单审核：${no}</p><p>供应商：${row.supplier ? row.supplier.supplier_name : '--'}；明细 ${lineCount} 行，采购数量 ${this.quantityByUnit(lines, line => line.purchase_qty ?? line.order_qty ?? line.qty ?? 0)}，金额 ¥${amount}。</p>`,
         approveOrder: `<p>审核采购订单：${no}</p><p>供应商：${row.supplier ? row.supplier.supplier_name : '--'}；审核通过后才可生成到货单。</p>`,
         confirmReceipt: `<p>确认到货：${no}</p><p>到货 ${this.quantityByUnit(lines, 'receipt_qty')}，合格 ${this.quantityByUnit(lines, 'qualified_qty')}，不合格 ${this.quantityByUnit(lines, 'unqualified_qty')}，质量待处理 ${this.quantityByUnit(lines, line => this.receiptUnresolvedQty(line))}。本次不更新正式库存。</p>`
+      }
+      if (command === 'generatePlanOrders') {
+        const suppliers = this.planSupplierCount(row)
+        return `<p>按采购计划 ${no} 生成采购订单</p><p>将按供应商拆成 ${suppliers} 张采购订单（每个供应商一张），合计预计金额 ¥${amount}。生成后订单为草稿，需要再提交审核。</p>`
+      }
+      if (command === 'orderToReceipt') {
+        return `<p>为采购订单 ${no} 生成到货单</p><p>供应商：${row.supplier ? row.supplier.supplier_name : '--'}。生成后进入到货单草稿，请填写实际到货数量、仓库和库位后再确认到货。</p>`
       }
       return summaries[command] || `<p>确认执行 ${no} 的业务动作？</p>`
     },
@@ -1205,7 +1313,12 @@ export default {
       })
       // 确认框使用 HTML；单位来自主数据，必须转义且不能把不同单位相加。
       const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
-      return Array.from(groups, ([unit, value]) => `${this.number(value)} ${html ? escape(unit) : unit}`).join('；') || '0'
+      // 多单位时省略数量为 0 的单位，避免出现“不合格 0 米；1 根”这类读起来别扭的文案。
+      const entries = Array.from(groups).filter(([, value]) => Math.abs(value) > 0.0000001)
+      if (entries.length) return entries.map(([unit, value]) => `${this.number(value)} ${html ? escape(unit) : unit}`).join('；')
+      // 全为 0 时单一单位仍带上单位（“不合格 0 根”），多单位只写 0。
+      const units = Array.from(groups.keys())
+      return units.length === 1 ? `0 ${html ? escape(units[0]) : units[0]}` : '0'
     },
     successMessage(command, res) {
       if (command === 'submitRequest') return '需求已确认，已锁定需求，可转采购计划'
@@ -1230,8 +1343,13 @@ export default {
     receiptQuantitySummary(row) {
       const lines = row.items || []
       if (!lines.length) return '-'
-      if (lines.length > 1) return `${lines.length} 行 / 多单位`
-      return `${this.number(lines[0].receipt_qty)} ${lines[0].purchase_unit_name_snapshot || lines[0].unit_name_snapshot || ''}`.trim()
+      // 按单位合计到货数量（不同单位不相加），比“2 行 / 多单位”更直观。
+      const groups = new Map()
+      lines.forEach(line => {
+        const unit = line.purchase_unit_name_snapshot || line.unit_name_snapshot || ''
+        groups.set(unit, (groups.get(unit) || 0) + Number(line.receipt_qty || 0))
+      })
+      return Array.from(groups).map(([unit, qty]) => `${this.number(qty)} ${unit}`.trim()).join('；')
     },
     stockPostingText(status) { return ({ pending: '待库存过账', posted: '已库存过账', failed: '过账失败', cancelled: '已取消' })[status] || '待库存过账' },
     financeSummaryText(status) { return ({ pending_fulfillment: '待履约', quality_frozen: '质量冻结', pending_payment: '待付款', pending_invoice: '待收票', pending_refund: '待退款', settled: '财务已结清' })[status] || '未结清' },
@@ -1295,7 +1413,7 @@ export default {
     },
     orderUntaxedAmount(order) { const subtotal = this.orderLineAmount(order); return order.tax_mode === 'tax_excluded' ? subtotal : subtotal - this.orderTaxAmount(order) },
     orderGrandTotal(order) { const subtotal = this.orderLineAmount(order); return subtotal + (order.tax_mode === 'tax_excluded' ? this.orderTaxAmount(order) : 0) + Number(order.freight_amount || 0) },
-    timeText(value) { return value ? String(value).replace('T', ' ').slice(0, 19) : '-' },
+    timeText(value) { return value ? erpDateTime(value, 19) : '-' },
     goOrderDetail(order) { this.$router.push(`/purchase/orders/${order.id}/detail`) },
     goReceiptDetail(receipt) {
       if (receipt && receipt.confirm_status === 'draft') return this.$router.push(`/purchase/receipts/${receipt.id}/edit`)
@@ -1496,6 +1614,11 @@ export default {
   text-decoration: underline;
 }
 
+.main-status-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; line-height: 1.2; }
+.main-status-sub { color: #8a94a0; font-size: 11px; }
+.main-status-sub.is-danger { color: #d03050; }
+.row-op-group { display: flex; align-items: center; gap: 2px; white-space: nowrap; }
+.row-op-group .el-dropdown { margin-left: 6px; }
 .danger-link {
   color: #ef4444 !important;
   font-weight: 500;

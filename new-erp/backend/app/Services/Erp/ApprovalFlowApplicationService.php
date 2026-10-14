@@ -52,7 +52,11 @@ class ApprovalFlowApplicationService
         return [
             'enabled' => ApprovalFlowTemplate::query()->where('status', 'enabled')->count(),
             'draft' => ApprovalFlowVersion::query()->where('version_status', 'draft')->count(),
-            'invalid' => ApprovalFlowVersion::query()->where('version_status', 'draft')->get()->filter(fn ($row) => !($row->validation_snapshot['valid'] ?? false))->count(),
+            // 草稿看保存时的校验结果；已启用流程按当前组织与角色成员实时复核，
+            // 避免发布后角色成员被移走、负责人停用等情况在列表里仍显示正常。
+            'invalid' => ApprovalFlowVersion::query()->where('version_status', 'draft')->get()->filter(fn ($row) => !($row->validation_snapshot['valid'] ?? false))->count()
+                + ApprovalFlowTemplate::query()->where('status', 'enabled')->with('currentVersion')->get()
+                    ->filter(fn ($template) => $template->currentVersion && !($this->validateDefinition((array) $template->currentVersion->definition_snapshot)['valid'] ?? false))->count(),
             'monthly_triggered' => DB::table('erp_approval_tasks')->where('created_at', '>=', now()->startOfMonth())->count(),
         ];
     }
@@ -315,6 +319,26 @@ class ApprovalFlowApplicationService
         }, 5);
     }
 
+    private function roleHasActiveMember(string $roleCode): bool
+    {
+        return DB::table('erp_rbac_user_roles as ur')
+            ->join('erp_rbac_roles as r', 'r.id', '=', 'ur.role_id')
+            ->join('erp_legacy_admin_users as u', 'u.legacy_id', '=', 'ur.user_legacy_id')
+            ->where('r.code', $roleCode)->where('r.enabled', true)
+            ->whereIn(DB::raw('LOWER(u.status)'), ['normal', 'active'])
+            ->exists();
+    }
+
+    private function departmentHasActivePrincipal(int $departmentId): bool
+    {
+        return DB::table('erp_department_users as du')
+            ->join('erp_legacy_admin_users as u', 'u.legacy_id', '=', 'du.user_legacy_id')
+            ->where('du.department_legacy_id', $departmentId)
+            ->where(fn ($q) => $q->where('du.is_principal', true)->orWhere('du.is_owner', true))
+            ->whereIn(DB::raw('LOWER(u.status)'), ['normal', 'active'])
+            ->exists();
+    }
+
     public function validateDefinition(array $definition): array
     {
         $errors = []; $warnings = [];
@@ -416,10 +440,15 @@ class ApprovalFlowApplicationService
                     $errors[] = $prefix.'未选择处理角色。';
                 } elseif ($ruleType === 'role' && !DB::table('erp_rbac_roles')->where('code', (string) $ruleValue)->where('enabled', true)->exists()) {
                     $errors[] = $prefix.'选择的处理角色不存在或已停用。';
+                } elseif ($ruleType === 'role' && !$this->roleHasActiveMember((string) $ruleValue)) {
+                    // 运行时按角色成员派发任务，角色下没有启用账号时提交单据会直接失败；发布前就拦下来。
+                    $errors[] = $prefix.'处理角色下没有启用的账号，提交单据时无法派发审核任务，请先在角色权限中添加成员。';
                 } elseif ($ruleType === 'department_principal' && !trim((string) $ruleValue)) {
                     $errors[] = $prefix.'未选择负责人所属部门规则。';
                 } elseif ($ruleType === 'department_principal' && $ruleValue !== 'task_department' && !DB::table('erp_departments')->where('legacy_id', (int) $ruleValue)->exists()) {
                     $errors[] = $prefix.'选择的负责人部门不存在。';
+                } elseif ($ruleType === 'department_principal' && $ruleValue !== 'task_department' && !$this->departmentHasActivePrincipal((int) $ruleValue)) {
+                    $errors[] = $prefix.'选择的部门没有启用的负责人账号，提交单据时无法派发审核任务。';
                 } elseif (in_array($ruleType, ['user', 'specified_users'], true) && empty((array) $ruleValue)) {
                     $errors[] = $prefix.'未选择指定处理人。';
                 } elseif (in_array($ruleType, ['user', 'specified_users'], true)) {

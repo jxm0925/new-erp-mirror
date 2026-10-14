@@ -289,7 +289,7 @@ class MasterDataController extends Controller
         }
         if ($record instanceof Item && array_key_exists('unit_id', $data)
             && (int) $data['unit_id'] !== (int) $record->unit_id) {
-            abort_if($this->itemBaseUnitLocked((int) $record->id), 422, '该 Item 已产生业务数据，基本单位不能直接修改。');
+            abort_if($this->itemBaseUnitLocked((int) $record->id), 422, '该物料已产生业务数据，基本单位不能直接修改。');
             $this->assertStandardBusinessUnit((int) $data['unit_id']);
         }
         if ($request->route('entity') === 'units') unset($data[$code]);
@@ -443,14 +443,14 @@ class MasterDataController extends Controller
                 ->where('sku.status', 'enabled')
                 ->where('sku.order_line_type', 'physical')
                 ->exists();
-            abort_if($usedByEnabledPhysicalSku, 422, '该 Item 是启用实物 SKU 的默认物料，请先替换默认 Item 或停用相关 SKU。');
+            abort_if($usedByEnabledPhysicalSku, 422, '该物料是启用实物 SKU 的默认物料，请先替换默认物料或停用相关 SKU。');
         }
         if ($record instanceof Unit) {
             $references = $record->items()->exists()
                 || $record->skus()->exists()
                 || $record->products()->exists()
                 || $record->purchaseConversions()->where('status', 'active')->exists();
-            abort_if($references, 422, '该单位仍被 Item、SKU、商品或有效采购换算引用，不能停用。');
+            abort_if($references, 422, '该单位仍被物料、SKU、商品或有效采购换算引用，不能停用。');
         }
     }
 
@@ -621,7 +621,7 @@ class MasterDataController extends Controller
             ->where('relation.is_primary', true)
             ->where('item.status', 'enabled')
             ->exists();
-        abort_unless($hasDefaultItem, 422, '实物 SKU 保存并启用前必须绑定一个有效默认 Item；可先保存草稿。');
+        abort_unless($hasDefaultItem, 422, '实物 SKU 保存并启用前必须绑定一个有效默认物料；可先保存草稿。');
     }
 
     private function rules(Request $request, ?int $id = null): array
@@ -768,7 +768,7 @@ class MasterDataController extends Controller
 
         if ($item && $mode === 'none') {
             $hasSerialHistory = DB::table('erp_inventory_serials')->where('item_id', $item->id)->exists();
-            abort_if($hasSerialHistory, 422, '该 Item 已存在单件追溯档案，不能改为仅批次追溯。');
+            abort_if($hasSerialHistory, 422, '该物料已存在单件追溯档案，不能改为仅批次追溯。');
         }
     }
 

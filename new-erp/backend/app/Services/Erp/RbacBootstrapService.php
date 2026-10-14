@@ -176,6 +176,8 @@ class RbacBootstrapService
             ['purchase.plan.delete', '删除计划', 'button', 'purchase.plan', null, null, 'el-icon-mouse', 4],
             ['purchase.plan.approve', '审核采购计划', 'button', 'purchase.plan', null, null, 'el-icon-mouse', 5],
             ['purchase.plan.generate_order', '从计划生成订单', 'button', 'purchase.plan', null, null, 'el-icon-mouse', 6],
+            // 供应商推荐接口早已按此权限校验，但目录缺少定义，导致只有超级管理员能用。
+            ['purchase.supplier_recommendation.view', '查看供应商推荐', 'button', 'purchase.plan', null, null, 'el-icon-magic-stick', 7],
 
             ['purchase.order.view', '查看订单', 'button', 'purchase.order', null, null, 'el-icon-mouse', 1],
             ['purchase.order.create', '新增订单', 'button', 'purchase.order', null, null, 'el-icon-mouse', 2],
@@ -217,6 +219,7 @@ class RbacBootstrapService
 
             ['inventory.balance.view', '查看库存余额', 'button', 'inventory.balance', null, null, 'el-icon-mouse', 1],
             ['inventory.balance.export', '导出库存余额', 'button', 'inventory.balance', null, null, 'el-icon-mouse', 2],
+            ['inventory.quality.handle', '库存质量处理', 'button', 'inventory.balance', null, null, 'el-icon-mouse', 3],
 
             ['inventory.transaction.view', '查看库存流水', 'button', 'inventory.transaction', null, null, 'el-icon-mouse', 1],
             ['inventory.transaction.export', '导出库存流水', 'button', 'inventory.transaction', null, null, 'el-icon-mouse', 2],
@@ -386,6 +389,8 @@ class RbacBootstrapService
             ['finance.account_valuation', '资金账户估值', 'menu', 'finance', '/finance/account-valuations', 'FinanceAccountValuation', 'el-icon-pie-chart', 609],
 
             // 财务管理 按钮
+            // 收付款列表、核销、财务统计等资金数据的统一查看权限（前后端已普遍校验，此前未登记导致只有超级管理员可用）。
+            ['finance.view', '查看财务资金数据', 'button', 'finance', null, null, 'el-icon-view', 0],
             ['finance.receipt.view', '查看收款单', 'button', 'finance.receipt', null, null, 'el-icon-mouse', 1],
             ['finance.receipt.create', '新增收款单', 'button', 'finance.receipt', null, null, 'el-icon-mouse', 2],
             ['finance.receipt.confirm', '确认收款入账', 'button', 'finance.receipt', null, null, 'el-icon-mouse', 3],

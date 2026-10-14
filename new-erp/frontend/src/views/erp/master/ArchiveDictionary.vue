@@ -358,6 +358,7 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import { listArchives, saveArchive, setArchiveStatus, deleteProductCategory } from '../../../api/erp/base-archives'
 
 const labels = { categories: '商品分类', payments: '付款方式', platforms: '成交平台' }
@@ -487,7 +488,7 @@ export default {
       return this.kind !== 'payments' && this.isEnabled(row) && (this.kind === 'categories' || !Number(row.parent_legacy_id))
     },
     dateText (value) {
-      return value ? String(value).replace('T', ' ').slice(0, 16) : '—'
+      return value ? erpDateTime(value, 16) : '—'
     },
     openCreate (parent) {
       this.form = {

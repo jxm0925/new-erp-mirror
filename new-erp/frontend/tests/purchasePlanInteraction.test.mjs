@@ -5,6 +5,8 @@ import * as purchaseScope from '../src/utils/purchaseManagementScope.mjs'
 
 const allocationSource = await readFile(new URL('../src/utils/purchasePlanAllocation.js', import.meta.url), 'utf8')
 const allocation = await import(`data:text/javascript;base64,${Buffer.from(allocationSource).toString('base64')}`)
+const dateTimeSource = await readFile(new URL('../src/utils/dateTime.js', import.meta.url), 'utf8')
+const dateTime = await import(`data:text/javascript;base64,${Buffer.from(dateTimeSource).toString('base64')}`)
 
 // 调用页面自身的方法和计算属性；仅替换 HTTP、Element UI 提示和组件引用。
 async function page(file, dependencies = {}) {
@@ -13,7 +15,7 @@ async function page(file, dependencies = {}) {
     .replace(/import\s+(?:\{[\s\S]*?\}|[^{};\n]+)\s+from\s+['"][^'"]+['"];?/g, '')
     .replace(/^import .*$/gm, '')
     .replace('export default', 'return')
-  const deps = { ...purchaseScope, ...allocation, PurchaseItemPicker: {}, PurchaseAttachmentPanel: {}, PurchaseConversionFacts: {}, ...dependencies }
+  const deps = { ...purchaseScope, ...allocation, ...dateTime, PurchaseItemPicker: {}, PurchaseAttachmentPanel: {}, PurchaseConversionFacts: {}, ...dependencies }
   const options = new Function(...Object.keys(deps), script)(...Object.values(deps))
   const messages = []
   const vm = { ...options.data(), type: 'plan', $refs: {},

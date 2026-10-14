@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Erp;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Concerns\AuthorizesErpPermissions;
 use App\Models\Erp\InventoryBalance;
 use App\Models\Erp\InventoryQualityEvent;
 use App\Models\Erp\InventorySerial;
@@ -13,8 +14,11 @@ use App\Services\Erp\ItemManagementScopeService;
 
 class InventoryBalanceController extends Controller
 {
+    use AuthorizesErpPermissions;
+
     public function index(Request $request)
     {
+        $this->erpAuthorize($request, 'inventory.balance.view');
         if ($request->input('view') === 'item') {
             return $this->itemSummary($request);
         }
@@ -67,6 +71,7 @@ class InventoryBalanceController extends Controller
 
     public function show(Request $request, int $id)
     {
+        $this->erpAuthorize($request, 'inventory.balance.view');
         $balance = InventoryBalance::with(['item.unit', 'item.skuRelations.sku.product', 'warehouse', 'location'])->findOrFail($id);
         app(ItemManagementScopeService::class)->assertContext($balance->item, $this->managementScope($request));
         return response()->json($balance);
@@ -74,6 +79,7 @@ class InventoryBalanceController extends Controller
 
     public function serials(Request $request, int $id)
     {
+        $this->erpAuthorize($request, 'inventory.balance.view');
         $balance = InventoryBalance::query()->with('item')->findOrFail($id);
         app(ItemManagementScopeService::class)->assertContext($balance->item, $this->managementScope($request));
         $query = InventorySerial::query()
@@ -92,6 +98,7 @@ class InventoryBalanceController extends Controller
 
     public function itemBatches(Request $request, int $itemId)
     {
+        $this->erpAuthorize($request, 'inventory.balance.view');
         $item = Item::query()->with(['unit'])->findOrFail($itemId);
         app(ItemManagementScopeService::class)->assertContext($item, $this->managementScope($request));
         $query = $this->activeBalanceQuery($request)->where('item_id', $itemId)
@@ -115,6 +122,7 @@ class InventoryBalanceController extends Controller
 
     public function batchContext(Request $request, int $itemId)
     {
+        $this->erpAuthorize($request, 'inventory.balance.view');
         $batchNo = trim((string) $request->input('batch_no'));
         abort_if($batchNo === '', 422, '批次号不能为空。');
         $item = Item::query()->with(['unit', 'skuRelations.sku.product'])->findOrFail($itemId);
@@ -128,7 +136,7 @@ class InventoryBalanceController extends Controller
             ->where('item_id', $itemId)->where('batch_no', $batchNo)
             ->where(fn ($q) => $q->where('quantity_on_hand', '<>', 0)->orWhere('quantity_locked', '<>', 0)->orWhere('quantity_defective', '<>', 0)->orWhere('quantity_pending', '<>', 0))
             ->orderBy('warehouse_id')->orderBy('location_id')->get();
-        abort_if($balances->isEmpty(), 404, '该 Item 下没有此批次库存。');
+        abort_if($balances->isEmpty(), 404, '该物料下没有此批次库存。');
 
         $source = InventoryTransactionItem::query()
             ->with(['purchaseReceiptItem.receipt.order', 'purchaseReceiptItem.receipt.supplier'])

@@ -159,7 +159,7 @@
                       <span class="price-val">¥{{ Number(sku.sale_price || 0).toFixed(2) }}</span>
                     </template>
                   </el-table-column>
-                  <el-table-column label="关联Item物料" width="125" align="center">
+                  <el-table-column label="关联物料" width="125" align="center">
                     <template slot-scope="{ row: sku }">
                       <el-tag v-if="relationList(sku).length" size="mini" type="success" effect="plain">已绑定 {{ relationList(sku).length }} 个物料</el-tag>
                       <el-tag v-else size="mini" type="warning" effect="plain">未绑定物料</el-tag>
@@ -447,6 +447,7 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import { saveProductSkuMatrix } from '../../../api/erp/master'
 import { listEntity, saveEntity, disableEntity, enableEntity, deleteEntity } from '../../../api/erp/master'
 import { reserveFreshDocumentNumber } from '../../../utils/documentNumberReservation'
@@ -732,7 +733,7 @@ export default {
     async deleteSku(row) {
       try {
         await this.$confirm(
-          `确认删除 SKU「${row.sku_code}」？仅未启用且从未被订单、BOM、定制或默认 Item 关系引用的 SKU 可以删除。`,
+          `确认删除 SKU「${row.sku_code}」？仅未启用且从未被订单、BOM、定制或默认 物料关系引用的 SKU 可以删除。`,
           '删除确认',
           { type: 'warning', confirmButtonText: '确认删除' }
         )
@@ -767,7 +768,7 @@ export default {
       return ({ enabled: '启用', disabled: '停用', draft: '草稿' })[status] || status
     },
     formatDate(v) {
-      return v ? String(v).replace('T', ' ').slice(0, 16) : '-'
+      return v ? erpDateTime(v, 16) : '-'
     }
   }
 }

@@ -10,7 +10,9 @@
       <div class="hero-art"><i class="el-icon-document-checked" /></div>
       <div class="quick-actions">
         <el-button v-if="$can('purchase.request.create')" size="small" icon="el-icon-document-add" @click="$router.push('/purchase/requests/create')">新建采购需求</el-button>
-        <el-button v-if="$can('purchase.receipt.view')" size="small" icon="el-icon-truck" @click="$router.push('/purchase/receipts')">采购到货验收</el-button>
+        <el-button v-if="$can(['purchase.receipt.create', 'purchase.receipt.confirm'])" size="small" icon="el-icon-truck" @click="$router.push('/purchase/receipts')">采购到货验收</el-button>
+        <el-button v-if="$can('finance.payment.create') && $can('finance.view')" size="small" icon="el-icon-wallet" @click="$router.push('/finance/payments/create')">新增付款</el-button>
+        <el-button v-if="$can(['finance.payable.view', 'finance.payable'])" size="small" icon="el-icon-tickets" @click="$router.push('/finance/payables')">应付管理</el-button>
         <el-button v-if="$can('inventory.adjustment.view')" size="small" icon="el-icon-sort" @click="$router.push('/inventory/adjustments')">库存调整</el-button>
         <el-button v-if="$can('bom.manage.create')" size="small" icon="el-icon-share" @click="$router.push('/bom/create')">新建BOM</el-button>
       </div>
@@ -19,7 +21,7 @@
     <el-alert v-if="loadError" type="error" :closable="false" :title="loadError" show-icon><el-button type="text" @click="load()">重新加载</el-button></el-alert>
     <template v-if="dashboard">
     <div class="todo-cards">
-      <article v-for="card in taskCards" :key="card.key" class="todo-card" @click="selectTodoType(card.key)">
+      <article v-for="card in visibleTaskCards" :key="card.key" class="todo-card" @click="selectTodoType(card.key)">
         <i :class="[card.icon, card.tone]" />
         <div><span>{{ card.name }}</span><strong>{{ card.count === null ? '无权限' : card.count }}</strong><small>当前实时待办</small></div>
         <em>查看 <i class="el-icon-arrow-right" /></em>
@@ -86,7 +88,7 @@
 
 
     <div class="bottom-grid">
-      <section class="console-panel chart-panel">
+      <section v-if="dashboard.trends.purchase !== null" class="console-panel chart-panel">
         <div class="panel-head"><h2>最近30天已审核采购单</h2></div>
         <div v-if="purchaseTrendTotal > 0" class="mini-chart">
           <span v-for="(bar,index) in purchaseTrend" :key="index" :style="{ height: `${bar.height}%` }" :title="`${bar.date}：${bar.count}笔`" />
@@ -94,7 +96,7 @@
         <div v-else class="console-empty chart-empty"><span>{{ dashboard.trends.purchase === null ? '无查看权限' : '暂无可展示趋势数据' }}</span></div>
         <button class="panel-link" @click="$router.push('/purchase/orders')">查看明细 <i class="el-icon-arrow-right" /></button>
       </section>
-      <section class="console-panel chart-panel">
+      <section v-if="dashboard.trends.inventory !== null" class="console-panel chart-panel">
         <div class="panel-head"><h2>最近30天库存事务趋势</h2></div>
         <div v-if="inventoryTrendTotal > 0" class="line-chart">
           <span v-for="(bar,index) in inventoryTrend" :key="index" :style="{ height: `${bar.height}%` }" :title="`${bar.date}：${bar.count}笔`" />
@@ -124,7 +126,7 @@ import { consoleTime, consoleWait, consoleTrend, consoleAmounts, consoleQuantiti
 
 export default {
   name: 'ConsoleDashboard',
-  data: () => ({ loading: false, loadError: '', dashboard: null, todoTab: 'todo', todoType: '', todoPage: 1, warningTab: '全部', warningTabs: ['全部', '主数据', '采购', '库存', 'BOM'], loadVersion: 0 }),
+  data: () => ({ loading: false, loadError: '', dashboard: null, todoTab: 'todo', todoType: '', todoPage: 1, warningTab: '全部', loadVersion: 0 }),
   computed: {
     todayText() { return new Intl.DateTimeFormat('zh-CN', { timeZone: this.timezone, year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' }).format(new Date()) },
     timezone() { return this.dashboard?.timezone || 'Asia/Shanghai' },
@@ -134,14 +136,18 @@ export default {
       return [
         ['requests', '待确认采购需求', 'el-icon-document', 'blue'], ['plans', '待审核采购计划', 'el-icon-tickets', 'orange'],
         ['orders', '待审核采购订单', 'el-icon-notebook-2', 'green'], ['receipts', '待过账采购到货', 'el-icon-truck', 'purple'],
-        ['adjustments', '待处理库存调整', 'el-icon-sort', 'blue'], ['boms', '待审核/待启用BOM', 'el-icon-share', 'orange']
+        ['adjustments', '待处理库存调整', 'el-icon-sort', 'blue'], ['boms', '待审核/待启用BOM', 'el-icon-share', 'orange'],
+        ['approvals', '其他待我审核', 'el-icon-s-check', 'green'], ['cash', '待确认资金单', 'el-icon-wallet', 'purple']
       ].map(([key, name, icon, tone]) => ({ key, name, icon, tone, count: this.dashboard?.counts[key] ?? null }))
     },
+    visibleTaskCards() { return this.taskCards.filter(card => card.count !== null) },
     totalTodo() { return this.dashboard?.total_todo ?? 0 },
     todoTitle() { return this.taskCards.find(c => c.key === this.todoType)?.name || '业务待办' },
     hasTodoAccess() { return this.taskCards.some(c => c.count !== null) },
     visibleTodos() { return this.dashboard?.todos?.data || [] },
     warningRows() { return this.dashboard?.warnings || [] },
+    // 预警分类按实际有数据的模块生成，不再固定显示无权限或无数据的分类。
+    warningTabs() { return ['全部', ...new Set(this.warningRows.map(row => row.module).filter(Boolean))] },
     filteredWarnings() { return this.warningTab === '全部' ? this.warningRows : this.warningRows.filter(r => r.module === this.warningTab) },
     recentOps() { return this.dashboard?.recent || [] },
     purchaseTrend() { return consoleTrend(this.dashboard?.trends.purchase) },
@@ -149,15 +155,22 @@ export default {
     purchaseTrendTotal() { return (this.dashboard?.trends.purchase || []).reduce((n, r) => n + r.count, 0) },
     inventoryTrendTotal() { return (this.dashboard?.trends.inventory || []).reduce((n, r) => n + r.count, 0) },
     modules() {
-      const d = this.dashboard || {}, m = d.master || {}, p = d.purchase || {}, i = d.inventory || {}, b = d.bom || {}
+      const d = this.dashboard || {}, m = d.master || {}, p = d.purchase || {}, i = d.inventory || {}, b = d.bom || {}, f = d.finance || {}
       const metric = (label, value) => ({ label, value })
       const link = (text, to) => ({ text, to })
       return [
-        { title: '主数据中心', icon: 'el-icon-menu', metrics: [metric('Product总数', m.products), metric('SKU总数', m.skus), metric('Item总数', m.items), metric('SKU-Item关联率', m.relation_rate), metric('停用物料', m.disabled_items), metric('缺少Item关联SKU', m.missing_skus)], links: [link('产品管理', '/master/products'), link('SKU管理', '/master/skus'), link('物料管理', '/master/items'), link('SKU-Item关系', '/master/sku-item-relations')] },
+        { title: '主数据中心', icon: 'el-icon-menu', metrics: [metric('产品总数', m.products), metric('SKU总数', m.skus), metric('物料总数', m.items), metric('SKU-物料关联率', m.relation_rate), metric('停用物料', m.disabled_items), metric('未关联物料的SKU', m.missing_skus)], links: [link('产品管理', '/master/products'), link('SKU管理', '/master/skus'), link('物料管理', '/master/items'), link('SKU-物料关系', '/master/sku-item-relations')] },
         { title: '采购管理', icon: 'el-icon-shopping-cart-2', metrics: [metric('本月采购需求', p.requests_month), metric('本月采购订单', p.orders_month), metric('待到货', p.awaiting_delivery), metric('待过账', p.receipts_to_post), metric('本月已审核金额', consoleAmounts(p.approved_amounts_month)), metric('不合格到货待处理', p.defects)], links: [link('采购需求', '/purchase/requests'), link('采购计划', '/purchase/plans'), link('采购订单', '/purchase/orders'), link('到货验收', '/purchase/receipts'), link('不合格品处理', '/purchase/defects')] },
         { title: '库存管理', icon: 'el-icon-house', metrics: [metric('有库存物料', i.stock_items), metric('库存数量（按单位）', consoleQuantities(i.quantity_by_unit)), metric('今日入库事务', i.today_in), metric('今日库存流水', i.today_transactions), metric('待处理库存调整', i.adjustments), metric('库存预警', i.alerts)], links: [link('库存余额', '/inventory/balances'), link('库存流水', '/inventory/transactions'), link('到货过账', '/inventory/posting'), link('库存调整', '/inventory/adjustments'), link('仓库库位', '/master/warehouse-locations')] },
-        { title: 'BOM管理', icon: 'el-icon-share', metrics: [metric('BOM总数', b.total), metric('已启用且有效', b.active), metric('待审核', b.pending), metric('有效默认BOM', b.defaults), metric('7天内到期', b.expiring), metric('缺少默认BOM的SKU', b.missing_defaults)], links: [link('BOM列表', '/bom/boms'), link('新建BOM', '/bom/create'), link('BOM审核', '/bom/boms'), link('BOM展开', '/bom/expand'), link('版本管理', '/bom/boms')] }
-      ]
+        { title: 'BOM管理', icon: 'el-icon-share', metrics: [metric('BOM总数', b.total), metric('已启用且有效', b.active), metric('待审核', b.pending), metric('有效默认BOM', b.defaults), metric('7天内到期', b.expiring), metric('缺少默认BOM的SKU', b.missing_defaults)], links: [link('BOM列表', '/bom/boms'), link('新建BOM', '/bom/create'), link('BOM审核', '/bom/boms'), link('BOM展开', '/bom/expand'), link('版本管理', '/bom/boms')] },
+        { title: '财务管理', icon: 'el-icon-coin', metrics: [metric('应付未付款', f.unpaid_payable ? consoleAmounts(f.unpaid_payable) : null), metric('应付未收票', f.unreceived_invoice ? consoleAmounts(f.unreceived_invoice) : null), metric('本月已付款', f.payments_month ? consoleAmounts(f.payments_month) : null), metric('本月已收款', f.receipts_month ? consoleAmounts(f.receipts_month) : null), metric('待确认资金单', f.draft_cash_documents)], links: [link('应付管理', '/finance/payables'), link('付款管理', '/finance/payments'), link('收款管理', '/finance/receipts'), link('发票管理', '/finance/invoices'), link('资金账户', '/finance/accounts')] }
+      ].map(module => ({
+        ...module,
+        metrics: module.metrics.filter(item => item.value !== null && item.value !== undefined),
+        // 快捷链接按目标页面的路由权限过滤，避免点进去才提示无权访问。
+        links: module.links.filter(item => this.canOpen(item.to))
+      }))
+        .filter(module => module.metrics.length > 0)
     }
   },
   watch: { todoTab() { this.todoPage = 1; this.load() } },
@@ -166,6 +179,10 @@ export default {
   mounted() { window.addEventListener('focus', this.refresh) },
   beforeDestroy() { this.loadVersion++; window.removeEventListener('focus', this.refresh) },
   methods: {
+    canOpen(path) {
+      const permission = this.$router.resolve(path).route.matched.map(record => record.meta && record.meta.permission).find(Boolean)
+      return !permission || this.$can(permission)
+    },
     refresh() { if (!this.loading) this.load() },
     async load() {
       const version = ++this.loadVersion
@@ -203,7 +220,7 @@ export default {
 .hero-art { justify-self: center; color: #9bd7b6; font-size: 70px; opacity: .78; }
 .quick-actions { display: grid; grid-template-columns: repeat(2,1fr); gap: 10px; }
 .quick-actions .el-button { height: 38px; margin: 0; background: #fff; }
-.todo-cards { display: grid; grid-template-columns: repeat(6,1fr); gap: 10px; margin: 10px 0; }
+.todo-cards { display: grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap: 10px; margin: 10px 0; }
 .todo-card { min-height: 82px; display: grid; grid-template-columns: 40px 1fr 48px; gap: 10px; align-items: center; padding: 12px; border: 1px solid #e2e6ea; border-radius: 5px; background: #fff; cursor: pointer; transition: transform .15s ease, box-shadow .15s ease; }
 .todo-card:hover { transform: translateY(-1px); box-shadow: 0 8px 22px rgba(17,24,39,.06); }
 .todo-card>i { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 7px; color: #fff; font-size: 18px; }
@@ -225,7 +242,7 @@ export default {
 .warning-list { padding: 8px 12px 0; max-height: 230px; overflow: auto; }
 .warning-list article { display: grid; grid-template-columns: 46px 1.05fr 1.2fr 112px 58px; gap: 10px; align-items: center; min-height: 42px; border-bottom: 1px solid #edf0f2; cursor: pointer; }
 .warning-list b,.warning-list span { display: block; }.warning-list span,.warning-list p,.warning-list time { color: #64717d; margin: 0; }.warning-list a { color: #2f6fec; }
-.module-overview { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; margin-top: 10px; }
+.module-overview { display: grid; grid-template-columns: repeat(auto-fit,minmax(260px,1fr)); gap: 10px; margin-top: 10px; }
 .module-card { padding: 12px; }
 .module-card h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; font-size: 14px; }
 .module-card h3 i { color: #10a464; }

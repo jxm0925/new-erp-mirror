@@ -22,6 +22,10 @@ frontend/*.out.log
 frontend/*.err.log
 frontend/*.rar
 
+# Mini program: npm sources are local only; the built miniprogram_npm stays tracked
+# so WeChat DevTools can compile a fresh clone without running "构建 npm".
+wxapp/node_modules/
+
 # Codex development evidence lives in D:\codex-introduce\new_erp
 backend/docs/
 design-qa.md

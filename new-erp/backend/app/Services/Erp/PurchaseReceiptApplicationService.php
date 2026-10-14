@@ -160,7 +160,7 @@ class PurchaseReceiptApplicationService
             $available = max(0, (float) $orderItem->remaining_qty - (float) ($allocations[$orderItem->id] ?? 0));
             if ($quantity - $available > 0.00000001) {
                 throw ValidationException::withMessages([
-                    'items' => "物料 {$orderItem->item_id} 本次到货 {$quantity} 超过可用剩余数量 {$available}。",
+                    'items' => "物料 ".($orderItem->item?->item_code ? $orderItem->item->item_code." ".$orderItem->item->item_name : $orderItem->item_id)." 本次到货 ".(float) $quantity." 超过订单剩余可到货数量 ".(float) $available."，不能超订单到货。",
                 ]);
             }
         }

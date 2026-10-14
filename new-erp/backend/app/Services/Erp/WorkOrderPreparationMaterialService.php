@@ -242,7 +242,7 @@ final class WorkOrderPreparationMaterialService
                 ->join('erp_purchase_receipt_items as receipt', 'receipt.id', '=', 'movement.source_item_id')
                 ->join('erp_purchase_order_items as ordered', 'ordered.id', '=', 'receipt.order_item_id')
                 ->where('ordered.request_item_id', $source->request_item_id)->where('movement.item_id', $source->component_item_id)
-                ->where('posting.source_type', 'purchase_receipt')->where('posting.transaction_type', 'purchase_receipt_posting')
+                ->where('movement.source_type', 'purchase_receipt')->whereIn('posting.transaction_type', ['purchase_receipt_posting', 'purchase_receipt_quality_release'])
                 ->where('posting.posting_status', 'posted')->sum('movement.change_qty');
             $received = bcadd($received, bccomp($posted, $quantity, 8) < 0 ? $posted : $quantity, 8);
         }

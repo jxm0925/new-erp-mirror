@@ -13,11 +13,24 @@ use Illuminate\Validation\ValidationException;
 
 class InventoryAdjustmentApplicationService
 {
+    public const REASONS = [
+        'stocktaking_difference' => '盘点差异',
+        'quality_recheck' => '质检复核修正',
+        'warehouse_correction' => '仓储录入修正',
+        'system_correction' => '系统数据修正',
+        'other' => '其他',
+    ];
+
+    public static function reasonLabel(?string $reason): ?string
+    {
+        return self::REASONS[$reason] ?? $reason;
+    }
+
     public function __construct(private readonly MaterialPhysicalService $physicalMaterials) {}
 
-    public function save(array $payload, ?int $id = null): InventoryAdjustment
+    public function save(array $payload, ?int $id = null, ?int $operatorId = null): InventoryAdjustment
     {
-        return DB::transaction(function () use ($payload, $id): InventoryAdjustment {
+        return DB::transaction(function () use ($payload, $id, $operatorId): InventoryAdjustment {
             $adjustment = $id
                 ? InventoryAdjustment::query()->lockForUpdate()->findOrFail($id)
                 : null;
@@ -27,8 +40,10 @@ class InventoryAdjustmentApplicationService
 
             if (!$adjustment) {
                 $adjustment = InventoryAdjustment::create([
-                    'adjustment_no' => $payload['adjustment_no'] ?? $this->nextNo('ADJ'),
+                    // 单号只由服务端编号规则生成，不接受客户端传入，避免重复或伪造单号。
+                    'adjustment_no' => app(DocumentNumberService::class)->next('inventory_adjustment', 'IA'),
                     'adjustment_status' => 'draft',
+                    'created_by' => $operatorId,
                     'adjustment_date' => $payload['adjustment_date'] ?? now()->toDateString(),
                     'reason' => $payload['reason'],
                     'remark' => $payload['remark'] ?? null,
@@ -90,9 +105,9 @@ class InventoryAdjustmentApplicationService
         }, 5);
     }
 
-    public function submit(int $id): InventoryAdjustment
+    public function submit(int $id, ?int $operatorId = null): InventoryAdjustment
     {
-        return DB::transaction(function () use ($id): InventoryAdjustment {
+        return DB::transaction(function () use ($id, $operatorId): InventoryAdjustment {
             $adjustment = InventoryAdjustment::query()->with(['items.item', 'items.serials', 'items.physicalEntries'])->lockForUpdate()->findOrFail($id);
             if ($adjustment->adjustment_status !== 'draft') {
                 throw ValidationException::withMessages(['status' => '只有草稿调整单可以提交。']);
@@ -109,19 +124,19 @@ class InventoryAdjustmentApplicationService
                     ->lockForUpdate()->firstOrFail();
                 $this->validateStoredLine($line, $balance, $adjustment->id);
             }
-            $adjustment->update(['adjustment_status' => 'submitted', 'submitted_at' => now()]);
+            $adjustment->update(['adjustment_status' => 'submitted', 'submitted_by' => $operatorId, 'submitted_at' => now()]);
             return $adjustment->fresh(['items.serials', 'items.physicalEntries']);
         }, 5);
     }
 
-    public function cancel(int $id): InventoryAdjustment
+    public function cancel(int $id, ?int $operatorId = null): InventoryAdjustment
     {
-        return DB::transaction(function () use ($id): InventoryAdjustment {
+        return DB::transaction(function () use ($id, $operatorId): InventoryAdjustment {
             $adjustment = InventoryAdjustment::query()->lockForUpdate()->findOrFail($id);
             if ($adjustment->adjustment_status !== 'submitted') {
                 throw ValidationException::withMessages(['status' => '只有已提交、尚未过账的调整单可以取消。']);
             }
-            $adjustment->update(['adjustment_status' => 'cancelled', 'cancelled_at' => now()]);
+            $adjustment->update(['adjustment_status' => 'cancelled', 'cancelled_by' => $operatorId, 'cancelled_at' => now()]);
             return $adjustment->fresh('items');
         }, 5);
     }
@@ -139,11 +154,6 @@ class InventoryAdjustmentApplicationService
             }
             $adjustment->delete();
         }, 5);
-    }
-
-    private function nextNo(string $prefix): string
-    {
-        return $prefix.now()->format('YmdHis').random_int(100, 999);
     }
 
     public function validateStoredLine(InventoryAdjustmentItem $line, InventoryBalance $balance, int $adjustmentId): array

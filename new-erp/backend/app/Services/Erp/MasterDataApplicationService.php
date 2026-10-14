@@ -286,7 +286,7 @@ class MasterDataApplicationService
                 ['erp_sku_item_relation_logs', 'sku_id'],
             ];
             foreach ($references as [$table, $column]) {
-                abort_if(DB::table($table)->where($column, $locked->getKey())->exists(), 422, '该 SKU 已产生订单、BOM、定制或默认 Item 关系记录，只能停用，不能删除。');
+                abort_if(DB::table($table)->where($column, $locked->getKey())->exists(), 422, '该 SKU 已产生订单、BOM、定制或默认物料关系记录，只能停用，不能删除。');
             }
 
             $this->assertNoForeignKeyReferences($locked);
@@ -453,7 +453,7 @@ class MasterDataApplicationService
         ];
         foreach ($references as [$table, $column]) {
             if (DB::table($table)->where($column, $itemId)->exists()) {
-                abort(422, '该 Item 已存在库存或正式业务引用，库存基本单位不能直接修改。');
+                abort(422, '该物料已存在库存或正式业务引用，库存基本单位不能直接修改。');
             }
         }
     }

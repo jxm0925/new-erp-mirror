@@ -22,7 +22,7 @@
     <!-- 全局统一页面提示条 -->
     <div class="erp-page-tip">
       <i class="el-icon-info" />
-      <span>维护商品销售层级的 SKU 规格主档案。实物 SKU 在启用并投入库存与工单生产履约前，必须绑定唯一且有效的默认物料（Item）；服务与无需发货类 SKU 则无需关联实物料。</span>
+      <span>维护商品销售层级的 SKU 规格主档案。实物 SKU 在启用并投入库存与工单生产履约前，必须绑定唯一且有效的默认物料；服务与无需发货类 SKU 则无需关联实物料。</span>
     </div>
 
     <!-- 顶部概览指标卡片 -->
@@ -54,12 +54,12 @@
       <div
         class="metric-card metric-warning"
         :class="{ active: query.missing_default_item }"
-        title="点击快速筛选缺少默认 Item 的实物 SKU"
+        title="点击快速筛选缺少默认物料的实物 SKU"
         @click="filterMissingItem"
       >
         <div class="metric-icon-box"><i class="el-icon-warning-outline" /></div>
         <div class="metric-info">
-          <span class="metric-label">缺少默认 Item (预警)</span>
+          <span class="metric-label">缺少默认物料(预警)</span>
           <strong class="metric-val code-mono text-danger">{{ missingItemCount }}</strong>
         </div>
         <i class="el-icon-arrow-right card-arrow" />
@@ -93,7 +93,7 @@
           </el-select>
 
           <el-checkbox v-model="query.missing_default_item" class="filter-checkbox" @change="search">
-            仅看缺少默认 Item
+            仅看缺少默认物料
           </el-checkbox>
         </div>
 
@@ -187,7 +187,7 @@
           </el-table-column>
 
           <!-- 默认关联 Item -->
-          <el-table-column label="默认物料 (Item)" min-width="160">
+          <el-table-column label="默认物料" min-width="160">
             <template slot-scope="{ row }">
               <div v-if="hasDefault(row)" class="item-bound-box" @click="goToItem(defaultItem(row).item)">
                 <i class="el-icon-box" />
@@ -200,7 +200,7 @@
                 effect="plain"
                 class="missing-item-tag"
               >
-                <i class="el-icon-warning" /> 缺少默认Item
+                <i class="el-icon-warning" /> 缺少默认物料
               </el-tag>
               <span v-else class="text-muted">—</span>
             </template>
@@ -365,7 +365,7 @@ export default {
     async deleteSku(row) {
       try {
         await this.$confirm(
-          `确认删除 SKU ${row.sku_code}？仅从未被订单、BOM、定制或默认 Item 关系引用的停用/草稿 SKU 可以删除。`,
+          `确认删除 SKU ${row.sku_code}？仅从未被订单、BOM、定制或默认 物料关系引用的停用/草稿 SKU 可以删除。`,
           '删除 SKU',
           { type: 'warning', confirmButtonText: '确认删除' }
         )

@@ -279,7 +279,7 @@ final class CuttingRecordService
         $allowed = null; $cuttingRequirement = null;
         if ($type === 'product') {
             $allowed = DB::table('erp_cutting_allowed_outputs')->where('cutting_order_id', $batch->cutting_order_id)->where('id', (int) ($row['allowed_output_id'] ?? 0))->first();
-            if (! $allowed) $c->fail('output_not_allowed', '该Item、配置或阶段不属于本下料任务允许的产出集合。');
+            if (! $allowed) $c->fail('output_not_allowed', '该物料、配置或阶段不属于本下料任务允许的产出集合。');
             $item = Item::query()->whereKey($allowed->item_id)->lockForUpdate()->first();
             if (! $item) $c->fail('output_item_invalid', '正式产出物料不存在。');
             app(ItemManagementScopeService::class)->assertProductionAllowed($item, 'results');

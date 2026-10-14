@@ -36,9 +36,9 @@ class InventoryService
     {
     }
 
-    public function postPurchaseReceipt(int $receiptId): InventoryTransaction
+    public function postPurchaseReceipt(int $receiptId, ?int $operatorId = null): InventoryTransaction
     {
-        return DB::transaction(function () use ($receiptId) {
+        return DB::transaction(function () use ($receiptId, $operatorId) {
             $receipt = PurchaseReceipt::with(['items.item', 'items.allocations', 'supplier', 'order'])->lockForUpdate()->findOrFail($receiptId);
 
             if ($receipt->stock_post_status === 'posted') {
@@ -86,7 +86,9 @@ class InventoryService
                 'warehouse_id' => $receipt->items->first()?->allocations->first()?->warehouse_id,
                 'location_id' => $receipt->items->first()?->allocations->first()?->location_id,
                 'transaction_date' => now()->toDateString(),
+                'posted_by' => $operatorId,
                 'posted_at' => now(),
+                'created_by' => $operatorId,
                 'remark' => '采购到货入库过账',
             ]);
 
@@ -139,7 +141,8 @@ class InventoryService
                 }
             }
 
-            $receipt->update(['stock_post_status' => 'posted', 'fulfillment_status' => 'fulfilled']);
+            $qualityPending = (float) $receipt->items->sum('quality_hold_amount') > 0.0001;
+            $receipt->update(['stock_post_status' => 'posted', 'fulfillment_status' => $qualityPending ? 'pending_quality' : 'fulfilled']);
             $postingLog = InventoryPostingLog::create([
                 'source_type' => 'purchase_receipt',
                 'source_id' => $receipt->id,
@@ -155,6 +158,90 @@ class InventoryService
                     ? ['inventory_posting_status' => 'posted', 'inventory_posting_log_id' => $postingLog->id]
                     : ['inventory_posting_status' => 'not_required']);
             }
+
+            return $transaction->fresh(['items.item', 'items.warehouse', 'items.location']);
+        });
+    }
+
+    /**
+     * 到货单已按合格部分过账后，不合格品经让步接收或返修合格转为可入库数量，
+     * 按“应入库数量 - 已过账数量”补一笔采购入库流水，入到该行第一条库位分配上。
+     */
+    public function postPurchaseReceiptQualityRelease(int $receiptItemId, ?int $operatorId = null, ?object $handling = null): ?InventoryTransaction
+    {
+        return DB::transaction(function () use ($receiptItemId, $operatorId, $handling): ?InventoryTransaction {
+            $line = \App\Models\Erp\PurchaseReceiptItem::with(['receipt', 'item', 'allocations'])->lockForUpdate()->findOrFail($receiptItemId);
+            $receipt = $line->receipt;
+            if (!$receipt || $receipt->stock_post_status !== 'posted' || !(bool) $line->is_stock_item_snapshot) return null;
+            if (PurchaseReceiptPostingEligibilityService::requiresQualityClosedBeforePosting($line->item)) {
+                throw ValidationException::withMessages(['receipt' => '序列号或实物管理物料不能在到货单过账后补入库，请走库存质量处理。']);
+            }
+
+            $posted = DB::table('erp_inventory_transaction_items as movement')
+                ->join('erp_inventory_transactions as posting', 'posting.id', '=', 'movement.transaction_id')
+                ->where('movement.source_type', 'purchase_receipt')->where('movement.source_id', $receipt->id)
+                ->whereIn('posting.transaction_type', ['purchase_receipt_posting', 'purchase_receipt_quality_release'])->where('posting.posting_status', 'posted')
+                ->where('movement.source_item_id', $line->id)
+                ->selectRaw('COALESCE(SUM(movement.change_qty), 0) as qty, COALESCE(SUM(movement.cost_amount), 0) as cost')
+                ->first();
+            $delta = bcsub(number_format($this->qualifiedBaseQuantity($line), 8, '.', ''), (string) $posted->qty, 8);
+            if (bccomp($delta, '0', 8) <= 0) return null;
+            $cost = bcsub((string) $line->inventory_cost_amount, (string) $posted->cost, 4);
+            if (bccomp($cost, '0', 4) < 0) $cost = '0.0000';
+
+            $allocation = $line->allocations->sortBy('id')->first();
+            if (!$allocation) {
+                throw ValidationException::withMessages(['receipt' => '该到货明细没有入库库位分配，无法补入库，请联系仓库补充分配。']);
+            }
+            $allocation->update(['base_qty' => bcadd((string) $allocation->base_qty, $delta, 8)]);
+
+            $transaction = InventoryTransaction::create([
+                'transaction_no' => $this->nextNo('ITX'),
+                // 一张到货单只允许一笔正式过账流水（来源唯一索引），补入库挂在不合格品处理单上，每张处理单一笔；
+                // 明细行仍记到货单来源，便于按到货明细汇总已入库数量。
+                'transaction_type' => 'purchase_receipt_quality_release',
+                'source_type' => $handling ? 'purchase_defect_handling' : 'purchase_receipt',
+                'source_id' => $handling ? $handling->id : $receipt->id,
+                'source_no' => $handling ? $handling->handling_no : $receipt->receipt_no,
+                'posting_status' => 'posted',
+                'warehouse_id' => $allocation->warehouse_id,
+                'location_id' => $allocation->location_id,
+                'transaction_date' => now()->toDateString(),
+                'posted_by' => $operatorId,
+                'posted_at' => now(),
+                'created_by' => $operatorId,
+                'remark' => '不合格品让步接收/返修合格补入库（到货单 '.$receipt->receipt_no.'）',
+            ]);
+            $this->applyInventoryChange($transaction, [
+                'item_id' => $line->item_id,
+                'warehouse_id' => $allocation->warehouse_id,
+                'location_id' => $allocation->location_id,
+                'batch_no' => $line->batch_no,
+                'unit_id' => $line->base_unit_id ?: $line->item?->unit_id,
+                'change_qty' => (float) $delta,
+                'unit_cost' => (float) $delta > 0 ? (float) $cost / (float) $delta : 0,
+                'cost_amount' => $cost,
+                'purchase_amount_snapshot' => (float) $cost,
+                'freight_amount_snapshot' => 0,
+                'other_purchase_cost_amount_snapshot' => 0,
+                'cost_source_type' => 'purchase_receipt_frozen_fact',
+                'source_type' => 'purchase_receipt',
+                'source_id' => $receipt->id,
+                'source_item_id' => $line->id,
+                'physical_operation' => null,
+                'physical_entry_count' => 0,
+                'remark' => '不合格品让步接收/返修合格补入库',
+            ]);
+            InventoryPostingLog::create([
+                'source_type' => $transaction->source_type,
+                'source_id' => $transaction->source_id,
+                'source_no' => $transaction->source_no,
+                'transaction_type' => 'purchase_receipt_quality_release',
+                'transaction_id' => $transaction->id,
+                'posting_status' => 'posted',
+                'message' => '不合格品转合格补入库成功',
+                'posted_at' => now(),
+            ]);
 
             return $transaction->fresh(['items.item', 'items.warehouse', 'items.location']);
         });
@@ -492,9 +579,9 @@ class InventoryService
         return round($baseTotal * $qualifiedQty / $receiptQty, 8);
     }
 
-    public function postAdjustment(int $adjustmentId): InventoryTransaction
+    public function postAdjustment(int $adjustmentId, ?int $operatorId = null): InventoryTransaction
     {
-        return DB::transaction(function () use ($adjustmentId) {
+        return DB::transaction(function () use ($adjustmentId, $operatorId) {
             $adjustment = InventoryAdjustment::with(['items.item', 'items.serials', 'items.physicalEntries'])->lockForUpdate()->findOrFail($adjustmentId);
             if ($adjustment->adjustment_status === 'posted') {
                 throw ValidationException::withMessages(['adjustment' => '该调整单已过账，不能重复过账。']);
@@ -511,7 +598,7 @@ class InventoryService
                     throw ValidationException::withMessages(['adjustment' => '调整数量必须大于 0，不能生成 0 数量库存事务。']);
                 }
                 if (!$line->item_id || !$line->warehouse_id || !$line->location_id || !$line->batch_no) {
-                    throw ValidationException::withMessages(['adjustment' => '调整明细必须包含 Item、仓库、库位和批次。']);
+                    throw ValidationException::withMessages(['adjustment' => '调整明细必须包含物料、仓库、库位和批次。']);
                 }
                 $balance = InventoryBalance::where('item_id', $line->item_id)
                     ->where('warehouse_id', $line->warehouse_id)
@@ -540,8 +627,11 @@ class InventoryService
                 'warehouse_id' => $adjustment->items->first()->warehouse_id,
                 'location_id' => $adjustment->items->first()->location_id,
                 'transaction_date' => now()->toDateString(),
+                'posted_by' => $operatorId,
                 'posted_at' => now(),
-                'remark' => $adjustment->reason,
+                'created_by' => $operatorId,
+                // 流水备注给人看，原因编码仍保存在调整单 reason 字段。
+                'remark' => InventoryAdjustmentApplicationService::reasonLabel($adjustment->reason),
             ]);
 
             foreach ($adjustment->items as $line) {
@@ -616,7 +706,7 @@ class InventoryService
                 $this->applyAdjustmentSerials($adjustment, $line, $balance);
             }
 
-            $adjustment->update(['adjustment_status' => 'posted', 'posted_at' => now()]);
+            $adjustment->update(['adjustment_status' => 'posted', 'posted_by' => $operatorId, 'posted_at' => now()]);
             InventoryPostingLog::create([
                 'source_type' => 'inventory_adjustment',
                 'source_id' => $adjustment->id,

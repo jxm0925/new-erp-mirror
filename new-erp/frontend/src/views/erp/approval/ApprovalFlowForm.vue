@@ -424,6 +424,13 @@
         >
         <p>发送站内消息通知相关人员。</p>
       </section>
+      <!-- 定义里一直有 allow_self_approval，但页面没有入口，只能是默认“不允许”。
+           只有一个审批人的岗位（如单人采购）需要打开，否则提交后无人可审。 -->
+      <section class="card self-approval">
+        <h2><i class="el-icon-user" /> 审批人限制</h2>
+        <el-checkbox v-model="definition.allow_self_approval" :disabled="readonly">允许提交人审批自己提交的单据</el-checkbox>
+        <p>关闭时，提交人即使在审批角色中也不能处理自己提交的任务；岗位只有一人时需要打开。</p>
+      </section>
       <section class="card check">
         <h2><i class="el-icon-circle-check" /> 发布前校验</h2>
         <p v-for="item in validationItems" :key="item.text">
@@ -630,6 +637,7 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import {
   createApprovalFlow,
   getApprovalFlow,
@@ -1408,10 +1416,7 @@ export default {
     },
     time(v) {
       return v
-        ? String(v)
-            .replace("T", " ")
-            .replace(/\.\d+Z$/, "")
-            .slice(0, 16)
+        ? erpDateTime(v, 16)
         : "-";
     },
   },
@@ -1664,7 +1669,7 @@ export default {
 }
 .bottom-grid {
   display: grid;
-  grid-template-columns: 1.15fr 0.75fr 1fr;
+  grid-template-columns: 1.15fr 0.75fr 0.75fr 1fr;
   gap: 10px;
   margin-top: 10px;
 }
@@ -1672,7 +1677,8 @@ export default {
   padding-bottom: 10px;
 }
 .bottom-grid .card > p,
-.notifications label {
+.notifications label,
+.self-approval label {
   margin: 9px 13px;
   font-size: 12px;
 }
@@ -1683,7 +1689,8 @@ export default {
 .actions > .el-button {
   margin: 8px 12px;
 }
-.notifications p {
+.notifications p,
+.self-approval p {
   color: #788594;
   margin-left: 34px !important;
 }

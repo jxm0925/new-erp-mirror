@@ -51,7 +51,7 @@ class InventoryQualityApplicationService
                     ->first();
                 if (!$serial) {
                     throw ValidationException::withMessages([
-                        'serial_no' => '该序列号不属于当前 Item、仓库、库位和批次，请核对实物标签。',
+                        'serial_no' => '该序列号不属于当前物料、仓库、库位和批次，请核对实物标签。',
                     ]);
                 }
                 if ($serial->serial_status !== 'available') {

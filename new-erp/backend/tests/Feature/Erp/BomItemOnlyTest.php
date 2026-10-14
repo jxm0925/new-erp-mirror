@@ -119,7 +119,7 @@ class BomItemOnlyTest extends TestCase
             $product->id,
             $sku->id
         ))->assertStatus(422)
-            ->assertJsonPath('message', '产出 Item 必须是该 SKU 当前有效的默认生产/履约 Item。');
+            ->assertJsonPath('message', '产出物料必须是该 SKU 当前有效的默认生产/履约物料。');
     }
 
     public function test_product_and_sku_must_be_both_present_or_both_null(): void
@@ -156,7 +156,7 @@ class BomItemOnlyTest extends TestCase
             null,
             null
         ))->assertStatus(422)
-            ->assertJsonPath('message', 'Item-only BOM 的产出 Item 必须已启用且可用于生产。');
+            ->assertJsonPath('message', 'Item-only BOM 的产出物料必须已启用且可用于生产。');
 
         $this->postJson('/api/v1/erp/bom/boms', $this->createPayload(
             $disabledOutput,
@@ -164,7 +164,7 @@ class BomItemOnlyTest extends TestCase
             null,
             null
         ))->assertStatus(422)
-            ->assertJsonPath('message', 'Item-only BOM 的产出 Item 必须已启用且可用于生产。');
+            ->assertJsonPath('message', 'Item-only BOM 的产出物料必须已启用且可用于生产。');
     }
 
     public function test_null_product_and_sku_match_only_item_only_bom_for_same_output_item(): void

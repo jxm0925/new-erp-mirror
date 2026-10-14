@@ -49,10 +49,10 @@ class SkuItemMatcher
                 'item_id' => $rel->item_id,
                 'item_code' => $rel->item?->item_code,
                 'item_name' => $rel->item?->item_name,
-            ])->all(), 'SKU-Item 存在多个默认 Item，请维护唯一默认关系');
+            ])->all(), 'SKU-Item 存在多个默认物料，请维护唯一默认关系');
         }
 
-        return $this->result('not_found', null, 'sku_primary', [], '当前 SKU 尚未维护可用默认 Item 关系');
+        return $this->result('not_found', null, 'sku_primary', [], '当前 SKU 尚未维护可用默认物料关系');
     }
 
     private function result(string $status, ?int $itemId, ?string $rule, array $candidates, ?string $reason): array

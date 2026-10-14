@@ -1,17 +1,6 @@
-import axios from 'axios'
+import { createErpApi } from './http'
 
-const api = axios.create({ baseURL: process.env.VUE_APP_BASE_API, timeout: 30000 })
-api.interceptors.request.use(config => {
-  const token = localStorage.getItem('erp_token')
-  if (token) config.headers.Authorization = `Bearer ${token}`
-  return config
-})
-api.interceptors.response.use(response => response, error => {
-  const errors = error.response?.data?.errors
-  const first = errors && Object.values(errors)[0]
-  const message = (Array.isArray(first) ? first[0] : first) || error.response?.data?.message || '请求失败，请稍后重试'
-  return Promise.reject(Object.assign(error, { userMessage: message, errorCode: error.response?.data?.error_code }))
-})
+const api = createErpApi({ timeout: 30000 })
 
 const cmd = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 

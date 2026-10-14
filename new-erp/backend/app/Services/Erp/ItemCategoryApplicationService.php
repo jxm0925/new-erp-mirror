@@ -41,13 +41,13 @@ class ItemCategoryApplicationService
 
                 if (empty($data['category_code'])) {
                     throw ValidationException::withMessages([
-                        'category_code' => 'Item类目编号不能为空，请重新打开新增页面获取系统编号。',
+                        'category_code' => '物料类目编号不能为空，请重新打开新增页面获取系统编号。',
                     ]);
                 }
 
                 if (ItemCategory::where('category_code', $data['category_code'])->exists()) {
                     throw ValidationException::withMessages([
-                        'category_code' => 'Item类目编号已被占用，请刷新系统编号后重新确认保存。',
+                        'category_code' => '物料类目编号已被占用，请刷新系统编号后重新确认保存。',
                     ]);
                 }
 
@@ -73,7 +73,7 @@ class ItemCategoryApplicationService
             if ((string) $exception->getCode() === '23000'
                 || str_contains(strtolower($exception->getMessage()), 'category_code')) {
                 throw ValidationException::withMessages([
-                    'category_code' => 'Item类目编号发生并发冲突，请刷新系统编号后重新确认保存。',
+                    'category_code' => '物料类目编号发生并发冲突，请刷新系统编号后重新确认保存。',
                 ]);
             }
             throw $exception;
@@ -87,7 +87,7 @@ class ItemCategoryApplicationService
             if (array_key_exists('category_code', $data)
                 && $data['category_code'] !== $locked->category_code) {
                 throw ValidationException::withMessages([
-                    'category_code' => 'Item类目编码创建后不可修改。',
+                    'category_code' => '物料类目编码创建后不可修改。',
                 ]);
             }
             unset($data['category_code'], $data['reservation_token'], $data['creation_session_id']);

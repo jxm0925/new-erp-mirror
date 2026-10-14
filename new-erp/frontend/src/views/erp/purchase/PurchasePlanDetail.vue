@@ -116,11 +116,11 @@
         </div>
         <div class="spec-item">
           <span class="spec-label">单据来源</span>
-          <span class="spec-value">{{ sourceText(plan.source_type || plan.data_source) }}</span>
+          <span class="spec-value">{{ planRequestNos.length ? '采购需求转入' : sourceText(plan.source_type || plan.data_source) }}</span>
         </div>
-        <div class="spec-item" v-if="plan.source_no">
+        <div class="spec-item" v-if="plan.source_no || planRequestNos.length">
           <span class="spec-label">来源单号</span>
-          <span class="spec-value">{{ plan.source_no }}</span>
+          <span class="spec-value">{{ plan.source_no || planRequestNos.join('、') }}</span>
         </div>
         <div class="spec-item spec-full">
           <span class="spec-label">备注说明</span>
@@ -374,6 +374,7 @@ export default {
     isAllExpanded: false
   }),
   computed: {
+    planRequestNos() { return this.plan ? this.requestNosOf(this.plan.items) : [] },
     scopeIssue() { return purchaseScopeIssue(this.plan) },
     canEdit() {
       return this.plan && (this.plan.plan_status === 'draft' || this.plan.audit_status === 'rejected') && this.$can(['purchase.plan.edit', 'purchase.plan'])
@@ -510,7 +511,7 @@ export default {
     lineUnit(line) {
       const unit = line.unit || (line.item && line.item.unit) || null
       const canonical = unit && (unit.standard_unit || unit.standardUnit || unit)
-      return (canonical && (canonical.symbol || canonical.unit_name || canonical.unit_code)) || '-'
+      return (canonical && (canonical.unit_name || canonical.symbol || canonical.unit_code)) || '-'
     },
     hasAllocatedSupplier(row) {
       return (row?.splits || []).some(s => Boolean(s.supplier_id || s.supplier))
@@ -542,6 +543,8 @@ export default {
       if (!snap) return ''
       return `换算规则：1 ${snap.purchase_unit_name_snapshot} = ${this.number(snap.conversion_factor_snapshot)} ${snap.base_unit_name_snapshot}`
     },
+    // 计划没有单独的来源字段，按明细是否关联采购需求判断，并列出需求单号。
+    requestNosOf(items) { return [...new Set((items || []).map(row => row.request && row.request.request_no).filter(Boolean))] },
     sourceText(v) {
       return ({ manual: '手工创建', purchase_request: '采购需求转入', system: '系统生成' })[v] || v || '手工创建'
     },

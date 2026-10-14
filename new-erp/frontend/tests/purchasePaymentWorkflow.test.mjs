@@ -185,7 +185,7 @@ test('付款期次入口只读权威余额，忽略URL金额与供应商，保�
   const calls = []
   const { vm } = await component('FinanceCashForm', { getPurchasePaymentPlan: async id => { calls.push(id); return response(order()) } }, { $route: { params: {}, query: {} } })
   await vm.loadInitialPurchaseOrder({ purchase_order_id: '11', payment_plan_id: '31', amount: '999999', supplier_id: '999' }, 0)
-  assert.deepEqual(calls, [11]); assert.equal(vm.doc.party_id, 8); assert.equal(vm.doc.amount, '200.0000'); assert.equal(vm.doc.currency, 'CNY')
+  assert.deepEqual(calls, [11]); assert.equal(vm.doc.party_id, 8); assert.equal(vm.doc.amount, '200.00'); assert.equal(vm.doc.currency, 'CNY')
   assert.deepEqual(vm.pending, []); assert.equal(vm.doc.purchase_order_allocations[0].payment_plan_id, 31); assert.equal(vm.sourceLoadError, '')
 })
 

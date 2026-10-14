@@ -34,9 +34,10 @@ class PurchaseDefectApplicationService
                     'receipt_item_id' => '到货单尚未完成验收确认，不能发起不合格品处理。',
                 ]);
             }
-            if ($receipt->stock_post_status !== 'pending') {
+            // 合格部分已先过账的到货单，未入库的不合格品仍在这里处理；已入库货物的质量问题走库存质量处理。
+            if (!in_array($receipt->stock_post_status, ['pending', 'posted'], true)) {
                 throw ValidationException::withMessages([
-                    'receipt_item_id' => '该到货单已完成库存过账，后续质量问题必须从库存余额发起库存质量处理。',
+                    'receipt_item_id' => '该到货单当前状态不能发起不合格品处理。',
                 ]);
             }
             $remaining = $this->remainingQuantity($line);
@@ -44,9 +45,13 @@ class PurchaseDefectApplicationService
             if ($quantity > $remaining + 0.00000001) {
                 throw ValidationException::withMessages(['handling_qty' => "处理数量不能超过剩余不合格/待处理数量 {$remaining}。"]);
             }
+            if ($remaining <= 0.00000001) {
+                throw ValidationException::withMessages(['receipt_item_id' => '该到货明细没有待处理的不合格数量；已入库货物的质量问题请从库存余额发起库存质量处理。']);
+            }
             if (in_array($data['handling_method'], ['concession', 'repair'], true)
-                && $receipt->stock_post_status !== 'pending') {
-                throw ValidationException::withMessages(['handling_method' => '已库存过账的质量问题必须从库存质量处理发起。']);
+                && $receipt->stock_post_status === 'posted'
+                && PurchaseReceiptPostingEligibilityService::requiresQualityClosedBeforePosting($line->item)) {
+                throw ValidationException::withMessages(['handling_method' => '序列号或实物管理物料的到货单已过账，让步接收或返修请走库存质量处理。']);
             }
 
             [$status, $step, $docType, $prefix] = $this->initialState($data['handling_method']);
@@ -101,9 +106,9 @@ class PurchaseDefectApplicationService
         }, 5);
     }
 
-    public function action(int $id, string $action, array $payload, ?string $operatorName): PurchaseDefectHandling
+    public function action(int $id, string $action, array $payload, ?string $operatorName, ?int $operatorId = null): PurchaseDefectHandling
     {
-        return DB::transaction(function () use ($id, $action, $payload, $operatorName): PurchaseDefectHandling {
+        return DB::transaction(function () use ($id, $action, $payload, $operatorName, $operatorId): PurchaseDefectHandling {
             $handling = PurchaseDefectHandling::query()
                 ->with(['receiptItem.receipt', 'replacementReceipt.items'])
                 ->lockForUpdate()
@@ -131,6 +136,10 @@ class PurchaseDefectApplicationService
             );
             $this->settlements->refresh($handling->receipt_id);
             $this->settlementSources->syncReceipt($handling->receipt_id, null, $operatorName);
+            // 合格部分已先过账时，让步接收/返修合格的数量在这里补入库。
+            if (in_array($handling->current_step, ['concession_completed', 'repair_completed'], true)) {
+                app(InventoryService::class)->postPurchaseReceiptQualityRelease((int) $handling->receipt_item_id, $operatorId, $handling);
+            }
 
             return $this->load($handling);
         }, 5);

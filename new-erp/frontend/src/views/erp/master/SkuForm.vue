@@ -42,7 +42,7 @@
     <!-- 顶部统一提示条 -->
     <div v-if="completionMode" class="erp-page-tip tip-warning">
       <i class="el-icon-warning-outline" />
-      <span>当前 SKU 的新系统资料尚未完整维护。补全销售单位、价格并配置默认 Item 后启用，才能投入后续订单履约与生产。</span>
+      <span>当前 SKU 的新系统资料尚未完整维护。补全销售单位、价格并配置默认物料后启用，才能投入后续订单履约与生产。</span>
     </div>
     <div v-else class="erp-page-tip">
       <i class="el-icon-info" />
@@ -208,26 +208,26 @@
           </div>
         </section>
 
-        <!-- 默认 Item 绑定 -->
+        <!-- 默认物料绑定 -->
         <section v-if="form.line_type === 'physical'" class="panel item-panel">
           <div class="panel-header">
             <i class="el-icon-connection" />
-            <h2>默认物料（Item）关系</h2>
+            <h2>默认物料关系</h2>
           </div>
           <p class="section-note">实物 SKU 保存草稿可暂不绑定；正式启用必须绑定唯一有效默认物料以支持出入库与工单拆解。</p>
           <div class="item-picker-line">
-            <label>默认 Item</label>
+            <label>默认物料</label>
             <el-input size="small" readonly :value="defaultItemText" placeholder="点击右侧按钮从已启用物料库中选择" @click.native="picker=true">
               <el-button slot="append" icon="el-icon-search" class="btn-picker-open" @click="picker=true">选择物料</el-button>
             </el-input>
           </div>
-          <el-table :data="defaultRelation ? [defaultRelation.item] : []" size="small" border class="item-summary-table" empty-text="当前尚未绑定默认 Item 物料">
-            <el-table-column prop="item_code" label="Item编码" min-width="140">
+          <el-table :data="defaultRelation ? [defaultRelation.item] : []" size="small" border class="item-summary-table" empty-text="当前尚未绑定默认物料">
+            <el-table-column prop="item_code" label="物料编码" min-width="140">
               <template slot-scope="{ row }">
                 <span class="code-mono text-success">{{ row.item_code }}</span>
               </template>
             </el-table-column>
-            <el-table-column prop="item_name" label="Item名称" min-width="170" show-overflow-tooltip />
+            <el-table-column prop="item_name" label="物料名称" min-width="170" show-overflow-tooltip />
             <el-table-column prop="spec" label="规格型号" min-width="140" show-overflow-tooltip />
             <el-table-column label="物料类型" width="100" align="center">
               <template slot-scope="{ row }">
@@ -245,7 +245,7 @@
         </section>
         <div v-else class="item-not-required-card">
           <i class="el-icon-circle-check" />
-          <span>当前订单行类型为非实物类（服务/无需发货），无需配置默认 Item 物料。</span>
+          <span>当前订单行类型为非实物类（服务/无需发货），无需配置默认物料。</span>
         </div>
       </div>
 
@@ -312,18 +312,18 @@
 
         <div class="preview-note">
           <strong><i class="el-icon-info" /> 订单履约链路提示</strong>
-          <p>客户提交销售订单后，系统将依据绑定的默认 Item 自动核算库存锁定量并生成生产工单投料计划。</p>
+          <p>客户提交销售订单后，系统将依据绑定的默认物料自动核算库存锁定量并生成生产工单投料计划。</p>
         </div>
       </aside>
     </div>
 
-    <!-- 弹窗：选择默认 Item -->
-    <el-dialog title="选择默认 Item 物料" :visible.sync="picker" width="840px" append-to-body custom-class="picker-dialog">
+    <!-- 弹窗：选择默认物料-->
+    <el-dialog title="选择默认物料" :visible.sync="picker" width="840px" append-to-body custom-class="picker-dialog">
       <div class="picker-toolbar">
         <el-input
           v-model="itemQuery.keyword"
           size="small"
-          placeholder="按 Item 编码 / 名称 / 规格检索"
+          placeholder="按 物料编码 / 名称 / 规格检索"
           clearable
           prefix-icon="el-icon-search"
           class="picker-input"
@@ -340,12 +340,12 @@
       </div>
 
       <el-table :data="items" size="small" border class="picker-table" @row-dblclick="chooseItem">
-        <el-table-column prop="item_code" label="Item编码" width="130" show-overflow-tooltip>
+        <el-table-column prop="item_code" label="物料编码" width="130" show-overflow-tooltip>
           <template slot-scope="{ row }">
             <span class="code-mono">{{ row.item_code }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="item_name" label="Item名称" min-width="150" show-overflow-tooltip />
+        <el-table-column prop="item_name" label="物料名称" min-width="150" show-overflow-tooltip />
         <el-table-column prop="spec" label="规格型号" min-width="120" show-overflow-tooltip />
         <el-table-column label="物料类型" width="90" align="center">
           <template slot-scope="{ row }">{{ itemTypeText(row.item_type) }}</template>
@@ -444,7 +444,7 @@ export default {
     },
     selectedUnitName () {
       const unit = this.canonicalUnit(this.currentSalesUnit)
-      return unit ? (unit.symbol || unit.unit_name) : '—'
+      return unit ? (unit.unit_name || unit.symbol) : '—'
     },
     selectedUnitPlaces () {
       const unit = this.canonicalUnit(this.currentSalesUnit)

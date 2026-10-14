@@ -116,7 +116,7 @@ final class WarehouseActionService
         $actor = (int) ($user->legacy_id ?? $user->id ?? 0); $name = (string) ($user->nickname ?? $user->username ?? $user->name ?? '');
         $command = $payload + ['client_command_id' => $commandId];
         return match ($action) {
-            'purchase.post' => app(InventoryService::class)->postPurchaseReceipt($id),
+            'purchase.post' => app(InventoryService::class)->postPurchaseReceipt($id, $actor ?: null),
             'purchase.allocate' => ['receipt_id' => app(PurchaseReceiptPostingRepairApplicationService::class)->repairSelectedLines($id, $payload['items'], $name)->id],
             'output.warehouse' => app(ProductionOutputService::class)->warehouse($id, $command, $user, $permissions),
             'remnant.warehouse' => app(CuttingRemnantReceiptService::class)->post($id, $command, ...$context),

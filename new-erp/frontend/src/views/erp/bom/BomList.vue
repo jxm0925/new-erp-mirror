@@ -3,7 +3,7 @@
     <div class="bom-head">
       <div>
         <h1>BOM 管理</h1>
-        <p>维护 SKU / 产出 Item 的生产用料结构、版本、审核、有效期与默认启用关系。</p>
+        <p>维护 SKU / 产出物料的生产用料结构、版本、审核、有效期与默认启用关系。</p>
       </div>
       <div class="head-actions">
         <el-button size="small" @click="$router.push('/bom/expand')">BOM 展开</el-button>
@@ -12,14 +12,14 @@
     </div>
 
     <div class="bom-filter">
-      <el-input v-model="query.keyword" size="small" clearable placeholder="BOM编号 / 名称 / Item / SKU" @keyup.enter.native="search" />
+      <el-input v-model="query.keyword" size="small" clearable placeholder="BOM编号 / 名称 / 物料 / SKU" @keyup.enter.native="search" />
       <el-select v-model="query.product_id" size="small" clearable filterable placeholder="归属商品">
         <el-option v-for="p in products" :key="p.id" :label="`${p.product_code} / ${p.product_name}`" :value="p.id" />
       </el-select>
       <el-select v-model="query.sku_id" size="small" clearable filterable placeholder="关联SKU">
         <el-option v-for="s in skus" :key="s.id" :label="`${s.sku_code} / ${s.sku_name}`" :value="s.id" />
       </el-select>
-      <el-select v-model="query.output_item_id" size="small" clearable filterable placeholder="产出Item">
+      <el-select v-model="query.output_item_id" size="small" clearable filterable placeholder="产出物料">
         <el-option v-for="i in items" :key="i.id" :label="`${i.item_code} / ${i.item_name}`" :value="i.id" />
       </el-select>
       <el-select v-model="query.status" size="small" clearable placeholder="状态">
@@ -58,7 +58,7 @@
       <el-table-column label="关联SKU" width="142" show-overflow-tooltip>
         <template slot-scope="{row}">{{ row.sku ? `${row.sku.sku_code} / ${row.sku.sku_name}` : '-' }}</template>
       </el-table-column>
-      <el-table-column label="产出Item" width="150" show-overflow-tooltip>
+      <el-table-column label="产出物料" width="150" show-overflow-tooltip>
         <template slot-scope="{row}">{{ row.output_item ? `${row.output_item.item_code} / ${row.output_item.item_name}` : '-' }}</template>
       </el-table-column>
       <el-table-column prop="version" label="版本" width="62" />

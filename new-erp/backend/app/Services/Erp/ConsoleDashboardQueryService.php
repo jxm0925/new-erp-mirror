@@ -11,28 +11,29 @@ use Illuminate\Support\Facades\DB;
 /** Module-wide operational facts; personal approval assignments remain in approvals/tasks. */
 class ConsoleDashboardQueryService
 {
-    public function dashboard(array $filters, array $codes, bool $super = false): array
+    public function dashboard(array $filters, array $codes, bool $super = false, ?int $userId = null): array
     {
         // One read snapshot prevents a concurrent submit/post from producing
         // mismatched counts and rows in this response. No business writes occur.
-        return DB::transaction(fn () => $this->projection($filters, $codes, $super));
+        return DB::transaction(fn () => $this->projection($filters, $codes, $super, $userId));
     }
 
-    private function projection(array $filters, array $codes, bool $super): array
+    private function projection(array $filters, array $codes, bool $super, ?int $userId = null): array
     {
         $can = fn (string $code): bool => $super || in_array($code, $codes, true);
         $now = CarbonImmutable::now(config('app.timezone'));
-        $queries = $this->todoQueries($can);
+        $queries = $this->todoQueries($can, $super ? null : $userId, $codes, $super);
         $counts = array_map(fn ($q) => $q?->count(), $queries);
         $todo = $this->todos($queries, $filters);
         $master = $this->master($can, $now);
         $purchase = $this->purchase($can, $now, $counts);
         $inventory = $this->inventory($can, $now, $counts);
         $bom = $this->bom($can, $now, $counts);
+        $finance = $this->finance($can, $now);
         return [
             'as_of' => $now->toIso8601String(), 'timezone' => $now->timezoneName,
             'counts' => $counts, 'total_todo' => array_sum($counts), 'todos' => $todo,
-            'master' => $master, 'purchase' => $purchase, 'inventory' => $inventory, 'bom' => $bom,
+            'master' => $master, 'purchase' => $purchase, 'inventory' => $inventory, 'bom' => $bom, 'finance' => $finance,
             'warnings' => $this->warnings($can, $master), 'warning_available' => $can('sku_item_relation.view') || $can('purchase.quality.view') || $can('inventory.alert.view'),
             'recent' => $this->recent($can),
             'trends' => [
@@ -42,19 +43,40 @@ class ConsoleDashboardQueryService
         ];
     }
 
-    private function todoQueries(callable $can): array
+    private function todoQueries(callable $can, ?int $actorId = null, array $codes = [], bool $super = false): array
     {
         // A draft's default audit_status=pending is not a submitted approval.
         // The same builders feed counts and paginated details to prevent drift.
+        // 待办只统计“当前账号能处理”的事项：需要对应的执行/审核权限，草稿只算自己的。
+        $actor = $actorId ? DB::table('erp_legacy_admin_users')->where('legacy_id', $actorId)->first(['legacy_id', 'username', 'nickname']) : null;
+        $actorName = $actor ? ($actor->nickname ?: $actor->username) : null;
+        $cashDirections = array_keys(array_filter(['payment' => $can('finance.payment.confirm'), 'receipt' => $can('finance.receipt.confirm')]));
         return [
-            'requests' => $can('purchase.request.view') ? PurchaseRequest::query()->where('request_status', 'draft')->toBase() : null,
-            'plans' => $can('purchase.plan.view') ? PurchasePlan::query()->where('plan_status', 'submitted')->where('audit_status', 'pending')->toBase() : null,
-            'orders' => $can('purchase.order.view') ? PurchaseOrder::query()->where('purchase_status', 'submitted')->where('audit_status', 'pending')->toBase() : null,
-            'receipts' => $can('inventory.post.view') ? PurchaseReceipt::query()->where('stock_post_status', 'pending')->where('receipt_status', 'confirmed')->where('confirm_status', 'confirmed')
+            'requests' => $can('purchase.request.view') && $can('purchase.request.submit') ? PurchaseRequest::query()->where('request_status', 'draft')
+                ->when($actorName, fn ($query) => $query->where(fn ($own) => $own->where('created_by', $actorName)->orWhereNull('created_by')))->toBase() : null,
+            'plans' => $can('purchase.plan.view') && $can('purchase.plan.approve') ? PurchasePlan::query()->where('plan_status', 'submitted')->where('audit_status', 'pending')->toBase() : null,
+            // 采购订单在审核中心审批：普通账号只把“派给自己、且不是自己提交”的订单算作待办，
+            // 否则提交人会在控制台看到一条自己无法处理的待审核。超级管理员仍看全部。
+            'orders' => $can('purchase.order.view') && ($can('approval.task.decide') || $can('purchase.order.approve')) ? PurchaseOrder::query()->where('purchase_status', 'submitted')->where('audit_status', 'pending')
+                ->when($actorId, fn ($query) => $query->whereExists(fn ($task) => $task->selectRaw('1')->from('erp_approval_tasks as t')
+                    ->join('erp_approval_node_assignees as a', 'a.approval_task_id', '=', 't.id')
+                    ->whereColumn('t.business_id', 'erp_purchase_orders.id')
+                    ->where('t.business_object_code', 'PURCHASE_ORDER')->where('t.task_status', 'PENDING')
+                    ->where('a.user_id', $actorId)->where('a.status', 'PENDING')
+                    // 流程允许提交人自审时，自己提交的订单也算待办。
+                    ->where(fn ($q) => $q->whereNull('t.initiator_id')->orWhere('t.initiator_id', '<>', $actorId)
+                        ->orWhereRaw("COALESCE(JSON_UNQUOTE(JSON_EXTRACT(t.flow_snapshot, '$.definition.allow_self_approval')), 'false') IN ('true', '1')"))))
+                ->toBase() : null,
+            'receipts' => $can('inventory.post.view') && $can('inventory.post.execute') ? PurchaseReceipt::query()->where('stock_post_status', 'pending')->where('receipt_status', 'confirmed')->where('confirm_status', 'confirmed')
                 ->whereHas('items', fn ($q) => $q->where('is_stock_item_snapshot', true)->where('final_stockable_base_qty', '>', 0))->toBase() : null,
-            'adjustments' => $can('inventory.adjustment.view') ? DB::table('erp_inventory_adjustments')->where('adjustment_status', 'submitted') : null,
+            'adjustments' => $can('inventory.adjustment.view') && $can('inventory.adjustment.confirm') ? DB::table('erp_inventory_adjustments')->where('adjustment_status', 'submitted') : null,
             'boms' => $can('bom.manage.view') ? Bom::query()->where(fn ($q) => $q->where(fn ($q) => $q->where('audit_status', 'pending')->whereNotNull('submitted_at'))
                 ->orWhere(fn ($q) => $q->where('audit_status', 'approved')->whereNotIn('status', ['active', 'enabled', 'published', 'archived'])))->toBase() : null,
+            // 审核中心里派给我的其他业务审核（采购订单已有单独卡片，这里不重复计算）。
+            'approvals' => $can('approval.task.view') && ($super || $actor) ? app(ApprovalTaskApplicationService::class)
+                ->actionableQuery($actor ?: (object) ['legacy_id' => 0], $codes, $super)->where('business_object_code', '<>', 'PURCHASE_ORDER')->toBase() : null,
+            // 未确认的收付款草稿：有确认权限的财务人员处理。
+            'cash' => $can('finance.view') && $cashDirections ? DB::table('erp_finance_cash_documents')->where('status', 'draft')->whereIn('direction', $cashDirections) : null,
         ];
     }
 
@@ -67,19 +89,27 @@ class ConsoleDashboardQueryService
             'receipts' => ['erp_purchase_receipts', 'receipt_no', null, 'updated_at', '采购到货', '待过账', '去过账', '物料等待库存过账'],
             'adjustments' => ['erp_inventory_adjustments', 'adjustment_no', 'submitted_by', 'submitted_at', '库存调整', '待处理', '去处理', '库存调整等待确认过账'],
             'boms' => ['erp_boms', 'bom_no', 'updated_by', 'submitted_at', 'BOM', '待处理', '查看BOM', 'BOM等待审核或启用'],
+            'approvals' => ['erp_approval_tasks', 'business_no', 'initiator_name', 'submitted_at', '审核任务', '待审核', '去审核', '审核任务等待处理'],
+            'cash' => ['erp_finance_cash_documents', 'document_no', 'operator_name_snapshot', 'created_at', '资金单', '待确认', '去确认', '资金单草稿等待确认'],
         ];
         $union = null;
         foreach ($queries as $type => $query) {
             if (!$query || (!empty($filters['type']) && $filters['type'] !== $type)) continue;
             if (($filters['priority'] ?? '') === 'high') {
-                if ($type !== 'requests') continue;
-                $query = (clone $query)->whereIn('priority', ['high', 'urgent']);
+                if (!in_array($type, ['requests', 'approvals'], true)) continue;
+                $query = $type === 'approvals' ? (clone $query)->where('risk_level', 'high') : (clone $query)->whereIn('priority', ['high', 'urgent']);
             }
             [$table, $no, $owner, $time] = $meta[$type];
             $q = (clone $query)->select("{$table}.id", "{$table}.{$no} as no")
                 ->selectRaw('? AS kind', [$type])->selectRaw("COALESCE({$table}.{$time}, {$table}.created_at) AS happened_at");
             $owner ? $q->selectRaw("{$table}.{$owner} AS owner") : $q->selectRaw('NULL AS owner');
-            $type === 'requests' ? $q->addSelect("{$table}.priority as priority_value") : $q->selectRaw('NULL AS priority_value');
+            if ($type === 'requests') $q->addSelect("{$table}.priority as priority_value");
+            elseif ($type === 'approvals') $q->selectRaw("CASE {$table}.risk_level WHEN 'high' THEN 'high' WHEN 'low' THEN 'low' ELSE 'normal' END AS priority_value");
+            else $q->selectRaw('NULL AS priority_value');
+            // 摘要与路由提示：审核任务用任务主题，资金单写明对手和金额。
+            if ($type === 'approvals') $q->selectRaw("{$table}.subject AS subject, NULL AS hint");
+            elseif ($type === 'cash') $q->selectRaw("CONCAT(CASE {$table}.direction WHEN 'payment' THEN '付款给 ' ELSE '收款自 ' END, COALESCE({$table}.party_name_snapshot, ''), ' ', {$table}.currency, ' ', FORMAT({$table}.amount, 2)) AS subject, {$table}.direction AS hint");
+            else $q->selectRaw('NULL AS subject, NULL AS hint');
             if (in_array($type, ['plans', 'orders', 'receipts'], true)) {
                 $target = ['plans' => 'purchase_plan', 'orders' => 'purchase_order', 'receipts' => 'purchase_receipt'][$type];
                 $action = $type === 'receipts' ? 'confirm' : 'submit';
@@ -102,11 +132,13 @@ class ConsoleDashboardQueryService
                 'receipts' => ['path' => '/inventory/posting', 'query' => ['keyword' => $r->no, 'receipt_id' => $r->id]],
                 'adjustments' => ['path' => '/inventory/adjustments', 'query' => ['adjustment_no' => $r->no]],
                 'boms' => ['path' => "/bom/{$r->id}/detail"],
+                'approvals' => ['path' => "/approvals/tasks/{$r->id}"],
+                'cash' => ['path' => ($r->hint === 'receipt' ? '/finance/receipts/' : '/finance/payments/').$r->id],
                 default => ['path' => "/purchase/{$r->kind}/{$r->id}/detail"],
             };
             return ['id' => "{$r->kind}-{$r->id}", 'kind' => $r->kind, 'type' => $type, 'no' => $r->no,
                 'priority' => $priority, 'statusText' => $status, 'action' => $action, 'to' => $to,
-                'summary' => $r->kind === 'receipts' ? "{$r->item_count}种物料等待库存过账" : $summary,
+                'summary' => $r->kind === 'receipts' ? "{$r->item_count}种物料等待库存过账" : ($r->subject ?: $summary),
                 'owner' => $this->actor($r->state_owner ?: $r->owner), 'time' => $this->iso($r->state_time ?: $r->happened_at)];
         }));
         return $result->toArray();
@@ -149,6 +181,25 @@ class ConsoleDashboardQueryService
         ];
     }
 
+    /** 财务岗位的控制台概览：应付未付、未收票、本月收付款与待确认资金单；无权限的指标返回 null 由前端隐藏。 */
+    private function finance(callable $can, CarbonImmutable $now): array
+    {
+        $payables = $can('finance.payable.view') ? app(PurchasePayableQueryService::class)->payables([], 1)['summary'] : null;
+        $cash = $can('finance.view');
+        $month = fn (string $direction) => DB::table('erp_finance_cash_documents')->where('direction', $direction)->where('status', 'confirmed')
+            ->where('business_date', '>=', $now->startOfMonth()->toDateString())->where('business_date', '<', $now->startOfMonth()->addMonth()->toDateString())
+            ->select('currency')->selectRaw('SUM(amount) AS amount')->groupBy('currency')->get()
+            ->map(fn ($r) => ['currency' => $r->currency, 'amount' => Money::normalize((string) $r->amount)])->all();
+        return [
+            // 应付按人民币口径汇总（与应付管理页一致）。
+            'unpaid_payable' => $payables ? [['currency' => 'CNY', 'amount' => $payables['unpaid_amount']]] : null,
+            'unreceived_invoice' => $payables ? [['currency' => 'CNY', 'amount' => $payables['unreceived_invoice_amount']]] : null,
+            'payments_month' => $cash ? $month('payment') : null,
+            'receipts_month' => $cash ? $month('receipt') : null,
+            'draft_cash_documents' => $cash ? DB::table('erp_finance_cash_documents')->where('status', 'draft')->count() : null,
+        ];
+    }
+
     private function inventory(callable $can, CarbonImmutable $now, array $counts): array
     {
         $balances = $can('inventory.balance.view');
@@ -158,7 +209,7 @@ class ConsoleDashboardQueryService
         return [
             'stock_items' => $balances ? DB::table('erp_inventory_balances')->where('quantity_on_hand', '>', 0)->distinct()->count('item_id') : null,
             'quantity_by_unit' => $units,
-            'today_in' => $can('inventory.transaction.view') ? (clone $today)->where('transaction_type', 'purchase_receipt_posting')->count() : null,
+            'today_in' => $can('inventory.transaction.view') ? (clone $today)->whereIn('transaction_type', ['purchase_receipt_posting', 'purchase_receipt_quality_release'])->count() : null,
             'today_transactions' => $can('inventory.transaction.view') ? $today->count() : null,
             'adjustments' => $counts['adjustments'],
             'alerts' => $can('inventory.alert.view') ? DB::table('erp_inventory_alerts')->where('is_active', true)->count() : null,
@@ -192,7 +243,7 @@ class ConsoleDashboardQueryService
         $rows = [];
         // Waiting is already represented as a todo. Without an SLA there is no
         // factual basis for declaring the first waiting receipt "serious".
-        if (($master['abnormal_skus'] ?? 0) > 0) $rows[] = ['id' => 'sku-relation', 'level' => '提醒', 'module' => '主数据', 'title' => 'SKU默认Item关系异常', 'object' => $master['abnormal_skus'].'个实物SKU', 'desc' => '缺少、重复或停用的默认Item关系需核对。', 'time' => null, 'action' => '去关联', 'to' => '/master/sku-item-relations'];
+        if (($master['abnormal_skus'] ?? 0) > 0) $rows[] = ['id' => 'sku-relation', 'level' => '提醒', 'module' => '主数据', 'title' => 'SKU默认物料关系异常', 'object' => $master['abnormal_skus'].'个实物SKU', 'desc' => '缺少、重复或停用的默认物料关系需核对。', 'time' => null, 'action' => '去关联', 'to' => '/master/sku-item-relations'];
         if ($can('purchase.quality.view')) {
             $count = DB::table('erp_purchase_defect_handlings')->whereNotIn('handling_status', ['completed', 'cancelled'])->count();
             if ($count) $rows[] = ['id' => 'defects', 'level' => '警告', 'module' => '采购', 'title' => '不合格到货待处理', 'object' => $count.'项处理单', 'desc' => '存在尚未完成的不合格品处理。', 'time' => null, 'action' => '去处理', 'to' => '/purchase/defects'];
@@ -230,13 +281,21 @@ class ConsoleDashboardQueryService
             ->get(['l.created_at as time', 'l.created_by as operator', 'l.message as content', 'b.bom_no as object'])->map(fn ($r) => [...(array) $r, 'module' => 'BOM']));
         if ($can('inventory.transaction.view')) $rows = $rows->concat(DB::table('erp_inventory_transactions')->where('posting_status', 'posted')->whereNotNull('posted_at')->orderByDesc('posted_at')->orderByDesc('id')->limit(10)
             ->get(['posted_at as time', 'posted_by as operator', 'transaction_no as object'])->map(fn ($r) => [...(array) $r, 'content' => '库存事务已过账', 'module' => '库存']));
+        if ($can('finance.view')) $rows = $rows->concat(DB::table('erp_finance_cash_documents')->where('status', 'confirmed')->whereNotNull('confirmed_at')->orderByDesc('confirmed_at')->orderByDesc('id')->limit(10)
+            ->get(['confirmed_at as time', 'operator_name_snapshot as operator', 'document_no as object', 'direction', 'party_name_snapshot', 'currency', 'amount'])
+            ->map(fn ($r) => ['time' => $r->time, 'operator' => $r->operator, 'object' => $r->object, 'module' => '财务',
+                'content' => ($r->direction === 'payment' ? '付款给 ' : '收款自 ').$r->party_name_snapshot.' '.$r->currency.' '.number_format((float) $r->amount, 2).' 已确认']));
         return $rows->sortByDesc('time')->take(10)->map(fn ($r) => [...$r, 'time' => $this->iso($r['time']), 'operator' => $this->actor($r['operator'])])->values()->all();
     }
 
     private function actor(string|int|null $value): string
     {
         if (!$value) return '未记录';
-        if (!ctype_digit((string) $value)) return (string) $value;
+        if (!ctype_digit((string) $value)) {
+            // 部分采购日志记录的是登录账号，统一显示为姓名。
+            $user = DB::table('erp_legacy_admin_users')->where('username', (string) $value)->first(['nickname']);
+            return $user && $user->nickname ? $user->nickname : (string) $value;
+        }
         $user = DB::table('erp_legacy_admin_users')->where('legacy_id', (int) $value)->first(['nickname', 'username']);
         return $user ? ($user->nickname ?: $user->username) : '未记录';
     }

@@ -562,11 +562,18 @@ export default {
 }
 
 .picker-footer {
+  position: sticky;
+  bottom: -12px;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 16px;
   margin-top: 14px;
+  padding: 10px 0 12px;
+  background: #fff;
+  border-top: 1px solid #f1f5f9;
 }
 .picker-actions {
   display: flex;
@@ -574,14 +581,23 @@ export default {
 }
 
 /* 主题绿按钮与样式穿透 */
+/* 弹窗高度受视口限制，内容在弹窗内部滚动，底部“确定添加”始终可见。 */
 .purchase-item-picker ::v-deep .el-dialog {
   max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+  margin-top: 16px !important;
+  display: flex;
+  flex-direction: column;
   border-radius: 8px;
   overflow: hidden;
 }
 .purchase-item-picker ::v-deep .el-dialog__header {
+  flex-shrink: 0;
   border-bottom: 1px solid #f1f5f9;
   padding: 14px 20px;
+}
+.purchase-item-picker ::v-deep .el-dialog__footer {
+  flex-shrink: 0;
 }
 .purchase-item-picker ::v-deep .el-dialog__title {
   font-size: 16px;
@@ -589,6 +605,9 @@ export default {
   color: #1e293b;
 }
 .purchase-item-picker ::v-deep .el-dialog__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
   padding: 16px 20px 12px;
 }
 .purchase-item-picker ::v-deep .el-button--success {

@@ -44,6 +44,11 @@
                   <el-tag size="mini" type="danger">不可过账</el-tag>
                   <span>{{ postingBlockedReason(row) }}</span>
                 </div>
+                <!-- 合格部分可先过账，不合格部分另行处理：给出提醒但不阻断。 -->
+                <div v-else-if="postingNotice(row)" class="posting-check posting-check-passed">
+                  <el-tag size="mini" type="warning">合格部分可过账</el-tag>
+                  <span>{{ postingNotice(row) }}</span>
+                </div>
                 <div v-else class="posting-check posting-check-passed">
                   <el-tag size="mini" type="success">检查通过</el-tag>
                   <span>仓库、库位、批次及编号资料完整</span>
@@ -54,7 +59,12 @@
               <template slot-scope="{ row }">
                 <div class="row-actions row-actions-wide">
                   <el-button size="mini" plain @click.stop="selectReceipt(row)">查看来源</el-button>
-                  <el-button v-if="postingBlockedReason(row) && $can('inventory.post.repair')" size="mini" type="warning" plain @click.stop="openPostingRepair(row)">补充分配</el-button>
+                  <!-- 被不合格品处理卡住时，补充库位分配解决不了问题，引导到不合格品处理或提示等待采购。 -->
+                  <template v-if="postingBlockedByDefect(row)">
+                    <el-button v-if="$can('purchase.quality.handle')" size="mini" type="warning" plain @click.stop="$router.push({ path: '/purchase/defects', query: { receipt_no: row.receipt_no } })">处理不合格品</el-button>
+                    <el-tag v-else size="mini" type="warning">等待采购处理不合格品</el-tag>
+                  </template>
+                  <el-button v-else-if="postingBlockedReason(row) && $can('inventory.post.repair')" size="mini" type="warning" plain @click.stop="openPostingRepair(row)">补充分配</el-button>
                   <el-button v-else-if="!postingBlockedReason(row) && $can('inventory.post.execute')" size="mini" type="success" @click.stop="openPostingConfirm(row)">确认入库过账</el-button>
                 </div>
               </template>
@@ -86,7 +96,7 @@
             <template slot="default"><el-button v-if="$can('inventory.post.repair')" size="mini" type="warning" plain @click="openPostingRepair(selectedReceipt)">补充仓库/库位分配</el-button></template>
           </el-alert>
           <el-table v-if="selectedReceipt" :data="selectedReceipt.items" size="mini" border>
-            <el-table-column label="Item编码/名称" min-width="140">
+            <el-table-column label="物料编码/名称" min-width="140">
               <template slot-scope="{ row }"><strong>{{ row.item_code }}</strong><br><span>{{ row.item_name }}</span></template>
             </el-table-column>
             <el-table-column label="入库分配" min-width="126"><template slot-scope="{row}">{{ postingAllocationSummary(row) }}</template></el-table-column>
@@ -111,7 +121,7 @@
     <section v-if="activeView === 'balances'" class="inventory-view">
       <div class="page-head">
         <div>
-          <h1>库存余额 <small><i class="el-icon-info" /> 库存对象为 Item，不按 Product/SKU 记账。</small></h1>
+          <h1>库存余额 <small><i class="el-icon-info" /> 按物料汇总，点击物料可查看批次、库位和编号。</small></h1>
         </div>
       </div>
 
@@ -124,7 +134,7 @@
 
       <section class="filter-panel balance-filter">
         <label>管理范围<el-select v-model="balanceQuery.management_scope" size="small" clearable placeholder="全部" @change="changeBalanceScope"><el-option label="工厂物料" value="factory" /><el-option label="办公用品" value="office" /></el-select></label>
-        <label>Item编码/名称<el-input v-model="balanceQuery.keyword" size="small" placeholder="支持编码、名称模糊查询" /></label>
+        <label>物料编码/名称<el-input v-model="balanceQuery.keyword" size="small" placeholder="支持编码、名称模糊查询" /></label>
         <label>仓库<el-select v-model="balanceQuery.warehouse" size="small" clearable placeholder="全部"><el-option v-for="w in warehouses" :key="w.id" :label="w.warehouse_name" :value="w.id" /></el-select></label>
         <label>库位<el-select v-model="balanceQuery.location" size="small" clearable placeholder="全部"><el-option v-for="l in locations" :key="l.id" :label="l.location_name" :value="l.id" /></el-select></label>
         <label>批次号<el-input v-model="balanceQuery.batch" size="small" placeholder="请输入批次号" /></label>
@@ -136,7 +146,7 @@
 
       <div class="balance-instruction-banner">
         <i class="el-icon-info info-icon-blue" />
-        <span>说明：库存余额按 Item 汇总展示；不合格和待处理数量不计入可用库存。点击 Item 后可查看批次、库位、编号与质量处理。</span>
+        <span>说明：库存余额按物料汇总；不合格和待处理数量不计入可用库存。点击物料可查看批次、库位、编号与质量处理。</span>
       </div>
 
       <!-- Actions Toolbar above Table -->
@@ -167,8 +177,10 @@
             @selection-change="handleBalanceSelectionChange"
           >
             <el-table-column type="selection" width="45" align="center" />
-            <el-table-column prop="item_code" label="Item编码" min-width="120" />
-            <el-table-column prop="item_name" label="Item名称" min-width="150" />
+            <el-table-column prop="item_code" label="物料编码" min-width="120" />
+            <el-table-column prop="item_name" label="物料名称" min-width="120" />
+            <!-- 同名物料（如不同口径的管材）只能靠规格区分，必须在列表直接展示。 -->
+            <el-table-column label="规格型号" min-width="120"><template slot-scope="{ row }">{{ row.spec || '--' }}</template></el-table-column>
             <el-table-column label="管理范围" width="95"><template slot-scope="{ row }">{{ scopeLabel(row.management_scope) }}</template></el-table-column>
             <el-table-column prop="unit" label="单位" width="60" align="center" />
             <el-table-column prop="batch_count" label="批次数" width="72" align="right" />
@@ -182,6 +194,7 @@
             <el-table-column prop="quantity_locked" label="锁定/预留" width="75" align="right" />
             <el-table-column prop="quantity_defective" label="不合格" width="65" align="right" />
             <el-table-column prop="quantity_pending" label="待处理" width="65" align="right" />
+            <el-table-column label="库存金额" min-width="105" align="right"><template slot-scope="{ row }">¥{{ money(row.inventory_value) }}</template></el-table-column>
             <el-table-column label="最近变动时间" min-width="135">
               <template slot-scope="{ row }">{{ dateTime(row.last_transaction_at) }}</template>
             </el-table-column>
@@ -218,11 +231,11 @@
           </div>
 
           <div class="side-scroll-body">
-            <!-- 1. Item基础信息 -->
-            <div class="detail-sec-title"><span>Item基础信息</span></div>
+            <!-- 1. 物料基础信息 -->
+            <div class="detail-sec-title"><span>物料基础信息</span></div>
             <div class="sec-kv-grid">
-              <div class="kv-item"><span class="kv-lbl">Item编码</span><strong class="kv-val">{{ selectedBalance.item_code }}</strong></div>
-              <div class="kv-item"><span class="kv-lbl">Item名称</span><strong class="kv-val">{{ selectedBalance.item_name }}</strong></div>
+              <div class="kv-item"><span class="kv-lbl">物料编码</span><strong class="kv-val">{{ selectedBalance.item_code }}</strong></div>
+              <div class="kv-item"><span class="kv-lbl">物料名称</span><strong class="kv-val">{{ selectedBalance.item_name }}</strong></div>
               <div class="kv-item"><span class="kv-lbl">管理范围</span><strong class="kv-val">{{ scopeLabel(selectedBalance.management_scope) }}</strong></div>
               <div class="kv-item"><span class="kv-lbl">单位</span><strong class="kv-val">{{ selectedBalance.unit || '-' }}</strong></div>
               <div class="kv-item"><span class="kv-lbl">物料类别</span><strong class="kv-val">{{ selectedBalance.category || '-' }}</strong></div>
@@ -238,7 +251,7 @@
               <div class="kv-item span-two"><span class="kv-lbl">关联产品</span><strong class="kv-val">{{ selectedBalance.product_code || '-' }}</strong></div>
               <div class="kv-item span-two"><span class="kv-lbl">SKU</span><strong class="kv-val">{{ selectedBalance.sku_code || '-' }}</strong></div>
             </div>
-            <div class="sku-note-box">说明：库存按 Item 记账，Product/SKU 仅作参考。</div>
+            <div class="sku-note-box">说明：库存按物料记账，关联的产品/SKU 仅作参考。</div>
 
             <!-- 3. 库存分布（按仓库/库位/批次） -->
             <div class="detail-sec-title"><span>库存分布（按仓库/库位/批次）</span></div>
@@ -442,15 +455,15 @@
       <div v-if="selectedBalance" class="batch-dialog-page" v-loading="batchDialogLoading">
         <header class="batch-dialog-head">
           <div>
-            <h2>Item批次与质量处理</h2>
+            <h2>物料批次与质量处理</h2>
             <p><strong>{{ selectedBalance.item_code }}</strong><span>{{ selectedBalance.item_name }}</span></p>
           </div>
-          <el-button size="small" type="success" plain @click="viewItemTransactions(selectedBalance)">查看Item流水</el-button>
+          <el-button size="small" type="success" plain @click="viewItemTransactions(selectedBalance)">查看物料流水</el-button>
         </header>
 
         <div class="batch-item-summary">
-          <div><span>Item编码</span><strong>{{ selectedBalance.item_code }}</strong></div>
-          <div><span>Item名称</span><strong>{{ selectedBalance.item_name }}</strong></div>
+          <div><span>物料编码</span><strong>{{ selectedBalance.item_code }}</strong></div>
+          <div><span>物料名称</span><strong>{{ selectedBalance.item_name }}{{ selectedBalance.spec ? '（' + selectedBalance.spec + '）' : '' }}</strong></div>
           <div><span>单位</span><strong>{{ selectedBalance.unit }}</strong></div>
           <div><span>账面库存</span><strong>{{ quantityNumber(selectedBalance.quantity_on_hand) }}</strong></div>
           <div><span>可用库存</span><strong>{{ quantityNumber(selectedBalance.quantity_available) }}</strong></div>
@@ -552,7 +565,7 @@
     >
       <div v-if="serialDialogBalance" class="inventory-serial-dialog-body">
         <div class="serial-locator-summary">
-          <div><span>Item</span><strong>{{ serialDialogBalance.item_code }} / {{ serialDialogBalance.item_name }}</strong></div>
+          <div><span>物料</span><strong>{{ serialDialogBalance.item_code }} / {{ serialDialogBalance.item_name }}</strong></div>
           <div><span>批次</span><strong>{{ serialDialogBalance.batch_no || (selectedBatch && selectedBatch.batch_no) || '-' }}</strong></div>
           <div><span>仓库</span><strong>{{ serialDialogBalance.warehouse_name || '-' }}</strong></div>
           <div><span>库位</span><strong>{{ serialDialogBalance.location_name || '-' }}</strong></div>
@@ -584,12 +597,12 @@
       <div class="metric-grid four">
         <article><i class="el-icon-download green" /><span>{{ activeView === 'adjustments' ? '调整单数' : '今日入库流水' }}</span><strong>{{ activeView === 'adjustments' ? adjustmentPagination.total : transactionStats.today_in_count }}</strong></article>
         <article><i class="el-icon-refresh orange" /><span>{{ activeView === 'adjustments' ? '已过账调整' : '今日调整流水' }}</span><strong>{{ activeView === 'adjustments' ? adjustmentStats.posted_count : transactionStats.today_adjust_count }}</strong></article>
-        <article><i class="el-icon-time blue" /><span>{{ activeView === 'adjustments' ? '待确认过账' : '待审核调整' }}</span><strong>{{ activeView === 'adjustments' ? adjustmentStats.submitted_count : transactionStats.pending_adjustment_count }}</strong></article>
-        <article><i class="el-icon-refresh-left purple" /><span>{{ activeView === 'adjustments' ? '草稿调整' : '已反过账预留' }}</span><strong>{{ activeView === 'adjustments' ? adjustmentStats.draft_count : transactionStats.reversed_count }}</strong></article>
+        <article><i class="el-icon-time blue" /><span>{{ activeView === 'adjustments' ? '待确认过账' : '待过账调整' }}</span><strong>{{ activeView === 'adjustments' ? adjustmentStats.submitted_count : transactionStats.pending_adjustment_count }}</strong></article>
+        <article><i class="el-icon-refresh-left purple" /><span>{{ activeView === 'adjustments' ? '草稿调整' : '今日出库流水' }}</span><strong>{{ activeView === 'adjustments' ? adjustmentStats.draft_count : (transactionStats.today_out_count || 0) }}</strong></article>
       </div>
 
       <section v-if="activeView === 'transactions'" class="filter-panel tx-filter">
-        <label>事务类型<el-select v-model="txQuery.type" size="small" clearable placeholder="全部"><el-option label="采购到货入库" value="purchase_receipt_posting" /><el-option label="手工库存调整" value="manual_adjustment" /></el-select></label>
+        <label>事务类型<el-select v-model="txQuery.type" size="small" clearable placeholder="全部"><el-option label="采购到货入库" value="purchase_receipt_posting" /><el-option label="不合格品转合格补入库" value="purchase_receipt_quality_release" /><el-option label="手工库存调整" value="manual_adjustment" /></el-select></label>
         <label>来源单号<el-input v-model="txQuery.sourceNo" size="small" placeholder="请输入来源单号" /></label>
         <label>物料编码/名称<el-input v-model="txQuery.keyword" size="small" placeholder="支持编码/名称查询" /></label>
         <label>仓库<el-select v-model="txQuery.warehouse" size="small" clearable placeholder="全部"><el-option v-for="w in warehouses" :key="w.id" :label="w.warehouse_name" :value="w.id" /></el-select></label>
@@ -612,7 +625,6 @@
       <div v-if="activeView === 'transactions'" class="disabled-legend">事务类型图例：
         <b class="green-text">采购到货入库</b>
         <b class="orange-text">手工库存调整</b>
-        <span>销售出库 / 工单领料 / 完工入库（后续阶段）</span>
       </div>
       <div v-else class="disabled-legend">手工调整单是库存数量修正的业务单据：先保存/提交，确认过账后才生成库存流水并改变余额。详情请点击单据查看。</div>
 
@@ -631,6 +643,9 @@
               <template slot-scope="{ row }"><span :class="row.change_qty >= 0 ? 'green-text' : 'red-text'">{{ row.change_qty > 0 ? '+' : '' }}{{ row.change_qty }}</span></template>
             </el-table-column>
             <el-table-column prop="balance_qty" label="库位结存" width="96" align="right" />
+            <el-table-column prop="unit" label="单位" width="60" align="center" />
+            <el-table-column label="金额" min-width="100" align="right"><template slot-scope="{ row }">¥{{ money(row.cost_amount) }}</template></el-table-column>
+            <el-table-column prop="posted_by_name" label="经办人" width="96" show-overflow-tooltip />
             <el-table-column label="状态" width="86" fixed="right"><template slot-scope="{ row }"><el-tag size="mini" type="success">{{ row.posting_status_text }}</el-tag></template></el-table-column>
             <el-table-column prop="posted_at" label="过账时间" min-width="132" show-overflow-tooltip />
           </el-table>
@@ -640,7 +655,7 @@
               <template slot-scope="{ row }">{{ adjustmentReasonLabel(row.reason) }}</template>
             </el-table-column>
             <el-table-column label="物料" min-width="170" fixed show-overflow-tooltip>
-              <template slot-scope="{ row }">{{ row.item_code }} / {{ row.item_name || '-' }}</template>
+              <template slot-scope="{ row }">{{ row.item_code }} / {{ row.item_name || '-' }}{{ row.item_spec ? '（' + row.item_spec + '）' : '' }}</template>
             </el-table-column>
             <el-table-column prop="warehouse_name" label="仓库" width="96" show-overflow-tooltip />
             <el-table-column prop="location_name" label="库位" width="86" show-overflow-tooltip />
@@ -652,6 +667,8 @@
             <el-table-column label="状态" width="92">
               <template slot-scope="{ row }"><el-tag size="mini" :type="adjustmentStatusType(row.status)">{{ adjustmentStatusText(row.status) }}</el-tag></template>
             </el-table-column>
+            <el-table-column prop="created_by_name" label="制单人" width="96" show-overflow-tooltip />
+            <el-table-column prop="posted_by_name" label="过账人" width="96" show-overflow-tooltip />
             <el-table-column prop="created_at" label="创建时间" min-width="132" show-overflow-tooltip />
             <el-table-column label="操作" width="220" fixed="right">
               <template slot-scope="{ row }">
@@ -681,6 +698,7 @@
     <el-dialog title="确认入库过账" :visible.sync="postingDialogVisible" width="760px" class="posting-dialog">
       <div v-if="postingCandidate">
         <el-alert title="本次按到货确认的库存管理要求入库。非库存物料、不合格和待处理数量不会进入正常库存。过账后会生成库存流水，并更新库存余额。同一到货单不能重复过账。" type="warning" :closable="false" show-icon />
+        <el-alert v-if="postingNotice(postingCandidate)" class="posting-notice-alert" :title="postingNotice(postingCandidate)" type="info" :closable="false" show-icon />
         <dl class="confirm-grid">
           <dt>到货单号</dt><dd>{{ postingCandidate.receipt_no }}</dd>
           <template v-if="postingCandidate.has_purchase_order">
@@ -700,10 +718,10 @@
         </dl>
         <div class="posting-assignment-list">
           <section v-for="line in postingCandidate.items" :key="line.id" class="posting-assignment-line">
-            <strong>{{ line.item_code }} / {{ line.item_name }}</strong>
+            <strong>{{ line.item_code }} / {{ line.item_name }}{{ line.item_spec ? '（' + line.item_spec + '）' : '' }}</strong>
             <div v-if="line.is_stock_item_snapshot === false">无需入库，实际入库 {{ line.stockable_display }}</div>
             <div v-if="postingLineNeedsAllocation(line) && !(line.allocations || []).length" class="posting-allocation-missing">未完成入库库位分配，禁止过账</div>
-            <label v-if="postingLineNeedsAllocation(line)">批次号<el-input :value="line.batch_no" size="small" disabled /></label>
+            <label v-if="postingLineNeedsAllocation(line)">批次号<el-input :value="line.batch_no || (line.allocations || []).map(a => a.batch_no).filter(Boolean)[0] || '过账时自动生成'" size="small" disabled /></label>
             <div v-if="postingLineNeedsAllocation(line) && (line.allocations || []).length" class="posting-allocation-review">
               <div v-for="allocation in line.allocations" :key="allocation.id || `${allocation.warehouse_id}-${allocation.location_id}`">
                 <strong>{{ allocation.warehouse ? allocation.warehouse.warehouse_name : '-' }} / {{ allocation.location ? allocation.location.location_name : '-' }}</strong>
@@ -754,14 +772,14 @@
       </span>
     </el-dialog>
 
-    <transition name="side-slide">
-      <aside v-if="adjustmentDrawerVisible && !balancePickerVisible" class="adjustment-panel">
+    <transition name="el-fade-in">
+      <aside v-if="adjustmentDrawerVisible && !balancePickerVisible" class="adjustment-panel" :style="{ zIndex: panelZIndex }">
         <header>
           <h3>手工库存调整单</h3>
           <button type="button" @click="adjustmentDrawerVisible = false"><i class="el-icon-close" /></button>
         </header>
         <div class="adjustment-panel-body">
-          <el-alert title="手工调整必须生成库存事务，不能直接修改库存余额。第 3 阶段默认不允许负库存。" type="info" :closable="false" show-icon />
+          <el-alert title="调整单过账后才会改变库存余额；调整后不允许出现负库存。" type="info" :closable="false" show-icon />
           <el-form :model="adjustmentForm" label-position="top" size="small">
             <el-form-item label="调整原因">
               <el-select v-model="adjustmentForm.reason" placeholder="请选择调整原因" popper-class="adjustment-reason-popper" :popper-append-to-body="false">
@@ -771,7 +789,7 @@
             <el-form-item label="库存对象（物料 / 仓库 / 库位 / 批次）">
               <div class="balance-picker-card">
                 <div>
-                  <strong>{{ adjustmentForm.item_code ? `${adjustmentForm.item_code} / ${adjustmentForm.item_name}` : '未选择库存对象' }}</strong>
+                  <strong>{{ adjustmentForm.item_code ? `${adjustmentForm.item_code} / ${adjustmentForm.item_name}${adjustmentForm.item_spec ? '（' + adjustmentForm.item_spec + '）' : ''}` : '未选择库存对象' }}</strong>
                   <span>{{ adjustmentForm.warehouse_name || '-' }} / {{ adjustmentForm.location_name || '-' }} / {{ adjustmentForm.batch_no || '-' }}</span>
                   <small v-if="adjustmentForm.balance_id">
                     账面库存：{{ adjustmentForm.current_on_hand }}　可用库存：{{ adjustmentForm.current_available }}　锁定库存：{{ adjustmentForm.current_locked }}　不合格数量：{{ adjustmentForm.current_defective }}　待处理数量：{{ adjustmentForm.current_pending }}
@@ -781,7 +799,7 @@
               </div>
             </el-form-item>
             <div class="adjustment-readonly-grid">
-              <span><b>物料</b>{{ adjustmentForm.item_code || '-' }} / {{ adjustmentForm.item_name || '-' }}</span>
+              <span><b>物料</b>{{ adjustmentForm.item_code || '-' }} / {{ adjustmentForm.item_name || '-' }}{{ adjustmentForm.item_spec ? '（' + adjustmentForm.item_spec + '）' : '' }}</span>
               <span><b>单位</b>{{ adjustmentForm.unit_name || '-' }}</span>
               <span><b>仓库</b>{{ adjustmentForm.warehouse_name || '-' }}</span>
               <span><b>库位</b>{{ adjustmentForm.location_name || '-' }}</span>
@@ -829,7 +847,7 @@
                   placeholder="搜索并选择当前库位、当前批次的可用编号">
                   <el-option v-for="serial in adjustmentSerialOptions" :key="serial.id" :label="serial.serial_no" :value="serial.serial_no" />
                 </el-select>
-                <small class="adjustment-serial-stock">当前库存对象共有 {{ adjustmentSerialTotal }} 个可用编号；只允许选择本 Item / 仓库 / 库位 / 批次中的编号。</small>
+                <small class="adjustment-serial-stock">当前库存对象共有 {{ adjustmentSerialTotal }} 个可用编号；只允许选择本物料 / 仓库 / 库位 / 批次中的编号。</small>
               </template>
 
               <div class="adjustment-serial-count" :class="{ danger: !adjustmentSerialCountValid }">
@@ -848,8 +866,8 @@
       </aside>
     </transition>
 
-    <transition name="side-slide">
-      <aside v-if="qualityDrawerVisible" class="adjustment-panel quality-panel">
+    <transition name="el-fade-in">
+      <aside v-if="qualityDrawerVisible" class="adjustment-panel quality-panel" :style="{ zIndex: panelZIndex }">
         <header>
           <div>
             <h3>库存质量处理</h3>
@@ -863,7 +881,7 @@
           <section class="quality-card">
             <h4><b>1</b> 实物定位</h4>
             <dl class="quality-locator">
-              <dt>Item</dt><dd>{{ qualityForm.item_code }} / {{ qualityForm.item_name }}</dd>
+              <dt>物料</dt><dd>{{ qualityForm.item_code }} / {{ qualityForm.item_name }}</dd>
               <dt>仓库 / 库位</dt><dd>{{ qualityForm.warehouse_name }} / {{ qualityForm.location_name }}</dd>
               <dt>批次号</dt><dd>{{ qualityForm.batch_no || '-' }}</dd>
               <dt>当前可用</dt><dd class="green-text">{{ qualityForm.current_available }} {{ qualityForm.unit_name }}</dd>
@@ -938,8 +956,8 @@
       </aside>
     </transition>
 
-    <transition name="side-slide">
-      <aside v-if="adjustmentDetailVisible" class="adjustment-panel adjustment-detail-panel">
+    <transition name="el-fade-in">
+      <aside v-if="adjustmentDetailVisible" class="adjustment-panel adjustment-detail-panel" :style="{ zIndex: panelZIndex }">
         <header>
           <h3>调整单详情</h3>
           <button type="button" @click="adjustmentDetailVisible = false"><i class="el-icon-close" /></button>
@@ -1007,7 +1025,9 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import cachedPageRoute from '@/utils/cachedPageRoute'
+import PopupManager from 'element-ui/lib/utils/popup/popup-manager'
 import { listEntity } from '@/api/erp/master'
 import { listPendingReceipts, repairPostingReceiptAllocations, postPostingReceipt, listInventoryBalances, listInventoryItemBatches, getInventoryBatchContext, listInventoryBalanceSerials, listInventoryTransactions, listInventoryAdjustments, listInventoryAdjustmentReasons, generateInventoryAdjustmentSerials, saveInventoryAdjustment, submitInventoryAdjustment, postInventoryAdjustment, cancelInventoryAdjustment, deleteInventoryAdjustment, getInventoryQualityContext, createInventoryQualityEvent, getInventoryAlertPolicy, activateInventoryAlertPolicy, disableInventoryAlertPolicy } from '@/api/erp/inventory'
 
@@ -1068,6 +1088,9 @@ export default {
       adjustmentDetailVisible: false,
       selectedAdjustment: null,
       adjustmentDrawerVisible: false,
+      // 面板可能叠在批次弹窗之上打开，层级必须向 Element 弹层管理器申请：
+      // 固定 3001 会盖住随后弹出的确认框（确认框约 2000+），导致按钮点不到。
+      panelZIndex: 2000,
       adjustmentForm: this.defaultAdjustmentForm(),
       adjustmentReasons: [],
       adjustmentReasonMap: {},
@@ -1195,12 +1218,12 @@ export default {
       return ({ return_supplier: '只处理已入库库存，并引用该批次采购来源；未入库不合格品仍在采购到货环节处理。', exchange: '问题实物保持冻结，后续对接正式采购换货单，跟踪原品退回和替换品到货。' })[this.qualityForm.handling_method] || '已入库库存不适用让步接收；返修、报废暂不开放。'
     },
     qualitySerialPlaceholder() {
-      if (this.qualityForm.serial_tracking_mode === 'none') return '该 Item 无需序列号，按批次处理'
+      if (this.qualityForm.serial_tracking_mode === 'none') return '该物料无需序列号，按批次处理'
       if (!this.qualitySerials.length) return '当前批次没有可用序列号'
       return '请选择或搜索设备编号 / 序列号'
     },
     qualitySerialHint() {
-      if (this.qualityForm.serial_tracking_mode === 'none') return '该 Item 的序列号策略为“无需编号”，本次按批次和数量定位。'
+      if (this.qualityForm.serial_tracking_mode === 'none') return '该物料的序列号策略为“无需编号”，本次按批次和数量定位。'
       if (!this.qualitySerials.length) return '当前批次没有可用编号；请先核对到货入库时的编号登记，不能凭空补录。'
       return '已加载当前库位、当前批次的 ' + this.qualitySerials.length + ' 个可用编号。'
     },
@@ -1213,6 +1236,9 @@ export default {
     }
   },
   watch: {
+    adjustmentDrawerVisible(visible) { if (visible) this.panelZIndex = PopupManager.nextZIndex() },
+    qualityDrawerVisible(visible) { if (visible) this.panelZIndex = PopupManager.nextZIndex() },
+    adjustmentDetailVisible(visible) { if (visible) this.panelZIndex = PopupManager.nextZIndex() },
     'pageRoute.fullPath': { immediate: true, handler() { this.syncActiveView(); this.applyConsoleTarget(); this.loadCurrentView() } },
     balancePickerQuery: { deep: true, handler() { this.balancePickerPagination.page = 1 } }
   },
@@ -1332,6 +1358,7 @@ export default {
             ...row,
             item_code: this.selectedBalance.item_code,
             item_name: this.selectedBalance.item_name,
+            spec: this.selectedBalance.spec || '',
             unit: this.selectedBalance.unit,
             warehouse_name: row.warehouse?.warehouse_name || '',
             location_name: row.location?.location_name || '',
@@ -1515,6 +1542,7 @@ export default {
           item_id: line.item_id,
           item_code: line.item?.item_code || '',
           item_name: line.item?.item_name || '',
+          item_spec: [line.item?.spec, line.item?.model].filter(Boolean).join(' / '),
           is_serial_managed: Boolean(line.item?.is_serial_managed),
           serial_tracking_mode: line.item?.serial_tracking_mode || (line.item?.is_serial_managed ? 'required' : 'none'),
           serial_text: line.serial_text || '',
@@ -1570,6 +1598,7 @@ export default {
         item_id: row.item_id,
         item_code: row.item?.item_code || '',
         item_name: row.item?.item_name || '',
+        spec: [row.item?.spec, row.item?.model].filter(Boolean).join(' / '),
         management_scope: row.item?.management_scope || 'factory',
         serial_tracking_mode: row.item?.serial_tracking_mode || (row.item?.is_serial_managed ? 'required' : 'none'),
         is_serial_managed: Boolean(row.item?.is_serial_managed),
@@ -1660,7 +1689,7 @@ export default {
       return { enabled: true, min_stock: null, safety_stock: null, max_stock: null, suggested_replenishment_qty: null }
     },
     async openAlertConfig() {
-      if (!this.selectedBalance || !this.selectedBalance.item_id) return this.$message.warning('请先在库存余额列表选择一个 Item。')
+      if (!this.selectedBalance || !this.selectedBalance.item_id) return this.$message.warning('请先在库存余额列表选择一个物料。')
       this.alertConfigItem = this.selectedBalance
       this.alertConfig = this.defaultAlertConfig()
       this.alertConfigVisible = true
@@ -1717,7 +1746,13 @@ export default {
     async openAdjustmentForBalance(row) {
       if (!row || !row.item_id) return
       await this.openBatchDialog(row)
-      this.$message.info('请在已打开的批次中选择实际仓库与库位后，再执行库存调整。')
+      // 只有一个批次且只在一个库位时，库存对象是确定的，直接打开调整单，不再让用户多选一步。
+      const balances = this.batchContext.balances || []
+      if (this.batchRows.length === 1 && balances.length === 1 && Number(balances[0].quantity_on_hand || 0) > 0) {
+        this.batchDialogVisible = false
+        return this.openAdjustmentFromBalance(balances[0])
+      }
+      this.$message.info('该物料有多个批次或库位，请在批次中选择实际仓库与库位后，再执行库存调整。')
     },
     async selectBatch(row) {
       if (!row) {
@@ -1801,7 +1836,7 @@ export default {
       return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     },
     dateTime(value) {
-      return value ? String(value).replace('T', ' ').replace(/\.\d+Z?$/, '').replace(/Z$/, '').slice(0, 19) : '--'
+      return value ? erpDateTime(value, 19) : '--'
     },
     mapTransaction(row) {
       return (row.items || []).map(line => ({
@@ -1843,6 +1878,8 @@ export default {
         unit: line.item?.unit?.unit_name || '',
         posting_status_text: this.postingStatusText(row.posting_status),
         posted_by: row.posted_by || '系统',
+        posted_by_name: line.posted_by_name || '未记录',
+        cost_amount: Number(line.cost_amount || 0),
         posted_at: this.dateTime(row.posted_at || row.created_at)
       }
     },
@@ -1856,6 +1893,9 @@ export default {
         reason_label: this.adjustmentReasonLabel(row.reason),
         item_code: first.item?.item_code || '',
         item_name: first.item?.item_name || '',
+        item_spec: [first.item?.spec, first.item?.model].filter(Boolean).join(' / '),
+        created_by_name: row.created_by_name || '—',
+        posted_by_name: row.posted_by_name || (row.adjustment_status === 'posted' ? '未记录' : '—'),
         warehouse_name: first.warehouse?.warehouse_name || '',
         location_name: first.location?.location_name || '',
         batch_no: first.batch_no || '',
@@ -1978,10 +2018,10 @@ export default {
       return ({ pending: 'warning', posted: 'success', failed: 'danger', cancelled: 'info' })[status] || 'info'
     },
     transactionTypeText(type) {
-      return ({ purchase_receipt_posting: '采购到货入库', purchase_return_outbound: '采购退货出库', inventory_quality_outbound: '库存质量换货原品出库', manual_adjustment: '手工库存调整' })[type] || '业务库存事务'
+      return ({ purchase_receipt_posting: '采购到货入库', purchase_receipt_quality_release: '不合格品转合格补入库', purchase_return_outbound: '采购退货出库', inventory_quality_outbound: '库存质量换货原品出库', manual_adjustment: '手工库存调整' })[type] || '业务库存事务'
     },
     sourceTypeText(type) {
-      return ({ purchase_receipt: '采购到货单', purchase_return: '采购退货单', inventory_quality_event: '库存质量事件', inventory_adjustment: '手工调整单' })[type] || '业务来源'
+      return ({ purchase_receipt: '采购到货单', purchase_defect_handling: '不合格品处理单', purchase_return: '采购退货单', inventory_quality_event: '库存质量事件', inventory_adjustment: '手工调整单' })[type] || '业务来源'
     },
     openPostingConfirm(row) {
       this.selectReceipt(row)
@@ -2016,6 +2056,11 @@ export default {
       return this.postingStockSnapshot(line.is_stock_item_snapshot) === true
         && !this.postingPolicyIssue(line) && Number(line.stockable_qty) > 0
     },
+    postingNotice(row) {
+      const notices = (row && row.posting_eligibility && row.posting_eligibility.notices) || []
+      return notices.map(notice => notice.message).filter(Boolean).join('；')
+    },
+    postingBlockedByDefect(row) { return /不合格品处理/.test(this.postingBlockedReason(row) || '') },
     postingBlockedReason(row) {
       if (!row || row.posting_status !== 'pending') return row && row.posting_status !== 'pending' ? (row.posting_status === 'not_required' ? '该到货单无需库存过账' : '该到货单已过账') : ''
       if (row.posting_eligibility && row.posting_eligibility.can_post === false) return row.posting_eligibility.reason_text || '到货入库资料不完整'
@@ -2167,6 +2212,7 @@ export default {
         item_id: balance.item_id,
         item_code: balance.item_code,
         item_name: balance.item_name,
+        item_spec: balance.spec || '',
         unit_id: balance.unit_id,
         unit_name: balance.unit,
         warehouse_id: balance.warehouse_id,
@@ -2826,6 +2872,7 @@ export default {
 .posting-blocked-alert { margin:8px 0 10px; }
 .posting-blocked-alert .el-alert__content { width:100%; }
 .posting-blocked-alert .el-alert__description { margin-top:7px; }
+.posting-notice-alert { margin-top:8px; }
 .posting-repair-summary { display:grid; grid-template-columns:minmax(0,220px) minmax(0,1fr); gap:12px; margin:12px 0; padding:10px 12px; border:1px solid #e4e9e6; border-radius:4px; background:#fafcfb; }
 .posting-repair-summary span { display:flex; flex-direction:column; gap:4px; color:#7b8580; font-size:12px; }
 .posting-repair-summary strong { color:#25342c; font-size:13px; }
@@ -2969,4 +3016,20 @@ export default {
 @media (max-width: 600px) {
   .posting-view .metric-grid.four { grid-template-columns: minmax(0, 1fr); }
 }
+/* 按 2026-09-24 规则，侧页统一改为当前页面上的居中弹窗：四周留边、按视口限制宽高，长内容在内部滚动。 */
+.adjustment-panel {
+  top: 50%;
+  left: 50%;
+  right: auto;
+  bottom: auto;
+  transform: translate(-50%, -50%);
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  height: min(760px, calc(100vh - 64px));
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 0 0 100vmax rgba(15, 23, 42, .45), 0 18px 48px rgba(15, 23, 42, .22);
+  overflow: hidden;
+}
+.adjustment-panel footer { border-radius: 0 0 8px 8px; }
 </style>

@@ -24,6 +24,17 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->appendToGroup('api', \App\Http\Middleware\EnsureErpAuthenticated::class);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
+        // 各 Controller 的按钮权限校验统一抛出“无按钮权限：<权限码>”，这里把权限码换成权限名称，
+        // 让业务人员看得懂缺的是哪项权限；原权限码仍放在 details 里便于管理员排查。
+        $exceptions->render(function (\Symfony\Component\HttpKernel\Exception\HttpExceptionInterface $exception, $request) {
+            $prefix = '无按钮权限：';
+            if ($exception->getStatusCode() !== 403 || !str_starts_with($exception->getMessage(), $prefix) || !$request->is('api/*')) return null;
+            $codes = array_values(array_filter(array_map('trim', explode(' 或 ', substr($exception->getMessage(), strlen($prefix))))));
+            $names = \Illuminate\Support\Facades\DB::table('erp_rbac_permissions')->whereIn('code', $codes)->pluck('name', 'code');
+            $labels = array_map(fn ($code) => '「'.($names[$code] ?? $code).'」', $codes);
+            $message = '当前账号没有'.implode('或', $labels).'权限，请联系管理员开通。';
+            return response()->json(['message' => $message, 'error_code' => 'forbidden', 'errors' => ['permission' => [$message]], 'details' => ['permission_codes' => $codes]], 403);
+        });
         $exceptions->render(function (WorkOrderDomainException $exception, $request) {
             if ($request->is('api/v1/erp/production/*') || $request->is('api/v1/erp/sales/*') || $request->is('api/v1/erp/inventory/warehouse-*')) {
                 return response()->json([

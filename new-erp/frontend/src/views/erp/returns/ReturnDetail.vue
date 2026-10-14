@@ -10,7 +10,7 @@
     <div class="summary-grid">
       <div class="card summary-card">
         <h3>退货单信息</h3>
-        <dl><dt>退货单号</dt><dd>{{ row.return_no || '-' }}</dd><template v-if="kind==='purchase'"><dt>管理类型</dt><dd><el-tag size="mini" :type="row.management_scope==='office'?'info':'success'">{{ scopeLabel(row.management_scope) }}</el-tag></dd><dt>退货范围</dt><dd>{{ purchaseScopeText }}</dd></template><template v-else><dt>退货类型</dt><dd>客户退货</dd></template><dt>退货原因</dt><dd>{{ row.return_reason || '-' }}</dd><dt>{{ kind==='purchase'?'退货数量':'申请日期' }}</dt><dd>{{ kind==='purchase'?totalRequested():dateOnly(row.return_date) }}</dd><dt>{{ kind==='purchase'?'本币金额':'申请人' }}</dt><dd>{{ kind==='purchase'?money(totalAmount()):(row.created_by_name||creatorName()) }}</dd><dt>备注</dt><dd>{{ row.remark || '-' }}</dd></dl>
+        <dl><dt>退货单号</dt><dd>{{ row.return_no || '-' }}</dd><template v-if="kind==='purchase'"><dt>管理类型</dt><dd><el-tag size="mini" :type="row.management_scope==='office'?'info':'success'">{{ scopeLabel(row.management_scope) }}</el-tag></dd><dt>退货范围</dt><dd>{{ purchaseScopeText }}</dd></template><template v-else><dt>退货类型</dt><dd>客户退货</dd></template><dt>退货原因</dt><dd>{{ row.return_reason || '-' }}</dd><dt>{{ kind==='purchase'?'退货数量':'申请日期' }}</dt><dd>{{ kind==='purchase'?totalRequested():dateOnly(row.return_date) }}</dd><dt>{{ kind==='purchase'?'退货金额（含税）':'申请人' }}</dt><dd>{{ kind==='purchase'?(row.amount_incl_tax != null ? money(row.amount_incl_tax) + '（未税 ' + money(totalAmount()) + '）' : money(totalAmount())):(row.created_by_name||creatorName()) }}</dd><dt>备注</dt><dd>{{ row.remark || '-' }}</dd></dl>
       </div>
       <div class="card summary-card">
         <h3>{{ kind==='purchase'?'来源与供应商':'原销售订单与客户' }}</h3>
@@ -47,7 +47,7 @@
           <el-table-column type="index" label="#" width="48" />
           <el-table-column label="Product" min-width="150"><template slot-scope="{row:item}">{{ item.order_line&&item.order_line.product_name||'-' }}</template></el-table-column>
           <el-table-column label="SKU" min-width="140"><template slot-scope="{row:item}">{{ item.order_line&&item.order_line.sku_name||'-' }}</template></el-table-column>
-          <el-table-column label="原履约Item" min-width="180"><template slot-scope="{row:item}">{{ item.item&&item.item.item_code||item.sales_order_line_id }}</template></el-table-column>
+          <el-table-column label="原履约物料" min-width="180"><template slot-scope="{row:item}">{{ item.item&&item.item.item_code||item.sales_order_line_id }}</template></el-table-column>
           <el-table-column label="申请退货" width="110" align="right"><template slot-scope="{row:item}">{{ number(item.requested_sales_qty||item.requested_base_qty) }}</template></el-table-column>
           <el-table-column label="已收货" width="100" align="right"><template slot-scope="{row:item}">{{ number(item.received_base_qty||0) }}</template></el-table-column>
           <el-table-column label="剩余待收" width="105" align="right"><template slot-scope="{row:item}">{{ remaining(item) }}</template></el-table-column>
@@ -74,6 +74,7 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import { purchaseScopeLabel, purchaseScopeIssue } from '@/utils/purchaseManagementScope.mjs'
 import { approvePurchaseReturn, cancelPurchaseReturn, closePurchaseReturn, getPurchaseReturn, postPurchaseReturn, submitPurchaseReturn } from '@/api/erp/purchase'
 import { cancelSalesReturn, closeSalesReturn, getSalesReturn, postSalesReturnReceipt, receiveSalesReturn } from '@/api/erp/sales'
@@ -106,7 +107,7 @@ export default {
     operatorName(action){const log=(this.row.logs||[]).find(item=>item.action===action);return log&&log.operator_name||'-'},
     receiptPostText(v){return({posted:'已过账',not_required:'无需过账',pending:'未过账'})[v]||v||'-'},
     receiptPostType(v){return v==='posted'?'success':v==='not_required'?'info':'warning'},
-    fmt(v){return v?String(v).replace('T',' ').slice(0,16):'-'}, dateOnly(v){return v?String(v).slice(0,10):'-'}, number(v){return Number(v||0).toFixed(2)}, money(v){return `¥ ${Number(v||0).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2})}`},
+    fmt(v){return v?erpDateTime(v, 16):'-'}, dateOnly(v){return v?String(v).slice(0,10):'-'}, number(v){return Number(v||0).toFixed(2)}, money(v){return `¥ ${Number(v||0).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2})}`},
     totalRequested(){return this.number((this.row.items||[]).reduce((s,i)=>s+Number(i.requested_base_qty||i.requested_sales_qty||0),0))},
     totalSourceQty(){return this.number((this.row.items||[]).reduce((s,i)=>s+Number(i.source_posted_base_qty||i.requested_base_qty||0),0))},
     totalPostedQty(){return this.number((this.row.items||[]).reduce((s,i)=>s+Number(i.previous_returned_base_qty||0),0))},

@@ -231,7 +231,7 @@ class ProductionExecutionFoundationService
             'standard_quantity_snapshot' => $quantity,
             'standard_time_formula_snapshot' => $mode === 'unit' ? 'unit_standard' : 'setup_plus_unit_times_qty',
             'kitting_required' => $kittingRequired,
-            // 备货生产做到中间工序时，目标工序自己的正式产出 Item 和本单有效去向是唯一依据。
+            // 备货生产做到中间工序时，目标工序自己的正式产出物料和本单有效去向是唯一依据。
             // 禁止回退到整条路线最终成品，否则会制造错误库存和错误谱系。
             'output_item_id_snapshot' => $isStockPrebuildTarget
                 ? ($workOrder->effective_output_item_id_snapshot ?? $operation['output_item_id']) : $operation['output_item_id'],

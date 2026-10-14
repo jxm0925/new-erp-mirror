@@ -114,6 +114,7 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import cachedPageRoute from '@/utils/cachedPageRoute'
 import { confirmProduction, getProductionPreview } from '@/api/erp/sales'
 
@@ -141,7 +142,7 @@ export default {
     resultText () { return this.order.production_confirm_status === 'confirmed' ? '已确认并锁定' : (this.blocked ? '待处理' : '待确认') },
     countRows () { return [{ label: '订单总行数', value: this.summary.total }, { label: '库存备货行数', value: this.summary.inventory }, { label: '生产安排行数', value: this.summary.production }, { label: '服务项目行数', value: this.summary.service }, { label: '无需发货行数', value: this.summary.no_delivery }] },
     quantityRows () { return [{ label: '库存备货', value: this.groupQuantity('inventory_qty') }, { label: '生产安排', value: this.groupQuantity('production_qty') }, { label: '服务项目', value: this.groupQuantity('service_qty') }, { label: '无需发货', value: this.groupQuantity('no_delivery_qty') }, { label: '尚未确定', value: this.groupQuantity('undetermined_qty') }] },
-    submitResults () { const rows = ['保存订单生产确认结果']; if (this.summary.inventory) rows.push('生成库存备货需求（Item基本数量）'); if (this.summary.production) rows.push('生成生产需求与根工单（销售/基本数量双口径）'); if (this.summary.service) rows.push('生成服务项目记录'); if (this.summary.no_delivery) rows.push('保存无需发货结果'); rows.push('锁定本次确认所使用的生产资料'); return rows }
+    submitResults () { const rows = ['保存订单生产确认结果']; if (this.summary.inventory) rows.push('生成库存备货需求（物料基本数量）'); if (this.summary.production) rows.push('生成生产需求与根工单（销售/基本数量双口径）'); if (this.summary.service) rows.push('生成服务项目记录'); if (this.summary.no_delivery) rows.push('保存无需发货结果'); rows.push('锁定本次确认所使用的生产资料'); return rows }
   },
   created () { this.load() },
   watch: {
@@ -206,7 +207,7 @@ export default {
     planStatusTag (value) { return ({ unallocated: 'info', partially_allocated: 'warning', allocated: 'success' })[value] || 'info' },
     fulfillmentProgressTag (value) { return ({ pending: 'warning', partial: 'warning', fulfilled: 'success', cancelled: 'danger' })[value] || 'info' },
     number (value) { return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 6 }) },
-    date (value) { return value ? String(value).replace('T', ' ').slice(0, 10) : '-' }
+    date (value) { return value ? erpDateTime(value, 10) : '-' }
   }
 }
 </script>

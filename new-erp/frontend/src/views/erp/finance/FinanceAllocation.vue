@@ -32,6 +32,7 @@
   </div>
 </template>
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import { getCashDocument, resolveFinanceSource, allocateCashDocument, reverseFinanceAllocation } from '../../../api/erp/finance'
 import FinanceSourcePicker from '../../../components/finance/FinanceSourcePicker.vue'
 import FinancePendingAllocations from '../../../components/finance/FinancePendingAllocations.vue'
@@ -60,7 +61,7 @@ export default {
   methods: {
     money,
     sourceLabel,
-    dateTimeText(value) { return String(value || '').replace('T', ' ').replace(/\.\d+Z$/, '') || '—' },
+    dateTimeText(value) { return erpDateTime(value, 19) || '—' },
     async load(reset = false) {
       const revision = ++this.loadRevision
       const id = this.resolvedCashId

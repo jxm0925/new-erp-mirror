@@ -1,23 +1,23 @@
 <template>
   <section class="set-page" v-loading="loading">
-    <header class="page-header"><h1>{{ current ? '更换默认Item' : '设置默认Item' }}</h1><div><el-button @click="back">← 返回列表</el-button><el-button @click="back">取消</el-button><el-button v-if="$can(current ? 'sku_item_relation.change' : 'sku_item_relation.set')" type="success" :loading="saving" @click="save">保存并立即生效</el-button></div></header>
-    <div class="notice">ⓘ 实物SKU必须设置唯一、启用的默认Item；服务和无需发货SKU无需设置Item。</div>
+    <header class="page-header"><h1>{{ current ? '更换默认物料' : '设置默认物料' }}</h1><div><el-button @click="back">← 返回列表</el-button><el-button @click="back">取消</el-button><el-button v-if="$can(current ? 'sku_item_relation.change' : 'sku_item_relation.set')" type="success" :loading="saving" @click="save">保存并立即生效</el-button></div></header>
+    <div class="notice">ⓘ 实物SKU必须设置唯一、启用的默认物料；服务和无需发货SKU无需设置物料。</div>
     <main v-if="sku" class="body">
       <aside class="sku-card"><h3>SKU只读信息</h3><dl><dt>Product</dt><dd>{{ product }}</dd><dt>SKU编码</dt><dd>{{ sku.sku_code }}</dd><dt>SKU名称</dt><dd>{{ sku.sku_name }}</dd><dt>规格型号</dt><dd>{{ sku.spec_text || '—' }}</dd><dt>销售单位</dt><dd>{{ sku.sales_unit?.unit_name || '—' }}</dd><dt>订单行类型</dt><dd>实物</dd></dl></aside>
-      <section class="setting-card"><h3>默认Item设置</h3>
+      <section class="setting-card"><h3>默认物料设置</h3>
         <div class="selection">
-          <section class="item-card"><b>当前默认Item（旧Item）</b><dl v-if="current"><dt>Item编码</dt><dd>{{ current.item_code }}</dd><dt>Item名称</dt><dd>{{ current.item_name }}</dd><dt>规格型号</dt><dd>{{ current.spec || '—' }}</dd><dt>Item类型</dt><dd>{{ itemType(current.item_type) }}</dd><dt>库存单位</dt><dd>{{ current.unit?.unit_name || '—' }}</dd><dt>状态</dt><dd><span>启用</span></dd></dl><p v-else>暂未设置</p></section>
+          <section class="item-card"><b>当前默认物料（旧物料）</b><dl v-if="current"><dt>物料编码</dt><dd>{{ current.item_code }}</dd><dt>物料名称</dt><dd>{{ current.item_name }}</dd><dt>规格型号</dt><dd>{{ current.spec || '—' }}</dd><dt>Item类型</dt><dd>{{ itemType(current.item_type) }}</dd><dt>库存单位</dt><dd>{{ current.unit?.unit_name || '—' }}</dd><dt>状态</dt><dd><span>启用</span></dd></dl><p v-else>暂未设置</p></section>
           <span class="arrow"><i class="el-icon-right" /></span>
           <div class="new-item">
-            <label>新默认Item<el-select v-model="form.item_id" filterable remote clearable :remote-method="searchItems" :loading="itemsLoading" placeholder="搜索Item编码、名称、规格型号" @change="selectItem"><el-option v-for="x in items" :key="x.id" :value="x.id" :label="`${x.item_code}｜${x.item_name}`"/></el-select></label>
+            <label>新默认物料<el-select v-model="form.item_id" filterable remote clearable :remote-method="searchItems" :loading="itemsLoading" placeholder="搜索物料编码、名称、规格型号" @change="selectItem"><el-option v-for="x in items" :key="x.id" :value="x.id" :label="`${x.item_code}｜${x.item_name}`"/></el-select></label>
             <div class="item-pager">
               <el-button size="mini" :disabled="itemPage <= 1 || itemsLoading" @click="changeItemPage(-1)">上一页</el-button>
               <span>第 {{ itemPage }} / {{ itemLastPage }} 页</span>
               <el-button size="mini" :disabled="itemPage >= itemLastPage || itemsLoading" @click="changeItemPage(1)">下一页</el-button>
             </div>
-            <small>支持搜索、分页，仅可选择启用状态Item（共 {{ itemTotal }} 条）</small>
+            <small>支持搜索、分页，仅可选择启用状态的物料（共 {{ itemTotal }} 条）</small>
           </div>
-          <section class="item-card chosen"><b>已选择的新默认Item</b><dl v-if="chosen"><dt>Item编码</dt><dd>{{ chosen.item_code }}</dd><dt>Item名称</dt><dd>{{ chosen.item_name }}</dd><dt>规格型号</dt><dd>{{ chosen.spec || '—' }}</dd><dt>Item类型</dt><dd>{{ itemType(chosen.item_type) }}</dd><dt>库存单位</dt><dd>{{ chosen.unit?.unit_name || '—' }}</dd><dt>状态</dt><dd><span>启用</span></dd></dl><p v-else>等待选择</p></section>
+          <section class="item-card chosen"><b>已选择的新默认物料</b><dl v-if="chosen"><dt>物料编码</dt><dd>{{ chosen.item_code }}</dd><dt>物料名称</dt><dd>{{ chosen.item_name }}</dd><dt>规格型号</dt><dd>{{ chosen.spec || '—' }}</dd><dt>Item类型</dt><dd>{{ itemType(chosen.item_type) }}</dd><dt>库存单位</dt><dd>{{ chosen.unit?.unit_name || '—' }}</dd><dt>状态</dt><dd><span>启用</span></dd></dl><p v-else>等待选择</p></section>
         </div>
         <section class="fulfillment-conversion">
           <h3>履约换算</h3>
@@ -27,12 +27,12 @@
             <label class="factor-field">履约数量（必填）<el-input-number v-model="form.factor" :min="0.00000001" :precision="8" :controls="false" /></label>
           </div>
           <div class="formula-preview" v-if="chosen"><i class="el-icon-info" /> 销售 1 {{ sku.sales_unit && (sku.sales_unit.symbol || sku.sales_unit.unit_name) }} = 履约 {{ number(form.factor) }} {{ chosen.unit && (chosen.unit.symbol || chosen.unit.unit_name) }} Item</div>
-          <div class="example-preview" v-if="chosen">换算示例：销售10{{ sku.sales_unit && (sku.sales_unit.symbol || sku.sales_unit.unit_name) }}时，Item基本需求量为 <b>{{ number(Number(form.factor || 0) * 10) }}</b> {{ chosen.unit && (chosen.unit.symbol || chosen.unit.unit_name) }}（只读）</div>
+          <div class="example-preview" v-if="chosen">换算示例：销售10{{ sku.sales_unit && (sku.sales_unit.symbol || sku.sales_unit.unit_name) }}时，物料基本需求量为 <b>{{ number(Number(form.factor || 0) * 10) }}</b> {{ chosen.unit && (chosen.unit.symbol || chosen.unit.unit_name) }}（只读）</div>
         </section>
         <div class="form-row"><label>变更原因 <b>*</b><el-select v-model="form.change_reason" placeholder="请选择变更原因"><el-option v-for="x in reasons" :key="x" :label="x" :value="x"/></el-select></label><label>备注 <b v-if="form.change_reason === '其他'">*</b><el-input type="textarea" :rows="3" maxlength="200" show-word-limit v-model="form.remark" :placeholder="form.change_reason === '其他' ? '变更原因选择“其他”时必填' : '请输入备注（选填）'"/></label></div>
         <div class="effective">生效说明　保存后立即生效，生效时间由服务器记录</div><div class="warning">! 保存后，旧的默认关系将变为非活动状态；历史记录与历史订单数据保持不变。</div>
       </section>
-      <aside class="check-card"><h3>保存前检查</h3><p :class="ok('physical')">● SKU订单行类型为实物</p><p :class="ok('selected')">● 新Item已启用</p><p :class="ok('different')">● {{ current ? '新Item或履约因子已变更' : '当前无旧Item，可首次设置' }}</p><p :class="ok('selected')">● 当前关系可以保留历史</p><p :class="ok('single')">● 不存在其他启用默认Item</p><p :class="form.factor > 0 ? 'pass' : 'fail'">● 履约因子大于0、单位精度符合规则</p></aside>
+      <aside class="check-card"><h3>保存前检查</h3><p :class="ok('physical')">● SKU订单行类型为实物</p><p :class="ok('selected')">● 新物料已启用</p><p :class="ok('different')">● {{ current ? '新物料或履约因子已变更' : '当前无旧物料，可首次设置' }}</p><p :class="ok('selected')">● 当前关系可以保留历史</p><p :class="ok('single')">● 不存在其他启用默认物料</p><p :class="form.factor > 0 ? 'pass' : 'fail'">● 履约因子大于0、单位精度符合规则</p></aside>
     </main>
   </section>
 </template>
@@ -57,7 +57,7 @@ export default {
       itemPerPage: 10,
       itemTotal: 0,
       form: { item_id: null, factor: 1, change_reason: '首次设置', remark: '' },
-      reasons: ['首次设置', '产品升级', '规格调整', '主数据修正', '原Item停用', '历史数据补全', '其他']
+      reasons: ['首次设置', '产品升级', '规格调整', '主数据修正', '原物料停用', '历史数据补全', '其他']
     }
   },
   computed: {
@@ -73,7 +73,7 @@ export default {
         const d = detail.data.data
         this.sku = d.sku
         if (this.sku.line_type !== 'physical') {
-          this.$message.warning('服务或无需发货SKU不允许设置默认Item')
+          this.$message.warning('服务或无需发货SKU不允许设置默认物料')
           return this.back()
         }
         const active = (d.audit.relations || []).filter(x => x.status === 'active' && x.is_primary)
@@ -132,16 +132,16 @@ export default {
       return good ? 'pass' : 'fail'
     },
     async save () {
-      if (!this.form.item_id) return this.$message.warning('请选择新的默认Item')
+      if (!this.form.item_id) return this.$message.warning('请选择新的默认物料')
       if (!(Number(this.form.factor) > 0)) return this.$message.warning('履约因子必须大于0')
-      if (this.current && this.current.id === this.form.item_id && Math.abs(Number(this.currentRelation?.qty || 0) - Number(this.form.factor)) < 0.00000001) return this.$message.error('新Item和履约因子不能与当前关系完全相同')
+      if (this.current && this.current.id === this.form.item_id && Math.abs(Number(this.currentRelation?.qty || 0) - Number(this.form.factor)) < 0.00000001) return this.$message.error('新物料和履约因子不能与当前关系完全相同')
       if (!this.form.change_reason) return this.$message.warning('请选择变更原因')
       if (this.form.change_reason === '其他' && !this.form.remark.trim()) return this.$message.warning('变更原因选择“其他”时必须填写备注')
-      if (this.activeRelationCount > 1) return this.$message.error('当前存在多个启用默认Item，请先在完整性检查中修复')
+      if (this.activeRelationCount > 1) return this.$message.error('当前存在多个启用默认物料，请先在完整性检查中修复')
       this.saving = true
       try {
         await setDefaultSkuItem(this.sku.id, this.form)
-        this.$message.success('默认Item已保存并立即生效')
+        this.$message.success('默认物料已保存并立即生效')
         this.$router.push(`/master/sku-item-relations/${this.sku.id}`)
       } catch (e) {
         this.$message.error(e.userMessage || '保存失败')

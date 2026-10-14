@@ -111,7 +111,7 @@
           </label>
 
           <label class="field required">
-            <span>产出Item</span>
+            <span>产出物料</span>
             <div class="select-like" :class="{ disabled: !canEdit }" @click="canEdit && openPicker('output')">
               <span>{{ outputItemLabel }}</span>
               <i class="el-icon-arrow-down"></i>
@@ -130,9 +130,9 @@
       <div class="detail-title">BOM明细</div>
       <el-table :data="form.items" border size="mini" class="bom-lines">
         <el-table-column prop="line_no" label="行号" width="64" align="center" />
-        <el-table-column label="组成物料Item" min-width="190">
+        <el-table-column label="组成物料" min-width="190">
           <template slot="header">
-            <span class="required-head">组成物料Item</span>
+            <span class="required-head">组成物料</span>
           </template>
           <template slot-scope="{row,$index}">
             <div class="item-cell" :class="{ disabled: !canEdit }" @click="canEdit && openPicker('component', $index)">
@@ -223,9 +223,9 @@
     </div>
 
     <!-- 页面本身有层叠上下文，弹窗必须与挂在 body 的遮罩同层，否则遮罩会覆盖弹窗并吞掉点击。 -->
-    <el-dialog :visible.sync="picker.visible" :title="picker.mode === 'output' ? '选择产出 Item' : '选择组成物料'" append-to-body width="980px" class="item-picker">
+    <el-dialog :visible.sync="picker.visible" :title="picker.mode === 'output' ? '选择产出物料' : '选择组成物料'" append-to-body width="980px" class="item-picker">
       <div class="picker-filter">
-        <el-input v-model="picker.keyword" size="small" clearable placeholder="Item编码/名称" @keyup.enter.native="searchItems" @clear="searchItems" />
+        <el-input v-model="picker.keyword" size="small" clearable placeholder="物料编码/名称" @keyup.enter.native="searchItems" @clear="searchItems" />
         <el-select v-model="picker.category_id" size="small" clearable placeholder="分类" @change="searchItems">
           <el-option v-for="c in categories" :key="c.id" :label="c.category_name" :value="c.id" />
         </el-select>
@@ -245,11 +245,11 @@
         <el-button size="small" @click="resetItems">重置</el-button>
       </div>
       <div class="picker-tip">
-        提示：重置或改变查询条件将返回第 1 页；停用物料不可选择；组成物料不可与产出Item相同。
+        提示：重置或改变查询条件将返回第 1 页；停用物料不可选择；组成物料不可与产出物料相同。
       </div>
       <el-table :data="picker.rows" border size="mini" height="360" v-loading="picker.loading">
-        <el-table-column prop="item_code" label="Item编码" width="140" />
-        <el-table-column prop="item_name" label="Item名称" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="item_code" label="物料编码" width="140" />
+        <el-table-column prop="item_name" label="物料名称" min-width="180" show-overflow-tooltip />
         <el-table-column label="类型" width="100"><template slot-scope="{row}">{{ itemTypeText(row.item_type) }}</template></el-table-column>
         <el-table-column label="分类" width="120"><template slot-scope="{row}">{{ row.category ? row.category.category_name : '-' }}</template></el-table-column>
         <el-table-column label="单位" width="80"><template slot-scope="{row}">{{ row.unit ? row.unit.unit_name : '-' }}</template></el-table-column>
@@ -360,7 +360,7 @@ export default {
       return this.form.bom_type === 'custom'
     },
     outputItemLabel() {
-      return this.form.output_item ? `${this.form.output_item.item_code}　${this.form.output_item.item_name}` : '请选择产出Item'
+      return this.form.output_item ? `${this.form.output_item.item_code}　${this.form.output_item.item_name}` : '请选择产出物料'
     },
     outputUnitName() {
       if (!this.form.output_item || !this.form.output_item.unit) return '—'
@@ -494,12 +494,12 @@ export default {
       return Boolean(this.itemDisableReason(item))
     },
     itemDisableReason(item) {
-      if (this.picker.mode === 'component' && item.id === this.form.output_item_id) return '产出Item不能作为组成物料'
+      if (this.picker.mode === 'component' && item.id === this.form.output_item_id) return '产出物料不能作为组成物料'
       if (['disabled', 'inactive'].includes(item.status)) return '停用物料不能选择'
       return ''
     },
     selectItem(item) {
-      if (this.isItemDisabled(item)) return this.$message.warning('停用物料或当前产出 Item 不能选择')
+      if (this.isItemDisabled(item)) return this.$message.warning('停用物料或当前产出物料不能选择')
       if (this.picker.mode === 'output') {
         this.$set(this.form, 'output_item_id', item.id)
         this.$set(this.form, 'output_item', { ...item })
@@ -544,7 +544,7 @@ export default {
       if (Boolean(payload.product_id) !== Boolean(payload.sku_id)) {
         return this.$message.error('归属商品和关联 SKU 必须同时填写，或同时留空')
       }
-      if (!payload.output_item_id) return this.$message.error('请选择产出 Item')
+      if (!payload.output_item_id) return this.$message.error('请选择产出物料')
       if (payload.items.some(item => !item.component_item_id)) return this.$message.error('BOM 明细中存在未选择物料的行')
       if (payload.items.some(item => item.is_length_cut_material && (!(Number(item.cut_length_mm) > 0) || !(Number(item.piece_qty) > 0)))) return this.$message.error('长度下料类物料必须填写每段长度和段数')
       if (payload.items.some(item => item.cutting_mode === 'sheet' && ['cut_length_mm', 'cut_width_mm', 'cut_thickness_mm', 'piece_qty'].some(key => !(Number(item[key]) > 0)))) return this.$message.error('板材必须填写单件长、宽、厚和每份产出的件数')

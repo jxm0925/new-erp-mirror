@@ -369,7 +369,7 @@ class BomController extends Controller
         })->filter(fn (int $count) => $count > 1);
         abort_if($duplicates->isNotEmpty(), 422, '同一 BOM 中相同物料与相同下料尺寸不能重复；请合并件数。');
         foreach (array_values($items) as $index => $line) {
-            abort_if((int) $line['component_item_id'] === (int) $bom->output_item_id, 422, 'BOM 组成物料不能等于产出 Item。');
+            abort_if((int) $line['component_item_id'] === (int) $bom->output_item_id, 422, 'BOM 组成物料不能等于产出物料。');
             $item = Item::with('unit')->lockForUpdate()->findOrFail($line['component_item_id']);
             app(ItemManagementScopeService::class)->assertProductionAllowed($item, 'items.'.$index.'.component_item_id');
             abort_if(in_array($item->status, ['disabled', 'inactive'], true), 422, '停用物料不能作为 BOM 组成物料。');
@@ -426,7 +426,7 @@ class BomController extends Controller
             abort_unless(
                 $outputItem && $outputItem->is_production_item,
                 422,
-                'Item-only BOM 的产出 Item 必须已启用且可用于生产。'
+                'Item-only BOM 的产出物料必须已启用且可用于生产。'
             );
 
             return;
@@ -434,7 +434,7 @@ class BomController extends Controller
 
         $product = Product::whereKey($productId)->where('status', 'enabled')->first();
         $sku = Sku::whereKey($skuId)->where('status', 'enabled')->first();
-        abort_unless($product && $sku && $outputItem, 422, '归属 Product、关联 SKU 和产出 Item 必须全部启用。');
+        abort_unless($product && $sku && $outputItem, 422, '归属 Product、关联 SKU 和产出物料必须全部启用。');
         abort_if((int) $sku->product_id !== (int) $product->id, 422, '关联 SKU 不属于所选 Product。');
         $validOutput = DB::table('erp_sku_item_relations')
             ->where('sku_id', $sku->id)
@@ -442,7 +442,7 @@ class BomController extends Controller
             ->where('status', 'active')
             ->where('is_primary', true)
             ->exists();
-        abort_unless($validOutput, 422, '产出 Item 必须是该 SKU 当前有效的默认生产/履约 Item。');
+        abort_unless($validOutput, 422, '产出物料必须是该 SKU 当前有效的默认生产/履约物料。');
     }
 
     private function assertFactoryBom(Bom $bom): void

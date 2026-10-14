@@ -79,6 +79,7 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import { createSalesCustomer, getSalesCustomer, listSalesCustomers, updateSalesCustomer } from '@/api/erp/sales'
 
 const blankContact = () => ({ localId: `contact-${Date.now()}-${Math.random()}`, contact_name: '', position: '', mobile: '', phone: '', email: '', is_default: false, status: 'enabled' })
@@ -98,7 +99,7 @@ export default {
     statusType(status) { return ({ enabled: 'success', potential: 'warning', disabled: 'info', blacklisted: 'danger' })[status] || 'info' },
     defaultContact(row) { return (row.contacts || []).find(item => item.is_default) || (row.contacts || [])[0] || {} },
     defaultAddress(row) { return (row.addresses || []).find(item => item.is_default) || (row.addresses || [])[0] || {} },
-    dateTime(value) { return value ? String(value).replace('T', ' ').slice(0, 16) : '—' },
+    dateTime(value) { return value ? erpDateTime(value, 16) : '—' },
     rowClass({ row }) { return this.selected && row.id === this.selected.id ? 'customer-selected-row' : '' },
     select(row) { this.selected = row },
     async load() { this.loading = true; try { const { data } = await listSalesCustomers(this.query); this.rows = data.data || []; this.total = data.total || 0; this.summary = data.summary || {}; this.ownerOptions = data.owner_options || []; if (this.selected) this.selected = this.rows.find(item => item.id === this.selected.id) || null; else this.selected = null } catch (error) { this.$message.error((error.response && error.response.data && error.response.data.message) || '客户列表加载失败') } finally { this.loading = false } },

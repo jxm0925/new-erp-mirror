@@ -3,7 +3,13 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
 const helpersSource = await readFile(new URL('../src/utils/systemManagement.js', import.meta.url), 'utf8')
-const helpers = await import(`data:text/javascript;base64,${Buffer.from(helpersSource).toString('base64')}`)
+// data: 模块无法解析相对导入，把时间工具源码内联进去。
+const dateTimeSource = await readFile(new URL('../src/utils/dateTime.js', import.meta.url), 'utf8')
+const inlinedHelpers = dateTimeSource + '\n' + helpersSource
+  .split(/\r?\n/)
+  .filter(line => !line.startsWith('import { erpDateTime }'))
+  .join('\n')
+const helpers = await import(`data:text/javascript;base64,${Buffer.from(inlinedHelpers).toString('base64')}`)
 const pickerSource = await readFile(new URL('../src/components/system/SystemRecordPicker.vue', import.meta.url), 'utf8')
 const roleSource = await readFile(new URL('../src/views/erp/system/SystemRolePermission.vue', import.meta.url), 'utf8')
 

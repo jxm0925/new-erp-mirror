@@ -51,7 +51,7 @@ class SupplierQuotationService
                 || ($item->category_id && SupplierCategoryCapability::where('supplier_id', $supplier->id)
                     ->where('item_category_id', $item->category_id)->where('status', 'active')
                     ->where(fn ($query) => $query->whereNull('expired_at')->orWhere('expired_at', '>', now()))->exists());
-            abort_unless($scopeAllowed, 422, '供应商尚未获准供应该 Item 或其末级 Item 类目，不能维护报价。');
+            abort_unless($scopeAllowed, 422, '供应商尚未获准供应该物料或其末级 Item 类目，不能维护报价。');
             $changeReason = $data['change_reason'] ?? null;
             $conversion = $this->conversions->purchaseConversion((int) $data['item_id'], (int) $data['unit_id'], null, true);
             $standardFactor = (float) $conversion->factor;

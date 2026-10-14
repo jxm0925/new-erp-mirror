@@ -65,7 +65,7 @@ return [
     |
     */
 
-    'timezone' => env('APP_TIMEZONE', 'Asia/Shanghai'),
+    'timezone' => env('APP_TIMEZONE', 'America/New_York'),
 
     /*
     |--------------------------------------------------------------------------
@@ -78,7 +78,7 @@ return [
     |
     */
 
-    'locale' => env('APP_LOCALE', 'en'),
+    'locale' => env('APP_LOCALE', 'zh_CN'),
 
     'fallback_locale' => env('APP_FALLBACK_LOCALE', 'en'),
 

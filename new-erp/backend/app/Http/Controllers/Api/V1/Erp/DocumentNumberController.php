@@ -15,7 +15,14 @@ class DocumentNumberController extends Controller
     public function rules(Request $request, DocumentNumberRuleService $service)
     {
         $this->authorizePermission($request, 'document_number_rule.view');
-        return response()->json($service->paginate($request->only(['document_type', 'keyword', 'enabled', 'per_page'])));
+        $paginator = $service->paginate($request->only(['document_type', 'keyword', 'enabled', 'per_page']));
+        $payload = $paginator->toArray();
+        $payload['stats'] = [
+            'total' => DocumentNumberRule::query()->count(),
+            'enabled' => DocumentNumberRule::query()->where('enabled', true)->count(),
+            'disabled' => DocumentNumberRule::query()->where('enabled', false)->count(),
+        ];
+        return response()->json($payload);
     }
 
     public function ruleTypes(Request $request, DocumentNumberRuleService $service)

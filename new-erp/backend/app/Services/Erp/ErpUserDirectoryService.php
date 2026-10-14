@@ -132,8 +132,14 @@ class ErpUserDirectoryService
             ->groupBy('user_legacy_id');
         $identities = DB::table('erp_legacy_admin_users')->whereIn('legacy_id', $userIds)
             ->get(['legacy_id', 'username', 'auth_group_names'])->keyBy('legacy_id');
+        // 最近登录取自登录审计日志（AuthController 每次签发会话时记录）。
+        $lastLogins = DB::table('erp_operation_logs')->where('module', 'auth')->where('action', 'login')
+            ->whereIn('target_id', $userIds)->groupBy('target_id')->selectRaw('target_id, MAX(created_at) AS last_login_at')
+            ->pluck('last_login_at', 'target_id');
 
-        return $users->map(function ($user) use ($rolesByUser, $identities) {
+        return $users->map(function ($user) use ($rolesByUser, $identities, $lastLogins) {
+            $lastLogin = $lastLogins->get($user->id);
+            $user->last_login_at = $lastLogin ? \Illuminate\Support\Carbon::parse($lastLogin)->toIso8601String() : null;
             $roles = $rolesByUser->get($user->id, collect());
             $user->rbac_roles = $roles->map(static fn ($role): array => [
                 'id' => (int) $role->id,

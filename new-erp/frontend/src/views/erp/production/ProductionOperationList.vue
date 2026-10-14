@@ -62,6 +62,7 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import { listProductionOperations, getProductionOperation, createProductionOperation, updateProductionOperation, enableProductionOperation, disableProductionOperation } from '../../../api/erp/production'
 import { reserveForCreatePage, clearCreatePageReservation } from '../../../utils/documentNumberReservation'
 
@@ -195,7 +196,7 @@ export default {
       } catch (error) { if (error !== 'cancel' && error !== 'close') this.$message.error(error.userMessage || '操作失败') }
     },
     booleanFlag(value) { return asBoolean(value) },
-    time(value) { return value ? String(value).replace('T', ' ').replace(/\.\d+Z$/, '').slice(0, 16) : '-' }
+    time(value) { return value ? erpDateTime(value, 16) : '-' }
   }
 }
 </script>

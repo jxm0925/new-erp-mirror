@@ -57,6 +57,7 @@ class PurchasePlanningConversionService
             $purchasePrecision = (int) $snapshot['purchase_decimal_places'];
             $basePrecision = (int) $snapshot['base_decimal_places'];
             $required = $direct ? ($requiredBase ?? (float) bcmul(sprintf('%.8F', (float) ($line['purchase_quantity'] ?? 0)), (string) $snapshot['conversion_factor_snapshot'], 8)) : (float) ($line['required_qty'] ?? 0);
+            if ($direct) $this->assertBaseQuantityFits((float) ($line['purchase_quantity'] ?? 0), $required, $snapshot, $factor);
             $this->assertPrecision($required, $basePrecision, 'required_qty', $snapshot['base_unit_name_snapshot']);
             abort_if(($direct ? $required < 0 : $required <= 0) || $factor <= 0, 422, '需求数量和换算因子无效');
 
@@ -71,6 +72,7 @@ class PurchasePlanningConversionService
             $quantity = (float) ($line['purchase_quantity'] ?? ($direct ? 0 : $suggested));
             $this->assertPrecision($quantity, $purchasePrecision, 'purchase_quantity', $snapshot['purchase_unit_name_snapshot']);
             $planned = (float) bcmul(sprintf('%.8F', $quantity), (string) $snapshot['conversion_factor_snapshot'], 8);
+            $this->assertBaseQuantityFits($quantity, $planned, $snapshot, $factor);
             $this->assertPrecision($planned, $basePrecision, 'purchase_quantity', $snapshot['base_unit_name_snapshot']);
             // Legacy quantity columns store four decimals; reject instead of silently truncating a stock fact.
             $this->assertPrecision($planned, min(4, $basePrecision), 'purchase_quantity', $snapshot['base_unit_name_snapshot']);
@@ -125,6 +127,27 @@ class PurchasePlanningConversionService
         }
         abort_if($allocated > $required + 0.00000001 || ($direct && $planned > (float) $snapshot['planned_base_qty'] + 0.00000001), 422, '供应商采购数量换算后不能超过计划采购数量');
         return ['snapshot' => $snapshot, 'splits' => $splits, 'allocated' => $allocated];
+    }
+
+    /**
+     * 采购数量折算成库存单位后出现库存单位不允许的小数时，直接告诉用户该改成多少，
+     * 而不是只报“单位 根 最多允许 0 位小数”。
+     */
+    private function assertBaseQuantityFits(float $quantity, float $planned, array $snapshot, float $factor): void
+    {
+        $basePrecision = (int) $snapshot['base_decimal_places'];
+        if (!is_finite($planned) || $factor <= 0 || abs($planned - round($planned, $basePrecision)) <= 0.00000001) return;
+        $purchaseName = $snapshot['purchase_unit_name_snapshot'];
+        $baseName = $snapshot['base_unit_name_snapshot'];
+        $scale = 10 ** $basePrecision;
+        $roundedBase = ceil($planned * $scale - 0.00000001) / $scale;
+        $suggestion = round($roundedBase / $factor, (int) $snapshot['purchase_decimal_places']);
+        $fmt = fn ($value) => rtrim(rtrim(number_format((float) $value, 8, '.', ''), '0'), '.');
+        $hint = abs($suggestion * $factor - $roundedBase) < 0.00000001
+            ? "建议改为 {$fmt($suggestion)} {$purchaseName}（折合 {$fmt($roundedBase)} {$baseName}），或改用 {$baseName} 作为采购单位。"
+            : "请调整数量，或改用 {$baseName} 作为采购单位。";
+        throw ValidationException::withMessages(['purchase_quantity' => "{$fmt($quantity)} {$purchaseName} 折合 {$fmt($planned)} {$baseName}，{$baseName}"
+            .($basePrecision === 0 ? '只能是整数' : "最多 {$basePrecision} 位小数")."。{$hint}"]);
     }
 
     public function assertPrecision(float $quantity, int $precision, string $field, string $name): void

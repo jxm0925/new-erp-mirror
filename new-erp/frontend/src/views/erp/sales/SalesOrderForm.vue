@@ -805,6 +805,7 @@ Do not change layout without approval.
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import cachedPageRoute from '@/utils/cachedPageRoute'
 import ProductSkuPicker from '@/components/sales/ProductSkuPicker.vue'
 import SalesOrderAttachmentPreviewDialog from '@/components/sales/SalesOrderAttachmentPreviewDialog.vue'
@@ -1587,7 +1588,7 @@ export default {
     },
     formatFileTime(value) {
       if (!value) return '-'
-      return String(value).replace('T', ' ').slice(0, 19)
+      return erpDateTime(value, 19)
     },
     previewAttachment(file) {
       if (!file || file.can_preview !== true) return this.$message.info('该附件不支持页面内预览，请下载后查看')
@@ -1693,7 +1694,7 @@ export default {
         selected,
         params: { management_scope: 'factory', status: 'enabled', is_purchase_item: 1, is_length_cut_material: 1 },
         title: '选择长度下料 Item',
-        tip: '仅显示真实采购/库存的长度下料 Item。可跨分类、搜索和分页多选；长度与段数返回订单行后填写。'
+        tip: '仅显示真实采购/库存的长度下料 物料。可跨分类、搜索和分页多选；长度与段数返回订单行后填写。'
       })
     },
     applyCutItems(items) {

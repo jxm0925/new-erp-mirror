@@ -20,9 +20,10 @@ class PurchaseReceiptPostingEligibilityService
         ]);
 
         $reasons = collect();
+        $notices = collect();
         $this->checkDocumentState($receipt, $reasons);
         $this->checkScope($receipt, $reasons);
-        $this->checkLines($receipt, $reasons);
+        $this->checkLines($receipt, $reasons, $notices);
 
         $reasons = $reasons->unique('code')->values();
         $primary = $reasons->first();
@@ -32,6 +33,8 @@ class PurchaseReceiptPostingEligibilityService
             'reason_code' => $primary['code'] ?? null,
             'reason_text' => $primary['message'] ?? '过账检查通过',
             'reasons' => $reasons->all(),
+            // 不阻断过账的提醒，例如“合格部分先入库，不合格部分另行处理”。
+            'notices' => $notices->values()->all(),
             'action_label' => $reasons->isEmpty() || str_starts_with($primary['code'] ?? '', 'scope_') ? null : '补充入库分配',
             'action_type' => $reasons->isEmpty() || str_starts_with($primary['code'] ?? '', 'scope_') ? null : 'repair_receipt_allocation',
         ];
@@ -54,7 +57,7 @@ class PurchaseReceiptPostingEligibilityService
         }
     }
 
-    private function checkLines(PurchaseReceipt $receipt, Collection $reasons): void
+    private function checkLines(PurchaseReceipt $receipt, Collection $reasons, Collection $notices): void
     {
         $qualifiedTotal = 0.0;
         foreach ($receipt->items as $line) {
@@ -65,12 +68,20 @@ class PurchaseReceiptPostingEligibilityService
             $code = $line->item?->item_code ?: '未知物料';
 
             if ((float) $line->quality_hold_amount > 0.0001) {
-                $this->reason(
-                    $reasons,
-                    "quality_pending_{$line->id}",
-                    "物料 {$code} 仍有未完成的不合格品处理，须先完成退货、换货、返修、让步接收或报废流程。",
-                    $line->id,
-                );
+                if (self::requiresQualityClosedBeforePosting($line->item)) {
+                    $this->reason(
+                        $reasons,
+                        "quality_pending_{$line->id}",
+                        "物料 {$code} 按序列号或实物管理，须先完成不合格品处理（退货、换货、返修、让步接收或报废）后再过账。",
+                        $line->id,
+                    );
+                } else {
+                    $notices->push([
+                        'code' => "quality_pending_{$line->id}",
+                        'message' => ($line->item?->item_name ? $line->item->item_name."（{$code}）" : "物料 {$code}")." 还有不合格品待处理，本次先入库合格的 {$this->number($qualified)}{$line->base_unit_name_snapshot}；不合格部分处理后，让步接收或返修合格的数量会自动补入库。",
+                        'receipt_item_id' => $line->id,
+                    ]);
+                }
             }
 
             if (!trim((string) $line->batch_no)) {
@@ -121,6 +132,13 @@ class PurchaseReceiptPostingEligibilityService
         if ($qualifiedTotal <= 0) {
             $this->reason($reasons, 'qualified_quantity_empty', '没有可进入正常库存的合格数量。');
         }
+    }
+
+    /** 序列号、实物管理物料入库时要逐件建档，合格部分先过账后无法安全地按件补入，仍要求先处理完不合格品。 */
+    public static function requiresQualityClosedBeforePosting(?object $item): bool
+    {
+        if (!$item) return true;
+        return $item->serialTrackingMode() !== 'none' || $item->materialManagementMode() === 'physical';
     }
 
     private function checkSerials(object $line, float $qualified, Collection $reasons): void

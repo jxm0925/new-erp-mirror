@@ -96,6 +96,7 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
 import { purchaseScopes, purchaseScopeLabel, purchaseScopeIssue } from '@/utils/purchaseManagementScope.mjs'
 import { listPurchaseReturns, submitPurchaseReturn, postPurchaseReturn } from '@/api/erp/purchase'
 import { listSalesReturns, confirmSalesReturn, listSalesCustomers } from '@/api/erp/sales'
@@ -144,7 +145,8 @@ export default {
           ]
     }
   },
-  created() { this.loadOptions(); this.load() },
+  // 从不合格品处理等页面跳转过来时带着退货单号，直接定位到该单据。
+  created() { if (this.$route.query.return_no) this.query.return_no = String(this.$route.query.return_no); this.loadOptions(); this.load() },
   methods: {
     scopeLabel(scope) { return purchaseScopeLabel(scope) },
     scopeIssue(row) { return this.kind === 'purchase' ? purchaseScopeIssue(row) : '' },
@@ -178,7 +180,7 @@ export default {
     rowStatusText(row) { return row.return_status === 'pending_outbound' && row.return_scope === 'rejected_before_posting' ? '待退回供应商' : this.statusText(row.return_status) },
     statusText(value) { return ({ draft:'草稿', submitted:'待审核', approved:'已审核', pending_outbound:'待执行', pending_receipt:'待收货', partial_received:'部分收货', received:'已收货', completed:'已完成', cancelled:'已取消', closed:'已关闭' })[value] || value || '-' },
     statusType(value) { return ({ completed:'success', approved:'success', received:'success', cancelled:'danger', closed:'info', submitted:'warning', pending_outbound:'warning', pending_receipt:'warning', partial_received:'warning' })[value] || '' },
-    fmt(value) { return value ? String(value).replace('T',' ').slice(0,16) : '-' },
+    fmt(value) { return value ? erpDateTime(value, 16) : '-' },
     async advance(row) {
       if (this.scopeIssue(row)) return this.$message.warning(this.scopeIssue(row)); await this.$confirm(`确认${this.kind === 'purchase' ? '提交审核' : '提交确认'}？`, '操作确认'); await (this.kind === 'purchase' ? submitPurchaseReturn(row.id) : confirmSalesReturn(row.id)); this.$message.success('操作成功'); this.load() },
     async post(row) {

@@ -40,6 +40,7 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../utils/dateTime'
 import { deletePurchaseAttachment, downloadPurchaseAttachment, previewPurchaseAttachment, uploadPurchaseAttachment } from '@/api/erp/purchase'
 
 const labels = { contract: '采购合同', quotation: '报价资料', delivery_note: '送货单', inspection_report: '验收报告', invoice: '发票资料', technical: '技术资料', other: '其他附件' }
@@ -106,7 +107,7 @@ export default {
     isPreviewable(row) { return ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'].includes(String(row.mime_type || '').toLowerCase()) },
     typeText(value) { return labels[value] || value || '其他附件' },
     fileSize(value) { const size = Number(value || 0); return size >= 1048576 ? `${(size / 1048576).toFixed(2)} MB` : `${Math.max(1, Math.ceil(size / 1024))} KB` },
-    timeText(value) { return value ? String(value).replace('T', ' ').slice(0, 19) : '-' }
+    timeText(value) { return value ? erpDateTime(value, 19) : '-' }
   }
 }
 </script>

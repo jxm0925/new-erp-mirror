@@ -163,7 +163,7 @@
           :row-class-name="rowClass"
           empty-text="暂无物料档案，请点击右上角“新增物料”录入或“导入物料”。"
         >
-          <el-table-column prop="item_code" label="Item编码" min-width="200">
+          <el-table-column prop="item_code" label="物料编码" min-width="200">
             <template slot-scope="{ row }">
               <span class="item-code-link" :title="row.item_code" @click="openDetail(row)">
                 <i class="el-icon-coin" /> {{ row.item_code }}
@@ -308,7 +308,7 @@
               <el-tag size="mini" :type="selectedIsOffice ? 'warning' : 'success'" effect="plain">{{ recordScopeLabel(selected) }}</el-tag>
             </div>
             <div class="banner-sub-meta">
-              <span>Item编码：<strong>{{ selected.item_code }}</strong></span>
+              <span>物料编码：<strong>{{ selected.item_code }}</strong></span>
               <span>基本单位：<strong>{{ unitLabel(selected.unit) }}</strong></span>
               <span>分类：<strong>{{ categoryPath(selected.category_id) || selected.category?.category_name || '-' }}</strong></span>
             </div>
@@ -376,7 +376,8 @@
               </el-table-column>
               <el-table-column label="换算关系" min-width="180">
                 <template slot-scope="{ row }">
-                  <span class="font-mono">1 {{ row.purchase_unit && row.purchase_unit.symbol }} = {{ number(row.factor) }} {{ row.base_unit && row.base_unit.symbol }}</span>
+                  <span class="font-mono">1 {{ row.purchase_unit && (row.purchase_unit.unit_name || row.purchase_unit.symbol) }} = {{ number(row.factor) }} {{ row.base_unit && (row.base_unit.unit_name || row.base_unit.symbol) }}</span>
+                  <div v-if="conversionWarning(row)" class="conversion-warning"><i class="el-icon-warning-outline" /> {{ conversionWarning(row) }}</div>
                 </template>
               </el-table-column>
               <el-table-column label="默认" width="60" align="center">
@@ -410,7 +411,7 @@
                 @current-change="loadConversions"
               />
             </div>
-            <p class="conversion-tip"><i class="el-icon-info" /> 采购换算仅对当前 Item 生效，不影响其他物料；库存台账始终以基本单位记账。</p>
+            <p class="conversion-tip"><i class="el-icon-info" /> 采购换算仅对当前物料生效，不影响其他物料；库存台账始终以基本单位记账。</p>
           </section>
 
           <!-- 属性卡片 5：关联 SKU 档案 -->
@@ -486,6 +487,9 @@
             />
             <span class="formula-unit">{{ canonicalUnitSymbol(selected.unit) }}</span>
           </div>
+          <div v-if="formConversionWarning" class="conversion-warning">
+            <i class="el-icon-warning-outline" /> {{ formConversionWarning }}
+          </div>
         </el-form-item>
 
         <div class="switch-row">
@@ -520,6 +524,8 @@
 </template>
 
 <script>
+import { erpDateTime } from '../../../utils/dateTime'
+import { minimalValidPurchaseQuantity } from '../../../utils/unitConversion'
 import cachedPageRoute from '../../../utils/cachedPageRoute'
 import { routeMaterialScope, materialRecordScope, materialScopeLabel, materialListPath, materialTypesForScope } from '../../../utils/materialManagementScope.mjs'
 import {
@@ -642,9 +648,16 @@ export default {
     enabledUnits () {
       return this.businessUnits.filter(row => row.status === 'enabled')
     },
+    // 换算后库存单位出现不允许的小数时提示（如 1 米 = 0.2 根，而“根”只能是整数）。
+    formConversionWarning () {
+      const purchase = this.units.find(row => Number(row.id) === Number(this.conversionForm.purchase_unit_id))
+      const base = this.canonicalUnit(this.selected && this.selected.unit)
+      if (!purchase || !base || !(Number(this.conversionForm.factor) > 0)) return ''
+      return this.integerHint(this.conversionForm.factor, purchase, base, this.conversionForm.is_default)
+    },
     purchaseUnitSymbol () {
       const unit = this.units.find(row => Number(row.id) === Number(this.conversionForm.purchase_unit_id))
-      return (unit && (unit.symbol || unit.unit_name)) || '采购单位'
+      return (unit && (unit.unit_name || unit.symbol)) || '采购单位'
     },
     enabledCount () {
       return Number(this.stats.enabled || 0)
@@ -1005,7 +1018,7 @@ export default {
         ? '合格入库数量必须与唯一SN数量一致'
         : this.serialTrackingMode(row) === 'optional'
           ? '本次启用SN时必须逐件完整登记'
-          : '不录SN，按Item/仓库/库位/批次追溯'
+          : '不录SN，按物料/仓库/库位/批次追溯'
     },
     statusText (value) {
       return value === 'enabled' ? '启用' : '停用'
@@ -1023,6 +1036,20 @@ export default {
       const current = this.canonicalUnit(unit)
       return current ? `${current.unit_code || ''} ${current.unit_name || ''}`.trim() : '-'
     },
+    conversionWarning (row) {
+      if (!row || row.status !== 'active') return ''
+      return this.integerHint(row.factor, this.canonicalUnit(row.purchase_unit), this.canonicalUnit(row.base_unit), row.is_default)
+    },
+    integerHint (factor, purchase, base, isDefault) {
+      if (!purchase || !base) return ''
+      const minimum = minimalValidPurchaseQuantity(factor, base.decimal_places ?? 4, purchase.decimal_places ?? 4)
+      if (minimum === null) return ''
+      const purchaseName = purchase.unit_name || purchase.symbol
+      const baseName = base.unit_name || base.symbol
+      const rule = Number(base.decimal_places) === 0 ? `${baseName} 只能是整数` : `${baseName} 最多 ${base.decimal_places} 位小数`
+      return `${rule}：1 ${purchaseName} 折合 ${this.number(factor)} ${baseName}，采购数量须调整为合规数量（最少 ${minimum} ${purchaseName}）。` +
+        (isDefault ? `作为默认采购单位时，下单默认数量会自动改为 ${minimum} ${purchaseName}；如常按${baseName}采购，建议把“${baseName}”设为默认。` : '')
+    },
     unitLabel (unit) {
       const current = this.canonicalUnit(unit)
       return current ? `${current.unit_code || ''} ${current.unit_name || ''} (${current.symbol || current.unit_name || ''})`.trim() : '-'
@@ -1035,7 +1062,7 @@ export default {
       return Number(value || 0).toFixed(6).replace(/0+$/, '').replace(/\.$/, '')
     },
     formatDate (value) {
-      return value ? String(value).replace('T', ' ').slice(0, 16) : '-'
+      return value ? erpDateTime(value, 16) : '-'
     }
   }
 }
@@ -1756,6 +1783,7 @@ export default {
   color: #64748b;
 }
 
+.conversion-warning { margin-top: 4px; color: #b7791f; font-size: 12px; line-height: 1.45; white-space: normal; }
 .conversion-tip {
   margin: 8px 0 0;
   font-size: 11px;

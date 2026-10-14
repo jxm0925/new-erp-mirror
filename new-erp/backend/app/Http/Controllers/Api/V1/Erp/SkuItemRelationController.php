@@ -56,7 +56,7 @@ class SkuItemRelationController extends Controller
         $this->authorizePermission($request, $hasCurrent ? 'sku_item_relation.change' : 'sku_item_relation.set');
         $data = $request->validate(['item_id' => 'required|exists:erp_items,id', 'factor' => 'required|numeric|gt:0', 'change_reason' => 'required|string|max:80', 'remark' => 'nullable|string|max:1000']);
         $relation = $service->setPrimary($skuId, $data['item_id'], $data['change_reason'], $data['remark'] ?? null, $this->operatorId($request), $this->operatorName($request), (float) $data['factor']);
-        return response()->json(['message' => '默认 Item 已保存并立即生效。', 'data' => $relation->load('item')], 201);
+        return response()->json(['message' => '默认物料已保存并立即生效。', 'data' => $relation->load('item')], 201);
     }
 
     /** Compatibility endpoint for the pre-Stage-4 client; it now follows the same one-default-item transaction. */
@@ -66,7 +66,7 @@ class SkuItemRelationController extends Controller
         $hasCurrent = SkuItemRelation::where('sku_id', $data['sku_id'])->where('status', 'active')->where('is_primary', true)->exists();
         $this->authorizePermission($request, $hasCurrent ? 'sku_item_relation.change' : 'sku_item_relation.set');
         $relation = $service->setPrimary($data['sku_id'], $data['item_id'], $data['change_reason'], $data['remark'] ?? null, $this->operatorId($request), $this->operatorName($request), (float) $data['factor']);
-        return response()->json(['message' => '默认 Item 已保存并立即生效。', 'data' => $relation->load('item')], 201);
+        return response()->json(['message' => '默认物料已保存并立即生效。', 'data' => $relation->load('item')], 201);
     }
 
     public function audit(Request $request, SkuItemRelationAuditService $audit)
@@ -85,7 +85,7 @@ class SkuItemRelationController extends Controller
         $this->authorizePermission($request, 'sku_item_relation.repair');
         $data = $request->validate(['keep_relation_id' => 'required|integer|exists:erp_sku_item_relations,id', 'change_reason' => 'required|string|max:80', 'remark' => 'nullable|string|max:1000']);
         $service->resolveDuplicate($skuId, $data['keep_relation_id'], $data['change_reason'], $data['remark'] ?? null, $this->operatorId($request), $this->operatorName($request));
-        return response()->json(['message' => '重复默认 Item 已处理，处理记录已写入日志。']);
+        return response()->json(['message' => '重复默认物料已处理，处理记录已写入日志。']);
     }
 
     public function removeWrongBinding(Request $request, int $skuId, SkuItemDefaultRelationService $service)
@@ -129,7 +129,7 @@ class SkuItemRelationController extends Controller
     {
         $relation = SkuItemRelation::findOrFail($id);
         $data = $this->validated($request, $id);
-        abort_if($relation->status === 'active' && $relation->is_primary && (int) $relation->item_id !== (int) ($data['item_id'] ?? 0), 422, '默认 Item 更换必须使用“替换默认 Item”，以保留历史关系。');
+        abort_if($relation->status === 'active' && $relation->is_primary && (int) $relation->item_id !== (int) ($data['item_id'] ?? 0), 422, '默认物料更换必须使用“替换默认物料”，以保留历史关系。');
         DB::transaction(function () use ($relation, &$data, $request) {
             $sku = Sku::lockForUpdate()->findOrFail($data['sku_id']);
             $data = $this->normalize($data, $sku);
@@ -163,9 +163,9 @@ class SkuItemRelationController extends Controller
         ]);
         $relation = DB::transaction(function () use ($data, $request) {
             $sku = Sku::lockForUpdate()->findOrFail($data['sku_id']);
-            abort_if($this->orderLineType($sku) !== 'physical', 422, '服务或无需发货 SKU 无需默认 Item');
+            abort_if($this->orderLineType($sku) !== 'physical', 422, '服务或无需发货 SKU 无需默认物料');
             $item = \App\Models\Erp\Item::whereKey($data['item_id'])->where('status', 'enabled')->lockForUpdate()->first();
-            abort_unless($item, 422, '默认 Item 必须处于启用状态');
+            abort_unless($item, 422, '默认物料必须处于启用状态');
             app(\App\Services\Erp\ItemManagementScopeService::class)->assertProductionAllowed($item, 'item_id');
             SkuItemRelation::where('sku_id', $sku->id)->where('status', 'active')->where('is_primary', true)->lockForUpdate()->get();
             SkuItemRelation::where('sku_id', $sku->id)->where('status', 'active')->where('is_primary', true)->update(['is_primary' => false, 'status' => 'inactive', 'expired_at' => now(), 'operator_name' => $this->operatorName($request)]);
@@ -175,7 +175,7 @@ class SkuItemRelationController extends Controller
                 'remark' => $data['remark'] ?? null, 'effective_at' => now(), 'operator_name' => $this->operatorName($request),
             ]);
         });
-        return response()->json(['message' => '默认 Item 已更新，旧关系已进入历史', 'data' => $relation->load(['item', 'unit'])]);
+        return response()->json(['message' => '默认物料已更新，旧关系已进入历史', 'data' => $relation->load(['item', 'unit'])]);
     }
 
     private function validated(Request $request, ?int $id = null): array

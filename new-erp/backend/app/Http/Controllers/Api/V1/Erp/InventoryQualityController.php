@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Erp;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Concerns\AuthorizesErpPermissions;
 use App\Models\Erp\InventoryBalance;
 use App\Models\Erp\InventoryQualityEvent;
 use App\Models\Erp\InventoryTransactionItem;
@@ -12,8 +13,11 @@ use Illuminate\Http\Request;
 
 class InventoryQualityController extends Controller
 {
+    use AuthorizesErpPermissions;
+
     public function index(Request $request)
     {
+        $this->erpAuthorize($request, 'inventory.balance.view');
         $query = InventoryQualityEvent::query()
             ->with(['item.unit', 'warehouse', 'location', 'receipt.order', 'supplier'])
             ->latest('created_at');
@@ -31,8 +35,9 @@ class InventoryQualityController extends Controller
         return response()->json($query->paginate($this->perPage($request)));
     }
 
-    public function context(int $balanceId)
+    public function context(Request $request, int $balanceId)
     {
+        $this->erpAuthorize($request, 'inventory.balance.view');
         $balance = InventoryBalance::query()
             ->with(['item.unit', 'warehouse', 'location', 'serials' => fn ($q) => $q->where('serial_status', 'available')->orderBy('serial_no')])
             ->findOrFail($balanceId);
@@ -69,8 +74,9 @@ class InventoryQualityController extends Controller
         ]);
     }
 
-    public function show(int $id)
+    public function show(Request $request, int $id)
     {
+        $this->erpAuthorize($request, 'inventory.balance.view');
         return response()->json(InventoryQualityEvent::with([
             'item.unit', 'warehouse', 'location', 'serial', 'receipt.order', 'supplier', 'logs',
         ])->findOrFail($id));
@@ -78,6 +84,7 @@ class InventoryQualityController extends Controller
 
     public function store(Request $request, InventoryQualityApplicationService $service)
     {
+        $this->erpAuthorize($request, 'inventory.quality.handle');
         $payload = $request->validate([
             'inventory_balance_id' => 'required|exists:erp_inventory_balances,id',
             'serial_no' => 'nullable|string|max:120',
@@ -108,6 +115,7 @@ class InventoryQualityController extends Controller
 
     public function start(Request $request, int $id, InventoryQualityApplicationService $service)
     {
+        $this->erpAuthorize($request, 'inventory.quality.handle');
         [$operatorId, $operatorName] = $this->operator($request);
         return response()->json([
             'message' => '质量处理已开始，问题库存继续保持冻结。',
@@ -117,6 +125,7 @@ class InventoryQualityController extends Controller
 
     public function complete(Request $request, int $id, InventoryQualityApplicationService $service)
     {
+        $this->erpAuthorize($request, 'inventory.quality.handle');
         $payload = $request->validate(['result_description' => 'required|string|max:1000']);
         [$operatorId, $operatorName] = $this->operator($request);
         return response()->json([

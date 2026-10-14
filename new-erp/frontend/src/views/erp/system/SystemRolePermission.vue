@@ -690,8 +690,16 @@ export default {
       this.rolePage = page
       this.load()
     },
-    syncChecked() {
-      this.checkedPermissionIds = this.$refs.permTree ? this.$refs.permTree.getCheckedKeys() : []
+    syncChecked(data) {
+      const tree = this.$refs.permTree
+      if (!tree) return
+      // 权限树按 check-strictly 独立勾选；勾选/取消模块或菜单时一并处理其下全部按钮和接口，避免逐个勾选。
+      if (data && (data.children || []).length) {
+        const checked = tree.getCheckedKeys().includes(data.id)
+        const walk = node => (node.children || []).forEach(child => { tree.setChecked(child.id, checked, false); walk(child) })
+        walk(data)
+      }
+      this.checkedPermissionIds = tree.getCheckedKeys()
     },
     filterPermissionNode(value, data) {
       if (!value) return true

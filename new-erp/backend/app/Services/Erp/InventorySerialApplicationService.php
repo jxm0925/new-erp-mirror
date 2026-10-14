@@ -18,7 +18,7 @@ class InventorySerialApplicationService
     {
         if ($item->serialTrackingMode() === 'none') {
             throw ValidationException::withMessages([
-                'item_id' => '当前 Item 未启用单件编号追溯，不能生成序列号。',
+                'item_id' => '当前物料未启用单件编号追溯，不能生成序列号。',
             ]);
         }
 
