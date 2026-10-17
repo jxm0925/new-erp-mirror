@@ -77,7 +77,7 @@
         </el-tabs>
       </el-tab-pane>
     </el-tabs>
-    <el-pagination v-if="tab === 'settlements' || tab === 'handovers'" :current-page="page" :page-size="20" :total="tab === 'settlements' ? inputTotal : resultTotal" layout="total, prev, pager, next" @current-change="changePage" />
+    <el-pagination v-if="tab === 'settlements' || tab === 'handovers'" :current-page="page" :page-size="10" :total="tab === 'settlements' ? inputTotal : resultTotal" layout="total, prev, pager, next" @current-change="changePage" />
   </section>
 </template>
 
@@ -123,7 +123,7 @@ export default {
     async fetchDetail() {
       this.loading = true
       try {
-        const { data } = await getCuttingExecution(this.pageRoute.params.id, { page: this.page, per_page: 20 })
+        const { data } = await getCuttingExecution(this.pageRoute.params.id, { page: this.page, per_page: 10 })
         const payload = data.data || data
         this.detail = payload.order || payload.cutting_order || payload
         this.sourceWorkOrders = payload.source_work_orders || []

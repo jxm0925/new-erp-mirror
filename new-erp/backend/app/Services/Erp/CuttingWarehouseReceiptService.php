@@ -28,6 +28,8 @@ final class CuttingWarehouseReceiptService
             $result = $route ? DB::table('erp_cutting_results')->where('id', $route->result_id)->lockForUpdate()->first() : null;
             $batch = $result ? DB::table('erp_cutting_settlement_batches')->where('id', $result->settlement_batch_id)->lockForUpdate()->first() : null;
             if (! $route || ! $result || ! $batch) $this->commands->fail('cutting_route_missing', '产出去向不存在。', 404);
+            $requirement = $result->cutting_requirement_snapshot ? json_decode($result->cutting_requirement_snapshot, true, 512, JSON_THROW_ON_ERROR) : [];
+            if (($requirement['output_kind'] ?? null) === ProductionCuttingComponentService::KIND) $this->commands->fail('cutting_component_warehouse_forbidden', '工序下料组件只能按冻结数量和计量单位交接下道工序，不能按原材料库存单位入库。', 409);
             $this->commands->order((int) $batch->cutting_order_id, $user, $permissions, $super, $permission, true);
             $this->commands->version($route, $payload);
             if ($route->route_type !== 'WAREHOUSE' || $route->target_material_requirement_id) {

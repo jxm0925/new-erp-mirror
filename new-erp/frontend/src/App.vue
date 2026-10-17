@@ -184,7 +184,7 @@ export default {
     ],
     inventoryMenus: [
       { name: '库存过账工作台', path: '/inventory/posting', icon: 'el-icon-finished', permission: 'inventory.posting' },
-      { name: '生产配料', path: '/inventory/production-picking', icon: 'el-icon-finished', permission: 'production.material_picking.view' },
+      { name: '生产配料', path: '/inventory/production-picking', icon: 'el-icon-finished', permission: ['production.material_picking.view', 'production.material_receipt.view'] },
       { name: '库存余额', path: '/inventory/balances', icon: 'el-icon-coin', permission: 'inventory.balance' },
       { name: '库存流水', path: '/inventory/transactions', icon: 'el-icon-tickets', permission: 'inventory.transaction' },
       { name: '手工调整', path: '/inventory/adjustments', icon: 'el-icon-edit-outline', permission: 'inventory.adjustment' },
@@ -197,7 +197,7 @@ export default {
     salesMenus: [
       { name: '客户管理', path: '/sales/customers', icon: 'el-icon-user', permission: 'sales.customer' },
       { name: '销售订单', path: '/sales/orders', icon: 'el-icon-s-order', permission: 'sales.order' },
-      { name: '销售发货单', path: '/sales/shipments', icon: 'el-icon-truck', permission: 'sales_order.shipment.view' },
+      { name: '销售发货单', path: '/sales/shipments', icon: 'el-icon-truck', permission: ['sales_order.shipment.view', 'sales_order.shipment.packing.execute', 'sales_order.shipment.packing.quality'] },
       { name: '销售退货', path: '/sales/returns', icon: 'el-icon-refresh-left', permission: 'sales.return' }
     ],
     productionMenus: [
@@ -205,6 +205,7 @@ export default {
         { name: '工序管理', path: '/production/operations', icon: 'el-icon-set-up', permission: 'production.operation' },
         { name: '工艺路线', path: '/production/routings', icon: 'el-icon-guide', permission: 'production.routing' }
       ] },
+      { name: '生产作业', path: '/production/tasks', icon: 'el-icon-s-operation', permission: 'production.task.view' },
       { name: '生产执行监管', path: '/production/execution-monitor', icon: 'el-icon-monitor', permission: 'production.unit.view' },
       { name: '生产绩效统计', path: '/production/performance', icon: 'el-icon-data-analysis', permission: 'production.performance.view' },
       { name: '生产需求', path: '/production/demands', icon: 'el-icon-document', permission: 'production.demand' },
@@ -376,12 +377,12 @@ export default {
     },
     async refreshInventoryAlerts() {
       if (!localStorage.getItem('erp_token')) return
-      try { const [unread, recent] = await Promise.all([listUnreadInventoryAlerts({ per_page: 100 }), listInventoryAlerts({ per_page: 100 })]); this.inventoryAlertCount = unread.data.total || (unread.data.data || []).length; this.inventoryAlerts = recent.data.data || [] } catch (e) {}
+      try { const [unread, recent] = await Promise.all([listUnreadInventoryAlerts({ per_page: 10 }), listInventoryAlerts({ per_page: 10 })]); this.inventoryAlertCount = unread.data.total || (unread.data.data || []).length; this.inventoryAlerts = recent.data.data || [] } catch (e) {}
     },
     async refreshApprovalNotifications() {
       if (!localStorage.getItem('erp_token')) return
       try {
-        const { data } = await listApprovalNotifications({ status: 'UNREAD', per_page: 20 })
+        const { data } = await listApprovalNotifications({ status: 'UNREAD', per_page: 10 })
         this.approvalNotifications = data.data || []
         this.approvalNotificationCount = Number(data.unread_count || 0)
       } catch (e) {}

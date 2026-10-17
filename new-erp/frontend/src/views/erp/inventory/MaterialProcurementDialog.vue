@@ -31,7 +31,7 @@
         <el-table-column v-if="picker.kind === 'items'" prop="spec" label="规格" min-width="130" />
         <el-table-column v-if="picker.kind === 'items'" prop="unit_name" label="库存单位" width="100" />
       </el-table>
-      <el-pagination :pager-count="5" class="pm-pagination" :total="picker.total" :current-page.sync="picker.page" :page-size="20" layout="total, prev, pager, next" @current-change="loadPicker" />
+      <el-pagination :pager-count="5" class="pm-pagination" :total="picker.total" :current-page.sync="picker.page" :page-size="10" layout="total, prev, pager, next" @current-change="loadPicker" />
       <div v-if="picker.kind === 'items'" class="pm-selected">已选 {{ Object.keys(picker.selected).length }} 种物料<el-tag v-for="row in Object.values(picker.selected)" :key="row.id" closable @close="$delete(picker.selected, row.id)">{{ row.item_name }}</el-tag></div>
       </div></div>
       <span slot="footer"><el-button size="small" @click="picker.visible = false">取消</el-button><el-button type="success" size="small" :disabled="picker.kind === 'orders' ? !picker.current : !Object.keys(picker.selected).length" @click="acceptPicker">确认选择</el-button></span>
@@ -81,7 +81,7 @@ export default {
     async loadPicker() {
       const sequence = ++this.picker.sequence; this.picker.loading = true; this.picker.error = ''
       try {
-        const { data } = await procurementOptions(this.picker.kind, { keyword: this.picker.keyword, category_id: this.picker.category_id, page: this.picker.page, per_page: 20 })
+        const { data } = await procurementOptions(this.picker.kind, { keyword: this.picker.keyword, category_id: this.picker.category_id, page: this.picker.page, per_page: 10 })
         if (sequence === this.picker.sequence) { this.picker.rows = data.data; this.picker.total = data.total }
       } catch (e) { if (sequence === this.picker.sequence) this.picker.error = e.userMessage || e.message }
       finally { if (sequence === this.picker.sequence) this.picker.loading = false }

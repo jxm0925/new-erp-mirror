@@ -103,7 +103,7 @@ import { listSalesReturns, confirmSalesReturn, listSalesCustomers } from '@/api/
 import { listEntity } from '@/api/erp/master'
 import { listUsers } from '@/api/erp/rbac'
 
-const baseQuery = () => ({ management_scope: '', keyword: '', return_no: '', receipt_no: '', purchase_keyword: '', supplier_id: '', customer_id: '', sales_user_legacy_id: '', return_scope: '', return_status: '', page: 1, per_page: 20 })
+const baseQuery = () => ({ management_scope: '', keyword: '', return_no: '', receipt_no: '', purchase_keyword: '', supplier_id: '', customer_id: '', sales_user_legacy_id: '', return_scope: '', return_status: '', page: 1, per_page: 10 })
 
 export default {
   props: { kind: { type: String, required: true } },

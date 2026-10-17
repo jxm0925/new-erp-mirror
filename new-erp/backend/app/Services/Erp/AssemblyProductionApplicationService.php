@@ -271,6 +271,7 @@ final class AssemblyProductionApplicationService
             $plan = array_replace($plan, ['status' => 'not_required', 'plan_version' => $planVersion]);
             $record = AssemblyProductionPlan::updateOrCreate(['root_work_order_id' => $wo->id], [
                 'status' => 'NOT_REQUIRED', 'plan_version' => $planVersion, 'work_order_version' => $wo->business_version,
+                'input_hash' => $plan['input_hash'], 'cancelled_at' => null,
                 'command_id' => $command, 'request_hash' => $hash, 'plan_snapshot' => $plan, 'organization_code' => $wo->organization_code,
             ]);
             $plan['plan_id'] = (int) $record->id;
@@ -280,6 +281,7 @@ final class AssemblyProductionApplicationService
         // Every child, reservation and preparation material commits together.
         $record = AssemblyProductionPlan::updateOrCreate(['root_work_order_id' => $wo->id], [
             'status' => 'PREPARED', 'plan_version' => $planVersion, 'work_order_version' => (int) $wo->business_version + 1,
+            'cancelled_at' => null,
             'input_hash' => $plan['input_hash'], 'command_id' => $command, 'request_hash' => $hash,
             'prepared_by_legacy_id' => $this->actor($user), 'prepared_at' => now(),
             'organization_code' => $wo->organization_code, 'plan_snapshot' => $plan,
@@ -407,10 +409,17 @@ final class AssemblyProductionApplicationService
     public function releaseCheck(WorkOrder $wo, ?Bom $bom): ?array
     {
         if (! Schema::hasTable('erp_assembly_production_plans') || ! $bom) return null;
-        $hasMake = $bom->items->contains(fn ($line) => $line->componentItem?->manufacturing_strategy === 'make');
+        $hasMake = $this->requiresMadeComponents($bom, $this->continuationRootRequirements($wo, $bom));
         $rootId = (int) ($wo->assembly_root_work_order_id ?: $wo->id);
         $record = AssemblyProductionPlan::where('root_work_order_id', $rootId)->lockForUpdate()->first();
-        if (! $hasMake && (! $record || $record->status === 'NOT_REQUIRED')) return null;
+        if (! $hasMake && (! $record || $record->status === 'NOT_REQUIRED')) {
+            if ($record && $wo->inventory_continuation_plan) {
+                $valid = $record->input_hash === $this->inputHash($wo, $bom);
+                return ['valid' => $valid, 'code' => $valid ? '' : 'assembly_plan_changed',
+                    'message' => $valid ? '' : '库存续接与已准备的剩余物料依据不一致，请重新核料。', 'plan_id' => (int) $record->id];
+            }
+            return null;
+        }
         if ($record?->status !== 'PREPARED') return ['valid' => false, 'code' => 'assembly_preparation_required',
             'message' => data_get($record?->plan_snapshot, 'issues.0.message') ?: ($hasMake ? '自产部件必须先完成库存净算和关联子工单准备。' : '生产准备尚未完成，请核对准备原因后重试。')];
         $snapshot = $record->plan_snapshot;
@@ -525,6 +534,34 @@ final class AssemblyProductionApplicationService
         }
     }
 
+    /** A continuation command may replace a genuinely unstarted plan without cancelling its root WO. */
+    public function replaceForInventoryContinuationLocked(WorkOrder $wo, object $user): void
+    {
+        $this->editable($wo);
+        if ($wo->assembly_component_demand_id) $this->fail('assembly_child_continuation_forbidden', '关联部件工单不能单独切换为整机库存续接。', 409);
+        if ($this->actor($user) < 1) $this->fail('actor_required', '库存续接需要真实操作账号。', 403);
+        if (! Schema::hasTable('erp_assembly_production_plans')) return;
+        (new ProductionUnstartedTreeGuard)->assertForInventoryContinuation($wo);
+        $record = AssemblyProductionPlan::where('root_work_order_id', $wo->id)->lockForUpdate()->first();
+        if ($record?->status === 'PREPARED') $this->cancelLocked($wo, $user, '整机库存续接替换未发布的部件生产计划');
+        $liveChildren = WorkOrder::where('assembly_root_work_order_id', $wo->id)->where('status', '<>', 'CANCELLED')->lockForUpdate()->get()->isNotEmpty();
+        $activeReservations = DB::table('erp_assembly_inventory_reservations')->whereIn('work_order_id',
+            WorkOrder::where(fn ($q) => $q->whereKey($wo->id)->orWhere('assembly_root_work_order_id', $wo->id))->select('id'))
+            ->where('status', 'ACTIVE')->lockForUpdate()->get()->isNotEmpty();
+        if ($liveChildren || $activeReservations) $this->fail('continuation_tree_inconsistent', '原部件计划与关联工单或库存预留不一致，不能完整替换。', 409);
+        if ($record) $record->update(['status' => 'CANCELLED', 'cancelled_at' => now()]);
+        $ids = WorkOrder::where(fn ($q) => $q->whereKey($wo->id)->orWhere('assembly_root_work_order_id', $wo->id))->pluck('id');
+        DB::table('erp_work_order_material_preparations')->whereIn('work_order_id', $ids)->update(['status' => 'SUPERSEDED', 'updated_at' => now()]);
+        DB::table('erp_work_order_preparation_materials')->whereIn('work_order_id', $ids)->update(['status' => 'SUPERSEDED', 'updated_at' => now()]);
+        // Keep the prior snapshot in the execution audit before the next preparation
+        // version replaces the plan header. Child and inventory histories remain intact.
+        DB::table('erp_production_execution_events')->insert(['aggregate_type' => 'work_order', 'aggregate_id' => $wo->id,
+            'action' => 'replace_assembly_for_continuation', 'before_version' => (int) $wo->business_version,
+            'after_version' => (int) $wo->business_version,
+            'fact_snapshot' => json_encode(['previous_plan' => $record?->plan_snapshot, 'retained_root_work_order_id' => (int) $wo->id], JSON_THROW_ON_ERROR),
+            'operator_legacy_id' => $this->actor($user), 'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now()]);
+    }
+
     public function cancelLocked(WorkOrder $wo, object $user, string $reason): void
     {
         if (! Schema::hasTable('erp_assembly_production_plans')) return;
@@ -559,20 +596,21 @@ final class AssemblyProductionApplicationService
             $plan['issues'][] = ['code' => 'assembly_root_bom_missing', 'message' => $match['block_reason'] ?? '整机未匹配有效 BOM。'];
             return $plan;
         }
-        $plan['required'] = $bom->items->contains(fn ($line) => $line->componentItem?->manufacturing_strategy === 'make');
-        if (! $plan['required']) { $plan['status'] = 'not_required'; return $plan; }
-        if (! data_get($wo->routing_snapshot, 'operations')) $plan['issues'][] = ['code' => 'assembly_root_routing_missing', 'message' => '请先确认整机工艺路线，再准备自产部件。'];
-        if ($wo->inventory_continuation_plan) $plan['issues'][] = ['code' => 'assembly_continuation_incompatible', 'message' => '含自产部件的工单暂不允许同时配置整机库存续接，请先清空续接方案。'];
+        $remaining = $this->continuationRootRequirements($wo, $bom);
+        $plan['required'] = $this->requiresMadeComponents($bom, $remaining);
         $plan['root_bom_hash'] = $this->bomHash($bom);
         $plan['input_hash'] = $this->inputHash($wo, $bom);
         $plan['root_base_qty'] = (string) $wo->target_base_qty;
+        $plan['plan_version'] = (int) AssemblyProductionPlan::where('root_work_order_id', $wo->id)->value('plan_version') + 1;
+        if (! $plan['required']) { $plan['status'] = 'not_required'; return $plan; }
+        if (! data_get($wo->routing_snapshot, 'operations')) $plan['issues'][] = ['code' => 'assembly_root_routing_missing', 'message' => '请先确认整机工艺路线，再准备自产部件。'];
         $stockUsed = [];
-        $this->walk($wo, $bom, (string) $wo->target_base_qty, 'root', [(int) $wo->output_item_id], 0, $lock, $stockUsed, $plan);
+        $this->walk($wo, $bom, (string) $wo->target_base_qty, 'root', [(int) $wo->output_item_id], 0, $lock, $stockUsed, $plan, $remaining);
         $plan['status'] = $plan['issues'] ? 'blocked' : 'preview';
         return $plan;
     }
 
-    private function walk(WorkOrder $root, Bom $bom, string $parentQty, string $parentPath, array $ancestors, int $depth, bool $lock, array &$stockUsed, array &$plan): void
+    private function walk(WorkOrder $root, Bom $bom, string $parentQty, string $parentPath, array $ancestors, int $depth, bool $lock, array &$stockUsed, array &$plan, ?array $rootRequirements = null): void
     {
         if ($depth >= 16 || count($plan['components']) >= 500) { $plan['issues'][] = ['code' => 'assembly_tree_limit', 'message' => 'BOM 层级或部件数量超过安全范围，请先拆分核对。']; return; }
         foreach ($bom->items as $line) {
@@ -583,8 +621,16 @@ final class AssemblyProductionApplicationService
                 return;
             }
             $item = Item::with('unit')->whereKey($line->component_item_id)->when($lock, fn ($q) => $q->lockForUpdate())->first();
-            $path = hash('sha256', $parentPath.':'.$line->id);
+            // The plan header is reused, while cancelled demand/child identities
+            // remain audit evidence under its unique (plan, path) constraint.
+            // Each replacement generation therefore gets distinct immutable paths.
+            $generation = (int) ($plan['plan_version'] ?? 1);
+            $path = hash('sha256', ($generation > 1 ? 'v'.$generation.':' : '').$parentPath.':'.$line->id);
             $required = bcadd(bcmul(bcmul((string) $line->qty, $parentQty, 16), bcadd('1', bcdiv((string) $line->loss_rate, '100', 16), 16), 16), (string) $line->fixed_qty, 16);
+            if ($parentPath === 'root' && $rootRequirements !== null) {
+                $required = $rootRequirements[(int) $line->id] ?? '0';
+                if (bccomp($required, '0', 8) <= 0) continue;
+            }
             $strategy = $item?->manufacturing_strategy ?: 'unspecified';
             $row = ['parent_path' => $parentPath, 'path_key' => $path, 'depth' => $depth,
                 'parent_work_order_id' => $parentPath === 'root' ? (int) $root->id : null,
@@ -724,9 +770,35 @@ final class AssemblyProductionApplicationService
     private function inputHash(WorkOrder $wo, Bom $bom): string
     {
         $routing = $wo->routing_snapshot; unset($routing['output_plan']);
-        return $this->hash(['item_id' => $wo->output_item_id, 'quantity' => (string) $wo->target_base_qty,
+        $input = ['item_id' => $wo->output_item_id, 'quantity' => (string) $wo->target_base_qty,
             'base_unit_id' => $wo->base_unit_id, 'bom_hash' => $this->bomHash($bom),
-            'technical_version' => (int) $wo->technical_version, 'technical_snapshot' => $wo->technical_snapshot, 'routing_snapshot' => $routing]);
+            'technical_version' => (int) $wo->technical_version, 'technical_snapshot' => $wo->technical_snapshot, 'routing_snapshot' => $routing];
+        // An empty plan retains the established hash of existing prepared WOs.
+        // A real continuation changes what must be made, and must invalidate the old preparation.
+        if ($wo->inventory_continuation_plan) $input['inventory_continuation_plan'] = $wo->inventory_continuation_plan;
+        return $this->hash($input);
+    }
+
+    /** Net components from the same formal material calculation used at publication. */
+    private function continuationRootRequirements(WorkOrder $wo, Bom $bom): ?array
+    {
+        if (! $wo->inventory_continuation_plan) return null;
+        $rows = app(ReleaseGateApplicationService::class)->buildMaterialRows($wo, $bom,
+            app(WorkOrderTechnicalService::class)->effectiveConfiguration($wo));
+        $rows = app(ProductionInventoryContinuationService::class)->materialRows($wo, $rows);
+        $required = [];
+        foreach ($rows as $row) {
+            if (! $row['bom_item_id'] || ($row['requirement_kind'] ?? 'standard') !== 'standard') continue;
+            $id = (int) $row['bom_item_id'];
+            $required[$id] = bcadd($required[$id] ?? '0', (string) $row['base_required_qty'], 8);
+        }
+        return $required;
+    }
+
+    private function requiresMadeComponents(Bom $bom, ?array $remaining): bool
+    {
+        return $bom->items->contains(fn ($line) => $line->componentItem?->manufacturing_strategy === 'make'
+            && ($remaining === null || bccomp($remaining[(int) $line->id] ?? '0', '0', 8) > 0));
     }
     private function hash(array $data): string
     {

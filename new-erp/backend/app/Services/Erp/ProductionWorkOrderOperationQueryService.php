@@ -23,7 +23,7 @@ final class ProductionWorkOrderOperationQueryService
         $query = ProductionQuantityOperation::where('work_order_id', $id)
             ->when(!empty($filters['status']), fn ($q) => $q->where('status', $filters['status']))
             ->orderBy('sequence_no_snapshot')->orderBy('id');
-        $page = $query->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 20))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
+        $page = $query->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 10))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
         $tasks = ProductionTask::query()->where('work_order_id', $id)
             ->whereIn('production_quantity_operation_id', $page->getCollection()->pluck('id'));
         $this->scopes->applyProductionTaskScope($tasks, $this->scopes->resolve($user, 'production.task.view', $permissions, $superAdmin), (int) ($user->legacy_id ?? $user->id));

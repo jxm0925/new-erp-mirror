@@ -39,7 +39,7 @@ class SalesCustomerController extends Controller
             $phone = trim((string) $request->input('phone'));
             $query->where('contact_phone', 'like', "%{$phone}%");
         }
-        $page = $query->paginate(min(100, max(5, $request->integer('per_page', 20))));
+        $page = $query->paginate(min(100, max(5, $request->integer('per_page', 10))));
         $payload = $page->toArray();
         $payload['summary'] = $summary;
         $payload['owner_options'] = SalesCustomer::query()

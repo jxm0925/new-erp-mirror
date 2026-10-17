@@ -21,7 +21,7 @@ final class ProductionExecutionInboxService
     {
         $query = $this->visibleQuery($resource, $user, $permissions, $superAdmin);
         $this->applyFilters($query, $filters);
-        $page = $query->orderByDesc('records.id')->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 20))));
+        $page = $query->orderByDesc('records.id')->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 10))));
         $rawRows = collect($page->items());
         $summaries = $this->lineSummaries($resource, $rawRows->pluck('id')->map(fn ($id) => (int) $id)->all());
         $rows = $rawRows->map(function (object $row) use ($resource, $permissions, $user, $summaries): array {

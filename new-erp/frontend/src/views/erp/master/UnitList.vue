@@ -340,7 +340,7 @@ export default {
       total: 0,
       stats: {},
       compact: window.innerWidth <= 900,
-      query: { keyword: '', unit_type: '', status: '', page: 1, per_page: 20 },
+      query: { keyword: '', unit_type: '', status: '', page: 1, per_page: 10 },
       form: emptyForm(),
       unitTypes: [
         { value: 'quantity', label: '数量' },

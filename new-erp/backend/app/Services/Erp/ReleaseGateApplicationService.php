@@ -53,20 +53,25 @@ class ReleaseGateApplicationService
         if (($workOrder->source_type ?: 'sales_order') === 'sales_order' && ! $demand) $this->fail('demand_missing', '销售订单来源工单的生产需求不存在。', 409);
 
         $line = $demand?->line;
+        $technical = app(WorkOrderTechnicalService::class);
+        $pinnedBomId = (int) ($workOrder->bom_id ?: $demand?->bom_id) ?: null;
+        $bom = $pinnedBomId ? Bom::with(['items.componentItem.unit', 'items.unit', 'outputItem.unit'])
+            ->lockForUpdate()->find($pinnedBomId) : null;
         $match = $this->bomMatcher->match(
             (int) (($demand?->product_id ?? 0) ?: ($line->product_id ?? 0)) ?: null,
             (int) (($demand?->sku_id ?? 0) ?: ($line->sku_id ?? 0)) ?: null,
             (int) (($workOrder->output_item_id ?? 0) ?: ($demand?->item_id ?? 0) ?: ($line->item_id ?? 0)) ?: null,
-            app(WorkOrderTechnicalService::class)->effectiveConfiguration($workOrder),
-            ($workOrder->bom_id ?: $demand?->bom_id) ? (int) ($workOrder->bom_id ?: $demand?->bom_id) : null,
+            $technical->confirmationCurrent($workOrder, $bom) ? $technical->effectiveConfiguration($workOrder) : null,
+            $pinnedBomId,
         );
-        $bom = null;
-        if (! empty($match['bom_id'])) {
+        if (empty($match['bom_id'])) $bom = null;
+        elseif (! $bom || (int) $bom->id !== (int) $match['bom_id']) {
             $bom = Bom::query()
                 ->with(['items.componentItem.unit', 'items.unit', 'outputItem.unit'])
                 ->lockForUpdate()
                 ->find((int) $match['bom_id']);
         }
+        $confirmationCurrent = $technical->confirmationCurrent($workOrder, $bom);
         $outputItem = $workOrder->output_item_id ? Item::query()->find($workOrder->output_item_id) : null;
         $executionMode = (string) ($outputItem?->production_execution_mode ?: 'unit');
         $unitQuantityValid = $executionMode !== 'unit' || $this->isPositiveIntegerDecimal((string) $workOrder->target_base_qty);
@@ -76,7 +81,7 @@ class ReleaseGateApplicationService
             $fundingOrder = WorkOrder::with('demand.order')->find($workOrder->assembly_root_work_order_id)?->demand?->order;
         }
         $funding = $fundingOrder ? $this->fundingGates->status($fundingOrder) : null;
-        $outputPlan = app(WorkOrderOutputPlanService::class)->prepare($workOrder, true);
+        $outputPlan = app(WorkOrderOutputPlanService::class)->prepare($workOrder, true, $match['bom_snapshot'] ?? null);
         $additionalOutputCount = app(WorkOrderPlannedOutputService::class)->additionalCount($workOrder);
 
         $checks = [
@@ -117,11 +122,8 @@ class ReleaseGateApplicationService
             $this->check('bom_effective', $this->bomEffective($bom), 'bom_not_effective', 'BOM 必须已审核、启用且处于生效期。', $bom ? ['bom_id' => $bom->id, 'status' => $bom->status, 'audit_status' => $bom->audit_status, 'effective_date' => optional($bom->effective_date)->format('Y-m-d'), 'expire_date' => optional($bom->expire_date)->format('Y-m-d')] : []),
             $this->check('bom_complete', $this->bomComplete($bom), 'bom_incomplete', 'BOM 必须至少包含一条用量或固定用量大于 0 的有效物料行。', ['line_count' => $bom?->items?->count() ?? 0]),
             $this->check('custom_documents', filled(data_get($workOrder->technical_snapshot, 'drawing_reference')) || $this->customDocumentsReady($line), 'custom_documents_missing', '定制生产发布前必须由技术岗位确认图纸或技术附件。', ['special_customized' => (bool) ($line->is_special_customized ?? false)]),
-            $this->check('technical_confirmation', ! app(WorkOrderTechnicalService::class)->requiresConfirmation($workOrder, $bom) || (
-                $workOrder->technical_version > 0
-                && (int) data_get($workOrder->technical_snapshot, 'bom_id') === (int) $workOrder->bom_id
-                && (int) data_get($workOrder->technical_snapshot, 'production_routing_id') === (int) $workOrder->production_routing_id
-            ), 'technical_confirmation_required', '定制成品或定制用料必须先完成工单技术确认。', ['technical_version' => (int) $workOrder->technical_version]),
+            $this->check('technical_confirmation', $confirmationCurrent,
+                'technical_confirmation_required', 'BOM 已修改或存在定制资料，请重新选择当前 BOM 并确认生产资料。', ['technical_version' => (int) $workOrder->technical_version]),
             $this->check('production_execution_mode', in_array($executionMode, ['unit', 'quantity'], true), 'production_execution_mode_invalid', '产出物料必须配置有效的生产执行模式。', ['production_execution_mode' => $executionMode]),
             $this->check('production_unit_quantity', $unitQuantityValid, 'production_unit_quantity_not_integer', "逐件生产物料的工单基准数量必须为整数，当前基准数量为 {$workOrder->target_base_qty}，请检查订单数量或单位换算。", ['production_execution_mode' => $executionMode, 'target_base_qty' => (string) $workOrder->target_base_qty]),
             $this->check('material_supply_rules', $supplyCoverage['valid'], 'material_supply_rule_incomplete', '工艺路线没有完整配置 BOM 物料的目标工序和供应规则。', $supplyCoverage),
@@ -154,7 +156,8 @@ class ReleaseGateApplicationService
                 ['issues' => $outputPlan['issues'], 'execution_blockers' => $outputPlan['execution_blockers']]);
         }
 
-        $assembly = app(AssemblyProductionApplicationService::class)->releaseCheck($workOrder, $bom);
+        // 旧技术配置可能引用已替换明细，重新确认前不能交给关联计划再次解析。
+        $assembly = $confirmationCurrent ? app(AssemblyProductionApplicationService::class)->releaseCheck($workOrder, $bom) : null;
         if ($assembly !== null) $checks[] = $this->check('assembly_component_plan', $assembly['valid'], $assembly['code'], $assembly['message'], $assembly);
         $preparation = app(WorkOrderPreparationMaterialService::class)->releaseCheck($workOrder);
         if ($preparation !== null) $checks[] = $this->check('material_preparation', $preparation['valid'], $preparation['code'], $preparation['message'], $preparation);
@@ -205,7 +208,7 @@ class ReleaseGateApplicationService
         if (! $workOrder) $this->fail('not_found', '工单不存在。', 404);
         $this->assertVisible($workOrder, $user, $permissions, $superAdmin);
 
-        $perPage = max(1, min(100, (int) ($filters['per_page'] ?? 20)));
+        $perPage = max(1, min(100, (int) ($filters['per_page'] ?? 10)));
         $page = max(1, (int) ($filters['page'] ?? 1));
 
         return WorkOrderMaterialRequirement::query()
@@ -226,16 +229,26 @@ class ReleaseGateApplicationService
             $materialConfiguration = collect(data_get($workOrder->technical_snapshot, 'materials', []))
                 ->firstWhere('bom_item_id', (int) $line['id'])['configuration'] ?? null;
             $plannedOutput = (float) $workOrder->target_base_qty;
-            $perOutput = (float) $line['qty'];
+            $perOutput = (string) $line['qty'];
             $lossRate = (float) $line['loss_rate'];
             $fixedQty = (float) $line['fixed_qty'];
-            $required = round($perOutput * $plannedOutput * (1 + $lossRate / 100) + $fixedQty, 8);
-            $unit = $template?->unit ?: $template?->componentItem?->unit;
-            $baseUnit = $template?->componentItem?->unit ?: $unit;
+            $required = app(CuttingQuantityCalculator::class)->round(bcadd(
+                bcmul(bcmul($perOutput, (string) $workOrder->target_base_qty, 16),
+                    bcadd('1', bcdiv((string) $line['loss_rate'], '100', 12), 12), 12),
+                (string) $line['fixed_qty'], 12), 8);
+            $domain = app(UnitConversionDomainService::class);
+            $unit = $domain->canonicalUnit($template?->unit ?: $template?->componentItem?->unit);
+            $baseUnit = $domain->canonicalUnit($template?->componentItem?->unit ?: $unit);
             $perOutputPieces = $line['piece_qty'] === null ? null : (float) $line['piece_qty'];
             $requiredPieces = $perOutputPieces === null ? null : round($perOutputPieces * $plannedOutput, 8);
             if ($requiredPieces !== null && abs($requiredPieces - round($requiredPieces)) > 0.00000001) {
                 $this->fail('cut_piece_quantity_not_integer', "下料需求 {$line['component_item_name']} {$line['cut_length_mm']}mm 的总段数必须是整数。", 422);
+            }
+            $requiredNetLength = null;
+            if (FrozenCuttingStockPolicy::isTotalLength($line['cutting_quantity_snapshot'] ?? [])) {
+                $requiredNetLength = bcmul((string) $line['cutting_quantity_snapshot']['total_length_mm'], (string) $workOrder->target_base_qty, 16);
+                if (bccomp($requiredNetLength, bcadd($requiredNetLength, '0', 5), 16) !== 0) $this->fail('cut_total_length_precision_invalid', '管材需求总长度不能超出毫米五位小数或米八位小数的可记录精度。', 422);
+                $requiredNetLength = bcadd($requiredNetLength, '0', 8);
             }
 
             return [
@@ -250,10 +263,13 @@ class ReleaseGateApplicationService
                 'component_item_name_snapshot' => $line['component_item_name'] ?: $template?->componentItem?->item_name,
                 'component_spec_snapshot' => $template?->componentItem?->spec,
                 'cut_length_mm_snapshot' => $line['cut_length_mm'],
-                'cutting_requirement_snapshot' => $line['cut_length_mm'] === null ? null : json_encode([
+                'cutting_requirement_snapshot' => empty($line['cutting_quantity_snapshot']) ? null : json_encode((FrozenCuttingStockPolicy::isTotalLength($line['cutting_quantity_snapshot'])
+                    ? ['required_total_length_mm' => $requiredNetLength] : []) + [
                     'length_mm' => $line['cut_length_mm'], 'width_mm' => $line['cut_width_mm'],
                     'thickness_mm' => $line['cut_thickness_mm'], 'allow_rotation' => $line['allow_cut_rotation'],
                     'piece_qty' => $line['piece_qty'], 'source' => $line['cut_requirement_source'],
+                    'dimensions' => $line['cutting_quantity_snapshot']['dimensions'] ?? null,
+                    'quantity_calculation' => $line['cutting_quantity_snapshot'],
                 ], JSON_THROW_ON_ERROR),
                 'per_output_piece_qty' => $perOutputPieces,
                 'required_piece_qty' => $requiredPieces,

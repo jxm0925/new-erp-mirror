@@ -1,4 +1,4 @@
-export const createPageState = (perPage = 50) => ({
+export const createPageState = (perPage = 10) => ({
   rows: [], page: 0, perPage, total: 0, lastPage: 1, loading: false, sequence: 0, params: {}, stats: {}, warehouseStats: {}
 })
 

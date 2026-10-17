@@ -872,7 +872,7 @@ final class CuttingDemandService
     private function pagination(array $filters): array
     {
         $page = filter_var($filters['page'] ?? 1, FILTER_VALIDATE_INT);
-        $size = filter_var($filters['per_page'] ?? 20, FILTER_VALIDATE_INT);
+        $size = filter_var($filters['per_page'] ?? 10, FILTER_VALIDATE_INT);
         if (! $page || $page < 1 || ! $size || $size < 1 || $size > 100) {
             $this->commands->fail('pagination_invalid', '分页参数不合法，每页最多100条。');
         }
@@ -883,7 +883,7 @@ final class CuttingDemandService
     private function revisionPagination(array $filters): array
     {
         $page = filter_var($filters['revision_page'] ?? 1, FILTER_VALIDATE_INT);
-        $size = filter_var($filters['revision_per_page'] ?? 20, FILTER_VALIDATE_INT);
+        $size = filter_var($filters['revision_per_page'] ?? 10, FILTER_VALIDATE_INT);
         if (! $page || $page < 1 || ! $size || $size < 1 || $size > 100) {
             $this->commands->fail('pagination_invalid', '变更记录分页参数不合法，每页最多100条。');
         }

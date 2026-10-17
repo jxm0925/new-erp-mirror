@@ -40,8 +40,14 @@ class ProductionWorkOrderController extends Controller
 
     public function continuationCandidates(Request $request, int $id, \App\Services\Erp\ProductionInventoryContinuationService $service)
     {
-        $filters = $request->validate(['keyword' => 'nullable|string|max:160', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50']);
+        $filters = $request->validate(['keyword' => 'nullable|string|max:160', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50',
+            'inventory_balance_id' => 'nullable|integer|min:1', 'source_output_record_id' => 'nullable|integer|min:1']);
         return response()->json($service->candidates($id, $filters, ...$this->context($request)));
+    }
+    public function continuationExecutions(Request $request, int $id, \App\Services\Erp\ProductionInventoryContinuationService $service)
+    {
+        $filters = $request->validate(['page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50']);
+        return response()->json($service->executions($id, $filters, ...$this->context($request)));
     }
     public function configureContinuation(Request $request, int $id, \App\Services\Erp\ProductionInventoryContinuationService $service)
     {
@@ -53,7 +59,7 @@ class ProductionWorkOrderController extends Controller
     public function continuationSerials(Request $request, int $id, \App\Services\Erp\ProductionInventoryContinuationService $service)
     {
         $filters = $request->validate(['inventory_balance_id' => 'required|integer|min:1', 'source_output_record_id' => 'nullable|integer|min:1', 'keyword' => 'nullable|string|max:160',
-            'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50']);
+            'inventory_serial_id' => 'nullable|integer|min:1', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50']);
         return response()->json($service->serials($id, $filters, ...$this->context($request)));
     }
     public function demands(Request $request, ProductionWorkOrderQueryService $service)
@@ -89,6 +95,13 @@ class ProductionWorkOrderController extends Controller
     {
         $context = $this->context($request);
         return response()->json(['data' => WorkOrderResource::make($service->workOrder($id, ...$context))->resolve($request)]);
+    }
+
+    public function laborSummary(Request $request, int $id, \App\Services\Erp\ProductionLaborSummaryQueryService $service)
+    {
+        $filters = $request->validate(['page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|in:10',
+            'people_page' => 'nullable|integer|min:1', 'people_per_page' => 'nullable|integer|in:10']);
+        return response()->json(['data' => $service->workOrder($id, $filters, ...$this->context($request))]);
     }
 
     public function releaseGate(Request $request, int $id, ReleaseGateApplicationService $service)
@@ -136,6 +149,7 @@ class ProductionWorkOrderController extends Controller
             'client_command_id' => ['required', 'string', 'max:120'],
             'expected_version' => ['required', 'integer', 'min:1'],
             'planned_date' => ['sometimes', 'nullable', 'date_format:Y-m-d'],
+            'responsible_user_legacy_id' => ['sometimes', 'nullable', 'integer', 'min:1', 'exists:erp_legacy_admin_users,legacy_id'],
             'production_location_name' => ['prohibited'],
             'production_batch' => ['prohibited'],
             'target_qty' => ['prohibited'], 'output_item_id' => ['prohibited'],
@@ -214,6 +228,14 @@ class ProductionWorkOrderController extends Controller
             'materials' => ['present', 'array', 'max:500'],
             'materials.*.bom_item_id' => ['required', 'integer', 'min:1', 'distinct'],
             'materials.*.configuration_id' => ['nullable', 'integer', 'min:1'],
+            'materials.*.cut_dimensions' => ['nullable', 'array:length_mm,width_mm,thickness_mm,piece_qty,allow_rotation,quantity_basis,total_length_mm'],
+            'materials.*.cut_dimensions.quantity_basis' => ['nullable', 'in:dimensions_pieces,total_length'],
+            'materials.*.cut_dimensions.total_length_mm' => ['nullable', 'numeric', 'gt:0'],
+            'materials.*.cut_dimensions.length_mm' => ['nullable', 'numeric', 'gt:0'],
+            'materials.*.cut_dimensions.width_mm' => ['nullable', 'numeric', 'gt:0'],
+            'materials.*.cut_dimensions.thickness_mm' => ['nullable', 'numeric', 'gt:0'],
+            'materials.*.cut_dimensions.piece_qty' => ['nullable', 'integer', 'min:1'],
+            'materials.*.cut_dimensions.allow_rotation' => ['nullable', 'boolean'],
         ]);
         $workOrder = $service->confirmTechnical($id, $payload, ...$context);
         return response()->json(['message' => '生产资料已确认并保存版本。', 'data' => WorkOrderResource::make($workOrder)->resolve($request)]);
@@ -243,7 +265,7 @@ class ProductionWorkOrderController extends Controller
         $service->showWorkOrder($id, ...$this->context($request));
         $rows = \Illuminate\Support\Facades\DB::table('erp_work_order_technical_versions')
             ->where('work_order_id', $id)->orderByDesc('version_no')
-            ->paginate(max(1, min(100, (int) $request->input('per_page', 20))));
+            ->paginate(max(1, min(100, (int) $request->input('per_page', 10))));
         $rows->getCollection()->transform(function ($row) {
             $row->snapshot = json_decode($row->snapshot, true, 512, JSON_THROW_ON_ERROR);
             return $row;

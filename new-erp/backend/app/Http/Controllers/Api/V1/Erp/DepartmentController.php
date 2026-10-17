@@ -155,7 +155,7 @@ class DepartmentController extends Controller
 
     private function perPage(Request $request): int
     {
-        return max(1, min(100, (int) $request->input('per_page', 20)));
+        return max(1, min(100, (int) $request->input('per_page', 10)));
     }
 
     private function authorizePermission(Request $request, string $permission): void

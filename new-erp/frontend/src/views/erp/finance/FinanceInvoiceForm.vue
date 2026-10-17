@@ -473,7 +473,7 @@ export default {
     supplierKeyword: '',
     supplierStatus: 'enabled',
     supplierPage: 1,
-    supplierPerPage: 5,
+    supplierPerPage: 10,
     supplierTotal: 0,
     rules: {
       invoice_no: [{ required: true, message: '请输入发票号码', trigger: 'blur' }],

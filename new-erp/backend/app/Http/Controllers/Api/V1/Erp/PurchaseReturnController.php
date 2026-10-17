@@ -230,9 +230,9 @@ class PurchaseReturnController extends Controller
         return response()->json($query->paginate($this->perPage($request)));
     }
 
-    public function show(Request $request, int $id)
+    public function show(Request $request, int $id, PurchaseReturnApplicationService $service)
     {
-        $this->authorizePermission($request, 'purchase_return.view');
+        $user = $this->authorizePermission($request, 'purchase_return.view');
         $purchaseReturn = PurchaseReturn::with([
             'supplier',
             'receipt.order',
@@ -283,6 +283,10 @@ class PurchaseReturnController extends Controller
                 ->where('source_id', $purchaseReturn->id)
                 ->value('transaction_no')
         );
+        $auth = app(AuthContextService::class);
+        if ($auth->isSuperAdmin($user) || in_array('finance.allocation.create', $auth->permissionCodes($user), true)) {
+            $purchaseReturn->setAttribute('ap_offset_preview', $service->previewApOffset($purchaseReturn, (int) ($user->legacy_id ?? $user->id)));
+        }
 
         return response()->json($purchaseReturn);
     }
@@ -344,6 +348,16 @@ class PurchaseReturnController extends Controller
         return $this->action($request, $service->post($id, ...$this->operator($request)), '采购退货出库完成');
     }
 
+    public function applyApOffset(Request $request, int $id, PurchaseReturnApplicationService $service)
+    {
+        $user = $this->authorizePermission($request, 'purchase_return.view');
+        $this->authorizePermission($request, 'finance.allocation.create');
+        $payload = $request->validate(['expected_fingerprint' => ['required', 'string', 'regex:/^[a-f0-9]{64}$/D'],
+            'idempotency_key' => 'required|string|max:100']);
+        return $this->action($request, $service->applyApOffset($id, $payload, (int) ($user->legacy_id ?? $user->id),
+            $user->nickname ?: $user->username), '退货已整笔抵扣原到货应付。');
+    }
+
     public function cancel(Request $request, int $id, PurchaseReturnApplicationService $service)
     {
         $this->authorizePermission($request, 'purchase_return.cancel');
@@ -390,6 +404,6 @@ class PurchaseReturnController extends Controller
 
     private function perPage(Request $request): int
     {
-        return min(100, max(10, (int) $request->input('per_page', 20)));
+        return min(100, max(10, (int) $request->input('per_page', 10)));
     }
 }

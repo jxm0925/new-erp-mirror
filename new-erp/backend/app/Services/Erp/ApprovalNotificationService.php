@@ -15,7 +15,7 @@ class ApprovalNotificationService
     {
         return ApprovalNotification::query()->where('user_id', $userId)->with('task:id,task_no,subject,task_status')
             ->when(($filters['status'] ?? null), fn ($query, $status) => $query->where('status', $status))
-            ->orderByDesc('notified_at')->paginate(min(max((int) ($filters['per_page'] ?? 20), 1), 100));
+            ->orderByDesc('notified_at')->paginate(min(max((int) ($filters['per_page'] ?? 10), 1), 100));
     }
 
     public function unreadCount(int $userId): int

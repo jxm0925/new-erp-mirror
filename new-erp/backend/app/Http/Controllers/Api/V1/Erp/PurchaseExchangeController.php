@@ -45,7 +45,7 @@ class PurchaseExchangeController extends Controller
             'pending_replacement_acceptance' => (clone $statsQuery)->whereIn('current_step', ['replacement_in_transit', 'pending_replacement_acceptance'])->count(),
             'completed' => (clone $statsQuery)->where('current_step', 'completed')->count(),
         ];
-        $perPage = max(10, min(100, (int) $request->input('per_page', 20)));
+        $perPage = max(10, min(100, (int) $request->input('per_page', 10)));
         return response()->json(['stats' => $stats, 'data' => $query->paginate($perPage)]);
     }
 

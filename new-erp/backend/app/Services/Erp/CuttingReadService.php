@@ -556,7 +556,7 @@ final class CuttingReadService
 
     private function page(Builder $q, array $f): array
     {
-        $page = filter_var($f['page'] ?? 1,FILTER_VALIDATE_INT); $size = filter_var($f['per_page'] ?? 20,FILTER_VALIDATE_INT);
+        $page = filter_var($f['page'] ?? 1,FILTER_VALIDATE_INT); $size = filter_var($f['per_page'] ?? 10,FILTER_VALIDATE_INT);
         if (! $page || $page < 1 || ! $size || $size < 1 || $size > 100) $this->commands->fail('pagination_invalid','分页参数不合法，每页最多100条。');
         $result = $q->paginate($size,['*'],'page',$page);
         return ['data'=>array_map(fn ($r) => (array) $r,$result->items()),'meta'=>['current_page'=>$page,'per_page'=>$size,'total'=>$result->total(),'last_page'=>$result->lastPage()]];

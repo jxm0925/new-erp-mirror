@@ -777,8 +777,8 @@ export default {
       warehouseDialogVisible: false,
       locationDialogVisible: false,
       warehouses: [],
-      warehousePage: createPageState(50),
-      locationPage: createPageState(50),
+      warehousePage: createPageState(10),
+      locationPage: createPageState(10),
       inventorySequence: 0,
       warehouseSearchTimer: null,
       locationSearchTimer: null,
@@ -894,11 +894,11 @@ export default {
     async changeWarehouseScope () {
       const sequence = ++this.warehouseScopeSequence
       clearTimeout(this.warehouseSearchTimer)
-      this.warehousePage = createPageState(50)
+      this.warehousePage = createPageState(10)
       this.warehouses = []
       this.selectedWarehouse = {}
       this.locations = []
-      this.locationPage = createPageState(50)
+      this.locationPage = createPageState(10)
       ++this.inventorySequence
       this.inventoryStats = { item_count: 0, balance_line_count: 0, total_qty: 0, inventory_value: 0 }
       this.inventoryLoading = false
@@ -930,7 +930,7 @@ export default {
     loadMoreWarehouses () { return this.loadWarehouses(true) },
     async loadLocations (append = false) {
       const warehouseId = this.selectedWarehouse.id
-      if (!warehouseId) { this.locations = []; this.locationPage = createPageState(50); return }
+      if (!warehouseId) { this.locations = []; this.locationPage = createPageState(10); return }
       const state = this.locationPage
       try {
         const data = await queryPage(state, params => listEntity('locations', params), {
@@ -963,7 +963,7 @@ export default {
       }
       this.inventoryLoading = true
       try {
-        const { data } = await listInventoryBalances({ warehouse_id: warehouseId, per_page: 5, include_quantity_summary: 1 })
+        const { data } = await listInventoryBalances({ warehouse_id: warehouseId, per_page: 10, include_quantity_summary: 1 })
         if (sequence !== this.inventorySequence) return
         const stats = data.stats || {}
         const quantities = stats.quantity_by_unit || []
@@ -988,7 +988,7 @@ export default {
       this.selectedWarehouse = { ...row }
       if (changed) {
         this.filters.area = ''
-        this.locationPage = createPageState(50)
+        this.locationPage = createPageState(10)
         this.locations = []
       }
       await this.$nextTick()

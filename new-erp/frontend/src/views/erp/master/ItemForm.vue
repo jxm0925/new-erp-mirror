@@ -147,6 +147,10 @@
                 <el-input v-model.trim="form.spec" clearable :placeholder="isOffice ? '例如：A4 70g 500张/包' : '填写实际型号或尺寸'" />
               </el-form-item>
 
+              <el-form-item label="品牌">
+                <el-input v-model.trim="form.brand" clearable maxlength="100" placeholder="选填，如：简谈" />
+              </el-form-item>
+
               <!-- 材质牌号 -->
               <el-form-item v-if="!isOffice" label="材质牌号">
                 <el-input v-model.trim="form.material_grade" clearable placeholder="例如：304 / 201 / Q235" />
@@ -719,6 +723,7 @@ const blankItem = () => ({
   category_id: null,
   unit_id: null,
   spec: '',
+  brand: '',
   material_grade: '',
   cutting_mode: 'none',
   material_management_mode: 'quantity',

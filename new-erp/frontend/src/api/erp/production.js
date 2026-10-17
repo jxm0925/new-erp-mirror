@@ -8,6 +8,7 @@ export const listWorkOrders = params => api.get('/v1/erp/production/work-orders'
 export const getWorkOrder = id => api.get(`/v1/erp/production/work-orders/${id}`)
 export const createWorkOrderDraft = data => api.post('/v1/erp/production/work-orders', data)
 export const updateWorkOrderDraft = (id, data) => api.put(`/v1/erp/production/work-orders/${id}`, data)
+export const updateWorkOrderPlan = (id, data) => api.put(`/v1/erp/production/work-orders/${id}/plan`, data)
 export const submitWorkOrder = (id, data) => api.post(`/v1/erp/production/work-orders/${id}/submit`, data)
 export const getWorkOrderReleaseGate = id => api.get(`/v1/erp/production/work-orders/${id}/release-gate`)
 export const publishWorkOrder = (id, data) => api.post(`/v1/erp/production/work-orders/${id}/publish`, data)

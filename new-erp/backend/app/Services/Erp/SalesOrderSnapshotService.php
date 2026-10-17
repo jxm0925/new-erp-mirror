@@ -16,18 +16,24 @@ class SalesOrderSnapshotService
 
     public function lock(array $payload): array
     {
+        $addressSupplied = array_key_exists('full_address', $payload) || array_key_exists('address', $payload);
+        $enteredAddress = trim((string) (array_key_exists('full_address', $payload) ? $payload['full_address'] : ($payload['address'] ?? '')));
+        if ($addressSupplied) {
+            // 显式清空只清订单地址；兼容字段同步后不会被客户整理流程当成新地址写回主档。
+            $payload['full_address'] = $enteredAddress ?: null;
+            $payload['address'] = $enteredAddress ?: null;
+        }
         $customer = $this->resolveAndUpsertCustomer($payload);
         abort_if($customer->status === 'blacklisted', 422, '该客户已在黑名单，不能创建销售订单');
 
         $contact = $this->contact($customer, $payload['customer_contact_id'] ?? null);
-        $address = $this->address($customer, $payload['customer_address_id'] ?? null);
+        $address = $addressSupplied && $enteredAddress === '' ? null : $this->address($customer, $payload['customer_address_id'] ?? null);
 
         $contactName = trim((string) ($payload['contact_name'] ?? ''))
             ?: ($contact?->contact_name ?: $customer->contact_name);
         $contactPhone = trim((string) ($payload['contact_phone'] ?? $payload['customer_phone'] ?? ''))
             ?: ($contact?->mobile ?: $contact?->phone ?: $customer->contact_phone);
-        $fullAddress = trim((string) ($payload['full_address'] ?? $payload['address'] ?? ''))
-            ?: ($address?->full_address ?: $customer->full_address);
+        $fullAddress = $addressSupplied ? $enteredAddress : ($address?->full_address ?: $customer->full_address);
 
         $payload['customer_contact_id'] = $contact?->id;
         $payload['customer_address_id'] = $address?->id;
@@ -46,7 +52,7 @@ class SalesOrderSnapshotService
             'province' => $address?->province,
             'city' => $address?->city,
             'district' => $address?->district,
-            'detail_address' => $fullAddress ?: $address?->detail_address,
+            'detail_address' => $fullAddress ?: null,
             'full_address' => $fullAddress ?: null,
         ];
         $payload['customer_snapshot'] = [

@@ -90,7 +90,7 @@ export default {
     rows: [],
     total: 0,
     page: 1,
-    perPage: 20,
+    perPage: 10,
     dateRange: [],
     filters: { keyword: '', progress_status: '', settlement_status: '' },
     progressOptions: [

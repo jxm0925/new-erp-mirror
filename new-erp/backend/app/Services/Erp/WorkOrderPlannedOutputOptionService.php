@@ -41,7 +41,7 @@ final class WorkOrderPlannedOutputOptionService
             $query->where(fn (Builder $items) => $items->where('item_code', 'like', "%{$keyword}%")
                 ->orWhere('item_name', 'like', "%{$keyword}%")->orWhere('spec', 'like', "%{$keyword}%"));
         }
-        $perPage = min(50, max(1, (int) ($filters['per_page'] ?? 20)));
+        $perPage = min(50, max(1, (int) ($filters['per_page'] ?? 10)));
         $page = $query->orderBy('item_code')->orderBy('id')->paginate($perPage, ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
 
         return [

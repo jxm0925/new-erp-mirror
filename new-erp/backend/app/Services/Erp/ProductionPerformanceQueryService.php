@@ -5,6 +5,7 @@ namespace App\Services\Erp;
 use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Models\Erp\ProductionPerformanceAssignment;
 use App\Models\Erp\SalesOrder;
+use App\Models\Erp\WorkOrder;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 
@@ -52,9 +53,37 @@ final class ProductionPerformanceQueryService
             $assignment = ProductionPerformanceAssignment::query()->where('active_scope_key', $item->scope_type.':'.$item->scope_id)->first();
             $rows[] = ['scope' => $scope, 'assignment_version' => $assignment ? (int) $assignment->version_no : 0,
                 'credited_share_ratio' => $assignment?->credited_share_ratio, 'noncredited_share_ratio' => $assignment?->noncredited_share_ratio,
-                'confirmed_at' => $assignment?->confirmed_at, 'can_confirm' => in_array('production.performance.manage', $permissions, true)];
+                'confirmed_at' => $assignment?->confirmed_at, 'can_confirm' => in_array('production.performance.manage', $permissions, true),
+                'can_adjust_rate' => $this->scopes->canManageRate($scope, $user, $permissions)];
         }
         return ['data' => $rows, 'meta' => $this->meta($page)];
+    }
+
+    public function workOrderScopes(int $workOrderId, array $filters, object $user, array $permissions, bool $superAdmin = false): array
+    {
+        $this->permission($permissions);
+        $workOrder = WorkOrder::find($workOrderId);
+        $visibility = $this->dataScopes->resolve($user, 'production.performance.view', $permissions, $superAdmin);
+        if (! $workOrder || ! $this->dataScopes->workOrderVisible($workOrder, $visibility)) {
+            $this->fail('performance_work_order_not_found', '工单不存在或不在当前绩效资料范围内。', 404);
+        }
+        // Execution targets exist only after release. Draft route nodes are not
+        // rate subjects and must never become editable placeholder operations.
+        $units = DB::table('erp_production_unit_operations as op')->where('op.work_order_id', $workOrderId)
+            ->selectRaw('? AS scope_type, op.id AS scope_id, op.sequence_no_snapshot, op.production_unit_id', ['unit_operation']);
+        $quantities = DB::table('erp_production_quantity_operations as op')->where('op.work_order_id', $workOrderId)
+            ->selectRaw('? AS scope_type, op.id AS scope_id, op.sequence_no_snapshot, NULL AS production_unit_id', ['quantity_operation']);
+        $page = DB::query()->fromSub($units->unionAll($quantities), 'work_order_scopes')
+            ->orderBy('sequence_no_snapshot')->orderBy('production_unit_id')->orderBy('scope_id')
+            ->paginate($this->size($filters), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
+        $rows = [];
+        foreach ($page->items() as $item) {
+            $scope = $this->scopes->resolve($item->scope_type, (int) $item->scope_id);
+            unset($scope['participants']);
+            $rows[] = ['scope' => $scope, 'production_unit_id' => $item->production_unit_id ? (int) $item->production_unit_id : null,
+                'can_adjust_rate' => $this->scopes->canManageRate($scope, $user, $permissions, $superAdmin)];
+        }
+        return ['data' => $rows, 'meta' => $this->meta($page), 'work_order_status' => $workOrder->status];
     }
 
     public function paginate(array $filters, object $user, array $permissions, bool $superAdmin = false): array
@@ -96,6 +125,7 @@ final class ProductionPerformanceQueryService
             $seenSources = [];
             $sourceSalesQty = [];
             $sourceQuantityConflicts = [];
+            $directSources = app(ShipmentDirectSourcePolicy::class);
             foreach ($this->shipmentSources->forOrder($order) as $source) {
                 $lineId = (int) ($source['sales_order_line_id'] ?? 0);
                 if (! in_array($lineId, $eligibleLineIds, true)) continue;
@@ -104,6 +134,15 @@ final class ProductionPerformanceQueryService
                 if (isset($seenSources[$sourceKey])) continue;
                 $seenSources[$sourceKey] = true;
                 $sourceSalesQty[$lineId] = bcadd($sourceSalesQty[$lineId] ?? '0', (string) $source['sales_qty'], 8);
+                // Direct purchased stock contributes only its actual shipment
+                // packing work. Production-origin failures still require lineage.
+                if ($directSources->isCompletedDirectSource($source)) continue;
+                if ($directSources->hasDirectEvidence($source)) {
+                    $issues[] = ['code' => 'direct_shipment_incomplete', 'sales_order_line_id' => $lineId,
+                        'shipment_line_id' => (int) $source['shipment_line_id'],
+                        'message' => '外购直发的包装工艺、包装完工或发运过账资料尚未核对完整。'];
+                    continue;
+                }
                 if (! $this->traceComplete($source['trace_status'] ?? null) || empty($source['output_record_id'])) {
                     $issues[] = ['code' => 'shipment_source_missing', 'sales_order_line_id' => $lineId,
                         'shipment_line_id' => (int) $source['shipment_line_id'], 'message' => '本次发货的生产来源资料不完整。'];
@@ -146,10 +185,11 @@ final class ProductionPerformanceQueryService
                 $scope = $row['scope'];
                 $assignment = ProductionPerformanceAssignment::query()->with('shares')->where('active_scope_key', $scope['scope_type'].':'.$scope['scope_id'])->first();
                 $row['assignment'] = $assignment ? $this->assignments->present($assignment) : null;
-                $row['assignment_current'] = $assignment !== null && (int) $assignment->owner_legacy_id === $scope['owner_legacy_id']
+                $row['assignment_current'] = $assignment !== null && $assignment->status === 'confirmed' && (int) $assignment->owner_legacy_id === $scope['owner_legacy_id']
                     && (int) ($assignment->scope_snapshot['scope_version'] ?? 0) === $scope['scope_version'];
                 $row['can_confirm'] = $scope['status'] === 'COMPLETED' && $scope['owner_legacy_id'] === (int) ($user->legacy_id ?? $user->id ?? 0)
                     && in_array('production.performance.manage', $permissions, true);
+                $row['can_adjust_rate'] = $this->scopes->canManageRate($scope, $user, $permissions, $superAdmin);
                 $row['statistics_status'] = ! $row['assignment_current'] ? 'pending_shares'
                     : ($scope['performance_rate_snapshot'] === null ? 'pending_rate' : ($scope['status'] !== 'COMPLETED' ? 'pending_completion' : 'ready'));
                 if ($scope['scope_type'] !== 'shipment_packing_operation' && isset($sourceQuantityConflicts[$row['sales_order_line_id']])) $row['statistics_status'] = 'pending_trace';
@@ -216,14 +256,24 @@ final class ProductionPerformanceQueryService
 
     public function scope(string $type, int $id, array $filters, object $user, array $permissions, bool $superAdmin = false): array
     {
-        $this->permission($permissions);
+        $canPlan = in_array($type === 'shipment_packing_operation' ? 'sales_order.shipment.packing.execute' : 'production.task.collaborate', $permissions, true);
+        $canCorrect = in_array('production.performance.manage', $permissions, true);
+        if (! $canPlan && ! $canCorrect && ! in_array('production.performance.view', $permissions, true)) {
+            $this->fail('permission_denied', '当前用户没有查看本人工序份额的权限。', 403);
+        }
         $scope = $this->scopes->resolve($type, $id);
         // The participant picker is deliberately restricted to the accountable
         // owner. Statistics viewers inspect source rows, not arbitrary identities.
         if ($scope['owner_legacy_id'] !== (int) ($user->legacy_id ?? $user->id ?? 0)) $this->fail('performance_owner_required', '只有工序接单人可以打开个人份额确认。', 403);
         $assignment = ProductionPerformanceAssignment::query()->with('shares')->where('active_scope_key', $type.':'.$id)->first();
         $participants = $scope['participants']; unset($scope['participants']);
+        $scope['can_manage_shares'] = in_array($scope['status'], ['READY', 'WAIT_MATERIAL', 'WAIT_HANDOVER', 'IN_PROGRESS', 'PAUSED', 'REWORK', 'WAIT_QUALITY', 'WAIT_WAREHOUSE', 'COMPLETED'], true)
+            && ($canCorrect || ($canPlan && $scope['status'] !== 'COMPLETED'));
+        if (! $canCorrect || ! in_array('production.performance.view', $permissions, true)) {
+            foreach (['performance_rate_snapshot', 'original_performance_rate_snapshot', 'rate_version', 'rate_changed_at'] as $privateField) unset($scope[$privateField]);
+        }
         return ['scope' => $scope, 'participants' => $this->slice($participants, $filters['page'] ?? 1, $this->size($filters)),
+            'default_shares' => $this->calculator->defaultShares($participants),
             'assignment' => $assignment ? $this->assignments->present($assignment) : null];
     }
 
@@ -288,7 +338,7 @@ final class ProductionPerformanceQueryService
                     ->where('posted.source_type', 'sales_shipment')->where('posted.transaction_type', 'sales_shipment_outbound')->where('posted.posting_status', 'posted');
             })->groupBy('line.sales_order_line_id')->selectRaw('line.sales_order_line_id, SUM(line.sales_qty) as sales_qty, MAX(shipment.shipped_at) as last_shipped_at')->get()->keyBy('sales_order_line_id');
         $order->loadMissing('lines');
-        $result = $this->calculator->shipmentReadiness($order->lines->map(fn ($line) => $line->only(['id', 'line_type', 'line_status', 'order_qty', 'no_delivery_qty', 'service_fulfilled_qty']))->all(),
+        $result = $this->calculator->shipmentReadiness($order->lines->map(fn ($line) => $line->only(['id', 'line_type', 'line_status', 'order_qty', 'cancelled_qty', 'no_delivery_qty', 'service_fulfilled_qty']))->all(),
             $shipped->map(fn ($row) => (array) $row)->all());
         $result['entire_order_shipped_at'] = $result['entire_order_shipped'] ? $shipped->max('last_shipped_at') : null;
         return $result;
@@ -326,7 +376,7 @@ final class ProductionPerformanceQueryService
         return ['pending_shares' => '个人份额或不计绩效状态尚未确认。', 'pending_rate' => '来源工序未冻结绩效比例。',
             'pending_completion' => '来源工序尚未完成。'][$status] ?? '绩效来源资料尚未完整。';
     }
-    private function size(array $filters): int { return max(1, min(100, (int) ($filters['per_page'] ?? 20))); }
+    private function size(array $filters): int { return max(1, min(100, (int) ($filters['per_page'] ?? 10))); }
     private function slice(array $rows, mixed $page, int $size): array
     {
         $page = max(1, (int) $page);

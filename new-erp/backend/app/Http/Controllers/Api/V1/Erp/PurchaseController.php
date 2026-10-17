@@ -19,6 +19,7 @@ use App\Services\Erp\PurchaseDefectApplicationService;
 use App\Services\Erp\PurchaseDraftDeletionApplicationService;
 use App\Services\Erp\PurchaseRequestLifecycleApplicationService;
 use App\Services\Erp\PurchaseOrderFinanceSummaryService;
+use App\Services\Erp\PurchasePriceCheckService;
 use App\Services\Erp\SupplierCapabilityService;
 use App\Services\Erp\SupplierPerformanceService;
 use Illuminate\Database\Eloquent\Builder;
@@ -899,7 +900,7 @@ class PurchaseController extends Controller
     }
 
     /** 采购价格预警：表单提交前按当前明细比较历史价（尚未保存的数据）。 */
-    public function priceCheck(Request $request, AppServicesErpPurchasePriceCheckService $service)
+    public function priceCheck(Request $request, PurchasePriceCheckService $service)
     {
         $this->erpAuthorize($request, ['purchase.order.view', 'purchase.order.create', 'purchase.order.edit', 'purchase.plan.view']);
         $data = $request->validate([
@@ -914,7 +915,7 @@ class PurchaseController extends Controller
     }
 
     /** 采购价格预警：订单详情、审核任务里查看本订单与历史价的对比。 */
-    public function orderPriceCheck(Request $request, int $id, AppServicesErpPurchasePriceCheckService $service)
+    public function orderPriceCheck(Request $request, int $id, PurchasePriceCheckService $service)
     {
         $this->erpAuthorize($request, ['purchase.order.view', 'approval.task.view']);
         return response()->json(['data' => $service->checkOrder(PurchaseOrder::with('items')->findOrFail($id))]);
@@ -1266,9 +1267,7 @@ class PurchaseController extends Controller
             ]);
             $totalQty += $qty;
             $totalAmount += $amount;
-            $taxAmount += $order->tax_mode === 'tax_excluded'
-                ? $amount * $taxRate / 100
-                : ($taxRate > 0 ? $amount * $taxRate / (100 + $taxRate) : 0);
+            $taxAmount += $amountFacts['tax_amount_snapshot'];
         }
         $contractAmount = $totalAmount + ($order->tax_mode === 'tax_excluded' ? $taxAmount : 0) + (float) ($order->freight_amount ?? 0);
         $order->update([
@@ -1386,7 +1385,8 @@ class PurchaseController extends Controller
                 'qualified_qty' => $line['qualified_qty'] ?? $qty,
                 'unqualified_qty' => $line['unqualified_qty'] ?? 0,
                 'unit_price' => $price,
-                'tax_rate' => $line['tax_rate'] ?? 13,
+                'tax_rate' => $orderItem && $receipt->settlement_mode !== 'replacement_no_charge'
+                    ? $orderItem->tax_rate : ($line['tax_rate'] ?? 13),
                 'receipt_cost' => $qty * $price,
                 ...$conversion,
                 'batch_no' => $batchNo,
@@ -1626,7 +1626,7 @@ class PurchaseController extends Controller
 
     private function perPage(Request $request): int
     {
-        return min(100, max(5, (int) $request->input('per_page', 20)));
+        return min(100, max(5, (int) $request->input('per_page', 10)));
     }
 
     private function filterManagementScope(Builder $query, Request $request): void

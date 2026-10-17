@@ -19,7 +19,7 @@ class SupplierFinanceQueryService
         'period_refund_allocated_amount', 'period_refund_reversed_amount',
     ];
 
-    public function paginate(array $filters, int $perPage = 20): array
+    public function paginate(array $filters, int $perPage = 10): array
     {
         $query = $this->supplierQuery($filters);
         // Aggregate the complete filtered result before pagination. Never add

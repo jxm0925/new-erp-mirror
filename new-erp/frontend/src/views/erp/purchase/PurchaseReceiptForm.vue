@@ -144,7 +144,7 @@
       <aside class="document-summary">
         <h3>{{ isReplacement ? '换货结算与库存成本' : '单据金额汇总' }}</h3>
         <dl v-if="isReplacement"><dt>数量汇总</dt><dd>{{ quantitySummary }}</dd><dt>入库成本金额</dt><dd>¥{{ money(untaxedAmount) }}</dd><dt>本次新增应付</dt><dd class="no-payable">¥0.00</dd><dt>原采购合同金额</dt><dd>不变</dd></dl>
-        <dl v-else><dt>数量汇总</dt><dd>{{ quantitySummary }}</dd><dt>未税金额</dt><dd>¥{{ money(untaxedAmount) }}</dd><dt>税额（13%）</dt><dd>¥{{ money(taxAmount) }}</dd><dt>含税金额</dt><dd>¥{{ money(totalAmount) }}</dd></dl>
+        <dl v-else><dt>数量汇总</dt><dd>{{ quantitySummary }}</dd><dt>未税金额</dt><dd>¥{{ money(untaxedAmount) }}</dd><dt>税额</dt><dd>¥{{ money(taxAmount) }}</dd><dt>含税金额</dt><dd>¥{{ money(totalAmount) }}</dd></dl>
         <template v-if="isEdit">
           <hr>
           <h3>验收结算口径</h3>

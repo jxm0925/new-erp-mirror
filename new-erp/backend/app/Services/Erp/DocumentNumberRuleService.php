@@ -26,7 +26,7 @@ class DocumentNumberRuleService
             $query->where(fn ($q) => $q->where('name', 'like', "%{$keyword}%")->orWhere('prefix', 'like', "%{$keyword}%"));
         }
 
-        $paginator = $query->paginate(min(100, max(5, (int) ($filters['per_page'] ?? 20))));
+        $paginator = $query->paginate(min(100, max(5, (int) ($filters['per_page'] ?? 10))));
         $paginator->through(fn (DocumentNumberRule $rule) => $this->present($rule));
         return $paginator;
     }

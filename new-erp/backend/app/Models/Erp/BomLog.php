@@ -6,5 +6,5 @@ class BomLog extends MasterModel
 {
     protected $table = 'erp_bom_logs';
 
-    public function bom() { return $this->belongsTo(Bom::class, 'bom_id'); }
+    public function bom() { return $this->belongsTo(Bom::class, 'bom_id')->withTrashed(); }
 }

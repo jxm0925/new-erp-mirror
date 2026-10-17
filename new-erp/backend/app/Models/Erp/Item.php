@@ -19,6 +19,16 @@ class Item extends MasterModel
     }
     public function materialManagementMode(): string { return $this->material_management_mode ?: 'quantity'; }
     public function cuttingMode(): string { return $this->cutting_mode ?: ($this->is_length_cut_material ? 'length' : 'none'); }
+    public function isPurchaseFulfilledItem(): bool
+    {
+        // A purchased assembly may retain a BOM or production-use flag. Its explicit
+        // supply strategy wins; flags are a fallback only for unspecified legacy items.
+        if ($this->item_type === 'service' || ! $this->is_stock_item || $this->managementScope() !== 'factory') return false;
+        if ($this->manufacturing_strategy === 'purchase') return true;
+        if ($this->manufacturing_strategy === 'make') return false;
+        return in_array($this->manufacturing_strategy, [null, '', 'unspecified'], true)
+            && $this->is_purchase_item && ! $this->is_production_item;
+    }
     public function managementScope(): string
     {
         return $this->management_scope ?: ($this->item_type === 'office_consumable' ? 'office' : 'factory');

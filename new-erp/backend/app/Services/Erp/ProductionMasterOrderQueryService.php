@@ -36,7 +36,7 @@ final class ProductionMasterOrderQueryService
         $this->applyDisplayStatus($query, $filters['status'] ?? null, $scope);
 
         $page = $query->paginate(
-            min(50, max(1, (int) ($filters['per_page'] ?? 20))),
+            min(50, max(1, (int) ($filters['per_page'] ?? 10))),
             ['*'],
             'page',
             max(1, (int) ($filters['page'] ?? 1)),
@@ -97,7 +97,7 @@ final class ProductionMasterOrderQueryService
         $query = WorkOrder::query()->with('outputItem')->where('production_master_order_id', $id)->orderBy('id');
         $scope = $this->scopeResolver->resolve($user, 'production.work_order.view', $permissions, $superAdmin);
         $this->scopeResolver->applyWorkOrderScope($query, $scope);
-        $page = $query->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 20))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
+        $page = $query->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 10))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
         $summaries = $this->executionProjections->summaries($page->getCollection());
         $page->setCollection($page->getCollection()->map(function (WorkOrder $workOrder) use ($summaries): array {
             $execution = $summaries[(int) $workOrder->id] ?? null;
@@ -133,7 +133,7 @@ final class ProductionMasterOrderQueryService
             ->whereHas('workOrder', fn (Builder $q) => $q->where('production_master_order_id', $id))
             ->when(! empty($filters['work_order_id']), fn (Builder $query) => $query->where('work_order_id', (int) $filters['work_order_id']))
             ->orderBy('work_order_id')->orderBy('sequence_no')
-            ->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 20))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
+            ->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 10))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
         $outputUnitIds = DB::table('erp_production_output_records')
             ->whereIn('production_unit_id', $page->getCollection()->pluck('id'))
             ->pluck('production_unit_id')->mapWithKeys(fn ($unitId) => [(int) $unitId => true]);

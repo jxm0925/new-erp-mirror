@@ -5,6 +5,7 @@ namespace App\Services\Erp;
 use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Models\Erp\ProductionDemand;
 use App\Models\Erp\SalesOrderProductionRequirement;
+use App\Models\Erp\SalesOrder;
 use App\Models\Erp\Item;
 use App\Models\Erp\ProductionRouting;
 use App\Models\Erp\ProductionRoutingOperation;
@@ -55,7 +56,7 @@ class WorkOrderApplicationService
         );
         if (! empty($filters['status'])) $query->where('requirement_status', $filters['status']);
         if (! empty($filters['sales_order_id'])) $query->where('sales_order_id', (int) $filters['sales_order_id']);
-        return $query->paginate((int) ($filters['per_page'] ?? 20));
+        return $query->paginate((int) ($filters['per_page'] ?? 10));
     }
 
     public function showDemand(int $id, object $user, array $permissions, bool $superAdmin = false): ProductionDemand
@@ -77,7 +78,7 @@ class WorkOrderApplicationService
         );
         if (! empty($filters['status'])) $query->where('status', $filters['status']);
         if (! empty($filters['production_demand_id'])) $query->where('production_demand_id', (int) $filters['production_demand_id']);
-        return $query->paginate((int) ($filters['per_page'] ?? 20));
+        return $query->paginate((int) ($filters['per_page'] ?? 10));
     }
 
     public function showWorkOrder(int $id, object $user, array $permissions, bool $superAdmin = false): WorkOrder
@@ -182,6 +183,86 @@ class WorkOrderApplicationService
         return $workOrder->fresh(['demand.order', 'demand.line', 'statusLogs', 'releaseGateChecks']);
     }
 
+    /** Called only by a permission-checked sales change/cancel use case in its order transaction. */
+    public function cancelUnreleasedSalesTreeLocked(int $orderId, int $rootId, object $actor, string $reason): void
+    {
+        if (DB::transactionLevel() < 1) $this->fail('transaction_required', '订单关联工单撤销必须在正式订单事务内执行。', 409);
+        if ($this->userId($actor) < 1) $this->fail('actor_required', '撤销关联生产工单需要真实操作账号。', 403);
+        $order = SalesOrder::whereKey($orderId)->lockForUpdate()->first();
+        if (! $order) $this->fail('sales_order_not_found', '来源销售订单不存在。', 404);
+        $unlocked = WorkOrder::whereKey($rootId)->first();
+        if (! $unlocked) $this->fail('not_found', '来源生产工单不存在。', 404);
+        $demand = $unlocked->production_demand_id ? $this->lockDemand((int) $unlocked->production_demand_id) : null;
+        $root = $this->lockWorkOrder($rootId);
+        if ($root->source_type !== 'sales_order' || $root->assembly_component_demand_id || ! $demand
+            || (int) $demand->sales_order_id !== $orderId || ($root->source_id && (int) $root->source_id !== $orderId)) {
+            $this->fail('sales_work_order_scope_mismatch', '只能撤销该销售订单自身的关联根工单。', 403);
+        }
+        $tree = WorkOrder::where(fn ($q) => $q->whereKey($rootId)->orWhere('assembly_root_work_order_id', $rootId))
+            ->orderBy('id')->lockForUpdate()->get();
+        if ($root->status === self::CANCELLED) {
+            if ($tree->contains(fn ($node) => $node->status !== self::CANCELLED)) {
+                $this->fail('sales_work_order_tree_inconsistent', '已取消根工单仍有关联有效子工单，请先核对完整生产树，不能继续订单变更。', 409);
+            }
+            return;
+        }
+        if (! SalesOrderProductionChangeService::treeIsUnreleased($tree->map(fn ($node) => $node->getAttributes())->all())) {
+            $this->fail('sales_work_order_already_released', '关联工单已发布或执行，不能随订单变更自动撤销，请先处理正式生产逆向流程。', 409);
+        }
+        if ((float) $demand->consumed_qty > 0 || (float) $demand->closed_qty > 0) {
+            $this->fail('sales_production_has_facts', '来源生产需求已有执行或关闭事实，不能自动撤销。', 409);
+        }
+        $ids = $tree->pluck('id');
+        $tasks = \App\Models\Erp\ProductionTask::whereIn('work_order_id', $ids)->lockForUpdate()->get();
+        $hasFacts = $tasks->contains(fn ($task) => SalesOrderProductionChangeService::taskHasExecutionFacts($task->getAttributes()));
+        $operationIds = [];
+        foreach (['erp_production_unit_operations', 'erp_production_quantity_operations'] as $table) {
+            $operations = DB::table($table)->whereIn('work_order_id', $ids)->orderBy('id')->lockForUpdate()->get();
+            $hasFacts = $hasFacts || $operations->contains(fn ($operation) => SalesOrderProductionChangeService::operationHasExecutionFacts((array) $operation));
+            $operationIds[$table === 'erp_production_unit_operations' ? 'unit_operation' : 'quantity_operation'] = $operations->pluck('id');
+        }
+        $hasFacts = $hasFacts || DB::table('erp_production_output_records')->whereIn('work_order_id', $ids)->lockForUpdate()->get()->isNotEmpty()
+            || DB::table('erp_production_labor_sessions')->where(function ($q) use ($tasks, $operationIds): void {
+                $q->whereIn('task_id', $tasks->pluck('id'));
+                foreach ($operationIds as $type => $targetIds) {
+                    $q->orWhere(fn ($target) => $target->where('target_type', $type)->whereIn('target_id', $targetIds));
+                }
+            })->lockForUpdate()->get()->isNotEmpty()
+            || DB::table('erp_assembly_inventory_reservations')->whereIn('work_order_id', $ids)->where('consumed_base_qty', '>', 0)->lockForUpdate()->get()->isNotEmpty()
+            || DB::table('erp_work_order_material_requirements')->whereIn('work_order_id', $ids)
+                ->where(fn ($q) => $q->where('issued_qty', '>', 0)->orWhere('picked_qty', '>', 0)->orWhere('delivered_qty', '>', 0)->orWhere('received_qty', '>', 0)->orWhere('returned_qty', '>', 0))
+                ->lockForUpdate()->get()->isNotEmpty()
+            || DB::table('erp_material_picking_tasks')->whereIn('work_order_id', $ids)->where('status', '<>', 'CANCELLED')->lockForUpdate()->get()->isNotEmpty();
+        if ($hasFacts) $this->fail('sales_production_has_facts', '关联工单已存在接单、工时、工序或产出事实，不能自动撤销。', 409);
+        // Purchasing is an independent external commitment. Do not erase its
+        // ownership merely because the sales plan changes; reverse it explicitly first.
+        $materials = \App\Models\Erp\WorkOrderPreparationMaterial::whereIn('work_order_id', $ids)->lockForUpdate()->get();
+        foreach ($materials as $material) {
+            if (bccomp(app(WorkOrderPreparationMaterialService::class)->pendingForPreparation((int) $material->id), '0', 8) > 0) {
+                $this->fail('sales_work_order_procurement_pending', '关联工单仍有未撤销的申购或采购到货事实，请先处理原采购关联再变更订单。', 409);
+            }
+        }
+        app(AssemblyProductionApplicationService::class)->cancelLocked($root, $actor, $reason);
+        $liveChildren = WorkOrder::where('assembly_root_work_order_id', $rootId)->where('status', '<>', self::CANCELLED)->lockForUpdate()->get()->isNotEmpty();
+        $retainedReservations = DB::table('erp_assembly_inventory_reservations')->whereIn('work_order_id', $ids)
+            ->where('status', 'ACTIVE')->lockForUpdate()->get()->isNotEmpty();
+        if ($liveChildren || $retainedReservations) {
+            $this->fail('sales_work_order_tree_incomplete', '自产部件准备状态与关联工单树不一致，无法完整撤销，请先核对原准备计划。', 409);
+        }
+        // Pending and blocked preparation rows have no child plan to reverse,
+        // but must still be terminal so a delayed preparation cannot resurrect it.
+        \App\Models\Erp\AssemblyProductionPlan::where('root_work_order_id', $rootId)->where('status', '<>', 'CANCELLED')
+            ->update(['status' => 'CANCELLED', 'cancelled_at' => now()]);
+        foreach ($ids as $id) app(ProductionTaskAssignmentService::class)->cancelPendingForWorkOrder((int) $id, $actor);
+        $before = (string) $root->status;
+        $version = (int) $root->business_version;
+        $root->forceFill(['status' => self::CANCELLED, 'business_version' => $version + 1,
+            'cancelled_by_legacy_id' => $this->userId($actor), 'cancel_reason' => $reason, 'cancelled_at' => now(),
+            'updated_by_legacy_id' => $this->userId($actor)])->save();
+        $this->recordStatus($root, $before, self::CANCELLED, $reason, $version, $version + 1, $actor);
+        $this->refreshDemandProjection($demand);
+    }
+
     /** The assembly preparation transaction is the sole creator of these linked replenishment orders. */
     public function createAssemblyChildLocked(WorkOrder $root, WorkOrder $parent, \App\Models\Erp\AssemblyComponentDemand $demand, array $row, object $user): WorkOrder
     {
@@ -198,7 +279,7 @@ class WorkOrderApplicationService
         $snapshot = $this->productionMasterData->snapshot($routing);
         app(StockPrebuildEligibilityService::class)->assertSnapshot($snapshot, (int) $target->id);
         $child = WorkOrder::create([
-            'work_order_no' => $number, 'source_type' => 'stock_prebuild', 'source_id' => $demand->id,
+            'work_order_no' => $number, 'source_type' => 'stock_prebuild', 'source_id' => $demand->id, 'collaboration_enabled' => true,
             'source_no_snapshot' => $root->work_order_no, 'source_title_snapshot' => '自产部件需求',
             'stocking_purpose' => 'common_inventory', 'configured_output_mode_snapshot' => $target->output_mode,
             'effective_output_mode_snapshot' => 'warehouse_required', 'effective_output_item_id_snapshot' => $item->id,
@@ -283,8 +364,12 @@ class WorkOrderApplicationService
             $this->assertWorkOrderVisible($workOrder, $user, $permissions, $superAdmin);
             $this->assertExpectedVersion($workOrder, $payload);
             $this->assertState($workOrder, [self::DRAFT, self::WAIT_RELEASE]);
+            if (array_key_exists('responsible_user_legacy_id', $payload)) {
+                $this->assertResponsibleUser($payload['responsible_user_legacy_id'], $user, $permissions, $superAdmin);
+            }
             $before = $this->editableSnapshot($workOrder);
-            foreach (['planned_date'] as $field) {
+            // 发布前负责人只作用于本工单；省略保留原值，显式空值允许恢复自主接单。
+            foreach (['planned_date', 'responsible_user_legacy_id'] as $field) {
                 if (array_key_exists($field, $payload)) $workOrder->{$field} = $payload[$field];
             }
             $workOrder->production_batch = $workOrder->production_batch ?: $workOrder->work_order_no;
@@ -812,6 +897,7 @@ class WorkOrderApplicationService
             $workOrder = WorkOrder::create([
                 'work_order_no' => $number,
                 'source_type' => $sourceType,
+                'collaboration_enabled' => true,
                 'source_id' => null,
                 'source_no_snapshot' => $this->documentNumbers->next('stock_prebuild'),
                 'source_title_snapshot' => '系统备货',
@@ -997,6 +1083,7 @@ class WorkOrderApplicationService
         return array_merge([
             'work_order_no' => $number,
             'source_type' => 'sales_order',
+            'collaboration_enabled' => true,
             'source_id' => $demand->sales_order_id,
             'source_no_snapshot' => $demand->order?->sales_order_no,
             'source_title_snapshot' => $demand->requirement_no,

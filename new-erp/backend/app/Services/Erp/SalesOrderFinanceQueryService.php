@@ -144,7 +144,7 @@ class SalesOrderFinanceQueryService
         if (($filters['purchase_link_status'] ?? '') === 'unlinked') $orders->whereNotIn('id', SalesOrderPurchaseLink::where('status', 'active')->select('sales_order_id'));
         $linked = DB::table('erp_sales_order_purchase_links')->where('status', 'active')->whereIn('sales_order_id', (clone $orders)->select('id'))
             ->selectRaw('COUNT(*) AS link_count, COUNT(DISTINCT sales_order_id) AS linked_order_count, COUNT(DISTINCT purchase_order_id) AS purchase_order_count')->first();
-        $page = $orders->orderByDesc('id')->paginate($filters['per_page'] ?? 20);
+        $page = $orders->orderByDesc('id')->paginate($filters['per_page'] ?? 10);
         $page->getCollection()->transform(function ($order): array {
             $overview = $this->overview($order);
             return [...$overview, 'customer_name' => $order->customer_name, 'order_date' => $order->order_date?->toDateString(), 'order_status' => $order->order_status];

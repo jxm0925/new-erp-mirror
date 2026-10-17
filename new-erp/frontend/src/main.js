@@ -54,6 +54,7 @@ import ProductionDemandList from './views/erp/production/ProductionDemandList.vu
 import ProductionDemandDetail from './views/erp/production/ProductionDemandDetail.vue'
 import WorkOrderList from './views/erp/production/WorkOrderList.vue'
 import WorkOrderDetail from './views/erp/production/WorkOrderDetail.vue'
+import ProductionTaskWorkbench from './views/erp/production/ProductionTaskWorkbench.vue'
 import WorkOrderForm from './views/erp/production/WorkOrderForm.vue'
 import ProductionOperationList from './views/erp/production/ProductionOperationList.vue'
 import ProductionOperationForm from './views/erp/production/ProductionOperationForm.vue'
@@ -159,7 +160,7 @@ const router = new VueRouter({
     { path: '/purchase/returns/:id/detail', component: ReturnDetail, props: { kind: 'purchase' }, meta: { permission: 'purchase_return.view' } },
     { path: '/inventory', redirect: '/inventory/posting' },
     { path: '/inventory/posting', component: InventoryBoard, meta: { permission: 'inventory.posting' } },
-    { path: '/inventory/production-picking', component: ProductionPickingBoard, meta: { permission: 'production.material_picking.view' } },
+    { path: '/inventory/production-picking', component: ProductionPickingBoard, meta: { permission: ['production.material_picking.view', 'production.material_receipt.view'] } },
     { path: '/inventory/balances', component: InventoryBoard, meta: { permission: 'inventory.balance' } },
     { path: '/inventory/transactions', component: InventoryBoard, meta: { permission: 'inventory.transaction' } },
     { path: '/inventory/adjustments', component: InventoryBoard, meta: { permission: 'inventory.adjustment' } },
@@ -184,13 +185,14 @@ const router = new VueRouter({
     { path: '/production/work-orders', component: WorkOrderList, meta: { permission: 'production.work_order.view' } },
     { path: '/production/work-orders/create', component: WorkOrderForm, meta: { permission: 'production.work_order.create' } },
     { path: '/production/work-orders/:id', component: WorkOrderDetail, meta: { permission: 'production.work_order.view' } },
+    { path: '/production/tasks', component: ProductionTaskWorkbench, meta: { permission: 'production.task.view' } },
     { path: '/production/operations', component: ProductionOperationList, meta: { permission: 'production.operation.view' } },
     { path: '/production/operations/new', redirect: { path: '/production/operations', query: { create: '1' } }, meta: { permission: 'production.operation.create' } },
     { path: '/production/operations/:id/edit', redirect: to => ({ path: '/production/operations', query: { edit: to.params.id } }), meta: { permission: 'production.operation.edit' } },
     { path: '/production/operations/:id', component: ProductionOperationForm, meta: { permission: 'production.operation.view' } },
     { path: '/production/routings', component: ProductionRoutingList, meta: { permission: 'production.routing.view' } },
     { path: '/production/performance', component: ProductionPerformanceBoard, meta: { permission: 'production.performance.view' } },
-    { path: '/sales/shipments', component: SalesShipmentBoard, meta: { permission: 'sales_order.shipment.view' } },
+    { path: '/sales/shipments', component: SalesShipmentBoard, meta: { permission: ['sales_order.shipment.view', 'sales_order.shipment.packing.execute', 'sales_order.shipment.packing.quality'] } },
     { path: '/production/routings/new', component: ProductionRoutingForm, meta: { permission: 'production.routing.create' } },
     { path: '/production/routings/:id/edit', component: ProductionRoutingForm, meta: { permission: 'production.routing.edit' } },
     { path: '/production/routings/:id', component: ProductionRoutingForm, meta: { permission: 'production.routing.view' } },

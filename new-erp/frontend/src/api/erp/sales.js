@@ -7,6 +7,7 @@ export const saveSalesOrder = data => data.id
   : api.post('/v1/erp/sales/orders', data)
 export const confirmSalesOrder = id => api.post(`/v1/erp/sales/orders/${id}/confirm`)
 export const formalConfirmSalesOrder = id => api.post(`/v1/erp/sales/orders/${id}/formal-confirm`)
+export const cancelSalesOrder = (id, data) => api.post(`/v1/erp/sales/orders/${id}/cancel`, data)
 export const listSalesCustomers = params => api.get('/v1/erp/sales/customers', { params })
 export const getSalesCustomer = id => api.get(`/v1/erp/sales/customers/${id}`)
 export const createSalesCustomer = data => api.post('/v1/erp/sales/customers', data)
@@ -28,7 +29,7 @@ export const decideSalesOrderChangeCandidate = (id, candidateId, data) => api.po
 // 销售订单详情后续接入退货记录时使用；服务端按订单数据权限分页返回。
 export const listSalesOrderReturns = (id, params) => api.get(`/v1/erp/sales/orders/${id}/returns`, { params })
 export const getSalesOrderContract = () => api.get('/v1/erp/sales/orders/interface-contract')
-export const getSalesOrderOptions = () => api.get('/v1/erp/sales/orders/options')
+export const getSalesOrderOptions = params => api.get('/v1/erp/sales/orders/options', { params })
 export const getProductionPreview = id => api.get(`/v1/erp/sales/orders/${id}/production-confirmation-preview`)
 export const confirmProduction = (id, data) => api.post(`/v1/erp/sales/orders/${id}/production-confirmation`, data)
 export const lockSalesOrderInventory = (id, data) => api.post(`/v1/erp/sales/orders/${id}/lock-inventory`, data)

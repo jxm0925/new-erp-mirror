@@ -177,19 +177,15 @@ export default {
     async load() {
       const requestToken = ++this.requestToken
       const params = { ...this.query, order_available: 1 }
-      if (this.mode === 'global_sku') {
-        const { data } = await searchSalesOrderSkus(params)
+      if (this.mode !== 'product') {
+        const { data } = await searchSalesOrderSkus({ ...params, product_id: this.mode === 'sku' ? this.productId : undefined })
         if (requestToken !== this.requestToken) return
         this.rows = data.data || []
         this.page = { total: data.total || 0 }
         return
       }
-      if (this.mode === 'sku') {
-        params.product_id = this.productId
-        params.order_available = 1
-      }
       if (!params.category_id) delete params.category_id
-      const { data } = await listEntity(this.mode === 'product' ? 'products' : 'skus', params)
+      const { data } = await listEntity('products', params)
       if (requestToken !== this.requestToken) return
       this.rows = data.data || []
       this.page = { total: data.total || 0 }

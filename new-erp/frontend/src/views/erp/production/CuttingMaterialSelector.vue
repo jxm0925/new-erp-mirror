@@ -74,7 +74,7 @@ export default {
     loading: false,
     keyword: '',
     page: 1,
-    perPage: 20,
+    perPage: 10,
     total: 0,
     rows: [],
     selected: [],

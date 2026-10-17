@@ -140,6 +140,24 @@ final class WorkOrderPreparationMaterialService
             $earlierRequired = bcadd($earlierRequired, $need, 8);
         }
         $availableForRow = $this->positive(bcsub($available, $earlierRequired, 8));
+        $requirement = new WorkOrderMaterialRequirement($snapshot);
+        if (app(ProductionCuttingAllocationService::class)->unitKind($requirement)) {
+            // Whole pieces with different geometries can overlap. Claim candidate identities
+            // once in line order, rather than subtracting unrelated theoretical fractions.
+            $claimed = ['physical_ids' => [], 'balance_qty' => []];
+            foreach ($earlier as $prior) {
+                if (! $this->sameStockPool($snapshot, $prior->material_snapshot)) continue;
+                $priorRequirement = new WorkOrderMaterialRequirement($prior->material_snapshot);
+                $priorProcurement = $this->procurementTotals($this->activeProcurement()->where('source.preparation_material_requirement_id', $prior->id));
+                $need = $this->positive(bcsub(bcsub((string) $prior->required_base_qty, $this->securedForPreparation($prior), 8), $priorProcurement['pending'], 8));
+                if (! app(ProductionCuttingAllocationService::class)->unitKind($priorRequirement)) { $availableForRow = '0.00000000'; break; }
+                $this->cuttingAvailableCoverage($priorRequirement, $claimed, $need);
+            }
+            if (! isset($priorRequirement) || app(ProductionCuttingAllocationService::class)->unitKind($priorRequirement)) {
+                $need = $this->positive(bcsub(bcsub((string) $row->required_base_qty, $secured, 8), $pending, 8));
+                $availableForRow = $this->cuttingAvailableCoverage($requirement, $claimed, $need);
+            }
+        }
         $quantities = $this->netQuantities((string) $row->required_base_qty, $secured, $availableForRow, $commitments['committed'], $commitments['received']);
         $shortage = $quantities['shortage_qty'];
         return ['id' => (int) $row->id, 'preparation_material_requirement_id' => (int) $row->id,
@@ -198,6 +216,13 @@ final class WorkOrderPreparationMaterialService
     {
         $totals = $this->procurementTotals($this->formalProcurement((int) $source->material_requirement_id));
         $requirement = WorkOrderMaterialRequirement::findOrFail($source->material_requirement_id);
+        if (app(ProductionCuttingAllocationService::class)->unitKind($requirement)) {
+            $remaining = app(ProductionCuttingAllocationService::class)->remaining($requirement)['formal_coverage_qty'];
+            $secured = $this->positive(bcsub((string) $requirement->required_qty, $remaining, 8));
+            $quantities = $this->netQuantities((string) $requirement->required_qty, $secured, $this->availableStock($requirement), $totals['committed'], $totals['received']);
+            return ['pending_procurement_qty' => $totals['pending'], 'committed_procurement_qty' => $totals['committed'],
+                'received_procurement_qty' => $totals['received'], 'procureable_qty' => $quantities['procureable_qty']];
+        }
         $targets = DB::table('erp_production_target_material_requirements')->where('material_requirement_id', $source->material_requirement_id)
             ->selectRaw('SUM(required_base_qty) as required, SUM(GREATEST(satisfied_base_qty-returned_base_qty,0)) as satisfied')->first();
         $allocations = DB::table('erp_material_picking_task_lines as line')->join('erp_material_picking_tasks as task', 'task.id', '=', 'line.task_id')
@@ -280,18 +305,26 @@ final class WorkOrderPreparationMaterialService
         if (! $root || in_array($root->status, ['CANCELLED', 'CLOSED'], true)) $this->fail('demand_inactive', '来源根工单已失效，不能继续物料准备。');
         $source = $root->demand;
         if ($root->source_type === 'sales_order' && (! $source || ! $source->is_active || in_array($source->requirement_status, ['cancelled', 'closed', 'superseded'], true))) $this->fail('demand_inactive', '来源生产需求已失效，不能继续物料准备。');
-        $configuration = app(WorkOrderTechnicalService::class)->effectiveConfiguration($wo);
+        $technical = app(WorkOrderTechnicalService::class);
+        $pinnedBomId = (int) ($wo->bom_id ?: $demand?->bom_id) ?: null;
+        $bom = $pinnedBomId ? Bom::with(['items.componentItem.unit', 'items.unit', 'outputItem.unit'])->find($pinnedBomId) : null;
+        if ($bom && ! $technical->confirmationCurrent($wo, $bom)) {
+            $this->fail('technical_confirmation_required', 'BOM 已修改或存在定制资料，请重新选择当前 BOM 并确认生产资料。');
+        }
+        $configuration = $technical->effectiveConfiguration($wo);
         $match = app(BomMatcher::class)->match((int) ($demand?->product_id ?: $demand?->line?->product_id) ?: null,
             (int) ($demand?->sku_id ?: $demand?->line?->sku_id) ?: null, (int) $wo->output_item_id ?: null,
-            $configuration, (int) ($wo->bom_id ?: $demand?->bom_id) ?: null);
+            $configuration, $pinnedBomId);
         if (($match['status'] ?? null) !== 'matched') $this->fail('bom_not_matched', (string) ($match['block_reason'] ?? '未匹配到唯一有效 BOM。'));
-        $bom = Bom::with(['items.componentItem.unit', 'items.unit', 'outputItem.unit'])->find($match['bom_id']);
+        if (! $bom || (int) $bom->id !== (int) $match['bom_id']) {
+            $bom = Bom::with(['items.componentItem.unit', 'items.unit', 'outputItem.unit'])->find($match['bom_id']);
+        }
         if (! $bom || $bom->audit_status !== 'approved' || ! in_array($bom->status, ['active', 'enabled', 'published'], true)
             || ($bom->effective_date && $bom->effective_date->toDateString() > now()->toDateString())
             || ($bom->expire_date && $bom->expire_date->toDateString() < now()->toDateString())) $this->fail('bom_not_effective', '物料准备必须使用当前有效的已审核 BOM。');
-        if (app(WorkOrderTechnicalService::class)->requiresConfirmation($wo, $bom) && ($wo->technical_version < 1
-            || (int) data_get($wo->technical_snapshot, 'bom_id') !== (int) $wo->bom_id
-            || (int) data_get($wo->technical_snapshot, 'production_routing_id') !== (int) $wo->production_routing_id)) $this->fail('technical_confirmation_required', '定制用料必须先完成工单技术确认。');
+        if (! $technical->confirmationCurrent($wo, $bom)) {
+            $this->fail('technical_confirmation_required', 'BOM 已修改或存在定制资料，请重新选择当前 BOM 并确认生产资料。');
+        }
         $rows = app(ReleaseGateApplicationService::class)->buildMaterialRows($wo, $bom, $configuration);
         $rows = app(ProductionInventoryContinuationService::class)->materialRows($wo, $rows);
         if ($rows === []) $this->fail('bom_incomplete', '物料准备不能使用空 BOM。');
@@ -332,11 +365,61 @@ final class WorkOrderPreparationMaterialService
 
     private function availableStock(WorkOrderMaterialRequirement $requirement): string
     {
+        if (app(ProductionCuttingAllocationService::class)->unitKind($requirement)) {
+            $claimed = ['physical_ids' => [], 'balance_qty' => []];
+            return $this->cuttingAvailableCoverage($requirement, $claimed, (string) $requirement->required_qty);
+        }
         $stock = app(ProductionPickingStockService::class);
         $total = '0.00000000';
         foreach (InventoryBalance::with(['item', 'warehouse', 'location'])->where('item_id', $requirement->component_item_id)
             ->where('unit_id', $requirement->base_unit_id)->orderBy('id')->get() as $balance) {
-            if ($stock->eligible($balance, $requirement)) $total = bcadd($total, $stock->availableDecimal($balance), 8);
+            if ($stock->eligible($balance, $requirement)) $total = bcadd($total, $stock->availableDecimal($balance, null, [], $requirement), 8);
+        }
+        return $total;
+    }
+
+    private function cuttingAvailableCoverage(WorkOrderMaterialRequirement $requirement, array &$claimed, string $limit): string
+    {
+        $pieces = FrozenCuttingStockPolicy::positiveDecimal($requirement->required_piece_qty);
+        $totalLength = FrozenCuttingStockPolicy::isTotalLength($requirement->cutting_requirement_snapshot ?? []);
+        $netLength = $totalLength ? app(ProductionCuttingAllocationService::class)->netLength($requirement) : null;
+        $required = FrozenCuttingStockPolicy::positiveDecimal($requirement->required_qty);
+        if ((! $totalLength && ! $pieces) || ! $required || bccomp($limit, '0', 8) <= 0) return '0.00000000';
+        $stock = app(ProductionPickingStockService::class); $total = '0.00000000';
+        $reservedPhysicalIds = app(ProductionCuttingAllocationService::class)->reservedPhysicalIds();
+        foreach (InventoryBalance::with(['item', 'warehouse', 'location'])->where('item_id', $requirement->component_item_id)
+            ->where('unit_id', $requirement->base_unit_id)->orderBy('id')->get() as $balance) {
+            if (! $stock->eligible($balance, $requirement)) continue;
+            $available = $this->positive(bcsub($stock->availableDecimal($balance, null, [], $requirement, true), (string) ($claimed['balance_qty'][$balance->id] ?? 0), 8));
+            if (bccomp($available, '0', 8) <= 0) continue;
+            $geometry = $stock->geometry($requirement, $balance->item?->cuttingMode() ?? 'none');
+            $physical = $balance->item?->materialManagementMode() === 'physical';
+            $stockKind = app(ProductionCuttingAllocationService::class)->stockUnitKind($requirement);
+            if ($physical) {
+                $sources = $stock->physicalQuery($balance, $requirement)->whereNotIn('physical.id', [...$reservedPhysicalIds, ...$claimed['physical_ids']])
+                    ->orderBy('physical.id')->select('physical.id', 'physical.shape', 'physical.dimensions')->cursor();
+            } else {
+                $lot = $balance->material_lot_id ? DB::table('erp_material_lots')->where('id', $balance->material_lot_id)->first() : null;
+                $dimensions = $stock->lengthSource($balance, $requirement, $lot);
+                $perSource = CuttingStockQuantityPolicy::sourceQuantity($stockKind, $dimensions);
+                $count = (int) bcdiv($available, $perSource, 0);
+                $sources = (function () use ($count, $dimensions) { for ($i = 0; $i < $count; $i++) yield (object) ['dimensions' => $dimensions]; })();
+            }
+            foreach ($sources as $source) {
+                $dimensions = is_array($source->dimensions) ? $source->dimensions : json_decode($source->dimensions ?: '{}', true, 512, JSON_THROW_ON_ERROR);
+                if ($physical) $dimensions = ['shape' => $source->shape] + $dimensions;
+                $capacity = $totalLength ? FrozenCuttingStockPolicy::positiveDecimal($dimensions['length_mm'] ?? null) : CuttingStockAllocationPolicy::capacity($geometry, $dimensions);
+                if (! $capacity || bccomp((string) $capacity, '0', 8) <= 0) continue;
+                $sourceQuantity = CuttingStockQuantityPolicy::sourceQuantity($stockKind, $dimensions);
+                if (bccomp($sourceQuantity, $available, 8) > 0) continue;
+                $coverage = bcdiv(bcmul($required, (string) $capacity, 16), $totalLength ? $netLength : $pieces, 8);
+                if (bccomp($coverage, '0', 8) <= 0) continue;
+                if ($physical) $claimed['physical_ids'][] = (int) $source->id;
+                $claimed['balance_qty'][$balance->id] = bcadd((string) ($claimed['balance_qty'][$balance->id] ?? 0), $sourceQuantity, 8);
+                $available = bcsub($available, $sourceQuantity, 8);
+                $total = bcadd($total, $coverage, 8);
+                if (bccomp($total, $limit, 8) >= 0) return bcadd($limit, '0', 8);
+            }
         }
         return $total;
     }
@@ -366,9 +449,13 @@ final class WorkOrderPreparationMaterialService
 
     private function routingDefinition(array $snapshot): array
     {
-        // freezeLocked appends this execution result after Gate. Route operations,
-        // supply rules and output definitions remain part of the preparation input.
+        // Publication derives the execution plan and cutting-component facts after Gate.
+        // They are not preparation inputs; retain every route, supply and output definition.
         unset($snapshot['output_plan']);
+        foreach ($snapshot['operations'] ?? [] as $index => $node) {
+            unset($node['output_kind'], $node['component_requirements']);
+            $snapshot['operations'][$index] = $node;
+        }
         return $snapshot;
     }
 

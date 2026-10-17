@@ -5,6 +5,16 @@
       <el-button v-if="canConfigure" size="small" type="success" plain :disabled="busy || !!pending" @click="openPicker">选择库存</el-button>
     </div>
     <div class="quantity-summary"><span>工单数量 <b>{{ quantity(targetQuantity) }}</b></span><span>库存续接 <b>{{ quantity(selectedQuantity) }}</b></span><span>新生产 <b>{{ quantity(Math.max(0, targetQuantity - selectedQuantity)) }}</b></span><span>{{ workOrder.quantity && (workOrder.quantity.base_unit_name || workOrder.quantity.unit_name) }}</span></div>
+    <template v-if="!canConfigure">
+      <el-alert v-if="executionError" :title="executionError" type="error" :closable="false"><el-button type="text" @click="loadExecutions(executionPage)">重新加载</el-button></el-alert>
+      <el-table v-if="executions.length" :data="executions" size="small" border v-loading="executionLoading">
+        <el-table-column label="库存来源" min-width="170"><template slot-scope="{ row }">{{ row.source_work_order_no }}<small class="cell-detail">{{ row.batch_no }}<span v-if="row.serial_no"> · {{ row.serial_no }}</span></small></template></el-table-column>
+        <el-table-column label="数量" width="105"><template slot-scope="{ row }">{{ quantity(row.base_qty) }}</template></el-table-column>
+        <el-table-column label="续接工序" min-width="150"><template slot-scope="{ row }">{{ row.start_sequence }} · {{ row.start_operation_name }}</template></el-table-column>
+        <el-table-column label="领用状态" min-width="200"><template slot-scope="{ row }">{{ executionStatus(row) }}</template></el-table-column>
+      </el-table>
+      <el-pagination v-if="executionTotal" background small layout="prev, pager, next, total" :current-page="executionPage" :page-size="10" :total="executionTotal" @current-change="loadExecutions" />
+    </template>
     <el-alert v-if="pending" class="pending-alert" type="warning" :closable="false" title="上次保存结果尚未确认，请重试原请求。" show-icon />
     <el-table v-if="selected.length" :data="selected" size="small" border empty-text="未选择库存续接">
       <el-table-column label="来源工单" min-width="150"><template slot-scope="{ row }">{{ row.source_work_order_no || '—' }}</template></el-table-column>
@@ -13,7 +23,7 @@
       <el-table-column label="从下一道工序开始" min-width="165"><template slot-scope="{ row }">{{ row.start_sequence }} · {{ row.start_operation_name || '—' }}</template></el-table-column>
       <el-table-column v-if="canConfigure" label="操作" width="85"><template slot-scope="{ row }"><el-button type="text" :disabled="busy || !!pending" @click="removeSelection(row)">移除</el-button></template></el-table-column>
     </el-table>
-    <p v-else class="empty-note">本工单从首道工序开始生产。</p>
+    <p v-else-if="canConfigure || (!executionLoading && !executionTotal && !executionError)" class="empty-note">本工单从首道工序开始生产。</p>
     <div v-if="canConfigure" class="panel-actions"><span v-if="dirty">库存选择尚未保存</span><el-button type="success" size="small" :loading="busy" :disabled="!dirty && !pending" @click="save">{{ pending ? '重试原保存请求' : '保存库存续接' }}</el-button></div>
 
     <div v-if="pickerOpen" class="picker-overlay" @click.self="closePicker">
@@ -30,7 +40,7 @@
               <el-table-column label="续接数量" width="138"><template slot-scope="{ row }"><el-input-number v-if="noneSelection(row)" v-model="noneSelection(row).base_qty" size="mini" :min="0" :max="Number(row.available_base_qty)" :precision="8" :controls="false" /><span v-else>{{ row.serial_tracking_mode === 'none' ? '—' : identityCount(row) }}</span></template></el-table-column>
               <el-table-column label="从下一道工序开始" min-width="170"><template slot-scope="{ row }">{{ row.start_sequence }} · {{ row.start_operation_name }}</template></el-table-column>
             </el-table>
-            <el-pagination small layout="prev, pager, next, total" :current-page="page" :page-size="20" :total="total" :pager-count="5" @current-change="loadCandidates" />
+            <el-pagination small layout="prev, pager, next, total" :current-page="page" :page-size="10" :total="total" :pager-count="5" @current-change="loadCandidates" />
           </template>
           <template v-else>
             <el-button type="text" @click="backToSources"><i class="el-icon-back" /> 返回库存来源</el-button>
@@ -41,7 +51,7 @@
               <el-table-column prop="serial_no" label="设备编号 / 序列号" min-width="230" />
               <el-table-column label="数量" width="85"><template>1</template></el-table-column>
             </el-table>
-            <el-pagination small layout="prev, pager, next, total" :current-page="serialPage" :page-size="20" :total="serialTotal" :pager-count="5" @current-change="loadIdentities" />
+            <el-pagination small layout="prev, pager, next, total" :current-page="serialPage" :page-size="10" :total="serialTotal" :pager-count="5" @current-change="loadIdentities" />
           </template>
           <p class="selection-note">已选 {{ draftRows.length }} 项，续接数量 {{ quantity(draftQuantity) }}；新生产数量 {{ quantity(Math.max(0, targetQuantity - draftQuantity)) }}。</p>
           <el-alert v-if="draftQuantity > targetQuantity" type="error" :closable="false" title="续接数量超过工单数量，请调整。" />
@@ -53,7 +63,8 @@
 </template>
 
 <script>
-import { configureInventoryContinuation, listInventoryContinuationCandidates, listInventoryContinuationSerials, pendingInventoryContinuation } from '../../../api/erp/production-continuations'
+import { configureInventoryContinuation, listInventoryContinuationCandidates, listInventoryContinuationSerials, listInventoryContinuationExecutions, pendingInventoryContinuation } from '../../../api/erp/production-continuations'
+import { continuationFocus, matchesContinuationSource, continuationExecutionStatus } from '../../../utils/production-continuation.mjs'
 
 const sourceKey = row => `${row.inventory_balance_id}:${row.source_output_record_id}`
 const keyOf = row => `${sourceKey(row)}:${row.inventory_serial_id || 'quantity'}`
@@ -62,7 +73,8 @@ export default {
   name: 'ProductionInventoryContinuationPanel',
   props: { workOrder: { type: Object, required: true } },
   data: () => ({ selected: [], baseline: '[]', pending: null, busy: false, pickerOpen: false, draft: {}, candidates: [], loading: false, keyword: '', page: 1, total: 0,
-    identitySource: null, serialKeyword: '', serials: [], serialPage: 1, serialTotal: 0, serialLoading: false }),
+    identitySource: null, serialKeyword: '', serials: [], serialPage: 1, serialTotal: 0, serialLoading: false,
+    executions: [], executionLoading: false, executionError: '', executionTotal: 0, executionPage: 1, sourceFocus: null, openedFocus: '' }),
   computed: {
     canConfigure () { return ['DRAFT', 'WAIT_RELEASE'].includes(this.workOrder.status) && this.$can('production.work_order.edit') },
     targetQuantity () { return Number(this.workOrder.target_base_qty || this.workOrder.quantity?.target_base_qty || this.workOrder.quantity?.target_qty || 0) },
@@ -72,14 +84,33 @@ export default {
     dirty () { return summary(this.selected) !== this.baseline }
   },
   watch: { workOrder: { immediate: true, handler () { this.syncFromWorkOrder() } } },
-  beforeDestroy () { this.loadSequence = (this.loadSequence || 0) + 1; this.serialSequence = (this.serialSequence || 0) + 1 },
+  beforeDestroy () { this.loadSequence = (this.loadSequence || 0) + 1; this.serialSequence = (this.serialSequence || 0) + 1; this.executionSequence = (this.executionSequence || 0) + 1 },
   methods: {
     quantity (value) { return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 8 }) },
+    executionStatus: continuationExecutionStatus,
     syncFromWorkOrder () {
       this.closePicker()
       this.selected = (this.workOrder.inventory_continuation_plan || []).map(row => ({ ...row }))
       this.baseline = summary(this.selected)
       this.pending = this.workOrder.id ? pendingInventoryContinuation(this.workOrder.id) : null
+      this.executions = []; this.executionTotal = 0; this.executionError = ''
+      this.executionSequence = (this.executionSequence || 0) + 1
+      if (!this.canConfigure && this.workOrder.id) this.loadExecutions(1)
+      const focus = continuationFocus(this.$route.query || {})
+      const focusKey = `${this.workOrder.id}:${JSON.stringify(focus)}`
+      if (focus && this.canConfigure && this.openedFocus !== focusKey) {
+        this.openedFocus = focusKey; this.$nextTick(() => { this.sourceFocus = focus; this.openPicker() })
+      }
+    },
+    async loadExecutions (page) {
+      const sequence = this.executionSequence = (this.executionSequence || 0) + 1; const id = this.workOrder.id
+      this.executionPage = page; this.executionLoading = true; this.executionError = ''
+      try {
+        const { data } = await listInventoryContinuationExecutions(id, { page, per_page: 10 })
+        if (sequence !== this.executionSequence || id !== this.workOrder.id) return
+        this.executions = data.data || []; this.executionTotal = Number(data.meta?.total || 0)
+      } catch (error) { if (sequence === this.executionSequence) this.executionError = error.userMessage || '库存续接领用状态加载失败' }
+      finally { if (sequence === this.executionSequence) this.executionLoading = false }
     },
     removeSelection (row) { this.selected = this.selected.filter(candidate => keyOf(candidate) !== keyOf(row)) },
     openPicker () {
@@ -95,10 +126,28 @@ export default {
       const sequence = this.loadSequence = (this.loadSequence || 0) + 1; const id = this.workOrder.id
       this.page = page; this.loading = true
       try {
-        const { data } = await listInventoryContinuationCandidates(id, { page, per_page: 20, keyword: this.keyword.trim() })
+        const focus = this.sourceFocus
+        const { data } = await listInventoryContinuationCandidates(id, { page, per_page: 10, keyword: this.keyword.trim(),
+          ...(focus ? { inventory_balance_id: focus.inventory_balance_id, source_output_record_id: focus.source_output_record_id } : {}) })
         if (sequence !== this.loadSequence || !this.pickerOpen || id !== this.workOrder.id) return
         this.candidates = data.data || []; this.total = Number(data.meta?.total || 0)
         for (const row of this.candidates) for (const selected of this.draftRows.filter(candidate => sourceKey(candidate) === sourceKey(row))) Object.assign(selected, row, { inventory_serial_id: selected.inventory_serial_id, base_qty: selected.base_qty })
+        if (focus && this.sourceFocus === focus) {
+          this.sourceFocus = null
+          const row = this.candidates.find(candidate => matchesContinuationSource(candidate, focus))
+          if (!row) { this.$message.warning('该库存来源当前不能续接，请重新核对库存及工艺'); return }
+          if (focus.inventory_serial_id) {
+            const response = await listInventoryContinuationSerials(id, { inventory_balance_id: focus.inventory_balance_id,
+              source_output_record_id: focus.source_output_record_id, inventory_serial_id: focus.inventory_serial_id, page: 1, per_page: 10 })
+            if (sequence !== this.loadSequence || !this.pickerOpen || id !== this.workOrder.id) return
+            const serial = (response.data.data || []).find(candidate => Number(candidate.id) === focus.inventory_serial_id)
+            if (!serial) { this.$message.warning('该库存序列号当前不可用，请重新选择'); return }
+            this.$set(this.draft, this.serialKey(row, serial.id), { ...row, inventory_serial_id: serial.id, serial_no: serial.serial_no, base_qty: 1 })
+          } else if (row.serial_tracking_mode === 'none') {
+            this.$set(this.draft, `${sourceKey(row)}:quantity`, { ...row, inventory_serial_id: null,
+              base_qty: Math.min(focus.base_qty, Number(row.available_base_qty), this.targetQuantity) })
+          } else this.openIdentities(row)
+        }
       } catch (error) { if (sequence === this.loadSequence) this.$message.error(error.userMessage || '库存来源加载失败') }
       finally { if (sequence === this.loadSequence) this.loading = false }
     },
@@ -113,7 +162,7 @@ export default {
       if (!source) return
       this.serialPage = page; this.serialLoading = true
       try {
-        const { data } = await listInventoryContinuationSerials(id, { inventory_balance_id: source.inventory_balance_id, source_output_record_id: source.source_output_record_id, keyword: this.serialKeyword.trim(), page, per_page: 20 })
+        const { data } = await listInventoryContinuationSerials(id, { inventory_balance_id: source.inventory_balance_id, source_output_record_id: source.source_output_record_id, keyword: this.serialKeyword.trim(), page, per_page: 10 })
         if (sequence !== this.serialSequence || !this.identitySource || sourceKey(source) !== sourceKey(this.identitySource) || !this.pickerOpen || id !== this.workOrder.id) return
         this.serials = data.data || []; this.serialTotal = Number(data.meta?.total || 0)
       } catch (error) { if (sequence === this.serialSequence) this.$message.error(error.userMessage || '序列号加载失败') }

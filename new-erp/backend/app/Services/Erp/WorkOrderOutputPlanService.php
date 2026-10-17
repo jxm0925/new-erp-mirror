@@ -94,7 +94,7 @@ final class WorkOrderOutputPlanService
     }
 
     /** Caller owns the WO lock at release. The same resolver supplies preview and authority checks. */
-    public function prepare(WorkOrder $workOrder, bool $lock = false): array
+    public function prepare(WorkOrder $workOrder, bool $lock = false, ?array $resolvedBomSnapshot = null): array
     {
         if ($this->historical($workOrder)) return $this->projection($workOrder);
         if ($lock && $this->plannedOutputs->tableAvailable()) {
@@ -124,6 +124,16 @@ final class WorkOrderOutputPlanService
         $terminalId = (int) ($nodes->last()['routing_operation_id'] ?? 0);
         foreach ($nodes as $node) {
             $operation = $this->nodeProjection($node);
+            if (CuttingComponentPlanPolicy::isCutting($node)) {
+                $componentPlan = CuttingComponentPlanPolicy::resolve($node, (array) (($resolvedBomSnapshot ?? $workOrder->bom_snapshot)['items'] ?? []), (string) $workOrder->target_base_qty, $terminalId);
+                $operation['output_kind'] = 'cutting_components';
+                $operation['rule_source'] = 'bom_cutting_requirements';
+                $operation['legacy_output']['item_id'] = null;
+                $operation['component_requirements'] = $componentPlan['component_requirements'];
+                foreach ($componentPlan['issues'] as $issue) $this->issue($issues, $issue['code'], $issue['message'], $node);
+                $operations[] = $operation;
+                continue;
+            }
             $rules = $node['output_rules'] ?? [];
             if (! is_array($rules) || ! array_is_list($rules) || count($rules) > 100) {
                 $this->issue($issues, 'operation_output_rules_invalid', '冻结工序的产出规则明细格式无效。', $node);
@@ -224,6 +234,15 @@ final class WorkOrderOutputPlanService
         $plan['frozen_at'] = now()->toISOString();
         $plan['frozen_by_legacy_id'] = (int) ($user->legacy_id ?? $user->id ?? 0);
         $snapshot['output_plan'] = $plan;
+        $componentOperations = collect($plan['operations'])->where('output_kind', 'cutting_components')->keyBy('routing_operation_id');
+        foreach ($snapshot['operations'] as &$node) {
+            if ($component = $componentOperations->get((int) $node['routing_operation_id'])) {
+                $node['output_kind'] = 'cutting_components';
+                $node['output_item_id'] = null; $node['output_item_code'] = null; $node['output_item_name'] = null;
+                $node['component_requirements'] = $component['component_requirements'];
+            }
+        }
+        unset($node);
         $workOrder->routing_snapshot = $snapshot;
     }
 

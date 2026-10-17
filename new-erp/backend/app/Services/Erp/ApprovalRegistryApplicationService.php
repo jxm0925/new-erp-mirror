@@ -41,7 +41,7 @@ class ApprovalRegistryApplicationService
             ->where('TABLE_NAME', 'not like', 'erp\_legacy\_%')
             ->orderBy('TABLE_NAME');
 
-        $page = $query->paginate(min(max((int) ($filters['per_page'] ?? 20), 1), 50), [
+        $page = $query->paginate(min(max((int) ($filters['per_page'] ?? 10), 1), 50), [
             'TABLE_NAME', 'TABLE_COMMENT', 'ENGINE', 'TABLE_ROWS',
         ]);
         $page->getCollection()->transform(function ($row) {

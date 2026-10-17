@@ -39,7 +39,7 @@ Page({
         const response = await service.detail(this.data.id);
         if (sequence === this.loadSequence) { this.setData({ detail: withNames(response.data || {}) }); this.startTimer(); }
       } else {
-        const response = await service.list({ view: this.data.view === 'pool' ? 'all' : 'mine', status: this.data.view === 'pool' ? 'WAIT_CLAIM' : undefined, keyword: this.data.keyword.trim(), page: this.data.page, per_page: 20 });
+        const response = await service.list({ view: this.data.view === 'pool' ? 'all' : 'mine', status: this.data.view === 'pool' ? 'WAIT_CLAIM' : undefined, keyword: this.data.keyword.trim(), page: this.data.page, per_page: 10 });
         if (sequence === this.loadSequence) this.setData({ rows: (append === true ? this.data.rows : []).concat((response.data || []).map(withNames)), total: Number(response.total || 0) });
       }
     } catch (error) { if (sequence === this.loadSequence) this.setData({ error: error.message || '共同加工作业加载失败', page: append === true ? Math.max(1,this.data.page - 1) : this.data.page }); }

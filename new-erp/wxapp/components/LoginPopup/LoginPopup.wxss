@@ -1,12 +1,27 @@
 /* 授权弹窗 */
+.login-header{
+    display: flex;
+    align-items: center;
+    padding: 20rpx 32rpx 0;
+}
 .top{
-    text-align: center;
-    margin-top: 20rpx;
+    flex: 1;
+    min-width: 0;
     height: 70rpx;
     line-height: 70rpx;
     font-weight: bold;
     font-size: 35rpx;
 }
+.login-mode-switch{
+    width: auto;
+    margin: 0 0 0 16rpx;
+    padding: 0;
+    background: transparent;
+    color: #d81e06;
+    font-size: 24rpx;
+    line-height: 50rpx;
+}
+.login-mode-switch::after{border: none;}
 .tips{
     text-align: center;
     font-size: 29rpx;

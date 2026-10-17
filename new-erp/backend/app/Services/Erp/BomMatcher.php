@@ -24,7 +24,7 @@ class BomMatcher
             return $this->blocked('not_checked', 'Item 未匹配，不能匹配 BOM');
         }
 
-        $query = $this->eligibleQuery()->with('items')
+        $query = $this->eligibleQuery()->with(['items.componentItem.unit.standardUnit', 'items.unit.standardUnit'])
             // 已确认需求引用的是具体版本。默认版本改变不得替换已选的生产资料；
             // 原版本失效则显式阻断，由技术岗位修订，不能自动回退到另一份 BOM。
             ->when($pinnedBomId !== null, fn ($q) => $q->whereKey($pinnedBomId))

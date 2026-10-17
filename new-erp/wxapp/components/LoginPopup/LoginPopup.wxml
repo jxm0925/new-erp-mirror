@@ -10,14 +10,16 @@
   bind:close="closeTank"
   root-portal="true"
 >
-    <van-row>
-    <van-col span="8"  custom-class="top">统一账号登录</van-col>
-    </van-row>
+    <view class="login-header">
+      <text class="top">{{loginMode === 'production' ? '生产账号登录' : '统一账号登录'}}</text>
+      <button class="login-mode-switch" disabled="{{loading}}" bindtap="switchMode">{{loginMode === 'production' ? '切换统一账号登录' : '切换生产账号登录'}}</button>
+    </view>
     <van-cell-group inset>
         <van-field
             model:value="{{account}}"
             label="用户名"
-            placeholder="请输入用户名"
+            placeholder="{{loginMode === 'production' ? '请输入生产账号' : '请输入用户名'}}"
+            disabled="{{loading}}"
             custom-class="input-class"
             error="{{account_error}}"
             use-button-slot
@@ -31,6 +33,7 @@
             label="密码"
             type="password"
             placeholder="请输入密码"
+            disabled="{{loading}}"
             custom-class="input-class"
             error="{{password_error}}"
             use-button-slot

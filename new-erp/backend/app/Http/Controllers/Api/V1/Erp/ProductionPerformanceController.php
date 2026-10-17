@@ -18,6 +18,13 @@ class ProductionPerformanceController extends Controller
         return response()->json($service->operations($filters, $user, $permissions));
     }
 
+    public function workOrderScopes(Request $request, int $id, ProductionPerformanceQueryService $service)
+    {
+        $filters = $request->validate($this->filters());
+        [$user, $permissions, $super] = $this->context($request);
+        return response()->json($service->workOrderScopes($id, $filters, $user, $permissions, $super));
+    }
+
     public function index(Request $request, ProductionPerformanceQueryService $service)
     {
         $filters = $request->validate($this->filters() + ['keyword' => 'nullable|string|max:160',
@@ -44,15 +51,28 @@ class ProductionPerformanceController extends Controller
     {
         $payload = $request->validate([
             'client_command_id' => 'required|string|max:120', 'expected_scope_version' => 'required|integer|min:1',
-            'expected_assignment_version' => 'required|integer|min:0', 'shares' => 'present|array|max:200',
-            'shares.*.employee_legacy_id' => 'required|integer|min:1|distinct', 'shares.*.eligible' => 'required|boolean',
+            'expected_assignment_version' => 'required|integer|min:0', 'shares' => 'required|array|min:1|max:200',
+            'shares.*.employee_legacy_id' => 'required|integer|min:1|distinct', 'shares.*.eligible' => 'sometimes|boolean',
             'shares.*.share_ratio' => 'required|numeric|min:0|max:1', 'shares.*.remark' => 'nullable|string|max:500',
-            'noncredited_confirmed' => 'required|boolean', 'noncredited_reason' => 'nullable|string|max:500',
+            'noncredited_confirmed' => 'sometimes|boolean', 'noncredited_reason' => 'nullable|string|max:500',
             'owner_legacy_id' => 'prohibited', 'performance_amount' => 'prohibited', 'basis_amount' => 'prohibited',
         ]);
         [$user, $permissions] = $this->context($request);
-        return response()->json(['message' => '个人份额已确认，整单发完后由统计端统一计算。',
-            'data' => $service->confirm($scopeType, $scopeId, $payload, $user, $permissions)]);
+        $result = $service->confirm($scopeType, $scopeId, $payload, $user, $permissions);
+        return response()->json(['message' => $result['status'] === 'planned' ? '个人份额计划已保存，完工时按真实参与人员确认。' : '个人份额已确认，整单发完后由统计端统一计算。', 'data' => $result]);
+    }
+
+    public function updateScopeRate(Request $request, string $scopeType, int $scopeId, ProductionPerformanceApplicationService $service)
+    {
+        $payload = $request->validate([
+            'client_command_id' => 'required|string|max:120', 'expected_scope_version' => 'required|integer|min:1',
+            'expected_rate_version' => 'required|integer|min:0', 'performance_rate' => 'required|numeric|min:0|max:1',
+            'reason' => 'required|string|max:500', 'performance_rate_snapshot' => 'prohibited',
+            'owner_legacy_id' => 'prohibited', 'performance_amount' => 'prohibited', 'basis_amount' => 'prohibited',
+        ]);
+        [$user, $permissions, $super] = $this->context($request);
+        return response()->json(['message' => '工序绩效比例已更新，整单发完后的统计按新版本计算。',
+            'data' => $service->updateScopeRate($scopeType, $scopeId, $payload, $user, $permissions, $super)]);
     }
 
     public function policy(Request $request, ProductionPerformanceQueryService $service)

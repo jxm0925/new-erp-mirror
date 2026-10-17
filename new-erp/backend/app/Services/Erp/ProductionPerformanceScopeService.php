@@ -3,12 +3,15 @@
 namespace App\Services\Erp;
 
 use App\Exceptions\Erp\WorkOrderDomainException;
+use App\Models\Erp\WorkOrder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 /** Resolve personal-share subjects from genuine execution identities, never from sales names. */
 class ProductionPerformanceScopeService
 {
     public const TYPES = ['unit_operation', 'quantity_operation', 'shipment_packing_operation'];
+    public const RATE_TABLE = 'erp_production_performance_rate_versions';
 
     public function resolve(string $type, int $id, bool $lock = false): array
     {
@@ -16,7 +19,6 @@ class ProductionPerformanceScopeService
         if ($type === 'shipment_packing_operation') return $this->packing($id, $lock);
         $table = $type === 'unit_operation' ? 'erp_production_unit_operations' : 'erp_production_quantity_operations';
         $query = DB::table($table)->where('id', $id);
-        if ($lock) $query->lockForUpdate();
         $target = $query->first();
         if (! $target) $this->fail('performance_scope_not_found', '绩效来源工序不存在。', 404);
         $taskQuery = DB::table('erp_production_tasks as task')
@@ -24,6 +26,12 @@ class ProductionPerformanceScopeService
             ->where('link.target_type', $type)->where('link.target_id', $id);
         if ($lock) $taskQuery->lockForUpdate();
         $task = $taskQuery->first(['task.*']);
+        // Execution changes lock the task before its target. Rate/share commands use
+        // that same order so a completion cannot deadlock against a ratio revision.
+        if ($lock) {
+            $target = DB::table($table)->where('id', $id)->lockForUpdate()->first();
+            if (! $target) $this->fail('performance_scope_not_found', '绩效来源工序不存在。', 404);
+        }
         $owner = (int) ($target->responsible_user_legacy_id ?: ($task->assignee_user_legacy_id ?? 0));
         if ($task && $owner > 0 && (int) $task->assignee_user_legacy_id !== $owner) {
             $this->fail('performance_owner_mismatch', '工序与接单人记录不一致，请先核对真实负责人。', 409);
@@ -31,8 +39,12 @@ class ProductionPerformanceScopeService
         $labor = DB::table('erp_production_labor_sessions')->where('target_type', $type)->where('target_id', $id)
             ->selectRaw('employee_legacy_id, COALESCE(SUM(actual_labor_minutes),0) AS actual_labor_minutes')->groupBy('employee_legacy_id')->get();
         $ids = $labor->pluck('employee_legacy_id')->map(fn ($value) => (int) $value)->all();
-        if ($task) $ids = array_merge($ids, DB::table('erp_production_task_collaborators')->where('task_id', $task->id)
-            ->pluck('employee_legacy_id')->map(fn ($value) => (int) $value)->all());
+        if ($task) {
+            $until = $target->completed_at ?: now();
+            $ids = array_merge($ids, DB::table('erp_production_task_collaborators')->where('task_id', $task->id)
+                ->where('joined_at', '<=', $until)->where(fn ($q) => $q->whereNull('left_at')->orWhere('left_at', '>=', $until))
+                ->pluck('employee_legacy_id')->map(fn ($value) => (int) $value)->all());
+        }
         if ($owner > 0) $ids[] = $owner;
         $workOrder = DB::table('erp_work_orders')->where('id', $target->work_order_id)->first(['id', 'work_order_no']);
         return $this->projection($type, $target, $owner, $this->people($ids, $labor->keyBy('employee_legacy_id')->all()), [
@@ -49,7 +61,7 @@ class ProductionPerformanceScopeService
         if (! $target) $this->fail('performance_scope_not_found', '包装工序不存在。', 404);
         $labor = DB::table('erp_shipment_packing_labor_sessions')->where('operation_id', $id)
             ->selectRaw('employee_legacy_id, COALESCE(SUM(actual_labor_minutes),0) AS actual_labor_minutes')->groupBy('employee_legacy_id')->get();
-        $ids = DB::table('erp_shipment_packing_participants')->where('operation_id', $id)->pluck('employee_legacy_id')
+        $ids = DB::table('erp_shipment_packing_participants')->where('operation_id', $id)->where('is_active', true)->pluck('employee_legacy_id')
             ->merge($labor->pluck('employee_legacy_id'))->map(fn ($value) => (int) $value)->all();
         $owner = (int) ($target->owner_legacy_id ?? 0);
         if ($owner > 0) $ids[] = $owner;
@@ -73,13 +85,33 @@ class ProductionPerformanceScopeService
 
     private function projection(string $type, object $target, int $owner, array $participants, array $extra): array
     {
+        // A rate correction is an independently versioned business fact. Frozen
+        // execution/routing values remain the original source for audit and trace.
+        $revision = Schema::hasTable(self::RATE_TABLE) ? DB::table(self::RATE_TABLE)->where('active_scope_key', $type.':'.$target->id)->first() : null;
+        $originalRate = isset($target->performance_rate_snapshot) ? (string) $target->performance_rate_snapshot : null;
         return $extra + ['scope_type' => $type, 'scope_id' => (int) $target->id, 'owner_legacy_id' => $owner,
             'scope_version' => (int) $target->business_version, 'status' => (string) $target->status,
             'operation_code' => (string) ($target->operation_code_snapshot ?? ''), 'operation_name' => (string) ($target->operation_name_snapshot ?? ''),
             'stage_code' => (string) ($target->stage_code_snapshot ?? ''), 'stage_name' => (string) ($target->stage_name_snapshot ?? ''),
-            'performance_rate_snapshot' => isset($target->performance_rate_snapshot) ? (string) $target->performance_rate_snapshot : null,
+            'performance_rate_snapshot' => $revision ? (string) $revision->performance_rate : $originalRate,
+            'original_performance_rate_snapshot' => $originalRate, 'rate_version' => $revision ? (int) $revision->version_no : 0,
+            'rate_changed_at' => $revision?->changed_at,
             'routing_operation_id_snapshot' => (int) ($target->routing_operation_id_snapshot ?? $target->routing_operation_id ?? 0),
             'completed_at' => $target->completed_at ?? null, 'participants' => $participants];
+    }
+
+    public function canManageRate(array $scope, object $user, array $permissions, bool $superAdmin = false): bool
+    {
+        if (! $superAdmin && (! in_array('production.performance.manage', $permissions, true)
+            || ! in_array('production.performance.view', $permissions, true))) return false;
+        $resolver = app(ProductionDataScopeResolver::class);
+        $visibility = $resolver->resolve($user, 'production.performance.manage', $permissions, $superAdmin);
+        if (($visibility['mode'] ?? 'deny') === 'all') return true;
+        if (($visibility['mode'] ?? 'deny') === 'deny') return false;
+        if (in_array((int) $scope['owner_legacy_id'], $visibility['user_ids'], true)) return true;
+        if (empty($scope['work_order_id'])) return false;
+        $workOrder = WorkOrder::find((int) $scope['work_order_id']);
+        return $workOrder && $resolver->workOrderVisible($workOrder, $visibility);
     }
 
     private function fail(string $code, string $message, int $status = 422): never

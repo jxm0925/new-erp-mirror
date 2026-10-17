@@ -29,7 +29,7 @@ import { listSupplierFinanceEntries } from '../../../api/erp/supplierFinance'
 
 export default {
   props: { visible: Boolean, supplier: { type: Object, default: () => ({}) }, initialPeriod: { type: Array, default: () => [] } },
-  data: () => ({ rows: [], total: 0, loading: false, page: 1, perPage: 20, dateRange: [], filters: { keyword: '', event_family: '' }, requestId: 0, cashDetailsVisible: false }),
+  data: () => ({ rows: [], total: 0, loading: false, page: 1, perPage: 10, dateRange: [], filters: { keyword: '', event_family: '' }, requestId: 0, cashDetailsVisible: false }),
   watch: {
     visible(value) { if (value) this.open(); else this.invalidate() },
     supplier() { if (this.visible) this.open() },

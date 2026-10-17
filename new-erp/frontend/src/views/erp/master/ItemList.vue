@@ -325,6 +325,7 @@
             <div class="info-grid">
               <div class="info-item"><span class="info-label">管理类型</span><span class="info-val">{{ recordScopeLabel(selected) }}</span></div>
               <div class="info-item"><span class="info-label">规格型号</span><span class="info-val">{{ selected.spec || '-' }}</span></div>
+              <div class="info-item"><span class="info-label">品牌</span><span class="info-val">{{ selected.brand || '-' }}</span></div>
               <div v-if="!selectedIsOffice" class="info-item"><span class="info-label">材质牌号</span><span class="info-val">{{ selected.material_grade || '-' }}</span></div>
               <div v-if="!selectedIsOffice" class="info-item"><span class="info-label">下料分类</span><span class="info-val">{{ cuttingModeText(selected) }}</span></div>
               <div v-if="!selectedIsOffice && cuttingMode(selected) === 'length'" class="info-item"><span class="info-label">标准定长</span><span class="info-val">{{ Number(selected.standard_stock_length_mm).toLocaleString('zh-CN') }} mm</span></div>
@@ -584,7 +585,7 @@ export default {
       selected: {},
       conversions: [],
       conversionTotal: 0,
-      conversionQuery: { page: 1, per_page: 5 },
+      conversionQuery: { page: 1, per_page: 10 },
       conversionForm: emptyConversion(),
       categoryTree: [],
       categories: [],
@@ -604,7 +605,7 @@ export default {
         unit_id: '',
         status: '',
         page: 1,
-        per_page: 20
+        per_page: 10
       },
       conversionReasons: [
         '新增采购换算',

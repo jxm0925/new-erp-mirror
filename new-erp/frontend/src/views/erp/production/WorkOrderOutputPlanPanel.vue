@@ -47,7 +47,7 @@
         </el-table>
       </div>
       <div class="output-selected"><span>已选择 {{ Object.keys(selected).length }} 项</span><el-tag v-for="row in Object.values(selected)" :key="row.id" closable @close="$delete(selected,row.id)">{{ row.item_code }} / {{ row.item_name }}</el-tag></div>
-      <div class="output-picker-pagination"><el-pagination small background layout="total, prev, pager, next" :pager-count="5" :current-page="optionPage" :page-size="20" :total="optionTotal" @current-change="loadOptions" /></div>
+      <div class="output-picker-pagination"><el-pagination small background layout="total, prev, pager, next" :pager-count="5" :current-page="optionPage" :page-size="10" :total="optionTotal" @current-change="loadOptions" /></div>
       <span slot="footer"><el-button @click="pickerVisible=false">取消</el-button><el-button type="success" :disabled="!Object.keys(selected).length" @click="applySelection">确认添加</el-button></span>
     </el-dialog>
   </section>
@@ -108,7 +108,7 @@ export default {
       const id = this.workOrder.id
       this.optionPage = page; this.optionLoading = true; this.pickerError = ''
       try {
-        const response = await searchWorkOrderOutputOptions(id, { type:'items',keyword:this.keyword,category_id:this.categoryId,page,per_page:20 })
+        const response = await searchWorkOrderOutputOptions(id, { type:'items',keyword:this.keyword,category_id:this.categoryId,page,per_page:10 })
         if (this.pickerVisible && sequence === this.optionSequence && id === this.workOrder.id) { this.optionRows = response.data.data || []; this.optionTotal = Number(response.data.total ?? response.data.meta?.total ?? 0) }
       } catch (error) { if (this.pickerVisible && sequence === this.optionSequence) { this.optionRows = []; this.optionTotal = 0; this.pickerError = error.userMessage || '物料读取失败' } }
       finally { if (sequence === this.optionSequence) this.optionLoading = false }

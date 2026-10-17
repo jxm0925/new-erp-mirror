@@ -7,11 +7,12 @@
         <el-button size="small" @click="returnToOrder">返回</el-button>
         <el-button size="small" icon="el-icon-refresh" :disabled="!editable" :loading="loading" @click="recalculate">重新计算备货方案</el-button>
         <el-button size="small" :disabled="!editable" @click="validateAll(true)">保存检查结果</el-button>
-        <el-button size="small" type="success" :disabled="!canSubmit" :loading="submitting" @click="submit">提交确认</el-button>
+        <el-button size="small" type="success" :disabled="!canSubmit" :loading="submitting" @click="submit">{{ pending ? '重试原确认' : '提交确认' }}</el-button>
       </div>
     </header>
 
     <el-alert class="top-alert" type="info" :closable="false" show-icon title="确认订单备货方式后，生产需求将建立根工单并自动准备；资料或物料阻塞可在工单中查看和处理。" />
+    <el-alert v-if="pending" class="top-alert" type="warning" :closable="false" show-icon title="上次确认结果尚未收到。请重试原确认，系统会识别同一次操作；核实前暂不能修改本次数量。" />
 
     <div v-if="order" class="page-grid">
       <main>
@@ -43,7 +44,7 @@
             <el-table-column label="已确认分配" width="100" align="center"><template slot-scope="{row}"><b>{{ number(row.confirmed_allocated_qty) }}</b><small class="sub">{{ row.sales_unit || '-' }}</small></template></el-table-column>
             <el-table-column label="本次确认数量" width="122" align="center">
               <template slot-scope="{row}">
-                <span class="readonly-confirm">{{ number(row.confirm_qty) }}</span>
+                <el-input-number v-model="row.confirm_qty" :disabled="!editable" :min="0" :max="row.remaining_confirm_qty" :precision="salesPrecision(row)" :controls="false" @change="changeConfirmQuantity(row)" />
                 <small class="sub">{{ row.sales_unit || '-' }}</small>
               </template>
             </el-table-column>
@@ -53,7 +54,7 @@
                   <div><span>默认库存物料</span><b>{{ row.default_item_name || row.item_name || '-' }}</b></div>
                   <div><span>当前可用库存</span><b>{{ number(row.available_base_qty) }} {{ row.base_unit || '-' }}</b></div>
                   <div><span>方案状态</span><el-tag size="mini" :type="suggestionStatus(row).type">{{ suggestionStatus(row).text }}</el-tag></div>
-                  <div><span>系统建议</span><b class="suggestion">库存 {{ number(row.system_suggested_inventory_qty) }} / 生产 {{ number(row.system_suggested_production_qty) }} {{ row.sales_unit || '-' }}</b></div>
+                  <div><span>本次建议</span><b class="suggestion">库存 {{ number(currentSuggestion(row).inventory_qty) }} / {{ row.is_purchase_fulfilled ? '外购' : '生产' }} {{ number(row.is_purchase_fulfilled ? currentSuggestion(row).purchase_qty : currentSuggestion(row).production_qty) }} {{ row.sales_unit || '-' }}</b></div>
                   <div><span>判断原因</span><b>{{ row.system_suggestion_reason || '-' }}</b></div>
                   <small>计算时间：{{ row.inventory_calculated_at || '-' }}</small>
                 </div>
@@ -64,7 +65,8 @@
               <template slot-scope="{row}">
                 <div class="split-grid">
                   <label>库存<el-input-number v-model="row.inventory_qty" :disabled="!editable || !isPhysical(row)" :min="0" :max="Math.min(Number(row.confirm_qty || 0), Number(row.available_sales_qty || 0))" :precision="salesPrecision(row)" :controls="false" /></label>
-                  <label>生产<el-input-number v-model="row.production_qty" :disabled="!editable || !isPhysical(row)" :min="0" :max="row.confirm_qty" :precision="salesPrecision(row)" :controls="false" /></label>
+                  <label v-if="row.is_purchase_fulfilled">外购<el-input-number v-model="row.purchase_qty" :disabled="!editable || !isPhysical(row)" :min="0" :max="row.confirm_qty" :precision="salesPrecision(row)" :controls="false" /></label>
+                  <label v-else>生产<el-input-number v-model="row.production_qty" :disabled="!editable || !isPhysical(row)" :min="0" :max="row.confirm_qty" :precision="salesPrecision(row)" :controls="false" /></label>
                   <label>服务<el-input-number v-model="row.service_qty" :disabled="!editable || !isService(row)" :min="0" :max="row.confirm_qty" :precision="salesPrecision(row)" :controls="false" /></label>
                   <label>无需发货<el-input-number v-model="row.no_delivery_qty" :disabled="!editable || !isNoDelivery(row)" :min="0" :max="row.confirm_qty" :precision="salesPrecision(row)" :controls="false" /></label>
                   <label>未确定<span class="readonly-qty">{{ number(remainingUndetermined(row)) }}</span></label>
@@ -109,7 +111,7 @@
     </div>
 
     <el-empty v-if="!order && !loading" description="未找到订单生产确认数据" />
-    <el-alert v-if="blocked" class="bottom-tip" type="warning" :closable="false" show-icon title="存在数量不一致或生产资料不齐的订单行，请处理后再提交确认。" />
+    <el-alert v-if="blocked" class="bottom-tip" type="warning" :closable="false" show-icon title="存在分配数量不一致或库存不足的订单行，请处理后再提交确认。" />
   </section>
 </template>
 
@@ -117,11 +119,12 @@
 import { erpDateTime } from '../../../utils/dateTime'
 import cachedPageRoute from '@/utils/cachedPageRoute'
 import { confirmProduction, getProductionPreview } from '@/api/erp/sales'
+import { confirmationAllocationSum, currentConfirmationSuggestion, confirmationIsAdjusted, buildSalesProductionConfirmation } from '../../../utils/sales-production-confirmation.mjs'
 
 const ReadinessTag = {
   props: ['value'],
   render (h) {
-    const text = this.value === 'ready' ? '已齐全' : (this.value === 'missing' ? '资料不齐' : (this.value === 'pending_next_stage' ? '下一阶段维护' : '不适用'))
+    const text = this.value === 'ready' ? '已齐全' : (this.value === 'missing' ? '资料不齐' : (this.value === 'pending_next_stage' ? '工单维护' : '不适用'))
     const type = this.value === 'ready' ? 'success' : (this.value === 'missing' ? 'danger' : 'info')
     return h('el-tag', { props: { size: 'mini', type } }, text)
   }
@@ -131,18 +134,18 @@ export default {
   mixins: [cachedPageRoute],
   name: 'SalesProductionConfirmation',
   components: { ReadinessTag },
-  data: () => ({ loading: false, submitting: false, preview: {}, order: null, lines: [], adjustmentReason: '' }),
+  data: () => ({ loading: false, submitting: false, preview: {}, order: null, lines: [], adjustmentReason: '', pending: null, storageKey: '', loadSequence: 0 }),
   computed: {
-    editable () { return this.order && this.order.order_status === 'confirmed' && ['pending', 'blocked'].includes(this.order.production_confirm_status) },
+    editable () { return !this.pending && this.$can('sales_order.production_confirm') && this.order && this.order.order_status === 'confirmed' && ['pending', 'blocked'].includes(this.order.production_confirm_status) },
     blocked () { return this.lines.some(row => this.lineBlocked(row)) },
-    canSubmit () { return this.editable && !this.blocked && this.lines.length > 0 && this.lines.some(row => Number(row.confirm_qty || 0) > 0) && this.lines.every(row => this.allocationValid(row)) && (!this.hasManualAdjustment || !!this.adjustmentReason) },
+    canSubmit () { return this.$can('sales_order.production_confirm') && !this.loading && (!!this.pending || (this.editable && !this.blocked && this.lines.length > 0 && this.lines.some(row => Number(row.confirm_qty || 0) > 0) && this.lines.every(row => this.allocationValid(row)) && (!this.hasManualAdjustment || !!this.adjustmentReason))) },
     hasManualAdjustment () { return this.lines.some(row => this.lineAdjusted(row)) },
     baseGroups () { return this.preview.base_unit_groups || [] },
-    summary () { return { total: this.lines.length, inventory: this.lines.filter(row => row.inventory_qty > 0).length, production: this.lines.filter(row => row.production_qty > 0).length, service: this.lines.filter(row => row.service_qty > 0).length, no_delivery: this.lines.filter(row => row.no_delivery_qty > 0).length } },
+    summary () { return { total: this.lines.length, inventory: this.lines.filter(row => row.inventory_qty > 0).length, production: this.lines.filter(row => row.production_qty > 0).length, purchase: this.lines.filter(row => row.purchase_qty > 0).length, service: this.lines.filter(row => row.service_qty > 0).length, no_delivery: this.lines.filter(row => row.no_delivery_qty > 0).length } },
     resultText () { return this.order.production_confirm_status === 'confirmed' ? '已确认并锁定' : (this.blocked ? '待处理' : '待确认') },
-    countRows () { return [{ label: '订单总行数', value: this.summary.total }, { label: '库存备货行数', value: this.summary.inventory }, { label: '生产安排行数', value: this.summary.production }, { label: '服务项目行数', value: this.summary.service }, { label: '无需发货行数', value: this.summary.no_delivery }] },
-    quantityRows () { return [{ label: '库存备货', value: this.groupQuantity('inventory_qty') }, { label: '生产安排', value: this.groupQuantity('production_qty') }, { label: '服务项目', value: this.groupQuantity('service_qty') }, { label: '无需发货', value: this.groupQuantity('no_delivery_qty') }, { label: '尚未确定', value: this.groupQuantity('undetermined_qty') }] },
-    submitResults () { const rows = ['保存订单生产确认结果']; if (this.summary.inventory) rows.push('生成库存备货需求（物料基本数量）'); if (this.summary.production) rows.push('生成生产需求与根工单（销售/基本数量双口径）'); if (this.summary.service) rows.push('生成服务项目记录'); if (this.summary.no_delivery) rows.push('保存无需发货结果'); rows.push('锁定本次确认所使用的生产资料'); return rows }
+    countRows () { return [{ label: '订单总行数', value: this.summary.total }, { label: '库存备货行数', value: this.summary.inventory }, { label: '生产安排行数', value: this.summary.production }, { label: '待外购到货行数', value: this.summary.purchase }, { label: '服务项目行数', value: this.summary.service }, { label: '无需发货行数', value: this.summary.no_delivery }] },
+    quantityRows () { return [{ label: '库存备货', value: this.groupQuantity('inventory_qty') }, { label: '生产安排', value: this.groupQuantity('production_qty') }, { label: '外购备货', value: this.groupQuantity('purchase_qty') }, { label: '服务项目', value: this.groupQuantity('service_qty') }, { label: '无需发货', value: this.groupQuantity('no_delivery_qty') }, { label: '尚未确定', value: this.groupQuantity('undetermined_qty') }] },
+    submitResults () { const rows = ['保存订单生产确认结果']; if (this.summary.inventory) rows.push('生成库存备货需求（物料基本数量）'); if (this.summary.production) rows.push('生成生产需求与根工单（销售/基本数量双口径）'); if (this.summary.purchase) rows.push('保存外购缺口，到货后正式锁库存'); if (this.summary.service) rows.push('生成服务项目记录'); if (this.summary.no_delivery) rows.push('保存无需发货结果'); rows.push('锁定本次确认所使用的生产资料'); return rows }
   },
   created () { this.load() },
   watch: {
@@ -154,53 +157,93 @@ export default {
       return this.$router.push(`/sales/orders/${this.order.id}/detail`)
     },
     async load (notify = false) {
+      const sequence = ++this.loadSequence
+      const orderId = this.pageRoute.params.id
+      if (Number(this.order?.id) !== Number(orderId)) { this.order = null; this.lines = []; this.preview = {}; this.pending = null; this.storageKey = '' }
       this.loading = true
       try {
-        const { data } = await getProductionPreview(this.pageRoute.params.id)
+        const { data } = await getProductionPreview(orderId)
+        if (sequence !== this.loadSequence) return
         this.preview = data || {}; this.order = data.order || null
-        this.lines = (data.lines || []).map(row => ({ ...row, inventory_qty: Number(row.inventory_qty || 0), production_qty: Number(row.production_qty || 0), service_qty: Number(row.service_qty || 0), no_delivery_qty: Number(row.no_delivery_qty || 0), undetermined_qty: Number(row.undetermined_qty || 0), confirm_qty: Number(row.confirm_qty || 0), available_sales_qty: Number(row.available_sales_qty || 0), system_suggested_inventory_qty: Number(row.system_suggested_inventory_qty || 0), system_suggested_production_qty: Number(row.system_suggested_production_qty || 0) }))
+        this.lines = (data.lines || []).map(row => ({ ...row, inventory_qty: Number(row.inventory_qty || 0), production_qty: Number(row.production_qty || 0), purchase_qty: Number(row.purchase_qty || 0), service_qty: Number(row.service_qty || 0), no_delivery_qty: Number(row.no_delivery_qty || 0), undetermined_qty: Number(row.undetermined_qty || 0), confirm_qty: Number(row.confirm_qty || 0), remaining_confirm_qty: Number(row.remaining_confirm_qty ?? row.confirm_qty ?? 0), available_sales_qty: Number(row.available_sales_qty || 0), system_suggested_inventory_qty: Number(row.system_suggested_inventory_qty || 0), system_suggested_production_qty: Number(row.system_suggested_production_qty || 0), system_suggested_purchase_qty: Number(row.system_suggested_purchase_qty || 0) }))
+        let actor = 0
+        try { actor = JSON.parse(localStorage.getItem('erp_user') || '{}').legacy_id || 0 } catch (_) { /* Unavailable local profile. */ }
+        this.storageKey = `erp_pending_sales_production_${actor}_${orderId}`
+        try { this.pending = JSON.parse(localStorage.getItem(this.storageKey) || 'null') } catch (_) { this.pending = null }
         this.adjustmentReason = ''
         if (notify) this.$message.success('已按当前真实可用库存重新计算备货方案')
-      } catch (error) { this.$message.error(error.userMessage || '订单生产确认数据加载失败') } finally { this.loading = false }
+      } catch (error) { if (sequence === this.loadSequence) this.$message.error(error.userMessage || '订单生产确认数据加载失败') } finally { if (sequence === this.loadSequence) this.loading = false }
     },
     recalculate () { return this.load(true) },
-    validateAll (notify) { const valid = this.lines.every(row => this.allocationValid(row)) && !this.blocked && (!this.hasManualAdjustment || !!this.adjustmentReason); if (notify) this.$message[valid ? 'success' : 'warning'](valid ? '检查通过，可以提交确认' : (this.hasManualAdjustment && !this.adjustmentReason ? '手工修改系统建议后必须填写调整原因' : '存在数量不守恒、库存不足或资料不齐的订单行')); return valid },
+    validateAll (notify) { const valid = this.lines.every(row => this.allocationValid(row)) && !this.blocked && (!this.hasManualAdjustment || !!this.adjustmentReason); if (notify) this.$message[valid ? 'success' : 'warning'](valid ? '检查通过，可以提交确认' : (this.hasManualAdjustment && !this.adjustmentReason ? '手工修改系统建议后必须填写调整原因' : '存在分配数量不一致或库存不足的订单行')); return valid },
     async submit () {
-      if (!this.validateAll(false)) return this.$message.warning('请先完成全部订单行的备货数量配置和资料检查')
-      if (this.hasManualAdjustment && !this.adjustmentReason) return this.$message.warning('手工修改系统备货建议时必须填写调整原因')
-      await this.$confirm('确认保存本订单的库存备货、生产安排、服务项目及无需发货结果？生产安排行将建立根工单并自动准备。', '提交订单生产确认', { type: 'warning' })
+      if (this.submitting || this.loading || !this.$can('sales_order.production_confirm') || !this.order?.id
+        || Number(this.pageRoute.params.id) !== Number(this.order.id)) return
+      const orderId = this.order.id
+      const storageKey = this.storageKey
+      const contextSequence = this.loadSequence
+      // Lock before opening the confirmation dialog. The reviewed quantities
+      // belong to this order/version, even if navigation changes while it is open.
       this.submitting = true
       try {
-        await confirmProduction(this.order.id, { adjustment_reason: this.adjustmentReason || null, lines: this.lines.map(row => ({ sales_order_line_id: row.sales_order_line_id, confirm_qty: row.confirm_qty, inventory_qty: row.inventory_qty, production_qty: row.production_qty, service_qty: row.service_qty, no_delivery_qty: row.no_delivery_qty })) })
-        this.$message.success('订单生产确认已提交，请在工单执行跟踪中查看准备结果'); await this.load()
-      } catch (error) { this.$message.error(error.userMessage || '订单生产确认提交失败') } finally { this.submitting = false }
+        let payload = this.pending
+        if (!payload) {
+          if (!this.validateAll(false)) return this.$message.warning('请先完成全部订单行的备货数量配置和资料检查')
+          payload = buildSalesProductionConfirmation(this.order, this.lines, this.adjustmentReason,
+            `sales-production-${orderId}-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`)
+          await this.$confirm('确认保存本订单的库存、生产、外购、服务及无需发货结果？只有生产安排行建立工单。', '提交订单生产确认', { type: 'warning' })
+          if (contextSequence !== this.loadSequence || Number(this.pageRoute.params.id) !== Number(orderId)) return
+          localStorage.setItem(storageKey, JSON.stringify(payload))
+          this.pending = payload
+        }
+        await confirmProduction(orderId, payload)
+        localStorage.removeItem(storageKey)
+        if (Number(this.pageRoute.params.id) === Number(orderId)) {
+          this.pending = null
+          this.$message.success('订单生产确认已提交，请在工单执行跟踪中查看准备结果'); await this.load()
+        }
+      } catch (error) {
+        if (error === 'cancel' || error === 'close') return
+        const status = Number(error.response?.status || 0)
+        if (status >= 400 && status < 500 && !['command_processing', 'command_recovery_required', 'recovery_required'].includes(error.errorCode)) {
+          localStorage.removeItem(storageKey)
+          if (Number(this.pageRoute.params.id) === Number(orderId)) {
+            this.pending = null
+            if ([403, 404, 409].includes(status)) await this.load()
+          }
+        }
+        if (Number(this.pageRoute.params.id) === Number(orderId)) this.$message.error(error.userMessage || error.message || '订单生产确认提交失败，请重试原确认')
+      } finally { this.submitting = false }
     },
     normalizeAllocation (row) { row.undetermined_qty = this.remainingUndetermined(row) },
-    allocationSum (row) { if (!row) return 0; return ['inventory_qty', 'production_qty', 'service_qty', 'no_delivery_qty'].reduce((sum, key) => sum + Number(row[key] || 0), 0) },
+    changeConfirmQuantity (row) { Object.assign(row, currentConfirmationSuggestion(row)); this.normalizeAllocation(row) },
+    allocationSum (row) { return row ? confirmationAllocationSum(row) : 0 },
     allocationValid (row) { return !!row && Math.abs(this.allocationSum(row) - Number(row.confirm_qty || 0)) < 0.00000001 },
-    lineAdjusted (row) { return this.isPhysical(row) && (Math.abs(Number(row.inventory_qty || 0) - Number(row.system_suggested_inventory_qty || 0)) > 0.00000001 || Math.abs(Number(row.production_qty || 0) - Number(row.system_suggested_production_qty || 0)) > 0.00000001) },
+    lineAdjusted (row) { return this.isPhysical(row) && confirmationIsAdjusted(row) },
+    currentSuggestion (row) { return currentConfirmationSuggestion(row) },
     suggestionStatus (row) {
-      const inventory = Number(row.system_suggested_inventory_qty || 0)
-      const production = Number(row.system_suggested_production_qty || 0)
+      if (Number(row.confirm_qty || 0) === 0) return { text: '本次不确认', type: 'info' }
+      const { inventory_qty: inventory, production_qty: production, purchase_qty: purchase } = this.currentSuggestion(row)
+      if (purchase > 0) return { text: inventory > 0 ? '库存 + 外购备货' : '外购待到货', type: 'warning' }
       if (inventory > 0 && production <= 0) return { text: '全部库存备货', type: 'success' }
       if (inventory > 0 && production > 0) return { text: '库存 + 生产', type: 'warning' }
       return { text: '全部生产安排', type: 'info' }
     },
     itemBaseConfirmQty (row) { return this.isPhysical(row) ? Number(row.confirm_qty || 0) * Number(row.fulfillment_factor || 0) : 0 },
     groupQuantity (key) { const groups = {}; this.lines.forEach(row => { const qty = key === 'undetermined_qty' ? this.remainingUndetermined(row) : Number(row[key] || 0); if (qty <= 0) return; const unit = row.sales_unit || '-'; groups[unit] = (groups[unit] || 0) + qty }); const values = Object.keys(groups).map(unit => `${this.number(groups[unit])} ${unit}`); return values.join(' / ') || '0' },
-    remainingUndetermined (row) { return Math.max(0, Number(row.remaining_sales_qty || 0) - Number(row.confirm_qty || 0)) },
+    remainingUndetermined (row) { return Math.max(0, Number(row.remaining_confirm_qty ?? row.remaining_sales_qty ?? 0) - Number(row.confirm_qty || 0)) },
     lineBlocked (row) { return !this.allocationValid(row) || Number(row.inventory_qty || 0) > Number(row.available_sales_qty || 0) + 0.00000001 },
     blockingReason (row) { if (!this.allocationValid(row)) return '各项分配数量之和与订单数量不一致'; if (Number(row.inventory_qty || 0) > Number(row.available_sales_qty || 0) + 0.00000001) return '库存备货数量超过当前真实可用库存'; return '无阻塞' },
     isService (row) { return row.line_type === 'service' },
     isNoDelivery (row) { return ['no_delivery', 'fee', 'auxiliary'].includes(row.line_type) },
     isPhysical (row) { return !this.isService(row) && !this.isNoDelivery(row) },
     needsItem (row) { return this.isPhysical(row) },
-    primaryType (row) { if (row.inventory_qty > 0 && row.production_qty > 0) return 'mixed'; if (row.production_qty > 0) return 'production'; if (row.inventory_qty > 0) return 'inventory'; if (row.service_qty > 0) return 'service'; if (row.no_delivery_qty > 0) return 'no_delivery'; return 'undetermined' },
+    primaryType (row) { if (row.inventory_qty > 0 && row.purchase_qty > 0) return 'mixed_purchase'; if (row.purchase_qty > 0) return 'purchase'; if (row.inventory_qty > 0 && row.production_qty > 0) return 'mixed'; if (row.production_qty > 0) return 'production'; if (row.inventory_qty > 0) return 'inventory'; if (row.service_qty > 0) return 'service'; if (row.no_delivery_qty > 0) return 'no_delivery'; return 'undetermined' },
     serviceItemText (row) { return this.isService(row) ? '服务项目' : '无需 Item' },
-    itemRoleText (row) { const type = this.primaryType(row); return ({ production: '生产 Item', inventory: '库存 Item', mixed: '库存/生产 Item', service: '服务项目', no_delivery: '无需发货', undetermined: '尚未确定' })[type] },
-    fulfillmentText (type) { return ({ inventory: '库存备货', production: '生产安排', mixed: '库存 + 生产', service: '服务项目', no_delivery: '无需发货', undetermined: '尚未确定' })[type] || '待确认' },
-    allocationText (row) { const parts = []; if (row.inventory_qty > 0) parts.push(`库存 ${this.number(row.inventory_qty)}`); if (row.production_qty > 0) parts.push(`生产 ${this.number(row.production_qty)}`); if (row.service_qty > 0) parts.push(`服务 ${this.number(row.service_qty)}`); if (row.no_delivery_qty > 0) parts.push(`无需交付 ${this.number(row.no_delivery_qty)}`); if (this.remainingUndetermined(row) > 0) parts.push(`待确认 ${this.number(this.remainingUndetermined(row))}`); return parts.join(' + ') || '待配置' },
-    typeTag (type) { return ({ inventory: 'success', production: '', mixed: 'warning', service: 'warning', no_delivery: 'info', undetermined: 'danger' })[type] || 'info' },
+    itemRoleText (row) { const type = this.primaryType(row); return ({ production: '生产 Item', inventory: '库存 Item', mixed: '库存/生产 Item', purchase: '外购备货', mixed_purchase: '库存/外购备货', service: '服务项目', no_delivery: '无需发货', undetermined: '尚未确定' })[type] },
+    fulfillmentText (type) { return ({ inventory: '库存备货', production: '生产安排', purchase: '外购备货', mixed_purchase: '库存 + 外购', mixed: '库存 + 生产', service: '服务项目', no_delivery: '无需发货', undetermined: '尚未确定' })[type] || '待确认' },
+    allocationText (row) { const parts = []; if (row.inventory_qty > 0) parts.push(`库存 ${this.number(row.inventory_qty)}`); if (row.production_qty > 0) parts.push(`生产 ${this.number(row.production_qty)}`); if (row.purchase_qty > 0) parts.push(`外购 ${this.number(row.purchase_qty)}`); if (row.service_qty > 0) parts.push(`服务 ${this.number(row.service_qty)}`); if (row.no_delivery_qty > 0) parts.push(`无需交付 ${this.number(row.no_delivery_qty)}`); if (this.remainingUndetermined(row) > 0) parts.push(`待确认 ${this.number(this.remainingUndetermined(row))}`); return parts.join(' + ') || '待配置' },
+    typeTag (type) { return ({ inventory: 'success', production: '', purchase: 'warning', mixed_purchase: 'warning', mixed: 'warning', service: 'warning', no_delivery: 'info', undetermined: 'danger' })[type] || 'info' },
     salesPrecision (row) { return Number(row.sales_unit_precision || 0) },
     actualFulfillmentText (value) { return ({ pending: '未开始', partial: '部分完成', fulfilled: '已完成', cancelled: '已取消' })[value] || value || '-' },
     planStatusText (value) { return ({ unallocated: '未分配', partially_allocated: '部分分配', allocated: '已分配完成' })[value] || '未分配' },
@@ -217,4 +260,12 @@ export default {
 .order-summary{grid-template-columns:repeat(3,minmax(0,1fr))}
 .readonly-qty{display:flex;align-items:center;justify-content:center;height:28px;margin-top:4px;border:1px solid #dfe5ed;border-radius:4px;background:#f5f7fa;color:#59697e;font-size:12px}
 .readonly-confirm{display:inline-flex;min-width:58px;height:28px;align-items:center;justify-content:center;border:1px solid #dfe5ed;border-radius:4px;background:#f5f7fa;font-weight:700}.inventory-analysis{display:grid;gap:5px;font-size:11px}.inventory-analysis>div{display:flex;justify-content:space-between;gap:8px}.inventory-analysis span{color:#68778b;white-space:nowrap}.inventory-analysis b{text-align:right;font-weight:600}.inventory-analysis .suggestion{color:#07883f}.inventory-analysis small{color:#8995a6;border-top:1px dashed #e2e7ee;padding-top:5px}.manual-adjusted{margin-top:5px;color:#d46b08;font-size:11px}.adjustment-reason{display:grid;grid-template-columns:260px minmax(0,1fr);gap:16px;align-items:start;padding:12px 14px;border-top:1px solid #e4e9f0;background:#fff8ec}.adjustment-reason>div{display:flex;flex-direction:column;gap:5px}.adjustment-reason em{color:#e34848;font-style:normal}.adjustment-reason small{color:#7b8798;font-weight:400}.muted{color:#8a96a8}
+
+.confirm-page, .page-grid > main, .page-grid > aside { min-width: 0; box-sizing: border-box; }
+@media (max-width: 780px) {
+  .page-head { height: auto; align-items: flex-start; flex-wrap: wrap; gap: 12px; padding: 8px 0 12px; }
+  .actions { flex-wrap: wrap; }
+  .order-summary { grid-template-columns: minmax(0, 1fr); }
+  .adjustment-reason { grid-template-columns: minmax(0, 1fr); }
+}
 </style>

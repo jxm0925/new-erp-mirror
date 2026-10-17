@@ -34,7 +34,20 @@ final class ProductionCuttingOperationController extends Controller
 
     public function save(Request $r, int $taskId, string $targetType, int $targetId, int $batchId, ProductionCuttingOperationService $service)
     {
-        $payload = $this->payload($r,['actual_qty'=>'required|numeric|gte:0','other_results'=>'nullable|array|max:99','other_results.*'=>'array']);
+        $payload = $this->payload($r,[
+            'actual_qty'=>'required_without:components|nullable|numeric|gte:0',
+            'components'=>'required_without:actual_qty|nullable|array|min:1|max:100',
+            'components.*.target_material_requirement_id'=>'required|integer|min:1|distinct',
+            'components.*.actual_piece_qty'=>'nullable|integer|min:0',
+            'components.*.actual_total_length_mm'=>'nullable|numeric|decimal:0,5|gte:0',
+            'other_results'=>'nullable|array|max:99','other_results.*'=>'array',
+            'remnant_review'=>'required|array', 'remnant_review.confirmed'=>'required|boolean', 'remnant_review.source_fingerprint'=>'nullable|string|size:64',
+            'remnant_review.sources'=>'required|array|min:1|max:1000', 'remnant_review.sources.*.source_key'=>'required|string|max:80',
+            'remnant_review.sources.*.no_remnant'=>'required|boolean', 'remnant_review.sources.*.rows'=>'present|array|max:99',
+            'remnant_review.sources.*.rows.*.client_row_id'=>'required|string|max:80',
+            'remnant_review.sources.*.rows.*.length_mm'=>'nullable|numeric|decimal:0,2|gt:0',
+            'remnant_review.sources.*.rows.*.area_mm2'=>'nullable|numeric|decimal:0,2|gt:0',
+        ]);
         return response()->json(['data'=>$service->save($taskId,$targetType,$targetId,$batchId,$payload,...$this->context($r))]);
     }
 

@@ -71,6 +71,7 @@ class ProductionOutputService
             $output = ProductionOutputRecord::query()->lockForUpdate()->find($outputId);
             if (! $output) $this->fail('output_not_found', '生产产出记录不存在。', 404);
             if ((int) $output->business_version !== (int) $payload['expected_version']) $this->fail('version_conflict', '产出记录版本已变化，请刷新后重试。', 409);
+            if (app(ProductionCuttingComponentService::class)->isOutput($output)) $this->fail('cutting_components_warehouse_forbidden', '下料组件保留原材料和尺寸明细，只能交接本工单下游，不能作为成品或公共原料入库。', 409);
             if ($output->output_mode_snapshot === 'flow_only') $this->fail('flow_only_cannot_warehouse', '纯流转产出禁止入库。');
             if ($output->quality_mode_snapshot !== 'none' && ! ProductionQualityInspection::query()->where('output_record_id', $output->id)->where('result', 'passed')->exists())
                 $this->fail('quality_not_passed', '生产产出尚未通过独立生产质检，不能入库。', 409);
@@ -129,13 +130,15 @@ class ProductionOutputService
             $output->update(['status' => $outputStatus, 'business_version' => (int) $output->business_version + 1]);
             if (! $terminal) {
                 $this->syncSourceTarget($output, 'COMPLETED');
-                $this->ensureNextTask($output, false, $this->userId($user));
             }
             $workOrder = WorkOrder::query()->lockForUpdate()->find($output->work_order_id);
             $inventorySerialId = $workOrder
                 ? $this->stockPrebuild->registerOutputSerial($workOrder, $output, $payload, $user)
                 : null;
-            $issueId = $terminal ? null : $this->createInternalIssue($output, $payload, $transaction);
+            $issueId = $terminal ? null : $this->createInternalIssue($output, $payload, $user);
+            // Establish the stock/SN hold before offering the successor. Its claim
+            // and start gates must see the formal internal issue from the outset.
+            if (! $terminal) $this->ensureNextTask($output, false, $this->userId($user));
             if ($terminal) DB::table('erp_work_order_finished_goods_receipts')->where('id', $receiptId)->update([
                 'output_warehouse_posting_id' => $postingId, 'inventory_transaction_id' => $transaction->id,
                 'status' => 'POSTED', 'updated_at' => now(),
@@ -170,12 +173,15 @@ class ProductionOutputService
 
         $line = SalesOrderLine::query()->lockForUpdate()->find($workOrder->demand->sales_order_line_id);
         if (! $line) $this->fail('sales_order_line_missing', '销售来源工单无法定位原订单行，禁止丢失回补归属。', 409);
-        $fulfillment = SalesOrderFulfillment::query()
+        $fulfillments = SalesOrderFulfillment::query()
             ->where('sales_order_id', $workOrder->demand->sales_order_id)
             ->where('sales_order_line_id', $line->id)
             ->where('fulfillment_type', 'production')
             ->where('demand_status', 'confirmed')
-            ->lockForUpdate()->orderByDesc('id')->first();
+            ->lockForUpdate()->orderBy('id')->get();
+        // New batches bind to their exact demand; only a sole unbound legacy row
+        // has an unambiguous fallback. Never choose the latest row across batches.
+        $fulfillment = SalesOrderFulfillmentPolicy::productionFulfillmentForDemand($fulfillments, (int) $workOrder->production_demand_id);
         if (! $fulfillment) $this->fail('sales_production_fulfillment_missing', '销售来源工单缺少生产履约记录，禁止生成无归属库存。', 409);
         $balance = InventoryBalance::query()
             ->where('item_id', $output->output_item_id)
@@ -226,25 +232,28 @@ class ProductionOutputService
         });
     }
 
-    private function createInternalIssue(ProductionOutputRecord $output, array $payload, object $transaction): ?int
+    private function createInternalIssue(ProductionOutputRecord $output, array $payload, object $user): ?int
     {
         if (! in_array($output->output_mode_snapshot, ['warehouse_required', 'warehouse_optional'], true)) return null;
         $source = $this->sourceTarget($output); if (! $source) return null;
         $model = $output->source_target_type === 'unit_operation' ? \App\Models\Erp\ProductionUnitOperation::class : \App\Models\Erp\ProductionQuantityOperation::class;
         $query = $model::query()->where('sequence_no_snapshot', '>', $source->sequence_no_snapshot);
         $output->source_target_type === 'unit_operation' ? $query->where('production_unit_id', $source->production_unit_id) : $query->where('work_order_id', $source->work_order_id);
-        $next = $query->orderBy('sequence_no_snapshot')->first(); if (! $next) return null;
+        $next = $query->orderBy('sequence_no_snapshot')->lockForUpdate()->first(); if (! $next) return null;
         $link = DB::table('erp_production_task_targets')->where('target_type', $output->source_target_type)->where('target_id', $next->id)->first();
         if (! $link) return null;
-        $balance = DB::table('erp_inventory_balances')->where('item_id', $output->output_item_id)->where('warehouse_id', $payload['warehouse_id'])
-            ->where('location_id', $payload['location_id'])->where('batch_no', $payload['batch_no'])->first();
+        $balance = InventoryBalance::query()->where('item_id', $output->output_item_id)->where('warehouse_id', $payload['warehouse_id'])
+            ->where('location_id', $payload['location_id'])->where('batch_no', $payload['batch_no'])->lockForUpdate()->firstOrFail();
         $issueId = DB::table('erp_production_internal_issue_tasks')->insertGetId(['issue_no' => $this->numbers->next('production_internal_issue', 'PII'),
             'work_order_id' => $output->work_order_id, 'target_task_id' => $link->task_id, 'target_type' => $output->source_target_type,
             'target_id' => $next->id, 'source_type' => $output->production_unit_id ? 'continuation_reserved' : 'common_inventory',
             'status' => 'WAIT_ISSUE', 'business_version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        $workOrder = WorkOrder::query()->lockForUpdate()->findOrFail($output->work_order_id);
+        $continuationId = app(ProductionInventoryContinuationService::class)->reserveExistingFlow($workOrder, $output, $source, $next, $balance, $issueId, $user);
+        if ($continuationId) DB::table('erp_production_internal_issue_tasks')->where('id', $issueId)->update(['source_type' => 'inventory_continuation']);
         $targetRequirementId = $this->uniqueTargetMaterialRequirement($output->source_target_type, (int) $next->id, (int) $output->output_item_id);
         DB::table('erp_production_internal_issue_lines')->insert(['issue_task_id' => $issueId, 'output_record_id' => $output->id,
-            'target_material_requirement_id' => $targetRequirementId,
+            'target_material_requirement_id' => $targetRequirementId, 'inventory_continuation_id' => $continuationId,
             'item_id' => $output->output_item_id, 'inventory_balance_id' => $balance->id, 'warehouse_id' => $payload['warehouse_id'],
             'location_id' => $payload['location_id'], 'batch_no' => $payload['batch_no'], 'serial_id' => $output->inventory_serial_id,
             'serial_no_snapshot' => $output->serial_no_snapshot, 'issue_base_qty' => $output->output_base_qty, 'created_at' => now(), 'updated_at' => now()]);
@@ -293,7 +302,7 @@ class ProductionOutputService
                     'target_target_type' => $output->source_target_type, 'target_target_id' => $next->id,
                     'target_material_requirement_id' => $targetRequirementId, 'output_record_id' => $output->id,
                     'status' => 'WAIT_RECEIVE', 'handed_over_by_legacy_id' => $userId, 'handed_over_at' => now(),
-                    'identity_snapshot' => json_encode(['output_no' => $output->output_no, 'serial_no' => $output->serial_no_snapshot], JSON_UNESCAPED_UNICODE),
+                    'identity_snapshot' => json_encode(app(ProductionCuttingComponentService::class)->handoverIdentity($output), JSON_UNESCAPED_UNICODE),
                     'business_version' => 1, 'created_at' => now(), 'updated_at' => now()]);
             } elseif ($existingHandover->status === 'REJECTED') {
                 // The output identity is unique across a rework cycle. Reopen the same
@@ -316,6 +325,7 @@ class ProductionOutputService
         $target = $this->sourceTarget($output, true);
         if (! $target) return;
         $target->status = $status; $target->business_version = (int) $target->business_version + 1; $target->save();
+        if ($status === 'COMPLETED') app(ProductionPerformanceApplicationService::class)->ensureDefaultShares($output->source_target_type, (int) $target->id);
         $link = DB::table('erp_production_task_targets')->where('target_type', $output->source_target_type)->where('target_id', $target->id)->first();
         if (! $link) return;
         DB::table('erp_production_task_targets')->where('id', $link->id)->update(['status_snapshot' => $status, 'updated_at' => now()]);

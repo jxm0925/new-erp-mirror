@@ -40,7 +40,7 @@
           <h3>基本信息</h3>
         </div>
       </div>
-      <el-descriptions :column="{ xl: 4, lg: 3, md: 2, sm: 1 }" border size="small" class="detail-descriptions">
+      <el-descriptions :column="descriptionsColumns" border size="small" class="detail-descriptions">
         <el-descriptions-item label="单据编号">
           <span class="font-mono highlight-no">{{ no }}</span>
         </el-descriptions-item>
@@ -94,6 +94,7 @@
     </section>
 
     <!-- 采购价格预警：与历史采购价对比（仅采购订单）。 -->
+    <el-alert v-if="type==='orders' && priceCheckError" :title="priceCheckError" type="warning" :closable="false" show-icon />
     <purchase-price-check-panel v-if="type==='orders'" :result="priceCheck" />
 
     <!-- 审核流进度（仅采购订单） -->
@@ -287,10 +288,11 @@ const statusMap = {
 
 export default {
   name: 'PurchaseSimpleDetail',
-  components: { PurchasePaymentPlanDialog: () => import('@/components/finance/PurchasePaymentPlanDialog.vue') },
+  components: { PurchasePriceCheckPanel, PurchasePaymentPlanDialog: () => import('@/components/finance/PurchasePaymentPlanDialog.vue') },
   props: { type: { type: String, required: true } },
-  data: () => ({ doc: null, paymentPlanVisible: false }),
+  data: () => ({ doc: null, paymentPlanVisible: false, priceCheck: null, priceCheckError: '', viewportWidth: window.innerWidth }),
   computed: {
+    descriptionsColumns() { return this.viewportWidth >= 1920 ? 4 : this.viewportWidth >= 1200 ? 3 : this.viewportWidth >= 992 ? 2 : 1 },
     orderProgress() {
       const doc = this.doc || {}
       const items = doc.items || []
@@ -354,14 +356,27 @@ export default {
     }
   },
   async mounted() {
+    window.addEventListener('resize', this.updateViewportWidth)
     try {
       const res = await getPurchase(this.type, this.$route.params.id)
       this.doc = res.data
+      if (this.type === 'orders') this.loadPriceCheck()
     } catch (e) {
       this.$message?.error?.('获取单据详情失败')
     }
   },
+  beforeDestroy() { window.removeEventListener('resize', this.updateViewportWidth) },
   methods: {
+    updateViewportWidth() { this.viewportWidth = window.innerWidth },
+    async loadPriceCheck() {
+      this.priceCheck = null; this.priceCheckError = ''
+      try {
+        const response = await getOrderPriceCheck(this.doc.id)
+        this.priceCheck = response.data.data
+      } catch (error) {
+        this.priceCheckError = error.userMessage || '采购价格对比未能获取，请刷新后重试'
+      }
+    },
     scopeLabel(scope) { return purchaseScopeLabel(scope) },
     itemCode(row) { return row.item_code || (row.item && row.item.item_code) || '-' },
     itemName(row) { return row.item_name || (row.item && row.item.item_name) || '-' },

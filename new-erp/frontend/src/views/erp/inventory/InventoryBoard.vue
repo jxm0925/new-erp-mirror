@@ -1040,7 +1040,7 @@ export default {
       postingRows: [],
       postingStats: { posted_today: 0 },
       postingQuery: { dateRange: [], supplier: '', warehouse: '', keyword: '' },
-      postingPagination: { page: 1, per_page: 20, total: 0 },
+      postingPagination: { page: 1, per_page: 10, total: 0 },
       selectedReceipt: null,
       postingDialogVisible: false,
       postingCandidate: null,
@@ -1049,7 +1049,7 @@ export default {
       postingRepairSaving: false,
       balanceQuery: { management_scope: '', keyword: '', warehouse: '', location: '', batch: '', status: '' },
       balanceRequestSeq: 0,
-      balancePagination: { page: 1, per_page: 20, total: 0 },
+      balancePagination: { page: 1, per_page: 10, total: 0 },
       selectedBalance: null,
       balanceDetailVisible: false,
       balanceDetailBatches: [],
@@ -1072,7 +1072,7 @@ export default {
       serialKeyword: '',
       serialDialogLoading: false,
       serialRows: [],
-      serialPagination: { page: 1, per_page: 20, total: 0 },
+      serialPagination: { page: 1, per_page: 10, total: 0 },
       qualityDrawerVisible: false,
       qualitySaving: false,
       qualitySource: {},
@@ -1080,10 +1080,10 @@ export default {
       qualityEvents: [],
       qualityForm: this.defaultQualityForm(),
       txQuery: { type: '', sourceNo: '', keyword: '', warehouse: '', location: '', batch: '', dateRange: [], itemId: null },
-      txPagination: { page: 1, per_page: 20, total: 0 },
+      txPagination: { page: 1, per_page: 10, total: 0 },
       transactionStats: { today_in_count: 0, today_adjust_count: 0, pending_adjustment_count: 0, reversed_count: 0 },
       adjustmentQuery: { no: '', reason: '', keyword: '', status: '', dateRange: [] },
-      adjustmentPagination: { page: 1, per_page: 20, total: 0 },
+      adjustmentPagination: { page: 1, per_page: 10, total: 0 },
       adjustmentStats: { posted_count: 0, submitted_count: 0, draft_count: 0 },
       adjustmentDetailVisible: false,
       selectedAdjustment: null,
@@ -1417,7 +1417,7 @@ export default {
     },
     applyPagination(target, payload) {
       target.page = Number(payload.current_page || 1)
-      target.per_page = Number(payload.per_page || target.per_page || 20)
+      target.per_page = Number(payload.per_page || target.per_page || 10)
       target.total = Number(payload.total || 0)
     },
     balanceParams() {
@@ -2250,7 +2250,7 @@ export default {
           keyword: String(keyword || '').trim(),
           serial_status: 'available',
           page: 1,
-          per_page: 100
+          per_page: 10
         })
         const page = response.data || {}
         this.adjustmentSerialOptions = page.data || []

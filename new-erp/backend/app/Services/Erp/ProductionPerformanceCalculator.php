@@ -11,8 +11,9 @@ final class ProductionPerformanceCalculator
 
     public function policy(): array
     {
-        return ['code' => self::BASIS_MODE, 'version' => 1, 'label' => '折后商品含税金额，不含运费和另收包装费',
-            'trigger' => 'entire_order_shipped', 'individual_share_mode' => 'owner_confirmed', 'normalize_shares' => false];
+        return ['code' => self::BASIS_MODE, 'version' => 2, 'label' => '折后商品含税金额，不含运费和另收包装费',
+            'trigger' => 'entire_order_shipped', 'individual_share_mode' => 'owner_planned_or_completion_default',
+            'new_share_total' => '1.00000000', 'normalize_shares' => false, 'historical_assignments' => 'preserve'];
     }
 
     public function ratio(mixed $value): string
@@ -20,40 +21,62 @@ final class ProductionPerformanceCalculator
         if (! is_numeric($value) || ! is_finite((float) $value) || (float) $value < 0 || (float) $value > 1) {
             throw new WorkOrderDomainException('performance_ratio_invalid', '比例必须在 0% 到 100% 之间。');
         }
-        return number_format((float) $value, 8, '.', '');
+        $decimal = is_float($value) ? number_format($value, 8, '.', '') : trim((string) $value);
+        if (is_float($value) && abs($value - (float) $decimal) > 0.000000000001) {
+            throw new WorkOrderDomainException('performance_ratio_precision', '比例最多保留 8 位小数。');
+        }
+        if (! preg_match('/^\d+(?:\.\d+)?$/D', $decimal) || strlen($decimal) > 80) {
+            throw new WorkOrderDomainException('performance_ratio_invalid', '比例必须使用十进制数，1% 请填写 0.01。');
+        }
+        $scale = str_contains($decimal, '.') ? strlen(explode('.', $decimal, 2)[1]) : 0;
+        if (bccomp($decimal, bcadd($decimal, '0', 8), max(8, $scale)) !== 0) {
+            throw new WorkOrderDomainException('performance_ratio_precision', '比例最多保留 8 位小数。');
+        }
+        return bcadd($decimal, '0', 8);
     }
 
-    public function validateShares(array $shares, bool $noncreditedConfirmed, ?string $reason): array
+    public function validateShares(array $shares, bool $noncreditedConfirmed = false, ?string $reason = null): array
     {
-        $credited = '0.00000000';
         $declared = '0.00000000';
         $ids = [];
         $normalized = [];
         foreach ($shares as $share) {
             $id = (int) ($share['employee_legacy_id'] ?? 0);
             if ($id <= 0 || in_array($id, $ids, true)) throw new WorkOrderDomainException('performance_employee_invalid', '绩效人员必须有效且不能重复。');
-            if (! array_key_exists('eligible', $share) || ! array_key_exists('share_ratio', $share)) {
-                throw new WorkOrderDomainException('performance_share_missing', '请明确是否计个人绩效及个人份额，不能用默认零代替未登记。');
+            if (! array_key_exists('share_ratio', $share)) {
+                throw new WorkOrderDomainException('performance_share_missing', '请填写每位参与人员的个人份额。');
             }
             $ids[] = $id;
             $ratio = $this->ratio($share['share_ratio']);
-            if ($share['eligible'] === null || (is_string($share['eligible']) && trim($share['eligible']) === '')) {
-                throw new WorkOrderDomainException('performance_eligibility_invalid', '是否计个人绩效必须明确选择。');
+            // The new contract divides the whole operation pool. Historical eligible=false
+            // rows are still read by amounts(), but cannot be used to create a new unpaid tail.
+            if (array_key_exists('eligible', $share) && filter_var($share['eligible'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) !== true) {
+                throw new WorkOrderDomainException('performance_eligibility_invalid', '新个人份额直接按参与人分配，不再登记不计绩效人员。');
             }
-            $eligible = filter_var($share['eligible'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
-            if ($eligible === null) throw new WorkOrderDomainException('performance_eligibility_invalid', '是否计个人绩效必须明确选择。');
             $declared = bcadd($declared, $ratio, 8);
-            if ($eligible) $credited = bcadd($credited, $ratio, 8);
-            $normalized[] = ['employee_legacy_id' => $id, 'eligible' => $eligible, 'share_ratio' => $ratio,
+            $normalized[] = ['employee_legacy_id' => $id, 'eligible' => true, 'share_ratio' => $ratio,
                 'remark' => trim((string) ($share['remark'] ?? '')) ?: null];
         }
-        if (bccomp($declared, '1', 8) > 0) throw new WorkOrderDomainException('performance_share_exceeded', '本工序登记的个人份额合计不能超过 100%。');
-        $noncredited = bcsub('1', $credited, 8);
-        if (bccomp($noncredited, '0', 8) > 0 && (! $noncreditedConfirmed || trim((string) $reason) === '')) {
-            throw new WorkOrderDomainException('performance_noncredited_confirmation_required', '请确认剩余份额不计个人绩效并填写原因。');
-        }
+        if (bccomp($declared, '1', 8) !== 0) throw new WorkOrderDomainException('performance_share_total_invalid', '本工序参与人员的个人份额合计必须等于 100%。');
         usort($normalized, fn ($a, $b) => $a['employee_legacy_id'] <=> $b['employee_legacy_id']);
-        return ['shares' => $normalized, 'credited_share_ratio' => $credited, 'noncredited_share_ratio' => $noncredited];
+        return ['shares' => $normalized, 'credited_share_ratio' => '1.00000000', 'noncredited_share_ratio' => '0.00000000'];
+    }
+
+    /** Stable remainder allocation gives three participants exactly 100%, without normalizing entered shares. */
+    public function defaultShares(array $participants): array
+    {
+        $ids = array_values(array_unique(array_map(fn ($row) => (int) ($row['employee_legacy_id'] ?? 0), $participants)));
+        $ids = array_values(array_filter($ids, fn ($id) => $id > 0));
+        sort($ids);
+        if ($ids === []) return [];
+        $equal = bcdiv('1', (string) count($ids), 8);
+        $remaining = '1.00000000'; $shares = [];
+        foreach ($ids as $index => $id) {
+            $ratio = $index === count($ids) - 1 ? $remaining : $equal;
+            $remaining = bcsub($remaining, $ratio, 8);
+            $shares[] = ['employee_legacy_id' => $id, 'eligible' => true, 'share_ratio' => $ratio, 'remark' => null];
+        }
+        return $shares;
     }
 
     public function sourceBasis(string $lineAmount, string $sourceSalesQty, string $orderSalesQty, string $coverage): string
@@ -77,6 +100,7 @@ final class ProductionPerformanceCalculator
                 || ($line['line_status'] ?? '') === 'cancelled') continue;
             $required = bcsub(bcsub((string) ($line['order_qty'] ?? '0'), (string) ($line['no_delivery_qty'] ?? '0'), 8),
                 (string) ($line['service_fulfilled_qty'] ?? '0'), 8);
+            $required = bcsub($required, (string) ($line['cancelled_qty'] ?? '0'), 8);
             if (bccomp($required, '0', 8) <= 0) continue;
             $shipped = (string) ($shippedByLine[(int) $line['id']]['sales_qty'] ?? '0');
             $comparison = bccomp($shipped, $required, 8);

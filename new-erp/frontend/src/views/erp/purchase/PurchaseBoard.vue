@@ -108,7 +108,7 @@
           <span class="dialog-main-title">{{ detailNo(selected) }}</span>
           <span class="dialog-sub-title">{{ meta.short }}详情</span>
           <el-tag size="mini" :type="selected.management_scope === 'office' ? 'info' : 'success'">{{ scopeLabel(selected.management_scope) }}</el-tag>
-          <el-tag size="mini" :type="tagType(mainStatus(selected))">{{ labelOf(mainStatus(selected)) }}</el-tag>
+          <el-tag size="mini" :type="mainStatus(selected).type">{{ mainStatus(selected).text }}</el-tag>
           <el-tag v-if="selected.deleted_at" size="mini" type="info">已删除</el-tag>
           <el-tag v-if="mode==='orders' && selected.audit_status" size="mini" :type="tagType(selected.audit_status)">{{ labelOf(selected.audit_status, 'audit_status') }}</el-tag>
         </div>
@@ -126,7 +126,7 @@
             <h4>基础信息</h4>
           </div>
           <div class="spec-grid">
-            <div class="spec-item"><span class="spec-label">单据状态</span><span class="spec-value"><el-tag size="mini" :type="tagType(mainStatus(selected))">{{ labelOf(mainStatus(selected)) }}</el-tag></span></div>
+            <div class="spec-item"><span class="spec-label">单据状态</span><span class="spec-value"><el-tag size="mini" :type="mainStatus(selected).type">{{ mainStatus(selected).text }}</el-tag></span></div>
             <div class="spec-item" v-if="['plans', 'orders'].includes(mode)"><span class="spec-label">审核状态</span><span class="spec-value"><el-tag size="mini" :type="tagType(selected.audit_status)">{{ labelOf(selected.audit_status, 'audit_status') }}</el-tag></span></div>
             <div class="spec-item" v-if="mode==='plans'"><span class="spec-label">订单生成</span><span class="spec-value"><el-tag size="mini" :type="tagType(selected.order_status)">{{ labelOf(selected.order_status) }}</el-tag></span></div>
             <div class="spec-item" v-if="mode==='orders'"><span class="spec-label">到货状态</span><span class="spec-value"><el-tag size="mini" :type="tagType(selected.receipt_status)">{{ labelOf(selected.receipt_status) }}</el-tag></span></div>
@@ -710,7 +710,7 @@ export default {
           label: this.mode === 'plans' ? '未分配计划' : '待处理',
           value: this.mode === 'plans'
             ? this.rows.filter(r => this.planAllocationInfo(r).type === 'danger').length
-            : this.rows.filter(r => ['draft', 'submitted', 'processing'].includes(this.mainStatus(r))).length,
+            : this.rows.filter(r => ['draft', 'submitted', 'processing'].includes(r.request_status || r.plan_status || r.purchase_status || r.confirm_status || r.receipt_status)).length,
           sub: this.mode === 'plans' ? '单待分配供应商' : '单',
           icon: 'el-icon-warning-outline'
         }
@@ -1201,7 +1201,6 @@ export default {
         priority: first.priority || row.priority || '--'
       }
     },
-    mainStatus(row) { return row.request_status || row.plan_status || row.purchase_status || row.confirm_status || row.receipt_status },
     // 草稿单据的审核状态在库里默认是 pending，但还没提交，列表上显示“未提交”，避免与“草稿”矛盾。
     statusValue(row, prop) {
       const value = this.valueOf(row, prop)
@@ -1244,7 +1243,8 @@ export default {
         if (partial) return { text: '部分到货', type: 'warning', sub: row.expected_arrival_date ? `预计 ${String(row.expected_arrival_date).slice(5, 10)} 到齐` : '' }
         return { text: '待到货', type: 'primary', sub: row.expected_arrival_date ? `预计 ${String(row.expected_arrival_date).slice(5, 10)} 到货` : '未填写预计到货' }
       }
-      return { text: this.labelOf(row.status), type: 'info' }
+      const status = row.request_status || row.plan_status || row.purchase_status || row.confirm_status || row.receipt_status || row.status
+      return { text: this.labelOf(status), type: this.tagType(status) }
     },
     overdueDays(row) {
       if (!row || !row.expected_arrival_date) return 0

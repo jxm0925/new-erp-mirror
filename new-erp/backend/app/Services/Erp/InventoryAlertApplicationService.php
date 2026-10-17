@@ -120,7 +120,7 @@ class InventoryAlertApplicationService
             ->first();
     }
 
-    public function unreadForUser(?int $userId, int $perPage = 20)
+    public function unreadForUser(?int $userId, int $perPage = 10)
     {
         return InventoryAlert::query()->with(['item:id,item_code,item_name,unit_id', 'warehouse:id,warehouse_name'])
             ->where('is_read', false)

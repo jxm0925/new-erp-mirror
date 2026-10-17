@@ -106,8 +106,24 @@ class ProductionTaskController extends Controller
     {
         $payload = $request->validate([
             'client_command_id' => 'required|string|max:120', 'expected_version' => 'required|integer|min:1',
-            'employee_legacy_ids' => 'required|array|min:1|max:20',
+            'employee_legacy_ids' => 'present|array|max:20',
             'employee_legacy_ids.*' => 'required|integer|min:1|distinct',
+            'shares' => 'sometimes|prohibited_with:scope_shares|array|min:1|max:200',
+            'shares.*.employee_legacy_id' => 'required|integer|min:1|distinct',
+            'shares.*.share_ratio' => 'required|numeric|min:0|max:1',
+            'shares.*.remark' => 'nullable|string|max:500',
+            'shares.*.eligible' => 'sometimes|boolean',
+            'scope_shares' => 'sometimes|array|min:1|max:200',
+            'scope_shares.*.scope_type' => 'required|in:unit_operation,quantity_operation',
+            'scope_shares.*.scope_id' => 'required|integer|min:1',
+            'scope_shares.*.expected_scope_version' => 'required|integer|min:1',
+            'scope_shares.*.expected_assignment_version' => 'required|integer|min:0',
+            'scope_shares.*.shares' => 'required|array|min:1|max:200',
+            'scope_shares.*.shares.*.employee_legacy_id' => 'required|integer|min:1',
+            'scope_shares.*.shares.*.share_ratio' => 'required|numeric|min:0|max:1',
+            'scope_shares.*.shares.*.remark' => 'nullable|string|max:500',
+            'scope_shares.*.shares.*.eligible' => 'sometimes|boolean',
+            'performance_amount' => 'prohibited', 'basis_amount' => 'prohibited',
         ]);
         [$user, $permissions] = $this->writeContext($request);
         return response()->json(['message' => '协同人员已添加。', 'data' => $service->add($id, $payload, $user, $permissions)]);

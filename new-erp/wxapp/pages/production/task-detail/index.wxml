@@ -171,7 +171,7 @@
     <view class="card">
       <view class="card-title">
         <view class="card-title-left">现场作业人员 ({{totalWorkersCount}}人)</view>
-        <view wx:if="{{task.allowed_actions.add_collaborators}}" class="btn-add-collab-head" bindtap="openAddCollaborator">+ 添加协同</view>
+        <view wx:if="{{task.allowed_actions.add_collaborators || collabPending}}" class="btn-add-collab-head" bindtap="openAddCollaborator">{{collabPending ? '重试协同与份额' : '+ 添加协同'}}</view>
       </view>
       <view class="personnel-list">
         <view class="person-item" wx:for="{{workersList}}" wx:key="id">
@@ -293,7 +293,7 @@
         <van-cell-group border="{{ false }}">
           <block wx:for="{{ collabCandidates }}" wx:key="id">
             <van-cell
-              clickable="{{ !item.alreadyJoined }}"
+              clickable="{{ !item.alreadyJoined && !collabPending && !busy }}"
               data-id="{{ item.id }}"
               bind:click="toggleCollabSelect"
               custom-class="cand-cell {{ item.alreadyJoined ? 'is-joined' : '' }}"
@@ -312,7 +312,7 @@
               <van-checkbox
                 slot="right-icon"
                 name="{{ item.id }}"
-                disabled="{{ item.alreadyJoined }}"
+                disabled="{{ item.alreadyJoined || collabPending || busy }}"
                 checked-color="#d81e06"
               />
             </van-cell>
@@ -325,13 +325,21 @@
       <text>第 {{collabPage}} 页</text>
       <van-button size="small" disabled="{{collabLoading || !collabHasNext}}" bind:click="collabNextPage">下一页</van-button>
     </view>
+    <view wx:if="{{selectedCollabPeople.length}}" class="collab-selected"><view wx:for="{{selectedCollabPeople}}" wx:for-item="person" wx:key="id" data-id="{{person.id}}" bindtap="removeSelectedCollaborator">{{person.name}} ×</view></view>
+    <scroll-view scroll-y class="collab-share-list">
+      <view wx:for="{{collabShareGroups}}" wx:for-item="group" wx:for-index="groupIndex" wx:key="scope_id" class="collab-share-group">
+        <view class="collab-share-heading"><text>{{group.name}} · {{group.scope_id}}</text><button size="mini" data-group="{{groupIndex}}" bindtap="equalCollabShares" disabled="{{busy || collabPending}}">平均分配</button></view>
+        <view wx:for="{{group.rows}}" wx:for-item="person" wx:for-index="personIndex" wx:key="employee_legacy_id" class="collab-share-row"><text>{{person.employee_name}}{{person.employee_legacy_id === group.owner_legacy_id ? '（接单人）' : person.has_labor && !person.is_active ? '（已参与）' : '（协同人）'}}</text><view><input type="digit" value="{{person.percent}}" data-group="{{groupIndex}}" data-person="{{personIndex}}" bindinput="collabShareInput" disabled="{{busy || collabPending}}"/><text>%</text></view></view>
+      </view>
+      <view wx:if="{{collabError}}" class="collab-share-error">{{collabError}}</view>
+    </scroll-view>
 
     <!-- Modal Footer -->
     <view class="modal-foot">
       <view class="foot-info">已选择 <text class="foot-num">{{ selectedCollabIds.length }}</text> 人</view>
       <view class="foot-btns">
         <van-button custom-class="btn-modal-cancel" round bind:click="closeCollabModal">取消</van-button>
-        <van-button custom-class="btn-modal-confirm" round type="danger" color="#d81e06" loading="{{ busy }}" bind:click="submitAddCollaborators">确认加入协同</van-button>
+        <van-button custom-class="btn-modal-confirm" round type="success" color="#008b4b" loading="{{ busy }}" disabled="{{!collabPending && !collabShareGroups.length}}" bind:click="submitAddCollaborators">{{collabPending ? '重试原操作' : '确认协同与份额'}}</van-button>
       </view>
     </view>
   </van-popup>

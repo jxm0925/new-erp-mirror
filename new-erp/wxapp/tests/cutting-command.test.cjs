@@ -13,6 +13,7 @@ function client(storage, request) {
       getStorageSync: key => storage[key],
       setStorageSync(key, value) { storage[key] = JSON.parse(JSON.stringify(value)); },
       removeStorageSync(key) { delete storage[key]; },
+      getStorageInfoSync() { return { keys: Object.keys(storage) }; },
     },
   });
   return module.exports;
@@ -58,4 +59,13 @@ test('unresolved payload cannot silently change and is isolated by actor', async
   storage.erp_user = { legacy_id: 8 };
   await assert.rejects(api.write('orders', { quantity: '2' }, 'create'), /timeout/);
   assert.equal(calls, 2);
+});
+test('PUT component results are discoverable for the same target and replay unchanged', async () => {
+  const storage = { erp_user: { legacy_id: 7 } }; const calls = []; const route = 'production/tasks/1/targets/unit_operation/2/cutting/batches/9';
+  const first = client(storage, async options => { calls.push(options); throw new Error('timeout'); });
+  await assert.rejects(first.write(route, { expected_version: 1, components: [{ target_material_requirement_id: 11, actual_piece_qty: 3 }] }, 'save', 'PUT'));
+  const pending = first.pendingCommands('production/tasks/1/targets/unit_operation/2/cutting/batches/', 'PUT');
+  assert.equal(pending.length, 1); assert.equal(pending[0].path, route); assert.equal(first.pendingCommands(route).length, 0);
+  const retry = client(storage, async options => { calls.push(options); return {}; }); await retry.write(route, pending[0].payload, 'save', 'PUT');
+  assert.equal(JSON.stringify(calls[1].data), JSON.stringify(calls[0].data)); assert.equal(retry.pendingCommands(route, 'PUT').length, 0);
 });

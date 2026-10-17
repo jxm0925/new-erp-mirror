@@ -26,5 +26,8 @@
 .picking-input-unit input { width: 110rpx; text-align: center; height: 65rpx; font-size: 27rpx; }.picking-input-unit text { padding: 9rpx 12rpx; border-left: 1rpx solid #dce2ea; }
 .picking-identity { margin-top: 20rpx; padding: 14rpx 20rpx; }
 .picking-actions { display: flex; flex-direction: column; gap: 18rpx; }
+.picking-cut-source { min-width: 0; padding: 16rpx 0; line-height: 1.7; overflow-wrap: anywhere; }
+.picking-cut-source .warehouse-field { flex-wrap: wrap; gap: 12rpx; }
+.picking-cut-source input { min-width: 160rpx; flex: 1; width: auto; }
 .picking-dialog-title { justify-content: center; }.picking-cancel-text { line-height: 1.8; text-align: center; margin: 10rpx 0 40rpx; }.picking-cancel-label { margin-bottom: 16rpx; color: #617089; }
 @media (max-width: 350px) { .warehouse-card { padding: 20rpx; }.warehouse-label { width: 135rpx; }.picking-quantities > view { padding: 0 6rpx; }.picking-source-body > view { gap: 8rpx; }.picking-source-body { font-size: 23rpx; }.picking-source-body text:last-child { flex-shrink: 1; }.picking-badge { padding: 7rpx; } }

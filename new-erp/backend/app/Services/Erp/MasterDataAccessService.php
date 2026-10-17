@@ -15,7 +15,7 @@ final class MasterDataAccessService
             'suppliers' => 'master.supplier',
             'warehouses' => 'master.warehouse',
             'locations' => $action === 'edit' ? 'master.warehouse' : 'master.location',
-            'units', 'categories', 'trade-platforms' => 'master.base_archive',
+            'units', 'categories', 'trade-platforms', 'carriers' => 'master.base_archive',
             default => abort(405, '不支持的主数据操作。'),
         };
         // 基础档案沿用现有“新增/维护”权限，库位编辑沿用仓库库位编辑权限。

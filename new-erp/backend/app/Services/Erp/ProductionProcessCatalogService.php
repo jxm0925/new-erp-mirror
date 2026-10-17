@@ -17,7 +17,7 @@ class ProductionProcessCatalogService
         $model = $this->model($type);
         return $model::query()->when($filters['keyword'] ?? null, fn ($q, $v) => $q->where(fn ($sub) => $sub->where('code', 'like', "%{$v}%")->orWhere('name', 'like', "%{$v}%")))
             ->when($filters['status'] ?? null, fn ($q, $v) => $q->where('status', $v))
-            ->orderBy('sort')->orderBy('id')->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 20))));
+            ->orderBy('sort')->orderBy('id')->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 10))));
     }
 
     public function save(string $type, ?int $id, array $data, object $actor, array $permissions, bool $super): array

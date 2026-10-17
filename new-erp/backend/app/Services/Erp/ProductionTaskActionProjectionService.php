@@ -2,11 +2,12 @@
 
 namespace App\Services\Erp;
 
+use App\Models\Erp\ProductionQuantityOperation;
 use Illuminate\Support\Collection;
 
 class ProductionTaskActionProjectionService
 {
-    public function project(object $task, object $target, object $user, array $permissions, Collection $activeLabor, array $readiness): array
+    public function project(object $task, object $target, object $user, array $permissions, Collection $activeLabor, array $readiness, bool $cuttingRequired): array
     {
         $userId = (int) ($user->legacy_id ?? $user->id ?? 0);
         $status = (string) $target->status;
@@ -14,6 +15,8 @@ class ProductionTaskActionProjectionService
         $isCollaborator = (bool) $task->workOrder?->collaboration_enabled
             && $task->collaborators->contains(fn ($row) => $row->role === 'collaborator'
                 && (int) $row->employee_legacy_id === $userId && $row->left_at === null);
+        $isReportParticipant = $isOwner || $task->collaborators->contains(fn ($row) =>
+            (int) $row->employee_legacy_id === $userId && $row->left_at === null);
         $myActive = $activeLabor->contains(fn ($session) => (int) $session->employee_legacy_id === $userId);
         $has = fn (string $permission): bool => in_array($permission, $permissions, true);
 
@@ -26,6 +29,9 @@ class ProductionTaskActionProjectionService
             'pause' => $isOwner && $status === 'IN_PROGRESS' && $myActive && $has('production.task.pause'),
             'resume' => $isOwner && ! $myActive && $target->started_at
                 && in_array($status, ['IN_PROGRESS', 'PAUSED'], true) && $has('production.task.resume'),
+            'report' => $isReportParticipant && $target instanceof ProductionQuantityOperation
+                && in_array($status, ['IN_PROGRESS', 'PAUSED'], true) && $has('production.report.create')
+                && ! $cuttingRequired,
             'complete' => $isOwner && in_array($status, ['IN_PROGRESS', 'PAUSED'], true)
                 && $has('production.task.complete'),
             'accept_handover' => $isOwner && $status === 'WAIT_HANDOVER'
@@ -36,7 +42,7 @@ class ProductionTaskActionProjectionService
                 && in_array($status, ['IN_PROGRESS', 'PAUSED'], true) && $has('production.task.collaborate'),
         ];
         if ($task->active_job_bundle_id) {
-            foreach (['start', 'start_rework', 'pause', 'resume', 'complete', 'start_collaborator_labor', 'pause_collaborator_labor'] as $key) $allowed[$key] = false;
+            foreach (['start', 'start_rework', 'pause', 'resume', 'report', 'complete', 'start_collaborator_labor', 'pause_collaborator_labor'] as $key) $allowed[$key] = false;
         }
         $allowed['open_job_bundle'] = (bool) $task->active_job_bundle_id;
         $labels = [
@@ -45,6 +51,7 @@ class ProductionTaskActionProjectionService
             'start_rework' => ['code' => 'start_rework', 'label' => '开始返工'],
             'pause' => ['code' => 'pause_my_work', 'label' => '暂停我的作业'],
             'resume' => ['code' => 'resume_my_work', 'label' => '恢复我的作业'],
+            'report' => ['code' => 'report', 'label' => '登记报工'],
             'accept_handover' => ['code' => 'accept_handover', 'label' => '接收交接'],
             'start_collaborator_labor' => ['code' => 'start_collaborator_labor', 'label' => '开始协同计时'],
             'pause_collaborator_labor' => ['code' => 'pause_collaborator_labor', 'label' => '暂停协同计时'],
@@ -52,7 +59,7 @@ class ProductionTaskActionProjectionService
             'open_job_bundle' => ['code' => 'open_job_bundle', 'label' => '查看共同加工作业'],
         ];
         if ($task->active_job_bundle_id) $labels['confirm_kitting'] = ['code' => 'confirm_kitting_and_start', 'label' => '确认本条齐套'];
-        $ordered = ['confirm_kitting', 'start', 'start_rework', 'pause', 'resume', 'accept_handover', 'start_collaborator_labor', 'pause_collaborator_labor', 'complete'];
+        $ordered = ['confirm_kitting', 'start', 'start_rework', 'pause', 'resume', 'accept_handover', 'start_collaborator_labor', 'pause_collaborator_labor', 'report', 'complete'];
         $ordered[] = 'open_job_bundle';
         $actions = collect($ordered)->filter(fn (string $key): bool => $allowed[$key])->map(fn (string $key): array => $labels[$key])->values()->all();
 

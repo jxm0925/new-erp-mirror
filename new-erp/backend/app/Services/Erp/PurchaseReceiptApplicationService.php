@@ -89,6 +89,7 @@ class PurchaseReceiptApplicationService
                     'receipt_qty' => $quantity,
                     'qualified_qty' => $quantity,
                     'unit_price' => $line->unit_price,
+                    'tax_rate' => $line->tax_rate,
                     'receipt_cost' => $quantity * (float) $line->unit_price,
                     'inventory_posting_status' => $stockManaged ? 'pending' : 'not_required',
                     ...$conversion,

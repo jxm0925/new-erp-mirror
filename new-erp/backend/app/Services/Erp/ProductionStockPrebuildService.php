@@ -8,6 +8,7 @@ use App\Models\Erp\InventoryLocationBalance;
 use App\Models\Erp\InventorySerial;
 use App\Models\Erp\Item;
 use App\Models\Erp\ProductionOutputRecord;
+use App\Models\Erp\ProductionSerial;
 use App\Models\Erp\ProductionQuantityOperation;
 use App\Models\Erp\ProductionUnitOperation;
 use App\Models\Erp\WorkOrder;
@@ -266,7 +267,28 @@ final class ProductionStockPrebuildService
                 'updated_at' => now(),
             ]);
         }
-        $output->update(['inventory_serial_id' => $serial->id, 'serial_no_snapshot' => $serialNo]);
+        if (! $productionSerial && $output->production_unit_id && (int) $output->output_item_id === (int) $workOrder->output_item_id
+            && $this->bindsInventoryCheckpoint($workOrder, $output)) {
+            // A final-product PU may first enter inventory at a dry checkpoint,
+            // before the configured terminal SN stage. Bind that real inventory
+            // identity now; generating a second SN at WATER_TEST would split one device.
+            $unit = DB::table('erp_production_units')->where('id', $output->production_unit_id)->lockForUpdate()->first();
+            if (! $unit || (int) $unit->work_order_id !== (int) $workOrder->id) $this->fail('production_serial_unit_missing', '生产产出缺少对应的原产品单元。', 409);
+            $productionSerial = ProductionSerial::query()->firstOrCreate(['serial_no' => $serialNo], [
+                'item_id' => $item->id, 'serial_type' => 'finished_device', 'generation_stage' => 'inventory_checkpoint',
+                'status' => 'inventory_bound', 'inventory_serial_id' => $serial->id,
+                'source_type' => 'production_unit', 'source_id' => $unit->id, 'generated_at' => now(),
+            ]);
+            if ((int) $productionSerial->item_id !== (int) $item->id
+                || ($unit->device_serial_id && (int) $unit->device_serial_id !== (int) $productionSerial->id)) {
+                $this->fail('production_serial_conflict', '入库序列号与产品单元已有身份不一致。', 409);
+            }
+            DB::table('erp_production_units')->where('id', $unit->id)->update([
+                'device_serial_id' => $productionSerial->id, 'device_no_snapshot' => $serialNo, 'updated_at' => now(),
+            ]);
+        }
+        $output->update(['serial_id' => $productionSerial?->id ?: $output->serial_id,
+            'inventory_serial_id' => $serial->id, 'serial_no_snapshot' => $serialNo]);
         if ($productionSerial) DB::table('erp_production_serials')->where('id', $productionSerial->id)->update([
             'inventory_serial_id' => $serial->id, 'status' => 'inventory_bound', 'updated_at' => now(),
         ]);
@@ -282,6 +304,21 @@ final class ProductionStockPrebuildService
         if ($workOrder->stocking_purpose === 'common_inventory') return true;
         return $output->output_mode_snapshot === 'warehouse_required'
             || ($output->output_mode_snapshot === 'warehouse_optional' && $output->disposition === 'warehouse');
+    }
+
+    private function bindsInventoryCheckpoint(WorkOrder $wo, ProductionOutputRecord $output): bool
+    {
+        if ($wo->source_type === 'stock_prebuild') return true;
+        $table = $output->source_target_type === 'unit_operation' ? 'erp_production_unit_operations' : 'erp_production_quantity_operations';
+        $routingId = DB::table($table)->where('id', $output->source_target_id)->value('routing_operation_id_snapshot');
+        $nodes = collect(data_get($wo->routing_snapshot, 'operations', []))
+            ->filter(fn ($node) => ($node['execution_context'] ?? 'production') === 'production')->sortBy('sequence');
+        $source = $nodes->firstWhere('routing_operation_id', (int) $routingId);
+        $next = $source ? $nodes->where('sequence', '>', $source['sequence'])->first() : null;
+        // Other ordinary intermediate outputs retain their established SN policy.
+        // Only this held dry product and reusable prebuild product bind early.
+        return $source && $next && (new ProductionInventoryCheckpointPolicy)->isDryAssembly((int) $wo->output_item_id,
+            (int) $output->output_item_id, $output->output_mode_snapshot, $source['stage_code'] ?? null, $next['stage_code'] ?? null);
     }
 
     private function targetContext(WorkOrder $source, int $itemId): array

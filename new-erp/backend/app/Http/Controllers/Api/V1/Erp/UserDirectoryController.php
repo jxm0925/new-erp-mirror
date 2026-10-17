@@ -19,7 +19,7 @@ class UserDirectoryController extends Controller
         $required = match ($scope) {
             'warehouse' => ['master.warehouse.create', 'master.warehouse.edit'],
             'production' => ['production.demand.view', 'production.work_order.view'],
-            'sales' => ['sales.order', 'sales_return.view'],
+            'sales' => ['sales.order', 'sales_return.view', 'sales_order.view', 'sales_order.create', 'sales.order.create', 'sales.order.edit', 'sales_order.edit_draft', 'sales_order.change', 'sales_order.change.submit'],
             default => ['system.admin.view'],
         };
         if (! $user || (! $auth->isSuperAdmin($user) && array_intersect($required, $permissions) === [])) {
@@ -43,12 +43,12 @@ class UserDirectoryController extends Controller
             'keyword' => $request->input('keyword'),
             'page' => $request->input('page'),
             'per_page' => $request->input('per_page'),
-        ]);
+        ], $user);
 
         if ($result instanceof LengthAwarePaginator) {
             return response()->json([
                 'data' => $result->items(),
-                ...($scope === 'warehouse' && $request->boolean('include_departments') ? [
+                ...(in_array($scope, ['warehouse', 'production', 'sales'], true) && $request->boolean('include_departments') ? [
                     // 选择器明确请求部门树，仅提供真实分类，不额外授予系统账号管理权限。
                     'departments' => DB::table('erp_departments')->whereNull('deleted_at')->orderBy('sort')->orderBy('legacy_id')
                         ->get(['legacy_id as id', 'parent_legacy_id as parent_id', 'name']),

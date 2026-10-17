@@ -11,6 +11,89 @@ class ProductionInventoryContinuationService
 {
     public function __construct(private readonly InventoryAvailabilityService $availability, private readonly DocumentNumberService $numbers) {}
 
+    /** A dry sales product stays with its existing WO/PU; stock-prebuild output is reusable. */
+    public function reserveExistingFlow(WorkOrder $wo, ProductionOutputRecord $output, object $source, object $next,
+        InventoryBalance $balance, int $issueId, object $user): ?int
+    {
+        $policy = new ProductionInventoryCheckpointPolicy;
+        if ($wo->source_type === 'stock_prebuild' || ! $policy->isDryAssembly((int) $wo->output_item_id,
+            (int) $output->output_item_id, $output->output_mode_snapshot, $source->stage_code_snapshot ?? null, $next->stage_code_snapshot ?? null)) return null;
+        if (DB::transactionLevel() < 1) throw new \LogicException('Dry inventory reservation requires the warehouse posting transaction.');
+        if (! $policy->canHoldUnstarted($next)) $this->fail('dry_inventory_successor_started', '试水已开工，不能改为总装干态入库。', 409);
+        $existing = DB::table('erp_work_order_inventory_continuations')->where('internal_issue_task_id', $issueId)->lockForUpdate()->first();
+        if ($existing) return (int) $existing->id;
+        $qty = (string) $output->output_base_qty;
+        if (bccomp((string) $balance->quantity_available, $qty, 8) < 0) $this->fail('continuation_inventory_insufficient', '总装干库存可用数量不足，不能保留给原工单。', 409);
+        $serial = $output->inventory_serial_id ? DB::table('erp_inventory_serials')->where('id', $output->inventory_serial_id)->lockForUpdate()->first() : null;
+        if ($output->inventory_serial_id && (! $serial || $serial->serial_status !== 'available'
+            || (int) $serial->inventory_balance_id !== (int) $balance->id || $serial->source_document_type !== 'production_output'
+            || (int) $serial->source_document_id !== (int) $output->id || bccomp($qty, '1', 8) !== 0)) {
+            $this->fail('continuation_serial_invalid', '总装干库存序列号与当前入库产出不一致。', 409);
+        }
+        $this->changeLock($balance, $qty);
+        $id = DB::table('erp_work_order_inventory_continuations')->insertGetId([
+            'work_order_id' => $wo->id, 'source_output_record_id' => $output->id,
+            'inventory_balance_id' => $balance->id, 'inventory_serial_id' => $serial?->id,
+            'production_unit_id' => $output->production_unit_id,
+            'start_routing_operation_id' => $next->routing_operation_id_snapshot, 'start_sequence' => $next->sequence_no_snapshot,
+            'base_qty' => $qty, 'internal_issue_task_id' => $issueId,
+            'source_snapshot' => json_encode(['continuation_mode' => 'same_work_order', 'source_work_order_id' => (int) $wo->id,
+                'source_output_record_id' => (int) $output->id, 'source_target_type' => $output->source_target_type,
+                'source_target_id' => (int) $source->id, 'production_unit_id' => $output->production_unit_id,
+                'start_operation_name' => $next->operation_name_snapshot, 'start_stage_code' => $next->stage_code_snapshot,
+                'batch_no' => $balance->batch_no, 'serial_no' => $serial?->serial_no], JSON_THROW_ON_ERROR),
+            'created_by_legacy_id' => $user->legacy_id ?? $user->id, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        if ($serial) {
+            DB::table('erp_inventory_serials')->where('id', $serial->id)->update(['serial_status' => 'continuation_reserved', 'updated_at' => now()]);
+            DB::table('erp_inventory_serial_events')->insert([
+                'inventory_serial_id' => $serial->id, 'event_type' => 'production_dry_inventory_reserved',
+                'document_type' => 'production_output', 'document_id' => $output->id, 'document_no' => $output->output_no,
+                'from_status' => 'available', 'to_status' => 'continuation_reserved', 'warehouse_id' => $balance->warehouse_id,
+                'location_id' => $balance->location_id, 'batch_no' => $balance->batch_no, 'operator_id' => $user->legacy_id ?? $user->id,
+                'event_payload' => json_encode(['inventory_continuation_id' => $id, 'work_order_id' => (int) $wo->id,
+                    'production_unit_id' => $output->production_unit_id, 'internal_issue_task_id' => $issueId], JSON_THROW_ON_ERROR),
+                'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+            ]);
+        }
+        // Holding is an inventory fact, not a fabricated completed/pause labor fact.
+        // The existing next task is blocked by its WAIT_ISSUE/ISSUED prerequisite.
+        DB::table('erp_production_execution_events')->insert([
+            'aggregate_type' => 'inventory_continuation', 'aggregate_id' => $id, 'action' => 'hold_dry_inventory',
+            'before_status' => null, 'after_status' => 'RESERVED', 'before_version' => 0, 'after_version' => 1,
+            'fact_snapshot' => json_encode(['inventory_continuation_id' => $id, 'internal_issue_task_id' => $issueId,
+                'source_output_record_id' => (int) $output->id, 'production_unit_id' => $output->production_unit_id,
+                'resume_target_id' => (int) $next->id], JSON_THROW_ON_ERROR),
+            'operator_legacy_id' => $user->legacy_id ?? $user->id, 'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        return (int) $id;
+    }
+
+    public function executions(int $id, array $filters, object $user, array $permissions, bool $super = false): array
+    {
+        app(WorkOrderApplicationService::class)->showWorkOrder($id, $user, $permissions, $super);
+        $page = DB::table('erp_work_order_inventory_continuations as continuation')
+            ->leftJoin('erp_production_internal_issue_tasks as issue', 'issue.id', '=', 'continuation.internal_issue_task_id')
+            ->join('erp_production_output_records as output', 'output.id', '=', 'continuation.source_output_record_id')
+            ->join('erp_work_orders as source', 'source.id', '=', 'output.work_order_id')
+            ->leftJoin('erp_inventory_balances as balance', 'balance.id', '=', 'continuation.inventory_balance_id')
+            ->leftJoin('erp_inventory_serials as serial', 'serial.id', '=', 'continuation.inventory_serial_id')
+            ->where('continuation.work_order_id', $id)->orderByDesc('continuation.id')
+            ->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 10))), ['continuation.*', 'source.work_order_no as source_work_order_no',
+                'balance.batch_no', 'serial.serial_no', 'issue.status as internal_issue_status', 'issue.target_task_id']);
+        $rows = collect($page->items())->map(function ($row): array {
+            $snapshot = json_decode((string) $row->source_snapshot, true) ?: [];
+            return ['id' => (int) $row->id, 'source_work_order_no' => $row->source_work_order_no,
+                'batch_no' => $row->batch_no, 'serial_no' => $row->serial_no, 'base_qty' => $row->base_qty,
+                'production_unit_id' => $row->production_unit_id ? (int) $row->production_unit_id : null,
+                'start_sequence' => (int) $row->start_sequence, 'start_operation_name' => $snapshot['start_operation_name'] ?? '',
+                'continuation_mode' => $snapshot['continuation_mode'] ?? 'new_work_order', 'status' => $row->status,
+                'internal_issue_task_id' => $row->internal_issue_task_id ? (int) $row->internal_issue_task_id : null,
+                'internal_issue_status' => $row->internal_issue_status, 'target_task_id' => $row->target_task_id ? (int) $row->target_task_id : null];
+        })->all();
+        return ['data' => $rows, 'meta' => ['current_page' => $page->currentPage(), 'total' => $page->total(), 'per_page' => $page->perPage()]];
+    }
+
     public function candidates(int $workOrderId, array $filters, object $user, array $permissions, bool $super = false): array
     {
         $wo = app(WorkOrderApplicationService::class)->showWorkOrder($workOrderId, $user, $permissions, $super);
@@ -22,14 +105,16 @@ class ProductionInventoryContinuationService
             ->join('erp_inventory_balances as balance', fn ($q) => $q->on('balance.item_id', '=', 'output.output_item_id')
                 ->on('balance.warehouse_id', '=', 'post.warehouse_id')->on('balance.location_id', '=', 'post.location_id')->on('balance.batch_no', '=', 'post.batch_no'))
             ->join('erp_items as item', 'item.id', '=', 'balance.item_id')
-            ->where('balance.quantity_available', '>', 0)->where('post.status', 'POSTED')->where('source.output_item_id', $wo->output_item_id);
+            ->where('balance.quantity_available', '>', 0)->where('post.status', 'POSTED')->where('source.output_item_id', $wo->output_item_id)
+            ->when($filters['inventory_balance_id'] ?? null, fn ($q, $id) => $q->where('balance.id', $id))
+            ->when($filters['source_output_record_id'] ?? null, fn ($q, $id) => $q->where('output.id', $id));
         if (! empty($filters['keyword'])) {
             $keyword = '%'.trim($filters['keyword']).'%';
             $query->where(fn ($q) => $q->where('balance.batch_no', 'like', $keyword)->orWhere('item.item_code', 'like', $keyword)
                 ->orWhere('item.item_name', 'like', $keyword)->orWhere('item.spec', 'like', $keyword));
         }
         $page = $query->select('balance.id as balance_id', 'output.id as output_id')->distinct()->orderBy('balance.id')->orderBy('output.id')
-            ->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 20))));
+            ->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 10))));
         $rows = [];
         foreach ($page->items() as $candidate) {
             $balance = InventoryBalance::find($candidate->balance_id);
@@ -59,8 +144,9 @@ class ProductionInventoryContinuationService
         $source = $this->source($wo, (int) $filters['inventory_balance_id'], null, '1', false, empty($filters['source_output_record_id']) ? null : (int) $filters['source_output_record_id']);
         $page = DB::table('erp_inventory_serials')->where('inventory_balance_id', $filters['inventory_balance_id'])
             ->where('serial_status', 'available')->where('source_document_type', 'production_output')->where('source_document_id', $source['source_output_record_id'])
+            ->when($filters['inventory_serial_id'] ?? null, fn ($q, $serialId) => $q->where('id', $serialId))
             ->when($filters['keyword'] ?? null, fn ($q, $v) => $q->where('serial_no', 'like', '%'.trim($v).'%'))
-            ->orderBy('id')->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 20))), ['id', 'serial_no']);
+            ->orderBy('id')->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 10))), ['id', 'serial_no']);
         return ['data' => $page->items(), 'meta' => ['current_page' => $page->currentPage(), 'last_page' => $page->lastPage(), 'total' => $page->total(), 'per_page' => $page->perPage()]];
     }
 
@@ -77,7 +163,6 @@ class ProductionInventoryContinuationService
                 return $old->response_snapshot;
             }
             if (! in_array($wo->status, ['DRAFT', 'WAIT_RELEASE'], true)) $this->fail('continuation_plan_locked', '只可在工单发布前选择库存续接。', 409);
-            app(AssemblyProductionApplicationService::class)->assertMutable($wo);
             if ((int) $wo->business_version !== (int) $payload['expected_version']) $this->fail('version_conflict', '工单已变化，请刷新后重试。', 409);
             if ($wo->source_type === 'stock_prebuild') $this->fail('continuation_source_invalid', '备货工单不能再次采用库存续接。');
             $plan = []; $sum = '0'; $balances = []; $serials = [];
@@ -96,13 +181,19 @@ class ProductionInventoryContinuationService
             $mode = $wo->outputItem?->production_execution_mode ?: 'unit';
             if ($mode === 'unit' && bccomp($sum, bcadd($sum, '0', 0), 8) !== 0) $this->fail('continuation_unit_quantity_invalid', '逐件生产只能选整数件库存。');
             $before = (int) $wo->business_version;
-            $wo->update(['inventory_continuation_plan' => $plan, 'business_version' => $before + 1, 'updated_by_legacy_id' => $user->legacy_id ?? $user->id]);
-            $response = ['id' => $id, 'business_version' => $before + 1, 'inventory_continuation_plan' => $plan];
+            $changed = $plan != ($wo->inventory_continuation_plan ?? []);
+            if ($changed) {
+                $assembly = app(AssemblyProductionApplicationService::class);
+                $assembly->replaceForInventoryContinuationLocked($wo, $user);
+                $wo->update(['inventory_continuation_plan' => $plan, 'business_version' => $before + 1, 'updated_by_legacy_id' => $user->legacy_id ?? $user->id]);
+                if ($wo->source_type === 'sales_order') $assembly->scheduleAutomaticLocked($wo, $user);
+            }
+            $response = ['id' => $id, 'business_version' => (int) $wo->business_version, 'inventory_continuation_plan' => $plan];
             ProductionExecutionCommand::create(['client_command_id' => $payload['client_command_id'], 'command_type' => 'configure_inventory_continuation',
                 'aggregate_type' => 'work_order', 'aggregate_id' => $id, 'request_hash' => $hash, 'status' => 'succeeded',
                 'response_snapshot' => $response, 'initiated_by_legacy_id' => $user->legacy_id ?? $user->id, 'processing_finished_at' => now()]);
             DB::table('erp_production_execution_events')->insert(['aggregate_type' => 'work_order', 'aggregate_id' => $id,
-                'action' => 'configure_inventory_continuation', 'before_version' => $before, 'after_version' => $before + 1,
+                'action' => 'configure_inventory_continuation', 'before_version' => $before, 'after_version' => (int) $wo->business_version,
                 'fact_snapshot' => json_encode($plan, JSON_THROW_ON_ERROR), 'operator_legacy_id' => $user->legacy_id ?? $user->id,
                 'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now()]);
             return $response;
@@ -151,6 +242,11 @@ class ProductionInventoryContinuationService
         $old = $this->nodes($sourceWo); $current = $this->nodes($wo);
         $index = $old->search(fn ($node) => (int) $node['routing_operation_id'] === (int) ($target?->routing_operation_id_snapshot ?? 0));
         if ($index === false || ! isset($current[$index + 1])) $this->fail('continuation_checkpoint_invalid', '库存没有可续接的剩余生产工序。');
+        if ($sourceWo->source_type !== 'stock_prebuild'
+            && (new ProductionInventoryCheckpointPolicy)->isDryAssembly((int) $sourceWo->output_item_id, (int) $output->output_item_id,
+                $output->output_mode_snapshot, $old[$index]['stage_code'] ?? null, $old[$index + 1]['stage_code'] ?? null)) {
+            $this->fail('continuation_original_work_order_required', '该总装干库存属于原生产工单，请在原工单办理试水领用。', 409);
+        }
         foreach ($old->take($index + 1) as $i => $node) {
             if (! isset($current[$i]) || $this->signature($node) !== $this->signature($current[$i])) $this->fail('continuation_routing_mismatch', '库存前序工艺与本工单不兼容，不能跳过已有工序。');
         }
@@ -215,6 +311,8 @@ class ProductionInventoryContinuationService
             $row['requirement_kind'] = 'standard';
             $originalRequired = (float) $row['base_required_qty'];
             $remaining = []; $total = 0;
+            $cutting = $row['cutting_requirement_snapshot'] ? json_decode($row['cutting_requirement_snapshot'], true, 512, JSON_THROW_ON_ERROR) : [];
+            $netLength = '0.00000000';
             foreach ($nodes as $node) foreach ($node['material_supply_rules'] ?? [] as $rule) {
                 if ((int) $rule['component_item_id'] !== (int) $row['component_item_id']) continue;
                 $target = $nodes->get((int) $rule['target_routing_operation_id']); if (! $target) continue;
@@ -224,11 +322,17 @@ class ProductionInventoryContinuationService
                     + (float) $row['fixed_qty']) * (float) $rule['required_qty_ratio'], 8);
                 $remaining['rule:'.$rule['rule_id']] = $required;
                 $total += $required;
+                if (FrozenCuttingStockPolicy::isTotalLength($cutting)) $netLength = bcadd($netLength,
+                    bcmul(bcmul(FrozenCuttingStockPolicy::totalLength($cutting), (string) $quantity, 16), (string) $rule['required_qty_ratio'], 8), 8);
             }
             if ($total <= 0) continue;
             $row['remaining_supply_snapshot'] = json_encode($remaining, JSON_THROW_ON_ERROR);
             $row['base_required_qty'] = $row['required_qty'] = $row['remaining_qty'] = round($total, 8);
             if ($row['required_piece_qty'] !== null) $row['required_piece_qty'] = round((float) $row['required_piece_qty'] * $total / $originalRequired, 8);
+            if (FrozenCuttingStockPolicy::isTotalLength($cutting)) {
+                $cutting['required_total_length_mm'] = $netLength;
+                $row['cutting_requirement_snapshot'] = json_encode($cutting, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
+            }
             $result[] = $row;
         }
         foreach (collect($wo->inventory_continuation_plan)->groupBy(fn ($p) => $p['start_routing_operation_id'].':'.$p['item_id']) as $plans) {
@@ -298,7 +402,11 @@ class ProductionInventoryContinuationService
         foreach ($lines as $line) {
             $row = DB::table('erp_work_order_inventory_continuations')->where('id', $line->inventory_continuation_id)->lockForUpdate()->first();
             if (! $row || $row->status !== 'RESERVED' || (int) $row->internal_issue_task_id !== (int) $issue->id
-                || (int) $row->work_order_id !== (int) $issue->work_order_id || bccomp((string) $row->base_qty, (string) $line->issue_base_qty, 8) !== 0) $this->fail('continuation_reservation_invalid', '库存续接领用与锁定来源不一致。', 409);
+                || (int) $row->work_order_id !== (int) $issue->work_order_id
+                || (int) $row->source_output_record_id !== (int) $line->output_record_id
+                || (int) $row->inventory_balance_id !== (int) $line->inventory_balance_id
+                || (int) ($row->inventory_serial_id ?? 0) !== (int) ($line->serial_id ?? 0)
+                || bccomp((string) $row->base_qty, (string) $line->issue_base_qty, 8) !== 0) $this->fail('continuation_reservation_invalid', '库存续接领用与锁定来源不一致。', 409);
             $balance = InventoryBalance::whereKey($row->inventory_balance_id)->lockForUpdate()->firstOrFail();
             $this->changeLock($balance, bcsub('0', (string) $row->base_qty, 8));
             DB::table('erp_work_order_inventory_continuations')->where('id', $row->id)->update(['status' => 'RECEIVED',
@@ -306,7 +414,7 @@ class ProductionInventoryContinuationService
             if ($row->inventory_serial_id) {
                 $serial = DB::table('erp_inventory_serials')->where('id', $row->inventory_serial_id)->lockForUpdate()->first();
                 if (! $serial || $serial->serial_status !== 'continuation_reserved' || (int) $serial->source_document_id !== (int) $row->source_output_record_id) $this->fail('continuation_serial_invalid', '续接序列号状态或来源已变化。', 409);
-                DB::table('erp_inventory_serials')->where('id', $serial->id)->update(['serial_status' => 'production_consumed', 'updated_at' => now()]);
+                DB::table('erp_inventory_serials')->where('id', $serial->id)->update(['serial_status' => 'production_consumed', 'outbound_at' => now(), 'updated_at' => now()]);
                 DB::table('erp_inventory_serial_events')->insert(['inventory_serial_id' => $serial->id, 'event_type' => 'production_continuation_received',
                     'document_type' => 'production_internal_issue', 'document_id' => $issue->id, 'document_no' => $issue->issue_no,
                     'from_status' => 'continuation_reserved', 'to_status' => 'production_consumed', 'warehouse_id' => $serial->warehouse_id,

@@ -45,7 +45,7 @@ final class CuttingInventoryReservationService
         if (! empty($filters['status'])) $query->where('reservation.status', $filters['status']);
         if (! empty($filters['keyword'])) $query->where('reservation.reservation_no', 'like', '%'.$filters['keyword'].'%');
         $page = $query->select('reservation.*', 'receipt.receipt_no', 'receipt.route_id', 'result.stage_id')
-            ->orderByDesc('reservation.id')->paginate((int) ($filters['per_page'] ?? 20), ['*'], 'page', (int) ($filters['page'] ?? 1));
+            ->orderByDesc('reservation.id')->paginate((int) ($filters['per_page'] ?? 10), ['*'], 'page', (int) ($filters['page'] ?? 1));
         $data = $page->getCollection()->map(function ($row): array {
             $pending = $this->pending((int) $row->id);
             return (array) $row + ['remaining_qty' => $this->remaining($row),

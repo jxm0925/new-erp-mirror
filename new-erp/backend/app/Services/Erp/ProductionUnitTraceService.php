@@ -25,7 +25,7 @@ final class ProductionUnitTraceService
             ->when(! empty($filters['status']), fn ($query) => $query->where('erp_production_units.status', $filters['status']));
         app(ProductionUnitDisplayQuery::class)->apply($query, $workOrderId, $filters['display_status'] ?? null);
         $page = $query->orderBy('erp_production_units.sequence_no')->orderBy('erp_production_units.id')
-            ->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 20))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
+            ->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 10))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
         $rows = $page->getCollection()->map(fn (ProductionUnit $unit) => $this->projection($unit))->all();
         $page->setCollection(collect($this->withTaskActions($rows, $user, $permissions, $superAdmin)));
         return $page;

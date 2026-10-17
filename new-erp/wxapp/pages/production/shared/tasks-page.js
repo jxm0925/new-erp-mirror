@@ -45,7 +45,7 @@ module.exports = function createTasksPage() { return {
     const sequence = this.requestSequence = (this.requestSequence || 0) + 1;
     const page = append ? this.data.page + 1 : 1;
     this.setData(append ? { loadingMore: true } : { loading: true, loaded: false, rows: [], filteredRows: [], stats: { total: '—', running: '—', waiting: '—', completed: '—' } });
-    return production.myTasks({ page, per_page: 20, keyword: this.data.keyword.trim(), execution_filter: this.data.active, include_stats: 1 }).then((response) => {
+    return production.myTasks({ page, per_page: 10, keyword: this.data.keyword.trim(), execution_filter: this.data.active, include_stats: 1 }).then((response) => {
       if (sequence !== this.requestSequence) return;
       const existing = append ? this.data.rows : [];
       const ids = new Set(existing.map(row => row.id));

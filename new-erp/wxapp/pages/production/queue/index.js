@@ -35,7 +35,7 @@ Page({
     }
     const sequence = this.requestSequence = (this.requestSequence || 0) + 1;
     const page = append ? this.data.page + 1 : 1;
-    const params = { page, per_page: 20, keyword: this.data.keyword.trim() };
+    const params = { page, per_page: 10, keyword: this.data.keyword.trim() };
     if (TASK_TYPES.includes(this.data.type)) params.is_public = this.data.publicFilter;
     this.setData(append ? { loadingMore: true } : { loading: true, loaded: false, rows: [], page: 0, total: 0 });
     let promise;

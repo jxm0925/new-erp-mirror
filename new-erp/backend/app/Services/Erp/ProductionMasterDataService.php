@@ -49,7 +49,7 @@ class ProductionMasterDataService
                     ->where('reference_route.status', 'active')
                     ->selectRaw('1')
             ))
-            ->orderBy('sort')->orderBy('id')->paginate(min(20, max(1, (int) ($filters['per_page'] ?? 20))));
+            ->orderBy('sort')->orderBy('id')->paginate(min(20, max(1, (int) ($filters['per_page'] ?? 10))));
     }
 
     public function operation(int $id, array $permissions, bool $superAdmin): ProductionOperation
@@ -171,13 +171,18 @@ class ProductionMasterDataService
             ->when($filters['keyword'] ?? null, fn ($q, $v) => $q->where(fn ($x) => $x->where('routing_no', 'like', "%{$v}%")->orWhere('routing_name', 'like', "%{$v}%")))
             ->when($filters['status'] ?? null, fn ($q, $v) => $q->where('status', $v))
             ->when($filters['output_item_id'] ?? null, fn ($q, $v) => $q->where('output_item_id', $v))
-            ->orderByDesc('is_default')->orderByDesc('id')->paginate((int) ($filters['per_page'] ?? 20));
+            ->orderByDesc('is_default')->orderByDesc('id')->paginate((int) ($filters['per_page'] ?? 10));
     }
 
     public function routing(int $id, array $permissions, bool $superAdmin): ProductionRouting
     {
         $this->authorize($permissions, $superAdmin, 'production.routing.view');
-        return ProductionRouting::with(['outputItem.unit.standardUnit', 'product', 'sku', 'operations.operation', 'operations.outputItem.unit.standardUnit', 'operations.outputRules', 'operations.materialSupplyRules.componentItem', 'operations.stage', 'operations.packagingScheme'])->findOrFail($id);
+        $routing = ProductionRouting::with(['outputItem.unit.standardUnit', 'product', 'sku', 'operations.operation', 'operations.outputItem.unit.standardUnit', 'operations.outputRules', 'operations.materialSupplyRules.componentItem', 'operations.stage', 'operations.packagingScheme'])->findOrFail($id);
+        $itemIds = $routing->operations->flatMap(fn ($operation) => $operation->packaging_materials ?? [])
+            ->pluck('component_item_id')->filter(fn ($itemId) => (int) $itemId > 0)->map(fn ($itemId) => (int) $itemId)->unique()->values();
+        $routing->setRelation('packaging_material_items', $itemIds->isEmpty() ? collect()
+            : Item::with('unit.standardUnit')->whereIn('id', $itemIds)->get(['id', 'item_name', 'unit_id']));
+        return $routing;
     }
 
     public function createRouting(array $data, object $user, array $permissions, bool $superAdmin): ProductionRouting
@@ -411,13 +416,22 @@ class ProductionMasterDataService
     {
         $this->authorize($permissions, $superAdmin, ['production.operation.view', 'production.routing.view', 'production.work_order.create']);
         $keyword = trim((string) ($filters['keyword'] ?? ''));
-        $perPage = min(50, max(1, (int) ($filters['per_page'] ?? 20)));
+        $perPage = min(50, max(1, (int) ($filters['per_page'] ?? 10)));
         $query = match ($type) {
-            'items' => app(ItemManagementScopeService::class)->applyScope(Item::query(), 'factory')->where('status', 'enabled')->where('is_production_item', true)
+            'items' => app(ItemManagementScopeService::class)->applyScope(Item::query(), 'factory')->where('status', 'enabled')
+                ->where(function ($items) use ($filters): void {
+                    $items->where('is_production_item', true);
+                    if (($filters['purpose'] ?? null) === 'routing') {
+                        $items->orWhere(fn ($direct) => $direct->where('is_stock_item', true)->where('item_type', '!=', 'service')
+                            ->where(fn ($strategy) => $strategy->where('manufacturing_strategy', 'purchase')
+                                ->orWhere(fn ($legacy) => $legacy->where(fn ($empty) => $empty->whereNull('manufacturing_strategy')->orWhereIn('manufacturing_strategy', ['', 'unspecified']))
+                                    ->where('is_purchase_item', true)->where('is_production_item', false))));
+                    }
+                })
                 ->when($keyword, fn ($q) => $q->where(fn ($x) => $x->where('item_code', 'like', "%{$keyword}%")->orWhere('item_name', 'like', "%{$keyword}%")))->orderBy('item_name'),
             'operations' => ProductionOperation::query()->where('status', 'enabled')
                 ->when(isset($filters['is_public']) && $filters['is_public'] !== '', fn ($q) => $q->where('is_public', (bool) $filters['is_public']))
-                ->when($keyword, fn ($q) => $q->where(fn ($x) => $x->where('operation_no', 'like', "%{$keyword}%")->orWhere('operation_name', 'like', "%{$keyword}%")))->orderBy('sort'),
+                ->when($keyword, fn ($q) => $q->where(fn ($x) => $x->where('operation_no', 'like', "%{$keyword}%")->orWhere('operation_name', 'like', "%{$keyword}%")))->orderBy('sort')->orderBy('id'),
             'products' => Product::query()->where('status', 'enabled')
                 ->when($keyword, fn ($q) => $q->where(fn ($x) => $x->where('product_code', 'like', "%{$keyword}%")->orWhere('product_name', 'like', "%{$keyword}%")))->orderBy('product_name'),
             'skus' => Sku::query()->where('status', 'enabled')
@@ -452,6 +466,12 @@ class ProductionMasterDataService
             'routing_name' => $routing->routing_name, 'version' => (int) $routing->version,
             'output_item_id' => (int) $routing->output_item_id,
             'output_item_code' => $routing->outputItem?->item_code, 'output_item_name' => $routing->outputItem?->item_name,
+            // Execution may stop at a stock-prebuild target while this historical
+            // route still contains later production. Consumers must compare the
+            // counts before treating a copied/truncated list as a finished route.
+            'snapshot_scope' => 'complete_route',
+            'operation_count' => $routing->operations->count(),
+            'production_operation_count' => $routing->operations->filter(fn ($row) => ($row->execution_context ?: 'production') === 'production')->count(),
             'operations' => $routing->operations->map(fn ($row) => [
                 'routing_operation_id' => (int) $row->id, 'operation_id' => (int) $row->operation_id,
                 'operation_no' => $row->operation?->operation_no, 'operation_name' => $row->operation?->operation_name,
@@ -504,6 +524,7 @@ class ProductionMasterDataService
             // 无金融权限的路线编辑不会返回比例字段；省略字段保留原比例，避免保存普通工艺时清空规则。
             if (! array_key_exists('performance_rate', $row)) $row['performance_rate'] = $old?->performance_rate;
             $row['execution_context'] = $row['execution_context'] ?? 'production';
+            if ($row['execution_context'] === 'shipment') $row['output_item_id'] = null;
             $row['packaging_materials'] = $row['packaging_materials'] ?? [];
             // Omission preserves a saved rule set; only an explicit empty array clears it.
             // Never translate a multi-line rule set back into the legacy scalar output fields.
@@ -601,9 +622,11 @@ class ProductionMasterDataService
             }
         }
         $production = $routing->operations->where('execution_context', 'production');
-        if ($production->isEmpty()) throw ValidationException::withMessages(['operations' => '工艺路线必须至少包含一道生产工序。']);
+        if ($production->isEmpty() && ! app(ShipmentDirectSourcePolicy::class)->allowsShipmentOnlyRouting($routing->outputItem)) {
+            throw ValidationException::withMessages(['operations' => '自制物料的工艺路线必须至少包含一道生产工序；外购物料可以维护独立发货包装路线。']);
+        }
         $firstShipment = $routing->operations->where('execution_context', 'shipment')->min('sequence');
-        if ($firstShipment !== null && $production->max('sequence') >= $firstShipment) throw ValidationException::withMessages(['operations' => '发货包装工序必须排在生产工序之后。']);
+        if ($firstShipment !== null && $production->isNotEmpty() && $production->max('sequence') >= $firstShipment) throw ValidationException::withMessages(['operations' => '发货包装工序必须排在生产工序之后。']);
         foreach ($routing->operations as $operation) {
             if (($operation->execution_context ?: 'production') === 'shipment' && ! $operation->packaging_scheme_id) throw ValidationException::withMessages(['operations' => '发货包装工序必须选择方案。']);
         }

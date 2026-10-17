@@ -65,18 +65,14 @@ function getContext() {
   return pages[pages.length - 1];
 }
 // 控制弹窗显隐方法
-function BadgePopup() {
-  const options = {
-    show: true,
-    dom: '.LoginPopup'
-  };
+function BadgePopup(mode) {
   const page = getContext();
-  const c= page .selectComponent(options.dom);
+  const c = page.selectComponent('.LoginPopup');
   if (!c) {
-    console.warn(`未找到 ${options.dom} 节点，请确认 dom 是否正确`);
+    console.warn('未找到 .LoginPopup 节点，请确认 dom 是否正确');
     return;
   }
-  c.setData(options);
+  c.open(mode);
 }
 // 刷新当前页面
 function refreshPage() {

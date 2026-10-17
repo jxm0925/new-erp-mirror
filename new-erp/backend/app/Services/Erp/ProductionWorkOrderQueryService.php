@@ -342,6 +342,6 @@ final class ProductionWorkOrderQueryService
         return is_string($value) ? trim($value) : $value;
     }
 
-    private function perPage(array $filters): int { return max(1, min(100, (int) ($filters['per_page'] ?? 20))); }
+    private function perPage(array $filters): int { return max(1, min(100, (int) ($filters['per_page'] ?? 10))); }
     private function page(array $filters): int { return max(1, (int) ($filters['page'] ?? 1)); }
 }

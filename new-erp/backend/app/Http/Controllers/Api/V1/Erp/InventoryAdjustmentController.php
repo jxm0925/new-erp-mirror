@@ -135,7 +135,7 @@ class InventoryAdjustmentController extends Controller
 
     private function perPage(Request $request): int
     {
-        return min(100, max(10, (int) $request->input('per_page', 20)));
+        return min(100, max(10, (int) $request->input('per_page', 10)));
     }
 
     // 列表与详情展示制单、提交、过账、取消人的姓名，便于追溯“谁改了库存”。

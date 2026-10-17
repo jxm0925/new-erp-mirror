@@ -23,6 +23,12 @@ final class CuttingAutomaticCostService
             $qty = $row->actual_qty;
             if ($qty === null) $c->fail('automatic_cost_measurement_required','已登记的余料、废料或损耗缺少实测依据，不能自动按0核算。');
             if (bccomp((string) $qty,'0',8) === 0) { $weights[$row->id] = $area[$row->id] = $length[$row->id] = '0'; continue; }
+            $requirement = $row->cutting_requirement_snapshot ? json_decode($row->cutting_requirement_snapshot, true, 512, JSON_THROW_ON_ERROR) : [];
+            if ($row->result_type === 'product' && FrozenCuttingStockPolicy::isTotalLength($requirement)) {
+                app(CuttingOutputEligibilityService::class)->assertMeasurements($requirement, $measure, $row->cut_length_mm, $row->piece_qty, (string) $qty);
+                $length[$row->id] = (string) $measure['total_length_mm'];
+                continue;
+            }
             // A measured weight is the whole result line's weight; configuration
             // weight/dimensions describe one piece and must be multiplied by qty.
             if (isset($measure['weight_kg'])) $weights[$row->id] = CuttingDecimal::value($measure['weight_kg']);
@@ -35,6 +41,7 @@ final class CuttingAutomaticCostService
             $pieceArea = isset($size['length_mm'],$size['width_mm'])
                 ? bcmul(CuttingDecimal::value($size['length_mm']),CuttingDecimal::value($size['width_mm']),8) : null;
             if ($pieceArea !== null && ($size['shape'] ?? 'RECTANGLE') === 'RECTANGLE') $area[$row->id] = bcmul($pieceArea,$pieces,8);
+            elseif (($size['shape'] ?? null) === 'IRREGULAR' && isset($size['area_mm2'])) $area[$row->id] = bcmul(CuttingDecimal::value($size['area_mm2']), $pieces, 8);
             $pieceLength = $row->result_type === 'product' ? ($row->cut_length_mm ?? $size['length_mm'] ?? null) : ($size['length_mm'] ?? null);
             if ($pieceLength !== null) $length[$row->id] = bcmul(CuttingDecimal::value($pieceLength),$pieces,8);
         }
@@ -58,14 +65,13 @@ final class CuttingAutomaticCostService
                 if ($batch->physical_material_id && count(array_intersect_key($area, array_flip($otherIds))) === count($otherIds)) {
                     $source = DB::table('erp_material_physicals')->where('id',$batch->physical_material_id)->first();
                     $sourceSize = $source ? json_decode($source->dimensions,true,512,JSON_THROW_ON_ERROR) : [];
-                    $sourceTotal = $sourceSize['area_mm2'] ?? ($source && $source->shape === 'RECTANGLE' && isset($sourceSize['length_mm'],$sourceSize['width_mm'])
-                        ? bcmul((string) $sourceSize['length_mm'],(string) $sourceSize['width_mm'],8) : null);
+                    $sourceTotal = $source ? FrozenCuttingStockPolicy::area(['shape' => $source->shape] + $sourceSize) : null;
                     if ($sourceTotal !== null) {
                         $shares = $this->withResidual($area, $lossIds, $lossWeights, (string) $sourceTotal, $c);
                         $basis = 'SHEET_AREA_MM2';
                     }
                 } elseif (! $batch->physical_material_id && count(array_intersect_key($length, array_flip($otherIds))) === count($otherIds)) {
-                    $sourceTotal = bcmul((string) $batch->standard_stock_length_mm,(string) $batch->input_qty,8);
+                    $sourceTotal = app(CuttingOutputEligibilityService::class)->source($batch)['total_length_mm'];
                     $shares = $this->withResidual($length, $lossIds, $lossWeights, $sourceTotal, $c);
                     $basis = 'LENGTH_MM';
                 }
@@ -88,9 +94,9 @@ final class CuttingAutomaticCostService
                     || ($nominalThickness !== null && bccomp((string) $nominalThickness,(string) ($size['nominal_thickness_mm'] ?? $size['thickness_mm']),8) !== 0))
                     $c->fail('automatic_cost_thickness_mismatch','产出厚度与来源钢板不一致，不能按同板面积核算。');
             }
-            $sourceArea = $size['area_mm2'] ?? ($source->shape === 'RECTANGLE' && isset($size['length_mm'],$size['width_mm']) ? bcmul((string) $size['length_mm'],(string) $size['width_mm'],8) : null);
+            $sourceArea = FrozenCuttingStockPolicy::area(['shape' => $source->shape] + $size);
             if ($sourceArea === null || bccomp($sum,(string) $sourceArea,8) > 0) $c->fail('automatic_cost_material_exceeded','产出与余料面积超过实际投入，不能核算。');
-        } elseif ($basis === 'LENGTH_MM' && bccomp($sum,bcmul((string) $batch->standard_stock_length_mm,(string) $batch->input_qty,8),8) > 0)
+        } elseif ($basis === 'LENGTH_MM' && bccomp($sum,app(CuttingOutputEligibilityService::class)->source($batch)['total_length_mm'],8) > 0)
             $c->fail('automatic_cost_material_exceeded','产出与余料长度超过实际投入，不能核算。');
         // Unreported kerf/processing consumption stays in the material cost of
         // recorded results. Explicit measured loss rows participate separately.
@@ -100,7 +106,10 @@ final class CuttingAutomaticCostService
             $cost = bccomp($share,'0',8) === 0 ? '0.0000' : CuttingDecimal::share($remaining,$left,$share);
             $costs[$id] = $cost; $remaining = bcsub($remaining,$cost,4); $left = bcsub($left,$share,8);
         }
-        return ['rule'=>self::RULE,'basis'=>$basis,'weights'=>$shares,'dimensions'=>$dimensions,'costs'=>$costs];
+        $review = app(ProductionCuttingOperationService::class)->linkedOrder((int) $batch->cutting_order_id)
+            ? app(CuttingRemnantBalanceService::class)->assertConfirmed($batch) : null;
+        return ['rule'=>self::RULE,'basis'=>$basis,'weights'=>$shares,'dimensions'=>$dimensions,'costs'=>$costs,
+            'confirmed_processing_consumption' => $review ? array_map(fn ($source) => ['source_key' => $source['source_key'], 'quantity_basis' => $source['quantity_basis'], 'quantity' => $source['confirmed_processing_consumption']], $review['sources']) : null];
     }
 
     private function withResidual(array $known, array $lossIds, array $lossWeights, string $sourceTotal, CuttingCommandService $c): array

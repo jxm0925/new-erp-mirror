@@ -72,7 +72,7 @@ import { listFinanceAccounts, listFinanceTransfers } from '../../../api/erp/fina
 const blankQuery = () => ({ source_account_id: '', target_account_id: '', source_currency: '', target_currency: '', status: '', keyword: '', business_date_start: '', business_date_end: '' })
 
 export default {
-  data: () => ({ loading: false, accounts: [], rows: [], currencies: [], dateRange: [], query: blankQuery(), page: 1, perPage: 20, total: 0, summary: { all: 0, draft: 0, confirmed: 0, voided: 0 } }),
+  data: () => ({ loading: false, accounts: [], rows: [], currencies: [], dateRange: [], query: blankQuery(), page: 1, perPage: 10, total: 0, summary: { all: 0, draft: 0, confirmed: 0, voided: 0 } }),
   created () { this.bootstrap() },
   methods: {
     async bootstrap () {

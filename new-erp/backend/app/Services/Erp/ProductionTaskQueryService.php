@@ -24,7 +24,7 @@ class ProductionTaskQueryService
     {
         $query = $this->filteredQuery($filters, $user, $permissions, $superAdmin);
         $page = $query->with(['workOrder.outputItem', 'workOrder.productionMasterOrder', 'targets', 'collaborators', 'laborSessions', 'pendingAssignment'])->orderByDesc('id')
-            ->paginate(min(20, max(1, (int) ($filters['per_page'] ?? 20))));
+            ->paginate(min(20, max(1, (int) ($filters['per_page'] ?? 10))));
         $this->enrichTargets(collect($page->items()), $permissions, $user);
         collect($page->items())->each(fn (ProductionTask $task) => $this->enrichPeople($task));
         return $page;
@@ -206,6 +206,7 @@ class ProductionTaskQueryService
         if (! $task) throw new WorkOrderDomainException('task_not_found', '生产任务不存在或不在当前数据范围内。', 404);
         $this->enrichTargets(collect([$task]), $permissions, $user);
         $this->enrichPeople($task);
+        $task->setAttribute('received_cutting_components', app(ProductionCuttingComponentService::class)->receivedForTask($task));
         return $task;
     }
 
@@ -249,9 +250,22 @@ class ProductionTaskQueryService
                 ->orWhere(fn ($quantity) => $quantity->where('source_target_type', 'quantity_operation')->whereIn('source_target_id', $quantityIds)))
             ->orderByDesc('id')->get()->unique(fn ($row) => $row->source_target_type.':'.$row->source_target_id)
             ->keyBy(fn ($row) => $row->source_target_type.':'.$row->source_target_id);
+        $personalPlans = $this->personalSharePlans($tasks, $units, $quantities, $permissions, $user);
+        // 接单即验收：把上道工序待验收的产出随目标一起返回，接单前就能看到来源、数量和谁交出。
+        $incomingHandovers = DB::table('erp_production_operation_handovers as handover')
+            ->leftJoin('erp_production_output_records as output', 'output.id', '=', 'handover.output_record_id')
+            ->where('handover.status', 'WAIT_RECEIVE')
+            ->where(fn ($query) => $query
+                ->where(fn ($unit) => $unit->where('handover.target_target_type', 'unit_operation')->whereIn('handover.target_target_id', $unitIds))
+                ->orWhere(fn ($quantity) => $quantity->where('handover.target_target_type', 'quantity_operation')->whereIn('handover.target_target_id', $quantityIds)))
+            ->orderBy('handover.id')
+            ->get(['handover.id', 'handover.handover_no', 'handover.business_version', 'handover.handed_over_by_legacy_id', 'handover.handed_over_at',
+                'handover.target_target_type', 'handover.target_target_id', 'handover.identity_snapshot', 'output.output_no', 'output.output_base_qty'])
+            ->groupBy(fn ($row) => $row->target_target_type.':'.$row->target_target_id);
+        $handoverPeople = $this->users->many($incomingHandovers->flatten(1)->pluck('handed_over_by_legacy_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all());
 
         foreach ($tasks as $task) {
-            $details = $task->targets->map(function ($link) use ($task, $units, $quantities, $outputs, $permissions, $user, $serverNow): array {
+            $details = $task->targets->map(function ($link) use ($task, $units, $quantities, $outputs, $permissions, $user, $serverNow, $incomingHandovers, $handoverPeople): array {
                 $target = $link->target_type === 'unit_operation'
                     ? $units->get((int) $link->target_id)
                     : $quantities->get((int) $link->target_id);
@@ -273,7 +287,8 @@ class ProductionTaskQueryService
                         : ['valid' => false, 'reason_code' => 'in_progress_labor_missing', 'message' => '人工工序处于加工中，但没有任何负责人或协作者的进行中工时。'])
                     : ['valid' => true, 'reason_code' => null, 'message' => null];
                 $readiness = $this->readiness->project($link->target_type, $target);
-                $actionProjection = $this->actions->project($task, $target, $user, $permissions, $activeLabor, $readiness);
+                $cuttingRequired = app(ProductionCuttingOperationService::class)->required($link->target_type, (int) $target->id);
+                $actionProjection = $this->actions->project($task, $target, $user, $permissions, $activeLabor, $readiness, $cuttingRequired);
                 $userId = (int) ($user->legacy_id ?? $user->id ?? 0);
                 $mySessions = $task->laborSessions->filter(fn ($session) => $session->target_type === $link->target_type
                     && (int) $session->target_id === (int) $target->id && (int) $session->employee_legacy_id === $userId);
@@ -284,7 +299,7 @@ class ProductionTaskQueryService
                 return [
                     'target_type' => $link->target_type,
                     'target_id' => (int) $target->id,
-                    'cutting_required' => app(ProductionCuttingOperationService::class)->required($link->target_type, (int) $target->id),
+                    'cutting_required' => $cuttingRequired,
                     'status' => $target->status,
                     'status_label' => $this->statusLabel($status),
                     'reason_code' => $this->reasonCode($status),
@@ -337,6 +352,13 @@ class ProductionTaskQueryService
                         'disposition' => $output->disposition,
                         'allowed_actions' => $outputActions,
                     ] : null,
+                    'incoming_handovers' => ($incomingHandovers->get($link->target_type.':'.$target->id) ?? collect())->map(fn ($row): array => [
+                        'id' => (int) $row->id, 'handover_no' => $row->handover_no, 'business_version' => (int) $row->business_version,
+                        'output_no' => $row->output_no, 'output_base_qty' => $row->output_base_qty === null ? null : (float) $row->output_base_qty,
+                        'handed_over_at' => $row->handed_over_at,
+                        'handed_over_by' => $handoverPeople[(int) $row->handed_over_by_legacy_id] ?? null,
+                        'identity' => $row->identity_snapshot ? json_decode((string) $row->identity_snapshot, true) : null,
+                    ])->values()->all(),
                     'claimed_at' => optional($target->claimed_at)->toISOString(),
                     'kitting_confirmed_at' => optional($target->kitting_confirmed_at)->toISOString(),
                     'started_at' => optional($target->started_at)->toISOString(),
@@ -345,6 +367,7 @@ class ProductionTaskQueryService
                 ];
             })->values()->all();
             $task->setAttribute('target_details', $details);
+            $task->setAttribute('share_scopes', $personalPlans[(int) $task->id] ?? []);
             $task->setAttribute('production_context', $this->productionContext($task));
             $roles = collect($details)->pluck('my_role')->unique()->values();
             $task->setAttribute('my_role', $roles->contains('owner') ? 'owner' : ($roles->contains('collaborator') ? 'collaborator' : 'viewer'));
@@ -359,6 +382,12 @@ class ProductionTaskQueryService
                 'reject_assignment' => $task->status === 'WAIT_ACCEPT' && $task->pendingAssignment
                     && (int) $task->pendingAssignment->offered_to_legacy_id === (int) $user->legacy_id
                     && in_array('production.task.claim', $permissions, true),
+                // 接单即验收：接单前（可接/被派单）或历史上已接单但仍待交接确认时，都可以将上道产出退回上道工序。
+                'return_previous' => collect($details)->contains(fn ($detail) => ! empty($detail['incoming_handovers']))
+                    && (in_array('production.task.claim', $permissions, true) || in_array('production.handover.reject', $permissions, true))
+                    && ((! $task->assignee_user_legacy_id && ($task->status === 'WAIT_CLAIM' || ($task->status === 'WAIT_ACCEPT' && $task->pendingAssignment
+                        && (int) $task->pendingAssignment->offered_to_legacy_id === (int) $user->legacy_id)))
+                        || ((int) $task->assignee_user_legacy_id === (int) $user->legacy_id && $task->status === 'WAIT_HANDOVER')),
                 'auto_assign' => ! $task->active_job_bundle_id && $task->status === 'WAIT_CLAIM' && ! $task->assignee_user_legacy_id
                     && in_array('production.assignment.auto', $permissions, true),
                 'add_collaborators' => ! $task->active_job_bundle_id && (int) $task->assignee_user_legacy_id === (int) $user->legacy_id
@@ -367,6 +396,48 @@ class ProductionTaskQueryService
                     && in_array('production.task.collaborate', $permissions, true),
             ]);
         }
+    }
+
+    /** Batch the exact target identities and past labor; one task can contain different participant groups. */
+    private function personalSharePlans(Collection $tasks, Collection $units, Collection $quantities, array $permissions, object $user): array
+    {
+        if (! in_array('production.task.collaborate', $permissions, true)) return [];
+        $owned = $tasks->filter(fn ($task) => (int) $task->assignee_user_legacy_id === (int) ($user->legacy_id ?? $user->id ?? 0)
+            && ! $task->active_job_bundle_id && (bool) $task->workOrder?->collaboration_enabled);
+        if ($owned->isEmpty()) return [];
+        $links = $owned->flatMap(fn ($task) => $task->targets);
+        $keys = $links->map(fn ($link) => $link->target_type.':'.$link->target_id)->unique();
+        $labor = DB::table('erp_production_labor_sessions')->where(function ($query) use ($links): void {
+            $query->where(fn ($q) => $q->where('target_type', 'unit_operation')->whereIn('target_id', $links->where('target_type', 'unit_operation')->pluck('target_id')))
+                ->orWhere(fn ($q) => $q->where('target_type', 'quantity_operation')->whereIn('target_id', $links->where('target_type', 'quantity_operation')->pluck('target_id')));
+        })->get(['target_type', 'target_id', 'employee_legacy_id'])->groupBy(fn ($row) => $row->target_type.':'.$row->target_id);
+        $assignments = \App\Models\Erp\ProductionPerformanceAssignment::query()->with('shares')->whereIn('active_scope_key', $keys)->get()->keyBy('active_scope_key');
+        $people = $this->users->many($owned->pluck('assignee_user_legacy_id')->merge($owned->flatMap(fn ($task) => $task->collaborators->pluck('employee_legacy_id')))
+            ->merge($labor->flatten(1)->pluck('employee_legacy_id'))->filter()->unique()->values()->all());
+        $projection = app(ProductionPersonalSharePlan::class); $result = [];
+        foreach ($owned as $task) {
+            $result[(int) $task->id] = $task->targets->map(function ($link) use ($task, $units, $quantities, $labor, $assignments, $people, $projection): ?array {
+                $target = $link->target_type === 'unit_operation' ? $units->get((int) $link->target_id) : $quantities->get((int) $link->target_id);
+                if (! $target) return null;
+                $key = $link->target_type.':'.$link->target_id;
+                $owner = (int) ($target->responsible_user_legacy_id ?: $task->assignee_user_legacy_id);
+                $until = $target->completed_at ?: now();
+                $activeIds = $task->collaborators->filter(fn ($row) => $row->joined_at <= $until && ($row->left_at === null || $row->left_at >= $until))->pluck('employee_legacy_id')->map(fn ($id) => (int) $id);
+                $laborIds = $labor->get($key, collect())->pluck('employee_legacy_id')->map(fn ($id) => (int) $id);
+                $participants = $activeIds->merge($laborIds)->push($owner)->filter()->unique()->map(fn ($id) => [
+                    'employee_legacy_id' => $id, 'employee_name' => $people[$id]['display_name'] ?? '账号 #'.$id,
+                    'identity_exists' => isset($people[$id]), 'is_active' => $id === $owner || $activeIds->contains($id), 'has_labor' => $laborIds->contains($id),
+                ])->values()->all();
+                $assignment = $assignments->get($key);
+                return $projection->projection(['scope_type' => $link->target_type, 'scope_id' => (int) $target->id,
+                    'scope_version' => (int) $target->business_version, 'owner_legacy_id' => $owner, 'status' => $target->status,
+                    'scope_name' => $link->target_type === 'unit_operation' ? ($target->productionUnit?->unit_no ?: $task->operation_name_snapshot) : $task->operation_name_snapshot,
+                    'can_plan' => $owner === (int) $task->assignee_user_legacy_id && ! in_array($target->status, ['COMPLETED', 'CANCELLED'], true)],
+                    $participants, $assignment ? ['version_no' => (int) $assignment->version_no, 'status' => $assignment->status,
+                        'shares' => $assignment->shares->map(fn ($share) => ['employee_legacy_id' => (int) $share->employee_legacy_id, 'share_ratio' => (string) $share->share_ratio])->all()] : null);
+            })->filter()->values()->all();
+        }
+        return $result;
     }
 
     /** One service-side vocabulary prevents wxapp and PC from inventing divergent interpretations of a PT state. */

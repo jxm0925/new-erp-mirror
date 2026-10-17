@@ -87,7 +87,7 @@ Do not change layout without approval.
               <template slot-scope="{row}"><el-tag size="mini" :type="statusTag(row.order_status)">{{ statusText(row.order_status) }}</el-tag></template>
             </el-table-column>
             <el-table-column label="交付状态" width="104">
-              <template slot-scope="{row}"><el-tag size="mini" :type="fulfillmentStatusTag(row.fulfillment_status)">{{ fulfillmentStatusText(row.fulfillment_status) }}</el-tag><small v-if="row.fulfillment_composition_label" class="muted">{{ row.fulfillment_composition_label }}</small></template>
+              <template slot-scope="{row}"><el-tag size="mini" :type="fulfillmentStatusTag(row.fulfillment_status)">{{ fulfillmentStatusText(row.fulfillment_status) }}</el-tag><small class="muted">发货：{{ shipmentStatusText(row.shipment_status) }}</small><small v-if="row.fulfillment_composition_label" class="muted">{{ row.fulfillment_composition_label }}</small></template>
             </el-table-column>
             <el-table-column label="生产确认" width="88">
               <template slot-scope="{row}"><el-tag size="mini" :type="statusTag(row.production_confirm_status)">{{ statusText(row.production_confirm_status) }}</el-tag></template>
@@ -104,7 +104,7 @@ Do not change layout without approval.
               <template slot-scope="{row}">
                 <el-button type="text" size="mini" @click.stop="$router.push(`/sales/orders/${row.id}/detail`)">查看详情</el-button>
                 <el-button v-if="row.allowed_actions && row.allowed_actions.edit_draft" type="text" size="mini" @click.stop="$router.push(`/sales/orders/${row.id}/edit`)">编辑</el-button>
-                <el-button v-if="row.allowed_actions && row.allowed_actions.submit_confirmation" type="text" size="mini" @click.stop="confirmOrder(row)">确认前检查</el-button>
+                <el-button v-if="row.allowed_actions && row.allowed_actions.submit_confirmation" type="text" size="mini" @click.stop="confirmOrder(row)">确认订单</el-button>
                 <el-dropdown v-if="moreActions(row).length" trigger="click" @command="cmd => handleCommand(cmd, row)">
                   <span class="more-link">更多<i class="el-icon-arrow-down" /></span>
                   <el-dropdown-menu slot="dropdown">
@@ -139,6 +139,7 @@ Do not change layout without approval.
               <dt>客户</dt><dd>{{ selected.customer_name || '-' }}</dd>
               <dt>金额</dt><dd>¥{{ money(selected.total_amount) }}</dd>
               <dt>订单行</dt><dd>{{ (selected.lines || []).length }} 行</dd>
+              <dt>发货状态</dt><dd><el-tag size="mini" :type="statusTag(selected.shipment_status)">{{ shipmentStatusText(selected.shipment_status) }}</el-tag></dd>
               <dt>生产确认</dt><dd>{{ statusText(selected.production_confirm_status) }}</dd>
             </dl>
             <div class="side-actions">
@@ -159,7 +160,7 @@ Do not change layout without approval.
 
 <script>
 import { confirmSalesOrder, deleteSalesOrderDraft, listSalesOrders } from '@/api/erp/sales'
-import { statusTag, statusText } from '@/utils/erpStatus'
+import { statusTag, statusText, shipmentStatusText } from '@/utils/erpStatus'
 
 export default {
   data: () => ({
@@ -168,7 +169,7 @@ export default {
     total: 0,
     selected: null,
     activeTab: '',
-    query: { keyword: '', order_status: '', fulfillment_status: '', production_confirm_status: '', page: 1, per_page: 20 }
+    query: { keyword: '', order_status: '', fulfillment_status: '', production_confirm_status: '', page: 1, per_page: 10 }
   }),
   computed: {
     metrics() {
@@ -222,7 +223,7 @@ export default {
     },
     reset() {
       this.activeTab = ''
-      this.query = { keyword: '', order_status: '', fulfillment_status: '', production_confirm_status: '', page: 1, per_page: 20 }
+      this.query = { keyword: '', order_status: '', fulfillment_status: '', production_confirm_status: '', page: 1, per_page: 10 }
       this.load()
     },
     switchTab(tab) {
@@ -236,9 +237,20 @@ export default {
       this.selected = row
     },
     async confirmOrder(row) {
+      // 一步确认：服务端先检查、通过后立即正式确认；未通过不改状态。
+      try {
+        await this.$confirm('确认后将锁定单位换算信息、按实时库存锁定备货并建立所需生产层级。系统会先自动检查，是否继续？', '确认订单', { type: 'warning' })
+      } catch (error) {
+        return
+      }
       const response = await confirmSalesOrder(row.id)
       const result = response.data && response.data.data ? response.data.data : response.data
-      this.$alert(this.precheckHtml(result), '确认前检查结果', { dangerouslyUseHTMLString: true, confirmButtonText: '返回编辑' })
+      if (result.passed && !(result.checks || []).some(check => check.status === 'blocked')) {
+        this.$message.success('订单已确认')
+        await this.load()
+        return
+      }
+      this.$alert(this.precheckHtml(result), '订单暂不能确认', { dangerouslyUseHTMLString: true, confirmButtonText: '返回编辑' })
     },
     precheckHtml(result) {
       const items = (result.checks || []).map(check => `<li class="${check.status}"><b>${check.status === 'passed' ? '通过' : '阻塞'}</b> ${check.message}</li>`).join('')
@@ -268,6 +280,7 @@ export default {
     },
     statusText,
     statusTag,
+    shipmentStatusText,
     fulfillmentStatusText(value) { return ({ pending: '待交付', partial: '部分交付', fulfilled: '已交付', cancelled: '已取消' })[value] || value || '-' },
     fulfillmentStatusTag(value) { return ({ pending: 'warning', partial: 'warning', fulfilled: 'success', cancelled: 'danger' })[value] || 'info' },
     dateOnly(v) {

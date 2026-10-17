@@ -190,7 +190,7 @@ class MasterDataController extends Controller
         $warehouseStats = $request->route('entity') === 'locations' && $request->boolean('include_stats') && $request->filled('warehouse_id')
             ? app(MasterDataSummaryService::class)->locations($request->integer('warehouse_id')) : null;
         // 稳定的次级排序保证更新时间相同的记录不会跨页重复或遗漏。
-        $data = $query->latest('updated_at')->orderByDesc('id')->paginate(min(100, max(5, (int) $request->input('per_page', 20))));
+        $data = $query->latest('updated_at')->orderByDesc('id')->paginate(min(100, max(5, (int) $request->input('per_page', 10))));
         if ($request->route('entity') === 'items') {
             $data->getCollection()->transform(function (Item $item): Item {
                 $relationSupplier = $item->activeDefaultSupplierRelation?->supplier;

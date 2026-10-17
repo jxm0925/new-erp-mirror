@@ -26,7 +26,7 @@ class SalesShipmentController extends Controller
                     ->where('r.source_type', 'sales_order')->where('r.reservation_status', 'active')
                     ->where(fn ($w) => $w->whereColumn('r.sales_order_fulfillment_id', 'erp_sales_order_fulfillments.id')
                         ->orWhere(fn ($legacy) => $legacy->whereNull('r.sales_order_fulfillment_id')->whereColumn('r.inventory_balance_id', 'erp_sales_order_fulfillments.inventory_balance_id')));
-            })->orderBy('sales_order_line_id')->orderBy('id')->paginate(min(max($request->integer('per_page', 20), 1), 100));
+            })->orderBy('sales_order_line_id')->orderBy('id')->paginate(min(max($request->integer('per_page', 10), 1), 100));
         $page->setCollection($page->getCollection()->map(function ($row): array {
             $parents = $this->sourceReservations($row);
             return ['id' => (int) $row->id, 'sales_order_line_id' => (int) $row->sales_order_line_id,
@@ -47,7 +47,7 @@ class SalesShipmentController extends Controller
         return response()->json(['data' => \App\Models\Erp\InventorySerial::query()->whereIn('inventory_balance_id', $parents->pluck('inventory_balance_id'))
             ->where('item_id', $fulfillment->item_id)->where('serial_status', 'available')
             ->when($request->filled('keyword'), fn ($q) => $q->where('serial_no', 'like', '%'.trim((string) $request->input('keyword')).'%'))
-            ->orderBy('id')->paginate(min(max($request->integer('per_page', 20), 1), 100), ['id', 'serial_no', 'batch_no', 'inventory_balance_id'])]);
+            ->orderBy('id')->paginate(min(max($request->integer('per_page', 10), 1), 100), ['id', 'serial_no', 'batch_no', 'inventory_balance_id'])]);
     }
 
     private function sourceReservations(object $fulfillment)
@@ -73,7 +73,7 @@ class SalesShipmentController extends Controller
             ->orderByDesc('id');
         $this->applySalesOrderVisibility($query, $request);
 
-        return $this->costSafeJson(['data' => $query->paginate(min(max($request->integer('per_page', 20), 1), 100))]);
+        return $this->costSafeJson(['data' => $query->paginate(min(max($request->integer('per_page', 10), 1), 100))]);
     }
 
     public function show(Request $request, int $id)

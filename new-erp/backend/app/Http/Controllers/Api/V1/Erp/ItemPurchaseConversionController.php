@@ -24,7 +24,7 @@ class ItemPurchaseConversionController extends Controller
         return response()->json($domain->activePurchaseConversions($itemId)
             ->with(['purchaseUnit.standardUnit', 'baseUnit.standardUnit'])
             ->orderByDesc('is_default')
-            ->paginate(min(100, max(5, $request->integer('per_page', 20)))));
+            ->paginate(min(100, max(5, $request->integer('per_page', 10)))));
     }
 
     public function store(Request $request, int $itemId, ItemPurchaseConversionApplicationService $service)

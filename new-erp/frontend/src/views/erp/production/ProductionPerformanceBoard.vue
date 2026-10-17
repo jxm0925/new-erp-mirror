@@ -15,11 +15,12 @@
         <el-table-column label="工序" min-width="165"><template slot-scope="s">{{ s.row.scope.operation_name || s.row.scope.operation_code }}</template></el-table-column>
         <el-table-column label="来源" min-width="160"><template slot-scope="s">{{ s.row.scope.work_order_no || ('发货单 #' + s.row.scope.shipment_id) }}</template></el-table-column>
         <el-table-column label="工序类别" width="105"><template slot-scope="s">{{ scopeType(s.row.scope.scope_type) }}</template></el-table-column>
+        <el-table-column label="工序比例" width="105"><template slot-scope="s">{{ percent(s.row.scope.performance_rate_snapshot) }}</template></el-table-column>
         <el-table-column label="计个人绩效份额" width="160"><template slot-scope="s">{{ s.row.assignment_version ? percent(s.row.credited_share_ratio) : '尚未确认' }}</template></el-table-column>
         <el-table-column label="份额版本" width="105"><template slot-scope="s">{{ s.row.assignment_version ? 'V' + s.row.assignment_version : '尚未确认' }}</template></el-table-column>
-        <el-table-column prop="scope.completed_at" label="完成时间" width="170" /><el-table-column label="操作" width="120"><template slot-scope="s"><el-button v-if="s.row.can_confirm && $can('production.performance.manage')" type="text" @click="openShares(s.row.scope)">确认个人份额</el-button><span v-else>仅可查看</span></template></el-table-column>
+        <el-table-column prop="scope.completed_at" label="完成时间" width="170" /><el-table-column label="操作" width="235"><template slot-scope="s"><div class="performance-row-actions"><el-button v-if="canEditRate(s.row)" type="text" @click="openRate(s.row.scope)">调整工序比例</el-button><el-button v-if="s.row.can_confirm && $can('production.performance.manage')" type="text" @click="openShares(s.row.scope)">确认个人份额</el-button><span v-if="!s.row.can_confirm && !canEditRate(s.row)">仅可查看</span></div></template></el-table-column>
       </el-table>
-      <div class="performance-pagination"><span>共 {{ total }} 条</span><el-pagination background layout="prev, pager, next" :current-page="page" :page-size="20" :total="total" @current-change="v=>{page=v;load()}" /></div>
+      <div class="performance-pagination"><span>共 {{ total }} 条</span><el-pagination background layout="prev, pager, next" :current-page="page" :page-size="10" :total="total" @current-change="v=>{page=v;load()}" /></div>
     </section>
     <el-dialog title="订单个人绩效统计" :visible.sync="detailVisible" width="1180px" append-to-body custom-class="performance-dialog" :close-on-click-modal="false" @closed="detailSequence++">
       <div v-loading="detailLoading" v-if="detail">
@@ -34,14 +35,15 @@
           <el-table-column label="个人绩效金额" width="140"><template slot-scope="s">{{ money(s.row.personal_performance_amount) }}</template></el-table-column>
           <el-table-column label="个人份额" min-width="180"><template slot-scope="s"><div v-if="s.row.assignment"><small v-for="share in s.row.assignment.shares" :key="share.employee_legacy_id">{{ share.employee_name }}：{{ percent(share.share_ratio) }} {{ share.eligible ? '' : '（不计个人绩效）' }}</small></div><span v-else>尚未确认</span></template></el-table-column>
           <el-table-column label="资料状态" width="120"><template slot-scope="s">{{ statusText(s.row.statistics_status) }}</template></el-table-column>
-          <el-table-column label="操作" width="110"><template slot-scope="s"><el-button v-if="s.row.can_confirm" type="text" @click="openShares(s.row.scope)">确认个人份额</el-button></template></el-table-column>
-        </el-table><div class="performance-pagination"><span>共 {{ detail.rows.meta.total }} 条来源</span><el-pagination background layout="prev, pager, next" :current-page="detailPages.page" :page-size="20" :total="detail.rows.meta.total" @current-change="v=>detailPage('page',v)" /></div></el-tab-pane>
-          <el-tab-pane label="员工统计" name="employees"><p v-if="!detail.statistics_complete" class="performance-help">以下为已核对工序的明细；整单资料补齐后形成完整统计。</p><el-table :data="detail.employees.data" border size="small"><el-table-column prop="employee_name" label="员工" min-width="180" /><el-table-column prop="operations_count" label="已核对工序数" width="160" /><el-table-column label="个人绩效金额" min-width="180"><template slot-scope="s">{{ money(s.row.performance_amount) }}</template></el-table-column></el-table><div class="performance-pagination"><span>共 {{ detail.employees.meta.total }} 人</span><el-pagination background layout="prev, pager, next" :current-page="detailPages.employees_page" :page-size="20" :total="detail.employees.meta.total" @current-change="v=>detailPage('employees_page',v)" /></div></el-tab-pane>
-          <el-tab-pane :label="'待核对（' + detail.issues.meta.total + '）'" name="issues"><el-table :data="detail.issues.data" border size="small"><el-table-column prop="message" label="待核对内容" min-width="360" /><el-table-column label="来源" min-width="130"><template slot-scope="s">{{ s.row.scope_id ? scopeType(s.row.scope_type) + ' #' + s.row.scope_id : ('商品行 #' + (s.row.sales_order_line_id || '—')) }}</template></el-table-column></el-table><div class="performance-pagination"><span>共 {{ detail.issues.meta.total }} 项</span><el-pagination background layout="prev, pager, next" :current-page="detailPages.issues_page" :page-size="20" :total="detail.issues.meta.total" @current-change="v=>detailPage('issues_page',v)" /></div></el-tab-pane>
+          <el-table-column label="操作" width="235"><template slot-scope="s"><div class="performance-row-actions"><el-button v-if="canEditRate(s.row)" type="text" @click="openRate(s.row.scope)">调整工序比例</el-button><el-button v-if="s.row.can_confirm && $can('production.performance.manage')" type="text" @click="openShares(s.row.scope)">确认个人份额</el-button></div></template></el-table-column>
+        </el-table><div class="performance-pagination"><span>共 {{ detail.rows.meta.total }} 条来源</span><el-pagination background layout="prev, pager, next" :current-page="detailPages.page" :page-size="10" :total="detail.rows.meta.total" @current-change="v=>detailPage('page',v)" /></div></el-tab-pane>
+          <el-tab-pane label="员工统计" name="employees"><p v-if="!detail.statistics_complete" class="performance-help">以下为已核对工序的明细；整单资料补齐后形成完整统计。</p><el-table :data="detail.employees.data" border size="small"><el-table-column prop="employee_name" label="员工" min-width="180" /><el-table-column prop="operations_count" label="已核对工序数" width="160" /><el-table-column label="个人绩效金额" min-width="180"><template slot-scope="s">{{ money(s.row.performance_amount) }}</template></el-table-column></el-table><div class="performance-pagination"><span>共 {{ detail.employees.meta.total }} 人</span><el-pagination background layout="prev, pager, next" :current-page="detailPages.employees_page" :page-size="10" :total="detail.employees.meta.total" @current-change="v=>detailPage('employees_page',v)" /></div></el-tab-pane>
+          <el-tab-pane :label="'待核对（' + detail.issues.meta.total + '）'" name="issues"><el-table :data="detail.issues.data" border size="small"><el-table-column prop="message" label="待核对内容" min-width="360" /><el-table-column label="来源" min-width="130"><template slot-scope="s">{{ s.row.scope_id ? scopeType(s.row.scope_type) + ' #' + s.row.scope_id : ('商品行 #' + (s.row.sales_order_line_id || '—')) }}</template></el-table-column></el-table><div class="performance-pagination"><span>共 {{ detail.issues.meta.total }} 项</span><el-pagination background layout="prev, pager, next" :current-page="detailPages.issues_page" :page-size="10" :total="detail.issues.meta.total" @current-change="v=>detailPage('issues_page',v)" /></div></el-tab-pane>
         </el-tabs>
       </div><span slot="footer"><el-button @click="detailVisible=false">关闭</el-button><el-button type="success" :loading="detailLoading" @click="loadDetail">重新核对统计</el-button></span>
     </el-dialog>
     <production-performance-shares ref="shares" @confirmed="afterConfirmation" />
+    <production-performance-rate-dialog ref="rateDialog" @updated="afterConfirmation" @stale="afterConfirmation" />
   </div>
 </template>
 
@@ -49,8 +51,9 @@
 import { listPerformanceOrders, listPerformanceOperations, getPerformanceOrder } from '../../../api/erp/production-performance'
 import { ratioToPercent } from '../../../utils/production-performance.mjs'
 import ProductionPerformanceShares from './ProductionPerformanceShares.vue'
+import ProductionPerformanceRateDialog from './ProductionPerformanceRateDialog.vue'
 export default {
-  components: { ProductionPerformanceShares },
+  components: { ProductionPerformanceShares, ProductionPerformanceRateDialog },
   data: () => ({ tab: 'orders', keyword: '', dates: [], rows: [], total: 0, page: 1, loading: false, sequence: 0, detailVisible: false, detailLoading: false, detailSequence: 0, detailId: 0, detail: null, detailTab: 'sources', detailPages: { page: 1, employees_page: 1, issues_page: 1 } }),
   created() { this.load() },
   methods: {
@@ -65,7 +68,7 @@ export default {
       if (!this.$can('production.performance.view')) return
       const sequence = ++this.sequence; this.loading = true
       try {
-        const params = { page: this.page, per_page: 20, keyword: this.keyword.trim() || undefined }
+        const params = { page: this.page, per_page: 10, keyword: this.keyword.trim() || undefined }
         if (this.tab === 'orders' && this.dates?.length === 2) { params.shipped_from = this.dates[0]; params.shipped_to = this.dates[1] }
         const { data } = await (this.tab === 'orders' ? listPerformanceOrders(params) : listPerformanceOperations(params))
         if (sequence !== this.sequence) return
@@ -78,16 +81,28 @@ export default {
     async loadDetail() {
       if (!this.detailId || !this.detailVisible) return
       const sequence = ++this.detailSequence; this.detailLoading = true
-      try { const { data } = await getPerformanceOrder(this.detailId, { ...this.detailPages, per_page: 20 }); if (sequence === this.detailSequence && this.detailVisible) this.detail = data.data }
+      try { const { data } = await getPerformanceOrder(this.detailId, { ...this.detailPages, per_page: 10 }); if (sequence === this.detailSequence && this.detailVisible) this.detail = data.data }
       catch (error) { if (sequence === this.detailSequence) this.$message.error(error.userMessage || error.message) }
       finally { if (sequence === this.detailSequence) this.detailLoading = false }
     },
     openShares(scope) { this.$refs.shares.open(scope.scope_type, scope.scope_id) },
+    canEditRate(row) { return row.can_adjust_rate && this.$can('production.performance.view') && this.$can('production.performance.manage') },
+    openRate(scope) { this.$refs.rateDialog.open(scope) },
     afterConfirmation() { this.load(); if (this.detailVisible) this.loadDetail() }
   }
 }
 </script>
 
 <style>
+.performance-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+.performance-row-actions .el-button + .el-button {
+  margin-left: 0;
+}
 .performance-page{padding:26px 30px;color:#24364b;max-width:1660px;margin:auto}.performance-head{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:22px}.performance-head p{font-size:12px;color:#7c8998;margin:0 0 7px}.performance-head h1{font-size:25px;margin:0 0 9px}.performance-head span,.performance-help{font-size:13px;color:#748293;line-height:1.6}.performance-policy{background:#eef8f2;border:1px solid #d5ebde;color:#38624b;font-size:13px;padding:12px 16px;margin-bottom:20px;border-radius:5px}.performance-page .el-tabs__active-bar{background:#3b8a63}.performance-page .el-tabs__item.is-active{color:#3b8a63}.performance-card{background:#fff;border:1px solid #e5ebee;border-radius:5px;padding:18px}.performance-filters{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:18px}.performance-filters>.el-input{width:250px}.performance-pagination{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-top:16px;color:#7c8998;font-size:12px}.performance-dialog{top:50%;margin:0 auto!important;transform:translateY(-50%);max-width:calc(100vw - 36px);max-height:90vh;display:flex;flex-direction:column;border-radius:6px}.performance-dialog .el-dialog__header{padding:19px 24px 16px;border-bottom:1px solid #e7edef;flex-shrink:0}.performance-dialog .el-dialog__title{font-weight:600;color:#263b4f}.performance-dialog .el-dialog__body{padding:20px 24px;min-height:0;overflow:auto}.performance-dialog .el-dialog__footer{padding:14px 24px 18px;border-top:1px solid #e7edef;flex-shrink:0}.performance-scope-meta{display:flex;flex-wrap:wrap;align-items:center;gap:12px;font-size:13px;margin-bottom:16px}.performance-scope-meta>span{color:#718292}.performance-dialog small{display:block;color:#748293;line-height:1.7}.performance-dialog .el-tag{margin-left:5px}.performance-dialog .performance-error{color:#bd544f}.performance-dialog .el-button--text{color:#3b8a63}.performance-totals{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:18px 0}.performance-totals>div{padding:16px 18px;border:1px solid #e1eae5;background:#f8fbf9;border-radius:4px}.performance-totals span{display:block;color:#6d7c88;font-size:12px;margin-bottom:8px}.performance-totals strong{font-size:21px;color:#315743}.performance-share-total{display:flex;flex-wrap:wrap;gap:20px;margin:18px 0;font-size:13px}.performance-share-total strong{color:#426851}.performance-reason{margin-top:12px}.performance-page .el-table td,.performance-dialog .el-table td{vertical-align:top}.performance-page .el-table th,.performance-dialog .el-table th{background:#f5f8f7;color:#607367}.performance-page .el-table .cell,.performance-dialog .el-table .cell{word-break:break-word}.performance-page .el-button--text{color:#3b8a63}@media(max-width:720px){.performance-page{padding:16px 12px}.performance-head{align-items:flex-start}.performance-head h1{font-size:22px}.performance-card{padding:12px}.performance-filters>.el-input{width:100%}.performance-filters .el-date-editor{max-width:100%}.performance-totals{grid-template-columns:1fr}.performance-dialog{max-width:calc(100vw - 18px);max-height:94vh}.performance-dialog .el-dialog__body{padding:14px}.performance-dialog .el-dialog__header,.performance-dialog .el-dialog__footer{padding:15px}.performance-pagination{flex-wrap:wrap}}
 </style>

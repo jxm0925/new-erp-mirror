@@ -1,5 +1,11 @@
 const production = require('../services/production');
 
+function pending(key) {
+  const user = wx.getStorageSync('erp_user') || {};
+  const command = wx.getStorageSync('erp_production_decision_' + Number(user.legacy_id || 0) + '_' + key);
+  return command && command.payload || null;
+}
+
 // An unacknowledged write keeps its original command and payload across page reloads.
 function execute(key, payload, send) {
   const user = wx.getStorageSync('erp_user') || {};
@@ -16,8 +22,9 @@ function execute(key, payload, send) {
     // Network/timeout and server failures can follow a committed transaction; replay the same command.
     if (error.errorCode !== 'network_error' && error.errorCode !== 'command_processing' && Number(error.statusCode || 0) < 500
         && Number(error.statusCode || 0) > 0) wx.removeStorageSync(storageKey);
+    error.pendingCommand = Boolean(wx.getStorageSync(storageKey));
     throw error;
   });
 }
 
-module.exports = { execute };
+module.exports = { execute, pending };

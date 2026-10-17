@@ -767,7 +767,7 @@ export default {
       quoteDialogVisible: false,
       suppliers: [],
       items: [],
-      itemPage: createPageState(50),
+      itemPage: createPageState(10),
       itemKeyword: '',
       selectedItems: [],
       units: [],
@@ -793,10 +793,10 @@ export default {
         status: '',
         category_id: this.$route.query.category_id ? Number(this.$route.query.category_id) : ''
       },
-      pagination: { page: 1, perPage: 20, total: 0 },
-      relationPagination: { page: 1, perPage: 5, total: 0 },
-      quotePagination: { page: 1, perPage: 5, total: 0 },
-      purchasePagination: { page: 1, perPage: 5, total: 0 },
+      pagination: { page: 1, perPage: 10, total: 0 },
+      relationPagination: { page: 1, perPage: 10, total: 0 },
+      quotePagination: { page: 1, perPage: 10, total: 0 },
+      purchasePagination: { page: 1, perPage: 10, total: 0 },
       rules: {
         supplier_code: [{ required: true, message: '系统未取得供应商编码，请重新打开新增窗口', trigger: 'blur' }],
         supplier_name: [{ required: true, message: '请输入供应商名称', trigger: 'blur' }]
@@ -1084,7 +1084,7 @@ export default {
       })
     },
     openRelation () {
-      this.itemPage = createPageState(50)
+      this.itemPage = createPageState(10)
       this.items = []; this.selectedItems = []; this.itemKeyword = ''
       this.relationForm = emptyRelation()
       this.relationDialogVisible = true
@@ -1108,7 +1108,7 @@ export default {
       })
     },
     openQuote () {
-      this.itemPage = createPageState(50)
+      this.itemPage = createPageState(10)
       this.items = []; this.selectedItems = []; this.itemKeyword = ''
       this.quoteForm = emptyQuote()
       this.quoteConversions = []

@@ -36,8 +36,13 @@ use App\Services\Erp\SalesOrderAttachmentService;
 use App\Services\Erp\SalesOrderFundingGateService;
 use App\Services\Erp\SalesOrderEditImpactService;
 use App\Services\Erp\SalesOrderInventoryLockService;
+use App\Services\Erp\SalesOrderFulfillmentPolicy;
+use App\Services\Erp\SalesOrderProductionChangeService;
+use App\Services\Erp\SalesOrderVisibilityService;
+use App\Services\Erp\ErpUserProjectionService;
 use App\Services\Erp\SalesCostVisibilityService;
 use App\Services\Erp\SkuItemMatcher;
+use App\Services\Erp\UnitConversionDomainService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
@@ -48,7 +53,7 @@ use Illuminate\Validation\Rule;
 class SalesOrderController extends Controller
 {
     private const ORDER_STATUSES = ['draft', 'confirmed', 'closed', 'cancelled'];
-    private const FULFILLMENT_TYPES = ['pending', 'inventory', 'production', 'mixed', 'service', 'no_delivery'];
+    private const FULFILLMENT_TYPES = ['pending', 'inventory', 'production', 'purchase', 'mixed', 'service', 'no_delivery'];
 
     /** One HTTP output boundary also covers write acknowledgements and future auxiliary actions. */
     public function callAction($method, $parameters)
@@ -98,7 +103,7 @@ class SalesOrderController extends Controller
         $this->abortUnlessOrderVisible($request, $order);
         $payload = $this->attachCurrentOperator($this->validateOrder($request, true), $request);
         $payload['change_reason'] = $request->validate(['change_reason' => 'nullable|string|max:500'])['change_reason'] ?? null;
-        $result = $service->submit($id, $payload, $this->operatorName($request));
+        $result = $service->submit($id, $payload, $this->operatorName($request), app(AuthContextService::class)->currentUser($request));
         return response()->json(['message' => $result['mode'] === 'candidate' ? '订单修改已提交审核，正式订单暂未变更。' : '订单修改已立即生效并完整留痕。', 'data' => $result]);
     }
 
@@ -127,25 +132,27 @@ class SalesOrderController extends Controller
         // edit/submit permission.  A generic change permission must never
         // bypass business, finance or fulfillment approval.
         $this->abortUnlessPermission($request, $permission);
-        $result = $service->decide($candidateId, $payload['approval_type'], $payload['decision'] === 'approve', $this->operatorName($request), $payload['comment'] ?? null);
+        $result = $service->decide($candidateId, $payload['approval_type'], $payload['decision'] === 'approve', $this->operatorName($request), $payload['comment'] ?? null, app(AuthContextService::class)->currentUser($request));
         return response()->json(['message' => '审核处理完成。', 'data' => $result]);
     }
 
     /** Paged direct SKU search for sales-order add/edit; never fetches all SKU to the browser. */
-    public function searchOrderSkus(Request $request, InventoryAvailabilityService $availabilityService)
+    public function searchOrderSkus(Request $request, InventoryAvailabilityService $availabilityService, UnitConversionDomainService $conversions)
     {
         $this->abortUnlessPermission($request, 'sales_order.view');
         $filters = $request->validate([
             'keyword' => 'nullable|string|max:160',
+            'product_id' => 'nullable|integer|min:1|exists:erp_products,id',
             'page' => 'nullable|integer|min:1',
             'per_page' => 'nullable|integer|min:1|max:50',
         ]);
         $keyword = trim((string) ($filters['keyword'] ?? ''));
         $perPage = min(max((int) $request->input('per_page', 10), 1), 50);
-        $query = Sku::query()->with(['product', 'salesUnit', 'itemRelations.item.unit'])
+        $query = Sku::query()->with(['product', 'salesUnit', 'itemRelations.item.unit.standardUnit'])
             ->where('status', 'enabled')->where('is_sale_item', true)
             ->whereNotNull('sales_unit_id')->whereNotNull('sale_price')
             ->whereHas('product', fn (Builder $q) => $q->where('status', 'enabled'));
+        if (! empty($filters['product_id'])) $query->where('product_id', (int) $filters['product_id']);
         foreach (preg_split('/\\s+/u', $keyword, -1, PREG_SPLIT_NO_EMPTY) ?: [] as $token) {
             $query->where(function (Builder $q) use ($token) {
                 $like = '%'.$token.'%';
@@ -173,16 +180,30 @@ class SalesOrderController extends Controller
         $page = $query->orderBy('sku_code')->paginate($perPage);
         $itemIds = $page->getCollection()->flatMap(fn (Sku $sku) => $sku->itemRelations->pluck('item_id'))->filter()->unique();
         $availability = $availabilityService->availableBaseQuantities($itemIds->all());
-        $page->getCollection()->transform(function (Sku $sku) use ($availability) {
-            $relation = $sku->itemRelations->firstWhere('is_primary', true) ?: $sku->itemRelations->first();
-            $factor = max(0.00000001, (float) ($relation?->qty ?: 1));
-            $availableBase = $relation?->item_id ? (float) ($availability[$relation->item_id] ?? 0) : null;
+        $page->getCollection()->transform(function (Sku $sku) use ($availability, $conversions) {
+            $lineType = $this->normalizeLineType(null, null, $sku, $sku->product);
+            $sku->itemRelations->each(function ($relation): void {
+                $relation->item?->setAttribute('is_purchase_fulfilled', $relation->item->isPurchaseFulfilledItem());
+            });
+            $relations = $sku->itemRelations->filter(fn ($relation) => $relation->status === 'active'
+                && $relation->is_primary && $relation->item?->status === 'enabled');
+            $relation = $relations->count() === 1 ? $relations->first() : null;
+            $factor = $relation && (float) $relation->qty > 0 ? (float) $relation->qty : null;
+            $baseUnit = $conversions->canonicalUnit($relation?->item?->unit);
+            $availableBase = $factor !== null ? (float) ($availability[$relation->item_id] ?? 0) : null;
             $sku->setAttribute('available_stock', $availableBase === null ? null : floor(($availableBase / $factor) * 100000000) / 100000000);
+            $sku->setAttribute('fulfillment_factor_preview', $factor);
+            $sku->setAttribute('item_base_unit_name_preview', $baseUnit?->unit_name);
+            $sku->setAttribute('default_fulfillment_relation_id', $factor !== null ? (int) $relation->id : null);
+            $sku->setAttribute('default_item_id', $factor !== null ? (int) $relation->item_id : null);
+            $sku->setAttribute('default_item_name', $factor !== null ? $relation->item?->item_name : null);
+            $sku->setAttribute('is_purchase_fulfilled', $factor !== null && $relation->item->isPurchaseFulfilledItem());
             $sku->setAttribute('default_price', $sku->sale_price === null ? null : (float) $sku->sale_price);
             $sku->setAttribute('default_tax_rate', (float) ($sku->default_tax_rate ?? 0));
             $sku->setAttribute('default_price_tax_mode', $sku->default_price_tax_mode ?: 'tax_inclusive');
-            $sku->setAttribute('default_fulfillment_method', in_array($sku->line_type, ['service', 'no_delivery'], true) ? $sku->line_type : 'auto');
-            return $sku;
+            $sku->setAttribute('default_fulfillment_method', in_array($lineType, ['service', 'no_delivery'], true) ? $lineType : 'auto');
+            // 销售行继承服务商品类型；数组投影避免被 SKU 的全局 line_type accessor 改回旧值。
+            return [...$sku->toArray(), 'line_type' => $lineType];
         });
         return response()->json($page);
     }
@@ -199,15 +220,27 @@ class SalesOrderController extends Controller
 
     public function submitDraftConfirmation(Request $request, int $id)
     {
-        $this->abortUnlessPermission($request, 'sales_order.submit_confirmation');
+        // 一步确认：检查 + 正式确认合并为一个动作、一个权限；检查未通过时不改任何状态。
+        $this->abortUnlessAnyPermission($request, ['sales_order.submit_confirmation', 'sales_order.formal_confirm']);
         $order = SalesOrder::findOrFail($id);
         $this->abortUnlessOrderVisible($request, $order);
         $service = app(SalesOrderDraftService::class);
         $result = $service->precheckConfirmation($order);
-        if ($result['passed']) {
-            $result['order'] = $service->submitForConfirmation($order, $this->operatorName($request));
-            $result['message'] = '确认前检查已通过，订单已提交正式确认。';
+        if (!$result['passed']) {
+            $result['message'] = '确认前检查未通过，请按下列提示处理后重新确认。';
+            return response()->json([
+                'message' => $result['message'],
+                'data' => $result,
+            ]);
         }
+
+        if ($order->confirm_status !== 'pending_confirmation') {
+            $service->submitForConfirmation($order, $this->operatorName($request));
+        }
+        $confirmed = $this->performFormalConfirm($request, $id);
+        $result['order'] = $confirmed;
+        $result['confirmed'] = true;
+        $result['message'] = '订单已确认，系统已按实时库存锁定备货数量并建立所需生产层级。';
 
         return response()->json([
             'message' => $result['message'],
@@ -350,7 +383,7 @@ class SalesOrderController extends Controller
             'lines.product', 'lines.sku', 'lines.item',
             'fulfillments' => fn ($fulfillments) => $fulfillments
                 ->where('demand_status', 'confirmed')
-                ->whereIn('fulfillment_type', ['inventory', 'production', 'service', 'no_delivery']),
+                ->whereIn('fulfillment_type', SalesOrderFulfillmentPolicy::TYPES),
         ])
             ->latest('updated_at');
         $this->applySalesOrderVisibility($query, $request);
@@ -399,11 +432,11 @@ class SalesOrderController extends Controller
                 ->orderBy('sort')
                 ->orderBy('legacy_id')
                 ->get(['legacy_id as id', 'parent_legacy_id as pid', 'name', 'short_name', 'trade_type']),
-            'carriers' => DB::table('erp_sales_order_deliveries')
+            'carriers' => (! $request->has('include_carriers') || $request->boolean('include_carriers')) ? DB::table('erp_sales_order_deliveries')
                 ->where('enabled', true)
                 ->orderBy('sort')
                 ->orderBy('legacy_id')
-                ->get(['legacy_id as id', 'name', 'code', 'trade_type']),
+                ->get(['legacy_id as id', 'name', 'code', 'trade_type']) : [],
             'share_users' => DB::table('erp_sales_order_share_users')
                 ->where(function ($query) {
                     $query->whereNull('status')->orWhere('status', 'normal');
@@ -455,6 +488,17 @@ class SalesOrderController extends Controller
         });
     }
 
+    public function laborSummary(Request $request, int $id, \App\Services\Erp\ProductionLaborSummaryQueryService $service)
+    {
+        $this->abortUnlessPermission($request, 'sales_order.view');
+        $this->abortUnlessPermission($request, 'production.labor_stats.view');
+        $filters = $request->validate(['page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|in:10',
+            'people_page' => 'nullable|integer|min:1', 'people_per_page' => 'nullable|integer|in:10']);
+        $query = SalesOrder::query(); $this->applySalesOrderVisibility($query, $request);
+        $order = $query->findOrFail($id); $auth = app(AuthContextService::class); $user = $auth->currentUser($request);
+        return response()->json(['data' => $service->salesOrder($order, $filters, $user, $auth->permissionCodes($user), $auth->isSuperAdmin($user))]);
+    }
+
     public function show(Request $request, int $id)
     {
         $this->abortUnlessPermission($request, 'sales_order.view');
@@ -479,8 +523,10 @@ class SalesOrderController extends Controller
         ]);
         $this->applySalesOrderVisibility($query, $request);
         $order = $query->findOrFail($id);
+        $order->setAttribute('sales_user', app(ErpUserProjectionService::class)->one($order->sales_user_legacy_id));
         $order->lines->each(function ($line): void {
             $line->setAttribute('system_item', $this->orderLineItemProjection($line));
+            $line->setAttribute('is_purchase_fulfilled', SalesOrderFulfillmentPolicy::isPurchaseLine($line));
         });
         $this->decorateFulfillmentComposition($order);
         $changeEligibility = app(SalesOrderEditImpactService::class)->eligibility($order);
@@ -561,9 +607,19 @@ class SalesOrderController extends Controller
         });
     }
 
+    /** 兼容旧入口：对已处于待确认状态的订单执行正式确认；新流程请用 orders/{id}/confirm 一步确认。 */
     public function confirm(Request $request, int $id)
     {
-        $this->abortUnlessPermission($request, 'sales_order.formal_confirm');
+        $this->abortUnlessAnyPermission($request, ['sales_order.submit_confirmation', 'sales_order.formal_confirm']);
+        $confirmed = $this->performFormalConfirm($request, $id);
+        return response()->json([
+            'message' => '订单已确认，系统已按实时库存锁定备货数量并建立所需生产层级。',
+            'data' => $confirmed,
+        ]);
+    }
+
+    private function performFormalConfirm(Request $request, int $id)
+    {
         $order = SalesOrder::with(['lines.sku', 'lines.item'])->findOrFail($id);
         $this->abortUnlessOrderVisible($request, $order);
         $isReplay = $order->order_status === 'confirmed'
@@ -573,7 +629,7 @@ class SalesOrderController extends Controller
         abort_if($order->order_status === 'cancelled', 422, '已取消订单不能确认');
         abort_if($order->lines->isEmpty(), 422, '销售订单至少需要一行明细');
         if (!$isReplay) {
-            abort_if(blank($order->carrier_id), 422, '提交确认前必须先选择快递！');
+            SalesOrderFulfillmentPolicy::assertConfirmationRequirements($order);
             foreach ($order->lines as $line) {
                 $price = (float) $line->unit_price;
                 abort_if(
@@ -591,10 +647,7 @@ class SalesOrderController extends Controller
         abort_unless($operator, 401, '请先登录 ERP');
         $confirmed = app(\App\Services\Erp\SalesOrderFulfillmentApplicationService::class)
             ->confirmOrderAndFulfill($order->id, $this->operatorName($request), $operator);
-        return response()->json([
-            'message' => '订单已确认，系统已按实时库存锁定备货数量并建立所需生产层级。',
-            'data' => $confirmed,
-        ]);
+        return $confirmed;
     }
 
     public function productionConfirmationPreview(Request $request, int $id)
@@ -631,14 +684,18 @@ class SalesOrderController extends Controller
         $order = SalesOrder::with(['lines.product', 'lines.sku', 'lines.item'])->findOrFail($id);
         $this->abortUnlessOrderVisible($request, $order);
         abort_if($order->order_status !== 'confirmed', 422, '订单确认后才能做生产确认');
-        abort_if(!in_array($order->production_confirm_status, ['pending', 'blocked'], true), 422, '当前订单无需或已经完成订单生产确认');
+        // State/version are checked only for a new command in the service. An exact
+        // successful command replay must remain usable after its response was lost.
 
         $payload = $request->validate([
+            'client_command_id' => 'required|string|max:120',
+            'expected_version' => 'required|integer|min:1',
             'lines' => 'required|array|min:1',
             'lines.*.sales_order_line_id' => 'required|exists:erp_sales_order_lines,id',
             'lines.*.confirm_qty' => 'required|numeric|min:0',
             'lines.*.inventory_qty' => 'required|numeric|min:0',
             'lines.*.production_qty' => 'required|numeric|min:0',
+            'lines.*.purchase_qty' => 'sometimes|numeric|min:0',
             'lines.*.service_qty' => 'required|numeric|min:0',
             'lines.*.no_delivery_qty' => 'required|numeric|min:0',
             'lines.*.undetermined_qty' => 'prohibited',
@@ -654,6 +711,8 @@ class SalesOrderController extends Controller
             $payload['adjustment_reason'] ?? null,
             false,
             app(AuthContextService::class)->currentUser($request),
+            $payload['client_command_id'],
+            (int) $payload['expected_version'],
         );
         return response()->json([
             'message' => '订单生产确认已提交，库存占用、生产需求、主生产工单和待发布生产工单已生成。',
@@ -670,11 +729,14 @@ class SalesOrderController extends Controller
             $order = SalesOrder::with(['lines', 'fulfillments'])->lockForUpdate()->findOrFail($id);
             $this->abortUnlessOrderVisible($request, $order);
             abort_if($order->order_status === 'cancelled', 422, '订单已经取消，不能重复取消');
-            abort_if($order->shipment_status !== 'not_shipped' || $order->lines->sum('shipped_qty') > 0, 422, '已有发货记录的订单不能直接取消，请进入售后/退货流程');
+            abort_if(! in_array($order->shipment_status, ['not_shipped', 'not_required'], true) || $order->lines->sum('shipped_qty') > 0
+                || $order->shipments()->where('shipment_status', '<>', 'cancelled')->exists(), 422, '已有有效发货单或发货事实，不能直接取消，请先处理发货逆向流程');
             abort_if(SalesOrderProductionRequirement::where('sales_order_id', $order->id)
-                ->where('is_active', true)
-                ->whereIn('requirement_status', ['ready', 'partially_consumed', 'consumed', 'closed'])
-                ->exists(), 422, '生产需求已生效或被消耗，不能直接取消，请走订单变更流程');
+                ->where(fn ($q) => $q->where('consumed_qty', '>', 0)->orWhereIn('requirement_status', ['partially_consumed', 'consumed', 'closed']))
+                ->exists(), 422, '生产需求已有执行或关闭事实，不能直接取消，请走正式逆向流程');
+            $actor = app(AuthContextService::class)->currentUser($request);
+            abort_unless($actor, 401, '请先登录 ERP');
+            app(SalesOrderProductionChangeService::class)->cancelUnreleasedLocked($order, $actor, '销售订单取消：'.$payload['reason']);
 
             $beforeStatus = $order->order_status;
             $order->update([
@@ -682,12 +744,18 @@ class SalesOrderController extends Controller
                 'cancel_reason' => $payload['reason'],
                 'cancelled_at' => now(),
                 'cancelled_by' => $this->operatorName($request),
+                'business_version' => (int) $order->business_version + 1,
+                'inventory_lock_status' => 'released',
             ]);
+            foreach ($order->lines as $line) $line->update(['cancelled_qty' => max(0, (float) $line->order_qty - (float) $line->shipped_qty)]);
             app(InventoryReservationService::class)->releaseForSalesOrder($order, '订单取消：'.$payload['reason']);
             SalesOrderProductionRequirement::where('sales_order_id', $order->id)
                 ->where('is_active', true)
-                ->whereIn('requirement_status', ['draft', 'blocked'])
+                ->whereIn('requirement_status', ['draft', 'blocked', 'ready', 'confirmed'])
                 ->update(['requirement_status' => 'cancelled', 'is_active' => false, 'closed_qty' => DB::raw('remaining_qty')]);
+            SalesOrderFulfillment::where('sales_order_id', $order->id)->whereIn('demand_status', ['pending', 'confirmed'])
+                ->update(['demand_status' => 'cancelled', 'production_requirement_status' => 'cancelled']);
+            SalesOrderFulfillment::where('sales_order_id', $order->id)->where('reservation_status', 'awaiting_purchase')->update(['reservation_status' => 'cancelled']);
             $this->log($order->id, null, 'cancel', $beforeStatus, 'cancelled', '取消销售订单：'.$payload['reason']);
 
             return response()->json(['message' => '订单已取消', 'data' => $order->fresh(['lines', 'fulfillments'])]);
@@ -696,24 +764,8 @@ class SalesOrderController extends Controller
 
     public function cancel(Request $request, int $id)
     {
-        $this->abortUnlessPermission($request, 'sales_order.cancel');
-        $order = SalesOrder::findOrFail($id);
-        $this->abortUnlessOrderVisible($request, $order);
-        abort_if($order->shipment_status !== 'not_shipped', 422, '已有发货数量的订单不能直接取消，请进入售后/退货流程');
-
-        $order->update([
-            'order_status' => 'cancelled',
-            'cancelled_at' => now(),
-            'cancelled_by' => $this->operatorName($request),
-        ]);
-        app(InventoryReservationService::class)->releaseForSalesOrder($order, '订单取消释放库存占用');
-        SalesOrderProductionRequirement::where('sales_order_id', $order->id)
-            ->where('is_active', true)
-            ->whereIn('requirement_status', ['draft', 'blocked'])
-            ->update(['requirement_status' => 'cancelled', 'is_active' => false, 'closed_qty' => DB::raw('remaining_qty')]);
-        $this->log($order->id, null, 'cancel', null, 'cancelled', '取消销售订单，历史库存、生产和交付记录保留');
-
-        return response()->json(['message' => '订单已取消', 'data' => $order->fresh(['lines', 'fulfillments'])]);
+        $request->merge(['reason' => trim((string) $request->input('reason')) ?: '业务取消']);
+        return $this->cancelWithReason($request, $id);
     }
 
     public function logs(Request $request, int $id)
@@ -970,6 +1022,12 @@ class SalesOrderController extends Controller
             'lines.*.sort_order' => 'nullable|integer|min:0',
             'lines.*.customization_description' => 'nullable|string|max:2000',
             'lines.*.configuration_snapshot' => 'nullable|array',
+            'lines.*.configuration_snapshot.need_pump' => 'nullable|boolean',
+            'lines.*.configuration_snapshot.electric' => 'nullable|string|max:80',
+            'lines.*.configuration_snapshot.is_customized' => 'nullable|boolean',
+            'lines.*.configuration_snapshot.is_special_customized' => 'nullable|boolean',
+            'lines.*.configuration_snapshot.special_custom_description' => 'nullable|string|max:2000',
+            'lines.*.configuration_snapshot.valid_days' => 'nullable|string|max:120',
             'lines.*.configuration_snapshot.cut_requirements' => 'nullable|array',
             'lines.*.configuration_snapshot.cut_requirements.*.component_item_id' => 'required|integer|exists:erp_items,id',
             'lines.*.configuration_snapshot.cut_requirements.*.cut_length_mm' => 'required|numeric|min:0.01|max:9999999999.99',
@@ -1221,24 +1279,25 @@ class SalesOrderController extends Controller
         $user = app(AuthContextService::class)->currentUser($request);
         $codes = $user ? app(AuthContextService::class)->permissionCodes($user) : [];
         $draft = $order->order_status === 'draft';
-        $pending = $order->confirm_status !== 'pending_confirmation';
-        $canConfirm = in_array('sales_order.formal_confirm', $codes, true);
+        // 检查+正式确认合并为一个“确认订单”动作；任一旧权限均视为拥有该权限。
+        $canConfirm = in_array('sales_order.submit_confirmation', $codes, true)
+            || in_array('sales_order.formal_confirm', $codes, true);
         return [
             'edit_draft' => $draft && in_array('sales_order.edit_draft', $codes, true),
             'delete_draft' => $draft && in_array('sales_order.delete_draft', $codes, true),
-            'submit_confirmation' => $draft && $pending && in_array('sales_order.submit_confirmation', $codes, true),
-            'formal_confirm' => $draft && !$pending && $canConfirm,
+            'submit_confirmation' => $draft && $canConfirm,
+            'formal_confirm' => false,
             'production_confirmation' => $order->order_status === 'confirmed'
                 && in_array($order->production_confirm_status, ['pending', 'blocked'], true)
                 && in_array('sales_order.production_confirm', $codes, true),
             'lock_inventory' => $order->order_status === 'confirmed'
-                && $order->shipment_status !== 'shipped'
+                && in_array($order->shipment_status, ['not_shipped', 'partially_shipped'], true)
                 && in_array('sales_order.inventory_lock', $codes, true),
             'cancel' => $order->order_status !== 'cancelled'
-                && $order->shipment_status === 'not_shipped'
+                && in_array($order->shipment_status, ['not_shipped', 'not_required'], true)
                 && in_array('sales_order.cancel', $codes, true),
             'edit' => ($draft && in_array('sales_order.edit_draft', $codes, true))
-                || (($changeEligibility['allowed'] ?? ($order->order_status === 'confirmed' && $order->shipment_status === 'not_shipped'))
+                || (($changeEligibility['allowed'] ?? ($order->order_status === 'confirmed' && in_array($order->shipment_status, ['not_shipped', 'not_required'], true)))
                     && (in_array('sales_order.change', $codes, true) || in_array('sales_order.change.submit', $codes, true))),
             'change' => false,
             'view_attachment' => in_array('sales_order.view_attachment', $codes, true),
@@ -1557,6 +1616,7 @@ class SalesOrderController extends Controller
         if (empty($payload['sales_user_legacy_id'])) {
             $payload['sales_user_legacy_id'] = $legacyAdminId;
         }
+        app(SalesOrderVisibilityService::class)->assertAssignableSalesUser($payload['sales_user_legacy_id'], $user);
         if (empty($payload['created_by'])) {
             $payload['created_by'] = $user->nickname ?: $user->username;
         }
@@ -1837,14 +1897,14 @@ class SalesOrderController extends Controller
 
     private function decorateFulfillmentComposition(SalesOrder $order): void
     {
-        $rows = $order->relationLoaded('fulfillments') ? $order->fulfillments : collect();
+        $rows = $order->relationLoaded('fulfillments') ? $order->fulfillments->where('demand_status', 'confirmed') : collect();
         $types = $rows
             ->where('demand_status', 'confirmed')
-            ->filter(fn (SalesOrderFulfillment $row) => in_array($row->fulfillment_type, ['inventory', 'production', 'service', 'no_delivery'], true)
+            ->filter(fn (SalesOrderFulfillment $row) => in_array($row->fulfillment_type, SalesOrderFulfillmentPolicy::TYPES, true)
                 && (float) ($row->sales_qty ?? $row->fulfillment_qty) > 0)
             ->pluck('fulfillment_type')->unique()->values();
         $quantities = $rows->groupBy('fulfillment_type')->map(fn ($group) => round($group->sum(fn ($row) => (float) ($row->sales_qty ?? $row->fulfillment_qty)), 8));
-        foreach (['inventory', 'production', 'service', 'no_delivery'] as $type) {
+        foreach (SalesOrderFulfillmentPolicy::TYPES as $type) {
             $quantities->put($type, (float) $quantities->get($type, 0));
         }
         $effectiveQty = $order->lines->sum(fn (SalesOrderLine $line) => max(0, (float) $line->order_qty - (float) $line->cancelled_qty));
@@ -1863,7 +1923,7 @@ class SalesOrderController extends Controller
         } elseif ($types->contains('inventory') && $types->contains('production')) {
             $label = '部分库存 + 部分生产';
         } else {
-            $names = ['inventory' => '库存', 'production' => '生产', 'service' => '服务', 'no_delivery' => '无需发货'];
+            $names = ['inventory' => '库存', 'production' => '生产', 'purchase' => '外购备货', 'service' => '服务', 'no_delivery' => '无需发货'];
             $label = $types->map(fn ($type) => $names[$type] ?? $type)->implode(' + ');
         }
 
@@ -1918,7 +1978,7 @@ class SalesOrderController extends Controller
 
     private function perPage(Request $request): int
     {
-        return min(100, max(5, (int) $request->input('per_page', 20)));
+        return min(100, max(5, (int) $request->input('per_page', 10)));
     }
 
     private function nextNo(string $prefix): string

@@ -54,8 +54,8 @@ function pageFixture(page, service = {}) {
 }
 test('native public task retains cross-order source quantities and requires every line including explicit zero', async () => {
   const { page } = pageFixture('public-preparation'); page.drafts = {
-    1: { demand: { id: 1, work_order_id: 10, work_order_version: 2, remaining_to_prepare: 5 }, sources: [{ id: 11, selected_qty: '2' }] },
-    2: { demand: { id: 2, work_order_id: 20, work_order_version: 3, remaining_to_prepare: 9 }, sources: [{ id: 22, selected_qty: '3' }] } };
+    1: { demand: { id: 1, work_order_id: 10, work_order_version: 2, remaining_to_prepare: 5 }, sources: [{ id: 11, selected_qty: '2', warehouse_id: 7, picking_available_qty: '5' }] },
+    2: { demand: { id: 2, work_order_id: 20, work_order_version: 3, remaining_to_prepare: 9 }, sources: [{ id: 22, selected_qty: '3', warehouse_id: 7, picking_available_qty: '9' }] } };
   page.data.warehouse = { id: 7 }; let created;
   page.run = async (endpoint, body) => { created = body; };
   page.create(); assert.equal(created.lines.length, 2); assert.equal(created.work_order_versions[20], 3); assert.equal(created.lines[1].inventory_balance_id, 22);

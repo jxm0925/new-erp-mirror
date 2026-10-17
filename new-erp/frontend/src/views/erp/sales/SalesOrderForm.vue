@@ -7,6 +7,8 @@ Do not change layout without approval.
   <section class="sales-form-page">
     <product-sku-picker ref="productSkuPicker" @select="applyPicker" />
     <customer-picker ref="customerPicker" @select="applyCustomer" />
+    <warehouse-manager-picker :visible.sync="salesUserPickerVisible" title="选择销售人员" scope="sales" :current="selectedSalesUser" @selected="applySalesUser" />
+    <sales-carrier-picker :visible.sync="carrierPickerVisible" :current="selectedCarrier" @selected="applyCarrier" />
     <purchase-item-picker ref="cutItemPicker" @select-multiple="applyCutItems" />
     <order-edit-impact-dialog
       :visible.sync="impactDialogVisible"
@@ -19,6 +21,7 @@ Do not change layout without approval.
       :effective-version="impactPreview.effectiveVersion"
       :reason.sync="impactReason"
       :submitting="impactSubmitting"
+      :submit-error="impactSubmitError"
       @back="impactDialogVisible = false"
       @submit="submitImpactPreview"
     />
@@ -34,7 +37,7 @@ Do not change layout without approval.
       <div class="toolbar-actions">
         <el-button size="small" @click="$router.push('/sales/orders')">返回列表</el-button>
         <el-button v-if="isEdit ? ($can('sales_order.edit_draft') || $can('sales_order.change')) : $can('sales_order.create')" size="small" @click="save(false)">{{ isConfirmedEdit ? '保存修改' : '保存草稿' }}</el-button>
-        <el-button v-if="!isConfirmedEdit && $can('sales_order.submit_confirmation')" size="small" type="primary" class="btn-emerald-primary" @click="save(true)">提交确认</el-button>
+        <el-button v-if="!isConfirmedEdit && ($can('sales_order.submit_confirmation') || $can('sales_order.formal_confirm'))" size="small" type="primary" class="btn-emerald-primary" @click="save(true)">保存并确认</el-button>
       </div>
     </div>
 
@@ -57,9 +60,7 @@ Do not change layout without approval.
               <el-date-picker v-model="form.order_time" type="datetime" size="small" value-format="yyyy-MM-dd HH:mm:ss" placeholder="选择下单时间" />
               <span></span>
               <label class="required">销售人员</label>
-              <el-select v-model="form.sales_user_legacy_id" size="small" filterable placeholder="请选择销售" @change="handleSalesUserChange">
-                <el-option v-for="item in shareUserOptions" :key="item.id" :label="item.nickname" :value="String(item.id)" />
-              </el-select>
+              <el-input :value="selectedSalesUser && (selectedSalesUser.nickname || selectedSalesUser.username)" size="small" readonly placeholder="请选择销售" suffix-icon="el-icon-search" @focus="salesUserPickerVisible = true" @click.native="salesUserPickerVisible = true" />
               <span></span>
               <label class="required">订单来源</label>
               <el-select v-model="form.order_source" size="small">
@@ -269,7 +270,7 @@ Do not change layout without approval.
                           <div class="form-field-group">
                             <label>行处理类型</label>
                             <div class="line-type-chip-wrap">
-                              <el-tag size="small" :type="lineTypeTag(row.line_type)" effect="light">{{ lineTypeText(row.line_type) }}</el-tag>
+                              <el-tag size="small" :type="lineTypeTag(row.line_type)" effect="light">{{ lineTypeText(row) }}</el-tag>
                             </div>
                           </div>
                           <div class="form-field-group full-span">
@@ -569,15 +570,15 @@ Do not change layout without approval.
 
             <el-table-column label="履约类型" width="95" align="center">
               <template slot-scope="{row}">
-                <el-tag size="mini" :type="lineTypeTag(row.line_type)" effect="light">{{ lineTypeText(row.line_type) }}</el-tag>
+                <el-tag size="mini" :type="lineTypeTag(row.line_type)" effect="light">{{ lineTypeText(row) }}</el-tag>
               </template>
             </el-table-column>
 
             <el-table-column label="BOM状态" width="85" align="center">
               <template slot-scope="{row}">
-                <span v-if="row.line_type === 'service' || row.line_type === 'no_delivery'" class="dash-text">无需</span>
+                <span v-if="!lineNeedsItem(row) || row.is_purchase_fulfilled" class="dash-text">无需</span>
                 <el-tag v-else-if="row.bom_snapshot && row.bom_snapshot.name" size="mini" type="success" effect="plain">就绪</el-tag>
-                <el-tag v-else size="mini" type="warning" effect="plain">待补</el-tag>
+                <el-tag v-else size="mini" type="info" effect="plain">工单维护</el-tag>
               </template>
             </el-table-column>
 
@@ -670,7 +671,7 @@ Do not change layout without approval.
               <div class="field-stack"><span>是否自提</span><el-switch v-model="form.shipping_snapshot.is_self_pickup" /></div>
               <div class="field-stack"><span>客户物流备注</span><el-input v-model="form.shipping_snapshot.customer_logistics_note" size="small" placeholder="客户指定承运方式、运输注意事项" /></div>
               <div class="field-stack trade-type-field"><span>贸易类型</span><el-radio-group v-model="form.trade_type" size="small"><el-radio-button label="domestic">内贸</el-radio-button><el-radio-button label="foreign">外贸</el-radio-button></el-radio-group></div>
-              <div class="field-stack"><span class="required">快递选择</span><el-select v-model="form.carrier_id" size="small" placeholder="选择发货快递" clearable><el-option v-for="item in carrierOptions" :key="item.id" :label="item.name" :value="String(item.id)" /></el-select></div>
+              <div class="field-stack"><span :class="{required:form.lines.some(line => lineNeedsItem(line))}">快递选择</span><div class="carrier-selector-field"><el-input :value="selectedCarrier && selectedCarrier.name" size="small" readonly placeholder="实物发货时选择快递" suffix-icon="el-icon-search" @focus="carrierPickerVisible = true" @click.native="carrierPickerVisible = true" /><el-button v-if="form.carrier_id" type="text" @click="clearCarrier">清除</el-button></div></div>
               <div class="field-stack"><span>快递单号</span><el-input v-model="form.logistics_snapshot.express_no" size="small" placeholder="待发货后填写" /></div>
               <template v-if="form.trade_type === 'foreign'">
                 <div class="field-stack"><span>件数（PCS）</span><el-input v-model="form.logistics_snapshot.pcs" size="small" placeholder="件数" /></div>
@@ -741,9 +742,9 @@ Do not change layout without approval.
               </div>
             </div>
             <div class="summary-metric-card">
-              <span class="metric-label">库存直发</span>
+              <span class="metric-label">外购备货</span>
               <div class="metric-value-wrap">
-                <span class="num text-blue">{{ stockLineCount }}</span>
+                <span class="num text-blue">{{ purchaseLineCount }}</span>
                 <span class="unit">行</span>
               </div>
             </div>
@@ -812,6 +813,8 @@ import SalesOrderAttachmentPreviewDialog from '@/components/sales/SalesOrderAtta
 import OrderEditImpactDialog from '@/components/sales/OrderEditImpactDialog.vue'
 import { legacyMediaUrl } from '@/utils/legacyMedia'
 import CustomerPicker from '@/components/sales/CustomerPicker.vue'
+import WarehouseManagerPicker from '@/components/master/WarehouseManagerPicker.vue'
+import SalesCarrierPicker from '@/components/sales/SalesCarrierPicker.vue'
 import PurchaseItemPicker from '@/components/purchase/PurchaseItemPicker.vue'
 import { getSalesOrder, saveSalesOrder, confirmSalesOrder, getSalesOrderOptions, uploadSalesOrderAttachment, deleteSalesOrderAttachment, downloadSalesOrderAttachment, previewSalesOrderEditImpact, submitSalesOrderEditImpact } from '@/api/erp/sales'
 import { reserveForCreatePage, clearCreatePageReservation } from '@/utils/documentNumberReservation'
@@ -838,6 +841,9 @@ const emptyLine = () => ({
   spec_text_snapshot: '',
   item_name: '待系统匹配',
   item_match_status: 'pending',
+  is_purchase_fulfilled: false,
+  fulfillment_factor_preview: null,
+  item_base_unit_name_preview: null,
   line_type: 'physical',
   order_qty: 1,
   unit_price: 0,
@@ -859,9 +865,13 @@ const emptyLine = () => ({
 
 export default {
   mixins: [cachedPageRoute],
-  components: { ProductSkuPicker, CustomerPicker, PurchaseItemPicker, SalesOrderAttachmentPreviewDialog, OrderEditImpactDialog },
+  components: { ProductSkuPicker, CustomerPicker, WarehouseManagerPicker, SalesCarrierPicker, PurchaseItemPicker, SalesOrderAttachmentPreviewDialog, OrderEditImpactDialog },
   data: () => ({
     selectedLine: null,
+    salesUserPickerVisible: false,
+    selectedSalesUser: null,
+    carrierPickerVisible: false,
+    selectedCarrier: null,
     expandedLineKeys: [],
     detailSections: [],
     fileCategory: '设计图纸',
@@ -875,6 +885,7 @@ export default {
     impactDialogVisible: false,
     impactReason: '',
     impactSubmitting: false,
+    impactSubmitError: '',
     impactPayload: null,
     editOrderMeta: null,
     impactPreview: {
@@ -889,7 +900,6 @@ export default {
     },
     payTypeOptions: [],
     platformRawOptions: [],
-    carrierOptions: [],
     shareUserOptions: [],
     pickerLine: null,
     deletedLineIds: [],
@@ -953,13 +963,13 @@ export default {
       return this.form.lines.reduce((sum, line) => sum + this.lineAmount(line), 0)
     },
     productionLineCount() {
-      return this.form.lines.filter(line => line.line_type === 'physical').length
+      return this.form.lines.filter(line => line.sku_id && this.lineNeedsItem(line) && !line.is_purchase_fulfilled).length
     },
-    stockLineCount() {
-      return this.form.lines.filter(line => line.line_type === 'no_delivery').length
+    purchaseLineCount() {
+      return this.form.lines.filter(line => line.is_purchase_fulfilled).length
     },
     missingDataCount() {
-      return this.form.lines.filter(line => line.line_type === 'physical' && !line.bom_snapshot).length
+      return this.form.lines.filter(line => line.sku_id && (this.lineAttributeMessage(line) || this.lineCustomizationMessage(line) || (this.lineNeedsItem(line) && line.item_match_status !== 'matched'))).length
     },
     platformOptions() {
       return this.platformRawOptions.filter(item => Number(item.pid || 0) === 0)
@@ -1077,10 +1087,9 @@ export default {
     },
     async loadOptions() {
       try {
-        const { data } = await getSalesOrderOptions()
+        const { data } = await getSalesOrderOptions({ include_carriers: 0 })
         this.payTypeOptions = data.pay_types || []
         this.platformRawOptions = data.platforms || []
-        this.carrierOptions = data.carriers || []
         this.shareUserOptions = data.share_users || []
       } catch (error) {
         this.$message.warning('销售订单基础选项加载失败，请检查新系统基础数据配置')
@@ -1104,7 +1113,7 @@ export default {
         created_by_legacy_id: data.created_by_legacy_id ? String(data.created_by_legacy_id) : '',
         is_share: Boolean(data.is_share),
         share_user: Array.isArray(data.share_user) ? data.share_user.map(String) : String(data.share_user || '').split(',').filter(Boolean),
-        carrier_id: data.carrier_id ? String(data.carrier_id) : '',
+        carrier_id: (data.default_carrier_id || data.carrier_id) ? String(data.default_carrier_id || data.carrier_id) : '',
         customer_snapshot: { remark: '', delivery_note: '', ...(data.customer_snapshot || {}) },
         shipping_snapshot: { is_self_pickup: false, customer_logistics_note: '', ...(data.shipping_snapshot || {}) },
         logistics_snapshot: { express_no: '', pcs: '', gw: '', vol: '', si_date: '', cy_date: '', cargo_ready_date: '', ...(data.logistics_snapshot || {}) },
@@ -1123,6 +1132,9 @@ export default {
           technical_attachment_snapshot: { files: this.mergeAttachmentFiles((line.technical_attachment_snapshot && line.technical_attachment_snapshot.files) || [], (line.attachments || []).map(this.mapAttachment)) }
         }))
       }
+      const salesUser = data.sales_user
+      this.selectedSalesUser = salesUser ? { id: salesUser.user_id, nickname: salesUser.display_name, department_names: salesUser.department_name } : (data.sales_user_legacy_id ? { id: Number(data.sales_user_legacy_id), nickname: `账号 ${data.sales_user_legacy_id}` } : null)
+      this.selectedCarrier = this.form.carrier_id ? { carrier_option_id: Number(this.form.carrier_id), name: data.default_carrier_name_snapshot || (data.shipping_snapshot || {}).default_carrier_name || (data.shipping_snapshot || {}).carrier_name || '' } : null
       this.selectedLine = this.form.lines[0] || null
       return true
       } catch (error) {
@@ -1224,9 +1236,24 @@ export default {
         this.form.platform2 = ''
       }
     },
-    handleSalesUserChange(value) {
-      const user = this.shareUserOptions.find(item => String(item.id) === String(value))
-      this.form.created_by = user ? user.nickname : ''
+    applySalesUser(user) {
+      this.selectedSalesUser = user
+      this.form.sales_user_legacy_id = String(user.id)
+      this.form.created_by = user.nickname || user.username
+    },
+    applyCarrier(carrier) {
+      this.selectedCarrier = carrier
+      this.form.carrier_id = String(carrier.carrier_option_id)
+      this.$set(this.form.shipping_snapshot, 'default_carrier_id', carrier.carrier_option_id)
+      this.$set(this.form.shipping_snapshot, 'default_carrier_name', carrier.name)
+    },
+    clearCarrier() {
+      this.selectedCarrier = null
+      this.form.carrier_id = ''
+      this.form.default_carrier_name_snapshot = null
+      this.$set(this.form.shipping_snapshot, 'default_carrier_id', null)
+      this.$set(this.form.shipping_snapshot, 'default_carrier_name', null)
+      this.$set(this.form.shipping_snapshot, 'carrier_name', null)
     },
     openProductPicker(row) {
       this.selectedLine = row
@@ -1262,6 +1289,14 @@ export default {
         line.configuration_snapshot = {}
         line.bom_snapshot = null
         line.routing_snapshot = null
+        line.item_snapshot = null
+        line.item_match_snapshot = null
+        line.is_purchase_fulfilled = false
+        line.fulfillment_factor_preview = null
+        line.fulfillment_factor_snapshot = null
+        line.item_base_unit_name_preview = null
+        line.item_base_unit_name_snapshot = null
+        line.available_stock_hint = null
         line.item_name = '待系统匹配'
         line.item_match_status = 'pending'
         return
@@ -1287,6 +1322,18 @@ export default {
       line.line_type = row.line_type || (row.fulfillment_type === 'service' ? 'service' : (row.fulfillment_type === 'virtual' ? 'no_delivery' : 'physical'))
       line.is_customized = false
       line.is_special_customized = false
+      // SKU 更换后重新读取默认物料，旧 SKU 的物料和单位预览不能继续展示。
+      line.item_name = '待系统匹配'
+      line.item_match_status = 'pending'
+      line.item_snapshot = null
+      line.item_match_snapshot = null
+      line.is_purchase_fulfilled = false
+      line.bom_snapshot = null
+      line.routing_snapshot = null
+      line.fulfillment_factor_preview = null
+      line.fulfillment_factor_snapshot = null
+      line.item_base_unit_name_preview = null
+      line.item_base_unit_name_snapshot = null
       line.sku_snapshot = {
         id: row.id,
         sku_code: row.sku_code,
@@ -1309,13 +1356,14 @@ export default {
         sales_unit_name: row.sales_unit && row.sales_unit.unit_name,
         sales_unit_symbol: row.sales_unit && row.sales_unit.unit_symbol
       }
-      const defaultRelation = (row.item_relations || []).find(relation => relation.status === 'active' && relation.is_primary && relation.item && relation.item.status === 'enabled')
-      if (line.line_type === 'physical' && defaultRelation) {
-        line.item_name = defaultRelation.item.item_name
+      const factor = Number(row.fulfillment_factor_preview)
+      if (this.lineNeedsItem(line) && row.default_item_id && Number.isFinite(factor) && factor > 0) {
+        line.item_name = row.default_item_name
         line.item_match_status = 'matched'
-        line.fulfillment_factor_preview = Number(defaultRelation.base_qty_per_sku_unit || 1)
-        line.item_base_unit_name_preview = defaultRelation.item.unit && defaultRelation.item.unit.unit_name
-      } else if (line.line_type === 'service' || line.line_type === 'no_delivery') {
+        line.fulfillment_factor_preview = factor
+        line.item_base_unit_name_preview = row.item_base_unit_name_preview
+        line.is_purchase_fulfilled = row.is_purchase_fulfilled === true
+      } else if (!this.lineNeedsItem(line)) {
         line.item_name = '无需 Item'
         line.item_match_status = 'not_required'
       }
@@ -1744,6 +1792,8 @@ export default {
       }
     },
     async submitImpactPreview() {
+      if (this.impactSubmitting) return
+      this.impactSubmitError = ''
       if (!this.impactPayload) { this.impactDialogVisible = false; return }
       if (this.impactPreview.requiresApproval && !String(this.impactReason || '').trim()) return this.$message.error('请填写本次修改的变更原因')
       this.impactSubmitting = true
@@ -1752,6 +1802,8 @@ export default {
         this.$message.success(data.message || '订单修改已处理')
         this.impactDialogVisible = false
         this.$router.push(`/sales/orders/${this.pageRoute.params.id}/detail`)
+      } catch (error) {
+        this.impactSubmitError = error.userMessage || '订单修改提交失败，请检查后重试'
       } finally { this.impactSubmitting = false }
     },
     async save(andConfirm) {
@@ -1761,7 +1813,7 @@ export default {
       if (!this.form.payment_method_id) return this.$message.error('请选择付款方式')
       if (this.form.lines.some(line => !line.sku_id)) return this.$message.error('订单行必须通过全局搜索选择SKU')
       if (this.form.lines.some(line => !line.product_id)) return this.$message.error('所选SKU缺少所属Product，请维护SKU主数据后重试')
-      if (andConfirm && !this.form.carrier_id) return this.$message.error('提交确认前必须先选择快递')
+      if (andConfirm && this.form.lines.some(line => this.lineNeedsItem(line)) && !this.form.carrier_id) return this.$message.error('实物订单提交确认前必须先选择快递')
       if (andConfirm && this.form.lines.some(line => Number(line.unit_price || 0) <= 0)) return this.$message.error('提交确认前，订单行销售单价必须大于 0')
       const invalidAttribute = this.form.lines.find(line => this.lineAttributeMessage(line))
       if (andConfirm && invalidAttribute) return this.showLineError(invalidAttribute, this.lineAttributeMessage(invalidAttribute))
@@ -1770,7 +1822,7 @@ export default {
       const invalidCut = this.form.lines.find(line => this.lineCutMessage(line))
       if (invalidCut) return this.showLineError(invalidCut, this.lineCutMessage(invalidCut), 'cut')
       this.syncHeaderFlags()
-      const carrier = this.carrierOptions.find(item => String(item.id) === String(this.form.carrier_id))
+      const carrier = this.selectedCarrier
       const payload = {
         ...withoutInternalFreight(this.form),
         deleted_line_ids: this.deletedLineIds,
@@ -1817,6 +1869,7 @@ export default {
         }
         this.impactPayload = payload
         this.impactReason = ''
+        this.impactSubmitError = ''
         this.applyImpactPreview(impact)
         this.impactDialogVisible = true
         return
@@ -1828,8 +1881,22 @@ export default {
         this.numberReservation = null
       }
       if (andConfirm) {
-        await confirmSalesOrder(id)
-        this.$message.success('确认前校验已通过，订单等待下一阶段正式确认')
+        const response = await confirmSalesOrder(id)
+        const result = response.data.data || response.data
+        const blocked = (result.checks || []).find(item => item.status === 'blocked')
+        if (!result.passed || blocked) {
+          this.$message.warning((blocked && blocked.message) || result.message || '确认前检查未通过，请补齐资料后重试')
+          const editPath = `/sales/orders/${id}/edit`
+          // 草稿已保存；进入同一单据继续补齐，不能留在新增页再次创建。
+          if (this.pageRoute.path !== editPath) this.$router.push({ path: editPath, query: blocked && blocked.field ? { focus: blocked.field } : {} })
+          else if (blocked && blocked.field) {
+            const lineMatch = blocked.field.match(/^lines\.(\d+)\./)
+            const line = lineMatch && this.form.lines[Number(lineMatch[1]) - 1]
+            if (line) this.openLineDetail(line)
+          }
+          return
+        }
+        this.$message.success('订单已确认')
         this.$router.push(`/sales/orders/${id}/detail`)
       } else {
         this.$message.success('订单草稿已保存')
@@ -1845,8 +1912,9 @@ export default {
     money(value) {
       return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     },
-    lineTypeText(v) {
-      return ({ physical: '制造/发货', service: '服务项目', no_delivery: '无需发货', auxiliary: '辅助录入', fee: '费用' })[v] || v
+    lineTypeText(line) {
+      if (line.is_purchase_fulfilled) return '外购备货'
+      return ({ physical: '实物备货', service: '服务项目', no_delivery: '无需发货', auxiliary: '辅助录入', fee: '费用' })[line.line_type] || line.line_type
     },
     lineTypeTag(v) {
       return ({ physical: 'warning', service: 'info', no_delivery: 'success', auxiliary: '' })[v] || ''
@@ -2089,6 +2157,13 @@ export default {
   gap: 10px;
   align-items: center;
 }
+.carrier-selector-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.carrier-selector-field > .el-input { flex: 1; min-width: 0; }
 .btn-emerald-primary {
   background: linear-gradient(135deg, #008b4b 0%, #00763f 100%) !important;
   border-color: #00763f !important;
@@ -3378,6 +3453,26 @@ export default {
 }
 
 @media (max-width: 768px) {
+  .order-lines .section-title {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .title-main {
+    flex-wrap: wrap;
+  }
+  .title-main h3,
+  .lines-count-pill {
+    white-space: nowrap;
+  }
+  .title-action-btns {
+    min-width: 0;
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+  .title-action-btns .el-button + .el-button {
+    margin-left: 0;
+  }
   .form-toolbar {
     padding: 0 14px;
     height: auto;

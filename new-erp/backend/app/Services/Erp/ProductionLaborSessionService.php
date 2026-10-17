@@ -275,6 +275,7 @@ class ProductionLaborSessionService
 
     private function assertNoActivePacking(int $employeeId): void
     {
+        app(WarehouseLaborSessionService::class)->assertNoActiveWarehouse($employeeId);
         if (DB::table('erp_shipment_packing_labor_sessions')->where('employee_legacy_id', $employeeId)
             ->where('status', 'ACTIVE')->lockForUpdate()->first()) {
             $this->fail('labor_session_active', '当前人员已有包装加工计时，请先暂停原包装作业。', 409);

@@ -21,6 +21,7 @@ CREATE TABLE `erp_shipment_packing_materials` (
   `unit_id` bigint(20) unsigned DEFAULT NULL,
   `base_qty` decimal(18,8) NOT NULL,
   `serial_snapshot` json DEFAULT NULL,
+  `usage_snapshot` json DEFAULT NULL,
   `inventory_transaction_id` bigint(20) unsigned DEFAULT NULL,
   `inventory_transaction_item_id` bigint(20) unsigned DEFAULT NULL,
   `cost_amount_snapshot` decimal(18,4) DEFAULT NULL,

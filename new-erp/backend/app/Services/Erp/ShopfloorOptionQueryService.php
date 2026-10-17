@@ -15,7 +15,7 @@ final class ShopfloorOptionQueryService
     {
         abort_unless($super || array_intersect(['production.work_order.create', 'production.work_order.edit'], $permissions), 403, '无权选择工单基础资料。');
         abort_unless(in_array($type, ['categories', 'items', 'routings', 'routing_operations', 'routing_preview', 'reserved_work_orders', 'reserved_units', 'reserved_operations'], true), 422, '不支持的工单资料类型。');
-        $size = min(50, max(1, (int) ($filters['per_page'] ?? 20)));
+        $size = min(50, max(1, (int) ($filters['per_page'] ?? 10)));
         $keyword = trim((string) ($filters['keyword'] ?? ''));
         if (str_starts_with($type, 'reserved_')) {
             abort_unless($user, 401, '请先登录。');

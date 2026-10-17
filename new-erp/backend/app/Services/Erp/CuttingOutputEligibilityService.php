@@ -37,14 +37,24 @@ final class CuttingOutputEligibilityService
             $size = json_decode($physical->dimensions, true, 512, JSON_THROW_ON_ERROR);
             return ['mode' => 'sheet', 'item_id' => (int) $batch->input_item_id,
                 'physical_material_id' => (int) $physical->id, 'shape' => $physical->shape,
+                'area_mm2' => FrozenCuttingStockPolicy::area(['shape' => $physical->shape] + $size),
                 'length_mm' => $size['length_mm'] ?? null, 'width_mm' => $size['width_mm'] ?? null,
                 // Older identities contain only measured thickness. Exact equality is
                 // the only safe fallback; no rounding to a guessed commercial gauge.
                 'thickness_mm' => $size['nominal_thickness_mm'] ?? $size['thickness_mm'] ?? null,
                 'actual_thickness_mm' => $size['thickness_mm'] ?? null];
         }
+        $frozen = DB::table('erp_production_cutting_inputs')->where('settlement_batch_id', $batch->id)->value('requirement_snapshot');
+        $sources = $frozen ? (json_decode($frozen, true, 512, JSON_THROW_ON_ERROR)['sources'] ?? []) : [];
+        $totalLength = '0.00000000';
+        foreach ($sources as $source) {
+            $length = FrozenCuttingStockPolicy::positiveDecimal($source['dimensions']['length_mm'] ?? null);
+            if (! $length) $this->commands->fail('input_source_length_missing', '实际已收原根缺少冻结长度。', 409);
+            $totalLength = bcadd($totalLength, $length, 8);
+        }
         return ['mode' => 'length', 'item_id' => (int) $batch->input_item_id,
-            'length_mm' => $batch->standard_stock_length_mm, 'input_qty' => $batch->input_qty];
+            'length_mm' => $batch->standard_stock_length_mm, 'input_qty' => $batch->input_qty,
+            'total_length_mm' => $sources ? $totalLength : bcmul((string) $batch->standard_stock_length_mm, (string) $batch->input_qty, 8)];
     }
 
     /** The caller owns Item/configuration visibility; aliases i and c must exist. */
@@ -53,6 +63,7 @@ final class CuttingOutputEligibilityService
         $source = $this->source($batch);
         $query->join('erp_boms as cutting_bom', 'cutting_bom.output_item_id', '=', 'i.id')
             ->join('erp_bom_items as cutting_component', 'cutting_component.bom_id', '=', 'cutting_bom.id')
+            ->whereNull('cutting_bom.deleted_at')->whereNull('cutting_component.deleted_at')
             ->where('cutting_component.component_item_id', $batch->input_item_id)
             ->where('cutting_bom.status', 'active')->where('cutting_bom.audit_status', 'approved')
             ->where(fn (Builder $q) => $q->whereNull('cutting_bom.effective_date')->orWhere('cutting_bom.effective_date', '<=', now()->toDateString()))
@@ -62,6 +73,8 @@ final class CuttingOutputEligibilityService
         $query->whereRaw("{$length} > 0");
         if ($source['mode'] === 'sheet') {
             $width = $this->dimensionSql('width'); $thickness = $this->dimensionSql('thickness');
+            if ($source['shape'] === 'IRREGULAR') return $query->whereRaw("{$width} > 0")->whereRaw("{$thickness} = ?", [$source['thickness_mm']])
+                ->whereRaw("{$length} * {$width} <= ?", [$source['area_mm2']]);
             $query->whereRaw("{$width} > 0")->whereRaw("{$thickness} = ?", [$source['thickness_mm']])
                 ->where(function (Builder $q) use ($source, $length, $width): void {
                     $q->where(fn (Builder $normal) => $normal->whereRaw("{$length} <= ?", [$source['length_mm']])
@@ -100,6 +113,16 @@ final class CuttingOutputEligibilityService
     public function assertMeasurements(array $requirement, array $measurements, mixed $length, mixed $pieces, string $quantity): void
     {
         $c = $this->commands; $mode = $requirement['input']['mode'];
+        if (FrozenCuttingStockPolicy::isTotalLength($requirement)) {
+            $total = FrozenCuttingStockPolicy::positiveDecimal($measurements['total_length_mm'] ?? null);
+            if (($requirement['output_kind'] ?? null) !== ProductionCuttingComponentService::KIND || $mode !== 'length'
+                || $length !== null || $pieces !== null || array_diff(array_keys($measurements), ['total_length_mm']) || ! $total
+                || bccomp(bcmul($quantity, '1000', 8), $total, 8) !== 0
+                || bccomp($total, (string) ($requirement['covered_total_length_mm'] ?? '0'), 8) > 0) {
+                $c->fail('output_total_length_mismatch', '管材组件的实际米数必须对应已收来源覆盖的总长度，不能填写单段尺寸、件数或另一计量口径。');
+            }
+            return;
+        }
         $actualLength = $mode === 'length' ? ($length ?? $measurements['length_mm'] ?? null) : ($measurements['length_mm'] ?? null);
         if ($length !== null && isset($measurements['length_mm']) && bccomp(CuttingDecimal::value($length), (string) $measurements['length_mm'], 8) !== 0) {
             $c->fail('output_length_mismatch', '产出长度字段必须与实际尺寸一致。');
@@ -128,6 +151,12 @@ final class CuttingOutputEligibilityService
         $source = $this->source($batch); $used = '0';
         foreach ($rows as $row) {
             $m = $row->measurements ? json_decode($row->measurements, true, 512, JSON_THROW_ON_ERROR) : [];
+            $requirement = $row->cutting_requirement_snapshot ? json_decode($row->cutting_requirement_snapshot, true, 512, JSON_THROW_ON_ERROR) : [];
+            if ($row->result_type === 'product' && FrozenCuttingStockPolicy::isTotalLength($requirement)) {
+                $this->assertMeasurements($requirement, $m, $row->cut_length_mm, $row->piece_qty, (string) $row->actual_qty);
+                $used = bcadd($used, (string) $m['total_length_mm'], 8);
+                continue;
+            }
             if (in_array($row->result_type, ['recyclable_scrap', 'process_loss'], true)) continue;
             $length = $source['mode'] === 'sheet' || $row->result_type !== 'product'
                 ? ($m['length_mm'] ?? null) : ($row->cut_length_mm ?? $m['length_mm'] ?? null);
@@ -143,6 +172,14 @@ final class CuttingOutputEligibilityService
                 $this->commands->fail('remnant_thickness_mismatch', '余料或产出的实际厚度不能改变来源板材厚度。');
             }
             $width = $m['width_mm'] ?? null;
+            if (($m['shape'] ?? null) === 'IRREGULAR' && isset($m['area_mm2'])) {
+                $used = bcadd($used, bcmul((string) $m['area_mm2'], $qty, 8), 8);
+                continue;
+            }
+            if ($source['shape'] === 'IRREGULAR' && $length !== null && $width !== null) {
+                $used = bcadd($used, bcmul(bcmul((string) $length, (string) $width, 8), $qty, 8), 8);
+                continue;
+            }
             if ($length !== null && $width !== null && $source['length_mm'] !== null && $source['width_mm'] !== null) {
                 $normal = bccomp((string) $length, (string) $source['length_mm'], 8) <= 0 && bccomp((string) $width, (string) $source['width_mm'], 8) <= 0;
                 $rotated = bccomp((string) $width, (string) $source['length_mm'], 8) <= 0 && bccomp((string) $length, (string) $source['width_mm'], 8) <= 0;
@@ -151,8 +188,8 @@ final class CuttingOutputEligibilityService
                 if ($row->result_type === 'product' || ($m['shape'] ?? 'RECTANGLE') === 'RECTANGLE') $used = bcadd($used, bcmul(bcmul((string) $length, (string) $width, 8), $qty, 8), 8);
             }
         }
-        $available = $source['mode'] === 'length' ? bcmul((string) $source['length_mm'], (string) $batch->input_qty, 8)
-            : ($source['length_mm'] !== null && $source['width_mm'] !== null ? bcmul((string) $source['length_mm'], (string) $source['width_mm'], 8) : null);
+        $available = $source['mode'] === 'length' ? $source['total_length_mm']
+            : $source['area_mm2'];
         if ($available !== null && bccomp($used, $available, 8) > 0) $this->commands->fail('cutting_material_exceeded', '产出与余料合计超过实际投入材料，请检查数量和尺寸。');
     }
 

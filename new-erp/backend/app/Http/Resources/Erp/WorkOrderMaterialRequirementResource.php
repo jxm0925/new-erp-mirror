@@ -30,12 +30,15 @@ class WorkOrderMaterialRequirementResource extends JsonResource
                 'loss_rate' => (float) $this->loss_rate,
                 'fixed_qty' => (float) $this->fixed_qty,
             ],
-            'cutting' => $this->cut_length_mm_snapshot === null ? null : [
-                'cut_length_mm' => (float) $this->cut_length_mm_snapshot,
+            'cutting' => $this->cut_length_mm_snapshot === null && ! $this->cutting_requirement_snapshot ? null : [
+                'cut_length_mm' => $this->cut_length_mm_snapshot === null ? null : (float) $this->cut_length_mm_snapshot,
+                'cutting_quantity_basis' => \App\Services\Erp\FrozenCuttingStockPolicy::isTotalLength($this->cutting_requirement_snapshot ?? []) ? 'total_length' : 'dimensions_pieces',
+                'total_length_mm' => $this->cutting_requirement_snapshot['quantity_calculation']['total_length_mm'] ?? null,
+                'required_total_length_mm' => $this->cutting_requirement_snapshot['required_total_length_mm'] ?? null,
                 'cut_width_mm' => $this->cutting_requirement_snapshot['width_mm'] ?? null,
                 'cut_thickness_mm' => $this->cutting_requirement_snapshot['thickness_mm'] ?? null,
-                'per_output_piece_qty' => (float) $this->per_output_piece_qty,
-                'required_piece_qty' => (float) $this->required_piece_qty,
+                'per_output_piece_qty' => $this->per_output_piece_qty === null ? null : (float) $this->per_output_piece_qty,
+                'required_piece_qty' => $this->required_piece_qty === null ? null : (float) $this->required_piece_qty,
                 'display' => $this->formatCutRequirement(),
             ],
             'quantity' => [
@@ -58,6 +61,9 @@ class WorkOrderMaterialRequirementResource extends JsonResource
 
     private function formatCutRequirement(): string
     {
+        if (\App\Services\Erp\FrozenCuttingStockPolicy::isTotalLength($this->cutting_requirement_snapshot ?? [])) {
+            return rtrim(rtrim(bcdiv((string) $this->cutting_requirement_snapshot['required_total_length_mm'], '1000', 8), '0'), '.').'米';
+        }
         $length = rtrim(rtrim(number_format((float) $this->cut_length_mm_snapshot, 2, '.', ''), '0'), '.');
         $pieces = rtrim(rtrim(number_format((float) $this->required_piece_qty, 8, '.', ''), '0'), '.');
         $spec = $this->cutting_requirement_snapshot ?? [];

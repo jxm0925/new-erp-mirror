@@ -287,7 +287,7 @@ export default {
         status: '',
         missing_default_item: false,
         page: 1,
-        per_page: 20
+        per_page: 10
       }
     }
   },
@@ -330,7 +330,7 @@ export default {
         status: '',
         missing_default_item: false,
         page: 1,
-        per_page: 20
+        per_page: 10
       }
       this.fetch()
     },

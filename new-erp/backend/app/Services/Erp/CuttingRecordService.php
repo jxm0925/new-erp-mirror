@@ -131,6 +131,8 @@ final class CuttingRecordService
                 DB::table('erp_cutting_results')->where('id',$old->id)->update(['status'=>'VOIDED','voided_at'=>now(),'voided_by_legacy_id'=>$c->actor($user),'business_version'=>$old->business_version+1,'updated_at'=>now()]);
                 $c->event('result',$old->id,'void',$user,$old,['status'=>'VOIDED']);
             }
+            app(ProductionCuttingOperationService::class)->assertComponentResultCoverage($batch,
+                DB::table('erp_cutting_results')->where('settlement_batch_id', $batchId)->whereNotIn('status', ['VOIDED', 'SUPERSEDED', 'REVERSED'])->get());
             DB::table('erp_cutting_settlement_batches')->where('id', $batchId)->update(['business_version' => $batch->business_version + 1, 'updated_at' => now()]);
             $response = ['settlement_batch_id' => $batchId, 'result_ids' => $resultIds, 'business_version' => $batch->business_version + 1, 'status' => 'PROCESSING'];
             $c->event('batch', $batchId, 'save_results', $user, $batch, $response); return $response;
@@ -208,6 +210,8 @@ final class CuttingRecordService
             if ($batch->status !== 'PROCESSING') $c->fail('record_frozen', '加工结果已提交，不能重复提交。', 409);
             $this->input($batch);
             $rows = DB::table('erp_cutting_results')->where('settlement_batch_id', $batchId)->whereNotIn('status',['VOIDED','SUPERSEDED'])->orderBy('id')->lockForUpdate()->get();
+            if (app(ProductionCuttingOperationService::class)->linkedOrder((int) $batch->cutting_order_id)) app(CuttingRemnantBalanceService::class)->assertConfirmed($batch);
+            app(ProductionCuttingOperationService::class)->assertComponentResultCoverage($batch, $rows);
             // One physical may yield only measured loss; its operation can still finish from other batches.
             // Standalone jobs retain their product requirement, and the ordinary operation validates total output.
             if (! $rows->contains('result_type', 'product') && ($rows->isEmpty()
@@ -329,7 +333,11 @@ final class CuttingRecordService
         if ($measurements !== null && ! is_array($measurements)) $c->fail('measurement_invalid', '尺寸和重量必须为结构化实测记录。');
         if ($measurement !== 'MEASURED' && $measurements !== null) $c->fail('measurement_invalid', '未测量或未登记不能填写实测尺寸或重量。');
         foreach ($measurements ?? [] as $key => $value) {
-            if (! in_array($key, ['length_mm','width_mm','thickness_mm','weight_kg','area_mm2','shape'], true)) $c->fail('measurement_invalid', '实测字段不合法。');
+            if (! in_array($key, ['length_mm','width_mm','thickness_mm','weight_kg','area_mm2','shape','total_length_mm','source_key'], true)) $c->fail('measurement_invalid', '实测字段不合法。');
+            if ($key === 'source_key') {
+                if (! is_string($value) || ! preg_match('/^(?:physical|root):\d+$/D', $value) || ! app(ProductionCuttingOperationService::class)->linkedOrder((int) $batch->cutting_order_id)) $c->fail('measurement_source_invalid', '余料来源必须引用本工序实际已收的一根或一张。');
+                continue;
+            }
             if ($key === 'shape') { if (! in_array($value, ['RECTANGLE','IRREGULAR'], true)) $c->fail('shape_invalid', '余料形状不合法。'); }
             else CuttingDecimal::value($value, 8, true);
         }
@@ -337,6 +345,7 @@ final class CuttingRecordService
             app(CuttingOutputEligibilityService::class)->assertMeasurements($cuttingRequirement, $measurements ?? [],
                 $row['cut_length_mm'] ?? null, $row['piece_qty'] ?? null, (string) $qty);
         }
+        if (isset($measurements['total_length_mm']) && ! FrozenCuttingStockPolicy::isTotalLength($cuttingRequirement ?? [])) $c->fail('measurement_invalid', '只有工序内按总长度加工的管材组件可以登记总长度实测。');
         if (! $draft && $type !== 'product') {
             if ($measurement !== 'MEASURED') $c->fail('other_result_measurement_required','其他结果提交前必须完成实测登记。');
             $input = Item::find($batch->input_item_id); $mode = $input?->cuttingMode() ?: ($batch->physical_material_id ? 'sheet' : 'length');
@@ -349,8 +358,8 @@ final class CuttingRecordService
                     if (! in_array($shape,['RECTANGLE','IRREGULAR'],true)) $c->fail('remnant_shape_required','板材余料必须选择矩形或异形。');
                     if ($shape === 'RECTANGLE' && (! $positive('length_mm') || ! $positive('width_mm') || ! $positive('thickness_mm')))
                         $c->fail('remnant_dimensions_required','矩形板材余料必须填写长、宽、厚。');
-                    if ($shape === 'IRREGULAR' && ! $positive('weight_kg') && (! $positive('length_mm') || ! $positive('width_mm')))
-                        $c->fail('remnant_extent_required','异形板材余料必须填写外包长宽或重量。');
+                    if ($shape === 'IRREGULAR' && ! $positive('area_mm2') && ! $positive('weight_kg') && (! $positive('length_mm') || ! $positive('width_mm')))
+                        $c->fail('remnant_extent_required','异形板材余料必须填写实际面积、外包长宽或重量。');
                 }
             }
             if (in_array($type,['recyclable_scrap','process_loss'],true) && ! $positive('weight_kg'))
@@ -366,7 +375,7 @@ final class CuttingRecordService
         if (isset($row['reported_quality']) && ! in_array($row['reported_quality'], ['qualified','unqualified'], true)) $c->fail('reported_quality_invalid','现场申报只能填写合格或不合格，不代替正式质检。');
         return ['result_type' => $type, 'allowed_output_id' => $allowed?->id, 'item_id' => $allowed?->item_id,
             'configuration_id' => $allowed?->configuration_id, 'stage_id' => $allowed?->stage_id, 'actual_qty' => $qty,
-            'piece_qty' => $cuttingRequirement ? bcmul((string) $qty, (string) $cuttingRequirement['per_output_piece_qty'], 8)
+            'piece_qty' => $cuttingRequirement ? (FrozenCuttingStockPolicy::isTotalLength($cuttingRequirement) ? null : bcmul((string) $qty, (string) $cuttingRequirement['per_output_piece_qty'], 8))
                 : (isset($row['piece_qty']) ? CuttingDecimal::value($row['piece_qty']) : null),
             'cut_length_mm' => isset($row['cut_length_mm']) ? CuttingDecimal::value($row['cut_length_mm'], 2) : null,
             'measurements' => $measurements === null ? null : json_encode($measurements, JSON_THROW_ON_ERROR), 'measurement_status' => $measurement,
@@ -391,6 +400,14 @@ final class CuttingRecordService
     {
         if ($link = app(ProductionCuttingOperationService::class)->linkedOrder((int) $batch->cutting_order_id)) {
             $snapshot = json_decode($link->technical_snapshot, true, 512, JSON_THROW_ON_ERROR);
+            if (($snapshot['output_kind'] ?? null) === ProductionCuttingComponentService::KIND) {
+                $allowed = DB::table('erp_cutting_allowed_outputs')->where('id', $row->allowed_output_id)->where('cutting_order_id', $batch->cutting_order_id)->first();
+                if (! $allowed) $this->commands->fail('cutting_component_output_invalid', '下料组件不属于本次冻结的原料需求集合。');
+                $requirement = app(ProductionCuttingOperationService::class)->frozenRequirement($batch, $allowed);
+                if (! $requirement || (int) $row->item_id !== (int) $requirement['item_id'] || (int) $row->configuration_id !== (int) $requirement['configuration_id'])
+                    $this->commands->fail('cutting_component_output_invalid', '下料组件必须沿用冻结原料、规格需求和实际来源。');
+                return;
+            }
             if ((int) $row->item_id !== (int) $snapshot['output_item_id'] || (int) $row->configuration_id !== (int) $snapshot['configuration_id'])
                 $this->commands->fail('operation_output_frozen', '加工结果与本工序冻结产出不一致。');
             return;

@@ -570,7 +570,7 @@ export default {
       this.fetchAll()
     },
     skuPage(row) {
-      return this.skuPages[row.id] || { rows: [], total: Number(row.skus_count || 0), page: 1, per_page: 5, loading: false }
+      return this.skuPages[row.id] || { rows: [], total: Number(row.skus_count || 0), page: 1, per_page: 10, loading: false }
     },
     skuList(row) {
       return this.skuPage(row).rows
@@ -581,7 +581,7 @@ export default {
     },
     async loadSkuPage(row, page = 1, perPage = null) {
       const current = this.skuPage(row)
-      const state = { ...current, page, per_page: perPage || current.per_page || 5, loading: true }
+      const state = { ...current, page, per_page: perPage || current.per_page || 10, loading: true }
       this.$set(this.skuPages, row.id, state)
       try {
         const response = await listEntity('skus', { product_id: row.id, page: state.page, per_page: state.per_page })

@@ -2,12 +2,14 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
+import { continuationFocus, matchesContinuationSource, continuationExecutionStatus } from '../src/utils/production-continuation.mjs'
 
 const require = createRequire(import.meta.url)
 const compiler = require('vue-template-compiler')
 const source = await readFile(new URL('../src/views/erp/production/ProductionInventoryContinuationPanel.vue', import.meta.url), 'utf8')
 const apiSource = await readFile(new URL('../src/api/erp/production-continuations.js', import.meta.url), 'utf8')
 function mount (deps = {}) {
+  deps = { continuationFocus, matchesContinuationSource, continuationExecutionStatus, ...deps }
   const script = source.match(/<script>([\s\S]*?)<\/script>/)[1].replace(/import[^\n]+\n/g, '').replace('export default', 'return')
   const options = new Function(...Object.keys(deps), script)(...Object.values(deps))
   const vm = { ...options.data(), workOrder: { id: 7, status: 'DRAFT', business_version: 2, quantity: { target_base_qty: 10 } },
@@ -103,4 +105,32 @@ test('an identity response cannot cross into another output of the same inventor
   finish({ data: { data: [{ id: 101 }], meta: { total: 1 } } }); await request
   assert.deepEqual(vm.serials, [])
   assert.equal(vm.validate([{ ...stock, inventory_serial_id: 101, base_qty: 1 }, { ...stock, source_output_record_id: 20, inventory_serial_id: 101, base_qty: 1 }]), false)
+})
+
+test('shipment focus validates and preselects its exact source and SN without saving implicitly', async () => {
+  const calls = []; let saves = 0
+  const vm = mount({ listInventoryContinuationCandidates: async (id, params) => {
+    calls.push({ id, params }); return { data: { data: [stock], meta: { total: 1 } } }
+  }, listInventoryContinuationSerials: async (id, params) => {
+    calls.push({ id, params }); return { data: { data: [{ id: 901, serial_no: 'SN-901' }], meta: { total: 1 } } }
+  }, configureInventoryContinuation: async () => { saves++ } })
+  vm.sourceFocus = { inventory_balance_id: 42, source_output_record_id: 10, inventory_serial_id: 901, base_qty: 1 }
+  vm.pickerOpen = true
+  await vm.loadCandidates(1)
+  assert.equal(calls[0].params.inventory_balance_id, 42); assert.equal(calls[0].params.source_output_record_id, 10)
+  assert.equal(calls[1].params.inventory_serial_id, 901)
+  assert.equal(vm.draftRows.length, 1); assert.equal(vm.draftRows[0].serial_no, 'SN-901')
+  assert.deepEqual(vm.selected, []); assert.equal(saves, 0)
+})
+
+test('released continuation execution uses server pagination and retains formal issue state', async () => {
+  const requests = []
+  const vm = mount({ listInventoryContinuationExecutions: async (id, params) => {
+    requests.push({ id, params }); return { data: { data: [{ id: 9, continuation_mode: 'same_work_order', internal_issue_status: 'WAIT_ISSUE' }], meta: { total: 25 } } }
+  } })
+  vm.workOrder.status = 'RELEASED'
+  await vm.loadExecutions(2)
+  assert.deepEqual(requests[0], { id: 7, params: { page: 2, per_page: 20 } })
+  assert.equal(vm.executionTotal, 25); assert.equal(vm.executionPage, 2)
+  assert.equal(vm.executionStatus(vm.executions[0]), '干态入库，待试水领用')
 })

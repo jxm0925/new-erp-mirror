@@ -40,7 +40,7 @@ export default {
       types: importTypes, importType: importTypes.includes(this.$route.query.type) ? this.$route.query.type : 'Product',
       importManagementScope: ['factory','office'].includes(this.$route.query.management_scope) ? this.$route.query.management_scope : '',
       file: null, batch: null, rows: [], busy: false, filter: '', uploadSequence: 0,
-      rowPage: createPageState(50),
+      rowPage: createPageState(10),
       tabs: [{ label: '全部', value: '' }, { label: '仅错误', value: 'error' }, { label: '仅警告', value: 'warning' }, { label: '可导入', value: 'valid' }]
     }
   },
@@ -79,7 +79,7 @@ export default {
         this.filter = ''
         // 预检首屏和后续分页使用相同页长，不能首屏50条后改用100条而跳过中间记录。
         const page = data.rows
-        this.rowPage = { ...createPageState(Number(page.per_page || 50)), rows: page.data || [],
+        this.rowPage = { ...createPageState(Number(page.per_page || 10)), rows: page.data || [],
           page: Number(page.current_page || 1), total: Number(page.total || 0), lastPage: Number(page.last_page || 1), params: { status: '' } }
         this.rows = this.rowPage.rows
         this.$message.success('预检完成')
@@ -122,7 +122,7 @@ export default {
     reset () {
       this.uploadSequence += 1
       invalidatePage(this.rowPage)
-      this.rowPage = createPageState(50)
+      this.rowPage = createPageState(10)
       this.stage = 0; this.file = null; this.batch = null; this.rows = []; this.filter = ''; this.busy = false
     },
     rowClass ({ row }) { return row.validation_status === 'error' ? 'error-row' : row.validation_status === 'warning' ? 'warning-row' : '' }

@@ -3,7 +3,7 @@
     <p class="breadcrumb">{{ kind === 'purchase' ? '采购管理 / 采购退货 / 退货详情' : '销售管理 / 销售退货 / 退货详情' }}</p>
     <div class="page-head">
       <div class="title-line"><h1>{{ row.return_no || `${title}详情` }}</h1><el-tag size="small" :type="statusType(row.return_status)">{{ statusText(row.return_status) }}</el-tag><el-tag v-if="kind==='purchase'" size="small" :type="row.stock_post_status==='posted'?'success':'info'">{{ purchasePostText }}</el-tag></div>
-      <div class="head-actions"><el-button size="small" @click="$router.push(basePath)">返回列表</el-button><el-button v-if="canCancel" size="small" type="danger" plain @click="cancelReturn">取消退货单</el-button><el-button v-if="canClose" size="small" plain @click="closeReturn">关闭</el-button><el-button v-if="kind==='purchase'&&!managementScopeIssue&&row.return_status==='draft'&&$can('purchase_return.submit')" size="small" type="success" @click="submitPurchase">提交审核</el-button><el-button v-if="kind==='purchase'&&!managementScopeIssue&&row.return_status==='submitted'&&$can('purchase_return.approve')" size="small" type="success" @click="approve">审核通过</el-button><el-button v-if="kind==='purchase'&&!managementScopeIssue&&row.return_status==='pending_outbound'&&$can('purchase_return.post')" size="small" type="success" @click="postPurchase">{{ isRejectedBeforePosting ? '确认已退回供应商' : '退货出库过账' }}</el-button><el-button v-if="kind==='sales'&&['pending_receipt','partial_received'].includes(row.return_status)&&$can('sales_return.receive')" size="small" type="success" icon="el-icon-plus" @click="openReceive">登记退货到货</el-button></div>
+      <div class="head-actions"><el-button size="small" @click="$router.push(basePath)">返回列表</el-button><el-button v-if="canCancel" size="small" type="danger" plain @click="cancelReturn">取消退货单</el-button><el-button v-if="canClose" size="small" plain @click="closeReturn">关闭</el-button><el-button v-if="kind==='purchase'&&!managementScopeIssue&&row.return_status==='draft'&&$can('purchase_return.submit')" size="small" type="success" @click="submitPurchase">提交审核</el-button><el-button v-if="kind==='purchase'&&!managementScopeIssue&&row.return_status==='submitted'&&$can('purchase_return.approve')" size="small" type="success" @click="approve">审核通过</el-button><el-button v-if="kind==='purchase'&&!managementScopeIssue&&row.return_status==='pending_outbound'&&$can('purchase_return.post')" size="small" type="success" @click="postPurchase">{{ isRejectedBeforePosting ? '确认已退回供应商' : '退货出库过账' }}</el-button><el-button v-if="canShowApOffset" size="small" type="success" :loading="saving" :disabled="saving||!apOffsetPreview.available" :title="apOffsetPreview.reason||''" @click="offsetPayable">退货抵扣应付</el-button><el-button v-if="kind==='sales'&&['pending_receipt','partial_received'].includes(row.return_status)&&$can('sales_return.receive')" size="small" type="success" icon="el-icon-plus" @click="openReceive">登记退货到货</el-button></div>
     </div>
 
     <el-alert v-if="managementScopeIssue" :title="managementScopeIssue" type="warning" :closable="false" show-icon />
@@ -19,7 +19,7 @@
       </div>
       <div class="card summary-card">
         <h3>{{ kind==='purchase'?'状态与时间':'状态进度' }}</h3>
-        <template v-if="kind==='purchase'"><dl><dt>退货状态</dt><dd>{{ statusText(row.return_status) }}</dd><dt>过账状态</dt><dd>{{ purchasePostText }}</dd><dt>制单人</dt><dd>{{ row.created_by_name||creatorName() }}</dd><dt>制单时间</dt><dd>{{ fmt(row.created_at) }}</dd><dt>审核人</dt><dd>{{ row.approved_by_name||operatorName('approve') }}</dd><dt>审核时间</dt><dd>{{ fmt(row.approved_at) }}</dd></dl></template>
+        <template v-if="kind==='purchase'"><dl><dt>退货状态</dt><dd>{{ statusText(row.return_status) }}</dd><dt>过账状态</dt><dd>{{ purchasePostText }}</dd><dt>应付处理</dt><dd>{{ settlementEffectText }}</dd><dt>制单人</dt><dd>{{ row.created_by_name||creatorName() }}</dd><dt>制单时间</dt><dd>{{ fmt(row.created_at) }}</dd><dt>审核人</dt><dd>{{ row.approved_by_name||operatorName('approve') }}</dd><dt>审核时间</dt><dd>{{ fmt(row.approved_at) }}</dd></dl></template>
         <template v-else><div class="progress-track"><div v-for="(step,index) in progressSteps" :key="step" class="progress-node" :class="{done:index<=currentStep}"><i :class="index<currentStep?'el-icon-check':'el-icon-more'" /><span>{{ step }}</span></div></div><div class="progress-meta"><span>{{ dateOnly(row.return_date) }}<small>{{ row.created_by_name||creatorName() }}</small></span><span>{{ fmt(row.confirmed_at) }}<small>{{ row.received_by_name||'-' }}</small></span><span><small>待处理</small></span><span><small>待处理</small></span></div></template>
       </div>
     </div>
@@ -76,14 +76,18 @@
 <script>
 import { erpDateTime } from '../../../utils/dateTime'
 import { purchaseScopeLabel, purchaseScopeIssue } from '@/utils/purchaseManagementScope.mjs'
-import { approvePurchaseReturn, cancelPurchaseReturn, closePurchaseReturn, getPurchaseReturn, postPurchaseReturn, submitPurchaseReturn } from '@/api/erp/purchase'
+import { approvePurchaseReturn, cancelPurchaseReturn, closePurchaseReturn, getPurchaseReturn, offsetPurchaseReturnPayable, postPurchaseReturn, submitPurchaseReturn } from '@/api/erp/purchase'
 import { cancelSalesReturn, closeSalesReturn, getSalesReturn, postSalesReturnReceipt, receiveSalesReturn } from '@/api/erp/sales'
 import { listEntity } from '@/api/erp/master'
+import { allocationKey } from '@/utils/financeCashAllocation'
 export default {
   props:{kind:{type:String,required:true}},
-  data:()=>({loading:false,saving:false,row:{},receiveVisible:false,receiveItems:[],warehouses:[],locations:[]}),
+  data:()=>({loading:false,saving:false,row:{},apOffsetRequest:null,receiveVisible:false,receiveItems:[],warehouses:[],locations:[]}),
   computed:{
     managementScopeIssue(){return this.kind==='purchase'?purchaseScopeIssue(this.row):''},
+    apOffsetPreview(){return this.row.ap_offset_preview||{}},
+    canShowApOffset(){return this.kind==='purchase'&&!this.managementScopeIssue&&this.row.return_status==='completed'&&this.row.settlement_effect_type==='PENDING'&&this.$can('purchase_return.view')&&this.$can('finance.allocation.create')},
+    settlementEffectText(){return({PENDING:'待处理',AP_OFFSET:'已抵扣应付',SUPPLIER_REFUND:'供应商退款',REFUSE_PAY:'不予付款'})[this.row.settlement_effect_type]||'待核对'},
     title(){return this.kind==='purchase'?'采购退货':'销售退货'},
     basePath(){return this.kind==='purchase'?'/purchase/returns':'/sales/returns'},
     isRejectedBeforePosting(){return this.kind==='purchase'&&this.row.return_scope==='rejected_before_posting'},
@@ -102,7 +106,7 @@ export default {
     async load(){this.loading=true;try{const{data}=await(this.kind==='purchase'?getPurchaseReturn(this.$route.params.id):getSalesReturn(this.$route.params.id));this.row=data.data||data;if(this.kind==='sales'&&this.$route.query.receive==='1')this.$nextTick(this.openReceive)}finally{this.loading=false}},
     statusText(v){if(v==='pending_outbound'&&this.isRejectedBeforePosting)return '待退回供应商';return({draft:'草稿',submitted:'待审核',approved:'已审核',pending_outbound:'待出库',pending_receipt:'待收货',partial_received:'部分收货',received:'已收货',completed:'已完成',cancelled:'已取消',closed:'已关闭'})[v]||v||'-'},
     statusType(v){return({completed:'success',approved:'success',received:'success',cancelled:'danger',closed:'info',submitted:'warning',pending_outbound:'warning',pending_receipt:'warning',partial_received:'warning'})[v]||''},
-    actionText(v){return({create:'创建退货单',submit:'提交审核',approve:'审核通过',confirm:'确认',confirm_supplier_return:'确认已退回供应商',receive:'登记退货到货',post_receipt:'退货入库过账',post:'退货出库过账',cancel:'取消',close:'关闭'})[v]||v||'-'},
+    actionText(v){return({create:'创建退货单',submit:'提交审核',approve:'审核通过',confirm:'确认',confirm_supplier_return:'确认已退回供应商',receive:'登记退货到货',post_receipt:'退货入库过账',post:'退货出库过账',apply_ap_offset:'退货抵扣应付',cancel:'取消',close:'关闭'})[v]||v||'-'},
     creatorName(){const log=(this.row.logs||[]).find(item=>item.action==='create');return log&&log.operator_name||'-'},
     operatorName(action){const log=(this.row.logs||[]).find(item=>item.action===action);return log&&log.operator_name||'-'},
     receiptPostText(v){return({posted:'已过账',not_required:'无需过账',pending:'未过账'})[v]||v||'-'},
@@ -120,9 +124,24 @@ export default {
     async submitPurchase(){if(this.managementScopeIssue)return this.$message.warning(this.managementScopeIssue);await this.$confirm('确认提交该采购退货单进入审核？','提交审核');await submitPurchaseReturn(this.row.id);this.$message.success('已提交审核');this.load()},
     async approve(){if(this.managementScopeIssue)return this.$message.warning(this.managementScopeIssue);await this.$confirm('确认审核通过该采购退货单？','审核确认');await approvePurchaseReturn(this.row.id);this.$message.success('审核通过');this.load()},
     async postPurchase(){if(this.managementScopeIssue)return this.$message.warning(this.managementScopeIssue);const rejected=this.isRejectedBeforePosting;await this.$confirm(rejected?'确认不合格实物已经退回供应商？本操作不产生库存出库。':'确认按原仓库、库位和批次执行退货出库？',rejected?'确认退回供应商':'出库过账',{type:'warning'});await postPurchaseReturn(this.row.id);this.$message.success(rejected?'已确认退回供应商':'出库过账完成');this.load()},
+    async offsetPayable(){
+      if(this.saving||!this.canShowApOffset||!this.apOffsetPreview.available)return
+      const preview=this.apOffsetPreview
+      await this.$confirm(`原到货：${preview.receipt_no}；抵扣金额：人民币 ${preview.amount} 元；说明：${preview.audit_reason}。确认将本退货整笔抵扣原到货应付？`,'退货抵扣应付',{type:'warning',confirmButtonText:'确认抵扣'})
+      if(!this.apOffsetRequest||this.apOffsetRequest.expected_fingerprint!==preview.expected_fingerprint)this.apOffsetRequest={expected_fingerprint:preview.expected_fingerprint,idempotency_key:allocationKey()}
+      this.saving=true
+      let completed=false
+      try{await offsetPurchaseReturnPayable(this.row.id,this.apOffsetRequest);completed=true;this.$message.success('退货已整笔抵扣原到货应付');await this.load();this.apOffsetRequest=null}
+      catch(error){
+        if(completed)this.$message.error('退货已整笔抵扣应付，详情刷新失败，请刷新核对。')
+        else if(error.response&&error.response.status>=400&&error.response.status<500)this.$message.error(error.userMessage||'退货抵扣未完成，请刷新后核对。')
+        else this.$message.error('抵扣结果尚未确认，请使用原请求重试核对。')
+      }
+      finally{this.saving=false}
+    },
     async postReceipt(r){await this.$confirm('确认仅将检验合格的可重新入库数量过账？','入库过账');await postSalesReturnReceipt(this.row.id,r.id);this.$message.success('退货入库已过账');this.load()},
     openReceive(){this.receiveItems=(this.row.items||[]).map(item=>{const remain=Math.max(0,Number(item.requested_base_qty)-Number(item.received_base_qty||0));return{sales_return_item_id:item.id,item_label:`${item.item&&item.item.item_code||''} / ${item.item&&item.item.item_name||''}`,max_qty:remain,received_base_qty:remain,restock_base_qty:remain,pending_base_qty:0,scrap_base_qty:0,rejected_base_qty:0,warehouse_id:null,location_id:null,batch_no:''}}).filter(i=>i.max_qty>0);if(!this.receiveItems.length)return this.$message.info('没有剩余待收数量');this.receiveVisible=true;this.searchWarehouses('');this.searchLocations('')},
-    async searchWarehouses(keyword){const{data}=await listEntity('warehouses',{keyword,status:'active',page:1,per_page:20});this.warehouses=data.data||[]}, async searchLocations(keyword){const{data}=await listEntity('locations',{keyword,status:'active',page:1,per_page:20});this.locations=data.data||[]},
+    async searchWarehouses(keyword){const{data}=await listEntity('warehouses',{keyword,status:'active',page:1,per_page:10});this.warehouses=data.data||[]}, async searchLocations(keyword){const{data}=await listEntity('locations',{keyword,status:'active',page:1,per_page:10});this.locations=data.data||[]},
     async saveReceipt(){const invalid=this.receiveItems.some(i=>Math.abs(Number(i.received_base_qty)-Number(i.restock_base_qty)-Number(i.pending_base_qty)-Number(i.scrap_base_qty)-Number(i.rejected_base_qty))>0.000001||(i.restock_base_qty>0&&(!i.warehouse_id||!i.location_id||!i.batch_no)));if(invalid)return this.$message.error('请检查数量守恒；可重新入库时仓库、库位和批次必填');this.saving=true;try{await receiveSalesReturn(this.row.id,{items:this.receiveItems});this.$message.success('退货到货已登记');this.receiveVisible=false;this.load()}finally{this.saving=false}}
   }
 }

@@ -122,7 +122,7 @@ class ConsoleDashboardQueryService
             $union ? $union->unionAll($q) : $union = $q;
         }
         $page = (int) ($filters['page'] ?? 1);
-        $perPage = (int) ($filters['per_page'] ?? 8);
+        $perPage = (int) ($filters['per_page'] ?? 10);
         if (!$union) return ['data' => [], 'total' => 0, 'current_page' => $page, 'per_page' => $perPage];
         $result = DB::query()->fromSub($union, 'todos')->orderByRaw('COALESCE(state_time, happened_at) ASC')->orderBy('kind')->orderBy('id')->paginate($perPage, ['*'], 'page', $page);
         $result->setCollection($result->getCollection()->map(function ($r) use ($meta) {

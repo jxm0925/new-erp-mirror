@@ -4,13 +4,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-function mount(production = {}, wxOverrides = {}) {
+function mount(production = {}, wxOverrides = {}, decisionOverrides = {}) {
   let page;
   const source = fs.readFileSync(path.join(__dirname, '../pages/production/task-detail/index.js'), 'utf8');
   vm.runInNewContext(source, {
     Page: value => { page = value; },
     require: module => module.includes('production-decision-command')
-      ? { execute: (key, payload, send) => send(Object.assign({}, payload, { client_command_id: 'test-' + key })) }
+      ? Object.assign({ pending: () => null, execute: (key, payload, send) => send(Object.assign({}, payload, { client_command_id: 'test-' + key })) }, decisionOverrides)
+      : module.includes('personal-shares') ? require('../utils/personal-shares')
       : production,
     wx: Object.assign({ getStorageSync: () => ({}), showToast() {}, showLoading() {}, hideLoading() {} }, wxOverrides),
     clearInterval() {}, setInterval() { return 1; }, Date, Math, Number, String, Object, Array, Promise,
@@ -72,7 +73,9 @@ test('owner loads real directory candidates and submits selected ids', async () 
   page.data.id = 9;
   page.data.userId = 100;
   page.data.task = { assignee_user_legacy_id: 100, business_version: 3,
-    work_order: { collaboration_enabled: true }, collaborators: [] };
+    work_order: { collaboration_enabled: true }, collaborators: [], share_scopes: [
+      { scope_type: 'unit_operation', scope_id: 11, scope_version: 2, owner_legacy_id: 100, can_plan: true, participants: [{ employee_legacy_id: 100, employee_name: '负责人', is_active: true }] },
+    ] };
   page.data.workersList = [{ id: 100 }];
   page.load = async () => {};
   page.openAddCollaborator();
@@ -85,6 +88,36 @@ test('owner loads real directory candidates and submits selected ids', async () 
   assert.equal(submitted.id, 9);
   assert.equal(submitted.payload.expected_version, 3);
   assert.deepEqual(Array.from(submitted.payload.employee_legacy_ids), [200]);
+  assert.deepEqual(JSON.parse(JSON.stringify(submitted.payload.scope_shares[0].shares)).map(row => row.share_ratio), ['0.50000000', '0.50000000']);
+});
+
+test('task owner enters seventy thirty per actual scope and keeps different historical contributors', async () => {
+  let submitted;
+  const page = mount({ addCollaborators: async (_id, payload) => { submitted = JSON.parse(JSON.stringify(payload)); } });
+  page.data.id = 9; page.data.task = { assignee_user_legacy_id: 100, business_version: 3, work_order: { collaboration_enabled: true }, share_scopes: [
+    { scope_type: 'unit_operation', scope_id: 11, scope_version: 2, owner_legacy_id: 100, can_plan: true, participants: [{ employee_legacy_id: 100, employee_name: '接单人' }, { employee_legacy_id: 201, employee_name: '实际甲', has_labor: true }] },
+    { scope_type: 'unit_operation', scope_id: 12, scope_version: 2, owner_legacy_id: 100, can_plan: true, participants: [{ employee_legacy_id: 100, employee_name: '接单人' }, { employee_legacy_id: 202, employee_name: '实际乙', has_labor: true }] },
+  ] }; page.collabPeople = {}; page.load = async () => {}; page.refreshCollabShares();
+  page.collabShareInput({ currentTarget: { dataset: { group: 0, person: 0 } }, detail: { value: '70' } });
+  page.collabShareInput({ currentTarget: { dataset: { group: 0, person: 1 } }, detail: { value: '30' } });
+  await page.submitAddCollaborators();
+  assert.deepEqual(submitted.scope_shares[0].shares.map(person => person.share_ratio), ['0.70000000', '0.30000000']);
+  assert.deepEqual(submitted.scope_shares[1].shares.map(person => person.employee_legacy_id), [100, 202]);
+  assert.deepEqual(submitted.employee_legacy_ids, []);
+});
+
+test('uncertain task collaboration reopens original allocation and blocks edits until original replay', async () => {
+  const pending = { expected_version: 3, employee_legacy_ids: [201], scope_shares: [{ scope_type: 'unit_operation', scope_id: 11, expected_scope_version: 2, expected_assignment_version: 0,
+    shares: [{ employee_legacy_id: 100, share_ratio: '0.7' }, { employee_legacy_id: 201, share_ratio: '0.3' }] }] }; let submitted;
+  const page = mount({ addCollaborators: async (_id, payload) => { submitted = JSON.parse(JSON.stringify(payload)); } }, {}, { pending: () => pending });
+  page.data.id = 9; page.data.task = { status: 'COMPLETED', assignee_user_legacy_id: 100, share_scopes: [] }; page.load = async () => {};
+  await page.openAddCollaborator();
+  assert.equal(page.data.collabPending, true);
+  assert.deepEqual(Array.from(page.data.collabShareGroups[0].rows, person => person.percent), ['70', '30']);
+  page.collabShareInput({ currentTarget: { dataset: { group: 0, person: 0 } }, detail: { value: '50' } });
+  assert.equal(page.data.collabShareGroups[0].rows[0].percent, '70');
+  await page.submitAddCollaborators();
+  assert.equal(submitted.expected_version, 3); assert.equal(submitted.scope_shares[0].shares[0].share_ratio, '0.7');
 });
 
 test('rework remains an explicit start action in the current design', () => {

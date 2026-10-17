@@ -16,7 +16,7 @@ final class ProductionMaterialProcurementApplicationService
     {
         $this->permission($permissions);
         if ($kind === 'categories') return app(ItemManagementScopeService::class)->applyScope(ItemCategory::query(), 'factory')->select('id', 'category_name', 'parent_id')->orderBy('sort_order')->orderBy('id')
-            ->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 20))));
+            ->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 10))));
         if ($kind === 'orders') {
             $query = $this->orders($user, $permissions, $admin)->select('id', 'sales_order_no', 'customer_name');
             if (! empty($filters['keyword'])) $query->where(fn ($q) => $q->where('sales_order_no', 'like', '%'.$filters['keyword'].'%')->orWhere('customer_name', 'like', '%'.$filters['keyword'].'%'));
@@ -27,7 +27,7 @@ final class ProductionMaterialProcurementApplicationService
             if (! empty($filters['category_id'])) $query->where('category_id', (int) $filters['category_id']);
             if (! empty($filters['keyword'])) $query->where(fn ($q) => $q->where('item_code', 'like', '%'.$filters['keyword'].'%')->orWhere('item_name', 'like', '%'.$filters['keyword'].'%')->orWhere('spec', 'like', '%'.$filters['keyword'].'%')->orWhere('model', 'like', '%'.$filters['keyword'].'%'));
         }
-        $page = $query->orderByDesc('id')->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 20))));
+        $page = $query->orderByDesc('id')->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 10))));
         if ($kind === 'items') $page->getCollection()->transform(function ($item) {
             $unit = app(UnitConversionDomainService::class)->canonicalUnit($item->unit);
             return [...$item->only(['id', 'item_code', 'item_name', 'spec', 'model', 'category_id']),

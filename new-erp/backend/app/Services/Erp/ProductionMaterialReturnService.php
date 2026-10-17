@@ -36,21 +36,22 @@ class ProductionMaterialReturnService
                     ->where('target_type', $payload['target_type'])->where('target_id', $payload['target_id'])
                     ->where('material_requirement_id', $requirement->id)->exists();
                 if (! $belongsToTarget) $this->fail('material_requirement_target_invalid', '退料明细不属于当前生产目标。');
-                $qty = (float) $line['return_base_qty'];
+                $qty = CuttingDecimal::value((string) $line['return_base_qty']);
+                if (in_array(data_get($requirement->cutting_requirement_snapshot, 'quantity_calculation.unit_kind'), ['root', 'sheet'], true)) app(ProductionCuttingAllocationService::class)->whole($qty);
                 $batchNo = (string) ($line['batch_no'] ?? '');
-                $sourceReceived = (float) app(ProductionMaterialReceiptQueryService::class)->query()
+                $sourceReceived = (string) app(ProductionMaterialReceiptQueryService::class)->query()
                     ->where('pick_line.material_requirement_id', $requirement->id)
                     ->where('pick_line.production_target_type', $payload['target_type'])->where('pick_line.production_target_id', $payload['target_id'])
                     ->where('pick_line.warehouse_id', (int) $line['warehouse_id'])->where('pick_line.location_id', (int) $line['location_id'])
                     ->whereRaw('COALESCE(pick_line.batch_no, \'\') = ?', [$batchNo])->sum('receipt_line.accepted_qty');
-                $already = (float) DB::table('erp_production_material_return_lines as return_line')
+                $already = (string) DB::table('erp_production_material_return_lines as return_line')
                     ->join('erp_production_material_returns as material_return', 'material_return.id', '=', 'return_line.return_id')
                     ->where('return_line.material_requirement_id', $requirement->id)
                     ->where('material_return.target_type', $payload['target_type'])->where('material_return.target_id', $payload['target_id'])
                     ->where('return_line.warehouse_id', (int) $line['warehouse_id'])->where('return_line.location_id', (int) $line['location_id'])
                     ->whereRaw('COALESCE(return_line.batch_no, \'\') = ?', [$batchNo])
                     ->whereIn('material_return.status', ['SUBMITTED', 'WAIT_QUALITY', 'COMPLETED', 'QUARANTINED'])->sum('return_line.return_base_qty');
-                if ($qty <= 0 || $qty + $already > $sourceReceived + 0.00000001) $this->fail('return_quantity_exceeds_received', '退料数量不能超过当前生产目标在该仓库、库位和批次已签收且尚未退回的数量。');
+                if (bccomp(bcadd($qty, $already, 8), $sourceReceived, 8) > 0) $this->fail('return_quantity_exceeds_received', '退料数量不能超过当前生产目标在该仓库、库位和批次已签收且尚未退回的数量。');
                 DB::table('erp_production_material_return_lines')->insert(['return_id' => $id, 'material_requirement_id' => $requirement->id,
                     'component_item_id' => $requirement->component_item_id, 'warehouse_id' => $line['warehouse_id'], 'location_id' => $line['location_id'],
                     'batch_no' => $line['batch_no'] ?? null, 'serial_snapshot' => isset($line['serial_ids']) ? json_encode(['inventory_serial_ids' => $line['serial_ids']]) : null,
@@ -75,9 +76,23 @@ class ProductionMaterialReturnService
                 $return, $lines, $user, $return->return_type === 'quality_return', $costs
             );
             $this->materialCosts->finalizeMaterialReturns($lines, $transaction);
+            $currentFormalReturns = [];
+            foreach ($lines as $line) {
+                $allocationService = app(ProductionCuttingAllocationService::class);
+                $coverage = $allocationService->returnCoverage($allocationService->decode($line->serial_snapshot));
+                $formalCoverages = $coverage['formal_coverages'] ?: [(int) $line->material_requirement_id => ['formal_coverage_qty' => $coverage['formal_coverage_qty'] ?? 0]];
+                foreach ($formalCoverages as $key => $member) $currentFormalReturns[(int) $key] = bcadd($currentFormalReturns[(int) $key] ?? '0', (string) $member['formal_coverage_qty'], 8);
+            }
             foreach ($lines as $line) {
                 $requirement = WorkOrderMaterialRequirement::lockForUpdate()->findOrFail($line->material_requirement_id);
-                $requirement->returned_qty = (float) $requirement->returned_qty + (float) $line->return_base_qty;
+                $allocationService = app(ProductionCuttingAllocationService::class);
+                $coverage = $allocationService->returnCoverage($allocationService->decode($line->serial_snapshot));
+                $requirement->returned_qty = bcadd((string) $requirement->returned_qty, (string) $line->return_base_qty, 8);
+                if ($allocationService->unitKind($requirement)) {
+                    if ($coverage['formal_coverage_qty'] === null) $this->fail('cutting_return_allocation_missing', '整根或整张退料必须恢复原签收来源的冻结需求覆盖。');
+                    // This header is still SUBMITTED, so formalRemaining does not include this receipt yet.
+                    $requirement->remaining_qty = bcadd($allocationService->formalRemaining($requirement), $currentFormalReturns[(int) $requirement->id] ?? '0.00000000', 8);
+                }
                 $requirement->business_version++;
                 $requirement->save();
 
@@ -92,14 +107,31 @@ class ProductionMaterialReturnService
                     ->lockForUpdate()
                     ->first();
                 if (! $targetRequirement) $this->fail('material_requirement_target_invalid', '退料明细不属于当前生产目标。');
-                $returned = (float) $targetRequirement->returned_base_qty + (float) $line->return_base_qty;
-                $netSatisfied = max(0, (float) $targetRequirement->satisfied_base_qty - $returned);
-                DB::table('erp_production_target_material_requirements')->where('id', $targetRequirement->id)->update([
-                    'returned_base_qty' => $returned,
-                    'status' => $netSatisfied + 0.00000001 >= (float) $targetRequirement->required_base_qty ? 'SATISFIED' : ($netSatisfied > 0 ? 'PARTIALLY_SATISFIED' : 'OPEN'),
-                    'business_version' => (int) $targetRequirement->business_version + 1,
-                    'updated_at' => now(),
-                ]);
+                $targetCoverages = $coverage['target_coverages'] ?: [(int) $targetRequirement->id => ['material_requirement_id' => (int) $line->material_requirement_id, 'coverage_qty' => $coverage['coverage_qty'] ?? $line->return_base_qty]];
+                foreach ($targetCoverages as $targetId => $member) {
+                    $targetRow = DB::table('erp_production_target_material_requirements')->where('id', (int) $targetId)
+                        ->where('target_type', $return->target_type)->where('target_id', $return->target_id)
+                        ->where('material_requirement_id', (int) $member['material_requirement_id'])->where('component_item_id', $line->component_item_id)->lockForUpdate()->first();
+                    if (! $targetRow) $this->fail('material_requirement_target_invalid', '组合退料的冻结成员不属于当前生产目标或原料。');
+                    $returned = bcadd((string) $targetRow->returned_base_qty, (string) $member['coverage_qty'], 8);
+                    $netSatisfied = bcsub((string) $targetRow->satisfied_base_qty, $returned, 8);
+                    if (bccomp($netSatisfied, '0', 8) < 0) $netSatisfied = '0.00000000';
+                    DB::table('erp_production_target_material_requirements')->where('id', $targetRow->id)->update([
+                        'returned_base_qty' => $returned,
+                        'status' => bccomp($netSatisfied, (string) $targetRow->required_base_qty, 8) >= 0 ? 'SATISFIED' : (bccomp($netSatisfied, '0', 8) > 0 ? 'PARTIALLY_SATISFIED' : 'OPEN'),
+                        'business_version' => (int) $targetRow->business_version + 1, 'updated_at' => now(),
+                    ]);
+                }
+            }
+            // A combined stock movement belongs to its owner once; every covered BOM member
+            // separately regains its frozen theoretical need when that stock is returned.
+            $actualOwnerIds = $lines->pluck('material_requirement_id')->map(fn ($value) => (int) $value)->all();
+            foreach ($currentFormalReturns as $requirementId => $coverageQuantity) {
+                if (in_array($requirementId, $actualOwnerIds, true) || bccomp($coverageQuantity, '0', 8) <= 0) continue;
+                $requirement = WorkOrderMaterialRequirement::lockForUpdate()->findOrFail($requirementId);
+                if ((int) $requirement->work_order_id !== (int) $return->work_order_id) $this->fail('material_requirement_invalid', '组合退料成员不属于当前工单。');
+                $requirement->remaining_qty = bcadd(app(ProductionCuttingAllocationService::class)->formalRemaining($requirement), $coverageQuantity, 8);
+                $requirement->business_version++; $requirement->save();
             }
             $status = $return->return_type === 'quality_return' ? 'WAIT_QUALITY' : 'COMPLETED';
             DB::table('erp_production_material_returns')->where('id', $id)->update(['status' => $status,

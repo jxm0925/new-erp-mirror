@@ -46,7 +46,7 @@ export default {
     rows: [],
     total: 0,
     page: 1,
-    perPage: 20,
+    perPage: 10,
     dateRange: [],
     productionUsers: [],
     filters: { keyword: '', customer: '', product: '', production_location_name: '', responsible_user_legacy_id: '', status: '', source_type: '' },

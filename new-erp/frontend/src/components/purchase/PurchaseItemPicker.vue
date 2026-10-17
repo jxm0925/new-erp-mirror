@@ -193,7 +193,7 @@ export default {
     selectedById: {},
     categoryTree: [],
     extraParams: {},
-    query: { keyword: '', item_type: '', category_id: null, management_scope: '', page: 1, per_page: 20 }
+    query: { keyword: '', item_type: '', category_id: null, management_scope: '', page: 1, per_page: 10 }
   }),
   computed: {
     itemTypes() {
@@ -224,7 +224,7 @@ export default {
       this.dialogTitle = title
       this.selectedById = Object.fromEntries((selected || []).filter(row => row && row.id && (!params.management_scope || purchaseScopeMatches(row, params.management_scope))).map(row => [row.id, row]))
       this.extraParams = { status: 'enabled', is_purchase_item: 1, ...params }
-      this.query = { keyword: '', item_type: '', category_id: null, management_scope: params.management_scope || '', page: 1, per_page: 20 }
+      this.query = { keyword: '', item_type: '', category_id: null, management_scope: params.management_scope || '', page: 1, per_page: 10 }
       this.current = null
       this.rows = []
       this.categoryTree = []

@@ -28,6 +28,9 @@ final class WorkOrderTechnicalService
                     'spec' => $row->component_spec_snapshot, 'per_output_qty' => (string) $row->per_output_qty,
                     'unit_name' => $row->unit_name_snapshot, 'is_custom_item' => (bool) $row->configuration_id,
                     'configuration' => $row->configuration_snapshot,
+                    'cutting_mode' => $row->cutting_requirement_snapshot['quantity_calculation']['mode'] ?? 'none',
+                    'cut_dimensions' => $row->cutting_requirement_snapshot['quantity_calculation']['dimensions'] ?? $row->cutting_requirement_snapshot['dimensions'] ?? null,
+                    'cutting_quantity_snapshot' => $row->cutting_requirement_snapshot['quantity_calculation'] ?? null,
                 ])->all(),
             ];
         }
@@ -51,6 +54,10 @@ final class WorkOrderTechnicalService
                 'component_item_name' => $row->componentItem?->item_name,
                 'spec' => $row->componentItem?->spec, 'is_custom_item' => (bool) $row->componentItem?->is_custom_item,
                 'per_output_qty' => (string) $row->qty, 'unit_name' => $row->unit?->unit_name, 'configuration' => null,
+                'cutting_mode' => $row->componentItem?->cuttingMode() ?? 'none',
+                'cut_dimensions' => $this->bomCutDimensions($row),
+                'cutting_quantity_snapshot' => $row->cutting_quantity_snapshot,
+                'unit' => $row->unit?->toArray(),
             ])->all() ?? [],
             'drawing_reference' => null,
         ];
@@ -79,7 +86,7 @@ final class WorkOrderTechnicalService
                 'boms' => Bom::query()->where('audit_status', 'approved')->whereIn('status', ['active', 'enabled', 'published'])
                     ->where(fn ($q) => $q->whereNull('effective_date')->orWhere('effective_date', '<=', now()->toDateString()))
                     ->where(fn ($q) => $q->whereNull('expire_date')->orWhere('expire_date', '>=', now()->toDateString())),
-                'routings' => ProductionRouting::query()->where('status', 'active'),
+                'routings' => ProductionRouting::query()->with(['operations.operation', 'operations.stage', 'operations.packagingScheme'])->where('status', 'active'),
                 default => $this->fail('technical_option_type', '不支持的生产资料类型。'),
             };
             $query->where('output_item_id', $workOrder->output_item_id)
@@ -101,10 +108,24 @@ final class WorkOrderTechnicalService
             if ($type === 'configurations') $query->where('i.category_id', (int) $filters['category_id']);
             else $query->whereHas('outputItem', fn ($q) => $q->where('category_id', (int) $filters['category_id']));
         }
-        $rows = $query->orderByDesc($order)->paginate(max(1, min(100, (int) ($filters['per_page'] ?? 20))));
+        $rows = $query->orderByDesc($order)->paginate(max(1, min(100, (int) ($filters['per_page'] ?? 10))));
         $rows->getCollection()->transform(function ($row) use ($type) {
             $value = (array) ($row instanceof \Illuminate\Database\Eloquent\Model ? $row->toArray() : $row);
             if ($type === 'configurations') $value['dimensions'] = json_decode($value['dimensions'], true, 512, JSON_THROW_ON_ERROR);
+            if ($type === 'routings') {
+                // 候选只展示可选择的真实工序，不泄露技术选择权限之外的绩效比例和包材成本。
+                // 完整执行事实仍在确认时由权威路线服务重新校验并冻结。
+                $value['operations'] = $row->operations->sortBy('sequence')->map(fn ($node) => [
+                    'routing_operation_id' => (int) $node->id,
+                    'operation_id' => (int) $node->operation_id,
+                    'operation_no' => $node->operation?->operation_no,
+                    'operation_name' => $node->operation?->operation_name,
+                    'sequence' => (int) $node->sequence,
+                    'execution_context' => $node->execution_context ?: 'production',
+                    'stage_name' => $node->stage?->name,
+                    'packaging_scheme_name' => $node->packagingScheme?->name,
+                ])->values()->all();
+            }
             return $value;
         });
         return $rows->toArray();
@@ -157,16 +178,32 @@ final class WorkOrderTechnicalService
                 'per_output_qty' => (string) $item->qty,
                 'unit_name' => $item->unit?->unit_name,
                 'configuration' => $this->configuration($workOrder, $item->componentItem, $row['configuration_id'] ?? null),
+                'cutting_mode' => $item->componentItem->cuttingMode(),
+                'cut_dimensions' => $row['cut_dimensions'] ?? $this->bomCutDimensions($item),
+                'unit' => $item->unit?->toArray(),
             ];
         })->all();
         $drawing = trim((string) ($payload['drawing_reference'] ?? $output['drawing_reference'] ?? ''));
         if (($line?->is_special_customized || $workOrder->outputItem?->is_custom_item) && $drawing === '') {
             $this->fail('technical_drawing_required', '定制生产必须由技术岗位确认图纸版本。');
         }
-        $configurationSnapshot = $this->cuttingConfiguration($bom, $output);
+        $configurationSnapshot = $this->cuttingConfiguration($bom, collect($materials));
+        $configurationSnapshot['stock_bom_lines'] = collect($materials)->filter(fn ($row) => $row['configuration'] !== null)
+            ->map(fn ($row) => ['bom_item_id' => $row['bom_item_id'], 'configuration' => $row['configuration']])->values()->all();
         $resolvedBom = app(BomMatcher::class)->match(
             $line?->product_id, $line?->sku_id, (int) $workOrder->output_item_id, $configurationSnapshot, $bom->id,
         );
+        $resolvedLines = collect($resolvedBom['bom_snapshot']['items'] ?? [])->keyBy('id');
+        $materials = collect($materials)->map(function (array $row) use ($resolvedLines): array {
+            $resolved = $resolvedLines->get($row['bom_item_id']);
+            $row['per_output_qty'] = $resolved['qty'] ?? $row['per_output_qty'];
+            $row['cutting_quantity_snapshot'] = $resolved['cutting_quantity_snapshot'] ?? null;
+            $row['cut_dimensions'] = $resolved['cutting_quantity_snapshot']['dimensions'] ?? null;
+            if (FrozenCuttingStockPolicy::isTotalLength($row['cutting_quantity_snapshot'] ?? [])) {
+                $row['cut_dimensions'] = ['quantity_basis' => 'total_length', 'total_length_mm' => $row['cutting_quantity_snapshot']['total_length_mm']];
+            }
+            return $row;
+        })->all();
         return [
             'bom_id' => (int) $bom->id, 'bom_snapshot' => $resolvedBom['bom_snapshot'],
             'production_routing_id' => (int) $routing->id, 'routing_snapshot' => $routingSnapshot,
@@ -177,30 +214,53 @@ final class WorkOrderTechnicalService
         ];
     }
 
-    private function cuttingConfiguration(Bom $bom, ?array $output): array
+    private function cuttingConfiguration(Bom $bom, \Illuminate\Support\Collection $materials): array
     {
-        if (! $output) return [];
-        $cutLines = $bom->items->filter(fn ($row) => in_array($row->componentItem?->cuttingMode(), ['length', 'sheet'], true));
-        if ($cutLines->isEmpty()) return [];
-        // 只有单一原料行的直接下料模板能将成品尺寸一一映射到毛坯。
-        // 多原料/多几何行需要各自的技术模板，不能把成品总尺寸套到每一行。
-        if ($cutLines->count() !== 1) {
-            $this->fail('technical_cutting_mapping_ambiguous', '定制下料 BOM 包含多条原料行，请使用每种定制零件独立的下料模板，不能自动套用成品尺寸。');
+        $lines = [];
+        foreach ($bom->items as $row) {
+            $mode = $row->componentItem?->cuttingMode();
+            $material = $materials->firstWhere('bom_item_id', (int) $row->id);
+            $dimensions = $material['cut_dimensions'] ?? null;
+            if (! in_array($mode, ['length', 'sheet'], true)) {
+                if ($dimensions !== null) $this->fail('technical_cutting_material_invalid', '只有下料原材料可以维护加工尺寸。');
+                continue;
+            }
+            if (is_array($dimensions) && ($dimensions['quantity_basis'] ?? null) === 'total_length') {
+                if ($mode !== 'length' || ! FrozenCuttingStockPolicy::positiveDecimal($dimensions['total_length_mm'] ?? null)
+                    || isset($dimensions['length_mm']) || isset($dimensions['piece_qty']) || isset($dimensions['width_mm'])
+                    || isset($dimensions['thickness_mm']) || ! empty($dimensions['allow_rotation'])) {
+                    $this->fail('technical_cutting_total_length_invalid', '管材总长度必须明确，不能同时维护单段尺寸或件数。');
+                }
+                $lines[] = ['bom_item_id' => (int) $row->id, 'cutting_quantity_basis' => 'total_length',
+                    'total_length_mm' => $dimensions['total_length_mm'], 'cut_length_mm' => null, 'piece_qty' => null,
+                    'cut_width_mm' => null, 'cut_thickness_mm' => null, 'allow_cut_rotation' => false];
+                continue;
+            }
+            if (! is_array($dimensions) || ! isset($dimensions['length_mm'], $dimensions['piece_qty'])) {
+                $this->fail('technical_cutting_dimensions_required', '每条下料明细必须填写加工长度和件数。');
+            }
+            // Finished product dimensions never substitute a component's own dimensions.
+            $lines[] = ['bom_item_id' => (int) $row->id,
+                'cutting_quantity_basis' => 'dimensions_pieces', 'total_length_mm' => null,
+                'cut_length_mm' => $dimensions['length_mm'],
+                'cut_width_mm' => $mode === 'sheet' ? ($dimensions['width_mm'] ?? null) : null,
+                'cut_thickness_mm' => $mode === 'sheet' ? ($dimensions['thickness_mm'] ?? null) : null,
+                'piece_qty' => $dimensions['piece_qty'],
+                'allow_cut_rotation' => $mode === 'sheet' && (bool) ($dimensions['allow_rotation'] ?? false),
+            ];
         }
-        $row = $cutLines->first();
-        $dimensions = $output['dimensions'];
-        $sheet = $row->componentItem->cuttingMode() === 'sheet';
-        if ((float) ($dimensions['length_mm'] ?? 0) <= 0 || ($sheet && (float) ($dimensions['width_mm'] ?? 0) <= 0)
-            || (int) $row->piece_qty <= 0) {
-            $this->fail('technical_cutting_dimensions_required', '下料配置必须填写长度，板件还须填写宽度；BOM 必须维护每件产出的下料件数。');
+        return $lines === [] ? [] : ['technical_bom_lines' => $lines];
+    }
+
+    private function bomCutDimensions(object $row): ?array
+    {
+        if (! in_array($row->componentItem?->cuttingMode(), ['length', 'sheet'], true)) return null;
+        if (FrozenCuttingStockPolicy::isTotalLength($row->cutting_quantity_snapshot ?? [])) {
+            return ['quantity_basis' => 'total_length', 'total_length_mm' => $row->cutting_quantity_snapshot['total_length_mm']];
         }
-        return ['technical_bom_lines' => [[
-            'bom_item_id' => (int) $row->id,
-            'cut_length_mm' => (float) $dimensions['length_mm'],
-            'cut_width_mm' => $sheet ? (float) $dimensions['width_mm'] : null,
-            'cut_thickness_mm' => isset($dimensions['thickness_mm']) ? (float) $dimensions['thickness_mm'] : $row->cut_thickness_mm,
-            'configuration_id' => (int) $output['id'],
-        ]]];
+        return ['length_mm' => $row->cut_length_mm, 'width_mm' => $row->cut_width_mm,
+            'thickness_mm' => $row->cut_thickness_mm, 'piece_qty' => $row->piece_qty,
+            'allow_rotation' => (bool) $row->allow_cut_rotation];
     }
 
     public function requiresConfirmation(WorkOrder $workOrder, ?Bom $bom): bool
@@ -209,11 +269,31 @@ final class WorkOrderTechnicalService
             || $bom?->items->contains(fn ($row) => (bool) $row->componentItem?->is_custom_item));
     }
 
+    public function confirmationCurrent(WorkOrder $workOrder, ?Bom $bom): bool
+    {
+        // 配置解析可能拆行或只取部分模板；无明细快照的新备货和关联子工单保留原确认规则。
+        $frozenItemIds = collect(data_get($workOrder->bom_snapshot, 'items', []))->pluck('id')
+            ->map(fn ($id) => (int) $id)->unique();
+        // shortcut: 依赖 BOM 编辑整体替换明细 ID；若改为原行更新，需增加明细修订标识。
+        if ($frozenItemIds->isNotEmpty() && $frozenItemIds->diff($bom?->items->pluck('id') ?? [])->isNotEmpty()) return false;
+
+        return ! $this->requiresConfirmation($workOrder, $bom) || (
+            $workOrder->technical_version > 0
+            && (int) data_get($workOrder->technical_snapshot, 'bom_id') === (int) $workOrder->bom_id
+            && (int) data_get($workOrder->technical_snapshot, 'production_routing_id') === (int) $workOrder->production_routing_id
+        );
+    }
+
     public function effectiveConfiguration(WorkOrder $workOrder): ?array
     {
         // 技术岗位确认后仅使用该不可变版本，禁止旧销售下料参数覆盖生产规格。
         if ($workOrder->technical_version > 0) {
-            return data_get($workOrder->technical_snapshot, 'configuration_snapshot', []);
+            $configuration = data_get($workOrder->technical_snapshot, 'configuration_snapshot', []);
+            // 原料配置与产出配置各自冻结，原料长宽不能从产出裁切尺寸推断。
+            $configuration['stock_bom_lines'] = collect(data_get($workOrder->technical_snapshot, 'materials', []))
+                ->filter(fn ($row) => ! empty($row['configuration']))
+                ->map(fn ($row) => ['bom_item_id' => $row['bom_item_id'], 'configuration' => $row['configuration']])->values()->all();
+            return $configuration;
         }
         return $workOrder->demand?->configuration_snapshot ?: $workOrder->demand?->line?->configuration_snapshot;
     }

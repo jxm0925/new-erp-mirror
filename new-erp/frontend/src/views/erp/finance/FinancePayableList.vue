@@ -538,7 +538,7 @@ export default {
     suppliers: [],
     loading: false,
     page: 1,
-    perPage: 20,
+    perPage: 10,
     total: 0,
     dateRange: [],
     filters: blankFilters(),

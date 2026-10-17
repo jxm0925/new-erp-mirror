@@ -1,5 +1,5 @@
 <template>
-  <el-dialog title="选择仓管负责人" :visible="visible" append-to-body width="min(820px, calc(100vw - 32px))" top="8vh" custom-class="warehouse-manager-picker" :close-on-click-modal="false" @close="close">
+  <el-dialog :title="title" :visible="visible" append-to-body width="min(820px, calc(100vw - 32px))" top="8vh" custom-class="warehouse-manager-picker" :close-on-click-modal="false" @close="close">
     <div class="manager-picker-layout">
       <aside class="manager-departments">
         <el-tree :data="departmentTree" node-key="id" :props="{ label: 'name', children: 'children' }" default-expand-all highlight-current :current-node-key="departmentId" @node-click="selectDepartment" />
@@ -16,7 +16,7 @@
           <el-table-column prop="username" label="账号" min-width="105" />
           <el-table-column label="部门" min-width="120"><template slot-scope="{ row }">{{ departmentsText(row.department_names) }}</template></el-table-column>
         </el-table>
-        <el-pagination small :current-page="page" :page-size="20" :total="total" layout="total, prev, pager, next" @current-change="changePage" />
+        <el-pagination small :current-page="page" :page-size="10" :total="total" layout="total, prev, pager, next" @current-change="changePage" />
         <div class="manager-selection">已选：{{ selected ? `${selected.nickname || selected.username}（${selected.username || selected.id}）` : '未选择' }}</div>
       </div>
     </div>
@@ -29,7 +29,7 @@ import { listUsers } from '../../api/erp/rbac'
 
 export default {
   name: 'WarehouseManagerPicker',
-  props: { visible: Boolean, current: { type: Object, default: null } },
+  props: { visible: Boolean, current: { type: Object, default: null }, title: { type: String, default: '选择仓管负责人' }, scope: { type: String, default: 'warehouse' } },
   data: () => ({ rows: [], departments: [], selected: null, keyword: '', page: 1, total: 0, departmentId: 0, loading: false, error: '', requestSerial: 0 }),
   computed: {
     departmentTree () {
@@ -58,9 +58,9 @@ export default {
       const serial = ++this.requestSerial
       this.loading = true; this.error = ''; this.rows = []
       try {
-        const { data } = await listUsers({ scope: 'warehouse', keyword: this.keyword, department_id: this.departmentId || undefined, page: this.page, per_page: 20, include_departments: includeDepartments ? 1 : undefined })
+        const { data } = await listUsers({ scope: this.scope, keyword: this.keyword, department_id: this.departmentId || undefined, page: this.page, per_page: 10, include_departments: includeDepartments ? 1 : undefined })
         if (serial !== this.requestSerial || !this.visible) return
-        this.rows = data.data || []; this.total = data.meta.total
+        this.rows = (data.data || []).map(row => this.scope === 'production' ? { ...row, id: row.user_id, nickname: row.display_name, username: String(row.user_id), department_names: row.department_name } : row); this.total = data.meta.total
         if (data.departments) this.departments = data.departments
       } catch (e) {
         if (serial === this.requestSerial) { this.error = e.userMessage || '员工列表加载失败，请重新查询'; this.total = 0 }

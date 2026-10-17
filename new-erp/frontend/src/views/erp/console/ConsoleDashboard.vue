@@ -49,7 +49,7 @@
           <el-table-column label="操作" width="86" fixed="right"><template slot-scope="{ row }"><el-button type="text" size="mini" @click="$router.push(row.to)">{{ row.action }}</el-button></template></el-table-column>
         </el-table>
         <div v-else class="console-empty"><i class="el-icon-finished" /><strong>{{ hasTodoAccess ? '当前范围没有需要处理的事项' : '无待办查看权限' }}</strong><span>可通过右上角快捷入口创建新业务，或进入业务模块查看历史记录。</span></div>
-        <el-pagination class="todo-pagination" small layout="total, prev, pager, next" :pager-count="5" :current-page="todoPage" :page-size="8" :total="dashboard.todos.total" @current-change="changeTodoPage" />
+        <el-pagination class="todo-pagination" small layout="total, prev, pager, next" :pager-count="5" :current-page="todoPage" :page-size="10" :total="dashboard.todos.total" @current-change="changeTodoPage" />
         <button class="panel-link" @click="showAllTodos">查看全部待办 <i class="el-icon-arrow-right" /></button>
       </section>
 
@@ -189,7 +189,7 @@ export default {
       this.loading = true
       this.loadError = ''
       try {
-        const res = await getConsoleDashboard({ page: this.todoPage, per_page: 8, type: this.todoType || undefined, priority: this.todoTab === 'soon' ? 'high' : undefined })
+        const res = await getConsoleDashboard({ page: this.todoPage, per_page: 10, type: this.todoType || undefined, priority: this.todoTab === 'soon' ? 'high' : undefined })
         if (version !== this.loadVersion) return
         this.dashboard = res.data.data
         if (this.todoPage > 1 && !this.dashboard.todos.data.length) { this.todoPage = 1; return this.load() }

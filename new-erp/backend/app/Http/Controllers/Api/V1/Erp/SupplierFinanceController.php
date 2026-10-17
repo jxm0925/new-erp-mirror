@@ -53,6 +53,6 @@ class SupplierFinanceController extends Controller
 
     private function perPage(Request $request): int
     {
-        return min(100, max(1, (int) $request->input('per_page', 20)));
+        return min(100, max(1, (int) $request->input('per_page', 10)));
     }
 }

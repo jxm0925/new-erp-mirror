@@ -4,7 +4,7 @@
       <h3>完工记录</h3>
       <el-select v-model="statusFilter" class="status-filter" :disabled="busy" @change="changeFilter"><el-option label="全部状态" value="" /><el-option v-for="(label, status) in statuses" :key="status" :label="label" :value="status" /></el-select>
       <div class="record-options"><button v-for="row in records" :key="row.completion_id" class="record-option" :class="{selected: selectedId === row.completion_id}" :disabled="busy" @click="selectCompletion(row.completion_id)"><i class="el-icon-document" /><span>{{ row.completion_no }}</span><el-tag size="small" :type="statusType(row.status)">{{ statusText(row.status) }}</el-tag><span>{{ number(row.submitted_base_qty) }} {{ unitName }}</span><time>{{ row.submitted_at }}</time></button></div>
-      <el-pagination small :current-page="page" :page-size="5" :total="total" :disabled="busy" layout="total, prev, pager, next" @current-change="changePage" />
+      <el-pagination small :current-page="page" :page-size="10" :total="total" :disabled="busy" layout="total, prev, pager, next" @current-change="changePage" />
     </div>
     <el-alert v-if="loadError" :title="loadError" type="error" :closable="false" show-icon><el-button type="text" @click="load()">重新加载</el-button></el-alert>
     <el-alert v-if="pendingReview" title="上次审核结果尚未确认，请继续原操作。" type="warning" :closable="false" show-icon><el-button v-if="$can('production.completion.review')" type="text" :loading="reviewBusy" @click="retryReview">继续上次审核</el-button></el-alert>
@@ -78,7 +78,7 @@ import { completionCommandStore, completionErrorIsDefinitive } from '../../../ut
 
 const CHECKS = {
   labor_ended: ['工时已结束', '无仍在计时的作业。'], reports_settled: ['报工数量满足', '已登记产出数量满足完工要求。'],
-  material_returns_settled: ['无待确认退料', '没有待处理的退料单。'], terminal_outputs_ready: ['终末产出已就绪', '产出已完成所需工序，等待完工审核。']
+  material_returns_settled: ['无待确认退料', '没有待处理的退料单。'], terminal_outputs_ready: ['终末产出已就绪', '产出已完成所需工序，可提交工单完工（提交即生效，无需单独审核）。']
 }
 const checksFor = row => ((row && row.preflight_snapshot && row.preflight_snapshot.checks) || []).filter(check => CHECKS[check.key]).map(check => ({ ...check, label: CHECKS[check.key][0], description: CHECKS[check.key][1] }))
 export default {
@@ -117,7 +117,7 @@ export default {
       const sequence = this.listSequence = (this.listSequence || 0) + 1; this.loading = true; this.loadError = ''
       try {
         this.pendingReview = this.store('review').read(); this.pendingReceipt = this.store('receipt').read()
-        const { data } = await listWorkOrderCompletions(this.workOrder.id, { page: this.page, per_page: 5, status: this.statusFilter || undefined })
+        const { data } = await listWorkOrderCompletions(this.workOrder.id, { page: this.page, per_page: 10, status: this.statusFilter || undefined })
         if (sequence !== this.listSequence) return
         if (this.page > data.last_page) { this.page = data.last_page; return this.load() }
         this.records = data.data || []; this.total = Number(data.total || 0)

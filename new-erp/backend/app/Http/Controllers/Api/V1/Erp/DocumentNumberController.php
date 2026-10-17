@@ -123,7 +123,7 @@ class DocumentNumberController extends Controller
             $query->where(fn ($q) => $q->where('document_no', 'like', "%{$keyword}%")
                 ->orWhere('creation_session_id', 'like', "%{$keyword}%"));
         }
-        return response()->json($query->paginate(min(100, max(5, $request->integer('per_page', 20)))));
+        return response()->json($query->paginate(min(100, max(5, $request->integer('per_page', 10)))));
     }
 
     /** Internal scheduled/diagnostic action; not exposed in the ERP UI. */

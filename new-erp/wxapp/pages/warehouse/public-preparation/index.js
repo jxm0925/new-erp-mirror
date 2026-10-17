@@ -32,7 +32,7 @@ Page({
         const task = response.data || response; const lines = task.lines;
         if (this.version && this.version !== task.business_version) { this.actuals = {}; this.tracked = {}; this.lineCache = {}; }
         this.version = task.business_version;
-        lines.data.forEach(line => { this.lineCache[line.id] = line; });
+        lines.data.forEach(line => { if (typeof line.serial_snapshot === 'string') line.serial_snapshot = JSON.parse(line.serial_snapshot); this.lineCache[line.id] = line; });
         task.statusText = statuses[task.status] || task.status;
         const pendingAction = ['claim', 'assign', 'start', 'confirm', 'cancel'].find(action => writes.pending(`production/public-material-preparations/${task.id}/${action}`)) || '';
         this.setData({ task, rows: lines.data, total: lines.total, lastPage: lines.last_page, loading: false, pendingAction }); this.syncActuals();
@@ -49,7 +49,7 @@ Page({
   openTask(event) { wx.navigateTo({ url: `/pages/warehouse/public-preparation/index?id=${Number(event.currentTarget.dataset.id)}` }); },
   openChild(event) { wx.navigateTo({ url: `/pages/warehouse/picking/index?id=${Number(event.currentTarget.dataset.id)}&publicDetail=1` }); },
   openProcurement() { wx.navigateTo({ url: '/pages/warehouse/material-procurement/index' }); },
-  picker(mode, title, query, selected, multiple, quantity) { if (!this.data.busy) this.setData({ pickerOpen: true, pickerMode: mode, pickerTitle: title, pickerQuery: query || {}, pickerSelected: selected || [], pickerMultiple: !!multiple, pickerQuantity: !!quantity }); },
+  picker(mode, title, query, selected, multiple, quantity) { if (!this.data.busy && !this.data.pendingCreate && !this.data.pendingAction) this.setData({ pickerOpen: true, pickerMode: mode, pickerTitle: title, pickerQuery: query || {}, pickerSelected: selected || [], pickerMultiple: !!multiple, pickerQuantity: !!quantity }); },
   chooseWarehouse() { this.picker('warehouse', '选择配料仓库', {}, this.data.warehouse ? [this.data.warehouse] : [], false); },
   chooseStock(event) {
     if (!this.data.warehouse) return wx.showToast({ title: '请先选择仓库', icon: 'none' });
@@ -64,6 +64,7 @@ Page({
     this.picker(kind, kind === 'physical' ? '选择实际板材' : '选择序列号', { picking_task_id: row.task_id, picking_task_line_id: row.id }, (this.tracked[row.id] || {})[kind] || [], true);
   },
   pickerConfirm(event) {
+    if (this.data.busy || this.data.pendingCreate || this.data.pendingAction) return;
     const rows = event.detail.rows; const mode = this.data.pickerMode;
     this.closePicker();
     if (mode === 'people') return this.action('assign', { assigned_picker_legacy_id: rows[0].id });
@@ -72,29 +73,32 @@ Page({
       if (this.data.warehouse && this.data.warehouse.id !== rows[0].id && this.data.selectedCount) return wx.showModal({ title: '更换仓库', content: '更换仓库会清除已选库存来源。', success: result => { if (result.confirm) apply(); } });
       return apply();
     }
-    if (mode === 'stock') { this.drafts[this.selectedDemand.id] = { demand: this.selectedDemand, sources: rows }; return this.syncSelection(); }
+    if (mode === 'stock') { this.drafts[this.selectedDemand.id] = { demand: this.selectedDemand, sources: rows.map(logic.sourceView) }; return this.syncSelection(); }
     if (!this.tracked[this.trackedLine.id]) this.tracked[this.trackedLine.id] = {};
     this.tracked[this.trackedLine.id][mode] = rows; this.actuals[this.trackedLine.id] = String(rows.length); this.syncActuals();
   },
   closePicker() { this.setData({ pickerOpen: false }); },
-  syncSelection() { const selected = Object.values(this.drafts).filter(row => row.sources.length).map(row => ({ id: row.demand.id, label: `${row.demand.work_order_no} · ${row.demand.item_name}`, quantity: logic.sumQty(row.sources.map(source => source.selected_qty)) })); this.setData({ selected, selectedCount: selected.length }); wx.setStorageSync(this.draftKey(), { drafts: this.drafts, warehouse: this.data.warehouse }); },
-  removeSelection(event) { delete this.drafts[event.currentTarget.dataset.id]; this.syncSelection(); },
+  syncSelection() { const selected = Object.values(this.drafts).filter(row => row.sources.length).map(row => ({ id: row.demand.id, label: `${row.demand.work_order_no} · ${row.demand.item_name}`, quantity: logic.sumQty(row.sources.map(source => source.selected_qty)), unit: row.demand.unit_name, sources: row.sources.map(logic.sourceView), cutting: !!logic.cuttingKind(row.demand) || row.sources.some(source => logic.cuttingKind(source)), remaining_cut_piece_qty: row.demand.remaining_cut_piece_qty })); this.setData({ selected, selectedCount: selected.length }); wx.setStorageSync(this.draftKey(), { drafts: this.drafts, warehouse: this.data.warehouse }); },
+  cutPiecesInput(event) {
+    if (this.data.busy || this.data.pendingCreate) return;
+    const draft = this.drafts[event.currentTarget.dataset.id]; const source = draft && draft.sources.find(row => Number(row.id) === Number(event.currentTarget.dataset.source));
+    if (source) { source.planned_cut_piece_qty = String(event.detail.value); this.syncSelection(); }
+  },
+  removeSelection(event) { if (this.data.busy || this.data.pendingCreate) return; delete this.drafts[event.currentTarget.dataset.id]; this.syncSelection(); },
   create() {
     if (this.data.pendingCreate) return this.run('production/public-material-preparations', {}, response => this.created(response));
     try {
       if (!this.data.warehouse) throw new Error('请选择配料仓库');
-      const lines = []; const versions = {};
+      const lines = logic.planningLines(this.data.warehouse.id, this.drafts); const versions = {};
       Object.values(this.drafts).forEach(row => {
-        if (Number(logic.sumQty(row.sources.map(source => source.selected_qty))) > Number(row.demand.remaining_to_prepare)) throw new Error('本次配料超过对应待配需求');
         versions[row.demand.work_order_id] = row.demand.work_order_version;
-        row.sources.forEach(source => { if (!logic.validQty(source.selected_qty) || Number(source.selected_qty) <= 0) throw new Error('请填写有效配料数量'); lines.push({ target_material_requirement_id: row.demand.id, inventory_balance_id: source.id, planned_pick_qty: source.selected_qty }); });
       });
       if (!lines.length || lines.length > 100) throw new Error('单次配料请选择1至100条库存来源');
       this.run('production/public-material-preparations', { warehouse_id: this.data.warehouse.id, work_order_versions: versions, lines }, response => this.created(response));
     } catch (error) { this.setData({ error: error.message }); }
   },
   created(response) { this.drafts = {}; this.syncSelection(); this.setData({ id: response.data.id, page: 1, task: null }); return this.load(); },
-  quantityInput(event) { this.actuals[event.currentTarget.dataset.id] = String(event.detail.value); },
+  quantityInput(event) { if (this.data.busy || this.data.pendingAction) return; this.actuals[event.currentTarget.dataset.id] = String(event.detail.value); },
   syncActuals() { this.setData({ rows: this.data.rows.map(row => Object.assign({}, row, { actualInput: this.actuals[row.id] || '', physicalCount: ((this.tracked[row.id] || {}).physical || []).length, serialCount: ((this.tracked[row.id] || {}).serial || []).length, fulfillmentText: row.fulfillment_mode_snapshot === 'onsite_cutting' ? '现场领料' : '工序配送' })) }); },
   action(action, extra) {
     const task = this.data.task; const body = Object.assign({ expected_version: task.business_version, child_versions: Object.fromEntries(task.children.map(row => [row.id, row.business_version])) }, extra || {});
@@ -107,7 +111,7 @@ Page({
       const row = this.lineCache[id]; const selected = this.tracked[id] || {};
       return { picking_task_line_id: Number(id), actual_pick_qty: qty, serial_ids: (selected.serial || []).map(item => item.id), physical_material_ids: (selected.physical || []).map(item => item.id), maximum: row.planned_pick_qty };
     });
-    if (lines.length !== this.data.total || lines.some(row => !logic.validQty(row.actual_pick_qty) || Number(row.actual_pick_qty) > Number(row.maximum)) || !lines.some(row => Number(row.actual_pick_qty) > 0)) return this.setData({ error: '请核对各页并逐条填写实拣数量，未拣填写0；至少有一条大于0。' });
+    if (lines.length !== this.data.total || lines.some(row => !logic.validQty(row.actual_pick_qty) || Number(row.actual_pick_qty) > Number(row.maximum) || ((this.lineCache[row.picking_task_line_id].serial_snapshot || {}).cutting_allocation && !Number.isInteger(Number(row.actual_pick_qty)))) || !lines.some(row => Number(row.actual_pick_qty) > 0)) return this.setData({ error: '请核对各页并逐条填写实拣数量，未拣填写0；整根或整张填写整数，至少有一条大于0。' });
     return this.action('confirm', { lines: lines.map(({ maximum, ...line }) => line) });
   },
   openCancel() { this.setData({ cancelOpen: true, cancelReason: '' }); },

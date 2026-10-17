@@ -24,7 +24,7 @@ class ApprovalFormApplicationService
             $query->where(fn ($q) => $q->where('form_code', 'like', "%{$keyword}%")
                 ->orWhere('form_name', 'like', "%{$keyword}%"));
         }
-        $page = $query->orderByDesc('updated_at')->paginate(min(max((int) ($filters['per_page'] ?? 20), 1), 100));
+        $page = $query->orderByDesc('updated_at')->paginate(min(max((int) ($filters['per_page'] ?? 10), 1), 100));
         $page->getCollection()->transform(function (ApprovalFormTemplate $form) {
             $version = ApprovalFormVersion::query()->where('form_template_id', $form->id)
                 ->when(

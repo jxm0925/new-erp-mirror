@@ -33,14 +33,23 @@ class ProductionTaskCollaborationService
         $this->permission($permissions);
         $employeeIds = array_values(array_unique(array_map('intval', $payload['employee_legacy_ids'] ?? [])));
         sort($employeeIds);
-        if ($employeeIds === []) $this->fail('collaborators_required', '请至少选择一位协同人员。');
+        if ($employeeIds === [] && ! array_key_exists('shares', $payload) && ! array_key_exists('scope_shares', $payload)) $this->fail('collaborators_required', '请至少选择一位协同人员或确认实际工序的个人份额。');
         $commandId = trim((string) ($payload['client_command_id'] ?? ''));
         if ($commandId === '') $this->fail('client_command_id_required', '写操作必须提供 client_command_id。');
-        $hash = hash('sha256', json_encode([$taskId, $this->userId($user), (int) ($payload['expected_version'] ?? 0), $employeeIds], JSON_UNESCAPED_UNICODE));
+        $shares = array_key_exists('shares', $payload) ? app(ProductionPerformanceCalculator::class)->validateShares((array) $payload['shares'])['shares'] : null;
+        if ($shares !== null && array_key_exists('scope_shares', $payload)) $this->fail('performance_task_scope_invalid', '统一份额和逐工序份额不能同时提交。');
+        $scopeShares = array_key_exists('scope_shares', $payload)
+            ? app(ProductionPersonalSharePlan::class)->normalizeScopePlans((array) $payload['scope_shares'], app(ProductionPerformanceCalculator::class)) : null;
+        $hashFacts = [$taskId, $this->userId($user), (int) ($payload['expected_version'] ?? 0), $employeeIds];
+        if ($shares !== null) $hashFacts[] = ['shares' => $shares, 'share_policy_version' => 2];
+        if ($scopeShares !== null) $hashFacts[] = ['scope_shares' => $scopeShares, 'share_policy_version' => 2];
+        $hash = hash('sha256', json_encode($hashFacts, JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
 
-        return DB::transaction(function () use ($taskId, $payload, $user, $employeeIds, $commandId, $hash): array {
+        return DB::transaction(function () use ($taskId, $payload, $user, $employeeIds, $commandId, $hash, $shares, $scopeShares, $permissions): array {
             $task = ProductionTask::query()->with('workOrder')->lockForUpdate()->find($taskId);
             if (! $task) $this->fail('task_not_found', '生产任务不存在。', 404);
+            // Even a successful-command replay must still belong to this actual owner.
+            if ((int) $task->assignee_user_legacy_id !== $this->userId($user)) $this->fail('task_owner_required', '只有任务负责人可以添加协同人员。', 403);
             $existing = ProductionExecutionCommand::query()->where('client_command_id', $commandId)->lockForUpdate()->first();
             if ($existing) return $this->replay($existing, 'add_task_collaborators', $hash);
             $ledger = ProductionExecutionCommand::create(['client_command_id' => $commandId, 'command_type' => 'add_task_collaborators',
@@ -71,9 +80,12 @@ class ProductionTaskCollaborationService
                 $task->collaborators()->create(['employee_legacy_id' => $employeeId, 'role' => 'collaborator',
                     'responsibility_weight' => 0, 'joined_at' => $now, 'business_version' => 1]);
             }
-            if ($addedIds !== []) $task->update(['business_version' => (int) $task->business_version + 1]);
+            $plans = $addedIds !== [] || $shares !== null || $scopeShares !== null
+                ? app(ProductionPerformanceApplicationService::class)->planTaskShares($taskId, $shares, $user, $permissions, $scopeShares) : [];
+            if ($addedIds !== [] || $shares !== null || $scopeShares !== null) $task->update(['business_version' => (int) $task->business_version + 1]);
             $result = ['task_id' => (int) $task->id, 'added_employee_legacy_ids' => $addedIds,
                 'existing_employee_legacy_ids' => $activeIds, 'task_business_version' => (int) $task->business_version,
+                'planned_assignments' => $plans,
                 'occurred_at' => $now->toISOString()];
             $ledger->update(['result_type' => 'production_task', 'result_id' => $taskId, 'response_snapshot' => $result,
                 'status' => 'succeeded', 'processing_finished_at' => now()]);
@@ -95,7 +107,7 @@ class ProductionTaskCollaborationService
                 ->where('r.enabled', true)->where('p.enabled', true)->where('p.code', 'production.task.collaborate'));
         if ($keyword = trim((string) ($filters['keyword'] ?? ''))) $query->where(fn ($q) => $q
             ->where('u.nickname', 'like', "%{$keyword}%")->orWhere('u.username', 'like', "%{$keyword}%")->orWhere('u.legacy_id', 'like', "%{$keyword}%"));
-        $page = $query->orderBy('u.legacy_id')->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 20))), ['u.legacy_id']);
+        $page = $query->orderBy('u.legacy_id')->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 10))), ['u.legacy_id']);
         $people = app(ErpUserProjectionService::class)->many($page->getCollection()->pluck('legacy_id')->all());
         $page->setCollection($page->getCollection()->map(fn ($row) => ($people[(int) $row->legacy_id] ?? ['user_id' => (int) $row->legacy_id])
             + ['already_joined' => in_array((int) $row->legacy_id, $activeIds, true)]));

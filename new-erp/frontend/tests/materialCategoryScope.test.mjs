@@ -89,7 +89,7 @@ test('default combined tree and paginated root list omit scope instead of silent
   assert.deepEqual(vm.state.calls.tree, [{}])
   assert.equal('management_scope' in vm.state.calls.list[0], false)
   assert.equal(vm.state.calls.list[0].root_only, 1)
-  assert.equal(vm.state.calls.list[0].per_page, 20)
+  assert.equal(vm.state.calls.list[0].per_page, 10)
   assert.deepEqual(vm.rows.map(row => row.management_scope), ['factory', 'office'])
   assert.equal(vm.selected.id, undefined)
   assert.equal(vm.scopeName(vm.rows[0]), '工厂物料')

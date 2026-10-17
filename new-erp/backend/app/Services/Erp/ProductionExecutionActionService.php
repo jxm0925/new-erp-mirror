@@ -113,6 +113,7 @@ class ProductionExecutionActionService
                 'business_version' => (int) $target->business_version + 1])->save();
             $task->targets()->where('target_type', $type)->where('target_id', $target->id)->update(['status_snapshot' => $nextStatus]);
             $this->refreshTask($task);
+            if ($nextStatus === 'COMPLETED') app(ProductionPerformanceApplicationService::class)->ensureDefaultShares($type, (int) $target->id);
             if ($nextStatus === 'COMPLETED' && ! $terminal) $this->advanceNext($type, $target, $task->work_order_id, $userId, $output);
             return $this->projection($task->fresh(), $target, $output);
         });
@@ -221,6 +222,7 @@ class ProductionExecutionActionService
 
     private function createOutput(string $type, object $target, int $userId, array $payload, $now, bool $terminal): object
     {
+        if ($bundle = app(ProductionCuttingComponentService::class)->createOutput($type, $target, $userId, $payload, $now, $terminal)) return $bundle;
         $qty = $type === 'unit_operation' ? 1 : (float) $target->completed_base_qty;
         $unitId = $type === 'unit_operation' ? (int) $target->production_unit_id : null;
         $existing = DB::table('erp_production_output_records')->where('source_target_type', $type)->where('source_target_id', $target->id)->first();
@@ -325,14 +327,57 @@ class ProductionExecutionActionService
             ->where('issue.status', 'RECEIVED')->whereNotNull('line.output_record_id')
             ->get(['line.output_record_id', 'line.issue_base_qty'])->map(fn ($row) => ['id' => (int) $row->output_record_id, 'qty' => $row->issue_base_qty, 'type' => 'internal_issue']);
         $child = DB::table('erp_production_output_records')->where('id', $childOutputId)->first();
-        foreach ($parents->concat($issued)->groupBy('id') as $sameParent) {
+        // Receipt totals can include returned material; only this output's consumption belongs in its ancestry.
+        $received = DB::table('erp_production_material_consumptions as consumption')
+            ->join('erp_production_input_holdings as input', 'input.input_holding_id', '=', 'consumption.source_holding_id')
+            ->leftJoin('erp_production_target_material_requirements as requirement', 'requirement.id', '=', 'input.target_material_requirement_id')
+            ->leftJoin('erp_material_receipt_lines as receipt', 'receipt.id', '=', 'input.material_receipt_line_id')
+            ->leftJoin('erp_inventory_transaction_items as posted', 'posted.id', '=', 'input.inventory_transaction_item_id')
+            ->leftJoin('erp_material_lots as lot', 'lot.id', '=', 'consumption.source_material_lot_id')
+            ->leftJoin('erp_production_output_records as source', 'source.id', '=', 'input.source_output_record_id')
+            ->where('consumption.output_record_id', $childOutputId)
+            ->where('input.target_type', $targetType)->where('input.target_id', $targetId)
+            ->whereNotNull('input.source_output_record_id')->whereNotNull('input.material_receipt_line_id')
+            ->whereNotNull('input.inventory_transaction_item_id')->whereNull('input.operation_handover_id')->whereNull('input.internal_issue_line_id')
+            ->get(['input.source_output_record_id', 'input.target_material_requirement_id', 'input.quantity as received_quantity',
+                'consumption.quantity', 'consumption.target_material_requirement_id as consumed_requirement_id', 'consumption.source_material_lot_id',
+                'requirement.target_type as requirement_target_type', 'requirement.target_id as requirement_target_id', 'requirement.component_item_id',
+                'receipt.component_item_id as receipt_item_id', 'posted.item_id as posted_item_id',
+                'lot.source_type as lot_source_type', 'lot.source_id as lot_source_id', 'lot.item_id as lot_item_id',
+                'source.material_lot_id as parent_lot_id', 'source.output_item_id as parent_item_id'])
+            ->map(function ($row) use ($targetType, $targetId, $childOutputId, $child): array {
+                if (! $child || $child->source_target_type !== $targetType || (int) $child->source_target_id !== $targetId
+                    || (int) $row->source_output_record_id === $childOutputId || ! $row->target_material_requirement_id
+                    || (int) $row->consumed_requirement_id !== (int) $row->target_material_requirement_id
+                    || $row->requirement_target_type !== $targetType || (int) $row->requirement_target_id !== $targetId
+                    || $row->lot_source_type !== 'production_output_record' || (int) $row->lot_source_id !== (int) $row->source_output_record_id
+                    || (int) $row->parent_lot_id !== (int) $row->source_material_lot_id
+                    || (int) $row->parent_item_id !== (int) $row->lot_item_id || (int) $row->lot_item_id !== (int) $row->component_item_id
+                    || (int) $row->receipt_item_id !== (int) $row->component_item_id || (int) $row->posted_item_id !== (int) $row->component_item_id
+                    || bccomp((string) $row->quantity, '0', 8) <= 0 || bccomp((string) $row->quantity, (string) $row->received_quantity, 8) > 0) {
+                    $this->fail('production_material_lineage_source_invalid', '普通领用产出谱系缺少与当前完工、正式收料和来源产出一致的数量或物料事实。', 409);
+                }
+                return ['id' => (int) $row->source_output_record_id, 'qty' => (string) $row->quantity, 'type' => 'material_receipt'];
+            });
+        foreach ($parents->concat($issued)->concat($received)->groupBy('id') as $sameParent) {
             $parent = $sameParent->first();
             if ($parent['id'] === $childOutputId) continue;
+            $parentQuantity = $sameParent->contains(fn ($row) => $row['qty'] === null) ? null
+                : $sameParent->reduce(fn ($sum, $row) => bcadd($sum, (string) $row['qty'], 8), '0.00000000');
+            if ($sameParent->contains(fn ($row) => $row['type'] === 'material_receipt')) {
+                $existing = DB::table('erp_production_output_lineage_links')->where('parent_output_record_id', $parent['id'])
+                    ->where('child_output_record_id', $childOutputId)->lockForUpdate()->first();
+                if ($existing && (($existing->parent_base_qty === null) !== ($parentQuantity === null)
+                    || ($parentQuantity !== null && bccomp((string) $existing->parent_base_qty, $parentQuantity, 8) !== 0)
+                    || $existing->child_base_qty === null || bccomp((string) $existing->child_base_qty, (string) $child->output_base_qty, 8) !== 0)) {
+                    $this->fail('production_material_lineage_quantity_conflict', '普通领用产出谱系的冻结数量与本次实际消耗不一致，请先核对来源。', 409);
+                }
+            }
             DB::table('erp_production_output_lineage_links')->insertOrIgnore([
                 'parent_output_record_id' => $parent['id'],
                 'child_output_record_id' => $childOutputId,
                 'relation_type' => $parent['type'],
-                'parent_base_qty' => $sameParent->contains(fn ($row) => $row['qty'] === null) ? null : $sameParent->sum('qty'),
+                'parent_base_qty' => $parentQuantity,
                 'child_base_qty' => $child?->output_base_qty,
                 'parent_inventory_serial_id' => DB::table('erp_production_output_records')->where('id', $parent['id'])->value('inventory_serial_id'),
                 'child_inventory_serial_id' => DB::table('erp_production_output_records')->where('id', $childOutputId)->value('inventory_serial_id'),
@@ -384,7 +429,7 @@ class ProductionExecutionActionService
             'source_target_type' => $type, 'source_target_id' => $target->id, 'target_target_type' => $nextType,
             'target_target_id' => $next->id, 'target_material_requirement_id' => $requirementIds->isEmpty() ? null : (int) $requirementIds->first(),
             'output_record_id' => $output->id, 'status' => 'WAIT_RECEIVE',
-            'handed_over_by_legacy_id' => $userId, 'handed_over_at' => now(), 'identity_snapshot' => json_encode(['output_no' => $output->output_no ?? null], JSON_UNESCAPED_UNICODE),
+            'handed_over_by_legacy_id' => $userId, 'handed_over_at' => now(), 'identity_snapshot' => json_encode(app(ProductionCuttingComponentService::class)->handoverIdentity($output), JSON_UNESCAPED_UNICODE),
             'business_version' => 1, 'created_at' => now(), 'updated_at' => now(),
             ]);
         }

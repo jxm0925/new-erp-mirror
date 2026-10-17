@@ -1,11 +1,13 @@
 const packing = require('../../../services/packing');
 const view = require('../../../utils/warehouse-page');
+const personalShares = require('../../../utils/personal-shares');
+const materialUsage = require('../../../utils/packing-material-usage');
 const statusLabels = { READY: '待加工', WAITING: '等待前序', IN_PROGRESS: '加工中', WAIT_QUALITY: '待质检', COMPLETED: '已完成', CANCELLED: '已取消' };
 const clone = value => JSON.parse(JSON.stringify(value));
 Page({
   data: { shipmentId: 0, page: 1, lastPage: 1, total: 0, rows: [], loading: true, busy: false, error: '', keyword: '',
     detailOpen: false, operation: {}, pending: false, operationError: '', peopleOpen: false, peopleRows: [], selectedPeople: [], peopleKeyword: '',
-    peoplePage: 1, peopleLast: 1, departments: [{ id: 0, name: '全部部门' }], departmentIndex: 0,
+    peoplePage: 1, peopleLast: 1, departments: [{ id: 0, name: '全部部门' }], departmentIndex: 0, shareRows: [], peopleError: '',
     materialsOpen: false, materialRows: [], materialDrafts: [], materialKeyword: '', materialPage: 1, materialLast: 1, materialError: '',
     categories: [{ id: 0, category_name: '全部分类' }], categoryIndex: 0,
     identityOpen: false, identityRows: [], selectedIdentities: [], identityMaterial: {}, identityPage: 1, identityLast: 1, identityKeyword: '',
@@ -22,6 +24,11 @@ Page({
     return Object.assign({}, row, { statusLabel: statusLabels[row.status] || row.status, ownerName: owner ? owner.name : '未接单',
       is_public_snapshot: row.is_public_snapshot === true || row.is_public_snapshot === 1 || row.is_public_snapshot === '1',
       qtyText: view.quantity(row.planned_base_qty), allowed_actions: actions,
+      materials: (row.materials || []).map(material => {
+        const usage = material.usage_snapshot || {}; const labels = { length_mm: '长', width_mm: '宽', thickness_mm: '厚' };
+        return Object.assign({}, material, { usageText: Object.keys(labels).filter(axis => usage.dimensions && usage.dimensions[axis] !== undefined && usage.dimensions[axis] !== null)
+          .map(axis => labels[axis] + ' ' + usage.dimensions[axis] + ' mm').join(' / '), usageRemark: usage.remark || '' });
+      }),
       contents: (row.contents || []).map(content => Object.assign({}, content, { qtyText: view.quantity(content.base_qty), serialText: (content.serial_nos || []).join('、') })) });
   },
   load() {
@@ -53,7 +60,7 @@ Page({
       return Promise.all([this.load(), this.showOperation(op.id)]).then(() => true);
     }).catch(error => {
       const details = Object.values(error.errors || (error.details && error.details.errors) || {}).flat().join('；');
-      this.setData({ operationError: details || view.errorText(error), materialError: details || view.errorText(error), pending: Boolean(error.pendingCommand) });
+      this.setData({ operationError: details || view.errorText(error), materialError: details || view.errorText(error), peopleError: error.pendingCommand ? '原操作结果待确认，请重试原操作。' : details || view.errorText(error), pending: Boolean(error.pendingCommand) });
       return false;
     }).finally(() => this.setData({ busy: false }));
   },
@@ -63,7 +70,7 @@ Page({
     if (this.data.busy || this.data.pending) return;
     this.peopleSelected = {};
     (this.data.operation.participants || []).filter(row => row.role === 'COLLABORATOR' && row.is_active).forEach(row => { this.peopleSelected[row.employee_legacy_id] = { legacy_id: row.employee_legacy_id, nickname: row.name }; });
-    this.setData({ peopleOpen: true, peopleRows: [], peopleKeyword: '', peoplePage: 1, peopleLast: 1, departmentIndex: 0, selectedPeople: Object.values(this.peopleSelected) }); return this.loadPeople(true);
+    this.setData({ peopleOpen: true, peopleRows: [], peopleKeyword: '', peoplePage: 1, peopleLast: 1, departmentIndex: 0, selectedPeople: Object.values(this.peopleSelected), shareRows: [], peopleError: '' }); this.refreshPeopleShares(); return this.loadPeople(true);
   },
   loadPeople(include) {
     const sequence = this.peopleSequence = (this.peopleSequence || 0) + 1; const operationId = this.data.operation.id;
@@ -78,8 +85,20 @@ Page({
   searchPeople() { this.setData({ peoplePage: 1 }); this.loadPeople(); },
   chooseDepartment(event) { this.setData({ departmentIndex: Number(event.detail.value), peoplePage: 1 }); this.loadPeople(); },
   turnPeople(event) { const page = this.data.peoplePage + Number(event.currentTarget.dataset.delta); if (page > 0 && page <= this.data.peopleLast) { this.setData({ peoplePage: page }); this.loadPeople(); } },
-  togglePerson(event) { const id = Number(event.currentTarget.dataset.id); const row = this.data.peopleRows.find(row => Number(row.legacy_id) === id) || this.peopleSelected[id]; if (this.peopleSelected[id]) delete this.peopleSelected[id]; else this.peopleSelected[id] = row; this.setData({ selectedPeople: Object.values(this.peopleSelected), peopleRows: this.data.peopleRows.map(person => Object.assign({}, person, { selected: Boolean(this.peopleSelected[person.legacy_id]) })) }); },
-  savePeople() { return this.execute('collaborators', { employee_legacy_ids: Object.keys(this.peopleSelected).map(Number) }); },
+  togglePerson(event) { if (this.data.busy || this.data.pending) return; const id = Number(event.currentTarget.dataset.id); const row = this.data.peopleRows.find(row => Number(row.legacy_id) === id) || this.peopleSelected[id]; if (!row || id === Number(this.data.operation.owner_legacy_id)) return; if (this.peopleSelected[id]) delete this.peopleSelected[id]; else this.peopleSelected[id] = row; this.setData({ selectedPeople: Object.values(this.peopleSelected), peopleRows: this.data.peopleRows.map(person => Object.assign({}, person, { selected: Boolean(this.peopleSelected[person.legacy_id]) })) }); this.refreshPeopleShares(); },
+  refreshPeopleShares() {
+    const op = this.data.operation; const ownerId = Number(op.owner_legacy_id);
+    const participants = (op.participants || []).filter(person => Number(person.employee_legacy_id) === ownerId || person.has_labor)
+      .map(person => Object.assign({}, person, { employee_name: person.name }));
+    if (!ownerId || !participants.some(person => Number(person.employee_legacy_id) === ownerId)) return this.setData({ shareRows: [], peopleError: '接单人资料不完整，请重新读取包装工序' });
+    const previous = [{ scope_type: 'shipment_packing_operation', scope_id: op.id, rows: this.data.shareRows }];
+    const groups = personalShares.groups([{ scope_type: 'shipment_packing_operation', scope_id: op.id, scope_version: op.business_version,
+      owner_legacy_id: ownerId, scope_name: op.operation_name, can_plan: true, participants, share_plan: op.share_plan }], Object.values(this.peopleSelected), previous);
+    this.setData({ shareRows: groups[0].rows, peopleError: '' });
+  },
+  peopleShareInput(event) { if (this.data.busy || this.data.pending) return; const id = Number(event.currentTarget.dataset.id); const rows = this.data.shareRows; const person = rows.find(row => Number(row.employee_legacy_id) === id); if (person) person.percent = event.detail.value; this.setData({ shareRows: rows, peopleError: '' }); },
+  equalPeopleShares() { if (this.data.busy || this.data.pending) return; const equal = personalShares.defaultShares(this.data.shareRows); this.data.shareRows.forEach(person => { person.percent = personalShares.ratioToPercent(equal.find(share => share.employee_legacy_id === Number(person.employee_legacy_id)).share_ratio); }); this.setData({ shareRows: this.data.shareRows, peopleError: '' }); },
+  savePeople() { if (this.data.pending) return this.execute('recover'); let shares; try { shares = personalShares.buildShares(this.data.shareRows); } catch (error) { return this.setData({ peopleError: error.message }); } return this.execute('collaborators', { employee_legacy_ids: Object.keys(this.peopleSelected).map(Number), shares }); },
   closePeople() { if (!this.data.busy) { this.peopleSequence = (this.peopleSequence || 0) + 1; this.setData({ peopleOpen: false }); } },
   openMaterials() { if (this.data.busy || this.data.pending) return; this.materialSelected = {}; this.setData({ materialsOpen: true, materialRows: [], materialDrafts: [], materialError: '', materialKeyword: '', materialPage: 1, materialLast: 1, categoryIndex: 0 }); return this.loadMaterials(true); },
   loadMaterials(include) {
@@ -95,9 +114,11 @@ Page({
   searchMaterials() { this.setData({ materialPage: 1 }); this.loadMaterials(); },
   chooseCategory(event) { this.setData({ categoryIndex: Number(event.detail.value), materialPage: 1 }); this.loadMaterials(); },
   turnMaterials(event) { const page = this.data.materialPage + Number(event.currentTarget.dataset.delta); if (page > 0 && page <= this.data.materialLast) { this.setData({ materialPage: page }); this.loadMaterials(); } },
-  chooseMaterial(event) { const id = Number(event.currentTarget.dataset.id); const row = this.data.materialRows.find(row => Number(row.id) === id); if (!row || this.materialSelected[id]) return; this.materialSelected[id] = Object.assign({}, clone(row), { base_qty: '', identities: [] }); this.updateDrafts(); },
+  chooseMaterial(event) { const id = Number(event.currentTarget.dataset.id); const row = this.data.materialRows.find(row => Number(row.id) === id); if (!row || this.materialSelected[id]) return; this.materialSelected[id] = Object.assign({}, clone(row), { base_qty: '', identities: [], usage_dimensions: { length_mm: '', width_mm: '', thickness_mm: '' }, usage_remark: '' }); this.updateDrafts(); },
   updateDrafts() { this.setData({ materialDrafts: Object.values(this.materialSelected), materialRows: this.data.materialRows.map(row => Object.assign({}, row, { selected: Boolean(this.materialSelected[row.id]) })) }); },
-  quantityInput(event) { const id = Number(event.currentTarget.dataset.id); if (this.materialSelected[id]) { this.materialSelected[id].base_qty = event.detail.value; this.updateDrafts(); } },
+  quantityInput(event) { if (this.data.busy || this.data.pending) return; const id = Number(event.currentTarget.dataset.id); if (this.materialSelected[id]) { this.materialSelected[id].base_qty = event.detail.value; this.updateDrafts(); } },
+  usageDimensionInput(event) { const id = Number(event.currentTarget.dataset.id); const axis = event.currentTarget.dataset.axis; if (this.data.busy || this.data.pending || !this.materialSelected[id] || !['length_mm', 'width_mm', 'thickness_mm'].includes(axis)) return; this.materialSelected[id].usage_dimensions[axis] = event.detail.value; this.updateDrafts(); },
+  usageRemarkInput(event) { const id = Number(event.currentTarget.dataset.id); if (!this.data.busy && !this.data.pending && this.materialSelected[id]) { this.materialSelected[id].usage_remark = event.detail.value; this.updateDrafts(); } },
   removeMaterial(event) { delete this.materialSelected[Number(event.currentTarget.dataset.id)]; this.updateDrafts(); },
   openIdentities(event) { const material = this.materialSelected[Number(event.currentTarget.dataset.id)]; if (!material || this.data.busy) return; this.identitySelected = Object.fromEntries(material.identities.map(row => [row.id, row])); this.setData({ identityOpen: true, identityRows: [], identityKeyword: '', identityMaterial: material, identityPage: 1, identityLast: 1, selectedIdentities: Object.values(this.identitySelected) }); return this.loadIdentities(); },
   loadIdentities() { const sequence = this.identitySequence = (this.identitySequence || 0) + 1; const sourceId = this.data.identityMaterial.id; const operationId = this.data.operation.id; return packing.identities(operationId, { inventory_balance_id: sourceId, keyword: this.data.identityKeyword, page: this.data.identityPage, per_page: 10 }).then(response => { if (sequence !== this.identitySequence || !this.data.identityOpen || sourceId !== this.data.identityMaterial.id || operationId !== this.data.operation.id) return; const paged = view.rows(response); this.setData({ identityRows: paged.rows.map(row => Object.assign({}, row, { selected: Boolean(this.identitySelected[row.id]) })), identityPage: paged.page, identityLast: paged.lastPage }); }).catch(error => { if (sequence === this.identitySequence && this.data.identityOpen) wx.showToast({ title: view.errorText(error), icon: 'none' }); }); },
@@ -107,7 +128,7 @@ Page({
   toggleIdentity(event) { const id = Number(event.currentTarget.dataset.id); const row = this.data.identityRows.find(row => Number(row.id) === id) || this.identitySelected[id]; if (this.identitySelected[id]) delete this.identitySelected[id]; else this.identitySelected[id] = row; this.setData({ selectedIdentities: Object.values(this.identitySelected), identityRows: this.data.identityRows.map(row => Object.assign({}, row, { selected: Boolean(this.identitySelected[row.id]) })) }); },
   confirmIdentities() { const material = this.materialSelected[this.data.identityMaterial.id]; material.identities = Object.values(this.identitySelected); material.base_qty = String(material.physical || material.serial_tracking_mode === 'required' ? material.identities.length : Math.max(Number(material.base_qty) || 0, material.identities.length)); this.updateDrafts(); this.setData({ identityOpen: false }); },
   closeIdentities() { if (!this.data.busy) { this.identitySequence = (this.identitySequence || 0) + 1; this.setData({ identityOpen: false }); } },
-  saveMaterials() { const rows = Object.values(this.materialSelected); if (!rows.length || rows.some(row => !(Number(row.base_qty) > 0))) return this.setData({ materialError: '请填写每项实际耗用数量，板料须选择真实实物。' }); return this.execute('materials', { materials: rows.map(row => ({ inventory_balance_id: row.id, base_qty: row.base_qty, physical_material_ids: row.physical ? row.identities.map(identity => identity.id) : [], inventory_serial_ids: !row.physical && row.serial_tracking_mode !== 'none' ? row.identities.map(identity => identity.id) : [] })) }); },
+  saveMaterials() { let materials; try { materials = materialUsage.buildMaterials(Object.values(this.materialSelected)); } catch (error) { return this.setData({ materialError: error.message }); } return this.execute('materials', { materials }); },
   closeMaterials() { if (!this.data.busy) { this.materialSequence = (this.materialSequence || 0) + 1; this.identitySequence = (this.identitySequence || 0) + 1; this.setData({ materialsOpen: false, identityOpen: false }); } },
   openInspection() { this.setData({ inspectionOpen: true, inspectionResult: 'passed', inspectionReason: '' }); },
   inspectionChange(event) { this.setData({ inspectionResult: event.detail.value }); },

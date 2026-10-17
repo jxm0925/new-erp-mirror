@@ -399,6 +399,15 @@ class ProductionExecutionFoundationService
                 : ($unitSequence === null
                     ? app(ProductionInventoryContinuationService::class)->plannedQuantity($workOrder, (int) $this->executionOperations($workOrder)->firstWhere('routing_operation_id', $routingOperationId)['sequence']) * (float) $row->per_output_piece_qty * $ratio
                     : (float) $row->per_output_piece_qty * $ratio);
+            $cuttingSnapshot = $row->cutting_requirement_snapshot;
+            $cutting = $cuttingSnapshot ? json_decode($cuttingSnapshot, true, 512, JSON_THROW_ON_ERROR) : [];
+            if (FrozenCuttingStockPolicy::isTotalLength($cutting)) {
+                $outputQuantity = $unitSequence === null
+                    ? (string) app(ProductionInventoryContinuationService::class)->plannedQuantity($workOrder, (int) $this->executionOperations($workOrder)->firstWhere('routing_operation_id', $routingOperationId)['sequence']) : '1';
+                // Loss allowance belongs to stock coverage, not the net length handed to welding.
+                $cutting['required_total_length_mm'] = bcmul(bcmul(FrozenCuttingStockPolicy::totalLength($cutting), $outputQuantity, 16), (string) ($rule['required_qty_ratio'] ?? 1), 8);
+                $cuttingSnapshot = json_encode($cutting, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE);
+            }
             DB::table('erp_production_target_material_requirements')->insert([
                 'work_order_id' => $workOrder->id,
                 'target_type' => $targetType,
@@ -407,7 +416,7 @@ class ProductionExecutionFoundationService
                 'material_supply_rule_snapshot_id' => $row->id,
                 'component_item_id' => $row->component_item_id,
                 'cut_length_mm_snapshot' => $row->cut_length_mm_snapshot,
-                'cutting_requirement_snapshot' => $row->cutting_requirement_snapshot,
+                'cutting_requirement_snapshot' => $cuttingSnapshot,
                 'required_piece_qty_snapshot' => $requiredPieces === null ? null : round($requiredPieces, 8),
                 'requirement_kind' => $kind,
                 'required_base_qty' => round($required, 8),

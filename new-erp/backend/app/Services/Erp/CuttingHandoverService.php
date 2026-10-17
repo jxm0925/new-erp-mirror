@@ -104,7 +104,7 @@ final class CuttingHandoverService
                 ->orWhere('task.task_no', 'like', '%'.$keyword.'%')->orWhere('item.item_code', 'like', '%'.$keyword.'%')->orWhere('item.item_name', 'like', '%'.$keyword.'%'));
         }
         $page = filter_var($filters['page'] ?? 1, FILTER_VALIDATE_INT);
-        $size = filter_var($filters['per_page'] ?? 20, FILTER_VALIDATE_INT);
+        $size = filter_var($filters['per_page'] ?? 10, FILTER_VALIDATE_INT);
         if (! $page || $page < 1 || ! $size || $size < 1 || $size > 100) {
             $this->commands->fail('pagination_invalid', '分页参数不合法，每页最多100条。');
         }

@@ -1,7 +1,7 @@
 <view class="workbench-page">
   <view wx:if="{{!authenticated}}" class="login-card">
     <view class="login-icon-box"><van-icon name="manager-o" size="88rpx" color="#e52613" /></view>
-    <strong class="login-title">未登录统一生产账号</strong>
+    <strong class="login-title">未登录生产账号</strong>
     <text class="login-desc">登录后查看实时生产概况和现场执行任务</text>
     <button class="login-btn" bindtap="openLogin">立即登录</button>
   </view>
@@ -52,4 +52,5 @@
     </view>
   </block>
 </view>
-<LoginPopup class="LoginPopup"></LoginPopup>
+<LoginPopup class="LoginPopup" default-mode="production"></LoginPopup>
+<van-notify id="van-notify" />

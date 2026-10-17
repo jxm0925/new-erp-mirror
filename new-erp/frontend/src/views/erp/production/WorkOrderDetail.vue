@@ -1,5 +1,7 @@
 <template>
   <section class="production-page" v-loading="loading">
+    <WarehouseManagerPicker :visible.sync="responsiblePickerVisible" title="选择生产负责人" scope="production" :current="selectedResponsibleUser" @selected="selectResponsibleUser" />
+    <WorkOrderCompletionSubmitDialog ref="completionSubmit" @updated="fetchWorkOrder" />
     <div class="page-heading">
       <div>
         <p class="eyebrow">生产管理 / 工单管理 / 工单详情</p>
@@ -9,9 +11,16 @@
         <el-button @click="$router.back()">返回</el-button>
         <el-button v-if="activeView==='technical' && canPrepareTechnical" type="success" :loading="technicalSaving" @click="$refs.technical.confirm()">确认生产资料</el-button>
         <template v-if="activeView!=='technical'">
+        <el-button v-if="$can('production.task.view') && ['RELEASED','IN_PROGRESS','COMPLETED'].includes(workOrder.status)" @click="$router.push({path:'/production/tasks',query:{work_order_id:String(workOrder.id)}})">查看生产作业</el-button>
+        <el-button v-if="canSubmitCompletion" type="success" @click="$refs.completionSubmit.open(workOrder.id)">提交工单完工</el-button>
         <el-button v-if="workOrder.source && workOrder.source.demand_id" @click="openSource">查看生产需求</el-button>
         <el-button v-if="canRematchRouting" type="warning" plain @click="rematchRouting">重新匹配工艺路线</el-button>
         <el-button v-if="canEdit && activeView==='detail'" type="success" @click="save">保存</el-button>
+        <el-button v-if="canEditPlan && !canEdit && !planEditing && activeView==='detail'" type="success" @click="startPlanEdit">编辑生产计划</el-button>
+        <template v-if="planEditing && activeView==='detail'">
+          <el-button :disabled="planSaving || !!pendingPlan" @click="cancelPlanEdit">取消编辑</el-button>
+          <el-button type="success" :loading="planSaving" @click="savePlan">{{ pendingPlan ? '重试原保存' : '保存生产计划' }}</el-button>
+        </template>
         <el-button v-if="canSubmit" type="success" @click="submit">提交</el-button>
         <el-button v-if="canPublish" type="success" @click="publish">发布工单</el-button>
         <el-button v-if="canReturn" @click="returnDraft">退回草稿</el-button>
@@ -58,14 +67,15 @@
             <p><label>产品名称</label><strong>{{ workOrder.product && workOrder.product.name || '-' }}</strong></p>
             <p><label>SKU / 物料编码</label><strong>{{ workOrder.product && (workOrder.product.sku || workOrder.product.item_code) || '-' }}</strong></p>
             <p><label>计划数量</label><el-input v-if="canEdit" v-model="form.target_qty" size="small"><template slot="append">{{ workOrder.quantity && workOrder.quantity.unit_name || '' }}</template></el-input><strong v-else>{{ number(workOrder.quantity && workOrder.quantity.target_qty) }} {{ workOrder.quantity && workOrder.quantity.unit_name || '' }}</strong></p>
-            <p><label>计划日期</label><el-date-picker v-if="canEdit" v-model="form.planned_date" type="date" value-format="yyyy-MM-dd" size="small" placeholder="请选择计划日期" /><strong v-else>{{ workOrder.plan && workOrder.plan.planned_date || '-' }}</strong></p>
-            <p><label>负责人</label><el-select v-if="canEdit" v-model="form.responsible_user_legacy_id" size="small" placeholder="请选择生产负责人" clearable filterable><el-option v-for="user in productionUsers" :key="user.user_id" :label="displayUser(user)" :value="user.user_id" /></el-select><strong v-else>{{ workOrder.responsible_user && workOrder.responsible_user.display_name || '待分配' }}</strong></p>
+            <p><label>计划日期</label><el-date-picker v-if="canEdit || planEditing" v-model="form.planned_date" :disabled="planSaving || !!pendingPlan" type="date" value-format="yyyy-MM-dd" size="small" placeholder="请选择计划日期" /><strong v-else>{{ workOrder.plan && workOrder.plan.planned_date || '-' }}</strong></p>
+            <p><label>负责人</label><span v-if="canEdit || planEditing" class="responsible-selector"><el-input :value="selectedResponsibleUser && selectedResponsibleUser.nickname" :disabled="planSaving || !!pendingPlan" size="small" readonly placeholder="请选择生产负责人" suffix-icon="el-icon-search" @focus="openResponsiblePicker" @click.native="openResponsiblePicker" /><el-button v-if="form.responsible_user_legacy_id" type="text" :disabled="planSaving || !!pendingPlan" @click="clearResponsibleUser">清除</el-button></span><strong v-else>{{ workOrder.responsible_user && workOrder.responsible_user.display_name || '待分配' }}</strong></p>
             <p><label>生产批次</label><strong>{{ workOrder.plan && workOrder.plan.production_batch || '-' }}</strong></p>
             <p><label>BOM 版本</label><strong>{{ bomLabel }}</strong></p>
             <p><label>产出物料</label><strong>{{ workOrder.product && workOrder.product.item_name || '-' }}</strong></p>
             <p><label>工艺路线</label><strong>{{ routeLabel }}</strong></p>
             <p v-if="workOrder.source_type==='stock_prebuild'"><label>备货目标路线工序</label><strong>{{ targetRouteOperationLabel }}</strong></p>
           </div>
+          <div class="route-preview"><label>工序流程</label><p>{{ routeOperationChain }}</p><el-button v-if="canPrepareTechnical" type="text" @click="activeView='technical'">调整工艺路线</el-button></div>
         </section>
 
         <section class="split-grid">
@@ -109,7 +119,9 @@
     </div>
 
     <ProductionInventoryContinuationPanel :key="`continuation-${workOrder.id}`" :work-order="workOrder" @updated="fetchWorkOrder" />
+    <WorkOrderPerformancePanel v-if="$can('production.performance.view') && ['RELEASED', 'IN_PROGRESS', 'COMPLETED'].includes(workOrder.status)" :key="`performance-${workOrder.id}`" :work-order-id="workOrder.id" />
     <ProductionAssignmentPanel v-if="['RELEASED', 'IN_PROGRESS', 'COMPLETED'].includes(workOrder.status)" :key="`assignments-${workOrder.id}`" :work-order="workOrder" @updated="fetchWorkOrder" />
+    <ProductionLaborSummaryPanel v-if="activeView === 'detail' && workOrder.id && $can('production.labor_stats.view')" :key="`labor-${workOrder.id}-${workOrder.business_version}`" scope-type="work_order" :scope-id="Number(workOrder.id)" />
 
     <section class="card timeline-card">
       <h3>7. 工单状态时间线</h3>
@@ -127,36 +139,42 @@
 import cachedPageRoute from '@/utils/cachedPageRoute'
 import { getAssemblyPlan } from '../../../api/erp/assembly-production'
 import { materialDemands } from '../../../api/erp/production-materials'
-import { getWorkOrder, updateWorkOrderDraft, submitWorkOrder, getWorkOrderReleaseGate, publishWorkOrder, listWorkOrderMaterialRequirements, returnWorkOrderToDraft, cancelWorkOrder, rematchWorkOrderRouting } from '../../../api/erp/production'
-import { listUsers } from '../../../api/erp/rbac'
+import { getWorkOrder, updateWorkOrderDraft, updateWorkOrderPlan, submitWorkOrder, getWorkOrderReleaseGate, publishWorkOrder, listWorkOrderMaterialRequirements, returnWorkOrderToDraft, cancelWorkOrder, rematchWorkOrderRouting } from '../../../api/erp/production'
+import WarehouseManagerPicker from '@/components/master/WarehouseManagerPicker.vue'
 import WorkOrderCompletionPanel from './WorkOrderCompletionPanel.vue'
+import WorkOrderCompletionSubmitDialog from './WorkOrderCompletionSubmitDialog.vue'
 import WorkOrderTechnicalPanel from './WorkOrderTechnicalPanel.vue'
 import ProductionInventoryContinuationPanel from './ProductionInventoryContinuationPanel.vue'
 import ProductionAssignmentPanel from './ProductionAssignmentPanel.vue'
 import WorkOrderOutputPlanPanel from './WorkOrderOutputPlanPanel.vue'
 import WorkOrderAssemblyPanel from './WorkOrderAssemblyPanel.vue'
 import ProductionJobBundlePanel from './ProductionJobBundlePanel.vue'
+import WorkOrderPerformancePanel from './WorkOrderPerformancePanel.vue'
+import ProductionLaborSummaryPanel from './ProductionLaborSummaryPanel.vue'
 
 export default {
   mixins: [cachedPageRoute],
   name: 'WorkOrderDetail',
-  components: { WorkOrderCompletionPanel, WorkOrderTechnicalPanel, ProductionInventoryContinuationPanel, ProductionAssignmentPanel, WorkOrderOutputPlanPanel, WorkOrderAssemblyPanel, ProductionJobBundlePanel },
-  data: () => ({ technicalSaving: false, loading: false, gateLoading: false, activeView: 'detail', workOrder: {}, gate: null, preparation: null, materialSequence: 0, materials: [], materialTotal: 0, materialPage: 1, materialPerPage: 20, productionUsers: [], form: { target_qty: '', planned_date: '', production_batch: '', responsible_user_legacy_id: '', production_location_name: '' } }),
+  components: { WarehouseManagerPicker, WorkOrderCompletionPanel, WorkOrderCompletionSubmitDialog, WorkOrderTechnicalPanel, ProductionInventoryContinuationPanel, ProductionAssignmentPanel, WorkOrderOutputPlanPanel, WorkOrderAssemblyPanel, ProductionJobBundlePanel, WorkOrderPerformancePanel, ProductionLaborSummaryPanel },
+  data: () => ({ technicalSaving: false, loading: false, gateLoading: false, planEditing: false, planSaving: false, pendingPlan: null, responsiblePickerVisible: false, selectedResponsibleUser: null, activeView: 'detail', workOrder: {}, gate: null, preparation: null, materialSequence: 0, materials: [], materialTotal: 0, materialPage: 1, materialPerPage: 10, form: { target_qty: '', planned_date: '', production_batch: '', responsible_user_legacy_id: '', production_location_name: '' } }),
   computed: {
     beforeRelease() { return ['DRAFT', 'WAIT_RELEASE'].includes(this.workOrder.status) },
     gateChecks() { const checks = this.gate?.checks || []; const issues = [...(this.preparation?.issues || []), ...(this.preparation?.material_preparation?.issues || [])]; return [...checks, ...issues.filter((issue, index) => issues.findIndex(row => row.message === issue.message) === index && !checks.some(row => row.message === issue.message)).map((issue, index) => ({ key: 'preparation-' + index, status: 'blocked', message: issue.message }))] },
     canPrepareTechnical() { return ['DRAFT','WAIT_RELEASE'].includes(this.workOrder.status) && this.$can('production.technical.prepare') },
     canEdit() { return Boolean(this.workOrder.actions && this.workOrder.actions.edit) && this.pageRoute.query.mode === 'edit' },
-    canSubmit() { return Boolean(this.workOrder.actions && this.workOrder.actions.submit) },
-    canReturn() { return Boolean(this.workOrder.actions && this.workOrder.actions.return_draft) },
-    canCancel() { return Boolean(this.workOrder.actions && this.workOrder.actions.cancel) },
+    canEditPlan() { return Boolean(this.workOrder.actions && this.workOrder.actions.edit_plan) },
+    canSubmit() { return !this.planEditing && Boolean(this.workOrder.actions && this.workOrder.actions.submit) },
+    canReturn() { return !this.planEditing && Boolean(this.workOrder.actions && this.workOrder.actions.return_draft) },
+    canCancel() { return !this.planEditing && Boolean(this.workOrder.actions && this.workOrder.actions.cancel) },
     canRematchRouting() { return Boolean(this.workOrder.actions && this.workOrder.actions.rematch_routing) },
     canViewGate() { return Boolean(this.workOrder.actions && this.workOrder.actions.view_release_gate) },
     canViewMaterials() { return Boolean(this.workOrder.actions && this.workOrder.actions.view_materials) },
-    canPublish() { return this.workOrder.status === 'WAIT_RELEASE' && this.gate && this.gate.allowed && this.$can('production.work_order.publish') },
+    canPublish() { return !this.planEditing && this.workOrder.status === 'WAIT_RELEASE' && this.gate && this.gate.allowed && this.$can('production.work_order.publish') },
     canViewCompletion() { return ['RELEASED', 'IN_PROGRESS', 'COMPLETED'].includes(this.workOrder.status) && this.$can('production.completion.view') },
+    canSubmitCompletion() { return ['RELEASED', 'IN_PROGRESS'].includes(this.workOrder.status) && this.$can('production.completion.create') },
     bomLabel() { const bom = this.workOrder.release && this.workOrder.release.bom; return bom ? `${bom.bom_no || 'BOM'} ${bom.version || ''}`.trim() : '发布后锁定' },
     routeLabel() { const r=this.workOrder.routing||{}; return r.id ? `${r.no||''} ${r.name||''} V${r.version||'-'}`.trim() : '未配置' },
+    routeOperationChain() { return ((this.workOrder.routing?.snapshot || {}).operations || []).map(row => `${row.operation_name || row.operation_code || '未命名工序'}${row.packaging_scheme_name ? `（${row.packaging_scheme_name}）` : ''}`).join(' → ') || '尚未冻结工序流程' },
     targetRouteOperationLabel() { const n=(this.workOrder.routing||{}).target_routing_operation; return n ? `${n.sequence} - ${n.operation_name||''}` : '-' },
     timeline() {
       const order = ['DRAFT', 'WAIT_RELEASE', 'RELEASED']
@@ -165,8 +183,12 @@ export default {
       return order.map((status, index) => ({ status, label: labels[status], done: current >= index, current: current === index }))
     }
   },
-  created() { this.fetchUsers(); this.fetchWorkOrder() },
+  created() { this.fetchWorkOrder() },
   watch: {
+    'pageRoute.query.tab'(tab) {
+      if (tab === 'bundles' && this.$can('production.task.view')) this.activeView = 'bundles'
+      else if (tab === 'completion' && this.canViewCompletion) this.activeView = 'completion'
+    },
     'pageRoute.params.id'(nextId, previousId) {
       if (nextId === previousId) return
       this.workOrder = {}
@@ -176,6 +198,10 @@ export default {
       this.materials = []
       this.materialTotal = 0
       this.materialPage = 1
+      this.planEditing = false
+      this.pendingPlan = null
+      this.responsiblePickerVisible = false
+      this.selectedResponsibleUser = null
       this.fetchWorkOrder()
     }
   },
@@ -188,8 +214,11 @@ export default {
         if (String(this.pageRoute.params.id) !== requestedId) return
         this.workOrder = response.data.data || {}
         if (!this.beforeRelease) this.preparation = null
-        if (this.canViewCompletion && (this.pageRoute.query.tab === 'completion' || this.workOrder.status === 'COMPLETED')) this.activeView = 'completion'
+        if (this.pageRoute.query.tab === 'bundles' && this.$can('production.task.view')) this.activeView = 'bundles'
+        else if (this.canViewCompletion && (this.pageRoute.query.tab === 'completion' || this.workOrder.status === 'COMPLETED')) this.activeView = 'completion'
         this.form = { target_qty: this.workOrder.target_qty, planned_date: this.workOrder.planned_date, production_batch: this.workOrder.production_batch, responsible_user_legacy_id: this.workOrder.responsible_user && this.workOrder.responsible_user.user_id, production_location_name: this.workOrder.production_location_name }
+        const responsible = this.workOrder.responsible_user
+        this.selectedResponsibleUser = responsible ? { id: responsible.user_id, nickname: responsible.display_name, username: String(responsible.user_id), department_names: responsible.department_name } : null
         const tasks = []
         if (this.canViewGate && ['WAIT_RELEASE', 'RELEASED'].includes(this.workOrder.status)) tasks.push(this.fetchGate(false, this.workOrder.id))
         if (this.beforeRelease) tasks.push(this.fetchPreparation(this.workOrder.id))
@@ -197,7 +226,31 @@ export default {
         await Promise.all(tasks)
       } catch (error) { if (String(this.pageRoute.params.id) === requestedId) this.$message.error(error.userMessage || '工单加载失败') } finally { if (String(this.pageRoute.params.id) === requestedId) this.loading = false }
     },
-    async fetchUsers() { try { const response = await listUsers({ scope: 'production', status: 'normal', page: 1, per_page: 100 }); this.productionUsers = response.data.data || response.data || [] } catch (error) { this.productionUsers = [] } },
+    openResponsiblePicker() { if ((this.canEdit || this.planEditing) && !this.planSaving && !this.pendingPlan) this.responsiblePickerVisible = true },
+    selectResponsibleUser(user) { this.selectedResponsibleUser = user; this.form.responsible_user_legacy_id = user.id },
+    clearResponsibleUser() { this.selectedResponsibleUser = null; this.form.responsible_user_legacy_id = null },
+    startPlanEdit() { if (this.canEditPlan && !this.loading) this.planEditing = true },
+    cancelPlanEdit() { this.planEditing = false; this.fetchWorkOrder() },
+    async savePlan() {
+      if (this.planSaving || this.loading || !this.canEditPlan || !this.planEditing || !this.isPageRouteActive) return
+      const id = this.workOrder.id
+      if (!this.pendingPlan) this.pendingPlan = { client_command_id: this.command('plan'), expected_version: this.workOrder.business_version, planned_date: this.form.planned_date || null, responsible_user_legacy_id: this.form.responsible_user_legacy_id || null }
+      this.planSaving = true
+      try {
+        await updateWorkOrderPlan(id, this.pendingPlan)
+        this.pendingPlan = null
+        this.planEditing = false
+        this.$message.success('生产计划已保存')
+        await this.fetchWorkOrder()
+      } catch (error) {
+        const status = Number(error.response?.status || 0)
+        if (status >= 400 && status < 500 && !['command_processing', 'command_recovery_required', 'recovery_required'].includes(error.errorCode)) {
+          this.pendingPlan = null
+          if ([403, 404, 409].includes(status)) { this.planEditing = false; await this.fetchWorkOrder() }
+        }
+        this.$message.error(error.userMessage || '生产计划保存失败，请重试原保存')
+      } finally { this.planSaving = false }
+    },
     async fetchGate(showMessage, workOrderId = this.workOrder.id || this.pageRoute.params.id) {
       this.gateLoading = true
       try {
@@ -280,4 +333,19 @@ export default {
 .completion-context{display:grid;grid-template-columns:minmax(260px,1fr) minmax(390px,1.5fr) minmax(250px,1fr);gap:24px;background:#fff;border:1px solid #e4eaf0;border-radius:4px;padding:20px;margin-bottom:18px;color:#263d60;font-size:13px}.completion-context>div{min-width:0}.completion-context>div+div{border-left:1px solid #edf1f5;padding-left:20px}.completion-context label{display:block;color:#7b8eac;margin-bottom:12px;font-size:13px}.completion-context h1{font-size:20px;margin:0;overflow-wrap:anywhere}.completion-context .title-line{flex-wrap:wrap;gap:8px}.completion-context-pair{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:14px}.completion-context-pair p{margin:0;overflow-wrap:anywhere}.completion-source{display:flex;align-items:center;gap:12px}.completion-source>div{flex:1;min-width:0;border:1px solid #e7edf4;border-radius:4px;padding:15px 8px;text-align:center;overflow-wrap:anywhere}.completion-source>i{color:#879bbb}.completion-context strong{font-weight:500;overflow-wrap:anywhere}
 @media(max-width:1250px){.completion-context{grid-template-columns:1fr 1fr}.completion-context>div:last-child{grid-column:1/3;border-left:0;padding-left:0}}
 @media(max-width:760px){.completion-context{grid-template-columns:minmax(0,1fr);padding:14px;gap:18px}.completion-context>div+div{border-left:0;border-top:1px solid #edf1f5;padding:16px 0 0}.completion-context>div:last-child{grid-column:auto}.completion-source{gap:6px;font-size:11px}.completion-source label{font-size:11px}.completion-source>div{padding:10px 4px}}
+
+.route-preview {
+  padding: 12px 0;
+  min-width: 0;
+  color: #33455d;
+}
+.route-preview > label { color: #66758a; font-size: 13px; }
+.route-preview > p { margin: 8px 0; line-height: 1.8; overflow-wrap: anywhere; }
+.responsible-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.responsible-selector .el-input { flex: 1; min-width: 0; }
 </style>

@@ -224,8 +224,8 @@ Page({
   },
   closeOutput() { if (!this.data.busy) { this.outputSequence = (this.outputSequence || 0) + 1; this.setData({ showOutput: false, outputLoading: false }); } },
   loadOutputCategories(page = 1) {
-    const request = this.data.order.purpose === 'WORKER' ? cutting.workerCategories({ settlement_batch_id: this.data.settlementId, page, per_page: 20 })
-      : cutting.selectorCategories(this.data.orderId, { mode: 'outputs', page, per_page: 20 });
+    const request = this.data.order.purpose === 'WORKER' ? cutting.workerCategories({ settlement_batch_id: this.data.settlementId, page, per_page: 10 })
+      : cutting.selectorCategories(this.data.orderId, { mode: 'outputs', page, per_page: 10 });
     return request.then(response => {
       const result = pageOf(response);
       this.setData({ outputCategories: (page === 1 ? [{ id: '', category_name: '全部' }] : this.data.outputCategories).concat(result.rows), categoryPage: result.currentPage, categoryLastPage: result.lastPage });
@@ -241,7 +241,7 @@ Page({
     const sequence = this.outputSequence = (this.outputSequence || 0) + 1;
     this.setData({ outputLoading: true });
     const query = { keyword: String(this.data.outputKeyword || '').trim() || undefined,
-      category_id: this.data.outputCategoryId || undefined, settlement_batch_id: this.data.settlementId, page, per_page: 20 };
+      category_id: this.data.outputCategoryId || undefined, settlement_batch_id: this.data.settlementId, page, per_page: 10 };
     const request = this.data.order.purpose === 'WORKER' ? cutting.workerOutputs(query) : cutting.allowedOutputs(this.data.orderId, query);
     return request.then(response => {
         if (sequence !== this.outputSequence) return;
@@ -385,7 +385,7 @@ Page({
     if (!this.data.splitProduct.id) return wx.showToast({ title: '请先保存产出，再选择订单', icon: 'none' });
     this.setData({ targetLoading: true });
     const sequence = this.targetSequence = (this.targetSequence || 0) + 1;
-    return cutting.handoverTargets(this.data.splitProduct.id, { keyword: String(this.data.targetKeyword || '').trim() || undefined, page, per_page: 20 })
+    return cutting.handoverTargets(this.data.splitProduct.id, { keyword: String(this.data.targetKeyword || '').trim() || undefined, page, per_page: 10 })
       .then(response => { if (sequence !== this.targetSequence) return; const result = pageOf(response); this.setData({ targets: result.rows, targetPage: result.currentPage, targetLastPage: result.lastPage, targetIndex: -1, targetLoading: false }); })
       .catch(error => { if (sequence !== this.targetSequence) return; this.setData({ targetLoading: false, targets: [], targetIndex: -1 }); wx.showToast({ title: (error && error.message) || '订单需求加载失败', icon: 'none' }); });
   },

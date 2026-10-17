@@ -13,7 +13,7 @@ Page({
       is_login: 0
     },
     score: 0,
-    unifiedLoggedIn: false,
+    erpLoggedIn: false,
     erpUser: null,
     logoutBusy: false
   },
@@ -32,11 +32,12 @@ Page({
    * 生命周期函数--监听页面显示
    */
   onShow() {
-    var userInfo = wx.getStorageSync('userInfo');
+    var userInfo = wx.getStorageSync('userInfo') || { is_login: 0 };
+    const erpLoggedIn = Boolean(wx.getStorageSync('erp_token'));
     this.setData({
       userInfo: userInfo,
-      erpUser: wx.getStorageSync('erp_user') || null,
-      unifiedLoggedIn:Boolean(wx.getStorageSync('token') && wx.getStorageSync('erp_token'))
+      erpUser: erpLoggedIn ? wx.getStorageSync('erp_user') || null : null,
+      erpLoggedIn
     });
     console.log(userInfo);
     if (userInfo && userInfo.is_login) {
@@ -50,7 +51,7 @@ Page({
   },
 
   closeTank() {
-    if (!this.data.userInfo.is_login) {
+    if (!this.data.userInfo.is_login && !this.data.erpLoggedIn) {
       util.BadgePopup();
     }
   },
@@ -79,8 +80,9 @@ Page({
     const needAuth = e.currentTarget.dataset.auth;
     const isTab = e.currentTarget.dataset.tab;
 
-    if (needAuth && (!this.data.userInfo || !this.data.userInfo.is_login)) {
-      util.BadgePopup();
+    const loggedIn = needAuth === 'production' ? this.data.erpLoggedIn : this.data.userInfo.is_login;
+    if (needAuth && !loggedIn) {
+      util.BadgePopup(needAuth === 'production' ? 'production' : 'unified');
       return;
     }
     if (!url) return;
@@ -139,8 +141,8 @@ Page({
     if (this.data.logoutBusy) return;
     this.setData({ logoutBusy: true });
     erpAuth.logoutAll().then(() => {
-        this.setData({ userInfo: { is_login: 0 }, erpUser: null, unifiedLoggedIn: false, score: 0 });
-        Notify({ type: 'success', message: '已退出统一账号' });
+        this.setData({ userInfo: { is_login: 0 }, erpUser: null, erpLoggedIn: false, score: 0 });
+        Notify({ type: 'success', message: '已退出登录' });
       })
       .finally(() => this.setData({ logoutBusy: false }));
   }

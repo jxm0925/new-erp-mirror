@@ -48,7 +48,7 @@ Page({
   prevPage() { if (this.data.page > 1) return this.loadCandidates(this.data.page - 1); },
   nextPage() { if (this.data.page < this.data.lastPage) return this.loadCandidates(this.data.page + 1); },
   loadCategories(page) {
-    return cutting.workerInputCategories({ page, per_page: 20 }).then(response => {
+    return cutting.workerInputCategories({ page, per_page: 10 }).then(response => {
       const result = pageOf(response);
       this.setData({ categories: (page === 1 ? [{ id: '', category_name: '全部' }] : this.data.categories).concat(result.rows), categoryPage: result.page, categoryLastPage: result.lastPage });
     }).catch(error => wx.showToast({ title: error.message || '分类加载失败', icon: 'none' }));
@@ -57,7 +57,7 @@ Page({
   loadCandidates(page) {
     const sequence = this.requestSequence = (this.requestSequence || 0) + 1;
     this.setData({ loading: true });
-    return cutting.workerInputs({ input_type: this.data.inputType, page, per_page: 20, keyword: this.data.keyword.trim() || undefined, category_id: this.data.categoryId || undefined }).then(response => {
+    return cutting.workerInputs({ input_type: this.data.inputType, page, per_page: 10, keyword: this.data.keyword.trim() || undefined, category_id: this.data.categoryId || undefined }).then(response => {
       if (sequence !== this.requestSequence) return;
       const result = pageOf(response); const selected = this.data.pickerSelected;
       this.setData({ candidates: result.rows.map(row => Object.assign(present(row), { _selected: selected.some(item => item._key === keyOf(row)) })),

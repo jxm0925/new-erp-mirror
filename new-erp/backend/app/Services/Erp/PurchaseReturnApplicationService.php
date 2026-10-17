@@ -2,6 +2,10 @@
 
 namespace App\Services\Erp;
 
+use App\Domain\Finance\FinanceConstants;
+use App\Domain\Finance\Money;
+use App\Models\Erp\FinanceInvoiceAllocation;
+use App\Models\Erp\FinanceOperationLog;
 use App\Models\Erp\InventoryTransactionItem;
 use App\Models\Erp\InventoryBalance;
 use App\Models\Erp\InventoryQualityEvent;
@@ -9,10 +13,12 @@ use App\Models\Erp\InventorySerial;
 use App\Models\Erp\PurchaseDefectHandling;
 use App\Models\Erp\PurchaseReceiptItem;
 use App\Models\Erp\PurchaseReceipt;
+use App\Models\Erp\PurchaseOrder;
 use App\Models\Erp\PurchaseReturn;
 use App\Models\Erp\PurchaseReturnItem;
 use App\Models\Erp\PurchaseReturnLog;
 use App\Models\Erp\PurchaseReturnItemSerial;
+use App\Models\Erp\PurchaseSettlementSource;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -405,6 +411,171 @@ class PurchaseReturnApplicationService
         }
 
         return $this->load($purchaseReturn);
+    }
+
+    public function previewApOffset(PurchaseReturn $return, int $operatorId): array
+    {
+        try {
+            return DB::transaction(function () use ($return, $operatorId): array {
+                [$current, $receipt] = $this->lockApOffsetContext($return->id, (int) $return->source_receipt_id);
+                $facts = $this->apOffsetFacts($current, $receipt);
+                return ['available' => true, 'amount' => $facts['amount'], 'receipt_no' => $receipt->receipt_no,
+                    'audit_reason' => $facts['audit_reason'], 'expected_fingerprint' => $this->apOffsetFingerprint($current, $receipt, $operatorId)];
+            }, 5);
+        } catch (ValidationException $exception) {
+            return ['available' => false, 'reason' => collect($exception->errors())->flatten()->first()];
+        }
+    }
+
+    public function applyApOffset(int $id, array $payload, int $operatorId, ?string $operatorName): PurchaseReturn
+    {
+        abort_unless($operatorId > 0, 403, '退货抵扣应付必须由已登录的业务人员办理。');
+        $identity = PurchaseReturn::query()->findOrFail($id, ['id', 'source_receipt_id']);
+        $requestHash = hash('sha256', json_encode(['return_id' => $id, 'operator_id' => $operatorId,
+            'expected_fingerprint' => $payload['expected_fingerprint']], JSON_THROW_ON_ERROR));
+        $return = DB::transaction(function () use ($id, $identity, $payload, $operatorId, $operatorName, $requestHash): PurchaseReturn {
+            [$return, $receipt] = $this->lockApOffsetContext($id, (int) $identity->source_receipt_id);
+            // The return lock is the one-time latch; saved audit facts prove a retry without adding a command table.
+            $previous = FinanceOperationLog::query()->where('document_type', 'purchase_return')->where('document_id', $id)
+                ->where('action', 'apply_ap_offset')->orderBy('id')->lockForUpdate()->first();
+            if ($previous) {
+                abort_unless((int) $previous->operator_id === $operatorId, 403, '该抵扣请求由其他人员办理，请刷新查看结果。');
+                $fact = $previous->fact_snapshot;
+                if (! hash_equals((string) ($fact['idempotency_key'] ?? ''), $payload['idempotency_key'])
+                    || ! hash_equals((string) ($fact['request_hash'] ?? ''), $requestHash)
+                    || $return->settlement_effect_type !== FinanceConstants::PURCHASE_EFFECT_AP_OFFSET) {
+                    throw ValidationException::withMessages(['idempotency_key' => '退货抵扣请求与已保存事实不一致，请刷新后核对。']);
+                }
+                return $return;
+            }
+            if (! hash_equals($this->apOffsetFingerprint($return, $receipt, $operatorId), $payload['expected_fingerprint'])) {
+                throw ValidationException::withMessages(['expected_fingerprint' => '退货事实已变化，请刷新后重新确认抵扣金额和来源。']);
+            }
+            $this->settlementSources->syncReceipt($receipt->id, $operatorId, $operatorName);
+            $facts = $this->apOffsetFacts($return, $receipt);
+            $before = $facts['sources']->map(fn ($source) => $source->only(['id', 'source_line_id', 'eligible_amount', 'ap_offset_amount', 'unallocated_amount']))->values()->all();
+            $return->update(['settlement_effect_type' => FinanceConstants::PURCHASE_EFFECT_AP_OFFSET]);
+            $this->settlementSources->syncReceipt($receipt->id, $operatorId, $operatorName);
+            $after = PurchaseSettlementSource::query()->whereIn('id', $facts['sources']->pluck('id'))->orderBy('id')->lockForUpdate()->get()->keyBy('source_line_id');
+            foreach ($facts['line_amounts'] as $lineId => $amount) {
+                $old = $facts['sources']->get($lineId); $current = $after->get($lineId);
+                $offset = Money::add((string) $old->ap_offset_amount, $amount);
+                if (! $current || Money::compare((string) $current->eligible_amount, (string) $old->eligible_amount) !== 0
+                    || Money::compare((string) $current->ap_offset_amount, $offset) !== 0
+                    || Money::compare((string) $current->allocated_amount, '0') !== 0
+                    || Money::compare((string) $current->unallocated_amount, Money::sub((string) $old->eligible_amount, $offset)) !== 0) {
+                    throw ValidationException::withMessages(['ap_offset' => '应付抵扣结果与本退货冻结金额不一致，本次操作未保存。']);
+                }
+            }
+            $content = '退货抵扣应付 '.$facts['amount'].' 元；'.$facts['audit_reason'];
+            $this->log($return, 'apply_ap_offset', 'completed', 'completed', $operatorId, $operatorName, $content);
+            FinanceOperationLog::create(['document_type' => 'purchase_return', 'document_id' => $id, 'action' => 'apply_ap_offset',
+                'from_status' => FinanceConstants::PURCHASE_EFFECT_PENDING, 'to_status' => FinanceConstants::PURCHASE_EFFECT_AP_OFFSET,
+                'fact_snapshot' => ['idempotency_key' => $payload['idempotency_key'], 'request_hash' => $requestHash,
+                    'expected_fingerprint' => $payload['expected_fingerprint'], 'operator_id' => $operatorId,
+                    'receipt_id' => $receipt->id, 'amount' => $facts['amount'], 'audit_reason' => $facts['audit_reason'],
+                    'line_amounts' => $facts['line_amounts'], 'before_sources' => $before,
+                    'after_sources' => $after->map(fn ($source) => $source->only(['id', 'source_line_id', 'eligible_amount', 'ap_offset_amount', 'unallocated_amount']))->values()->all()],
+                'operator_id' => $operatorId, 'operator_name' => $operatorName, 'content' => $content]);
+            return $return;
+        }, 5);
+        return $this->load($return);
+    }
+
+    private function lockApOffsetContext(int $id, int $receiptId): array
+    {
+        // Payments take the receipt root before cash/allocation rows; reversing that order could miss a concurrent payment.
+        $receipt = PurchaseReceipt::query()->lockForUpdate()->findOrFail($receiptId);
+        if ($receipt->order_id) PurchaseOrder::query()->whereKey($receipt->order_id)->lockForUpdate()->firstOrFail();
+        $receipt->setRelation('items', $receipt->items()->orderBy('id')->lockForUpdate()->get());
+        $return = PurchaseReturn::query()->lockForUpdate()->findOrFail($id);
+        $return->setRelation('items', $return->items()->orderBy('id')->lockForUpdate()->get());
+        if ((int) $return->source_receipt_id !== (int) $receipt->id
+            || app(PurchaseManagementScopeService::class)->assertDocumentScope($return)
+                !== app(PurchaseReceiptManagementScopeService::class)->assertReceipt($receipt)) {
+            throw ValidationException::withMessages(['management_scope' => '退货与原到货的来源或管理范围不一致，不能抵扣应付。']);
+        }
+        return [$return, $receipt];
+    }
+
+    private function apOffsetFacts(PurchaseReturn $return, PurchaseReceipt $receipt): array
+    {
+        if ($return->settlement_effect_type !== FinanceConstants::PURCHASE_EFFECT_PENDING || $return->return_scope !== 'posted_inventory'
+            || $return->return_status !== 'completed' || $return->audit_status !== 'approved' || $return->stock_post_status !== 'posted'
+            || $return->finance_fact_status !== 'frozen' || $return->currency_snapshot !== 'CNY' || $receipt->currency_snapshot !== 'CNY'
+            || $receipt->confirm_status !== 'confirmed' || $receipt->settlement_mode !== 'normal'
+            || (int) $return->supplier_id !== (int) $receipt->supplier_id || (int) $return->source_order_id !== (int) $receipt->order_id
+            || ! DB::table('erp_inventory_transactions')->where('source_type', 'purchase_return')->where('source_id', $return->id)
+                ->where('transaction_type', 'purchase_return_outbound')->where('posting_status', 'posted')->lockForUpdate()->first(['id'])) {
+            throw ValidationException::withMessages(['ap_offset' => '仅金额已冻结、已审核并完成实际出库的人民币待处理退货可以整笔抵扣原到货应付。']);
+        }
+        $receiptLines = $receipt->items->keyBy('id'); $lineAmounts = []; $total = '0.0000';
+        foreach ($return->items as $line) {
+            $sourceLine = $receiptLines->get($line->source_receipt_item_id);
+            if (! $sourceLine || (int) $sourceLine->item_id !== (int) $line->item_id || $sourceLine->finance_fact_status !== 'frozen' || $sourceLine->settlement_amount === null
+                || $line->finance_fact_status !== 'frozen' || $line->currency_snapshot !== 'CNY' || $line->settlement_amount === null
+                || bccomp((string) $line->posted_base_qty, '0', 8) <= 0
+                || bccomp((string) $line->posted_base_qty, (string) $line->approved_base_qty, 8) !== 0
+                || bccomp((string) $line->posted_base_qty, (string) $line->requested_base_qty, 8) !== 0
+                || Money::compare((string) $line->settlement_amount, '0') < 0) {
+                throw ValidationException::withMessages(['ap_offset' => '退货明细必须全部实际出库，并保留同物料、同币种的原到货冻结金额。']);
+            }
+            $lineId = (int) $line->source_receipt_item_id;
+            $lineAmounts[$lineId] = Money::add($lineAmounts[$lineId] ?? '0', (string) $line->settlement_amount);
+            $total = Money::add($total, (string) $line->settlement_amount);
+        }
+        if (Money::compare($total, '0') <= 0 || Money::compare($total, (string) $return->settlement_amount) !== 0) {
+            throw ValidationException::withMessages(['ap_offset' => '退货整笔冻结结算金额必须大于零，并与全部明细合计一致。']);
+        }
+        $sources = PurchaseSettlementSource::query()->where('source_type', PurchaseSettlementSourceApplicationService::SOURCE_TYPE_RECEIPT_QUALIFIED)
+            ->where('source_document_type', 'purchase_receipt')->where('source_document_id', $receipt->id)->where('source_receipt_id', $receipt->id)
+            ->where('source_version', 1)->whereIn('source_line_id', array_keys($lineAmounts))->orderBy('id')->lockForUpdate()->get()->keyBy('source_line_id');
+        $balances = app(FinanceAllocationBalanceQueryService::class);
+        foreach ($lineAmounts as $lineId => $amount) {
+            $source = $sources->get($lineId);
+            if (! $source || (int) $source->supplier_id !== (int) $receipt->supplier_id
+                || (int) $source->purchase_order_id !== (int) $receipt->order_id || $source->currency !== 'CNY'
+                || Money::compare((string) $source->ap_offset_amount, '0') < 0
+                || Money::compare((string) $source->eligible_amount, (string) $receiptLines->get($lineId)->settlement_amount) !== 0
+                || Money::compare($amount, Money::sub((string) $source->eligible_amount, (string) $source->ap_offset_amount)) > 0) {
+                throw ValidationException::withMessages(['ap_offset' => '原到货可抵扣应付不足或结算来源不一致，不能部分抵扣本退货。']);
+            }
+            if (Money::compare($balances->forSource(FinanceConstants::SOURCE_PURCHASE_SETTLEMENT_SOURCE, $source->id, FinanceConstants::DIRECTION_PAYMENT), '0') !== 0) {
+                throw ValidationException::withMessages(['ap_offset' => '原结算来源已有有效付款，请先按正式财务流程处理，不能直接抵扣退货。']);
+            }
+        }
+        if (Money::compare($balances->forSource(FinanceConstants::SOURCE_PURCHASE_RECEIPT, $receipt->id, FinanceConstants::DIRECTION_PAYMENT), '0') !== 0
+            || Money::compare($balances->forSource(FinanceConstants::SOURCE_PURCHASE_RETURN_SUPPLIER_REFUND, $return->id), '0') !== 0
+            || Money::compare($balances->forSource(FinanceConstants::SOURCE_PURCHASE_RETURN_AP_OFFSET, $return->id), '0') !== 0) {
+            throw ValidationException::withMessages(['ap_offset' => '原到货或本退货已有资金核销，请先核对财务事实后再办理。']);
+        }
+        // Draft invoice matches can later be confirmed without rechecking this payable, so they also block this narrow action.
+        if (FinanceInvoiceAllocation::query()->where('status', FinanceConstants::ALLOCATION_ACTIVE)
+            ->where(function ($query) use ($sources, $receipt): void {
+                $query->where(fn ($source) => $source->where('source_business_type', FinanceConstants::SOURCE_PURCHASE_SETTLEMENT_SOURCE)->whereIn('source_document_id', $sources->pluck('id')))
+                    ->orWhere(fn ($source) => $source->where('source_business_type', FinanceConstants::SOURCE_PURCHASE_RECEIPT)->where('source_document_id', $receipt->id));
+            })->orderBy('id')->lockForUpdate()->first(['id'])) {
+            throw ValidationException::withMessages(['ap_offset' => '原到货已有有效发票匹配（含草稿），请先处理发票事实后再抵扣。']);
+        }
+        if ($receipt->order_id) {
+            $paid = app(PurchasePaymentBalanceQueryService::class)->currentForOrders([(int) $receipt->order_id])[(int) $receipt->order_id];
+            if (Money::compare($paid['paid_amount'], '0') !== 0 || Money::compare($paid['refund_amount'], '0') !== 0) {
+                throw ValidationException::withMessages(['ap_offset' => '原采购订单已有已确认资金用途，请先核对预付款或退款，不能直接办理本次抵扣。']);
+            }
+        }
+        return ['amount' => $total, 'line_amounts' => $lineAmounts, 'sources' => $sources,
+            'audit_reason' => trim((string) $return->remark) ?: trim((string) $return->return_reason)];
+    }
+
+    private function apOffsetFingerprint(PurchaseReturn $return, PurchaseReceipt $receipt, int $operatorId): string
+    {
+        return hash('sha256', json_encode(['operator_id' => $operatorId,
+            'return' => $return->only(['id', 'source_receipt_id', 'source_order_id', 'supplier_id', 'management_scope', 'currency_snapshot',
+                'return_scope', 'return_status', 'audit_status', 'stock_post_status', 'settlement_effect_type', 'settlement_amount', 'finance_fact_status', 'remark', 'return_reason']),
+            'receipt' => $receipt->only(['id', 'order_id', 'supplier_id', 'management_scope', 'currency_snapshot', 'confirm_status', 'settlement_mode']),
+            'items' => $return->items->map(fn ($line) => $line->only(['id', 'source_receipt_item_id', 'item_id', 'currency_snapshot',
+                'requested_base_qty', 'approved_base_qty', 'posted_base_qty', 'settlement_amount', 'finance_fact_status']))->values()->all(),
+        ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR));
     }
 
     public function cancel(int $id, ?int $operatorId, ?string $operatorName): PurchaseReturn

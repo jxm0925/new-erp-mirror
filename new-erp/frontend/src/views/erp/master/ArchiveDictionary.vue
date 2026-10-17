@@ -1,9 +1,9 @@
 <template>
-  <div class="archive-dictionary">
+  <div class="archive-dictionary" :class="{ 'carrier-dictionary': kind === 'carriers' }">
     <el-empty v-if="!canRead" description="暂无查看权限" />
     <template v-else>
       <!-- 概览指标卡片网格 -->
-      <section class="metric-overview-grid">
+      <section v-if="kind !== 'carriers'" class="metric-overview-grid">
         <!-- 分类模式指标卡片 -->
         <template v-if="kind === 'categories'">
           <div class="metric-card metric-all" :class="{ active: !query.status }" title="查看全部商品分类" @click="filterStatus('')">
@@ -143,19 +143,21 @@
 
         <div class="table-wrap">
           <el-table ref="table" v-loading="loading" :data="rows" border size="small" row-key="id" class="enterprise-table">
-            <el-table-column :prop="codeField" :label="kind === 'platforms' ? '平台编号' : '编码'" min-width="120">
+            <el-table-column v-if="kind !== 'carriers'" :prop="codeField" :label="kind === 'platforms' ? '平台编号' : '编码'" min-width="120">
               <template slot-scope="{ row }">
                 <span class="code-mono archive-code-chip">{{ row[codeField] }}</span>
               </template>
             </el-table-column>
 
-            <el-table-column :prop="nameField" :label="label + '名称'" min-width="150">
+            <el-table-column :prop="nameField" :label="kind === 'carriers' ? '名称' : label + '名称'" min-width="150">
               <template slot-scope="{ row }">
                 <span class="archive-name-text">{{ row[nameField] }}</span>
               </template>
             </el-table-column>
+            <el-table-column v-if="kind === 'carriers'" prop="code" label="业务编码" min-width="150"><template slot-scope="{ row }">{{ row.code || '—' }}</template></el-table-column>
+            <el-table-column v-if="kind === 'carriers'" prop="sort" label="排序" width="90" align="center" />
 
-            <el-table-column v-if="kind !== 'payments'" label="所属层级" min-width="130">
+            <el-table-column v-if="!['payments', 'carriers'].includes(kind)" label="所属层级" min-width="130">
               <template slot-scope="{ row }">
                 <span v-if="isRoot(row)" class="root-badge"><i class="el-icon-folder" /> 一级（根）</span>
                 <span v-else class="sub-badge"><i class="el-icon-caret-right" /> {{ parentName(row) }}</span>
@@ -195,13 +197,13 @@
               </template>
             </el-table-column>
 
-            <el-table-column :prop="sortField" label="排序" width="70" align="center">
+            <el-table-column v-if="kind !== 'carriers'" :prop="sortField" label="排序" width="70" align="center">
               <template slot-scope="{ row }">
                 <span class="code-mono sort-val">{{ row[sortField] }}</span>
               </template>
             </el-table-column>
 
-            <el-table-column v-if="kind !== 'platforms'" prop="remark" label="备注说明" min-width="140" show-overflow-tooltip>
+            <el-table-column v-if="!['platforms', 'carriers'].includes(kind)" prop="remark" label="备注说明" min-width="140" show-overflow-tooltip>
               <template slot-scope="{ row }">
                 <span class="remark-text">{{ row.remark || '-' }}</span>
               </template>
@@ -213,7 +215,7 @@
               </template>
             </el-table-column>
 
-            <el-table-column v-if="canManage" label="操作" :width="kind === 'payments' ? 140 : 220" :fixed="compact ? false : 'right'" align="center">
+            <el-table-column v-if="canManage" label="操作" :width="['payments', 'carriers'].includes(kind) ? 160 : 220" :fixed="compact ? false : 'right'" align="center">
               <template slot-scope="{ row }">
                 <div class="row-actions">
                   <el-button v-if="canCreateChild(row)" type="text" size="mini" class="btn-action-child" icon="el-icon-plus" @click="openCreate(row)">新增下级</el-button>
@@ -264,25 +266,35 @@
     <el-dialog
       :title="(form.id ? '编辑' : '新增') + label"
       :visible.sync="dialogVisible"
-      width="620px"
+      :width="kind === 'carriers' ? '568px' : '620px'"
       top="7vh"
       append-to-body
       :close-on-click-modal="false"
       :close-on-press-escape="!saving"
       :show-close="!saving"
       :before-close="beforeClose"
-      custom-class="base-archive-dialog"
+      :custom-class="kind === 'carriers' ? 'base-archive-dialog carrier-archive-dialog' : 'base-archive-dialog'"
+      :class="{ 'carrier-dialog-shell': kind === 'carriers' }"
       @closed="clearValidation"
     >
       <div class="dialog-header-banner">
         <i :class="bannerIconClass" class="banner-icon" />
         <div class="banner-text">
-          <p class="banner-title">{{ form.id ? '修改' + label + '基础属性' : '录入新' + label }}</p>
-          <p class="banner-sub">请确保编码在全系统内唯一且符合主数据编码规范</p>
+          <p class="banner-title">{{ kind === 'carriers' ? '维护销售订单承运商' : (form.id ? '修改' + label + '基础属性' : '录入新' + label) }}</p>
+          <p class="banner-sub">{{ kind === 'carriers' ? '请填写名称，停用不影响历史单据。' : '请确保编码在全系统内唯一且符合主数据编码规范' }}</p>
         </div>
       </div>
 
       <el-form ref="form" :model="form" label-position="top" size="small" :disabled="saving" class="archive-dialog-form" @submit.native.prevent>
+        <template v-if="kind === 'carriers'">
+          <el-form-item label="承运商名称" prop="name" :rules="[{ required: true, message: '请输入承运商名称', trigger: 'blur' }]"><el-input v-model.trim="form.name" maxlength="160" /></el-form-item>
+          <el-form-item label="业务编码（选填）" prop="code"><el-input v-model.trim="form.code" maxlength="80" /><div class="field-help">用于业务识别，可留空。</div></el-form-item>
+          <div class="form-grid-2col carrier-last-fields">
+            <el-form-item label="显示排序"><el-input-number v-model="form.sort" :min="0" :max="9999" :precision="0" controls-position="right" class="full" /></el-form-item>
+            <el-form-item label="启用状态"><el-radio-group v-model="form.status" class="status-radio-group"><el-radio label="enabled"><span class="radio-label-text text-success">正常启用</span></el-radio><el-radio label="disabled"><span class="radio-label-text text-muted">停用</span></el-radio></el-radio-group></el-form-item>
+          </div>
+        </template>
+        <template v-else>
         <div class="form-grid-2col">
           <el-form-item
             v-if="kind !== 'platforms'"
@@ -347,6 +359,7 @@
         <el-form-item v-if="kind !== 'platforms'" label="备注说明" class="full">
           <el-input v-model="form.remark" type="textarea" :rows="3" :maxlength="kind === 'payments' ? 1000 : 200" show-word-limit placeholder="选填，补充说明该档案业务场景或约束..." />
         </el-form-item>
+        </template>
       </el-form>
 
       <span slot="footer" class="dialog-footer">
@@ -361,7 +374,7 @@
 import { erpDateTime } from '../../../utils/dateTime'
 import { listArchives, saveArchive, setArchiveStatus, deleteProductCategory } from '../../../api/erp/base-archives'
 
-const labels = { categories: '商品分类', payments: '付款方式', platforms: '成交平台' }
+const labels = { categories: '商品分类', payments: '付款方式', platforms: '成交平台', carriers: '承运商' }
 
 export default {
   name: 'ArchiveDictionary',
@@ -379,21 +392,22 @@ export default {
       dialogVisible: false,
       form: {},
       formParentName: '',
-      query: { keyword: '', status: '', usage: '', page: 1, per_page: 20 },
+      query: { keyword: '', status: '', usage: '', page: 1, per_page: 10 },
       loadSequence: 0,
       compact: window.innerWidth <= 900
     }
   },
   computed: {
     label () { return labels[this.kind] },
-    codeField () { return this.kind === 'payments' ? 'method_code' : this.kind === 'categories' ? 'category_code' : 'legacy_id' },
+    codeField () { return this.kind === 'carriers' ? 'code' : (this.kind === 'payments' ? 'method_code' : this.kind === 'categories' ? 'category_code' : 'legacy_id') },
     nameField () { return this.kind === 'payments' ? 'method_name' : this.kind === 'categories' ? 'category_name' : 'name' },
     sortField () { return this.kind === 'categories' ? 'sort_order' : 'sort' },
-    canManage () { return this.$can(this.kind === 'payments' ? 'finance.payment_method.manage' : 'master.base_archive') },
-    canRead () { return this.canManage || (this.kind === 'payments' && this.$can('finance.payment_method.view')) },
+    canManage () { return this.$can(this.kind === 'carriers' ? 'master.base_archive.create' : (this.kind === 'payments' ? 'finance.payment_method.manage' : 'master.base_archive')) },
+    canRead () { return this.kind === 'carriers' ? this.$can('master.base_archive') : (this.canManage || (this.kind === 'payments' && this.$can('finance.payment_method.view'))) },
     bannerIconClass () {
       if (this.kind === 'categories') return 'el-icon-price-tag'
       if (this.kind === 'payments') return 'el-icon-bank-card'
+      if (this.kind === 'carriers') return 'el-icon-truck'
       return 'el-icon-shopping-cart-2'
     },
     enabledCount () {
@@ -445,7 +459,7 @@ export default {
         this.rows = data.data || []
         this.total = Number(data.total || 0)
         this.stats = data.stats || {}
-        this.$emit('count-updated', this.total)
+        this.$emit('count-updated', this.kind === 'carriers' ? Number(this.stats.total ?? this.total) : this.total)
         if (!this.rows.length && this.query.page > 1 && this.total <= (this.query.page - 1) * this.query.per_page) {
           this.query.page = Math.max(1, Math.ceil(this.total / this.query.per_page))
           return this.load()
@@ -485,7 +499,7 @@ export default {
         : row.parent_name || '无（主平台）'
     },
     canCreateChild (row) {
-      return this.kind !== 'payments' && this.isEnabled(row) && (this.kind === 'categories' || !Number(row.parent_legacy_id))
+      return !['payments', 'carriers'].includes(this.kind) && this.isEnabled(row) && (this.kind === 'categories' || !Number(row.parent_legacy_id))
     },
     dateText (value) {
       return value ? erpDateTime(value, 16) : '—'
@@ -505,7 +519,7 @@ export default {
         available_for_receipt: true,
         available_for_payment: true
       }
-      if (this.kind === 'platforms') this.form.client_request_id = window.crypto.randomUUID()
+      if (['platforms', 'carriers'].includes(this.kind)) this.form.client_request_id = window.crypto.randomUUID()
       this.formParentName = parent ? parent[this.nameField] : ''
       this.dialogVisible = true
       this.clearValidation()
@@ -537,7 +551,11 @@ export default {
         }
         const f = this.form
         let payload
-        if (this.kind === 'categories') {
+        if (this.kind === 'carriers') {
+          payload = { id: f.id, name: f.name, code: f.code || null, sort: f.sort, status: f.status }
+          if (f.id) payload.expected_version = f.business_version
+          else payload.client_request_id = f.client_request_id
+        } else if (this.kind === 'categories') {
           payload = {
             id: f.id,
             category_code: f.category_code,
@@ -1169,5 +1187,75 @@ export default {
 
 .base-archive-dialog .el-form-item {
   margin-bottom: 16px;
+}
+
+.carrier-dialog-shell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-top: 80px;
+  box-sizing: border-box;
+}
+.carrier-archive-dialog {
+  display: flex;
+  flex-direction: column;
+  margin: 0 !important;
+  min-height: 596px;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 112px);
+}
+.carrier-archive-dialog .el-dialog__header {
+  flex-shrink: 0;
+  padding: 20px 24px;
+}
+.carrier-archive-dialog .el-dialog__title {
+  font-size: 18px;
+  line-height: 22px;
+}
+.carrier-archive-dialog .el-dialog__body {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  padding: 20px 24px;
+  overflow-y: auto;
+}
+.carrier-archive-dialog .dialog-header-banner {
+  min-height: 78px;
+  padding: 14px 16px;
+  margin-bottom: 24px;
+  box-sizing: border-box;
+}
+.carrier-archive-dialog .banner-title { font-size: 16px; }
+.carrier-archive-dialog .banner-sub { font-size: 13px; }
+.carrier-archive-dialog .el-form-item { margin-bottom: 24px; }
+.carrier-archive-dialog .el-form-item__label {
+  padding-bottom: 8px;
+  font-size: 14px;
+  line-height: 20px;
+}
+.carrier-archive-dialog .el-input__inner {
+  height: 40px;
+  line-height: 40px;
+}
+.carrier-archive-dialog .el-input__inner:focus { border-color: #008b4b; }
+.carrier-archive-dialog .el-radio__input.is-checked .el-radio__inner {
+  border-color: #008b4b;
+  background: #008b4b;
+}
+.carrier-archive-dialog .el-radio__input.is-checked + .el-radio__label,
+.carrier-archive-dialog .el-radio__input.is-checked + .el-radio__label .radio-label-text { color: #008b4b; }
+.carrier-archive-dialog .el-radio__inner:hover { border-color: #008b4b; }
+.carrier-archive-dialog .el-input-number__increase,
+.carrier-archive-dialog .el-input-number__decrease { line-height: 19px; }
+.carrier-archive-dialog .field-help { margin-top: 6px; font-size: 13px; }
+.carrier-archive-dialog .form-grid-2col { gap: 32px; }
+.carrier-archive-dialog .status-radio-group { height: 40px; gap: 18px; }
+.carrier-archive-dialog .el-radio { margin-right: 0; }
+.carrier-archive-dialog .el-dialog__footer { flex-shrink: 0; padding: 20px 24px; }
+.carrier-archive-dialog .el-dialog__footer .el-button { height: 40px; padding: 10px 20px; font-size: 14px; }
+@media (max-width: 600px) {
+  .carrier-dialog-shell { padding: 16px 0; }
+  .carrier-archive-dialog { min-height: 0; max-height: calc(100vh - 32px); }
+  .carrier-archive-dialog .form-grid-2col { grid-template-columns: minmax(0, 1fr); gap: 0; }
 }
 </style>

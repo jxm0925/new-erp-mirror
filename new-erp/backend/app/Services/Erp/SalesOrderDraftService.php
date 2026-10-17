@@ -135,7 +135,7 @@ class SalesOrderDraftService
         abort_if($order->confirm_status === 'pending_confirmation', 422, '订单已提交确认，请勿重复提交');
         $order->load(['lines.sku', 'lines.attachments']);
         abort_if($order->lines->isEmpty(), 422, '销售订单至少需要一行明细');
-        abort_if(blank($order->default_carrier_id ?: $order->carrier_id), 422, '提交确认前必须选择快递');
+        SalesOrderFulfillmentPolicy::assertConfirmationRequirements($order);
 
         foreach ($order->lines as $line) {
             abort_if(! $this->priceIsValid($line), 422, $this->priceValidationMessage($line));
@@ -200,12 +200,10 @@ class SalesOrderDraftService
                 'field' => $field,
             ], static fn ($value) => $value !== null);
         };
-        $shippingAddress = $order->full_address
-            ?: data_get($order->shipping_address_snapshot, 'full_address')
-            ?: data_get($order->shipping_address_snapshot, 'address');
+        $requirements = SalesOrderFulfillmentPolicy::confirmationRequirements($order->attributesToArray(), $order->lines->map(fn ($line) => $line->getAttributes())->all());
         $add('DRAFT_STATUS', $order->order_status === 'draft', '订单处于草稿状态', '订单状态不是草稿，不能执行确认前检查', 'order_status');
-        $add('CUSTOMER_COMPLETE', filled($order->customer_name) && filled($order->contact_phone) && filled($shippingAddress), '客户及收货信息完整', '客户名称、联系电话或收货地址不完整', 'customer');
-        $add('DEFAULT_CARRIER_REQUIRED', filled($order->default_carrier_id ?: $order->carrier_id), '默认承运方式已选择', '请选择默认承运方式', 'default_carrier_id');
+        $add('CUSTOMER_COMPLETE', $requirements['customer_complete'] && $requirements['shipping_complete'], $requirements['requires_delivery'] ? '客户及收货信息完整' : '客户及联系信息完整', '客户名称、联系电话或实物收货地址不完整', 'customer');
+        $add('DEFAULT_CARRIER_REQUIRED', $requirements['carrier_complete'], $requirements['requires_delivery'] ? '默认承运方式已选择' : '本订单无需配送', '请选择默认承运方式', 'default_carrier_id');
         $add('ORDER_LINES_REQUIRED', $order->lines->isNotEmpty(), '订单明细已填写', '订单至少需要一行明细', 'lines');
         foreach ($order->lines as $line) {
             $prefix = "LINE_{$line->line_no}_";
@@ -242,7 +240,7 @@ class SalesOrderDraftService
         abort_if($order->confirm_status === 'pending_confirmation', 422, 'Order has already been submitted.');
         $order->load(['lines.sku', 'lines.attachments']);
         abort_if($order->lines->isEmpty(), 422, 'At least one order line is required.');
-        abort_if(blank($order->default_carrier_id ?: $order->carrier_id), 422, 'Default carrier is required before confirmation.');
+        SalesOrderFulfillmentPolicy::assertConfirmationRequirements($order);
 
         foreach ($order->lines as $line) {
             abort_if(! $this->priceIsValid($line), 422, $this->priceValidationMessage($line));

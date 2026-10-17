@@ -138,7 +138,7 @@ class InventoryAlertController extends Controller
         return response()->json(['message' => '已生成采购需求草稿，不会自动生成采购订单。', 'data' => $record]);
     }
 
-    private function perPage(Request $request): int { return min(100, max(10, (int) $request->input('per_page', 20))); }
+    private function perPage(Request $request): int { return min(100, max(10, (int) $request->input('per_page', 10))); }
     private function authorize(Request $request, string $permission): object
     {
         $auth = app(AuthContextService::class); $user = $auth->currentUser($request);

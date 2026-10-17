@@ -10,6 +10,7 @@ export const pendingInventoryContinuation = id => {
 }
 export const listInventoryContinuationCandidates = (id, params) => api.get(base(id) + '/candidates', { params })
 export const listInventoryContinuationSerials = (id, params) => api.get(base(id) + '/serials', { params })
+export const listInventoryContinuationExecutions = (id, params) => api.get(base(id) + '/executions', { params })
 const inflight = new Map()
 export const configureInventoryContinuation = (id, data) => {
   const key = storageKey(id)

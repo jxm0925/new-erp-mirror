@@ -163,7 +163,7 @@ export default {
       rows: [],
       suppliers: [],
       query: { management_scope: '', receipt_no: '', purchase_order_no: '', supplier_id: '', keyword: '', handling_status: '', handling_method: '', dateRange: [] },
-      pagination: { page: 1, per_page: 20, total: 0 },
+      pagination: { page: 1, per_page: 10, total: 0 },
       drawerVisible: false,
       selectedRow: {},
       handleForm: this.emptyHandleForm()

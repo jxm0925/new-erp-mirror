@@ -102,7 +102,7 @@ class SkuItemRelationController extends Controller
         $query = SkuItemRelation::with(['sku.product', 'item', 'unit', 'baseRelation']);
         if ($request->filled('sku_id')) $query->where('sku_id', $request->integer('sku_id'));
         if ($request->filled('status')) $query->where('status', $request->status);
-        return response()->json($query->latest()->paginate(min(100, max(5, $request->integer('per_page', 20)))));
+        return response()->json($query->latest()->paginate(min(100, max(5, $request->integer('per_page', 10)))));
     }
 
     public function store(Request $request)
@@ -266,7 +266,7 @@ class SkuItemRelationController extends Controller
                     ->orWhereHas('itemRelations', fn ($relation) => $activePrimary($relation)->whereHas('item', fn ($item) => $item->where('status', '<>', 'enabled')));
             });
         }
-        $perPage = min(100, max(5, $request->integer('per_page', 20)));
+        $perPage = min(100, max(5, $request->integer('per_page', 10)));
         $paginator = $query->paginate($perPage);
         $paginator->setCollection($paginator->getCollection()->map(function (Sku $sku) use ($audit) {
             $check = $audit->inspect($sku); $relation = $check['relations']->first();

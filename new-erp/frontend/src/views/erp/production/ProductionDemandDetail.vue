@@ -87,7 +87,7 @@ import { listUsers } from '../../../api/erp/rbac'
 
 export default {
   name: 'ProductionDemandDetail',
-  data: () => ({ loading: false, drawerVisible: false, draftQueryConsumed: false, workOrderPage: 1, workOrderPerPage: 20, workOrderTotal: 0, productionUsers: [], demand: { actions: {}, quantity: {}, product: {}, readiness: {}, create_work_order_gate: {}, work_orders: [] }, draft: { target_qty: '', planned_date: '', production_batch: '', responsible_user_legacy_id: '', production_location_name: '' } }),
+  data: () => ({ loading: false, drawerVisible: false, draftQueryConsumed: false, workOrderPage: 1, workOrderPerPage: 10, workOrderTotal: 0, productionUsers: [], demand: { actions: {}, quantity: {}, product: {}, readiness: {}, create_work_order_gate: {}, work_orders: [] }, draft: { target_qty: '', planned_date: '', production_batch: '', responsible_user_legacy_id: '', production_location_name: '' } }),
   created() { this.fetchDemand(); this.fetchProductionUsers() },
   methods: {
     async fetchDemand() { this.loading = true; try { const response = await getProductionDemand(this.$route.params.id, { page: this.workOrderPage, per_page: this.workOrderPerPage }); this.demand = response.data.data || this.demand; this.workOrderTotal = this.demand.work_orders_pagination && this.demand.work_orders_pagination.total || (this.demand.work_orders || []).length; if (!this.draftQueryConsumed && this.$route.query.draft === '1') { this.draftQueryConsumed = true; if (this.demand.actions && this.demand.actions.create_work_order === true) this.drawerVisible = true } } catch (error) { this.$message.error(error.userMessage || '生产需求加载失败') } finally { this.loading = false } },

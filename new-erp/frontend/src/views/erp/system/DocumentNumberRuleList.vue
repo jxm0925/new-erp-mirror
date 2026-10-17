@@ -564,7 +564,7 @@ export default {
       disabled: 0
     },
     page: 1,
-    perPage: 20,
+    perPage: 10,
     query: {
       document_type: '',
       keyword: '',

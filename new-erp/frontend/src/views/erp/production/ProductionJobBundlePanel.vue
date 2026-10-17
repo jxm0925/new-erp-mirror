@@ -8,7 +8,7 @@
       <div class="bundle-card-bottom"><span>{{ row.owner && (row.owner.display_name || row.owner.name) || '待接单' }} · {{ row.line_count || (row.lines || []).length }}项任务</span><el-button type="text" @click="openDetail(row.id)">查看作业</el-button></div>
     </article>
     <el-empty v-if="!loading && !rows.length" :image-size="60" description="暂无共同加工作业" />
-    <el-pagination background small layout="prev, pager, next, total" :current-page="page" :page-size="20" :total="total" @current-change="changePage" />
+    <el-pagination background small layout="prev, pager, next, total" :current-page="page" :page-size="10" :total="total" @current-change="changePage" />
 
     <el-dialog title="安排共同加工" :visible.sync="createVisible" width="1100px" append-to-body custom-class="production-bundle-dialog" :close-on-click-modal="false" :close-on-press-escape="!busy" :show-close="!busy" @closed="resetCreate">
       <el-input v-model.trim="title" size="small" maxlength="160" placeholder="作业名称（可选）" :disabled="editLocked" />
@@ -21,7 +21,7 @@
         <el-table-column label="计划数量" min-width="120"><template slot-scope="scope">{{ quantity(scope.row.planned_base_qty !== undefined ? scope.row.planned_base_qty : scope.row.target && scope.row.target.planned_base_qty) }} {{ unitName(scope.row) }}<div v-if="scope.row.unit && scope.row.unit.no">{{ scope.row.unit.no }}</div></template></el-table-column>
         <el-table-column label="当前条件" min-width="190"><template slot-scope="scope">{{ candidateReason(scope.row) }}</template></el-table-column>
       </el-table>
-      <el-pagination background small layout="prev, pager, next, total" :current-page="candidatePage" :page-size="20" :total="candidateTotal" @current-change="changeCandidatePage" />
+      <el-pagination background small layout="prev, pager, next, total" :current-page="candidatePage" :page-size="10" :total="candidateTotal" @current-change="changeCandidatePage" />
       <div class="selected-bundle-tasks"><div class="bundle-heading"><strong>已选 {{ selectedRows.length }}项</strong></div><div v-for="row in selectedRows" :key="row.task_id" class="selected-bundle-row"><span>{{ row.work_order && row.work_order.no || row.work_order_no }} · {{ row.item && row.item.name || row.task_no }}</span><el-button type="text" :disabled="editLocked" @click="toggleCandidate(row,false)">移除</el-button></div></div>
       <span slot="footer" class="bundle-dialog-footer"><span>已选 {{ selectedRows.length }}项任务</span><div><el-button :disabled="busy" @click="createVisible=false">取消</el-button><el-button type="success" :loading="busy" :disabled="!pending && (selectedRows.length<2 || selectedRows.length>20)" @click="create">{{ pending ? '重试安排' : '确认安排' }}</el-button></div></span>
     </el-dialog>
@@ -54,7 +54,7 @@ export default {
       if (!this.workOrder.id) return
       const sequence = this.listSequence = (this.listSequence || 0) + 1
       this.loading = true
-      try { const response = await listJobBundles({ view: 'all', work_order_id: this.workOrder.id, keyword: this.keyword.trim(), page: this.page, per_page: 20 }); if (sequence === this.listSequence) { this.rows = response.data.data || []; this.total = Number(response.data.total || 0) } }
+      try { const response = await listJobBundles({ view: 'all', work_order_id: this.workOrder.id, keyword: this.keyword.trim(), page: this.page, per_page: 10 }); if (sequence === this.listSequence) { this.rows = response.data.data || []; this.total = Number(response.data.total || 0) } }
       catch (error) { if (sequence === this.listSequence) this.$message.error(error.userMessage || '共同加工作业加载失败') }
       finally { if (sequence === this.listSequence) this.loading = false }
     },
@@ -86,7 +86,7 @@ export default {
       const sequence = this.candidateSequence = (this.candidateSequence || 0) + 1
       this.candidateLoading = true
       try {
-        const response = await jobBundleCandidates({ page: this.candidatePage, per_page: 20, keyword: this.candidateKeyword.trim(), work_order_id: this.currentOrderOnly ? this.workOrder.id : undefined })
+        const response = await jobBundleCandidates({ page: this.candidatePage, per_page: 10, keyword: this.candidateKeyword.trim(), work_order_id: this.currentOrderOnly ? this.workOrder.id : undefined })
         if (sequence === this.candidateSequence && this.createVisible) { this.candidates = response.data.data || []; this.candidateTotal = Number(response.data.total || 0) }
       } catch (error) { if (sequence === this.candidateSequence) this.$message.error(error.userMessage || '候选任务加载失败') }
       finally { if (sequence === this.candidateSequence) this.candidateLoading = false }

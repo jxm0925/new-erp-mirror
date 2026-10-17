@@ -7,6 +7,7 @@
       <el-alert v-for="(issue,index) in messages" :key="`${issue.code}-${index}`" :title="issueTitle(issue)" type="warning" :closable="false" class="plan-issue" />
       <article v-for="operation in plan.operations || []" :key="operation.routing_operation_id" class="operation-output-card">
         <h4>{{ operation.sequence }} · {{ operation.operation_name || '工序' }}</h4>
+        <el-table v-if="operation.output_kind === 'cutting_components'" :data="operation.component_requirements || []" size="small" border empty-text="尚无下料明细"><el-table-column label="原材料" min-width="160"><template slot-scope="{row}">{{ row.raw_item_name }}<small class="component-raw-code">{{ row.raw_item_code }}</small></template></el-table-column><el-table-column label="加工尺寸" min-width="180"><template slot-scope="{row}">{{ componentDimensions(row.dimensions) }}</template></el-table-column><el-table-column label="计划件数" min-width="100"><template slot-scope="{row}">{{ row.required_piece_qty }} {{ row.cutting_mode === 'length' ? '段' : '块' }}</template></el-table-column></el-table>
         <div v-for="row in operation.outputs || []" :key="row.operation_output_line_uuid" class="operation-output-row">
           <div class="operation-output-item"><strong>{{ row.item_code || row.item_code_snapshot }}</strong><span>{{ row.item_name || row.item_name_snapshot }}</span><small>{{ row.spec || row.spec_snapshot || '—' }}</small><el-tag size="mini" :type="row.output_scope === 'intermediate' ? 'info' : 'success'">{{ row.output_scope === 'intermediate' ? '工序中间产出' : '工单产出' }}</el-tag></div>
           <div><label>产出类型</label>{{ outputRole(row.output_role) }}</div>
@@ -15,7 +16,7 @@
           <div><label>完成去向</label>{{ outputMode(row.output_mode) }}</div>
           <div><label>不入库可继续</label>{{ row.allow_continue_without_warehouse === true ? '是' : row.allow_continue_without_warehouse === false ? '否' : '—' }}</div>
         </div>
-        <el-empty v-if="!(operation.outputs || []).length" :image-size="40" description="该工序未指定独立产出" />
+        <el-empty v-if="operation.output_kind !== 'cutting_components' && !(operation.outputs || []).length" :image-size="40" description="该工序未指定独立产出" />
       </article>
       <el-empty v-if="!loading && !(plan.operations || []).length" :image-size="55" description="尚无工序产出计划" />
     </template>
@@ -40,6 +41,7 @@ export default {
   watch:{'workOrder.business_version':{immediate:true,handler(){if(this.workOrder.id)this.load()}}},
   beforeDestroy(){this.loadSequence++},
   methods:{
+    componentDimensions(value){const d=value || {};return [d.length_mm,d.width_mm,d.thickness_mm].filter(v=>v!=null).join(' × ')+' mm'},
     issueTitle(issue){
       const operation=(this.plan?.operations || []).find(row=>Number(row.routing_operation_id)===Number(issue.routing_operation_id))
       const output=(operation?.outputs || []).find(row=>issue.output_rule_key ? row.output_rule_key===issue.output_rule_key : Number(row.item_id)===Number(issue.details?.item_id))

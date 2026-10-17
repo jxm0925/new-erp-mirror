@@ -13,6 +13,12 @@ export const claimAssignmentTask = (id, data) => api.post(base + '/tasks/' + id 
 export const listTaskCollaboratorCandidates = (id, params) => api.get(base + '/tasks/' + id + '/collaborator-candidates', { params })
 export const addTaskCollaborators = (id, data) => api.post(base + '/tasks/' + id + '/collaborators', data)
 
+export function pendingProductionDecision(key) {
+  let actor = 0
+  try { actor = Number(JSON.parse(localStorage.getItem('erp_user') || '{}').legacy_id || 0) } catch (_) { /* No stored profile. */ }
+  try { return JSON.parse(localStorage.getItem('erp_pending_production_' + actor + '_' + key) || 'null')?.payload || null } catch (_) { return null }
+}
+
 export function executeProductionDecision(key, data, send) {
   const rawUser = localStorage.getItem('erp_user')
   let actor = 0
@@ -28,6 +34,7 @@ export function executeProductionDecision(key, data, send) {
   }).catch(error => {
     const status = Number(error.response?.status || 0)
     if (status >= 400 && status < 500 && error.errorCode !== 'command_processing') localStorage.removeItem(storageKey)
+    error.pendingCommand = Boolean(localStorage.getItem(storageKey))
     throw error
   })
 }

@@ -35,7 +35,7 @@ export default {
     canRecover () { return !!this.pending && this.$can('production.work_order.view') && this.$can('production.work_order.edit') }
   },
   mounted () { this.load() },
-  watch: { 'workOrder.id' () { this.load() } },
+  watch: { 'workOrder.id' () { this.load() }, 'workOrder.business_version' () { this.load() } },
   methods: {
     quantity: productionQuantity,
     unit (row) { return row.item?.base_unit_name || row.base_unit_name || '' },

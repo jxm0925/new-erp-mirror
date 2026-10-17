@@ -228,7 +228,7 @@ class SupplierCapabilityController extends Controller
 
     private function perPage(Request $request): int
     {
-        return min(100, max(5, $request->integer('per_page', 20)));
+        return min(100, max(5, $request->integer('per_page', 10)));
     }
 
     private function operatorId(Request $request): ?int

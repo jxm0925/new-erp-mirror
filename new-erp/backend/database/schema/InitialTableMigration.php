@@ -20,6 +20,7 @@ abstract class InitialTableMigration extends Migration
     public const CREATE_SQL = '';
     public const DECLARED_CHECKS = [];
     public const LEGACY_UNIQUE_INDEX = [];
+    public const ESTABLISHED_EXTENSION = false;
 
     public $withinTransaction = false;
 
@@ -78,7 +79,16 @@ abstract class InitialTableMigration extends Migration
         return static::inspectBaseline($connection, $this);
     }
 
-    private static function inspectBaseline(Connection $connection, ?self $owner = null): array
+    /** 新业务表仅由声明它的完整 owner 扩展已接纳基线，普通预检仍拒绝缺表。 */
+    final public function preflightEstablishedExtension(Connection $connection): array
+    {
+        if (!static::ESTABLISHED_EXTENSION) {
+            throw new RuntimeException('This owner does not declare an established-baseline extension.');
+        }
+        return static::inspectBaseline($connection, null, $this);
+    }
+
+    private static function inspectBaseline(Connection $connection, ?self $owner = null, ?self $newOwner = null): array
     {
         if ($connection->pretending()) {
             throw new RuntimeException('Read-only preflight requires actual metadata, not pretend results.');
@@ -137,7 +147,24 @@ abstract class InitialTableMigration extends Migration
 
         $present = array_intersect_key($tables, $definitions);
         $missing = array_diff_key($definitions, $present);
-        if ($missing && $legacyRecords) {
+        $establishedExtension = false;
+        if ($newOwner) {
+            $canonicalOwner = $definitions[$newOwner::TABLE] ?? null;
+            if (!$canonicalOwner || !$canonicalOwner::ESTABLISHED_EXTENSION
+                || static::normalizeSql($canonicalOwner::CREATE_SQL) !== static::normalizeSql($newOwner::CREATE_SQL)
+                || $canonicalOwner::DECLARED_CHECKS !== $newOwner::DECLARED_CHECKS) {
+                throw new RuntimeException('New-table owner differs from the canonical manifest.');
+            }
+            $otherDefinitions = array_diff_key($definitions, [$newOwner::TABLE => true]);
+            // 必须已登记其余全部初始定义，且只允许本 owner 尚未登记、尚未建表。
+            // 既有表丢失、其他新表缺失或旧基线尚未接纳均不能走这个入口。
+            $otherNames = array_map(fn ($table) => $manifest['tables'][$table], array_keys($otherDefinitions));
+            $establishedExtension = $otherDefinitions
+                && !isset($records[$manifest['tables'][$newOwner::TABLE]])
+                && array_diff($otherNames, array_keys($records)) === []
+                && array_diff(array_keys($missing), [$newOwner::TABLE]) === [];
+        }
+        if ($missing && $legacyRecords && !$establishedExtension) {
             throw new RuntimeException('Partial legacy database: missing '.implode(', ', array_keys($missing)));
         }
         $pendingLegacyIndex = false;
@@ -167,7 +194,7 @@ abstract class InitialTableMigration extends Migration
         }
 
         $allCanonicalRecorded = count(array_intersect_key($records, $canonical)) === count($canonical);
-        $mode = !$missing && ($legacyRecords || $allCanonicalRecorded) ? 'existing' : 'fresh';
+        $mode = $establishedExtension ? 'extension' : (!$missing && ($legacyRecords || $allCanonicalRecorded) ? 'existing' : 'fresh');
         if ($mode === 'fresh') {
             static::assertEmpty($connection, array_keys($present));
         }
@@ -260,6 +287,68 @@ abstract class InitialTableMigration extends Migration
         $cached['plan']['missing'] = array_values(array_diff($cached['plan']['missing'], [static::TABLE]));
         $cached['plan']['tables'][] = static::TABLE;
         self::$plans[$connection] = $cached;
+    }
+
+    /**
+     * 只 CREATE 当前新表，不 ALTER 原表、不回填、不写迁移记录、不关闭外键检查。
+     * Laravel 在本方法成功后正常登记 owner；DDL 成功但登记中断时可精确重试。
+     */
+    final protected function createEstablishedExtension(): void
+    {
+        $connection = $this->databaseConnection();
+        if ($connection->pretending()) {
+            $this->upAsInitialTable();
+            return;
+        }
+        $pdo = $connection->getPdo();
+        static::assertSafeSession($pdo);
+        $plan = $this->preflightEstablishedExtension($connection);
+        static::assertSameSession($connection, $pdo);
+        if ($plan['mode'] !== 'extension') {
+            $this->upAsInitialTable();
+            return;
+        }
+        if (!in_array(static::TABLE, $plan['missing'], true)) {
+            // 上次已建成但尚未登记：只核对，不重复建表，也不要求旧业务表为空。
+            return;
+        }
+        $setting = (array) $connection->selectOne('SELECT @@SESSION.lock_wait_timeout AS lock_wait_timeout', [], false);
+        $original = $setting['lock_wait_timeout'] ?? null;
+        if (!ctype_digit((string) $original) || (int) $original < 1 || (int) $original > 31536000) {
+            throw new RuntimeException('Cannot determine the original lock_wait_timeout session setting.');
+        }
+        static::assertSameSession($connection, $pdo);
+        $identity = (array) $connection->selectOne('SELECT DATABASE() AS database_name', [], false);
+        if (($identity['database_name'] ?? null) !== $plan['database']) {
+            throw new RuntimeException('Database changed after extension preflight.');
+        }
+        static::assertSameSession($connection, $pdo);
+        try {
+            static::execute($pdo, 'SET SESSION lock_wait_timeout = '.min(5, (int) $original));
+            static::assertSameSession($connection, $pdo);
+            static::execute($pdo, $this->createSql($plan['version']));
+        } finally {
+            try {
+                static::execute($pdo, 'SET SESSION lock_wait_timeout = '.(int) $original);
+            } catch (Throwable $failure) {
+                static::discardSession($connection, $pdo);
+                throw new RuntimeException('Failed to restore lock_wait_timeout; unsafe connection disconnected.', 0, $failure);
+            }
+        }
+        static::assertSameSession($connection, $pdo);
+        if (self::$plans !== null) unset(self::$plans[$connection]);
+        // 新表落地后再核对整库；不能以成功执行 CREATE 冒充完整接纳。
+        $after = $this->preflightEstablishedExtension($connection);
+        if ($after['database'] !== $plan['database']) {
+            throw new RuntimeException('Database changed after extension CREATE.');
+        }
+        static::assertSameSession($connection, $pdo);
+    }
+
+    private function upAsInitialTable(): void
+    {
+        // 调用本类初始建表实现，避免 owner 的 up() 再次进入扩展方法。
+        self::up();
     }
 
     /**

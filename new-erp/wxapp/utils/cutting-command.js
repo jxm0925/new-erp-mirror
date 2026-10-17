@@ -13,11 +13,11 @@ function businessPayload(data) {
   return JSON.stringify(canonical(result));
 }
 
-function pendingCommands(pathPrefix) {
+function pendingCommands(pathPrefix, method = 'POST') {
   const actor = wx.getStorageSync('erp_user') || {};
-  const prefix = `cutting-pending:${actor.legacy_id || actor.id || 'session'}:POST:${pathPrefix}`;
+  const prefix = `cutting-pending:${actor.legacy_id || actor.id || 'session'}:${method}:${pathPrefix}`;
   return (wx.getStorageInfoSync().keys || []).filter(key => key.startsWith(prefix)).map(key => ({
-    path: key.slice(key.indexOf(':POST:') + 6), payload: (wx.getStorageSync(key) || {}).payload,
+    path: key.slice(key.indexOf(`:${method}:`) + method.length + 2), payload: (wx.getStorageSync(key) || {}).payload,
   })).filter(row => row.payload);
 }
 

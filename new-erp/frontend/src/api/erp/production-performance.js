@@ -7,3 +7,5 @@ export const getPerformanceOrder = (id, params) => api.get(base + '/orders/' + i
 export const listPerformanceOperations = params => api.get(base + '/operations', { params })
 export const getPerformanceScope = (type, id, params) => api.get(base + '/scopes/' + type + '/' + id, { params })
 export const confirmPerformanceShares = (type, id, data) => api.put(base + '/assignments/' + type + '/' + id, data)
+export const updatePerformanceScopeRate = (type, id, data) => api.put(base + '/rates/' + type + '/' + id, data)
+export const listWorkOrderPerformanceScopes = (id, params) => api.get(base + '/work-orders/' + id + '/scopes', { params })

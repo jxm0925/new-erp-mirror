@@ -58,6 +58,22 @@ class MaterialPolicyApplicationService
                 ->where('item_id', $lockedItem->id)->where('status', 'active')
                 ->lockForUpdate()->latest('effective_at')->first();
 
+            // 仅修改物料基础资料时复用生效策略，避免制造无意义版本。
+            if ($current && blank($attributes['change_reason'] ?? null)) {
+                $keys = [...self::SNAPSHOT_KEYS, 'remark'];
+                $incoming = new ItemMaterialPolicy(array_replace([
+                    'template_code' => null,
+                    'production_execution_mode' => 'unit',
+                    'serial_generation_stage' => 'before_finished_goods_posting',
+                    'serial_generation_routing_operation_id' => null,
+                    'remark' => null,
+                ], Arr::only($attributes, $keys)));
+                if ($incoming->only($keys) === $current->only($keys)) {
+                    $this->syncOperationalItemAttributes($lockedItem, $current);
+                    return $current;
+                }
+            }
+
             abort_if($current && blank($attributes['change_reason'] ?? null), 422, '已存在生效策略，启用新版本必须填写变更原因。');
             $now = now();
             if ($current) $current->update(['status' => 'historical', 'expired_at' => $now]);

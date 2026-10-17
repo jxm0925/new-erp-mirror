@@ -70,20 +70,26 @@ Page(Object.assign({}, materialSelector.pageMethods, {
     return production.onsiteCollections({ production_target_type: this.data.targetType, production_target_id: this.data.targetId, page: this.data.onsitePage, per_page: 10 }).then(response => {
       if (sequence !== this.onsiteSequence) return;
       const result = warehouse.rows(response);
-      this.setData({ onsiteRows: result.rows.map(row => Object.assign({}, row, { accepted: '', physicals: [], serials: [], remainingText: warehouse.quantity(row.remaining_qty) })), onsiteTotal: result.total, onsiteLastPage: result.lastPage, onsiteLoading: false });
+      this.onsiteDrafts = this.onsiteDrafts || {};
+      this.setData({ onsiteRows: result.rows.map(row => {
+        const saved = this.onsiteDrafts[row.id]; const draft = saved && saved.task_version === row.task_version ? saved : { accepted: '', physicals: [], serials: [] };
+        const pending = this.data.onsitePending.some(command => command.path === `production/material-picking-tasks/${row.task_id}/onsite-receive`);
+        return Object.assign({}, row, draft, { pending, remainingText: warehouse.quantity(row.remaining_qty) });
+      }), onsiteTotal: result.total, onsiteLastPage: result.lastPage, onsiteLoading: false });
     }).catch(error => { if (sequence === this.onsiteSequence) this.setData({ onsiteLoading: false, onsiteError: error.message }); });
   },
   onsitePage(event) { const page = this.data.onsitePage + Number(event.currentTarget.dataset.delta); if (page > 0 && page <= this.data.onsiteLastPage && !this.data.busy) { this.setData({ onsitePage: page }); this.loadOnsite(); } },
-  onsiteQuantity(event) { const index = this.data.onsiteRows.findIndex(row => row.id === Number(event.currentTarget.dataset.id)); if (index >= 0) this.setData({ [`onsiteRows[${index}].accepted`]: event.detail.value }); },
+  saveOnsiteDraft(row) { this.onsiteDrafts = this.onsiteDrafts || {}; this.onsiteDrafts[row.id] = { task_version: row.task_version, accepted: row.accepted, physicals: row.physicals, serials: row.serials }; },
+  onsiteQuantity(event) { const index = this.data.onsiteRows.findIndex(row => row.id === Number(event.currentTarget.dataset.id)); const row = this.data.onsiteRows[index]; if (row && !row.pending && !this.data.busy) { this.setData({ [`onsiteRows[${index}].accepted`]: event.detail.value }); this.saveOnsiteDraft(this.data.onsiteRows[index]); } },
   selectOnsiteSource(event) {
     const row = this.data.onsiteRows.find(row => row.id === Number(event.currentTarget.dataset.id)); const kind = event.currentTarget.dataset.kind;
-    if (!row || this.data.busy) return;
+    if (!row || this.data.busy || row.pending) return;
     this.setData({ onsiteSourceOpen: true, onsiteSourceLineId: row.id, onsiteSourceMode: `onsite-${kind === 'physicals' ? 'physical' : 'serial'}`, onsiteSourceQuery: { picking_task_line_id: row.id }, onsiteSourceSelected: row[kind] });
   },
   acceptOnsiteSource(event) {
     const index = this.data.onsiteRows.findIndex(row => row.id === this.data.onsiteSourceLineId);
     const kind = this.data.onsiteSourceMode === 'onsite-physical' ? 'physicals' : 'serials';
-    if (index >= 0) this.setData({ [`onsiteRows[${index}].${kind}`]: event.detail.rows, [`onsiteRows[${index}].accepted`]: String(event.detail.rows.length) });
+    if (index >= 0 && !this.data.onsiteRows[index].pending && !this.data.busy) { this.setData({ [`onsiteRows[${index}].${kind}`]: event.detail.rows, [`onsiteRows[${index}].accepted`]: String(event.detail.rows.length) }); this.saveOnsiteDraft(this.data.onsiteRows[index]); }
     this.closeOnsiteSource();
   },
   closeOnsiteSource() { this.setData({ onsiteSourceOpen: false }); },
@@ -96,13 +102,14 @@ Page(Object.assign({}, materialSelector.pageMethods, {
   },
   receiveOnsite(event) {
     const row = this.data.onsiteRows.find(row => row.id === Number(event.currentTarget.dataset.id));
-    if (!row || this.data.busy || !this.data.canReceiveOnsite) return;
+    if (!row || this.data.busy || row.pending || !this.data.canReceiveOnsite) return;
     if (!/^\d+(\.\d{1,8})?$/.test(row.accepted) || Number(row.accepted) <= 0 || Number(row.accepted) > Number(row.remaining_qty)) return wx.showToast({ title: '请填写有效领料数量', icon: 'none' });
+    if (['root', 'sheet'].includes(row.cutting_unit_kind) && !Number.isInteger(Number(row.accepted))) return wx.showToast({ title: '整根或整张领料须填写整数', icon: 'none' });
     if ((row.material_management_mode === 'physical' && row.physicals.length !== Number(row.accepted)) || (row.serial_control_type !== 'none' && row.serials.length !== Number(row.accepted))) return wx.showToast({ title: '请选择对应实物或序列号', icon: 'none' });
     this.setData({ busy: true, onsiteError: '' });
-    production.receiveOnsite(row.task_id, { expected_version: row.task_version, lines: [{ picking_task_line_id: row.id, accepted_qty: row.accepted, physical_material_ids: row.physicals.map(item => item.id), accepted_serial_ids: row.serials.map(item => item.id) }] })
-      .then(response => { wx.showToast({ title: response.recoveredCommand ? '已确认上次领料结果' : '现场领料已确认', icon: 'success' }); return this.loadOnsite(); })
-      .catch(error => this.setData({ onsiteError: error.message })).finally(() => this.setData({ busy: false }));
+    return production.receiveOnsite(row.task_id, { expected_version: row.task_version, lines: [{ picking_task_line_id: row.id, accepted_qty: row.accepted, physical_material_ids: row.physicals.map(item => item.id), accepted_serial_ids: row.serials.map(item => item.id) }] })
+      .then(response => { if (this.onsiteDrafts) delete this.onsiteDrafts[row.id]; wx.showToast({ title: response.recoveredCommand ? '已确认上次领料结果' : '现场领料已确认', icon: 'success' }); return this.loadOnsite(); })
+      .catch(error => { const pending = materialWrites.pendingList('production/material-picking-tasks/').filter(command => command.path.endsWith('/onsite-receive')); this.setData({ onsiteError: error.message, onsitePending: pending, onsiteRows: this.data.onsiteRows.map(item => Object.assign({}, item, { pending: pending.some(command => command.path === `production/material-picking-tasks/${item.task_id}/onsite-receive`) })) }); }).finally(() => this.setData({ busy: false }));
   },
   setBlocking(event) { this.setData({ blocking: event.currentTarget.dataset.value === 'true' }); },
   setReturnType(event) { this.setData({ returnType: event.currentTarget.dataset.value }); },

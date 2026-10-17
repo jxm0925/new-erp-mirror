@@ -1862,14 +1862,20 @@ class InventoryService
         if ($transaction->source_type === 'material_picking_task' && $transaction->transaction_type === 'production_material_picking_outbound') {
             $pick = DB::table('erp_material_picking_task_lines')->where('id',(int) ($line['source_item_id'] ?? 0))
                 ->where('task_id',$transaction->source_id)->where('inventory_balance_id',$balance->id)->where('component_item_id',$item->id)->lockForUpdate()->first();
-            $ids = $pick ? (json_decode($pick->serial_snapshot ?: '{}',true)['physical_material_ids'] ?? []) : [];
-            $sum = '0'; $valid = $pick && count($ids) > 0 && count($ids) === count(array_unique($ids))
-                && bccomp($quantity,bcsub('0',(string) count($ids),8),8) === 0
-                && bccomp((string) $pick->actual_pick_qty,(string) count($ids),8) === 0;
+            $snapshot = $pick ? json_decode($pick->serial_snapshot ?: '{}',true) : [];
+            $ids = $snapshot['physical_material_ids'] ?? [];
+            $allocation = $snapshot['cutting_allocation'] ?? null;
+            $sum = '0'; $stockQty = '0.00000000'; $valid = $pick && count($ids) > 0 && count($ids) === count(array_unique($ids));
             foreach ($ids as $id) {
                 if (! $this->physicalAtBalance((int) $id,(int) $item->id,(int) $balance->id)) { $valid = false; break; }
-                $sum = bcadd($sum,(string) DB::table('erp_material_physicals')->where('id',$id)->value('total_cost'),4);
+                $physical = DB::table('erp_material_physicals')->where('id',$id)->first();
+                $size = ['shape' => $physical->shape] + json_decode($physical->dimensions ?: '{}', true);
+                $source = collect($allocation['sources'] ?? [])->firstWhere('physical_material_id', (int) $id);
+                if ($allocation && (! $source || ! ($source['picked'] ?? false) || ! FrozenCuttingStockPolicy::sameDimensions($source['dimensions'], $size))) { $valid = false; break; }
+                $stockQty = bcadd($stockQty, CuttingStockQuantityPolicy::sourceQuantity($allocation['stock_unit_kind'] ?? 'sheet', $size), 8);
+                $sum = bcadd($sum,(string) $physical->total_cost,4);
             }
+            $valid = $valid && bccomp($quantity, bcsub('0', $stockQty, 8), 8) === 0 && bccomp((string) $pick->actual_pick_qty, $stockQty, 8) === 0;
             if ($valid && bccomp(bcsub('0',$sum,4),(string) ($line['cost_amount'] ?? ''),4) === 0) return;
         }
 
@@ -1922,16 +1928,34 @@ class InventoryService
     private function preparePickingPhysicals(object $line, InventoryBalance $balance, float $quantity): ?string
     {
         if ($line->componentItem?->materialManagementMode() !== 'physical') return null;
-        if (abs($quantity - round($quantity)) > 0.00000001) throw ValidationException::withMessages(['actual_pick_qty'=>'板材实拣数量必须是整张。']);
+        $allocation = $line->serial_snapshot['cutting_allocation'] ?? null;
+        $sourceCount = $allocation['actual_source_count'] ?? (int) $quantity;
+        if (! $allocation && abs($quantity - round($quantity)) > 0.00000001) throw ValidationException::withMessages(['actual_pick_qty'=>'板材实拣数量必须是整张。']);
         $requested = $line->serial_snapshot['physical_material_ids'] ?? null;
-        if ($requested !== null && (count($requested) !== (int) $quantity || count($requested) !== count(array_unique($requested))))
+        if ($requested !== null && (count($requested) !== $sourceCount || count($requested) !== count(array_unique($requested))))
             throw ValidationException::withMessages(['physical_material_id'=>'所选实物张数与实拣数量不一致。']);
-        $physicals = DB::table('erp_material_physicals as physical')->join('erp_material_holdings as holding','holding.id','=','physical.current_holding_id')
-            ->where('physical.item_id',$line->component_item_id)->where('physical.status','AVAILABLE')
-            ->where('holding.inventory_balance_id',$balance->id)->where('holding.position_type','WAREHOUSE')->where('holding.status','ACTIVE')
+        $requirement = \App\Models\Erp\WorkOrderMaterialRequirement::findOrFail($line->material_requirement_id);
+        $stock = app(ProductionPickingStockService::class);
+        $mixed = count($allocation['members'] ?? []) > 1;
+        $physicals = $stock->physicalQuery($balance, $mixed ? null : $requirement)
             ->when($requested !== null, fn ($query) => $query->whereIn('physical.id', $requested))
-            ->orderBy('physical.id')->limit((int) $quantity)->lockForUpdate()->get(['physical.*']);
-        if ($physicals->count() !== (int) $quantity) throw ValidationException::withMessages(['physical_material_id'=>'本批次可用板材实物不足，不能用数量替代实物出库。']);
+            ->orderBy('physical.id')->limit($sourceCount)->lockForUpdate()->get(['physical.*']);
+        if ($physicals->count() !== $sourceCount) throw ValidationException::withMessages(['physical_material_id'=>'本批次可用板材实物不足，不能用数量替代实物出库。']);
+        $actualStockQuantity = '0.00000000';
+        foreach ($physicals as $physical) {
+            $actualDimensions = ['shape' => $physical->shape] + json_decode($physical->dimensions ?: '{}', true);
+            $source = collect($allocation['sources'] ?? [])->firstWhere('physical_material_id', (int) $physical->id);
+            if ($allocation && (! $source || ! ($source['picked'] ?? false) || ! FrozenCuttingStockPolicy::sameDimensions($source['dimensions'], $actualDimensions)))
+                throw ValidationException::withMessages(['physical_material_id'=>'所选实物身份或尺寸与本次冻结分配不一致，请重新配料。']);
+            if (! $mixed && ! FrozenCuttingStockPolicy::allows($stock->geometry($requirement, $balance->item?->cuttingMode() ?? 'none'), $actualDimensions))
+                throw ValidationException::withMessages(['physical_material_id'=>'所选实物尺寸或厚度不符合发布时冻结的下料要求。']);
+            foreach ($source['members'] ?? [] as $member) if (! FrozenCuttingStockPolicy::allows(
+                FrozenCuttingStockPolicy::requirement($member['dimensions'], null, $member['mode']), $actualDimensions))
+                throw ValidationException::withMessages(['physical_material_id'=>'所选实物不能容纳冻结组合成员的尺寸或厚度。']);
+            $actualStockQuantity = bcadd($actualStockQuantity, CuttingStockQuantityPolicy::sourceQuantity($allocation['stock_unit_kind'] ?? 'sheet', $actualDimensions), 8);
+        }
+        if (bccomp($actualStockQuantity, number_format($quantity, 8, '.', ''), 8) !== 0)
+            throw ValidationException::withMessages(['actual_pick_qty'=>'实际库存数量与所选整张实物面积或张数不一致。']);
         $sum = '0'; foreach ($physicals as $physical) $sum = bcadd($sum,(string) $physical->total_cost,4);
         // The persisted pick line, not a caller-provided bypass flag, authorizes these exact identities.
         $line->serial_snapshot = array_merge($line->serial_snapshot ?? [], ['physical_material_ids'=>$physicals->pluck('id')->map(fn ($id)=>(int) $id)->all()]);

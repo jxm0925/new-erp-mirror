@@ -185,6 +185,7 @@ Route::prefix('v1/erp/purchase')->group(function () {
     Route::post('returns/{id}/submit', [PurchaseReturnController::class, 'submit'])->whereNumber('id');
     Route::post('returns/{id}/approve', [PurchaseReturnController::class, 'approve'])->whereNumber('id');
     Route::post('returns/{id}/post', [PurchaseReturnController::class, 'post'])->whereNumber('id');
+    Route::post('returns/{id}/ap-offset', [PurchaseReturnController::class, 'applyApOffset'])->whereNumber('id');
     Route::post('returns/{id}/cancel', [PurchaseReturnController::class, 'cancel'])->whereNumber('id');
     Route::post('returns/{id}/close', [PurchaseReturnController::class, 'close'])->whereNumber('id');
     Route::delete('returns/{id}', [PurchaseReturnController::class, 'destroy'])->whereNumber('id');
@@ -335,6 +336,7 @@ Route::prefix('v1/erp/bom')->group(function () {
     Route::post('boms/{id}/deactivate', [BomController::class, 'deactivate'])->whereNumber('id');
     Route::post('boms/{id}/set-default', [BomController::class, 'setDefault'])->whereNumber('id');
     Route::post('boms/{id}/copy-version', [BomController::class, 'copyVersion'])->whereNumber('id');
+    Route::post('boms/{id}/restore', [BomController::class, 'restore'])->whereNumber('id');
     Route::delete('boms/{id}', [BomController::class, 'destroy'])->whereNumber('id');
 });
 
@@ -354,6 +356,7 @@ Route::prefix('v1/erp/sales')->group(function () {
     Route::get('orders/attachments/{id}/download', [SalesOrderController::class, 'downloadAttachment'])->whereNumber('id');
     Route::delete('orders/attachments/{id}', [SalesOrderController::class, 'deleteDraftAttachment'])->whereNumber('id');
     Route::get('orders/{id}', [SalesOrderController::class, 'show'])->whereNumber('id');
+    Route::get('orders/{id}/labor-summary', [SalesOrderController::class, 'laborSummary'])->whereNumber('id');
     Route::put('orders/{id}', [SalesOrderController::class, 'updateDraft'])->whereNumber('id');
     Route::post('orders/{id}/edit-impact/preview', [SalesOrderController::class, 'previewEditImpact'])->whereNumber('id');
     Route::post('orders/{id}/edit-impact/submit', [SalesOrderController::class, 'submitEditImpact'])->whereNumber('id');
@@ -368,8 +371,11 @@ Route::prefix('v1/erp/sales')->group(function () {
     Route::post('orders/{id}/cancel', [SalesOrderController::class, 'cancelWithReason'])->whereNumber('id');
     Route::get('shipments', [SalesShipmentController::class, 'index']);
     Route::post('shipments', [SalesShipmentController::class, 'store']);
+    Route::get('shipments/sources', [SalesShipmentController::class, 'sources']);
+    Route::get('shipments/sources/{fulfillmentId}/serials', [SalesShipmentController::class, 'sourceSerials'])->whereNumber('fulfillmentId');
     Route::get('shipments/{id}', [SalesShipmentController::class, 'show'])->whereNumber('id');
     Route::get('shipments/{id}/packing', [ShipmentPackingController::class, 'show'])->whereNumber('id');
+    Route::get('shipments/{id}/packing/routings', [ShipmentPackingController::class, 'routings'])->whereNumber('id');
     Route::post('shipments/{id}/packing', [ShipmentPackingController::class, 'configure'])->whereNumber('id');
     Route::post('shipments/{id}/confirm', [SalesShipmentController::class, 'confirm'])->whereNumber('id');
     Route::post('shipments/{id}/post-outbound', [SalesShipmentController::class, 'postOutbound'])->whereNumber('id');
@@ -492,10 +498,12 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::put('{type}/{id}', [ProductionProcessCatalogController::class, 'update'])->whereIn('type', ['stages', 'packaging-schemes'])->whereNumber('id');
     Route::get('performance/basis-policy', [ProductionPerformanceController::class, 'policy']);
     Route::get('performance/operations', [ProductionPerformanceController::class, 'operations']);
+    Route::get('performance/work-orders/{id}/scopes', [ProductionPerformanceController::class, 'workOrderScopes'])->whereNumber('id');
     Route::get('performance/orders', [ProductionPerformanceController::class, 'index']);
     Route::get('performance/orders/{id}', [ProductionPerformanceController::class, 'show'])->whereNumber('id');
     Route::get('performance/scopes/{scopeType}/{scopeId}', [ProductionPerformanceController::class, 'scope'])->whereNumber('scopeId');
     Route::put('performance/assignments/{scopeType}/{scopeId}', [ProductionPerformanceController::class, 'confirm'])->whereNumber('scopeId');
+    Route::put('performance/rates/{scopeType}/{scopeId}', [ProductionPerformanceController::class, 'updateScopeRate'])->whereNumber('scopeId');
     Route::get('shipment-packing/commands/result', [ShipmentPackingController::class, 'commandResult']);
     Route::get('shipment-packing/operations', [ShipmentPackingController::class, 'operations']);
     Route::get('shipment-packing/operations/{id}', [ShipmentPackingController::class, 'operation'])->whereNumber('id');
@@ -521,6 +529,7 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::get('work-orders', [ProductionWorkOrderController::class, 'workOrders']);
     Route::post('work-orders', [ProductionWorkOrderController::class, 'store']);
     Route::get('work-orders/{id}', [ProductionWorkOrderController::class, 'showWorkOrder'])->whereNumber('id');
+    Route::get('work-orders/{id}/labor-summary', [ProductionWorkOrderController::class, 'laborSummary'])->whereNumber('id');
     Route::get('work-orders/{id}/planned-outputs', [ProductionWorkOrderController::class, 'plannedOutputs'])->whereNumber('id');
     Route::get('work-orders/{id}/output-plan-preview', [ProductionWorkOrderController::class, 'outputPlanPreview'])->whereNumber('id');
     Route::get('work-orders/{id}/assembly-plan-preview', [ProductionAssemblyController::class, 'preview'])->whereNumber('id');
@@ -530,6 +539,7 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::get('work-orders/{id}/operations', [ProductionWorkOrderController::class, 'operations'])->whereNumber('id');
     Route::get('work-orders/{id}/inventory-continuation/candidates', [ProductionWorkOrderController::class, 'continuationCandidates'])->whereNumber('id');
     Route::get('work-orders/{id}/inventory-continuation/serials', [ProductionWorkOrderController::class, 'continuationSerials'])->whereNumber('id');
+    Route::get('work-orders/{id}/inventory-continuation/executions', [ProductionWorkOrderController::class, 'continuationExecutions'])->whereNumber('id');
     Route::post('work-orders/{id}/inventory-continuation', [ProductionWorkOrderController::class, 'configureContinuation'])->whereNumber('id');
     Route::get('work-orders/{id}/release-gate', [ProductionWorkOrderController::class, 'releaseGate'])->whereNumber('id');
     Route::get('work-orders/{id}/material-requirements', [ProductionWorkOrderController::class, 'materialRequirements'])->whereNumber('id');
@@ -615,12 +625,14 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::get('internal-issues/{id}', [ProductionInternalIssueController::class, 'show'])->whereNumber('id');
     Route::post('internal-issues/{id}/dispatch', [ProductionInternalIssueController::class, 'dispatch'])->whereNumber('id');
     Route::post('internal-issues/{id}/receive', [ProductionInternalIssueController::class, 'receive'])->whereNumber('id');
-    Route::get('material-picking-workspace/{action}', [ProductionMaterialExecutionController::class, 'pickingWorkspace'])->whereIn('action', ['targets', 'sources', 'options', 'serials', 'physicals', 'receipt-serials']);
+    Route::post('material-picking-workspace/cutting-preview', [ProductionMaterialExecutionController::class, 'cuttingPreview']);
+    Route::get('material-picking-workspace/{action}', [ProductionMaterialExecutionController::class, 'pickingWorkspace'])->whereIn('action', ['targets', 'sources', 'options', 'serials', 'physicals', 'receipt-serials', 'warehouse-physicals']);
     Route::get('material-execution-events/{type}/{id}', [ProductionMaterialExecutionController::class, 'materialEvents'])->whereIn('type', ['picking_task', 'delivery'])->whereNumber('id');
     Route::get('material-preparation-demands', [ProductionMaterialExecutionController::class, 'preparationDemands']);
     Route::get('public-material-preparations', [\App\Http\Controllers\Api\V1\Erp\PublicMaterialPreparationController::class, 'index']);
     Route::post('public-material-preparations', [\App\Http\Controllers\Api\V1\Erp\PublicMaterialPreparationController::class, 'store']);
     Route::get('public-material-preparations/{id}', [\App\Http\Controllers\Api\V1\Erp\PublicMaterialPreparationController::class, 'show'])->whereNumber('id');
+    Route::post('public-material-preparations/{id}/labor/{action}', [\App\Http\Controllers\Api\V1\Erp\PublicMaterialPreparationController::class, 'labor'])->whereNumber('id')->whereIn('action', ['start', 'pause', 'resume']);
     Route::post('public-material-preparations/{id}/{action}', [\App\Http\Controllers\Api\V1\Erp\PublicMaterialPreparationController::class, 'transition'])->whereNumber('id')->whereIn('action', ['assign', 'claim', 'start', 'confirm', 'cancel']);
     Route::get('material-procurement-options/{kind}', [\App\Http\Controllers\Api\V1\Erp\PublicMaterialPreparationController::class, 'procurementOptions'])->whereIn('kind', ['orders', 'items', 'categories']);
     Route::post('material-procurement-requests', [\App\Http\Controllers\Api\V1\Erp\PublicMaterialPreparationController::class, 'procure']);
@@ -630,6 +642,7 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::get('material-picking-tasks', [ProductionMaterialExecutionController::class, 'pickingTasks']);
     Route::post('material-picking-tasks', [ProductionMaterialExecutionController::class, 'createPickingTask']);
     Route::get('material-picking-tasks/{id}', [ProductionMaterialExecutionController::class, 'showPickingTask'])->whereNumber('id');
+    Route::post('material-picking-tasks/{id}/labor/{action}', [ProductionMaterialExecutionController::class, 'pickingLabor'])->whereNumber('id')->whereIn('action', ['start', 'pause', 'resume']);
     Route::post('material-picking-tasks/{id}/assign', [ProductionMaterialExecutionController::class, 'assignPickingTask'])->whereNumber('id');
     Route::post('material-picking-tasks/{id}/start', [ProductionMaterialExecutionController::class, 'startPickingTask'])->whereNumber('id');
     Route::post('material-picking-tasks/{id}/confirm', [ProductionMaterialExecutionController::class, 'confirmPickingTask'])->whereNumber('id');
@@ -637,6 +650,7 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::get('material-deliveries', [ProductionMaterialExecutionController::class, 'deliveries']);
     Route::post('material-deliveries', [ProductionMaterialExecutionController::class, 'createDelivery']);
     Route::get('material-deliveries/{id}', [ProductionMaterialExecutionController::class, 'showDelivery'])->whereNumber('id');
+    Route::post('material-deliveries/{id}/labor/{action}', [ProductionMaterialExecutionController::class, 'deliveryLabor'])->whereNumber('id')->whereIn('action', ['start', 'pause', 'resume']);
     Route::post('material-deliveries/{id}/dispatch', [ProductionMaterialExecutionController::class, 'dispatchDelivery'])->whereNumber('id');
     Route::post('material-deliveries/{id}/deliver', [ProductionMaterialExecutionController::class, 'deliverDelivery'])->whereNumber('id');
     Route::post('material-deliveries/{id}/receive', [ProductionMaterialExecutionController::class, 'receiveDelivery'])->whereNumber('id');
@@ -701,6 +715,10 @@ Route::prefix('v1/erp/aftersales')->group(function () {
 });
 
 Route::prefix('v1/erp/master')->group(function () {
+    Route::get('carriers', [\App\Http\Controllers\Api\V1\Erp\CarrierController::class, 'index']);
+    Route::post('carriers', [\App\Http\Controllers\Api\V1\Erp\CarrierController::class, 'store']);
+    Route::put('carriers/{id}', [\App\Http\Controllers\Api\V1\Erp\CarrierController::class, 'update'])->whereNumber('id');
+    Route::post('carriers/{id}/status', [\App\Http\Controllers\Api\V1\Erp\CarrierController::class, 'status'])->whereNumber('id');
     Route::get('trade-platforms', [\App\Http\Controllers\Api\V1\Erp\TradePlatformController::class, 'index']);
     Route::post('trade-platforms', [\App\Http\Controllers\Api\V1\Erp\TradePlatformController::class, 'store']);
     Route::put('trade-platforms/{id}', [\App\Http\Controllers\Api\V1\Erp\TradePlatformController::class, 'update'])->whereNumber('id');

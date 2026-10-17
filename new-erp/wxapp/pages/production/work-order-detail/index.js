@@ -104,7 +104,7 @@ Page({
   backToList() { wx.redirectTo({ url: '/pages/production/tasks/index' }); },
   openMaterials() { if (this.data.actions.view_materials) return this.showMaterials(1); },
   showMaterials(page) {
-    return production.workOrderMaterials(this.data.workOrderId, { page, per_page: 5 }).then(response => {
+    return production.workOrderMaterials(this.data.workOrderId, { page, per_page: 10 }).then(response => {
       const rows = response.data || [], more = Number(response.current_page || page) < Number(response.last_page || page);
       const content = rows.length ? rows.map(row => ((row.component || {}).name || '—') + '  ' + number((row.quantity || {}).required_qty) + ((row.unit || {}).name || '')).join('\n') : '暂无物料需求';
       wx.showModal({ title: '物料需求 · 第' + page + '页', content, confirmText: more ? '下一页' : '关闭', showCancel: more, cancelText: '关闭', success: result => { if (result.confirm && more) this.showMaterials(page + 1); } });

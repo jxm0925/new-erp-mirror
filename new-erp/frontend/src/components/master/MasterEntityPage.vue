@@ -56,7 +56,7 @@ import { listEntity, saveEntity, disableEntity } from '../../api/erp/master'
 
 export default {
   props: { config: { type: Object, required: true } },
-  data: () => ({ rows: [], total: 0, loading: false, saving: false, drawer: false, formVisible: false, selected: null, form: {}, options: {}, query: { keyword: '', status: '', page: 1, per_page: 20 } }),
+  data: () => ({ rows: [], total: 0, loading: false, saving: false, drawer: false, formVisible: false, selected: null, form: {}, options: {}, query: { keyword: '', status: '', page: 1, per_page: 10 } }),
   computed: {
     rules() {
       const result = {}
@@ -74,7 +74,7 @@ export default {
       const sources = [...new Set(this.config.fields.filter(f => f.type === 'remote').map(f => f.source))]
       await Promise.all(sources.map(async source => { const { data } = await listEntity(source, { per_page: 100 }); this.$set(this.options, source, data.data) }))
     },
-    reset() { this.query = { keyword: '', status: '', page: 1, per_page: 20 }; this.load() },
+    reset() { this.query = { keyword: '', status: '', page: 1, per_page: 10 }; this.load() },
     displayValue(row, col) {
       if (col.path) return col.path.split('.').reduce((obj, key) => obj && obj[key], row) ?? '—'
       if (col.type === 'status') return row[col.prop] === 'enabled' ? '启用' : '停用'

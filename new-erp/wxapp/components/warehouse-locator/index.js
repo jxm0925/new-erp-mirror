@@ -13,7 +13,7 @@ Component({
     loadWarehouses() {
       const sequence = this.warehouseSequence = (this.warehouseSequence || 0) + 1;
       this.setData({ warehouseLoading: true, error: '' });
-      return warehouse.locators({ mode: 'warehouse', keyword: this.data.warehouseKeyword, page: this.data.warehousePage, per_page: 5 }).then(response => {
+      return warehouse.locators({ mode: 'warehouse', keyword: this.data.warehouseKeyword, page: this.data.warehousePage, per_page: 10 }).then(response => {
         if (sequence !== this.warehouseSequence) return;
         const result = page.rows(response); this.setData({ warehouses: result.rows, warehousePage: result.page, warehouseLast: result.lastPage, warehouseTotal: result.total, warehouseLoading: false });
       }).catch(error => { if (sequence === this.warehouseSequence) this.setData({ warehouseLoading: false, error: page.errorText(error) }); });
@@ -21,7 +21,7 @@ Component({
     loadLocations() {
       const sequence = this.locationSequence = (this.locationSequence || 0) + 1;
       this.setData({ locationLoading: true, error: '' });
-      return warehouse.locators({ mode: 'location', warehouse_id: this.data.selected.warehouse_id, keyword: this.data.locationKeyword, page: this.data.locationPage, per_page: 5 }).then(response => {
+      return warehouse.locators({ mode: 'location', warehouse_id: this.data.selected.warehouse_id, keyword: this.data.locationKeyword, page: this.data.locationPage, per_page: 10 }).then(response => {
         if (sequence !== this.locationSequence) return;
         const result = page.rows(response); this.setData({ locations: result.rows.map(row => Object.assign({}, row, { areaName: ({ raw: '原料区', finished: '成品区' })[row.area] || row.area || '' })),
           locationPage: result.page, locationLast: result.lastPage, locationTotal: result.total, locationLoading: false });

@@ -193,7 +193,7 @@ Page({
     this.setData({ loading: true });
     return Promise.all([
       production.masterOrder(this.data.id),
-      production.masterOrderWorkOrders(this.data.id, { page: 1, per_page: 50 }),
+      production.masterOrderWorkOrders(this.data.id, { page: 1, per_page: 10 }),
     ]).then(([detail, orders]) => {
       this.setData({ master: view(detail.data || {}, orders.data || []), loading: false });
     }).catch((error) => {

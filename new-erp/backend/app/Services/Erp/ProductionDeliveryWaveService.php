@@ -103,7 +103,7 @@ final class ProductionDeliveryWaveService
         $query->whereHas('deliveryTasks.lines.delivery.workOrder', fn (Builder $orders) => $this->scopeResolver->applyWorkOrderScope($orders, $scope));
         if (! empty($filters['status'])) $query->where('status', $filters['status']);
         if (! empty($filters['production_preparation_order_id'])) $query->where('production_preparation_order_id', (int) $filters['production_preparation_order_id']);
-        return $query->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 20))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
+        return $query->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 10))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
     }
 
     private function createTask(MaterialDeliveryWave $wave, ProductionPreparationOrder $prep, array $payload, object $user, array $permissions, bool $superAdmin): void

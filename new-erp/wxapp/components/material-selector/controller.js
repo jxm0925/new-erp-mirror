@@ -25,7 +25,7 @@ const definition = {
     fetchPage(page) {
       const sequence = this.requestSequence = (this.requestSequence || 0) + 1;
       this.setData({ loading: true, error: '', rows: [], page });
-      const query = { mode: this.properties.mode, keyword: this.data.keyword.trim(), page, per_page: 20 };
+      const query = { mode: this.properties.mode, keyword: this.data.keyword.trim(), page, per_page: 10 };
       if (this.data.categoryId !== '') query.category_id = this.data.categoryId;
       return production.materialOptions(this.properties.taskId, this.properties.targetType, this.properties.targetId, query)
         .then((response) => {

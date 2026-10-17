@@ -57,7 +57,7 @@
             </div>
           </template></el-table-column>
           <el-table-column label="顺序" width="120"><template slot-scope="s"><div class="sequence-control"><el-button type="success" plain size="mini" :icon="expanded.includes(s.row.key)?'el-icon-minus':'el-icon-plus'" :aria-label="(expanded.includes(s.row.key)?'收起':'展开')+'第'+s.row.sequence+'道工序设置'" @click="toggleOperation(s.row)" /><el-input :value="s.row.sequence" disabled size="small" /></div></template></el-table-column>
-          <el-table-column label="工序" min-width="160"><template slot-scope="s"><div class="operation-select-field"><el-select v-model="s.row.operation_id" :disabled="viewOnly" filterable remote :remote-method="searchOperations" size="small"><el-option v-for="o in operations" :key="o.id" :label="o.operation_name" :value="o.id" class="operation-select-option"><div class="operation-option"><span>{{ o.operation_name }}</span><el-tag v-if="isPublic(o.is_public)" size="mini" type="success">公共工序</el-tag></div></el-option></el-select><el-tag v-if="operationIsPublic(s.row)" size="mini" type="success" class="selected-operation-tag">公共工序</el-tag></div></template></el-table-column>
+          <el-table-column label="工序" min-width="160"><template slot-scope="s"><div class="operation-select-field"><el-input :value="operationName(s.row)" :disabled="viewOnly" readonly suffix-icon="el-icon-search" placeholder="请选择工序" size="small" @click.native="openOperationPicker(s.row)" @keydown.enter.native.prevent="openOperationPicker(s.row)" /><el-tag v-if="operationIsPublic(s.row)" size="mini" type="success" class="selected-operation-tag">公共工序</el-tag></div></template></el-table-column>
           <el-table-column label="阶段 / 场景" min-width="125"><template slot-scope="s">{{ catalogName('stages',s.row.production_stage_id) || '未设置阶段' }}<div class="setting-note">{{ s.row.execution_context==='shipment'?'发货作业':'生产工序' }}</div></template></el-table-column>
           <el-table-column label="用料" min-width="65"><template slot-scope="s">{{ s.row.execution_context==='shipment'?s.row.packaging_materials.length:incomingRules(s.row).length }} 种</template></el-table-column>
           <el-table-column label="产出" min-width="140"><template slot-scope="s"><template v-if="s.row.output_rules && s.row.output_rules.length"><div v-for="rule in s.row.output_rules" :key="rule.output_rule_key">{{ rule.item_name_snapshot || rule.item_name || itemName(rule.item_id) }}</div></template><template v-else>{{ itemName(s.row.output_item_id) || '—' }}</template></template></el-table-column>
@@ -72,15 +72,17 @@
     <product-sku-picker ref="productPicker" @select="selectProduct" />
     <production-process-catalog-panel ref="processCatalog" :launchers="false" @select="selectCatalog" @updated="rememberCatalog" />
     <routing-output-rules-dialog ref="outputRules" @confirm="applyOutputRules" />
+    <system-record-picker :visible.sync="operationPickerOpen" type="operations" :multiple="false" :value="operationPickerValue" @confirm="selectOperation" />
   </section>
 </template>
 <script>
 import cachedPageRoute from '@/utils/cachedPageRoute'
-import { reserveProductionNumber, searchProductionOptions, getProductionRouting, createProductionRouting, updateProductionRouting, activateProductionRouting } from '../../../api/erp/production'
+import { reserveProductionNumber, getProductionRouting, createProductionRouting, updateProductionRouting, activateProductionRouting } from '../../../api/erp/production'
 import PurchaseItemPicker from '@/components/purchase/PurchaseItemPicker.vue'
 import ProductSkuPicker from '@/components/sales/ProductSkuPicker.vue'
 import ProductionProcessCatalogPanel from './ProductionProcessCatalogPanel.vue'
 import RoutingOutputRulesDialog from './RoutingOutputRulesDialog.vue'
+import SystemRecordPicker from '@/components/system/SystemRecordPicker.vue'
 import { executeProductionDecision } from '../../../api/erp/production-assignments'
 const uuid = () => window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return (c==='x'?r:(r&3|8)).toString(16)})
 const emptyPercent = value => value === '' || value === null || value === undefined
@@ -90,17 +92,18 @@ const validPercent = value => emptyPercent(value) || (/^\d{1,3}(?:\.\d{1,4})?$/.
 const asBoolean = value => value === true || value === 1 || value === '1'
 export default {
   mixins: [cachedPageRoute],
-  name:'ProductionRoutingForm', components:{PurchaseItemPicker,ProductSkuPicker,ProductionProcessCatalogPanel,RoutingOutputRulesDialog},
-  data:()=>({loading:false,sessionId:'',reservationToken:'',savedId:null,operations:[],items:{},catalogs:{stages:{},'packaging-schemes':{}},expanded:[],pickerTarget:null,catalogTarget:null,pendingSave:null,pendingActivation:null,
+  name:'ProductionRoutingForm', components:{PurchaseItemPicker,ProductSkuPicker,ProductionProcessCatalogPanel,RoutingOutputRulesDialog,SystemRecordPicker},
+  data:()=>({loading:false,sessionId:'',reservationToken:'',savedId:null,operations:[],operationPickerOpen:false,operationPickerTarget:null,operationPickerValue:[],items:{},catalogs:{stages:{},'packaging-schemes':{}},expanded:[],pickerTarget:null,catalogTarget:null,pendingSave:null,pendingActivation:null,
     outputModes:{flow_only:'直接交接',warehouse_optional:'可选入库',warehouse_required:'合格后入库'},
     supplyModes:{dedicated_delivery:'专单配送',workstation_stock:'工位库存',no_per_order_delivery:'无需逐单配送'},
     form:{routing_no:'正在生成…',routing_name:'',output_item_id:null,product_id:null,sku_id:null,product:null,sku:null,version:1,status:'draft',is_default:false,remark:'',business_version:1,operations:[]},
     rules:{routing_name:[{required:true,message:'请输入路线名称',trigger:'blur'}],output_item_id:[{required:true,message:'请选择产出物料',trigger:'change'}]}}),
   computed:{id(){return this.savedId || this.pageRoute.params.id},viewOnly(){return (Boolean(this.pageRoute.params.id)&&!this.pageRoute.path.endsWith('/edit')) || this.form.status!=='draft'},title(){return this.id?(this.viewOnly?'查看工艺路线':'编辑工艺路线'):'新增工艺路线'},canManagePerformance(){return this.$can('production.performance.manage')}},
-  async created(){await this.searchOperations();if(this.id)await this.load();else await this.reserve()},
+  async created(){if(this.id)await this.load();else await this.reserve()},
   methods:{
     statusText(v){return({draft:'草稿',active:'已生效',retired:'已退役',disabled:'已退役'})[v]||v},
     isPublic(value){return asBoolean(value)},
+    operationName(row){return this.operations.find(operation=>Number(operation.id)===Number(row.operation_id))?.operation_name||''},
     operationIsPublic(row){const operation=this.operations.find(candidate=>Number(candidate.id)===Number(row.operation_id));return asBoolean(operation&&operation.is_public!==undefined?operation.is_public:row.is_public??row.operation?.is_public)},
     itemName(id){const item=this.items[id];return item?item.item_name:(id?`物料 ${id}`:'')},
     itemUnit(id){const item=this.items[id]||{};const unit=item.unit?.standard_unit||item.unit?.standardUnit||item.unit||item.inventory_unit;return unit?.symbol||unit?.unit_name||unit?.unit_code||item.base_unit_name||'—'},
@@ -109,11 +112,13 @@ export default {
     catalogName(type,id){return (this.catalogs[type][id]||{}).name||(id?`档案 ${id}`:'')},
     openCatalog(type,row=null){if(this.viewOnly)return;this.catalogTarget=row?{type,row}:null;this.$refs.processCatalog.open(type,{mode:row?'select':'manage',selected:row?(this.catalogs[type][type==='stages'?row.production_stage_id:row.packaging_scheme_id]||null):null})},
     selectCatalog({type,row}){this.rememberCatalog({type,row});if(!this.catalogTarget||this.catalogTarget.type!==type||!this.form.operations.includes(this.catalogTarget.row))return;this.$set(this.catalogTarget.row,type==='stages'?'production_stage_id':'packaging_scheme_id',row.id);this.catalogTarget=null},
-    async searchOperations(keyword=''){try{const r=await searchProductionOptions('operations',{keyword,per_page:20});const current=this.operations.filter(o=>this.form.operations.some(row=>row.operation_id===o.id));this.operations=Array.from(new Map([...current,...(r.data.data||[])].map(o=>[o.id,o])).values())}catch(e){this.$message.error(e.userMessage||'工序加载失败')}},
+    openOperationPicker(row){if(this.viewOnly||!this.form.operations.includes(row))return;this.operationPickerTarget=row;const current=this.operations.find(operation=>Number(operation.id)===Number(row.operation_id));this.operationPickerValue=current?[current]:[];this.operationPickerOpen=true},
+    selectOperation(rows){const row=this.operationPickerTarget;if(this.viewOnly||!this.form.operations.includes(row)||rows.length!==1)return;const operation=rows[0];const index=this.operations.findIndex(current=>Number(current.id)===Number(operation.id));if(index<0)this.operations.push(operation);else this.$set(this.operations,index,operation);row.operation_id=operation.id},
     async reserve(){this.loading=true;this.sessionId=uuid();try{const r=await reserveProductionNumber('routing',this.sessionId,this.pageRoute.path);this.form.routing_no=r.data.data.document_no;this.reservationToken=r.data.data.reservation_token;this.addOperation()}catch(e){this.$message.error(e.userMessage||'编号生成失败')}finally{this.loading=false}},
     async load(){this.loading=true;try{const r=await getProductionRouting(this.id);this.applyData(r.data.data)}catch(e){this.$message.error(e.userMessage||'路线加载失败')}finally{this.loading=false}},
     applyData(data){
       this.rememberItem(data.output_item)
+      ;(data.packaging_material_items||[]).forEach(item=>this.rememberItem(item))
       const byId=new Map((data.operations||[]).map(x=>[Number(x.id),`op-${x.id}`]))
       const rows=(data.operations||[]).map(x=>{
         this.rememberItem(x.output_item)
@@ -136,7 +141,7 @@ export default {
     canMove(index,delta){const next=index+delta;return next>=0&&next<this.form.operations.length&&this.form.operations[index].execution_context===this.form.operations[next].execution_context},
     move(index,delta){if(!this.canMove(index,delta))return;const row=this.form.operations.splice(index,1)[0];this.form.operations.splice(index+delta,0,row);this.renumber()},
     orderContexts(){this.form.operations=[...this.form.operations.filter(row=>row.execution_context!=='shipment'),...this.form.operations.filter(row=>row.execution_context==='shipment')];this.renumber()},
-    changeExecutionContext(row,context){if(this.viewOnly||row.execution_context===context)return;if(context==='shipment'&&(row.material_supply_rules.length||this.incomingRules(row).length||(row.output_rules||[]).length)){this.$message.warning('请先清除本工序相关的生产用料和产出规则，再改为发货作业');return}if(context==='production'&&(row.packaging_scheme_id||row.packaging_materials.length)){this.$message.warning('请先清除包装方案和包装用料，再改为生产工序');return}row.execution_context=context;if(context==='shipment'){row.output_mode='flow_only';row.allow_continue_without_warehouse=true}this.orderContexts()},
+    changeExecutionContext(row,context){if(this.viewOnly||row.execution_context===context)return;if(context==='shipment'&&(row.material_supply_rules.length||this.incomingRules(row).length||(row.output_rules||[]).length)){this.$message.warning('请先清除本工序相关的生产用料和产出规则，再改为发货作业');return}if(context==='production'&&(row.packaging_scheme_id||row.packaging_materials.length)){this.$message.warning('请先清除包装方案和包装用料，再改为生产工序');return}row.execution_context=context;if(context==='shipment'){row.output_item_id=null;row.output_mode='flow_only';row.allow_continue_without_warehouse=true}this.orderContexts()},
     renumber(){this.form.operations.forEach((r,i)=>{r.sequence=(i+1)*10})},
     onExpand(row,expanded){this.expanded=expanded.map(x=>x.key)},
     toggleOperation(row){this.expanded=this.expanded.includes(row.key)?this.expanded.filter(key=>key!==row.key):[...this.expanded,row.key]},
@@ -163,7 +168,7 @@ export default {
         operations:this.form.operations.map(row=>{
           const operation={operation_id:row.operation_id,production_stage_id:row.production_stage_id||null,execution_context:row.execution_context,sequence:row.sequence,is_key_operation:row.is_key_operation,
             parameters:{...(row.parameters||{}),text:row.parameters_text},remark:row.remark||null,setup_standard_minutes:Number(row.setup_standard_minutes),unit_standard_minutes:Number(row.unit_standard_minutes),standard_minutes:Number(row.unit_standard_minutes),
-            output_item_id:row.output_item_id,output_mode:row.output_mode,quality_mode:row.quality_mode,work_mode:row.work_mode,allow_continue_without_warehouse:row.allow_continue_without_warehouse}
+            output_item_id:row.execution_context==='shipment'?null:row.output_item_id,output_mode:row.output_mode,quality_mode:row.quality_mode,work_mode:row.work_mode,allow_continue_without_warehouse:row.allow_continue_without_warehouse}
           // 保留明细标识，后端可按原节点保留当前账号不可见的绩效配置。
           if(Number(row.id)>0)operation.id=Number(row.id)
           if(Object.hasOwn(row,'output_rules'))operation.output_rules=(row.output_rules||[]).map(rule=>({output_rule_key:rule.output_rule_key,item_id:Number(rule.item_id),output_role:rule.output_role,base_qty_per_reference_unit:String(rule.base_qty_per_reference_unit),quality_mode:rule.quality_mode,output_mode:rule.output_mode,allow_continue_without_warehouse:!!rule.allow_continue_without_warehouse,remark:rule.remark||null}))
@@ -230,29 +235,10 @@ export default {
   white-space: normal;
   line-height: 1.5;
 }
-.operation-select-field .el-select {
+.operation-select-field .el-input {
   width: 100%;
   min-width: 0;
 }
-.operation-select-option {
-  height: auto;
-  min-height: 34px;
-  padding-top: 4px;
-  padding-bottom: 4px;
-  line-height: 1.5;
-}
-.operation-option {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.operation-option > span {
-  min-width: 0;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-.operation-option .el-tag,
 .selected-operation-tag {
   flex-shrink: 0;
 }

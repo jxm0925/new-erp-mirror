@@ -12,7 +12,7 @@
         <el-table-column label="剩余可安排" min-width="130"><template slot-scope="{row}">{{ quantity(row.remaining_demand_qty) }} {{ row.base_unit_name }}</template></el-table-column>
         <el-table-column label="需求状态" min-width="100"><template slot-scope="{row}">{{ row.revision_pending ? '待确认变更' : '有效需求' }}</template></el-table-column>
       </el-table>
-      <el-pagination background small layout="prev,pager,next,total" :current-page="page" :page-size="20" :total="total" @current-change="changePage" />
+      <el-pagination background small layout="prev,pager,next,total" :current-page="page" :page-size="10" :total="total" @current-change="changePage" />
     </section>
     <section class="panel">
       <header><h2>本次下料安排</h2><span>{{ selectedRows.length }}条需求</span></header>
@@ -31,7 +31,7 @@
         <el-table-column label="原料需求量" min-width="130"><template slot-scope="{row}">{{ quantity(row.input_required_base_qty) }} {{ row.input_base_unit_name }}</template></el-table-column>
         <el-table-column label="选择" min-width="150"><template slot-scope="{row}"><el-button v-if="row.eligible" size="small" type="success" :disabled="editLocked" @click="chooseProducer(row)">选择</el-button><span v-else>{{ row.reason }}</span></template></el-table-column>
       </el-table>
-      <el-pagination background small layout="prev,pager,next,total" :current-page="producerPage" :page-size="20" :total="producerTotal" @current-change="changeProducerPage" />
+      <el-pagination background small layout="prev,pager,next,total" :current-page="producerPage" :page-size="10" :total="producerTotal" @current-change="changeProducerPage" />
       <span slot="footer"><el-button @click="producerVisible=false">取消</el-button></span>
     </el-dialog>
   </section>
@@ -60,7 +60,7 @@ export default {
     async loadDemands () {
       const sequence = this.sequence = (this.sequence || 0) + 1
       this.loading = true
-      try { const { data } = await listCuttingDemands({ page: this.page, per_page: 20, status: 'ACTIVE', keyword: this.keyword.trim() }); if (sequence === this.sequence) { this.demands = data.data || []; this.total = Number(data.meta?.total || 0) } }
+      try { const { data } = await listCuttingDemands({ page: this.page, per_page: 10, status: 'ACTIVE', keyword: this.keyword.trim() }); if (sequence === this.sequence) { this.demands = data.data || []; this.total = Number(data.meta?.total || 0) } }
       catch (error) { if (sequence === this.sequence) this.$message.error(error.userMessage || '正式需求加载失败') }
       finally { if (sequence === this.sequence) this.loading = false }
     },
@@ -78,7 +78,7 @@ export default {
     async loadProducers () {
       const sequence = this.producerSequence = (this.producerSequence || 0) + 1
       this.producerLoading = true
-      try { const { data } = await listCuttingDemandProducers(this.producerDemandId, { page: this.producerPage, per_page: 20, keyword: this.producerKeyword.trim() }); if (sequence === this.producerSequence && this.producerVisible) { this.producers = data.data || []; this.producerTotal = Number(data.meta?.total || 0) } }
+      try { const { data } = await listCuttingDemandProducers(this.producerDemandId, { page: this.producerPage, per_page: 10, keyword: this.producerKeyword.trim() }); if (sequence === this.producerSequence && this.producerVisible) { this.producers = data.data || []; this.producerTotal = Number(data.meta?.total || 0) } }
       catch (error) { if (sequence === this.producerSequence) this.$message.error(error.userMessage || '生产来源加载失败') }
       finally { if (sequence === this.producerSequence) this.producerLoading = false }
     },

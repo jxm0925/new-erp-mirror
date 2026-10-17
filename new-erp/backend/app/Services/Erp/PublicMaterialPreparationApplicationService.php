@@ -19,7 +19,7 @@ final class PublicMaterialPreparationApplicationService
         $query = $this->visibleQuery($user, $permissions, $admin)->with('warehouse')->withCount('tasks')->orderByDesc('id');
         if (! empty($filters['status'])) $query->where('status', $filters['status']);
         if (! empty($filters['keyword'])) $query->where('task_no', 'like', '%'.$filters['keyword'].'%');
-        return $query->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 20))));
+        return $query->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 10))));
     }
 
     public function show(int $id, array $filters, object $user, array $permissions, bool $admin): array
@@ -32,9 +32,10 @@ final class PublicMaterialPreparationApplicationService
             ->join('erp_work_orders as wo', 'wo.id', '=', 'task.work_order_id')->where('task.public_preparation_task_id', $job->id)
             ->join('erp_items as item', 'item.id', '=', 'line.component_item_id')
             ->orderBy('line.id')->select('line.*', 'wo.work_order_no', 'task.task_no', 'item.item_code', 'item.item_name', 'item.spec', 'item.material_management_mode')
-            ->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 20))));
+            ->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 10))));
         $picker = $job->assigned_picker_legacy_id ? DB::table('erp_legacy_admin_users')->where('legacy_id', $job->assigned_picker_legacy_id)->first(['nickname', 'username']) : null;
-        return [...$job->toArray(), 'assigned_picker_name' => $picker?->nickname ?: $picker?->username, 'children' => $tasks->toArray(), 'lines' => $lines->toArray()];
+        return [...$job->toArray(), 'assigned_picker_name' => $picker?->nickname ?: $picker?->username, 'children' => $tasks->toArray(), 'lines' => $lines->toArray(),
+            'labor' => app(WarehouseLaborSessionService::class)->projection('public_preparation', $id, $user, $permissions, $admin, $filters)];
     }
 
     public function create(array $payload, object $user, array $permissions, bool $admin): array
@@ -66,6 +67,7 @@ final class PublicMaterialPreparationApplicationService
     {
         $this->permission($permissions, ['assign' => 'assign', 'claim' => 'pick', 'start' => 'pick', 'confirm' => 'pick', 'cancel' => 'cancel'][$action]);
         return $this->commands->run('public_preparation_'.$action, $payload, $user, function () use ($id, $action, $payload, $user, $permissions, $admin) {
+            app(WarehouseLaborSessionService::class)->lockEmployee((int) ($user->legacy_id ?? $user->id));
             $job = $this->visibleQuery($user, $permissions, $admin)->lockForUpdate()->findOrFail($id);
             if ((int) $payload['expected_version'] !== (int) $job->business_version) throw new WorkOrderDomainException('version_conflict', '公共配料任务已变化，请刷新后重试。', 409);
             $tasks = $job->tasks()->orderBy('id')->lockForUpdate()->get();
@@ -76,6 +78,7 @@ final class PublicMaterialPreparationApplicationService
             if (in_array($action, ['claim', 'start', 'confirm'], true) && $job->assigned_picker_legacy_id && (int) $job->assigned_picker_legacy_id !== $actorId)
                 throw new WorkOrderDomainException('picker_mismatch', '该公共配料任务已由其他人领取。', 403);
             if ($action === 'claim') $payload['assigned_picker_legacy_id'] = $actorId;
+            if (in_array($action, ['assign', 'cancel'], true)) app(WarehouseLaborSessionService::class)->businessAction('public_preparation', $job, $action, $user);
             if ($action === 'confirm') {
                 $lineIds = DB::table('erp_material_picking_task_lines')->whereIn('task_id', $tasks->pluck('id'))->pluck('id');
                 $rows = collect($payload['lines']);
@@ -111,8 +114,12 @@ final class PublicMaterialPreparationApplicationService
             $partial = $action === 'confirm' && DB::table('erp_material_picking_task_lines')->whereIn('task_id', $tasks->pluck('id'))->whereColumn('actual_pick_qty', '<', 'planned_pick_qty')->exists();
             $job->update(['status' => ['assign' => 'WAIT_PICK', 'claim' => 'WAIT_PICK', 'start' => 'PICKING', 'confirm' => $partial ? 'PARTIALLY_PREPARED' : 'PREPARED', 'cancel' => 'CANCELLED'][$action],
                 'assigned_picker_legacy_id' => $payload['assigned_picker_legacy_id'] ?? $job->assigned_picker_legacy_id, 'business_version' => $job->business_version + 1]);
+            if (in_array($action, ['start', 'confirm'], true)) app(WarehouseLaborSessionService::class)->businessAction('public_preparation', $job, $action, $user);
             return $this->show($job->id, [], $user, $permissions, $admin);
-        }, fn ($resultId) => $this->show($resultId, [], $user, $permissions, $admin));
+        }, function ($resultId) use ($id, $user, $permissions, $admin) {
+            if ((int) $resultId !== $id) throw new WorkOrderDomainException('idempotency_hash_conflict', '提交标识不属于当前公共配料任务。', 409);
+            return $this->show($id, [], $user, $permissions, $admin);
+        });
     }
 
     private function visibleQuery(object $user, array $permissions, bool $admin)

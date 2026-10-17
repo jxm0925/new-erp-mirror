@@ -33,7 +33,7 @@ class ApprovalFlowApplicationService
                 ->orWhere('flow_name', 'like', "%{$keyword}%")
                 ->orWhere('business_scene', 'like', "%{$keyword}%"));
         }
-        $page = $query->orderBy('id')->paginate(min(max((int) ($filters['per_page'] ?? 20), 1), 100));
+        $page = $query->orderBy('id')->paginate(min(max((int) ($filters['per_page'] ?? 10), 1), 100));
         $taskCounts = DB::table('erp_approval_tasks')->selectRaw('flow_template_id, count(*) total')->whereNotNull('flow_template_id')->groupBy('flow_template_id')->pluck('total', 'flow_template_id');
         $page->getCollection()->transform(function (ApprovalFlowTemplate $flow) use ($taskCounts) {
             $version = $flow->versions->first();

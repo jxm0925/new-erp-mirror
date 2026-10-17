@@ -217,7 +217,7 @@ class ApprovalTaskApplicationService
                 ->orWhere('business_no', 'like', "%{$keyword}%")->orWhere('subject', 'like', "%{$keyword}%"));
         }
         $page = $query->orderByRaw("FIELD(risk_level, 'high', 'medium', 'low')")
-            ->orderByDesc('submitted_at')->paginate(min(max((int) ($filters['per_page'] ?? 20), 1), 100));
+            ->orderByDesc('submitted_at')->paginate(min(max((int) ($filters['per_page'] ?? 10), 1), 100));
         $page->getCollection()->transform(fn (ApprovalTask $task) => $this->decorate($task, $user, $permissionCodes, $isSuperAdmin));
         // 列表展示业务对象中文名，避免直接露出 PURCHASE_ORDER 之类的编码。
         $objectNames = DB::table('erp_approval_business_objects')

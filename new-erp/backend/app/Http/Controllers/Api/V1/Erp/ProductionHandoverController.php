@@ -5,13 +5,19 @@ namespace App\Http\Controllers\Api\V1\Erp;
 use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Http\Controllers\Controller;
 use App\Services\Erp\AuthContextService;
+use App\Services\Erp\ProductionFinancialProjectionService;
 use App\Services\Erp\ProductionHandoverService;
 use Illuminate\Http\Request;
 
 class ProductionHandoverController extends Controller
 {
     public function pending(Request $request, ProductionHandoverService $service)
-    { [$user, $permissions] = $this->context($request); return response()->json(['data' => $service->pending($user, $permissions)]); }
+    {
+        $filters = $request->validate(['keyword' => 'nullable|string|max:160', 'page' => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:1|max:20']);
+        [$user, $permissions, $super] = $this->context($request);
+        return response()->json(app(ProductionFinancialProjectionService::class)->redact($service->pending($user, $permissions, $filters, $super)));
+    }
     public function accept(Request $request, int $id, ProductionHandoverService $service)
     { return $this->decide($request, $id, $service, true); }
     public function reject(Request $request, int $id, ProductionHandoverService $service)

@@ -27,7 +27,7 @@ final class ProductionJobBundleQueryService
                 ->orWhereHas('productionUnitOperation', fn ($t) => $t->where('operation_id_snapshot', $id)));
         }
         $this->search($query, $filters['keyword'] ?? '');
-        $page = $query->orderByDesc('id')->paginate(min(20, max(1, (int) ($filters['per_page'] ?? 20))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
+        $page = $query->orderByDesc('id')->paginate(min(20, max(1, (int) ($filters['per_page'] ?? 10))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
         $page->setCollection($page->getCollection()->map(function ($task) {
             try {
                 $facts = $this->compatibility->inspect($task);
@@ -52,7 +52,7 @@ final class ProductionJobBundleQueryService
         if (! empty($filters['status'])) $query->where('status', $filters['status']);
         if ($term = trim((string) ($filters['keyword'] ?? ''))) $query->where(fn ($q) => $q->where('bundle_no', 'like', '%'.addcslashes($term, '\\%_').'%')
             ->orWhere('title', 'like', '%'.addcslashes($term, '\\%_').'%')->orWhere('operation_name_snapshot', 'like', '%'.addcslashes($term, '\\%_').'%'));
-        $page = $query->orderByDesc('id')->paginate(min(20, max(1, (int) ($filters['per_page'] ?? 20))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
+        $page = $query->orderByDesc('id')->paginate(min(20, max(1, (int) ($filters['per_page'] ?? 10))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
         $page->setCollection($page->getCollection()->map(fn ($bundle) => $this->project($bundle, $user, $permissions)));
         return $page->toArray() + ['can_create' => $this->canCreate($permissions)];
     }

@@ -24,7 +24,7 @@ final class TradePlatformController extends Controller
             'root' => (clone $query)->where('p.parent_legacy_id', 0)->count(),
             'sub' => (clone $query)->where('p.parent_legacy_id', '>', 0)->count(),
         ] : null;
-        $rows = $query->orderBy('p.parent_legacy_id')->orderBy('p.sort')->orderBy('p.id')->paginate($data['per_page'] ?? 20);
+        $rows = $query->orderBy('p.parent_legacy_id')->orderBy('p.sort')->orderBy('p.id')->paginate($data['per_page'] ?? 10);
         $rows->setCollection($rows->getCollection()->map(fn ($row) => TradePlatformApplicationService::present($row)));
         return response()->json([...$rows->toArray(), ...($stats === null ? [] : ['stats' => $stats])]);
     }

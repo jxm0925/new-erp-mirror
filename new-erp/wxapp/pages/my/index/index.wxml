@@ -11,19 +11,20 @@
       </view>
       <view class="info-box">
         <view class="name-row">
-          <text class="username">{{userInfo.name ? userInfo.name : '点击登录'}}</text>
+          <text class="username">{{erpLoggedIn ? (erpUser.nickname || erpUser.username || '生产账号') : (userInfo.name || '点击登录')}}</text>
           <van-button wx:if="{{userInfo.is_login && !userInfo.user_id}}" custom-class="bind-btn" type="default" size="mini" round bind:tap="loginPop">绑定账号</van-button>
-          <view wx:if="{{userInfo.is_login && (erpUser.role_name || erpUser.nickname)}}" class="role-pill">
+          <view wx:if="{{erpLoggedIn && (erpUser.role_name || erpUser.nickname)}}" class="role-pill">
             <text>{{erpUser.role_name || erpUser.nickname}}</text>
           </view>
         </view>
         <view class="sub-row">
           <text wx:if="{{userInfo.is_login}}" class="points">个人积分：{{score || 0}}</text>
+          <text wx:elif="{{erpLoggedIn}}" class="login-tip">生产账号已登录</text>
           <text wx:else class="login-tip">登录开启生产报工与全员协同服务</text>
         </view>
       </view>
       <button
-        wx:if="{{userInfo.is_login || unifiedLoggedIn}}"
+        wx:if="{{userInfo.is_login || erpLoggedIn}}"
         class="profile-logout"
         loading="{{logoutBusy}}"
         disabled="{{logoutBusy}}"
@@ -51,7 +52,7 @@
       </view>
     </view>
     <view class="stats-divider"></view>
-    <view class="stats-item" data-url="/pages/production/my-tasks/index" data-auth="true" bindtap="navTo">
+    <view class="stats-item" data-url="/pages/production/my-tasks/index" data-auth="production" bindtap="navTo">
       <view class="stats-num stats-icon-num">
         <van-icon name="todo-list-o" size="38rpx" color="#1890ff" />
       </view>
@@ -134,7 +135,7 @@
         <text class="card-subtitle">现场报工 · 任务流转</text>
       </view>
       <view class="action-grid">
-        <view class="action-item" data-url="/pages/production/workbench/index" data-auth="true" bindtap="navTo">
+        <view class="action-item" data-url="/pages/production/workbench/index" data-auth="production" bindtap="navTo">
           <view class="action-icon-box icon-blue">
             <van-icon name="chart-trending-o" size="44rpx" color="#1890ff" />
           </view>
@@ -143,7 +144,7 @@
             <text class="action-desc">看板概况与生产趋势</text>
           </view>
         </view>
-        <view class="action-item" data-url="/pages/production/my-tasks/index" data-auth="true" bindtap="navTo">
+        <view class="action-item" data-url="/pages/production/my-tasks/index" data-auth="production" bindtap="navTo">
           <view class="action-icon-box icon-indigo">
             <van-icon name="send-gift-o" size="44rpx" color="#2f54eb" />
           </view>

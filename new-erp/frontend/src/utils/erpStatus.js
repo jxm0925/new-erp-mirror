@@ -26,6 +26,8 @@ export const STATUS_LABELS = {
   crm_clue: '线索转单',
 
   inventory: '库存备货',
+  purchase: '外购备货',
+  awaiting_purchase: '外购待到货',
   production: '生产安排',
   mixed: '库存+生产',
   non_physical_only: '仅服务或无需发货',
@@ -40,12 +42,13 @@ export const STATUS_LABELS = {
   fulfilled: '已完成',
   not_started: '未开始',
   not_shipped: '未发货',
+  partially_shipped: '部分发货',
   shipped: '已发货',
   open: '待处理',
 
   create: '创建订单',
   update: '编辑订单',
-  submit_confirmation: '提交确认前检查',
+  submit_confirmation: '确认订单',
   confirm: '正式确认订单',
   delete_draft: '删除订单草稿',
 
@@ -124,6 +127,9 @@ export const STATUS_LABELS = {
   assemble: '总装',
   assembly: '总装',
   testing: '试水',
+  water_test: '试水',
+  packing: '打包',
+  shipping: '发货',
   packaging: '打包',
   sending: '发货',
   final_assembly: '总装完成',
@@ -148,6 +154,8 @@ export const STATUS_TAG_TYPES = {
   not_planned: 'info',
   not_entered: 'info',
   inventory: 'success',
+  purchase: 'warning',
+  awaiting_purchase: 'warning',
   production: 'warning',
   mixed: 'warning',
   service: 'info',
@@ -161,6 +169,9 @@ export const STATUS_TAG_TYPES = {
   reservation_pending: 'warning',
   reserved: 'success',
   fulfilled: 'success',
+  not_shipped: 'warning',
+  partially_shipped: 'warning',
+  shipped: 'success',
   open: 'warning',
   active: 'success',
   replaced: 'info',
@@ -207,4 +218,8 @@ export function statusText(value) {
 
 export function statusTag(value) {
   return STATUS_TAG_TYPES[value] || ''
+}
+
+export function shipmentStatusText(value) {
+  return value === 'not_required' ? '无需发货' : statusText(value)
 }

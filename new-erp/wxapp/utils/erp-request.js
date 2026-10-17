@@ -50,7 +50,7 @@ function request(options) {
           return;
         }
 
-        if (response.statusCode === 401) {
+        if (response.statusCode === 401 && token && wx.getStorageSync(ERP_TOKEN_KEY) === token) {
           wx.removeStorageSync(ERP_TOKEN_KEY);
         }
         reject(normalizeError(response));

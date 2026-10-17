@@ -843,8 +843,8 @@ export default {
       this.partyLoading = true
       try {
         const response = partyType === 'customer'
-          ? await listSalesCustomers({ keyword, page: 1, per_page: 20 })
-          : await listEntity('suppliers', { keyword, page: 1, per_page: 20 })
+          ? await listSalesCustomers({ keyword, page: 1, per_page: 10 })
+          : await listEntity('suppliers', { keyword, page: 1, per_page: 10 })
         if (revision !== this.partyRevision || initRevision !== this.initRevision) return
         this.parties = (response.data.data || []).map(row => ({ id: Number(row.id), name: partyType === 'customer' ? (row.customer_name || row.customer_short_name || row.contact_name || row.customer_code) : (row.supplier_name || row.name || row.supplier_code) }))
       } catch (error) {

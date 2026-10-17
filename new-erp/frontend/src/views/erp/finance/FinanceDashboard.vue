@@ -256,13 +256,13 @@
         </el-table>
         <div class="detail-pagination-wrapper">
           <el-pagination
-            v-if="detail.rows.length > 15"
+            v-if="detail.rows.length > 10"
             small
             background
             layout="total, prev, pager, next"
             :pager-count="5"
             :current-page.sync="detailPage"
-            :page-size="15"
+            :page-size="10"
             :total="detail.rows.length"
           />
         </div>
@@ -380,8 +380,8 @@ export default {
       return count
     },
     visibleDetailRows() {
-      const start = (this.detailPage - 1) * 15
-      return this.detail.rows.slice(start, start + 15)
+      const start = (this.detailPage - 1) * 10
+      return this.detail.rows.slice(start, start + 10)
     }
   },
   mounted() {
@@ -404,7 +404,7 @@ export default {
       const seq = ++this.currencySequence
       this.currencyLoading = true
       try {
-        const response = await listFinanceCurrencies({ keyword: (query || '').trim(), per_page: 50 })
+        const response = await listFinanceCurrencies({ keyword: (query || '').trim(), per_page: 10 })
         if (seq !== this.currencySequence) return
         this.currencies = response.data?.data || []
       } catch (e) {

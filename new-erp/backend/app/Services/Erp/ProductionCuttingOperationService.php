@@ -44,7 +44,7 @@ final class ProductionCuttingOperationService
         $batchPage = DB::table('erp_cutting_settlement_batches as batch')->leftJoin('erp_material_physicals as physical','physical.id','=','batch.physical_material_id')
             ->join('erp_items as item','item.id','=','batch.input_item_id')->where('batch.cutting_order_id',$link?->cutting_order_id ?? 0)
             ->select('batch.*','physical.physical_no','physical.dimensions','item.item_name','item.item_code','item.cutting_mode')
-            ->orderBy('batch.id')->paginate(20,['*'],'batch_page',max(1,(int) ($filters['batch_page'] ?? 1)));
+            ->orderBy('batch.id')->paginate(10,['*'],'batch_page',max(1,(int) ($filters['batch_page'] ?? 1)));
         $batchId = (int) ($filters['settlement_batch_id'] ?? ($batchPage->items()[0]->id ?? 0));
         $batch = $link && $batchId ? DB::table('erp_cutting_settlement_batches as batch')
             ->leftJoin('erp_material_physicals as physical','physical.id','=','batch.physical_material_id')
@@ -61,22 +61,43 @@ final class ProductionCuttingOperationService
             'batches'=>['data'=>$batchPage->items(),'meta'=>['current_page'=>$batchPage->currentPage(),'last_page'=>$batchPage->lastPage(),'total'=>$batchPage->total()]],
             'current_batch'=>$batch,'results'=>$results,'server_now'=>now()->toISOString(),
             'technical_attachments'=>$workOrder->technical_snapshot['attachments'] ?? []];
-        if ($batch) $data['requirement'] = $this->frozenRequirement($batch, DB::table('erp_cutting_allowed_outputs')->where('cutting_order_id',$link->cutting_order_id)->first());
-        if (in_array('production.cutting.confirm',$permissions,true) && $link) {
-            $data['material_costs'] = [
-                'input'=>(string) DB::table('erp_production_cutting_inputs')->where('operation_id',$link->id)->sum('total_cost'),
-                'by_result'=>DB::table('erp_cutting_results as result')->join('erp_cutting_settlement_batches as batch','batch.id','=','result.settlement_batch_id')
-                    ->where('batch.cutting_order_id',$link->cutting_order_id)->where('result.status','CONFIRMED')
-                    ->groupBy('result.result_type')->selectRaw('result.result_type, SUM(result.total_cost) as total_cost')->get(),
-            ];
-        }
-        // Workers need quantities and provenance; financial amounts require the existing cost permission.
-        if (! in_array('production.cutting.confirm',$permissions,true)) {
-            foreach ($data['batches']['data'] as $row) unset($row->original_total_cost);
-            if ($data['current_batch']) unset($data['current_batch']->original_total_cost);
-            foreach ($data['results'] as $row) unset($row->total_cost);
-        }
-        return $data;
+        $componentMode = $link ? ($this->json($link->technical_snapshot)['output_kind'] ?? null) === ProductionCuttingComponentService::KIND
+            : strtoupper((string) ($target->stage_code_snapshot ?: $target->operation_code_snapshot)) === 'CUTTING';
+        if ($componentMode) {
+            $data['output_kind'] = ProductionCuttingComponentService::KIND;
+            $data['output'] = null;
+            $rows = $link ? $this->json($link->technical_snapshot)['requirements'] : $this->requirements($type, $id)
+                ->get(['target.id as target_requirement_id', 'target.required_piece_qty_snapshot as required_piece_qty', 'material.bom_item_id', 'material.component_item_id',
+                    'material.component_item_code_snapshot', 'material.component_item_name_snapshot', 'target.cutting_requirement_snapshot'])->map(fn ($r) => (array) $r)->all();
+            $data['component_requirements'] = $this->componentProjection($rows, $link);
+            if ($batch) {
+                $frozen = $this->json(DB::table('erp_production_cutting_inputs')->where('settlement_batch_id', $batch->id)->value('requirement_snapshot'));
+                $data['current_batch']->actual_stock_qty = $frozen['actual_stock_qty'] ?? null;
+                $data['current_batch']->stock_unit_kind = $frozen['stock_unit_kind'] ?? null;
+                $proven = collect($frozen['components'] ?? [])->keyBy('target_material_requirement_id');
+                $data['current_batch']->component_requirements = collect($data['component_requirements'])->filter(fn ($r) => $proven->has($r['target_material_requirement_id']))
+                    ->map(function ($r) use ($proven, $batch, $link) {
+                        $source = $proven->get($r['target_material_requirement_id']);
+                        $used = $this->componentQuantityUsage((int) $link->cutting_order_id, $r['target_material_requirement_id'], (int) $batch->id);
+                        if (($r['quantity_basis'] ?? null) === 'total_length') {
+                            $left = bcsub($r['required_total_length_mm'], $used, 8);
+                            return $r + ['covered_total_length_mm' => $source['covered_total_length_mm'],
+                                'max_total_length_mm' => bccomp($left, $source['covered_total_length_mm'], 8) < 0 ? (bccomp($left, '0', 8) > 0 ? $left : '0.00000000') : $source['covered_total_length_mm']];
+                        }
+                        $left = bcsub($r['required_piece_qty'], $used, 8);
+                        return $r + ['covered_piece_qty' => $source['covered_piece_qty'], 'max_piece_qty' => bccomp($left, $source['covered_piece_qty'], 8) < 0 ? max(0, (int) $left) : (int) $source['covered_piece_qty']];
+                    })->values()->all();
+            }
+        } elseif ($batch) $data['requirement'] = $this->frozenRequirement($batch, DB::table('erp_cutting_allowed_outputs')->where('cutting_order_id',$link->cutting_order_id)->first());
+        if ($batch) $data['current_batch']->remnant_review = app(CuttingRemnantBalanceService::class)->projection($batch, $results);
+        $running = in_array($target->status, ['IN_PROGRESS', 'PAUSED'], true) && ! $task->active_job_bundle_id;
+        $data['allowed_actions'] = [
+            'prepare' => ! $link && in_array($target->status, ['WAIT_MATERIAL', 'READY', 'IN_PROGRESS', 'PAUSED'], true) && ! $task->active_job_bundle_id,
+            'use_material' => (bool) $link && in_array($target->status, ['READY', 'IN_PROGRESS', 'PAUSED'], true) && ! $task->active_job_bundle_id,
+            'save_results' => $running && $batch?->status === 'PROCESSING',
+            'finish' => $running && (bool) $link && $batchPage->total() > 0 && in_array('production.task.complete', $permissions, true),
+        ];
+        return app(ProductionFinancialProjectionService::class)->redact($data);
     }
 
     public function materials(int $taskId, string $type, int $id, array $filters, object $user, array $permissions, bool $super = false): array
@@ -102,9 +123,9 @@ final class ProductionCuttingOperationService
             $query->join('erp_item_categories as category','category.id','=','item.category_id')->select('category.id','category.category_name')->distinct()->orderBy('category.id');
         } else {
             $query->select('input.id as production_input_holding_id','physical.id as physical_material_id','physical.physical_no','physical.dimensions',
-                'item.item_code','item.item_name','item.spec','item.cutting_mode','item.standard_stock_length_mm','holding.quantity as available_qty','posted.batch_no')->orderBy('input.id')->orderBy('physical.id');
+                'item.item_code','item.item_name','item.spec','item.cutting_mode','item.standard_stock_length_mm','material.base_unit_name_snapshot as stock_unit_name','holding.quantity as available_qty','posted.batch_no')->orderBy('input.id')->orderBy('physical.id');
         }
-        $page = $query->paginate(min(20,max(1,(int) ($filters['per_page'] ?? 20))),['*'],'page',max(1,(int) ($filters['page'] ?? 1)));
+        $page = $query->paginate(min(20,max(1,(int) ($filters['per_page'] ?? 10))),['*'],'page',max(1,(int) ($filters['page'] ?? 1)));
         return ['data'=>$page->items(),'meta'=>['current_page'=>$page->currentPage(),'last_page'=>$page->lastPage(),'total'=>$page->total()]];
     }
 
@@ -120,11 +141,17 @@ final class ProductionCuttingOperationService
                 $this->commands->version($target, $payload);
                 if (! in_array($target->status, ['WAIT_MATERIAL', 'READY', 'IN_PROGRESS', 'PAUSED'], true))
                     $this->commands->fail('cutting_operation_state_invalid', '当前工序尚不能登记下料。', 409);
-                $requirements = $this->requirements($type, $id)->get(['target.id as target_requirement_id', 'material.*']);
+                $requirements = $this->requirements($type, $id)->get(['target.id as target_requirement_id', 'target.required_piece_qty_snapshot as target_required_piece_qty', 'target.required_base_qty as target_required_base_qty', 'target.cutting_requirement_snapshot as target_cutting_requirement_snapshot', 'material.*']);
                 if ($requirements->isEmpty()) $this->commands->fail('cutting_requirement_missing', '本工序没有冻结的板材或管材下料要求。', 409);
                 $workOrder = WorkOrder::findOrFail($task->work_order_id);
-                $outputItemId = (int) $target->output_item_id_snapshot;
-                if (! $outputItemId) $this->commands->fail('cutting_output_missing', '请先由技术人员维护工序产出，现场不能另选产品。', 409);
+                $componentMode = strtoupper((string) ($target->stage_code_snapshot ?: $target->operation_code_snapshot)) === 'CUTTING';
+                if ($componentMode) app(ProductionCuttingComponentService::class)->assertTarget($target, $type);
+                if ($componentMode) foreach ($requirements as $requirement) {
+                    $requirement->required_piece_qty = $requirement->target_required_piece_qty;
+                    $requirement->cutting_requirement_snapshot = $requirement->target_cutting_requirement_snapshot;
+                }
+                $outputItemId = $componentMode ? null : (int) $target->output_item_id_snapshot;
+                if (! $componentMode && ! $outputItemId) $this->commands->fail('cutting_output_missing', '请先由技术人员维护工序产出，现场不能另选产品。', 409);
                 $configurationId = $outputItemId === (int) $workOrder->output_item_id ? $workOrder->output_configuration_id : null;
                 if (DB::table('erp_items')->where('id', $outputItemId)->where('is_custom_item', true)->exists() && ! $configurationId)
                     $this->commands->fail('cutting_configuration_missing', '定制工序产出缺少冻结配置，不能使用其他产品的配置。', 409);
@@ -140,6 +167,7 @@ final class ProductionCuttingOperationService
                     'assignee_user_legacy_id'=>$actor, 'claimed_at'=>$now, 'business_version'=>1, 'created_at'=>$now, 'updated_at'=>$now,
                 ]);
                 $snapshot = ['work_order_no'=>$workOrder->work_order_no, 'technical_version'=>$workOrder->technical_version,
+                    'output_kind'=>$componentMode ? ProductionCuttingComponentService::KIND : 'item',
                     'output_item_id'=>$outputItemId, 'configuration_id'=>$configurationId, 'operation_name'=>$target->operation_name_snapshot,
                     'stage_id'=>$target->routing_operation_id_snapshot, 'requirements'=>$requirements->map(fn ($r) => (array) $r)->all()];
                 $operationId = DB::table('erp_production_cutting_operations')->insertGetId([
@@ -148,11 +176,20 @@ final class ProductionCuttingOperationService
                     'created_by_legacy_id'=>$actor, 'created_at'=>$now, 'updated_at'=>$now,
                 ]);
                 // Quality and destination are enforced once by ordinary production completion/quality/handover.
-                DB::table('erp_cutting_allowed_outputs')->insert([
-                    'cutting_order_id'=>$orderId, 'item_id'=>$outputItemId, 'configuration_id'=>$configurationId,
-                    'stage_id'=>$target->routing_operation_id_snapshot, 'quality_mode'=>'none', 'output_mode'=>'stockable', 'work_mode'=>$target->work_mode_snapshot ?: 'manual',
-                    'rule_snapshot'=>json_encode($snapshot, JSON_THROW_ON_ERROR), 'created_at'=>$now, 'updated_at'=>$now,
-                ]);
+                foreach ($componentMode ? $requirements : [null] as $requirement) {
+                    $cutting = $componentMode ? $this->json($requirement->cutting_requirement_snapshot) : [];
+                    if ($componentMode && (! $requirement->bom_item_id || ! $cutting || (FrozenCuttingStockPolicy::isTotalLength($cutting)
+                        ? ! FrozenCuttingStockPolicy::requiredTotalLength($cutting) : ! $requirement->required_piece_qty)))
+                        $this->commands->fail('cutting_component_requirement_invalid', '下料组件必须有冻结的 BOM 原料行、尺寸和实际件数。', 409);
+                    if ($componentMode && ! in_array(data_get($this->json($requirement->cutting_requirement_snapshot), 'quantity_calculation.unit_kind'), ['root', 'sheet', 'm', 'm2'], true))
+                        $this->commands->fail('cutting_component_stock_unit_not_supported', '下料原料必须冻结米、平方米、根或张的真实库存计量口径。', 409);
+                    DB::table('erp_cutting_allowed_outputs')->insert([
+                        'cutting_order_id'=>$orderId, 'item_id'=>$componentMode ? $requirement->component_item_id : $outputItemId,
+                        'configuration_id'=>$componentMode ? $requirement->configuration_id : $configurationId,
+                        'stage_id'=>$target->routing_operation_id_snapshot, 'quality_mode'=>'none', 'output_mode'=>'stockable', 'work_mode'=>$target->work_mode_snapshot ?: 'manual',
+                        'rule_snapshot'=>json_encode($snapshot + ['target_material_requirement_id'=>$requirement?->target_requirement_id], JSON_THROW_ON_ERROR), 'created_at'=>$now, 'updated_at'=>$now,
+                    ]);
+                }
                 $result = ['operation_id'=>$operationId, 'cutting_order_id'=>$orderId];
                 $this->commands->event('order', $orderId, 'prepare_operation', $user, null, $result + ['production_task_id'=>$taskId, 'target_type'=>$type, 'target_id'=>$id]);
                 return $result;
@@ -172,6 +209,7 @@ final class ProductionCuttingOperationService
                 if (! in_array($target->status, ['READY','IN_PROGRESS','PAUSED'], true)) $this->commands->fail('cutting_operation_state_invalid', '当前工序不能添加加工用料。', 409);
                 $link = DB::table('erp_production_cutting_operations')->where('target_type',$type)->where('target_id',$id)->lockForUpdate()->first();
                 if (! $link) $this->commands->fail('cutting_operation_missing', '请先打开本工序下料记录。', 409);
+                $componentMode = ($this->json($link->technical_snapshot)['output_kind'] ?? null) === ProductionCuttingComponentService::KIND;
                 $input = DB::table('erp_production_input_holdings')->where('id',(int) ($payload['production_input_holding_id'] ?? 0))
                     ->where('target_type',$type)->where('target_id',$id)->where('status','ACTIVE')->lockForUpdate()->first();
                 $holding = $input ? DB::table('erp_material_holdings')->where('id',$input->input_holding_id)->lockForUpdate()->first() : null;
@@ -187,29 +225,36 @@ final class ProductionCuttingOperationService
                     || ! DB::table('erp_material_movements')->where('target_holding_id',$holding->id)->where('source_holding_id',$input->source_holding_id)
                         ->where('action','PROD_MATERIAL_RECEIPT')->exists())
                     $this->commands->fail('cutting_material_ancestry_invalid', '本次用料缺少正式出库与收料的连续凭据。', 409);
+                if ($componentMode) {
+                    $frozenMode = data_get($this->json($requirement->cutting_requirement_snapshot), 'quantity_calculation.mode');
+                    if (! in_array($frozenMode, ['length', 'sheet'], true)) $this->commands->fail('cutting_component_mode_missing', '组件下料必须使用已发布的原料加工方式。', 409);
+                    $requirement->cutting_mode = $frozenMode;
+                }
                 $physical = null;
                 if ($requirement->cutting_mode === 'sheet') {
                     $physical = DB::table('erp_material_physicals')->where('id',(int) ($payload['physical_material_id'] ?? 0))->lockForUpdate()->first();
                     if (! $physical || $physical->status !== 'PRODUCTION_RECEIVED' || (int) $physical->item_id !== (int) $posted->item_id
                         || (int) $physical->current_holding_id !== (int) $holding->id)
                         $this->commands->fail('cutting_physical_receipt_mismatch', '这张板材不属于本工序已收材料的实际出库批次，或已被使用。', 409);
-                    if (isset($payload['quantity']) && bccomp(CuttingDecimal::value($payload['quantity']), '1', 8) !== 0)
+                    if (! $componentMode && isset($payload['quantity']) && bccomp(CuttingDecimal::value($payload['quantity']), '1', 8) !== 0)
                         $this->commands->fail('physical_quantity_invalid','板材按一张具体实物登记。');
-                    $quantity = '1.00000000';
+                    $quantity = $componentMode && isset($payload['quantity']) ? CuttingDecimal::value($payload['quantity']) : '1.00000000';
                 } else {
                     if (! empty($payload['physical_material_id'])) $this->commands->fail('physical_quantity_invalid','管材用料不能指定板材实物。');
                     $quantity = CuttingDecimal::value($payload['quantity'] ?? null);
-                    if (bccomp($quantity, bcadd($quantity,'0',0),8) !== 0 || ! $requirement->standard_stock_length_mm)
+                    if (! $componentMode && (bccomp($quantity, bcadd($quantity,'0',0),8) !== 0 || ! $requirement->standard_stock_length_mm))
                         $this->commands->fail('root_quantity_invalid','请登记实际整根数量，原料必须有标准长度。');
                 }
+                $componentSources = $componentMode ? $this->componentSources($input, $physical, $physical && ! isset($payload['quantity']) ? null : $quantity) : null;
+                if ($componentMode) $quantity = CuttingStockAllocationPolicy::sum($componentSources, 'actual_stock_qty');
                 if (bccomp($quantity,(string) $holding->quantity,8) > 0) $this->commands->fail('cutting_received_quantity_exceeded','加工数量超过本工序尚未使用的实际收料。',409);
                 $cost = $physical ? (string) $physical->total_cost : CuttingDecimal::share((string) $holding->total_cost,(string) $holding->quantity,$quantity); $now = now();
                 if (bccomp($cost,(string) $holding->total_cost,4) > 0) $this->commands->fail('cutting_received_cost_exceeded','板材实物金额超过本工序实际收料剩余金额。',409);
                 $batchId = DB::table('erp_cutting_settlement_batches')->insertGetId([
                     'batch_no'=>$this->numbers->next('cutting_settlement','CB'), 'cutting_order_id'=>$link->cutting_order_id,
                     'cutting_task_id'=>$link->cutting_task_id,'input_item_id'=>$requirement->component_item_id,'physical_material_id'=>$physical?->id,
-                    'source_holding_id'=>$holding->id,'input_qty'=>$quantity,'original_total_cost'=>$cost,
-                    'standard_stock_length_mm'=>$physical ? null : $requirement->standard_stock_length_mm,
+                    'source_holding_id'=>$holding->id,'input_qty'=>$componentMode ? count($componentSources) : $quantity,'original_total_cost'=>$cost,
+                    'standard_stock_length_mm'=>$physical ? null : ($componentMode ? $componentSources[0]['dimensions']['length_mm'] : $requirement->standard_stock_length_mm),
                     'status'=>'PROCESSING','business_version'=>1,'created_at'=>$now,'updated_at'=>$now,
                 ]);
                 $wipId = DB::table('erp_material_holdings')->insertGetId([
@@ -238,7 +283,10 @@ final class ProductionCuttingOperationService
                     'required_thickness_mm'=>$size['thickness_mm'] ?? null,'per_output_piece_qty'=>$size['piece_qty'],
                     'allow_cut_rotation'=>$size['allow_rotation'] ?? false,'item_id'=>$snapshot['output_item_id'],
                     'configuration_id'=>$snapshot['configuration_id'],'input'=>app(CuttingOutputEligibilityService::class)->source($batch)];
-                $this->assertSourceFits($frozen);
+                if ($componentMode) {
+                    $frozen = $this->componentInputSnapshot($link, $input, $batch, $componentSources);
+                    foreach ($frozen['components'] as $component) $this->assertSourceFits($component);
+                } else $this->assertSourceFits($frozen);
                 DB::table('erp_production_cutting_inputs')->insert([
                     'operation_id'=>$link->id,'settlement_batch_id'=>$batchId,'production_input_holding_id'=>$input->id,
                     'quantity'=>$quantity,'total_cost'=>$cost,'requirement_snapshot'=>json_encode($frozen,JSON_THROW_ON_ERROR),'created_at'=>$now,'updated_at'=>$now,
@@ -252,12 +300,21 @@ final class ProductionCuttingOperationService
     private function assertSourceFits(array $r): void
     {
         $source = $r['input'];
+        if (FrozenCuttingStockPolicy::isTotalLength($r)) {
+            if ($source['mode'] !== 'length' || ! FrozenCuttingStockPolicy::positiveDecimal($r['covered_total_length_mm'] ?? null)) $this->commands->fail('cutting_total_length_source_invalid', '管材总长度缺少实际已收原根覆盖。');
+            return;
+        }
         if ($source['mode'] === 'length') {
             if (bccomp((string) $r['required_length_mm'],(string) $source['length_mm'],8) > 0) $this->commands->fail('output_too_large','要求长度超过本次实际材料长度。');
             return;
         }
         if (bccomp((string) $r['required_thickness_mm'],(string) $source['thickness_mm'],8) !== 0)
             $this->commands->fail('output_thickness_mismatch','实际板材厚度与冻结工艺要求不符。');
+        if (($source['shape'] ?? null) === 'IRREGULAR') {
+            if (! isset($source['area_mm2']) || bccomp(bcmul((string) $r['required_length_mm'], (string) $r['required_width_mm'], 8), (string) $source['area_mm2'], 8) > 0)
+                $this->commands->fail('output_too_large', '冻结板件面积超过本块实际余料面积。');
+            return;
+        }
         $normal = bccomp((string) $r['required_length_mm'],(string) $source['length_mm'],8) <= 0 && bccomp((string) $r['required_width_mm'],(string) $source['width_mm'],8) <= 0;
         $rotated = $r['allow_cut_rotation'] && bccomp((string) $r['required_length_mm'],(string) $source['width_mm'],8) <= 0 && bccomp((string) $r['required_width_mm'],(string) $source['length_mm'],8) <= 0;
         if (! $normal && ! $rotated) $this->commands->fail('output_too_large','冻结产出尺寸无法使用本张板材加工。');
@@ -274,6 +331,8 @@ final class ProductionCuttingOperationService
                 $batch = $link ? DB::table('erp_cutting_settlement_batches')->where('id',$batchId)->where('cutting_order_id',$link->cutting_order_id)->lockForUpdate()->first() : null;
                 if (! $batch) $this->commands->fail('cutting_batch_scope_invalid','本用料记录不属于当前工序。',404);
                 $this->commands->version($batch,$payload);
+                $componentMode = ($this->json($link->technical_snapshot)['output_kind'] ?? null) === ProductionCuttingComponentService::KIND;
+                if ($componentMode) return $this->saveComponentResults($link, $batch, $payload, $user, $permissions, $super);
                 $allowed = DB::table('erp_cutting_allowed_outputs')->where('cutting_order_id',$link->cutting_order_id)->first();
                 $r = $this->frozenRequirement($batch,$allowed);
                 $quantity = CuttingDecimal::value($payload['actual_qty'] ?? null, 8, true);
@@ -285,11 +344,13 @@ final class ProductionCuttingOperationService
                     if (! is_array($other) || ($other['result_type'] ?? 'product') === 'product') $this->commands->fail('other_result_invalid','余料和损耗不能替换工序产出。');
                     $rows[] = $other;
                 }
+                $rows = app(CuttingRemnantBalanceService::class)->prepareRows($batch, $rows, $payload['remnant_review'] ?? ['confirmed' => false]);
                 if (! $rows) $this->commands->fail('cutting_results_required', '本次用料必须登记产出、余料或实际损耗，不能空白结算。');
                 $prefix = 'op-cut-save-'.hash('sha256',$payload['client_command_id']);
                 $saved = app(CuttingRecordService::class)->saveResults($batchId,['client_command_id'=>$prefix,'expected_version'=>$batch->business_version,'results'=>$rows],$user,$permissions,$super);
                 $all = DB::table('erp_cutting_results')->where('settlement_batch_id',$batchId)->whereNotIn('status',['VOIDED','SUPERSEDED'])->get();
                 app(CuttingOutputEligibilityService::class)->assertBatchFits($batch,$all);
+                $saved['remnant_review'] = app(CuttingRemnantBalanceService::class)->saveReview($batch, $payload['remnant_review'] ?? ['confirmed' => false], $user);
                 return $saved;
             });
     }
@@ -310,6 +371,7 @@ final class ProductionCuttingOperationService
                 foreach ($batches as $batch) {
                     if ($batch->status === 'CONFIRMED') continue;
                     if ($batch->status !== 'PROCESSING') $this->commands->fail('cutting_batch_not_editable','存在状态异常的下料记录，请先处理。',409);
+                    app(CuttingRemnantBalanceService::class)->assertConfirmed($batch);
                     $products = DB::table('erp_cutting_results')->where('settlement_batch_id',$batch->id)->where('result_type','product')->where('status','DRAFT')->get();
                     foreach ($products as $product) app(CuttingRecordService::class)->splitRoutes($product->id,
                         ['client_command_id'=>$prefix.'-route-'.$product->id,'expected_version'=>$product->business_version,
@@ -352,9 +414,10 @@ final class ProductionCuttingOperationService
         if ($type === 'quantity_operation'
             && (bccomp((string) ($payload['completed_base_qty'] ?? 0),$quantity,8) !== 0 || bccomp((string) $target->completed_base_qty,'0',8) !== 0))
             $this->commands->fail('cutting_output_quantity_mismatch','下料实际合格产出必须与本工序待完成数量一致，不能重复报工或以其他数量完工。',409);
+        $componentMode = ($this->json($link->technical_snapshot)['output_kind'] ?? null) === ProductionCuttingComponentService::KIND;
         foreach ($this->requirements($type,$target->id)->get(['target.id']) as $requirement) {
             $inputs = DB::table('erp_production_input_holdings')->where('target_material_requirement_id',$requirement->id)->pluck('id');
-            if (! DB::table('erp_production_cutting_inputs')->where('operation_id',$link->id)->whereIn('production_input_holding_id',$inputs)->exists())
+            if (! $componentMode && ! DB::table('erp_production_cutting_inputs')->where('operation_id',$link->id)->whereIn('production_input_holding_id',$inputs)->exists())
                 $this->commands->fail('cutting_input_missing','存在尚未登记实际加工用料的下料需求。',409);
             if (DB::table('erp_production_input_holdings as input')->join('erp_material_holdings as holding','holding.id','=','input.input_holding_id')
                 ->whereIn('input.id',$inputs)->where('holding.status','ACTIVE')->where('holding.quantity','>',0)->exists())
@@ -365,6 +428,23 @@ final class ProductionCuttingOperationService
     private function confirmedOutputQuantity(object $link, string $type, object $target): string
     {
         $expected = $type === 'quantity_operation' ? (string) $target->planned_base_qty : '1';
+        if (($this->json($link->technical_snapshot)['output_kind'] ?? null) === ProductionCuttingComponentService::KIND) {
+            $pieces = [];
+            foreach (DB::table('erp_cutting_results as result')->join('erp_cutting_settlement_batches as batch', 'batch.id', '=', 'result.settlement_batch_id')
+                ->where('batch.cutting_order_id', $link->cutting_order_id)->where('result.status', 'CONFIRMED')->where('result.result_type', 'product')->get(['result.*']) as $result) {
+                $r = $this->json($result->cutting_requirement_snapshot); $id = (int) ($r['target_material_requirement_id'] ?? 0);
+                if (($r['output_kind'] ?? null) !== ProductionCuttingComponentService::KIND || ! $id) $this->commands->fail('cutting_component_identity_invalid', '逐规格下料结果缺少冻结需求身份。', 409);
+                $amount = FrozenCuttingStockPolicy::isTotalLength($r) ? ($this->json($result->measurements)['total_length_mm'] ?? '0') : $result->piece_qty;
+                $pieces[$id] = bcadd($pieces[$id] ?? '0', (string) $amount, 8);
+            }
+            foreach ($this->json($link->technical_snapshot)['requirements'] as $requirement) {
+                $cutting = $this->json($requirement['cutting_requirement_snapshot']);
+                $required = FrozenCuttingStockPolicy::isTotalLength($cutting) ? FrozenCuttingStockPolicy::requiredTotalLength($cutting) : $requirement['required_piece_qty'];
+                if (bccomp($pieces[(int) $requirement['target_requirement_id']] ?? '0', (string) $required, 8) !== 0)
+                    $this->commands->fail('cutting_component_quantity_mismatch', '每条冻结下料明细的实际总长度或合格件数必须完整满足本工序需求。', 409);
+            }
+            return $expected;
+        }
         $byRequirement = DB::table('erp_cutting_results as result')
             ->join('erp_production_cutting_inputs as used','used.settlement_batch_id','=','result.settlement_batch_id')
             ->join('erp_production_input_holdings as input','input.id','=','used.production_input_holding_id')
@@ -383,6 +463,7 @@ final class ProductionCuttingOperationService
 
     public function coveredRequirementIds(string $type, int $id): array
     {
+        if ($link = app(ProductionCuttingComponentService::class)->link($type, $id)) return array_map(fn ($r) => (int) $r['target_requirement_id'], $this->json($link->technical_snapshot)['requirements']);
         return DB::table('erp_production_cutting_inputs as used')->join('erp_production_cutting_operations as operation','operation.id','=','used.operation_id')
             ->join('erp_production_input_holdings as input','input.id','=','used.production_input_holding_id')
             ->where('operation.target_type',$type)->where('operation.target_id',$id)->distinct()->pluck('input.target_material_requirement_id')->all();
@@ -390,6 +471,7 @@ final class ProductionCuttingOperationService
 
     public function attachOutputCosts(object $output, object $target, string $type, int $actor): object
     {
+        if (app(ProductionCuttingComponentService::class)->isOutput($output)) return app(ProductionCuttingComponentService::class)->attachCosts($output, $target, $type, $actor);
         $link = DB::table('erp_production_cutting_operations')->where('target_type',$type)->where('target_id',$target->id)->first();
         if (! $link) return $output;
         if (DB::transactionLevel() < 1) throw new \LogicException('Cutting output transfer requires production completion transaction.');
@@ -463,18 +545,254 @@ final class ProductionCuttingOperationService
         $row = DB::table('erp_production_cutting_inputs')->where('settlement_batch_id',$batch->id)->first();
         if (! $row) return null;
         $r = json_decode($row->requirement_snapshot,true,512,JSON_THROW_ON_ERROR);
+        if (($r['output_kind'] ?? null) === ProductionCuttingComponentService::KIND) {
+            $rule = $this->json($allowed->rule_snapshot);
+            $r = collect($r['components'])->firstWhere('target_material_requirement_id', (int) ($rule['target_material_requirement_id'] ?? 0));
+            if (! $r) $this->commands->fail('cutting_component_source_not_owned', '该冻结规格没有本次实际已收材料的覆盖凭据。', 409);
+        }
         if ((int) $r['item_id'] !== (int) $allowed->item_id || (int) $r['configuration_id'] !== (int) $allowed->configuration_id)
             $this->commands->fail('cutting_output_identity_invalid','产出必须使用本工序冻结的物料和配置。');
         return $r;
     }
+
+    /** Each selected whole source can be used once, and only its received member rows may yield pieces. */
+    private function componentSources(object $input, ?object $physical, ?string $quantity): array
+    {
+        $receipt = DB::table('erp_material_receipt_lines')->where('id', $input->material_receipt_line_id)->first();
+        $allocation = $this->json($receipt?->accepted_serial_snapshot)['cutting_allocation'] ?? null;
+        if (! $allocation || ! ($allocation['sources'] ?? [])) $this->commands->fail('cutting_component_received_source_required', '组件加工必须引用正式收料中冻结的整根或整张来源和规格覆盖。', 409);
+        $used = [];
+        foreach (DB::table('erp_production_cutting_inputs')->where('production_input_holding_id', $input->id)->get(['requirement_snapshot']) as $previous) {
+            $used = array_merge($used, $this->json($previous->requirement_snapshot)['source_keys'] ?? []);
+        }
+        $sources = array_values(array_filter($allocation['sources'], fn ($source) => ! in_array($source['source_key'], $used, true)
+            && (! $physical || (int) ($source['physical_material_id'] ?? 0) === (int) $physical->id)));
+        $selected = []; $stockQty = '0.00000000';
+        foreach ($sources as $source) {
+            $stockKind = $allocation['stock_unit_kind'] ?? $allocation['unit_kind'] ?? null;
+            $actualQty = $source['actual_stock_qty'] ?? (in_array($stockKind, ['root', 'sheet'], true) ? '1.00000000' : null);
+            if ($actualQty === null || bccomp((string) $actualQty, '0', 8) <= 0) $this->commands->fail('cutting_component_stock_quantity_missing', '每个实际已收来源必须明确原库存单位的真实数量，不能把米数或面积当作根数或张数。', 409);
+            $sourceDimensions = $source['dimensions'] ?? [];
+            $geometricQty = match ($stockKind) {
+                'root', 'sheet' => '1.00000000',
+                'm' => isset($sourceDimensions['length_mm']) ? bcdiv((string) $sourceDimensions['length_mm'], '1000', 8) : null,
+                'm2' => FrozenCuttingStockPolicy::area($sourceDimensions) !== null ? bcdiv(FrozenCuttingStockPolicy::area($sourceDimensions), '1000000', 8) : null,
+                default => null,
+            };
+            if ($geometricQty === null || bccomp((string) $actualQty, $geometricQty, 8) !== 0 || ($stockKind === 'm2' && ! ($source['physical_material_id'] ?? null)))
+                $this->commands->fail('cutting_component_stock_source_invalid', '实际库存量必须与已收整根长度或逐张实物面积精确对应。', 409);
+            $source['stock_unit_kind'] = $stockKind;
+            $source['actual_stock_qty'] = bcadd((string) $actualQty, '0', 8);
+            $selected[] = $source; $stockQty = bcadd($stockQty, $source['actual_stock_qty'], 8);
+            if ($physical || ($quantity !== null && bccomp($stockQty, $quantity, 8) >= 0)) break;
+        }
+        if (! $selected || ($quantity !== null && bccomp($stockQty, $quantity, 8) !== 0)) $this->commands->fail('cutting_component_source_exceeded', '加工数量必须精确对应尚未加工的完整实际来源，不能重复或分割一根或一张。', 409);
+        $sources = $selected;
+        $dimensions = $sources[0]['dimensions'] ?? [];
+        if ($physical ? FrozenCuttingStockPolicy::area($dimensions) === null : ! FrozenCuttingStockPolicy::positiveDecimal($dimensions['length_mm'] ?? null)) $this->commands->fail('cutting_component_source_dimensions_missing', '已收材料缺少实际冻结长度或面积，不能回退到物料当前默认尺寸。', 409);
+        foreach ($sources as &$source) {
+            if (($source['dimensions'] ?? []) !== $dimensions) $this->commands->fail('cutting_component_sources_mixed', '不同实际原料尺寸必须分别登记加工批次。', 409);
+            $source['members'] ??= [['target_material_requirement_id' => (int) $allocation['target_material_requirement_id'],
+                'covered_piece_qty' => (int) $source['covered_piece_qty'], 'covered_base_qty' => (string) $source['coverage_qty'],
+                'formal_coverage_qty' => (string) $source['formal_coverage_qty']]];
+        }
+        unset($source);
+        if ($physical) {
+            $actual = ['shape' => $physical->shape] + $this->json($physical->dimensions);
+            if (! FrozenCuttingStockPolicy::sameDimensions($dimensions, $actual))
+                $this->commands->fail('cutting_component_physical_changed', '本张实物尺寸与正式已收来源不一致，不能重新解释原规格。', 409);
+        }
+        return $sources;
+    }
+
+    private function componentInputSnapshot(object $link, object $input, object $batch, array $sources): array
+    {
+        $requirements = collect($this->json($link->technical_snapshot)['requirements'])->keyBy('target_requirement_id');
+        $members = []; $sourceLengths = [];
+        foreach ($sources as $source) foreach ($source['members'] as $member) {
+            $id = (int) ($member['target_material_requirement_id'] ?? 0);
+            $requirement = $requirements->get($id);
+            if (! $requirement || (int) $requirement['component_item_id'] !== (int) $batch->input_item_id
+                || (isset($member['material_requirement_id']) && (int) $member['material_requirement_id'] !== (int) $requirement['id'])
+                || (isset($member['bom_item_id']) && (int) $member['bom_item_id'] !== (int) $requirement['bom_item_id']))
+                $this->commands->fail('cutting_component_member_invalid', '实际已收来源的成员不属于本工序冻结的同原料 BOM 需求。', 409);
+            $size = $this->json($requirement['cutting_requirement_snapshot']);
+            $totalLength = FrozenCuttingStockPolicy::isTotalLength($size);
+            if ($totalLength) {
+                if (($member['quantity_basis'] ?? null) !== 'total_length' || ! FrozenCuttingStockPolicy::positiveDecimal($member['covered_base_qty'] ?? null)
+                    || bccomp((string) ($member['target_required_qty'] ?? '0'), (string) $requirement['target_required_base_qty'], 8) !== 0
+                    || bccomp((string) ($member['required_total_length_mm'] ?? '0'), (string) FrozenCuttingStockPolicy::requiredTotalLength($size), 8) !== 0) {
+                    $this->commands->fail('cutting_component_member_quantity_invalid', '实际已收来源的总长度口径或理论覆盖与冻结需求不一致。', 409);
+                }
+                $covered = FrozenCuttingStockPolicy::positiveDecimal($member['covered_total_length_mm'] ?? null);
+                if (! $covered) $this->commands->fail('cutting_component_source_length_missing', '已收原根缺少冻结的净覆盖总长度，不能从舍入后的理论库存量反推。', 409);
+                $sourceLengths[$source['source_key']] = bcadd($sourceLengths[$source['source_key']] ?? '0', $covered, 8);
+                if (bccomp($covered, '0', 8) <= 0 || bccomp($sourceLengths[$source['source_key']], (string) $source['dimensions']['length_mm'], 8) > 0) $this->commands->fail('cutting_component_source_length_exceeded', '单根来源覆盖总长度超过其真实已收长度。', 409);
+            } else {
+                $covered = (string) ($member['covered_piece_qty'] ?? '0');
+                if (bccomp($covered, '0', 8) <= 0 || bccomp($covered, bcadd($covered, '0', 0), 8) !== 0) $this->commands->fail('cutting_component_member_quantity_invalid', '实际材料必须明确覆盖每条冻结规格的整数件数。', 409);
+            }
+            if (isset($member['dimensions']) && ! $totalLength) {
+                foreach (['length_mm', 'width_mm', 'thickness_mm'] as $axis) {
+                    $frozen = $size[$axis] ?? null; $received = $member['dimensions'][$axis] ?? null;
+                    if (($frozen === null) !== ($received === null) || ($frozen !== null && bccomp((string) $frozen, (string) $received, 8) !== 0))
+                        $this->commands->fail('cutting_component_member_dimensions_changed', '已收原料分组的规格尺寸与本工序冻结 BOM 行不一致。', 409);
+                }
+            }
+            $members[$id] = bcadd($members[$id] ?? '0', $covered, 8);
+            $requiredQuantity = $totalLength ? FrozenCuttingStockPolicy::requiredTotalLength($size) : $requirement['required_piece_qty'];
+            if (bccomp($members[$id], (string) $requiredQuantity, 8) > 0) $this->commands->fail('cutting_component_member_quantity_invalid', '实际来源覆盖超过本工序冻结的需求总长度或件数。', 409);
+        }
+        $source = app(CuttingOutputEligibilityService::class)->source($batch);
+        $source += ['material_receipt_line_id' => (int) $input->material_receipt_line_id, 'inventory_transaction_item_id' => (int) $input->inventory_transaction_item_id,
+            'production_input_holding_id' => (int) $input->id, 'source_keys' => array_column($sources, 'source_key'), 'sources' => $sources];
+        $components = [];
+        foreach ($members as $id => $covered) {
+            $requirement = $requirements->get($id); $size = $this->json($requirement['cutting_requirement_snapshot']);
+            if (($size['quantity_calculation']['unit_kind'] ?? null) !== $sources[0]['stock_unit_kind']) $this->commands->fail('cutting_component_stock_unit_changed', '实际来源的库存计量口径与冻结 BOM 原料行不一致。', 409);
+            $totalLength = FrozenCuttingStockPolicy::isTotalLength($size);
+            $components[] = ($totalLength ? ['quantity_basis' => 'total_length', 'quantity_unit' => 'm',
+                'required_total_length_mm' => FrozenCuttingStockPolicy::requiredTotalLength($size), 'covered_total_length_mm' => $covered] : []) + ['output_kind' => ProductionCuttingComponentService::KIND, 'target_material_requirement_id' => $id,
+                'material_requirement_id' => (int) $requirement['id'], 'bom_item_id' => (int) $requirement['bom_item_id'], 'bom_id' => (int) $requirement['bom_id'],
+                'item_id' => (int) $batch->input_item_id, 'configuration_id' => $requirement['configuration_id'] ?? null,
+                'required_length_mm' => $size['length_mm'], 'required_width_mm' => $size['width_mm'] ?? null,
+                'required_thickness_mm' => $size['thickness_mm'] ?? null, 'allow_cut_rotation' => $size['allow_rotation'] ?? false,
+                'per_output_piece_qty' => $totalLength ? null : 1, 'reference_piece_qty' => $size['piece_qty'], 'required_piece_qty' => $totalLength ? null : (string) $requirement['required_piece_qty'],
+                'covered_piece_qty' => $totalLength ? null : $covered, 'input' => $source];
+        }
+        if (! $components) $this->commands->fail('cutting_component_members_missing', '该实际来源没有可以追溯的下料规格覆盖。', 409);
+        return ['output_kind' => ProductionCuttingComponentService::KIND, 'actual_stock_qty' => CuttingStockAllocationPolicy::sum($sources, 'actual_stock_qty'),
+            'stock_unit_kind' => $sources[0]['stock_unit_kind'], 'source_count' => count($sources), 'source_keys' => array_column($sources, 'source_key'), 'sources' => $sources, 'components' => $components];
+    }
+
+    private function saveComponentResults(object $link, object $batch, array $payload, object $user, array $permissions, bool $super): array
+    {
+        if (array_diff(array_keys($payload), ['client_command_id', 'expected_version', 'components', 'other_results', 'remnant_review']) || ! is_array($payload['components'] ?? null)
+            || ! array_is_list($payload['components']) || count($payload['components']) > 100) $this->commands->fail('cutting_component_results_invalid', '请按本次已收材料覆盖的冻结规格逐项登记实际下料件数。');
+        $allowedRows = DB::table('erp_cutting_allowed_outputs')->where('cutting_order_id', $link->cutting_order_id)->orderBy('id')->get()
+            ->keyBy(fn ($allowed) => (int) ($this->json($allowed->rule_snapshot)['target_material_requirement_id'] ?? 0));
+        $rows = []; $seen = [];
+        foreach ($payload['components'] as $component) {
+            if (! is_array($component) || array_diff(array_keys($component), ['target_material_requirement_id', 'actual_piece_qty', 'actual_total_length_mm'])) $this->commands->fail('cutting_component_result_fields_invalid', '组件结果只能引用冻结需求并登记对应的实际总长度或件数。');
+            $id = (int) ($component['target_material_requirement_id'] ?? 0);
+            if (isset($seen[$id]) || ! ($allowed = $allowedRows->get($id))) $this->commands->fail('cutting_component_result_identity_invalid', '下料结果的规格重复或不属于本工序。');
+            $seen[$id] = true; $r = $this->frozenRequirement($batch, $allowed);
+            if (FrozenCuttingStockPolicy::isTotalLength($r)) {
+                if (isset($component['actual_piece_qty'])) $this->commands->fail('cutting_component_result_fields_invalid', '按总长度加工的管材不能填写实际件数。');
+                $length = CuttingDecimal::value($component['actual_total_length_mm'] ?? null, 8, true);
+                $other = $this->componentQuantityUsage((int) $link->cutting_order_id, $id, (int) $batch->id);
+                if (bccomp($length, $r['covered_total_length_mm'], 8) > 0 || bccomp(bcadd($length, $other, 8), $r['required_total_length_mm'], 8) > 0) $this->commands->fail('cutting_component_result_quantity_invalid', '实际总长度超过本次已收来源覆盖或该需求剩余总长度。');
+                if (bccomp($length, '0', 8) === 0) continue;
+                $quantity = bcdiv($length, '1000', 8);
+                if (bccomp(bcmul($quantity, '1000', 8), $length, 8) !== 0) $this->commands->fail('cutting_component_result_precision_invalid', '管材米数超出八位小数精度，不能静默舍入。');
+                $rows[] = ['client_row_id' => 'component-'.$id, 'result_type' => 'product', 'allowed_output_id' => $allowed->id,
+                    'actual_qty' => $quantity, 'piece_qty' => null, 'cut_length_mm' => null, 'measurement_status' => 'MEASURED', 'measurements' => ['total_length_mm' => $length]];
+                continue;
+            }
+            if (isset($component['actual_total_length_mm'])) $this->commands->fail('cutting_component_result_fields_invalid', '按尺寸件数加工的明细不能填写实际总长度。');
+            $qty = CuttingDecimal::value($component['actual_piece_qty'] ?? null, 8, true);
+            $otherPieces = $this->componentQuantityUsage((int) $link->cutting_order_id, $id, (int) $batch->id);
+            if (bccomp($qty, bcadd($qty, '0', 0), 8) !== 0 || bccomp($qty, $r['covered_piece_qty'], 8) > 0
+                || bccomp(bcadd($qty, $otherPieces, 8), $r['required_piece_qty'], 8) > 0) $this->commands->fail('cutting_component_result_quantity_invalid', '实际件数必须是整数，并且不能超过本次来源覆盖或该冻结规格的剩余需求。');
+            if (bccomp($qty, '0', 8) === 0) continue;
+            $measurements = ['length_mm' => $r['required_length_mm']];
+            if ($r['input']['mode'] === 'sheet') $measurements += ['width_mm' => $r['required_width_mm'], 'thickness_mm' => $r['input']['actual_thickness_mm']];
+            $rows[] = ['client_row_id' => 'component-'.$id, 'result_type' => 'product', 'allowed_output_id' => $allowed->id,
+                'actual_qty' => $qty, 'piece_qty' => $qty, 'cut_length_mm' => $r['required_length_mm'], 'measurement_status' => 'MEASURED', 'measurements' => $measurements];
+        }
+        foreach ($payload['other_results'] ?? [] as $other) {
+            if (! is_array($other) || ($other['result_type'] ?? 'product') === 'product') $this->commands->fail('other_result_invalid', '余料和损耗不能替换冻结组件结果。');
+            $rows[] = $other;
+        }
+        $rows = app(CuttingRemnantBalanceService::class)->prepareRows($batch, $rows, $payload['remnant_review'] ?? ['confirmed' => false]);
+        if (! $rows) $this->commands->fail('cutting_results_required', '本次实际材料必须登记下料件数、余料或实测损耗。');
+        $saved = app(CuttingRecordService::class)->saveResults((int) $batch->id, ['client_command_id' => 'op-cut-save-'.hash('sha256', $payload['client_command_id']), 'expected_version' => $batch->business_version, 'results' => $rows], $user, $permissions, $super);
+        app(CuttingOutputEligibilityService::class)->assertBatchFits($batch, DB::table('erp_cutting_results')->where('settlement_batch_id', $batch->id)->whereNotIn('status', ['VOIDED', 'SUPERSEDED'])->get());
+        $saved['remnant_review'] = app(CuttingRemnantBalanceService::class)->saveReview($batch, $payload['remnant_review'] ?? ['confirmed' => false], $user);
+        return $saved;
+    }
+
+    private function componentQuantityUsage(int $orderId, int $requirementId, ?int $excludeBatch = null, bool $confirmedOnly = false): string
+    {
+        $query = DB::table('erp_cutting_results as result')->join('erp_cutting_settlement_batches as batch', 'batch.id', '=', 'result.settlement_batch_id')
+            ->where('batch.cutting_order_id', $orderId)->where('result.result_type', 'product')->whereNotIn('result.status', ['VOIDED', 'SUPERSEDED', 'REVERSED']);
+        if ($excludeBatch) $query->where('batch.id', '<>', $excludeBatch);
+        if ($confirmedOnly) $query->where('result.status', 'CONFIRMED');
+        $qty = '0.00000000';
+        foreach ($query->get(['result.piece_qty', 'result.measurements', 'result.cutting_requirement_snapshot']) as $row) {
+            $snapshot = $this->json($row->cutting_requirement_snapshot);
+            if ((int) ($snapshot['target_material_requirement_id'] ?? 0) !== $requirementId) continue;
+            $amount = FrozenCuttingStockPolicy::isTotalLength($snapshot) ? ($this->json($row->measurements)['total_length_mm'] ?? '0') : $row->piece_qty;
+            $qty = bcadd($qty, (string) $amount, 8);
+        }
+        return $qty;
+    }
+
+    public function assertComponentResultCoverage(object $batch, \Illuminate\Support\Collection $rows): void
+    {
+        $used = DB::table('erp_production_cutting_inputs')->where('settlement_batch_id', $batch->id)->first();
+        $snapshot = $this->json($used?->requirement_snapshot);
+        if (($snapshot['output_kind'] ?? null) !== ProductionCuttingComponentService::KIND) return;
+        $proven = collect($snapshot['components'] ?? [])->keyBy('target_material_requirement_id');
+        $pieces = [];
+        foreach ($rows->where('result_type', 'product') as $row) {
+            $r = $this->json($row->cutting_requirement_snapshot); $id = (int) ($r['target_material_requirement_id'] ?? 0);
+            if (FrozenCuttingStockPolicy::isTotalLength($r)) {
+                $length = $this->json($row->measurements)['total_length_mm'] ?? null;
+                if (! $proven->has($id) || $proven->get($id) !== $r || ! FrozenCuttingStockPolicy::positiveDecimal($length)
+                    || $row->piece_qty !== null || $row->cut_length_mm !== null
+                    || bccomp(bcmul((string) $row->actual_qty, '1000', 8), (string) $length, 8) !== 0) $this->commands->fail('cutting_component_source_not_owned', '管材结果缺少本次已收来源覆盖或米数与总长度不一致。', 409);
+                $pieces[$id] = bcadd($pieces[$id] ?? '0', (string) $length, 8);
+                continue;
+            }
+            if (! $proven->has($id) || $proven->get($id) !== $r || bccomp((string) $row->actual_qty, (string) $row->piece_qty, 8) !== 0
+                || bccomp((string) $row->piece_qty, bcadd((string) $row->piece_qty, '0', 0), 8) !== 0) $this->commands->fail('cutting_component_source_not_owned', '组件结果必须引用本次已收来源覆盖的冻结规格和整数件数。', 409);
+            $pieces[$id] = bcadd($pieces[$id] ?? '0', (string) $row->piece_qty, 8);
+        }
+        foreach ($pieces as $id => $quantity) {
+            $r = $proven->get($id); $other = $this->componentQuantityUsage((int) $batch->cutting_order_id, $id, (int) $batch->id);
+            $covered = FrozenCuttingStockPolicy::isTotalLength($r) ? $r['covered_total_length_mm'] : $r['covered_piece_qty'];
+            $required = FrozenCuttingStockPolicy::isTotalLength($r) ? $r['required_total_length_mm'] : $r['required_piece_qty'];
+            if (bccomp($quantity, $covered, 8) > 0 || bccomp(bcadd($quantity, $other, 8), $required, 8) > 0)
+                $this->commands->fail('cutting_component_result_quantity_invalid', '逐规格结果合计不能超过该实际来源覆盖或正式剩余需求。', 409);
+        }
+    }
+
+    private function componentProjection(array $requirements, ?object $link): array
+    {
+        return array_map(function ($row) use ($link) {
+            $size = $this->json($row['cutting_requirement_snapshot']);
+            $confirmed = $link ? $this->componentQuantityUsage((int) $link->cutting_order_id, (int) $row['target_requirement_id'], null, true) : '0.00000000';
+            if (FrozenCuttingStockPolicy::isTotalLength($size)) {
+                $required = FrozenCuttingStockPolicy::requiredTotalLength($size);
+                return ['target_material_requirement_id' => (int) $row['target_requirement_id'], 'bom_item_id' => (int) $row['bom_item_id'], 'raw_item_id' => (int) $row['component_item_id'],
+                    'raw_item_code' => $row['component_item_code_snapshot'], 'raw_item_name' => $row['component_item_name_snapshot'],
+                    'quantity_basis' => 'total_length', 'quantity_unit' => 'm', 'dimensions' => null,
+                    'required_piece_qty' => null, 'confirmed_piece_qty' => null, 'remaining_piece_qty' => null,
+                    'required_total_length_mm' => $required, 'confirmed_total_length_mm' => $confirmed,
+                    'remaining_total_length_mm' => bccomp($required, $confirmed, 8) > 0 ? bcsub($required, $confirmed, 8) : '0.00000000'];
+            }
+            return ['target_material_requirement_id' => (int) $row['target_requirement_id'], 'bom_item_id' => (int) $row['bom_item_id'], 'raw_item_id' => (int) $row['component_item_id'],
+                'raw_item_code' => $row['component_item_code_snapshot'], 'raw_item_name' => $row['component_item_name_snapshot'],
+                'dimensions' => ['length_mm' => $size['length_mm'], 'width_mm' => $size['width_mm'] ?? null, 'thickness_mm' => $size['thickness_mm'] ?? null],
+                'required_piece_qty' => bcadd((string) $row['required_piece_qty'], '0', 8), 'confirmed_piece_qty' => $confirmed,
+                'remaining_piece_qty' => max(0, (int) bcsub((string) $row['required_piece_qty'], $confirmed, 8))];
+        }, $requirements);
+    }
+
+    private function json(mixed $value): array
+    { return is_array($value) ? $value : ($value ? json_decode($value, true, 512, JSON_THROW_ON_ERROR) : []); }
 
     public function receivedInputValid(object $batch): bool
     {
         $row = DB::table('erp_production_cutting_inputs')->where('settlement_batch_id',$batch->id)->first();
         if (! $row) return false;
         $input = DB::table('erp_production_input_holdings')->where('id',$row->production_input_holding_id)->first();
+        $snapshot = $this->json($row->requirement_snapshot);
+        $componentMode = ($snapshot['output_kind'] ?? null) === ProductionCuttingComponentService::KIND;
         return $input && (int) $input->input_holding_id === (int) $batch->source_holding_id
-            && bccomp((string) $row->quantity,(string) $batch->input_qty,8) === 0
+            && ($componentMode ? (bccomp((string) $row->quantity, (string) $snapshot['actual_stock_qty'], 8) === 0
+                && bccomp((string) $batch->input_qty, (string) $snapshot['source_count'], 8) === 0) : bccomp((string) $row->quantity,(string) $batch->input_qty,8) === 0)
             && bccomp((string) $row->total_cost,(string) $batch->original_total_cost,4) === 0
             && DB::table('erp_material_movements')->where('source_holding_id',$batch->source_holding_id)->where('target_holding_id',$batch->wip_holding_id)
                 ->where('action','PROD_CUTTING_USE')->where('quantity',$row->quantity)->where('total_cost',$row->total_cost)->exists();
@@ -490,6 +808,7 @@ final class ProductionCuttingOperationService
         $this->commands->workOrder($task->work_order_id, $user, $permissions, $super, 'production.cutting.record');
         if ((int) $task->assignee_user_legacy_id !== $this->commands->actor($user))
             $this->commands->fail('task_owner_required', '仅本工序负责人可以登记下料结果。', 403);
+        if ($lock && $task->active_job_bundle_id) $this->commands->fail('job_bundle_execution_required', '当前任务已加入共同加工作业，请从共同加工作业办理。', 409);
         $model = match ($type) { 'unit_operation'=>ProductionUnitOperation::class, 'quantity_operation'=>ProductionQuantityOperation::class,
             default=>null };
         if (! $model) $this->commands->fail('target_type_invalid', '工序类型无效。');

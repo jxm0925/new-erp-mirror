@@ -23,7 +23,7 @@ final class PublicMaterialPreparationQueryService
         if ($keyword = trim((string) ($filters['keyword'] ?? ''))) $query->where(fn ($q) => $q
             ->whereHas('workOrder', fn ($w) => $w->where('work_order_no', 'like', '%'.$keyword.'%'))
             ->orWhereHas('componentItem', fn ($i) => $i->where('item_code', 'like', '%'.$keyword.'%')->orWhere('item_name', 'like', '%'.$keyword.'%')->orWhere('spec', 'like', '%'.$keyword.'%')));
-        $page = $query->orderBy('id')->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 20))));
+        $page = $query->orderBy('id')->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 10))));
         $projections = [];
         $page->getCollection()->transform(function ($row) use ($materials, &$projections): array {
             $projection = $projections[$row->work_order_id] ??= $materials->projection($row->workOrder);

@@ -4,7 +4,7 @@ import { auditDefaultSkuItemRelations, removeWrongSkuItemBinding } from '../../.
 
 export default {
   name: 'SkuItemIntegrityCheck',
-  data () { return { loading: false, rows: [], page: 1, perPage: 20, total: 0, tab: 'all', summary: {} } },
+  data () { return { loading: false, rows: [], page: 1, perPage: 10, total: 0, tab: 'all', summary: {} } },
   created () { this.load() },
   methods: {
     async load () {

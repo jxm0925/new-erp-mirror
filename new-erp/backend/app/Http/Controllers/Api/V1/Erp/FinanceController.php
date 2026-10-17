@@ -890,5 +890,5 @@ class FinanceController extends Controller
     }
 
     private function operatorName(object $user): string { return (string) ($user->nickname ?: $user->username ?: '系统'); }
-    private function perPage(Request $request): int { return min(100, max(5, (int) $request->input('per_page', 20))); }
+    private function perPage(Request $request): int { return min(100, max(5, (int) $request->input('per_page', 10))); }
 }

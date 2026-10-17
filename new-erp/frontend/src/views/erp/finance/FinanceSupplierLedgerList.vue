@@ -61,7 +61,7 @@ const MoneyColumn = {
 export default {
   components: { MoneyColumn, SupplierFinanceEntriesDialog },
   props: { embedded: Boolean, active: { type: Boolean, default: true } },
-  data: () => ({ rows: [], loading: false, page: 1, perPage: 20, total: 0, dateRange: [], filters: blankFilters(), loaded: false, requestId: 0, detailVisible: false, detailSupplier: {} }),
+  data: () => ({ rows: [], loading: false, page: 1, perPage: 10, total: 0, dateRange: [], filters: blankFilters(), loaded: false, requestId: 0, detailVisible: false, detailSupplier: {} }),
   created() {
     if (this.active) this.load()
   },

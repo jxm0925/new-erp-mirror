@@ -16,7 +16,7 @@
       </el-table-column>
       <el-table-column prop="remnant_no" label="余料编号" min-width="185" />
       <el-table-column label="物料" min-width="200"><template slot-scope="{row}">{{ row.item_code }}<br>{{ row.item_name }}</template></el-table-column>
-      <el-table-column label="实际尺寸（mm）" min-width="150"><template slot-scope="{row}">{{ dimensions(row.dimensions) }}</template></el-table-column>
+      <el-table-column label="实际尺寸 / 面积" min-width="150"><template slot-scope="{row}">{{ dimensions(row.dimensions) }}</template></el-table-column>
       <el-table-column prop="source_batch_no" label="用料批次" min-width="160" />
       <el-table-column label="库存数量" min-width="105" align="center"><template slot-scope="{row}">{{ qty(row.quantity) }} {{ row.unit_name }}</template></el-table-column>
       <el-table-column prop="total_cost" label="材料金额" min-width="110" align="right" />
@@ -31,7 +31,7 @@
       <p class="remnant-context">下料单　{{ orderNo }}　·　已选 {{ selectedRows.length }} 块余料</p>
       <el-alert v-if="formError" :title="formError" type="error" :closable="false" />
       <div class="remnant-table"><el-table :data="selectedRows" border>
-        <el-table-column prop="remnant_no" label="余料编号" min-width="190" /><el-table-column label="实际尺寸（mm）" min-width="155"><template slot-scope="{row}">{{ dimensions(row.dimensions) }}</template></el-table-column>
+        <el-table-column prop="remnant_no" label="余料编号" min-width="190" /><el-table-column label="实际尺寸 / 面积" min-width="155"><template slot-scope="{row}">{{ dimensions(row.dimensions) }}</template></el-table-column>
         <el-table-column label="入库数量" min-width="100"><template slot-scope="{row}">{{ qty(row.quantity) }} {{ row.unit_name }}</template></el-table-column><el-table-column prop="remnant_no" label="入库批次" min-width="185" /><el-table-column prop="total_cost" label="材料金额" width="120" align="right" />
         <el-table-column label="操作" width="80"><template slot-scope="{row}"><el-button type="text" :disabled="busy || !!pending" @click="$delete(selected,row.id)">移除</el-button></template></el-table-column>
       </el-table></div>
@@ -55,7 +55,7 @@
           <div><dt>入库时间</dt><dd>{{ receipt.posted_at }}</dd></div><div><dt>备注</dt><dd>{{ receipt.remark || '—' }}</dd></div>
         </dl>
         <div class="remnant-table"><el-table :data="receipt.lines" border>
-          <el-table-column label="余料编号" min-width="190"><template slot-scope="{row}">{{ row.line_snapshot.remnant_no }}</template></el-table-column><el-table-column label="实际尺寸（mm）" min-width="165"><template slot-scope="{row}">{{ dimensions(row.line_snapshot.dimensions) }}</template></el-table-column>
+          <el-table-column label="余料编号" min-width="190"><template slot-scope="{row}">{{ row.line_snapshot.remnant_no }}</template></el-table-column><el-table-column label="实际尺寸 / 面积" min-width="165"><template slot-scope="{row}">{{ dimensions(row.line_snapshot.dimensions) }}</template></el-table-column>
           <el-table-column label="入库数量" min-width="105"><template slot-scope="{row}">{{ qty(row.posted_qty) }} {{ row.line_snapshot.unit_name }}</template></el-table-column><el-table-column prop="batch_no" label="入库批次" min-width="185" /><el-table-column prop="posted_cost" label="材料金额" min-width="125" align="right" />
         </el-table></div>
         <p class="remnant-record-total"><span>合计 {{ receipt.piece_count }} 块余料</span><span>材料金额合计 <strong>{{ receipt.posted_cost }}</strong></span></p><p class="remnant-help">库存已增加，原余料编号与尺寸保持不变。</p></template>
@@ -66,6 +66,7 @@
 </template>
 <script>
 import { listRemnants, getRemnantReceipt, pendingRemnantReceipt, postRemnantReceipt } from '../../../api/erp/remnant-receipts'
+import { cuttingAreaSquareMetres } from '../../../utils/cutting-quantity.mjs'
 import CuttingWarehouseLocator from './CuttingWarehouseLocator.vue'
 export default {
   components: { CuttingWarehouseLocator },
@@ -86,7 +87,13 @@ export default {
   methods: {
     invalidate() { this.sequence = (this.sequence || 0) + 1; this.detailSequence = (this.detailSequence || 0) + 1 },
     qty(value) { return value == null ? '待核对' : String(value).replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '') },
-    dimensions(d = {}) { if (d.length_mm && d.width_mm) return [d.length_mm, d.width_mm, d.thickness_mm].filter(Boolean).map(this.qty).join(' × '); if (d.length_mm) return `${this.qty(d.length_mm)}`; return d.weight_kg ? `重量 ${this.qty(d.weight_kg)} kg` : '—' },
+    dimensions(d = {}) {
+      if (d.length_mm && d.width_mm) return `${[d.length_mm, d.width_mm, d.thickness_mm].filter(Boolean).map(this.qty).join(' × ')} mm`
+      if (d.length_mm) return `${this.qty(d.length_mm)} mm`
+      const area = cuttingAreaSquareMetres(d.area_mm2)
+      if (area && Number(area) > 0) return `面积 ${area} ㎡${d.thickness_mm ? ` · 厚 ${this.qty(d.thickness_mm)} mm` : ''}`
+      return d.weight_kg ? `重量 ${this.qty(d.weight_kg)} kg` : '—'
+    },
     resetFilters() { this.keyword = ''; this.status = 'PENDING'; this.load(1) },
     changeSize(size) { this.pageSize = size; this.load(1) },
     async load(page = this.page) {

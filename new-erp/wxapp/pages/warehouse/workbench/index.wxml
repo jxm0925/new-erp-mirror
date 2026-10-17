@@ -27,7 +27,8 @@
     </view>
   </block>
 </view>
-<LoginPopup class="LoginPopup"></LoginPopup>
+<LoginPopup class="LoginPopup" default-mode="production"></LoginPopup>
+<van-notify id="van-notify" />
 <view class="workspace-navigation">
   <view class="active"><van-icon name="wap-home" size="46rpx"/><text>工作台</text></view>
   <view bindtap="openTasks"><van-icon name="orders-o" size="46rpx"/><text>任务</text></view>

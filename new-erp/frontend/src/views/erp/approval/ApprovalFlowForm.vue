@@ -911,7 +911,7 @@ export default {
     async searchRegistryCandidates(keyword) {
       this.registryDialog.candidatesLoading = true;
       try {
-        const { data } = await listApprovalRegistryCandidates({ keyword, page: 1, per_page: 20 });
+        const { data } = await listApprovalRegistryCandidates({ keyword, page: 1, per_page: 10 });
         this.registryDialog.candidates = data.data || [];
       } finally {
         this.registryDialog.candidatesLoading = false;

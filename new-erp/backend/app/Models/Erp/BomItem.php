@@ -2,8 +2,12 @@
 
 namespace App\Models\Erp;
 
+use Illuminate\Database\Eloquent\SoftDeletes;
+
 class BomItem extends MasterModel
 {
+    use SoftDeletes;
+
     protected $table = 'erp_bom_items';
     protected $casts = [
         'replaceable' => 'boolean',
@@ -15,9 +19,10 @@ class BomItem extends MasterModel
         'cut_thickness_mm' => 'decimal:2',
         'allow_cut_rotation' => 'boolean',
         'piece_qty' => 'integer',
+        'cutting_quantity_snapshot' => 'array',
     ];
 
-    public function bom() { return $this->belongsTo(Bom::class, 'bom_id'); }
+    public function bom() { return $this->belongsTo(Bom::class, 'bom_id')->withTrashed(); }
     public function componentItem() { return $this->belongsTo(Item::class, 'component_item_id'); }
     public function unit() { return $this->belongsTo(Unit::class); }
 }

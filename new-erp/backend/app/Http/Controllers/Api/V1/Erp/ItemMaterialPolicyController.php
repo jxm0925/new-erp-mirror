@@ -19,7 +19,7 @@ class ItemMaterialPolicyController extends Controller
     public function history(Request $request, int $itemId)
     {
         $data = ItemMaterialPolicy::query()->where('item_id', $itemId)
-            ->orderByDesc('version_no')->paginate(min(100, max(5, (int) $request->input('per_page', 20))));
+            ->orderByDesc('version_no')->paginate(min(100, max(5, (int) $request->input('per_page', 10))));
         return response()->json($data);
     }
 

@@ -105,6 +105,16 @@
               />
             </div>
           </el-tab-pane>
+          <el-tab-pane name="carriers">
+            <span slot="label" class="custom-tab-item">
+              <i class="el-icon-truck" />
+              <span>承运商</span>
+              <span class="tab-badge code-mono">{{ counts.carriers }}</span>
+            </span>
+            <div class="tab-pane-content">
+              <archive-dictionary v-if="visited.carriers" ref="carrierList" kind="carriers" :active="activeTab === 'carriers'" @count-updated="c => updateCount('carriers', c)" />
+            </div>
+          </el-tab-pane>
         </el-tabs>
       </div>
     </div>
@@ -122,7 +132,8 @@ const countsCache = {
   units: 9,
   categories: 0,
   payments: 6,
-  platforms: 1
+  platforms: 1,
+  carriers: 0
 }
 
 export default {
@@ -141,7 +152,8 @@ export default {
         units: '单位管理',
         categories: '商品分类',
         payments: '付款方式',
-        platforms: '成交平台'
+        platforms: '成交平台',
+        carriers: '承运商'
       }
       return map[this.activeTab] || '基础档案'
     },
@@ -154,7 +166,8 @@ export default {
         units: '新增单位',
         categories: '新增分类',
         payments: '新增付款方式',
-        platforms: '新增平台'
+        platforms: '新增平台',
+        carriers: '新增承运商'
       }
       return map[this.activeTab] || '新增档案'
     },
@@ -163,12 +176,13 @@ export default {
       if (this.activeTab === 'categories') return this.$can('master.base_archive')
       if (this.activeTab === 'payments') return this.$can('finance.payment_method.manage')
       if (this.activeTab === 'platforms') return this.$can('master.base_archive')
+      if (this.activeTab === 'carriers') return this.$can('master.base_archive.create')
       return true
     }
   },
   created () {
     const queryTab = this.$route.query.tab
-    if (queryTab && ['units', 'categories', 'payments', 'platforms'].includes(queryTab)) {
+    if (queryTab && ['units', 'categories', 'payments', 'platforms', 'carriers'].includes(queryTab)) {
       this.activeTab = queryTab
       this.$set(this.visited, queryTab, true)
     }
@@ -186,13 +200,14 @@ export default {
     },
     async prefetchCounts () {
       try {
-        const [uRes, cRes, pRes, plRes] = await Promise.allSettled([
+        const [uRes, cRes, pRes, plRes, carrierRes] = await Promise.allSettled([
           listEntity('units', { per_page: 1 }),
           listArchives('categories', { per_page: 1 }),
           this.$can('finance.payment_method.view') || this.$can('finance.payment_method.manage')
             ? listArchives('payments', { per_page: 1 })
             : Promise.resolve({ data: { total: 0 } }),
-          listArchives('platforms', { per_page: 1 })
+          listArchives('platforms', { per_page: 1 }),
+          listArchives('carriers', { per_page: 1 })
         ])
         if (uRes.status === 'fulfilled' && uRes.value && uRes.value.data) {
           this.updateCount('units', Number(uRes.value.data.total || 0))
@@ -206,6 +221,7 @@ export default {
         if (plRes.status === 'fulfilled' && plRes.value && plRes.value.data) {
           this.updateCount('platforms', Number(plRes.value.data.total || 0))
         }
+        if (carrierRes.status === 'fulfilled' && carrierRes.value && carrierRes.value.data) this.updateCount('carriers', Number(carrierRes.value.data.total || 0))
       } catch (_) {}
     },
     getRefComp (ref) {
@@ -224,6 +240,9 @@ export default {
       } else if (this.activeTab === 'platforms') {
         const comp = this.getRefComp(this.$refs.platformList)
         if (comp && comp.load) comp.load()
+      } else if (this.activeTab === 'carriers') {
+        const comp = this.getRefComp(this.$refs.carrierList)
+        if (comp && comp.load) comp.load()
       }
     },
     createInActiveTab () {
@@ -238,6 +257,9 @@ export default {
         if (comp && comp.openCreate) comp.openCreate()
       } else if (this.activeTab === 'platforms') {
         const comp = this.getRefComp(this.$refs.platformList)
+        if (comp && comp.openCreate) comp.openCreate()
+      } else if (this.activeTab === 'carriers') {
+        const comp = this.getRefComp(this.$refs.carrierList)
         if (comp && comp.openCreate) comp.openCreate()
       }
     }

@@ -85,13 +85,15 @@ final class WorkOrderCompletionService
                 $completionId = DB::table('erp_work_order_completions')->insertGetId([
                     'completion_no' => $this->numbers->next('work_order_completion', 'WOC'),
                     'client_command_id' => $payload['client_command_id'], 'work_order_id' => $workOrder->id,
-                    'status' => 'PENDING_REVIEW', 'submitted_base_qty' => $totals['submitted'],
+                    'status' => 'APPROVED', 'submitted_base_qty' => $totals['submitted'],
                     'qualified_base_qty' => $totals['qualified'], 'unqualified_base_qty' => $totals['unqualified'],
                     'scrapped_base_qty' => $totals['scrapped'], 'defect_reason' => $payload['defect_reason'] ?? null,
                     'remark' => $payload['remark'] ?? null,
                     'attachment_snapshot' => empty($payload['attachments']) ? null : json_encode(array_values($payload['attachments']), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                     'preflight_snapshot' => json_encode($preflight, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                     'submitted_by_legacy_id' => $this->userId($user), 'submitted_at' => $now,
+                    'reviewed_by_legacy_id' => $this->userId($user), 'reviewed_at' => $now,
+                    'review_reason' => '提交完工即生效，不再单独审核；去仓库的由仓库入库时验收，去下一工单的由下一工单接单时验收。',
                     'organization_code' => $workOrder->organization_code, 'business_version' => 1,
                     'created_at' => $now, 'updated_at' => $now,
                 ]);
@@ -108,10 +110,14 @@ final class WorkOrderCompletionService
                         'qualified_base_qty' => $qualified, 'unqualified_base_qty' => $unqualified, 'scrapped_base_qty' => $scrapped,
                         'created_at' => $now, 'updated_at' => $now,
                     ]);
-                    $output->update(['status' => 'PENDING_COMPLETION_REVIEW', 'business_version' => (int) $output->business_version + 1]);
+                    $warehouse = $output->output_mode_snapshot === 'warehouse_required'
+                        || ($output->output_mode_snapshot === 'warehouse_optional' && $output->disposition === 'warehouse');
+                    $output->update(['status' => $warehouse ? 'WAIT_WAREHOUSE' : 'COMPLETED', 'business_version' => (int) $output->business_version + 1]);
+                    $this->stockPrebuild->routeApprovedDirectOutput($workOrder, $output->fresh(), $user);
                 }
                 $workOrder->business_version = (int) $workOrder->business_version + 1;
                 $workOrder->save();
+                $this->readiness->refresh($workOrder, $user, '提交完工并满足最终完成条件', $completionId, $now);
                 return $this->completionProjection(DB::table('erp_work_order_completions')->where('id', $completionId)->first());
             });
     }

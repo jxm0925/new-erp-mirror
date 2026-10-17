@@ -19,7 +19,7 @@ import FinanceRateMaintenanceDialog from './FinanceRateMaintenanceDialog.vue'
 
 export default {
   components: { FinanceRateMaintenanceDialog },
-  data: () => ({ loading: false, rows: [], currencies: [], page: 1, perPage: 20, total: 0, summary: {}, rateMaintenanceVisible: false, query: { valuation_date: new Date().toISOString().slice(0, 10), currency: '', status: '', keyword: '' } }),
+  data: () => ({ loading: false, rows: [], currencies: [], page: 1, perPage: 10, total: 0, summary: {}, rateMaintenanceVisible: false, query: { valuation_date: new Date().toISOString().slice(0, 10), currency: '', status: '', keyword: '' } }),
   computed: { foreignCount () { return this.rows.filter(row => row.account?.currency && row.account.currency !== 'CNY').length } },
   created () { this.bootstrap(); if (this.$route.query.rate_maintenance === '1') this.rateMaintenanceVisible = true },
   methods: {

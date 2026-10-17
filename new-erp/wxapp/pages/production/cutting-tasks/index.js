@@ -79,7 +79,7 @@ Page({
     const sequence = this.requestSequence = (this.requestSequence || 0) + 1;
     this.setData({ loading: true, error: '' });
     const handovers = this.data.group === 'handovers';
-    const query = { scope: this.data.scope, status_group: handovers ? undefined : this.data.group, keyword: this.data.keyword.trim() || undefined, page, per_page: 20 };
+    const query = { scope: this.data.scope, status_group: handovers ? undefined : this.data.group, keyword: this.data.keyword.trim() || undefined, page, per_page: 10 };
     return (handovers ? cutting.pendingHandovers(query) : cutting.listTasks(query)).then(response => {
       if (sequence !== this.requestSequence) return;
       const result = pagePayload(response);

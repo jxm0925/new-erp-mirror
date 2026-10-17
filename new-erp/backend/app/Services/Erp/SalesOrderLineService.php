@@ -9,6 +9,7 @@ use App\Models\Erp\SalesOrderAttachment;
 use App\Models\Erp\SalesOrderLine;
 use App\Models\Erp\Sku;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 
 class SalesOrderLineService
 {
@@ -60,8 +61,13 @@ class SalesOrderLineService
         $lines = SalesOrderLine::query()
             ->where('sales_order_id', $order->id)
             ->whereIn('id', $ids)
-            ->where('line_status', 'open')
+            ->lockForUpdate()
             ->get();
+        if ($lines->count() !== count(array_unique($ids)) || $lines->contains(fn ($line) => $line->line_status !== 'open')) {
+            // Confirmed rows retain demand and fulfillment history. The draft
+            // deletion path cannot pretend that an accepted line was removed.
+            throw ValidationException::withMessages(['deleted_line_ids' => '正式订单行不能按草稿删除，请通过正式取消或变更流程处理。'])->status(409);
+        }
 
         foreach ($lines as $line) {
             SalesOrderAttachment::query()
@@ -95,23 +101,21 @@ class SalesOrderLineService
         if ($lineType === 'physical') {
             abort_if($match['match_status'] !== 'matched', 422, $match['block_reason'] ?: '实物 SKU 未维护唯一有效默认物料');
         }
-        $requirement = $this->conversions->calculateSalesRequirement($sku, $qty);
+        $requirement = SalesOrderFulfillmentPolicy::isPhysical($lineType)
+            ? $this->conversions->calculateSalesRequirement($sku, $qty)
+            : ['item' => null, 'factor' => null, 'base_qty' => 0.0];
         $item = $requirement['item'];
 
-        $isCustomized = (bool) ($line['is_customized'] ?? false);
-        $isSpecialCustomized = (bool) ($line['is_special_customized'] ?? false);
+        $configuration = $this->configurationSnapshot($line, $existing?->configuration_snapshot);
+        $isCustomized = $configuration['is_customized'];
+        $isSpecialCustomized = $configuration['is_special_customized'];
         abort_if($isCustomized && !$sku->allow_customized, 422, '当前 SKU 不允许普通定制');
         abort_if($isSpecialCustomized && !$sku->allow_special_customized, 422, '当前 SKU 不允许特殊定制');
 
-        $electric = trim((string) ($line['electric'] ?? '')) ?: null;
-        $needPump = array_key_exists('need_pump', $line) && $line['need_pump'] !== null
-            ? (bool) $line['need_pump']
-            : null;
-        $configuration = is_array($line['configuration_snapshot'] ?? null)
-            ? $line['configuration_snapshot']
-            : [];
-        unset($configuration['electric'], $configuration['need_pump']);
+        $configuration['is_customized'] = $isCustomized || (bool) $sku->is_custom_sku;
         $configuration = $this->lengthCutRequirements->normalizeConfiguration($configuration);
+        $electric = $configuration['electric'];
+        $needPump = $configuration['need_pump'];
 
         $price = round((float) ($line['unit_price'] ?? 0), 4);
         $discountRate = round((float) ($line['discount_rate'] ?? 1), 6);
@@ -125,15 +129,13 @@ class SalesOrderLineService
         $amountExclTax = $priceTaxMode === 'tax_exclusive'
             ? $commercialAmount
             : round($commercialAmount / (1 + $taxRate), 4);
-        $taxAmount = round($commercialAmount - $amountExclTax, 4);
+        $taxAmount = $priceTaxMode === 'tax_exclusive'
+            ? round($amountExclTax * $taxRate, 4)
+            : round($commercialAmount - $amountExclTax, 4);
         $amountInclTax = $priceTaxMode === 'tax_exclusive'
             ? round($commercialAmount + $taxAmount, 4)
             : $commercialAmount;
-        $description = trim((string) (
-            $line['customization_description']
-            ?? data_get($configuration, 'special_custom_description')
-            ?? ''
-        ));
+        $description = $configuration['special_custom_description'];
 
         return [
             'sales_order_id' => $order->id,
@@ -177,16 +179,10 @@ class SalesOrderLineService
             'amount_incl_tax' => $amountInclTax,
             'need_pump' => $needPump,
             'electric' => $electric,
-            'is_customized' => $isCustomized || (bool) $sku->is_custom_sku,
-            'is_special_customized' => $isSpecialCustomized,
-            'customization_description' => $description ?: null,
-            'configuration_snapshot' => [
-                'need_pump' => $needPump,
-                'electric' => $electric,
-                'is_customized' => $isCustomized || (bool) $sku->is_custom_sku,
-                'is_special_customized' => $isSpecialCustomized,
-                'special_custom_description' => $description ?: null,
-            ] + $configuration,
+            'is_customized' => $configuration['is_customized'],
+            'is_special_customized' => $configuration['is_special_customized'],
+            'customization_description' => $description,
+            'configuration_snapshot' => $configuration,
             'product_snapshot' => $product->only([
                 'id', 'product_code', 'product_name', 'product_type', 'model', 'unit_id', 'image',
             ]),
@@ -225,6 +221,34 @@ class SalesOrderLineService
             'design' => null,
             'remark' => $line['remark'] ?? null,
         ];
+    }
+
+    /** Normalize editable mirrors only; frozen cutting facts never consult current master data here. */
+    public function configurationSnapshot(array $line, ?array $storedConfiguration = null): array
+    {
+        $incoming = is_array($line['configuration_snapshot'] ?? null) ? $line['configuration_snapshot'] : [];
+        $configuration = array_key_exists('configuration_snapshot', $line) && $line['configuration_snapshot'] === null
+            ? []
+            : array_replace($storedConfiguration ?? [], $incoming);
+        $value = fn (string $field, mixed $default = null) => array_key_exists($field, $line)
+            ? $line[$field]
+            : ($configuration[$field] ?? $default);
+        $electric = trim((string) ($value('electric') ?? ''));
+        $needPump = $value('need_pump');
+        $description = array_key_exists('special_custom_description', $incoming)
+            ? $incoming['special_custom_description']
+            : (array_key_exists('customization_description', $line)
+                ? $line['customization_description']
+                : ($configuration['special_custom_description'] ?? null));
+        $description = trim((string) ($description ?? ''));
+
+        return [
+            'need_pump' => $needPump === null ? null : (bool) $needPump,
+            'electric' => $electric === '' ? null : $electric,
+            'is_customized' => (bool) $value('is_customized', false),
+            'is_special_customized' => (bool) $value('is_special_customized', false),
+            'special_custom_description' => $description === '' ? null : $description,
+        ] + $configuration + ['cut_requirements' => []];
     }
 
     private function lineType(Sku $sku, Product $product, ?string $legacyGoodsType): string

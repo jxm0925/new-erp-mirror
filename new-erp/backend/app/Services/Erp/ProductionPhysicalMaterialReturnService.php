@@ -11,10 +11,14 @@ final class ProductionPhysicalMaterialReturnService
     public function prepare(object $source, int $itemId, string $quantity): ?array
     {
         if (Item::findOrFail($itemId)->materialManagementMode() !== 'physical') return null;
-        if (bccomp($quantity, bcadd($quantity, '0', 0), 8) !== 0) $this->fail('整板退料必须为整数张。');
         $rows = DB::table('erp_material_physicals')->where('item_id', $itemId)->where('current_holding_id', $source->id)
-            ->where('status', 'PRODUCTION_RECEIVED')->orderBy('id')->limit((int) $quantity)->lockForUpdate()->get();
-        if ($rows->count() !== (int) $quantity) $this->fail('退料数量没有对应的未加工整板实物。');
+            ->where('status', 'PRODUCTION_RECEIVED')->orderBy('id')->lockForUpdate()->get();
+        $input = DB::table('erp_production_input_holdings')->where('input_holding_id', $source->id)->first();
+        $receipt = $input ? DB::table('erp_material_receipt_lines')->where('id', $input->material_receipt_line_id)->first() : null;
+        $allocation = $receipt ? app(ProductionCuttingAllocationService::class)->decode($receipt->accepted_serial_snapshot)['cutting_allocation'] ?? null : null;
+        $stock = $this->stockSources($itemId, $rows, $allocation);
+        $selected = CuttingReturnAllocationPolicy::selectStockSources($stock['sources'], $quantity, null, $stock['stock_unit_kind']);
+        $rows = $rows->whereIn('id', array_column($selected, 'physical_material_id'));
         $total = '0'; foreach ($rows as $row) $total = bcadd($total, (string) $row->total_cost, 4);
         if (bccomp($total, (string) $source->total_cost, 4) > 0) $this->fail('整板金额超过该工序剩余投入金额。');
         DB::table('erp_material_physicals')->whereIn('id', $rows->pluck('id'))->update([
@@ -31,23 +35,56 @@ final class ProductionPhysicalMaterialReturnService
         if (!$returnLine || (int) $returnLine->warehouse_id !== (int) $line['warehouse_id'] || (int) $returnLine->location_id !== (int) $line['location_id']
             || (string) ($returnLine->batch_no ?: 'PROD-RETURN-'.$transaction->source_id) !== (string) $line['batch_no']) return false;
         $allocations = DB::table('erp_production_material_return_cost_allocations')->where('return_line_id', $returnLine->id)->lockForUpdate()->get();
-        $ids = []; $total = '0';
+        $ids = []; $total = '0'; $actualQuantity = '0.00000000';
+        $returnAllocation = app(ProductionCuttingAllocationService::class)->decode($returnLine->serial_snapshot)['cutting_allocation'] ?? null;
         foreach ($allocations as $allocation) {
             $physicalIds = json_decode($allocation->physical_material_ids ?: '[]', true, 512, JSON_THROW_ON_ERROR);
-            if (bccomp((string) count($physicalIds), (string) $allocation->quantity, 8) !== 0) return false;
-            $cost = '0';
+            if (! $physicalIds || count($physicalIds) !== count(array_unique($physicalIds))) return false;
+            $cost = '0'; $physicals = [];
             foreach ($physicalIds as $id) {
                 if (in_array($id, $ids, true)) return false;
                 $physical = DB::table('erp_material_physicals')->where('id', $id)->lockForUpdate()->first();
                 if (!$physical || $physical->status !== 'RETURN_PENDING' || (int) $physical->item_id !== $itemId
                     || (int) $physical->current_holding_id !== (int) $allocation->source_input_holding_id) return false;
                 $ids[] = $id; $cost = bcadd($cost, (string) $physical->total_cost, 4);
+                $physicals[] = $physical;
             }
+            $stock = $this->stockSources($itemId, $physicals, $returnAllocation);
+            $stockQuantity = CuttingStockAllocationPolicy::sum($stock['sources'], 'actual_stock_qty');
+            if (bccomp($stockQuantity, (string) $allocation->quantity, 8) !== 0) return false;
+            $actualQuantity = bcadd($actualQuantity, $stockQuantity, 8);
             if (bccomp($cost, (string) $allocation->total_cost, 4) !== 0) return false;
             $total = bcadd($total, $cost, 4);
         }
-        return bccomp((string) count($ids), $quantity, 8) === 0 && bccomp($quantity, (string) $returnLine->return_base_qty, 8) === 0
+        return bccomp($actualQuantity, $quantity, 8) === 0 && bccomp($quantity, (string) $returnLine->return_base_qty, 8) === 0
             && bccomp($total, (string) ($line['cost_amount'] ?? '-1'), 4) === 0;
+    }
+
+    /** Existing identities prove area stock; a square-metre quantity is never a board count. */
+    public function stockSources(int $itemId, iterable $physicals, ?array $allocation): array
+    {
+        $kind = $allocation['stock_unit_kind'] ?? null;
+        if ($kind === null) {
+            $item = Item::with('unit.standardUnit')->findOrFail($itemId);
+            $unit = app(UnitConversionDomainService::class)->canonicalUnit($item->unit);
+            if (! $unit) $this->fail('整板原料缺少真实库存单位。');
+            $kind = app(CuttingQuantityCalculator::class)->unitKind($unit);
+        }
+        if (! in_array($kind, ['sheet', 'm2'], true)) $this->fail('整板原料库存单位必须为张或平方米。');
+        $frozen = collect($allocation['sources'] ?? [])->keyBy('physical_material_id'); $sources = [];
+        foreach ($physicals as $physical) {
+            $source = $frozen->get((int) $physical->id);
+            if ($allocation && ! $source) $this->fail('整板实物不属于原签收或退料的冻结来源。');
+            if (! $source) {
+                $dimensions = app(ProductionCuttingAllocationService::class)->decode($physical->dimensions);
+                $length = FrozenCuttingStockPolicy::positiveDecimal($dimensions['length_mm'] ?? null);
+                $width = FrozenCuttingStockPolicy::positiveDecimal($dimensions['width_mm'] ?? null);
+                if ($kind === 'm2' && (! $length || ! $width)) $this->fail('平方米库存缺少已维护的实际板材长宽，不能估算数量。');
+                $source = ['physical_material_id' => (int) $physical->id, 'actual_stock_qty' => $kind === 'sheet' ? '1.00000000' : bcdiv(bcmul($length, $width, 16), '1000000', 8)];
+            }
+            $source['actual_stock_qty'] = CuttingReturnAllocationPolicy::stockQuantity($source, $kind); $sources[] = $source;
+        }
+        return ['stock_unit_kind' => $kind, 'sources' => $sources];
     }
 
     public function finalize(object $line, object $posted, object $transaction): void

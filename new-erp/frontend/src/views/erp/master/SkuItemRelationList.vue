@@ -828,7 +828,7 @@ export default {
         visible: false,
         loading: false,
         saving: false,
-        itemPage: createPageState(50),
+        itemPage: createPageState(10),
         isChange: false,
         sku: null,
         current: null,
@@ -1019,7 +1019,7 @@ export default {
       this.setModal.chosen = null
       this.setModal.items = []
       this.setModal.itemKeyword = ''
-      this.setModal.itemPage = createPageState(50)
+      this.setModal.itemPage = createPageState(10)
       this.setModal.form = {
         item_id: null,
         factor: 1,

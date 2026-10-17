@@ -20,7 +20,7 @@
         <el-table-column v-if="canManage" label="维护" width="85"><template slot-scope="scope"><el-button type="text" @click.stop="edit(scope.row)">编辑</el-button></template></el-table-column>
       </el-table>
       <div class="catalog-footer">
-        <el-pagination layout="prev, pager, next, total" :current-page="page" :page-size="20" :pager-count="5" :total="total" @current-change="changePage" />
+        <el-pagination layout="prev, pager, next, total" :current-page="page" :page-size="10" :pager-count="5" :total="total" @current-change="changePage" />
         <span v-if="mode==='select' && selected">已选：{{ selected.name }}</span>
       </div>
       <span slot="footer"><el-button @click="visible=false">{{ mode==='select'?'取消':'关闭' }}</el-button><el-button v-if="mode==='select'" type="success" :disabled="!selected || selected.status!=='enabled'" @click="confirm">确认选择</el-button></span>
@@ -78,7 +78,7 @@ export default {
       const sequence = ++this.requestSequence
       this.loading = true
       try {
-        const response = await listProcessCatalog(this.catalogType, { page: this.page, per_page: 20, keyword: this.keyword.trim(), status: this.status || undefined })
+        const response = await listProcessCatalog(this.catalogType, { page: this.page, per_page: 10, keyword: this.keyword.trim(), status: this.status || undefined })
         if (sequence !== this.requestSequence || !this.visible) return
         this.rows = response.data.data || []; this.total = Number(response.data.total || 0)
         if (this.selected) { const current = this.rows.find(row => Number(row.id) === Number(this.selected.id)); if (current) this.selected = current }

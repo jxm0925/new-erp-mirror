@@ -1,8 +1,10 @@
 import api from './master'
 
 export const listBoms = params => api.get('/v1/erp/bom/boms', { params })
-export const getBom = id => api.get(`/v1/erp/bom/boms/${id}`)
+export const getBom = (id, params) => api.get(`/v1/erp/bom/boms/${id}`, { params })
 export const saveBom = data => data.id ? api.put(`/v1/erp/bom/boms/${data.id}`, data) : api.post('/v1/erp/bom/boms', data)
+export const deleteBom = id => api.delete(`/v1/erp/bom/boms/${id}`)
+export const restoreBom = id => api.post(`/v1/erp/bom/boms/${id}/restore`)
 export const submitBom = id => api.post(`/v1/erp/bom/boms/${id}/submit`)
 export const approveBom = id => api.post(`/v1/erp/bom/boms/${id}/approve`)
 export const rejectBom = id => api.post(`/v1/erp/bom/boms/${id}/reject`)

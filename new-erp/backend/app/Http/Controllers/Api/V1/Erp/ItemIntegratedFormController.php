@@ -65,6 +65,7 @@ class ItemIntegratedFormController extends Controller
             'item.management_scope' => 'sometimes|required|in:factory,office',
             'item.category_id' => 'required|integer|exists:erp_item_categories,id',
             'item.spec' => 'nullable|string|max:255',
+            'item.brand' => 'nullable|string|max:100',
             'item.material_grade' => 'nullable|string|max:80',
             'item.cutting_mode' => 'required|in:none,sheet,length',
             'item.material_management_mode' => 'required|in:quantity,physical',

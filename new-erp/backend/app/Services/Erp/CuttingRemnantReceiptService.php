@@ -61,7 +61,7 @@ final class CuttingRemnantReceiptService
         $sourceOrders = \App\Models\Erp\WorkOrder::query()->where(function ($q) use ($orderId): void {
             $q->whereIn('id', DB::table('erp_cutting_plan_allocations')->where('cutting_order_id', $orderId)->select('work_order_id'))
                 ->orWhereIn('id', DB::table('erp_production_cutting_operations')->where('cutting_order_id', $orderId)->select('work_order_id'));
-        })->orderBy('id')->paginate(5, ['id', 'work_order_no'], 'source_page', max(1, (int) ($filters['source_page'] ?? 1)));
+        })->orderBy('id')->paginate(10, ['id', 'work_order_no'], 'source_page', max(1, (int) ($filters['source_page'] ?? 1)));
         return ['data' => $rows, 'order_no' => $order->cutting_order_no, 'source_work_orders' => $sourceOrders->toArray(),
             'meta' => ['current_page' => $page->currentPage(), 'per_page' => $page->perPage(), 'total' => $page->total()]];
     }

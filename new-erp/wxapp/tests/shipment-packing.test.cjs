@@ -66,11 +66,11 @@ function pageFixture() {
   const helpers = { permissions: () => () => true, quantity: value => String(value), errorText: e => e.message,
     rows: response => ({ rows: response.data.data, page: response.data.current_page, lastPage: response.data.last_page, total: response.data.total }), back() {} };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../pages/production/shipment-packing/index.js'), 'utf8'), {
-    Page: value => { definition = value; }, wx: { showToast() {} }, require: name => name.includes('services') ? service : helpers,
+    Page: value => { definition = value; }, wx: { showToast() {} }, require: name => name.includes('services') ? service : name.includes('personal-shares') ? require('../utils/personal-shares') : name.includes('packing-material-usage') ? require('../utils/packing-material-usage') : helpers,
   });
   const page = Object.assign({}, definition, { data: plain(definition.data), peopleSelected: {}, materialSelected: {}, setData(values) { Object.assign(this.data, values); } });
-  page.data.operation = { id: 10, business_version: 3, participants: [] };
-  return { page, actions, calls, people, materials, identities };
+  page.data.operation = { id: 10, business_version: 3, owner_legacy_id: 44, participants: [{ employee_legacy_id: 44, name: '真实接单人', role: 'OWNER', is_active: true }] };
+  return { page, actions, calls, people, materials, identities, service };
 }
 const paged = rows => ({ data: { data: rows, current_page: 1, last_page: 2, total: 11 } });
 const event = id => ({ currentTarget: { dataset: { id } } });
@@ -85,6 +85,41 @@ test('owner-selected collaborators survive search and pagination and can be remo
   assert.deepEqual(f.actions[0].employee_legacy_ids, [102]);
   assert.equal(f.actions[0].action, 'collaborators');
   assert.equal(f.actions[0].expected_version, 3);
+});
+
+test('packing owner confirms manual seventy thirty and keeps a past actual contributor in its own operation', async () => {
+  const f = pageFixture();
+  f.people.push(paged([{ legacy_id: 101, nickname: '协同人' }])); await f.page.openPeople(); f.page.togglePerson(event(101));
+  f.page.peopleShareInput({ currentTarget: { dataset: { id: 44 } }, detail: { value: '70' } });
+  f.page.peopleShareInput({ currentTarget: { dataset: { id: 101 } }, detail: { value: '30' } });
+  await f.page.savePeople();
+  assert.deepEqual(f.actions[0].shares.map(person => person.share_ratio), ['0.70000000', '0.30000000']);
+  assert.deepEqual(f.actions[0].shares.map(person => person.employee_legacy_id), [44, 101]);
+
+  const past = pageFixture(); past.page.data.operation.participants.push({ employee_legacy_id: 61, name: '已参与协同人', role: 'COLLABORATOR', is_active: false, has_labor: true });
+  past.people.push(paged([])); await past.page.openPeople();
+  assert.deepEqual(plain(past.page.data.shareRows).map(person => person.employee_legacy_id), [44, 61]);
+});
+
+test('unknown packing share result freezes edits and sends only recovery of the original action', async () => {
+  const f = pageFixture(); f.people.push(paged([{ legacy_id: 101, nickname: '协同人' }])); await f.page.openPeople(); f.page.togglePerson(event(101));
+  f.service.action = (_id, payload) => { f.actions.push(plain(payload)); return Promise.reject(Object.assign(new Error('lost response'), { pendingCommand: true })); };
+  await f.page.savePeople(); const before = plain(f.page.data.shareRows);
+  f.page.peopleShareInput({ currentTarget: { dataset: { id: 44 } }, detail: { value: '70' } }); f.page.togglePerson(event(101));
+  assert.deepEqual(plain(f.page.data.shareRows), before);
+  await f.page.savePeople(); assert.equal(f.actions[1].action, 'recover');
+});
+
+test('actual material dimensions and Chinese remarks survive the selected source payload without changing quantity', async () => {
+  const f = pageFixture(); f.materials.push(paged([{ id: 21, item_name: '木条', physical: false, serial_tracking_mode: 'none', quantity_available: '10' }]));
+  await f.page.openMaterials(); f.page.chooseMaterial(event(21));
+  f.page.quantityInput({ currentTarget: { dataset: { id: 21 } }, detail: { value: '3' } });
+  f.page.usageDimensionInput({ currentTarget: { dataset: { id: 21, axis: 'length_mm' } }, detail: { value: '1200.25' } });
+  f.page.usageRemarkInput({ currentTarget: { dataset: { id: 21 } }, detail: { value: '木箱底托实际用料' } });
+  await f.page.saveMaterials();
+  assert.equal(f.actions[0].materials[0].base_qty, '3');
+  assert.deepEqual(f.actions[0].materials[0].usage_dimensions, { length_mm: '1200.25' });
+  assert.equal(f.actions[0].materials[0].usage_remark, '木箱底托实际用料');
 });
 
 test('material selection keeps actual source and quantity across pages without inserting default plate dimensions', async () => {

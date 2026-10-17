@@ -1,5 +1,6 @@
 const production = require('../../../services/production');
 const decisionCommand = require('../../../utils/production-decision-command');
+const personalShares = require('../../../utils/personal-shares');
 
 const STATUS_CONFIG = {
   WAIT_CLAIM: { label: '待接单', theme: 'gray', color: '#8f959e', bg: '#f2f3f5' },
@@ -138,6 +139,10 @@ Page({
     collabTotal: 0,
     collabLoading: false,
     collabHasNext: false,
+    collabShareGroups: [],
+    selectedCollabPeople: [],
+    collabError: '',
+    collabPending: false,
   },
 
   timerId: null,
@@ -231,7 +236,8 @@ Page({
       const targets = (task.target_details || []).map(targetView);
       this.buildWorkersList(task, targets);
 
-      this.setData({ task, targets, loading: false });
+      this.setData({ task, targets, loading: false, collabPending: Boolean(decisionCommand.pending('collaborators_' + this.data.id)) });
+      if (this.data.showCollabModal && !this.data.collabPending) this.refreshCollabShares();
       this.loadMaterials();
       this.startTimer();
     }).catch((error) => {
@@ -508,6 +514,13 @@ Page({
 
   // Collaborator Modal Methods
   openAddCollaborator() {
+    const pending = decisionCommand.pending('collaborators_' + this.data.id);
+    if (pending) {
+      this.collabPeople = {};
+      this.setData({ showCollabModal: true, collabPending: true, selectedCollabIds: pending.employee_legacy_ids || [], selectedCollabPeople: [], collabCandidates: [],
+        collabShareGroups: personalShares.restoreGroups(this.data.task.share_scopes || [], pending.scope_shares || [], this.data.task.assignee_user_legacy_id), collabError: '' });
+      return Promise.resolve();
+    }
     if (!this.data.task) return;
     if (Number(this.data.task.assignee_user_legacy_id) !== Number(this.data.userId)) {
       return wx.showToast({ title: '只有任务负责人可添加协同人员', icon: 'none' });
@@ -518,22 +531,25 @@ Page({
     if (['WAIT_CLAIM', 'WAIT_ACCEPT', 'COMPLETED', 'CANCELLED'].includes(this.data.task.status)) {
       return wx.showToast({ title: '任务尚未接单，不能添加协同', icon: 'none' });
     }
-    this.setData({ showCollabModal: true, collabSearchKeyword: '', selectedCollabIds: [], collabCandidates: [], collabPage: 1, collabTotal: 0 });
+    this.collabPeople = {};
+    this.setData({ showCollabModal: true, collabPending: false, collabSearchKeyword: '', selectedCollabIds: [], selectedCollabPeople: [], collabCandidates: [], collabPage: 1, collabTotal: 0, collabShareGroups: [], collabError: '' });
+    this.refreshCollabShares();
     return this.loadCollabCandidates(1);
   },
 
   loadCollabCandidates(page) {
     const sequence = this.collabRequestSequence = (this.collabRequestSequence || 0) + 1;
     this.setData({ collabLoading: true });
-    return production.collaborationCandidates(this.data.id, { page, per_page: 20, keyword: this.data.collabSearchKeyword.trim() }).then((response) => {
+    return production.collaborationCandidates(this.data.id, { page, per_page: 10, keyword: this.data.collabSearchKeyword.trim() }).then((response) => {
       if (sequence !== this.collabRequestSequence || !this.data.showCollabModal) return;
       const rows = response.data || [];
       this.allCollabCandidates = rows.filter(row => Number(row.user_id) !== Number(this.data.userId)).map(row => ({
         id: Number(row.user_id), name: row.display_name || `人员 #${row.user_id}`,
         empNo: String(row.user_id), dept: row.department_name || '未配置部门',
       }));
+      this.allCollabCandidates.forEach(person => { this.collabPeople[person.id] = person; });
       this.setData({ collabPage: page, collabTotal: Number(response.total || rows.length),
-        collabHasNext: page * 20 < Number(response.total || rows.length), collabCandidates: this.filterCandidates('') });
+        collabHasNext: page * 10 < Number(response.total || rows.length), collabCandidates: this.filterCandidates('') });
     }).catch(error => { if (sequence === this.collabRequestSequence) wx.showToast({ title: error.message || '协同人员加载失败', icon: 'none' }); })
       .finally(() => { if (sequence === this.collabRequestSequence) this.setData({ collabLoading: false }); });
   },
@@ -541,7 +557,8 @@ Page({
   closeCollabModal() {
     this.collabRequestSequence = (this.collabRequestSequence || 0) + 1;
     this.allCollabCandidates = [];
-    this.setData({ showCollabModal: false, selectedCollabIds: [], collabSearchKeyword: '', collabCandidates: [], collabTotal: 0, collabPage: 1, collabLoading: false, collabHasNext: false });
+    this.collabPeople = {};
+    this.setData({ showCollabModal: false, selectedCollabIds: [], selectedCollabPeople: [], collabShareGroups: [], collabError: '', collabSearchKeyword: '', collabCandidates: [], collabTotal: 0, collabPage: 1, collabLoading: false, collabHasNext: false });
   },
 
   filterCandidates(keyword) {
@@ -575,14 +592,17 @@ Page({
   collabNextPage() { if (!this.data.collabLoading && this.data.collabHasNext) return this.loadCollabCandidates(this.data.collabPage + 1); },
 
   onCheckboxChange(event) {
+    if (this.data.busy || this.data.collabPending) return;
     const rawList = event.detail || [];
     const selected = rawList.map(Number);
     const pageIds = this.data.collabCandidates.map(row => Number(row.id));
     const retained = this.data.selectedCollabIds.filter(id => !pageIds.includes(Number(id)));
     this.setData({ selectedCollabIds: Array.from(new Set(retained.concat(selected))) });
+    this.refreshCollabShares();
   },
 
   toggleCollabSelect(event) {
+    if (this.data.busy || this.data.collabPending) return;
     const id = Number(event.currentTarget.dataset.id);
     const candidate = this.data.collabCandidates.find((m) => m.id === id);
     if (candidate && candidate.alreadyJoined) {
@@ -592,25 +612,55 @@ Page({
     const exists = current.includes(id);
     const next = exists ? current.filter((x) => x !== id) : current.concat([id]);
     this.setData({ selectedCollabIds: next });
+    this.refreshCollabShares();
+  },
+
+  refreshCollabShares() {
+    if (this.data.collabPending) return;
+    const selected = this.data.selectedCollabIds.map(id => this.collabPeople[id]).filter(Boolean);
+    this.setData({ selectedCollabPeople: selected, collabShareGroups: personalShares.groups(this.data.task.share_scopes || [], selected, this.data.collabShareGroups) });
+  },
+  removeSelectedCollaborator(event) {
+    if (this.data.busy || this.data.collabPending) return;
+    const id = Number(event.currentTarget.dataset.id);
+    this.setData({ selectedCollabIds: this.data.selectedCollabIds.filter(value => Number(value) !== id) }); this.refreshCollabShares();
+  },
+  collabShareInput(event) {
+    if (this.data.busy || this.data.collabPending) return;
+    const group = Number(event.currentTarget.dataset.group); const person = Number(event.currentTarget.dataset.person);
+    const groups = this.data.collabShareGroups;
+    if (groups[group] && groups[group].rows[person]) groups[group].rows[person].percent = event.detail.value;
+    this.setData({ collabShareGroups: groups, collabError: '' });
+  },
+  equalCollabShares(event) {
+    if (this.data.busy || this.data.collabPending) return;
+    const group = this.data.collabShareGroups[Number(event.currentTarget.dataset.group)];
+    if (!group) return;
+    const equal = personalShares.defaultShares(group.rows);
+    group.rows.forEach(person => { person.percent = personalShares.ratioToPercent(equal.find(share => share.employee_legacy_id === Number(person.employee_legacy_id)).share_ratio); });
+    this.setData({ collabShareGroups: this.data.collabShareGroups, collabError: '' });
   },
 
   submitAddCollaborators() {
     if (this.data.busy) return;
     const ids = this.data.selectedCollabIds;
-    if (!ids || ids.length === 0) {
-      return wx.showToast({ title: '请至少勾选一位协同人员', icon: 'none' });
-    }
     if (ids.length > 20) return wx.showToast({ title: '每次最多添加20位协同人员', icon: 'none' });
+    const pending = decisionCommand.pending('collaborators_' + this.data.id);
+    let payload = pending;
+    if (!pending) {
+      this.refreshCollabShares();
+      try { payload = { expected_version: this.data.task.business_version, employee_legacy_ids: ids,
+        scope_shares: personalShares.scopeShares(this.data.collabShareGroups) }; }
+      catch (error) { return this.setData({ collabError: error.message }); }
+    }
     this.setData({ busy: true });
-    return decisionCommand.execute('collaborators_' + this.data.id, {
-      expected_version: this.data.task.business_version,
-      employee_legacy_ids: ids,
-    }, payload => production.addCollaborators(this.data.id, payload)).then(() => {
-      wx.showToast({ title: `已成功添加 ${ids.length} 位协同人员`, icon: 'success' });
+    return decisionCommand.execute('collaborators_' + this.data.id, payload, data => production.addCollaborators(this.data.id, data)).then(() => {
+      wx.showToast({ title: '协同与个人份额已保存', icon: 'success' });
       this.closeCollabModal();
       return this.load();
     }).catch((err) => {
       wx.showToast({ title: err.message || '协同人员添加失败', icon: 'none' });
+      this.setData({ collabPending: Boolean(decisionCommand.pending('collaborators_' + this.data.id)), collabError: err.pendingCommand ? '原操作结果待确认，请重试原操作。' : err.message || '协同与份额保存失败' });
       // Keep selection and the same command after an unacknowledged write.
       return this.load();
     }).finally(() => {

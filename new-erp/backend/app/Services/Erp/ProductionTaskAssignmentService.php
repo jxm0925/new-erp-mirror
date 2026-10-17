@@ -41,7 +41,7 @@ final class ProductionTaskAssignmentService
         if ($keyword = trim((string) ($filters['keyword'] ?? ''))) {
             $rows = $rows->filter(fn ($row) => str_contains(mb_strtolower(($row['employee']['display_name'] ?? '').' '.$row['employee_legacy_id']), mb_strtolower($keyword)))->values();
         }
-        $perPage = min(50, max(1, (int) ($filters['per_page'] ?? 20))); $page = max(1, (int) ($filters['page'] ?? 1));
+        $perPage = min(50, max(1, (int) ($filters['per_page'] ?? 10))); $page = max(1, (int) ($filters['page'] ?? 1));
         return new LengthAwarePaginator($this->financial->redact($rows->slice(($page - 1) * $perPage, $perPage)->values()->all()), $rows->count(), $perPage, $page);
     }
 
@@ -84,7 +84,7 @@ final class ProductionTaskAssignmentService
         if (! empty($filters['task_id'])) $query->where('task_id', (int) $filters['task_id']);
         if ($keyword = trim((string) ($filters['keyword'] ?? ''))) $query->whereHas('task', fn ($task) => $task->where('task_no', 'like', "%{$keyword}%")
             ->orWhere('operation_name_snapshot', 'like', "%{$keyword}%")->orWhereHas('workOrder', fn ($wo) => $wo->where('work_order_no', 'like', "%{$keyword}%")));
-        $page = $query->orderByDesc('id')->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 20))));
+        $page = $query->orderByDesc('id')->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 10))));
         $page->setCollection($page->getCollection()->map(fn ($offer) => $this->assignmentProjection($offer, $user, $permissions)));
         return $page;
     }
@@ -175,13 +175,20 @@ final class ProductionTaskAssignmentService
         if (! in_array($workOrder->status, ['RELEASED', 'IN_PROGRESS'], true)) $this->fail('work_order_not_executable', '工单已取消或尚未发布，不能接单。', 409);
         $task->fill(['assignee_user_legacy_id' => $userId, 'claimed_at' => $now, 'status' => 'CLAIMED',
             'assignment_mode' => $mode, 'assignment_score_snapshot' => $score, 'business_version' => $version + 1])->save();
+        $receivedTargets = [];
         foreach ($task->targets as $link) {
             $target = $this->lockTarget($link->target_type, (int) $link->target_id);
             if ($target->status !== 'WAIT_CLAIM' || $target->responsible_user_legacy_id) $this->fail('target_state_conflict', '生产目标已接单或已推进，请刷新。', 409);
+            // 接单即验收：上道工序的待接收交接在接单同一事务里自动接收，发现问题应先退回上道工序。
+            $receivedOnClaim = app(ProductionHandoverService::class)->receiveOnClaim($link->target_type, $target, $user) > 0;
             $status = $this->statusAfterClaim($link->target_type, $target);
             $target->fill(['responsible_user_legacy_id' => $userId, 'claimed_at' => $now, 'status' => $status,
                 'business_version' => (int) $target->business_version + 1])->save();
             $link->update(['status_snapshot' => $status]);
+            if ($receivedOnClaim) $receivedTargets[] = [$link->target_type, $target];
+        }
+        foreach ($receivedTargets as [$receivedType, $receivedTarget]) {
+            app(ProductionHandoverService::class)->refreshAfterClaim($receivedType, $receivedTarget, $task);
         }
         if (! $workOrder->responsible_user_legacy_id) $workOrder->update(['responsible_user_legacy_id' => $userId, 'business_version' => (int) $workOrder->business_version + 1]);
         $task->collaborators()->create(['employee_legacy_id' => $userId, 'role' => 'owner', 'responsibility_weight' => 1, 'joined_at' => $now, 'business_version' => 1]);

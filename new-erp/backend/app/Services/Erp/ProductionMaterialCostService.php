@@ -14,6 +14,7 @@ final class ProductionMaterialCostService
     public function acceptHandover(object $handover, ?string $acceptedQuantity, int $actor): void
     {
         if (DB::transactionLevel() < 1) throw new \LogicException('Production handover material transfer requires a transaction.');
+        if (app(ProductionCuttingComponentService::class)->acceptHandover($handover, $acceptedQuantity, $actor)) return;
         $output = DB::table('erp_production_output_records')->where('id', $handover->output_record_id)->lockForUpdate()->first();
         if (! $output || $output->material_total_cost === null) return;
         if (DB::table('erp_production_input_holdings')->where('operation_handover_id', $handover->id)->exists()) return;
@@ -194,15 +195,22 @@ final class ProductionMaterialCostService
         $cost = CuttingDecimal::share((string) $source->total_cost, (string) $source->quantity, $quantity);
         $physicals = DB::table('erp_material_physicals')->where('current_holding_id',$source->id)->where('status','PRODUCTION_TRANSIT')->orderBy('id')->lockForUpdate()->get();
         if ($physicals->isNotEmpty()) {
-            if (bccomp($quantity,bcadd($quantity,'0',0),8) !== 0 || $physicals->count() < (int) $quantity)
-                $this->fail('production_physical_receipt_invalid','板材收料必须逐张对应本次配料出库实物。');
+            $allocation = app(ProductionCuttingAllocationService::class)->decode($receiptLine->accepted_serial_snapshot)['cutting_allocation'] ?? null;
+            if ($allocation) {
+                $frozenIds = array_column($allocation['sources'], 'physical_material_id');
+                if (! $frozenIds || array_diff($frozenIds, $physicals->pluck('id')->map(fn ($id) => (int) $id)->all())) $this->fail('production_physical_receipt_invalid', '板材收料必须逐张引用原正式出库中尚未领用的冻结实物。');
+                $physicals = $physicals->whereIn('id', $frozenIds);
+            }
             if ($physicalIds !== null) {
                 $physicalIds = array_map('intval', $physicalIds);
-                if (count($physicalIds) !== count(array_unique($physicalIds)) || count($physicalIds) !== (int) $quantity
+                if (! $physicalIds || count($physicalIds) !== count(array_unique($physicalIds))
                     || array_diff($physicalIds, $physicals->pluck('id')->map(fn ($id) => (int) $id)->all()))
-                    $this->fail('production_physical_receipt_invalid', '现场领料必须选择本次正式配料中尚未领用的具体板材，数量需与所选实物一致。');
+                    $this->fail('production_physical_receipt_invalid', '现场领料必须选择本次正式配料中尚未领用的具体板材。');
                 $physicals = $physicals->whereIn('id', $physicalIds);
-            } else $physicals = $physicals->take((int) $quantity);
+            }
+            $stock = app(ProductionPhysicalMaterialReturnService::class)->stockSources((int) $pickLine->component_item_id, $physicals, $allocation);
+            $selected = CuttingReturnAllocationPolicy::selectStockSources($stock['sources'], $quantity, $physicalIds, $stock['stock_unit_kind']);
+            $physicals = $physicals->whereIn('id', array_column($selected, 'physical_material_id'));
             $cost = '0';
             foreach ($physicals as $physical) $cost = bcadd($cost,(string) $physical->total_cost,4);
             if (bccomp($cost,(string) $source->total_cost,4) > 0) $this->fail('production_physical_receipt_cost_invalid','板材实物金额超过正式出库在途金额。');
@@ -277,6 +285,8 @@ final class ProductionMaterialCostService
             if (bccomp($remaining, '0', 8) !== 0) {
                 $this->fail('production_return_cost_coverage_incomplete', '退料数量超过该目标尚未消耗的真实生产投入，不能按零成本退回。');
             }
+            $snapshot = app(ProductionCuttingAllocationService::class)->freezeReturnAllocations((int) $line->id, (int) $requirement->id, (string) $line->return_base_qty);
+            if ($snapshot !== null) $line->serial_snapshot = json_encode($snapshot, JSON_THROW_ON_ERROR);
             $costs[(int) $line->id] = ['cost_amount' => $total,
                 'unit_cost' => bcdiv($total, (string) $line->return_base_qty, 8)];
         }
@@ -318,6 +328,10 @@ final class ProductionMaterialCostService
             ->where('holding.status', 'ACTIVE')->where('holding.quantity', '>', 0)->orderBy('holding.id')->lockForUpdate()
             ->get(['holding.*', 'input.id as input_bridge_id', 'input.target_material_requirement_id as input_requirement_id',
                 'input.source_output_record_id', 'input.inventory_transaction_item_id', 'input.material_receipt_line_id']);
+        if (app(ProductionCuttingComponentService::class)->isOutput($output)) {
+            if ($requirements->isNotEmpty() || $inputHoldings->isNotEmpty()) $this->fail('cutting_components_uncovered_input', '下料组件束不能混入未由冻结下料需求追溯的其他投入。');
+            return $output;
+        }
         $holdings = $requirementHoldings->map(function ($holding) {
             $holding->input_bridge_id = null; $holding->input_requirement_id = $holding->position_id;
             $holding->source_output_record_id = null; return $holding;
@@ -350,6 +364,7 @@ final class ProductionMaterialCostService
                 continue;
             }
             $parent = DB::table('erp_production_output_records')->where('id', $holding->source_output_record_id)->first();
+            if (app(ProductionCuttingComponentService::class)->assertInputAncestry($holding, $parent)) continue;
             $lot = DB::table('erp_material_lots')->where('id', $holding->material_lot_id)->first();
             if (! $parent || $parent->material_total_cost === null || (int) $parent->material_lot_id !== (int) $holding->material_lot_id
                 || ! $lot || $lot->source_type !== 'production_output_record' || (int) $lot->source_id !== (int) $parent->id

@@ -51,7 +51,7 @@ class SalesShipmentApplicationService
                 $fulfillment = SalesOrderFulfillment::query()
                     ->where('sales_order_id', $order->id)
                     ->where('id', $row['sales_order_fulfillment_id'] ?? 0)
-                    ->whereIn('fulfillment_type', ['inventory', 'production'])
+                    ->whereIn('fulfillment_type', ['inventory', 'production', 'purchase'])
                     ->where('demand_status', 'confirmed')
                     ->lockForUpdate()->firstOrFail();
                 $parents = InventoryReservation::query()
@@ -76,6 +76,22 @@ class SalesShipmentApplicationService
                     throw ValidationException::withMessages(['lines.'.$index.'.base_qty' => '本次发货数量超过该订单行的有效库存预留。']);
                 }
                 $line = SalesOrderLine::query()->findOrFail($fulfillment->sales_order_line_id);
+                if (! SalesOrderFulfillmentPolicy::isPhysical((string) $line->line_type)) {
+                    throw ValidationException::withMessages(['lines.'.$index => '服务或无需发货的订单行不能创建实物发货。']);
+                }
+                $factor = (float) $line->fulfillment_factor_snapshot;
+                if ($factor <= 0 || (int) $fulfillment->item_id !== (int) $line->item_id
+                    || ($fulfillment->fulfillment_factor_snapshot !== null && abs((float) $fulfillment->fulfillment_factor_snapshot - $factor) > 0.00000001)) {
+                    throw ValidationException::withMessages(['lines.'.$index => '订单行与库存备货的物料或单位快照不一致，请先核对。']);
+                }
+                // 直接汇总有效发货明细，避免旧 shipped_qty 缓存含待发运数量时被重复扣除。
+                $allocatedSalesQty = (float) SalesShipmentLine::query()->where('sales_order_line_id', $line->id)
+                    ->whereHas('shipment', fn ($q) => $q->whereIn('shipment_status', ['draft', 'pending_outbound', 'outbound_posted', 'shipped', 'completed']))->sum('sales_qty');
+                $remainingSalesQty = max(0, SalesOrderFulfillmentPolicy::effectiveQuantity((float) $line->order_qty, (float) $line->cancelled_qty)
+                    - $allocatedSalesQty);
+                if ($baseQty / $factor > $remainingSalesQty + 0.00000001) {
+                    throw ValidationException::withMessages(['lines.'.$index.'.base_qty' => '本次发货数量超过扣除取消量及其他发货单后的订单有效待发数量。']);
+                }
                 $serialIds = array_values(array_unique(array_map('intval', (array) ($row['inventory_serial_ids'] ?? []))));
                 if (array_intersect($usedSerialIds, $serialIds) !== []) {
                     throw ValidationException::withMessages(['lines.'.$index.'.inventory_serial_ids' => '同一设备编号/序列号不能分配到多个发货行。']);
@@ -99,7 +115,6 @@ class SalesShipmentApplicationService
                 if ($serialIds !== [] && $serialsByBalance->flatten(1)->count() !== count($serialIds)) {
                     throw ValidationException::withMessages(['lines.'.$index.'.inventory_serial_ids' => '所选序列号不属于该订单行预留的真实库存来源，或已被其他业务使用。']);
                 }
-                $factor = (float) ($line->fulfillment_factor_snapshot ?: 1);
                 $remainingQty = $baseQty; $serialOffset = 0;
                 if ($trackingMode === 'optional' && $serialIds !== []) {
                     $parents = $parents->sortByDesc(fn ($parent) => ($serialsByBalance->get($parent->inventory_balance_id) ?? collect())->isNotEmpty())->values();
@@ -197,11 +212,15 @@ class SalesShipmentApplicationService
     public function dispatch(SalesShipment $shipment, string $operator): SalesShipment
     {
         return DB::transaction(function () use ($shipment, $operator): SalesShipment {
+            $orderId = (int) SalesShipment::query()->whereKey($shipment->id)->value('sales_order_id');
+            // 与创建及出库保持订单→发货单锁序，发运和订单数量汇总必须原子生效。
+            SalesOrder::query()->whereKey($orderId)->lockForUpdate()->firstOrFail();
             $shipment = SalesShipment::query()->lockForUpdate()->findOrFail($shipment->id);
             if ($shipment->shipment_status !== 'outbound_posted') throw ValidationException::withMessages(['shipment' => '只有已出库的发货单可以发运。']);
             $this->packing->assertReady($shipment);
             $shipment->update(['shipment_status' => 'shipped', 'shipped_at' => now()]);
             $shipment->packages()->update(['package_status' => 'shipped']);
+            $this->refreshOrderShipmentStatus($orderId);
             $this->log($shipment, 'dispatch', 'outbound_posted', 'shipped', $operator, '物流已发运。');
             return $shipment->fresh(['lines', 'packages']);
         });
@@ -270,11 +289,11 @@ class SalesShipmentApplicationService
     private function refreshOrderShipmentStatus(int $orderId): void
     {
         $order = SalesOrder::query()->with('lines')->lockForUpdate()->findOrFail($orderId);
-        $shippedByLine = SalesShipmentLine::query()->whereHas('shipment', fn ($q) => $q->where('sales_order_id', $orderId)->whereIn('shipment_status', ['outbound_posted', 'shipped', 'completed']))
+        // 出库只形成库存与成本事实；实际发运后才累计销售已发货数量。
+        $shippedByLine = SalesShipmentLine::query()->whereHas('shipment', fn ($q) => $q->where('sales_order_id', $orderId)->whereIn('shipment_status', ['shipped', 'completed']))
             ->selectRaw('sales_order_line_id, SUM(sales_qty) AS shipped_qty')->groupBy('sales_order_line_id')->pluck('shipped_qty', 'sales_order_line_id');
         foreach ($order->lines as $line) $line->update(['shipped_qty' => $shippedByLine[$line->id] ?? 0]);
-        $complete = $order->lines->every(fn (SalesOrderLine $line) => (float) ($shippedByLine[$line->id] ?? 0) + 0.00000001 >= (float) $line->order_qty);
-        $order->update(['shipment_status' => $complete ? 'shipped' : 'partially_shipped']);
+        $order->update(['shipment_status' => SalesOrderFulfillmentPolicy::shipmentStatus($order->lines->map(fn ($line) => $line->getAttributes())->all())]);
         $this->actualCosts->refresh($orderId);
     }
 

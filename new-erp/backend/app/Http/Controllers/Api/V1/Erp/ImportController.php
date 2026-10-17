@@ -76,7 +76,7 @@ class ImportController extends Controller
             'status' => 'previewed', 'total_rows' => array_sum($counts), 'valid_rows' => $counts['valid'],
             'warning_rows' => $counts['warning'], 'error_rows' => $counts['error'],
         ]);
-        return response()->json(['message' => '预检完成', 'data' => $batch->fresh(), 'rows' => $batch->rows()->orderBy('row_no')->orderBy('id')->paginate(50)]);
+        return response()->json(['message' => '预检完成', 'data' => $batch->fresh(), 'rows' => $batch->rows()->orderBy('row_no')->orderBy('id')->paginate(10)]);
     }
 
     public function rows(Request $request, int $id)
@@ -85,7 +85,7 @@ class ImportController extends Controller
         $this->assertBatchContext($request, ImportBatch::findOrFail($id));
         $query = ImportRow::where('batch_id', $id);
         if ($request->filled('status')) $query->where('validation_status', $request->status);
-        return response()->json($query->orderBy('row_no')->orderBy('id')->paginate(min(200, max(10, $request->integer('per_page', 50)))));
+        return response()->json($query->orderBy('row_no')->orderBy('id')->paginate(min(200, max(10, $request->integer('per_page', 10)))));
     }
 
     public function confirm(Request $request, int $id, ItemImportApplicationService $itemImporter)

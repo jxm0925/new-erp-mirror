@@ -145,14 +145,14 @@ Page({
   loadOptions(page) {
     const sequence = this.optionSequence = (this.optionSequence || 0) + 1;
     this.setData({ optionLoading: true, options: [], optionError: '' });
-    return workOrders.options(this.data.picker, { keyword: this.data.keyword.trim(), category_id: this.data.categoryId, output_item_id: this.data.item.id, routing_id: this.data.routing.id, target_routing_operation_id: this.data.operation.id, reserved_for_work_order_id: this.data.targetWorkOrder.id, reserved_for_production_unit_id: this.data.targetUnit.id, status: this.data.targetStatus, page, per_page: 15 }).then(response => {
+    return workOrders.options(this.data.picker, { keyword: this.data.keyword.trim(), category_id: this.data.categoryId, output_item_id: this.data.item.id, routing_id: this.data.routing.id, target_routing_operation_id: this.data.operation.id, reserved_for_work_order_id: this.data.targetWorkOrder.id, reserved_for_production_unit_id: this.data.targetUnit.id, status: this.data.targetStatus, page, per_page: 10 }).then(response => {
       if (sequence === this.optionSequence) this.setData({ options: (response.data || []).map(row => Object.assign({}, row, { statusLabel: STATUS[row.status] || row.status || '' })), page: Number(response.current_page), lastPage: Number(response.last_page) });
     }).catch(error => { if (sequence === this.optionSequence) this.setData({ optionError: error.message || '加载失败，请重试' }); }).finally(() => { if (sequence === this.optionSequence) this.setData({ optionLoading: false }); });
   },
   loadCategories(page) {
     const sequence = this.categorySequence = (this.categorySequence || 0) + 1;
     this.setData({ categoryLoading: true });
-    return workOrders.options('categories', { page, per_page: 15 }).then(response => {
+    return workOrders.options('categories', { page, per_page: 10 }).then(response => {
       if (sequence === this.categorySequence) this.setData({ categories: response.data || [], categoryPage: Number(response.current_page), categoryLastPage: Number(response.last_page) });
     }).catch(error => { if (sequence === this.categorySequence) this.toast(error.message); }).finally(() => { if (sequence === this.categorySequence) this.setData({ categoryLoading: false }); });
   },

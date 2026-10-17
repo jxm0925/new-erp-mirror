@@ -67,8 +67,8 @@ Page({
     if (typeof page !== 'number') page = 1;
     const sequence = this.loadSequence = (this.loadSequence || 0) + 1;
     this.setData({ loading: true });
-    const detail = cutting.taskExecution(this.data.taskId, { page, per_page: 20 });
-    const overview = this.data.orderId ? cutting.orderExecution(this.data.orderId, { page: 1, per_page: 20 }) : Promise.resolve({ data: {} });
+    const detail = cutting.taskExecution(this.data.taskId, { page, per_page: 10 });
+    const overview = this.data.orderId ? cutting.orderExecution(this.data.orderId, { page: 1, per_page: 10 }) : Promise.resolve({ data: {} });
     return Promise.all([detail, overview]).then(([taskResponse, orderResponse]) => {
       if (sequence !== this.loadSequence) return;
       const payload = dataOf(taskResponse);
@@ -152,7 +152,7 @@ Page({
     this.loadInputs(1);
   },
   loadInputCategories(page = 1) {
-    return cutting.selectorCategories(this.data.orderId, { mode: 'inputs', page, per_page: 20 }).then(response => {
+    return cutting.selectorCategories(this.data.orderId, { mode: 'inputs', page, per_page: 10 }).then(response => {
       const result = pageOf(response);
       this.setData({ categories: (page === 1 ? [{ id: '', category_name: '全部' }] : this.data.categories).concat(result.rows), categoryPage: result.currentPage, categoryLastPage: result.lastPage });
     });
@@ -172,7 +172,7 @@ Page({
     const sequence = this.inputSequence = (this.inputSequence || 0) + 1;
     this.setData({ inputLoading: true });
     return cutting.listInputs(this.data.orderId, { input_type: this.data.inputType, keyword: String(this.data.inputKeyword || '').trim() || undefined,
-      category_id: this.data.categoryId || undefined, page, per_page: 20 }).then(response => {
+      category_id: this.data.categoryId || undefined, page, per_page: 10 }).then(response => {
         if (sequence !== this.inputSequence) return;
         const result = pageOf(response);
         this.setData({ inputCandidates: result.rows.map(row => presentCandidate(row, this.data.selectedInputs)), inputPage: result.currentPage,
@@ -216,7 +216,7 @@ Page({
   closeFlow() { this.setData({ showFlow: false }); },
   loadFlow(page) {
     this.setData({ flowLoading: true });
-    return cutting.orderExecution(this.data.orderId, { flow: this.data.flowType, page, per_page: 20 }).then(response => {
+    return cutting.orderExecution(this.data.orderId, { flow: this.data.flowType, page, per_page: 10 }).then(response => {
       const payload = dataOf(response); const result = pageOf(this.data.flowType === 'confirm' ? payload.inputs : payload.results);
       this.setData({ flowRows: result.rows.map(row => Object.assign({}, row, { record_id: row.settlement_batch_id || row.id })), flowPage: result.currentPage, flowLastPage: result.lastPage, flowLoading: false });
     }).catch(error => { this.setData({ flowLoading: false }); wx.showToast({ title: error.message || '流转记录加载失败', icon: 'none' }); });

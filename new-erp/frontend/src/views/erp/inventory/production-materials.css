@@ -120,5 +120,46 @@
 .pm-related { margin-top: 15px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .pm-rejection { margin-top: 14px; }
 .pm-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+.production-material-dialog .pm-source-plans {
+  margin-top: 14px;
+  max-height: 420px;
+  overflow: auto;
+}
+.production-material-dialog .pm-source-plan {
+  border: 1px solid #dce8e2;
+  border-radius: 4px;
+  padding: 12px;
+  margin-bottom: 12px;
+  background: #fff;
+}
+.production-material-dialog .pm-source-plan-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.production-material-dialog .pm-source-plan-note {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 8px 0;
+}
+.production-material-dialog .pm-source-plan-note.pm-danger {
+  color: #b45309;
+}
+.production-material-dialog .pm-board-plan-summary {
+  font-size: 12px;
+  text-align: left;
+  margin-top: 8px;
+}
+.production-material-dialog .pm-board-plan-summary summary {
+  color: #008b4b;
+  cursor: pointer;
+}
+.production-material-dialog .pm-board-plan-summary > div {
+  border-top: 1px solid #edf2ef;
+  padding: 8px 0;
+}
 @media (max-width: 1000px) { .pm-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pm-stock-layout { grid-template-columns: 140px minmax(0, 1fr); } }
 @media (max-width: 700px) { .production-picking-page { padding: 14px 10px; } .production-material-dialog { max-width: calc(100vw - 24px); margin: 3vh auto !important; max-height: 94vh; } .production-material-dialog .el-dialog__body { padding: 12px; } .production-material-dialog .el-dialog__header { padding: 16px 14px; } .production-material-dialog .el-dialog__footer { padding: 12px; } .pm-meta { grid-template-columns: 1fr; gap: 8px; } .pm-stock-layout { grid-template-columns: 1fr; } .pm-stock-layout aside { border-right: 0; border-bottom: 1px solid #dfe7f2; display: flex; overflow-x: auto; padding: 3px; } .pm-stock-layout aside button { flex-shrink: 0; width: auto; } .pm-inline-field { flex-wrap: wrap; } .pm-inline-field > .el-input { max-width: 100%; } .pm-footer { align-items: flex-end; } .pm-footer > span:first-child { font-size: 12px; } .pm-list-filters { padding: 12px; } }

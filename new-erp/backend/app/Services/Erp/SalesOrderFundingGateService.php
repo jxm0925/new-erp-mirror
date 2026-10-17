@@ -4,6 +4,7 @@ namespace App\Services\Erp;
 
 use App\Domain\Finance\Money;
 use App\Models\Erp\SalesOrder;
+use Illuminate\Validation\ValidationException;
 use Throwable;
 
 final class SalesOrderFundingGateService
@@ -67,7 +68,7 @@ final class SalesOrderFundingGateService
     public function assertCanShip(SalesOrder|int $order): void
     {
         $status = $this->status($order);
-        if (! $status['shipment_funds_satisfied']) throw new \DomainException($status['shipment_block_message']);
+        if (! $status['shipment_funds_satisfied']) throw ValidationException::withMessages(['funding' => $status['shipment_block_message']]);
     }
 
     public function refreshProjection(SalesOrder $order): array

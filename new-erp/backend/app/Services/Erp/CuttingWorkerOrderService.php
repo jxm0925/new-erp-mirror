@@ -121,7 +121,7 @@ final class CuttingWorkerOrderService
                 'c.id as configuration_id','c.configuration_no','c.version_no as configuration_version','c.drawing_reference','c.dimensions as configuration_dimensions')
             ->addSelect(app(CuttingOutputEligibilityService::class)->columns())
             ->orderBy('i.id')->orderBy('c.id')->orderBy('cutting_component.id')
-            ->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 20))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
+            ->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 10))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
         return ['data' => $page->items(), 'meta' => ['current_page' => $page->currentPage(), 'last_page' => $page->lastPage(),
             'per_page' => $page->perPage(), 'total' => $page->total()]];
     }
@@ -133,7 +133,7 @@ final class CuttingWorkerOrderService
         $q = DB::table('erp_item_categories as category')->where('category.status','enabled')->whereIn('category.id',
             $this->outputQuery($batch,$user,$permissions,$super)->select('i.category_id'));
         $page = $q->select('category.id','category.category_name')->orderBy('category.sort_order')->orderBy('category.id')
-            ->paginate(min(100,max(1,(int) ($filters['per_page'] ?? 20))),['*'],'page',max(1,(int) ($filters['page'] ?? 1)));
+            ->paginate(min(100,max(1,(int) ($filters['per_page'] ?? 10))),['*'],'page',max(1,(int) ($filters['page'] ?? 1)));
         return ['data'=>$page->items(),'meta'=>['current_page'=>$page->currentPage(),'last_page'=>$page->lastPage(),'total'=>$page->total(),'per_page'=>$page->perPage()]];
     }
 

@@ -27,9 +27,9 @@ class SalesOrderChangeApplicationService
     ) {
     }
 
-    public function apply(int $orderId, array $payload, string $operator): SalesOrderChange
+    public function apply(int $orderId, array $payload, string $operator, ?object $actor = null): SalesOrderChange
     {
-        return DB::transaction(function () use ($orderId, $payload, $operator): SalesOrderChange {
+        return DB::transaction(function () use ($orderId, $payload, $operator, $actor): SalesOrderChange {
             $order = SalesOrder::query()->with(['lines', 'shipments', 'salesReturns'])
                 ->lockForUpdate()->findOrFail($orderId);
             $this->assertChangeable($order);
@@ -49,21 +49,23 @@ class SalesOrderChangeApplicationService
             }
             if (!$changes) throw ValidationException::withMessages(['lines' => '没有检测到可保存的数量或商业金额变更。']);
 
-            // Release only active order reservations. A shipment or consumed
-            // production requirement was rejected before this point, so no real
-            // inventory/factory fact can be rewritten by a change request.
-            $this->reservations->releaseForSalesOrder($order, '订单变更，释放旧库存预留');
-            SalesOrderFulfillment::where('sales_order_id', $order->id)
-                ->whereIn('demand_status', ['pending', 'confirmed'])
-                ->update([
-                    'demand_status' => 'superseded',
-                    'reservation_status' => 'superseded',
-                    'production_requirement_status' => 'superseded',
-                ]);
-            SalesOrderProductionRequirement::where('sales_order_id', $order->id)
-                ->where('is_active', true)
-                ->whereIn('requirement_status', ['draft', 'blocked', 'ready'])
-                ->update(['requirement_status' => 'superseded', 'is_active' => false]);
+            $hasOperationalImpact = collect($changes)->contains(fn (array $change): bool =>
+                abs((float) $change[0]->order_qty - (float) $change[1]['order_qty']) > 0.00000001);
+            if ($hasOperationalImpact) {
+                app(SalesOrderProductionChangeService::class)->cancelUnreleasedLocked($order, $actor, '销售订单变更：'.$payload['reason']);
+                $this->reservations->releaseForSalesOrder($order, '订单变更，释放旧库存预留');
+                SalesOrderFulfillment::where('sales_order_id', $order->id)
+                    ->whereIn('demand_status', ['pending', 'confirmed'])
+                    ->update([
+                        'demand_status' => 'superseded',
+                        'reservation_status' => 'superseded',
+                        'production_requirement_status' => 'superseded',
+                    ]);
+                SalesOrderProductionRequirement::where('sales_order_id', $order->id)
+                    ->where('is_active', true)
+                    ->whereIn('requirement_status', ['draft', 'blocked', 'ready'])
+                    ->update(['requirement_status' => 'superseded', 'is_active' => false]);
+            }
 
             foreach ($changes as [$line, $new]) {
                 $line->update($new);
@@ -71,9 +73,12 @@ class SalesOrderChangeApplicationService
             $this->amounts->refresh($order);
             $order->update([
                 'change_status' => 'applied',
-                'fulfillment_status' => 'pending',
-                'production_confirm_status' => 'pending',
-            ]);
+                'business_version' => (int) $order->business_version + 1,
+                'shipment_status' => SalesOrderFulfillmentPolicy::shipmentStatus($order->fresh('lines')->lines->map(fn ($line) => $line->getAttributes())->all()),
+            ] + ($hasOperationalImpact ? [
+                'fulfillment_status' => 'pending', 'production_confirm_status' => 'pending',
+                'inventory_lock_status' => 'pending', 'inventory_locked_at' => null, 'inventory_locked_by_legacy_id' => null,
+            ] : []));
             $this->fundingGates->refreshProjection($order->fresh());
 
             $after = $order->fresh(['lines', 'fulfillments', 'productionRequirements'])->toArray();
@@ -101,10 +106,12 @@ class SalesOrderChangeApplicationService
                 'sales_order_id' => $order->id,
                 'action' => 'confirmed_order_change',
                 'before_status' => 'confirmed',
-                'after_status' => 'pending_reconfirmation',
+                'after_status' => $hasOperationalImpact ? 'pending_reconfirmation' : 'confirmed',
                 'payload' => ['change_no' => $change->change_no, 'changed_line_ids' => collect($changes)->map(fn ($row) => $row[0]->id)->values()->all()],
                 'operator' => $operator,
-                'content' => '已应用订单变更 '.$change->change_no.'；旧库存预留、生产和交付安排已作废，必须重新进行订单生产确认。原因：'.$change->reason,
+                'content' => '已应用订单变更 '.$change->change_no.($hasOperationalImpact
+                    ? '；旧库存预留、生产和交付安排已作废，必须重新进行订单生产确认。'
+                    : '；商业金额已更新，原库存预留、生产和交付安排保留。').'原因：'.$change->reason,
             ]);
 
             return $change->fresh('order.lines');
@@ -136,7 +143,7 @@ class SalesOrderChangeApplicationService
         if ($order->order_status !== 'confirmed' || $order->confirm_status !== 'confirmed') {
             throw ValidationException::withMessages(['order_status' => '只有已正式确认的销售订单可走订单变更；草稿请直接编辑。']);
         }
-        if ($order->shipment_status !== 'not_shipped' || $order->lines->sum('shipped_qty') > 0 || $order->shipments->isNotEmpty()) {
+        if (! in_array($order->shipment_status, ['not_shipped', 'not_required'], true) || $order->lines->sum('shipped_qty') > 0 || $order->shipments->isNotEmpty()) {
             throw ValidationException::withMessages(['shipment_status' => '已有发货事实或发货单，禁止直接订单变更，请走售后/退货流程。']);
         }
         if ($order->salesReturns->whereNotIn('return_status', ['cancelled'])->isNotEmpty()) {
@@ -152,7 +159,8 @@ class SalesOrderChangeApplicationService
         }
     }
 
-    private function normalizeLine(SalesOrderLine $line, array $row): array
+    /** Uses the accepted line's Item/unit/role; commercial edits never re-resolve today's SKU masters. */
+    public function normalizeLine(SalesOrderLine $line, array $row): array
     {
         $qty = array_key_exists('order_qty', $row) ? round((float) $row['order_qty'], 4) : (float) $line->order_qty;
         $price = array_key_exists('unit_price', $row) ? round((float) $row['unit_price'], 4) : (float) $line->unit_price;
@@ -161,22 +169,33 @@ class SalesOrderChangeApplicationService
         if ($tax > 1) $tax = round($tax / 100, 6);
         $mode = $row['price_tax_mode'] ?? $line->price_tax_mode ?? 'tax_inclusive';
 
-        if ($qty <= 0) throw ValidationException::withMessages(['lines.'.$line->id.'.order_qty' => '变更后的订单数量必须大于 0；删除订单行需走独立变更审批。']);
+        if (! is_finite($qty) || $qty <= 0) throw ValidationException::withMessages(['lines.'.$line->id.'.order_qty' => '变更后的订单数量必须大于 0；删除订单行需走独立变更审批。']);
         $gift = $line->commercial_role === 'gift';
-        if (($gift && abs($price) >= 0.00000001) || (! $gift && $price <= 0)) {
+        if (! is_finite($price) || ($gift && abs($price) >= 0.00000001) || (! $gift && $price <= 0)) {
             throw ValidationException::withMessages([
                 'lines.'.$line->id.'.unit_price' => $gift
                     ? '赠品行变更后的销售单价必须为 0。'
                     : '正常销售行变更后的销售单价必须大于 0。',
             ]);
         }
-        if ($discount < 0 || $discount > 1) throw ValidationException::withMessages(['lines.'.$line->id.'.discount_rate' => '折扣率必须在 0 到 1 之间。']);
-        if ($tax < 0 || $tax > 1) throw ValidationException::withMessages(['lines.'.$line->id.'.tax_rate' => '税率不合法。']);
+        if (! is_finite($discount) || $discount < 0 || $discount > 1) throw ValidationException::withMessages(['lines.'.$line->id.'.discount_rate' => '折扣率必须在 0 到 1 之间。']);
+        if (! is_finite($tax) || $tax < 0 || $tax > 1) throw ValidationException::withMessages(['lines.'.$line->id.'.tax_rate' => '税率不合法。']);
         if (!in_array($mode, ['tax_inclusive', 'tax_exclusive'], true)) throw ValidationException::withMessages(['lines.'.$line->id.'.price_tax_mode' => '含税方式不合法。']);
+
+        $quantityChanges = [];
+        if (abs($qty - (float) $line->order_qty) > 0.00000001) {
+            $factor = (float) $line->fulfillment_factor_snapshot;
+            if (SalesOrderFulfillmentPolicy::isPhysical((string) $line->line_type) && (! is_finite($factor) || $factor <= 0)) {
+                throw ValidationException::withMessages(['lines.'.$line->id.'.order_qty' => '原订单缺少有效的冻结单位换算比例，不能按默认比例改数量。']);
+            }
+            $quantityChanges['item_base_required_qty'] = SalesOrderFulfillmentPolicy::isPhysical((string) $line->line_type) ? round($qty * $factor, 8) : 0.0;
+        }
 
         $commercial = round($qty * $price * $discount, 4);
         $excl = $mode === 'tax_exclusive' ? $commercial : round($commercial / (1 + $tax), 4);
-        $taxAmount = round($commercial - $excl, 4);
+        $taxAmount = $mode === 'tax_exclusive'
+            ? round($excl * $tax, 4)
+            : round($commercial - $excl, 4);
         $incl = $mode === 'tax_exclusive' ? round($commercial + $taxAmount, 4) : $commercial;
         $commercialSnapshot = (array) $line->commercial_snapshot;
         $commercialSnapshot = array_merge($commercialSnapshot, [
@@ -195,15 +214,16 @@ class SalesOrderChangeApplicationService
             'tax_amount' => $taxAmount,
             'amount_incl_tax' => $incl,
             'commercial_snapshot' => $commercialSnapshot,
-            'item_base_required_qty' => round($qty * (float) ($line->fulfillment_factor_snapshot ?: 1), 8),
-        ];
+        ] + $quantityChanges + (array_key_exists('remark', $row) ? ['remark' => $row['remark']] : []);
     }
 
     private function isChanged(SalesOrderLine $line, array $new): bool
     {
-        foreach (['order_qty', 'unit_price', 'discount_rate', 'tax_rate', 'price_tax_mode'] as $key) {
-            if ((string) $line->{$key} !== (string) $new[$key]) return true;
+        foreach (['order_qty', 'unit_price', 'discount_rate', 'tax_rate'] as $key) {
+            if (abs((float) $line->{$key} - (float) $new[$key]) > 0.00000001) return true;
         }
+        if ((string) $line->price_tax_mode !== (string) $new['price_tax_mode']) return true;
+        if (array_key_exists('remark', $new) && (string) $line->remark !== (string) $new['remark']) return true;
         return false;
     }
 }

@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import { cuttingPickingLine } from '../src/utils/production-cutting-allocation.mjs'
 
 function mount(source, deps = {}) {
   const script = source.match(/<script>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '').replace('export default', 'return')
@@ -13,7 +14,7 @@ function mount(source, deps = {}) {
 const publicSource = await readFile(new URL('../src/views/erp/inventory/PublicMaterialPreparationPanel.vue', import.meta.url), 'utf8')
 const procurementSource = await readFile(new URL('../src/views/erp/inventory/MaterialProcurementDialog.vue', import.meta.url), 'utf8')
 const onsiteSource = await readFile(new URL('../src/views/erp/inventory/OnsiteMaterialCollectionPanel.vue', import.meta.url), 'utf8')
-const deps = { StockSelector: {}, OptionPicker: {}, pendingMaterialWrite: () => null }
+const deps = { StockSelector: {}, OptionPicker: {}, pendingMaterialWrite: () => null, cuttingPickingLine }
 
 test('public draft keeps cross-page source identity and each work order version in one request', async () => {
   const vm = mount(publicSource, deps)

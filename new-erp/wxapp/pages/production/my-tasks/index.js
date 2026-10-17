@@ -252,7 +252,7 @@ Page({
     return production
       .myTasks({
         page,
-        per_page: 20,
+        per_page: 10,
         keyword: this.data.keyword.trim(),
         execution_filter: this.data.active,
         is_public: this.data.publicFilter,

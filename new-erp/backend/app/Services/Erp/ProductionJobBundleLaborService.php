@@ -12,6 +12,7 @@ final class ProductionJobBundleLaborService
     {
         // Reuse the employee-wide active slot also used by ordinary production and cutting.
         DB::table('erp_legacy_admin_users')->where('legacy_id', $employeeId)->lockForUpdate()->first();
+        app(WarehouseLaborSessionService::class)->assertNoActiveWarehouse($employeeId);
         if (ProductionLaborSession::query()->where('employee_legacy_id', $employeeId)->where('status', 'ACTIVE')->lockForUpdate()->exists()
             || DB::table('erp_shipment_packing_labor_sessions')->where('employee_legacy_id', $employeeId)->where('status', 'ACTIVE')->lockForUpdate()->exists()) {
             throw new WorkOrderDomainException('labor_session_active', '当前人员已有加工计时，请先暂停原作业后再开始共同加工。', 409);

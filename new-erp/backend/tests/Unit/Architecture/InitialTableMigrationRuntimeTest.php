@@ -527,7 +527,7 @@ class InitialTableMigrationRuntimeTest extends TestCase
         $this->assertSame(['legacy_one', 'legacy_two'], $connection->records);
     }
 
-    public function test_real_owner_and_all_285_definitions_share_the_exact_compatibility_contract(): void
+    public function test_real_owner_and_all_definitions_share_the_exact_compatibility_contract(): void
     {
         $definitions = InitialTableMigration::definitions();
         $table = 'erp_production_material_consumptions';
@@ -546,7 +546,7 @@ class InitialTableMigrationRuntimeTest extends TestCase
             $this->assertSame('ALTER TABLE `erp_production_material_consumptions` ADD UNIQUE KEY `prod_material_consumption_source_uq` (`output_record_id`,`source_holding_id`)', $connection->recordingPdo->statements[1]);
             $this->assertCount(3, $connection->recordingPdo->statements);
             $this->assertCount(189, $connection->records);
-            $this->assertCount(285, $connection->tables);
+            $this->assertCount(count($definitions), $connection->tables);
             $this->assertFalse(InitialTableMigration::preflight($connection)['pending_legacy_unique_index']);
         } finally {
             DB::clearResolvedInstance('db');

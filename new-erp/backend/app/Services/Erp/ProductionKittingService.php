@@ -109,7 +109,7 @@ class ProductionKittingService
         }
         $query->orderBy('target_requirement.id');
         if ($mode === 'return') $query->orderBy('receipt_source.warehouse_id')->orderBy('receipt_source.location_id')->orderBy('receipt_source.batch_no');
-        $page = $query->paginate(min(20, max(1, (int) ($filters['per_page'] ?? 20))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
+        $page = $query->paginate(min(20, max(1, (int) ($filters['per_page'] ?? 10))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
         $rows = collect($page->items())->map(function ($row) use ($mode) {
             $data = (array) $row;
             $data['key'] = $mode === 'return'
@@ -236,7 +236,7 @@ class ProductionKittingService
                 'requirement.id', 'requirement.material_requirement_id', 'requirement.material_supply_rule_snapshot_id', 'requirement.component_item_id',
                 'requirement.required_base_qty', 'requirement.satisfied_base_qty', 'requirement.returned_base_qty',
                 'requirement.cut_length_mm_snapshot', 'requirement.required_piece_qty_snapshot',
-                'work_requirement.received_qty as work_order_received_qty',
+                'work_requirement.received_qty as work_order_received_qty', 'work_requirement.component_spec_snapshot',
                 'supply.supply_mode_snapshot', 'item.item_code', 'item.item_name',
                 'workstation.workstation_snapshot', 'workstation.onsite_available_base_qty_snapshot',
                 'workstation.confirmed_base_qty', 'workstation.confirmed_by_legacy_id', 'workstation.confirmed_at',
@@ -309,7 +309,8 @@ class ProductionKittingService
                     'id' => (int) $row->id, 'material_requirement_id' => (int) $row->material_requirement_id,
                     'material_supply_rule_snapshot_id' => (int) $row->material_supply_rule_snapshot_id,
                     'component_item_id' => (int) $row->component_item_id, 'component_item_code' => $row->item_code,
-                    'component_item_name' => $row->item_name, 'required_base_qty' => $required,
+                    'component_item_name' => $row->item_name, 'component_item_spec' => $row->component_spec_snapshot,
+                    'required_base_qty' => $required,
                     'cut_length_mm' => $row->cut_length_mm_snapshot === null ? null : (float) $row->cut_length_mm_snapshot,
                     'required_piece_qty' => $row->required_piece_qty_snapshot === null ? null : (float) $row->required_piece_qty_snapshot,
                     'satisfied_base_qty' => $received, 'gross_received_base_qty' => $grossReceived,

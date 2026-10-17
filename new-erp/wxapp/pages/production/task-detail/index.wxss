@@ -758,7 +758,9 @@ page {
 }
 
 .candidate-list {
-  max-height: 520rpx;
+  max-height: 24vh;
+  min-height:0;
+  flex:1 1 180rpx;
   overflow-y: auto;
 }
 
@@ -823,6 +825,7 @@ page {
 }
 
 .modal-foot {
+  flex-shrink:0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -856,6 +859,7 @@ page {
 }
 
 .collab-pagination {
+  flex-shrink:0;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -996,3 +1000,13 @@ page {
   align-items: center;
   justify-content: center;
 }
+.collab-share-list { max-height:28vh; min-height:0; width:100%; padding:0 28rpx; box-sizing:border-box; }
+.collab-share-group { min-width:0; padding:18rpx 0; }
+.collab-share-heading, .collab-share-row { display:flex; align-items:center; justify-content:space-between; gap:16rpx; min-width:0; margin:12rpx 0; }
+.collab-share-heading>text, .collab-share-row>text { min-width:0; word-break:break-all; }
+.collab-share-heading button { flex-shrink:0; margin:0; color:#008b4b; background:#fff; border:1rpx solid #bbf7d0; }
+.collab-share-row>view { display:flex; align-items:center; gap:8rpx; flex-shrink:0; }
+.collab-share-row input { width:150rpx; min-width:0; border:1rpx solid #e2e8f0; border-radius:8rpx; padding:12rpx; box-sizing:border-box; }
+.collab-share-error { color:#b91c1c; padding:12rpx 0; word-break:break-all; }
+.collab-selected { display:flex; flex-wrap:wrap; gap:10rpx; padding:12rpx 28rpx; min-width:0; }
+.collab-selected>view { max-width:100%; word-break:break-all; background:#f0fdf4; color:#00763f; border-radius:8rpx; padding:8rpx 12rpx; }

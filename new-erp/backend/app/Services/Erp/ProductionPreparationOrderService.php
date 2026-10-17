@@ -89,7 +89,7 @@ final class ProductionPreparationOrderService
             $query->where(fn (Builder $q) => $q->where('preparation_order_no', 'like', $like)
                 ->orWhereHas('masterOrder', fn (Builder $master) => $master->where('master_order_no', 'like', $like)));
         }
-        return $query->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 20))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
+        return $query->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 10))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
     }
 
     public function show(int $id, object $user, array $permissions, bool $superAdmin = false): ProductionPreparationOrder

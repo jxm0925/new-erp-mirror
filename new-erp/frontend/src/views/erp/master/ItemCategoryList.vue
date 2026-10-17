@@ -540,7 +540,7 @@ export default {
         keyword: '',
         status: '',
         page: 1,
-        per_page: 20
+        per_page: 10
       },
       rules: {
         management_scope: [{ required: true, message: '请选择管理范围', trigger: 'change' }],
@@ -691,7 +691,7 @@ export default {
       return this.loadChildren()
     },
     reset() {
-      this.query = { management_scope: '', keyword: '', status: '', page: 1, per_page: 20 }
+      this.query = { management_scope: '', keyword: '', status: '', page: 1, per_page: 10 }
       this.treeKeyword = ''
       return this.changeManagementScope()
     },

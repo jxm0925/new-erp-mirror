@@ -1,5 +1,7 @@
 <template>
   <section class="shipment-board">
+    <shipment-packing-panel v-if="executionOnly" execution-only />
+    <template v-else>
     <header class="shipment-header"><h1>销售发货</h1><el-button v-if="$can('sales_order.shipment.create')" type="success" size="small" icon="el-icon-plus" @click="openCreate">新建发货单</el-button></header>
     <form class="shipment-filter" @submit.prevent="search"><el-input v-model.trim="query.keyword" size="small" clearable placeholder="发货单号 / 运单号" /><el-select v-model="query.shipment_status" size="small" clearable placeholder="发货状态"><el-option v-for="state in states" :key="state.value" :value="state.value" :label="state.label" /></el-select><el-button type="success" size="small" native-type="submit" icon="el-icon-search">查询</el-button><el-button size="small" icon="el-icon-refresh" @click="reset">重置</el-button></form>
     <div class="shipment-card">
@@ -30,7 +32,7 @@
     <el-dialog title="新建发货单" :visible.sync="createOpen" append-to-body width="min(1050px, calc(100vw - 32px))" top="5vh" custom-class="sales-shipment-dialog" :close-on-click-modal="false">
       <div class="shipment-form-grid"><label>销售订单<el-input :value="selectedOrder.sales_order_no" readonly size="small"><el-button slot="append" icon="el-icon-search" @click="openOrderPicker">选择订单</el-button></el-input></label><label>承运商<el-input v-model.trim="createForm.carrier_name" size="small" maxlength="120" /></label><label>运单号<el-input v-model.trim="createForm.tracking_no" size="small" maxlength="120" /></label></div>
       <el-table v-loading="sourceLoading" :data="sourceRows" border size="small"><el-table-column label="选择" width="55"><template slot-scope="{ row }"><el-checkbox :value="Boolean(sourceSelected[row.id])" @change="toggleSource(row, $event)" /></template></el-table-column><el-table-column label="产品 / 物料" min-width="190"><template slot-scope="{ row }">{{ row.product_name || row.item_name }}</template></el-table-column><el-table-column label="预留批次" min-width="170"><template slot-scope="{ row }">{{ row.batch_nos.join('、') }}</template></el-table-column><el-table-column prop="available_base_qty" label="可发基础数量" width="120" /><el-table-column label="本次发货基础数量" width="165"><template slot-scope="{ row }"><el-input-number v-if="sourceSelected[row.id]" v-model="sourceSelected[row.id].base_qty" size="mini" :controls="false" :min="0" :max="Number(row.available_base_qty)" :precision="8" :disabled="row.serial_tracking_mode === 'required'" /></template></el-table-column><el-table-column label="设备编号 / 序列号" min-width="175"><template slot-scope="{ row }"><el-button v-if="sourceSelected[row.id] && row.serial_tracking_mode !== 'none'" type="text" @click="openSerialPicker(row)">选择序列号（{{ sourceSelected[row.id].serials.length }}）</el-button></template></el-table-column></el-table>
-      <el-pagination background :current-page="sourcePage" :page-size="20" :total="sourceTotal" layout="total, prev, pager, next" @current-change="changeSourcePage" />
+      <el-pagination background :current-page="sourcePage" :page-size="10" :total="sourceTotal" layout="total, prev, pager, next" @current-change="changeSourcePage" />
       <div class="shipment-selected"><el-tag v-for="row in Object.values(sourceSelected)" :key="row.id" closable @close="$delete(sourceSelected, row.id)">{{ row.product_name || row.item_name }} · {{ qty(row.base_qty) }}</el-tag></div>
       <label class="shipment-remark">备注<el-input v-model.trim="createForm.remark" type="textarea" :rows="2" maxlength="2000" /></label>
       <el-alert v-if="createError" :title="createError" type="error" :closable="false" />
@@ -40,17 +42,18 @@
     <el-dialog title="选择销售订单" :visible.sync="orderPickerOpen" append-to-body width="min(900px, calc(100vw - 32px))" top="8vh" custom-class="sales-shipment-dialog" :close-on-click-modal="false">
       <form class="shipment-filter" @submit.prevent="searchOrders"><el-input v-model.trim="orderQuery.keyword" size="small" placeholder="订单号 / 客户名称" /><el-button size="small" type="success" native-type="submit">查询</el-button></form>
       <el-table :data="orderRows" border size="small"><el-table-column prop="sales_order_no" label="订单号" min-width="190" /><el-table-column prop="customer_name" label="客户名称" min-width="170" /><el-table-column prop="order_date" label="订单日期" min-width="110" /><el-table-column label="选择" width="95"><template slot-scope="{ row }"><el-button type="text" :disabled="!['confirmed', 'in_progress'].includes(row.order_status)" @click="chooseOrder(row)">选择</el-button></template></el-table-column></el-table>
-      <el-pagination background :current-page="orderQuery.page" :page-size="20" :total="orderTotal" layout="total, prev, pager, next" @current-change="changeOrderPage" />
+      <el-pagination background :current-page="orderQuery.page" :page-size="10" :total="orderTotal" layout="total, prev, pager, next" @current-change="changeOrderPage" />
       <span slot="footer"><el-button size="small" @click="orderPickerOpen = false">取消</el-button></span>
     </el-dialog>
 
     <el-dialog title="选择发货序列号" :visible.sync="serialOpen" append-to-body width="min(850px, calc(100vw - 32px))" top="8vh" custom-class="sales-shipment-dialog" :close-on-click-modal="false">
       <form class="shipment-filter" @submit.prevent="searchSerials"><el-input v-model.trim="serialKeyword" size="small" placeholder="设备编号 / 序列号" /><el-button size="small" type="success" native-type="submit">查询</el-button></form>
       <el-table :data="serialRows" border size="small"><el-table-column label="选择" width="55"><template slot-scope="{ row }"><el-checkbox :value="Boolean(serialSelected[row.id])" @change="toggleSerial(row, $event)" /></template></el-table-column><el-table-column prop="serial_no" label="设备编号 / 序列号" min-width="180" /><el-table-column prop="batch_no" label="来源批次" min-width="180" /></el-table>
-      <el-pagination background :current-page="serialPage" :page-size="20" :total="serialTotal" layout="total, prev, pager, next" @current-change="changeSerialPage" />
+      <el-pagination background :current-page="serialPage" :page-size="10" :total="serialTotal" layout="total, prev, pager, next" @current-change="changeSerialPage" />
       <div class="shipment-selected"><el-tag v-for="serial in Object.values(serialSelected)" :key="serial.id" closable @close="$delete(serialSelected, serial.id)">{{ serial.serial_no }}</el-tag></div>
       <span slot="footer"><el-button size="small" @click="serialOpen = false">取消</el-button><el-button size="small" type="success" @click="confirmSerials">确认选择</el-button></span>
     </el-dialog>
+    </template>
   </section>
 </template>
 
@@ -63,38 +66,41 @@ import { listSalesOrders, getSalesOrder } from '@/api/erp/sales'
 export default {
   name: 'SalesShipmentBoard',
   components: { ShipmentPackingPanel },
-  data: () => ({ loading: false, busy: false, error: '', rows: [], total: 0, query: { keyword: '', shipment_status: '', sales_order_id: '', page: 1, per_page: 20 },
+  data: () => ({ loading: false, busy: false, error: '', rows: [], total: 0, query: { keyword: '', shipment_status: '', sales_order_id: '', page: 1, per_page: 10 },
     states: [{ value: 'draft', label: '草稿' }, { value: 'pending_outbound', label: '待出库' }, { value: 'outbound_posted', label: '待发运' }, { value: 'shipped', label: '已发运' }, { value: 'cancelled', label: '已取消' }],
     detailOpen: false, detailLoading: false, detail: {}, detailError: '', createOpen: false, createError: '', selectedOrder: {}, createForm: { carrier_name: '', tracking_no: '', remark: '' },
     sourceLoading: false, sourceRows: [], sourceSelected: {}, sourcePage: 1, sourceTotal: 0,
-    orderPickerOpen: false, orderRows: [], orderTotal: 0, orderQuery: { keyword: '', page: 1, per_page: 20 },
+    orderPickerOpen: false, orderRows: [], orderTotal: 0, orderQuery: { keyword: '', page: 1, per_page: 10 },
     serialOpen: false, serialRows: [], serialSelected: {}, serialSource: {}, serialPage: 1, serialTotal: 0, serialKeyword: '', loadSequence: 0 }),
+  computed: {
+    executionOnly () { return !this.$can('sales_order.shipment.view') && this.$can(['sales_order.shipment.packing.execute', 'sales_order.shipment.packing.quality']) }
+  },
   created () { this.query.sales_order_id = this.$route.query.sales_order_id || ''; this.load() },
   beforeDestroy () { this.loadSequence++ },
   methods: {
     qty (value) { return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 8 }) },
     time (value) { return value ? erpDateTime(value, 19) : '—' },
     statusText (value) { const status = this.states.find(row => row.value === value); return status ? status.label : value || '—' },
-    async load () { const sequence = ++this.loadSequence; this.loading = true; this.error = ''; try { const { data } = await listShipments(this.query); if (sequence !== this.loadSequence) return; this.rows = data.data.data; this.total = data.data.total } catch (e) { this.error = e.userMessage || '发货单读取失败' } finally { if (sequence === this.loadSequence) this.loading = false } },
+    async load () { if (this.executionOnly) return; const sequence = ++this.loadSequence; this.loading = true; this.error = ''; try { const { data } = await listShipments(this.query); if (sequence !== this.loadSequence) return; this.rows = data.data.data; this.total = data.data.total } catch (e) { this.error = e.userMessage || '发货单读取失败' } finally { if (sequence === this.loadSequence) this.loading = false } },
     search () { this.query.page = 1; this.load() },
-    reset () { this.query = { keyword: '', shipment_status: '', sales_order_id: '', page: 1, per_page: 20 }; this.load() },
+    reset () { this.query = { keyword: '', shipment_status: '', sales_order_id: '', page: 1, per_page: 10 }; this.load() },
     changePage (page) { this.query.page = page; this.load() },
     changeSize (size) { this.query.per_page = size; this.search() },
     async openDetail (id) { this.detailOpen = true; this.detailLoading = true; this.detailError = ''; this.detail = {}; try { const { data } = await getShipment(id); this.detail = data.data } catch (e) { this.detailError = e.userMessage || '发货详情读取失败' } finally { this.detailLoading = false } },
     async refreshDetail () { if (!this.detail.id) return; const { data } = await getShipment(this.detail.id); this.detail = data.data; await this.load() },
     async shipmentAction (action, payload = {}) { if (this.busy) return; const label = { confirm: '确认发货单', 'post-outbound': '确认销售出库', dispatch: '确认发运', cancel: '取消发货单' }[action]; try { await this.$confirm(`确认执行“${label}”？`, label, { type: 'warning' }); this.busy = true; this.detailError = ''; await actShipment(this.detail.id, action, payload); this.$message.success(`${label}已完成`); await this.refreshDetail() } catch (e) { if (!['cancel', 'close'].includes(e)) this.detailError = e.userMessage || '发货操作失败' } finally { this.busy = false } },
     async cancelShipment () { try { const result = await this.$prompt('请填写取消原因', '取消发货单', { inputValidator: value => Boolean(value && value.trim()) || '请填写取消原因', inputType: 'textarea' }); await this.shipmentAction('cancel', { reason: result.value }) } catch (_) { /* User cancelled. */ } },
-    async openCreate () { this.createOpen = true; this.createError = ''; this.selectedOrder = {}; this.sourceRows = []; this.sourceSelected = {}; this.sourcePage = 1; this.sourceTotal = 0; this.createForm = { carrier_name: '', tracking_no: '', remark: '' }; if (this.query.sales_order_id) { try { const { data } = await getSalesOrder(this.query.sales_order_id); await this.chooseOrder(data.data) } catch (e) { this.createError = e.userMessage || '订单读取失败' } } },
-    openOrderPicker () { this.orderQuery = { keyword: '', page: 1, per_page: 20 }; this.orderPickerOpen = true; this.loadOrders() },
+    async openCreate () { this.createOpen = true; this.createError = ''; this.selectedOrder = {}; this.sourceRows = []; this.sourceSelected = {}; this.sourcePage = 1; this.sourceTotal = 0; this.createForm = { carrier_name: '', tracking_no: '', remark: '' }; if (this.query.sales_order_id) { try { const { data } = await getSalesOrder(this.query.sales_order_id); await this.chooseOrder(data) } catch (e) { this.createError = e.userMessage || '订单读取失败' } } },
+    openOrderPicker () { this.orderQuery = { keyword: '', page: 1, per_page: 10 }; this.orderPickerOpen = true; this.loadOrders() },
     async loadOrders () { try { const { data } = await listSalesOrders(this.orderQuery); this.orderRows = data.data || []; this.orderTotal = data.total || 0 } catch (e) { this.$message.error(e.userMessage || '订单读取失败') } },
     searchOrders () { this.orderQuery.page = 1; this.loadOrders() },
     changeOrderPage (page) { this.orderQuery.page = page; this.loadOrders() },
     async chooseOrder (row) { this.selectedOrder = row; this.orderPickerOpen = false; this.sourceSelected = {}; this.sourcePage = 1; this.createForm.carrier_name = row.default_carrier_name_snapshot || ''; await this.loadSources() },
-    async loadSources () { if (!this.selectedOrder.id) return; this.sourceLoading = true; try { const { data } = await listShipmentSources({ sales_order_id: this.selectedOrder.id, page: this.sourcePage, per_page: 20 }); this.sourceRows = data.data.data; this.sourceTotal = data.data.total } catch (e) { this.createError = e.userMessage || '预留库存读取失败' } finally { this.sourceLoading = false } },
+    async loadSources () { if (!this.selectedOrder.id) return; this.sourceLoading = true; try { const { data } = await listShipmentSources({ sales_order_id: this.selectedOrder.id, page: this.sourcePage, per_page: 10 }); this.sourceRows = data.data.data; this.sourceTotal = data.data.total } catch (e) { this.createError = e.userMessage || '预留库存读取失败' } finally { this.sourceLoading = false } },
     changeSourcePage (page) { this.sourcePage = page; this.loadSources() },
     toggleSource (row, selected) { if (selected) this.$set(this.sourceSelected, row.id, { ...row, base_qty: row.serial_tracking_mode === 'required' ? 0 : Number(row.available_base_qty), serials: [] }); else this.$delete(this.sourceSelected, row.id) },
     async openSerialPicker (row) { this.serialSource = row; this.serialSelected = Object.fromEntries(this.sourceSelected[row.id].serials.map(serial => [serial.id, serial])); this.serialPage = 1; this.serialKeyword = ''; this.serialOpen = true; await this.loadSerials() },
-    async loadSerials () { try { const { data } = await listShipmentSourceSerials(this.serialSource.id, { page: this.serialPage, per_page: 20, keyword: this.serialKeyword }); this.serialRows = data.data.data; this.serialTotal = data.data.total } catch (e) { this.$message.error(e.userMessage || '发货序列号读取失败') } },
+    async loadSerials () { try { const { data } = await listShipmentSourceSerials(this.serialSource.id, { page: this.serialPage, per_page: 10, keyword: this.serialKeyword }); this.serialRows = data.data.data; this.serialTotal = data.data.total } catch (e) { this.$message.error(e.userMessage || '发货序列号读取失败') } },
     searchSerials () { this.serialPage = 1; this.loadSerials() },
     changeSerialPage (page) { this.serialPage = page; this.loadSerials() },
     toggleSerial (row, selected) { if (selected) this.$set(this.serialSelected, row.id, row); else this.$delete(this.serialSelected, row.id) },

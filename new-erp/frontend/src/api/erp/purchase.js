@@ -51,6 +51,7 @@ export const createPurchaseReturn = data => api.post('/v1/erp/purchase/returns',
 export const submitPurchaseReturn = id => api.post(`/v1/erp/purchase/returns/${id}/submit`)
 export const approvePurchaseReturn = id => api.post(`/v1/erp/purchase/returns/${id}/approve`)
 export const postPurchaseReturn = id => api.post(`/v1/erp/purchase/returns/${id}/post`)
+export const offsetPurchaseReturnPayable = (id, data) => api.post(`/v1/erp/purchase/returns/${id}/ap-offset`, data)
 export const cancelPurchaseReturn = id => api.post(`/v1/erp/purchase/returns/${id}/cancel`)
 export const closePurchaseReturn = id => api.post(`/v1/erp/purchase/returns/${id}/close`)
 // 采购价格预警：与历史采购价比较（按库存基本单位）

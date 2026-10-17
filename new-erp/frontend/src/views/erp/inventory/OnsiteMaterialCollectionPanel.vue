@@ -7,12 +7,12 @@
       <el-table-column prop="work_order_no" label="工单" min-width="175" />
       <el-table-column prop="item_name" label="物料" min-width="145" />
       <el-table-column prop="spec" label="规格" min-width="115" />
-      <el-table-column label="待领数量" min-width="100"><template slot-scope="{row}">{{ row.remaining_qty }} {{ row.unit_name_snapshot }}</template></el-table-column>
+      <el-table-column label="待领原料" min-width="100"><template slot-scope="{row}">{{ row.remaining_qty }} {{ row.unit_name_snapshot }}<small v-if="row.cutting_unit_kind">待加工 {{ row.remaining_cut_piece_qty }} {{ row.cutting_unit_kind === 'root' ? '段' : '块' }}</small></template></el-table-column>
       <el-table-column label="本次领料" width="135"><template slot-scope="{row}"><el-input v-model="row.accepted" size="small" inputmode="decimal" placeholder="填写数量" /></template></el-table-column>
       <el-table-column label="具体原料" min-width="140"><template slot-scope="{row}"><el-button v-if="row.material_management_mode === 'physical'" type="text" @click="select(row, 'physicals')">选择板材 {{ row.physicals.length }} 张</el-button><el-button v-if="row.serial_control_type !== 'none'" type="text" @click="select(row, 'serials')">选择序列号 {{ row.serials.length }} 件</el-button><span v-if="row.material_management_mode !== 'physical' && row.serial_control_type === 'none'">按数量领料</span></template></el-table-column>
       <el-table-column label="操作" width="110"><template slot-scope="{row}"><el-button type="text" :disabled="busy || !valid(row) || !$can('production.material_receipt.confirm')" @click="receive(row)">确认现场领料</el-button></template></el-table-column>
     </el-table>
-    <el-pagination :pager-count="5" class="pm-pagination" :current-page.sync="page" :total="total" :page-size="20" layout="total, prev, pager, next" @current-change="load" />
+    <el-pagination :pager-count="5" class="pm-pagination" :current-page.sync="page" :total="total" :page-size="10" layout="total, prev, pager, next" @current-change="load" />
     <option-picker ref="options" />
   </section>
 </template>
@@ -29,13 +29,14 @@ export default {
       const sequence = ++this.sequence; this.loading = true; this.error = ''
       this.pending = pendingMaterialWrites('onsite-')
       try {
-        const { data } = await onsiteCollections({ page: this.page, per_page: 20 })
+        const { data } = await onsiteCollections({ page: this.page, per_page: 10 })
         if (sequence === this.sequence) { this.rows = data.data.map(row => ({ ...row, accepted: '', physicals: [], serials: [] })); this.total = data.total }
       } catch (e) { if (sequence === this.sequence) this.error = e.userMessage || e.message }
       finally { if (sequence === this.sequence) this.loading = false }
     },
     valid(row) {
       return /^\d+(\.\d{1,8})?$/.test(row.accepted) && Number(row.accepted) > 0 && Number(row.accepted) <= Number(row.remaining_qty)
+        && (!row.cutting_unit_kind || Number.isInteger(Number(row.accepted)))
         && (row.material_management_mode !== 'physical' || Number(row.accepted) === row.physicals.length)
         && (row.serial_control_type === 'none' || Number(row.accepted) === row.serials.length)
     },
@@ -46,7 +47,7 @@ export default {
       if (this.busy || !this.valid(row)) return
       this.busy = true; this.error = ''
       try {
-        const payload = { expected_version: row.task_version, lines: [{ picking_task_line_id: row.id, accepted_qty: row.accepted, physical_material_ids: row.physicals.map(item => item.id), accepted_serial_ids: row.serials.map(item => item.id) }] }
+        const payload = { expected_version: row.task_version, lines: [{ picking_task_line_id: row.id, accepted_qty: row.accepted, physical_material_ids: row.material_management_mode === 'physical' ? row.physicals.map(item => item.id) : undefined, accepted_serial_ids: row.serials.map(item => item.id) }] }
         const { data } = await materialWrite(`onsite-${row.task_id}-${row.id}`, payload, body => receiveOnsite(row.task_id, body))
         this.$message.success(data.message); await this.load()
       } catch (e) { this.error = e.userMessage || '领料结果尚未确认，请重试确认上次操作。' }

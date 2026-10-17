@@ -20,7 +20,7 @@ CREATE TABLE `erp_production_output_records` (
   `source_target_type` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `source_target_id` bigint(20) unsigned NOT NULL,
   `production_unit_id` bigint(20) unsigned DEFAULT NULL,
-  `output_item_id` bigint(20) unsigned NOT NULL,
+  `output_item_id` bigint(20) unsigned DEFAULT NULL,
   `output_base_qty` decimal(18,8) NOT NULL,
   `output_mode_snapshot` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `quality_mode_snapshot` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,

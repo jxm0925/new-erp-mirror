@@ -28,6 +28,7 @@ final class CuttingConfirmationService
                 $c->fail('automatic_cost_scope_invalid','此自动规则仅用于工人自主下料，不改变既有计划核算。');
             if ($batch->status !== 'WAIT_CONFIRM') $c->fail('batch_not_confirmable','用料批次尚未通过申报和质量确认，或已核算。',409);
             $this->records->assertInput($batch);
+            if (app(ProductionCuttingOperationService::class)->linkedOrder((int) $batch->cutting_order_id)) app(CuttingRemnantBalanceService::class)->assertConfirmed($batch);
             $wipHolding = DB::table('erp_material_holdings')->where('id', $batch->wip_holding_id)->lockForUpdate()->first();
             if (!$wipHolding) $c->fail('input_holding_missing', '下料投入持有记录不存在。');
             MaterialHoldingInvariant::attributes((array) $wipHolding);
@@ -209,10 +210,13 @@ final class CuttingConfirmationService
             if ($shape === 'RECTANGLE') {
                 foreach (['length_mm','width_mm','thickness_mm'] as $field) $dimensions[$field] = CuttingDecimal::value($measure[$field] ?? null,2);
             } else {
-                foreach (['length_mm','width_mm','thickness_mm','weight_kg'] as $field)
-                    if (isset($measure[$field])) $dimensions[$field] = CuttingDecimal::value($measure[$field],2);
-                if (! isset($dimensions['weight_kg']) && (! isset($dimensions['length_mm']) || ! isset($dimensions['width_mm'])))
-                    $c->fail('remnant_extent_required','异形板材余料必须填写外包长宽或重量。');
+                foreach (['length_mm','width_mm','thickness_mm','weight_kg','area_mm2'] as $field)
+                    if (isset($measure[$field])) {
+                        if (in_array($field, ['length_mm', 'area_mm2'], true) && ! preg_match('/^\d{1,10}(?:\.\d{1,2})?$/D', (string) $measure[$field])) $c->fail('remnant_precision_invalid', '余料长度和面积最多保留两位毫米单位小数，不能截断。');
+                        $dimensions[$field] = CuttingDecimal::value($measure[$field],2);
+                    }
+                if (! isset($dimensions['area_mm2']) && ! isset($dimensions['weight_kg']) && (! isset($dimensions['length_mm']) || ! isset($dimensions['width_mm'])))
+                    $c->fail('remnant_extent_required','异形板材余料必须填写实际面积、外包长宽或重量。');
             }
             if (isset($parentDimensions['nominal_thickness_mm'])) $dimensions['nominal_thickness_mm'] = $parentDimensions['nominal_thickness_mm'];
             if (isset($parentDimensions['thickness_mm'])) {
@@ -223,6 +227,7 @@ final class CuttingConfirmationService
             }
         } else {
             if ($item->cuttingMode() !== 'length') $c->fail('remnant_input_invalid','余料来源不是已支持的板材或定长原料。');
+            if (! preg_match('/^\d{1,10}(?:\.\d{1,2})?$/D', (string) ($measure['length_mm'] ?? ''))) $c->fail('remnant_precision_invalid', '余料长度最多保留两位毫米小数，不能截断。');
             $dimensions['length_mm'] = CuttingDecimal::value($measure['length_mm'] ?? null,2);
         }
         $sourceLot = DB::table('erp_material_holdings')->where('id',$batch->wip_holding_id)->value('material_lot_id');

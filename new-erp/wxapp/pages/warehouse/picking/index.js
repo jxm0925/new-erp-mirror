@@ -52,7 +52,7 @@ Page({
   syncDemands() {
     const rows = this.data.rows.map(row => {
       const draft = this.drafts[row.id]; const sources = draft ? draft.sources : [];
-      return Object.assign({}, row, { sources, requiredText: ui.quantity(row.required_qty), remainingText: ui.quantity(row.remaining_to_prepare),
+      return Object.assign({}, row, { sources, cutting: !!logic.cuttingKind(row) || sources.some(source => logic.cuttingKind(source)), requiredText: ui.quantity(row.required_qty), remainingText: ui.quantity(row.remaining_to_prepare),
         preparedText: ui.quantity(Math.max(0, Number(row.required_qty) - Number(row.remaining_to_prepare)).toFixed(8)), selectedQty: logic.sumQty(sources.map(source => source.selected_qty)) });
     });
     this.setData({ rows, selectedDemandCount: Object.values(this.drafts).filter(draft => draft.sources.length).length }); this.saveDraft();
@@ -123,6 +123,12 @@ Page({
   },
   closePicker() { this.setData({ pickerOpen: false }); },
   removeSource(event) { if (this.locked()) return; const draft = this.drafts[event.currentTarget.dataset.id]; if (!draft) return; draft.sources = draft.sources.filter(row => Number(row.id) !== Number(event.currentTarget.dataset.source)); this.syncDemands(); },
+  cutPiecesInput(event) {
+    if (this.locked()) return;
+    const draft = this.drafts[event.currentTarget.dataset.id];
+    const source = draft && draft.sources.find(row => Number(row.id) === Number(event.currentTarget.dataset.source));
+    if (source) { source.planned_cut_piece_qty = String(event.detail.value); this.syncDemands(); }
+  },
   submitCreate() {
     if (this.locked() || !this.data.canCreate) return;
     try { return this.execute('picking.create', logic.createPayload(this.data.target, this.data.warehouse && this.data.warehouse.id, this.drafts)); }

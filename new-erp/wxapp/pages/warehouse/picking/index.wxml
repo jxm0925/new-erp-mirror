@@ -16,7 +16,13 @@
       <view class="picking-material-heading"><text class="picking-number">{{(page - 1) * 10 + index + 1}}</text><view class="picking-material-name"><view>{{item.item_code}}</view><view>{{item.item_name}}</view><view wx:if="{{item.spec}}" class="warehouse-muted">{{item.spec}}</view></view><text class="picking-badge">待配料</text></view>
       <view class="picking-quantities"><view><view class="warehouse-muted">需求数量</view><view>{{item.requiredText}} {{item.unit_name}}</view></view><view><view class="warehouse-muted">已配数量</view><view>{{item.preparedText}} {{item.unit_name}}</view></view><view><view class="warehouse-muted">待配数量</view><view class="warehouse-danger">{{item.remainingText}} {{item.unit_name}}</view></view><view><view class="warehouse-muted">本次配料</view><view class="picking-qty-value">{{item.selectedQty}} {{item.unit_name}}</view></view></view>
       <view class="picking-source-title">已选来源（{{item.sources.length}}）</view>
+      <view wx:if="{{item.cutting}}" class="warehouse-note">剩余下料 {{item.remaining_cut_piece_qty}} 件；下方本次数量为实际整根或整张。跨批次请分别填写覆盖件数。</view>
       <view wx:for="{{item.sources}}" wx:for-item="source" wx:key="id" class="picking-source"><view class="picking-source-body"><view><text>{{source.warehouse.warehouse_name}} / {{source.subtitle}}</text><text>可用 {{source.availableText}} {{item.unit_name}}</text></view><view><text>批次 {{source.batch_no || '—'}}</text><text>本次 {{source.selected_qty}} {{item.unit_name}}</text></view></view><button class="picking-remove" disabled="{{busy || pendingAction}}" data-id="{{item.id}}" data-source="{{source.id}}" bindtap="removeSource">移除</button></view>
+      <view wx:if="{{item.cutting}}" wx:for="{{item.sources}}" wx:for-item="source" wx:key="id" class="picking-cut-source">
+        <view>批次 {{source.batch_no || '—'}} · 单根／张可覆盖 {{source.cutting_capacity_piece_qty}} 件</view>
+        <view wx:if="{{source.cutDimensionsText}}" class="warehouse-muted">下料尺寸 {{source.cutDimensionsText}} mm</view>
+        <view class="warehouse-field"><text>本批覆盖件数</text><input class="warehouse-input" type="number" value="{{source.planned_cut_piece_qty}}" placeholder="单一来源可留空" data-id="{{item.id}}" data-source="{{source.id}}" disabled="{{busy || pendingAction}}" bindinput="cutPiecesInput"/></view>
+      </view>
       <button wx:if="{{canCreate}}" class="warehouse-secondary picking-source-button" disabled="{{busy || pendingAction}}" data-id="{{item.id}}" bindtap="chooseSources"><van-icon name="plus"/> 选择库存</button>
     </view>
     <view wx:if="{{target}}" class="warehouse-pager"><button disabled="{{page <= 1 || loading}}" data-delta="-1" bindtap="turnPage">上一页</button><text>{{page}} / {{lastPage}}</text><button disabled="{{page >= lastPage || loading}}" data-delta="1" bindtap="turnPage">下一页</button></view>
@@ -40,6 +46,7 @@
         <view class="picking-material-heading"><text class="picking-number">{{(page - 1) * 10 + index + 1}}</text><view class="picking-material-name"><view>{{item.itemCode}}</view><view>{{item.itemName}}</view><view wx:if="{{item.spec}}" class="warehouse-muted">{{item.spec}}</view></view></view>
         <view class="warehouse-field"><text class="warehouse-label">库位</text><text class="warehouse-value">{{item.locationName || '—'}}</text></view>
         <view class="warehouse-field"><text class="warehouse-label">批次</text><text class="warehouse-value">{{item.batchNo || '—'}}</text></view>
+        <view wx:if="{{item.cutting}}" class="warehouse-muted">计划覆盖 {{item.plannedCutPieces}} 件 · 已拣覆盖 {{item.actualCutPieces}} 件</view>
         <view class="picking-actual-row"><text>应拣 {{item.plannedText}} {{item.unitName}}</text><view wx:if="{{canConfirm}}" class="picking-actual"><text class="warehouse-danger">实拣</text><view class="picking-input-unit"><input type="digit" value="{{item.draftQty}}" placeholder="请填写" disabled="{{busy || pendingAction}}" data-id="{{item.id}}" bindinput="pickInput"/><text>{{item.unitName}}</text></view></view><text wx:else>实拣 {{item.actualText}} {{item.unitName}}</text></view>
         <button wx:if="{{canConfirm && (item.physical || item.serial)}}" class="warehouse-secondary picking-identity" disabled="{{busy || pendingAction}}" data-id="{{item.id}}" bindtap="chooseIdentity">{{item.physical ? '选择实物' : '选择序列号'}}（{{item.selectedCount}}）</button>
       </view>

@@ -29,8 +29,10 @@ class ShipmentPackingController extends Controller
     {
         $actor = $this->authorize($request, 'sales_order.shipment.packing.view');
         $shipment = $this->visibleShipment($id, $actor);
+        $laborFilters = $this->laborFilters($request);
         $operations = $shipment->packingOperations()->orderBy('package_id')->orderBy('sequence')->paginate($this->pageSize($request));
-        $operations->setCollection($operations->getCollection()->map(fn ($op) => $service->projection($op, (int) $actor->legacy_id)));
+        $operations->setCollection($operations->getCollection()->map(fn ($op) => $service->projection($op, (int) $actor->legacy_id,
+            $request->integer('labor_operation_id') === (int) $op->id ? $laborFilters : [])));
         $packages = $shipment->packages()->orderBy('id')->paginate($this->pageSize($request), ['*'], 'packages_page');
         $packages->setCollection($packages->getCollection()->map(fn ($row) => [
             'id' => (int) $row->id, 'package_no' => $row->package_no, 'package_status' => $row->package_status,
@@ -49,7 +51,17 @@ class ShipmentPackingController extends Controller
         ])->all() : null;
         return response()->json(['data' => ['shipment_id' => (int) $shipment->id, 'shipment_no' => $shipment->shipment_no,
             'packing_version' => (int) $shipment->packing_version, 'requirements' => $service->requirements($shipment),
-            'operations' => $operations, 'packages' => $packages, 'plan_packages' => $plan]]);
+            'operations' => $operations, 'packages' => $packages, 'plan_packages' => $plan,
+            'packing_route_selections' => $request->boolean('plan') ? $service->savedRouteSelections($shipment) : null]]);
+    }
+
+    public function routings(Request $request, int $id, ShipmentPackingApplicationService $service)
+    {
+        $actor = $this->authorize($request, 'sales_order.shipment.packing.configure');
+        $filters = $request->validate(['shipment_line_id' => 'required|integer|min:1', 'keyword' => 'nullable|string|max:100',
+            'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|in:10']);
+        return response()->json(['data' => $service->routingCandidates($this->visibleShipment($id, $actor),
+            (int) $filters['shipment_line_id'], $filters)]);
     }
 
     public function configure(Request $request, int $id, ShipmentPackingApplicationService $service)
@@ -67,6 +79,12 @@ class ShipmentPackingController extends Controller
             'packages.*.contents.*.packaging_scheme_id' => 'nullable|integer',
             'packages.*.contents.*.inventory_serial_ids' => 'nullable|array',
             'packages.*.contents.*.inventory_serial_ids.*' => 'integer',
+            'packing_route_selections' => 'nullable|array|max:200',
+            'packing_route_selections.*' => 'array:shipment_line_id,production_routing_id,expected_routing_version,reason',
+            'packing_route_selections.*.shipment_line_id' => 'required|integer|min:1|distinct',
+            'packing_route_selections.*.production_routing_id' => 'required|integer|min:1',
+            'packing_route_selections.*.expected_routing_version' => 'required|integer|min:1',
+            'packing_route_selections.*.reason' => 'required|string|max:500',
         ]);
         return response()->json(['message' => '包装方案已保存，工序已生成', 'data' => $service->configure($id, $data, $actor)]);
     }
@@ -87,7 +105,7 @@ class ShipmentPackingController extends Controller
     public function operation(Request $request, int $id, ShipmentPackingApplicationService $service)
     {
         $actor = $this->authorizeExecutionRead($request);
-        return response()->json(['data' => $service->projection($this->visibleOperation($id, $actor), (int) $actor->legacy_id)]);
+        return response()->json(['data' => $service->projection($this->visibleOperation($id, $actor), (int) $actor->legacy_id, $this->laborFilters($request))]);
     }
 
     public function action(Request $request, int $id, ShipmentPackingApplicationService $service)
@@ -98,10 +116,18 @@ class ShipmentPackingController extends Controller
         $data = $request->validate(['action' => 'required|in:claim,collaborators,start,pause,materials,complete,inspect',
             'expected_version' => 'required|integer|min:1', 'client_command_id' => 'required|string|max:100',
             'employee_legacy_ids' => 'nullable|array|max:100', 'employee_legacy_ids.*' => 'integer|distinct',
+            'shares' => 'nullable|array|max:200',
+            'shares.*.employee_legacy_id' => 'required|integer|min:1|distinct',
+            'shares.*.share_ratio' => 'required|numeric|min:0|max:1', 'shares.*.remark' => 'nullable|string|max:500',
             'completed_base_qty' => 'required_if:action,complete|numeric|min:0.00000001',
             'materials' => 'required_if:action,materials|array|min:1|max:100',
             'materials.*.inventory_balance_id' => 'required|integer', 'materials.*.base_qty' => 'required|numeric|min:0.00000001',
             'materials.*.inventory_serial_ids' => 'nullable|array', 'materials.*.inventory_serial_ids.*' => 'integer|distinct',
+            'materials.*.usage_dimensions' => 'nullable|array:length_mm,width_mm,thickness_mm',
+            'materials.*.usage_dimensions.length_mm' => 'nullable|numeric|min:0.01|max:9999999999.99',
+            'materials.*.usage_dimensions.width_mm' => 'nullable|numeric|min:0.01|max:9999999999.99',
+            'materials.*.usage_dimensions.thickness_mm' => 'nullable|numeric|min:0.01|max:9999999999.99',
+            'materials.*.usage_remark' => 'nullable|string|max:500',
             'materials.*.physical_material_ids' => 'nullable|array', 'materials.*.physical_material_ids.*' => 'integer|distinct']);
         if ($data['action'] === 'inspect') $data += $request->validate(['result' => 'required|in:passed,failed', 'reason' => 'nullable|string|max:500']);
         return response()->json(['message' => '包装工序已更新', 'data' => $service->action($id, $data['action'], $data, $actor)]);
@@ -134,7 +160,7 @@ class ShipmentPackingController extends Controller
         $op = $this->visibleOperation($id, $actor);
         abort_unless((int) $op->owner_legacy_id === (int) $actor->legacy_id, 403, '只有接单人可以登记实际用料。');
         $itemIds = collect($op->packaging_materials_snapshot ?? [])->pluck('component_item_id');
-        $query = InventoryBalance::query()->with(['item', 'warehouse', 'location', 'unit'])
+        $query = InventoryBalance::query()->with(['item', 'warehouse', 'location', 'unit.standardUnit'])
             ->whereIn('item_id', $itemIds)->where('quantity_available', '>', 0)
             ->whereHas('item', fn ($q) => app(ItemManagementScopeService::class)->applyScope($q, 'factory')->where('status', 'enabled'))
             ->whereHas('warehouse', fn ($q) => $q->whereIn('status', ['enabled', 'active']))
@@ -142,13 +168,17 @@ class ShipmentPackingController extends Controller
             ->when($request->filled('category_id'), fn ($q) => $q->whereHas('item', fn ($w) => $w->where('category_id', $request->integer('category_id'))))
             ->when($request->filled('keyword'), fn ($q) => $q->whereHas('item', fn ($w) => $w->where(fn ($n) => $n->where('item_code', 'like', '%'.$request->input('keyword').'%')->orWhere('item_name', 'like', '%'.$request->input('keyword').'%')->orWhere('spec', 'like', '%'.$request->input('keyword').'%'))));
         $page = $query->orderBy('id')->paginate($this->pageSize($request));
-        $page->setCollection($page->getCollection()->map(fn ($balance) => ['id' => (int) $balance->id,
+        $page->setCollection($page->getCollection()->map(function ($balance): array {
+            $unit = app(\App\Services\Erp\UnitConversionDomainService::class)->canonicalUnit($balance->unit);
+            return ['id' => (int) $balance->id,
             'item_id' => (int) $balance->item_id, 'item_code' => $balance->item?->item_code, 'item_name' => $balance->item?->item_name,
-            'spec' => $balance->item?->spec, 'unit_name' => $balance->unit?->unit_name,
+            'spec' => $balance->item?->spec, 'unit_name' => $unit?->unit_name,
+            'unit_decimal_places' => $unit?->decimal_places, 'unit_allow_decimal' => $unit ? (bool) $unit->allow_decimal : null,
             'warehouse_name' => $balance->warehouse?->warehouse_name, 'location_name' => $balance->location?->location_name,
             'batch_no' => $balance->batch_no, 'quantity_available' => $balance->quantity_available,
             'physical' => $balance->item?->materialManagementMode() === 'physical',
-            'serial_tracking_mode' => $balance->item?->serialTrackingMode() ?? 'none']));
+            'serial_tracking_mode' => $balance->item?->serialTrackingMode() ?? 'none'];
+        }));
         return response()->json(['data' => $page,
             'categories' => $request->boolean('include_categories') ? DB::table('erp_item_categories')->where('management_scope', 'factory')->orderBy('sort_order')->get(['id', 'parent_id', 'category_name']) : null]);
     }
@@ -162,11 +192,25 @@ class ShipmentPackingController extends Controller
             ->whereHas('item', fn ($q) => app(ItemManagementScopeService::class)->applyScope($q, 'factory'))
             ->findOrFail($request->integer('inventory_balance_id'));
         $physical = $balance->item?->materialManagementMode() === 'physical';
-        $query = DB::table($physical ? 'erp_material_physicals' : 'erp_inventory_serials')->where('inventory_balance_id', $balance->id);
-        $physical ? $query->where('status', 'AVAILABLE') : $query->where('serial_status', 'available');
-        if ($request->filled('keyword')) $query->where($physical ? 'physical_no' : 'serial_no', 'like', '%'.trim((string) $request->input('keyword')).'%');
-        return response()->json(['data' => $query->orderBy('id')->paginate($this->pageSize($request), $physical
-            ? ['id', 'physical_no', 'length_mm', 'width_mm', 'thickness_mm'] : ['id', 'serial_no'])]);
+        if ($physical) {
+            // Physical stock belongs to its current warehouse holding; dimensions
+            // live in JSON. Querying nonexistent balance/size columns hid real plate identities.
+            $query = DB::table('erp_material_physicals as physical')->join('erp_material_holdings as holding', 'holding.id', '=', 'physical.current_holding_id')
+                ->where('physical.item_id', $balance->item_id)->where('holding.inventory_balance_id', $balance->id)
+                ->where('holding.position_type', 'WAREHOUSE')->where('holding.status', 'ACTIVE')->where('physical.status', 'AVAILABLE')
+                ->whereNotExists(fn ($reserved) => $reserved->selectRaw('1')->from('erp_material_physical_reservations as reserved')
+                    ->whereColumn('reserved.physical_material_id', 'physical.id')->where('reserved.status', 'ACTIVE'));
+            if ($request->filled('keyword')) $query->where('physical.physical_no', 'like', '%'.trim((string) $request->input('keyword')).'%');
+            return response()->json(['data' => $query->orderBy('physical.id')->paginate($this->pageSize($request), [
+                'physical.id', 'physical.physical_no', 'physical.shape', 'physical.root_physical_id', 'physical.parent_physical_id',
+                DB::raw("JSON_UNQUOTE(JSON_EXTRACT(physical.dimensions, '$.length_mm')) AS length_mm"),
+                DB::raw("JSON_UNQUOTE(JSON_EXTRACT(physical.dimensions, '$.width_mm')) AS width_mm"),
+                DB::raw("JSON_UNQUOTE(JSON_EXTRACT(physical.dimensions, '$.thickness_mm')) AS thickness_mm"),
+            ])]);
+        }
+        $query = DB::table('erp_inventory_serials')->where('inventory_balance_id', $balance->id)->where('item_id', $balance->item_id)->where('serial_status', 'available');
+        if ($request->filled('keyword')) $query->where('serial_no', 'like', '%'.trim((string) $request->input('keyword')).'%');
+        return response()->json(['data' => $query->orderBy('id')->paginate($this->pageSize($request), ['id', 'serial_no'])]);
     }
 
     private function visibleShipment(int $id, object $actor): SalesShipment
@@ -208,5 +252,10 @@ class ShipmentPackingController extends Controller
         abort_unless($auth->isSuperAdmin($actor) || in_array($code, $auth->permissionCodes($actor), true), 403, '无按钮权限：'.$code);
         return $actor;
     }
-    private function pageSize(Request $request): int { return min(max($request->integer('per_page', 20), 1), 100); }
+    private function pageSize(Request $request): int { return min(max($request->integer('per_page', 10), 1), 100); }
+    private function laborFilters(Request $request): array
+    {
+        return $request->validate(['labor_page' => 'nullable|integer|min:1', 'labor_per_page' => 'nullable|integer|in:10',
+            'labor_operation_id' => 'nullable|integer|min:1']);
+    }
 }
