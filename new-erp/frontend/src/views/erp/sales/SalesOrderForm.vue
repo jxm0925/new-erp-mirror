@@ -351,7 +351,7 @@ Do not change layout without approval.
             </template>
           </el-table-column>
 
-          <el-table-column label="产品" min-width="150">
+          <el-table-column label="产品" min-width="130">
             <template slot-scope="{row}">
               <div class="cell-picker" :class="{ 'has-value': !!row.product_name }" title="点击选择或更换产品" @click="openProductPicker(row)">
                 <div class="cell-main">{{ row.product_name || '选择产品' }}</div>
@@ -360,7 +360,7 @@ Do not change layout without approval.
             </template>
           </el-table-column>
 
-          <el-table-column label="规格（SKU）" min-width="150">
+          <el-table-column label="规格（SKU）" min-width="130">
             <template slot-scope="{row}">
               <div class="cell-picker" :class="{ 'has-value': !!row.sku_name }" title="点击选择或更换规格" @click="openSkuPicker(row)">
                 <div class="cell-main">{{ row.sku_name || '选择规格' }}</div>
@@ -369,7 +369,7 @@ Do not change layout without approval.
             </template>
           </el-table-column>
 
-          <el-table-column label="匹配物料" min-width="110">
+          <el-table-column label="匹配物料" min-width="96">
             <template slot-scope="{row}">
               <div class="match-cell" :title="row.item_name">
                 <span class="match-dot" :class="row.item_match_status === 'matched' ? 'dot-green' : 'dot-gray'" />
@@ -378,7 +378,7 @@ Do not change layout without approval.
             </template>
           </el-table-column>
 
-          <el-table-column label="数量" width="112">
+          <el-table-column label="数量" width="108">
             <template slot-scope="{row}">
               <div class="qty-cell">
                 <el-input v-model.number="row.order_qty" size="mini" class="inline-input text-right" @input="recalc" />
@@ -387,7 +387,7 @@ Do not change layout without approval.
             </template>
           </el-table-column>
 
-          <el-table-column label="单价" width="100">
+          <el-table-column label="单价" width="96">
             <template slot-scope="{row}">
               <div class="price-cell">
                 <span class="unit-text">¥</span>
@@ -396,13 +396,13 @@ Do not change layout without approval.
             </template>
           </el-table-column>
 
-          <el-table-column label="小计" width="104" align="right">
+          <el-table-column label="小计" width="96" align="right">
             <template slot-scope="{row}">
               <span class="amount-cell">¥{{ money(lineAmount(row)) }}</span>
             </template>
           </el-table-column>
 
-          <el-table-column label="配置" width="110">
+          <el-table-column label="配置" width="90">
             <template slot-scope="{row}">
               <div class="chip-list">
                 <span v-if="row.is_customized" class="chip chip-amber">定制</span>
@@ -414,13 +414,13 @@ Do not change layout without approval.
             </template>
           </el-table-column>
 
-          <el-table-column label="履约" width="84" align="center">
+          <el-table-column label="履约" width="80" align="center">
             <template slot-scope="{row}">
               <el-tag size="mini" :type="lineTypeTag(row.line_type)" effect="light">{{ lineTypeText(row) }}</el-tag>
             </template>
           </el-table-column>
 
-          <el-table-column label="BOM" width="76" align="center">
+          <el-table-column label="BOM" width="78" align="center">
             <template slot-scope="{row}">
               <span v-if="!lineNeedsItem(row) || row.is_purchase_fulfilled" class="muted-text">无需</span>
               <el-tag v-else-if="row.bom_snapshot && row.bom_snapshot.name" size="mini" type="success" effect="plain">就绪</el-tag>
@@ -428,7 +428,7 @@ Do not change layout without approval.
             </template>
           </el-table-column>
 
-          <el-table-column label="图纸" width="80" align="center">
+          <el-table-column label="图纸" width="60" align="center">
             <template slot-scope="{row}">
               <el-upload class="line-file-upload" action="#" :auto-upload="false" :show-file-list="false" :on-change="file => addLineFileForRow(file, row)">
                 <el-button size="mini" plain class="btn-file-count"><i class="el-icon-paperclip" /> {{ files(row).length }}</el-button>
@@ -436,7 +436,7 @@ Do not change layout without approval.
             </template>
           </el-table-column>
 
-          <el-table-column label="操作" width="104" align="center" fixed="right">
+          <el-table-column label="操作" width="92" align="center">
             <template slot-scope="{$index, row}">
               <el-button type="text" size="mini" @click="toggleLineDetail(row)">{{ expandedLineKeys.includes(row.line_uuid) ? '收起' : '配置' }}</el-button>
               <el-button type="text" size="mini" class="danger-link" @click="removeLine($index)">删除</el-button>
@@ -1806,6 +1806,7 @@ export default {
 .panel-actions .el-button + .el-button { margin-left: 0; }
 .count-pill {
   padding: 1px 8px;
+  line-height: 18px;
   border-radius: 10px;
   background: #f1f5f9;
   color: #64748b;
@@ -1927,7 +1928,17 @@ export default {
 .btn-file-count { padding: 4px 8px !important; }
 
 /* 订单行展开区 */
-.order-line-detail { padding: 10px 14px 12px; display: grid; gap: 10px; }
+.order-lines { container-type: inline-size; }
+/* 表格横向滚动时，展开区固定在可视宽度内，不随表格总宽撑开 */
+.order-line-detail {
+  position: sticky;
+  left: 0;
+  width: calc(100cqw - 2px);
+  box-sizing: border-box;
+  padding: 10px 14px 12px;
+  display: grid;
+  gap: 10px;
+}
 .line-detail-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .row-badge {
   padding: 1px 8px;
@@ -1941,7 +1952,7 @@ export default {
 .line-detail-amount { margin-left: auto; font-size: 13px; font-weight: 700; color: #008b4b; }
 .line-detail-grid {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) minmax(280px, 1.2fr) minmax(280px, 1.2fr);
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 10px;
 }
 .detail-block {
@@ -2083,10 +2094,6 @@ export default {
 .precheck-focus { outline: 2px solid #f59e0b; outline-offset: 2px; transition: outline-color 0.25s ease; }
 
 /* 响应式 */
-@media (max-width: 1400px) {
-  .line-detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .line-detail-grid .detail-block:first-child { grid-column: 1 / -1; }
-}
 @media (max-width: 1100px) {
   .top-grid { grid-template-columns: 1fr; }
 }
