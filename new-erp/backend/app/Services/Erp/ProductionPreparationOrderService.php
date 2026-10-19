@@ -49,6 +49,8 @@ final class ProductionPreparationOrderService
         foreach ($requirements as $requirement) {
             // Stock continuation is already locked and routed through internal issue; it is not new procurement demand.
             if ($requirement->requirement_kind === 'stock_continuation') continue;
+            // 单台订单的自产部件由子工单直接转交，不再生成仓库备料行。
+            if ($this->suppliedByDirectChild($workOrder, $requirement)) continue;
             $line = ProductionPreparationOrderLine::query()->where('material_requirement_id', $requirement->id)->first();
             if ($line) {
                 if ((int) $line->preparation_order_id !== (int) $order->id || (int) $line->work_order_id !== (int) $workOrder->id) {
@@ -74,6 +76,16 @@ final class ProductionPreparationOrderService
             ]);
         }
         return $order->fresh($this->relations());
+    }
+
+    private function suppliedByDirectChild(WorkOrder $workOrder, object $requirement): bool
+    {
+        if (! $requirement->bom_item_id) return false;
+        return DB::table('erp_work_orders as child')
+            ->join('erp_assembly_component_demands as demand', 'demand.id', '=', 'child.assembly_component_demand_id')
+            ->where('child.reserved_for_work_order_id', $workOrder->id)->where('child.stocking_purpose', 'reserved_for_work_order')
+            ->where('child.effective_output_mode_snapshot', 'flow_only')->where('child.status', '<>', 'CANCELLED')
+            ->where('demand.bom_item_id', $requirement->bom_item_id)->exists();
     }
 
     public function paginate(array $filters, object $user, array $permissions, bool $superAdmin = false): LengthAwarePaginator

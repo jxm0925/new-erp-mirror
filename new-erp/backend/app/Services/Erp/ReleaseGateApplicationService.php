@@ -178,8 +178,13 @@ class ReleaseGateApplicationService
                     $permissions ?? $auth->permissionCodes($user), $superAdmin ?? $auth->isSuperAdmin($user));
                 $checks[] = $this->check('stock_prebuild_reserved_target', true, '', '', $target);
             } catch (WorkOrderDomainException $exception) {
+                $message = $exception->getMessage();
+                if ($workOrder->assembly_component_demand_id && $exception->errorCode === 'reserved_target_work_order_unavailable') {
+                    $parentNo = WorkOrder::query()->whereKey($workOrder->reserved_for_work_order_id)->value('work_order_no');
+                    $message = '本部件做完直接转给总装工单'.($parentNo ? ' '.$parentNo : '').'，请先发布总装工单。';
+                }
                 $checks[] = $this->check('stock_prebuild_reserved_target', false, $exception->errorCode,
-                    $exception->getMessage(), ['reserved_for_work_order_id' => $workOrder->reserved_for_work_order_id]);
+                    $message, ['reserved_for_work_order_id' => $workOrder->reserved_for_work_order_id]);
             }
         }
         $allowed = collect($checks)->every(fn (array $check): bool => $check['status'] === 'passed');

@@ -280,11 +280,16 @@ class WorkOrderApplicationService
         $number = $this->documentNumbers->next('work_order');
         $snapshot = $this->productionMasterData->snapshot($routing);
         app(StockPrebuildEligibilityService::class)->assertSnapshot($snapshot, (int) $target->id);
+        // 单台订单：部件做完直接转给总装工单的接收工序；批量单（整机数量大于 1）仍入库再领。
+        $directTarget = $this->directAssemblyTargetOperation($root, $parent, $item, $row);
         $child = WorkOrder::create([
             'work_order_no' => $number, 'source_type' => 'stock_prebuild', 'source_id' => $demand->id, 'collaboration_enabled' => true,
             'source_no_snapshot' => $root->work_order_no, 'source_title_snapshot' => '自产部件需求',
-            'stocking_purpose' => 'common_inventory', 'configured_output_mode_snapshot' => $target->output_mode,
-            'effective_output_mode_snapshot' => 'warehouse_required', 'effective_output_item_id_snapshot' => $item->id,
+            'stocking_purpose' => $directTarget ? 'reserved_for_work_order' : 'common_inventory',
+            'reserved_for_work_order_id' => $directTarget ? $parent->id : null,
+            'reserved_for_target_operation_id' => $directTarget,
+            'configured_output_mode_snapshot' => $target->output_mode,
+            'effective_output_mode_snapshot' => $directTarget ? 'flow_only' : 'warehouse_required', 'effective_output_item_id_snapshot' => $item->id,
             'assembly_root_work_order_id' => $root->id, 'assembly_parent_work_order_id' => $parent->id,
             'assembly_component_demand_id' => $demand->id, 'production_master_order_id' => $root->production_master_order_id,
             'output_item_id' => $item->id, 'production_routing_id' => $routing->id,
@@ -300,8 +305,44 @@ class WorkOrderApplicationService
             'business_version' => 1, 'organization_code' => $root->organization_code,
             'created_by_legacy_id' => $this->userId($user), 'updated_by_legacy_id' => $this->userId($user),
         ]);
-        $this->recordStatus($child, null, self::WAIT_RELEASE, '自产部件库存不足，建立关联补足工单', 0, 1, $user);
+        $this->recordStatus($child, null, self::WAIT_RELEASE, $directTarget
+            ? '自产部件库存不足，建立关联补足工单（单台订单，做完直接转总装）' : '自产部件库存不足，建立关联补足工单', 0, 1, $user);
         return $child;
+    }
+
+    /**
+     * 单台订单（整机数量为 1）的直接下级部件，做完直接转到总装工单消耗该部件的那道工序。
+     * 条件：根工单来自销售订单、数量为 1、部件全部由子工单生产（没有占用库存），
+     * 且整机路线里只有一道工序接收该部件。否则返回 null，沿用入库再领。
+     */
+    private function directAssemblyTargetOperation(WorkOrder $root, WorkOrder $parent, Item $item, array $row): ?int
+    {
+        if ($root->source_type !== 'sales_order' || (int) $parent->id !== (int) $root->id) return null;
+        if (bccomp((string) $root->target_base_qty, '1', 8) !== 0) return null;
+        if (bccomp((string) ($row['inventory_reserved_base_qty'] ?? '0'), '0', 8) !== 0
+            || bccomp((string) ($row['production_base_qty'] ?? '0'), (string) ($row['required_base_qty'] ?? '0'), 8) !== 0) return null;
+        $targets = collect(data_get($root->routing_snapshot, 'operations', []))
+            ->filter(fn ($node) => ($node['execution_context'] ?? 'production') === 'production')
+            ->flatMap(fn ($node) => $node['material_supply_rules'] ?? [])
+            ->filter(fn ($rule) => (int) ($rule['component_item_id'] ?? 0) === (int) $item->id)
+            ->pluck('target_routing_operation_id')->map(fn ($id) => (int) $id)->filter()->unique()->values();
+        return $targets->count() === 1 ? $targets->first() : null;
+    }
+
+    /** 总装工单发布后，把直接转交的子工单绑定到唯一的生产单元，子工单随后即可发布。 */
+    private function bindDirectAssemblyChildren(WorkOrder $workOrder, object $user): void
+    {
+        $children = WorkOrder::query()->where('reserved_for_work_order_id', $workOrder->id)
+            ->where('stocking_purpose', 'reserved_for_work_order')->whereNotNull('assembly_component_demand_id')
+            ->whereNull('reserved_for_production_unit_id')->whereIn('status', [self::DRAFT, self::WAIT_RELEASE])
+            ->lockForUpdate()->get();
+        if ($children->isEmpty() || $workOrder->production_execution_mode_snapshot !== 'unit') return;
+        $units = DB::table('erp_production_units')->where('work_order_id', $workOrder->id)->pluck('id');
+        if ($units->count() !== 1) return;
+        foreach ($children as $child) {
+            $child->forceFill(['reserved_for_production_unit_id' => (int) $units->first(),
+                'business_version' => (int) $child->business_version + 1, 'updated_by_legacy_id' => $this->userId($user)])->save();
+        }
     }
 
     public function updateDraft(int $id, array $payload, object $user, array $permissions, bool $superAdmin = false): WorkOrder
@@ -576,6 +617,7 @@ class WorkOrderApplicationService
 
             $this->productionExecution->initializePublished($workOrder, $executionPolicy);
             app(AssemblyProductionInventoryService::class)->bindPublished($workOrder);
+            $this->bindDirectAssemblyChildren($workOrder, $user);
             app(WorkOrderPreparationMaterialService::class)->bindPublishedLocked($workOrder);
             app(ProductionInventoryContinuationService::class)->reservePublished($workOrder, $user);
             // Order preparation documents belong to a production master order.

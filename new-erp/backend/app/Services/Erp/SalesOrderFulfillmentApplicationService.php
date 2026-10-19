@@ -10,7 +10,8 @@ use App\Models\Erp\{
     SalesOrderLine,
     SalesOrderLog,
     SalesOrderProductionRequirement,
-    Unit
+    Unit,
+    WorkOrder
 };
 use App\Exceptions\Erp\WorkOrderDomainException;
 use Illuminate\Database\QueryException;
@@ -255,6 +256,9 @@ class SalesOrderFulfillmentApplicationService
                 'undetermined_base_qty' => $this->isPhysicalLine($line) ? $this->salesToBaseQuantity($line, $quantities['undetermined_qty']) : null,
                 ...$quantities,
                 'blocking_reason' => implode('；', $blocking),
+                // 在制备货工单只做提示，是否等它入库由销售决定（调小本次确认数量，入库后再确认剩余数量）。
+                'in_progress_stock_prebuilds' => $this->isPhysicalLine($line) && ! SalesOrderFulfillmentPolicy::isPurchaseLine($line)
+                    && $order->production_confirm_status !== 'confirmed' ? $this->inProgressStockPrebuilds($line) : [],
                 'generated_result' => $this->resultTextFromQuantities($quantities),
                 'data_readiness' => [
                     'bom' => $productionQty <= 0 ? 'not_required' : (($bom['status'] ?? null) === 'matched' ? 'ready' : 'missing'),
@@ -636,6 +640,30 @@ class SalesOrderFulfillmentApplicationService
         $result = SalesOrder::with(['lines', 'fulfillments', 'productionRequirements', 'activeProductionMasterOrder.workOrders'])->findOrFail($orderId);
         $result->setAttribute('confirmation_command_result', $command->response_snapshot);
         return $result;
+    }
+
+    /** 同一产品正在做、还没入库的公共备货工单（不含部件子工单）。 */
+    private function inProgressStockPrebuilds(SalesOrderLine $line): array
+    {
+        if (! $line->item_id) return [];
+        $labels = ['WAIT_RELEASE' => '待发布', 'RELEASED' => '已发布', 'IN_PROGRESS' => '生产中'];
+        return WorkOrder::query()->where('source_type', 'stock_prebuild')->where('stocking_purpose', 'common_inventory')
+            ->whereNull('assembly_component_demand_id')->where('output_item_id', $line->item_id)
+            ->whereIn('status', array_keys($labels))->orderByRaw('planned_date IS NULL')->orderBy('planned_date')->orderBy('id')->limit(10)
+            ->get(['id', 'work_order_no', 'status', 'target_base_qty', 'planned_date', 'target_routing_operation_id', 'routing_snapshot'])
+            ->map(function (WorkOrder $wo) use ($labels): array {
+                $posted = (float) DB::table('erp_production_output_warehouse_postings as post')
+                    ->join('erp_production_output_records as output', 'output.id', '=', 'post.output_record_id')
+                    ->where('output.work_order_id', $wo->id)->where('post.status', 'POSTED')->sum('post.posted_base_qty');
+                $target = collect(data_get($wo->routing_snapshot, 'operations', []))
+                    ->firstWhere('routing_operation_id', (int) $wo->target_routing_operation_id);
+                return ['id' => (int) $wo->id, 'work_order_no' => $wo->work_order_no, 'status' => $wo->status,
+                    'status_label' => $labels[$wo->status] ?? $wo->status,
+                    'target_base_qty' => (float) $wo->target_base_qty,
+                    'pending_base_qty' => max(0, round((float) $wo->target_base_qty - $posted, 8)),
+                    'target_operation_name' => $target['operation_name'] ?? null,
+                    'planned_date' => optional($wo->planned_date)->format('Y-m-d')];
+            })->filter(fn (array $row): bool => $row['pending_base_qty'] > 0)->values()->all();
     }
 
     private function addPlannedAllocations(array &$plannedByBalance, array $allocations): void
