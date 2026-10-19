@@ -284,6 +284,7 @@ Route::prefix('v1/erp/inventory')->group(function () {
     Route::get('alerts/{id}', [InventoryAlertController::class, 'show'])->whereNumber('id');
     Route::post('alerts/{id}/read', [InventoryAlertController::class, 'markRead'])->whereNumber('id');
     Route::post('alerts/{id}/purchase-request', [InventoryAlertController::class, 'createPurchaseRequest'])->whereNumber('id');
+    Route::post('alerts/{id}/stock-prebuild', [InventoryAlertController::class, 'createStockPrebuild'])->whereNumber('id');
     Route::get('alerts/policies/{itemId}', [InventoryAlertController::class, 'policy'])->whereNumber('itemId');
     Route::put('alerts/policies/{itemId}', [InventoryAlertController::class, 'savePolicy'])->whereNumber('itemId');
     Route::post('alerts/policies/{itemId}/activate', [InventoryAlertController::class, 'activatePolicy'])->whereNumber('itemId');
@@ -445,6 +446,7 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::post('cutting/orders/{id}/issue', [CuttingController::class, 'issue'])->whereNumber('id');
     Route::post('cutting/orders/{id}/issue-physicals', [CuttingController::class, 'issuePhysicals'])->whereNumber('id');
     Route::get('cutting/settlements/{id}/execution', [CuttingController::class, 'settlementExecution'])->whereNumber('id');
+    Route::get('cutting/settlements/{id}/route-suggestions', [CuttingController::class, 'routeSuggestions'])->whereNumber('id');
     Route::put('cutting/settlements/{id}/results', [CuttingController::class, 'save'])->whereNumber('id');
     Route::post('cutting/settlements/{id}/first-cut', [CuttingController::class, 'firstCut'])->whereNumber('id');
     Route::post('cutting/settlements/{id}/return-original', [CuttingController::class, 'returnOriginal'])->whereNumber('id');

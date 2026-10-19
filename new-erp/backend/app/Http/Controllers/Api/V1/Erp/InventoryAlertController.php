@@ -138,6 +138,15 @@ class InventoryAlertController extends Controller
         return response()->json(['message' => '已生成采购需求草稿，不会自动生成采购订单。', 'data' => $record]);
     }
 
+    public function createStockPrebuild(Request $request, int $id, InventoryAlertApplicationService $service)
+    {
+        $user = $this->authorize($request, 'production.work_order.create');
+        $auth = app(AuthContextService::class);
+        $result = $service->createStockPrebuildFromAlert($id, $user, $auth->permissionCodes($user), $auth->isSuperAdmin($user));
+        return response()->json(['message' => $result['existing'] ? '该预警已有未完成的备货工单。' : '已生成备货工单草稿，请核对后发布。',
+            'data' => ['id' => $result['work_order']->id, 'work_order_no' => $result['work_order']->work_order_no, 'existing' => $result['existing']]]);
+    }
+
     private function perPage(Request $request): int { return min(100, max(10, (int) $request->input('per_page', 10))); }
     private function authorize(Request $request, string $permission): object
     {

@@ -371,6 +371,29 @@ Page({
     this.setData({ showSplit: true, splitIndex: index, splitProduct: JSON.parse(JSON.stringify(product)), routeType: 'NEXT_OPERATION', routeQty: String(product.unassigned_qty_ui || ''), targets: [], targetIndex: -1, targetKeyword: '', targetPage: 1, targetLastPage: 1 });
     return this.searchTargets();
   },
+  // 先切后分配：按“物料 + 尺寸”自动建议分给各工单，计划日期早的优先，多余的入库；核对后再保存。
+  async autoAssign() {
+    if (this.data.busy || !this.data.editableRoutes || !this.data.products.length) return;
+    this.setData({ busy: true });
+    try {
+      await (this.data.editableResults ? this.saveAndRoute() : this.saveRoutesOnly()); await this.load();
+      if (this.data.error || this.pendingJob || !this.data.editableRoutes) return;
+      const rows = dataOf(await cutting.routeSuggestions(this.data.settlementId)).data || [];
+      const byId = {}; rows.forEach(row => { byId[row.result_id] = row; });
+      let added = 0;
+      const products = this.data.products.map(product => {
+        const suggestion = byId[product.id];
+        if (!suggestion || !suggestion.routes.length) return product;
+        added += suggestion.routes.length;
+        const routes = suggestion.routes.map(route => Object.assign({}, route, { quantity: String(Number(route.quantity)), status: 'PLANNED', editable: true }));
+        return Object.assign({}, product, { routes: (product.routes || []).concat(routes) });
+      });
+      if (!added) { wx.showToast({ title: '没有需要分配的产出或可接收的工单需求', icon: 'none' }); return; }
+      this.setData({ products: recomputeProducts(products) });
+      wx.showToast({ title: '已生成分配建议，请核对后保存', icon: 'none' });
+    } catch (error) { wx.showToast({ title: (error && error.message) || '自动分配失败', icon: 'none' }); }
+    finally { this.setData({ busy: false }); }
+  },
   closeSplit() { this.targetSequence = (this.targetSequence || 0) + 1; this.setData({ showSplit: false, splitIndex: -1, splitProduct: {}, targetLoading: false }); },
   setRouteType(event) {
     this.targetSequence = (this.targetSequence || 0) + 1;

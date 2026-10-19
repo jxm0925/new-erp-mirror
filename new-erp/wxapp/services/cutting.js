@@ -50,6 +50,7 @@ module.exports = {
   submitSettlement: (id, data) => command(`production/cutting/settlements/${id}/submit`, data || {}, 'cut-submit'),
   splitRoutes: (id, data) => safeCommand.write(`production/cutting/results/${id}/routes`, data || {}, 'cut-split', 'PUT'),
   handoverTargets: (id, query) => get(`production/cutting/results/${id}/handover-targets`, query || {}),
+  routeSuggestions: id => get(`production/cutting/settlements/${id}/route-suggestions`, {}),
   pendingHandovers: (query) => get('production/cutting/handovers/pending', query || {}),
   acceptHandover: (id, data) => command(`production/cutting/handovers/${id}/accept`, data || {}, 'cut-accept'),
   rejectHandover: (id, data) => command(`production/cutting/handovers/${id}/reject`, data || {}, 'cut-reject'),

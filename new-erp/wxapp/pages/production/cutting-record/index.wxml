@@ -155,6 +155,10 @@
         <view class="title-mark"></view>
         <text class="section-title">产出去向流转</text>
       </view>
+      <button class="split-btn" wx:if="{{editableRoutes && products.length && order.purpose === 'WORKER'}}" disabled="{{busy}}" bindtap="autoAssign">
+        <van-icon name="aim" size="24rpx" />
+        <text>按需求自动分配</text>
+      </button>
     </view>
 
     <view class="routes-container" wx:if="{{products.length}}">

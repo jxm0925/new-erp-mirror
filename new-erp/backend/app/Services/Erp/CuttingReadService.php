@@ -244,7 +244,7 @@ final class CuttingReadService
         }
         $q->select('requirement.id as target_material_requirement_id', 'requirement.target_type', 'requirement.target_id',
             'requirement.required_base_qty', 'requirement.satisfied_base_qty', 'requirement.returned_base_qty', 'requirement.status as requirement_status',
-            'wo.id as work_order_id', 'wo.work_order_no', 'task.id as task_id', 'task.task_no', 'task.status as task_status',
+            'wo.id as work_order_id', 'wo.work_order_no', 'wo.planned_date', 'task.id as task_id', 'task.task_no', 'task.status as task_status',
             'wo.source_type', 'wo.source_no_snapshot as order_no', 'wo.source_title_snapshot as order_title',
             'target_item.item_name as target_item_name', 'task.operation_name_snapshot as operation_name',
             'task.assignee_user_legacy_id', 'unit.id as production_unit_id', 'unit.unit_no', DB::raw('COALESCE(pending_supply.pending_qty,0) AS pending_qty'))
@@ -259,6 +259,52 @@ final class CuttingReadService
                 && ! in_array($row['task_status'], ['WAIT_CLAIM', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'], true);
         }
         unset($row); return $page;
+    }
+
+    /**
+     * 先切后分配：按“物料 + 尺寸”把本批未指定的产出建议分给各工单需求。
+     * 只读预览，工人确认后仍按原有“拆分去向”逐条保存；计划日期早的工单优先，多余的建议入库。
+     */
+    public function routeSuggestions(int $batchId, object $user, array $permissions, bool $super = false): array
+    {
+        $batch = $this->commands->assertBatchVisible($batchId, $user, $permissions, $super, 'production.cutting.record');
+        if (app(ProductionCuttingOperationService::class)->linkedOrder((int) $batch->cutting_order_id))
+            return ['data' => [], 'message' => '工序内下料按工单冻结路线流转，无需分配。'];
+        $results = DB::table('erp_cutting_results')->where('settlement_batch_id', $batchId)->where('result_type', 'product')
+            ->whereIn('status', ['DRAFT', 'SUBMITTED'])->orderBy('id')->get();
+        $consumed = []; $data = [];
+        foreach ($results as $result) {
+            $existing = DB::table('erp_cutting_result_routes')->where('result_id', $result->id)->where('status', '!=', 'CANCELLED')->get();
+            $remaining = bcsub((string) $result->actual_qty, (string) $existing->sum(fn ($route) => (float) $route->quantity), 8);
+            if (bccomp($remaining, '0', 8) <= 0) continue;
+            // 本条产出自己的草稿去向不计入 pending，这里按目标扣回，避免重复分配。
+            $own = $existing->where('status', 'PLANNED')->whereNotNull('target_material_requirement_id')->groupBy('target_material_requirement_id')
+                ->map(fn ($rows) => (string) $rows->sum(fn ($route) => (float) $route->quantity));
+            $mode = DB::table('erp_cutting_allowed_outputs')->where('id', $result->allowed_output_id)->value('output_mode');
+            $routes = [];
+            if ($mode !== 'warehouse_required') {
+                $targets = collect($this->handoverTargets((int) $result->id, ['page' => 1, 'per_page' => 100], $user, $permissions, $super)['data'])
+                    ->sortBy(fn ($row) => [($row['planned_date'] ?? null) ? 0 : 1, (string) ($row['planned_date'] ?? ''), (int) $row['work_order_id'], (int) $row['task_id']])->values();
+                foreach ($targets as $target) {
+                    if (bccomp($remaining, '0', 8) <= 0) break;
+                    $id = (int) $target['target_material_requirement_id'];
+                    $available = bcsub(bcsub((string) $target['selectable_qty'], $consumed[$id] ?? '0', 8), $own->get($id, '0'), 8);
+                    if (bccomp($available, '0', 8) <= 0) continue;
+                    $qty = bccomp($available, $remaining, 8) < 0 ? $available : $remaining;
+                    $routes[] = ['route_type' => 'NEXT_OPERATION', 'quantity' => $qty, 'target_material_requirement_id' => $id,
+                        'work_order_no' => $target['work_order_no'], 'order_no' => $target['order_no'], 'planned_date' => $target['planned_date'] ?? null,
+                        'target_label' => implode(' / ', array_filter([$target['order_label'] ?? null, $target['target_item_name'] ?? null,
+                            $target['operation_name'] ?: $target['task_no'], $target['unit_no'] ?? null]))];
+                    $consumed[$id] = bcadd($consumed[$id] ?? '0', $qty, 8);
+                    $remaining = bcsub($remaining, $qty, 8);
+                }
+            }
+            if (bccomp($remaining, '0', 8) > 0 && $mode !== 'flow_only')
+                $routes[] = ['route_type' => 'WAREHOUSE', 'quantity' => $remaining, 'target_material_requirement_id' => null, 'target_label' => '入库'];
+            $data[] = ['result_id' => (int) $result->id, 'client_row_id' => $result->client_row_id, 'routes' => $routes,
+                'unassigned_qty' => $mode === 'flow_only' && bccomp($remaining, '0', 8) > 0 ? $remaining : '0.00000000'];
+        }
+        return ['data' => $data];
     }
 
     private function results(int $orderId, array $f, ?int $batchId = null): array

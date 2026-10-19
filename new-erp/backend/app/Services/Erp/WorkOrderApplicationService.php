@@ -300,7 +300,7 @@ class WorkOrderApplicationService
             'target_qty' => $row['production_base_qty'], 'target_base_qty' => $row['production_base_qty'],
             'base_unit_id' => $item->unit_id, 'base_unit_name_snapshot' => $item->unit->unit_name,
             'bom_id' => $row['child_bom_id'], 'bom_version_id' => $row['child_bom_id'],
-            'planned_date' => $root->planned_date?->format('Y-m-d'), 'production_batch' => $number,
+            'planned_date' => $this->assemblyChildPlannedDate($root, $parent, $item), 'production_batch' => $number,
             'responsible_user_legacy_id' => $parent->responsible_user_legacy_id, 'status' => self::WAIT_RELEASE,
             'business_version' => 1, 'organization_code' => $root->organization_code,
             'created_by_legacy_id' => $this->userId($user), 'updated_by_legacy_id' => $this->userId($user),
@@ -308,6 +308,29 @@ class WorkOrderApplicationService
         $this->recordStatus($child, null, self::WAIT_RELEASE, $directTarget
             ? '自产部件库存不足，建立关联补足工单（单台订单，做完直接转总装）' : '自产部件库存不足，建立关联补足工单', 0, 1, $user);
         return $child;
+    }
+
+    /**
+     * 子工单计划日期按交期倒推：上级工单计划日期（没有时用根工单的）减去上级工单从“接收该部件的工序”
+     * 到最后一道工序的标准工时（准备工时 + 单件工时 × 数量，按每天 8 小时折天，至少 1 天），不早于今天。
+     */
+    private function assemblyChildPlannedDate(WorkOrder $root, WorkOrder $parent, Item $item): ?string
+    {
+        $due = $parent->planned_date ?? $root->planned_date;
+        if (! $due) return null;
+        $nodes = collect(data_get($parent->routing_snapshot, 'operations', []))
+            ->filter(fn ($node) => ($node['execution_context'] ?? 'production') === 'production');
+        $consumers = $nodes->flatMap(fn ($node) => $node['material_supply_rules'] ?? [])
+            ->filter(fn ($rule) => (int) ($rule['component_item_id'] ?? 0) === (int) $item->id)
+            ->pluck('target_routing_operation_id')->map(fn ($id) => (int) $id)->filter()->all();
+        $start = $nodes->whereIn('routing_operation_id', $consumers)->min('sequence') ?? $nodes->min('sequence');
+        $qty = (float) $parent->target_base_qty;
+        $minutes = $nodes->filter(fn ($node) => (int) ($node['sequence'] ?? 0) >= (int) $start)->sum(function ($node) use ($qty) {
+            $unit = $node['unit_standard_minutes'] ?? null;
+            return (float) ($node['setup_standard_minutes'] ?? 0) + ($unit !== null ? (float) $unit * $qty : (float) ($node['standard_minutes'] ?? 0));
+        });
+        $date = \Illuminate\Support\Carbon::parse($due)->subDays(max(1, (int) ceil($minutes / 480)));
+        return ($date->lt(today()) ? today() : $date)->format('Y-m-d');
     }
 
     /**

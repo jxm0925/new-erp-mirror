@@ -10,6 +10,9 @@ use App\Models\Erp\InventoryBalance;
 use App\Models\Erp\Item;
 use App\Models\Erp\PurchaseRequest;
 use App\Models\Erp\PurchaseRequestItem;
+use App\Models\Erp\ProductionRouting;
+use App\Models\Erp\WorkOrder;
+use App\Exceptions\Erp\WorkOrderDomainException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -224,6 +227,38 @@ class InventoryAlertApplicationService
             $alert->update(['purchase_request_id' => $request->id]);
             return $request->fresh(['items.item', 'items.unit', 'items.warehouse']);
         }, 5);
+    }
+
+    /**
+     * 自制件低于最低库存时，一键生成“公共库存备货”工单草稿。
+     * 同一次预警只生成一张未结束的备货工单；数量取建议补货量，没有时补到安全库存（或最低库存）。
+     */
+    public function createStockPrebuildFromAlert(int $alertId, object $user, array $permissions, bool $super = false): array
+    {
+        $alert = InventoryAlert::query()->findOrFail($alertId);
+        if (! $alert->is_active || ! in_array($alert->alert_status, ['low_stock', 'out_of_stock'], true))
+            throw new WorkOrderDomainException('alert_not_shortage', '只有缺货或低库存的预警可以生成备货工单。', 422);
+        $item = Item::query()->findOrFail($alert->item_id);
+        if (! $item->is_production_item) throw new WorkOrderDomainException('item_not_production', '该物料不是自制件，请生成采购需求。', 422);
+        $commandPrefix = 'inventory-alert-'.$alert->id.'-';
+        $open = WorkOrder::query()->where('source_type', 'stock_prebuild')->where('output_item_id', $item->id)
+            ->where('origin_command_id', 'like', $commandPrefix.'%')->whereNotIn('status', ['COMPLETED', 'CANCELLED'])->orderByDesc('id')->first();
+        if ($open) return ['work_order' => $open, 'existing' => true];
+        $routing = ProductionRouting::query()->with('operations')->where('status', 'active')->where('output_item_id', $item->id)->orderByDesc('id')->first();
+        $target = $routing?->operations->where('output_item_id', $item->id)->sortByDesc('sequence')->first();
+        if (! $routing || ! $target)
+            throw new WorkOrderDomainException('stock_prebuild_routing_missing', '该物料没有生效的工艺路线，或路线中没有产出该物料的工序，不能生成备货工单。', 422);
+        $available = (float) $alert->available_qty;
+        $level = (float) ($alert->safety_stock_snapshot ?: $alert->min_stock_snapshot ?: 0);
+        $qty = (float) ($alert->suggested_replenishment_qty_snapshot ?: 0) ?: max(0, $level - $available);
+        if ($qty <= 0) throw new WorkOrderDomainException('stock_prebuild_qty_missing', '请先在预警规则里设置建议补货量或安全库存。', 422);
+        $workOrder = app(WorkOrderApplicationService::class)->createDraft([
+            'client_command_id' => $commandPrefix.optional($alert->first_triggered_at)->format('YmdHis'),
+            'source_type' => 'stock_prebuild', 'stocking_purpose' => 'common_inventory',
+            'output_item_id' => $item->id, 'production_routing_id' => $routing->id, 'target_routing_operation_id' => $target->id,
+            'target_qty' => rtrim(rtrim(number_format(ceil($qty * 10000) / 10000, 4, '.', ''), '0'), '.'),
+        ], $user, $permissions, $super);
+        return ['work_order' => $workOrder, 'existing' => false];
     }
 
     private function recalculate(InventoryAlertPolicy $policy, int $warehouseId, string $reason): InventoryAlert

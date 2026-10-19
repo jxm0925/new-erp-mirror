@@ -62,6 +62,8 @@ final class CuttingController extends Controller
     { return response()->json($s->selectorCategories($id,$this->selectorCategoryFilters($r), ...$this->context($r))); }
     public function handoverTargets(Request $r, int $id, CuttingReadService $s)
     { return response()->json($s->handoverTargets($id,$this->filters($r), ...$this->context($r))); }
+    public function routeSuggestions(Request $r, int $id, CuttingReadService $s)
+    { return response()->json($s->routeSuggestions($id, ...$this->context($r))); }
     public function inputs(Request $r, int $id, CuttingReadService $s)
     { return response()->json($s->inputCandidates($id,$this->filters($r), ...$this->context($r))); }
     public function materialPhysicals(Request $r, CuttingReadService $s)

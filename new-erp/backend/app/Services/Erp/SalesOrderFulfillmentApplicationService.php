@@ -306,8 +306,9 @@ class SalesOrderFulfillmentApplicationService
         if (! $automatic && (blank($clientCommandId) || $expectedVersion === null || $expectedVersion < 1)) {
             throw ValidationException::withMessages(['client_command_id' => '分批确认必须提供操作命令号和当前订单版本。']);
         }
-        if (! $automatic && (int) ($operator?->legacy_id ?? $operator?->id ?? 0) < 1) {
-            throw new WorkOrderDomainException('actor_required', '分批确认需要真实操作账号。', 403);
+        // 自动确认同样要记录真实操作账号，不能把工单创建人、状态日志记成 0。
+        if ((int) ($operator?->legacy_id ?? $operator?->id ?? 0) < 1) {
+            throw new WorkOrderDomainException('actor_required', $automatic ? '自动确认需要真实操作账号。' : '分批确认需要真实操作账号。', 403);
         }
         if ($clientCommandId !== null) {
             $clientCommandId = trim($clientCommandId);
@@ -418,8 +419,9 @@ class SalesOrderFulfillmentApplicationService
                     $this->addPlannedAllocations($plannedByBalance, $inventoryAllocations);
                     $productionQty = (float) $quantities['production_qty'];
                     $bom = $productionQty > 0 ? $this->bomMatcher->match($line->product_id, $line->sku_id, $line->item_id, $line->configuration_snapshot) : null;
-                    $lineBlocked = ($productionQty > 0 && (($bom['status'] ?? null) !== 'matched'))
-                        || ($productionQty > 0 && $line->is_special_customized && !$this->hasTechnicalAttachment($line));
+                    // 与生产需求状态同一口径：只有 BOM 未匹配才算阻塞；缺图纸由工单发布检查拦截，
+                    // 避免履约记录显示“阻塞”而生产需求显示“就绪”。
+                    $lineBlocked = $productionQty > 0 && (($bom['status'] ?? null) !== 'matched');
                     $prepared[$line->id] = compact(
                         'quantities', 'bom', 'lineBlocked', 'alreadyFulfilled', 'remainingSalesQty',
                         'inventoryAnalysis', 'inventoryAllocations', 'isAdjusted', 'currentConfirmQty'
@@ -584,10 +586,7 @@ class SalesOrderFulfillmentApplicationService
                             $snapshot['production_requirement_id'] = (int) $newDemand->id;
                             $fulfillment->update(['match_snapshot' => $snapshot]);
                         }
-                        $this->workOrders->ensureAutomaticSalesDraft(
-                            $newDemand,
-                            $operator ?? (object) ['nickname' => $operatorName],
-                        );
+                        $this->workOrders->ensureAutomaticSalesDraft($newDemand, $operator);
                     }
                 }
 
