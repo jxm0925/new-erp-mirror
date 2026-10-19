@@ -257,8 +257,12 @@ class InventoryAlertApplicationService
                 $states[$alert->id] = ['state' => 'routing_missing', 'reason' => '该物料还没有生效的工艺路线（或路线里没有产出它的工序），请先在“工艺路线”里维护并启用。'];
                 continue;
             }
+            $latest = ! ProductionRouting::query()->where('routing_no', $routing->routing_no)->where('version', '>', $routing->version)->where('status', 'active')->exists();
             $states[$alert->id] = ['state' => 'ready', 'suggested_qty' => $this->prebuildQty($alert),
-                'routing' => ['id' => $routing->id, 'routing_no' => $routing->routing_no, 'routing_name' => $routing->routing_name]];
+                'item_type_label' => ['finished_product' => '成品', 'finished_good' => '成品', 'semi_finished' => '半成品'][$item->item_type] ?? '自制件',
+                'source_label' => '自制', 'warehouse_name' => optional($alert->warehouse ?? $alert->warehouse()->first())->warehouse_name,
+                'routing' => ['id' => $routing->id, 'routing_no' => $routing->routing_no, 'routing_name' => $routing->routing_name,
+                    'version' => (int) $routing->version, 'is_latest' => $latest]];
         }
         return $states;
     }
