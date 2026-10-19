@@ -176,6 +176,8 @@ class WorkOrderApplicationService
         $workOrder = WorkOrder::create($attributes);
         $this->recordStatus($workOrder, null, self::WAIT_RELEASE, '销售订单确认后自动建立待发布生产工单', 0, 1, $operator);
         $this->refreshDemandProjection($demand);
+        // 找货顺序：成品库存（销售确认时已锁定）→ 备货工单入库的半成品（从下一道工序续做）→ 从头生产。
+        app(ProductionInventoryContinuationService::class)->autoPlanFromStockPrebuild($workOrder, $operator);
 
         // Sales acceptance commits before preparation. Deep component or database
         // failures cannot erase its root, and PENDING survives a stopped worker.

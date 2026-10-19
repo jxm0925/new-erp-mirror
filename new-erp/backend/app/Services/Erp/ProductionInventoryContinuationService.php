@@ -200,6 +200,85 @@ class ProductionInventoryContinuationService
         }, 5);
     }
 
+    /**
+     * 订单确认找货顺序的第二步：成品库存不足的部分，优先选用备货工单已入库的半成品（如总装干机），
+     * 从下一道工序（如试水）续做，剩余数量才从头生产。只用备货工单（公共库存）的产出；
+     * 订单工单自己的半成品只能本单使用，不参与自动选用。其他未发布工单已选中的库存不重复选用。
+     * 只在订单工单刚建立、尚未发布时调用；发布前仍可在工单上手动调整库存续接。
+     */
+    public function autoPlanFromStockPrebuild(WorkOrder $wo, object $user): array
+    {
+        if ($wo->source_type !== 'sales_order' || ! in_array($wo->status, ['DRAFT', 'WAIT_RELEASE'], true)
+            || ! empty($wo->inventory_continuation_plan) || $wo->assembly_component_demand_id) return [];
+        $unitMode = ($wo->outputItem?->production_execution_mode ?: 'unit') === 'unit';
+        $remaining = bcadd((string) $wo->target_base_qty, '0', 8);
+        if (bccomp($remaining, '0', 8) <= 0) return [];
+        $claimed = []; $claimedSerials = [];
+        WorkOrder::query()->whereIn('status', ['DRAFT', 'WAIT_RELEASE'])->whereKeyNot($wo->id)
+            ->where('output_item_id', $wo->output_item_id)->whereNotNull('inventory_continuation_plan')
+            ->lockForUpdate()->get(['id', 'inventory_continuation_plan'])
+            ->each(function (WorkOrder $other) use (&$claimed, &$claimedSerials): void {
+                foreach ($other->inventory_continuation_plan ?? [] as $row) {
+                    $balanceId = (int) ($row['inventory_balance_id'] ?? 0);
+                    $claimed[$balanceId] = bcadd($claimed[$balanceId] ?? '0', (string) ($row['base_qty'] ?? '0'), 8);
+                    if (! empty($row['inventory_serial_id'])) $claimedSerials[(int) $row['inventory_serial_id']] = true;
+                }
+            });
+        $candidates = DB::table('erp_production_output_warehouse_postings as post')
+            ->join('erp_production_output_records as output', 'output.id', '=', 'post.output_record_id')
+            ->join('erp_work_orders as source', 'source.id', '=', 'output.work_order_id')
+            ->join('erp_inventory_balances as balance', fn ($q) => $q->on('balance.item_id', '=', 'output.output_item_id')
+                ->on('balance.warehouse_id', '=', 'post.warehouse_id')->on('balance.location_id', '=', 'post.location_id')->on('balance.batch_no', '=', 'post.batch_no'))
+            ->where('balance.quantity_available', '>', 0)->where('post.status', 'POSTED')
+            ->where('source.output_item_id', $wo->output_item_id)->where('source.source_type', 'stock_prebuild')
+            ->whereNull('source.reserved_for_work_order_id')->whereNull('source.assembly_component_demand_id')
+            ->select('balance.id as balance_id', 'output.id as output_id')->distinct()
+            ->orderBy('balance.id')->orderBy('output.id')->limit(200)->get();
+        $plan = []; $used = [];
+        foreach ($candidates as $candidate) {
+            if (bccomp($remaining, $unitMode ? '1' : '0.00000001', 8) < 0) break;
+            $balance = InventoryBalance::query()->whereKey($candidate->balance_id)->lockForUpdate()->first();
+            if (! $balance) continue;
+            $free = bcsub(bcsub((string) $balance->quantity_available, $claimed[$balance->id] ?? '0', 8), $used[$balance->id] ?? '0', 8);
+            if (bccomp($free, '0', 8) <= 0) continue;
+            $item = Item::find($balance->item_id);
+            if ($item?->serialTrackingMode() !== 'none') {
+                $serialIds = DB::table('erp_inventory_serials')->where('inventory_balance_id', $balance->id)->where('serial_status', 'available')
+                    ->where('source_document_type', 'production_output')->where('source_document_id', $candidate->output_id)
+                    ->orderBy('id')->limit(500)->lockForUpdate()->pluck('id');
+                foreach ($serialIds as $serialId) {
+                    if (bccomp($remaining, '1', 8) < 0 || bccomp($free, '1', 8) < 0) break;
+                    if (isset($claimedSerials[(int) $serialId])) continue;
+                    try { $row = $this->source($wo, (int) $balance->id, (int) $serialId, '1.00000000', true, (int) $candidate->output_id); }
+                    catch (WorkOrderDomainException) { continue; }
+                    $plan[] = $row; $claimedSerials[(int) $serialId] = true;
+                    $used[$balance->id] = bcadd($used[$balance->id] ?? '0', '1', 8);
+                    $free = bcsub($free, '1', 8); $remaining = bcsub($remaining, '1', 8);
+                }
+                continue;
+            }
+            $take = bccomp($free, $remaining, 8) < 0 ? $free : $remaining;
+            if ($unitMode) $take = bcadd($take, '0', 0);
+            if (bccomp($take, '0', 8) <= 0) continue;
+            $take = bcadd($take, '0', 8);
+            try { $row = $this->source($wo, (int) $balance->id, null, $take, true, (int) $candidate->output_id); }
+            catch (WorkOrderDomainException) { continue; }
+            $plan[] = $row;
+            $used[$balance->id] = bcadd($used[$balance->id] ?? '0', $take, 8);
+            $remaining = bcsub($remaining, $take, 8);
+        }
+        if (! $plan) return [];
+        $before = (int) $wo->business_version;
+        $wo->update(['inventory_continuation_plan' => $plan, 'business_version' => $before + 1,
+            'updated_by_legacy_id' => $user->legacy_id ?? $user->id ?? null]);
+        DB::table('erp_production_execution_events')->insert(['aggregate_type' => 'work_order', 'aggregate_id' => $wo->id,
+            'action' => 'auto_inventory_continuation', 'before_version' => $before, 'after_version' => $before + 1,
+            'fact_snapshot' => json_encode($plan, JSON_THROW_ON_ERROR), 'reason' => '订单确认时自动选用备货工单入库的半成品续做',
+            'operator_legacy_id' => $user->legacy_id ?? $user->id ?? null, 'operator_name' => $user->nickname ?? null,
+            'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now()]);
+        return $plan;
+    }
+
     private function source(WorkOrder $wo, int $balanceId, ?int $serialId, string $qty, bool $lock, ?int $requestedOutputId = null): array
     {
         $q = InventoryBalance::whereKey($balanceId); if ($lock) $q->lockForUpdate();
