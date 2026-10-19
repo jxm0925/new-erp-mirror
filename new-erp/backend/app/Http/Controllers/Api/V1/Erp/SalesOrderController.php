@@ -88,9 +88,9 @@ class SalesOrderController extends Controller
     /** Real server-side Before/After analysis; it never writes a confirmed order. */
     public function previewEditImpact(Request $request, int $id, SalesOrderEditImpactService $service)
     {
-        $this->abortUnlessAnyPermission($request, ['sales_order.change', 'sales_order.change.submit']);
         $order = SalesOrder::with(['lines', 'shipments', 'salesReturns'])->findOrFail($id);
         $this->abortUnlessOrderVisible($request, $order);
+        $this->authorizeConfirmedEdit($request, $order, $service);
         $payload = $this->attachCurrentOperator($this->validateOrder($request, true), $request);
         return response()->json(['data' => $service->preview($order, $payload)]);
     }
@@ -98,13 +98,21 @@ class SalesOrderController extends Controller
     /** Submit the exact payload that was previewed. The service recalculates it under a DB lock. */
     public function submitEditImpact(Request $request, int $id, SalesOrderEditImpactService $service)
     {
-        $this->abortUnlessAnyPermission($request, ['sales_order.change', 'sales_order.change.submit']);
         $order = SalesOrder::findOrFail($id);
         $this->abortUnlessOrderVisible($request, $order);
+        $this->authorizeConfirmedEdit($request, $order, $service);
         $payload = $this->attachCurrentOperator($this->validateOrder($request, true), $request);
         $payload['change_reason'] = $request->validate(['change_reason' => 'nullable|string|max:500'])['change_reason'] ?? null;
         $result = $service->submit($id, $payload, $this->operatorName($request), app(AuthContextService::class)->currentUser($request));
-        return response()->json(['message' => $result['mode'] === 'candidate' ? '订单修改已提交审核，正式订单暂未变更。' : '订单修改已立即生效并完整留痕。', 'data' => $result]);
+        return response()->json(['message' => $result['mode'] === 'candidate' ? '工单已发布，订单修改已提交审核，正式订单暂未变更。' : '订单修改已立即生效并完整留痕。', 'data' => $result]);
+    }
+
+    /** 工单发布前用订单编辑权限即可修改；发布后必须具备订单变更权限（并走审核）。 */
+    private function authorizeConfirmedEdit(Request $request, SalesOrder $order, SalesOrderEditImpactService $service): void
+    {
+        $this->abortUnlessAnyPermission($request, $service->productionReleased($order)
+            ? ['sales_order.change', 'sales_order.change.submit']
+            : ['sales_order.edit_draft', 'sales_order.change', 'sales_order.change.submit']);
     }
 
     public function candidateHistory(Request $request, int $id)
@@ -240,7 +248,7 @@ class SalesOrderController extends Controller
         $confirmed = $this->performFormalConfirm($request, $id);
         $result['order'] = $confirmed;
         $result['confirmed'] = true;
-        $result['message'] = '订单已确认，系统已按实时库存锁定备货数量并建立所需生产层级。';
+        $result['message'] = '订单已确认。请核实订单后执行“生产确认”，工单发布前订单可以直接修改。';
 
         return response()->json([
             'message' => $result['message'],
@@ -404,6 +412,10 @@ class SalesOrderController extends Controller
         if ($request->filled('order_status')) $query->where('order_status', $request->input('order_status'));
         if ($request->filled('fulfillment_status')) $query->where('fulfillment_status', $request->input('fulfillment_status'));
         if ($request->filled('production_confirm_status')) $query->where('production_confirm_status', $request->input('production_confirm_status'));
+        // 阶段页签：草稿；待生产确认（已确认订单中尚未完成生产确认的，即销售核实期）。
+        $stage = (string) $request->input('stage');
+        if ($stage === 'draft') $query->where('order_status', 'draft');
+        if ($stage === 'pending_production') $query->where('order_status', 'confirmed')->whereIn('production_confirm_status', ['pending', 'blocked']);
 
         $page = $query->paginate($this->perPage($request));
         $canViewAmounts = $this->canViewAmounts($request);
@@ -413,7 +425,27 @@ class SalesOrderController extends Controller
             if (! $canViewAmounts) $this->hideOrderAmounts($order);
             return $order;
         });
-        return response()->json($page);
+        $payload = $page->toArray();
+        $payload['stage_counts'] = $this->orderStageCounts($request);
+        return response()->json($payload);
+    }
+
+    /** 页签数量按当前用户可见订单全量统计，不受当前分页影响。 */
+    private function orderStageCounts(Request $request): array
+    {
+        $base = function () use ($request): Builder {
+            $query = SalesOrder::query();
+            $this->applySalesOrderVisibility($query, $request);
+            return $query;
+        };
+        return [
+            'all' => $base()->count(),
+            'draft' => $base()->where('order_status', 'draft')->count(),
+            'pending_production' => $base()->where('order_status', 'confirmed')->whereIn('production_confirm_status', ['pending', 'blocked'])->count(),
+            'pending' => $base()->where('order_status', 'confirmed')->where('fulfillment_status', 'pending')->count(),
+            'partial' => $base()->where('order_status', 'confirmed')->where('fulfillment_status', 'partial')->count(),
+            'fulfilled' => $base()->where('order_status', 'confirmed')->where('fulfillment_status', 'fulfilled')->count(),
+        ];
     }
 
     public function options(Request $request)
@@ -613,7 +645,7 @@ class SalesOrderController extends Controller
         $this->abortUnlessAnyPermission($request, ['sales_order.submit_confirmation', 'sales_order.formal_confirm']);
         $confirmed = $this->performFormalConfirm($request, $id);
         return response()->json([
-            'message' => '订单已确认，系统已按实时库存锁定备货数量并建立所需生产层级。',
+            'message' => '订单已确认，请核实后执行生产确认。',
             'data' => $confirmed,
         ]);
     }
@@ -622,8 +654,11 @@ class SalesOrderController extends Controller
     {
         $order = SalesOrder::with(['lines.sku', 'lines.item'])->findOrFail($id);
         $this->abortUnlessOrderVisible($request, $order);
-        $isReplay = $order->order_status === 'confirmed'
-            && in_array($order->production_confirm_status, ['confirmed', 'blocked'], true);
+        // 订单确认只锁定单位换算并进入“待生产确认”；备货、生产需求和工单在销售核实后的生产确认里才生成。
+        $isReplay = $order->order_status === 'confirmed';
+        if ($isReplay) {
+            return $order->fresh(['lines', 'fulfillments', 'productionRequirements']);
+        }
         abort_if(!$isReplay && $order->confirm_status !== 'pending_confirmation', 422, '请先完成确认前检查');
         abort_if(!$isReplay && $order->order_status !== 'draft', 422, '只有草稿状态的销售订单可以提交确认');
         abort_if($order->order_status === 'cancelled', 422, '已取消订单不能确认');
@@ -645,9 +680,8 @@ class SalesOrderController extends Controller
 
         $operator = app(AuthContextService::class)->currentUser($request);
         abort_unless($operator, 401, '请先登录 ERP');
-        $confirmed = app(\App\Services\Erp\SalesOrderFulfillmentApplicationService::class)
-            ->confirmOrderAndFulfill($order->id, $this->operatorName($request), $operator);
-        return $confirmed;
+        return app(\App\Services\Erp\SalesOrderFulfillmentApplicationService::class)
+            ->confirmOrder($order->id, $this->operatorName($request));
     }
 
     public function productionConfirmationPreview(Request $request, int $id)
@@ -1282,6 +1316,9 @@ class SalesOrderController extends Controller
         // 检查+正式确认合并为一个“确认订单”动作；任一旧权限均视为拥有该权限。
         $canConfirm = in_array('sales_order.submit_confirmation', $codes, true)
             || in_array('sales_order.formal_confirm', $codes, true);
+        $canChange = in_array('sales_order.change', $codes, true) || in_array('sales_order.change.submit', $codes, true);
+        $released = $order->order_status === 'confirmed'
+            && app(SalesOrderEditImpactService::class)->productionReleased($order);
         return [
             'edit_draft' => $draft && in_array('sales_order.edit_draft', $codes, true),
             'delete_draft' => $draft && in_array('sales_order.delete_draft', $codes, true),
@@ -1296,9 +1333,11 @@ class SalesOrderController extends Controller
             'cancel' => $order->order_status !== 'cancelled'
                 && in_array($order->shipment_status, ['not_shipped', 'not_required'], true)
                 && in_array('sales_order.cancel', $codes, true),
+            // 工单发布前是销售核实期，有订单编辑权限即可直接改；发布后必须有订单变更权限并走审核。
             'edit' => ($draft && in_array('sales_order.edit_draft', $codes, true))
                 || (($changeEligibility['allowed'] ?? ($order->order_status === 'confirmed' && in_array($order->shipment_status, ['not_shipped', 'not_required'], true)))
-                    && (in_array('sales_order.change', $codes, true) || in_array('sales_order.change.submit', $codes, true))),
+                    && ($released ? $canChange : ($canChange || in_array('sales_order.edit_draft', $codes, true)))),
+            'production_released' => $released,
             'change' => false,
             'view_attachment' => in_array('sales_order.view_attachment', $codes, true),
             'upload_attachment' => $draft && in_array('sales_order.upload_attachment', $codes, true),

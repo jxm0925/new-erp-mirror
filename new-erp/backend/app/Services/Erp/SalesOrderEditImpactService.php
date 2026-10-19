@@ -104,6 +104,12 @@ class SalesOrderEditImpactService
         }
     }
 
+    /** 订单关联工单是否已发布：发布前自由修改，发布后修改必须审核。 */
+    public function productionReleased(SalesOrder $order): bool
+    {
+        return app(SalesOrderProductionChangeService::class)->hasReleasedWorkOrders($order);
+    }
+
     public function submit(int $orderId, array $payload, string $operator, ?object $actor = null): array
     {
         return DB::transaction(function () use ($orderId, $payload, $operator, $actor) {
@@ -245,10 +251,16 @@ class SalesOrderEditImpactService
             }
         }
         $types = collect($diffs)->pluck('impact_types')->flatten()->unique()->values()->all();
+        // 工单发布前是销售核实期：任何修改都立即生效，无需审核；发布后才按影响类型走候选版本审核。
+        $released = $this->productionReleased($order);
         $required = [];
-        if (in_array('COMMERCIAL', $types, true) || in_array('PRODUCTION', $types, true)) $required[] = 'business';
-        if (in_array('FINANCIAL', $types, true)) $required[] = 'finance';
-        if (in_array('FULFILLMENT', $types, true)) $required[] = 'fulfillment';
+        if ($released) {
+            if (in_array('COMMERCIAL', $types, true) || in_array('PRODUCTION', $types, true)) $required[] = 'business';
+            if (in_array('FINANCIAL', $types, true)) $required[] = 'finance';
+            if (in_array('FULFILLMENT', $types, true)) $required[] = 'fulfillment';
+        } else {
+            $diffs = array_map(fn (array $diff): array => array_replace($diff, ['approval_requirements' => []]), $diffs);
+        }
         $approvalReasons = $this->approvalReasons($diffs, $required);
         $production = [
             'affects_production' => in_array('PRODUCTION', $types, true),
@@ -269,7 +281,13 @@ class SalesOrderEditImpactService
             'approval_summary' => ['none' => count($diffs) - count(array_filter($diffs, fn ($diff) => $diff['approval_requirements'])), 'business' => count(array_filter($diffs, fn ($d) => in_array('business', $d['approval_requirements'], true))), 'finance' => count(array_filter($diffs, fn ($d) => in_array('finance', $d['approval_requirements'], true))), 'fulfillment' => count(array_filter($diffs, fn ($d) => in_array('fulfillment', $d['approval_requirements'], true)))],
             'requires_approval' => !empty($required), 'required_approval_types' => $required,
             'approval_reasons' => $approvalReasons,
-            'candidate_effect_summary' => empty($required) ? '本次修改保存后立即生效，并记录修改历史。' : '审核通过前，正式订单、库存预留、生产和交付安排及应收保持不变。',
+            'production_released' => $released,
+            'edit_stage' => $released ? 'review_required' : 'free',
+            'candidate_effect_summary' => $released
+                ? (empty($required) ? '本次修改保存后立即生效，并记录修改历史。' : '审核通过前，正式订单、库存预留、生产和交付安排及应收保持不变。')
+                : ($facts['has_operational_facts'] && collect($diffs)->contains(fn ($d) => collect($d['impact_types'])->intersect(['FULFILLMENT', 'PRODUCTION'])->isNotEmpty())
+                    ? '工单尚未发布，本次修改保存后立即生效；已生成的待发布工单和库存预留会撤销，需要重新执行“生产确认”。'
+                    : '工单尚未发布，本次修改保存后立即生效，并记录修改历史。'),
             'production_impact' => $production,
             'business_facts' => $facts,
         ];

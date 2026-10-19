@@ -37,6 +37,30 @@ final class SalesOrderProductionChangeService
         return false;
     }
 
+    /**
+     * 订单关联的工单（含装配子工单）是否已有任何一张发布过。
+     * 未发布期间销售可以自由修改订单；一旦发布，订单修改必须走审核。
+     */
+    public function hasReleasedWorkOrders(SalesOrder $order): bool
+    {
+        $demandIds = SalesOrderProductionRequirement::where('sales_order_id', $order->id)->pluck('id');
+        $rootIds = WorkOrder::query()->whereNull('assembly_component_demand_id')
+            ->where(function ($q) use ($order, $demandIds): void {
+                $q->where(fn ($source) => $source->where('source_type', 'sales_order')->where('source_id', $order->id))
+                    ->orWhereIn('production_demand_id', $demandIds);
+            })->pluck('id');
+        if ($rootIds->isEmpty()) return false;
+        return WorkOrder::query()
+            ->where(function ($q) use ($rootIds): void {
+                $q->whereIn('id', $rootIds)->orWhereIn('assembly_root_work_order_id', $rootIds);
+            })
+            ->where('status', '<>', WorkOrderApplicationService::CANCELLED)
+            ->where(function ($q): void {
+                $q->whereNotNull('released_at')
+                    ->orWhereNotIn('status', ['DRAFT', 'WAIT_RELEASE', 'CANCELLED']);
+            })->exists();
+    }
+
     public function cancelUnreleasedLocked(SalesOrder $order, ?object $actor, string $reason): void
     {
         if (DB::transactionLevel() < 1) throw new \LogicException('销售生产变更必须在订单事务内执行。');

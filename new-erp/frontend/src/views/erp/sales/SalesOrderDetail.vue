@@ -1,6 +1,6 @@
 <!--
 Design reference: D:\codex-introduce\new_erp\docs\ui-reference\phase6\phase6-order-detail-one-page-design.png
-Design status: Approved (Optimized for modern ERP layout & responsive UX)
+Design status: 新增“订单阶段提示条”（基础档案风格），其余布局保持，待用户确认。
 -->
 <template>
   <section class="sales-detail-page">
@@ -29,13 +29,19 @@ Design status: Approved (Optimized for modern ERP layout & responsive UX)
       <div class="header-actions">
         <el-button size="small" icon="el-icon-back" @click="$router.push('/sales/orders')">返回列表</el-button>
         <el-button v-if="$can('sales_order.shipment.view')" size="small" icon="el-icon-truck" @click="$router.push({ path: '/sales/shipments', query: { sales_order_id: order.id } })">发货单</el-button>
-        <el-button v-if="order.allowed_actions && order.allowed_actions.edit" size="small" icon="el-icon-edit" @click="$router.push(`/sales/orders/${order.id}/edit`)">编辑订单</el-button>
+        <el-button v-if="order.allowed_actions && order.allowed_actions.edit" size="small" icon="el-icon-edit" @click="$router.push(`/sales/orders/${order.id}/edit`)">{{ order.allowed_actions.production_released ? '申请修改（需审核）' : '编辑订单' }}</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.submit_confirmation" size="small" type="success" icon="el-icon-check" @click="doConfirm">确认订单</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.lock_inventory" class="inventory-lock-button" size="small" type="danger" icon="el-icon-lock" @click="openInventoryLock">锁库存</el-button>
-        <el-button v-if="order.allowed_actions && order.allowed_actions.production_confirmation" size="small" type="primary" icon="el-icon-s-operation" @click="$router.push(`/sales/orders/${order.id}/production-confirmation`)">订单生产确认</el-button>
+        <el-button v-if="order.allowed_actions && order.allowed_actions.production_confirmation" size="small" type="primary" icon="el-icon-s-operation" @click="$router.push(`/sales/orders/${order.id}/production-confirmation`)">生产确认</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.cancel" size="small" type="danger" plain :loading="cancelling" @click="cancelOrder">取消订单</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.delete_draft" size="small" type="danger" plain icon="el-icon-delete" @click="deleteDraft">删除草稿</el-button>
       </div>
+    </div>
+
+    <!-- 订单阶段提示：让销售知道现在能不能直接修改，以及下一步该做什么 -->
+    <div v-if="stageTip" :class="['erp-page-tip', `tip-${stageTip.type}`]">
+      <i :class="stageTip.icon" />
+      <span>{{ stageTip.text }}</span>
     </div>
 
     <!-- 状态与预警提示 -->
@@ -608,6 +614,16 @@ export default {
         (this.order.attachments || []).map(this.mapAttachment)
       )
     },
+    // 订单阶段提示：草稿可随意改；确认后工单发布前为核实期（可直接改）；工单发布后修改须审核。
+    stageTip() {
+      const actions = this.order.allowed_actions || {}
+      if (this.order.order_status === 'draft') return { type: 'info', icon: 'el-icon-edit-outline', text: '草稿阶段：订单可随意修改。核对无误后点击“确认订单”，确认不会生成工单。' }
+      if (this.order.order_status !== 'confirmed') return null
+      if (actions.production_released) return { type: 'warning', icon: 'el-icon-lock', text: '工单已发布：订单不能随意修改。如需修改，请点击“申请修改”，说明原因并提交，经相关负责人审核通过后才会生效。' }
+      if (['pending', 'blocked'].includes(this.order.production_confirm_status)) return { type: 'success', icon: 'el-icon-s-flag', text: '核实期：订单已确认，尚未生成工单，此阶段可直接修改订单。核实无误后，请点击“生产确认”生成待发布工单。' }
+      if (this.order.production_confirm_status === 'confirmed') return { type: 'success', icon: 'el-icon-s-flag', text: '待发布工单已生成：工单发布前仍可直接修改订单（修改后需重新生产确认），工单一旦发布，修改须经审核。' }
+      return null
+    },
     currentVersion() { return Math.max(1, ...(this.order.versions || []).map(item => Number(item.version_no || 0))) },
     orderApprovalSteps() { const task=this.order.approval_task||{}; const steps=[{key:'submit',name:'发起提交',state:'done'},...(task.nodes||[]).map(n=>({key:n.node_key,name:n.node_name,state:n.node_status==='APPROVED'?'done':n.node_status==='PENDING'?'active':n.node_status==='REJECTED'?'failed':'wait'})),{key:'finish',name:'审核完成',state:task.task_status==='APPROVED'?'done':task.task_status==='REJECTED'?'failed':'wait'}]; return steps },
     orderApprovalCurrent() { const task=this.order.approval_task||{}; const node=(task.nodes||[]).find(n=>n.node_status==='PENDING'); return node ? node.node_name : (task.task_status==='APPROVED'?'审核完成':task.task_status==='REJECTED'?'已驳回':'—') },
@@ -679,7 +695,7 @@ export default {
     async doConfirm() {
       // 一步确认：服务端先做确认前检查，通过后立即正式确认；未通过不改变订单状态。
       try {
-        await this.$confirm('确认后将锁定本次销售单位、默认库存物料、物料基本单位和单位换算比例，并按实时库存锁定备货、建立所需生产层级。系统会先自动检查，是否继续？', '确认订单', { type: 'warning' })
+        await this.$confirm('确认后将锁定本次销售单位、默认库存物料、物料基本单位和单位换算比例，订单进入核实期：此时不会生成工单，工单发布前仍可直接修改订单。系统会先自动检查，是否继续？', '确认订单', { type: 'warning' })
       } catch (error) {
         return
       }
@@ -688,7 +704,7 @@ export default {
       const blocked = (result.checks || []).find(item => item.status === 'blocked')
       const passed = Boolean(result.passed) && !blocked
       if (passed) {
-        this.$message.success('订单已确认')
+        this.$message.success('订单已确认，请核实后执行“生产确认”')
         await this.load()
         return
       }
@@ -1003,6 +1019,14 @@ export default {
   gap: 16px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
 }
+
+/* 订单阶段提示条（基础档案风格） */
+.erp-page-tip { display: flex; align-items: flex-start; gap: 8px; padding: 9px 14px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; color: #00763f; font-size: 13px; line-height: 1.5; margin-bottom: 14px; }
+.erp-page-tip i { font-size: 15px; color: #008b4b; flex-shrink: 0; margin-top: 2px; }
+.erp-page-tip.tip-warning { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+.erp-page-tip.tip-warning i { color: #d97706; }
+.erp-page-tip.tip-info { background: #f8fafc; border-color: #e2e8f0; color: #475569; }
+.erp-page-tip.tip-info i { color: #64748b; }
 
 .crumb {
   color: #64748b;

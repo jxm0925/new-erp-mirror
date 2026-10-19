@@ -1,6 +1,6 @@
 <!--
 Design reference: D:\codex-introduce\new_erp\docs\product-design\phase6-order\phase6-order-add-edit.png
-Design status: Approved
+Design status: Approved（本次仅在工具栏下方新增“订单阶段提示条”，布局其余部分未改，待用户确认）
 Do not change layout without approval.
 -->
 <template>
@@ -39,6 +39,12 @@ Do not change layout without approval.
         <el-button v-if="isEdit ? ($can('sales_order.edit_draft') || $can('sales_order.change')) : $can('sales_order.create')" size="small" @click="save(false)">{{ isConfirmedEdit ? '保存修改' : '保存草稿' }}</el-button>
         <el-button v-if="!isConfirmedEdit && ($can('sales_order.submit_confirmation') || $can('sales_order.formal_confirm'))" size="small" type="primary" class="btn-emerald-primary" @click="save(true)">保存并确认</el-button>
       </div>
+    </div>
+
+    <!-- 订单阶段提示：工单发布前可直接修改，发布后需提交审核 -->
+    <div v-if="editStageTip" :class="['stage-tip', `stage-tip--${editStageTip.type}`]">
+      <i :class="editStageTip.icon" />
+      <span>{{ editStageTip.text }}</span>
     </div>
 
     <div class="form-layout">
@@ -948,6 +954,14 @@ export default {
     },
     isConfirmedEdit() {
       return this.isEdit && this.editOrderMeta && this.editOrderMeta.order_status === 'confirmed'
+    },
+    editStageTip() {
+      if (!this.isConfirmedEdit) return null
+      const actions = (this.editOrderMeta && this.editOrderMeta.allowed_actions) || {}
+      if (actions.production_released) {
+        return { type: 'warning', icon: 'el-icon-lock', text: '工单已发布：本次修改不会直接生效。点击“保存修改”后将列出变更内容，填写变更原因并提交，由相关负责人审核通过后才会生效。' }
+      }
+      return { type: 'success', icon: 'el-icon-s-flag', text: '核实期：工单尚未发布，可直接修改，保存后立即生效并留痕。若改动了数量、SKU、备货方式等影响生产的内容，已生成的待发布工单会被撤销，需要重新执行“生产确认”。' }
     },
     currentIndex() {
       const index = this.form.lines.indexOf(this.selectedLine)
@@ -1896,7 +1910,7 @@ export default {
           }
           return
         }
-        this.$message.success('订单已确认')
+        this.$message.success('订单已确认，请核实后执行“生产确认”')
         this.$router.push(`/sales/orders/${id}/detail`)
       } else {
         this.$message.success('订单草稿已保存')
@@ -1924,6 +1938,10 @@ export default {
 </script>
 
 <style scoped>
+.stage-tip { display: flex; align-items: flex-start; gap: 8px; padding: 9px 14px; margin: 0 0 12px; border-radius: 6px; font-size: 13px; line-height: 1.5; background: #f0fdf4; border: 1px solid #bbf7d0; color: #00763f; }
+.stage-tip i { font-size: 15px; color: #008b4b; flex-shrink: 0; margin-top: 2px; }
+.stage-tip--warning { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+.stage-tip--warning i { color: #d97706; }
 /* ==========================================================================
    销售订单创建/编辑 - 现代化企业级视觉规范
    ========================================================================== */

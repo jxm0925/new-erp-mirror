@@ -11,7 +11,7 @@
       </div>
     </header>
 
-    <el-alert class="top-alert" type="info" :closable="false" show-icon title="确认订单备货方式后，生产需求将建立根工单并自动准备；资料或物料阻塞可在工单中查看和处理。" />
+    <el-alert class="top-alert" type="info" :closable="false" show-icon title="生产确认后，系统按所选备货方式建立生产需求与待发布工单。工单发布前订单仍可直接修改（修改后需重新生产确认），工单一旦发布，订单修改须经相关负责人审核。" />
     <el-alert v-if="pending" class="top-alert" type="warning" :closable="false" show-icon title="上次确认结果尚未收到。请重试原确认，系统会识别同一次操作；核实前暂不能修改本次数量。" />
 
     <div v-if="order" class="page-grid">
