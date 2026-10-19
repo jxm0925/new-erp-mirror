@@ -233,7 +233,52 @@ class InventoryAlertApplicationService
      * 自制件低于最低库存时，一键生成“公共库存备货”工单草稿。
      * 同一次预警只生成一张未结束的备货工单；数量取建议补货量，没有时补到安全库存（或最低库存）。
      */
-    public function createStockPrebuildFromAlert(int $alertId, object $user, array $permissions, bool $super = false): array
+    /**
+     * 列表/详情直接告诉用户“能不能生成、为什么不能、已经有哪张”，避免点了按钮才报错。
+     * 返回 [alert_id => state]；非自制件或不缺货的预警不返回。
+     */
+    public function prebuildStates(iterable $alerts): array
+    {
+        $states = [];
+        foreach ($alerts as $alert) {
+            $item = $alert->item ?? Item::query()->find($alert->item_id);
+            if (! $item || ! $item->is_production_item) continue;
+            $open = WorkOrder::query()->where('source_type', 'stock_prebuild')->where('output_item_id', $item->id)
+                ->where('origin_command_id', 'like', 'inventory-alert-'.$alert->id.'-%')->whereNotIn('status', ['COMPLETED', 'CANCELLED'])
+                ->orderByDesc('id')->first(['id', 'work_order_no', 'status', 'target_qty', 'planned_date']);
+            if ($open) {
+                $states[$alert->id] = ['state' => 'existing', 'work_order' => ['id' => $open->id, 'work_order_no' => $open->work_order_no,
+                    'status' => $open->status, 'target_qty' => (string) $open->target_qty, 'planned_date' => optional($open->planned_date)->format('Y-m-d')]];
+                continue;
+            }
+            if (! $alert->is_active || ! in_array($alert->alert_status, ['low_stock', 'out_of_stock'], true)) continue;
+            [$routing, $target] = $this->prebuildRouting($item);
+            if (! $routing || ! $target) {
+                $states[$alert->id] = ['state' => 'routing_missing', 'reason' => '该物料还没有生效的工艺路线（或路线里没有产出它的工序），请先在“工艺路线”里维护并启用。'];
+                continue;
+            }
+            $states[$alert->id] = ['state' => 'ready', 'suggested_qty' => $this->prebuildQty($alert),
+                'routing' => ['id' => $routing->id, 'routing_no' => $routing->routing_no, 'routing_name' => $routing->routing_name]];
+        }
+        return $states;
+    }
+
+    private function prebuildRouting(Item $item): array
+    {
+        $routing = ProductionRouting::query()->with('operations')->where('status', 'active')->where('output_item_id', $item->id)
+            ->orderByDesc('is_default')->orderByDesc('id')->first();
+        return [$routing, $routing?->operations->where('output_item_id', $item->id)->sortByDesc('sequence')->first()];
+    }
+
+    private function prebuildQty(InventoryAlert $alert): string
+    {
+        $available = (float) $alert->available_qty;
+        $level = (float) ($alert->safety_stock_snapshot ?: $alert->min_stock_snapshot ?: 0);
+        $qty = (float) ($alert->suggested_replenishment_qty_snapshot ?: 0) ?: max(0, $level - $available);
+        return rtrim(rtrim(number_format(ceil($qty * 10000) / 10000, 4, '.', ''), '0'), '.') ?: '0';
+    }
+
+    public function createStockPrebuildFromAlert(int $alertId, object $user, array $permissions, bool $super = false, array $input = []): array
     {
         $alert = InventoryAlert::query()->findOrFail($alertId);
         if (! $alert->is_active || ! in_array($alert->alert_status, ['low_stock', 'out_of_stock'], true))
@@ -244,19 +289,16 @@ class InventoryAlertApplicationService
         $open = WorkOrder::query()->where('source_type', 'stock_prebuild')->where('output_item_id', $item->id)
             ->where('origin_command_id', 'like', $commandPrefix.'%')->whereNotIn('status', ['COMPLETED', 'CANCELLED'])->orderByDesc('id')->first();
         if ($open) return ['work_order' => $open, 'existing' => true];
-        $routing = ProductionRouting::query()->with('operations')->where('status', 'active')->where('output_item_id', $item->id)->orderByDesc('id')->first();
-        $target = $routing?->operations->where('output_item_id', $item->id)->sortByDesc('sequence')->first();
+        [$routing, $target] = $this->prebuildRouting($item);
         if (! $routing || ! $target)
             throw new WorkOrderDomainException('stock_prebuild_routing_missing', '该物料没有生效的工艺路线，或路线中没有产出该物料的工序，不能生成备货工单。', 422);
-        $available = (float) $alert->available_qty;
-        $level = (float) ($alert->safety_stock_snapshot ?: $alert->min_stock_snapshot ?: 0);
-        $qty = (float) ($alert->suggested_replenishment_qty_snapshot ?: 0) ?: max(0, $level - $available);
-        if ($qty <= 0) throw new WorkOrderDomainException('stock_prebuild_qty_missing', '请先在预警规则里设置建议补货量或安全库存。', 422);
+        $qty = isset($input['target_qty']) && $input['target_qty'] !== '' ? (string) $input['target_qty'] : $this->prebuildQty($alert);
+        if (! is_numeric($qty) || (float) $qty <= 0) throw new WorkOrderDomainException('stock_prebuild_qty_missing', '请填写备货数量，或先在预警规则里设置建议补货量或安全库存。', 422);
         $workOrder = app(WorkOrderApplicationService::class)->createDraft([
             'client_command_id' => $commandPrefix.optional($alert->first_triggered_at)->format('YmdHis'),
             'source_type' => 'stock_prebuild', 'stocking_purpose' => 'common_inventory',
             'output_item_id' => $item->id, 'production_routing_id' => $routing->id, 'target_routing_operation_id' => $target->id,
-            'target_qty' => rtrim(rtrim(number_format(ceil($qty * 10000) / 10000, 4, '.', ''), '0'), '.'),
+            'target_qty' => $qty, 'planned_date' => $input['planned_date'] ?? null,
         ], $user, $permissions, $super);
         return ['work_order' => $workOrder, 'existing' => false];
     }

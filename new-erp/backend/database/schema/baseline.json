@@ -159,6 +159,8 @@
     "erp_production_performance_assignments": "2026_10_12_000235_create_erp_production_performance_assignments_table",
     "erp_production_performance_commands": "2026_10_12_000236_create_erp_production_performance_commands_table",
     "erp_production_performance_rate_versions": "2026_10_14_000001_create_erp_production_performance_rate_versions_table",
+    "erp_production_performance_template_lines": "2026_10_17_000002_create_erp_production_performance_template_lines_table",
+    "erp_production_performance_templates": "2026_10_17_000001_create_erp_production_performance_templates_table",
     "erp_production_performance_shares": "2026_10_12_000237_create_erp_production_performance_shares_table",
     "erp_production_preparation_order_lines": "2026_10_12_000238_create_erp_production_preparation_order_lines_table",
     "erp_production_preparation_orders": "2026_10_12_000239_create_erp_production_preparation_orders_table",

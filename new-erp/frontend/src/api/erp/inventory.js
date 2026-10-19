@@ -38,4 +38,4 @@ export const disableInventoryAlertPolicy = (itemId, data = {}) => api.post(`/v1/
 export const markInventoryAlertRead = id => api.post(`/v1/erp/inventory/alerts/${id}/read`)
 export const listUnreadInventoryAlerts = params => api.get('/v1/erp/inventory/alerts/unread', { params })
 export const createPurchaseRequestFromInventoryAlert = id => api.post(`/v1/erp/inventory/alerts/${id}/purchase-request`)
-export const createStockPrebuildFromInventoryAlert = id => api.post(`/v1/erp/inventory/alerts/${id}/stock-prebuild`)
+export const createStockPrebuildFromInventoryAlert = (id, data = {}) => api.post(`/v1/erp/inventory/alerts/${id}/stock-prebuild`, data)

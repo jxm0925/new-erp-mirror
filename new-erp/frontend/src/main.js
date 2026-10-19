@@ -60,6 +60,7 @@ import ProductionOperationList from './views/erp/production/ProductionOperationL
 import ProductionOperationForm from './views/erp/production/ProductionOperationForm.vue'
 import ProductionRoutingList from './views/erp/production/ProductionRoutingList.vue'
 import ProductionPerformanceBoard from './views/erp/production/ProductionPerformanceBoard.vue'
+import ProductionPerformanceTemplates from './views/erp/production/ProductionPerformanceTemplates.vue'
 import SalesShipmentBoard from './views/erp/sales/SalesShipmentBoard.vue'
 import ProductionRoutingForm from './views/erp/production/ProductionRoutingForm.vue'
 import ProductionExecutionMonitor from './views/erp/production/ProductionExecutionMonitor.vue'
@@ -192,6 +193,7 @@ const router = new VueRouter({
     { path: '/production/operations/:id', component: ProductionOperationForm, meta: { permission: 'production.operation.view' } },
     { path: '/production/routings', component: ProductionRoutingList, meta: { permission: 'production.routing.view' } },
     { path: '/production/performance', component: ProductionPerformanceBoard, meta: { permission: 'production.performance.view' } },
+    { path: '/production/performance/templates', component: ProductionPerformanceTemplates, meta: { permission: 'production.performance.manage' } },
     { path: '/sales/shipments', component: SalesShipmentBoard, meta: { permission: ['sales_order.shipment.view', 'sales_order.shipment.packing.execute', 'sales_order.shipment.packing.quality'] } },
     { path: '/production/routings/new', component: ProductionRoutingForm, meta: { permission: 'production.routing.create' } },
     { path: '/production/routings/:id/edit', component: ProductionRoutingForm, meta: { permission: 'production.routing.edit' } },

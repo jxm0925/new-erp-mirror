@@ -16,7 +16,7 @@
         <el-form-item label="是否默认"><el-input :value="form.is_default ? '是' : '否'" disabled /></el-form-item>
       </div></section>
       <section class="form-card operation-card">
-        <div class="sub-heading"><h2>路线工序</h2><div v-if="!viewOnly" class="catalog-actions"><el-button type="success" plain @click="openCatalog('stages')">维护生产阶段</el-button><el-button type="success" plain @click="openCatalog('packaging-schemes')">维护包装方案</el-button><el-button type="success" @click="addOperation">添加工序</el-button></div></div>
+        <div class="sub-heading"><h2>路线工序</h2><div v-if="!viewOnly" class="catalog-actions"><el-select v-if="canManagePerformance" :value="null" size="small" placeholder="套用提成模板" class="perf-template-select" @visible-change="v=>v&&loadPerformanceTemplates()" @change="applyPerformanceTemplate"><el-option v-for="t in performanceTemplates" :key="t.id" :label="t.template_name" :value="t.id"/></el-select><el-button type="success" plain @click="openCatalog('stages')">维护生产阶段</el-button><el-button type="success" plain @click="openCatalog('packaging-schemes')">维护包装方案</el-button><el-button type="success" @click="addOperation">添加工序</el-button></div></div>
         <el-table ref="operations" :data="form.operations" border row-key="key" :expand-row-keys="expanded" @expand-change="onExpand">
           <el-table-column type="expand" width="1" class-name="native-expand"><template slot-scope="s">
             <div class="operation-settings">
@@ -77,7 +77,7 @@
 </template>
 <script>
 import cachedPageRoute from '@/utils/cachedPageRoute'
-import { reserveProductionNumber, getProductionRouting, createProductionRouting, updateProductionRouting, activateProductionRouting } from '../../../api/erp/production'
+import { reserveProductionNumber, getProductionRouting, createProductionRouting, updateProductionRouting, activateProductionRouting, listPerformanceTemplates } from '../../../api/erp/production'
 import PurchaseItemPicker from '@/components/purchase/PurchaseItemPicker.vue'
 import ProductSkuPicker from '@/components/sales/ProductSkuPicker.vue'
 import ProductionProcessCatalogPanel from './ProductionProcessCatalogPanel.vue'
@@ -93,7 +93,7 @@ const asBoolean = value => value === true || value === 1 || value === '1'
 export default {
   mixins: [cachedPageRoute],
   name:'ProductionRoutingForm', components:{PurchaseItemPicker,ProductSkuPicker,ProductionProcessCatalogPanel,RoutingOutputRulesDialog,SystemRecordPicker},
-  data:()=>({loading:false,sessionId:'',reservationToken:'',savedId:null,operations:[],operationPickerOpen:false,operationPickerTarget:null,operationPickerValue:[],items:{},catalogs:{stages:{},'packaging-schemes':{}},expanded:[],pickerTarget:null,catalogTarget:null,pendingSave:null,pendingActivation:null,
+  data:()=>({performanceTemplates:[],loading:false,sessionId:'',reservationToken:'',savedId:null,operations:[],operationPickerOpen:false,operationPickerTarget:null,operationPickerValue:[],items:{},catalogs:{stages:{},'packaging-schemes':{}},expanded:[],pickerTarget:null,catalogTarget:null,pendingSave:null,pendingActivation:null,
     outputModes:{flow_only:'直接交接',warehouse_optional:'可选入库',warehouse_required:'合格后入库'},
     supplyModes:{dedicated_delivery:'专单配送',workstation_stock:'工位库存',no_per_order_delivery:'无需逐单配送'},
     form:{routing_no:'正在生成…',routing_name:'',output_item_id:null,product_id:null,sku_id:null,product:null,sku:null,version:1,status:'draft',is_default:false,remark:'',business_version:1,operations:[]},
@@ -101,6 +101,8 @@ export default {
   computed:{id(){return this.savedId || this.pageRoute.params.id},viewOnly(){return (Boolean(this.pageRoute.params.id)&&!this.pageRoute.path.endsWith('/edit')) || this.form.status!=='draft'},title(){return this.id?(this.viewOnly?'查看工艺路线':'编辑工艺路线'):'新增工艺路线'},canManagePerformance(){return this.$can('production.performance.manage')}},
   async created(){if(this.id)await this.load();else await this.reserve()},
   methods:{
+    async loadPerformanceTemplates(){if(this.performanceTemplates.length)return;try{const r=await listPerformanceTemplates({status:'enabled',per_page:100});this.performanceTemplates=r.data.data||[]}catch(e){this.$message.error(e.userMessage||'提成模板加载失败')}},
+    applyPerformanceTemplate(id){const t=this.performanceTemplates.find(x=>x.id===id);if(!t)return;const rates=new Map(t.lines.map(l=>[Number(l.operation_id),l.performance_rate]));let hit=0;this.form.operations.forEach(row=>{if(rates.has(Number(row.operation_id))){row.performance_percent=percentFromRate(rates.get(Number(row.operation_id)));hit++}});const miss=this.form.operations.length-hit;this.$message.success(`已按“${t.template_name}”填入 ${hit} 道工序的绩效比例`+(miss?`，${miss} 道不在模板里，保持不变`:'')+'，保存后生效')},
     statusText(v){return({draft:'草稿',active:'已生效',retired:'已退役',disabled:'已退役'})[v]||v},
     isPublic(value){return asBoolean(value)},
     operationName(row){return this.operations.find(operation=>Number(operation.id)===Number(row.operation_id))?.operation_name||''},
@@ -247,4 +249,5 @@ export default {
 @media(max-width:1100px){.routing-editor .form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.page-heading{gap:16px;flex-wrap:wrap}}
 @media(max-width:767px){.routing-editor .form-grid,.operation-settings{grid-template-columns:minmax(0,1fr)}.form-card{padding:14px}.settings-group{border-right:0;border-bottom:1px solid #e5eaf0}.heading-actions{width:100%;flex-wrap:wrap;gap:8px}.heading-actions .el-button{margin:0}.settings-group>label{grid-template-columns:72px minmax(0,1fr)}}
 @media(max-width:767px){.operation-card{container-type:inline-size}.operation-settings{width:calc(100cqw - 1px)}.settings-group{padding:14px}.settings-group>label{grid-template-columns:64px minmax(0,1fr);gap:6px}.setting-actions{gap:8px;flex-wrap:wrap}.setting-actions .el-button{margin:0}.routing-editor ::v-deep .el-input-group__append{padding:0 6px}}
+.perf-template-select{width:150px;margin-right:10px}
 </style>

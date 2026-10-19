@@ -359,7 +359,8 @@ export default {
     areaText (material) {
       const r = this.areaBoards(material); if (!r) return '请填写整板和裁切块尺寸'
       const loss = material.area.remnant === 'loss' ? `，损耗 ${((r.boards * r.board - r.used) / 1e6).toFixed(4)} m²` : ''
-      return `用料 ${(r.used / 1e6).toFixed(4)} m²，扣库存 ${r.boards} ${material.unit_name || ''}${loss}；成本按该批次单价计算`
+      const whole = material.area.remnant !== 'loss' && (material.unit_allow_decimal === false || !Number(material.unit_decimal_places || 0)) ? '。该木板单位不允许小数，只能按整张扣，请在“计量单位”中改为允许 2 位小数' : ''
+      return `用料 ${(r.used / 1e6).toFixed(4)} m²，扣库存 ${r.boards} ${material.unit_name || ''}${loss}；成本按该批次单价计算${whole}`
     },
     async openIdentities (material) { this.identityMaterial = material; this.identitySelected = Object.fromEntries(material.identities.map(row => [row.id, row])); this.identityRows = []; this.identityTotal = 0; this.identityKeyword = ''; this.identityPage = 1; this.identityOpen = true; await this.loadIdentities() },
     async loadIdentities () { const sequence = this.identitySequence = (this.identitySequence || 0) + 1; const operationId = this.activeOperation.id; const sourceId = this.identityMaterial.id; try { const { data } = await listPackingIdentities(operationId, { inventory_balance_id: sourceId, keyword: this.identityKeyword.trim(), page: this.identityPage, per_page: 10 }); if (sequence !== this.identitySequence || !this.identityOpen || sourceId !== this.identityMaterial.id || operationId !== this.activeOperation.id) return; this.identityRows = data.data.data; this.identityTotal = data.data.total } catch (e) { if (sequence === this.identitySequence && this.identityOpen) this.$message.error(e.userMessage || '实物身份读取失败') } },

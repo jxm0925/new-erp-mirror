@@ -37,10 +37,11 @@ function areaResult(row) {
   const boards = Math.ceil(Number((used / board * factor).toFixed(6))) / factor;
   return { pieces, used, board, boards };
 }
+function wholeOnly(row) { return (row.area || {}).remnant !== 'loss' && (row.unit_allow_decimal === false || !Number(row.unit_decimal_places || 0)); }
 function areaText(row) {
   try {
     const r = areaResult(row);
-    return '用料 ' + (r.used / 1e6).toFixed(4) + ' m²，扣库存 ' + r.boards + (row.unit_name || '') + ((row.area || {}).remnant === 'loss' ? '，损耗 ' + ((r.boards * r.board - r.used) / 1e6).toFixed(4) + ' m²' : '，余板回库');
+    return '用料 ' + (r.used / 1e6).toFixed(4) + ' m²，扣库存 ' + r.boards + (row.unit_name || '') + ((row.area || {}).remnant === 'loss' ? '，损耗 ' + ((r.boards * r.board - r.used) / 1e6).toFixed(4) + ' m²' : '，余板回库') + (wholeOnly(row) ? '。该木板单位不允许小数，只能按整张扣，请联系管理员在“计量单位”中改为允许 2 位小数' : '');
   } catch (error) { return error.message; }
 }
 function buildMaterials(rows) {

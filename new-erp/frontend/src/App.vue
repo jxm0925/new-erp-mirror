@@ -203,7 +203,8 @@ export default {
     productionMenus: [
       { name: '生产基础', children: [
         { name: '工序管理', path: '/production/operations', icon: 'el-icon-set-up', permission: 'production.operation' },
-        { name: '工艺路线', path: '/production/routings', icon: 'el-icon-guide', permission: 'production.routing' }
+        { name: '工艺路线', path: '/production/routings', icon: 'el-icon-guide', permission: 'production.routing' },
+        { name: '提成模板', path: '/production/performance/templates', icon: 'el-icon-coin', permission: 'production.performance.manage' }
       ] },
       { name: '生产作业', path: '/production/tasks', icon: 'el-icon-s-operation', permission: 'production.task.view' },
       { name: '生产执行监管', path: '/production/execution-monitor', icon: 'el-icon-monitor', permission: 'production.unit.view' },
