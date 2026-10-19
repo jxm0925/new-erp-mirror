@@ -127,6 +127,15 @@
         <div class="packing-usage-dimensions">
           <label v-for="field in usageFields" :key="field.key">{{ field.label }}（mm）<el-input-number v-model="material.usage_dimensions[field.key]" size="small" :controls="false" :min="0" :precision="2" :disabled="busy || pendingOperation" /></label>
         </div>
+        <div v-if="!material.physical && material.area" class="packing-area">
+          <el-checkbox v-model="material.area.enabled" :disabled="busy || pendingOperation" @change="applyArea(material)">木板按面积扣库存</el-checkbox>
+          <template v-if="material.area.enabled">
+            <div class="packing-area-row">整板<el-input-number v-model="material.area.board_length_mm" size="mini" :controls="false" :min="1" :precision="2" placeholder="长 mm" @change="applyArea(material)" />×<el-input-number v-model="material.area.board_width_mm" size="mini" :controls="false" :min="1" :precision="2" placeholder="宽 mm" @change="applyArea(material)" />mm</div>
+            <div v-for="(piece, index) in material.area.pieces" :key="index" class="packing-area-row">裁切块<el-input-number v-model="piece.length_mm" size="mini" :controls="false" :min="1" :precision="2" placeholder="长 mm" @change="applyArea(material)" />×<el-input-number v-model="piece.width_mm" size="mini" :controls="false" :min="1" :precision="2" placeholder="宽 mm" @change="applyArea(material)" />mm ×<el-input-number v-model="piece.qty" size="mini" :min="1" :step="1" step-strictly @change="applyArea(material)" />块<el-button v-if="material.area.pieces.length > 1" type="text" class="packing-danger" @click="material.area.pieces.splice(index, 1); applyArea(material)">删除</el-button></div>
+            <div class="packing-area-row"><el-button type="text" icon="el-icon-plus" @click="material.area.pieces.push({ length_mm: undefined, width_mm: undefined, qty: 1 })">加裁切块</el-button><el-radio-group v-model="material.area.remnant" size="mini" @change="applyArea(material)"><el-radio label="return">余板回库（按面积扣）</el-radio><el-radio label="loss">余板算损耗（按整张扣）</el-radio></el-radio-group></div>
+            <div class="packing-area-tip">{{ areaText(material) }}</div>
+          </template>
+        </div>
         <el-input v-model.trim="material.usage_remark" type="textarea" :rows="2" maxlength="500" :disabled="busy || pendingOperation" placeholder="裁切与用料备注（选填）" />
       </div>
       <el-alert v-if="materialError" :title="materialError" type="error" :closable="false" />
@@ -200,7 +209,7 @@ export default {
   watch: { packingContext: { immediate: true, handler () { this.loadSequence++; this.page = 1; this.operations = []; this.total = 0; this.requirements = []; this.packingVersion = 1; this.operationOpen = false; this.activeOperation = {}; this.operationError = ''; this.pendingOperation = false; this.planOpen = false; this.planPackages = []; this.routeSelections = {}; this.planError = ''; this.pendingPlan = false; this.error = ''; this.loading = false; this.resetSelectors(); this.load() } }, planOpen(value) { if (!value) { this.routeSequence++; this.routePicker.visible = false } } },
   beforeDestroy () { this.loadSequence++; this.resetSelectors() },
   methods: {
-    usageText (snapshot) { const d = snapshot?.dimensions || {}; const size = [['length_mm', '长'], ['width_mm', '宽'], ['thickness_mm', '厚']].filter(([key]) => d[key]).map(([key, label]) => `${label}${d[key]} mm`).join(' × '); return [size, snapshot?.remark].filter(Boolean).join('；') || '—' },
+    usageText (snapshot) { const area = snapshot?.area_usage; if (area) return `木板 ${area.board_length_mm}×${area.board_width_mm} mm：用料 ${area.used_area_m2} m²，扣 ${Number(area.consumed_boards)} 张，${area.remnant === 'loss' ? '损耗 ' + area.loss_area_m2 + ' m²' : '余板回库'}${snapshot.remark ? '；' + snapshot.remark : ''}`; const d = snapshot?.dimensions || {}; const size = [['length_mm', '长'], ['width_mm', '宽'], ['thickness_mm', '厚']].filter(([key]) => d[key]).map(([key, label]) => `${label}${d[key]} mm`).join(' × '); return [size, snapshot?.remark].filter(Boolean).join('；') || '—' },
     openContinuation (row) {
       this.$router.push({ path: `/production/work-orders/${row.target_work_order_id}`, query: {
         continuation_output_id: String(row.source_output_record_id), continuation_balance_id: String(row.inventory_balance_id || ''),
@@ -332,7 +341,26 @@ export default {
     searchMaterials () { this.materialQuery.page = 1; this.loadMaterials() },
     selectCategory (row) { this.materialQuery.category_id = row.id; this.searchMaterials() },
     materialPage (page) { this.materialQuery.page = page; this.loadMaterials() },
-    addMaterial (row) { this.$set(this.materialDrafts, row.id, { ...row, base_qty: 0, identities: [], usage_dimensions: { length_mm: null, width_mm: null, thickness_mm: null }, usage_remark: '' }) },
+    addMaterial (row) {
+      const size = String(row.spec || '').match(/(\d+(?:\.\d+)?)\s*[*×xX]\s*(\d+(?:\.\d+)?)/)
+      this.$set(this.materialDrafts, row.id, { ...row, base_qty: 0, identities: [], usage_dimensions: { length_mm: null, width_mm: null, thickness_mm: null }, usage_remark: '',
+        area: { enabled: false, board_length_mm: size ? Number(size[1]) : undefined, board_width_mm: size ? Number(size[2]) : undefined, pieces: [{ length_mm: undefined, width_mm: undefined, qty: 1 }], remnant: 'return' } })
+    },
+    // 与后端同一口径：裁切块面积之和 ÷ 整板面积；回库按库存单位精度向上取，损耗按整张向上取。
+    areaBoards (material) {
+      const a = material.area; const board = Number(a.board_length_mm) * Number(a.board_width_mm)
+      if (!(board > 0) || a.pieces.some(p => !(Number(p.length_mm) > 0 && Number(p.width_mm) > 0 && Number(p.qty) >= 1))) return null
+      const used = a.pieces.reduce((sum, p) => sum + Number(p.length_mm) * Number(p.width_mm) * Number(p.qty), 0)
+      const places = a.remnant === 'loss' || material.unit_allow_decimal === false ? 0 : Number(material.unit_decimal_places || 0)
+      const factor = Math.pow(10, places)
+      return { used, board, boards: Math.ceil(Number((used / board * factor).toFixed(6))) / factor }
+    },
+    applyArea (material) { const result = material.area.enabled ? this.areaBoards(material) : null; if (result) material.base_qty = result.boards },
+    areaText (material) {
+      const r = this.areaBoards(material); if (!r) return '请填写整板和裁切块尺寸'
+      const loss = material.area.remnant === 'loss' ? `，损耗 ${((r.boards * r.board - r.used) / 1e6).toFixed(4)} m²` : ''
+      return `用料 ${(r.used / 1e6).toFixed(4)} m²，扣库存 ${r.boards} ${material.unit_name || ''}${loss}；成本按该批次单价计算`
+    },
     async openIdentities (material) { this.identityMaterial = material; this.identitySelected = Object.fromEntries(material.identities.map(row => [row.id, row])); this.identityRows = []; this.identityTotal = 0; this.identityKeyword = ''; this.identityPage = 1; this.identityOpen = true; await this.loadIdentities() },
     async loadIdentities () { const sequence = this.identitySequence = (this.identitySequence || 0) + 1; const operationId = this.activeOperation.id; const sourceId = this.identityMaterial.id; try { const { data } = await listPackingIdentities(operationId, { inventory_balance_id: sourceId, keyword: this.identityKeyword.trim(), page: this.identityPage, per_page: 10 }); if (sequence !== this.identitySequence || !this.identityOpen || sourceId !== this.identityMaterial.id || operationId !== this.activeOperation.id) return; this.identityRows = data.data.data; this.identityTotal = data.data.total } catch (e) { if (sequence === this.identitySequence && this.identityOpen) this.$message.error(e.userMessage || '实物身份读取失败') } },
     searchIdentities () { this.identityPage = 1; this.loadIdentities() },
@@ -348,7 +376,9 @@ export default {
         physical_material_ids: row.physical ? row.identities.map(item => item.id) : [],
         inventory_serial_ids: !row.physical && row.serial_tracking_mode !== 'none' ? row.identities.map(item => item.id) : [],
         usage_dimensions: Object.fromEntries(Object.entries(row.usage_dimensions || {}).filter(([, value]) => value != null && value !== '').map(([key, value]) => [key, Number(value).toFixed(2)])),
-        usage_remark: row.usage_remark || null
+        usage_remark: row.usage_remark || null,
+        ...(row.area && row.area.enabled && !row.physical ? { area_usage: { board_length_mm: Number(row.area.board_length_mm).toFixed(2), board_width_mm: Number(row.area.board_width_mm).toFixed(2), remnant: row.area.remnant,
+          pieces: row.area.pieces.map(p => ({ length_mm: Number(p.length_mm).toFixed(2), width_mm: Number(p.width_mm).toFixed(2), qty: Number(p.qty) })) } } : {})
       })) })
     },
     saveInspection () { this.execute(this.activeOperation, 'inspect', this.inspection) }
@@ -443,4 +473,8 @@ export default {
 @media (max-width: 780px) {
   .packing-usage-dimensions { grid-template-columns: minmax(0, 1fr); }
 }
+.packing-area { margin: 6px 0; padding: 6px 8px; border: 1px dashed #dcdfe6; border-radius: 4px; }
+.packing-area-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; }
+.packing-area-row .el-input-number { width: 96px; }
+.packing-area-tip { margin-top: 6px; font-size: 12px; color: #909399; }
 </style>

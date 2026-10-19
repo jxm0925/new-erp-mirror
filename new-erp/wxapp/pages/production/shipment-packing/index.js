@@ -27,7 +27,7 @@ Page({
       materials: (row.materials || []).map(material => {
         const usage = material.usage_snapshot || {}; const labels = { length_mm: '长', width_mm: '宽', thickness_mm: '厚' };
         return Object.assign({}, material, { usageText: Object.keys(labels).filter(axis => usage.dimensions && usage.dimensions[axis] !== undefined && usage.dimensions[axis] !== null)
-          .map(axis => labels[axis] + ' ' + usage.dimensions[axis] + ' mm').join(' / '), usageRemark: usage.remark || '' });
+          .map(axis => labels[axis] + ' ' + usage.dimensions[axis] + ' mm').join(' / ') || (usage.area_usage ? '木板 ' + usage.area_usage.board_length_mm + '×' + usage.area_usage.board_width_mm + ' mm：用料 ' + usage.area_usage.used_area_m2 + ' m²，' + (usage.area_usage.remnant === 'loss' ? '损耗 ' + usage.area_usage.loss_area_m2 + ' m²' : '余板回库') : ''), usageRemark: usage.remark || '' });
       }),
       contents: (row.contents || []).map(content => Object.assign({}, content, { qtyText: view.quantity(content.base_qty), serialText: (content.serial_nos || []).join('、') })) });
   },
@@ -114,7 +114,12 @@ Page({
   searchMaterials() { this.setData({ materialPage: 1 }); this.loadMaterials(); },
   chooseCategory(event) { this.setData({ categoryIndex: Number(event.detail.value), materialPage: 1 }); this.loadMaterials(); },
   turnMaterials(event) { const page = this.data.materialPage + Number(event.currentTarget.dataset.delta); if (page > 0 && page <= this.data.materialLast) { this.setData({ materialPage: page }); this.loadMaterials(); } },
-  chooseMaterial(event) { const id = Number(event.currentTarget.dataset.id); const row = this.data.materialRows.find(row => Number(row.id) === id); if (!row || this.materialSelected[id]) return; this.materialSelected[id] = Object.assign({}, clone(row), { base_qty: '', identities: [], usage_dimensions: { length_mm: '', width_mm: '', thickness_mm: '' }, usage_remark: '' }); this.updateDrafts(); },
+  chooseMaterial(event) { const id = Number(event.currentTarget.dataset.id); const row = this.data.materialRows.find(row => Number(row.id) === id); if (!row || this.materialSelected[id]) return; const size = String(row.spec || '').match(/(\d+(?:\.\d+)?)\s*[*×xX]\s*(\d+(?:\.\d+)?)/); this.materialSelected[id] = Object.assign({}, clone(row), { base_qty: '', identities: [], usage_dimensions: { length_mm: '', width_mm: '', thickness_mm: '' }, usage_remark: '', area: { enabled: false, board_length_mm: size ? size[1] : '', board_width_mm: size ? size[2] : '', pieces_text: '', remnant: 'return', text: '' } }); this.updateDrafts(); },
+  // 木板按面积扣库存：开启后由裁切块自动算出耗用数量。
+  areaToggle(event) { const id = Number(event.currentTarget.dataset.id); const row = this.materialSelected[id]; if (this.data.busy || this.data.pending || !row || row.physical) return; row.area.enabled = !row.area.enabled; this.applyArea(row); },
+  areaInput(event) { const id = Number(event.currentTarget.dataset.id); const field = event.currentTarget.dataset.field; const row = this.materialSelected[id]; if (this.data.busy || this.data.pending || !row || !['board_length_mm', 'board_width_mm', 'pieces_text'].includes(field)) return; row.area[field] = event.detail.value; this.applyArea(row); },
+  areaRemnant(event) { const id = Number(event.currentTarget.dataset.id); const row = this.materialSelected[id]; if (this.data.busy || this.data.pending || !row) return; row.area.remnant = event.currentTarget.dataset.value === 'loss' ? 'loss' : 'return'; this.applyArea(row); },
+  applyArea(row) { if (row.area.enabled) { row.area.text = materialUsage.areaText(row); try { row.base_qty = String(materialUsage.areaResult(row).boards); } catch (error) { /* 尺寸未填完整时保留原数量 */ } } this.updateDrafts(); },
   updateDrafts() { this.setData({ materialDrafts: Object.values(this.materialSelected), materialRows: this.data.materialRows.map(row => Object.assign({}, row, { selected: Boolean(this.materialSelected[row.id]) })) }); },
   quantityInput(event) { if (this.data.busy || this.data.pending) return; const id = Number(event.currentTarget.dataset.id); if (this.materialSelected[id]) { this.materialSelected[id].base_qty = event.detail.value; this.updateDrafts(); } },
   usageDimensionInput(event) { const id = Number(event.currentTarget.dataset.id); const axis = event.currentTarget.dataset.axis; if (this.data.busy || this.data.pending || !this.materialSelected[id] || !['length_mm', 'width_mm', 'thickness_mm'].includes(axis)) return; this.materialSelected[id].usage_dimensions[axis] = event.detail.value; this.updateDrafts(); },

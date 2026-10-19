@@ -298,3 +298,7 @@ view, text, input, textarea, button, scroll-view, picker {
 .packing-share-row input { width:160rpx; }
 .packing-usage-dimensions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12rpx; margin:16rpx 0; min-width:0; }
 .packing-usage-dimensions input { width:100%; min-width:0; }
+
+.packing-area { margin: 12rpx 0; padding: 12rpx; border: 1rpx dashed #d0d7e2; border-radius: 10rpx; }
+.packing-area-text { width: auto; height: 140rpx; margin-top: 12rpx; }
+.packing-chosen { border-color: #07883f !important; color: #07883f !important; }

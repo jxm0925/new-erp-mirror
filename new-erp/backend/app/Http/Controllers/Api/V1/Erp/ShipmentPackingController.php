@@ -128,6 +128,14 @@ class ShipmentPackingController extends Controller
             'materials.*.usage_dimensions.width_mm' => 'nullable|numeric|min:0.01|max:9999999999.99',
             'materials.*.usage_dimensions.thickness_mm' => 'nullable|numeric|min:0.01|max:9999999999.99',
             'materials.*.usage_remark' => 'nullable|string|max:500',
+            'materials.*.area_usage' => 'nullable|array:board_length_mm,board_width_mm,pieces,remnant',
+            'materials.*.area_usage.board_length_mm' => 'required_with:materials.*.area_usage|numeric|min:1|max:999999',
+            'materials.*.area_usage.board_width_mm' => 'required_with:materials.*.area_usage|numeric|min:1|max:999999',
+            'materials.*.area_usage.remnant' => 'required_with:materials.*.area_usage|in:return,loss',
+            'materials.*.area_usage.pieces' => 'required_with:materials.*.area_usage|array|min:1|max:50',
+            'materials.*.area_usage.pieces.*.length_mm' => 'required|numeric|min:1|max:999999',
+            'materials.*.area_usage.pieces.*.width_mm' => 'required|numeric|min:1|max:999999',
+            'materials.*.area_usage.pieces.*.qty' => 'required|integer|min:1|max:10000',
             'materials.*.physical_material_ids' => 'nullable|array', 'materials.*.physical_material_ids.*' => 'integer|distinct']);
         if ($data['action'] === 'inspect') $data += $request->validate(['result' => 'required|in:passed,failed', 'reason' => 'nullable|string|max:500']);
         return response()->json(['message' => '包装工序已更新', 'data' => $service->action($id, $data['action'], $data, $actor)]);

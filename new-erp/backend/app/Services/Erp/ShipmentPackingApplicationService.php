@@ -273,7 +273,9 @@ class ShipmentPackingApplicationService
                     $materials[] = ShipmentPackingMaterial::create(['operation_id' => $op->id, 'inventory_balance_id' => $balance->id,
                         'item_id' => $balance->item_id, 'unit_id' => $balance->unit_id,
                         'base_qty' => $quantity,
-                        'usage_snapshot' => $usagePolicy->snapshot($row),
+                        'usage_snapshot' => ($area = $usagePolicy->areaUsage($row, $quantity, $baseUnit))
+                            ? array_merge($usagePolicy->snapshot($row) ?? ['dimensions' => null, 'remark' => null], ['area_usage' => $area])
+                            : $usagePolicy->snapshot($row),
                         'serial_snapshot' => ['inventory_serial_ids' => $row['inventory_serial_ids'] ?? [], 'physical_material_ids' => $row['physical_material_ids'] ?? []],
                         'posted_by_legacy_id' => $actorId]);
                 }

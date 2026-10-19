@@ -187,8 +187,8 @@ final class ProductionPerformanceApplicationService
         if (collect($scope['participants'])->contains(fn ($person) => ! $person['identity_exists'])) return null;
         $current = ProductionPerformanceAssignment::query()->with('shares')->where('active_scope_key', $type.':'.$id)->lockForUpdate()->first();
         if ($current && $current->status === 'confirmed') return $this->present($current);
-        $shares = $this->calculator->defaultShares($scope['participants']);
-        $origin = 'automatic_completion_default';
+        $shares = $this->calculator->laborShares($scope['participants']);
+        $origin = 'automatic_completion_labor_minutes';
         if ($current && $current->status === 'planned') {
             $planned = $current->shares->map(fn ($row) => ['employee_legacy_id' => (int) $row->employee_legacy_id,
                 'eligible' => (bool) $row->eligible, 'share_ratio' => $row->share_ratio, 'remark' => $row->remark])->all();
@@ -198,7 +198,7 @@ final class ProductionPerformanceApplicationService
             // person's share. Keep this plan visible for an explicit owner revision.
             if ($plannedIds !== $actualIds) {
                 if (count($actualIds) !== 1 && ($current->scope_snapshot['share_origin'] ?? '') !== 'collaboration_equal_default') return null;
-                $origin = count($actualIds) === 1 ? 'automatic_completion_single_owner' : 'automatic_completion_equal_default';
+                $origin = count($actualIds) === 1 ? 'automatic_completion_single_owner' : 'automatic_completion_labor_minutes';
             } else {
                 $shares = $planned; $origin = 'completion_of_owner_plan';
             }

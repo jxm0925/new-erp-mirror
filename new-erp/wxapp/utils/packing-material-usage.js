@@ -17,6 +17,32 @@ function add(left, right) {
   const a = parts(left); const b = parts(right); const fraction = Number(a[1]) + Number(b[1]);
   return String(Number(a[0]) + Number(b[0]) + Math.floor(fraction / 100000000)) + '.' + String(fraction % 100000000).padStart(8, '0');
 }
+// 木板按面积扣库存：裁切块面积之和 ÷ 整板面积；回库按单位精度向上取，损耗按整张向上取（与后端同一口径）。
+function parsePieces(text) {
+  return String(text || '').split(/[\n;；,，]+/).map(line => line.trim()).filter(Boolean).map(line => {
+    const match = line.match(/^(\d+(?:\.\d{1,2})?)\s*[*×xX]\s*(\d+(?:\.\d{1,2})?)(?:\s*[*×xX]\s*(\d+))?$/);
+    if (!match) throw new Error('裁切块格式应为：长*宽*块数，例如 1200*600*2');
+    return { length_mm: match[1], width_mm: match[2], qty: Number(match[3] || 1) };
+  });
+}
+function areaResult(row) {
+  const area = row.area || {};
+  const board = Number(area.board_length_mm) * Number(area.board_width_mm);
+  if (!(board > 0)) throw new Error('请填写整板长宽');
+  const pieces = parsePieces(area.pieces_text);
+  if (!pieces.length || pieces.length > 50) throw new Error('请登记1至50条裁切块');
+  const used = pieces.reduce((sum, p) => sum + Number(p.length_mm) * Number(p.width_mm) * p.qty, 0);
+  const places = area.remnant === 'loss' || row.unit_allow_decimal === false ? 0 : Number(row.unit_decimal_places || 0);
+  const factor = Math.pow(10, places);
+  const boards = Math.ceil(Number((used / board * factor).toFixed(6))) / factor;
+  return { pieces, used, board, boards };
+}
+function areaText(row) {
+  try {
+    const r = areaResult(row);
+    return '用料 ' + (r.used / 1e6).toFixed(4) + ' m²，扣库存 ' + r.boards + (row.unit_name || '') + ((row.area || {}).remnant === 'loss' ? '，损耗 ' + ((r.boards * r.board - r.used) / 1e6).toFixed(4) + ' m²' : '，余板回库');
+  } catch (error) { return error.message; }
+}
 function buildMaterials(rows) {
   if (!rows.length) throw new Error('请选择实际材料和库存来源');
   const totals = {};
@@ -44,7 +70,13 @@ function buildMaterials(rows) {
     const remark = String(row.usage_remark || '').trim(); if (Array.from(remark).length > 500) throw new Error('实际用料备注最多500字');
     if (Object.keys(dimensions).length) result.usage_dimensions = dimensions;
     if (remark) result.usage_remark = remark;
+    if (row.area && row.area.enabled && !row.physical) {
+      const area = areaResult(row);
+      if (compare(quantity, String(area.boards)) !== 0) throw new Error('按面积应耗用 ' + area.boards + '，请核对实际耗用数量');
+      result.area_usage = { board_length_mm: Number(row.area.board_length_mm).toFixed(2), board_width_mm: Number(row.area.board_width_mm).toFixed(2),
+        remnant: row.area.remnant === 'loss' ? 'loss' : 'return', pieces: area.pieces };
+    }
     return result;
   });
 }
-module.exports = { buildMaterials };
+module.exports = { buildMaterials, areaResult, areaText };

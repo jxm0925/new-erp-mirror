@@ -120,6 +120,8 @@ final class ProductionPerformanceQueryService
             $readiness = $this->readiness($order);
             $eligibleLineIds = array_column($readiness['lines'], 'sales_order_line_id');
             $lines = $order->lines->keyBy('id');
+            $foreign = strtoupper((string) ($order->currency ?: 'CNY')) !== strtoupper((string) ($order->base_currency ?: 'CNY'));
+            $exchangeRate = ! $foreign ? '1' : (bccomp((string) $order->business_exchange_rate, '0', 10) > 0 ? (string) $order->business_exchange_rate : null);
             $groups = [];
             $issues = [];
             $seenSources = [];
@@ -204,7 +206,12 @@ final class ProductionPerformanceQueryService
                     if ($lineAmount === null || (bccomp((string) $lineAmount, '0', 4) === 0 && bccomp((string) ($line->amount ?? 0), '0', 4) > 0)) {
                         $issues[] = ['code' => 'goods_amount_missing', 'sales_order_line_id' => (int) $line->id, 'message' => '商品折后含税金额尚未核对。'];
                         $row['statistics_status'] = 'pending_amount';
+                    } elseif ($exchangeRate === null) {
+                        $issues[] = ['code' => 'exchange_rate_missing', 'sales_order_line_id' => (int) $line->id, 'message' => '外币订单缺少业务汇率，不能折算人民币绩效基数。'];
+                        $row['statistics_status'] = 'pending_amount';
                     } else {
+                        // 外贸订单按订单业务汇率折成本位币（人民币）后再计提。
+                        $lineAmount = bcmul((string) $lineAmount, $exchangeRate, 4);
                         $basis = '0.000000000000';
                         foreach ($row['basis_slices'] as $slice) $basis = bcadd($basis, $this->calculator->sourceBasis((string) $lineAmount,
                             $slice['sales_qty'], (string) $line->order_qty, $slice['coverage']), 12);
@@ -244,7 +251,8 @@ final class ProductionPerformanceQueryService
             $fingerprintRows = array_map(function ($row) { unset($row['can_confirm']); return $row; }, $rows);
             $fingerprint = hash('sha256', json_encode([$this->policy(), (int) $order->business_version, $readiness, $fingerprintRows], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR));
             return ['order' => ['id' => (int) $order->id, 'sales_order_no' => $order->sales_order_no, 'customer_name' => $order->customer_name,
-                    'business_version' => (int) $order->business_version], 'readiness' => $readiness, 'basis_policy' => $this->policy(),
+                    'business_version' => (int) $order->business_version, 'currency' => $order->currency ?: 'CNY',
+                    'base_currency' => $order->base_currency ?: 'CNY', 'exchange_rate' => $exchangeRate], 'readiness' => $readiness, 'basis_policy' => $this->policy(),
                 'statistics_status' => $status, 'statistics_complete' => $completeStatistics,
                 'performance_pool_amount' => $completeStatistics ? $pool : null, 'personal_performance_amount' => $completeStatistics ? $personal : null,
                 'noncredited_amount' => $completeStatistics ? $excluded : null, 'calculation_fingerprint' => $fingerprint,

@@ -12,7 +12,7 @@ final class ProductionPerformanceCalculator
     public function policy(): array
     {
         return ['code' => self::BASIS_MODE, 'version' => 2, 'label' => '折后商品含税金额，不含运费和另收包装费',
-            'trigger' => 'entire_order_shipped', 'individual_share_mode' => 'owner_planned_or_completion_default',
+            'trigger' => 'entire_order_shipped', 'individual_share_mode' => 'owner_planned_or_completion_labor_minutes', 'individual_share_label' => '负责人已分配的按分配；未分配的按实际工时占比，工时均为 0 时均分',
             'new_share_total' => '1.00000000', 'normalize_shares' => false, 'historical_assignments' => 'preserve'];
     }
 
@@ -75,6 +75,29 @@ final class ProductionPerformanceCalculator
             $ratio = $index === count($ids) - 1 ? $remaining : $equal;
             $remaining = bcsub($remaining, $ratio, 8);
             $shares[] = ['employee_legacy_id' => $id, 'eligible' => true, 'share_ratio' => $ratio, 'remark' => null];
+        }
+        return $shares;
+    }
+
+    /** Completion default: weight by actual labor minutes; falls back to equal shares when no labor was recorded. */
+    public function laborShares(array $participants): array
+    {
+        $minutes = [];
+        foreach ($participants as $row) {
+            $id = (int) ($row['employee_legacy_id'] ?? 0);
+            if ($id <= 0) continue;
+            $value = is_numeric($row['actual_labor_minutes'] ?? null) && (float) $row['actual_labor_minutes'] > 0 ? bcadd((string) $row['actual_labor_minutes'], '0', 4) : '0.0000';
+            $minutes[$id] = bcadd($minutes[$id] ?? '0', $value, 4);
+        }
+        ksort($minutes);
+        $total = array_reduce($minutes, fn ($sum, $value) => bcadd($sum, $value, 4), '0');
+        if ($minutes === [] || bccomp($total, '0', 4) <= 0) return $this->defaultShares($participants);
+        $remaining = '1.00000000'; $shares = []; $ids = array_keys($minutes);
+        foreach ($ids as $index => $id) {
+            $ratio = $index === count($ids) - 1 ? $remaining : bcdiv($minutes[$id], $total, 8);
+            $remaining = bcsub($remaining, $ratio, 8);
+            $shares[] = ['employee_legacy_id' => $id, 'eligible' => true, 'share_ratio' => $ratio,
+                'remark' => '按实际工时 '.rtrim(rtrim($minutes[$id], '0'), '.').' 分钟'];
         }
         return $shares;
     }
