@@ -1453,6 +1453,35 @@ class SalesOrderController extends Controller
         };
         $childOperations = $childOperationGroups('erp_production_unit_operations')
             ->unionAll($childOperationGroups('erp_production_quantity_operations'))->get()->groupBy('assembly_root_work_order_id');
+        // 订单详情逐张列出部件子工单：工单号、物料、数量、状态和工序进度。
+        $childRows = (clone $children)->leftJoin('erp_items as child_item', 'child_item.id', '=', 'child.output_item_id')
+            ->where('child.status', '<>', 'CANCELLED')->orderBy('child.id')
+            ->get(['child.id', 'child.work_order_no', 'child.status', 'child.target_qty', 'child.base_unit_name_snapshot',
+                'child.target_unit_name_snapshot', 'child.assembly_root_work_order_id', 'child_item.item_name', 'child_item.spec']);
+        $childIds = $childRows->pluck('id');
+        $childOperationsById = $childIds->isEmpty() ? collect() : $operationGroups('erp_production_unit_operations', $childIds)
+            ->unionAll($operationGroups('erp_production_quantity_operations', $childIds))->get()->groupBy('work_order_id');
+        $visibleChildIds = [];
+        if ($childIds->isNotEmpty()) {
+            $visibleChildQuery = WorkOrder::query()->whereIn('id', $childIds);
+            $scopeResolver->applyWorkOrderScope($visibleChildQuery, $scope);
+            $visibleChildIds = $visibleChildQuery->pluck('id')->map(fn ($id) => (int) $id)->all();
+        }
+        $childList = $childRows->map(function ($child) use ($childOperationsById, $statusLabels, $visibleChildIds): array {
+            $targets = $childOperationsById->get($child->id) ?? collect();
+            return [
+                'work_order_id' => (int) $child->id, 'work_order_no' => $child->work_order_no,
+                'root_work_order_id' => (int) $child->assembly_root_work_order_id,
+                'item_name' => trim(($child->item_name ?? '').' '.($child->spec ?? '')) ?: null,
+                'target_qty' => (float) $child->target_qty, 'unit_name' => $child->target_unit_name_snapshot ?: $child->base_unit_name_snapshot,
+                'status' => $child->status, 'status_label' => $statusLabels[$child->status] ?? $child->status,
+                'completed_operation_count' => (int) $targets->where('status', 'COMPLETED')->sum('target_count'),
+                'total_operation_count' => (int) $targets->sum('target_count'),
+                'current_process_name' => $targets->filter(fn ($target) => (int) $target->active_count > 0)
+                    ->pluck('operation_name_snapshot')->filter()->unique()->implode('、') ?: null,
+                'can_view' => in_array((int) $child->id, $visibleChildIds, true),
+            ];
+        })->groupBy('root_work_order_id');
         // Persisted checks are evidence only for the exact current business
         // version. Reading this sales summary must never evaluate or write a gate.
         $gateIssues = DB::table('erp_work_order_release_gate_checks as gate')
@@ -1460,7 +1489,7 @@ class SalesOrderController extends Controller
             ->whereIn('wo.id', $orders->pluck('id'))->whereIn('wo.status', ['DRAFT', 'WAIT_RELEASE'])
             ->whereColumn('gate.work_order_version', 'wo.business_version')->where('gate.status', 'blocked')
             ->get(['gate.work_order_id', 'gate.check_key', 'gate.message'])->groupBy('work_order_id');
-        return $orders->getCollection()->map(function (WorkOrder $workOrder) use ($statusLabels, $operations, $visibleIds, $childStates, $childOperations, $gateIssues, $children): array {
+        return $orders->getCollection()->map(function (WorkOrder $workOrder) use ($statusLabels, $operations, $visibleIds, $childStates, $childOperations, $gateIssues, $children, $childList): array {
             $plan = app(\App\Services\Erp\AssemblyProductionApplicationService::class)->projection($workOrder);
             $material = $plan['material_preparation'] ?? [];
             // A released legacy order has no evidence of the new preparation workflow.
@@ -1505,6 +1534,7 @@ class SalesOrderController extends Controller
                     'current_process_name' => $componentTargets->filter(fn ($target) => (int) $target->active_count > 0)
                         ->pluck('operation_name_snapshot')->filter()->unique()->implode('、') ?: null,
                 ],
+                'component_work_orders' => ($childList->get($workOrder->id) ?? collect())->values()->all(),
                 'preparation_status' => $legacyPreparation ? 'legacy_snapshot' : ($plan['status'] ?? ($workOrder->status === 'CANCELLED' ? 'cancelled' : ($workOrder->released_at ? 'legacy_snapshot' : 'pending'))),
                 'preparation_ready' => $legacyPreparation ? null : (bool) ($plan['preparation_ready'] ?? ($material['ready'] ?? false)),
                 'material_preparation_status' => $legacyPreparation ? null : ($material['status'] ?? null),

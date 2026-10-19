@@ -339,6 +339,15 @@ Design status: 新增“订单阶段提示条”（基础档案风格），其�
                     <span class="label">阻塞原因</span><b class="value">{{ issue.message }}</b>
                   </div>
                 </div>
+                <div v-if="(work.component_work_orders || []).length" class="wo-children">
+                  <div class="wo-children-title">部件子工单（{{ work.component_work_orders.length }}）</div>
+                  <div v-for="child in work.component_work_orders" :key="child.work_order_id" class="wo-child-row">
+                    <el-button v-if="child.can_view" type="text" class="wo-child-no font-mono" @click="openTrackedWorkOrder(child)">{{ child.work_order_no }}</el-button><span v-else class="wo-child-no font-mono">{{ child.work_order_no }}</span>
+                    <span class="wo-child-item" :title="child.item_name">{{ child.item_name || '-' }} × {{ Number(child.target_qty).toLocaleString('zh-CN') }}{{ child.unit_name || '' }}</span>
+                    <el-tag size="mini" :type="childStatusType(child.status)" effect="plain">{{ child.status_label }}</el-tag>
+                    <span class="wo-child-progress">{{ childProgressText(child) }}</span>
+                  </div>
+                </div>
               </div>
             </div>
             <el-empty v-else :image-size="48" description="当前订单尚未生成生产工单" /><el-pagination v-if="tracking.total > tracking.per_page" background layout="total, prev, pager, next" :current-page="tracking.current_page" :page-size="tracking.per_page" :total="tracking.total" @current-change="loadTracking" />
@@ -680,6 +689,11 @@ export default {
       const operations = progress.total_operation_count ? `；工序完成 ${progress.completed_operation_count}/${progress.total_operation_count}` : ''
       const current = progress.current_process_name ? `；正在进行：${progress.current_process_name}` : ''
       return `${progress.work_order_count} 张部件工单${states ? '（' + states + '）' : ''}${operations}${current}`
+    },
+    childStatusType(status) { return ({ COMPLETED: 'success', IN_PROGRESS: 'warning', RELEASED: '', CANCELLED: 'info' })[status] || 'info' },
+    childProgressText(child) {
+      const ops = child.total_operation_count ? `工序 ${child.completed_operation_count}/${child.total_operation_count}` : '未开工'
+      return child.current_process_name ? `${ops} · ${child.current_process_name}` : ops
     },
     openTrackedWorkOrder(work) { if (work.can_view === true && work.work_order_id) this.$router.push(`/production/work-orders/${work.work_order_id}`) },
     async loadTracking(page) {
@@ -1458,6 +1472,13 @@ export default {
 }
 
 /* 追踪与审计控制台 (Tabs) */
+.wo-children { margin-top: 10px; padding-top: 8px; border-top: 1px dashed #e4e7ed; }
+.wo-children-title { font-size: 12px; color: #909399; margin-bottom: 4px; }
+.wo-child-row { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 2px 0; font-size: 12px; flex-wrap: wrap; }
+.wo-child-row .el-button { padding: 0; }
+.wo-child-no { font-size: 12px; }
+.wo-child-item { flex: 1 1 120px; min-width: 0; color: #606266; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wo-child-progress { color: #909399; white-space: nowrap; }
 .tracking-console-card {
   padding: 6px 16px 16px;
   scroll-margin-top: 12px;
