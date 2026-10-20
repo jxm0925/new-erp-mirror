@@ -124,6 +124,17 @@ Design status: 新增“订单阶段提示条”（基础档案风格），其�
             <span class="kv-label">生产确认状态</span>
             <span class="kv-value"><el-tag size="mini" :type="statusTag(order.production_confirm_status)">{{ statusText(order.production_confirm_status) }}</el-tag></span>
           </div>
+          <div class="kv-item">
+            <span class="kv-label">付款条件</span>
+            <span class="kv-value">{{ (order.funding_status && order.funding_status.policy_name) || '未配置' }}</span>
+          </div>
+          <div v-if="order.funding_status" class="kv-item">
+            <span class="kv-label">资金状态</span>
+            <span class="kv-value">
+              <el-tag size="mini" :type="order.funding_status.production_funds_satisfied ? 'success' : 'warning'">{{ order.funding_status.production_funds_satisfied ? '可开工' : '定金未到' }}</el-tag>
+              <el-tag size="mini" :type="order.funding_status.shipment_funds_satisfied ? 'success' : 'warning'">{{ order.funding_status.shipment_funds_satisfied ? '可发货' : (order.funding_status.outstanding_amount !== undefined ? `差尾款 ¥${Number(order.funding_status.outstanding_amount || 0).toLocaleString('zh-CN')}` : '尾款未齐') }}</el-tag>
+            </span>
+          </div>
         </div>
         <!-- 订单长备注独立块 -->
         <div v-if="order.remark" class="order-remark-box">
@@ -300,6 +311,20 @@ Design status: 新增“订单阶段提示条”（基础档案风格），其�
     <!-- 下方业务追踪与审计中心 (Tab 控制台整合散落与空态卡片) -->
     <div ref="tabSection" class="detail-card tracking-console-card">
       <el-tabs v-model="activeTab" class="tracking-tabs">
+        <el-tab-pane v-if="order.production_confirm_status === 'confirmed'" name="production">
+          <span slot="label"><i class="el-icon-s-order" /> 生产进度 <span v-if="workOrders.length" class="tab-badge-num">{{ workOrders.length }}</span></span>
+          <div class="tab-pane-content">
+            <el-table v-loading="workOrderLoading" :data="workOrders" size="small" border empty-text="这张订单没有生产工单（全部用库存、外购或服务）">
+              <el-table-column label="工单号" min-width="150"><template slot-scope="{ row }"><el-button type="text" class="font-mono" :disabled="!$can('production.work_order.view')" @click="$router.push(`/production/work-orders/${row.id}`)">{{ row.work_order_no }}</el-button></template></el-table-column>
+              <el-table-column label="行号" width="56" align="center"><template slot-scope="{ row }">{{ row.sales_order_line_no || '-' }}</template></el-table-column>
+              <el-table-column label="产品" min-width="160"><template slot-scope="{ row }">{{ row.product_name || row.item_name }} × {{ Number(row.planned_qty) }} {{ row.unit_name || '' }}</template></el-table-column>
+              <el-table-column label="状态" width="90"><template slot-scope="{ row }"><el-tag size="mini" :type="row.status === 'cancelled' ? 'info' : (row.status === 'paused' ? 'warning' : 'success')">{{ row.status_label }}</el-tag></template></el-table-column>
+              <el-table-column label="每道工序完成几台" min-width="220"><template slot-scope="{ row }"><span v-for="(p, i) in row.progress" :key="i" class="wo-step">{{ p.operation_name }} {{ Number(p.completed_qty) }}/{{ Number(p.planned_qty) }}</span><span v-if="!row.progress.length">-</span></template></el-table-column>
+              <el-table-column label="计划完工" width="100"><template slot-scope="{ row }">{{ row.planned_finish_date || '-' }}</template></el-table-column>
+              <el-table-column label="卡点" min-width="150"><template slot-scope="{ row }"><span :class="row.stuck_reason ? 'wo-stuck' : ''">{{ row.stuck_reason || '正常' }}</span></template></el-table-column>
+            </el-table>
+          </div>
+        </el-tab-pane>
         <el-tab-pane v-if="$can('sales_order.view') && $can('sales_order.amount.view') && $can('finance.view')" label="采购关联" name="finance">
           <div class="tab-pane-content"><sales-order-finance-panel v-if="activeTab === 'finance' && order.id" :order-id="order.id" /></div>
         </el-tab-pane>
@@ -516,6 +541,7 @@ import { confirmSalesOrder, formalConfirmSalesOrder, cancelSalesOrder, deleteSal
 import SalesOrderAttachmentPreviewDialog from '@/components/sales/SalesOrderAttachmentPreviewDialog.vue'
 import SalesOrderFinancePanel from '@/components/sales/SalesOrderFinancePanel.vue'
 import { statusTag, statusText, shipmentStatusText } from '@/utils/erpStatus'
+import { listSalesOrderWorkOrders } from '@/api/erp/production'
 
 export default {
   mixins: [cachedPageRoute],
@@ -523,6 +549,8 @@ export default {
   data: () => ({
     activeTab: 'attachments',
     order: {},
+    workOrders: [],
+    workOrderLoading: false,
     previewVisible: false,
     previewFile: null,
     changeLoading: false,
@@ -618,12 +646,28 @@ export default {
       this.inventoryLockStorageKey = `erp_pending_sales_inventory_lock_${actor}_${id}`
       try { this.inventoryLockPending = JSON.parse(localStorage.getItem(this.inventoryLockStorageKey) || 'null') } catch (_) { this.inventoryLockPending = null }
       await this.loadChanges(1)
-      if (this.$route.query.tab === 'logs') {
+      this.loadWorkOrders(sequence)
+      if (this.$route.query.tab === 'production') {
+        this.activeTab = 'production'
+      } else if (this.$route.query.tab === 'logs') {
         this.activeTab = 'logs'
         this.scrollToLogs()
       } else if (this.$route.query.tab === 'changes') {
         this.activeTab = 'changes'
         this.scrollToChanges()
+      }
+    },
+    async loadWorkOrders(sequence) {
+      this.workOrders = []
+      if (this.order.production_confirm_status !== 'confirmed' || !(this.$can('sales_order.view') || this.$can('production.work_order.view'))) return
+      this.workOrderLoading = true
+      try {
+        const { data } = await listSalesOrderWorkOrders(this.order.id)
+        if (sequence === this.loadSequence) this.workOrders = data.data || []
+      } catch (error) {
+        if (sequence === this.loadSequence) this.workOrders = []
+      } finally {
+        if (sequence === this.loadSequence) this.workOrderLoading = false
       }
     },
     async doConfirm() {
@@ -1903,4 +1947,6 @@ export default {
     margin-bottom: 4px;
   }
 }
+.wo-step { display: inline-block; margin: 0 6px 2px 0; padding: 1px 6px; border-radius: 4px; background: #f3f5f9; font-size: 12px; }
+.wo-stuck { color: #d92d20; }
 </style>

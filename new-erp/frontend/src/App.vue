@@ -200,6 +200,8 @@ export default {
       { name: '销售退货', path: '/sales/returns', icon: 'el-icon-refresh-left', permission: 'sales.return' }
     ],
     productionMenus: [
+      { name: '工单管理', path: '/production/work-orders', icon: 'el-icon-s-order', permission: 'production.work_order' },
+      { name: '序列号查询', path: '/production/serials', icon: 'el-icon-search', permission: 'production.serial' },
       { name: '生产基础', children: [
         { name: '工序管理', path: '/production/operations', icon: 'el-icon-set-up', permission: 'production.operation' },
         { name: '工艺路线', path: '/production/routings', icon: 'el-icon-guide', permission: 'production.routing' },
@@ -219,7 +221,8 @@ export default {
       { name: '发票管理', path: '/finance/invoices', icon: 'el-icon-document-copy', permission: 'finance.invoice' },
       { name: '资金账户', path: '/finance/accounts', icon: 'el-icon-bank-card', permission: 'finance.account' },
       { name: '资金转账 / 换汇', path: '/finance/transfers', icon: 'el-icon-sort', permission: 'finance.transfer' },
-      { name: '资金账户估值', path: '/finance/account-valuations', icon: 'el-icon-pie-chart', permission: 'finance.account_valuation' }
+      { name: '资金账户估值', path: '/finance/account-valuations', icon: 'el-icon-pie-chart', permission: 'finance.account_valuation' },
+      { name: '付款条件', path: '/finance/funding-policies', icon: 'el-icon-document-checked', permission: ['finance.funding_policy', 'sales_order.funding_policy.manage'] }
     ],
     systemMenus: [
       { name: '编号规则', path: '/system/document-number-rules', icon: 'el-icon-postcard', permission: 'system.document_number_rule' },
@@ -592,6 +595,8 @@ export default {
       if (path.startsWith('/production/routings/new')) return '工艺路线 / 新增'
       if (path.startsWith('/production/routings/') && path.endsWith('/edit')) return '工艺路线 / 编辑'
       if (path.startsWith('/production/routings/')) return '工艺路线 / 详情'
+      if (path === '/production/work-orders/new') return '工单管理 / 新建备货工单'
+      if (path.startsWith('/production/work-orders/')) return '工单管理 / 工单详情'
 
       // 销售管理
       if (path === '/sales/orders/create') return '销售订单 / 新增订单'
@@ -709,6 +714,7 @@ export default {
       if (path.startsWith('/inventory/alerts')) return '/inventory/alerts'
       if (path.startsWith('/production/operations')) return '/production/operations'
       if (path.startsWith('/production/routings')) return '/production/routings'
+      if (path.startsWith('/production/work-orders')) return '/production/work-orders'
       if (path.startsWith('/bom/boms') || path.startsWith('/bom/create') || path.startsWith('/bom/')) return '/bom/boms'
       if (path.startsWith('/finance/receipts')) return '/finance/receipts'
       if (path.startsWith('/finance/payments')) return '/finance/payments'

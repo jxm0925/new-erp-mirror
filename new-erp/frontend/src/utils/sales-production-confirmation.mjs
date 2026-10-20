@@ -28,7 +28,10 @@ export function buildSalesProductionConfirmation(order, rows, reason, commandId)
     if (!Number.isFinite(quantity) || quantity < 0 || Object.values(values).some(value => !Number.isFinite(value) || value < 0)) throw new Error('确认数量必须是有效的非负数')
     if (Math.abs(confirmationAllocationSum(values) - quantity) > 0.00000001) throw new Error('库存、生产、外购、服务及无需发货数量之和必须等于本次确认数量')
     if (quantity > Number(row.remaining_confirm_qty ?? row.confirm_qty) + 0.00000001) throw new Error('本次确认数量不能超过剩余可确认数量')
-    return { sales_order_line_id: row.sales_order_line_id, confirm_qty: quantity, ...values }
+    const line = { sales_order_line_id: row.sales_order_line_id, confirm_qty: quantity, ...values }
+    // 服务行（如发红包）默认已完成，可在确认页取消勾选
+    if (row.line_type === 'service') line.service_completed = row.service_completed !== false
+    return line
   })
   return { client_command_id: commandId, expected_version: version, adjustment_reason: String(reason || '').trim() || null, lines }
 }

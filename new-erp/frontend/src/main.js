@@ -55,6 +55,10 @@ import ProductionRoutingList from './views/erp/production/ProductionRoutingList.
 import ProductionPerformanceTemplates from './views/erp/production/ProductionPerformanceTemplates.vue'
 import SalesShipmentBoard from './views/erp/sales/SalesShipmentBoard.vue'
 import ProductionRoutingForm from './views/erp/production/ProductionRoutingForm.vue'
+import WorkOrderList from './views/erp/production/WorkOrderList.vue'
+import WorkOrderDetail from './views/erp/production/WorkOrderDetail.vue'
+import WorkOrderForm from './views/erp/production/WorkOrderForm.vue'
+import ProductionSerialTrace from './views/erp/production/ProductionSerialTrace.vue'
 import ApprovalWorkbench from './views/erp/approval/ApprovalWorkbench.vue'
 import ApprovalTaskDetail from './views/erp/approval/ApprovalTaskDetail.vue'
 import ApprovalFlowList from './views/erp/approval/ApprovalFlowList.vue'
@@ -178,6 +182,10 @@ const router = new VueRouter({
     { path: '/production/routings/new', component: ProductionRoutingForm, meta: { permission: 'production.routing.create' } },
     { path: '/production/routings/:id/edit', component: ProductionRoutingForm, meta: { permission: 'production.routing.edit' } },
     { path: '/production/routings/:id', component: ProductionRoutingForm, meta: { permission: 'production.routing.view' } },
+    { path: '/production/work-orders', component: WorkOrderList, meta: { permission: 'production.work_order.view' } },
+    { path: '/production/work-orders/new', component: WorkOrderForm, meta: { permission: 'production.work_order.create' } },
+    { path: '/production/work-orders/:id(\\d+)', component: WorkOrderDetail, meta: { permission: 'production.work_order.view' } },
+    { path: '/production/serials', component: ProductionSerialTrace, meta: { permission: 'production.serial.view' } },
     { path: '/approvals', redirect: '/approvals/tasks' },
     { path: '/approvals/tasks', component: ApprovalWorkbench, meta: { permission: 'approval.task.view' } },
     { path: '/approvals/processed', redirect: { path: '/approvals/tasks', query: { scope: 'processed' } } },
@@ -221,6 +229,7 @@ const router = new VueRouter({
       }
     } },
     { path: '/finance/accounts', component: FinanceAccountList, meta: { permission: 'finance.view' } },
+    { path: '/finance/funding-policies', component: () => import('./views/erp/finance/FinanceFundingPolicyList.vue'), meta: { permission: ['finance.funding_policy', 'sales_order.funding_policy.manage'] } },
     { path: '/finance/exchange-rates', redirect: { path: '/finance/account-valuations', query: { rate_maintenance: '1' } } },
     { path: '/finance/transfers', component: FinanceTransferList, meta: { permission: 'finance.view' } },
     { path: '/finance/transfers/create', component: FinanceTransferForm, meta: { permission: 'finance.payment.create' } },

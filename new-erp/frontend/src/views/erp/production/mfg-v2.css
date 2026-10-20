@@ -1,0 +1,57 @@
+/* 生产 v2 页面（工单、序列号、订单生产确认）共用样式：深蓝头部 + 白色圆角卡片。 */
+.mfg-page { background: #eef1f5; min-height: calc(100vh - 54px); color: #172033; font-size: 13px; }
+.mfg-hero { background: #14213d; color: #fff; padding: 18px 26px; }
+.mfg-crumb { color: #8fa0bf; font-size: 12px; }
+.mfg-crumb a { color: #8fa0bf; cursor: pointer; }
+.mfg-hrow { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 10px; gap: 20px; }
+.mfg-title { font-size: 22px; font-weight: 700; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.mfg-hero-sub { color: #b9c5dc; margin-top: 6px; }
+.mfg-meta { display: flex; gap: 26px; margin-top: 12px; color: #b9c5dc; flex-wrap: wrap; }
+.mfg-meta b { display: block; color: #fff; font-size: 14px; margin-top: 2px; }
+.mfg-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.mfg-actions .el-button { border-radius: 6px; font-weight: 600; }
+.mfg-actions .ghost { background: transparent; border-color: #3a4f7d; color: #dbe3f3; }
+.mfg-actions .ghost:hover { border-color: #8fa0bf; color: #fff; }
+.mfg-actions .primary { background: #ffb020; border-color: #ffb020; color: #2b1d00; }
+.mfg-actions .primary:hover { background: #ffc04d; border-color: #ffc04d; }
+.pill { font-size: 12px; padding: 3px 10px; border-radius: 12px; font-weight: 600; white-space: nowrap; }
+.p-y { background: #ffb020; color: #3d2800; } .p-r { background: #ff5a5f; color: #fff; } .p-g { background: #4ade80; color: #06351b; }
+.p-b { background: #60a5fa; color: #08254d; } .p-n { background: #3a4f7d; color: #dbe3f3; }
+.mfg-body { padding: 16px 22px; }
+.mfg-grid { display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 16px; align-items: start; }
+.card { background: #fff; border-radius: 12px; padding: 16px 18px; box-shadow: 0 1px 2px rgba(20, 33, 61, .06); margin-bottom: 16px; }
+.card h2 { font-size: 15px; display: flex; align-items: center; justify-content: space-between; margin: 0 0 12px; gap: 10px; }
+.card h2 small { font-size: 12px; color: #8a95a8; font-weight: 400; }
+.sub { color: #8a95a8; font-size: 12px; }
+.mono { font-family: "DejaVu Sans Mono", Menlo, Consolas, monospace; letter-spacing: -.2px; }
+.ok { color: #11804a; font-weight: 600; } .warn { color: #d92d20; font-weight: 600; } .amb { color: #b25c00; font-weight: 600; }
+.chip { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 600; white-space: nowrap; line-height: 18px; }
+.c-b { background: #e8f0ff; color: #1f5bd6; } .c-p { background: #f1e9ff; color: #7a3fd1; } .c-g { background: #e6f7ef; color: #11804a; }
+.c-o { background: #fff1e0; color: #b25c00; } .c-n { background: #eef1f5; color: #5b6780; } .c-r { background: #ffe9e7; color: #c0261b; }
+.note { border-left: 3px solid #ffb020; background: #fffaf0; border-radius: 6px; padding: 9px 12px; font-size: 12px; line-height: 1.7; color: #5b4a1f; }
+.lk { color: #1f6feb; font-weight: 600; cursor: pointer; }
+.kv { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid #f0f2f6; }
+.kv:last-child { border-bottom: 0; }
+.kv span { color: #5b6780; } .kv b { text-align: right; word-break: break-all; }
+.empty { color: #8a95a8; text-align: center; padding: 26px 0; }
+.kit-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.kit { border: 1px solid #e3e8f0; border-radius: 8px; padding: 12px 13px; }
+.kit.short { border-color: #f6c3be; background: #fff8f7; }
+.kit h3 { font-size: 13px; display: flex; justify-content: space-between; margin: 0 0 8px; }
+.kit .row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; font-size: 12px; color: #5b6780; }
+.kit .row b { color: #172033; white-space: nowrap; }
+.kit .row b.warn { color: #d92d20; }
+.flow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.flow .arrow { color: #b0b9c8; font-size: 11px; }
+@media (max-width: 1100px) {
+  .mfg-grid { grid-template-columns: 1fr; }
+  .kit-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 767px) {
+  .mfg-hero { padding: 14px 14px; }
+  .mfg-hrow { flex-direction: column; align-items: flex-start; }
+  .mfg-meta { gap: 14px 20px; }
+  .mfg-body { padding: 12px 10px; }
+  .card { padding: 14px 12px; }
+  .kit-grid { grid-template-columns: 1fr; }
+}
