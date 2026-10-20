@@ -149,11 +149,15 @@ final class WorkOrderPlanBuilder
             $fixed = (float) ($line['fixed_qty'] ?? 0);
             $total = round($unitQty * $qty * (1 + $loss / 100) + $fixed, 4);
             $componentRules = $rules->where('component_item_id', $componentId);
-            $targets = $componentRules->isNotEmpty()
+            // 定制 BOM 行可直接指定用在哪道工序。
+            $lineTarget = (int) ($line['target_routing_operation_id'] ?? 0);
+            $targets = $lineTarget && $byRouting->has($lineTarget)
+                ? [['key' => $byRouting->get($lineTarget)['key'], 'ratio' => 1.0, 'supply_mode' => null, 'kitting' => true]]
+                : ($componentRules->isNotEmpty()
                 ? $componentRules->map(fn ($rule) => ['key' => $byRouting->get($rule['target_routing_operation_id'])['key'] ?? $rule['host_key'],
                     'ratio' => (float) $rule['required_qty_ratio'], 'supply_mode' => $rule['supply_mode'] ?? null,
                     'kitting' => (bool) ($rule['participates_in_kitting'] ?? true)])->values()->all()
-                : [['key' => $firstKey, 'ratio' => 1.0, 'supply_mode' => null, 'kitting' => true]];
+                : [['key' => $firstKey, 'ratio' => 1.0, 'supply_mode' => null, 'kitting' => true]]);
             $item = $items->get($componentId);
             foreach ($targets as $target) {
                 $rows[] = [

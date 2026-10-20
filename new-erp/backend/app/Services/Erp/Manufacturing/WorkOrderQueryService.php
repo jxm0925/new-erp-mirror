@@ -6,7 +6,12 @@ use App\Models\Erp\Bom;
 use App\Models\Erp\InventoryBalance;
 use App\Models\Erp\Item;
 use App\Models\Erp\MfgWorkOrder;
+use App\Models\Erp\MfgDrawing;
+use App\Models\Erp\MfgLaborSession;
+use App\Models\Erp\MfgTaskParticipant;
+use App\Models\Erp\MfgUnitReport;
 use App\Models\Erp\MfgWorkOrderLog;
+use App\Models\Erp\MfgWorkOrderTech;
 use App\Models\Erp\MfgWorkOrderUnit;
 use App\Models\Erp\ProductionRouting;
 use App\Models\Erp\SalesOrder;
@@ -21,8 +26,8 @@ final class WorkOrderQueryService
     public const STATUS_LABELS = ['planned' => '计划', 'released' => '已下达', 'in_progress' => '生产中', 'paused' => '暂停',
         'completed' => '已完工', 'closed' => '已关闭', 'cancelled' => '已取消'];
     public const STOCK_REASONS = ['alert' => '库存预警', 'regular' => '常规备货', 'other' => '其他'];
-    public const UNIT_LABELS = ['waiting' => '未开工', 'in_progress' => '在制', 'rework' => '返工', 'completed' => '已完工',
-        'stored' => '已入库', 'scrapped' => '报废', 'cancelled' => '已取消'];
+    public const UNIT_LABELS = ['waiting' => '未开工', 'in_progress' => '在制', 'rework' => '返工', 'completed' => '等入库',
+        'stored' => '待试水', 'scrapped' => '报废', 'cancelled' => '已取消'];
 
     private array $funding = [];
 
@@ -53,11 +58,16 @@ final class WorkOrderQueryService
         $kitting = $this->plans->kitting($materials, $operations);
         $row['kitting'] = $kitting;
         $row['operations'] = $operations;
+        $opNames = $wo->operations->pluck('operation_name', 'id');
+        $pendingScrap = MfgUnitReport::query()->where('work_order_id', $wo->id)->where('review_status', 'pending')->pluck('unit_id')->flip();
         $row['units'] = $wo->units->map(fn ($u) => [
             'id' => $u->id, 'unit_no' => $u->unit_no, 'serial_no' => $u->serial_no, 'status' => $u->status,
-            'status_label' => self::UNIT_LABELS[$u->status] ?? $u->status, 'rework_count' => $u->rework_count,
-            'current_operation_id' => $u->current_operation_id, 'stored_at' => $u->stored_at?->toDateTimeString(),
+            'status_label' => isset($pendingScrap[$u->id]) ? '等报废确认' : (self::UNIT_LABELS[$u->status] ?? $u->status), 'rework_count' => $u->rework_count,
+            'current_operation_id' => $u->current_operation_id, 'current_operation_name' => $u->current_operation_id ? ($opNames[$u->current_operation_id] ?? null) : null,
+            'stored_at' => $u->stored_at?->toDateTimeString(), 'completed_at' => $u->completed_at?->toDateTimeString(),
         ])->values()->all();
+        $row['operations'] = $this->operationProgress($wo, $row['operations']);
+        $row['tech'] = $this->techSummary($wo);
         $row['logs'] = MfgWorkOrderLog::query()->where('work_order_id', $wo->id)->orderByDesc('id')->limit(30)->get()
             ->map(fn ($log) => ['id' => $log->id, 'action' => $log->action, 'content' => $log->content, 'operator_name' => $log->operator_name,
                 'created_at' => $log->created_at?->toDateTimeString()])->values()->all();
@@ -76,6 +86,33 @@ final class WorkOrderQueryService
         $row['created_at'] = $wo->created_at?->toDateTimeString();
         $row['released_at'] = $wo->released_at?->toDateTimeString();
         return $row;
+    }
+
+    /** 每道工序：现在停在这道的台、已过的台、接单人、谁在计时。 */
+    private function operationProgress(MfgWorkOrder $wo, array $operations): array
+    {
+        $here = $wo->units->whereIn('status', ['waiting', 'in_progress', 'rework'])->groupBy('current_operation_id')->map->count();
+        $rework = $wo->units->where('status', 'rework')->groupBy('current_operation_id')->map->count();
+        $owners = MfgTaskParticipant::query()->where('work_order_id', $wo->id)->where('role', 'owner')->where('is_active', true)->pluck('employee_name', 'work_order_operation_id');
+        $timing = MfgLaborSession::query()->where('work_order_id', $wo->id)->where('status', 'active')->get()->groupBy('work_order_operation_id');
+        $minutes = MfgLaborSession::query()->where('work_order_id', $wo->id)->selectRaw('work_order_operation_id, SUM(labor_minutes) AS m')->groupBy('work_order_operation_id')->pluck('m', 'work_order_operation_id');
+        $status = $wo->operations->pluck('status', 'id');
+        return array_map(fn ($op) => $op + [
+            'status' => $status[$op['id']] ?? 'pending', 'here_qty' => (int) ($here[$op['id']] ?? 0), 'rework_qty' => (int) ($rework[$op['id']] ?? 0),
+            'owner_name' => $owners[$op['id']] ?? null, 'timing_names' => ($timing->get($op['id']) ?? collect())->pluck('employee_name')->values()->all(),
+            'labor_minutes' => round((float) ($minutes[$op['id']] ?? 0), 1),
+        ], $operations);
+    }
+
+    private function techSummary(MfgWorkOrder $wo): ?array
+    {
+        $tech = MfgWorkOrderTech::query()->where('work_order_id', $wo->id)->first();
+        if (! $tech) return null;
+        $drawings = MfgDrawing::query()->where('work_order_id', $wo->id)->where('status', 'active')->orderBy('id')->get();
+        return ['status' => $tech->status, 'status_label' => TechService::STATUS_LABELS[$tech->status] ?? $tech->status, 'tech_owner_name' => $tech->tech_owner_name,
+            'released_at' => $tech->released_at?->toDateTimeString(), 'drawings_updated_at' => $tech->drawings_updated_at?->toDateTimeString(),
+            'drawings' => $drawings->map(fn ($d) => ['id' => $d->id, 'drawing_name' => $d->drawing_name, 'version_no' => $d->version_no, 'url' => $d->url,
+                'mime_type' => $d->mime_type, 'uploaded_by' => $d->uploaded_by, 'uploaded_at' => $d->uploaded_at?->toDateTimeString()])->values()->all()];
     }
 
     /** 备货工单新建页：选好产品、数量后预览 BOM、路线、各工序料够不够、预计用时和成本。 */

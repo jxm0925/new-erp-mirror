@@ -66,6 +66,8 @@ class RbacBootstrapService
             ['system', '系统管理', 'menu', null, null, null, 'el-icon-setting', 900],
 
             ['production.work_order', '工单管理', 'menu', 'production', '/production/work-orders', 'WorkOrderList', 'el-icon-s-order', 802],
+            ['production.board', '生产作业看板', 'menu', 'production', '/production/board', 'ProductionBoard', 'el-icon-data-board', 802],
+            ['production.tech', '定制技术', 'menu', 'production', '/production/tech', 'ProductionTechList', 'el-icon-edit-outline', 802],
             ['production.serial', '序列号查询', 'menu', 'production', '/production/serials', 'ProductionSerialTrace', 'el-icon-search', 802],
             ['production.base', '生产基础', 'menu', 'production', null, null, 'el-icon-setting', 803],
             ['production.operation', '工序管理', 'menu', 'production.base', '/production/operations', 'ProductionOperationList', 'el-icon-set-up', 804],
@@ -243,6 +245,11 @@ class RbacBootstrapService
             ['production.work_order.publish', '下达工单', 'button', 'production.work_order', null, null, 'el-icon-mouse', 7],
             ['production.task.view', '查看生产任务', 'button', 'production.work_order', null, null, 'el-icon-mouse', 21],
             ['production.task.collaborate', '生产任务协同', 'button', 'production.work_order', null, null, 'el-icon-mouse', 26],
+            ['production.task.execute', '生产报工', 'button', 'production.board', null, null, 'el-icon-mouse', 1],
+            ['production.task.assign', '派工', 'button', 'production.board', null, null, 'el-icon-mouse', 2],
+            ['production.scrap.approve', '确认报废', 'button', 'production.board', null, null, 'el-icon-mouse', 3],
+            ['production.receipt.execute', '成品入库', 'button', 'production.board', null, null, 'el-icon-mouse', 4],
+            ['production.tech.manage', '上传图纸和定制 BOM', 'button', 'production.tech', null, null, 'el-icon-mouse', 1],
             ['production.performance.manage', '维护提成模板', 'button', 'production.performance', null, null, 'el-icon-setting', 2],
             ['production.serial.view', '查看序列号追溯', 'button', 'production.serial', null, null, 'el-icon-mouse', 1],
             ['production.operation.view', '查看工序', 'button', 'production.operation', null, null, 'el-icon-mouse', 1],
@@ -572,6 +579,8 @@ class RbacBootstrapService
             'production.task.view', 'production.task.collaborate', 'production.performance.manage',
             'production.operation.view', 'production.operation.create', 'production.operation.edit', 'production.operation.toggle', 'production.operation.delete',
             'production.routing.view', 'production.routing.create', 'production.routing.edit', 'production.routing.activate', 'production.routing.default', 'production.routing.delete',
+            'production.board', 'production.tech', 'production.task.execute', 'production.task.assign', 'production.scrap.approve',
+            'production.receipt.execute', 'production.tech.manage',
         ];
         $matrix = [
             'admin' => $manager,
@@ -581,12 +590,14 @@ class RbacBootstrapService
                 'production.serial', 'production.serial.view',
                 'production.work_order.view', 'production.task.view', 'production.task.collaborate',
                 'production.operation.view', 'production.routing.view',
+                'production.board', 'production.task.execute',
             ],
             'department_principal' => [
                 'production.work_order', 'production.base', 'production.operation', 'production.routing',
                 'production.serial', 'production.serial.view',
                 'production.work_order.view', 'production.work_order.publish', 'production.task.view',
                 'production.operation.view', 'production.routing.view',
+                'production.board', 'production.tech', 'production.task.assign', 'production.scrap.approve',
             ],
         ];
         $permissionIds = DB::table('erp_rbac_permissions')->whereIn('code', $manager)->pluck('id', 'code');
