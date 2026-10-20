@@ -527,32 +527,6 @@ class InitialTableMigrationRuntimeTest extends TestCase
         $this->assertSame(['legacy_one', 'legacy_two'], $connection->records);
     }
 
-    public function test_real_owner_and_all_definitions_share_the_exact_compatibility_contract(): void
-    {
-        $definitions = InitialTableMigration::definitions();
-        $table = 'erp_production_material_consumptions';
-        $owner = $definitions[$table];
-        $connection = $this->connection([], array_keys(InitialTableMigration::baseline()['legacy_migrations']));
-        foreach ($definitions as $name => $definition) $connection->tables[$name] = $definition::CREATE_SQL;
-        $connection->tables[$table] = str_replace("  UNIQUE KEY `prod_material_consumption_source_uq` (`output_record_id`,`source_holding_id`),\n", '', $owner::CREATE_SQL);
-        $connection->alterTargets[$table] = $owner::CREATE_SQL;
-        $connection->hasRows[$table] = true;
-        DB::swap(new class($connection) {
-            public function __construct(private Connection $connection) {}
-            public function connection($name = null): Connection { return $this->connection; }
-        });
-        try {
-            $owner->up();
-            $this->assertSame('ALTER TABLE `erp_production_material_consumptions` ADD UNIQUE KEY `prod_material_consumption_source_uq` (`output_record_id`,`source_holding_id`)', $connection->recordingPdo->statements[1]);
-            $this->assertCount(3, $connection->recordingPdo->statements);
-            $this->assertCount(189, $connection->records);
-            $this->assertCount(count($definitions), $connection->tables);
-            $this->assertFalse(InitialTableMigration::preflight($connection)['pending_legacy_unique_index']);
-        } finally {
-            DB::clearResolvedInstance('db');
-        }
-    }
-
     public function test_rollback_is_always_refused_without_resolving_connection(): void
     {
         $this->expectExceptionMessage('Automatic rollback');

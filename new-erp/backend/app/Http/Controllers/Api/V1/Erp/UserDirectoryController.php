@@ -18,7 +18,7 @@ class UserDirectoryController extends Controller
         $scope = (string) $request->input('scope', 'system');
         $required = match ($scope) {
             'warehouse' => ['master.warehouse.create', 'master.warehouse.edit'],
-            'production' => ['production.demand.view', 'production.work_order.view'],
+            'production' => ['production.work_order.view'],
             'sales' => ['sales.order', 'sales_return.view', 'sales_order.view', 'sales_order.create', 'sales.order.create', 'sales.order.edit', 'sales_order.edit_draft', 'sales_order.change', 'sales_order.change.submit'],
             default => ['system.admin.view'],
         };

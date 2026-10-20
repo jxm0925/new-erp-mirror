@@ -17,13 +17,6 @@
           "scene": null
         },
         {
-          "name": "生产工作台",
-          "pathName": "pages/production/workbench/index",
-          "query": "",
-          "launchMode": "default",
-          "scene": null
-        },
-        {
           "name": "pages/war/index/index",
           "pathName": "pages/war/index/index",
           "query": "",
@@ -41,20 +34,6 @@
           "name": "pages/suggests/sub/story",
           "pathName": "pages/suggests/sub/story",
           "query": "",
-          "launchMode": "default",
-          "scene": null
-        },
-        {
-          "name": "物料配送",
-          "pathName": "pages/production/queue/index",
-          "query": "type=deliveries",
-          "launchMode": "default",
-          "scene": null
-        },
-        {
-          "name": "物料签收",
-          "pathName": "pages/production/queue/index",
-          "query": "type=receipts",
           "launchMode": "default",
           "scene": null
         }

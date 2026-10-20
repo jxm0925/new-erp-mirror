@@ -33,7 +33,6 @@ CREATE TABLE `erp_material_movements` (
   KEY `erp_material_movements_target_holding_id_foreign` (`target_holding_id`),
   KEY `erp_material_movements_inventory_transaction_id_foreign` (`inventory_transaction_id`),
   CONSTRAINT `erp_material_movements_inventory_transaction_id_foreign` FOREIGN KEY (`inventory_transaction_id`) REFERENCES `erp_inventory_transactions` (`id`),
-  CONSTRAINT `erp_material_movements_route_id_foreign` FOREIGN KEY (`route_id`) REFERENCES `erp_cutting_result_routes` (`id`),
   CONSTRAINT `erp_material_movements_source_holding_id_foreign` FOREIGN KEY (`source_holding_id`) REFERENCES `erp_material_holdings` (`id`),
   CONSTRAINT `erp_material_movements_target_holding_id_foreign` FOREIGN KEY (`target_holding_id`) REFERENCES `erp_material_holdings` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci

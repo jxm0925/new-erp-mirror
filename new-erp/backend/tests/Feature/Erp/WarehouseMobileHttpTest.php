@@ -93,19 +93,6 @@ class WarehouseMobileHttpTest extends TestCase
         $this->assertSame(0, DB::table('erp_inventory_transactions')->where('source_type', 'purchase_receipt')->where('source_id', $receipt->id)->count());
     }
 
-    public function test_http_picking_and_delivery_detail_line_page_meta_matches_returned_slice(): void
-    {
-        $f = $this->fixture(); [$pick, $delivery, $pickLines, $deliveryLines] = $this->materialReadFixture($f);
-        $token = $this->httpToken($f['user'], ['production.material_picking.view', 'production.material_delivery.view']);
-        foreach ([['material-picking-tasks', $pick, $pickLines], ['material-deliveries', $delivery, $deliveryLines]] as [$route, $id, $lines]) {
-            $this->withToken($token)->getJson(self::PRODUCTION.$route.'/'.$id.'?line_page=2&line_per_page=1')
-                ->assertOk()->assertJsonPath('data.line_meta.total', 2)->assertJsonPath('data.line_meta.current_page', 2)
-                ->assertJsonPath('data.line_meta.per_page', 1)->assertJsonPath('data.line_meta.last_page', 2)
-                ->assertJsonCount(1, 'data.lines')->assertJsonPath('data.lines.0.id', $lines[1]);
-            $this->withToken($token)->getJson(self::PRODUCTION.$route.'/'.$id.'?line_page=0&line_per_page=1')->assertUnprocessable();
-        }
-    }
-
     public function test_sales_return_serial_candidates_require_both_permissions_and_current_order_scope(): void
     {
         [$f, $order, $return, $line] = $this->returnReadFixture();
@@ -191,33 +178,6 @@ class WarehouseMobileHttpTest extends TestCase
             $line->save(); $lines[] = $line;
         }
         return [$receipt, $lines];
-    }
-
-    private function materialReadFixture(array $f): array
-    {
-        $common = ['created_at' => now(), 'updated_at' => now()];
-        $pick = DB::table('erp_material_picking_tasks')->insertGetId($common + ['task_no' => 'HTTP-PICK-'.Str::ulid(),
-            'work_order_id' => $f['wo']->id, 'warehouse_id' => $f['warehouse']->id,
-            'production_location_name_snapshot' => 'HTTP装配区', 'status' => 'WAIT_PICK', 'business_version' => 1]);
-        $delivery = DB::table('erp_material_deliveries')->insertGetId($common + ['delivery_no' => 'HTTP-DEL-'.Str::ulid(),
-            'work_order_id' => $f['wo']->id, 'picking_task_id' => $pick, 'from_warehouse_id' => $f['warehouse']->id,
-            'to_production_location_snapshot' => 'HTTP装配区', 'status' => 'READY', 'business_version' => 1,
-            'production_target_type' => 'quantity_operation', 'production_target_id' => $f['producerOperation'],
-            'expected_receiver_legacy_id' => $f['user']->legacy_id]);
-        $pickLines = []; $deliveryLines = [];
-        for ($i = 0; $i < 2; $i++) {
-            $line = DB::table('erp_material_picking_task_lines')->insertGetId($common + ['task_id' => $pick,
-                'material_requirement_id' => $f['inputRequirement']->id, 'component_item_id' => $f['raw']->id,
-                'required_qty_snapshot' => 2, 'planned_pick_qty' => 1, 'inventory_balance_id' => $f['balance']->id,
-                'warehouse_id' => $f['warehouse']->id, 'location_id' => $f['location']->id,
-                'batch_no' => $f['balance']->batch_no, 'unit_id' => $f['raw']->unit_id]);
-            $pickLines[] = $line;
-            $deliveryLines[] = DB::table('erp_material_delivery_lines')->insertGetId($common + ['delivery_id' => $delivery,
-                'material_requirement_id' => $f['inputRequirement']->id, 'picking_task_line_id' => $line,
-                'component_item_id' => $f['raw']->id, 'delivery_qty' => 1, 'unit_id' => $f['raw']->unit_id,
-                'batch_no' => $f['balance']->batch_no]);
-        }
-        return [$pick, $delivery, $pickLines, $deliveryLines];
     }
 
     private function httpToken(object $user, array $permissions, string $scope = 'all'): string

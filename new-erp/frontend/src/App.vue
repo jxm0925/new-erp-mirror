@@ -184,7 +184,6 @@ export default {
     ],
     inventoryMenus: [
       { name: '库存过账工作台', path: '/inventory/posting', icon: 'el-icon-finished', permission: 'inventory.posting' },
-      { name: '生产配料', path: '/inventory/production-picking', icon: 'el-icon-finished', permission: ['production.material_picking.view', 'production.material_receipt.view'] },
       { name: '库存余额', path: '/inventory/balances', icon: 'el-icon-coin', permission: 'inventory.balance' },
       { name: '库存流水', path: '/inventory/transactions', icon: 'el-icon-tickets', permission: 'inventory.transaction' },
       { name: '手工调整', path: '/inventory/adjustments', icon: 'el-icon-edit-outline', permission: 'inventory.adjustment' },
@@ -205,13 +204,7 @@ export default {
         { name: '工序管理', path: '/production/operations', icon: 'el-icon-set-up', permission: 'production.operation' },
         { name: '工艺路线', path: '/production/routings', icon: 'el-icon-guide', permission: 'production.routing' },
         { name: '提成模板', path: '/production/performance/templates', icon: 'el-icon-coin', permission: 'production.performance.manage' }
-      ] },
-      { name: '生产作业', path: '/production/tasks', icon: 'el-icon-s-operation', permission: 'production.task.view' },
-      { name: '生产执行监管', path: '/production/execution-monitor', icon: 'el-icon-monitor', permission: 'production.unit.view' },
-      { name: '生产绩效统计', path: '/production/performance', icon: 'el-icon-data-analysis', permission: 'production.performance.view' },
-      { name: '生产需求', path: '/production/demands', icon: 'el-icon-document', permission: 'production.demand' },
-      { name: '工单管理', path: '/production/work-orders', icon: 'el-icon-s-order', permission: 'production.work_order' },
-      { name: '下料管理', path: '/production/cutting', icon: 'el-icon-scissors', permission: 'production.cutting.view' }
+      ] }
     ],
     approvalMenus: [
       { name: '审核工作台', path: '/approvals/tasks', icon: 'el-icon-circle-check', permission: 'approval.task.view' },
@@ -599,15 +592,6 @@ export default {
       if (path.startsWith('/production/routings/new')) return '工艺路线 / 新增'
       if (path.startsWith('/production/routings/') && path.endsWith('/edit')) return '工艺路线 / 编辑'
       if (path.startsWith('/production/routings/')) return '工艺路线 / 详情'
-      if (path === '/production/execution-monitor') return '生产执行监管'
-      if (path === '/production/demands') return '生产需求'
-      if (path.startsWith('/production/demands/')) return '生产需求 / 详情'
-      if (path === '/production/work-orders') return '工单管理'
-      if (path.startsWith('/production/work-orders/new')) return '工单管理 / 新增'
-      if (path.startsWith('/production/work-orders/') && path.endsWith('/edit')) return '工单管理 / 编辑'
-      if (path.startsWith('/production/work-orders/')) return '工单管理 / 详情'
-      if (path === '/production/cutting') return '下料管理'
-      if (path.startsWith('/production/cutting/')) return '下料管理 / 详情'
 
       // 销售管理
       if (path === '/sales/orders/create') return '销售订单 / 新增订单'
@@ -638,7 +622,6 @@ export default {
 
       // 库存管理
       if (path === '/inventory/posting') return '库存过账工作台'
-      if (path === '/inventory/production-picking') return '生产配料'
       if (path === '/inventory/balances') return '库存余额'
       if (path === '/inventory/transactions') return '库存流水'
       if (path === '/inventory/adjustments') return '手工调整'
@@ -724,11 +707,8 @@ export default {
       if (path.startsWith('/purchase/receipts')) return '/purchase/receipts'
       if (path.startsWith('/purchase/returns')) return '/purchase/returns'
       if (path.startsWith('/inventory/alerts')) return '/inventory/alerts'
-      if (path.startsWith('/production/work-orders')) return '/production/work-orders'
-      if (path.startsWith('/production/demands')) return '/production/demands'
       if (path.startsWith('/production/operations')) return '/production/operations'
       if (path.startsWith('/production/routings')) return '/production/routings'
-      if (path.startsWith('/production/cutting')) return '/production/cutting'
       if (path.startsWith('/bom/boms') || path.startsWith('/bom/create') || path.startsWith('/bom/')) return '/bom/boms'
       if (path.startsWith('/finance/receipts')) return '/finance/receipts'
       if (path.startsWith('/finance/payments')) return '/finance/payments'

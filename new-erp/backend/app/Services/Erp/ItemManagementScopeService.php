@@ -155,11 +155,7 @@ final class ItemManagementScopeService
             ['erp_purchase_return_items', 'item_id'], ['erp_purchase_exchange_orders', 'item_id'],
             ['erp_boms', 'output_item_id'], ['erp_bom_items', 'component_item_id'],
             ['erp_production_routings', 'output_item_id'], ['erp_production_routing_operations', 'output_item_id'],
-            ['erp_routing_operation_output_rules', 'item_id'], ['erp_routing_operation_output_rules', 'reference_item_id'],
-            ['erp_routing_operation_material_supply_rules', 'component_item_id'], ['erp_work_orders', 'output_item_id'],
-            ['erp_work_orders', 'effective_output_item_id_snapshot'], ['erp_work_order_planned_outputs', 'item_id'],
-            ['erp_work_order_material_requirements', 'component_item_id'], ['erp_production_target_material_requirements', 'component_item_id'],
-            ['erp_sales_order_production_requirements', 'item_id'], ['erp_sku_item_relations', 'item_id'],
+            ['erp_routing_operation_material_supply_rules', 'component_item_id'], ['erp_sku_item_relations', 'item_id'],
         ];
         foreach ($references as [$table, $column]) if (Schema::hasTable($table) && Schema::hasColumn($table, $column)
             && DB::table($table)->where($column, $item->id)->exists()) {

@@ -7,7 +7,6 @@ use App\Models\Erp\SalesOrderChange;
 use App\Models\Erp\SalesOrderFulfillment;
 use App\Models\Erp\SalesOrderLine;
 use App\Models\Erp\SalesOrderLog;
-use App\Models\Erp\SalesOrderProductionRequirement;
 use App\Models\Erp\SalesOrderVersion;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -34,7 +33,7 @@ class SalesOrderChangeApplicationService
                 ->lockForUpdate()->findOrFail($orderId);
             $this->assertChangeable($order);
 
-            $before = $order->fresh(['lines', 'fulfillments', 'productionRequirements'])->toArray();
+            $before = $order->fresh(['lines', 'fulfillments'])->toArray();
             $rows = collect($payload['lines'])->keyBy('sales_order_line_id');
             if ($rows->count() !== count($payload['lines'])) {
                 throw ValidationException::withMessages(['lines' => '同一订单行只能提交一次变更。']);
@@ -52,7 +51,6 @@ class SalesOrderChangeApplicationService
             $hasOperationalImpact = collect($changes)->contains(fn (array $change): bool =>
                 abs((float) $change[0]->order_qty - (float) $change[1]['order_qty']) > 0.00000001);
             if ($hasOperationalImpact) {
-                app(SalesOrderProductionChangeService::class)->cancelUnreleasedLocked($order, $actor, '销售订单变更：'.$payload['reason']);
                 $this->reservations->releaseForSalesOrder($order, '订单变更，释放旧库存预留');
                 SalesOrderFulfillment::where('sales_order_id', $order->id)
                     ->whereIn('demand_status', ['pending', 'confirmed'])
@@ -61,10 +59,6 @@ class SalesOrderChangeApplicationService
                         'reservation_status' => 'superseded',
                         'production_requirement_status' => 'superseded',
                     ]);
-                SalesOrderProductionRequirement::where('sales_order_id', $order->id)
-                    ->where('is_active', true)
-                    ->whereIn('requirement_status', ['draft', 'blocked', 'ready'])
-                    ->update(['requirement_status' => 'superseded', 'is_active' => false]);
             }
 
             foreach ($changes as [$line, $new]) {
@@ -81,7 +75,7 @@ class SalesOrderChangeApplicationService
             ] : []));
             $this->fundingGates->refreshProjection($order->fresh());
 
-            $after = $order->fresh(['lines', 'fulfillments', 'productionRequirements'])->toArray();
+            $after = $order->fresh(['lines', 'fulfillments'])->toArray();
             $versionNo = (int) SalesOrderVersion::where('sales_order_id', $order->id)->max('version_no') + 1;
             $change = SalesOrderChange::create([
                 'change_no' => $this->numbers->next('sales_order_change', 'SOC'),
@@ -148,14 +142,6 @@ class SalesOrderChangeApplicationService
         }
         if ($order->salesReturns->whereNotIn('return_status', ['cancelled'])->isNotEmpty()) {
             throw ValidationException::withMessages(['sales_return' => '订单已进入销售退货流程，禁止直接订单变更。']);
-        }
-        $consumedProduction = SalesOrderProductionRequirement::where('sales_order_id', $order->id)
-            ->where(function ($query): void {
-                $query->where('consumed_qty', '>', 0)
-                    ->orWhereIn('requirement_status', ['partially_consumed', 'consumed', 'closed']);
-            })->exists();
-        if ($consumedProduction) {
-            throw ValidationException::withMessages(['production_requirement' => '生产需求已被工单或完工事实消耗，禁止直接订单变更。']);
         }
     }
 

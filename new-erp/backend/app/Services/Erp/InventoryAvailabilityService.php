@@ -59,11 +59,7 @@ class InventoryAvailabilityService
         if ($balance->material_lot_id) {
             $lot = \Illuminate\Support\Facades\DB::table('erp_material_lots')->where('id', $balance->material_lot_id)->first();
             if (! $lot) return 0.0;
-            // Production provenance requires terminal-route evidence even if an
-            // older lot was labelled as ordinary full stock or has no stage id.
-            if ($lot->source_type === 'production_output_record') {
-                if (! $this->isPublicFinishedProductionLot($balance, $lot)) return 0.0;
-            } elseif ($lot->configuration_id || $lot->stage_id || ! in_array($lot->material_form, ['FULL_STOCK','STANDARD_LENGTH'], true)) return 0.0;
+            if ($lot->configuration_id || $lot->stage_id || ! in_array($lot->material_form, ['FULL_STOCK','STANDARD_LENGTH'], true)) return 0.0;
         }
         $calculated = $this->calculate(
             (float) $balance->quantity_on_hand,
@@ -83,90 +79,6 @@ class InventoryAvailabilityService
             (string) $balance->quantity_defective, 8), (string) $balance->quantity_pending, 8);
         $available = bccomp($calculated, (string) $balance->quantity_available, 8) < 0 ? $calculated : (string) $balance->quantity_available;
         return bccomp($available, '0', 8) > 0 ? bcadd($available, '0', 8) : '0.00000000';
-    }
-
-    private function isPublicFinishedProductionLot(InventoryBalance $balance, object $lot): bool
-    {
-        if ($lot->source_type !== 'production_output_record' || $lot->material_form !== 'PRODUCT' || $lot->configuration_id
-            || $balance->item?->is_custom_item) return false;
-        $output = \Illuminate\Support\Facades\DB::table('erp_production_output_records as output')
-            ->join('erp_work_orders as wo', 'wo.id', '=', 'output.work_order_id')
-            ->where('output.id', $lot->source_id)->where('output.material_lot_id', $lot->id)
-            ->where('output.output_item_id', $balance->item_id)->whereColumn('wo.output_item_id', 'output.output_item_id')
-            ->whereNotNull('output.material_total_cost')->whereNull('wo.reserved_for_work_order_id')
-            ->first(['output.*', 'wo.routing_snapshot as public_routing_snapshot',
-                'wo.production_routing_id as public_routing_id', 'wo.routing_version_snapshot as public_routing_version']);
-        if (! $output || ! in_array($output->source_target_type, ['unit_operation', 'quantity_operation'], true)) return false;
-        $table = $output->source_target_type === 'unit_operation' ? 'erp_production_unit_operations' : 'erp_production_quantity_operations';
-        $source = \Illuminate\Support\Facades\DB::table($table)->where('id', $output->source_target_id)->where('work_order_id', $output->work_order_id)->first();
-        if (! $source || (int) $source->routing_operation_id_snapshot !== (int) $lot->stage_id) return false;
-        if (! self::frozenRouteAllowsFinishedStock([
-            'id' => $output->work_order_id, 'output_item_id' => $output->output_item_id,
-            'production_routing_id' => $output->public_routing_id, 'routing_version_snapshot' => $output->public_routing_version,
-            'routing_snapshot' => $output->public_routing_snapshot,
-        ], (array) $source)) return false;
-        $later = \Illuminate\Support\Facades\DB::table($table)->where('sequence_no_snapshot', '>', $source->sequence_no_snapshot);
-        $output->source_target_type === 'unit_operation' ? $later->where('production_unit_id', $source->production_unit_id)
-            : $later->where('work_order_id', $source->work_order_id);
-        if ($later->exists()) return false;
-        // Staged stock is not generally eligible. Only an approved terminal output with a factual
-        // finished-goods receipt may re-enter ordinary outbound availability; no receipt/status shortcut.
-        return \Illuminate\Support\Facades\DB::table('erp_work_order_finished_goods_receipts as receipt')
-            ->join('erp_work_order_completions as completion', 'completion.id', '=', 'receipt.completion_id')
-            ->where('receipt.output_record_id', $output->id)->where('receipt.status', 'POSTED')
-            ->where('completion.status', 'APPROVED')->where('receipt.batch_no', $balance->batch_no)
-            ->where('receipt.warehouse_id', $balance->warehouse_id)->where('receipt.location_id', $balance->location_id)->exists();
-    }
-
-    /** Pure frozen-fact check; absence of completeness evidence never means a finished product. */
-    public static function frozenRouteAllowsFinishedStock(array $workOrder, array $source): bool
-    {
-        $snapshot = $workOrder['routing_snapshot'] ?? null;
-        if (is_string($snapshot)) $snapshot = json_decode($snapshot, true);
-        if (! is_array($snapshot) || ($snapshot['snapshot_scope'] ?? null) !== 'complete_route') return false;
-        $operations = $snapshot['operations'] ?? null;
-        if (! is_array($operations) || $operations === []) return false;
-        $operationCount = self::positiveFrozenInteger($snapshot['operation_count'] ?? null);
-        $productionCount = self::positiveFrozenInteger($snapshot['production_operation_count'] ?? null);
-        if ($operationCount !== count($operations) || $productionCount === null) return false;
-        foreach (['routing_id' => 'production_routing_id', 'version' => 'routing_version_snapshot', 'output_item_id' => 'output_item_id'] as $key => $field) {
-            $frozen = self::positiveFrozenInteger($snapshot[$key] ?? null);
-            if ($frozen === null || $frozen !== self::positiveFrozenInteger($workOrder[$field] ?? null)) return false;
-        }
-        $workOrderId = self::positiveFrozenInteger($workOrder['id'] ?? null);
-        $sourceRoutingId = self::positiveFrozenInteger($source['routing_operation_id_snapshot'] ?? null);
-        $sourceSequence = self::positiveFrozenInteger($source['sequence_no_snapshot'] ?? null);
-        $sourceOperationId = self::positiveFrozenInteger($source['operation_id_snapshot'] ?? null);
-        if ($workOrderId === null || $workOrderId !== self::positiveFrozenInteger($source['work_order_id'] ?? null)
-            || $sourceRoutingId === null || $sourceSequence === null || $sourceOperationId === null) return false;
-
-        $routingIds = []; $sequences = []; $production = []; $acceptedSource = null;
-        foreach ($operations as $node) {
-            if (! is_array($node) || ! in_array($node['execution_context'] ?? null, ['production', 'shipment'], true)) return false;
-            $routingId = self::positiveFrozenInteger($node['routing_operation_id'] ?? null); $sequence = self::positiveFrozenInteger($node['sequence'] ?? null);
-            if ($routingId === null || $sequence === null || isset($routingIds[$routingId]) || isset($sequences[$sequence])) return false;
-            $routingIds[$routingId] = true; $sequences[$sequence] = true;
-            if ($node['execution_context'] !== 'production') continue;
-            $production[] = $node;
-            if ($routingId === $sourceRoutingId) $acceptedSource = $node;
-        }
-        if (count($production) !== $productionCount || ! $acceptedSource
-            || self::positiveFrozenInteger($acceptedSource['sequence']) !== $sourceSequence
-            || self::positiveFrozenInteger($acceptedSource['operation_id'] ?? null) !== $sourceOperationId) return false;
-        // Stock prebuilds instantiate execution only through their target. Their
-        // final instantiated task is not evidence of the full route's terminal
-        // production node; remaining work must enter a new WO via continuation.
-        foreach ($production as $node) {
-            if ((int) $node['sequence'] > (int) $acceptedSource['sequence']) return false;
-        }
-        return true;
-    }
-
-    private static function positiveFrozenInteger(mixed $value): ?int
-    {
-        if (! is_int($value) && ! is_string($value)) return null;
-        $integer = filter_var($value, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
-        return $integer === false ? null : $integer;
     }
 
     public function calculate(float $onHand, float $locked, float $defective, float $pending): float

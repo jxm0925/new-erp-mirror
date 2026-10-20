@@ -52,12 +52,12 @@
       </view>
     </view>
     <view class="stats-divider"></view>
-    <view class="stats-item" data-url="/pages/production/my-tasks/index" data-auth="production" bindtap="navTo">
+    <view class="stats-item" data-url="/pages/production/shipment-packing/index" data-auth="production" bindtap="navTo">
       <view class="stats-num stats-icon-num">
         <van-icon name="todo-list-o" size="38rpx" color="#1890ff" />
       </view>
       <view class="stats-label">
-        <text>工单任务</text>
+        <text>打包任务</text>
       </view>
     </view>
     <view class="stats-divider"></view>
@@ -132,25 +132,25 @@
           <view class="card-mark mark-blue"></view>
           <text class="card-title">生产执行与协同</text>
         </view>
-        <text class="card-subtitle">现场报工 · 任务流转</text>
+        <text class="card-subtitle">打包发货 · 日常协同</text>
       </view>
       <view class="action-grid">
-        <view class="action-item" data-url="/pages/production/workbench/index" data-auth="production" bindtap="navTo">
+        <view class="action-item" data-url="/pages/production/shipment-packing/index" data-auth="production" bindtap="navTo">
           <view class="action-icon-box icon-blue">
             <van-icon name="chart-trending-o" size="44rpx" color="#1890ff" />
           </view>
           <view class="action-text">
-            <text class="action-title">生产工作台</text>
-            <text class="action-desc">看板概况与生产趋势</text>
+            <text class="action-title">打包作业</text>
+            <text class="action-desc">发货单打包与质检</text>
           </view>
         </view>
-        <view class="action-item" data-url="/pages/production/my-tasks/index" data-auth="production" bindtap="navTo">
+        <view class="action-item" data-url="/pages/warehouse/workbench/index" data-auth="production" bindtap="navTo">
           <view class="action-icon-box icon-indigo">
             <van-icon name="send-gift-o" size="44rpx" color="#2f54eb" />
           </view>
           <view class="action-text">
-            <text class="action-title">我的生产任务</text>
-            <text class="action-desc">现场派工与领料报工</text>
+            <text class="action-title">仓库工作台</text>
+            <text class="action-desc">出入库与发货办理</text>
           </view>
         </view>
         <view class="action-item" data-url="/pages/my/report/index/index" data-auth="true" bindtap="navTo">

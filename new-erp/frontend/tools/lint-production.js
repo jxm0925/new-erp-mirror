@@ -7,10 +7,15 @@ const files = [
   'src/api/erp/production.js',
   'src/main.js',
   'src/App.vue',
-  'src/views/erp/production/ProductionDemandList.vue',
-  'src/views/erp/production/ProductionDemandDetail.vue',
-  'src/views/erp/production/WorkOrderList.vue',
-  'src/views/erp/production/WorkOrderDetail.vue',
+  'src/views/erp/production/ProductionOperationList.vue',
+  'src/views/erp/production/ProductionRoutingForm.vue',
+  'src/views/erp/production/ProductionPerformanceTemplates.vue',
+  'src/views/erp/sales/SalesOrderDetail.vue',
+  'src/views/erp/sales/SalesProductionConfirmation.vue',
+  'src/views/erp/sales/ShipmentPackingPanel.vue',
+  'src/views/erp/sales/PackingLaborPanel.vue',
+  'src/views/erp/inventory/InventoryAlertDetail.vue',
+  'src/views/erp/inventory/InventoryAlertWorkbench.vue',
 ]
 
 function fail(file, message) {

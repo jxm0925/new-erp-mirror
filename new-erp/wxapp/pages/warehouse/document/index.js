@@ -12,8 +12,7 @@ Page({
     returnSerialOpen: false, returnSerialLine: {}, returnSerialValue: {}, returnSerialExcluded: [], returnSerialConflict: false, canPacking: false },
   onLoad(options) {
     this.drafts = {}; this.returnLineCache = {}; this.returnSerialQueue = [];
-    const postedOutput = options.completed === '1' && ['output', 'cutting_product'].includes(options.kind);
-    this.setData({ kind: options.kind, id: Number(postedOutput ? options.parent : options.id), stage: options.stage || 'post', receiptId: postedOutput ? Number(options.id) : 0 });
+    this.setData({ kind: options.kind, id: Number(options.id), stage: options.stage || 'post' });
     this.load();
   },
   onUnload() { this.sequence = (this.sequence || 0) + 1; },
@@ -38,13 +37,12 @@ Page({
         }
         return row;
       });
-      const known = ({ purchase_receipt: ['purchase.allocate', 'purchase.post'], output: ['output.warehouse'], cutting_product: ['cutting.warehouse'],
-        production_return: ['production_return.receive'], sales_return: [this.data.stage === 'receive' ? 'sales_return.receive' : 'sales_return.post'],
+      const known = ({ purchase_receipt: ['purchase.allocate', 'purchase.post'], sales_return: [this.data.stage === 'receive' ? 'sales_return.receive' : 'sales_return.post'],
         sales_shipment: ['sales_shipment.post', 'sales_shipment.dispatch'], purchase_return: ['purchase_return.post'] })[this.data.kind] || [];
       const pendingAction = known.find(action => warehouse.pending(action, this.data.id)) || '';
       this.setData({ header, headerFields: view.header(this.data.kind, header, this.data.stage), lines, total: paged.total, page: paged.page, lastPage: paged.lastPage,
         canPacking: this.data.kind === 'sales_shipment' && (page.permissions()('sales_order.shipment.packing.execute') || page.permissions()('sales_order.shipment.packing.quality')),
-        hasMaterialCost: header.material_total_cost !== undefined && header.material_total_cost !== null, actions, mainAction, mainLabel: view.actionLabels[mainAction] || '', canAllocate: actions.includes('purchase.allocate'),
+actions, mainAction, mainLabel: view.actionLabels[mainAction] || '', canAllocate: actions.includes('purchase.allocate'),
         loading: false, pendingAction, receipt: result.receipt, readonly: !actions.length, item: header.item || {},
         quantity: this.data.quantity || page.quantity(header.remaining_qty), postingEligibility: result.posting_eligibility || null,
         packages: (result.packages && result.packages.data) || [], packagesTotal: (result.packages && result.packages.total) || 0, packagesLast: (result.packages && result.packages.last_page) || 1 });
@@ -53,7 +51,6 @@ Page({
   },
   turnPage(event) { const next = this.data.page + Number(event.currentTarget.dataset.delta); if (next > 0 && next <= this.data.lastPage && !this.data.busy) { this.setData({ page: next }); this.load(); } },
   turnPackages(event) { const next = this.data.packagesPage + Number(event.currentTarget.dataset.delta); if (next > 0 && next <= this.data.packagesLast) { this.setData({ packagesPage: next }); this.load(); } },
-  quantityInput(event) { if (!this.data.busy && !this.data.pendingAction) this.setData({ quantity: event.detail.value, fieldErrors: {} }); },
   returnInput(event) {
     if (this.data.busy || this.data.pendingAction) return;
     const { id, field } = event.currentTarget.dataset;
@@ -136,16 +133,7 @@ Page({
     if (this.data.pendingAction) return this.execute(this.data.pendingAction, {});
     const action = this.data.mainAction; if (!action) return;
     let payload = {};
-    if (['output.warehouse', 'cutting.warehouse'].includes(action)) {
-      const errors = {};
-      if (!this.data.locator.location_id) errors.locator = '请选择仓库和库位';
-      if (!(Number(this.data.quantity) > 0)) errors.quantity = '请输入大于0的本次入库数量';
-      if (!this.data.header.batch_no) errors.batch = '来源批次缺失，请核对原单据';
-      this.setData({ fieldErrors: errors }); if (Object.keys(errors).length) return;
-      payload = { expected_version: this.data.header.business_version, warehouse_id: this.data.locator.warehouse_id, location_id: this.data.locator.location_id,
-        batch_no: this.data.header.batch_no, [action === 'output.warehouse' ? 'posted_base_qty' : 'quantity']: this.data.quantity };
-    } else if (action === 'production_return.receive') payload = { expected_version: this.data.header.business_version };
-    else if (action === 'sales_return.receive') {
+    if (action === 'sales_return.receive') {
       const unreviewed = Object.values(this.drafts).filter(draft => draft.serialTracked && (!draft.serialReviewed || draft.serialReviewFingerprint !== view.returnSerialFingerprint(draft)));
       if (unreviewed.length) { this.returnSerialQueue = unreviewed.map(draft => Number(draft.sales_return_item_id)); this.showReturnSerial(this.returnSerialQueue[0], false); return; }
       let items;
@@ -159,8 +147,6 @@ Page({
     this.setData({ busy: true, error: '', allocationError: '', conflictOpen: false });
     return warehouse.submit(action, this.data.id, payload).then(result => {
       this.setData({ pendingAction: '', allocationOpen: false, allocations: [], allocationLine: null, fieldErrors: {}, locatorOpen: false, quantity: '', locator: {} });
-      if (action === 'output.warehouse') this.setData({ receiptId: result.posting_id });
-      if (action === 'cutting.warehouse') this.setData({ receiptId: result.receipt_id });
       if (action === 'sales_return.receive') { this.drafts = {}; this.returnLineCache = {}; this.returnSerialQueue = []; this.setData({ id: result.id, stage: 'post', page: 1, returnSerialOpen: false, returnSerialLine: {}, returnSerialValue: {}, returnSerialConflict: false }); }
       return this.load();
     }).catch(error => {

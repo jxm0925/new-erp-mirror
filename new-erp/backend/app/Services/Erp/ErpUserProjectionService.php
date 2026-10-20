@@ -32,17 +32,4 @@ final class ErpUserProjectionService
             })
             ->all();
     }
-
-    public function isProductionUser(int $userId): bool
-    {
-        return DB::table('erp_rbac_user_roles as ur')
-            ->join('erp_rbac_roles as r', 'r.id', '=', 'ur.role_id')
-            ->join('erp_rbac_role_permissions as rp', 'rp.role_id', '=', 'r.id')
-            ->join('erp_rbac_permissions as p', 'p.id', '=', 'rp.permission_id')
-            ->where('ur.user_legacy_id', $userId)
-            ->where('r.enabled', true)
-            ->where('p.enabled', true)
-            ->where('p.code', 'production.work_order.view')
-            ->exists();
-    }
 }

@@ -13,7 +13,7 @@ final class WarehouseWorkspaceController extends Controller
     public function index(Request $request, WarehouseWorkspaceService $service)
     {
         $filters = $request->validate(['direction' => 'nullable|in:all,inbound,outbound', 'status_group' => 'nullable|in:pending,completed',
-            'kind' => 'nullable|in:purchase_receipt,output,remnant,cutting_product,production_return,sales_return,picking,sales_shipment,purchase_return',
+            'kind' => 'nullable|in:purchase_receipt,sales_return,sales_shipment,purchase_return',
             'keyword' => 'nullable|string|max:120', 'date_from' => 'nullable|date',
             'date_to' => 'nullable|date'.($request->filled('date_from') ? '|after_or_equal:date_from' : ''),
             'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
@@ -61,8 +61,7 @@ final class WarehouseWorkspaceController extends Controller
     public function locators(Request $request)
     {
         [, $permissions] = $this->context($request);
-        $allowed = ['inventory.post.repair', 'production.output.warehouse', 'production.cutting.warehouse',
-            'production.material_picking.create', 'sales_return.receive'];
+        $allowed = ['inventory.post.repair', 'sales_return.receive'];
         if (! array_intersect($allowed, $permissions)) throw new WorkOrderDomainException('permission_denied', '没有选择入出库位置的权限。', 403);
         $filters = $request->validate(['mode' => 'required|in:warehouse,location', 'warehouse_id' => 'required_if:mode,location|integer|min:1',
             'keyword' => 'nullable|string|max:100', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);

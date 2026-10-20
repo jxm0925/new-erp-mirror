@@ -42,7 +42,6 @@ class SalesOrder extends MasterModel
 
     public function lines() { return $this->hasMany(SalesOrderLine::class); }
     public function fulfillments() { return $this->hasMany(SalesOrderFulfillment::class); }
-    public function productionRequirements() { return $this->hasMany(SalesOrderProductionRequirement::class); }
     public function versions() { return $this->hasMany(SalesOrderVersion::class); }
     public function logs() { return $this->hasMany(SalesOrderLog::class); }
     public function attachments() { return $this->hasMany(SalesOrderAttachment::class); }
@@ -53,5 +52,4 @@ class SalesOrder extends MasterModel
     public function salesChannel() { return $this->belongsTo(SalesChannel::class); }
     public function fundingPolicy() { return $this->belongsTo(SalesFundingPolicy::class); }
     public function paymentMethod() { return $this->belongsTo(PaymentMethod::class); }
-    public function activeProductionMasterOrder() { return $this->hasOne(ProductionMasterOrder::class, 'active_sales_order_id'); }
 }

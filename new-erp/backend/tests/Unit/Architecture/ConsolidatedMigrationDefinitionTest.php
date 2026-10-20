@@ -65,17 +65,6 @@ class ConsolidatedMigrationDefinitionTest extends TestCase
         $this->assertCount(750, $constraintNames);
     }
 
-    public function test_missing_live_unique_constraint_and_declared_checks_are_not_silently_dropped(): void
-    {
-        $d = InitialTableMigration::definitions();
-        $this->assertStringContainsString('UNIQUE KEY `prod_material_consumption_source_uq` (`output_record_id`,`source_holding_id`)', $d['erp_production_material_consumptions']::CREATE_SQL);
-        $checks = $d['erp_material_holdings']::DECLARED_CHECKS;
-        $this->assertArrayHasKey('cut_holding_authority_ck', $checks);
-        $this->assertStringContainsString('quantity >= 0 AND total_cost >= 0', $checks['cut_holding_authority_ck']);
-        $this->assertStringNotContainsString('CHECK', $d['erp_material_holdings']->createSql('8.0.12'));
-        $this->assertStringContainsString('cut_holding_authority_ck', $d['erp_material_holdings']->createSql('8.0.16'));
-    }
-
     private function identifiers(string $list): array
     {
         preg_match_all('/`([^`]+)`/', $list, $matches);

@@ -37,7 +37,6 @@ import PurchaseReceiptForm from './views/erp/purchase/PurchaseReceiptForm.vue'
 import PurchasePlanDetail from './views/erp/purchase/PurchasePlanDetail.vue'
 import PurchaseSimpleDetail from './views/erp/purchase/PurchaseSimpleDetail.vue'
 import InventoryBoard from './views/erp/inventory/InventoryBoard.vue'
-import ProductionPickingBoard from './views/erp/inventory/ProductionPickingBoard.vue'
 import InventoryAlertWorkbench from './views/erp/inventory/InventoryAlertWorkbench.vue'
 import InventoryAlertConfiguration from './views/erp/inventory/InventoryAlertConfiguration.vue'
 import InventoryAlertDetail from './views/erp/inventory/InventoryAlertDetail.vue'
@@ -50,23 +49,12 @@ import SalesCustomerList from './views/erp/sales/SalesCustomerList.vue'
 import SalesOrderForm from './views/erp/sales/SalesOrderForm.vue'
 import SalesOrderDetail from './views/erp/sales/SalesOrderDetail.vue'
 import SalesProductionConfirmation from './views/erp/sales/SalesProductionConfirmation.vue'
-import ProductionDemandList from './views/erp/production/ProductionDemandList.vue'
-import ProductionDemandDetail from './views/erp/production/ProductionDemandDetail.vue'
-import WorkOrderList from './views/erp/production/WorkOrderList.vue'
-import WorkOrderDetail from './views/erp/production/WorkOrderDetail.vue'
-import ProductionTaskWorkbench from './views/erp/production/ProductionTaskWorkbench.vue'
-import WorkOrderForm from './views/erp/production/WorkOrderForm.vue'
 import ProductionOperationList from './views/erp/production/ProductionOperationList.vue'
 import ProductionOperationForm from './views/erp/production/ProductionOperationForm.vue'
 import ProductionRoutingList from './views/erp/production/ProductionRoutingList.vue'
-import ProductionPerformanceBoard from './views/erp/production/ProductionPerformanceBoard.vue'
 import ProductionPerformanceTemplates from './views/erp/production/ProductionPerformanceTemplates.vue'
 import SalesShipmentBoard from './views/erp/sales/SalesShipmentBoard.vue'
 import ProductionRoutingForm from './views/erp/production/ProductionRoutingForm.vue'
-import ProductionExecutionMonitor from './views/erp/production/ProductionExecutionMonitor.vue'
-import CuttingList from './views/erp/production/CuttingList.vue'
-import CuttingCreate from './views/erp/production/CuttingCreate.vue'
-import CuttingDetail from './views/erp/production/CuttingDetail.vue'
 import ApprovalWorkbench from './views/erp/approval/ApprovalWorkbench.vue'
 import ApprovalTaskDetail from './views/erp/approval/ApprovalTaskDetail.vue'
 import ApprovalFlowList from './views/erp/approval/ApprovalFlowList.vue'
@@ -161,7 +149,6 @@ const router = new VueRouter({
     { path: '/purchase/returns/:id/detail', component: ReturnDetail, props: { kind: 'purchase' }, meta: { permission: 'purchase_return.view' } },
     { path: '/inventory', redirect: '/inventory/posting' },
     { path: '/inventory/posting', component: InventoryBoard, meta: { permission: 'inventory.posting' } },
-    { path: '/inventory/production-picking', component: ProductionPickingBoard, meta: { permission: ['production.material_picking.view', 'production.material_receipt.view'] } },
     { path: '/inventory/balances', component: InventoryBoard, meta: { permission: 'inventory.balance' } },
     { path: '/inventory/transactions', component: InventoryBoard, meta: { permission: 'inventory.transaction' } },
     { path: '/inventory/adjustments', component: InventoryBoard, meta: { permission: 'inventory.adjustment' } },
@@ -181,27 +168,16 @@ const router = new VueRouter({
     { path: '/sales/orders/:id/edit', component: SalesOrderForm },
     { path: '/sales/orders/:id/detail', component: SalesOrderDetail },
     { path: '/sales/orders/:id/production-confirmation', component: SalesProductionConfirmation },
-    { path: '/production/demands', component: ProductionDemandList, meta: { permission: 'production.demand.view' } },
-    { path: '/production/demands/:id', component: ProductionDemandDetail, meta: { permission: 'production.demand.view' } },
-    { path: '/production/work-orders', component: WorkOrderList, meta: { permission: 'production.work_order.view' } },
-    { path: '/production/work-orders/create', component: WorkOrderForm, meta: { permission: 'production.work_order.create' } },
-    { path: '/production/work-orders/:id', component: WorkOrderDetail, meta: { permission: 'production.work_order.view' } },
-    { path: '/production/tasks', component: ProductionTaskWorkbench, meta: { permission: 'production.task.view' } },
     { path: '/production/operations', component: ProductionOperationList, meta: { permission: 'production.operation.view' } },
     { path: '/production/operations/new', redirect: { path: '/production/operations', query: { create: '1' } }, meta: { permission: 'production.operation.create' } },
     { path: '/production/operations/:id/edit', redirect: to => ({ path: '/production/operations', query: { edit: to.params.id } }), meta: { permission: 'production.operation.edit' } },
     { path: '/production/operations/:id', component: ProductionOperationForm, meta: { permission: 'production.operation.view' } },
     { path: '/production/routings', component: ProductionRoutingList, meta: { permission: 'production.routing.view' } },
-    { path: '/production/performance', component: ProductionPerformanceBoard, meta: { permission: 'production.performance.view' } },
     { path: '/production/performance/templates', component: ProductionPerformanceTemplates, meta: { permission: 'production.performance.manage' } },
     { path: '/sales/shipments', component: SalesShipmentBoard, meta: { permission: ['sales_order.shipment.view', 'sales_order.shipment.packing.execute', 'sales_order.shipment.packing.quality'] } },
     { path: '/production/routings/new', component: ProductionRoutingForm, meta: { permission: 'production.routing.create' } },
     { path: '/production/routings/:id/edit', component: ProductionRoutingForm, meta: { permission: 'production.routing.edit' } },
     { path: '/production/routings/:id', component: ProductionRoutingForm, meta: { permission: 'production.routing.view' } },
-    { path: '/production/execution-monitor', component: ProductionExecutionMonitor, meta: { permission: 'production.unit.view' } },
-    { path: '/production/cutting', component: CuttingList, meta: { permission: 'production.cutting.view' } },
-    { path: '/production/cutting/create', component: CuttingCreate, meta: { permission: 'production.cutting.plan' } },
-    { path: '/production/cutting/:id', component: CuttingDetail, meta: { permission: 'production.cutting.view' } },
     { path: '/approvals', redirect: '/approvals/tasks' },
     { path: '/approvals/tasks', component: ApprovalWorkbench, meta: { permission: 'approval.task.view' } },
     { path: '/approvals/processed', redirect: { path: '/approvals/tasks', query: { scope: 'processed' } } },

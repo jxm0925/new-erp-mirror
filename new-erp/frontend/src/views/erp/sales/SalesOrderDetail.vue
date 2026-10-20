@@ -303,58 +303,6 @@ Design status: 新增“订单阶段提示条”（基础档案风格），其�
         <el-tab-pane v-if="$can('sales_order.view') && $can('sales_order.amount.view') && $can('finance.view')" label="采购关联" name="finance">
           <div class="tab-pane-content"><sales-order-finance-panel v-if="activeTab === 'finance' && order.id" :order-id="order.id" /></div>
         </el-tab-pane>
-        <!-- Tab 1: 工单与工序跟踪 -->
-        <el-tab-pane name="work_orders">
-          <span slot="label">
-            <i class="el-icon-c-scale-to-original" /> 工单执行跟踪
-            <span v-if="(order.work_order_tracking || []).length" class="tab-badge-num">{{ (order.work_order_tracking || []).length }}</span>
-          </span>
-          <div class="tab-pane-content">
-            <div class="tab-pane-header">
-              <span class="pane-subtitle">工单只读跟踪；不在销售订单草稿阶段创建工单。</span>
-            </div>
-            <div v-if="(order.work_order_tracking || []).length" class="work-order-grid">
-              <div v-for="work in order.work_order_tracking" :key="work.work_order_no" class="work-order-card-item">
-                <div class="wo-head">
-                  <el-button v-if="work.can_view" type="text" class="wo-no font-mono font-semibold" @click="openTrackedWorkOrder(work)">{{ work.work_order_no }}</el-button><span v-else class="wo-no font-mono font-semibold">{{ work.work_order_no }}</span>
-                  <el-tag size="mini" type="info">订单行 {{ work.line_no }}</el-tag>
-                </div>
-                <div class="wo-body">
-                  <div class="wo-field">
-                    <span class="label">当前工序</span>
-                    <b class="value">{{ work.current_process_name || '尚无进行中的工序' }}</b>
-                  </div>
-                  <div class="wo-field">
-                    <span class="label">工单进度</span>
-                    <el-tag size="mini" type="success" effect="plain">{{ work.progress_text || '-' }}</el-tag>
-                  </div>
-                  <div class="wo-field">
-                    <span class="label">生产准备</span>
-                    <b class="value">{{ preparationText(work.preparation_status, work.preparation_ready) }}<template v-if="work.material_preparation_status"> · {{ materialPreparationText(work.material_preparation_status) }}</template></b>
-                  </div>
-                  <div v-if="work.component_progress && work.component_progress.work_order_count" class="wo-field">
-                    <span class="label">部件进度</span><b class="value">{{ componentProgressText(work.component_progress) }}</b>
-                  </div>
-                  <div v-for="(issue, index) in (work.preparation_issues || [])" :key="index" class="wo-field">
-                    <span class="label">阻塞原因</span><b class="value">{{ issue.message }}</b>
-                  </div>
-                </div>
-                <div v-if="(work.component_work_orders || []).length" class="wo-children">
-                  <div class="wo-children-title">部件子工单（{{ work.component_work_orders.length }}）</div>
-                  <div v-for="child in work.component_work_orders" :key="child.work_order_id" class="wo-child-row">
-                    <el-button v-if="child.can_view" type="text" class="wo-child-no font-mono" @click="openTrackedWorkOrder(child)">{{ child.work_order_no }}</el-button><span v-else class="wo-child-no font-mono">{{ child.work_order_no }}</span>
-                    <span class="wo-child-item" :title="child.item_name">{{ child.item_name || '-' }} × {{ Number(child.target_qty).toLocaleString('zh-CN') }}{{ child.unit_name || '' }}</span>
-                    <el-tag size="mini" :type="childStatusType(child.status)" effect="plain">{{ child.status_label }}</el-tag>
-                    <span class="wo-child-progress">{{ childProgressText(child) }}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <el-empty v-else :image-size="48" description="当前订单尚未生成生产工单" /><el-pagination v-if="tracking.total > tracking.per_page" background layout="total, prev, pager, next" :current-page="tracking.current_page" :page-size="tracking.per_page" :total="tracking.total" @current-change="loadTracking" />
-            <ProductionLaborSummaryPanel v-if="activeTab === 'work_orders' && order.id && $can('production.labor_stats.view')" :key="`labor-${order.id}-${order.business_version}`" scope-type="sales_order" :scope-id="Number(order.id)" />
-          </div>
-        </el-tab-pane>
-
         <!-- Tab 2: 合同附件与图纸技术资料 -->
         <el-tab-pane name="attachments">
           <span slot="label">
@@ -567,16 +515,13 @@ import cachedPageRoute from '@/utils/cachedPageRoute'
 import { confirmSalesOrder, formalConfirmSalesOrder, cancelSalesOrder, deleteSalesOrderAttachment, deleteSalesOrderDraft, downloadSalesOrderAttachment, getSalesOrder, listSalesOrderChanges, lockSalesOrderInventory } from '@/api/erp/sales'
 import SalesOrderAttachmentPreviewDialog from '@/components/sales/SalesOrderAttachmentPreviewDialog.vue'
 import SalesOrderFinancePanel from '@/components/sales/SalesOrderFinancePanel.vue'
-import ProductionLaborSummaryPanel from '../production/ProductionLaborSummaryPanel.vue'
 import { statusTag, statusText, shipmentStatusText } from '@/utils/erpStatus'
 
 export default {
   mixins: [cachedPageRoute],
-  components: { SalesOrderAttachmentPreviewDialog, SalesOrderFinancePanel, ProductionLaborSummaryPanel },
+  components: { SalesOrderAttachmentPreviewDialog, SalesOrderFinancePanel },
   data: () => ({
-    activeTab: 'work_orders',
-    tracking: { current_page: 1, per_page: 10, total: 0 },
-    trackingSequence: 0,
+    activeTab: 'attachments',
     order: {},
     previewVisible: false,
     previewFile: null,
@@ -630,7 +575,7 @@ export default {
       if (this.order.order_status !== 'confirmed') return null
       if (actions.production_released) return { type: 'warning', icon: 'el-icon-lock', text: '工单已发布：订单不能随意修改。如需修改，请点击“申请修改”，说明原因并提交，经相关负责人审核通过后才会生效。' }
       if (['pending', 'blocked'].includes(this.order.production_confirm_status)) return { type: 'success', icon: 'el-icon-s-flag', text: '核实期：订单已确认，尚未生成工单，此阶段可直接修改订单。核实无误后，请点击“生产确认”生成待发布工单。' }
-      if (this.order.production_confirm_status === 'confirmed') return { type: 'success', icon: 'el-icon-s-flag', text: '待发布工单已生成：工单发布前仍可直接修改订单（修改后需重新生产确认），工单一旦发布，修改须经审核。' }
+      if (this.order.production_confirm_status === 'confirmed') return { type: 'success', icon: 'el-icon-s-flag', text: '生产确认完成：已记录需生产数量，订单仍可直接修改（修改后需重新生产确认）。' }
       return null
     },
     currentVersion() { return Math.max(1, ...(this.order.versions || []).map(item => Number(item.version_no || 0))) },
@@ -672,7 +617,6 @@ export default {
       try { actor = JSON.parse(localStorage.getItem('erp_user') || '{}').legacy_id || 0 } catch (_) { /* Local profile unavailable. */ }
       this.inventoryLockStorageKey = `erp_pending_sales_inventory_lock_${actor}_${id}`
       try { this.inventoryLockPending = JSON.parse(localStorage.getItem(this.inventoryLockStorageKey) || 'null') } catch (_) { this.inventoryLockPending = null }
-      this.tracking = data.work_order_tracking_pagination || { current_page: 1, per_page: 10, total: (data.work_order_tracking || []).length }
       await this.loadChanges(1)
       if (this.$route.query.tab === 'logs') {
         this.activeTab = 'logs'
@@ -681,30 +625,6 @@ export default {
         this.activeTab = 'changes'
         this.scrollToChanges()
       }
-    },
-    preparationText(value, ready) { if (value === 'prepared' && ready === false) return '准备未齐'; return ({ pending: '待准备', blocked: '准备受阻', prepared: '部件已准备', not_required: '无需自产部件', cancelled: '已取消', legacy_snapshot: '历史工单' })[value] || '待核对' },
-    materialPreparationText(value) { return ({ active: '核料完成', published: '已发布', schema_not_ready: '准备结构未就绪', not_prepared: '待核料', ready: '核料完成', prepared: '核料完成', blocked: '核料受阻', pending: '待核料', not_required: '无需用料', released: '已发布' })[value] || '待核料' },
-    componentProgressText(progress) {
-      const states = (progress.states || []).map(row => `${row.status_label} ${row.count}`).join('、')
-      const operations = progress.total_operation_count ? `；工序完成 ${progress.completed_operation_count}/${progress.total_operation_count}` : ''
-      const current = progress.current_process_name ? `；正在进行：${progress.current_process_name}` : ''
-      return `${progress.work_order_count} 张部件工单${states ? '（' + states + '）' : ''}${operations}${current}`
-    },
-    childStatusType(status) { return ({ COMPLETED: 'success', IN_PROGRESS: 'warning', RELEASED: '', CANCELLED: 'info' })[status] || 'info' },
-    childProgressText(child) {
-      const ops = child.total_operation_count ? `工序 ${child.completed_operation_count}/${child.total_operation_count}` : '未开工'
-      return child.current_process_name ? `${ops} · ${child.current_process_name}` : ops
-    },
-    openTrackedWorkOrder(work) { if (work.can_view === true && work.work_order_id) this.$router.push(`/production/work-orders/${work.work_order_id}`) },
-    async loadTracking(page) {
-      const id = this.order.id
-      const sequence = ++this.trackingSequence
-      try {
-        const { data } = await getSalesOrder(id, { tracking_page: page, tracking_per_page: this.tracking.per_page })
-        if (sequence !== this.trackingSequence || id !== this.order.id) return
-        this.$set(this.order, 'work_order_tracking', data.work_order_tracking || [])
-        this.tracking = data.work_order_tracking_pagination || this.tracking
-      } catch (error) { if (sequence === this.trackingSequence) this.$message.error(error.userMessage || '工单跟踪加载失败') }
     },
     async doConfirm() {
       // 一步确认：服务端先做确认前检查，通过后立即正式确认；未通过不改变订单状态。

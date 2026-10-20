@@ -9,9 +9,7 @@ use App\Models\Erp\{
     SalesOrderFulfillment,
     SalesOrderLine,
     SalesOrderLog,
-    SalesOrderProductionRequirement,
-    Unit,
-    WorkOrder
+    Unit
 };
 use App\Exceptions\Erp\WorkOrderDomainException;
 use Illuminate\Database\QueryException;
@@ -28,7 +26,6 @@ class SalesOrderFulfillmentApplicationService
         private readonly InventoryReservationService $inventoryReservations,
         private readonly SalesOrderFundingGateService $fundingGates,
         private readonly SalesOrderSnapshotService $snapshots,
-        private readonly WorkOrderApplicationService $workOrders,
     ) {}
 
     public function confirmOrderAndFulfill(int $orderId, string $operatorName, object $operator): SalesOrder
@@ -38,7 +35,7 @@ class SalesOrderFulfillmentApplicationService
             if ($current->order_status === 'confirmed'
                 && in_array($current->production_confirm_status, ['confirmed', 'blocked'], true)
                 && $current->fulfillments->where('demand_status', 'confirmed')->isNotEmpty()) {
-                return $current->fresh(['lines', 'fulfillments', 'productionRequirements', 'activeProductionMasterOrder.workOrders']);
+                return $current->fresh(['lines', 'fulfillments']);
             }
             if ($current->order_status === 'draft') {
                 $this->confirmOrder($orderId, $operatorName);
@@ -131,9 +128,6 @@ class SalesOrderFulfillmentApplicationService
             }
 
             SalesOrderFulfillment::where('sales_order_id', $order->id)->delete();
-            SalesOrderProductionRequirement::where('sales_order_id', $order->id)
-                ->where('is_active', true)->whereIn('requirement_status', ['draft', 'blocked'])
-                ->update(['requirement_status' => 'cancelled', 'is_active' => false, 'closed_qty' => DB::raw('remaining_qty')]);
 
             $order->update([
                 'order_status' => 'confirmed',
@@ -256,9 +250,6 @@ class SalesOrderFulfillmentApplicationService
                 'undetermined_base_qty' => $this->isPhysicalLine($line) ? $this->salesToBaseQuantity($line, $quantities['undetermined_qty']) : null,
                 ...$quantities,
                 'blocking_reason' => implode('；', $blocking),
-                // 在制备货工单只做提示，是否等它入库由销售决定（调小本次确认数量，入库后再确认剩余数量）。
-                'in_progress_stock_prebuilds' => $this->isPhysicalLine($line) && ! SalesOrderFulfillmentPolicy::isPurchaseLine($line)
-                    && $order->production_confirm_status !== 'confirmed' ? $this->inProgressStockPrebuilds($line) : [],
                 'generated_result' => $this->resultTextFromQuantities($quantities),
                 'data_readiness' => [
                     'bom' => $productionQty <= 0 ? 'not_required' : (($bom['status'] ?? null) === 'matched' ? 'ready' : 'missing'),
@@ -347,16 +338,9 @@ class SalesOrderFulfillmentApplicationService
                     'processing_started_at' => now(),
                 ]);
                 $batchFulfillmentIds = [];
-                $batchDemandIds = [];
 
                 SalesOrderFulfillment::where('sales_order_id', $order->id)
                     ->where('demand_status', 'pending')->delete();
-                $activeDemandsByLine = SalesOrderProductionRequirement::query()
-                    ->where('sales_order_id', $order->id)
-                    ->where('is_active', true)
-                    ->lockForUpdate()
-                    ->get()
-                    ->groupBy('sales_order_line_id');
                 $prepared = [];
                 $plannedByBalance = [];
                 foreach ($order->lines->sortBy('line_no') as $line) {
@@ -378,11 +362,6 @@ class SalesOrderFulfillmentApplicationService
                         ->where('demand_status', 'confirmed')->lockForUpdate()->get();
                     $alreadyFulfilled = $priorFulfillments
                         ->sum(fn (SalesOrderFulfillment $record) => $this->fulfillmentSalesQuantity($record, $line));
-                    $priorProductionQty = $priorFulfillments->where('fulfillment_type', 'production')
-                        ->sum(fn (SalesOrderFulfillment $record) => $this->fulfillmentSalesQuantity($record, $line));
-                    if ((float) $activeDemandsByLine->get($line->id, collect())->sum('production_qty') > $priorProductionQty + 0.00000001) {
-                        throw ValidationException::withMessages(['production_requirements' => "第 {$line->line_no} 行历史有效生产需求超过已确认生产数量，请先核对原关联，不能重复扩大生产。"]);
-                    }
                     $remainingSalesQty = max(0, $this->requiredQuantity($line) - $alreadyFulfilled);
                     $quantities = $this->validateDecisionQuantities($line, $row, $remainingSalesQty);
                     $currentConfirmQty = (float) $quantities['inventory_qty'] + (float) $quantities['production_qty']
@@ -433,7 +412,6 @@ class SalesOrderFulfillmentApplicationService
 
                 foreach ($order->lines as $line) {
                     $quantities = $prepared[$line->id]['quantities'];
-                    $newProductionFulfillments = [];
                     foreach (SalesOrderFulfillmentPolicy::TYPES as $type) {
                         $salesQuantity = $quantities[$type.'_qty'];
                         if ($salesQuantity <= 0) continue;
@@ -507,7 +485,6 @@ class SalesOrderFulfillmentApplicationService
                                 'remark' => $remark,
                             ]);
                             $batchFulfillmentIds[] = (int) $fulfillment->id;
-                            if ($type === 'production') $newProductionFulfillments[] = $fulfillment;
                         }
                     }
 
@@ -529,65 +506,6 @@ class SalesOrderFulfillmentApplicationService
                         'no_delivery_qty' => $lineTotals['no_delivery_qty'],
                         'undetermined_qty' => $lineTotals['undetermined_qty'],
                     ]);
-
-                    if ($quantities['production_qty'] > 0) {
-                        $bom = $prepared[$line->id]['bom'] ?? [];
-                        $status = ($bom['status'] ?? null) === 'matched' ? 'ready' : 'blocked';
-                        $productionBaseQty = $this->salesToBaseQuantity($line, $quantities['production_qty']);
-                        $demandAttributes = [
-                            'requirement_no' => $this->numbers->next('sales_production_requirement', 'SOPR'),
-                            'requirement_version' => 1 + (int) SalesOrderProductionRequirement::where('sales_order_line_id', $line->id)->max('requirement_version'),
-                            'sales_order_id' => $order->id,
-                            'sales_order_line_id' => $line->id,
-                            'product_id' => $line->product_id,
-                            'sku_id' => $line->sku_id,
-                            'item_id' => $line->item_id,
-                            'base_unit_id' => $line->item_base_unit_id,
-                            'base_unit_name_snapshot' => $line->item_base_unit_name_snapshot,
-                            'production_qty' => $quantities['production_qty'],
-                            'item_base_required_qty' => $productionBaseQty,
-                            'allocated_qty' => 0,
-                            'consumed_qty' => 0,
-                            'remaining_qty' => $quantities['production_qty'],
-                            'closed_qty' => 0,
-                            'requirement_status' => $status,
-                            'is_active' => true,
-                            'item_match_status' => $line->item_match_status,
-                            'configuration_snapshot' => $line->configuration_snapshot,
-                            'bom_snapshot' => $bom['bom_snapshot'] ?? null,
-                            'bom_match_status' => $bom['status'] ?? 'blocked',
-                            'bom_block_reason' => $bom['block_reason'] ?? null,
-                            'bom_id' => $bom['bom_id'] ?? null,
-                            'bom_version_id' => $bom['bom_version_id'] ?? null,
-                            'bom_version' => $bom['bom_version'] ?? null,
-                            'routing_snapshot' => null,
-                            'routing_match_status' => 'not_required_current_stage',
-                            'routing_block_reason' => null,
-                            'routing_id' => null,
-                            'routing_version_id' => null,
-                            'drawing_snapshot' => $line->drawing_snapshot,
-                            'technical_attachment_snapshot' => $this->attachmentSnapshot($line),
-                            'inspection_snapshot' => $line->inspection_snapshot,
-                            'required_delivery_date' => $order->required_delivery_date,
-                            'is_urgent' => $order->is_urgent,
-                            'is_delay' => $order->is_delay,
-                            'delay_date' => $order->delay_date,
-                            'is_ready_for_work_order' => false,
-                            'confirmed_at' => now(),
-                            'confirmed_by' => $operatorName,
-                            'remark' => $remark,
-                        ];
-                        // A different command is an additional confirmation batch, never a
-                        // replacement of an older batch merely because its quantity is equal.
-                        $newDemand = SalesOrderProductionRequirement::create($demandAttributes);
-                        $batchDemandIds[] = (int) $newDemand->id;
-                        foreach ($newProductionFulfillments as $fulfillment) {
-                            $snapshot = (array) $fulfillment->match_snapshot;
-                            $snapshot['production_requirement_id'] = (int) $newDemand->id;
-                            $fulfillment->update(['match_snapshot' => $snapshot]);
-                        }
-                        $this->workOrders->ensureAutomaticSalesDraft($newDemand, $operator);
-                    }
                 }
 
                 $remainingAfterConfirmation = $order->lines->sum(function (SalesOrderLine $line) {
@@ -610,13 +528,13 @@ class SalesOrderFulfillmentApplicationService
                     'business_version' => (int) $order->business_version + 1,
                 ]);
                 $this->log($order, 'production_confirm', 'pending', $productionConfirmStatus, $automatic
-                    ? '销售订单已按实时库存自动锁定备货数量，并建立唯一主生产工单与所需待发布生产工单。'
-                    : '订单生产确认已保存库存备货和生产需求，并建立唯一主生产工单与所需待发布生产工单。', $operatorName);
+                    ? '销售订单已按实时库存自动锁定备货数量，并记录需生产数量。'
+                    : '订单生产确认已保存库存备货和需生产数量。', $operatorName);
                 $ledger->update(['status' => 'succeeded', 'processing_finished_at' => now(), 'response_snapshot' => [
                     'sales_order_id' => $orderId, 'business_version' => (int) $order->business_version,
-                    'fulfillment_ids' => $batchFulfillmentIds, 'production_requirement_ids' => $batchDemandIds,
+                    'fulfillment_ids' => $batchFulfillmentIds,
                 ]]);
-                $result = $order->fresh(['lines', 'fulfillments', 'productionRequirements', 'activeProductionMasterOrder.workOrders']);
+                $result = $order->fresh(['lines', 'fulfillments']);
                 $result->setAttribute('confirmation_command_result', $ledger->response_snapshot);
                 return $result;
             }, 5);
@@ -636,33 +554,9 @@ class SalesOrderFulfillmentApplicationService
         if ($command->status !== 'succeeded' || ! is_array($command->response_snapshot)) {
             throw new WorkOrderDomainException('command_processing', '相同确认命令尚未完成，请稍后继续原操作。', 409);
         }
-        $result = SalesOrder::with(['lines', 'fulfillments', 'productionRequirements', 'activeProductionMasterOrder.workOrders'])->findOrFail($orderId);
+        $result = SalesOrder::with(['lines', 'fulfillments'])->findOrFail($orderId);
         $result->setAttribute('confirmation_command_result', $command->response_snapshot);
         return $result;
-    }
-
-    /** 同一产品正在做、还没入库的公共备货工单（不含部件子工单）。 */
-    private function inProgressStockPrebuilds(SalesOrderLine $line): array
-    {
-        if (! $line->item_id) return [];
-        $labels = ['WAIT_RELEASE' => '待发布', 'RELEASED' => '已发布', 'IN_PROGRESS' => '生产中'];
-        return WorkOrder::query()->where('source_type', 'stock_prebuild')->where('stocking_purpose', 'common_inventory')
-            ->whereNull('assembly_component_demand_id')->where('output_item_id', $line->item_id)
-            ->whereIn('status', array_keys($labels))->orderByRaw('planned_date IS NULL')->orderBy('planned_date')->orderBy('id')->limit(10)
-            ->get(['id', 'work_order_no', 'status', 'target_base_qty', 'planned_date', 'target_routing_operation_id', 'routing_snapshot'])
-            ->map(function (WorkOrder $wo) use ($labels): array {
-                $posted = (float) DB::table('erp_production_output_warehouse_postings as post')
-                    ->join('erp_production_output_records as output', 'output.id', '=', 'post.output_record_id')
-                    ->where('output.work_order_id', $wo->id)->where('post.status', 'POSTED')->sum('post.posted_base_qty');
-                $target = collect(data_get($wo->routing_snapshot, 'operations', []))
-                    ->firstWhere('routing_operation_id', (int) $wo->target_routing_operation_id);
-                return ['id' => (int) $wo->id, 'work_order_no' => $wo->work_order_no, 'status' => $wo->status,
-                    'status_label' => $labels[$wo->status] ?? $wo->status,
-                    'target_base_qty' => (float) $wo->target_base_qty,
-                    'pending_base_qty' => max(0, round((float) $wo->target_base_qty - $posted, 8)),
-                    'target_operation_name' => $target['operation_name'] ?? null,
-                    'planned_date' => optional($wo->planned_date)->format('Y-m-d')];
-            })->filter(fn (array $row): bool => $row['pending_base_qty'] > 0)->values()->all();
     }
 
     private function addPlannedAllocations(array &$plannedByBalance, array $allocations): void
@@ -859,12 +753,6 @@ class SalesOrderFulfillmentApplicationService
     {
         return SalesOrderAttachment::where('sales_order_line_id', $line->id)->where('status', 'active')
             ->whereIn('attachment_type', ['design_drawing', 'technical_file', 'customer_technical_agreement'])->exists();
-    }
-
-    private function attachmentSnapshot(SalesOrderLine $line): array
-    {
-        return SalesOrderAttachment::where('sales_order_line_id', $line->id)->where('status', 'active')
-            ->get(['id', 'attachment_type', 'original_name', 'url', 'version_no'])->toArray();
     }
 
     private function log(SalesOrder $order, string $action, ?string $before, ?string $after, string $content, string $operator): void

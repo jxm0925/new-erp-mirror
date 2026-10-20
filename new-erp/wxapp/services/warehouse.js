@@ -67,7 +67,4 @@ module.exports = {
   queue: query => get('inventory/warehouse-workspace', query),
   locators: query => get('inventory/warehouse-workspace/locators', query),
   document: (kind, id, query) => get(`inventory/warehouse-workspace/documents/${kind}/${id}`, query),
-  remnants: (id, query) => get(`production/cutting/orders/${id}/remnants`, query),
-  remnantReceipt: (id, receipt) => get(`production/cutting/orders/${id}/remnant-receipts/${receipt}`),
-  cuttingOrder: id => get(`production/cutting/orders/${id}/execution`, { page: 1, per_page: 1 }),
 };

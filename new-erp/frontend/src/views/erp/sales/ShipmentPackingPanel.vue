@@ -11,7 +11,6 @@
     <div v-for="line in blockedProductionLines" :key="'continuation-' + line.shipment_line_id" class="packing-continuation">
       <strong>{{ line.product_name || line.item_name }}</strong>
       <p v-for="message in line.production_blockers" :key="message">{{ message }}</p>
-      <el-button v-for="row in line.continuations" v-if="row.target_work_order_id && $can('production.work_order.view')" :key="row.source_output_record_id + ':' + (row.inventory_serial_id || 0)" type="text" @click="openContinuation(row)">{{ row.continuation_mode === 'same_work_order' ? '办理原工单续接领用' : '绑定库存并继续生产' }}</el-button>
     </div>
     <el-table :data="operations" border size="small" class="packing-table">
       <el-table-column prop="package_no" label="包裹编号" min-width="160" />
@@ -81,7 +80,7 @@
       <div v-for="content in activeOperation.contents" :key="content.id" class="packing-balance">{{ content.product_name || content.item_name }} · {{ qty(content.base_qty) }} · {{ content.packaging_scheme_name }}<div v-if="content.serial_nos.length">{{ content.serial_nos.join('、') }}</div></div>
       <h4>参与人员及实际工时</h4>
       <el-table :data="activeOperation.participants || []" border size="small"><el-table-column prop="name" label="人员" /><el-table-column label="身份"><template slot-scope="{ row }">{{ row.role === 'OWNER' ? '接单人' : '协同人' }}{{ row.is_active ? '' : '（已移除）' }}</template></el-table-column><el-table-column prop="actual_labor_minutes" label="实际工时（分钟）" /><el-table-column label="计时状态"><template slot-scope="{ row }">{{ row.is_timing ? '计时中' : '已暂停' }}</template></el-table-column></el-table>
-      <ProductionLaborSummaryPanel v-if="activeOperation.labor" :labor="activeOperation.labor" :busy="busy || laborLoading || pendingOperation" @page="loadPackingLabor" />
+      <PackingLaborPanel v-if="activeOperation.labor" :labor="activeOperation.labor" :busy="busy || laborLoading || pendingOperation" @page="loadPackingLabor" />
       <h4>实际用料</h4>
       <el-table :data="activeOperation.materials || []" border size="small"><el-table-column prop="item_name" label="物料" /><el-table-column prop="base_qty" label="实际耗用数量" /><el-table-column label="裁切尺寸 / 用料备注" min-width="180"><template slot-scope="{ row }">{{ usageText(row.usage_snapshot) }}</template></el-table-column><el-table-column prop="posted_at" label="过账时间" /></el-table>
       <el-alert v-if="operationError" :title="operationError" type="error" :closable="false" />
@@ -159,7 +158,7 @@
 <script>
 import { getShipmentPacking, configureShipmentPacking, listPackingOperations, getPackingOperation, actPackingOperation, listPackingPeople, listPackingMaterials, listPackingIdentities, listPackingRoutings, pendingPackingCommand } from '@/api/erp/shipment-packing'
 import { defaultPerformanceShares, ratioToPercent, buildPerformanceShares, performanceSelectionTotals } from '@/utils/production-performance.mjs'
-import ProductionLaborSummaryPanel from '../production/ProductionLaborSummaryPanel.vue'
+import PackingLaborPanel from './PackingLaborPanel.vue'
 
 let localId = 0
 const uid = () => `packing-${++localId}`
@@ -172,7 +171,7 @@ const tree = (rows, label) => {
 }
 export default {
   name: 'ShipmentPackingPanel',
-  components: { ProductionLaborSummaryPanel },
+  components: { PackingLaborPanel },
   props: { shipmentId: { type: Number, default: 0 }, shipmentStatus: String, executionOnly: { type: Boolean, default: false } },
   data: () => ({ loading: false, busy: false, error: '', page: 1, total: 0, operations: [], requirements: [], packingVersion: 1, loadSequence: 0,
     planOpen: false, planReady: false, planPackages: [], planError: '', pendingPlan: false, routeSelections: {}, routeSequence: 0, routePicker: { visible: false, line: null, keyword: '', page: 1, rows: [], total: 0, current: null, loading: false, error: '' }, operationOpen: false, activeOperation: {}, operationError: '', pendingOperation: false, laborLoading: false, laborSequence: 0,
@@ -210,12 +209,6 @@ export default {
   beforeDestroy () { this.loadSequence++; this.resetSelectors() },
   methods: {
     usageText (snapshot) { const area = snapshot?.area_usage; if (area) return `木板 ${area.board_length_mm}×${area.board_width_mm} mm：用料 ${area.used_area_m2} m²，扣 ${Number(area.consumed_boards)} 张，${area.remnant === 'loss' ? '损耗 ' + area.loss_area_m2 + ' m²' : '余板回库'}${snapshot.remark ? '；' + snapshot.remark : ''}`; const d = snapshot?.dimensions || {}; const size = [['length_mm', '长'], ['width_mm', '宽'], ['thickness_mm', '厚']].filter(([key]) => d[key]).map(([key, label]) => `${label}${d[key]} mm`).join(' × '); return [size, snapshot?.remark].filter(Boolean).join('；') || '—' },
-    openContinuation (row) {
-      this.$router.push({ path: `/production/work-orders/${row.target_work_order_id}`, query: {
-        continuation_output_id: String(row.source_output_record_id), continuation_balance_id: String(row.inventory_balance_id || ''),
-        continuation_serial_id: String(row.inventory_serial_id || '')
-      } })
-    },
     isPublicSnapshot (value) { return value === true || value === 1 || value === '1' },
     resetSelectors () { this.operationSequence = (this.operationSequence || 0) + 1; this.peopleSequence = (this.peopleSequence || 0) + 1; this.materialSequence = (this.materialSequence || 0) + 1; this.identitySequence = (this.identitySequence || 0) + 1; this.laborSequence++; this.routeSequence++; this.routePicker.visible = false; this.laborLoading = false; this.peopleOpen = false; this.peopleShares = {}; this.peopleShareError = ''; this.materialsOpen = false; this.identityOpen = false; this.inspectionOpen = false },
     qty (value) { return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 8 }) },

@@ -98,7 +98,6 @@ class SalesOrderDraftService
     {
         abort_if($order->order_status !== 'draft', 422, '只有草稿订单允许删除');
         abort_if($order->fulfillments()->exists(), 422, '订单已产生库存、生产或交付记录，不能删除');
-        abort_if($order->productionRequirements()->exists(), 422, '订单已产生生产需求，不能删除');
         abort_if(DB::table('erp_inventory_reservations')->where('source_order_id', $order->id)->exists(), 422, '订单已产生库存占用，不能删除');
 
         DB::transaction(function () use ($order, $operator) {
@@ -226,7 +225,6 @@ class SalesOrderDraftService
         abort_if($order->order_status !== 'draft' || $order->confirmed_at !== null
             || $order->confirm_status === 'pending_confirmation', 422, '只有未确认、未进入待审核状态的销售订单草稿可以删除。');
         abort_if($order->fulfillments()->exists(), 422, '订单已产生库存、生产或交付记录，不能删除。');
-        abort_if($order->productionRequirements()->exists(), 422, '订单已产生生产需求，不能删除。');
         abort_if(DB::table('erp_inventory_reservations')->where('source_order_id', $order->id)->exists(), 422, '订单已产生库存占用，不能删除。');
         $financeReferenced = DB::table('erp_finance_allocations')
             ->whereIn('source_business_type', ['sales_order', 'sales_order_refund'])->where('source_document_id', $order->id)->exists()

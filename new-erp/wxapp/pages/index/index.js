@@ -93,7 +93,7 @@ Page({
           break;
       case 3:
           wx.navigateTo({
-              url: '/pages/production/workbench/index',
+              url: '/pages/production/shipment-packing/index',
           })
           break;
       case 4:

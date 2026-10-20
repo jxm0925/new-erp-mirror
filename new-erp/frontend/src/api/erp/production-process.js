@@ -1,5 +1,5 @@
 import { createErpApi } from './http'
-import { executeProductionDecision } from './production-assignments'
+import { executeProductionDecision } from './production-decisions'
 
 const api = createErpApi({ fallbackMessage: '工艺档案操作失败' })
 const catalogPath = type => '/v1/erp/production/' + type

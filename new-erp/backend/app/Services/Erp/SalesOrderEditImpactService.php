@@ -9,7 +9,6 @@ use App\Models\Erp\SalesOrderChangeCandidate;
 use App\Models\Erp\SalesOrderChangeCandidateApproval;
 use App\Models\Erp\SalesOrderFulfillment;
 use App\Models\Erp\SalesOrderLog;
-use App\Models\Erp\SalesOrderProductionRequirement;
 use App\Models\Erp\SalesOrderVersion;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
@@ -104,10 +103,10 @@ class SalesOrderEditImpactService
         }
     }
 
-    /** 订单关联工单是否已发布：发布前自由修改，发布后修改必须审核。 */
+    /** 订单关联工单是否已下达：下达前自由修改，下达后修改必须审核。新生产工单上线前恒为否。 */
     public function productionReleased(SalesOrder $order): bool
     {
-        return app(SalesOrderProductionChangeService::class)->hasReleasedWorkOrders($order);
+        return false;
     }
 
     public function submit(int $orderId, array $payload, string $operator, ?object $actor = null): array
@@ -297,12 +296,8 @@ class SalesOrderEditImpactService
     {
         $order->load(['lines', 'shipments', 'salesReturns']);
         $this->assertChangeable($order);
-        $before = $order->fresh(['lines', 'fulfillments', 'productionRequirements'])->toArray();
+        $before = $order->fresh(['lines', 'fulfillments'])->toArray();
         $hasOperationalImpact = collect($impact['diffs'] ?? [])->contains(fn ($diff) => collect($diff['impact_types'] ?? [])->intersect(['FULFILLMENT', 'PRODUCTION'])->isNotEmpty());
-        if ($hasOperationalImpact) {
-            app(SalesOrderProductionChangeService::class)->cancelUnreleasedLocked($order, $actor,
-                '销售订单正式变更：'.($candidateModel?->change_reason ?: ($changeReason ?: '重新确认备货与生产数量')));
-        }
         // Approval can happen after internal costs change. Restore current
         // locked facts instead of replaying cost values from an old candidate.
         $order->update(app(SalesCostVisibilityService::class)->preserveStoredCosts($candidate['header'], $order->attributesToArray()));
@@ -312,14 +307,13 @@ class SalesOrderEditImpactService
         if ($hasOperationalImpact) {
             $this->reservations->releaseForSalesOrder($order, '订单候选版本生效，释放旧库存预留。');
             SalesOrderFulfillment::where('sales_order_id', $order->id)->whereIn('demand_status', ['pending', 'confirmed'])->update(['demand_status' => 'superseded', 'reservation_status' => 'superseded', 'production_requirement_status' => 'superseded']);
-            SalesOrderProductionRequirement::where('sales_order_id', $order->id)->where('is_active', true)->whereIn('requirement_status', ['draft', 'blocked', 'ready'])->update(['requirement_status' => 'superseded', 'is_active' => false]);
             $order->update(['change_status' => 'applied', 'fulfillment_status' => 'pending', 'production_confirm_status' => 'pending',
                 'inventory_lock_status' => 'pending', 'inventory_locked_at' => null, 'inventory_locked_by_legacy_id' => null]);
         }
         $order->update(['business_version' => (int) $order->business_version + 1,
             'shipment_status' => SalesOrderFulfillmentPolicy::shipmentStatus($order->fresh('lines')->lines->map(fn ($line) => $line->getAttributes())->all())]);
         $this->fundingGates->refreshProjection($order->fresh());
-        $after = $order->fresh(['lines', 'fulfillments', 'productionRequirements'])->toArray();
+        $after = $order->fresh(['lines', 'fulfillments'])->toArray();
         $versionNo = $candidateModel?->candidate_version ?: $this->nextCandidateVersion($order, $this->version($order));
         $appliedAt = now();
         $structuredDiffs = $candidateModel
@@ -603,10 +597,10 @@ class SalesOrderEditImpactService
             ->where('sales_order_id', $order->id)
             ->whereNotIn('demand_status', ['superseded', 'cancelled'])
             ->exists();
-        $hasProduction = SalesOrderProductionRequirement::query()
+        $hasProduction = SalesOrderFulfillment::query()
             ->where('sales_order_id', $order->id)
-            ->where('is_active', true)
-            ->whereNotIn('requirement_status', ['superseded', 'cancelled'])
+            ->where('fulfillment_type', 'production')
+            ->whereNotIn('demand_status', ['superseded', 'cancelled'])
             ->exists();
         return [
             'has_inventory_reservations' => $hasReservations,
@@ -640,14 +634,6 @@ class SalesOrderEditImpactService
         if ($order->order_status !== 'confirmed' || $order->confirm_status !== 'confirmed') throw ValidationException::withMessages(['order_status' => '只有已正式确认的订单可编辑；草稿订单请直接保存。']);
         if (! in_array($order->shipment_status, ['not_shipped', 'not_required'], true) || $order->lines->sum('shipped_qty') > 0 || $order->shipments->isNotEmpty()) throw ValidationException::withMessages(['shipment_status' => '已有发货事实的订单不能直接编辑，请走售后流程。']);
         if ($order->salesReturns->whereNotIn('return_status', ['cancelled'])->isNotEmpty()) throw ValidationException::withMessages(['sales_return' => '订单已进入销售退货流程，不能直接编辑。']);
-        $consumedProduction = SalesOrderProductionRequirement::where('sales_order_id', $order->id)
-            ->where(function ($query): void {
-                $query->where('consumed_qty', '>', 0)
-                    ->orWhereIn('requirement_status', ['partially_consumed', 'consumed', 'closed']);
-            })->exists();
-        if ($consumedProduction) {
-            throw ValidationException::withMessages(['production_requirement' => '生产需求已被工单或完工事实消耗，不能直接编辑订单。']);
-        }
     }
     private function log(SalesOrder $order, string $action, string $before, string $after, string $operator, array $payload, string $content): void { SalesOrderLog::create(['sales_order_id'=>$order->id,'action'=>$action,'before_status'=>$before,'after_status'=>$after,'payload'=>$payload,'operator'=>$operator,'content'=>$content]); }
 }

@@ -33,6 +33,5 @@ class SalesOrderLine extends MasterModel
     public function item() { return $this->belongsTo(Item::class); }
     public function itemBaseUnit() { return $this->belongsTo(Unit::class, 'item_base_unit_id'); }
     public function fulfillments() { return $this->hasMany(SalesOrderFulfillment::class); }
-    public function productionRequirements() { return $this->hasMany(SalesOrderProductionRequirement::class); }
     public function attachments() { return $this->hasMany(SalesOrderAttachment::class, 'sales_order_line_id'); }
 }

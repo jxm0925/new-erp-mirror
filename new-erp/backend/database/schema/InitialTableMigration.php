@@ -155,14 +155,17 @@ abstract class InitialTableMigration extends Migration
                 || $canonicalOwner::DECLARED_CHECKS !== $newOwner::DECLARED_CHECKS) {
                 throw new RuntimeException('New-table owner differs from the canonical manifest.');
             }
-            $otherDefinitions = array_diff_key($definitions, [$newOwner::TABLE => true]);
-            // 必须已登记其余全部初始定义，且只允许本 owner 尚未登记、尚未建表。
-            // 既有表丢失、其他新表缺失或旧基线尚未接纳均不能走这个入口。
+            // 同一次发布可带多张新表：缺失的表必须全部是尚未登记的扩展 owner，
+            // 其余全部初始定义必须已登记。既有表丢失或旧基线尚未接纳均不能走这个入口。
+            $pendingOwners = array_values(array_filter(array_keys($missing), fn ($table) => $definitions[$table]::ESTABLISHED_EXTENSION
+                && !isset($records[$manifest['tables'][$table]])));
+            $pendingOwners = array_values(array_unique(array_merge($pendingOwners, [$newOwner::TABLE])));
+            $otherDefinitions = array_diff_key($definitions, array_flip($pendingOwners));
             $otherNames = array_map(fn ($table) => $manifest['tables'][$table], array_keys($otherDefinitions));
             $establishedExtension = $otherDefinitions
                 && !isset($records[$manifest['tables'][$newOwner::TABLE]])
                 && array_diff($otherNames, array_keys($records)) === []
-                && array_diff(array_keys($missing), [$newOwner::TABLE]) === [];
+                && array_diff(array_keys($missing), $pendingOwners) === [];
         }
         if ($missing && $legacyRecords && !$establishedExtension) {
             throw new RuntimeException('Partial legacy database: missing '.implode(', ', array_keys($missing)));

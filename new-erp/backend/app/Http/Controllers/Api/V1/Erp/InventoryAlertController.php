@@ -32,8 +32,6 @@ class InventoryAlertController extends Controller
             'over' => (clone $statsQuery)->where('alert_status', 'over_stock')->count(),
         ];
         $page = $query->paginate($this->perPage($request));
-        $states = app(InventoryAlertApplicationService::class)->prebuildStates($page->getCollection());
-        $page->getCollection()->each(fn ($alert) => $alert->setAttribute('prebuild', $states[$alert->id] ?? null));
         return response()->json(array_merge($page->toArray(), ['stats' => $stats]));
     }
 
@@ -82,7 +80,7 @@ class InventoryAlertController extends Controller
         );
 
         return response()->json([
-            'data' => $alert->setAttribute('prebuild', $service->prebuildStates([$alert])[$alert->id] ?? null),
+            'data' => $alert,
             'evaluation' => $service->presentationFor($alert),
             'histories' => $histories,
         ]);
@@ -138,16 +136,6 @@ class InventoryAlertController extends Controller
         $user = $this->authorize($request, 'inventory.alert.create_request');
         $record = $service->createPurchaseRequestFromAlert($id, (int) $user->legacy_id);
         return response()->json(['message' => '已生成采购需求草稿，不会自动生成采购订单。', 'data' => $record]);
-    }
-
-    public function createStockPrebuild(Request $request, int $id, InventoryAlertApplicationService $service)
-    {
-        $user = $this->authorize($request, 'production.work_order.create');
-        $input = $request->validate(['target_qty' => 'nullable|numeric|gt:0|max:9999999999', 'planned_date' => 'nullable|date_format:Y-m-d']);
-        $auth = app(AuthContextService::class);
-        $result = $service->createStockPrebuildFromAlert($id, $user, $auth->permissionCodes($user), $auth->isSuperAdmin($user), $input);
-        return response()->json(['message' => $result['existing'] ? '该预警已有未完成的备货工单。' : '已生成备货工单草稿，请核对后发布。',
-            'data' => ['id' => $result['work_order']->id, 'work_order_no' => $result['work_order']->work_order_no, 'existing' => $result['existing']]]);
     }
 
     private function perPage(Request $request): int { return min(100, max(10, (int) $request->input('per_page', 10))); }

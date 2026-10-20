@@ -43,10 +43,6 @@ final class PurchaseRequestCreationApplicationService
                 'priority' => $line['priority'] ?? 'normal', 'line_status' => 'open', 'remark' => $line['remark'] ?? null,
                 'data_source' => 'manual', ...app(MaterialPolicySnapshotService::class)->fromItem($item),
             ]);
-            if ($priorItems !== null && \Illuminate\Support\Facades\Schema::hasTable('erp_material_procurement_sources')) {
-                DB::table('erp_material_procurement_sources')->where('request_id', $request->id)->where('component_item_id', $item->id)
-                    ->whereNull('request_item_id')->update(['request_item_id' => $created->id, 'updated_at' => now()]);
-            }
             $totalQty += $qty;
         }
         $request->update(['item_id' => $items[0]['item_id'] ?? null, 'request_qty' => $totalQty, 'planned_qty' => 0, 'required_date' => $items[0]['expected_date'] ?? null]);

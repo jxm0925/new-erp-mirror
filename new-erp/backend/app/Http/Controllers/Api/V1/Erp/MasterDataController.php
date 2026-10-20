@@ -464,7 +464,6 @@ class MasterDataController extends Controller
             ['erp_purchase_order_items', 'item_id'],
             ['erp_purchase_receipt_items', 'item_id'],
             ['erp_sales_order_lines', 'item_id'],
-            ['erp_sales_order_production_requirements', 'item_id'],
         ] as [$table, $column]) {
             if (DB::table($table)->where($column, $itemId)->exists()) return true;
         }

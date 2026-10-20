@@ -28,7 +28,7 @@
 </template>
 <script>
 import { reserveProductionNumber, getProductionOperation, createProductionOperation, updateProductionOperation } from '../../../api/erp/production'
-import { executeProductionDecision } from '../../../api/erp/production-assignments'
+import { executeProductionDecision } from '../../../api/erp/production-decisions'
 
 const uuid = () => window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
   const value = Math.random() * 16 | 0

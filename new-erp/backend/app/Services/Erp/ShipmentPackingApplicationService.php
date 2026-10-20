@@ -26,7 +26,7 @@ class ShipmentPackingApplicationService
     {
         foreach ($shipment->lines()->get() as $line) {
             if ($line->packing_source_snapshot !== null) continue;
-            $context = app(ProductionShipmentSourceResolver::class)->contextForShipmentLine($line);
+            $context = app(ShipmentSourceResolver::class)->contextForShipmentLine($line);
             $line->update(['packing_routing_snapshot' => $context['routing_snapshot'] ?? null,
                 'packing_source_snapshot' => $context['source_rows'] ?? []]);
         }
@@ -37,7 +37,7 @@ class ShipmentPackingApplicationService
         return $shipment->lines()->with('orderLine')->get()->map(function (SalesShipmentLine $line): array {
             // Frozen route/source choices remain historical facts, but readiness
             // must be checked against current formal production completion.
-            $context = app(ProductionShipmentSourceResolver::class)->contextForShipmentLine($line);
+            $context = app(ShipmentSourceResolver::class)->contextForShipmentLine($line);
             $route = $line->packing_routing_snapshot;
             // Older drafts have no frozen packing context. Read the formal source resolver only;
             // a current route is never substituted for an already frozen historic route.
@@ -221,22 +221,14 @@ class ShipmentPackingApplicationService
                 if ($op->laborSessions()->whereIn('employee_legacy_id', $removed)->where('status', 'ACTIVE')->exists()) $this->fail('仍在计时的协同人须先暂停自己的作业。');
                 $op->participants()->where('role', 'COLLABORATOR')->whereNotIn('employee_legacy_id', $ids)->update(['is_active' => false]);
                 foreach ($users as $user) $this->participant($op, $user, 'COLLABORATOR', $actorId);
-                // Selection and its exact owner/collaborator allocation are one
-                // command. A rejected allocation rolls the personnel changes back.
-                app(ProductionPerformanceApplicationService::class)->planScopeShares('shipment_packing_operation', (int) $op->id,
-                    isset($payload['shares']) ? (array) $payload['shares'] : null, $actor, $auth->permissionCodes($actor));
             } elseif (in_array($action, ['start', 'pause'], true)) {
                 if (! $op->participants()->where('employee_legacy_id', $actorId)->where('is_active', true)->exists()) $this->fail('只有接单人选择的参与人员可以记录本人工时。');
                 if ($action === 'start') {
                     // The same employee row also serializes ordinary production starts, so
                     // simultaneous commands in separate tasks cannot both open a timer.
                     DB::table('erp_legacy_admin_users')->where('legacy_id', $actorId)->lockForUpdate()->first();
-                    app(WarehouseLaborSessionService::class)->assertNoActiveWarehouse($actorId);
                     if (ShipmentPackingLaborSession::query()->where('employee_legacy_id', $actorId)->where('status', 'ACTIVE')->lockForUpdate()->first()) {
                         $this->fail('本人已有正在计时的包装作业，请先暂停原作业。');
-                    }
-                    if (DB::table('erp_production_labor_sessions')->where('employee_legacy_id', $actorId)->where('status', 'ACTIVE')->lockForUpdate()->first()) {
-                        $this->fail('本人已有正在计时的生产或下料作业，请先暂停原作业。');
                     }
                     if ($op->status === 'READY') {
                         $this->assertOwner($op, $actorId);
@@ -314,7 +306,6 @@ class ShipmentPackingApplicationService
             $op->business_version = (int) $op->business_version + 1;
             $op->save();
             if (in_array($action, ['complete', 'inspect'], true) && $op->status === 'COMPLETED') {
-                app(ProductionPerformanceApplicationService::class)->ensureDefaultShares('shipment_packing_operation', (int) $op->id);
                 $next = ShipmentPackingOperation::query()->where('package_id', $op->package_id)->where('chain_key', $op->chain_key)->where('sequence', '>', $op->sequence)->orderBy('sequence')->lockForUpdate()->first();
                 if ($next && $next->status === 'WAITING') $next->update(['status' => 'READY', 'business_version' => (int) $next->business_version + 1]);
                 if (! ShipmentPackingOperation::query()->where('package_id', $op->package_id)->where('status', '!=', 'COMPLETED')->exists()) $op->package()->update(['package_status' => 'packed']);
@@ -329,7 +320,7 @@ class ShipmentPackingApplicationService
         $this->assertProductionReady($shipment);
         foreach ($shipment->lines()->get() as $line) {
             $route = $line->packing_routing_snapshot;
-            if ($line->packing_source_snapshot === null) $route = app(ProductionShipmentSourceResolver::class)->contextForShipmentLine($line)['routing_snapshot'] ?? null;
+            if ($line->packing_source_snapshot === null) $route = app(ShipmentSourceResolver::class)->contextForShipmentLine($line)['routing_snapshot'] ?? null;
             if ($this->shipmentNodes($route)->isEmpty()) continue;
             $contents = $shipment->packingContents()->where('shipment_line_id', $line->id)->get();
             if (bccomp((string) $contents->sum('base_qty'), (string) $line->base_qty, 8) !== 0) $this->fail('发货产品尚未完整分配包装方案和包裹。');
@@ -369,13 +360,6 @@ class ShipmentPackingApplicationService
         $me = collect($participants)->firstWhere('employee_legacy_id', $actorId);
         $active = ! in_array($op->status, ['COMPLETED', 'CANCELLED'], true);
         $sharePlan = null;
-        if ((int) $op->owner_legacy_id === $actorId) {
-            $assignment = \App\Models\Erp\ProductionPerformanceAssignment::query()->with('shares')
-                ->where('active_scope_key', 'shipment_packing_operation:'.$op->id)->first();
-            if ($assignment) $sharePlan = ['version_no' => (int) $assignment->version_no, 'status' => $assignment->status,
-                'shares' => $assignment->shares->map(fn ($share) => ['employee_legacy_id' => (int) $share->employee_legacy_id,
-                    'share_ratio' => (string) $share->share_ratio])->values()->all()];
-        }
         return ['id' => (int) $op->id, 'shipment_id' => (int) $op->shipment_id, 'package_id' => (int) $op->package_id, 'share_plan' => $sharePlan,
             'package_no' => $op->package?->package_no, 'operation_name' => $op->operation_name_snapshot,
             'is_public_snapshot' => (bool) $op->is_public_snapshot,
@@ -413,7 +397,7 @@ class ShipmentPackingApplicationService
     private function originRoute(SalesShipmentLine $line): ?array
     {
         return $line->packing_source_snapshot !== null ? $line->packing_routing_snapshot
-            : (app(ProductionShipmentSourceResolver::class)->contextForShipmentLine($line)['routing_snapshot'] ?? null);
+            : (app(ShipmentSourceResolver::class)->contextForShipmentLine($line)['routing_snapshot'] ?? null);
     }
 
     private function candidateQuery(SalesShipmentLine $line)
@@ -489,7 +473,10 @@ class ShipmentPackingApplicationService
 
     private function assertProductionReady(SalesShipment $shipment): void
     {
-        foreach ($shipment->lines()->get() as $line) app(ProductionInventoryContinuationService::class)->assertShipmentLineReady($line);
+        foreach ($shipment->lines()->get() as $line) {
+            $blockers = app(ShipmentSourceResolver::class)->contextForShipmentLine($line)['blockers'] ?? [];
+            if ($blockers !== []) $this->fail(implode('；', $blockers));
+        }
     }
 
     private function assertEditable(SalesShipment $shipment): void

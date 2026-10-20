@@ -18,7 +18,6 @@ class ProductionMasterDataService
 {
     public function __construct(
         private readonly DocumentNumberService $numbers,
-        private readonly RoutingOperationOutputRuleService $outputRules,
     ) {}
 
     public function operations(array $filters, array $permissions, bool $superAdmin): LengthAwarePaginator
@@ -153,13 +152,6 @@ class ProductionMasterDataService
             if (DB::table('erp_production_routing_operations')->where('operation_id', $operation->id)->exists()) {
                 throw ValidationException::withMessages(['operation' => '该工序已被工艺路线引用；即使路线已退役也必须保留历史，不能删除。']);
             }
-            if (DB::table('erp_work_orders')->where('target_operation_id', $operation->id)->exists()) {
-                throw ValidationException::withMessages(['operation' => '该工序已被生产工单引用，不能删除。']);
-            }
-            if (DB::table('erp_production_unit_operations')->where('operation_id_snapshot', $operation->id)->exists()
-                || DB::table('erp_production_quantity_operations')->where('operation_id_snapshot', $operation->id)->exists()) {
-                throw ValidationException::withMessages(['operation' => '该工序已被生产执行快照引用，不能删除。']);
-            }
             $operation->delete();
         });
     }
@@ -177,7 +169,7 @@ class ProductionMasterDataService
     public function routing(int $id, array $permissions, bool $superAdmin): ProductionRouting
     {
         $this->authorize($permissions, $superAdmin, 'production.routing.view');
-        $routing = ProductionRouting::with(['outputItem.unit.standardUnit', 'product', 'sku', 'operations.operation', 'operations.outputItem.unit.standardUnit', 'operations.outputRules', 'operations.materialSupplyRules.componentItem', 'operations.stage', 'operations.packagingScheme'])->findOrFail($id);
+        $routing = ProductionRouting::with(['outputItem.unit.standardUnit', 'product', 'sku', 'operations.operation', 'operations.outputItem.unit.standardUnit', 'operations.materialSupplyRules.componentItem', 'operations.stage', 'operations.packagingScheme'])->findOrFail($id);
         $itemIds = $routing->operations->flatMap(fn ($operation) => $operation->packaging_materials ?? [])
             ->pluck('component_item_id')->filter(fn ($itemId) => (int) $itemId > 0)->map(fn ($itemId) => (int) $itemId)->unique()->values();
         $routing->setRelation('packaging_material_items', $itemIds->isEmpty() ? collect()
@@ -208,7 +200,7 @@ class ProductionMasterDataService
             ]);
             $this->syncOperations($routing, $data['operations'], $user);
             $this->numbers->consume($data['reservation_token'], 'routing', $number, $this->userId($user), 'production_routing', $routing->id);
-            return $routing->load(['outputItem.unit.standardUnit', 'product', 'sku', 'operations.operation', 'operations.outputItem.unit.standardUnit', 'operations.outputRules']);
+            return $routing->load(['outputItem.unit.standardUnit', 'product', 'sku', 'operations.operation', 'operations.outputItem.unit.standardUnit']);
         });
     }
 
@@ -231,9 +223,7 @@ class ProductionMasterDataService
             $routing->save();
             if (isset($data['operations'])) $this->syncOperations($routing, $data['operations'], $user);
             $this->assertRoutingManagementScope($routing);
-            // A header-only edit must not reinterpret existing rule denominators either.
-            $this->outputRules->validateRouting($routing);
-            return $routing->load(['outputItem.unit.standardUnit', 'product', 'sku', 'operations.operation', 'operations.outputItem.unit.standardUnit', 'operations.outputRules']);
+            return $routing->load(['outputItem.unit.standardUnit', 'product', 'sku', 'operations.operation', 'operations.outputItem.unit.standardUnit']);
         });
     }
 
@@ -309,7 +299,7 @@ class ProductionMasterDataService
             // family member must therefore be locking/current reads. Replacing either with
             // a plain find()/max() can make a waiting transaction miss the version just
             // committed by the previous copier and race for the same unique version.
-            $source = ProductionRouting::with(['operations', 'operations.outputRules'])->lockForUpdate()->findOrFail($id);
+            $source = ProductionRouting::with(['operations'])->lockForUpdate()->findOrFail($id);
             $this->assertRoutingManagementScope($source);
             $latest = ProductionRouting::where('routing_no', $source->routing_no)
                 ->orderByDesc('version')->lockForUpdate()->firstOrFail();
@@ -329,7 +319,6 @@ class ProductionMasterDataService
                     'output_item_id', 'output_mode', 'quality_mode', 'work_mode', 'allow_continue_without_warehouse',
                     'production_stage_id', 'execution_context', 'packaging_scheme_id', 'performance_rate', 'packaging_materials',
                 ]));
-                $this->outputRules->copy($row, $newRow, $user);
                 $copiedBySequence->put((int) $row->sequence, $newRow);
             }
             foreach ($source->operations as $row) {
@@ -343,7 +332,7 @@ class ProductionMasterDataService
                     ]) + ['target_routing_operation_id' => $newTarget->id]);
                 }
             }
-            return $copy->load(['outputItem.unit.standardUnit', 'product', 'sku', 'operations.operation', 'operations.outputItem.unit.standardUnit', 'operations.outputRules']);
+            return $copy->load(['outputItem.unit.standardUnit', 'product', 'sku', 'operations.operation', 'operations.outputItem.unit.standardUnit']);
         });
     }
 
@@ -376,29 +365,14 @@ class ProductionMasterDataService
 
             $routingOperationIds = DB::table('erp_production_routing_operations')
                 ->where('routing_id', $routing->id)->lockForUpdate()->pluck('id');
-            $referenced = DB::table('erp_work_orders')->where('production_routing_id', $routing->id)->exists()
-                || DB::table('erp_sales_order_production_requirements')->where('routing_id', $routing->id)->exists()
-                || DB::table('erp_production_units')->where('routing_id_snapshot', $routing->id)->exists()
-                || ($routingOperationIds->isNotEmpty() && (
+            $referenced = $routingOperationIds->isNotEmpty() && (
                     DB::table('erp_items')->whereIn('serial_generation_routing_operation_id', $routingOperationIds)->exists()
                     || DB::table('erp_item_material_policies')->whereIn('serial_generation_routing_operation_id', $routingOperationIds)->exists()
-                    || DB::table('erp_work_orders')->whereIn('target_routing_operation_id', $routingOperationIds)->exists()
-                    || DB::table('erp_work_orders')->whereIn('reserved_for_target_operation_id', $routingOperationIds)->exists()
-                    || DB::table('erp_production_inventory_reservations')->whereIn('target_routing_operation_id', $routingOperationIds)->exists()
-                    || DB::table('erp_production_unit_operations')->whereIn('routing_operation_id_snapshot', $routingOperationIds)->exists()
-                    || DB::table('erp_production_quantity_operations')->whereIn('routing_operation_id_snapshot', $routingOperationIds)->exists()
-                    || DB::table('erp_production_tasks')->whereIn('routing_operation_id_snapshot', $routingOperationIds)->exists()
-                    || DB::table('erp_production_units')->whereIn('current_routing_operation_id', $routingOperationIds)->exists()
-                    || DB::table('erp_work_order_material_supply_rules')->whereIn('target_routing_operation_id_snapshot', $routingOperationIds)->exists()
-                    || DB::table('erp_cutting_allowed_outputs')->whereIn('stage_id', $routingOperationIds)->exists()
-                    || DB::table('erp_cutting_demands')->whereIn('stage_id', $routingOperationIds)->exists()
-                    || DB::table('erp_cutting_plan_allocations')->whereIn('stage_id', $routingOperationIds)->exists()
-                    || DB::table('erp_cutting_results')->whereIn('stage_id', $routingOperationIds)->exists()
                     || DB::table('erp_material_lots')->whereIn('stage_id', $routingOperationIds)->exists()
                     || DB::table('erp_routing_operation_material_supply_rules')
                         ->whereNotIn('routing_operation_id', $routingOperationIds)
                         ->whereIn('target_routing_operation_id', $routingOperationIds)->exists()
-                ));
+                );
             if ($referenced) {
                 throw ValidationException::withMessages(['routing' => '该工艺路线或其节点已被生产配置、需求、工单或库存归属引用，不能删除。']);
             }
@@ -460,7 +434,7 @@ class ProductionMasterDataService
 
     public function snapshot(ProductionRouting $routing): array
     {
-        $routing->loadMissing(['outputItem', 'product', 'sku', 'operations.operation', 'operations.outputItem', 'operations.outputRules', 'operations.materialSupplyRules', 'operations.stage', 'operations.packagingScheme']);
+        $routing->loadMissing(['outputItem', 'product', 'sku', 'operations.operation', 'operations.outputItem', 'operations.materialSupplyRules', 'operations.stage', 'operations.packagingScheme']);
         return [
             'routing_id' => (int) $routing->id, 'routing_no' => $routing->routing_no,
             'routing_name' => $routing->routing_name, 'version' => (int) $routing->version,
@@ -498,7 +472,6 @@ class ProductionMasterDataService
                 'quality_mode' => $row->quality_mode ?: 'none',
                 'work_mode' => $row->work_mode ?: 'manual',
                 'allow_continue_without_warehouse' => (bool) $row->allow_continue_without_warehouse,
-                'output_rules' => $this->outputRules->snapshot($row),
                 'material_supply_rules' => $row->materialSupplyRules->map(fn ($rule) => [
                     'rule_id' => (int) $rule->id,
                     'component_item_id' => (int) $rule->component_item_id,
@@ -516,8 +489,7 @@ class ProductionMasterDataService
 
     private function syncOperations(ProductionRouting $routing, array $rows, object $user): void
     {
-        $previous = $routing->operations()->with('outputRules')->get()->keyBy('id');
-        $outputRuleKeys = [];
+        $previous = $routing->operations()->get()->keyBy('id');
         foreach ($rows as &$row) {
             $old = isset($row['id']) ? $previous->get((int) $row['id']) : $previous->first(fn ($node) => (int) $node->sequence === (int) $row['sequence'] && (int) $node->operation_id === (int) $row['operation_id']);
             if (isset($row['id']) && ! $old) throw ValidationException::withMessages(['operations' => '工序明细标识不属于当前草稿路线。']);
@@ -526,20 +498,6 @@ class ProductionMasterDataService
             $row['execution_context'] = $row['execution_context'] ?? 'production';
             if ($row['execution_context'] === 'shipment') $row['output_item_id'] = null;
             $row['packaging_materials'] = $row['packaging_materials'] ?? [];
-            // Omission preserves a saved rule set; only an explicit empty array clears it.
-            // Never translate a multi-line rule set back into the legacy scalar output fields.
-            $rules = array_key_exists('output_rules', $row) ? $row['output_rules'] : ($old ? $this->outputRules->inputRows($old) : []);
-            if (! is_array($rules)) throw ValidationException::withMessages(['operations' => '产出规则必须为明细列表；清空时请提交空列表。']);
-            if ($row['execution_context'] === 'shipment' && $rules !== []) throw ValidationException::withMessages(['operations' => '发货包装工序不能配置生产产出规则。']);
-            if ($old && (int) $old->operation_id !== (int) $row['operation_id']
-                && collect($rules)->contains(fn ($rule) => in_array(strtolower((string) ($rule['output_rule_key'] ?? '')), $old->outputRules->pluck('output_rule_key')->all(), true))) {
-                throw ValidationException::withMessages(['operations' => '更换工序档案时不能沿用原工序的产出规则标识，请建立新规则。']);
-            }
-            $row['_prepared_output_rules'] = $this->outputRules->prepare($routing, $rules, $old);
-            foreach ($row['_prepared_output_rules'] as $rule) {
-                if (isset($outputRuleKeys[$rule['output_rule_key']])) throw ValidationException::withMessages(['operations' => '同一路线的产出规则标识不能跨工序重复。']);
-                $outputRuleKeys[$rule['output_rule_key']] = true;
-            }
             if ($row['execution_context'] === 'shipment' && empty($row['packaging_scheme_id'])) throw ValidationException::withMessages(['operations' => '发货作业必须选择包装方案。']);
             if ($row['execution_context'] === 'production' && (! empty($row['packaging_scheme_id']) || $row['packaging_materials'] !== [])) throw ValidationException::withMessages(['operations' => '生产工序不能配置发货包装方案或包装用料。']);
             if ($row['execution_context'] === 'shipment' && ($row['material_supply_rules'] ?? []) !== []) throw ValidationException::withMessages(['operations' => '包装用料按基础单位数量配置，不能混用生产BOM用量占比。']);
@@ -580,7 +538,6 @@ class ProductionMasterDataService
                 'work_mode' => $row['work_mode'] ?? 'manual',
                 'allow_continue_without_warehouse' => (bool) ($row['allow_continue_without_warehouse'] ?? true),
             ]);
-            $this->outputRules->persist($created, $row['_prepared_output_rules'], $user);
             $createdBySequence->put((int) $row['sequence'], $created);
         }
         foreach ($rows as $row) {
@@ -609,9 +566,8 @@ class ProductionMasterDataService
 
     private function validateRoutingExecution(ProductionRouting $routing): void
     {
-        $routing->loadMissing(['outputItem', 'operations.outputItem', 'operations.outputRules', 'operations.materialSupplyRules.componentItem']);
+        $routing->loadMissing(['outputItem', 'operations.outputItem', 'operations.materialSupplyRules.componentItem']);
         $this->assertRoutingManagementScope($routing);
-        $this->outputRules->validateRouting($routing);
         if ($routing->outputItem?->status !== 'enabled') {
             throw ValidationException::withMessages(['output_item_id' => '路线产出物料不存在或已停用。']);
         }
@@ -670,10 +626,9 @@ class ProductionMasterDataService
 
     private function assertRoutingManagementScope(ProductionRouting $routing): void
     {
-        $routing->loadMissing(['operations.outputRules', 'operations.materialSupplyRules']);
+        $routing->loadMissing(['operations.materialSupplyRules']);
         $this->assertProductionItems(array_merge([(int) $routing->output_item_id],
             $routing->operations->pluck('output_item_id')->filter()->all(),
-            $routing->operations->flatMap(fn ($row) => $row->outputRules)->pluck('item_id')->all(),
             $routing->operations->flatMap(fn ($row) => $row->materialSupplyRules)->pluck('component_item_id')->all(),
             $routing->operations->flatMap(fn ($row) => $row->packaging_materials ?? [])->pluck('component_item_id')->all()), 'operations');
     }
@@ -696,27 +651,14 @@ class ProductionMasterDataService
                 if ($existing->request_hash !== $hash || $existing->command_type !== $type) throw ValidationException::withMessages(['client_command_id' => '该请求标识已用于不同操作。']);
                 $model = $entityType === 'operation' ? ProductionOperation::class : ProductionRouting::class;
                 $entity = $model::findOrFail($existing->entity_id);
-                return $entityType === 'routing' ? $entity->load(['outputItem.unit.standardUnit', 'operations.outputItem.unit.standardUnit', 'operations.outputRules']) : $entity;
+                return $entityType === 'routing' ? $entity->load(['outputItem.unit.standardUnit', 'operations.outputItem.unit.standardUnit']) : $entity;
             }
             DB::table('erp_production_master_commands')->insert([
                 'client_command_id' => $id, 'command_type' => $type, 'entity_type' => $entityType,
                 'request_hash' => $hash, 'initiated_by_legacy_id' => $this->userId($user), 'created_at' => now(), 'updated_at' => now(),
             ]);
-            $capturesOutputRules = $entityType === 'routing' && in_array($type, ['create_routing', 'update_routing', 'copy_routing'], true);
-            $outputRulesBefore = [];
-            if ($capturesOutputRules && $type === 'update_routing') {
-                $beforeRouting = ProductionRouting::query()->lockForUpdate()->findOrFail((int) $data['id']);
-                $outputRulesBefore = $this->outputRules->auditSnapshot($beforeRouting);
-            }
             $entity = $action();
             $responseSnapshot = ['id' => $entity->id];
-            if ($capturesOutputRules) {
-                $responseSnapshot['output_rule_change'] = [
-                    'before' => $outputRulesBefore, 'after' => $this->outputRules->auditSnapshot($entity),
-                    'routing_version' => (int) $entity->version, 'business_version' => (int) $entity->business_version,
-                    'source_routing_id' => $type === 'copy_routing' ? (int) $data['id'] : null,
-                ];
-            }
             DB::table('erp_production_master_commands')->where('client_command_id', $id)->update([
                 'entity_id' => $entity->id, 'response_snapshot' => json_encode($responseSnapshot, JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION), 'updated_at' => now(),
             ]);
@@ -730,7 +672,7 @@ class ProductionMasterDataService
             }
             $model = $entityType === 'operation' ? ProductionOperation::class : ProductionRouting::class;
             $entity = $model::findOrFail($existing->entity_id);
-            return $entityType === 'routing' ? $entity->load(['outputItem.unit.standardUnit', 'operations.outputItem.unit.standardUnit', 'operations.outputRules']) : $entity;
+            return $entityType === 'routing' ? $entity->load(['outputItem.unit.standardUnit', 'operations.outputItem.unit.standardUnit']) : $entity;
         }
     }
 

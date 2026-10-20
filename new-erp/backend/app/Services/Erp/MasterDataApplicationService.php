@@ -276,7 +276,6 @@ class MasterDataApplicationService
 
             $references = [
                 ['erp_sales_order_lines', 'sku_id'],
-                ['erp_sales_order_production_requirements', 'sku_id'],
                 ['erp_boms', 'sku_id'],
                 ['erp_boms', 'source_sku_id'],
                 ['erp_customization_records', 'base_sku_id'],
@@ -449,7 +448,6 @@ class MasterDataApplicationService
             ['erp_purchase_order_items', 'item_id'],
             ['erp_purchase_receipt_items', 'item_id'],
             ['erp_sales_order_lines', 'item_id'],
-            ['erp_sales_order_production_requirements', 'item_id'],
         ];
         foreach ($references as [$table, $column]) {
             if (DB::table($table)->where($column, $itemId)->exists()) {

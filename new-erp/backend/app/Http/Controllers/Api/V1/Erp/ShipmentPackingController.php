@@ -205,9 +205,7 @@ class ShipmentPackingController extends Controller
             // live in JSON. Querying nonexistent balance/size columns hid real plate identities.
             $query = DB::table('erp_material_physicals as physical')->join('erp_material_holdings as holding', 'holding.id', '=', 'physical.current_holding_id')
                 ->where('physical.item_id', $balance->item_id)->where('holding.inventory_balance_id', $balance->id)
-                ->where('holding.position_type', 'WAREHOUSE')->where('holding.status', 'ACTIVE')->where('physical.status', 'AVAILABLE')
-                ->whereNotExists(fn ($reserved) => $reserved->selectRaw('1')->from('erp_material_physical_reservations as reserved')
-                    ->whereColumn('reserved.physical_material_id', 'physical.id')->where('reserved.status', 'ACTIVE'));
+                ->where('holding.position_type', 'WAREHOUSE')->where('holding.status', 'ACTIVE')->where('physical.status', 'AVAILABLE');
             if ($request->filled('keyword')) $query->where('physical.physical_no', 'like', '%'.trim((string) $request->input('keyword')).'%');
             return response()->json(['data' => $query->orderBy('physical.id')->paginate($this->pageSize($request), [
                 'physical.id', 'physical.physical_no', 'physical.shape', 'physical.root_physical_id', 'physical.parent_physical_id',
