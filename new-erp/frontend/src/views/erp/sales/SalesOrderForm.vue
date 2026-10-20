@@ -83,6 +83,12 @@ Do not change layout without approval.
                 <el-option v-for="item in payTypeOptions" :key="item.id" :label="item.name" :value="String(item.id)" />
               </el-select>
             </div>
+            <div class="field">
+              <label>付款条件</label>
+              <el-select v-model="form.funding_policy_id" size="small" placeholder="不选按销售渠道默认" clearable>
+                <el-option v-for="item in fundingPolicyOptions" :key="item.id" :label="item.policy_name" :value="item.id" />
+              </el-select>
+            </div>
             <div class="field span-2">
               <label class="required">成交平台</label>
               <div class="inline-pair">
@@ -678,6 +684,7 @@ export default {
       changes: []
     },
     payTypeOptions: [],
+    fundingPolicyOptions: [],
     platformRawOptions: [],
     shareUserOptions: [],
     pickerLine: null,
@@ -692,6 +699,7 @@ export default {
       platform2: '',
       platform_buyer_id: '',
       payment_method_id: '',
+      funding_policy_id: null,
       sales_user_legacy_id: '',
       created_by_legacy_id: '',
       order_time: '',
@@ -842,6 +850,7 @@ export default {
         platform2: '',
         platform_buyer_id: '',
         payment_method_id: '',
+        funding_policy_id: null,
         sales_user_legacy_id: '',
         created_by_legacy_id: '',
         order_time: '',
@@ -876,6 +885,7 @@ export default {
       try {
         const { data } = await getSalesOrderOptions({ include_carriers: 0 })
         this.payTypeOptions = data.pay_types || []
+        this.fundingPolicyOptions = data.funding_policies || []
         this.platformRawOptions = data.platforms || []
         this.shareUserOptions = data.share_users || []
       } catch (error) {
@@ -896,6 +906,7 @@ export default {
         platform_buyer_id: data.platform_buyer_id || '',
         customer_kind: data.customer_kind || (data.customer_snapshot && data.customer_snapshot.customer_kind) || 'individual',
         payment_method_id: data.payment_method_id ? String(data.payment_method_id) : '',
+        funding_policy_id: data.funding_policy_id ? Number(data.funding_policy_id) : null,
         sales_user_legacy_id: data.sales_user_legacy_id ? String(data.sales_user_legacy_id) : '',
         created_by_legacy_id: data.created_by_legacy_id ? String(data.created_by_legacy_id) : '',
         is_share: Boolean(data.is_share),
@@ -1575,6 +1586,7 @@ export default {
       const payload = {
         ...withoutInternalFreight(this.form),
         deleted_line_ids: this.deletedLineIds,
+        funding_policy_id: this.form.funding_policy_id || null,
         share_user: this.form.is_share ? this.form.share_user : [],
         default_carrier_id: this.form.carrier_id || null,
         order_remark: this.form.remark || null,

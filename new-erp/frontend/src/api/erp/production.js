@@ -28,3 +28,17 @@ export const deletePerformanceTemplate = id => api.delete(`/v1/erp/production/pe
 export const previewPerformanceTemplate = (id, data) => api.post(`/v1/erp/production/performance/templates/${id}/preview`, data)
 export const applyPerformanceTemplate = (id, data) => api.post(`/v1/erp/production/performance/templates/${id}/apply`, data)
 export const listPerformanceTemplateOperations = params => api.get('/v1/erp/production/performance/template-operations', { params })
+
+// 新生产工单（v2）
+export const listWorkOrders = params => api.get('/v1/erp/production/work-orders', { params })
+export const getWorkOrder = id => api.get(`/v1/erp/production/work-orders/${id}`)
+export const previewWorkOrder = params => api.get('/v1/erp/production/work-orders/preview', { params })
+export const createWorkOrder = data => api.post('/v1/erp/production/work-orders', data)
+export const updateWorkOrder = (id, data) => api.put(`/v1/erp/production/work-orders/${id}`, data)
+export const getWorkOrderOptions = id => api.get(`/v1/erp/production/work-orders/${id}/options`)
+export const releaseWorkOrder = (id, data) => api.post(`/v1/erp/production/work-orders/${id}/release`, data)
+export const pauseWorkOrder = (id, data) => api.post(`/v1/erp/production/work-orders/${id}/pause`, data)
+export const resumeWorkOrder = (id, data) => api.post(`/v1/erp/production/work-orders/${id}/resume`, data)
+export const cancelWorkOrder = (id, data) => api.post(`/v1/erp/production/work-orders/${id}/cancel`, data)
+export const lookupSerial = serialNo => api.get('/v1/erp/production/serials/lookup', { params: { serial_no: serialNo } })
+export const listSalesOrderWorkOrders = orderId => api.get(`/v1/erp/production/sales-orders/${orderId}/work-orders`)

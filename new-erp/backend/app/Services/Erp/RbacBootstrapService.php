@@ -66,6 +66,7 @@ class RbacBootstrapService
             ['system', '系统管理', 'menu', null, null, null, 'el-icon-setting', 900],
 
             ['production.work_order', '工单管理', 'menu', 'production', '/production/work-orders', 'WorkOrderList', 'el-icon-s-order', 802],
+            ['production.serial', '序列号查询', 'menu', 'production', '/production/serials', 'ProductionSerialTrace', 'el-icon-search', 802],
             ['production.base', '生产基础', 'menu', 'production', null, null, 'el-icon-setting', 803],
             ['production.operation', '工序管理', 'menu', 'production.base', '/production/operations', 'ProductionOperationList', 'el-icon-set-up', 804],
             ['production.routing', '工艺路线', 'menu', 'production.base', '/production/routings', 'ProductionRoutingList', 'el-icon-guide', 805],
@@ -243,6 +244,7 @@ class RbacBootstrapService
             ['production.task.view', '查看生产任务', 'button', 'production.work_order', null, null, 'el-icon-mouse', 21],
             ['production.task.collaborate', '生产任务协同', 'button', 'production.work_order', null, null, 'el-icon-mouse', 26],
             ['production.performance.manage', '维护提成模板', 'button', 'production.performance', null, null, 'el-icon-setting', 2],
+            ['production.serial.view', '查看序列号追溯', 'button', 'production.serial', null, null, 'el-icon-mouse', 1],
             ['production.operation.view', '查看工序', 'button', 'production.operation', null, null, 'el-icon-mouse', 1],
             ['production.operation.create', '新增工序', 'button', 'production.operation', null, null, 'el-icon-mouse', 2],
             ['production.operation.edit', '编辑工序', 'button', 'production.operation', null, null, 'el-icon-mouse', 3],
@@ -304,6 +306,7 @@ class RbacBootstrapService
             ['finance.account', '资金账户', 'menu', 'finance', '/finance/accounts', 'FinanceAccountList', 'el-icon-bank-card', 607],
             ['finance.transfer', '资金转账 / 换汇', 'menu', 'finance', '/finance/transfers', 'FinanceTransferList', 'el-icon-sort', 608],
             ['finance.account_valuation', '资金账户估值', 'menu', 'finance', '/finance/account-valuations', 'FinanceAccountValuation', 'el-icon-pie-chart', 609],
+            ['finance.funding_policy', '付款条件', 'menu', 'finance', '/finance/funding-policies', 'FinanceFundingPolicyList', 'el-icon-document-checked', 610],
 
             // 财务管理 按钮
             // 收付款列表、核销、财务统计等资金数据的统一查看权限（前后端已普遍校验，此前未登记导致只有超级管理员可用）。
@@ -563,6 +566,7 @@ class RbacBootstrapService
     {
         $manager = [
             'production.work_order', 'production.base', 'production.operation', 'production.routing', 'production.performance',
+            'production.serial', 'production.serial.view',
             'production.work_order.view', 'production.work_order.create', 'production.work_order.edit',
             'production.work_order.publish', 'production.work_order.cancel',
             'production.task.view', 'production.task.collaborate', 'production.performance.manage',
@@ -574,11 +578,13 @@ class RbacBootstrapService
             'production_manager' => $manager,
             'production_operator' => [
                 'production.work_order', 'production.base', 'production.operation', 'production.routing',
+                'production.serial', 'production.serial.view',
                 'production.work_order.view', 'production.task.view', 'production.task.collaborate',
                 'production.operation.view', 'production.routing.view',
             ],
             'department_principal' => [
                 'production.work_order', 'production.base', 'production.operation', 'production.routing',
+                'production.serial', 'production.serial.view',
                 'production.work_order.view', 'production.work_order.publish', 'production.task.view',
                 'production.operation.view', 'production.routing.view',
             ],

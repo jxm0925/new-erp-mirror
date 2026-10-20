@@ -53,3 +53,8 @@ export const getCounterpartyBalance = (partyType, partyId) => api.get(`/v1/erp/f
 export const uploadFinanceAttachment = (id, form) => api.post(`/v1/erp/finance/cash-documents/${id}/attachments`, form, { headers: { 'Content-Type': 'multipart/form-data' } })
 export const previewFinanceAttachment = id => api.get(`/v1/erp/finance/attachments/${id}/preview`, { responseType: 'blob' })
 export const deleteFinanceAttachment = id => api.delete(`/v1/erp/finance/attachments/${id}`)
+
+export const listFundingPolicies = params => api.get('/v1/erp/finance/funding-policies', { params })
+export const createFundingPolicy = data => api.post('/v1/erp/finance/funding-policies', data)
+export const updateFundingPolicy = (id, data) => api.put(`/v1/erp/finance/funding-policies/${id}`, data)
+export const setFundingPolicyStatus = (id, data) => api.post(`/v1/erp/finance/funding-policies/${id}/status`, data)

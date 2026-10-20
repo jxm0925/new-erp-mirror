@@ -103,10 +103,10 @@ class SalesOrderEditImpactService
         }
     }
 
-    /** 订单关联工单是否已下达：下达前自由修改，下达后修改必须审核。新生产工单上线前恒为否。 */
+    /** 订单关联工单是否已开工：开工前自由修改（未开工工单随订单重新生成），开工后修改必须审核。 */
     public function productionReleased(SalesOrder $order): bool
     {
-        return false;
+        return app(\App\Services\Erp\Manufacturing\WorkOrderService::class)->salesOrderHasStartedWork((int) $order->id);
     }
 
     public function submit(int $orderId, array $payload, string $operator, ?object $actor = null): array
@@ -307,6 +307,8 @@ class SalesOrderEditImpactService
         if ($hasOperationalImpact) {
             $this->reservations->releaseForSalesOrder($order, '订单候选版本生效，释放旧库存预留。');
             SalesOrderFulfillment::where('sales_order_id', $order->id)->whereIn('demand_status', ['pending', 'confirmed'])->update(['demand_status' => 'superseded', 'reservation_status' => 'superseded', 'production_requirement_status' => 'superseded']);
+            // 数量随订单变：未开工的工单先取消，重新做生产确认时按新数量再生成。
+            app(\App\Services\Erp\Manufacturing\WorkOrderService::class)->cancelForSalesOrder($order, '订单变更后需重新做生产确认', $actor);
             $order->update(['change_status' => 'applied', 'fulfillment_status' => 'pending', 'production_confirm_status' => 'pending',
                 'inventory_lock_status' => 'pending', 'inventory_locked_at' => null, 'inventory_locked_by_legacy_id' => null]);
         }

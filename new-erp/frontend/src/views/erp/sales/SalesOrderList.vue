@@ -99,6 +99,15 @@ Design status: 按“基础档案”页面风格重做（页头卡片 / 提示�
           <el-table-column label="生产确认" width="92">
             <template slot-scope="{row}"><span v-if="row.order_status === 'draft'" class="muted">-</span><el-tag v-else size="mini" :type="productionTag(row.production_confirm_status)">{{ productionText(row.production_confirm_status) }}</el-tag></template>
           </el-table-column>
+          <el-table-column label="资金" width="92">
+            <template slot-scope="{row}">
+              <span v-if="['draft', 'cancelled'].includes(row.order_status)" class="muted">-</span>
+              <template v-else>
+                <el-tag size="mini" :type="row.production_funding_status === 'passed' ? 'success' : 'warning'">{{ row.production_funding_status === 'passed' ? '可开工' : '定金未到' }}</el-tag>
+                <small class="muted">{{ row.shipment_funding_status === 'passed' ? '可发货' : '尾款未齐' }}</small>
+              </template>
+            </template>
+          </el-table-column>
           <el-table-column label="交付状态" width="112">
             <template slot-scope="{row}">
               <el-tag size="mini" :type="fulfillmentStatusTag(row.fulfillment_status)">{{ fulfillmentStatusText(row.fulfillment_status) }}</el-tag>
