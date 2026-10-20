@@ -44,7 +44,8 @@
             <el-table-column label="已确认分配" width="100" align="center"><template slot-scope="{row}"><b>{{ number(row.confirmed_allocated_qty) }}</b><small class="sub">{{ row.sales_unit || '-' }}</small></template></el-table-column>
             <el-table-column label="本次确认数量" width="122" align="center">
               <template slot-scope="{row}">
-                <el-input-number v-model="row.confirm_qty" :disabled="!editable" :min="0" :max="row.remaining_confirm_qty" :precision="salesPrecision(row)" :controls="false" @change="changeConfirmQuantity(row)" />
+                <el-input-number v-if="editable" v-model="row.confirm_qty" :disabled="!editable" :min="0" :max="row.remaining_confirm_qty" :precision="salesPrecision(row)" :controls="false" @change="changeConfirmQuantity(row)" />
+                <span v-else class="readonly-confirm">{{ number(row.confirm_qty) }}</span>
                 <small class="sub">{{ row.sales_unit || '-' }}</small>
               </template>
             </el-table-column>
@@ -71,11 +72,11 @@
             <el-table-column label="备货数量分配（销售单位）" min-width="465">
               <template slot-scope="{row}">
                 <div class="split-grid">
-                  <label>库存<el-input-number v-model="row.inventory_qty" :disabled="!editable || !isPhysical(row)" :min="0" :max="Math.min(Number(row.confirm_qty || 0), Number(row.available_sales_qty || 0))" :precision="salesPrecision(row)" :controls="false" /></label>
-                  <label v-if="row.is_purchase_fulfilled">外购<el-input-number v-model="row.purchase_qty" :disabled="!editable || !isPhysical(row)" :min="0" :max="row.confirm_qty" :precision="salesPrecision(row)" :controls="false" /></label>
-                  <label v-else>生产<el-input-number v-model="row.production_qty" :disabled="!editable || !isPhysical(row)" :min="0" :max="row.confirm_qty" :precision="salesPrecision(row)" :controls="false" /></label>
-                  <label>服务<el-input-number v-model="row.service_qty" :disabled="!editable || !isService(row)" :min="0" :max="row.confirm_qty" :precision="salesPrecision(row)" :controls="false" /></label>
-                  <label>无需发货<el-input-number v-model="row.no_delivery_qty" :disabled="!editable || !isNoDelivery(row)" :min="0" :max="row.confirm_qty" :precision="salesPrecision(row)" :controls="false" /></label>
+                  <label>库存<el-input-number v-if="editable" v-model="row.inventory_qty" :disabled="!editable || !isPhysical(row)" :min="0" :max="Math.min(Number(row.confirm_qty || 0), Number(row.available_sales_qty || 0))" :precision="salesPrecision(row)" :controls="false" /><span v-else class="readonly-qty">{{ number(row.inventory_qty) }}</span></label>
+                  <label v-if="row.is_purchase_fulfilled">外购<el-input-number v-if="editable" v-model="row.purchase_qty" :disabled="!editable || !isPhysical(row)" :min="0" :max="row.confirm_qty" :precision="salesPrecision(row)" :controls="false" /><span v-else class="readonly-qty">{{ number(row.purchase_qty) }}</span></label>
+                  <label v-else>生产<el-input-number v-if="editable" v-model="row.production_qty" :disabled="!editable || !isPhysical(row)" :min="0" :max="row.confirm_qty" :precision="salesPrecision(row)" :controls="false" /><span v-else class="readonly-qty">{{ number(row.production_qty) }}</span></label>
+                  <label>服务<el-input-number v-if="editable" v-model="row.service_qty" :disabled="!editable || !isService(row)" :min="0" :max="row.confirm_qty" :precision="salesPrecision(row)" :controls="false" /><span v-else class="readonly-qty">{{ number(row.service_qty) }}</span></label>
+                  <label>无需发货<el-input-number v-if="editable" v-model="row.no_delivery_qty" :disabled="!editable || !isNoDelivery(row)" :min="0" :max="row.confirm_qty" :precision="salesPrecision(row)" :controls="false" /><span v-else class="readonly-qty">{{ number(row.no_delivery_qty) }}</span></label>
                   <label>未确定<span class="readonly-qty">{{ number(remainingUndetermined(row)) }}</span></label>
                 </div>
                 <div class="split-check" :class="allocationValid(row) ? 'pass' : 'fail'">{{ number(allocationSum(row)) }} / {{ number(row.confirm_qty) }} {{ row.sales_unit || '-' }}<span v-if="needsItem(row)">；本次 Item 基本数量 {{ number(itemBaseConfirmQty(row)) }} {{ row.base_unit }}</span></div>
