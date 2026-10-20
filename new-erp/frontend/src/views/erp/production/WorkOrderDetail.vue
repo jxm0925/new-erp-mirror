@@ -49,7 +49,7 @@
           <div>
             <div class="card">
               <h2>每台设备走到哪了
-                <span class="unit-sum"><b>{{ unitCount('stored') }}</b> 已入库 <b>{{ unitCount('in_progress') }}</b> 在制 <b class="warn">{{ unitCount('rework') }}</b> 返工 <b>{{ unitCount('waiting') }}</b> 未开工</span>
+                <span class="unit-sum"><b>{{ unitCount('stored') }}</b> 已入库 <b>{{ unitCount('completed') }}</b> 等入库 <b>{{ unitCount('in_progress') }}</b> 在制 <b class="warn">{{ unitCount('rework') }}</b> 返工 <b>{{ unitCount('waiting') }}</b> 未开工</span>
               </h2>
               <div v-if="!wo.units.length" class="empty">{{ wo.status === 'planned' ? '下达后按台生成序列号' : '这张工单不逐台跟踪（数量不是整数或超过 1000 台）' }}</div>
               <div v-else class="unit-wrap">
@@ -60,7 +60,7 @@
                   </thead>
                   <tbody>
                     <tr v-for="u in visibleUnits" :key="u.id">
-                      <td><div class="mono sn lk" @click="openSerial(u.serial_no)">{{ u.serial_no || ('第 ' + u.unit_no + ' 台') }}</div><div :class="u.status === 'rework' ? 'warn small' : 'sub'">{{ u.status === 'rework' ? `返工第 ${u.rework_count || 1} 次` : u.status_label }}<template v-if="u.rework_count && u.status !== 'rework'"> · 返工过 {{ u.rework_count }} 次</template></div></td>
+                      <td><div class="mono sn lk" @click="openSerial(u.serial_no)">{{ u.serial_no || ('第 ' + u.unit_no + ' 台') }}</div><div :class="u.status === 'rework' ? 'warn small' : 'sub'">{{ u.status === 'rework' ? `返工第 ${u.rework_count || 1} 次` : u.status_label }}<template v-if="u.current_operation_name && ['in_progress', 'rework'].includes(u.status)"> · {{ u.current_operation_name }}</template><template v-if="u.rework_count && u.status !== 'rework'"> · 返工过 {{ u.rework_count }} 次</template></div></td>
                       <td v-for="(op, i) in prodOps" :key="op.id"><div :class="['cell', cellState(u, i)]">{{ cellText(u, i) }}</div></td>
                       <td v-if="!prodOps.length"><div class="cell">-</div></td>
                       <td v-for="op in shipOps" :key="op.id" class="ship"><div class="cell dash">{{ u.status === 'stored' ? '待开发货单' : '' }}</div></td>
@@ -69,7 +69,25 @@
                 </table>
                 <div v-if="wo.units.length > unitLimit" class="more"><span class="lk" @click="unitLimit = wo.units.length">显示全部 {{ wo.units.length }} 台</span></div>
               </div>
-              <p class="sub tip">逐台报工在第 2 阶段上线；现在下达后显示序列号和状态。</p>
+            </div>
+
+            <div v-if="prodOps.length && wo.status !== 'planned'" class="card">
+              <h2>每道工序现在 <small>车间在小程序里按台报工，这里实时汇总</small></h2>
+              <div class="unit-wrap">
+                <table class="unit-table op-table">
+                  <thead><tr><th>工序</th><th>停在这道</th><th>做完</th><th>接单人</th><th>正在计时</th><th>累计工时</th></tr></thead>
+                  <tbody>
+                    <tr v-for="op in prodOps" :key="op.id">
+                      <td><b>{{ op.operation_name }}</b> <span :class="['chip', op.status === 'done' ? 'c-g' : (op.status === 'in_progress' ? 'c-o' : 'c-n')]">{{ opStatus(op.status) }}</span></td>
+                      <td>{{ op.here_qty || 0 }} 台<span v-if="op.rework_qty" class="warn"> · 返工 {{ op.rework_qty }}</span></td>
+                      <td>{{ qty(op.completed_qty) }} / {{ qty(wo.planned_qty) }}</td>
+                      <td>{{ op.owner_name || '没人接' }}</td>
+                      <td>{{ (op.timing_names || []).join('、') || '-' }}</td>
+                      <td>{{ op.labor_minutes ? hours(op.labor_minutes) : '-' }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
             </div>
 
             <div class="card">
@@ -107,6 +125,17 @@
           </div>
 
           <div>
+            <div v-if="wo.tech" class="card">
+              <h2>定制技术 <span :class="['chip', wo.tech.status === 'pending' ? 'c-o' : 'c-g']">{{ wo.tech.status_label }}</span></h2>
+              <div class="kv"><span>技术负责人</span><b>{{ wo.tech.tech_owner_name || '还没人处理' }}</b></div>
+              <div v-if="wo.tech.released_at" class="kv"><span>下发车间</span><b>{{ wo.tech.released_at.slice(5, 16) }}</b></div>
+              <div v-if="wo.tech.drawings_updated_at" class="note">下发后改过图纸（{{ wo.tech.drawings_updated_at.slice(5, 16) }}），车间会看到“图纸已更新”。</div>
+              <div class="kv"><span>设计图</span><b>
+                <template v-if="wo.tech.drawings.length"><a v-for="g in wo.tech.drawings" :key="g.id" class="lk dwg-lk" :href="g.url" target="_blank" rel="noopener">{{ g.drawing_name }} V{{ g.version_no }}</a></template>
+                <template v-else>还没上传</template>
+              </b></div>
+              <div v-if="$can(['production.tech', 'production.tech.manage'])" class="kv"><span>{{ wo.tech.status === 'pending' ? '等技术传图、确认 BOM 后下发' : '图纸和定制 BOM' }}</span><b class="lk" @click="$router.push(`/production/tech/${wo.id}`)">去定制技术</b></div>
+            </div>
             <div class="card">
               <h2>需要处理 <small>{{ wo.attention.length }} 件</small></h2>
               <div v-if="!wo.attention.length" class="att ok-att"><b>一切正常</b><p>没有缺料、暂停或延期。</p></div>
@@ -220,7 +249,9 @@ export default {
         this.loading = false
       }
     },
-    unitCount(status) { return this.wo.units.filter(u => (status === 'stored' ? ['stored', 'completed'].includes(u.status) : u.status === status)).length },
+    unitCount(status) { return this.wo.units.filter(u => u.status === status).length },
+    opStatus(status) { return ({ pending: '未开始', in_progress: '在做', done: '做完' })[status] || status },
+    hours(minutes) { return minutes >= 60 ? `${Number((minutes / 60).toFixed(1))} 时` : `${Math.round(minutes)} 分` },
     unitOpIndex(u) { return this.prodOps.findIndex(o => o.id === u.current_operation_id) },
     cellState(u, i) {
       if (['stored', 'completed'].includes(u.status)) return 'done'
@@ -339,6 +370,8 @@ export default {
 .cell.bad { background: #ffe9e7; border: 1px solid #f19a93; color: #c0261b; font-weight: 600; }
 .cell.dash { background: #fff; border: 1px dashed #d5dbe5; color: #b0b9c8; }
 .cell.off { background: #eef1f5; color: #8a95a8; text-decoration: line-through; }
+.op-table td { font-size: 12px; padding: 6px 4px; border-bottom: 1px solid #f0f2f6; white-space: nowrap; }
+.dwg-lk + .dwg-lk { margin-left: 8px; }
 .more { text-align: center; padding-top: 8px; }
 .tip { margin: 10px 0 0; }
 .two-col { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }

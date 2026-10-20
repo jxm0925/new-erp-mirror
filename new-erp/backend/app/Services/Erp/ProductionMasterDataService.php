@@ -388,7 +388,7 @@ class ProductionMasterDataService
 
     public function selector(string $type, array $filters, array $permissions, bool $superAdmin): LengthAwarePaginator
     {
-        $this->authorize($permissions, $superAdmin, ['production.operation.view', 'production.routing.view', 'production.work_order.create']);
+        $this->authorize($permissions, $superAdmin, ['production.operation.view', 'production.routing.view', 'production.work_order.create', 'production.tech.manage']);
         $keyword = trim((string) ($filters['keyword'] ?? ''));
         $perPage = min(50, max(1, (int) ($filters['per_page'] ?? 10)));
         $query = match ($type) {

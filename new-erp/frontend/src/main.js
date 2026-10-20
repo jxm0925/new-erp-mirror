@@ -59,6 +59,9 @@ import WorkOrderList from './views/erp/production/WorkOrderList.vue'
 import WorkOrderDetail from './views/erp/production/WorkOrderDetail.vue'
 import WorkOrderForm from './views/erp/production/WorkOrderForm.vue'
 import ProductionSerialTrace from './views/erp/production/ProductionSerialTrace.vue'
+import ProductionBoard from './views/erp/production/ProductionBoard.vue'
+import ProductionTechList from './views/erp/production/ProductionTechList.vue'
+import ProductionTechDetail from './views/erp/production/ProductionTechDetail.vue'
 import ApprovalWorkbench from './views/erp/approval/ApprovalWorkbench.vue'
 import ApprovalTaskDetail from './views/erp/approval/ApprovalTaskDetail.vue'
 import ApprovalFlowList from './views/erp/approval/ApprovalFlowList.vue'
@@ -186,6 +189,9 @@ const router = new VueRouter({
     { path: '/production/work-orders/new', component: WorkOrderForm, meta: { permission: 'production.work_order.create' } },
     { path: '/production/work-orders/:id(\\d+)', component: WorkOrderDetail, meta: { permission: 'production.work_order.view' } },
     { path: '/production/serials', component: ProductionSerialTrace, meta: { permission: 'production.serial.view' } },
+    { path: '/production/board', component: ProductionBoard, meta: { permission: 'production.board' } },
+    { path: '/production/tech', component: ProductionTechList, meta: { permission: ['production.tech', 'production.tech.manage'] } },
+    { path: '/production/tech/:id(\\d+)', component: ProductionTechDetail, meta: { permission: ['production.tech', 'production.tech.manage'] } },
     { path: '/approvals', redirect: '/approvals/tasks' },
     { path: '/approvals/tasks', component: ApprovalWorkbench, meta: { permission: 'approval.task.view' } },
     { path: '/approvals/processed', redirect: { path: '/approvals/tasks', query: { scope: 'processed' } } },

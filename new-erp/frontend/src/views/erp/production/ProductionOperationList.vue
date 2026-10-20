@@ -35,6 +35,7 @@
           <header><h2>工序详情</h2><el-button type="text" icon="el-icon-close" aria-label="关闭工序详情" @click="selected=null"/></header>
           <dl class="operation-facts"><div><dt>工序编码</dt><dd>{{ selected.operation_no }}</dd></div><div><dt>工序名称</dt><dd>{{ selected.operation_name }}</dd></div><div><dt>状态</dt><dd><el-tag size="mini" :type="selected.status==='enabled'?'success':'info'">{{ selected.status==='enabled'?'启用':'停用' }}</el-tag></dd></div><div><dt>排序</dt><dd>{{ selected.sort }}</dd></div><div><dt>公共工序</dt><dd><el-tag size="mini" :type="booleanFlag(selected.is_public)?'success':'info'">{{ booleanFlag(selected.is_public)?'是':'否' }}</el-tag></dd></div><div><dt>效率优先派工</dt><dd>{{ booleanFlag(selected.auto_assignment_enabled)?'启用':'关闭' }}</dd></div><div><dt>使用中的路线数量</dt><dd>{{ selected.active_routing_count || 0 }}</dd></div><div class="wide"><dt>说明</dt><dd>{{ selected.description || '-' }}</dd></div><div><dt>更新时间</dt><dd>{{ time(selected.updated_at) }}</dd></div><div><dt>更新人</dt><dd>{{ selected.updated_by_legacy_id ? `用户 #${selected.updated_by_legacy_id}` : '-' }}</dd></div></dl>
           <section class="routing-references"><h3>已生效路线引用</h3><p>该工序当前被以下已生效路线引用：</p><el-table :data="selected.active_routings || []" size="mini" border empty-text="当前没有已生效路线引用"><el-table-column prop="routing_no" label="路线编码" width="92"/><el-table-column prop="routing_name" label="路线名称" min-width="86"/><el-table-column label="版本" width="48"><template slot-scope="s">V{{ s.row.version }}</template></el-table-column><el-table-column label="产出物料" min-width="90"><template slot-scope="s">{{ s.row.output_item && (s.row.output_item.item_name || s.row.output_item.item_code) || '-' }}</template></el-table-column></el-table></section>
+          <section class="routing-references worker-section" v-loading="workersLoading"><h3>能做的人</h3><p>车间小程序里只有这些人能接、能报这道工序；没设则所有有报工权限的人都能做。</p><div class="worker-tags"><el-tag v-for="w in workers" :key="w.id" size="mini" type="success">{{ w.name }}</el-tag><span v-if="!workers.length" class="field-help">没设：所有有报工权限的人都能做</span></div><el-button v-if="$can('production.operation.edit')" size="mini" icon="el-icon-user" @click="openWorkers">设置能做的人</el-button></section>
           <el-alert v-if="Number(selected.active_routing_count)>0 && selected.status==='enabled'" title="该工序正被已生效路线引用，暂不可停用" type="warning" :closable="false" show-icon/>
           <div class="inspector-actions"><el-button @click="$router.push(`/production/operations/${selected.id}`)">查看</el-button><el-button v-if="$can('production.operation.edit')" type="primary" plain @click="openEdit(selected)">编辑</el-button><el-button v-if="$can('production.operation.toggle')" type="danger" plain :disabled="selected.status!=='enabled' || Number(selected.active_routing_count)>0" @click="toggle(selected)">停用</el-button><el-button v-if="$can('production.operation.toggle')" type="success" plain :disabled="selected.status==='enabled'" @click="toggle(selected)">启用</el-button></div>
         </template>
@@ -58,12 +59,20 @@
       </div>
       <template slot="footer"><el-button :disabled="createSaving" @click="createDialog=false">取消</el-button><el-button type="success" :loading="createSaving" :disabled="createLoading" @click="saveCreate">保存</el-button></template>
     </el-dialog>
+    <el-dialog :title="`能做的人 · ${selected ? selected.operation_name : ''}`" :visible.sync="workerDialog" width="480px" :close-on-click-modal="false" append-to-body>
+      <p class="field-help worker-help">不选任何人 = 所有有报工权限的人都能做。选了之后，别人在小程序里看不到这道工序的任务。</p>
+      <el-select v-model="workerIds" multiple filterable remote :remote-method="searchWorkers" :loading="workerSearching" placeholder="搜姓名添加" class="worker-select" @focus="searchWorkers('')">
+        <el-option v-for="u in workerOptions" :key="u.id" :label="u.name" :value="u.id" />
+      </el-select>
+      <template slot="footer"><el-button @click="workerDialog=false">取消</el-button><el-button type="success" :loading="workerSaving" @click="saveWorkers">保存</el-button></template>
+    </el-dialog>
   </section>
 </template>
 
 <script>
 import { erpDateTime } from '../../../utils/dateTime'
-import { listProductionOperations, getProductionOperation, createProductionOperation, updateProductionOperation, enableProductionOperation, disableProductionOperation } from '../../../api/erp/production'
+import { listProductionOperations, getProductionOperation, createProductionOperation, updateProductionOperation, enableProductionOperation, disableProductionOperation, getOperationWorkers, saveOperationWorkers } from '../../../api/erp/production'
+import { searchProductionUsers } from './mfg-helpers'
 import { reserveForCreatePage, clearCreatePageReservation } from '../../../utils/documentNumberReservation'
 
 const asBoolean = value => value === true || value === 1 || value === '1'
@@ -71,7 +80,7 @@ const blankCreateForm = () => ({ operation_no: '', operation_name: '', sort: 0, 
 
 export default {
   name: 'ProductionOperationList',
-  data: () => ({ loading: false, detailLoading: false, rows: [], selected: null, total: 0, page: 1, perPage: 10, filters: { keyword: '', status: '', reference_status: '', is_public: '' }, createDialog: false, createLoading: false, createSaving: false, createReservation: null, createFormKey: 0, dialogMode: 'create', createForm: blankCreateForm(), createRules: { operation_name: [{ required: true, message: '请输入工序名称', trigger: 'blur' }] } }),
+  data: () => ({ loading: false, detailLoading: false, rows: [], selected: null, total: 0, page: 1, perPage: 10, filters: { keyword: '', status: '', reference_status: '', is_public: '' }, createDialog: false, createLoading: false, createSaving: false, createReservation: null, createFormKey: 0, dialogMode: 'create', createForm: blankCreateForm(), createRules: { operation_name: [{ required: true, message: '请输入工序名称', trigger: 'blur' }] }, workers: [], workersLoading: false, workerDialog: false, workerIds: [], workerOptions: [], workerSearching: false, workerSaving: false }),
   computed: {
     statusRadioDisabled() { return this.dialogMode === 'edit' && !this.createForm.status_editable },
     statusLockReason() { return this.dialogMode === 'edit' && !this.createForm.status_editable ? this.createForm.status_lock_reason || '当前工序状态不可修改' : '' }
@@ -99,10 +108,42 @@ export default {
       const requestedId = row.id
       this.selected = { ...row, active_routings: [] }
       this.detailLoading = true
+      this.loadWorkers(requestedId)
       try {
         const response = await getProductionOperation(requestedId)
         if (this.selected && this.selected.id === requestedId) this.selected = response.data.data
       } catch (error) { this.$message.error(error.userMessage || '工序详情加载失败') } finally { if (this.selected && this.selected.id === requestedId) this.detailLoading = false }
+    },
+    async loadWorkers(id) {
+      this.workers = []
+      this.workersLoading = true
+      try {
+        const { data } = await getOperationWorkers(id)
+        if (this.selected && this.selected.id === id) this.workers = data.data || []
+      } catch (error) { this.workers = [] } finally { this.workersLoading = false }
+    },
+    openWorkers() {
+      this.workerIds = this.workers.map(w => w.id)
+      this.workerOptions = this.workers.slice()
+      this.workerDialog = true
+    },
+    async searchWorkers(keyword) {
+      this.workerSearching = true
+      try {
+        const found = await searchProductionUsers(keyword)
+        const picked = this.workerOptions.filter(o => this.workerIds.includes(o.id))
+        this.workerOptions = [...picked, ...found.filter(u => !picked.some(p => p.id === u.id))]
+      } catch (error) { this.$message.error(error.userMessage || '人员加载失败') } finally { this.workerSearching = false }
+    },
+    async saveWorkers() {
+      if (!this.selected) return
+      this.workerSaving = true
+      try {
+        const { data } = await saveOperationWorkers(this.selected.id, { employee_legacy_ids: this.workerIds })
+        this.workers = data.data || []
+        this.workerDialog = false
+        this.$message.success(data.message || '能做的人已保存')
+      } catch (error) { this.$message.error(error.userMessage || '保存失败') } finally { this.workerSaving = false }
     },
     search() { this.page = 1; this.load() },
     reset() { this.filters = { keyword: '', status: '', reference_status: '', is_public: '' }; this.search() },
@@ -238,4 +279,5 @@ export default {
 }
 @media(max-width:1200px){.operation-layout{grid-template-columns:1fr}.operation-inspector{min-height:340px}.operation-filters{grid-template-columns:repeat(3,minmax(0,1fr))}.operation-filters .filter-actions{grid-column:1/-1;justify-content:flex-end}.inspector-actions{margin-top:10px}}
 @media(max-width:767px){.operation-page{padding:12px}.operation-main{padding:14px 12px}.operation-filters{grid-template-columns:1fr}.operation-filters .filter-actions{grid-column:auto}.operation-table-card{overflow-x:auto}.operation-table-card .el-table{min-width:1120px}.operation-table-card .table-footer{min-width:760px}.operation-inspector{padding-bottom:12px}.operation-facts,.operation-create-grid{grid-template-columns:1fr}.operation-facts .wide{grid-column:auto}.operation-page ::v-deep .operation-create-dialog{top:0;width:calc(100% - 24px)!important;margin-top:4vh!important;transform:none}.operation-create-body{min-height:510px}}
+.worker-tags{margin-bottom:10px}.worker-tags .el-tag{margin:0 6px 6px 0}.worker-help{margin:0 0 12px}.worker-select{width:100%}
 </style>
