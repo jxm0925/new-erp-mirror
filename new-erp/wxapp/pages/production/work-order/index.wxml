@@ -1,0 +1,28 @@
+<view class="mt-page">
+  <view wx:if="{{error}}" class="mt-error">{{error}}</view>
+  <view wx:if="{{loading && !wo}}" class="mt-empty">正在读取工单</view>
+  <block wx:if="{{wo}}">
+    <view class="mt-head"><text class="mt-title mono">{{wo.work_order_no}}</text><text class="mt-muted">{{wo.status_label}}</text></view>
+    <view class="mt-card">
+      <view class="mt-op">{{wo.productText}} × {{wo.plannedText}}</view>
+      <view class="mt-muted mt-gap"><text wx:if="{{wo.sales_order_no}}">{{wo.sales_order_no}} · {{wo.customer_name}} · </text><text wx:else>备货 · </text>交期 {{wo.dueText || '-'}}</view>
+      <view wx:if="{{wo.sku_name}}" class="mt-muted">规格：{{wo.sku_name}}</view>
+      <view wx:if="{{wo.special_requirement}}" class="mt-note">{{wo.special_requirement}}</view>
+    </view>
+    <view class="mt-card">
+      <view class="mt-card-title">工序进度</view>
+      <view wx:if="{{!ops.length}}" class="mt-muted">没有车间工序</view>
+      <view wx:for="{{ops}}" wx:key="id" class="wo-op">
+        <view class="mt-row"><text>{{item.operation_name}}</text><text class="mt-muted">{{item.doneText}} / {{wo.plannedText}}<text wx:if="{{item.owner_name}}"> · {{item.owner_name}}</text><text wx:if="{{item.rework_qty}}" class="mt-red"> · 返工 {{item.rework_qty}}</text></text></view>
+        <view class="mt-bar"><view class="mt-bar-in" style="width: {{item.percent}}%"></view></view>
+      </view>
+    </view>
+    <view class="mt-card">
+      <view class="mt-card-title">每台在哪</view>
+      <view wx:if="{{!units.length}}" class="mt-muted">这张工单不逐台跟踪</view>
+      <view wx:for="{{units}}" wx:key="id" class="mt-kv">
+        <text class="k mono">{{item.short}}</text><text class="mt-tag {{item.tag}}">{{item.text}}</text>
+      </view>
+    </view>
+  </block>
+</view>

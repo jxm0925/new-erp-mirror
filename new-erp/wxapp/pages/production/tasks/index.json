@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "生产任务",
+  "navigationBarBackgroundColor": "#ffffff",
+  "navigationBarTextStyle": "black",
+  "enablePullDownRefresh": true,
+  "usingComponents": {}
+}

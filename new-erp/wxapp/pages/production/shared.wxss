@@ -1,0 +1,51 @@
+/* 生产任务 / 报工 / 工单查看 共用样式 */
+page { background: #f1f4f8; color: #172033; font-size: 28rpx; }
+view, text, input, textarea, button, scroll-view { box-sizing: border-box; }
+.mt-page { padding: 20rpx 20rpx 40rpx; min-width: 0; }
+.mt-page.has-footer { padding-bottom: 180rpx; }
+.mt-head { display: flex; justify-content: space-between; align-items: center; gap: 16rpx; padding: 8rpx 4rpx 20rpx; }
+.mt-title { font-size: 36rpx; font-weight: 700; }
+.mt-sub { font-size: 24rpx; color: #8a95a8; margin-top: 6rpx; }
+.mt-muted { color: #8a95a8; font-size: 24rpx; }
+.mt-red { color: #d92d20; font-size: 24rpx; font-weight: 600; }
+.mt-green { color: #11804a; font-weight: 600; }
+.mt-tabs { display: flex; background: #fff; border-radius: 16rpx; margin-bottom: 16rpx; overflow: hidden; }
+.mt-tab { flex: 1; text-align: center; padding: 22rpx 0; color: #5b6780; border-bottom: 4rpx solid transparent; }
+.mt-tab.on { color: #11804a; border-color: #11804a; font-weight: 700; }
+.mt-search { display: flex; gap: 12rpx; margin-bottom: 16rpx; }
+.mt-input { flex: 1; min-width: 0; background: #fff; border-radius: 12rpx; padding: 16rpx 20rpx; font-size: 26rpx; height: 76rpx; }
+.mt-card { background: #fff; border-radius: 20rpx; padding: 26rpx; margin-bottom: 18rpx; }
+.mt-card-title { font-weight: 700; font-size: 29rpx; margin-bottom: 14rpx; display: flex; justify-content: space-between; align-items: center; gap: 12rpx; }
+.mt-row { display: flex; justify-content: space-between; align-items: center; gap: 12rpx; }
+.mt-gap { margin-top: 14rpx; }
+.mt-op { font-size: 32rpx; font-weight: 700; }
+.mt-product { font-size: 28rpx; margin: 10rpx 0 6rpx; }
+.mt-tags { display: flex; gap: 8rpx; flex-wrap: wrap; justify-content: flex-end; }
+.mt-tag { font-size: 21rpx; padding: 4rpx 14rpx; border-radius: 20rpx; font-weight: 600; white-space: nowrap; }
+.mt-tag.red { background: #ffe9e7; color: #c0261b; }
+.mt-tag.amber { background: #fff1e0; color: #b25c00; }
+.mt-tag.purple { background: #f1e9ff; color: #7a3fd1; }
+.mt-tag.green { background: #e6f7ef; color: #11804a; }
+.mt-tag.gray { background: #eef1f5; color: #5b6780; }
+.mt-tag.blue { background: #e8f0ff; color: #1f5bd6; }
+.mt-bar { height: 10rpx; background: #eef1f5; border-radius: 6rpx; margin: 12rpx 0 4rpx; overflow: hidden; }
+.mt-bar-in { height: 100%; background: #11804a; border-radius: 6rpx; }
+.mt-btn { margin: 20rpx 0 0; width: 100%; background: #11804a; color: #fff; border-radius: 14rpx; font-size: 29rpx; font-weight: 600; padding: 18rpx 0; line-height: 1.5; }
+.mt-btn.ghost { background: #fff; color: #172033; border: 2rpx solid #d5dbe5; }
+.mt-btn.danger { background: #c0261b; color: #fff; }
+.mt-btn.danger-ghost { background: #fff; color: #c0261b; border: 2rpx solid #f19a93; }
+.mt-btn[disabled] { opacity: .5; }
+.mt-btn-mini { width: auto; margin: 0; padding: 0 28rpx; font-size: 26rpx; height: 76rpx; line-height: 76rpx; }
+.mt-error { background: #ffe9e7; color: #c0261b; border-radius: 12rpx; padding: 18rpx 20rpx; margin-bottom: 16rpx; font-size: 25rpx; }
+.mt-note { background: #fffaf0; border-left: 6rpx solid #ffb020; color: #5b4a1f; border-radius: 10rpx; padding: 14rpx 18rpx; font-size: 24rpx; margin-top: 14rpx; line-height: 1.6; }
+.mt-empty { text-align: center; color: #8a95a8; padding: 80rpx 0; }
+.mt-pager { display: flex; justify-content: center; align-items: center; gap: 24rpx; margin: 10rpx 0 20rpx; color: #5b6780; }
+.mt-foot { text-align: center; color: #8a95a8; font-size: 23rpx; padding: 10rpx 20rpx; }
+.mt-footer { position: fixed; left: 0; right: 0; bottom: 0; background: #fff; padding: 18rpx 20rpx calc(18rpx + env(safe-area-inset-bottom)); display: flex; gap: 16rpx; box-shadow: 0 -2rpx 12rpx rgba(20, 33, 61, .06); z-index: 10; }
+.mt-footer .mt-btn { margin: 0; }
+.mt-footer .mt-btn.side { flex: 0 0 34%; }
+.mt-kv { display: flex; justify-content: space-between; gap: 16rpx; padding: 14rpx 0; border-bottom: 1rpx solid #f0f2f6; font-size: 26rpx; }
+.mt-kv:last-child { border-bottom: 0; }
+.mt-kv .k { color: #5b6780; flex-shrink: 0; }
+.mt-kv .v { text-align: right; word-break: break-all; }
+.mono { font-family: Menlo, Consolas, monospace; }

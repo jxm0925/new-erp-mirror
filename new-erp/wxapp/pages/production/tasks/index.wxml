@@ -1,0 +1,48 @@
+<view class="mt-page">
+  <view class="mt-head">
+    <text class="mt-title">生产任务</text>
+    <text class="mt-muted">{{userName}}</text>
+  </view>
+  <view class="mt-tabs">
+    <view wx:for="{{tabs}}" wx:key="key" class="mt-tab {{tab === item.key ? 'on' : ''}}" data-tab="{{item.key}}" bindtap="pickTab">
+      {{item.label}}<text wx:if="{{item.key !== 'done'}}"> {{counts[item.key] || 0}}</text>
+    </view>
+  </view>
+  <view class="mt-search">
+    <input class="mt-input" value="{{keyword}}" bindinput="keywordInput" placeholder="搜工单号 / 产品 / 序列号" confirm-type="search" bindconfirm="search" />
+    <button class="mt-btn mt-btn-mini" bindtap="search">查询</button>
+  </view>
+  <view wx:if="{{error}}" class="mt-error">{{error}}</view>
+  <view wx:if="{{loading && !rows.length}}" class="mt-empty">正在读取任务</view>
+  <view wx:elif="{{!rows.length}}" class="mt-empty">{{tab === 'mine' ? '没有正在做的任务，去“可接”看看' : (tab === 'available' ? '暂时没有可接的任务' : '还没有做完的任务')}}</view>
+
+  <view wx:for="{{rows}}" wx:key="id" class="mt-card" data-id="{{item.id}}" bindtap="open">
+    <view class="mt-row">
+      <text class="mt-op">{{item.operation_name}}</text>
+      <view class="mt-tags">
+        <text wx:if="{{item.paused}}" class="mt-tag gray">暂停</text>
+        <text wx:if="{{item.is_urgent}}" class="mt-tag red">加急</text>
+        <text wx:if="{{item.timing}}" class="mt-tag amber">计时中</text>
+        <text wx:if="{{item.drawings_updated}}" class="mt-tag red">图纸已更新</text>
+        <text wx:elif="{{item.is_custom}}" class="mt-tag purple">定制{{item.has_drawing ? ' · 有图纸' : ''}}</text>
+      </view>
+    </view>
+    <view class="mt-product">{{item.product_name}}<text wx:if="{{item.sku_name}}" class="mt-muted"> {{item.sku_name}}</text></view>
+    <view class="mt-muted">{{item.work_order_no}}<text wx:if="{{item.assigned_by_name}}"> · {{item.assigned_by_name}}派给我</text><text wx:if="{{item.dueText}}"> · 交期 {{item.dueText}}</text></view>
+    <view class="mt-row mt-gap">
+      <text class="mt-muted">我这道：做完 {{item.doneText}} / {{item.plannedText}} 台<text wx:if="{{item.here_qty}}"> · 待做 {{item.here_qty}} 台</text></text>
+      <text wx:if="{{item.rework_qty}}" class="mt-red">{{item.rework_qty}} 台返工</text>
+    </view>
+    <view class="mt-bar"><view class="mt-bar-in" style="width: {{item.percent}}%"></view></view>
+    <view wx:if="{{item.paused}}" class="mt-note">工单暂停{{item.pause_reason ? '：' + item.pause_reason : ''}}</view>
+    <view wx:if="{{tab === 'available' && item.owner_name}}" class="mt-muted">已被 {{item.owner_name}} 接了</view>
+    <button class="mt-btn {{tab === 'done' ? 'ghost' : ''}}" data-id="{{item.id}}" catchtap="primary" disabled="{{busy || item.paused && tab === 'available'}}">{{item.buttonText}}</button>
+  </view>
+
+  <view wx:if="{{lastPage > 1}}" class="mt-pager">
+    <button class="mt-btn ghost mt-btn-mini" disabled="{{page <= 1}}" data-delta="-1" bindtap="turnPage">上一页</button>
+    <text>{{page}} / {{lastPage}}</text>
+    <button class="mt-btn ghost mt-btn-mini" disabled="{{page >= lastPage}}" data-delta="1" bindtap="turnPage">下一页</button>
+  </view>
+  <view wx:if="{{tab === 'available'}}" class="mt-foot">“可接”里是你能做、还没人接的工序，点“接单”就归你</view>
+</view>

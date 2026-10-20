@@ -23,7 +23,8 @@ class MfgWorkOrderController extends Controller
 
     public function show(Request $request, int $id, WorkOrderQueryService $query)
     {
-        [, $amounts] = $this->user($request, 'production.work_order.view');
+        // 车间工人（只有报工权限）在小程序里只读查看工单进度
+        [, $amounts] = $this->user($request, ['production.work_order.view', 'production.task.execute']);
         return response()->json(['data' => $query->detail($id, $amounts)]);
     }
 
@@ -126,14 +127,14 @@ class MfgWorkOrderController extends Controller
     }
 
     /** @return array{0: object, 1: bool} 当前用户、能否看金额（订单金额与预计成本） */
-    private function user(Request $request, string $permission): array
+    private function user(Request $request, string|array $permission): array
     {
         $auth = app(AuthContextService::class);
         $user = $auth->currentUser($request);
         if (! $user) throw new WorkOrderDomainException('unauthenticated', '请先登录 ERP。', 401);
         $super = $auth->isSuperAdmin($user);
         $codes = $auth->permissionCodes($user);
-        if (! $super && ! in_array($permission, $codes, true)) throw new WorkOrderDomainException('permission_denied', '当前账号没有这项工单权限。', 403);
+        if (! $super && ! array_intersect((array) $permission, $codes)) throw new WorkOrderDomainException('permission_denied', '当前账号没有这项工单权限。', 403);
         return [$user, $super || in_array('sales_order.amount.view', $codes, true) || in_array('production.performance.manage', $codes, true)];
     }
 }
