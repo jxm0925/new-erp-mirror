@@ -52,7 +52,7 @@
             <div class="kv"><span>产品</span><b>{{ result.work_order.product_name || result.work_order.item_name }}</b></div>
             <div class="kv" v-if="result.work_order.sku_code"><span>SKU</span><b>{{ result.work_order.sku_code }}</b></div>
             <div class="kv" v-if="result.work_order.special_requirement"><span>配置</span><b>{{ result.work_order.special_requirement }}</b></div>
-            <div class="kv"><span>BOM / 路线</span><b>{{ result.work_order.bom_no ? `V${result.work_order.bom_version}` : '-' }} · {{ result.work_order.routing_name ? `${result.work_order.routing_name} V${result.work_order.routing_version}` : '-' }}</b></div>
+            <div class="kv"><span>BOM / 路线</span><b>{{ result.work_order.bom_no ? bomLabel(result.work_order.bom_name, result.work_order.bom_no, result.work_order.bom_version) : '-' }} · {{ result.work_order.routing_name ? `${result.work_order.routing_name} V${result.work_order.routing_version}` : '-' }}</b></div>
             <div class="kv"><span>返工次数</span><b :class="{ warn: result.rework_count }">{{ result.rework_count || 0 }}</b></div>
             <div class="kv"><span>工单状态</span><b>{{ result.work_order.status_label }}</b></div>
           </div>
@@ -71,7 +71,7 @@
 
 <script>
 import { lookupSerial } from '../../../api/erp/production'
-import { errorText } from './mfg-helpers'
+import { bomLabel, errorText } from './mfg-helpers'
 
 export default {
   name: 'ProductionSerialTrace',
@@ -93,6 +93,7 @@ export default {
     if (this.$route.query.sn) { this.keyword = String(this.$route.query.sn); this.search() }
   },
   methods: {
+    bomLabel,
     async search() {
       const sn = (this.keyword || '').trim()
       if (!sn) return this.$message.warning('请输入序列号')

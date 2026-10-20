@@ -18,7 +18,7 @@
             <div class="mfg-meta">
               <span v-if="wo.sku_code">SKU<b>{{ wo.sku_code }}</b></span>
               <span>工艺路线<b>{{ wo.routing ? `${wo.routing.routing_name} V${wo.routing.version}` : '未设置' }}</b></span>
-              <span>BOM<b>{{ wo.bom ? `${wo.bom.bom_no} V${wo.bom.version}` : '未设置' }}</b></span>
+              <span>BOM<b>{{ wo.bom ? bomLabel(wo.bom.bom_name, wo.bom.bom_no, wo.bom.version) : '未设置' }}</b></span>
               <span>负责人<b>{{ wo.owner_name || '未指定' }}</b></span>
               <span>入库仓库<b>{{ wo.warehouse_name || '物料默认' }}</b></span>
             </div>
@@ -153,7 +153,7 @@
         <template v-if="wo && !wo.started">
           <el-form-item label="BOM（未开工可换）">
             <el-select v-model="adjust.bom_id" placeholder="选择 BOM">
-              <el-option v-for="b in adjust.bomOptions" :key="b.id" :label="`${b.bom_no} V${b.version}${b.is_default ? '（默认）' : ''} · ${b.scope}`" :value="b.id" />
+              <el-option v-for="b in adjust.bomOptions" :key="b.id" :label="`${bomLabel(b.bom_name, b.bom_no, b.version)}${b.is_default ? '（默认）' : ''}`" :value="b.id" />
             </el-select>
           </el-form-item>
           <el-form-item label="工艺路线（未开工可换）">
@@ -172,7 +172,7 @@
 
 <script>
 import { getWorkOrder, getWorkOrderOptions, updateWorkOrder, releaseWorkOrder, pauseWorkOrder, resumeWorkOrder, cancelWorkOrder } from '../../../api/erp/production'
-import { HERO_PILL, qty, money, shortDate, errorText, isCancel, searchProductionUsers } from './mfg-helpers'
+import { HERO_PILL, qty, money, shortDate, bomLabel, errorText, isCancel, searchProductionUsers } from './mfg-helpers'
 
 const STEPS = [{ value: 'planned', label: '计划' }, { value: 'released', label: '已下达' }, { value: 'in_progress', label: '生产中' }, { value: 'completed', label: '已完工' }, { value: 'closed', label: '已关闭' }]
 
@@ -208,7 +208,7 @@ export default {
   watch: { '$route.params.id'() { this.load() } },
   created() { this.load() },
   methods: {
-    qty, money, shortDate,
+    qty, money, shortDate, bomLabel,
     async load() {
       this.loading = true
       try {

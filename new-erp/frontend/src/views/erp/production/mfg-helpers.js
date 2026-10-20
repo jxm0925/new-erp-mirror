@@ -23,6 +23,13 @@ export function shortDate(value) {
   return value ? String(value).slice(5, 10) : '-'
 }
 
+export function bomLabel(name, number, version) {
+  const rawVersion = version === null || version === undefined ? '' : String(version)
+  const numericVersion = rawVersion.match(/^v?(\d+(?:\.\d+)*)$/i)
+  const displayVersion = numericVersion ? (/[1-9]/.test(numericVersion[1]) ? `V${numericVersion[1]}` : '') : rawVersion
+  return [name, number, displayVersion].filter(value => value !== null && value !== undefined && value !== '').join(' · ')
+}
+
 export function errorText(e, fallback) {
   return (e && e.userMessage) || fallback
 }

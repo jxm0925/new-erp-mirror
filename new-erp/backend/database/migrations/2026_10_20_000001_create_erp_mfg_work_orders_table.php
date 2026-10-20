@@ -40,7 +40,7 @@ CREATE TABLE `erp_mfg_work_orders` (
   `stored_qty` decimal(18,4) NOT NULL DEFAULT '0.0000',
   `bom_id` bigint(20) unsigned DEFAULT NULL,
   `bom_no` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
-  `bom_version` int(10) unsigned DEFAULT NULL,
+  `bom_version` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `bom_snapshot` json DEFAULT NULL,
   `routing_id` bigint(20) unsigned DEFAULT NULL,
   `routing_no` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,

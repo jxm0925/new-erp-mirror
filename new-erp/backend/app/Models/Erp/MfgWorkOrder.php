@@ -16,6 +16,13 @@ class MfgWorkOrder extends MasterModel
         'closed_at' => 'datetime', 'paused_at' => 'datetime', 'cancelled_at' => 'datetime',
     ];
 
+    public function getBomVersionAttribute($value): ?string
+    {
+        // 旧整数字段曾把 V1.0 存成 0；显示只能恢复本工单快照，不能借当前主档版本。
+        $snapshotVersion = data_get($this->bom_snapshot, 'version');
+        return $snapshotVersion !== null ? (string) $snapshotVersion : ($value === null ? null : (string) $value);
+    }
+
     public function operations() { return $this->hasMany(MfgWorkOrderOperation::class, 'work_order_id')->orderBy('sequence')->orderBy('id'); }
     public function units() { return $this->hasMany(MfgWorkOrderUnit::class, 'work_order_id')->orderBy('unit_no'); }
     public function materials() { return $this->hasMany(MfgWorkOrderMaterial::class, 'work_order_id')->orderBy('id'); }

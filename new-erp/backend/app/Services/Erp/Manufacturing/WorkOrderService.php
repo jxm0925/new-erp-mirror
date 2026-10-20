@@ -94,7 +94,7 @@ final class WorkOrderService
         return DB::transaction(function () use ($id, $expectedVersion, $actor) {
             $wo = $this->locked($id, $expectedVersion);
             if ($wo->status !== 'planned') $this->fail('status_invalid', '只有“计划”状态的工单可以下达。');
-            // 资料可能刚补齐：下达前按当前选择重新算一遍 BOM 和路线。
+            // 缺失的资料可补齐；已有 BOM 内容始终沿用本工单快照，下达时另验当前资格。
             $this->applyPlan($wo, Item::query()->findOrFail($wo->item_id), $wo->bom_id, $wo->routing_id, true);
             if ($wo->block_reason) $this->fail('release_blocked', '不能下达：'.$wo->block_reason);
             $this->doRelease($wo, $actor);
@@ -120,6 +120,8 @@ final class WorkOrderService
             foreach (['bom_id', 'routing_id'] as $field) {
                 if (! array_key_exists($field, $data) || (int) $data[$field] === (int) $wo->{$field}) continue;
                 if ($wo->started_at) $this->fail('started', '工单已开工，不能再换 BOM 或工艺路线。');
+                if ($field === 'bom_id' && ! $data[$field] && $wo->bom_id)
+                    $this->fail('bom_required', '不能清空已选 BOM，请明确选择需要改用的 BOM。');
                 $replan = true;
                 $changes[$field] = [$wo->{$field}, $data[$field]];
             }
@@ -213,6 +215,8 @@ final class WorkOrderService
 
     private function doRelease(MfgWorkOrder $wo, object $actor, bool $automatic = false): void
     {
+        if (! $wo->bom_id || ! $this->plans->isBomEligible((int) $wo->bom_id, (int) $wo->item_id))
+            $this->fail('release_blocked', '不能下达：所选 BOM 已失效或不是这个产品的 BOM，请调整工单明确选择有效的 BOM。');
         $serials = $this->generateUnits($wo);
         $wo->update(['status' => 'released', 'released_at' => now(), 'released_by_legacy_id' => $this->actorId($actor),
             'block_reason' => null, 'business_version' => (int) $wo->business_version + 1]);
@@ -237,7 +241,34 @@ final class WorkOrderService
     /** 写入 BOM/路线快照、工序、用料；已下达工单换版本时只重建工序和用料，序列号不变。 */
     private function applyPlan(MfgWorkOrder $wo, Item $item, ?int $bomId, ?int $routingId, bool $replace = false): void
     {
-        $plan = $this->plans->build($item, $wo->product_id, $wo->sku_id, $wo->configuration_snapshot, (float) $wo->planned_qty, $bomId, $routingId);
+        $bomSnapshot = null;
+        if ($replace && (int) $bomId === (int) $wo->bom_id) {
+            $snapshot = $wo->bom_snapshot;
+            // 空明细或缺用量不能被转成零需求后覆盖原工单用料。
+            $validSnapshot = $wo->bom_id && is_array($snapshot) && (int) ($snapshot['id'] ?? 0) === (int) $wo->bom_id
+                && is_array($snapshot['items'] ?? null) && $snapshot['items'];
+            if ($validSnapshot) {
+                foreach ($snapshot['items'] as $line) {
+                    if (! is_array($line)) {
+                        $validSnapshot = false;
+                        break;
+                    }
+                    $qty = data_get($line, 'cutting_quantity_snapshot.theoretical_qty') ?? ($line['qty'] ?? null);
+                    if ((int) ($line['component_item_id'] ?? 0) <= 0 || ! is_numeric($qty) || (float) $qty < 0
+                        || ! is_numeric($line['loss_rate'] ?? 0) || (float) ($line['loss_rate'] ?? 0) < 0
+                        || ! is_numeric($line['fixed_qty'] ?? 0) || (float) ($line['fixed_qty'] ?? 0) < 0) {
+                        $validSnapshot = false;
+                        break;
+                    }
+                }
+            }
+            if ($validSnapshot) {
+                $bomSnapshot = $snapshot;
+            } elseif ($wo->status !== 'planned' || $snapshot !== null) {
+                $this->fail('bom_snapshot_missing', '工单的 BOM 快照不完整，不能重新计算用料，请先核实原工单资料。');
+            }
+        }
+        $plan = $this->plans->build($item, $wo->product_id, $wo->sku_id, $wo->configuration_snapshot, (float) $wo->planned_qty, $bomId, $routingId, $bomSnapshot);
         if ($replace) {
             MfgWorkOrderMaterial::query()->where('work_order_id', $wo->id)->delete();
             MfgWorkOrderOperation::query()->where('work_order_id', $wo->id)->delete();
@@ -245,7 +276,7 @@ final class WorkOrderService
         $bom = $plan['bom'];
         $routing = $plan['routing'];
         $wo->update([
-            'bom_id' => $bom['id'] ?? $bomId, 'bom_no' => $bom['bom_no'] ?? null, 'bom_version' => isset($bom['version']) ? (int) $bom['version'] : null,
+            'bom_id' => $bom['id'] ?? $bomId, 'bom_no' => $bom['bom_no'] ?? null, 'bom_version' => isset($bom['version']) ? (string) $bom['version'] : null,
             'bom_snapshot' => $bom, 'routing_id' => $routing['routing_id'] ?? $routingId, 'routing_no' => $routing['routing_no'] ?? null,
             'routing_name' => $routing['routing_name'] ?? null, 'routing_version' => $routing['version'] ?? null,
             'routing_snapshot' => $routing,

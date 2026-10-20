@@ -27,10 +27,11 @@ final class WorkOrderPlanBuilder
     /**
      * @return array{bom: ?array, routing: ?array, operations: array, materials: array, block_reasons: array}
      */
-    public function build(Item $item, ?int $productId, ?int $skuId, ?array $configuration, float $qty, ?int $bomId = null, ?int $routingId = null): array
+    public function build(Item $item, ?int $productId, ?int $skuId, ?array $configuration, float $qty, ?int $bomId = null, ?int $routingId = null, ?array $bomSnapshot = null): array
     {
         $blocks = [];
-        $bom = $this->bom($item, $productId, $skuId, $configuration, $bomId, $blocks);
+        // 已保存工单的用量依据来自自身快照，换路线不能重新解析已修改的 BOM 主档。
+        $bom = $bomSnapshot ?? $this->bom($item, $productId, $skuId, $configuration, $bomId, $blocks);
         $routing = $this->routing($item, $productId, $skuId, $routingId, $blocks);
         $operations = $routing ? $routing['operations'] : [];
         $production = array_values(array_filter($operations, fn ($op) => $op['execution_context'] === 'production'));
@@ -38,6 +39,12 @@ final class WorkOrderPlanBuilder
         $materials = $bom ? $this->materials($bom['items'], $operations, $qty) : [];
 
         return ['bom' => $bom, 'routing' => $routing, 'operations' => $operations, 'materials' => $materials, 'block_reasons' => $blocks];
+    }
+
+    public function isBomEligible(int $bomId, int $itemId): bool
+    {
+        // 下达事务与主档停用/编辑共用 BOM 行锁，资格校验须读取当前已提交状态。
+        return $this->bomMatcher->eligibleQuery()->whereKey($bomId)->where('output_item_id', $itemId)->lockForUpdate()->first(['id']) !== null;
     }
 
     /** 每道工序料够不够：只看当前可用库存（第 3 阶段配料后改为已配/已签收）。 */

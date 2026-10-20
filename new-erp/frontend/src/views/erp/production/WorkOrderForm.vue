@@ -55,7 +55,7 @@
               <div class="f-grid">
                 <label class="span2"><span>BOM</span>
                   <el-select v-model="form.bom_id" clearable placeholder="没有可用 BOM" @change="schedulePreview">
-                    <el-option v-for="b in preview.bom_options" :key="b.id" :label="`${b.bom_no} V${b.version}${b.is_default ? '（默认）' : ''} · ${b.scope}`" :value="b.id" />
+                    <el-option v-for="b in preview.bom_options" :key="b.id" :label="`${bomLabel(b.bom_name, b.bom_no, b.version)}${b.is_default ? '（默认）' : ''}`" :value="b.id" />
                   </el-select>
                 </label>
                 <label class="span2"><span>工艺路线</span>
@@ -119,7 +119,7 @@
 <script>
 import { searchProductionOptions, previewWorkOrder, createWorkOrder } from '../../../api/erp/production'
 import { listEntity } from '../../../api/erp/master'
-import { qty, money, errorText, searchProductionUsers } from './mfg-helpers'
+import { qty, money, bomLabel, errorText, searchProductionUsers } from './mfg-helpers'
 
 const day = offset => { const d = new Date(); d.setDate(d.getDate() + offset); return d.toISOString().slice(0, 10) }
 
@@ -144,7 +144,7 @@ export default {
   },
   beforeDestroy() { clearTimeout(this.timer) },
   methods: {
-    qty, money,
+    qty, money, bomLabel,
     back() { this.$router.push('/production/work-orders') },
     async searchItems(keyword) {
       this.itemLoading = true
