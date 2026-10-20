@@ -210,6 +210,7 @@ class SalesOrderFulfillmentApplicationService
             $productionQty = (float) $quantities['production_qty'];
             $bom = $productionQty > 0 ? $this->bomMatcher->match($line->product_id, $line->sku_id, $line->item_id, $line->configuration_snapshot) : null;
             $drawing = $line->is_special_customized ? ($this->hasTechnicalAttachment($line) ? 'ready' : 'missing') : 'not_required';
+            $routing = $this->isPhysicalLine($line) && $line->item_id ? $this->routingSummary($line) : null;
             $blocking = [];
             // 技术条件在自动生成的工单中处理；销售确认只确定商业需求及履约数量。
             return [
@@ -249,11 +250,15 @@ class SalesOrderFulfillmentApplicationService
                 'purchase_base_qty' => $this->isPhysicalLine($line) ? $this->salesToBaseQuantity($line, $quantities['purchase_qty']) : null,
                 'undetermined_base_qty' => $this->isPhysicalLine($line) ? $this->salesToBaseQuantity($line, $quantities['undetermined_qty']) : null,
                 ...$quantities,
+                'routing_summary' => $routing,
+                'bom_summary' => ($bom['status'] ?? null) === 'matched' ? ['bom_no' => data_get($bom, 'bom_snapshot.bom_no'), 'version' => $bom['bom_version']] : null,
+                'delivery_inspection_required' => (bool) data_get($line->inspection_snapshot, 'delivery_inspection_required', false),
+                'commercial_role' => $line->commercial_role ?: 'sale',
                 'blocking_reason' => implode('；', $blocking),
                 'generated_result' => $this->resultTextFromQuantities($quantities),
                 'data_readiness' => [
                     'bom' => $productionQty <= 0 ? 'not_required' : (($bom['status'] ?? null) === 'matched' ? 'ready' : 'missing'),
-                    'routing' => $productionQty <= 0 ? 'not_required' : 'pending_next_stage',
+                    'routing' => $productionQty <= 0 ? 'not_required' : ($routing && $routing['production_operations'] ? 'ready' : 'missing'),
                     'drawing' => $drawing,
                     'inspection' => 'ready',
                 ],
@@ -481,6 +486,8 @@ class SalesOrderFulfillmentApplicationService
                                     'item_base_qty' => $allocation ? $allocatedBaseQty : $itemBaseQuantity,
                                     'planning' => $planningSnapshot,
                                     'inventory_allocation' => $allocation,
+                                    // 服务行（如安装红包）确认时默认“已完成”，没发的可取消勾选。
+                                    'service_completed' => $type === 'service' ? (bool) ($byLine->get($line->id)['service_completed'] ?? true) : null,
                                 ],
                                 'remark' => $remark,
                             ]);
@@ -519,6 +526,9 @@ class SalesOrderFulfillmentApplicationService
                 // 不要求销售再执行一次“生产确认”，也不连带阻断其他产品的工单。
                 $productionConfirmStatus = $remainingAfterConfirmation > 0.00000001 ? 'pending' : 'confirmed';
                 $this->inventoryReservations->reserveForSalesOrder($order->fresh('fulfillments'));
+                // 生产行一行一张工单，资料齐全就自动下达并生成序列号；BOM/路线缺失的停在“计划”等补齐。
+                $workOrderIds = app(\App\Services\Erp\Manufacturing\WorkOrderService::class)
+                    ->createForSalesFulfillments($order, $batchFulfillmentIds, $operator);
                 $order->update([
                     // Production confirmation allocates the fulfillment plan only. Actual
                     // fulfillment starts when downstream execution posts a real result.
@@ -528,11 +538,12 @@ class SalesOrderFulfillmentApplicationService
                     'business_version' => (int) $order->business_version + 1,
                 ]);
                 $this->log($order, 'production_confirm', 'pending', $productionConfirmStatus, $automatic
-                    ? '销售订单已按实时库存自动锁定备货数量，并记录需生产数量。'
-                    : '订单生产确认已保存库存备货和需生产数量。', $operatorName);
+                    ? '销售订单已按实时库存自动锁定备货数量，生产行已生成工单。'
+                    : '订单生产确认已保存库存备货，生产行已生成工单。', $operatorName);
                 $ledger->update(['status' => 'succeeded', 'processing_finished_at' => now(), 'response_snapshot' => [
                     'sales_order_id' => $orderId, 'business_version' => (int) $order->business_version,
                     'fulfillment_ids' => $batchFulfillmentIds,
+                    'work_order_ids' => $workOrderIds,
                 ]]);
                 $result = $order->fresh(['lines', 'fulfillments']);
                 $result->setAttribute('confirmation_command_result', $ledger->response_snapshot);
@@ -557,6 +568,26 @@ class SalesOrderFulfillmentApplicationService
         $result = SalesOrder::with(['lines', 'fulfillments'])->findOrFail($orderId);
         $result->setAttribute('confirmation_command_result', $command->response_snapshot);
         return $result;
+    }
+
+    /** 订单确认页显示的“车间做哪些工序、发货做哪些作业”：取默认工艺路线（只读，不加锁）。 */
+    private function routingSummary(SalesOrderLine $line): ?array
+    {
+        $matches = \App\Models\Erp\ProductionRouting::query()->with(['operations.operation', 'operations.packagingScheme'])
+            ->where('output_item_id', $line->item_id)->where('status', 'active')->where('is_default', true)
+            ->where(fn ($q) => $q->whereNull('product_id')->orWhere('product_id', $line->product_id))
+            ->where(fn ($q) => $q->whereNull('sku_id')->orWhere('sku_id', $line->sku_id))->orderBy('id')->get();
+        if ($matches->isEmpty()) return null;
+        $rank = static fn ($row): int => ($row->sku_id ? 2 : 0) + ($row->product_id ? 1 : 0);
+        $routing = $matches->sortByDesc($rank)->first();
+        $name = fn ($op) => $op->operation?->operation_name ?: '工序';
+        $operations = $routing->operations->sortBy('sequence');
+        return [
+            'routing_id' => $routing->id, 'routing_name' => $routing->routing_name, 'version' => (int) $routing->version,
+            'production_operations' => $operations->filter(fn ($op) => ($op->execution_context ?: 'production') === 'production')->map($name)->values()->all(),
+            'shipment_operations' => $operations->filter(fn ($op) => $op->execution_context === 'shipment')->map($name)->values()->all(),
+            'packaging_schemes' => $operations->filter(fn ($op) => $op->execution_context === 'shipment' && $op->packagingScheme)->map(fn ($op) => $op->packagingScheme->name)->unique()->values()->all(),
+        ];
     }
 
     private function addPlannedAllocations(array &$plannedByBalance, array $allocations): void

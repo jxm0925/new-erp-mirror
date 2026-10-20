@@ -28,6 +28,7 @@ use App\Http\Controllers\Api\V1\Erp\PurchaseSupplierRecommendationController;
 use App\Http\Controllers\Api\V1\Erp\ProductionMasterDataController;
 use App\Http\Controllers\Api\V1\Erp\ProductionProcessCatalogController;
 use App\Http\Controllers\Api\V1\Erp\ProductionPerformanceTemplateController;
+use App\Http\Controllers\Api\V1\Erp\MfgWorkOrderController;
 use App\Http\Controllers\Api\V1\Erp\ShipmentPackingController;
 use App\Http\Controllers\Api\V1\Erp\RbacController;
 use App\Http\Controllers\Api\V1\Erp\SalesOrderController;
@@ -404,6 +405,19 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::delete('performance/templates/{id}', [ProductionPerformanceTemplateController::class, 'destroy'])->whereNumber('id');
     Route::post('performance/templates/{id}/preview', [ProductionPerformanceTemplateController::class, 'preview'])->whereNumber('id');
     Route::post('performance/templates/{id}/apply', [ProductionPerformanceTemplateController::class, 'apply'])->whereNumber('id');
+    // 新生产工单（第 1 阶段）
+    Route::get('work-orders', [MfgWorkOrderController::class, 'index']);
+    Route::post('work-orders', [MfgWorkOrderController::class, 'store']);
+    Route::get('work-orders/preview', [MfgWorkOrderController::class, 'preview']);
+    Route::get('work-orders/{id}', [MfgWorkOrderController::class, 'show'])->whereNumber('id');
+    Route::put('work-orders/{id}', [MfgWorkOrderController::class, 'update'])->whereNumber('id');
+    Route::get('work-orders/{id}/options', [MfgWorkOrderController::class, 'options'])->whereNumber('id');
+    Route::post('work-orders/{id}/release', [MfgWorkOrderController::class, 'release'])->whereNumber('id');
+    Route::post('work-orders/{id}/pause', [MfgWorkOrderController::class, 'pause'])->whereNumber('id');
+    Route::post('work-orders/{id}/resume', [MfgWorkOrderController::class, 'resume'])->whereNumber('id');
+    Route::post('work-orders/{id}/cancel', [MfgWorkOrderController::class, 'cancel'])->whereNumber('id');
+    Route::get('serials/lookup', [MfgWorkOrderController::class, 'serial']);
+    Route::get('sales-orders/{orderId}/work-orders', [MfgWorkOrderController::class, 'salesOrder'])->whereNumber('orderId');
     Route::get('shipment-packing/commands/result', [ShipmentPackingController::class, 'commandResult']);
     Route::get('shipment-packing/operations', [ShipmentPackingController::class, 'operations']);
     Route::get('shipment-packing/operations/{id}', [ShipmentPackingController::class, 'operation'])->whereNumber('id');

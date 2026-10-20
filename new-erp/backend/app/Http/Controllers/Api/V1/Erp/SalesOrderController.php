@@ -670,7 +670,17 @@ class SalesOrderController extends Controller
         $this->abortUnlessAnyPermission($request, ['sales_order.view', 'sales_order.production_confirm']);
         $order = SalesOrder::with(['lines.product', 'lines.sku', 'lines.item', 'fulfillments'])->findOrFail($id);
         $this->abortUnlessOrderVisible($request, $order);
-        return response()->json(app(\App\Services\Erp\SalesOrderFulfillmentApplicationService::class)->preview($order->id));
+        $preview = app(\App\Services\Erp\SalesOrderFulfillmentApplicationService::class)->preview($order->id);
+        $auth = app(AuthContextService::class);
+        $user = $auth->currentUser($request);
+        // 确认页顶部显示“开工够不够 / 发货还差多少”；没有金额权限的只显示结论。
+        try {
+            $preview['funding_status'] = $user ? app(SalesOrderFundingGateService::class)->statusForPermissions($order, $auth->permissionCodes($user), $auth->isSuperAdmin($user)) : null;
+        } catch (\Throwable) {
+            $preview['funding_status'] = null;
+        }
+        $preview['work_orders'] = app(\App\Services\Erp\Manufacturing\WorkOrderQueryService::class)->forSalesOrder($order->id, false);
+        return response()->json($preview);
     }
 
     public function lockInventory(Request $request, int $id, SalesOrderInventoryLockService $service)
@@ -713,6 +723,7 @@ class SalesOrderController extends Controller
             'lines.*.purchase_qty' => 'sometimes|numeric|min:0',
             'lines.*.service_qty' => 'required|numeric|min:0',
             'lines.*.no_delivery_qty' => 'required|numeric|min:0',
+            'lines.*.service_completed' => 'sometimes|boolean',
             'lines.*.undetermined_qty' => 'prohibited',
             'remark' => 'nullable|string',
             'adjustment_reason' => 'nullable|string|max:500',
@@ -730,7 +741,9 @@ class SalesOrderController extends Controller
             (int) $payload['expected_version'],
         );
         return response()->json([
-            'message' => '订单生产确认已提交，库存占用、生产需求、主生产工单和待发布生产工单已生成。',
+            'message' => count((array) data_get($confirmed->confirmation_command_result, 'work_order_ids', [])) > 0
+                ? '订单生产确认已提交：库存已锁定，生产行已生成工单并自动下达（资料不全的工单停在“计划”）。'
+                : '订单生产确认已提交，库存已锁定。',
             'data' => $confirmed,
         ]);
     }
@@ -763,7 +776,11 @@ class SalesOrderController extends Controller
             SalesOrderFulfillment::where('sales_order_id', $order->id)->whereIn('demand_status', ['pending', 'confirmed'])
                 ->update(['demand_status' => 'cancelled', 'production_requirement_status' => 'cancelled']);
             SalesOrderFulfillment::where('sales_order_id', $order->id)->where('reservation_status', 'awaiting_purchase')->update(['reservation_status' => 'cancelled']);
-            $this->log($order->id, null, 'cancel', $beforeStatus, 'cancelled', '取消销售订单：'.$payload['reason']);
+            // 未开工的工单跟着取消；已开工的留给生产主管处理（工单动态里会记一笔）。
+            $workOrders = app(\App\Services\Erp\Manufacturing\WorkOrderService::class)->cancelForSalesOrder($order, '订单取消：'.$payload['reason'], $actor);
+            $this->log($order->id, null, 'cancel', $beforeStatus, 'cancelled', '取消销售订单：'.$payload['reason']
+                .($workOrders['cancelled'] ? '；已取消工单 '.implode('、', $workOrders['cancelled']) : '')
+                .($workOrders['kept'] ? '；已开工工单 '.implode('、', $workOrders['kept']).' 请生产主管处理' : ''));
 
             return response()->json(['message' => '订单已取消', 'data' => $order->fresh(['lines', 'fulfillments'])]);
         });
