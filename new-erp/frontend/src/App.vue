@@ -201,6 +201,8 @@ export default {
     ],
     productionMenus: [
       { name: '工单管理', path: '/production/work-orders', icon: 'el-icon-s-order', permission: 'production.work_order' },
+      { name: '生产作业看板', path: '/production/board', icon: 'el-icon-data-board', permission: 'production.board' },
+      { name: '定制技术', path: '/production/tech', icon: 'el-icon-edit-outline', permission: 'production.tech' },
       { name: '序列号查询', path: '/production/serials', icon: 'el-icon-search', permission: 'production.serial' },
       { name: '生产基础', children: [
         { name: '工序管理', path: '/production/operations', icon: 'el-icon-set-up', permission: 'production.operation' },
@@ -597,6 +599,7 @@ export default {
       if (path.startsWith('/production/routings/')) return '工艺路线 / 详情'
       if (path === '/production/work-orders/new') return '工单管理 / 新建备货工单'
       if (path.startsWith('/production/work-orders/')) return '工单管理 / 工单详情'
+      if (path.startsWith('/production/tech/')) return '定制技术 / 详情'
 
       // 销售管理
       if (path === '/sales/orders/create') return '销售订单 / 新增订单'

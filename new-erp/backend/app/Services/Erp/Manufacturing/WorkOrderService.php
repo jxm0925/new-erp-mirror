@@ -10,7 +10,9 @@ use App\Models\Erp\MfgWorkOrder;
 use App\Models\Erp\MfgWorkOrderLog;
 use App\Models\Erp\MfgWorkOrderMaterial;
 use App\Models\Erp\MfgWorkOrderOperation;
+use App\Models\Erp\MfgWorkOrderTech;
 use App\Models\Erp\MfgWorkOrderUnit;
+use App\Models\Erp\MfgLaborSession;
 use App\Models\Erp\SalesOrder;
 use App\Models\Erp\SalesOrderFulfillment;
 use App\Services\Erp\DocumentNumberService;
@@ -55,8 +57,12 @@ final class WorkOrderService
                 'planned_start_date' => now()->toDateString(),
                 'planned_finish_date' => $order->required_delivery_date ?: now()->addDays(7)->toDateString(),
             ], $item, $qty, $actor);
+            // 定制产品：先由技术上传图纸、确认定制 BOM，再下发车间。
+            $custom = (bool) $line->sku?->special_custom_description_required;
+            if ($custom) MfgWorkOrderTech::create(['work_order_id' => $wo->id, 'status' => 'pending']);
             $this->applyPlan($wo, $item, null, null);
-            $this->log($wo, 'created', null, 'planned', "订单 {$order->sales_order_no} 第 {$line->line_no} 行生产确认后自动生成工单", $actor);
+            if ($custom) MfgWorkOrderTech::query()->where('work_order_id', $wo->id)->update(['base_bom_id' => $wo->bom_id]);
+            $this->log($wo, 'created', null, 'planned', "订单 {$order->sales_order_no} 第 {$line->line_no} 行生产确认后自动生成工单".($custom ? '，定制产品等技术处理' : ''), $actor);
             if (! $wo->block_reason) $this->doRelease($wo, $actor, true);
             $created[] = $wo->id;
         }
@@ -152,6 +158,9 @@ final class WorkOrderService
             $wo = $this->locked($id, $expectedVersion);
             if (! in_array($wo->status, ['released', 'in_progress'], true)) $this->fail('status_invalid', '只有已下达或生产中的工单可以暂停。');
             $before = $wo->status;
+            foreach (MfgLaborSession::query()->where('work_order_id', $wo->id)->where('status', 'active')->lockForUpdate()->get() as $session) {
+                TaskService::closeSession($session, 'paused');
+            }
             $wo->update(['status' => 'paused', 'pause_reason' => $reason, 'paused_at' => now(), 'business_version' => (int) $wo->business_version + 1, 'updated_by_legacy_id' => $this->actorId($actor)]);
             $this->log($wo, 'paused', $before, 'paused', '暂停工单：'.$reason, $actor);
             return $wo->fresh();
@@ -202,6 +211,27 @@ final class WorkOrderService
     public function salesOrderHasStartedWork(int $orderId): bool
     {
         return MfgWorkOrder::query()->where('sales_order_id', $orderId)->whereNotNull('started_at')->where('status', '!=', 'cancelled')->exists();
+    }
+
+    /** 每台都已入库或报废，工单就完工。 */
+    public function refreshCompletion(MfgWorkOrder $wo, ?object $actor): void
+    {
+        if (! in_array($wo->status, ['released', 'in_progress', 'paused'], true)) return;
+        $units = MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->selectRaw('status, COUNT(*) AS c')->groupBy('status')->pluck('c', 'status');
+        if ($units->isEmpty() || $units->keys()->diff(['stored', 'scrapped', 'cancelled'])->isNotEmpty()) return;
+        $before = $wo->status;
+        $wo->update(['status' => 'completed', 'completed_at' => now(), 'business_version' => (int) $wo->business_version + 1]);
+        $this->log($wo, 'completed', $before, 'completed', '每台都已入库或报废，工单完工（入库 '.(int) ($units['stored'] ?? 0).' 台，报废 '.(int) ($units['scrapped'] ?? 0).' 台）', $actor);
+    }
+
+    /** 定制技术下发车间：用定制 BOM 快照重算用料，再下达生成序列号。调用方已锁工单。 */
+    public function releaseCustom(MfgWorkOrder $wo, array $bomSnapshot, object $actor): void
+    {
+        if ($wo->status !== 'planned') $this->fail('status_invalid', '只有“计划”状态的工单可以下发车间。');
+        $wo->update(['bom_snapshot' => $bomSnapshot]);
+        $this->applyPlan($wo, Item::query()->findOrFail($wo->item_id), $wo->bom_id, $wo->routing_id, true);
+        if ($wo->block_reason) $this->fail('release_blocked', '不能下发：'.$wo->block_reason);
+        $this->doRelease($wo, $actor);
     }
 
     private function doCancel(MfgWorkOrder $wo, string $reason, ?object $actor): void
@@ -275,6 +305,8 @@ final class WorkOrderService
         }
         $bom = $plan['bom'];
         $routing = $plan['routing'];
+        if (MfgWorkOrderTech::query()->where('work_order_id', $wo->id)->where('status', 'pending')->exists())
+            $plan['block_reasons'][] = '定制产品：等技术上传图纸、确认定制 BOM 后下发车间';
         $wo->update([
             'bom_id' => $bom['id'] ?? $bomId, 'bom_no' => $bom['bom_no'] ?? null, 'bom_version' => isset($bom['version']) ? (string) $bom['version'] : null,
             'bom_snapshot' => $bom, 'routing_id' => $routing['routing_id'] ?? $routingId, 'routing_no' => $routing['routing_no'] ?? null,
@@ -299,6 +331,26 @@ final class WorkOrderService
                 'work_order_id' => $wo->id, 'work_order_operation_id' => $opIds[$m['operation_key']] ?? null,
             ]);
         }
+        // 未开工前换了路线：已生成的台回到新的第一道车间工序。
+        if ($replace && ! $wo->started_at) {
+            MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->whereIn('status', ['waiting'])->update(['current_operation_id' => $this->firstProductionOperationId($wo)]);
+        }
+    }
+
+    /** 第 1 阶段下达的工单台没有记当前工序：未开工的统一放到第一道车间工序。 */
+    public function placeWaitingUnits(): void
+    {
+        $woIds = MfgWorkOrderUnit::query()->where('status', 'waiting')->whereNull('current_operation_id')->distinct()->limit(200)->pluck('work_order_id');
+        foreach (MfgWorkOrder::query()->whereIn('id', $woIds)->whereNull('started_at')->whereIn('status', ['released', 'paused'])->get() as $wo) {
+            $first = $this->firstProductionOperationId($wo);
+            if ($first) MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->where('status', 'waiting')->whereNull('current_operation_id')->update(['current_operation_id' => $first]);
+        }
+    }
+
+    private function firstProductionOperationId(MfgWorkOrder $wo): ?int
+    {
+        $id = MfgWorkOrderOperation::query()->where('work_order_id', $wo->id)->where('execution_context', 'production')->orderBy('sequence')->orderBy('id')->value('id');
+        return $id ? (int) $id : null;
     }
 
     /** 下达时按台生成序列号：整数台数才逐台跟踪；格式 前缀+年月-流水，如 SN2610-0015。 */
@@ -317,12 +369,13 @@ final class WorkOrderService
             ?: DocumentNumber::create(['document_type' => $type, 'number_date' => $date, 'current_sequence' => 0]);
         $sequence = (int) $counter->current_sequence;
         $serials = [];
+        $firstOp = $this->firstProductionOperationId($wo);
         for ($unit = 1; $unit <= (int) round($qty); $unit++) {
             do {
                 $sequence++;
                 $serial = $prefix.$period.'-'.str_pad((string) $sequence, 4, '0', STR_PAD_LEFT);
             } while (MfgWorkOrderUnit::query()->where('serial_no', $serial)->exists() || InventorySerial::query()->where('serial_no', $serial)->exists());
-            MfgWorkOrderUnit::create(['work_order_id' => $wo->id, 'unit_no' => $unit, 'serial_no' => $serial, 'status' => 'waiting', 'warehouse_id' => $wo->warehouse_id]);
+            MfgWorkOrderUnit::create(['work_order_id' => $wo->id, 'unit_no' => $unit, 'serial_no' => $serial, 'status' => 'waiting', 'current_operation_id' => $firstOp, 'warehouse_id' => $wo->warehouse_id]);
             $serials[] = $serial;
         }
         $counter->update(['current_sequence' => $sequence]);

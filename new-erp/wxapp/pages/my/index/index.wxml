@@ -135,6 +135,15 @@
         <text class="card-subtitle">打包发货 · 日常协同</text>
       </view>
       <view class="action-grid">
+        <view class="action-item" data-url="/pages/production/tasks/index" data-auth="production" bindtap="navTo">
+          <view class="action-icon-box icon-green">
+            <van-icon name="todo-list-o" size="44rpx" color="#11804a" />
+          </view>
+          <view class="action-text">
+            <text class="action-title">生产任务</text>
+            <text class="action-desc">接单、计时、按台报工</text>
+          </view>
+        </view>
         <view class="action-item" data-url="/pages/production/shipment-packing/index" data-auth="production" bindtap="navTo">
           <view class="action-icon-box icon-blue">
             <van-icon name="chart-trending-o" size="44rpx" color="#1890ff" />

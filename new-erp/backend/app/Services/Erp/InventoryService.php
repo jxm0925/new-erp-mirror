@@ -562,6 +562,90 @@ class InventoryService
         }, 5);
     }
 
+    /**
+     * 生产成品入库：一张入库记录 = 一条入库流水；按每台暂估材料成本入账（第 3 阶段领料后改实际成本）。
+     * 物料需要序列号管理时，同时把每台的序列号登记为可用库存序列号。
+     * @return array{transaction: InventoryTransaction, serial_ids: array<string, int>}
+     */
+    public function postProductionReceipt(\App\Models\Erp\MfgReceipt $receipt, \App\Models\Erp\MfgWorkOrder $workOrder, array $serialNos, ?int $operatorId = null): array
+    {
+        return DB::transaction(function () use ($receipt, $workOrder, $serialNos, $operatorId): array {
+            if (InventoryTransaction::query()->where('source_type', 'mfg_receipt')->where('source_id', $receipt->id)
+                ->where('transaction_type', 'production_receipt_inbound')->exists()) {
+                throw ValidationException::withMessages(['receipt' => '这张成品入库已经过账，不能重复入库。']);
+            }
+            $item = Item::query()->findOrFail($workOrder->item_id);
+            if ($item->materialManagementMode() === 'physical') {
+                throw ValidationException::withMessages(['item' => '这个产品按实物身份管理，暂不支持从生产直接入库。']);
+            }
+            $transaction = InventoryTransaction::create([
+                'transaction_no' => $this->nextNo('ITX'),
+                'transaction_type' => 'production_receipt_inbound',
+                'source_type' => 'mfg_receipt',
+                'source_id' => $receipt->id,
+                'source_no' => $receipt->receipt_no,
+                'posting_status' => 'posted',
+                'warehouse_id' => $receipt->warehouse_id,
+                'location_id' => $receipt->location_id,
+                'transaction_date' => now()->toDateString(),
+                'posted_by' => $operatorId,
+                'posted_at' => now(),
+                'created_by' => $operatorId,
+                'remark' => '生产成品入库，工单 '.$workOrder->work_order_no,
+            ]);
+            $this->applyInventoryChange($transaction, [
+                'item_id' => $item->id,
+                'warehouse_id' => $receipt->warehouse_id,
+                'location_id' => $receipt->location_id,
+                'batch_no' => $workOrder->work_order_no,
+                'unit_id' => $item->unit_id,
+                'change_qty' => (float) $receipt->qty,
+                'unit_cost' => (float) $receipt->unit_cost,
+                'cost_amount' => (float) $receipt->cost_amount,
+                'cost_source_type' => 'production_estimate',
+                'source_type' => 'mfg_receipt',
+                'source_id' => $receipt->id,
+                'remark' => '工单 '.$workOrder->work_order_no.' 成品入库（暂估材料成本）',
+            ]);
+            $serialIds = [];
+            if ($item->serialTrackingMode() !== 'none' && $serialNos) {
+                $balance = InventoryBalance::query()->where('item_id', $item->id)->where('warehouse_id', $receipt->warehouse_id)
+                    ->where('location_id', $receipt->location_id)->where('batch_no', $workOrder->work_order_no)->firstOrFail();
+                foreach ($serialNos as $serialNo) {
+                    if (InventorySerial::query()->where('serial_no', $serialNo)->exists()) {
+                        throw ValidationException::withMessages(['serial_no' => "序列号 {$serialNo} 已在库存里登记过，不能重复入库。"]);
+                    }
+                    $serial = InventorySerial::create([
+                        'serial_no' => $serialNo, 'inventory_balance_id' => $balance->id, 'item_id' => $item->id,
+                        'warehouse_id' => $receipt->warehouse_id, 'location_id' => $receipt->location_id, 'batch_no' => $workOrder->work_order_no,
+                        'origin_type' => 'production', 'number_source' => 'system',
+                        'source_document_type' => 'mfg_receipt', 'source_document_id' => $receipt->id, 'source_document_no' => $receipt->receipt_no,
+                        'serial_status' => 'available', 'received_at' => now(), 'registered_at' => now(), 'posted_at' => now(),
+                    ]);
+                    InventorySerialEvent::create([
+                        'inventory_serial_id' => $serial->id, 'event_type' => 'production_receipt_in', 'document_type' => 'mfg_receipt',
+                        'document_id' => $receipt->id, 'document_no' => $receipt->receipt_no, 'from_status' => null, 'to_status' => 'available',
+                        'warehouse_id' => $receipt->warehouse_id, 'location_id' => $receipt->location_id, 'batch_no' => $workOrder->work_order_no,
+                        'event_payload' => ['work_order_no' => $workOrder->work_order_no], 'occurred_at' => now(),
+                    ]);
+                    $serialIds[$serialNo] = $serial->id;
+                }
+            }
+            InventoryPostingLog::create([
+                'source_type' => 'mfg_receipt',
+                'source_id' => $receipt->id,
+                'source_no' => $receipt->receipt_no,
+                'transaction_type' => 'production_receipt_inbound',
+                'transaction_id' => $transaction->id,
+                'posting_status' => 'posted',
+                'message' => '生产成品入库成功',
+                'posted_by' => $operatorId,
+                'posted_at' => now(),
+            ]);
+            return ['transaction' => $transaction, 'serial_ids' => $serialIds];
+        }, 5);
+    }
+
     private function qualifiedBaseQuantity($line): float
     {
         if (!(bool) ($line->is_stock_item_snapshot ?? true)) return 0.0;

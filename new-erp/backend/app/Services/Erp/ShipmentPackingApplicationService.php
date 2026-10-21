@@ -230,6 +230,9 @@ class ShipmentPackingApplicationService
                     if (ShipmentPackingLaborSession::query()->where('employee_legacy_id', $actorId)->where('status', 'ACTIVE')->lockForUpdate()->first()) {
                         $this->fail('本人已有正在计时的包装作业，请先暂停原作业。');
                     }
+                    if (\App\Models\Erp\MfgLaborSession::query()->where('employee_legacy_id', $actorId)->where('status', 'active')->exists()) {
+                        $this->fail('本人有正在计时的生产工序，请先在生产任务里暂停。');
+                    }
                     if ($op->status === 'READY') {
                         $this->assertOwner($op, $actorId);
                         $this->assertProductionReady($shipment);

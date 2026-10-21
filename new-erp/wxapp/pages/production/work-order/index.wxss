@@ -1,0 +1,2 @@
+@import "../shared.wxss";
+.wo-op { padding: 10rpx 0 14rpx; }
