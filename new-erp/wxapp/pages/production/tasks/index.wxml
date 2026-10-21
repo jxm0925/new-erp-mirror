@@ -44,5 +44,5 @@
     <text>{{page}} / {{lastPage}}</text>
     <button class="mt-btn ghost mt-btn-mini" disabled="{{page >= lastPage}}" data-delta="1" bindtap="turnPage">下一页</button>
   </view>
-  <view wx:if="{{tab === 'available'}}" class="mt-foot">“可接”里是你能做、还没人接的工序，点“接单”就归你</view>
+  <view wx:if="{{tab === 'available' && canExecute}}" class="mt-foot">“可接”里是你能做、还没人接的工序，点“接单”就归你</view>
 </view>

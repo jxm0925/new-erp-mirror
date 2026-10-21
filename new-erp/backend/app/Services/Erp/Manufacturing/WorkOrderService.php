@@ -58,7 +58,7 @@ final class WorkOrderService
                 'planned_finish_date' => $order->required_delivery_date ?: now()->addDays(7)->toDateString(),
             ], $item, $qty, $actor);
             // 定制产品：先由技术上传图纸、确认定制 BOM，再下发车间。
-            $custom = (bool) $line->sku?->special_custom_description_required;
+            $custom = (bool) $line->is_special_customized;
             if ($custom) MfgWorkOrderTech::create(['work_order_id' => $wo->id, 'status' => 'pending']);
             $this->applyPlan($wo, $item, null, null);
             if ($custom) MfgWorkOrderTech::query()->where('work_order_id', $wo->id)->update(['base_bom_id' => $wo->bom_id]);
@@ -145,6 +145,10 @@ final class WorkOrderService
                 $this->applyPlan($wo, Item::query()->findOrFail($wo->item_id),
                     array_key_exists('bom_id', $data) ? ($data['bom_id'] ?: null) : $wo->bom_id,
                     array_key_exists('routing_id', $data) ? ($data['routing_id'] ?: null) : $wo->routing_id, true);
+                if (isset($changes['bom_id']) || isset($changes['routing_id'])) {
+                    // 换回原版本也要重新确认，不能复用变更前的技术签认。
+                    MfgWorkOrderTech::query()->where('work_order_id', $wo->id)->where('status', 'pending')->update(['bom_confirmed' => false]);
+                }
                 if ($wo->status !== 'planned' && $wo->block_reason) $this->fail('release_blocked', '换版本后资料不全：'.$wo->block_reason);
             }
             $this->log($wo, 'adjusted', $wo->status, $wo->status, '调整工单：'.$this->changeText($changes), $actor, ['changes' => $changes]);
@@ -217,9 +221,13 @@ final class WorkOrderService
     public function refreshCompletion(MfgWorkOrder $wo, ?object $actor): void
     {
         if (! in_array($wo->status, ['released', 'in_progress', 'paused'], true)) return;
-        $units = MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->selectRaw('status, COUNT(*) AS c')->groupBy('status')->pluck('c', 'status');
+        $units = MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->lockForUpdate()->pluck('status')->countBy();
         if ($units->isEmpty() || $units->keys()->diff(['stored', 'scrapped', 'cancelled'])->isNotEmpty()) return;
         $before = $wo->status;
+        // 全单已无在制台，报废等路径遗留的计时也必须在完工事务中结束。
+        foreach (MfgLaborSession::query()->where('work_order_id', $wo->id)->where('status', 'active')->lockForUpdate()->get() as $session) {
+            TaskService::closeSession($session, 'completed');
+        }
         $wo->update(['status' => 'completed', 'completed_at' => now(), 'business_version' => (int) $wo->business_version + 1]);
         $this->log($wo, 'completed', $before, 'completed', '每台都已入库或报废，工单完工（入库 '.(int) ($units['stored'] ?? 0).' 台，报废 '.(int) ($units['scrapped'] ?? 0).' 台）', $actor);
     }

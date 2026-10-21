@@ -17,10 +17,10 @@ class MfgTaskController extends Controller
 {
     public function index(Request $request, TaskQueryService $query)
     {
-        [$user] = $this->user($request, ['production.task.execute', 'production.task.view']);
+        [$user, $codes] = $this->user($request, ['production.task.execute', 'production.task.view']);
         $data = $request->validate(['tab' => 'nullable|in:mine,available,done', 'keyword' => 'nullable|string|max:120',
             'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50']);
-        return response()->json($query->tasks($user, $data['tab'] ?? 'mine', $data));
+        return response()->json($query->tasks($user, $data['tab'] ?? 'mine', $data, $codes));
     }
 
     public function show(Request $request, int $id, TaskQueryService $query)

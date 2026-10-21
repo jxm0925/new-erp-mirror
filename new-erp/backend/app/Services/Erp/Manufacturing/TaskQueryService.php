@@ -3,6 +3,7 @@
 namespace App\Services\Erp\Manufacturing;
 
 use App\Models\Erp\Location;
+use App\Models\Erp\Item;
 use App\Models\Erp\MfgDrawing;
 use App\Models\Erp\MfgLaborSession;
 use App\Models\Erp\MfgReceipt;
@@ -16,6 +17,7 @@ use App\Models\Erp\MfgWorkOrderUnit;
 use App\Models\Erp\ProductionOperationWorker;
 use App\Models\Erp\ProductionStage;
 use App\Models\Erp\Warehouse;
+use App\Services\Erp\AuthContextService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -33,13 +35,14 @@ final class TaskQueryService
     ) {}
 
     /** 小程序“生产任务”：我的 / 可接 / 做完的；每个人只看到自己能做的工序。 */
-    public function tasks(object $actor, string $tab, array $filters): array
+    public function tasks(object $actor, string $tab, array $filters, array $permissions): array
     {
         $this->workOrders->placeWaitingUnits();
         $me = (int) $this->actorId($actor);
+        $canExecute = app(AuthContextService::class)->isSuperAdmin($actor) || in_array('production.task.execute', $permissions, true);
         $page = $this->taskQuery($me, $tab, $filters)->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 10))));
-        $page->getCollection()->transform(fn ($op) => $this->taskRow($op, $me));
-        return $page->toArray() + ['counts' => [
+        $page->getCollection()->transform(fn ($op) => $this->taskRow($op, $me, $canExecute));
+        return $page->toArray() + ['permissions' => ['execute' => $canExecute], 'counts' => [
             'mine' => $this->taskQuery($me, 'mine', [])->count(), 'available' => $this->taskQuery($me, 'available', [])->count(),
         ]];
     }
@@ -47,6 +50,8 @@ final class TaskQueryService
     public function task(int $opId, object $actor, array $permissions): array
     {
         $me = (int) $this->actorId($actor);
+        $super = app(AuthContextService::class)->isSuperAdmin($actor);
+        $canExecute = $super || in_array('production.task.execute', $permissions, true);
         $op = MfgWorkOrderOperation::query()->findOrFail($opId);
         $wo = MfgWorkOrder::query()->with('operations')->findOrFail($op->work_order_id);
         $ops = $wo->operations->where('execution_context', 'production')->values();
@@ -104,12 +109,12 @@ final class TaskQueryService
             })->values()->all(),
             'reason_tags' => TaskService::REASON_TAGS,
             'allowed' => [
-                'claim' => $runnable && ! $owner && $canDo,
-                'start' => $runnable && ! $myActive && $here > 0 && (($mine && ($mine['role'] === 'owner' || $op->status === 'in_progress')) || (! $owner && $canDo)),
-                'pause' => (bool) $myActive,
-                'report' => $runnable && $mine && $here > 0,
-                'collaborators' => $runnable && $mine && $mine['role'] === 'owner',
-                'assign' => $runnable && in_array('production.task.assign', $permissions, true),
+                'claim' => $canExecute && $runnable && ! $owner && $canDo,
+                'start' => $canExecute && $runnable && ! $myActive && $here > 0 && (($mine && ($mine['role'] === 'owner' || $op->status === 'in_progress')) || (! $owner && $canDo)),
+                'pause' => $canExecute && (bool) $myActive,
+                'report' => $canExecute && $runnable && $mine && $here > 0,
+                'collaborators' => $canExecute && $runnable && $mine && $mine['role'] === 'owner',
+                'assign' => $runnable && ($super || in_array('production.task.assign', $permissions, true)),
             ],
         ];
     }
@@ -143,6 +148,7 @@ final class TaskQueryService
         if ($owner = (int) ($filters['owner_legacy_id'] ?? 0)) $woQuery->whereExists(fn ($q) => $q->selectRaw('1')->from('erp_mfg_task_participants as p')
             ->whereColumn('p.work_order_id', 'erp_mfg_work_orders.id')->where('p.employee_legacy_id', $owner)->where('p.is_active', true));
         $wos = $woQuery->with('operations')->orderByDesc('is_urgent')->orderBy('planned_finish_date')->limit(300)->get()->keyBy('id');
+        $itemScopes = Item::query()->whereIn('id', $wos->pluck('item_id'))->pluck('management_scope', 'id');
         $woIds = $wos->keys()->all() ?: [0];
         $units = MfgWorkOrderUnit::query()->whereIn('work_order_id', $woIds)->whereIn('status', array_merge(TaskService::SELECTABLE, ['completed']))->orderBy('unit_no')->get();
         $pendingScrap = MfgUnitReport::query()->where('review_status', 'pending')->whereIn('work_order_id', $woIds)->pluck('unit_id')->flip();
@@ -189,11 +195,11 @@ final class TaskQueryService
         $completed = $units->where('status', 'completed')->groupBy('work_order_id');
         $lastPass = MfgUnitReport::query()->whereIn('unit_id', $units->where('status', 'completed')->pluck('id') ?: [0])->where('result', 'passed')
             ->selectRaw('unit_id, MAX(created_at) AS t')->groupBy('unit_id')->pluck('t', 'unit_id');
-        $waiting = $completed->map(function ($group, $woId) use ($wos, $lastPass) {
+        $waiting = $completed->map(function ($group, $woId) use ($wos, $lastPass, $itemScopes) {
             $wo = $wos->get($woId);
             $lastOp = $wo->operations->where('execution_context', 'production')->last();
             return ['work_order_id' => $wo->id, 'work_order_no' => $wo->work_order_no, 'product_name' => $wo->product_name ?: $wo->item_name, 'sku_name' => $wo->sku_name,
-                'warehouse_id' => $wo->warehouse_id, 'last_operation_name' => $lastOp?->operation_name,
+                'warehouse_id' => $wo->warehouse_id, 'management_scope' => $itemScopes[$wo->item_id] ?? null, 'last_operation_name' => $lastOp?->operation_name,
                 'units' => $group->map(fn ($u) => ['id' => $u->id, 'serial_no' => $u->serial_no, 'short' => substr($u->serial_no, -4),
                     'passed_at' => isset($lastPass[$u->id]) ? substr((string) $lastPass[$u->id], 0, 16) : null])->values()->all()];
         })->values()->all();
@@ -214,6 +220,7 @@ final class TaskQueryService
                 'unclaimed' => $cards->where('state', 'unclaimed')->count(),
                 'rework_units' => MfgWorkOrderUnit::query()->where('status', 'rework')->count(),
                 'waiting_receipt' => MfgWorkOrderUnit::query()->where('status', 'completed')->count(),
+                'today_received_qty' => (float) MfgReceipt::query()->whereDate('created_at', $today)->sum('qty'),
                 'today_hours' => round($todayMinutes / 60, 1),
             ],
             'columns' => $columns,
@@ -288,7 +295,7 @@ final class TaskQueryService
         return $query;
     }
 
-    private function taskRow(MfgWorkOrderOperation $op, int $me): array
+    private function taskRow(MfgWorkOrderOperation $op, int $me, bool $canExecute): array
     {
         $wo = MfgWorkOrder::query()->findOrFail($op->work_order_id);
         $units = $this->tasks->selectableUnits($op);
@@ -308,6 +315,8 @@ final class TaskQueryService
             'assigned_by_name' => $owner && (int) $owner->employee_legacy_id === $me && $owner->assigned_by_legacy_id && (int) $owner->assigned_by_legacy_id !== $me ? $owner->assigned_by_name : null,
             'timing' => MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('employee_legacy_id', $me)->where('status', 'active')->exists(),
             'paused' => $wo->status === 'paused', 'pause_reason' => $wo->pause_reason,
+            'allowed' => ['claim' => $canExecute && in_array($wo->status, ['released', 'in_progress'], true) && $op->status !== 'done'
+                && ! $owner && $this->tasks->canDo($op, $me)],
         ];
     }
 

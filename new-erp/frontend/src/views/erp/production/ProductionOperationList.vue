@@ -72,7 +72,7 @@
 <script>
 import { erpDateTime } from '../../../utils/dateTime'
 import { listProductionOperations, getProductionOperation, createProductionOperation, updateProductionOperation, enableProductionOperation, disableProductionOperation, getOperationWorkers, saveOperationWorkers } from '../../../api/erp/production'
-import { searchProductionUsers } from './mfg-helpers'
+import { listUsers } from '../../../api/erp/rbac'
 import { reserveForCreatePage, clearCreatePageReservation } from '../../../utils/documentNumberReservation'
 
 const asBoolean = value => value === true || value === 1 || value === '1'
@@ -130,7 +130,8 @@ export default {
     async searchWorkers(keyword) {
       this.workerSearching = true
       try {
-        const found = await searchProductionUsers(keyword)
+        const { data } = await listUsers({ scope: 'production', capability: 'execute', status: 'normal', keyword: keyword || undefined, page: 1, per_page: 10 })
+        const found = (data.data || []).map(u => ({ id: u.user_id, name: u.display_name }))
         const picked = this.workerOptions.filter(o => this.workerIds.includes(o.id))
         this.workerOptions = [...picked, ...found.filter(u => !picked.some(p => p.id === u.id))]
       } catch (error) { this.$message.error(error.userMessage || '人员加载失败') } finally { this.workerSearching = false }

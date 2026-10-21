@@ -84,11 +84,17 @@ final class TechService
             $changed = $b && ((int) $b['component_item_id'] !== (int) $line['component_item_id'] || abs($b['qty'] - $line['qty']) > 0.00001
                 || abs($b['loss_rate'] - $line['loss_rate']) > 0.00001 || abs($b['fixed_qty'] - $line['fixed_qty']) > 0.00001
                 || (int) ($b['target_routing_operation_id'] ?? 0) !== (int) ($line['target_routing_operation_id'] ?? 0));
-            $rows[] = $this->lineRow($line, $items, $available, $opNames, $b, $b ? ($changed ? 'changed' : 'same') : 'added');
+            $rows[] = $this->lineRow($line, $items, $available, $opNames, $b, $b ? ($changed ? 'changed' : 'same') : 'added', (float) $wo->planned_qty);
         }
         foreach ($base as $b) {
-            if (! in_array($b['id'], $usedBase, true)) $rows[] = $this->lineRow(array_merge($b, ['qty' => 0, 'base_line_id' => $b['id']]), $items, $available, $opNames, $b, 'removed');
+            if (! in_array($b['id'], $usedBase, true)) $rows[] = $this->lineRow(array_merge($b, ['qty' => 0, 'base_line_id' => $b['id']]), $items, $available, $opNames, $b, 'removed', (float) $wo->planned_qty);
         }
+        $requiredByItem = collect($rows)->where('change', '!=', 'removed')->groupBy('component_item_id')
+            ->map(fn ($itemRows) => round($itemRows->sum('required_qty'), 4));
+        foreach ($rows as &$row) {
+            if ($row['change'] !== 'removed') $row['required_qty'] = $requiredByItem[$row['component_item_id']];
+        }
+        unset($row);
         $drawings = MfgDrawing::query()->where('work_order_id', $wo->id)->whereIn('status', ['active', 'replaced'])->orderByDesc('id')->get();
         $line = $wo->sales_order_line_id ? SalesOrderLine::query()->find($wo->sales_order_line_id) : null;
         $attachments = SalesOrderAttachment::query()->where('status', 'active')
@@ -97,7 +103,8 @@ final class TechService
                     ->whereIn('attachment_type', ['design_drawing', 'customer_drawing', 'technical_agreement', 'configuration_note'])))
             ->orderBy('id')->get(['id', 'original_name', 'url', 'attachment_type', 'mime_type', 'uploaded_by', 'uploaded_at']);
         $activeDrawings = $drawings->where('status', 'active')->values();
-        $shortages = collect($rows)->filter(fn ($r) => $r['change'] !== 'removed' && $r['available_qty'] < $r['required_qty'] - 0.00001)
+        $shortages = collect($rows)->where('change', '!=', 'removed')->unique('component_item_id')
+            ->filter(fn ($r) => $r['available_qty'] < $r['required_qty'] - 0.00001)
             ->map(fn ($r) => $r['component_item_name'].' 可用 '.$this->num($r['available_qty']).($r['unit_name'] ?: ''))->values()->all();
         $routingBlock = $wo->block_reason && str_contains($wo->block_reason, '路线');
         return [
@@ -120,7 +127,7 @@ final class TechService
             'drawings' => $activeDrawings->map(fn ($d) => $this->drawingRow($d))->values()->all(),
             'drawing_history' => $drawings->where('status', 'replaced')->map(fn ($d) => $this->drawingRow($d))->values()->all(),
             'base_bom' => $wo->bom_id ? ['id' => $wo->bom_id, 'bom_no' => $wo->bom_no, 'version' => $wo->bom_version,
-                'bom_name' => preg_replace('/（定制）$/u', '', (string) data_get($wo->bom_snapshot, 'bom_name'))] : null,
+                'bom_name' => data_get($wo->bom_snapshot, 'bom_name')] : null,
             'bom_lines' => $rows,
             'bom_changes' => ['changed' => collect($rows)->where('change', 'changed')->count(), 'added' => collect($rows)->where('change', 'added')->count(),
                 'removed' => collect($rows)->where('change', 'removed')->count(), 'same' => collect($rows)->where('change', 'same')->count()],
@@ -169,7 +176,8 @@ final class TechService
                     'remark' => mb_substr(trim((string) ($row['remark'] ?? '')), 0, 200) ?: null];
             }
             if (! $lines) $this->fail('lines_required', '定制 BOM 至少要有一行物料。');
-            $tech->update(['custom_bom' => ['base_bom_id' => $wo->bom_id, 'base_items' => $base, 'lines' => $lines], 'bom_confirmed' => $confirmed,
+            $tech->update(['custom_bom' => ['base_bom_id' => $wo->bom_id, 'base_routing_id' => $wo->routing_id, 'base_routing_version' => $wo->routing_version,
+                'base_items' => $base, 'lines' => $lines], 'bom_confirmed' => $confirmed,
                 'remark' => $remark !== null ? (mb_substr($remark, 0, 500) ?: null) : $tech->remark] + $this->ownerFields($tech, $actor));
             $byBase = collect($lines)->whereNotNull('base_line_id')->keyBy('base_line_id');
             $changed = collect($base)->filter(fn ($b) => ($l = $byBase->get($b['id'])) && ((int) $l['component_item_id'] !== (int) $b['component_item_id']
@@ -250,7 +258,6 @@ final class TechService
                     return $out;
                 }, $tech->custom_bom['lines'] ?? []);
             }
-            $snapshot['bom_name'] = preg_replace('/（定制）$/u', '', (string) ($snapshot['bom_name'] ?? '')).'（定制）';
             $snapshot['custom'] = true;
             $tech->update(['status' => 'released', 'released_by_legacy_id' => $this->actorId($actor), 'released_by_name' => $this->actorName($actor),
                 'released_at' => now(), 'remark' => $remark !== null && $remark !== '' ? mb_substr($remark, 0, 500) : $tech->remark] + $this->ownerFields($tech, $actor));
@@ -298,10 +305,15 @@ final class TechService
     {
         if ($tech->status === 'released') return true;
         if (! $tech->bom_confirmed) return false;
-        return ! $tech->custom_bom || (int) ($tech->custom_bom['base_bom_id'] ?? 0) === (int) $wo->bom_id;
+        $custom = $tech->custom_bom;
+        // 旧待下发确认缺少路线身份时重新签认，保留原定制行供技术核对。
+        return is_array($custom) && (int) ($custom['base_bom_id'] ?? 0) === (int) $wo->bom_id
+            && isset($custom['base_routing_id'], $custom['base_routing_version'])
+            && (int) $custom['base_routing_id'] === (int) $wo->routing_id
+            && (int) $custom['base_routing_version'] === (int) $wo->routing_version;
     }
 
-    private function lineRow(array $line, $items, array $available, $opNames, ?array $base, string $change): array
+    private function lineRow(array $line, $items, array $available, $opNames, ?array $base, string $change, float $plannedQty): array
     {
         $item = $items->get((int) $line['component_item_id']);
         $target = $line['target_routing_operation_id'] ?? null;
@@ -313,7 +325,8 @@ final class TechService
             'base_item_name' => $base && (int) $base['component_item_id'] !== (int) $line['component_item_id'] ? $base['component_item_name'] : null,
             'target_routing_operation_id' => $target, 'operation_name' => $target ? ($opNames[$target] ?? null) : null,
             'remark' => $line['remark'] ?? null, 'change' => $change,
-            'required_qty' => (float) $line['qty'], 'available_qty' => round((float) ($available[(int) $line['component_item_id']] ?? 0), 4),
+            'required_qty' => $change === 'removed' ? 0 : WorkOrderPlanBuilder::requiredQuantity($line, $plannedQty),
+            'available_qty' => round((float) ($available[(int) $line['component_item_id']] ?? 0), 4),
         ];
     }
 

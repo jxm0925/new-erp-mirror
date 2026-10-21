@@ -130,7 +130,7 @@
       <span slot="footer"><el-button size="small" @click="assign.visible = false">取消</el-button><el-button size="small" type="primary" :loading="saving" :disabled="!assign.employee" @click="saveAssign">派工</el-button></span>
     </el-dialog>
 
-    <el-dialog title="确认入库" :visible.sync="receipt.visible" width="520px" custom-class="mfg-dialog" :close-on-click-modal="false">
+    <el-dialog title="确认入库" :visible.sync="receipt.visible" width="520px" custom-class="mfg-dialog" :close-on-click-modal="false" @close="receiptPicker.visible = false">
       <template v-if="receipt.row">
         <p><b>{{ receipt.row.work_order_no }}</b> {{ receipt.row.product_name }}</p>
         <el-form label-position="top" size="small">
@@ -140,14 +140,10 @@
             </el-checkbox-group>
           </el-form-item>
           <el-form-item label="仓库">
-            <el-select v-model="receipt.warehouse_id" filterable placeholder="选仓库" style="width: 100%" @change="receipt.location_id = null">
-              <el-option v-for="w in warehouses" :key="w.id" :label="w.warehouse_name" :value="w.id" />
-            </el-select>
+            <el-button class="receipt-selector" :disabled="saving || !receipt.management_scope" @click="openReceiptPicker('warehouses')">{{ receipt.warehouse_name || '选仓库' }}<i class="el-icon-search" /></el-button>
           </el-form-item>
           <el-form-item label="库位">
-            <el-select v-model="receipt.location_id" filterable placeholder="选库位" style="width: 100%">
-              <el-option v-for="l in receiptLocations" :key="l.id" :label="[l.location_code, l.location_name].filter(Boolean).join(' ')" :value="l.id" />
-            </el-select>
+            <el-button class="receipt-selector" :disabled="!receipt.warehouse_id || saving" @click="openReceiptPicker('locations')">{{ receipt.location_name || '选库位' }}<i class="el-icon-search" /></el-button>
           </el-form-item>
           <el-form-item label="备注"><el-input v-model="receipt.remark" maxlength="500" /></el-form-item>
         </el-form>
@@ -155,25 +151,34 @@
       </template>
       <span slot="footer"><el-button size="small" @click="receipt.visible = false">取消</el-button><el-button size="small" type="primary" :loading="saving" :disabled="!receipt.unit_ids.length || !receipt.location_id" @click="saveReceipt">确认入库</el-button></span>
     </el-dialog>
+    <system-record-picker :visible.sync="receiptPicker.visible" :type="receiptPicker.type" :multiple="false" :value="receiptPickerValue" :warehouse-id="Number(receipt.warehouse_id || 0)" :management-scope="receipt.management_scope || ''" @confirm="selectReceiptLocator" />
   </section>
 </template>
 
 <script>
 import { getProductionBoard, taskAction, listTaskPeople, reviewScrapReport, receiveWorkOrderUnits } from '../../../api/erp/production'
-import { listEntity } from '../../../api/erp/master'
+import { getEntity } from '../../../api/erp/master'
+import SystemRecordPicker from '../../../components/system/SystemRecordPicker.vue'
 import { qty, shortDate, errorText, isCancel } from './mfg-helpers'
 
 export default {
   name: 'ProductionBoard',
+  components: { SystemRecordPicker },
   data: () => ({
-    loading: false, saving: false, board: null, timer: null, people: [], warehouses: [], locations: [],
+    loading: false, saving: false, board: null, timer: null, people: [],
     filters: { keyword: '', owner_legacy_id: null, urgent_only: false, custom_only: false },
     assign: { visible: false, op: null, title: '', employee: null },
-    receipt: { visible: false, row: null, unit_ids: [], warehouse_id: null, location_id: null, remark: '' }
+    receipt: { visible: false, row: null, unit_ids: [], management_scope: null, warehouse_id: null, warehouse_name: '', location_id: null, location_name: '', remark: '' },
+    receiptPicker: { visible: false, type: 'warehouses' }
   }),
   computed: {
-    todayStored() { return this.board ? this.board.today_receipts.reduce((s, r) => s + Number(r.qty || 0), 0) : 0 },
-    receiptLocations() { return this.locations.filter(l => Number(l.warehouse_id) === Number(this.receipt.warehouse_id)) }
+    todayStored() { return this.board ? Number(this.board.stats.today_received_qty || 0) : 0 },
+    receiptPickerValue() {
+      const r = this.receipt
+      return this.receiptPicker.type === 'warehouses'
+        ? (r.warehouse_id ? [{ id: r.warehouse_id, warehouse_name: r.warehouse_name }] : [])
+        : (r.location_id ? [{ id: r.location_id, location_name: r.location_name }] : [])
+    }
   },
   created() {
     this.load()
@@ -243,13 +248,41 @@ export default {
       }
     },
     async openReceipt(w) {
-      this.receipt = { visible: true, row: w, unit_ids: w.units.map(u => u.id), warehouse_id: w.warehouse_id || null, location_id: null, remark: '' }
-      if (!this.warehouses.length) {
-        try {
-          const [ws, ls] = await Promise.all([listEntity('warehouses', { per_page: 200 }), listEntity('locations', { per_page: 500 })])
-          this.warehouses = ws.data.data || []
-          this.locations = ls.data.data || []
-        } catch (e) { this.$message.error(errorText(e, '仓库库位加载失败')) }
+      const r = this.receipt = { visible: true, row: w, unit_ids: w.units.map(u => u.id), management_scope: ['factory', 'office'].includes(w.management_scope) ? w.management_scope : null, warehouse_id: null, warehouse_name: '', location_id: null, location_name: '', remark: '' }
+      if (!r.management_scope) {
+        this.$message.error('产出物料管理范围未确定，请先核对物料档案')
+        return
+      }
+      if (!w.warehouse_id) return
+      try {
+        const { data } = await getEntity('warehouses', w.warehouse_id, { include_location_summary: 1, management_scope: r.management_scope })
+        if (this.receipt !== r || !r.visible || r.warehouse_id) return
+        const warehouse = data
+        if (warehouse.status !== 'enabled' || warehouse.management_scope !== r.management_scope) return
+        r.warehouse_id = warehouse.id
+        r.warehouse_name = warehouse.warehouse_name
+      } catch (e) {
+        if (this.receipt !== r || !r.visible || r.warehouse_id) return
+        this.$message.error(errorText(e, '仓库加载失败，请重新选择'))
+      }
+    },
+    openReceiptPicker(type) {
+      if (this.saving || !this.receipt.visible || !this.receipt.management_scope || (type === 'locations' && !this.receipt.warehouse_id)) return
+      this.receiptPicker = { type, visible: true }
+    },
+    selectReceiptLocator(rows) {
+      const row = rows[0]
+      if (!row || !this.receipt.visible) return
+      if (this.receiptPicker.type === 'warehouses') {
+        if (Number(this.receipt.warehouse_id) !== Number(row.id)) {
+          this.receipt.location_id = null
+          this.receipt.location_name = ''
+        }
+        this.receipt.warehouse_id = row.id
+        this.receipt.warehouse_name = row.warehouse_name
+      } else {
+        this.receipt.location_id = row.id
+        this.receipt.location_name = [row.location_code, row.location_name].filter(Boolean).join(' ')
       }
     },
     async saveReceipt() {
@@ -309,6 +342,17 @@ export default {
 .photos { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
 .photos .el-image { width: 54px; height: 54px; border-radius: 6px; }
 .note { margin-top: 6px; }
+.receipt-selector {
+  width: 100%;
+  white-space: normal;
+  text-align: left;
+}
+.receipt-selector ::v-deep > span {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
 @media (max-width: 1100px) { .board-grid { grid-template-columns: 1fr; } }
 @media (max-width: 767px) {
   .toolbar .kw { width: 100%; }

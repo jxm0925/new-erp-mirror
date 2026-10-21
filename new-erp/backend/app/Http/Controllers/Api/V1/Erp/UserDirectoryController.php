@@ -33,7 +33,7 @@ class UserDirectoryController extends Controller
 
         $result = $service->users([
             'scope' => $scope,
-            'capability' => $scope === 'production' && $request->input('capability') === 'collaborate' ? 'collaborate' : null,
+            'capability' => $scope === 'production' && in_array($request->input('capability'), ['collaborate', 'execute'], true) ? $request->input('capability') : null,
             'status' => $request->input('status', 'normal'),
             'department_name' => $request->input('department_name'),
             'department_id' => $request->integer('department_id'),

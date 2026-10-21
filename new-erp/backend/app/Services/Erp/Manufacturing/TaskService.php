@@ -13,6 +13,7 @@ use App\Models\Erp\SalesOrder;
 use App\Models\Erp\ShipmentPackingLaborSession;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\SalesOrderFundingGateService;
+use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -53,9 +54,12 @@ final class TaskService
             $this->assertRunnable($wo, $op);
             $user = $this->activeUser($employeeId);
             if (! $user) $this->fail('user_invalid', '所选人员不存在或已停用。');
+            $this->assertExecutor($user);
             if (! $this->canDo($op, $employeeId)) $this->fail('not_worker', '这个人不在这道工序“能做的人”里，请先在工序管理里加上。');
             $old = $this->owner($op);
             if ($old && (int) $old->employee_legacy_id === $employeeId) $this->fail('no_change', '这道工序已经是他在做。');
+            if (MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('is_active', true)->whereNotNull('share_percent')->lockForUpdate()->first(['id']))
+                $this->fail('share_confirmation_required', '这道工序已约定固定份额，请先由接单人在协同设置中改为按实际工时分配，再改派并重新确认份额。');
             if ($old) {
                 if ($this->activeSession($op, (int) $old->employee_legacy_id)) $this->fail('owner_timing', '原接单人 '.$old->employee_name.' 正在计时，请先让他暂停再换人。');
                 $old->update(['is_active' => false, 'share_percent' => null]);
@@ -85,20 +89,17 @@ final class TaskService
                 if ($id && $id !== $me) $shares[$id] = isset($row['share_percent']) && $row['share_percent'] !== '' ? (float) $row['share_percent'] : null;
             }
             $ids = array_keys($shares);
-            $users = $ids ? DB::table('erp_legacy_admin_users')->whereIn('legacy_id', $ids)->whereIn(DB::raw('LOWER(status)'), ['normal', 'active'])->get() : collect();
+            $users = $ids ? DB::table('erp_legacy_admin_users')->whereIn('legacy_id', $ids)->whereNull('deleted_at')
+                ->whereIn(DB::raw('LOWER(TRIM(status))'), ['normal', 'active'])->orderBy('legacy_id')->lockForUpdate()->get() : collect();
             if ($users->count() !== count($ids)) $this->fail('user_invalid', '协同人必须是在职的账号。');
-            $auth = app(AuthContextService::class);
-            foreach ($users as $user) {
-                if (! $auth->isSuperAdmin($user) && ! in_array('production.task.execute', $auth->permissionCodes($user), true))
-                    $this->fail('user_invalid', $this->userName($user).' 没有生产报工权限，不能当协同人。');
-            }
+            foreach ($users as $user) $this->assertExecutor($user);
             $fixed = $ownerShare !== null || in_array(true, array_map(fn ($v) => $v !== null, $shares), true);
             if ($fixed) {
                 if ($ownerShare === null || in_array(null, $shares, true)) $this->fail('share_invalid', '要固定份额就每个人都填，不填就按实际工时分。');
                 if (abs($ownerShare + array_sum($shares) - 100) > 0.01) $this->fail('share_invalid', '所有人的份额加起来要等于 100%。');
             }
             $removed = MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('role', 'collaborator')->where('is_active', true)
-                ->whereNotIn('employee_legacy_id', $ids ?: [0])->get();
+                ->whereNotIn('employee_legacy_id', $ids ?: [0])->lockForUpdate()->get();
             foreach ($removed as $row) {
                 if ($this->activeSession($op, (int) $row->employee_legacy_id)) $this->fail('collaborator_timing', $row->employee_name.' 还在计时，请他先暂停再移出。');
                 $row->update(['is_active' => false]);
@@ -119,6 +120,8 @@ final class TaskService
             $this->assertRunnable($wo, $op);
             if ($op->status === 'done') $this->fail('operation_done', '这道工序已经做完。');
             $me = (int) $this->actorId($actor);
+            // 人员维护同样先锁账号再锁资格行，不能反向持锁后互相等待。
+            DB::table('erp_legacy_admin_users')->where('legacy_id', $me)->lockForUpdate()->first();
             $owner = $this->owner($op);
             if (! $owner) {
                 // 没人接时直接点开始 = 自己接单。
@@ -133,10 +136,9 @@ final class TaskService
                 $status = $order ? $this->funding->status($order) : ['production_funds_satisfied' => true];
                 if (! ($status['production_funds_satisfied'] ?? false)) $this->fail('funds_unsatisfied', $status['production_block_message'] ?? '定金未到，不能开工。');
             }
-            DB::table('erp_legacy_admin_users')->where('legacy_id', $me)->lockForUpdate()->first();
             if (MfgLaborSession::query()->where('employee_legacy_id', $me)->where('status', 'active')->lockForUpdate()->first())
                 $this->fail('already_timing', '你还有别的工序在计时，请先暂停那一道。');
-            if (ShipmentPackingLaborSession::query()->where('employee_legacy_id', $me)->where('status', 'ACTIVE')->exists())
+            if (ShipmentPackingLaborSession::query()->where('employee_legacy_id', $me)->where('status', 'ACTIVE')->lockForUpdate()->first(['id']))
                 $this->fail('already_timing', '你有打包作业正在计时，请先暂停。');
             $units = $this->selectableUnits($op);
             if ($units->isEmpty()) $this->fail('no_unit', '这道工序现在没有要做的台，等前道交过来再开始。');
@@ -171,21 +173,23 @@ final class TaskService
             [$wo, $op] = $this->lockTask($opId);
             $this->assertRunnable($wo, $op);
             $this->assertReporter($op, $actor);
-            if (! MfgLaborSession::query()->where('work_order_operation_id', $op->id)->exists()) $this->fail('no_labor', '这道工序还没有计时记录，请先点“开始”。');
+            $sessions = MfgLaborSession::query()->where('work_order_operation_id', $op->id)->lockForUpdate()->get();
+            if ($sessions->isEmpty()) $this->fail('no_labor', '这道工序还没有计时记录，请先点“开始”。');
             $units = $this->pickUnits($op, $unitIds);
             $ops = $this->productionOps($wo);
             $pos = $ops->pluck('id')->flip();
             $next = $ops->get($pos[$op->id] + 1);
-            $snapshot = $this->participantsSnapshot($op);
+            $reportedAt = now();
+            $snapshot = $this->participantsSnapshot($op, $sessions, $reportedAt);
             $firstPass = 0;
             $finished = 0;
             foreach ($units as $unit) {
                 $wasRework = $unit->status === 'rework';
-                if (! MfgUnitReport::query()->where('unit_id', $unit->id)->where('work_order_operation_id', $op->id)->where('result', 'passed')->exists()) $firstPass++;
-                $this->report($wo, $op, $unit, 'passed', $actor, ['is_rework' => $wasRework, 'participants_snapshot' => $snapshot]);
+                if (! MfgUnitReport::query()->where('unit_id', $unit->id)->where('work_order_operation_id', $op->id)->where('result', 'passed')->lockForUpdate()->first(['id'])) $firstPass++;
+                $this->report($wo, $op, $unit, 'passed', $actor, ['is_rework' => $wasRework, 'participants_snapshot' => $snapshot, 'created_at' => $reportedAt]);
                 $stillRework = false;
                 if ($wasRework) {
-                    $failedAt = MfgUnitReport::query()->where('unit_id', $unit->id)->where('result', 'failed')->orderByDesc('id')->value('work_order_operation_id');
+                    $failedAt = MfgUnitReport::query()->where('unit_id', $unit->id)->where('result', 'failed')->orderByDesc('id')->lockForUpdate()->value('work_order_operation_id');
                     $stillRework = $failedAt && isset($pos[$failedAt]) && $pos[$failedAt] > $pos[$op->id];
                 }
                 if ($next) {
@@ -193,7 +197,7 @@ final class TaskService
                     if ($next->status === 'done') $next->update(['status' => 'in_progress']);
                     $text = "{$op->operation_name}合格，交{$next->operation_name}";
                 } else {
-                    $unit->update(['status' => 'completed', 'current_operation_id' => null, 'completed_at' => now()]);
+                    $unit->update(['status' => 'completed', 'current_operation_id' => null, 'completed_at' => $reportedAt]);
                     $finished++;
                     $text = "{$op->operation_name}合格，生产完成，等入库";
                 }
@@ -202,7 +206,7 @@ final class TaskService
             }
             if ($firstPass) $op->update(['completed_qty' => (float) $op->completed_qty + $firstPass]);
             if ($finished) $wo->update(['completed_qty' => (float) $wo->completed_qty + $finished]);
-            $this->refreshOperation($wo, $op);
+            $this->refreshOperation($wo, $op, $reportedAt);
             return ['passed' => $units->count(), 'finished' => $finished, 'next_operation_name' => $next?->operation_name];
         }, 5);
     }
@@ -269,7 +273,11 @@ final class TaskService
             $before = $unit->status;
             $unit->update(['status' => 'scrapped', 'current_operation_id' => null]);
             $this->workOrders->log($wo, 'unit_scrapped', $before, 'scrapped', "{$unit->serial_no} 确认报废（{$op->operation_name}）".($remark ? '：'.$remark : ''), $actor, [], $unit->id);
-            $this->refreshOperation($wo, $op);
+            // 上游最后一台报废后，下游可能已无台可做，必须一并结束这些工序的计时。
+            $ops = $this->productionOps($wo);
+            foreach ($ops->slice($ops->pluck('id')->search($op->id)) as $affected) {
+                $this->refreshOperation($wo, $affected);
+            }
             $this->workOrders->refreshCompletion($wo, $actor);
         }, 5);
     }
@@ -280,11 +288,13 @@ final class TaskService
         return DB::transaction(function () use ($operationId, $employeeIds, $actor) {
             \App\Models\Erp\ProductionOperation::query()->lockForUpdate()->findOrFail($operationId);
             $ids = array_values(array_unique(array_filter(array_map('intval', $employeeIds))));
-            $users = $ids ? DB::table('erp_legacy_admin_users')->whereIn('legacy_id', $ids)->get()->keyBy('legacy_id') : collect();
-            if ($users->count() !== count($ids)) $this->fail('user_invalid', '所选人员里有不存在的账号，请刷新后重选。');
+            $users = $ids ? DB::table('erp_legacy_admin_users')->whereIn('legacy_id', $ids)->whereNull('deleted_at')
+                ->whereIn(DB::raw('LOWER(TRIM(status))'), ['normal', 'active'])->orderBy('legacy_id')->lockForUpdate()->get()->keyBy('legacy_id') : collect();
+            if ($users->count() !== count($ids)) $this->fail('user_invalid', '所选人员必须是未删除的在职账号，请刷新后重选。');
+            foreach ($users as $user) $this->assertExecutor($user);
             ProductionOperationWorker::query()->where('operation_id', $operationId)->whereNotIn('employee_legacy_id', $ids ?: [0])->delete();
             foreach ($ids as $id) {
-                ProductionOperationWorker::updateOrCreate(['operation_id' => $operationId, 'employee_legacy_id' => $id],
+                ProductionOperationWorker::query()->lockForUpdate()->updateOrCreate(['operation_id' => $operationId, 'employee_legacy_id' => $id],
                     ['employee_name' => $this->userName($users[$id]), 'created_by_legacy_id' => $this->actorId($actor)]);
             }
             return ProductionOperationWorker::query()->where('operation_id', $operationId)->orderBy('id')->get()
@@ -292,9 +302,9 @@ final class TaskService
         }, 5);
     }
 
-    public static function closeSession(MfgLaborSession $session, string $status): void
+    public static function closeSession(MfgLaborSession $session, string $status, ?CarbonInterface $endedAt = null): void
     {
-        $ended = now();
+        $ended = $endedAt ?? now();
         $session->update(['status' => $status, 'ended_at' => $ended,
             'labor_minutes' => round(max(0, $session->started_at->diffInSeconds($ended, false)) / 60, 2)]);
     }
@@ -303,17 +313,23 @@ final class TaskService
     public function canDo(MfgWorkOrderOperation $op, int $employeeId): bool
     {
         if (! $op->operation_id) return true;
-        $workers = ProductionOperationWorker::query()->where('operation_id', $op->operation_id)->pluck('employee_legacy_id')->map(fn ($v) => (int) $v);
+        $workers = ProductionOperationWorker::query()->where('operation_id', $op->operation_id)
+            ->when(DB::transactionLevel() > 0, fn ($q) => $q->lockForUpdate())->pluck('employee_legacy_id')->map(fn ($v) => (int) $v);
         return $workers->isEmpty() || $workers->contains($employeeId);
     }
 
     /** 本道现在能报的台：停在本道、没在等报废确认。 */
     public function selectableUnits(MfgWorkOrderOperation $op): Collection
     {
-        return MfgWorkOrderUnit::query()->where('work_order_id', $op->work_order_id)->where('current_operation_id', $op->id)
-            ->whereIn('status', self::SELECTABLE)
-            ->whereNotExists(fn ($q) => $q->selectRaw('1')->from('erp_mfg_unit_reports as r')->whereColumn('r.unit_id', 'erp_mfg_work_order_units.id')->where('r.review_status', 'pending'))
-            ->orderBy('unit_no')->get();
+        $query = MfgWorkOrderUnit::query()->where('work_order_id', $op->work_order_id)->where('current_operation_id', $op->id)
+            ->whereIn('status', self::SELECTABLE)->orderBy('unit_no');
+        if (DB::transactionLevel() > 0) {
+            // 待报废和台状态都要读当前值，不能混用等待工单锁前建立的旧视图。
+            $pending = MfgUnitReport::query()->where('work_order_id', $op->work_order_id)->where('review_status', 'pending')->lockForUpdate()->pluck('unit_id');
+            return $query->whereNotIn('id', $pending)->lockForUpdate()->get();
+        }
+        return $query->whereNotExists(fn ($q) => $q->selectRaw('1')->from('erp_mfg_unit_reports as r')
+            ->whereColumn('r.unit_id', 'erp_mfg_work_order_units.id')->where('r.review_status', 'pending'))->get();
     }
 
     private function lockTask(int $opId): array
@@ -341,7 +357,7 @@ final class TaskService
     {
         $ids = array_values(array_unique(array_filter(array_map('intval', $unitIds))));
         if (! $ids) $this->fail('unit_required', '请选择这次做完的台。');
-        $units = MfgWorkOrderUnit::query()->whereIn('id', $ids)->orderBy('unit_no')->lockForUpdate()->get();
+        $units = MfgWorkOrderUnit::query()->where('work_order_id', $op->work_order_id)->whereIn('id', $ids)->orderBy('unit_no')->lockForUpdate()->get();
         $selectable = $this->selectableUnits($op)->pluck('id')->all();
         if ($units->count() !== count($ids) || $units->contains(fn ($u) => ! in_array($u->id, $selectable, true)))
             $this->fail('unit_invalid', '选的台不在这道工序上或正在等报废确认，请刷新后重选。');
@@ -351,22 +367,22 @@ final class TaskService
     private function productionOps(MfgWorkOrder $wo): Collection
     {
         return MfgWorkOrderOperation::query()->where('work_order_id', $wo->id)->where('execution_context', 'production')
-            ->orderBy('sequence')->orderBy('id')->get()->values();
+            ->orderBy('sequence')->orderBy('id')->lockForUpdate()->get()->values();
     }
 
     /** 本道和之前各道都没有在做的台了，本道就算做完，同时结束本道所有计时。 */
-    private function refreshOperation(MfgWorkOrder $wo, MfgWorkOrderOperation $op): void
+    private function refreshOperation(MfgWorkOrder $wo, MfgWorkOrderOperation $op, ?CarbonInterface $endedAt = null): void
     {
         $ops = $this->productionOps($wo);
         $upTo = $ops->slice(0, $ops->pluck('id')->search($op->id) + 1)->pluck('id');
-        $alive = MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->whereIn('status', self::SELECTABLE)->whereIn('current_operation_id', $upTo)->exists();
+        $alive = MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->whereIn('status', self::SELECTABLE)->whereIn('current_operation_id', $upTo)->lockForUpdate()->first(['id']);
         if ($alive) {
             if ($op->status === 'done') $op->update(['status' => 'in_progress']);
             return;
         }
         $op->update(['status' => 'done']);
         foreach (MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('status', 'active')->lockForUpdate()->get() as $session) {
-            self::closeSession($session, 'completed');
+            self::closeSession($session, 'completed', $endedAt);
         }
     }
 
@@ -378,11 +394,16 @@ final class TaskService
         ]);
     }
 
-    private function participantsSnapshot(MfgWorkOrderOperation $op): array
+    private function participantsSnapshot(MfgWorkOrderOperation $op, Collection $sessions, CarbonInterface $reportedAt): array
     {
-        $minutes = MfgLaborSession::query()->where('work_order_operation_id', $op->id)
-            ->selectRaw('employee_legacy_id, SUM(labor_minutes) AS m')->groupBy('employee_legacy_id')->pluck('m', 'employee_legacy_id');
-        return MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('is_active', true)->orderByRaw("FIELD(role, 'owner', 'collaborator')")->get()
+        $participants = MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('is_active', true)->orderByRaw("FIELD(role, 'owner', 'collaborator')")->lockForUpdate()->get();
+        if ($participants->contains(fn ($p) => $p->share_percent !== null)
+            && ($participants->contains(fn ($p) => $p->share_percent === null) || abs($participants->sum('share_percent') - 100) > 0.01))
+            $this->fail('share_confirmation_required', '固定份额必须每个人都填写且合计为 100%，请由接单人在协同设置中重新确认。');
+        // 同批报工和完成计时共用这一时刻，快照包含尚未结束的真实工时段。
+        $minutes = $sessions->groupBy('employee_legacy_id')->map(fn ($rows) => $rows->sum(fn ($s) => $s->status === 'active'
+            ? round(max(0, $s->started_at->diffInSeconds($reportedAt, false)) / 60, 2) : (float) $s->labor_minutes));
+        return $participants
             ->map(fn ($p) => ['employee_legacy_id' => (int) $p->employee_legacy_id, 'employee_name' => $p->employee_name, 'role' => $p->role,
                 'share_percent' => $p->share_percent === null ? null : (float) $p->share_percent, 'labor_minutes' => round((float) ($minutes[$p->employee_legacy_id] ?? 0), 2)])
             ->values()->all();
@@ -390,22 +411,22 @@ final class TaskService
 
     private function owner(MfgWorkOrderOperation $op): ?MfgTaskParticipant
     {
-        return MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('role', 'owner')->where('is_active', true)->first();
+        return MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('role', 'owner')->where('is_active', true)->lockForUpdate()->first();
     }
 
     private function participant(MfgWorkOrderOperation $op, int $employeeId): ?MfgTaskParticipant
     {
-        return MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('employee_legacy_id', $employeeId)->where('is_active', true)->first();
+        return MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('employee_legacy_id', $employeeId)->where('is_active', true)->lockForUpdate()->first();
     }
 
     private function activeSession(MfgWorkOrderOperation $op, int $employeeId): ?MfgLaborSession
     {
-        return MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('employee_legacy_id', $employeeId)->where('status', 'active')->first();
+        return MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('employee_legacy_id', $employeeId)->where('status', 'active')->lockForUpdate()->first();
     }
 
     private function setParticipant(MfgWorkOrderOperation $op, int $employeeId, string $name, string $role, object $actor, ?float $share = null): void
     {
-        MfgTaskParticipant::updateOrCreate(['work_order_operation_id' => $op->id, 'employee_legacy_id' => $employeeId], [
+        MfgTaskParticipant::query()->lockForUpdate()->updateOrCreate(['work_order_operation_id' => $op->id, 'employee_legacy_id' => $employeeId], [
             'work_order_id' => $op->work_order_id, 'employee_name' => $name, 'role' => $role, 'is_active' => true, 'share_percent' => $share,
             'assigned_by_legacy_id' => $this->actorId($actor), 'assigned_by_name' => $this->actorName($actor), 'joined_at' => now(),
         ]);
@@ -413,7 +434,15 @@ final class TaskService
 
     private function activeUser(int $id): ?object
     {
-        return DB::table('erp_legacy_admin_users')->where('legacy_id', $id)->whereIn(DB::raw('LOWER(status)'), ['normal', 'active'])->first();
+        return DB::table('erp_legacy_admin_users')->where('legacy_id', $id)->whereNull('deleted_at')
+            ->whereIn(DB::raw('LOWER(TRIM(status))'), ['normal', 'active'])->lockForUpdate()->first();
+    }
+
+    private function assertExecutor(object $user): void
+    {
+        $auth = app(AuthContextService::class);
+        if (! $auth->isSuperAdmin($user) && ! in_array('production.task.execute', $auth->permissionCodes($user), true))
+            $this->fail('user_invalid', $this->userName($user).' 没有生产报工权限，不能参与这道工序。');
     }
 
     private function userName(object $user): string { return (string) (($user->nickname ?? null) ?: ($user->username ?? null) ?: ('#'.$user->legacy_id)); }

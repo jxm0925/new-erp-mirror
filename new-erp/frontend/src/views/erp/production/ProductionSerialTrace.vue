@@ -610,14 +610,14 @@ export default {
       return map[status] || 'info'
     },
     dotClass(action) {
-      if (['rejected', 'rework', 'cancelled', 'scrapped'].includes(action)) return 'bad'
-      if (['paused'].includes(action)) return 'doing'
+      if (['rejected', 'rework', 'cancelled', 'scrapped', 'unit_failed', 'unit_scrap_requested', 'unit_scrapped'].includes(action)) return 'bad'
+      if (['paused', 'unit_scrap_rejected'].includes(action)) return 'doing'
       return 'done'
     },
     actionTagType(action) {
-      if (['rejected', 'rework', 'cancelled', 'scrapped'].includes(action)) return 'danger'
-      if (['paused'].includes(action)) return 'warning'
-      if (['completed', 'stored'].includes(action)) return 'success'
+      if (['rejected', 'rework', 'cancelled', 'scrapped', 'unit_failed', 'unit_scrapped'].includes(action)) return 'danger'
+      if (['paused', 'unit_scrap_requested', 'unit_scrap_rejected'].includes(action)) return 'warning'
+      if (['completed', 'stored', 'unit_passed', 'unit_stored'].includes(action)) return 'success'
       if (['released', 'resumed'].includes(action)) return 'primary'
       return 'info'
     },
@@ -632,7 +632,13 @@ export default {
         rework: '返工返修',
         rejected: '质检不合格',
         scrapped: '报废处置',
-        cancelled: '制令取消'
+        cancelled: '制令取消',
+        unit_passed: '工序合格',
+        unit_failed: '质检不合格',
+        unit_scrap_requested: '申请报废',
+        unit_scrap_rejected: '报废驳回',
+        unit_scrapped: '报废处置',
+        unit_stored: '入库待试水'
       }
       return map[action] || '工序操作'
     },

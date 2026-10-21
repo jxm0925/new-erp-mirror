@@ -35,7 +35,9 @@ class ErpUserDirectoryService
             if ($actor) app(SalesOrderVisibilityService::class)->applySalesUserScope($query, $actor);
         }
         if (($filters['scope'] ?? null) === 'production') {
-            $query->whereExists(function ($productionUser): void {
+            // 工单负责人仍按查看能力筛选；工序工人入口只要求生产报工能力。
+            $permission = ($filters['capability'] ?? null) === 'execute' ? 'production.task.execute' : 'production.work_order.view';
+            $query->whereExists(function ($productionUser) use ($permission): void {
                 $productionUser->selectRaw('1')
                     ->from('erp_rbac_user_roles as ur')
                     ->join('erp_rbac_roles as r', 'r.id', '=', 'ur.role_id')
@@ -44,7 +46,7 @@ class ErpUserDirectoryService
                     ->whereColumn('ur.user_legacy_id', 'erp_legacy_admin_users.legacy_id')
                     ->where('r.enabled', true)
                     ->where('p.enabled', true)
-                    ->where('p.code', 'production.work_order.view');
+                    ->where('p.code', $permission);
             });
             if (($filters['capability'] ?? null) === 'collaborate') {
                 $query->whereExists(function ($collaborator): void {

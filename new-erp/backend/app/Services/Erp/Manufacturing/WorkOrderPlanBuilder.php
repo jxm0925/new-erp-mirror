@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp\Manufacturing;
 
+use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Models\Erp\Bom;
 use App\Models\Erp\Item;
 use App\Models\Erp\ProductionRouting;
@@ -133,6 +134,13 @@ final class WorkOrderPlanBuilder
         return $snapshot;
     }
 
+    /** 正式需求和技术缺料提醒共用同一数量口径，固定用量只按整张工单加一次。 */
+    public static function requiredQuantity(array $line, float $qty): float
+    {
+        $unitQty = (float) (data_get($line, 'cutting_quantity_snapshot.theoretical_qty') ?? $line['qty']);
+        return round($unitQty * $qty * (1 + (float) ($line['loss_rate'] ?? 0) / 100) + (float) ($line['fixed_qty'] ?? 0), 4);
+    }
+
     /** BOM 决定总量，路线的供料规则决定分到哪道工序；没有规则的料默认给第一道车间工序。 */
     private function materials(array $bomItems, array $operations, float $qty): array
     {
@@ -147,11 +155,14 @@ final class WorkOrderPlanBuilder
             $unitQty = (float) (data_get($line, 'cutting_quantity_snapshot.theoretical_qty') ?? $line['qty']);
             $loss = (float) ($line['loss_rate'] ?? 0);
             $fixed = (float) ($line['fixed_qty'] ?? 0);
-            $total = round($unitQty * $qty * (1 + $loss / 100) + $fixed, 4);
+            $total = self::requiredQuantity($line, $qty);
             $componentRules = $rules->where('component_item_id', $componentId);
             // 定制 BOM 行可直接指定用在哪道工序。
             $lineTarget = (int) ($line['target_routing_operation_id'] ?? 0);
-            $targets = $lineTarget && $byRouting->has($lineTarget)
+            if ($lineTarget && (! $byRouting->has($lineTarget) || $byRouting->get($lineTarget)['execution_context'] !== 'production')) {
+                throw new WorkOrderDomainException('operation_invalid', '定制 BOM 的用料工序已不在当前车间路线中，请重新确认物料对应的工序。');
+            }
+            $targets = $lineTarget
                 ? [['key' => $byRouting->get($lineTarget)['key'], 'ratio' => 1.0, 'supply_mode' => null, 'kitting' => true]]
                 : ($componentRules->isNotEmpty()
                 ? $componentRules->map(fn ($rule) => ['key' => $byRouting->get($rule['target_routing_operation_id'])['key'] ?? $rule['host_key'],
