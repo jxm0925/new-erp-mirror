@@ -25,7 +25,7 @@ CREATE TABLE `erp_mfg_labor_sessions` (
   `status` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'active',
   `started_at` timestamp NULL DEFAULT NULL,
   `ended_at` timestamp NULL DEFAULT NULL,
-  `labor_minutes` decimal(12,2) NOT NULL DEFAULT '0',
+  `labor_minutes` decimal(12,2) NOT NULL DEFAULT '0.00',
   `created_at` timestamp NULL DEFAULT NULL,
   `updated_at` timestamp NULL DEFAULT NULL,
   PRIMARY KEY (`id`),
