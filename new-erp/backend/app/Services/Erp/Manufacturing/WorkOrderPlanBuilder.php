@@ -48,10 +48,20 @@ final class WorkOrderPlanBuilder
         return $this->bomMatcher->eligibleQuery()->whereKey($bomId)->where('output_item_id', $itemId)->lockForUpdate()->first(['id']) !== null;
     }
 
-    /** 每道工序料够不够：只看当前可用库存（第 3 阶段配料后改为已配/已签收）。 */
+    /**
+     * 每道工序料够不够：已收的料 + 当前可用库存。
+     * 按数量管理的料要在工单里“收料”才扣库存（issue_mode=receive）；按实物管理的板料走开料领用（issue_mode=cutting），按在库板料估算。
+     */
     public function kitting(array $materials, array $operations): array
     {
-        $available = $this->availability->availableBaseQuantities(array_column($materials, 'component_item_id'));
+        $ids = array_values(array_unique(array_map('intval', array_column($materials, 'component_item_id'))));
+        $available = $this->availability->availableBaseQuantities($ids);
+        $physical = $ids ? Item::query()->whereIn('id', $ids)->get()->filter(fn (Item $i) => $i->materialManagementMode() === 'physical')->pluck('id')->map(fn ($id) => (int) $id)->all() : [];
+        if ($physical) {
+            foreach ($this->availability->outboundBalanceQuery($physical)->get() as $b) {
+                $available[(int) $b->item_id] = ($available[(int) $b->item_id] ?? 0) + $this->availability->calculate((float) $b->quantity_on_hand, (float) $b->quantity_locked, (float) $b->quantity_defective, (float) $b->quantity_pending);
+            }
+        }
         $remaining = $available;
         $result = [];
         foreach ($operations as $op) {
@@ -65,6 +75,7 @@ final class WorkOrderPlanBuilder
                 $use = min($need, $have);
                 if ($m['participates_in_kitting']) $remaining[$m['component_item_id']] = $have - $use;
                 $rows[] = $m + [
+                    'issue_mode' => in_array((int) $m['component_item_id'], $physical, true) ? 'cutting' : 'receive',
                     'available_qty' => round((float) ($available[$m['component_item_id']] ?? 0), 4),
                     'covered_qty' => round($use + (float) ($m['issued_qty'] ?? 0), 4),
                     'shortage_qty' => $m['participates_in_kitting'] ? round(max(0, $need - $use), 4) : 0,

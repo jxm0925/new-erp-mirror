@@ -28,5 +28,6 @@ module.exports = {
   action: (id, payload) => request.write(`${base}/tasks/${Number(id)}/actions`, payload, { loading: false, commandPrefix: 'task' }),
   people: (id, query) => get(`tasks/${Number(id)}/people`, query),
   workOrder: id => get(`work-orders/${Number(id)}`),
+  receiveMaterials: (workOrderId, operationId, payload) => request.write(`${base}/work-orders/${Number(workOrderId)}/operations/${Number(operationId)}/material-receipts`, payload || {}, { loading: true, commandPrefix: 'issue' }),
   uploadPhoto,
 };

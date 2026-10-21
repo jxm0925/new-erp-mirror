@@ -646,6 +646,75 @@ class InventoryService
         }, 5);
     }
 
+    /**
+     * 工序收料：车间收到本道要用的料时才扣库存（按库存平均成本出库）。
+     * @param array<int, array{balance_id:int, item_id:int, material_id:int, qty:string, serial_ids:array<int>}> $allocations
+     */
+    public function postProductionMaterialIssue(\App\Models\Erp\MfgMaterialIssue $issue, \App\Models\Erp\MfgWorkOrder $workOrder, array $allocations, ?int $operatorId = null): InventoryTransaction
+    {
+        return DB::transaction(function () use ($issue, $workOrder, $allocations, $operatorId): InventoryTransaction {
+            if (InventoryTransaction::query()->where('source_type', 'mfg_material_issue')->where('source_id', $issue->id)
+                ->where('transaction_type', 'production_material_issue_outbound')->exists()) {
+                throw ValidationException::withMessages(['issue' => '这张收料单已经扣过库存，不能重复扣。']);
+            }
+            if (! $allocations) throw ValidationException::withMessages(['issue' => '收料单没有要扣的库存。']);
+            $transaction = InventoryTransaction::create([
+                'transaction_no' => $this->nextNo('ITX'), 'transaction_type' => 'production_material_issue_outbound',
+                'source_type' => 'mfg_material_issue', 'source_id' => $issue->id, 'source_no' => $issue->issue_no,
+                'posting_status' => 'posted', 'transaction_date' => now()->toDateString(),
+                'posted_by' => $operatorId, 'posted_at' => now(), 'created_by' => $operatorId,
+                'remark' => '工序收料，工单 '.$workOrder->work_order_no,
+            ]);
+            $total = '0';
+            foreach ($allocations as $row) {
+                $balance = InventoryBalance::query()->whereKey($row['balance_id'])->lockForUpdate()->firstOrFail();
+                $item = Item::query()->findOrFail($row['item_id']);
+                $quantity = number_format((float) $row['qty'], 8, '.', '');
+                if ((int) $balance->item_id !== (int) $item->id || $item->materialManagementMode() === 'physical'
+                    || bccomp($quantity, '0', 8) <= 0 || $this->availability->availableForOutbound($balance) + 0.00000001 < (float) $quantity) {
+                    throw ValidationException::withMessages(['stock' => $item->item_name.' 可用库存不足或不能按数量领用，请刷新后重试。']);
+                }
+                $serialIds = array_values(array_unique(array_map('intval', $row['serial_ids'] ?? [])));
+                $serials = collect();
+                if ($serialIds) {
+                    $serials = InventorySerial::query()->whereIn('id', $serialIds)->where('inventory_balance_id', $balance->id)
+                        ->where('item_id', $item->id)->where('serial_status', 'available')->lockForUpdate()->get();
+                    if ($serials->count() !== count($serialIds)) throw ValidationException::withMessages(['stock' => $item->item_name.' 的序列号已被占用，请刷新后重试。']);
+                }
+                if ($item->serialTrackingMode() === 'required' && bccomp($quantity, (string) count($serialIds), 8) !== 0) {
+                    throw ValidationException::withMessages(['stock' => $item->item_name.' 按序列号管理，领用数量必须和序列号个数一致。']);
+                }
+                $cost = $balance->material_lot_id
+                    ? CuttingDecimal::share((string) $balance->inventory_value, (string) $balance->quantity_on_hand, $quantity)
+                    : bcmul($quantity, (string) $balance->average_unit_cost, 4);
+                $fact = $this->applyInventoryChange($transaction, [
+                    'item_id' => $item->id, 'warehouse_id' => $balance->warehouse_id, 'location_id' => $balance->location_id,
+                    'batch_no' => $balance->batch_no, 'unit_id' => $balance->unit_id,
+                    'change_qty' => bcsub('0', $quantity, 8), 'unit_cost' => (float) $balance->average_unit_cost, 'cost_amount' => bcsub('0', $cost, 4),
+                    'cost_source_type' => 'production_issue_average', 'source_type' => 'mfg_material_issue', 'source_id' => $issue->id,
+                    'source_item_id' => $row['material_id'] ?? null, 'remark' => '工单 '.$workOrder->work_order_no.' 工序收料',
+                ]);
+                $total = bcadd($total, bcsub('0', (string) $fact->cost_amount, 4), 4);
+                foreach ($serials as $serial) {
+                    $serial->update(['serial_status' => 'production_consumed', 'outbound_at' => now()]);
+                    InventorySerialEvent::create([
+                        'inventory_serial_id' => $serial->id, 'event_type' => 'production_material_issued', 'document_type' => 'mfg_material_issue',
+                        'document_id' => $issue->id, 'document_no' => $issue->issue_no, 'from_status' => 'available', 'to_status' => 'production_consumed',
+                        'warehouse_id' => $balance->warehouse_id, 'location_id' => $balance->location_id, 'batch_no' => $balance->batch_no,
+                        'event_payload' => ['work_order_no' => $workOrder->work_order_no], 'occurred_at' => now(),
+                    ]);
+                }
+            }
+            InventoryPostingLog::create([
+                'source_type' => 'mfg_material_issue', 'source_id' => $issue->id, 'source_no' => $issue->issue_no,
+                'transaction_type' => 'production_material_issue_outbound', 'transaction_id' => $transaction->id,
+                'posting_status' => 'posted', 'message' => '工序收料出库成功', 'posted_by' => $operatorId, 'posted_at' => now(),
+            ]);
+            $issue->update(['inventory_transaction_id' => $transaction->id, 'cost_amount' => $total]);
+            return $transaction;
+        }, 5);
+    }
+
     private function qualifiedBaseQuantity($line): float
     {
         if (!(bool) ($line->is_stock_item_snapshot ?? true)) return 0.0;

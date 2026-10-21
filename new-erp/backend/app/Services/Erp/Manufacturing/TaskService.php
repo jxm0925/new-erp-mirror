@@ -31,6 +31,8 @@ final class TaskService
     public function __construct(
         private readonly WorkOrderService $workOrders,
         private readonly SalesOrderFundingGateService $funding,
+        private readonly MaterialIssueService $materials,
+        private readonly ReceiptService $receipts,
     ) {}
 
     public function claim(int $opId, object $actor): void
@@ -142,6 +144,8 @@ final class TaskService
                 $this->fail('already_timing', '你有打包作业正在计时，请先暂停。');
             $units = $this->selectableUnits($op);
             if ($units->isEmpty()) $this->fail('no_unit', '这道工序现在没有要做的台，等前道交过来再开始。');
+            // 本道的料（总装的半成品、外购件）收到才能开工；缺货就停在这里。
+            $this->materials->assertReceivedForStart($wo, $op, $units);
             if (! $wo->started_at) {
                 $before = $wo->status;
                 $wo->update(['status' => 'in_progress', 'started_at' => now(), 'business_version' => (int) $wo->business_version + 1]);
@@ -207,7 +211,19 @@ final class TaskService
             if ($firstPass) $op->update(['completed_qty' => (float) $op->completed_qty + $firstPass]);
             if ($finished) $wo->update(['completed_qty' => (float) $wo->completed_qty + $finished]);
             $this->refreshOperation($wo, $op, $reportedAt);
-            return ['passed' => $units->count(), 'finished' => $finished, 'next_operation_name' => $next?->operation_name];
+            // 总装做完、订单马上要发：自动记入成品待发区，直接去发货试水。
+            $staged = null;
+            if ($finished) {
+                try {
+                    $staged = $this->receipts->autoStage($wo->id, $units->pluck('id')->all(), $actor);
+                } catch (\App\Exceptions\Erp\WorkOrderDomainException|\Illuminate\Validation\ValidationException $e) {
+                    // 自动入待发区失败不影响报工，留给仓库手工入库。
+                    $message = $e instanceof \Illuminate\Validation\ValidationException ? collect($e->errors())->flatten()->first() : $e->getMessage();
+                    $this->workOrders->log($wo, 'staging_failed', $wo->status, $wo->status, '自动记入成品待发区没成功：'.$message.'，请仓库手工入库', $actor);
+                }
+            }
+            return ['passed' => $units->count(), 'finished' => $finished, 'next_operation_name' => $next?->operation_name,
+                'staged_qty' => $staged ? (int) $staged->qty : 0, 'staged_receipt_no' => $staged?->receipt_no];
         }, 5);
     }
 

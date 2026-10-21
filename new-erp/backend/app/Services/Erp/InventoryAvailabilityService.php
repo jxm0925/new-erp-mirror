@@ -22,6 +22,18 @@ class InventoryAvailabilityService
         $ids = collect($itemIds)->map(fn ($id) => (int) $id)->filter()->unique()->values();
         if ($ids->isEmpty()) return [];
 
+        return $this->outboundBalanceQuery($ids->all())
+            ->get()
+            ->groupBy('item_id')
+            ->map(fn (Collection $balances) => round($balances->sum(
+                fn (InventoryBalance $balance) => $this->availableForOutbound($balance)
+            ), 8))
+            ->all();
+    }
+
+    /** 可出库的库存行（仓库、库位、批次都有效且未过期）；可用量再按 availableForOutbound 计算。 */
+    public function outboundBalanceQuery(array $itemIds)
+    {
         return InventoryBalance::query()
             ->select('erp_inventory_balances.*')
             ->join('erp_warehouses', 'erp_warehouses.id', '=', 'erp_inventory_balances.warehouse_id')
@@ -30,20 +42,14 @@ class InventoryAvailabilityService
                 $join->on('erp_inventory_batches.item_id', '=', 'erp_inventory_balances.item_id')
                     ->on('erp_inventory_batches.batch_no', '=', 'erp_inventory_balances.batch_no');
             })
-            ->whereIn('erp_inventory_balances.item_id', $ids)
+            ->whereIn('erp_inventory_balances.item_id', $itemIds)
             ->whereIn('erp_warehouses.status', ['enabled', 'active'])
             ->whereIn('erp_locations.status', ['enabled', 'active'])
             ->whereIn('erp_inventory_batches.status', ['enabled', 'active'])
             ->where(function ($query): void {
                 $query->whereNull('erp_inventory_batches.expire_date')
                     ->orWhere('erp_inventory_batches.expire_date', '>=', now()->toDateString());
-            })
-            ->get()
-            ->groupBy('item_id')
-            ->map(fn (Collection $balances) => round($balances->sum(
-                fn (InventoryBalance $balance) => $this->availableForOutbound($balance)
-            ), 8))
-            ->all();
+            });
     }
 
     /**

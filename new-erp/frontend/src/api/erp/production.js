@@ -40,6 +40,8 @@ export const releaseWorkOrder = (id, data) => api.post(`/v1/erp/production/work-
 export const pauseWorkOrder = (id, data) => api.post(`/v1/erp/production/work-orders/${id}/pause`, data)
 export const resumeWorkOrder = (id, data) => api.post(`/v1/erp/production/work-orders/${id}/resume`, data)
 export const cancelWorkOrder = (id, data) => api.post(`/v1/erp/production/work-orders/${id}/cancel`, data)
+export const createSemiWorkOrder = (id, data) => api.post(`/v1/erp/production/work-orders/${id}/semi-orders`, data)
+export const receiveOperationMaterials = (id, operationId, data) => api.post(`/v1/erp/production/work-orders/${id}/operations/${operationId}/material-receipts`, data)
 export const lookupSerial = serialNo => api.get('/v1/erp/production/serials/lookup', { params: { serial_no: serialNo } })
 export const listSalesOrderWorkOrders = orderId => api.get(`/v1/erp/production/sales-orders/${orderId}/work-orders`)
 // 车间报工、作业看板、成品入库、定制技术（第 2 阶段）

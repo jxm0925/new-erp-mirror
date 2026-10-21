@@ -198,6 +198,7 @@
             <el-option label="全部来源" value="" />
             <el-option label="销售订单" value="sales_order" />
             <el-option label="常规备货" value="stock" />
+            <el-option label="半成品补做" value="work_order" />
           </el-select>
           <el-checkbox
             v-model="filters.stuck_only"
@@ -252,8 +253,8 @@
               </template>
               <template v-else>
                 <div class="source-stock-box">
-                  <el-tag size="mini" type="info" effect="plain">库存备货</el-tag>
-                  <span class="stock-reason-text">{{ row.stock_reason_label || '常规备货' }}</span>
+                  <el-tag size="mini" type="info" effect="plain">{{ row.source_type === 'work_order' ? '半成品补做' : '库存备货' }}</el-tag>
+                  <span class="stock-reason-text">{{ row.source_type === 'work_order' ? (row.sales_order_no || '总装缺料') : (row.stock_reason_label || '常规备货') }}</span>
                 </div>
               </template>
             </template>
@@ -341,7 +342,7 @@
             <b class="qty-badge font-mono">× {{ qty(row.planned_qty) }} {{ row.unit_name || '台' }}</b>
           </div>
           <div class="mobile-source-sub">
-            {{ row.source_type === 'stock' ? '备货 · ' + (row.stock_reason_label || '常规备货') : row.sales_order_no + ' · ' + (row.customer_name || '—') }}
+            {{ row.source_type === 'stock' ? '备货 · ' + (row.stock_reason_label || '常规备货') : (row.source_type === 'work_order' ? '半成品补做 · ' : '') + (row.sales_order_no || '总装缺料') + ' · ' + (row.customer_name || '—') }}
           </div>
           <div v-if="row.progress && row.progress.length" class="ops-progress-flow mobile-ops">
             <div

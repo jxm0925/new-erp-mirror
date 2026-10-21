@@ -418,6 +418,8 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::post('work-orders/{id}/pause', [MfgWorkOrderController::class, 'pause'])->whereNumber('id');
     Route::post('work-orders/{id}/resume', [MfgWorkOrderController::class, 'resume'])->whereNumber('id');
     Route::post('work-orders/{id}/cancel', [MfgWorkOrderController::class, 'cancel'])->whereNumber('id');
+    Route::post('work-orders/{id}/semi-orders', [MfgWorkOrderController::class, 'semiOrder'])->whereNumber('id');
+    Route::post('work-orders/{id}/operations/{operationId}/material-receipts', [MfgWorkOrderController::class, 'receiveMaterials'])->whereNumber(['id', 'operationId']);
     Route::get('serials/lookup', [MfgWorkOrderController::class, 'serial']);
     Route::get('sales-orders/{orderId}/work-orders', [MfgWorkOrderController::class, 'salesOrder'])->whereNumber('orderId');
     // 车间报工、作业看板、成品入库、定制技术（第 2 阶段）

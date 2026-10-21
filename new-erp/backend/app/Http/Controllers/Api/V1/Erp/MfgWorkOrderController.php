@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Erp;
 use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Http\Controllers\Controller;
 use App\Services\Erp\AuthContextService;
+use App\Services\Erp\Manufacturing\MaterialIssueService;
 use App\Services\Erp\Manufacturing\WorkOrderQueryService;
 use App\Services\Erp\Manufacturing\WorkOrderService;
 use Illuminate\Http\Request;
@@ -98,6 +99,25 @@ class MfgWorkOrderController extends Controller
         $reason = $request->validate(['reason' => 'required|string|max:500'])['reason'];
         $wo = $service->cancel($id, $this->version($request), $reason, $user);
         return response()->json(['message' => '工单已取消。', 'data' => $query->detail($wo->id, $amounts)]);
+    }
+
+    /** 总装缺半成品：给下料组开半成品工单，不填数量就按缺口开。 */
+    public function semiOrder(Request $request, int $id, WorkOrderService $service, WorkOrderQueryService $query)
+    {
+        [$user, $amounts] = $this->user($request, 'production.work_order.create');
+        $data = $request->validate(['component_item_id' => 'required|integer|min:1', 'qty' => 'nullable|numeric|min:0.0001|max:100000']);
+        $child = $service->createForParent($id, (int) $data['component_item_id'], isset($data['qty']) ? (float) $data['qty'] : null, $user);
+        $text = $child->status === 'released' ? '已下达给下料组' : '资料不全，停在计划：'.$child->block_reason;
+        return response()->json(['message' => "半成品工单 {$child->work_order_no} 已开，{$text}。", 'data' => $query->detail($id, $amounts), 'child_id' => $child->id]);
+    }
+
+    /** 工序收料：按台数收本道要用的料，收了才扣库存；不填台数就收齐整张工单。 */
+    public function receiveMaterials(Request $request, int $id, int $operationId, MaterialIssueService $issues, WorkOrderQueryService $query)
+    {
+        [$user, $amounts] = $this->user($request, ['production.task.execute', 'production.work_order.edit']);
+        $data = $request->validate(['units' => 'nullable|integer|min:1|max:100000', 'remark' => 'nullable|string|max:500']);
+        $issue = $issues->receive($id, $operationId, isset($data['units']) ? (int) $data['units'] : null, $data['remark'] ?? null, $user);
+        return response()->json(['message' => "已收料（{$issue->issue_no}），库存已扣减，可以开工了。", 'data' => $query->detail($id, $amounts)]);
     }
 
     public function serial(Request $request, WorkOrderQueryService $query)

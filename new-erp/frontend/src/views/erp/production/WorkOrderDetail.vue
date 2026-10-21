@@ -33,6 +33,13 @@
                   <template v-if="wo.sales_order_line_no">（第 {{ wo.sales_order_line_no }} 行）</template>
                   · {{ wo.customer_name }}
                 </template>
+                <template v-else-if="wo.source_type === 'work_order'">
+                  <i class="el-icon-box text-muted" />
+                  需求来源：半成品补做
+                  <template v-if="wo.parent_work_order">
+                    · 给总装工单 <b class="code-mono lk-text" @click="openWorkOrder(wo.parent_work_order.id)">{{ wo.parent_work_order.work_order_no }}</b>
+                  </template>
+                </template>
                 <template v-else>
                   <i class="el-icon-box text-muted" />
                   需求来源：常规备货 · {{ wo.stock_reason_label || '常规备货' }}
@@ -337,6 +344,15 @@
                   >
                     {{ kitLabel(k) }}
                   </el-tag>
+                  <el-button
+                    v-if="k.receive_pending && canReceiveMaterials"
+                    type="text"
+                    size="mini"
+                    :disabled="saving"
+                    @click="receiveMaterials(k)"
+                  >
+                    收料
+                  </el-button>
                 </div>
                 <div class="materials-list">
                   <div
@@ -349,11 +365,29 @@
                     <span v-else class="mat-qty code-mono" :class="{ 'text-danger font-medium': m.shortage_qty > 0 }">
                       {{ qty(m.covered_qty) }} / {{ qty(m.required_qty) }} {{ m.unit_name || '' }}
                     </span>
+                    <span v-if="m.in_production_qty > 0" class="text-muted">在做 {{ qty(m.in_production_qty) }}</span>
+                    <el-button
+                      v-if="m.can_make && m.make_qty > 0 && $can('production.work_order.create')"
+                      type="text"
+                      size="mini"
+                      :disabled="saving"
+                      @click="makeSemi(m)"
+                    >
+                      开半成品工单
+                    </el-button>
                   </div>
                   <div v-if="!k.materials.length" class="no-material-row text-muted">
                     本工序无领料需求
                   </div>
                 </div>
+              </div>
+            </div>
+            <div v-if="wo.child_work_orders && wo.child_work_orders.length" class="materials-list">
+              <div v-for="c in wo.child_work_orders" :key="c.id" class="material-row">
+                <span class="mat-name text-truncate">
+                  半成品工单 <b class="code-mono lk-text" @click="openWorkOrder(c.id)">{{ c.work_order_no }}</b> · {{ c.item_name }}
+                </span>
+                <span class="mat-qty code-mono">{{ c.status_label }} · 入库 {{ qty(c.stored_qty) }} / {{ qty(c.planned_qty) }} {{ c.unit_name || '' }}</span>
               </div>
             </div>
           </section>
@@ -664,7 +698,7 @@
 </template>
 
 <script>
-import { getWorkOrder, getWorkOrderOptions, updateWorkOrder, releaseWorkOrder, pauseWorkOrder, resumeWorkOrder, cancelWorkOrder } from '../../../api/erp/production'
+import { getWorkOrder, getWorkOrderOptions, updateWorkOrder, releaseWorkOrder, pauseWorkOrder, resumeWorkOrder, cancelWorkOrder, createSemiWorkOrder, receiveOperationMaterials } from '../../../api/erp/production'
 import { HERO_PILL, qty, money, shortDate, bomLabel, errorText, isCancel, searchProductionUsers } from './mfg-helpers'
 
 const STEPS = [
@@ -700,6 +734,9 @@ export default {
     }
   }),
   computed: {
+    canReceiveMaterials() {
+      return this.$can('production.task.execute') || this.$can('production.work_order.edit')
+    },
     productName() {
       return this.wo ? (this.wo.product_name || this.wo.item_name) : ''
     },
@@ -809,6 +846,39 @@ export default {
       if (this.wo.sales_order_id) {
         this.$router.push(`/sales/orders/${this.wo.sales_order_id}/detail`)
       }
+    },
+    openWorkOrder(id) {
+      if (id) this.$router.push(`/production/work-orders/${id}`)
+    },
+    async makeSemi(m) {
+      let value
+      try {
+        const res = await this.$prompt(`${m.component_item_name} 缺料，给下料组开半成品工单，做完入半成品仓后总装再收料。开多少？`, '开半成品工单', {
+          inputValue: String(m.make_qty),
+          inputValidator: v => Number(v) > 0 || '数量必须大于 0'
+        })
+        value = Number(res.value)
+      } catch (e) {
+        if (isCancel(e)) return
+      }
+      if (value > 0) {
+        await this.run(() => createSemiWorkOrder(this.wo.id, { component_item_id: m.component_item_id, qty: value }), '半成品工单已开')
+      }
+    },
+    async receiveMaterials(k) {
+      let value
+      try {
+        const res = await this.$prompt(`${k.operation_name}收料：收料后从库存扣减，收够才能开工。收几台的料？不填就收齐整单。`, '工序收料', {
+          inputPlaceholder: '不填 = 收齐整单',
+          inputValidator: v => !v || (Number.isInteger(Number(v)) && Number(v) > 0) || '请填正整数台数'
+        })
+        value = res.value
+      } catch (e) {
+        if (isCancel(e)) return
+        return
+      }
+      const opId = Number(String(k.operation_key).replace(/^o/, ''))
+      await this.run(() => receiveOperationMaterials(this.wo.id, opId, value ? { units: Number(value) } : {}), '已收料')
     },
     openSerial(sn) {
       if (sn && this.$can('production.serial.view')) {

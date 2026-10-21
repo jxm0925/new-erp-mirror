@@ -121,7 +121,8 @@ class MfgTaskController extends Controller
     {
         $data = $request->validate(['unit_ids' => 'required|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1']);
         $result = $tasks->pass($id, $data['unit_ids'], $user);
-        return $result['passed'].' 台合格，'.($result['next_operation_name'] ? '已交'.$result['next_operation_name'].'。' : '生产完成，等入库。');
+        if ($result['next_operation_name']) return $result['passed'].' 台合格，已交'.$result['next_operation_name'].'。';
+        return $result['passed'].' 台合格，生产完成，'.($result['staged_qty'] ? '已自动记入成品待发区（'.$result['staged_receipt_no'].'），等发货试水。' : '等入库。');
     }
 
     private function reject(Request $request, int $id, TaskService $tasks, object $user): string

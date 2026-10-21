@@ -7,6 +7,7 @@ use App\Models\Erp\DocumentNumber;
 use App\Models\Erp\InventorySerial;
 use App\Models\Erp\Item;
 use App\Models\Erp\MfgWorkOrder;
+use App\Models\Erp\MfgWorkOrderLink;
 use App\Models\Erp\MfgWorkOrderLog;
 use App\Models\Erp\MfgWorkOrderMaterial;
 use App\Models\Erp\MfgWorkOrderOperation;
@@ -93,6 +94,57 @@ final class WorkOrderService
             }
             return $wo->fresh();
         }, 5);
+    }
+
+    /**
+     * 总装工单缺半成品：给下料组开半成品工单（不填数量就按缺口开：还要的 − 仓库可用 − 已开还没入库的）。
+     * 半成品工单按半成品自己的 BOM 和路线（下料→焊接→打磨）生产，完工入半成品仓，总装再收料。
+     */
+    public function createForParent(int $parentId, int $componentItemId, ?float $qty, object $actor): MfgWorkOrder
+    {
+        return DB::transaction(function () use ($parentId, $componentItemId, $qty, $actor) {
+            $parent = MfgWorkOrder::query()->with(['operations', 'materials'])->lockForUpdate()->findOrFail($parentId);
+            if (! in_array($parent->status, ['planned', 'released', 'in_progress', 'paused'], true)) $this->fail('status_invalid', '工单已结束，不能再开半成品工单。');
+            if ($parent->materials->where('component_item_id', $componentItemId)->isEmpty()) $this->fail('component_invalid', '这个物料不在本工单的用料里。');
+            $item = Item::query()->with('unit')->where('status', 'enabled')->find($componentItemId);
+            if (! $item) $this->fail('component_invalid', '这个物料不存在或已停用。');
+            if ($item->isPurchaseFulfilledItem() || ! in_array($item->item_type, ['semi_finished', 'finished_product'], true))
+                $this->fail('purchase_item', $item->item_name.' 不是自制半成品（外购件、原料请找采购），不能开生产工单。');
+            $gap = $this->semiGap($parent, $componentItemId);
+            if ($qty === null) {
+                if ($gap <= 0.00001) $this->fail('no_gap', $item->item_name.' 仓库可用库存加已开的半成品工单已经够用，不用再开。');
+                $qty = ceil(round($gap, 4));
+            }
+            if ($qty <= 0) $this->fail('qty_invalid', '半成品工单数量必须大于 0。');
+            $finish = $parent->planned_finish_date && $parent->planned_finish_date->gte(now()->startOfDay()) ? $parent->planned_finish_date->toDateString() : now()->toDateString();
+            $child = $this->newWorkOrder([
+                'source_type' => 'work_order', 'sales_order_no' => $parent->sales_order_no, 'customer_name' => $parent->customer_name,
+                'is_urgent' => (bool) $parent->is_urgent, 'planned_start_date' => now()->toDateString(), 'planned_finish_date' => $finish, 'required_date' => $finish,
+                'remark' => "总装工单 {$parent->work_order_no} 缺 {$item->item_name}，补做半成品",
+            ], $item, (float) $qty, $actor);
+            MfgWorkOrderLink::create(['parent_work_order_id' => $parent->id, 'child_work_order_id' => $child->id, 'component_item_id' => $item->id,
+                'qty' => $qty, 'created_by_legacy_id' => $this->actorId($actor), 'created_by_name' => $this->actorName($actor)]);
+            $this->applyPlan($child, $item, null, null);
+            $num = rtrim(rtrim(number_format((float) $qty, 4, '.', ''), '0'), '.');
+            $this->log($child, 'created', null, 'planned', "总装工单 {$parent->work_order_no} 缺 {$item->item_name}，开半成品工单 {$num}".($item->unit?->unit_name ?: ''), $actor, ['parent_work_order_id' => $parent->id]);
+            if (! $child->block_reason) $this->doRelease($child, $actor, true);
+            $this->log($parent, 'semi_ordered', $parent->status, $parent->status, "缺 {$item->item_name}，给下料组开半成品工单 {$child->work_order_no}（{$num}".($item->unit?->unit_name ?: '').'）'
+                .($child->block_reason ? '，半成品资料不全停在计划：'.$child->block_reason : ''), $actor, ['child_work_order_id' => $child->id]);
+            return $child->fresh();
+        }, 5);
+    }
+
+    /** 半成品缺口：本工单还要的 − 仓库可用 − 已开还没入库的半成品工单。 */
+    public function semiGap(MfgWorkOrder $parent, int $componentItemId): float
+    {
+        $operations = $parent->operations->map(fn ($op) => ['key' => 'o'.$op->id, 'operation_name' => $op->operation_name, 'sequence' => (int) $op->sequence,
+            'execution_context' => $op->execution_context ?: 'production'])->values()->all();
+        $materials = $parent->materials->map(fn ($m) => ['operation_key' => 'o'.$m->work_order_operation_id, 'component_item_id' => (int) $m->component_item_id,
+            'required_qty' => (float) $m->required_qty, 'issued_qty' => (float) $m->issued_qty, 'participates_in_kitting' => true])->values()->all();
+        $short = collect($this->plans->kitting($materials, $operations))->flatMap(fn ($op) => $op['materials'])
+            ->where('component_item_id', $componentItemId)->sum('shortage_qty');
+        $open = MaterialIssueService::openChildQty((int) $parent->id)[$componentItemId] ?? 0;
+        return round(max(0, (float) $short - (float) $open), 4);
     }
 
     public function release(int $id, int $expectedVersion, object $actor): MfgWorkOrder

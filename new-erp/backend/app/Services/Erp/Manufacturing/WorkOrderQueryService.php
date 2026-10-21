@@ -10,6 +10,7 @@ use App\Models\Erp\MfgDrawing;
 use App\Models\Erp\MfgLaborSession;
 use App\Models\Erp\MfgTaskParticipant;
 use App\Models\Erp\MfgUnitReport;
+use App\Models\Erp\MfgWorkOrderLink;
 use App\Models\Erp\MfgWorkOrderLog;
 use App\Models\Erp\MfgWorkOrderTech;
 use App\Models\Erp\MfgWorkOrderUnit;
@@ -55,9 +56,10 @@ final class WorkOrderQueryService
         $row = $this->row($wo, $amounts);
         $operations = $wo->operations->map(fn ($op) => $this->operationArray($op))->values()->all();
         $materials = $wo->materials->map(fn ($m) => $this->materialArray($m))->values()->all();
-        $kitting = $this->plans->kitting($materials, $operations);
+        $kitting = $this->semiKitting($wo, $this->plans->kitting($materials, $operations));
         $row['kitting'] = $kitting;
         $row['operations'] = $operations;
+        [$row['parent_work_order'], $row['child_work_orders']] = $this->links($wo);
         $opNames = $wo->operations->pluck('operation_name', 'id');
         $pendingScrap = MfgUnitReport::query()->where('work_order_id', $wo->id)->where('review_status', 'pending')->pluck('unit_id')->flip();
         $row['units'] = $wo->units->map(fn ($u) => [
@@ -239,7 +241,7 @@ final class WorkOrderQueryService
         $production = $wo->operations->where('execution_context', 'production')->values();
         return [
             'id' => $wo->id, 'work_order_no' => $wo->work_order_no, 'source_type' => $wo->source_type,
-            'source_label' => $wo->source_type === 'stock' ? '备货' : '销售订单',
+            'source_label' => match ($wo->source_type) { 'stock' => '备货', 'work_order' => '半成品补做', default => '销售订单' },
             'stock_reason' => $wo->stock_reason, 'stock_reason_label' => self::STOCK_REASONS[$wo->stock_reason] ?? null,
             'sales_order_id' => $wo->sales_order_id, 'sales_order_no' => $wo->sales_order_no, 'sales_order_line_no' => $wo->sales_order_line_no,
             'customer_name' => $wo->customer_name, 'product_name' => $wo->product_name, 'sku_code' => $wo->sku_code, 'sku_name' => $wo->sku_name,
@@ -292,10 +294,52 @@ final class WorkOrderQueryService
         foreach ($kitting as $op) {
             if ($op['status'] !== 'short') continue;
             $names = collect($op['materials'])->filter(fn ($m) => $m['shortage_qty'] > 0)->map(fn ($m) => $m['component_item_name'].' 缺 '.rtrim(rtrim(number_format($m['shortage_qty'], 4, '.', ''), '0'), '.').($m['unit_name'] ?: ''))->implode('、');
-            $items[] = ['type' => 'warning', 'title' => $op['operation_name'].'缺料', 'text' => $names.'。按当前可用库存算，请采购跟进。'];
+            $canMake = collect($op['materials'])->contains(fn ($m) => $m['shortage_qty'] > 0 && ! empty($m['can_make']));
+            $items[] = ['type' => 'warning', 'title' => $op['operation_name'].'缺料', 'text' => $names.'。按当前可用库存算，'
+                .($canMake ? '半成品可在齐套看板点“开半成品工单”交下料组做，外购件请采购跟进；料不齐不能开工。' : '请采购跟进；料不齐不能开工。')];
         }
         if ($row['overdue']) $items[] = ['type' => 'danger', 'title' => '已过计划完工日', 'text' => '计划 '.$row['planned_finish_date'].' 完工，请调整计划或加急。'];
         return $items;
+    }
+
+    /**
+     * 齐套看板补充：缺的是自制半成品时可以给下料组开单（can_make），已开还没入库的数量（in_production_qty），
+     * 建议再开多少（make_qty）；每道工序是否还有料没收（receive_pending）。
+     */
+    private function semiKitting(MfgWorkOrder $wo, array $kitting): array
+    {
+        $ids = collect($kitting)->flatMap(fn ($op) => collect($op['materials'])->pluck('component_item_id'))->unique()->values();
+        $items = Item::query()->whereIn('id', $ids)->get()->keyBy('id');
+        $open = $wo->id ? MaterialIssueService::openChildQty((int) $wo->id) : [];
+        $shortByItem = collect($kitting)->flatMap(fn ($op) => $op['materials'])->groupBy('component_item_id')->map(fn ($rows) => $rows->sum('shortage_qty'));
+        $openWo = in_array($wo->status, ['planned', 'released', 'in_progress', 'paused'], true);
+        foreach ($kitting as &$op) {
+            $pending = false;
+            foreach ($op['materials'] as &$m) {
+                $item = $items->get($m['component_item_id']);
+                $m['can_make'] = $openWo && $item && in_array($item->item_type, ['semi_finished', 'finished_product'], true) && ! $item->isPurchaseFulfilledItem();
+                $m['in_production_qty'] = (float) ($open[$m['component_item_id']] ?? 0);
+                $m['make_qty'] = $m['can_make'] ? max(0, ceil(round((float) ($shortByItem[$m['component_item_id']] ?? 0) - $m['in_production_qty'], 4))) : 0;
+                if ($m['participates_in_kitting'] && ($m['issue_mode'] ?? 'receive') === 'receive' && (float) $m['issued_qty'] + 0.00001 < (float) $m['required_qty']) $pending = true;
+            }
+            unset($m);
+            $op['receive_pending'] = $pending && in_array($wo->status, ['released', 'in_progress', 'paused'], true);
+        }
+        unset($op);
+        return $kitting;
+    }
+
+    /** 半成品工单显示是给哪张总装工单做的；总装工单列出给下料组开的半成品工单。 */
+    private function links(MfgWorkOrder $wo): array
+    {
+        $brief = fn (?MfgWorkOrder $w) => $w ? ['id' => $w->id, 'work_order_no' => $w->work_order_no, 'item_name' => $w->item_name, 'product_name' => $w->product_name,
+            'status' => $w->status, 'status_label' => self::STATUS_LABELS[$w->status] ?? $w->status, 'planned_qty' => (float) $w->planned_qty,
+            'stored_qty' => (float) $w->stored_qty, 'unit_name' => $w->unit_name, 'planned_finish_date' => $w->planned_finish_date?->toDateString()] : null;
+        $up = MfgWorkOrderLink::query()->where('child_work_order_id', $wo->id)->first();
+        $parent = $up ? $brief(MfgWorkOrder::query()->find($up->parent_work_order_id)) : null;
+        $childIds = MfgWorkOrderLink::query()->where('parent_work_order_id', $wo->id)->orderBy('id')->pluck('child_work_order_id');
+        $children = $childIds->isEmpty() ? [] : MfgWorkOrder::query()->whereIn('id', $childIds)->orderBy('id')->get()->map($brief)->values()->all();
+        return [$parent, $children];
     }
 
     private function operationArray(object $op): array

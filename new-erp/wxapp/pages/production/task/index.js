@@ -104,10 +104,24 @@ Page({
       if (response.data) this.apply(response.data); else this.load();
       return true;
     }).catch(error => {
-      wx.showModal({ title: '没成功', content: view.errorText(error), showCancel: false });
+      if (error && error.errorCode === 'material_not_received') {
+        // 本道的料还没收：可以当场收料（从库存扣减），收好再点开始。
+        wx.showModal({ title: '料还没收', content: view.errorText(error), confirmText: '现在收料', cancelText: '先不收',
+          success: res => { if (res.confirm) this.receiveMaterials(); } });
+      } else {
+        wx.showModal({ title: '没成功', content: view.errorText(error), showCancel: false });
+      }
       this.load(true);
       return false;
     }).finally(() => this.setData({ busy: false }));
+  },
+  receiveMaterials() {
+    const task = this.data.task;
+    if (!task || !task.work_order) return;
+    production.receiveMaterials(task.work_order.id, task.id).then(response => {
+      wx.showToast({ title: response.message || '已收料', icon: 'none', duration: 2500 });
+      this.load(true);
+    }).catch(error => wx.showModal({ title: '收料没成功', content: view.errorText(error), showCancel: false }));
   },
   claim() { this.run({ action: 'claim' }, '接单成功'); },
   start() { this.run({ action: 'start' }, '开始计时'); },
