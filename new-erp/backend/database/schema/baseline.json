@@ -105,6 +105,7 @@
     "erp_production_operation_workers": "2026_10_21_000001_create_erp_production_operation_workers_table",
     "erp_production_operations": "2026_10_12_000230_create_erp_production_operations_table",
     "erp_production_packaging_schemes": "2026_10_12_000234_create_erp_production_packaging_schemes_table",
+    "erp_production_performance_bindings": "2026_10_23_000001_create_erp_production_performance_bindings_table",
     "erp_production_performance_template_lines": "2026_10_17_000002_create_erp_production_performance_template_lines_table",
     "erp_production_performance_templates": "2026_10_17_000001_create_erp_production_performance_templates_table",
     "erp_production_routing_operations": "2026_10_12_000243_create_erp_production_routing_operations_table",

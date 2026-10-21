@@ -407,6 +407,8 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::delete('performance/templates/{id}', [ProductionPerformanceTemplateController::class, 'destroy'])->whereNumber('id');
     Route::post('performance/templates/{id}/preview', [ProductionPerformanceTemplateController::class, 'preview'])->whereNumber('id');
     Route::post('performance/templates/{id}/apply', [ProductionPerformanceTemplateController::class, 'apply'])->whereNumber('id');
+    Route::post('performance/templates/{id}/unbind', [ProductionPerformanceTemplateController::class, 'unbind'])->whereNumber('id');
+    Route::post('performance/templates/{id}/set-default', [ProductionPerformanceTemplateController::class, 'setDefault'])->whereNumber('id');
     // 新生产工单（第 1 阶段）
     Route::get('work-orders', [MfgWorkOrderController::class, 'index']);
     Route::post('work-orders', [MfgWorkOrderController::class, 'store']);

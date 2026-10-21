@@ -16,7 +16,7 @@
         <el-form-item label="是否默认"><el-input :value="form.is_default ? '是' : '否'" disabled /></el-form-item>
       </div></section>
       <section class="form-card operation-card">
-        <div class="sub-heading"><h2>路线工序</h2><div v-if="!viewOnly" class="catalog-actions"><el-select v-if="canManagePerformance" :value="null" size="small" placeholder="套用提成模板" class="perf-template-select" @visible-change="v=>v&&loadPerformanceTemplates()" @change="applyPerformanceTemplate"><el-option v-for="t in performanceTemplates" :key="t.id" :label="t.template_name" :value="t.id"/></el-select><el-button type="success" plain @click="openCatalog('stages')">维护生产阶段</el-button><el-button type="success" plain @click="openCatalog('packaging-schemes')">维护包装方案</el-button><el-button type="success" @click="addOperation">添加工序</el-button></div></div>
+        <div class="sub-heading"><h2>路线工序 <el-tag v-if="canManagePerformance" size="small" type="info">提成模板：{{ performanceLabel }}</el-tag></h2><div v-if="!viewOnly" class="catalog-actions"><el-button type="success" plain @click="openCatalog('stages')">维护生产阶段</el-button><el-button type="success" plain @click="openCatalog('packaging-schemes')">维护包装方案</el-button><el-button type="success" @click="addOperation">添加工序</el-button></div></div>
         <el-table ref="operations" :data="form.operations" border row-key="key" :expand-row-keys="expanded" @expand-change="onExpand">
           <el-table-column type="expand" width="1" class-name="native-expand"><template slot-scope="s">
             <div class="operation-settings">
@@ -32,7 +32,7 @@
               <section class="settings-group"><h3>工时与参数</h3>
                 <label><span>准备工时</span><el-input v-model.number="s.row.setup_standard_minutes" type="number" :disabled="viewOnly" min="0"><template slot="append">分钟</template></el-input></label>
                 <label><span>单件工时</span><el-input v-model.number="s.row.unit_standard_minutes" type="number" :disabled="viewOnly" min="0"><template slot="append">分钟</template></el-input></label>
-                <label v-if="canManagePerformance"><span>绩效比例</span><el-input v-model="s.row.performance_percent" :disabled="viewOnly" placeholder="留空表示未配置"><template slot="append">%</template></el-input></label>
+                <label v-if="canManagePerformance"><span>提成比例（按模板）</span><el-input :value="performanceText(s.row)" disabled><template slot="append">%</template></el-input></label>
                 <label><span>必要参数</span><el-input v-model="s.row.parameters_text" type="textarea" :rows="2" :disabled="viewOnly" /></label>
               </section>
               <section class="settings-group material-group"><h3>{{ s.row.execution_context==='shipment'?'发货包装':'用料规则' }}</h3>
@@ -76,7 +76,7 @@
 </template>
 <script>
 import cachedPageRoute from '@/utils/cachedPageRoute'
-import { reserveProductionNumber, getProductionRouting, createProductionRouting, updateProductionRouting, activateProductionRouting, listPerformanceTemplates } from '../../../api/erp/production'
+import { reserveProductionNumber, getProductionRouting, createProductionRouting, updateProductionRouting, activateProductionRouting } from '../../../api/erp/production'
 import PurchaseItemPicker from '@/components/purchase/PurchaseItemPicker.vue'
 import ProductSkuPicker from '@/components/sales/ProductSkuPicker.vue'
 import ProductionProcessCatalogPanel from './ProductionProcessCatalogPanel.vue'
@@ -85,22 +85,20 @@ import { executeProductionDecision } from '../../../api/erp/production-decisions
 const uuid = () => window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return (c==='x'?r:(r&3|8)).toString(16)})
 const emptyPercent = value => value === '' || value === null || value === undefined
 const percentFromRate = value => emptyPercent(value) ? '' : String(Number((Number(value) * 100).toFixed(4)))
-const rateFromPercent = value => emptyPercent(value) ? null : Number((Number(value) / 100).toFixed(6))
 const validPercent = value => emptyPercent(value) || (/^\d{1,3}(?:\.\d{1,4})?$/.test(String(value)) && Number(value) <= 100)
 const asBoolean = value => value === true || value === 1 || value === '1'
 export default {
   mixins: [cachedPageRoute],
   name:'ProductionRoutingForm', components:{PurchaseItemPicker,ProductSkuPicker,ProductionProcessCatalogPanel,SystemRecordPicker},
-  data:()=>({performanceTemplates:[],loading:false,sessionId:'',reservationToken:'',savedId:null,operations:[],operationPickerOpen:false,operationPickerTarget:null,operationPickerValue:[],items:{},catalogs:{stages:{},'packaging-schemes':{}},expanded:[],pickerTarget:null,catalogTarget:null,pendingSave:null,pendingActivation:null,
+  data:()=>({performance:null,loading:false,sessionId:'',reservationToken:'',savedId:null,operations:[],operationPickerOpen:false,operationPickerTarget:null,operationPickerValue:[],items:{},catalogs:{stages:{},'packaging-schemes':{}},expanded:[],pickerTarget:null,catalogTarget:null,pendingSave:null,pendingActivation:null,
     outputModes:{flow_only:'直接交接',warehouse_optional:'可选入库',warehouse_required:'合格后入库'},
     supplyModes:{dedicated_delivery:'专单配送',workstation_stock:'工位库存',no_per_order_delivery:'无需逐单配送'},
     form:{routing_no:'正在生成…',routing_name:'',output_item_id:null,product_id:null,sku_id:null,product:null,sku:null,version:1,status:'draft',is_default:false,remark:'',business_version:1,operations:[]},
     rules:{routing_name:[{required:true,message:'请输入路线名称',trigger:'blur'}],output_item_id:[{required:true,message:'请选择产出物料',trigger:'change'}]}}),
-  computed:{id(){return this.savedId || this.pageRoute.params.id},viewOnly(){return (Boolean(this.pageRoute.params.id)&&!this.pageRoute.path.endsWith('/edit')) || this.form.status!=='draft'},title(){return this.id?(this.viewOnly?'查看工艺路线':'编辑工艺路线'):'新增工艺路线'},canManagePerformance(){return this.$can('production.performance.manage')}},
+  computed:{id(){return this.savedId || this.pageRoute.params.id},viewOnly(){return (Boolean(this.pageRoute.params.id)&&!this.pageRoute.path.endsWith('/edit')) || this.form.status!=='draft'},title(){return this.id?(this.viewOnly?'查看工艺路线':'编辑工艺路线'):'新增工艺路线'},canManagePerformance(){return this.$can('production.performance.manage')},performanceLabel(){const p=this.performance;if(!p)return '保存后显示';if(!p.template)return '未配置（不计提成）';return p.template.template_name+(p.source==='default'?'（默认）':'（指定）')}},
   async created(){if(this.id)await this.load();else await this.reserve()},
   methods:{
-    async loadPerformanceTemplates(){if(this.performanceTemplates.length)return;try{const r=await listPerformanceTemplates({status:'enabled',per_page:100});this.performanceTemplates=r.data.data||[]}catch(e){this.$message.error(e.userMessage||'提成模板加载失败')}},
-    applyPerformanceTemplate(id){const t=this.performanceTemplates.find(x=>x.id===id);if(!t)return;const rates=new Map(t.lines.map(l=>[Number(l.operation_id),l.performance_rate]));let hit=0;this.form.operations.forEach(row=>{if(rates.has(Number(row.operation_id))){row.performance_percent=percentFromRate(rates.get(Number(row.operation_id)));hit++}});const miss=this.form.operations.length-hit;this.$message.success(`已按“${t.template_name}”填入 ${hit} 道工序的绩效比例`+(miss?`，${miss} 道不在模板里，保持不变`:'')+'，保存后生效')},
+    performanceText(row){const rates=this.performance&&this.performance.rates;if(!rates)return '';const rate=rates[row.operation_id];return rate===undefined||rate===null?'不计提成':percentFromRate(rate)},
     statusText(v){return({draft:'草稿',active:'已生效',retired:'已退役',disabled:'已退役'})[v]||v},
     isPublic(value){return asBoolean(value)},
     operationName(row){return this.operations.find(operation=>Number(operation.id)===Number(row.operation_id))?.operation_name||''},
@@ -118,6 +116,7 @@ export default {
     async load(){this.loading=true;try{const r=await getProductionRouting(this.id);this.applyData(r.data.data)}catch(e){this.$message.error(e.userMessage||'路线加载失败')}finally{this.loading=false}},
     applyData(data){
       this.rememberItem(data.output_item)
+      if(data.performance!==undefined)this.performance=data.performance
       ;(data.packaging_material_items||[]).forEach(item=>this.rememberItem(item))
       const byId=new Map((data.operations||[]).map(x=>[Number(x.id),`op-${x.id}`]))
       const rows=(data.operations||[]).map(x=>{
@@ -126,12 +125,11 @@ export default {
         this.rememberCatalog({type:'stages',row:x.stage||{id:x.production_stage_id,name:x.stage_name,code:x.stage_code}})
         this.rememberCatalog({type:'packaging-schemes',row:x.packaging_scheme||{id:x.packaging_scheme_id,name:x.packaging_scheme_name,code:x.packaging_scheme_code}})
         const ordinary={...x};delete ordinary.performance_rate
-        if(this.canManagePerformance)ordinary.performance_percent=percentFromRate(x.performance_rate)
         return {...ordinary,key:byId.get(Number(x.id)),production_stage_id:x.production_stage_id||null,execution_context:x.execution_context||'production',packaging_scheme_id:x.packaging_scheme_id||null,packaging_materials:(x.packaging_materials||[]).map(material=>{this.rememberItem(material.component_item);return {...material}}),parameters_text:x.parameters&&x.parameters.text||'',setup_standard_minutes:Number(x.setup_standard_minutes||0),unit_standard_minutes:Number(x.unit_standard_minutes??x.standard_minutes??0),material_supply_rules:(x.material_supply_rules||[]).map(rule=>{this.rememberItem(rule.component_item);return {...rule,target_key:byId.get(Number(rule.target_routing_operation_id)),percent:Number(percentFromRate(rule.required_qty_ratio))}})}
       })
       this.form={...this.form,...data,operations:rows};this.expanded=rows.length?[rows[0].key]:[]
     },
-    addOperation(){const row={key:uuid(),operation_id:null,production_stage_id:null,execution_context:'production',packaging_scheme_id:null,packaging_materials:[],sequence:(this.form.operations.length+1)*10,is_key_operation:false,parameters:null,parameters_text:'',remark:'',setup_standard_minutes:0,unit_standard_minutes:0,output_item_id:this.form.output_item_id,output_mode:'flow_only',quality_mode:'none',work_mode:'manual',allow_continue_without_warehouse:true,material_supply_rules:[]};if(this.canManagePerformance)row.performance_percent='';this.form.operations.push(row);this.orderContexts();this.expanded=[row.key]},
+    addOperation(){const row={key:uuid(),operation_id:null,production_stage_id:null,execution_context:'production',packaging_scheme_id:null,packaging_materials:[],sequence:(this.form.operations.length+1)*10,is_key_operation:false,parameters:null,parameters_text:'',remark:'',setup_standard_minutes:0,unit_standard_minutes:0,output_item_id:this.form.output_item_id,output_mode:'flow_only',quality_mode:'none',work_mode:'manual',allow_continue_without_warehouse:true,material_supply_rules:[]};this.form.operations.push(row);this.orderContexts();this.expanded=[row.key]},
     incomingRules(row){return this.form.operations.flatMap(x=>x.material_supply_rules).filter(r=>r.target_key===row.key)},
     removeMaterial(rule){this.form.operations.forEach(row=>{row.material_supply_rules=row.material_supply_rules.filter(r=>r!==rule)})},
     removePackagingMaterial(row,material){row.packaging_materials=row.packaging_materials.filter(current=>current!==material)},
@@ -153,7 +151,6 @@ export default {
       if(!row.operation_id){this.$message.warning('请完整选择工序');return false}
       if(row.execution_context!=='shipment'&&row.output_mode!=='flow_only'&&!row.output_item_id){this.$message.warning('入库工序必须选择产出物料');return false}
       if([row.setup_standard_minutes,row.unit_standard_minutes].some(value=>value===''||!Number.isFinite(Number(value))||Number(value)<0)){this.$message.warning('工时必须为大于或等于零的数字');return false}
-      if(this.canManagePerformance&&!validPercent(row.performance_percent)){this.$message.warning('绩效比例须为 0 到 100 之间的数字，最多四位小数；未配置请留空');return false}
       if(row.execution_context==='shipment'){
         if(!row.packaging_scheme_id){this.$message.warning('发货作业必须选择包装方案');return false}
         if(row.material_supply_rules.length||this.incomingRules(row).length){this.$message.warning('发货作业不能使用生产 BOM 用料规则');return false}
@@ -169,7 +166,6 @@ export default {
             output_item_id:row.execution_context==='shipment'?null:row.output_item_id,output_mode:row.output_mode,quality_mode:row.quality_mode,work_mode:row.work_mode,allow_continue_without_warehouse:row.allow_continue_without_warehouse}
           // 保留明细标识，后端可按原节点保留当前账号不可见的绩效配置。
           if(Number(row.id)>0)operation.id=Number(row.id)
-          if(this.canManagePerformance)operation.performance_rate=rateFromPercent(row.performance_percent)
           if(row.execution_context==='shipment'){
             operation.packaging_scheme_id=row.packaging_scheme_id
             operation.packaging_materials=row.packaging_materials.map(material=>({component_item_id:material.component_item_id,base_qty_per_output_unit:Number(material.base_qty_per_output_unit)}))
@@ -232,5 +228,4 @@ export default {
 @media(max-width:1100px){.routing-editor .form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.page-heading{gap:16px;flex-wrap:wrap}}
 @media(max-width:767px){.routing-editor .form-grid,.operation-settings{grid-template-columns:minmax(0,1fr)}.form-card{padding:14px}.settings-group{border-right:0;border-bottom:1px solid #e5eaf0}.heading-actions{width:100%;flex-wrap:wrap;gap:8px}.heading-actions .el-button{margin:0}.settings-group>label{grid-template-columns:72px minmax(0,1fr)}}
 @media(max-width:767px){.operation-card{container-type:inline-size}.operation-settings{width:calc(100cqw - 1px)}.settings-group{padding:14px}.settings-group>label{grid-template-columns:64px minmax(0,1fr);gap:6px}.setting-actions{gap:8px;flex-wrap:wrap}.setting-actions .el-button{margin:0}.routing-editor ::v-deep .el-input-group__append{padding:0 6px}}
-.perf-template-select{width:150px;margin-right:10px}
 </style>

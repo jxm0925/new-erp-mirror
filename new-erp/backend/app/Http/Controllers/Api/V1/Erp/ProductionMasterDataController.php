@@ -55,7 +55,6 @@ class ProductionMasterDataController extends Controller
         'operations.*.production_stage_id' => 'nullable|integer|exists:erp_production_stages,id',
         'operations.*.execution_context' => 'nullable|in:production,shipment',
         'operations.*.packaging_scheme_id' => 'nullable|integer|exists:erp_production_packaging_schemes,id',
-        'operations.*.performance_rate' => 'nullable|numeric|min:0|max:1',
         'operations.*.packaging_materials' => 'nullable|array',
         'operations.*.packaging_materials.*.component_item_id' => 'required|integer|exists:erp_items,id',
         'operations.*.packaging_materials.*.base_qty_per_output_unit' => 'required|numeric|gt:0|max:999999999',

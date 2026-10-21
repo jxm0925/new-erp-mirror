@@ -5,6 +5,7 @@ namespace App\Services\Erp;
 use App\Models\Erp\Item;
 use App\Models\Erp\Product;
 use App\Models\Erp\ProductionOperation;
+use App\Models\Erp\ProductionPerformanceBinding;
 use App\Models\Erp\ProductionStage;
 use App\Models\Erp\ProductionPackagingScheme;
 use App\Models\Erp\ProductionRouting;
@@ -174,13 +175,12 @@ class ProductionMasterDataService
             ->pluck('component_item_id')->filter(fn ($itemId) => (int) $itemId > 0)->map(fn ($itemId) => (int) $itemId)->unique()->values();
         $routing->setRelation('packaging_material_items', $itemIds->isEmpty() ? collect()
             : Item::with('unit.standardUnit')->whereIn('id', $itemIds)->get(['id', 'item_name', 'unit_id']));
-        return $routing;
+        return $this->withPerformance($routing);
     }
 
     public function createRouting(array $data, object $user, array $permissions, bool $superAdmin): ProductionRouting
     {
         $this->authorize($permissions, $superAdmin, 'production.routing.create');
-        $this->assertPerformanceWrite($data, $permissions, $superAdmin);
         return $this->command('create_routing', 'routing', $data, $user, function () use ($data, $user): ProductionRouting {
             $this->assertObjectRelation((int) $data['output_item_id'], $data['product_id'] ?? null, $data['sku_id'] ?? null);
             $number = $this->numbers->reservedNumber($data['reservation_token'], 'routing', $this->userId($user), $data['creation_session_id']);
@@ -200,14 +200,13 @@ class ProductionMasterDataService
             ]);
             $this->syncOperations($routing, $data['operations'], $user);
             $this->numbers->consume($data['reservation_token'], 'routing', $number, $this->userId($user), 'production_routing', $routing->id);
-            return $routing->load(['outputItem.unit.standardUnit', 'product', 'sku', 'operations.operation', 'operations.outputItem.unit.standardUnit']);
+            return $this->withPerformance($routing->load(['outputItem.unit.standardUnit', 'product', 'sku', 'operations.operation', 'operations.outputItem.unit.standardUnit']));
         });
     }
 
     public function updateRouting(int $id, array $data, object $user, array $permissions, bool $superAdmin): ProductionRouting
     {
         $this->authorize($permissions, $superAdmin, 'production.routing.edit');
-        $this->assertPerformanceWrite($data, $permissions, $superAdmin);
         return $this->command('update_routing', 'routing', $data + ['id' => $id], $user, function () use ($id, $data, $user): ProductionRouting {
             $routing = ProductionRouting::lockForUpdate()->findOrFail($id);
             $this->version($routing, $data);
@@ -223,7 +222,7 @@ class ProductionMasterDataService
             $routing->save();
             if (isset($data['operations'])) $this->syncOperations($routing, $data['operations'], $user);
             $this->assertRoutingManagementScope($routing);
-            return $routing->load(['outputItem.unit.standardUnit', 'product', 'sku', 'operations.operation', 'operations.outputItem.unit.standardUnit']);
+            return $this->withPerformance($routing->load(['outputItem.unit.standardUnit', 'product', 'sku', 'operations.operation', 'operations.outputItem.unit.standardUnit']));
         });
     }
 
@@ -317,7 +316,7 @@ class ProductionMasterDataService
                     'operation_id', 'sequence', 'parameters', 'is_key_operation', 'remark', 'standard_minutes',
                     'setup_standard_minutes', 'unit_standard_minutes',
                     'output_item_id', 'output_mode', 'quality_mode', 'work_mode', 'allow_continue_without_warehouse',
-                    'production_stage_id', 'execution_context', 'packaging_scheme_id', 'performance_rate', 'packaging_materials',
+                    'production_stage_id', 'execution_context', 'packaging_scheme_id', 'packaging_materials',
                 ]));
                 $copiedBySequence->put((int) $row->sequence, $newRow);
             }
@@ -332,7 +331,12 @@ class ProductionMasterDataService
                     ]) + ['target_routing_operation_id' => $newTarget->id]);
                 }
             }
-            return $copy->load(['outputItem.unit.standardUnit', 'product', 'sku', 'operations.operation', 'operations.outputItem.unit.standardUnit']);
+            // 新版本沿用来源路线指定的提成模板；未指定的继续走默认模板。
+            $binding = ProductionPerformanceBinding::query()->where('binding_key', ProductionPerformanceBinding::routingKey((int) $source->id))->first();
+            if ($binding) ProductionPerformanceBinding::query()->create(['binding_key' => ProductionPerformanceBinding::routingKey((int) $copy->id),
+                'routing_id' => $copy->id, 'template_id' => $binding->template_id,
+                'created_by_legacy_id' => $this->userId($user), 'updated_by_legacy_id' => $this->userId($user)]);
+            return $this->withPerformance($copy->load(['outputItem.unit.standardUnit', 'product', 'sku', 'operations.operation', 'operations.outputItem.unit.standardUnit']));
         });
     }
 
@@ -432,9 +436,19 @@ class ProductionMasterDataService
         return $matches->filter(fn ($row) => $rank($row) === $highest)->values();
     }
 
+    /** 比例只来自提成模板（路线指定或默认），路线工序上的旧比例列不再读取；无权限时由控制器整体脱敏。 */
+    private function withPerformance(ProductionRouting $routing): ProductionRouting
+    {
+        $resolved = app(ProductionPerformanceRateResolver::class)->forRouting((int) $routing->id);
+        $routing->operations->each(fn ($row) => $row->setAttribute('performance_rate', $resolved['rates'][(int) $row->operation_id] ?? null));
+        $routing->setRelation('performance', collect(['template' => $resolved['template'], 'source' => $resolved['source'], 'rates' => (object) $resolved['rates']]));
+        return $routing;
+    }
+
     public function snapshot(ProductionRouting $routing): array
     {
         $routing->loadMissing(['outputItem', 'product', 'sku', 'operations.operation', 'operations.outputItem', 'operations.materialSupplyRules', 'operations.stage', 'operations.packagingScheme']);
+        $performance = app(ProductionPerformanceRateResolver::class)->forRouting((int) $routing->id);
         return [
             'routing_id' => (int) $routing->id, 'routing_no' => $routing->routing_no,
             'routing_name' => $routing->routing_name, 'version' => (int) $routing->version,
@@ -446,6 +460,8 @@ class ProductionMasterDataService
             'snapshot_scope' => 'complete_route',
             'operation_count' => $routing->operations->count(),
             'production_operation_count' => $routing->operations->filter(fn ($row) => ($row->execution_context ?: 'production') === 'production')->count(),
+            // 生成时所用的提成模板（null=未配置模板，不计提成）；工单/包装作业按此快照，模板后改不追溯。
+            'performance_template' => $performance['template'] ? $performance['template'] + ['source' => $performance['source']] : null,
             'operations' => $routing->operations->map(fn ($row) => [
                 'routing_operation_id' => (int) $row->id, 'operation_id' => (int) $row->operation_id,
                 'operation_no' => $row->operation?->operation_no, 'operation_name' => $row->operation?->operation_name,
@@ -457,7 +473,7 @@ class ProductionMasterDataService
                 'execution_context' => $row->execution_context ?: 'production',
                 'packaging_scheme_id' => $row->packaging_scheme_id ? (int) $row->packaging_scheme_id : null,
                 'packaging_scheme_code' => $row->packagingScheme?->code, 'packaging_scheme_name' => $row->packagingScheme?->name,
-                'performance_rate' => $row->performance_rate === null ? null : (string) $row->performance_rate,
+                'performance_rate' => $performance['rates'][(int) $row->operation_id] ?? null,
                 'packaging_materials' => (array) ($row->packaging_materials ?? []),
                 'auto_assignment_enabled' => (bool) $row->operation?->auto_assignment_enabled,
                 'standard_minutes' => $row->standard_minutes === null ? null : (float) $row->standard_minutes,
@@ -493,8 +509,8 @@ class ProductionMasterDataService
         foreach ($rows as &$row) {
             $old = isset($row['id']) ? $previous->get((int) $row['id']) : $previous->first(fn ($node) => (int) $node->sequence === (int) $row['sequence'] && (int) $node->operation_id === (int) $row['operation_id']);
             if (isset($row['id']) && ! $old) throw ValidationException::withMessages(['operations' => '工序明细标识不属于当前草稿路线。']);
-            // 无金融权限的路线编辑不会返回比例字段；省略字段保留原比例，避免保存普通工艺时清空规则。
-            if (! array_key_exists('performance_rate', $row)) $row['performance_rate'] = $old?->performance_rate;
+            // 提成比例只能通过提成模板指定，路线保存不再写比例。
+            unset($row['performance_rate']);
             $row['execution_context'] = $row['execution_context'] ?? 'production';
             if ($row['execution_context'] === 'shipment') $row['output_item_id'] = null;
             $row['packaging_materials'] = $row['packaging_materials'] ?? [];
@@ -531,7 +547,7 @@ class ProductionMasterDataService
                 'operation_id', 'sequence', 'parameters', 'is_key_operation', 'remark', 'standard_minutes',
                 'setup_standard_minutes', 'unit_standard_minutes',
                 'output_item_id', 'output_mode', 'quality_mode', 'work_mode', 'allow_continue_without_warehouse',
-                'production_stage_id', 'execution_context', 'packaging_scheme_id', 'performance_rate', 'packaging_materials',
+                'production_stage_id', 'execution_context', 'packaging_scheme_id', 'packaging_materials',
             ])->all() + [
                 'output_mode' => $row['output_mode'] ?? 'flow_only',
                 'quality_mode' => $row['quality_mode'] ?? 'none',
@@ -631,13 +647,6 @@ class ProductionMasterDataService
             $routing->operations->pluck('output_item_id')->filter()->all(),
             $routing->operations->flatMap(fn ($row) => $row->materialSupplyRules)->pluck('component_item_id')->all(),
             $routing->operations->flatMap(fn ($row) => $row->packaging_materials ?? [])->pluck('component_item_id')->all()), 'operations');
-    }
-
-    private function assertPerformanceWrite(array $data, array $permissions, bool $superAdmin): void
-    {
-        if (collect($data['operations'] ?? [])->contains(fn (array $row) => array_key_exists('performance_rate', $row))) {
-            $this->authorize($permissions, $superAdmin, 'production.performance.manage');
-        }
     }
 
     private function command(string $type, string $entityType, array $data, object $user, callable $action)

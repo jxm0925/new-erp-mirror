@@ -46,7 +46,7 @@ class ProductionPerformanceTemplateController extends Controller
     {
         $this->user($request);
         $service->destroy($id);
-        return response()->json(['message' => '提成模板已删除，已套用到路线上的比例不受影响。']);
+        return response()->json(['message' => '提成模板已删除。']);
     }
 
     public function preview(Request $request, int $id, ProductionPerformanceTemplateService $service)
@@ -61,7 +61,21 @@ class ProductionPerformanceTemplateController extends Controller
         $user = $this->user($request);
         $data = $request->validate(['routing_ids' => 'required|array|min:1|max:50', 'routing_ids.*' => 'integer|min:1|distinct']);
         $result = $service->apply($id, array_map('intval', $data['routing_ids']), $user);
-        return response()->json(['message' => "已套用到 {$result['routings']} 条路线、{$result['operations']} 道工序；已生成的工单仍按原比例。", 'data' => $result]);
+        return response()->json(['message' => "已指定 {$result['routings']} 条路线使用本模板（{$result['operations']} 道工序比例有变化）；已生成的工单仍按原比例。", 'data' => $result]);
+    }
+
+    public function unbind(Request $request, int $id, ProductionPerformanceTemplateService $service)
+    {
+        $user = $this->user($request);
+        $data = $request->validate(['routing_ids' => 'required|array|min:1|max:50', 'routing_ids.*' => 'integer|min:1|distinct']);
+        $result = $service->unbind($id, array_map('intval', $data['routing_ids']), $user);
+        return response()->json(['message' => "已取消 {$result['routings']} 条路线的指定，改按默认模板计提成。", 'data' => $result]);
+    }
+
+    public function setDefault(Request $request, int $id, ProductionPerformanceTemplateService $service)
+    {
+        $user = $this->user($request);
+        return response()->json(['message' => '已设为默认提成模板，未指定模板的路线按它计提成；已生成的工单仍按原比例。', 'data' => $service->setDefault($id, $user)]);
     }
 
     private function payload(Request $request, bool $update = false): array

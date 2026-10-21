@@ -27,6 +27,8 @@ export const updatePerformanceTemplate = (id, data) => api.put(`/v1/erp/producti
 export const deletePerformanceTemplate = id => api.delete(`/v1/erp/production/performance/templates/${id}`)
 export const previewPerformanceTemplate = (id, data) => api.post(`/v1/erp/production/performance/templates/${id}/preview`, data)
 export const applyPerformanceTemplate = (id, data) => api.post(`/v1/erp/production/performance/templates/${id}/apply`, data)
+export const unbindPerformanceTemplate = (id, data) => api.post(`/v1/erp/production/performance/templates/${id}/unbind`, data)
+export const setDefaultPerformanceTemplate = id => api.post(`/v1/erp/production/performance/templates/${id}/set-default`)
 export const listPerformanceTemplateOperations = params => api.get('/v1/erp/production/performance/template-operations', { params })
 
 // 新生产工单（v2）
