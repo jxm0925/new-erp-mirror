@@ -14,6 +14,8 @@ use App\Models\Erp\MfgWorkOrderOperation;
 use App\Models\Erp\MfgWorkOrderTech;
 use App\Models\Erp\MfgWorkOrderUnit;
 use App\Models\Erp\MfgLaborSession;
+use App\Models\Erp\MfgCuttingBatch;
+use App\Models\Erp\MfgMaterialIssue;
 use App\Models\Erp\SalesOrder;
 use App\Models\Erp\SalesOrderFulfillment;
 use App\Services\Erp\DocumentNumberService;
@@ -190,6 +192,9 @@ final class WorkOrderService
                 $replan = true;
             }
             if (! $changes) $this->fail('no_change', '没有需要保存的修改。');
+            if ($replan && (MfgCuttingBatch::query()->where('work_order_id', $wo->id)->lockForUpdate()->first(['id'])
+                || MfgMaterialIssue::query()->where('work_order_id', $wo->id)->lockForUpdate()->first(['id'])))
+                $this->fail('material_already_issued', '工单已有真实领料或开料事实，不能覆盖原 BOM、路线和数量，请先核实已发生的用料。');
             $wo->business_version = (int) $wo->business_version + 1;
             $wo->updated_by_legacy_id = $this->actorId($actor);
             $wo->save();
@@ -273,6 +278,7 @@ final class WorkOrderService
     public function refreshCompletion(MfgWorkOrder $wo, ?object $actor): void
     {
         if (! in_array($wo->status, ['released', 'in_progress', 'paused'], true)) return;
+        if (MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('status', 'issued')->lockForUpdate()->first(['id'])) return;
         $units = MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->lockForUpdate()->pluck('status')->countBy();
         if ($units->isEmpty() || $units->keys()->diff(['stored', 'scrapped', 'cancelled'])->isNotEmpty()) return;
         $before = $wo->status;
@@ -297,6 +303,17 @@ final class WorkOrderService
     private function doCancel(MfgWorkOrder $wo, string $reason, ?object $actor): void
     {
         if (! in_array($wo->status, self::OPEN, true) || $wo->started_at) $this->fail('status_invalid', '工单已开工或已结束，不能取消。');
+        $cuttingOrders = [(int) $wo->id];
+        $pending = $cuttingOrders;
+        while ($pending) {
+            $children = MfgWorkOrderLink::query()->whereIn('parent_work_order_id', $pending)->lockForUpdate()->pluck('child_work_order_id')->map(fn ($id) => (int) $id)->all();
+            $pending = array_values(array_diff($children, $cuttingOrders));
+            $cuttingOrders = array_values(array_unique(array_merge($cuttingOrders, $pending)));
+        }
+        if (MfgCuttingBatch::query()->whereIn('work_order_id', $cuttingOrders)->lockForUpdate()->first(['id']))
+            $this->fail('cutting_already_issued', '本工单或关联半成品已有开料投入，不能直接取消。请保留原料、余料和半成品去向后再办理业务调整。');
+        if (MfgMaterialIssue::query()->whereIn('work_order_id', $cuttingOrders)->lockForUpdate()->first(['id']))
+            $this->fail('material_already_issued', '本工单或关联半成品已有真实领料，不能直接取消并遗留材料成本。');
         $before = $wo->status;
         $wo->update(['status' => 'cancelled', 'cancel_reason' => $reason, 'cancelled_at' => now(), 'business_version' => (int) $wo->business_version + 1, 'updated_by_legacy_id' => $this->actorId($actor)]);
         MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->whereIn('status', ['waiting'])->update(['status' => 'cancelled']);

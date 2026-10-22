@@ -49,4 +49,5 @@ module.exports = {
   people: (id, query) => get(`${base}/operations/${Number(id)}/people`, query),
   materials: (id, query) => get(`${base}/operations/${Number(id)}/material-sources`, query),
   identities: (id, query) => get(`${base}/operations/${Number(id)}/material-identities`, query),
+  reworkOperations: (id, lineId, query) => get(`sales/shipments/${Number(id)}/serials/${Number(lineId)}/rework-operations`, query),
 };

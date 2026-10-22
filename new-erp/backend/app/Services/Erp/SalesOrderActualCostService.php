@@ -13,7 +13,7 @@ class SalesOrderActualCostService
     {
         $outboundCost = (float) SalesShipment::query()
             ->where('sales_order_id', $salesOrderId)
-            ->whereIn('shipment_status', ['outbound_posted', 'shipped', 'completed'])
+            ->whereIn('shipment_status', ['outbound_posted', 'partially_shipped', 'shipped', 'completed'])
             ->sum('actual_cost_amount');
 
         $reversedReturnCost = (float) InventoryTransactionItem::query()

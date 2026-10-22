@@ -444,6 +444,70 @@ final class MaterialPhysicalService
         ]);
     }
 
+    /** 面积余板只保存人工确认的面积，不能把缺失外形伪造成可排版的矩形。 */
+    public function createManufacturingRemnant(
+        \App\Models\Erp\MfgCuttingBatch $batch,
+        array $input,
+        array $remnant,
+        InventoryBalance $balance,
+        InventoryTransactionItem $transactionItem,
+        int $operatorId,
+    ): int {
+        $source = DB::table('erp_material_physicals')->where('id', $input['physical_material_id'])->lockForUpdate()->first();
+        $sourceHolding = $source ? DB::table('erp_material_holdings')->where('id', $source->current_holding_id)->lockForUpdate()->first() : null;
+        if (! $source || ! $sourceHolding || $source->status !== 'CUTTING' || $sourceHolding->position_type !== 'MFG_CUTTING'
+            || (int) $sourceHolding->position_id !== (int) $batch->id || (int) $source->item_id !== (int) $balance->item_id) {
+            throw ValidationException::withMessages(['remnants' => '原板不在当前开料批次，不能生成余料身份。']);
+        }
+        $holding = $this->warehouseHolding($balance, 'REMNANT', (int) $balance->material_lot_id);
+        $dimensions = ['area_m2' => CuttingDecimal::value($remnant['measure_qty']),
+            'thickness_mm' => $input['dimensions']['thickness_mm']];
+        $uncut = bccomp((string) $remnant['output_measure'], '0', 8) === 0
+            && bccomp((string) $remnant['measure_qty'], (string) $input['input_measure'], 8) === 0;
+        if ($uncut && $input['shape'] === 'RECTANGLE') $dimensions = $input['dimensions'];
+        if (isset($input['dimensions']['nominal_thickness_mm'])) $dimensions['nominal_thickness_mm'] = $input['dimensions']['nominal_thickness_mm'];
+        $id = DB::table('erp_material_physicals')->insertGetId([
+            'physical_no' => $this->numbers->next('material_physical', 'PLATE'), 'item_id' => $source->item_id,
+            'source_transaction_item_id' => $transactionItem->id, 'material_lot_id' => $balance->material_lot_id,
+            'current_holding_id' => $holding->id, 'root_physical_id' => $source->root_physical_id ?: $source->id, 'parent_physical_id' => $source->id,
+            'material_form' => 'REMNANT', 'shape' => $uncut ? $input['shape'] : 'AREA_ONLY', 'dimensions' => json_encode($dimensions, JSON_THROW_ON_ERROR),
+            'total_cost' => $remnant['cost_amount'], 'status' => 'AVAILABLE', 'business_version' => 1,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('erp_material_movements')->insert([
+            'movement_no' => $this->numbers->next('material_movement', 'MM'), 'source_holding_id' => $sourceHolding->id,
+            'target_holding_id' => $holding->id, 'action' => 'MFG_REMNANT_RETURN', 'quantity' => '1', 'total_cost' => $remnant['cost_amount'],
+            'inventory_transaction_id' => $transactionItem->transaction_id, 'operator_legacy_id' => $operatorId,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        return $id;
+    }
+
+    /** 原板成本拆为真实余板与半成品净耗，旧身份只作历史，不能再次领入。 */
+    public function completeManufacturingCut(\App\Models\Erp\MfgCuttingBatch $batch, array $input, string $netCost, int $operatorId): void
+    {
+        $physical = DB::table('erp_material_physicals')->where('id', $input['physical_material_id'])->lockForUpdate()->first();
+        $holding = $physical ? DB::table('erp_material_holdings')->where('id', $physical->current_holding_id)->lockForUpdate()->first() : null;
+        if (! $physical || ! $holding || $physical->status !== 'CUTTING' || $holding->position_type !== 'MFG_CUTTING'
+            || (int) $holding->position_id !== (int) $batch->id || $holding->status !== 'ACTIVE'
+            || bccomp((string) $holding->total_cost, (string) $input['cost_amount'], 4) !== 0) {
+            throw ValidationException::withMessages(['cutting' => '原板开料持有状态或金额已变化，不能结算。']);
+        }
+        $targetId = $this->nonWarehouseHolding((int) $physical->material_lot_id, 'MFG_OUTPUT', (int) $batch->id, $netCost, 'CONSUMED');
+        DB::table('erp_material_movements')->insert([
+            'movement_no' => $this->numbers->next('material_movement', 'MM'), 'source_holding_id' => $holding->id, 'target_holding_id' => $targetId,
+            'action' => 'MFG_CUT_SETTLED', 'quantity' => '1', 'total_cost' => $netCost,
+            'inventory_transaction_id' => $batch->inventory_return_transaction_id, 'operator_legacy_id' => $operatorId,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+        DB::table('erp_material_holdings')->where('id', $holding->id)->update(MaterialHoldingInvariant::debit($holding, '1', (string) $input['cost_amount'])
+            + ['status' => 'CLOSED', 'business_version' => (int) $holding->business_version + 1, 'updated_at' => now()]);
+        DB::table('erp_material_physicals')->where('id', $physical->id)->update([
+            'current_holding_id' => $targetId, 'status' => 'CONSUMED', 'first_cut_at' => $physical->first_cut_at ?: now(),
+            'business_version' => (int) $physical->business_version + 1, 'updated_at' => now(),
+        ]);
+    }
+
     public function assertPhysicalNotInOpenDocument(int $physicalId, ?int $ignoreAdjustmentId = null, ?int $ignoreReturnId = null): void
     {
         $adjustment = DB::table('erp_inventory_adjustment_item_physicals as link')

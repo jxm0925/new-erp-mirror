@@ -316,7 +316,7 @@ class ProductionMasterDataService
                     'operation_id', 'sequence', 'parameters', 'is_key_operation', 'remark', 'standard_minutes',
                     'setup_standard_minutes', 'unit_standard_minutes',
                     'output_item_id', 'output_mode', 'quality_mode', 'work_mode', 'allow_continue_without_warehouse',
-                    'production_stage_id', 'execution_context', 'packaging_scheme_id', 'packaging_materials',
+                    'production_stage_id', 'execution_context', 'shipment_operation_type', 'packaging_scheme_id', 'packaging_materials',
                 ]));
                 $copiedBySequence->put((int) $row->sequence, $newRow);
             }
@@ -471,6 +471,7 @@ class ProductionMasterDataService
                 'production_stage_id' => $row->production_stage_id ? (int) $row->production_stage_id : null,
                 'stage_code' => $row->stage?->code, 'stage_name' => $row->stage?->name,
                 'execution_context' => $row->execution_context ?: 'production',
+                'shipment_operation_type' => ($row->execution_context ?: 'production') === 'shipment' ? ($row->shipment_operation_type ?: 'packing') : null,
                 'packaging_scheme_id' => $row->packaging_scheme_id ? (int) $row->packaging_scheme_id : null,
                 'packaging_scheme_code' => $row->packagingScheme?->code, 'packaging_scheme_name' => $row->packagingScheme?->name,
                 'performance_rate' => $performance['rates'][(int) $row->operation_id] ?? null,
@@ -512,9 +513,13 @@ class ProductionMasterDataService
             // 提成比例只能通过提成模板指定，路线保存不再写比例。
             unset($row['performance_rate']);
             $row['execution_context'] = $row['execution_context'] ?? 'production';
+            $row['shipment_operation_type'] = $row['execution_context'] === 'shipment' ? ($row['shipment_operation_type'] ?? 'packing') : null;
+            if ($row['execution_context'] === 'shipment' && ! in_array($row['shipment_operation_type'], ['water_test', 'packing', 'loading'], true)) throw ValidationException::withMessages(['operations' => '请选择试水、打包或装车作业类型。']);
             if ($row['execution_context'] === 'shipment') $row['output_item_id'] = null;
             $row['packaging_materials'] = $row['packaging_materials'] ?? [];
-            if ($row['execution_context'] === 'shipment' && empty($row['packaging_scheme_id'])) throw ValidationException::withMessages(['operations' => '发货作业必须选择包装方案。']);
+            if ($row['shipment_operation_type'] === 'packing' && empty($row['packaging_scheme_id'])) throw ValidationException::withMessages(['operations' => '打包工序必须选择包装方案。']);
+            if ($row['execution_context'] === 'shipment' && $row['shipment_operation_type'] !== 'packing'
+                && (! empty($row['packaging_scheme_id']) || $row['packaging_materials'] !== [])) throw ValidationException::withMessages(['operations' => '只有打包工序可以配置包装方案和包装用料。']);
             if ($row['execution_context'] === 'production' && (! empty($row['packaging_scheme_id']) || $row['packaging_materials'] !== [])) throw ValidationException::withMessages(['operations' => '生产工序不能配置发货包装方案或包装用料。']);
             if ($row['execution_context'] === 'shipment' && ($row['material_supply_rules'] ?? []) !== []) throw ValidationException::withMessages(['operations' => '包装用料按基础单位数量配置，不能混用生产BOM用量占比。']);
         }
@@ -547,7 +552,7 @@ class ProductionMasterDataService
                 'operation_id', 'sequence', 'parameters', 'is_key_operation', 'remark', 'standard_minutes',
                 'setup_standard_minutes', 'unit_standard_minutes',
                 'output_item_id', 'output_mode', 'quality_mode', 'work_mode', 'allow_continue_without_warehouse',
-                'production_stage_id', 'execution_context', 'packaging_scheme_id', 'packaging_materials',
+                'production_stage_id', 'execution_context', 'shipment_operation_type', 'packaging_scheme_id', 'packaging_materials',
             ])->all() + [
                 'output_mode' => $row['output_mode'] ?? 'flow_only',
                 'quality_mode' => $row['quality_mode'] ?? 'none',
@@ -600,7 +605,8 @@ class ProductionMasterDataService
         $firstShipment = $routing->operations->where('execution_context', 'shipment')->min('sequence');
         if ($firstShipment !== null && $production->isNotEmpty() && $production->max('sequence') >= $firstShipment) throw ValidationException::withMessages(['operations' => '发货包装工序必须排在生产工序之后。']);
         foreach ($routing->operations as $operation) {
-            if (($operation->execution_context ?: 'production') === 'shipment' && ! $operation->packaging_scheme_id) throw ValidationException::withMessages(['operations' => '发货包装工序必须选择方案。']);
+            if (($operation->execution_context ?: 'production') === 'shipment' && ($operation->shipment_operation_type ?: 'packing') === 'packing'
+                && ! $operation->packaging_scheme_id) throw ValidationException::withMessages(['operations' => '打包工序必须选择包装方案。']);
         }
         // BOM 决定总需求量；路线只分配需求到工序。跨工序占比必须合计为一，避免重复备料。
         $rules = $routing->operations->flatMap(fn ($operation) => $operation->materialSupplyRules);

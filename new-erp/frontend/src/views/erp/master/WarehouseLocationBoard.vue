@@ -498,6 +498,7 @@
                   <span class="loc-name-text" title="点击编辑库位">{{ row.location_name }}</span>
                 </template>
               </el-table-column>
+              <el-table-column label="用途" width="100"><template slot-scope="{ row }">{{ locationPurposes[row.location_purpose || 'general'] }}</template></el-table-column>
 
               <el-table-column prop="area" label="区域" width="80" align="center">
                 <template slot-scope="{ row }">
@@ -689,6 +690,11 @@
           </el-form-item>
         </div>
 
+        <el-form-item label="库位用途">
+          <el-select v-model="locationForm.location_purpose" class="full">
+            <el-option v-for="(label, value) in locationPurposes" :key="value" :value="value" :label="label" />
+          </el-select>
+        </el-form-item>
         <div class="form-grid-3">
           <el-form-item label="标准容量">
             <el-input-number v-model="locationForm.standard_capacity" :min="0" class="full font-tabular" controls-position="right" />
@@ -754,6 +760,7 @@ const emptyLoc = () => ({
   warehouse_id: null,
   location_code: '',
   location_name: '',
+  location_purpose: 'general',
   area: '',
   aisle: '',
   rack: '',
@@ -787,6 +794,7 @@ export default {
       warehouseForm: emptyWh(),
       warehouseOriginalScope: null,
       locationForm: emptyLoc(),
+      locationPurposes: { general: '普通存储', finished: '成品', shipping_staging: '待发', repair: '返修' },
       warehouseKeyword: '',
       warehouseManagementScope: '',
       warehouseScopeSequence: 0,

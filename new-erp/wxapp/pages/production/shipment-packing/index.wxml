@@ -1,5 +1,5 @@
 <view class="packing-page">
-  <view class="packing-page-head"><button class="packing-back" bindtap="back">返回</button><text class="packing-page-title">包装作业</text></view>
+  <view class="packing-page-head"><button class="packing-back" bindtap="back">返回</button><text class="packing-page-title">发货作业</text></view>
   <view class="packing-search"><input class="packing-input" value="{{keyword}}" bindinput="keywordInput" placeholder="搜索工序名称" confirm-type="search" bindconfirm="search"/><button class="packing-primary" bindtap="search" disabled="{{busy}}">查询</button></view>
   <view wx:if="{{error}}" class="packing-error">{{error}}</view>
   <view wx:if="{{loading}}" class="packing-empty">正在读取包装作业</view>
@@ -23,6 +23,15 @@
       <view class="packing-field"><text>状态</text><text>{{operation.statusLabel}}</text></view>
       <view class="packing-field"><text>接单人</text><text>{{operation.ownerName}}</text></view>
       <view wx:for="{{operation.contents}}" wx:for-item="content" wx:key="id" class="packing-content"><view>{{content.product_name || content.item_name}}</view><view>{{content.packaging_scheme_name}} · {{content.qtyText}}</view><view wx:if="{{content.serialText}}">{{content.serialText}}</view></view>
+      <block wx:if="{{operation.serialResults.length}}">
+        <view class="packing-section-title">本次作业设备</view>
+        <checkbox-group bindchange="chooseOperationSerials">
+          <label wx:for="{{operation.serialResults}}" wx:for-item="serial" wx:key="inventory_serial_id" class="packing-option">
+            <checkbox value="{{serial.inventory_serial_id}}" checked="{{serial.selected}}" disabled="{{busy || pending || !serial.canSelect}}" color="#008b4b" />
+            <view><view>{{serial.serial_no}} · {{serial.statusLabel}}</view><view class="packing-muted">{{serial.location_name}} · {{serial.quality_result === 'passed' ? '检验合格' : serial.quality_result === 'failed' ? '检验不合格' : '未检验'}}</view></view>
+          </label>
+        </checkbox-group>
+      </block>
       <view class="packing-section-title">参与人员及实际工时</view>
       <view wx:for="{{operation.participants}}" wx:for-item="person" wx:key="employee_legacy_id" class="packing-participant"><view><text>{{person.name}}</text><text class="packing-muted">{{person.role === 'OWNER' ? '接单人' : '协同人'}}{{person.is_active ? '' : '（已移除）'}}</text></view><view><text>{{person.actual_labor_minutes}} 分钟</text><text class="packing-tag">{{person.is_timing ? '计时中' : '已暂停'}}</text></view></view>
       <view class="packing-section-title">实际用料</view>
@@ -40,7 +49,7 @@
         <button wx:if="{{operation.allowed_actions.pause}}" class="packing-secondary" disabled="{{busy}}" loading="{{busy}}" data-action="pause" bindtap="runAction">暂停我的作业</button>
         <button wx:if="{{operation.allowed_actions.materials}}" class="packing-secondary" disabled="{{busy}}" bindtap="openMaterials">登记实际用料</button>
         <button wx:if="{{operation.allowed_actions.complete}}" class="packing-primary" disabled="{{busy}}" loading="{{busy}}" data-action="complete" bindtap="runAction">完成工序</button>
-        <button wx:if="{{operation.allowed_actions.inspect}}" class="packing-primary" disabled="{{busy}}" bindtap="openInspection">包装质检</button>
+        <button wx:if="{{operation.allowed_actions.inspect}}" class="packing-primary" disabled="{{busy}}" bindtap="openInspection">{{operation.shipment_operation_type === 'water_test' ? '试水检验' : '作业质检'}}</button>
       </block>
     </view>
   </view>
@@ -79,4 +88,31 @@
   <view class="packing-section-title">已选择 {{selectedIdentities.length}} 件</view><view class="packing-selected"><view wx:for="{{selectedIdentities}}" wx:for-item="identity" wx:key="id" data-id="{{identity.id}}" bindtap="toggleIdentity">{{identity.physical_no || identity.serial_no}} ×</view></view>
 </scroll-view><view class="packing-dialog-footer"><button class="packing-secondary" bindtap="closeIdentities">取消</button><button class="packing-primary" bindtap="confirmIdentities">确认选择</button></view></view></view>
 
-<view wx:if="{{inspectionOpen}}" class="packing-overlay packing-selector-overlay" catchtouchmove="stop"><view class="packing-dialog"><view class="packing-dialog-head"><text>包装质检</text><button disabled="{{busy}}" bindtap="closeInspection">关闭</button></view><view class="packing-dialog-body"><radio-group bindchange="inspectionChange"><label class="packing-option"><radio value="passed" checked="{{inspectionResult === 'passed'}}" color="#008b4b"/>合格</label><label class="packing-option"><radio value="failed" checked="{{inspectionResult === 'failed'}}" color="#008b4b"/>不合格，退回加工</label></radio-group><textarea class="packing-input packing-inspection-reason" value="{{inspectionReason}}" bindinput="inspectionInput" maxlength="500" placeholder="检验说明"/></view><view class="packing-dialog-footer"><button class="packing-secondary" disabled="{{busy}}" bindtap="closeInspection">取消</button><button class="packing-primary" disabled="{{busy || pending}}" loading="{{busy}}" bindtap="saveInspection">确认检验结果</button></view></view></view>
+<view wx:if="{{inspectionOpen}}" class="packing-overlay packing-selector-overlay" catchtouchmove="stop">
+  <view class="packing-dialog">
+    <view class="packing-dialog-head"><text>{{operation.shipment_operation_type === 'water_test' ? '试水检验' : '作业质检'}}</text><button disabled="{{busy}}" bindtap="closeInspection">关闭</button></view>
+    <scroll-view scroll-y class="packing-dialog-body">
+      <view wx:if="{{operationSerialIds.length}}" class="packing-content">本次检验 {{operationSerialIds.length}} 台</view>
+      <radio-group bindchange="inspectionChange"><label class="packing-option"><radio value="passed" checked="{{inspectionResult === 'passed'}}" color="#008b4b"/>合格</label><label class="packing-option"><radio value="failed" checked="{{inspectionResult === 'failed'}}" color="#008b4b"/>不合格，转返修</label></radio-group>
+      <block wx:if="{{inspectionResult === 'failed' && operation.serialResults.length}}">
+        <button class="packing-secondary" disabled="{{busy}}" bindtap="openRepairLocator">{{repairLocator.location_id ? repairLocator.warehouse_name + ' / ' + repairLocator.location_name : '选择返修仓库和库位'}}</button>
+        <button wx:if="{{inspectionNeedsReturn}}" class="packing-secondary" disabled="{{busy}}" bindtap="openReworkOperations">{{returnOperation ? returnOperation.operation_name : '选择返工工序'}}</button>
+      </block>
+      <textarea class="packing-input packing-inspection-reason" value="{{inspectionReason}}" bindinput="inspectionInput" maxlength="500" placeholder="检验说明"/>
+      <view wx:if="{{inspectionError}}" class="packing-error">{{inspectionError}}</view>
+    </scroll-view>
+    <view class="packing-dialog-footer"><button class="packing-secondary" disabled="{{busy}}" bindtap="closeInspection">取消</button><button class="packing-primary" disabled="{{busy || pending}}" loading="{{busy}}" bindtap="saveInspection">确认检验结果</button></view>
+  </view>
+</view>
+<warehouse-locator open="{{repairLocatorOpen}}" value="{{repairLocator}}" location-purpose="repair" bind:confirm="chooseRepairLocator" bind:cancel="closeRepairLocator"/>
+<view wx:if="{{reworkOpen}}" class="packing-overlay packing-identity-overlay" catchtouchmove="stop">
+  <view class="packing-dialog">
+    <view class="packing-dialog-head"><text>选择返工工序</text><button bindtap="closeReworkOperations">关闭</button></view>
+    <scroll-view scroll-y class="packing-dialog-body">
+      <view class="packing-search"><input class="packing-input" value="{{reworkKeyword}}" bindinput="reworkInput" placeholder="工序名称" confirm-type="search" bindconfirm="searchReworkOperations"/><button class="packing-primary" bindtap="searchReworkOperations">查询</button></view>
+      <view wx:for="{{reworkRows}}" wx:key="id" class="packing-option" data-id="{{item.id}}" bindtap="chooseReworkOperation"><text>{{item.sequence}} · {{item.operation_name}}</text></view>
+      <view class="packing-pager"><button disabled="{{reworkPage <= 1}}" data-delta="-1" bindtap="turnReworkOperations">上一页</button><text>{{reworkPage}} / {{reworkLast}}</text><button disabled="{{reworkPage >= reworkLast}}" data-delta="1" bindtap="turnReworkOperations">下一页</button></view>
+      <view wx:if="{{reworkError}}" class="packing-error">{{reworkError}}</view>
+    </scroll-view>
+  </view>
+</view>

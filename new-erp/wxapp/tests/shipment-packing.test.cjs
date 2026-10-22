@@ -54,7 +54,7 @@ test('another account cannot consume the previous account pending request', asyn
   assert.ok(f.packing.pending(71));
 });
 
-function pageFixture() {
+function pageFixture(wxOverrides = {}) {
   let definition;
   const calls = []; const actions = []; const people = []; const materials = []; const identities = [];
   const service = { pending: () => null, operations: () => Promise.resolve({ data: { data: [], total: 0, current_page: 1, last_page: 1 } }),
@@ -66,7 +66,7 @@ function pageFixture() {
   const helpers = { permissions: () => () => true, quantity: value => String(value), errorText: e => e.message,
     rows: response => ({ rows: response.data.data, page: response.data.current_page, lastPage: response.data.last_page, total: response.data.total }), back() {} };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../pages/production/shipment-packing/index.js'), 'utf8'), {
-    Page: value => { definition = value; }, wx: { showToast() {} }, require: name => name.includes('services') ? service : name.includes('personal-shares') ? require('../utils/personal-shares') : name.includes('packing-material-usage') ? require('../utils/packing-material-usage') : helpers,
+    Page: value => { definition = value; }, wx: Object.assign({ showToast() {} }, wxOverrides), require: name => name.includes('services') ? service : name.includes('personal-shares') ? require('../utils/personal-shares') : name.includes('packing-material-usage') ? require('../utils/packing-material-usage') : helpers,
   });
   const page = Object.assign({}, definition, { data: plain(definition.data), peopleSelected: {}, materialSelected: {}, setData(values) { Object.assign(this.data, values); } });
   page.data.operation = { id: 10, business_version: 3, owner_legacy_id: 44, participants: [{ employee_legacy_id: 44, name: '真实接单人', role: 'OWNER', is_active: true }] };
@@ -189,4 +189,64 @@ test('physical identity searches remain bounded, retain selection and ignore a c
   f.identities.push(new Promise(resolve => { finishOld = resolve; })); const old = f.page.loadIdentities(); f.page.closeIdentities();
   finishOld(paged([{ id: 99, physical_no: 'CLOSED' }])); await old;
   assert.equal(f.page.data.identityRows[0].id, 82);
+});
+
+test('completing selected shipment serials sends their exact count with the operation version', async () => {
+  const f = pageFixture({ showModal: options => options.success({ confirm: true }) });
+  f.page.data.operation.serial_results = [
+    { inventory_serial_id: 81, allowed_actions: { complete: false } },
+    { inventory_serial_id: 82, allowed_actions: { complete: true } },
+    { inventory_serial_id: 83, allowed_actions: { complete: true } },
+  ];
+  f.page.data.operationSerialIds = [82, 83];
+  f.page.complete();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(f.actions[0], { action: 'complete', expected_version: 3, inventory_serial_ids: [82, 83], completed_base_qty: 2 });
+});
+
+test('shipment quality submits only selected eligible serials and keeps the current operation version', async () => {
+  const f = pageFixture();
+  f.page.data.operation.serial_results = [
+    { inventory_serial_id: 81, allowed_actions: { inspect: true } },
+    { inventory_serial_id: 82, allowed_actions: { inspect: true } },
+  ];
+  f.page.data.operationSerialIds = [82];
+  f.page.data.inspectionResult = 'passed';
+  await f.page.saveInspection();
+  assert.deepEqual(f.actions[0], { action: 'inspect', expected_version: 3, result: 'passed', reason: '', inventory_serial_ids: [82] });
+});
+
+test('an ineligible selected serial is rejected before creating a shipment quality command', async () => {
+  const f = pageFixture();
+  f.page.data.operation.serial_results = [{ inventory_serial_id: 81, allowed_actions: { inspect: false } }];
+  f.page.data.operationSerialIds = [81];
+  await f.page.saveInspection();
+  assert.equal(f.actions.length, 0);
+  assert.match(f.page.data.operationError, /满足本次操作条件/);
+});
+
+test('failed manufactured shipment quality needs an actual repair location and return operation before sending the selected serial', async () => {
+  const f = pageFixture();
+  f.page.data.operation.serial_results = [{ inventory_serial_id: 81, requires_return_operation: true, allowed_actions: { inspect: true } }];
+  f.page.data.operationSerialIds = [81];
+  f.page.data.inspectionResult = 'failed';
+  f.page.data.inspectionReason = '接口漏水';
+  await f.page.saveInspection();
+  assert.equal(f.actions.length, 0);
+  assert.match(f.page.data.inspectionError, /返修库位和返工工序/);
+  f.page.data.repairLocator = { location_id: 31 };
+  f.page.data.returnOperation = { id: 52 };
+  await f.page.saveInspection();
+  assert.deepEqual(f.actions[0], { action: 'inspect', expected_version: 3, result: 'failed', reason: '接口漏水', inventory_serial_ids: [81], repair_location_id: 31, return_operation_id: 52 });
+});
+
+test('failed purchased serial moves to repair without inventing a manufacturing return operation', async () => {
+  const f = pageFixture();
+  f.page.data.operation.serial_results = [{ inventory_serial_id: 81, requires_return_operation: false, allowed_actions: { inspect: true } }];
+  f.page.data.operationSerialIds = [81];
+  f.page.data.inspectionResult = 'failed';
+  f.page.data.inspectionReason = '接口漏水';
+  f.page.data.repairLocator = { location_id: 31 };
+  await f.page.saveInspection();
+  assert.deepEqual(f.actions[0], { action: 'inspect', expected_version: 3, result: 'failed', reason: '接口漏水', inventory_serial_ids: [81], repair_location_id: 31 });
 });

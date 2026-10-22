@@ -15,6 +15,8 @@ class SalesShipment extends MasterModel
         'cancelled_at' => 'datetime',
         'packing_configured_at' => 'datetime',
         'packing_version' => 'integer',
+        'business_version' => 'integer',
+        'staged_at' => 'datetime',
     ];
 
     public function order() { return $this->belongsTo(SalesOrder::class, 'sales_order_id'); }
@@ -23,4 +25,5 @@ class SalesShipment extends MasterModel
     public function logs() { return $this->hasMany(SalesShipmentLog::class, 'shipment_id'); }
     public function packingContents() { return $this->hasMany(ShipmentPackingContent::class, 'shipment_id'); }
     public function packingOperations() { return $this->hasMany(ShipmentPackingOperation::class, 'shipment_id'); }
+    public function dispatches() { return $this->hasMany(ShipmentDispatch::class, 'shipment_id'); }
 }

@@ -13,14 +13,14 @@ use App\Models\Erp\ShipmentPackingLaborSession;
 use App\Models\Erp\ShipmentPackingMaterial;
 use App\Models\Erp\ShipmentPackingOperation;
 use App\Models\Erp\ShipmentPackingParticipant;
-use Illuminate\Database\QueryException;
+use App\Models\Erp\ShipmentSerialResult;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /** Packing is factual shipment execution; no sale price or earned amount is calculated here. */
 class ShipmentPackingApplicationService
 {
-    public function __construct(private readonly InventoryService $inventory) {}
+    public function __construct(private readonly InventoryService $inventory, private readonly ShipmentCommandService $commands) {}
 
     public function freezeRequirements(SalesShipment $shipment): void
     {
@@ -34,18 +34,20 @@ class ShipmentPackingApplicationService
 
     public function requirements(SalesShipment $shipment): array
     {
-        return $shipment->lines()->with('orderLine')->get()->map(function (SalesShipmentLine $line): array {
+        return $shipment->lines()->where('line_status', '!=', 'replaced')->with('orderLine')->get()->map(function (SalesShipmentLine $line): array {
             // Frozen route/source choices remain historical facts, but readiness
             // must be checked against current formal production completion.
             $context = app(ShipmentSourceResolver::class)->contextForShipmentLine($line);
+            if ($this->legacyPosted($line->shipment)) { $context['production_ready'] = true; $context['blockers'] = []; }
             $route = $line->packing_routing_snapshot;
             // Older drafts have no frozen packing context. Read the formal source resolver only;
             // a current route is never substituted for an already frozen historic route.
             if ($line->packing_source_snapshot === null) {
                 $route = $context['routing_snapshot'] ?? null;
             }
-            $nodes = $this->shipmentNodes($route);
-            $schemes = $nodes->groupBy('packaging_scheme_id')->map(fn ($group, $id) => [
+            $selectedRoute = $line->shipment->packingContents()->where('shipment_line_id', $line->id)->orderBy('id')->first()?->routing_snapshot;
+            $nodes = $this->shipmentNodes($selectedRoute ?? $route);
+            $schemes = $nodes->filter(fn ($node) => ($node['shipment_operation_type'] ?? 'packing') === 'packing')->groupBy('packaging_scheme_id')->map(fn ($group, $id) => [
                 'id' => (int) $id,
                 'name' => $group->first()['packaging_scheme_name'] ?? $group->first()['packaging_scheme_name_snapshot'] ?? '',
                 'operations' => $group->map(fn ($node) => ['name' => $node['operation_name'], 'sequence' => $node['sequence']])->values()->all(),
@@ -56,7 +58,8 @@ class ShipmentPackingApplicationService
                 'serial_tracking_mode' => \App\Models\Erp\Item::find($line->item_id)?->serialTrackingMode() ?? 'none',
                 'batch_no' => $line->batch_no, 'serial_ids' => $line->serial_snapshot['inventory_serial_ids'] ?? [],
                 'serials' => DB::table('erp_inventory_serials')->whereIn('id', $line->serial_snapshot['inventory_serial_ids'] ?? [])->get(['id', 'serial_no'])->map(fn ($row) => (array) $row)->all(),
-                'packing_required' => $nodes->isNotEmpty(), 'schemes' => $schemes, 'packing_route' => $this->routeIdentity($route),
+                'packing_required' => $nodes->isNotEmpty() || $this->requiresRouteSelection($line), 'requires_route_selection' => $this->requiresRouteSelection($line),
+                'schemes' => $schemes, 'packing_route' => $this->routeIdentity($route),
                 'production_ready' => $context['production_ready'], 'production_blockers' => $context['blockers'],
                 'continuations' => $context['continuations'] ?? []];
         })->all();
@@ -74,6 +77,9 @@ class ShipmentPackingApplicationService
             $snapshot = app(ProductionMasterDataService::class)->snapshot($route);
             return ['id' => (int) $route->id, 'routing_no' => $route->routing_no, 'routing_name' => $route->routing_name,
                 'version' => (int) $route->version, 'business_version' => (int) $route->business_version,
+                'schemes' => $this->shipmentNodes($snapshot)->filter(fn ($node) => ($node['shipment_operation_type'] ?? 'packing') === 'packing')->groupBy('packaging_scheme_id')->map(fn ($nodes, $id) => [
+                    'id' => (int) $id, 'name' => $nodes->first()['packaging_scheme_name'] ?? '',
+                    'operations' => $nodes->map(fn ($node) => ['name' => $node['operation_name'], 'sequence' => $node['sequence']])->values()->all()])->values()->all(),
                 'before_materials' => $before, 'packaging_materials' => $this->packingMaterials($snapshot)];
         }));
         return $page->toArray();
@@ -113,10 +119,11 @@ class ShipmentPackingApplicationService
                     $coverage[$line->id] = bcadd($coverage[$line->id] ?? '0', $quantity, 8);
                     $nodes = $this->shipmentNodes($routes[$line->id]);
                     $schemeId = (int) ($row['packaging_scheme_id'] ?? 0);
-                    if ($nodes->isNotEmpty() && ! $nodes->contains(fn ($node) => (int) ($node['packaging_scheme_id'] ?? 0) === $schemeId)) {
+                    $packingNodes = $nodes->filter(fn ($node) => ($node['shipment_operation_type'] ?? 'packing') === 'packing');
+                    if ($packingNodes->isNotEmpty() && ! $packingNodes->contains(fn ($node) => (int) ($node['packaging_scheme_id'] ?? 0) === $schemeId)) {
                         $this->fail('所选包装方案不属于该产品冻结的工艺流程。');
                     }
-                    if ($nodes->isEmpty() && $schemeId) $this->fail('当前产品未配置该包装方案。');
+                    if ($packingNodes->isEmpty() && $schemeId) $this->fail('当前产品未配置该包装方案。');
                     $serials = array_map('intval', (array) ($row['inventory_serial_ids'] ?? []));
                     $allowed = array_map('intval', (array) ($line->serial_snapshot['inventory_serial_ids'] ?? []));
                     if (count($serials) !== count(array_unique($serials)) || array_diff($serials, $allowed)
@@ -132,6 +139,7 @@ class ShipmentPackingApplicationService
                 if (bccomp($coverage[$line->id] ?? '0', (string) $line->base_qty, 8) !== 0) $this->fail('所有包裹中该产品的数量合计必须等于本次发货数量。');
                 if (array_diff((array) ($line->serial_snapshot['inventory_serial_ids'] ?? []), $seenSerials)) $this->fail('本次发货的每个序列号都必须分配到包裹。');
             }
+            ShipmentSerialResult::query()->where('shipment_id', $shipment->id)->delete();
             $shipment->packingOperations()->delete();
             $shipment->packingContents()->delete();
             $shipment->packages()->delete();
@@ -147,11 +155,12 @@ class ShipmentPackingApplicationService
                     $line = $lines->get((int) $row['shipment_line_id']);
                     $route = $routes[$line->id];
                     $schemeId = (int) ($row['packaging_scheme_id'] ?? 0);
-                    $nodes = $this->shipmentNodes($route)->filter(fn ($node) => (int) ($node['packaging_scheme_id'] ?? 0) === $schemeId)->sortBy('sequence')->values();
+                    $nodes = $this->shipmentNodes($route)->filter(fn ($node) => ($node['shipment_operation_type'] ?? 'packing') !== 'packing'
+                        || (int) ($node['packaging_scheme_id'] ?? 0) === $schemeId)->sortBy('sequence')->values();
                     $content = ShipmentPackingContent::create(['shipment_id' => $shipment->id, 'package_id' => $parcel->id,
                         'shipment_line_id' => $line->id, 'sales_order_line_id' => $line->sales_order_line_id, 'item_id' => $line->item_id,
                         'packaging_scheme_id' => $schemeId ?: null,
-                        'packaging_scheme_name_snapshot' => $nodes->first()['packaging_scheme_name'] ?? null,
+                        'packaging_scheme_name_snapshot' => $nodes->first(fn ($node) => ($node['shipment_operation_type'] ?? 'packing') === 'packing')['packaging_scheme_name'] ?? null,
                         'base_qty' => CuttingDecimal::value($row['base_qty'], 8, true),
                         'serial_snapshot' => ['inventory_serial_ids' => array_map('intval', $row['inventory_serial_ids'] ?? [])],
                         'source_snapshot' => $line->packing_source_snapshot, 'routing_snapshot' => $route]);
@@ -160,6 +169,7 @@ class ShipmentPackingApplicationService
                     $key = hash('sha256', json_encode($this->canonicalSnapshot([
                         'routing_id' => (int) $route['routing_id'], 'routing_version' => (int) $route['version'],
                         'packaging_scheme_id' => $schemeId, 'item_id' => (int) $line->item_id, 'operations' => $nodes->all(),
+                        'serial_managed' => ! empty($content->serial_snapshot['inventory_serial_ids']),
                     ]), JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION | JSON_THROW_ON_ERROR));
                     $groups[$key] ??= ['route' => $route, 'nodes' => $nodes, 'ids' => [], 'qty' => '0'];
                     $groups[$key]['ids'][] = $content->id;
@@ -171,6 +181,7 @@ class ShipmentPackingApplicationService
                             'routing_id' => $group['route']['routing_id'], 'routing_version_snapshot' => $group['route']['version'],
                             'routing_operation_id' => $node['routing_operation_id'], 'operation_id' => $node['operation_id'],
                             'operation_code_snapshot' => $node['operation_no'] ?? null, 'operation_name_snapshot' => $node['operation_name'],
+                            'shipment_operation_type_snapshot' => $node['shipment_operation_type'] ?? 'packing',
                             'is_public_snapshot' => (bool) ($node['is_public'] ?? false),
                             'production_stage_id' => $node['production_stage_id'] ?? null,
                             'stage_code_snapshot' => $node['stage_code'] ?? $node['production_stage_code'] ?? null,
@@ -187,7 +198,8 @@ class ShipmentPackingApplicationService
                 }
                 if (! $parcel->packingOperations()->exists()) $parcel->update(['package_status' => 'packed']);
             }
-            $shipment->update(['packing_version' => (int) $shipment->packing_version + 1, 'packing_configured_at' => now()]);
+            $shipment->update(['packing_version' => (int) $shipment->packing_version + 1, 'packing_configured_at' => now(), 'business_version' => (int) $shipment->business_version + 1]);
+            foreach ($shipment->lines()->get() as $line) $this->resetSerialRound($line);
             $this->log($shipment->id, null, 'configure', $actor, ['package_count' => count($packages), 'packing_version' => $shipment->packing_version,
                 'packing_route_selections' => array_values(array_filter(array_map(fn ($route) => $route['packing_route_selection'] ?? null, $routes)))]);
             return ['shipment_id' => $shipment->id, 'packing_version' => $shipment->packing_version];
@@ -200,6 +212,7 @@ class ShipmentPackingApplicationService
         return $this->command($action, $shipmentId, $payload + ['operation_id' => $operationId], $actor, function (SalesShipment $shipment) use ($operationId, $action, $payload, $actor): array {
             $this->assertEditable($shipment);
             $op = ShipmentPackingOperation::query()->where('shipment_id', $shipment->id)->lockForUpdate()->findOrFail($operationId);
+            if (! in_array($shipment->shipment_status, ['prepared', 'partially_shipped', 'outbound_posted'], true)) $this->fail('设备移至待发区后才能开始发货作业。');
             if ((int) $op->business_version !== (int) ($payload['expected_version'] ?? 0)) $this->fail('包装工序已变化，请刷新后重试。');
             $actorId = (int) $actor->legacy_id;
             if (in_array($op->status, ['COMPLETED', 'CANCELLED'], true)) $this->fail('已完成或取消的包装工序不能再次操作。');
@@ -285,6 +298,9 @@ class ShipmentPackingApplicationService
             } elseif ($action === 'complete') {
                 $this->assertOwner($op, $actorId);
                 if ($op->status !== 'IN_PROGRESS') $this->fail('只有加工中的包装工序可以完成。');
+                if ($this->serialLines($op)->isNotEmpty()) {
+                    $this->completeSerials($op, $payload, $actor);
+                } else {
                 if (bccomp(CuttingDecimal::value($payload['completed_base_qty'] ?? '', 8, true), (string) $op->planned_base_qty, 8) !== 0) $this->fail('完成数量必须等于本工序包裹产品数量；不足的产品不能随包裹发运。');
                 foreach ($op->packaging_materials_snapshot ?? [] as $required) {
                     if (! $op->materials()->where('item_id', $required['component_item_id'])->whereNotNull('posted_at')->exists()) $this->fail('本工序配置的包装材料尚未登记正式库存耗用。');
@@ -294,9 +310,14 @@ class ShipmentPackingApplicationService
                 if ($op->laborSessions()->where('status', 'ACTIVE')->where('employee_legacy_id', '!=', $actorId)->exists()) $this->fail('协同人须先暂停本人的计时，再由接单人完成工序。');
                 foreach ($op->laborSessions()->where('status', 'ACTIVE')->lockForUpdate()->get() as $session) $this->closeSession($session, 'COMPLETED');
                 if (! $op->laborSessions()->where('employee_legacy_id', $actorId)->exists()) $this->fail('接单人必须记录实际作业工时。');
-                $op->fill(['status' => $op->quality_mode_snapshot === 'none' ? 'COMPLETED' : 'WAIT_QUALITY',
-                    'completed_base_qty' => $op->planned_base_qty, 'completed_at' => $op->quality_mode_snapshot === 'none' ? now() : null]);
+                $qualityRequired = $op->quality_mode_snapshot !== 'none' || $op->shipment_operation_type_snapshot === 'water_test';
+                $op->fill(['status' => $qualityRequired ? 'WAIT_QUALITY' : 'COMPLETED',
+                    'completed_base_qty' => $op->planned_base_qty, 'completed_at' => $qualityRequired ? null : now()]);
+                }
             } elseif ($action === 'inspect') {
+                if ($this->serialLines($op)->isNotEmpty()) {
+                    $this->inspectSerials($op, $payload, $actor);
+                } else {
                 if ($op->status !== 'WAIT_QUALITY') $this->fail('该包装工序当前不处于待质检状态。');
                 $auth = app(AuthContextService::class);
                 if (! $auth->isSuperAdmin($actor) && ! in_array('sales_order.shipment.packing.quality', $auth->permissionCodes($actor), true)) $this->fail('没有包装质检权限。');
@@ -305,10 +326,12 @@ class ShipmentPackingApplicationService
                 $op->fill(['quality_result' => $payload['result'], 'inspected_by_legacy_id' => $actorId,
                     'inspected_at' => now(), 'inspection_remark' => $payload['reason'] ?? null,
                     'status' => $passed ? 'COMPLETED' : 'READY', 'completed_at' => $passed ? now() : null]);
+                }
             } else $this->fail('未知包装工序动作。');
             $op->business_version = (int) $op->business_version + 1;
             $op->save();
-            if (in_array($action, ['complete', 'inspect'], true) && $op->status === 'COMPLETED') {
+            if ($this->serialLines($op)->isNotEmpty()) { $this->refreshSerialOperations((int) $op->package_id); $op->refresh(); }
+            if ($this->serialLines($op)->isEmpty() && in_array($action, ['complete', 'inspect'], true) && $op->status === 'COMPLETED') {
                 $next = ShipmentPackingOperation::query()->where('package_id', $op->package_id)->where('chain_key', $op->chain_key)->where('sequence', '>', $op->sequence)->orderBy('sequence')->lockForUpdate()->first();
                 if ($next && $next->status === 'WAITING') $next->update(['status' => 'READY', 'business_version' => (int) $next->business_version + 1]);
                 if (! ShipmentPackingOperation::query()->where('package_id', $op->package_id)->where('status', '!=', 'COMPLETED')->exists()) $op->package()->update(['package_status' => 'packed']);
@@ -318,20 +341,42 @@ class ShipmentPackingApplicationService
         });
     }
 
-    public function assertReady(SalesShipment $shipment): void
+    public function assertReady(SalesShipment $shipment, ?array $packageIds = null): void
     {
         $this->assertProductionReady($shipment);
-        foreach ($shipment->lines()->get() as $line) {
-            $route = $line->packing_routing_snapshot;
-            if ($line->packing_source_snapshot === null) $route = app(ShipmentSourceResolver::class)->contextForShipmentLine($line)['routing_snapshot'] ?? null;
+        $contents = $shipment->packingContents()->when($packageIds !== null, fn ($q) => $q->whereIn('package_id', $packageIds))->get();
+        foreach ($contents as $content) {
+            $line = $shipment->lines()->findOrFail($content->shipment_line_id);
+            if ($line->line_status !== 'prepared' && ! ($line->line_status === 'outbound_posted' && $this->legacyPosted($shipment))) $this->fail('所选设备尚未在待发区就绪。');
+            $route = $content->routing_snapshot ?? $line->packing_routing_snapshot;
+            if ($route === null && $line->packing_source_snapshot === null) $route = app(ShipmentSourceResolver::class)->contextForShipmentLine($line)['routing_snapshot'] ?? null;
+            if (collect($line->packing_source_snapshot ?? [])->contains(fn ($source) => ($source['source_origin'] ?? '') === 'mfg_production')) {
+                $types = $this->shipmentNodes($route)->map(fn ($node) => $node['shipment_operation_type'] ?? 'packing')->all();
+                if (array_diff(['water_test', 'packing'], $types) !== []) $this->fail('自产设备尚未配置本次试水和打包作业。');
+            }
             if ($this->shipmentNodes($route)->isEmpty()) continue;
-            $contents = $shipment->packingContents()->where('shipment_line_id', $line->id)->get();
-            if (bccomp((string) $contents->sum('base_qty'), (string) $line->base_qty, 8) !== 0) $this->fail('发货产品尚未完整分配包装方案和包裹。');
-            foreach ($contents as $content) {
-                if (! ShipmentPackingOperation::query()->where('package_id', $content->package_id)->whereJsonContains('packing_content_ids', (int) $content->id)->exists()) $this->fail('包裹缺少对应产品的包装工序。');
+            $operations = ShipmentPackingOperation::query()->where('package_id', $content->package_id)->whereJsonContains('packing_content_ids', (int) $content->id)->get();
+            if ($operations->isEmpty()) $this->fail('包裹缺少对应产品的发货作业。');
+            foreach ($operations as $operation) {
+                $serialIds = $line->serial_snapshot['inventory_serial_ids'] ?? [];
+                if (count($serialIds) === 1 && ShipmentSerialResult::query()->where('operation_id', $operation->id)->where('shipment_line_id', $line->id)->exists()) {
+                    if (! ShipmentSerialResult::query()->where('operation_id', $operation->id)->where('shipment_line_id', $line->id)
+                        ->where('round', $line->quality_round)->where('status', 'completed')->exists()) $this->fail('所选设备的本轮发货作业尚未全部合格完成。');
+                } elseif ($operation->status !== 'COMPLETED') $this->fail('所选包裹的发货作业尚未完成。');
             }
         }
-        if ($shipment->packingOperations()->where('status', '!=', 'COMPLETED')->exists()) $this->fail('本次发货的包装工序尚未全部完成。');
+        if ($contents->isEmpty()) $this->fail('请先配置真实包裹及产品明细。');
+    }
+
+    public function dispatchablePackages(SalesShipment $shipment): array
+    {
+        return $shipment->packages()->orderBy('id')->get()->map(function ($package) use ($shipment): array {
+            $blockers = [];
+            if ($package->package_status === 'shipped') $blockers[] = '该包裹已经发出。';
+            else try { $this->assertReady($shipment, [(int) $package->id]); }
+            catch (ValidationException $exception) { $blockers = array_values(array_unique(collect($exception->errors())->flatten()->all())); }
+            return ['id' => (int) $package->id, 'package_no' => $package->package_no, 'ready' => $blockers === [], 'blockers' => $blockers];
+        })->all();
     }
 
     public function assertCanCancel(SalesShipment $shipment): void
@@ -368,6 +413,8 @@ class ShipmentPackingApplicationService
             'is_public_snapshot' => (bool) $op->is_public_snapshot,
             'stage_name' => $op->stage_name_snapshot, 'sequence' => (int) $op->sequence, 'status' => $op->status,
             'quality_result' => $op->quality_result,
+            'shipment_operation_type' => $op->shipment_operation_type_snapshot,
+            'serial_results' => $this->operationSerialResults($op, $actorId),
             'owner_legacy_id' => $op->owner_legacy_id ? (int) $op->owner_legacy_id : null,
             'planned_base_qty' => $op->planned_base_qty, 'completed_base_qty' => $op->completed_base_qty,
             'business_version' => (int) $op->business_version, 'participants' => $participants,
@@ -393,8 +440,131 @@ class ShipmentPackingApplicationService
                 'pause' => $active && $me && $me['is_timing'],
                 'materials' => $active && (int) $op->owner_legacy_id === $actorId && $op->status === 'IN_PROGRESS' && ! empty($op->packaging_materials_snapshot),
                 'complete' => $active && (int) $op->owner_legacy_id === $actorId && $op->status === 'IN_PROGRESS',
-                'inspect' => $active && $op->status === 'WAIT_QUALITY',
+                'inspect' => $active && ($op->status === 'WAIT_QUALITY' || collect($this->operationSerialResults($op, $actorId))->contains(fn ($row) => $row['allowed_actions']['inspect'])),
             ]];
+    }
+
+    public function resetSerialRound(SalesShipmentLine $line): void
+    {
+        if ($this->legacyPosted($line->shipment)) return;
+        $serialIds = $line->serial_snapshot['inventory_serial_ids'] ?? [];
+        if (count($serialIds) !== 1 || bccomp((string) $line->base_qty, '1', 8) !== 0) return;
+        $contents = ShipmentPackingContent::query()->where('shipment_line_id', $line->id)->get();
+        foreach ($contents as $content) {
+            foreach (ShipmentPackingOperation::query()->where('package_id', $content->package_id)->whereJsonContains('packing_content_ids', (int) $content->id)->get() as $op) {
+                ShipmentSerialResult::firstOrCreate(['operation_id' => $op->id, 'shipment_line_id' => $line->id, 'round' => (int) $line->quality_round],
+                    ['shipment_id' => $line->shipment_id, 'inventory_serial_id' => $serialIds[0], 'status' => 'waiting']);
+            }
+            $this->refreshSerialOperations((int) $content->package_id);
+        }
+    }
+
+    private function serialLines(ShipmentPackingOperation $op)
+    {
+        if ($this->legacyPosted($op->shipment)) return collect();
+        return SalesShipmentLine::query()->whereIn('id', $op->contents()->pluck('shipment_line_id'))->get()
+            ->filter(fn ($line) => count($line->serial_snapshot['inventory_serial_ids'] ?? []) === 1 && bccomp((string) $line->base_qty, '1', 8) === 0);
+    }
+
+    private function legacyPosted(SalesShipment $shipment): bool
+    {
+        return DB::table('erp_inventory_transactions')->where('source_type', 'sales_shipment')->where('source_id', $shipment->id)
+            ->where('transaction_type', 'sales_shipment_outbound')->where('posting_status', 'posted')->exists();
+    }
+
+    private function precedingCompleted(ShipmentPackingOperation $op, SalesShipmentLine $line): bool
+    {
+        foreach (ShipmentPackingOperation::query()->where('package_id', $op->package_id)->where('chain_key', $op->chain_key)->where('sequence', '<', $op->sequence)->get() as $previous) {
+            if (! ShipmentSerialResult::query()->where('operation_id', $previous->id)->where('shipment_line_id', $line->id)->where('round', $line->quality_round)->where('status', 'completed')->exists()) return false;
+        }
+        return true;
+    }
+
+    private function selectedSerialLines(ShipmentPackingOperation $op, array $payload)
+    {
+        $ids = array_values(array_unique(array_map('intval', $payload['inventory_serial_ids'] ?? [])));
+        $lines = $this->serialLines($op)->filter(fn ($line) => in_array((int) ($line->serial_snapshot['inventory_serial_ids'][0] ?? 0), $ids, true));
+        if ($ids === [] || $lines->count() !== count($ids) || $lines->contains(fn ($line) => $line->line_status !== 'prepared')) $this->fail('请选择本作业中仍在待发区的对应设备。');
+        return $lines;
+    }
+
+    private function completeSerials(ShipmentPackingOperation $op, array $payload, object $actor): void
+    {
+        $lines = $this->selectedSerialLines($op, $payload);
+        if (bccomp((string) ($payload['completed_base_qty'] ?? 0), (string) $lines->count(), 8) !== 0) $this->fail('本次完成数量必须等于所选设备数量。');
+        foreach ($op->packaging_materials_snapshot ?? [] as $required) {
+            if (! $op->materials()->where('item_id', $required['component_item_id'])->whereNotNull('posted_at')->exists()) $this->fail('请先登记本包裹实际使用的包装材料。');
+        }
+        if ($op->laborSessions()->where('status', 'ACTIVE')->where('employee_legacy_id', '!=', $actor->legacy_id)->exists()) $this->fail('协同人须先暂停本人的计时，再由接单人确认成果。');
+        if (! $op->laborSessions()->where('employee_legacy_id', $actor->legacy_id)->exists()) $this->fail('接单人必须记录实际作业工时。');
+        foreach ($lines as $line) {
+            if (! $this->precedingCompleted($op, $line)) $this->fail('所选设备的前道发货作业尚未合格。');
+            $result = ShipmentSerialResult::query()->where('operation_id', $op->id)->where('shipment_line_id', $line->id)->where('round', $line->quality_round)->lockForUpdate()->firstOrFail();
+            if ($result->status !== 'waiting') $this->fail('所选设备已经登记过本轮成果，不能重复完成。');
+            $quality = $op->shipment_operation_type_snapshot === 'water_test' || $op->quality_mode_snapshot !== 'none';
+            $result->update(['status' => $quality ? 'wait_quality' : 'completed', 'completed_by_legacy_id' => (int) $actor->legacy_id, 'completed_at' => now()]);
+        }
+        foreach ($op->laborSessions()->where('status', 'ACTIVE')->lockForUpdate()->get() as $session) $this->closeSession($session, 'COMPLETED');
+        $op->fill(['status' => 'IN_PROGRESS']);
+    }
+
+    private function inspectSerials(ShipmentPackingOperation $op, array $payload, object $actor): void
+    {
+        $auth = app(AuthContextService::class);
+        if (! $auth->isSuperAdmin($actor) && ! in_array('sales_order.shipment.packing.quality', $auth->permissionCodes($actor), true)) $this->fail('没有发货质检权限。');
+        if (! in_array($payload['result'] ?? '', ['passed', 'failed'], true)) $this->fail('请选择合格或不合格。');
+        foreach ($this->selectedSerialLines($op, $payload) as $line) {
+            $result = ShipmentSerialResult::query()->where('operation_id', $op->id)->where('shipment_line_id', $line->id)->where('round', $line->quality_round)->lockForUpdate()->firstOrFail();
+            if ($result->status !== 'wait_quality') $this->fail('所选设备尚未完成本轮作业或已质检，不能重复判定。');
+            if ($payload['result'] === 'failed') app(ShipmentSerialApplicationService::class)->failSerial($line, $payload, $actor);
+            $result->update(['status' => $payload['result'] === 'passed' ? 'completed' : 'failed', 'quality_result' => $payload['result'],
+                'inspected_by_legacy_id' => (int) $actor->legacy_id, 'inspected_at' => now(), 'reason' => $payload['reason'] ?? null]);
+        }
+        $op->fill(['status' => 'IN_PROGRESS']);
+    }
+
+    private function refreshSerialOperations(int $packageId): void
+    {
+        $operations = ShipmentPackingOperation::query()->where('package_id', $packageId)->orderBy('sequence')->lockForUpdate()->get();
+        foreach ($operations as $op) {
+            $lines = $this->serialLines($op);
+            if ($lines->isEmpty()) continue;
+            $active = $lines->whereNotIn('line_status', ['repair', 'replaced', 'cancelled']);
+            $rows = $active->map(fn ($line) => ShipmentSerialResult::query()->where('operation_id', $op->id)->where('shipment_line_id', $line->id)->where('round', $line->quality_round)->first());
+            $completed = $rows->filter(fn ($row) => $row?->status === 'completed')->count();
+            $ready = $active->contains(fn ($line) => $line->line_status === 'prepared' && $this->precedingCompleted($op, $line)
+                && ShipmentSerialResult::query()->where('operation_id', $op->id)->where('shipment_line_id', $line->id)->where('round', $line->quality_round)->where('status', 'waiting')->exists());
+            $waitingQuality = $rows->contains(fn ($row) => $row?->status === 'wait_quality');
+            $status = $active->isNotEmpty() && $completed === $active->count() ? 'COMPLETED'
+                : ($ready ? ($op->started_at ? 'IN_PROGRESS' : 'READY') : ($waitingQuality ? 'WAIT_QUALITY' : 'WAITING'));
+            if ($op->status !== $status || bccomp((string) $op->completed_base_qty, (string) $completed, 8) !== 0) {
+                $op->update(['status' => $status, 'completed_base_qty' => $completed, 'completed_at' => $status === 'COMPLETED' ? now() : null,
+                    'business_version' => (int) $op->business_version + 1]);
+            }
+        }
+        if ($operations->isNotEmpty()) {
+            $ready = ! ShipmentPackingOperation::query()->where('package_id', $packageId)->where('status', '!=', 'COMPLETED')->exists();
+            SalesShipmentPackage::query()->whereKey($packageId)->where('package_status', '!=', 'shipped')->update(['package_status' => $ready ? 'packed' : 'packing']);
+        }
+    }
+
+    private function operationSerialResults(ShipmentPackingOperation $op, int $actorId): array
+    {
+        $user = DB::table('erp_legacy_admin_users')->where('legacy_id', $actorId)->first();
+        $auth = app(AuthContextService::class);
+        $quality = $user && ($auth->isSuperAdmin($user) || in_array('sales_order.shipment.packing.quality', $auth->permissionCodes($user), true));
+        return $this->serialLines($op)->flatMap(function ($line) use ($op, $actorId, $quality) {
+            $row = ShipmentSerialResult::query()->where('operation_id', $op->id)->where('shipment_line_id', $line->id)->where('round', $line->quality_round)->first();
+            return \App\Models\Erp\InventorySerial::query()->with(['warehouse', 'location'])->whereIn('id', $line->serial_snapshot['inventory_serial_ids'] ?? [])->get()->map(function ($serial) use ($line, $row, $op, $actorId, $quality) {
+                $ready = $line->line_status === 'prepared' && $this->precedingCompleted($op, $line);
+                return ['shipment_line_id' => (int) $line->id, 'inventory_serial_id' => (int) $serial->id, 'serial_no' => $serial->serial_no,
+                    'round' => (int) $line->quality_round, 'status' => $row?->status === 'waiting' && $ready ? 'ready' : ($row?->status ?? 'waiting'),
+                    'quality_result' => $row?->quality_result,
+                    'requires_return_operation' => \App\Models\Erp\MfgWorkOrderUnit::query()->where('inventory_serial_id', $serial->id)->exists(),
+                    'allowed_actions' => ['complete' => $ready && $row?->status === 'waiting' && (int) $op->owner_legacy_id === $actorId && $op->status === 'IN_PROGRESS',
+                        'inspect' => $ready && $row?->status === 'wait_quality' && $quality]] + app(ShipmentSerialApplicationService::class)->stockLocationProjection($serial);
+            });
+        })->values()->all();
     }
 
     private function originRoute(SalesShipmentLine $line): ?array
@@ -405,19 +575,25 @@ class ShipmentPackingApplicationService
 
     private function candidateQuery(SalesShipmentLine $line)
     {
-        $schemes = $this->shipmentNodes($this->originRoute($line))->pluck('packaging_scheme_id')->map('intval')->unique()->all();
+        $schemes = $this->shipmentNodes($this->originRoute($line))->filter(fn ($node) => ($node['shipment_operation_type'] ?? 'packing') === 'packing')
+            ->pluck('packaging_scheme_id')->filter()->map('intval')->unique()->all();
         return ProductionRouting::where('output_item_id', $line->item_id)->where('status', 'active')
             ->where(fn ($q) => $q->whereNull('product_id')->orWhere('product_id', $line->orderLine?->product_id))
             ->where(fn ($q) => $q->whereNull('sku_id')->orWhere('sku_id', $line->orderLine?->sku_id))
-            ->whereHas('operations', fn ($q) => $q->where('execution_context', 'shipment')->whereIn('packaging_scheme_id', $schemes))
-            ->whereDoesntHave('operations', fn ($q) => $q->where('execution_context', 'shipment')
-                ->where(fn ($w) => $w->whereNull('packaging_scheme_id')->orWhereNotIn('packaging_scheme_id', $schemes)))
+            ->whereHas('operations', fn ($q) => $q->where('execution_context', 'shipment'))
+            ->when($schemes !== [], fn ($routes) => $routes->whereDoesntHave('operations', fn ($q) => $q->where('execution_context', 'shipment')
+                ->where(fn ($kind) => $kind->where('shipment_operation_type', 'packing')->orWhereNull('shipment_operation_type'))
+                ->where(fn ($w) => $w->whereNull('packaging_scheme_id')->orWhereNotIn('packaging_scheme_id', $schemes))))
             ->whereDoesntHave('operations', fn ($q) => $q->where('execution_context', 'shipment')->whereHas('packagingScheme', fn ($w) => $w->where('status', '!=', 'enabled')));
     }
 
     private function selectedRoutes($lines, array $selections, object $actor, SalesShipment $shipment): array
     {
         $routes = []; foreach ($lines as $line) $routes[$line->id] = $line->packing_routing_snapshot;
+        $selectedLineIds = array_map('intval', array_column($selections, 'shipment_line_id'));
+        foreach ($lines as $line) {
+            if ($this->requiresRouteSelection($line) && ! in_array((int) $line->id, $selectedLineIds, true)) $this->fail('请明确选择本次适用的发货工艺路线并填写原因。');
+        }
         $seen = [];
         foreach ($selections as $selection) {
             $line = $lines->get((int) ($selection['shipment_line_id'] ?? 0));
@@ -443,7 +619,22 @@ class ShipmentPackingApplicationService
                 'selected_at' => now()->toISOString(), 'packing_version' => (int) $shipment->packing_version + 1];
             $routes[$line->id] = $route;
         }
+        foreach ($lines as $line) {
+            if (collect($line->packing_source_snapshot ?? [])->contains(fn ($source) => ($source['source_origin'] ?? '') === 'mfg_production')) {
+                $types = $this->shipmentNodes($routes[$line->id])->map(fn ($node) => $node['shipment_operation_type'] ?? 'packing')->all();
+                if (array_diff(['water_test', 'packing'], $types) !== []) $this->fail('自产设备的发货路线须包含试水和打包作业。');
+            }
+        }
         return $routes;
+    }
+
+    private function requiresRouteSelection(SalesShipmentLine $line): bool
+    {
+        $origins = collect($line->packing_source_snapshot ?? [])->pluck('source_origin');
+        if ($origins->contains('legacy_production_stock')) return true;
+        if (! $origins->contains('mfg_production')) return false;
+        $types = $this->shipmentNodes($line->packing_routing_snapshot)->map(fn ($node) => $node['shipment_operation_type'] ?? 'packing')->all();
+        return array_diff(['water_test', 'packing'], $types) !== [];
     }
 
     private function routeIdentity(?array $route): ?array
@@ -476,6 +667,7 @@ class ShipmentPackingApplicationService
 
     private function assertProductionReady(SalesShipment $shipment): void
     {
+        if ($this->legacyPosted($shipment)) return;
         foreach ($shipment->lines()->get() as $line) {
             $blockers = app(ShipmentSourceResolver::class)->contextForShipmentLine($line)['blockers'] ?? [];
             if ($blockers !== []) $this->fail(implode('；', $blockers));
@@ -484,7 +676,7 @@ class ShipmentPackingApplicationService
 
     private function assertEditable(SalesShipment $shipment): void
     {
-        if (! in_array($shipment->shipment_status, ['draft', 'pending_outbound', 'outbound_posted'], true)) $this->fail('已发运或取消的单据不能修改包装作业。');
+        if (! in_array($shipment->shipment_status, ['draft', 'pending_outbound', 'prepared', 'partially_shipped', 'outbound_posted'], true)) $this->fail('已发运或取消的单据不能修改包装作业。');
     }
 
     private function assertOwner(ShipmentPackingOperation $op, int $actorId): void
@@ -506,31 +698,7 @@ class ShipmentPackingApplicationService
 
     private function command(string $action, int $shipmentId, array $payload, object $actor, \Closure $mutation): array
     {
-        $commandId = trim((string) ($payload['client_command_id'] ?? ''));
-        if ($commandId === '' || strlen($commandId) > 100) $this->fail('缺少有效的操作编号，请刷新后重试。');
-        $hash = hash('sha256', json_encode([$action, $shipmentId, $payload], JSON_UNESCAPED_UNICODE | JSON_PRESERVE_ZERO_FRACTION));
-        $actorId = (int) $actor->legacy_id;
-        $replay = function ($row) use ($hash): array {
-            if ($row->request_hash !== $hash) $this->fail('同一操作编号不能用于不同内容。');
-            return json_decode($row->response, true);
-        };
-        try {
-            return DB::transaction(function () use ($shipmentId, $actorId, $commandId, $hash, $mutation, $replay): array {
-                $shipment = SalesShipment::query()->lockForUpdate()->findOrFail($shipmentId);
-                $existing = DB::table('erp_shipment_packing_commands')->where('operator_legacy_id', $actorId)->where('client_command_id', $commandId)->first();
-                if ($existing) return $replay($existing);
-                $response = $mutation($shipment);
-                DB::table('erp_shipment_packing_commands')->insert(['operator_legacy_id' => $actorId, 'client_command_id' => $commandId,
-                    'request_hash' => $hash, 'response' => json_encode($response, JSON_UNESCAPED_UNICODE), 'created_at' => now(), 'updated_at' => now()]);
-                return $response;
-            }, 5);
-        } catch (QueryException $exception) {
-            // A unique command conflict rolls back every inventory/labor mutation. Only the
-            // exact persisted request may be replayed after a concurrent successful attempt.
-            $existing = DB::table('erp_shipment_packing_commands')->where('operator_legacy_id', $actorId)->where('client_command_id', $commandId)->first();
-            if ($existing) return $replay($existing);
-            throw $exception;
-        }
+        return $this->commands->run($action, $shipmentId, $payload, $actor, $mutation);
     }
 
     private function log(int $shipmentId, ?int $operationId, string $action, object $actor, array $payload): void

@@ -61,16 +61,23 @@ final class WarehouseWorkspaceController extends Controller
     public function locators(Request $request)
     {
         [, $permissions] = $this->context($request);
-        $allowed = ['inventory.post.repair', 'sales_return.receive'];
+        $allowed = ['inventory.post.repair', 'sales_return.receive', 'sales_order.shipment.post', 'sales_order.shipment.packing.execute', 'sales_order.shipment.packing.quality'];
         if (! array_intersect($allowed, $permissions)) throw new WorkOrderDomainException('permission_denied', '没有选择入出库位置的权限。', 403);
         $filters = $request->validate(['mode' => 'required|in:warehouse,location', 'warehouse_id' => 'required_if:mode,location|integer|min:1',
-            'keyword' => 'nullable|string|max:100', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
+            'keyword' => 'nullable|string|max:100', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100',
+            'location_purpose' => 'nullable|in:general,finished,shipping_staging,repair']);
         $mode = $filters['mode'];
         $query = DB::table($mode === 'warehouse' ? 'erp_warehouses' : 'erp_locations')->where('status', 'enabled');
         if ($mode === 'location') $query->where('warehouse_id', $filters['warehouse_id']);
+        if ($mode === 'location' && ! empty($filters['location_purpose'])) $query->where('location_purpose', $filters['location_purpose']);
+        if (array_intersect(['sales_order.shipment.post', 'sales_order.shipment.packing.execute', 'sales_order.shipment.packing.quality'], $permissions)
+            && ! array_intersect(['inventory.post.repair', 'sales_return.receive'], $permissions)) {
+            if ($mode === 'warehouse') $query->where('management_scope', 'factory');
+            else $query->whereIn('warehouse_id', DB::table('erp_warehouses')->where('management_scope', 'factory')->where('status', 'enabled')->select('id'));
+        }
         if ($keyword = trim((string) ($filters['keyword'] ?? ''))) $query->where(fn ($q) => $q->where($mode.'_code', 'like', '%'.$keyword.'%')->orWhere($mode.'_name', 'like', '%'.$keyword.'%'));
         $query->select('id', $mode.'_code as code', $mode.'_name as name', 'status');
-        if ($mode === 'location') $query->addSelect('warehouse_id', 'area');
+        if ($mode === 'location') $query->addSelect('warehouse_id', 'area', 'location_purpose');
         return response()->json($query->orderBy('id')->paginate($filters['per_page'] ?? 10));
     }
 

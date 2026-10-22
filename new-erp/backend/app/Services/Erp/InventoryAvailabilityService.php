@@ -56,25 +56,33 @@ class InventoryAvailabilityService
      * Shared outbound boundary for order/work reservations, supplier returns,
      * exchanges and quality handling.
      */
-    public function availableForOutbound(InventoryBalance $balance): float
+    public function availableForOutbound(InventoryBalance $balance, float $ownReserved = 0): float
     {
+        // 最终办理只加回调用方已锁定的本次占用，其他占用、不良与待定量仍扣除。
+        $ownReserved = max(0, min((float) $balance->quantity_locked, $ownReserved));
         // Plates and remnants are selected by physical identity, not Item totals.
         // Configured/staged lots also require their specific supply adapter; an
         // Item-only sales/picking query must not widen their eligibility.
         if ($balance->item?->materialManagementMode() === 'physical') return 0.0;
         if ($balance->material_lot_id) {
-            $lot = \Illuminate\Support\Facades\DB::table('erp_material_lots')->where('id', $balance->material_lot_id)->first();
+            $lotQuery = \Illuminate\Support\Facades\DB::table('erp_material_lots')->where('id', $balance->material_lot_id);
+            if ($ownReserved > 0 && \Illuminate\Support\Facades\DB::transactionLevel() > 0) $lotQuery->lockForUpdate();
+            $lot = $lotQuery->first();
             if (! $lot) return 0.0;
-            if ($lot->configuration_id || $lot->stage_id || ! in_array($lot->material_form, ['FULL_STOCK','STANDARD_LENGTH'], true)) return 0.0;
+            $ordinaryProduct = $lot->material_form === 'PRODUCT'
+                && $balance->item?->item_type === 'finished_product'
+                && $balance->item?->materialManagementMode() === 'quantity';
+            if ((int) $lot->item_id !== (int) $balance->item_id || $lot->configuration_id || $lot->stage_id
+                || (! $ordinaryProduct && ! in_array($lot->material_form, ['FULL_STOCK', 'STANDARD_LENGTH'], true))) return 0.0;
         }
         $calculated = $this->calculate(
             (float) $balance->quantity_on_hand,
-            (float) $balance->quantity_locked,
+            (float) $balance->quantity_locked - $ownReserved,
             (float) $balance->quantity_defective,
             (float) $balance->quantity_pending,
         );
 
-        return max(0, min((float) $balance->quantity_available, $calculated));
+        return max(0, min((float) $balance->quantity_available + $ownReserved, $calculated));
     }
 
     /** Exact decimal projection for planning; eligibility remains governed by the shared outbound boundary. */

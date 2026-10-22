@@ -29,6 +29,7 @@ use App\Http\Controllers\Api\V1\Erp\ProductionMasterDataController;
 use App\Http\Controllers\Api\V1\Erp\ProductionProcessCatalogController;
 use App\Http\Controllers\Api\V1\Erp\ProductionPerformanceTemplateController;
 use App\Http\Controllers\Api\V1\Erp\MfgWorkOrderController;
+use App\Http\Controllers\Api\V1\Erp\MfgCuttingController;
 use App\Http\Controllers\Api\V1\Erp\MfgTaskController;
 use App\Http\Controllers\Api\V1\Erp\MfgTechController;
 use App\Http\Controllers\Api\V1\Erp\ShipmentPackingController;
@@ -359,6 +360,10 @@ Route::prefix('v1/erp/sales')->group(function () {
     Route::post('shipments/{id}/confirm', [SalesShipmentController::class, 'confirm'])->whereNumber('id');
     Route::post('shipments/{id}/post-outbound', [SalesShipmentController::class, 'postOutbound'])->whereNumber('id');
     Route::post('shipments/{id}/dispatch', [SalesShipmentController::class, 'dispatch'])->whereNumber('id');
+    Route::get('shipments/{id}/serials/{lineId}/rework-operations', [SalesShipmentController::class, 'reworkOperations'])->whereNumber(['id', 'lineId']);
+    Route::get('shipments/{id}/serials/{lineId}/replacement-serials', [SalesShipmentController::class, 'replacementSerials'])->whereNumber(['id', 'lineId']);
+    Route::post('shipments/{id}/serials/{lineId}/repair-return', [SalesShipmentController::class, 'repairReturn'])->whereNumber(['id', 'lineId']);
+    Route::post('shipments/{id}/serials/{lineId}/replace', [SalesShipmentController::class, 'replaceSerial'])->whereNumber(['id', 'lineId']);
     Route::post('shipments/{id}/cancel', [SalesShipmentController::class, 'cancel'])->whereNumber('id');
     Route::delete('shipments/{id}', [SalesShipmentController::class, 'destroyDraft'])->whereNumber('id');
     Route::get('orders/{id}/logs', [SalesOrderController::class, 'logs'])->whereNumber('id');
@@ -422,6 +427,11 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::post('work-orders/{id}/cancel', [MfgWorkOrderController::class, 'cancel'])->whereNumber('id');
     Route::post('work-orders/{id}/semi-orders', [MfgWorkOrderController::class, 'semiOrder'])->whereNumber('id');
     Route::post('work-orders/{id}/operations/{operationId}/material-receipts', [MfgWorkOrderController::class, 'receiveMaterials'])->whereNumber(['id', 'operationId']);
+    Route::get('work-orders/{id}/cutting', [MfgCuttingController::class, 'context'])->whereNumber('id');
+    Route::get('work-orders/{id}/cutting/sources', [MfgCuttingController::class, 'sources'])->whereNumber('id');
+    Route::post('work-orders/{id}/cutting/preview', [MfgCuttingController::class, 'preview'])->whereNumber('id');
+    Route::post('work-orders/{id}/cutting/issue', [MfgCuttingController::class, 'issue'])->whereNumber('id');
+    Route::post('cutting-batches/{id}/settle', [MfgCuttingController::class, 'settle'])->whereNumber('id');
     Route::get('serials/lookup', [MfgWorkOrderController::class, 'serial']);
     Route::get('sales-orders/{orderId}/work-orders', [MfgWorkOrderController::class, 'salesOrder'])->whereNumber('orderId');
     // 车间报工、作业看板、成品入库、定制技术（第 2 阶段）

@@ -33,6 +33,7 @@ CREATE TABLE `erp_production_routing_operations` (
   `updated_at` timestamp NULL DEFAULT NULL,
   `production_stage_id` bigint(20) unsigned DEFAULT NULL,
   `execution_context` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'production',
+  `shipment_operation_type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `packaging_scheme_id` bigint(20) unsigned DEFAULT NULL,
   `performance_rate` decimal(10,6) DEFAULT NULL,
   `packaging_materials` json DEFAULT NULL,

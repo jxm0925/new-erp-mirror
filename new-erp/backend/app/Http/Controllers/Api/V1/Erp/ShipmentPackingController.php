@@ -50,6 +50,9 @@ class ShipmentPackingController extends Controller
                 'inventory_serial_ids' => $content->serial_snapshot['inventory_serial_ids'] ?? []])->all(),
         ])->all() : null;
         return response()->json(['data' => ['shipment_id' => (int) $shipment->id, 'shipment_no' => $shipment->shipment_no,
+            'shipment_version' => (int) $shipment->business_version, 'staged_at' => $shipment->staged_at,
+            'serial_results' => app(\App\Services\Erp\ShipmentSerialApplicationService::class)->projection($shipment),
+            'dispatchable_packages' => $service->dispatchablePackages($shipment),
             'packing_version' => (int) $shipment->packing_version, 'requirements' => $service->requirements($shipment),
             'operations' => $operations, 'packages' => $packages, 'plan_packages' => $plan,
             'packing_route_selections' => $request->boolean('plan') ? $service->savedRouteSelections($shipment) : null]]);
@@ -92,7 +95,7 @@ class ShipmentPackingController extends Controller
     public function operations(Request $request, ShipmentPackingApplicationService $service)
     {
         $actor = $this->authorizeExecutionRead($request);
-        $query = ShipmentPackingOperation::query()->whereHas('shipment', fn ($q) => $q->whereIn('shipment_status', ['draft', 'pending_outbound', 'outbound_posted']))
+        $query = ShipmentPackingOperation::query()->whereHas('shipment', fn ($q) => $q->whereIn('shipment_status', ['draft', 'pending_outbound', 'prepared', 'partially_shipped', 'outbound_posted']))
             ->when($request->filled('shipment_id'), fn ($q) => $q->where('shipment_id', $request->integer('shipment_id')))
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->input('status')))
             ->when($request->filled('keyword'), fn ($q) => $q->where('operation_name_snapshot', 'like', '%'.trim((string) $request->input('keyword')).'%'));
@@ -120,6 +123,8 @@ class ShipmentPackingController extends Controller
             'shares.*.employee_legacy_id' => 'required|integer|min:1|distinct',
             'shares.*.share_ratio' => 'required|numeric|min:0|max:1', 'shares.*.remark' => 'nullable|string|max:500',
             'completed_base_qty' => 'required_if:action,complete|numeric|min:0.00000001',
+            'inventory_serial_ids' => 'nullable|array|max:1000', 'inventory_serial_ids.*' => 'integer|min:1|distinct',
+            'repair_location_id' => 'nullable|integer|min:1', 'return_operation_id' => 'nullable|integer|min:1',
             'materials' => 'required_if:action,materials|array|min:1|max:100',
             'materials.*.inventory_balance_id' => 'required|integer', 'materials.*.base_qty' => 'required|numeric|min:0.00000001',
             'materials.*.inventory_serial_ids' => 'nullable|array', 'materials.*.inventory_serial_ids.*' => 'integer|distinct',
@@ -240,7 +245,11 @@ class ShipmentPackingController extends Controller
         $query->where(fn ($q) => $q->where(fn ($ready) => $ready->where('status', 'READY')->whereNull('owner_legacy_id'))
             ->orWhereHas('participants', fn ($p) => $p->where('employee_legacy_id', $actor->legacy_id))
             ->orWhere('inspected_by_legacy_id', $actor->legacy_id)
-            ->when(in_array('sales_order.shipment.packing.quality', $auth->permissionCodes($actor), true), fn ($quality) => $quality->orWhere('status', 'WAIT_QUALITY')));
+            ->when(in_array('sales_order.shipment.packing.quality', $auth->permissionCodes($actor), true), fn ($quality) => $quality->orWhere('status', 'WAIT_QUALITY')
+                ->orWhereExists(fn ($pending) => $pending->selectRaw('1')->from('erp_shipment_serial_results as result')
+                    ->join('erp_sales_shipment_lines as line', 'line.id', '=', 'result.shipment_line_id')
+                    ->whereColumn('result.operation_id', 'erp_shipment_packing_operations.id')->whereColumn('result.round', 'line.quality_round')
+                    ->where('line.line_status', 'prepared')->where('result.status', 'wait_quality'))));
     }
 
     private function authorizeExecutionRead(Request $request): object

@@ -1,7 +1,7 @@
 const warehouse = require('../../services/warehouse');
 const page = require('../../utils/warehouse-page');
 Component({
-  properties: { open: Boolean, value: { type: Object, value: {} } },
+  properties: { open: Boolean, value: { type: Object, value: {} }, locationPurpose: { type: String, value: '' } },
   data: { warehouses: [], locations: [], warehousePage: 1, locationPage: 1, warehouseLast: 1, locationLast: 1,
     warehouseTotal: 0, locationTotal: 0, warehouseKeyword: '', locationKeyword: '', selected: {}, error: '', warehouseLoading: false, locationLoading: false },
   observers: { open(value) { if (value) this.reset(); else { this.warehouseSequence = (this.warehouseSequence || 0) + 1; this.locationSequence = (this.locationSequence || 0) + 1; } } },
@@ -21,7 +21,7 @@ Component({
     loadLocations() {
       const sequence = this.locationSequence = (this.locationSequence || 0) + 1;
       this.setData({ locationLoading: true, error: '' });
-      return warehouse.locators({ mode: 'location', warehouse_id: this.data.selected.warehouse_id, keyword: this.data.locationKeyword, page: this.data.locationPage, per_page: 10 }).then(response => {
+      return warehouse.locators({ mode: 'location', warehouse_id: this.data.selected.warehouse_id, location_purpose: this.properties.locationPurpose || undefined, keyword: this.data.locationKeyword, page: this.data.locationPage, per_page: 10 }).then(response => {
         if (sequence !== this.locationSequence) return;
         const result = page.rows(response); this.setData({ locations: result.rows.map(row => Object.assign({}, row, { areaName: ({ raw: '原料区', finished: '成品区' })[row.area] || row.area || '' })),
           locationPage: result.page, locationLast: result.lastPage, locationTotal: result.total, locationLoading: false });

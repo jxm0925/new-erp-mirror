@@ -6,6 +6,8 @@ use App\Models\Erp\Bom;
 use App\Models\Erp\InventoryBalance;
 use App\Models\Erp\Item;
 use App\Models\Erp\MfgWorkOrder;
+use App\Models\Erp\MfgCuttingBatch;
+use App\Models\Erp\MfgMaterialIssue;
 use App\Models\Erp\MfgDrawing;
 use App\Models\Erp\MfgLaborSession;
 use App\Models\Erp\MfgTaskParticipant;
@@ -28,7 +30,7 @@ final class WorkOrderQueryService
         'completed' => '已完工', 'closed' => '已关闭', 'cancelled' => '已取消'];
     public const STOCK_REASONS = ['alert' => '库存预警', 'regular' => '常规备货', 'other' => '其他'];
     public const UNIT_LABELS = ['waiting' => '未开工', 'in_progress' => '在制', 'rework' => '返工', 'completed' => '等入库',
-        'stored' => '待试水', 'scrapped' => '报废', 'cancelled' => '已取消'];
+        'stored' => '已入库', 'scrapped' => '报废', 'cancelled' => '已取消'];
 
     private array $funding = [];
 
@@ -52,7 +54,7 @@ final class WorkOrderQueryService
 
     public function detail(int $id, bool $amounts): array
     {
-        $wo = MfgWorkOrder::query()->with(['operations', 'units', 'materials'])->findOrFail($id);
+        $wo = MfgWorkOrder::query()->with(['operations', 'units', 'materials', 'item:id,item_type'])->findOrFail($id);
         $row = $this->row($wo, $amounts);
         $operations = $wo->operations->map(fn ($op) => $this->operationArray($op))->values()->all();
         $materials = $wo->materials->map(fn ($m) => $this->materialArray($m))->values()->all();
@@ -79,9 +81,28 @@ final class WorkOrderQueryService
         $row['special_requirement'] = $wo->special_requirement;
         $row['remark'] = $wo->remark;
         $row['warehouse_id'] = $wo->warehouse_id;
+        $row['allowed_location_purposes'] = ReceiptService::allowedLocationPurposes($wo);
         $row['warehouse_name'] = $wo->warehouse_id ? Warehouse::query()->whereKey($wo->warehouse_id)->value('warehouse_name') : null;
         $row['standard_minutes_per_unit'] = round(collect($operations)->where('execution_context', 'production')->sum('unit_standard_minutes'), 1);
         $row['estimated_material_cost_per_unit'] = $amounts ? $this->plans->estimateMaterialCost($materials, (float) $wo->planned_qty) : null;
+        $row['actual_material_cost_amount'] = null;
+        $row['actual_material_cost_per_unit'] = null;
+        $row['material_cost_collection_complete'] = false;
+        if ($amounts) {
+            $issued = MfgMaterialIssue::query()->where('work_order_id', $wo->id)
+                ->selectRaw('COUNT(*) AS fact_count, COALESCE(SUM(cost_amount), 0) AS total_cost')->first();
+            $cut = MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('status', 'settled')
+                ->selectRaw('COUNT(*) AS fact_count, COALESCE(SUM(net_cost_amount), 0) AS total_cost')->first();
+            if ((int) $issued->fact_count + (int) $cut->fact_count > 0) {
+                // 已发生金额来自正式单据；库存被领空后不能再以当前余额预算替代真实归集。
+                $row['actual_material_cost_amount'] = bcadd((string) $issued->total_cost, (string) $cut->total_cost, 4);
+                $row['actual_material_cost_per_unit'] = (float) $wo->planned_qty > 0
+                    ? bcdiv($row['actual_material_cost_amount'], (string) $wo->planned_qty, 4) : null;
+                $row['material_cost_collection_complete'] = ! $wo->materials->contains(fn ($m) => $m->participates_in_kitting
+                    && bccomp((string) $m->issued_qty, (string) $m->required_qty, 4) < 0)
+                    && ! MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('status', 'issued')->exists();
+            }
+        }
         $row['sales_order'] = $this->salesOrderSummary($wo, $amounts);
         $row['attention'] = $this->attention($row, $kitting);
         $row['created_by_name'] = $wo->created_by_name;

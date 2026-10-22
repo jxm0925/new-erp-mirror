@@ -4,6 +4,8 @@ namespace App\Services\Erp\Manufacturing;
 
 use App\Models\Erp\Location;
 use App\Models\Erp\MfgReceipt;
+use App\Models\Erp\MfgCuttingBatch;
+use App\Models\Erp\MfgMaterialIssue;
 use App\Models\Erp\MfgWorkOrder;
 use App\Models\Erp\MfgWorkOrderLink;
 use App\Models\Erp\MfgWorkOrderUnit;
@@ -11,6 +13,8 @@ use App\Models\Erp\SalesOrder;
 use App\Models\Erp\Warehouse;
 use App\Services\Erp\DocumentNumberService;
 use App\Services\Erp\InventoryService;
+use App\Services\Erp\InventoryReservationService;
+use App\Services\Erp\CuttingDecimal;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -26,14 +30,16 @@ final class ReceiptService
     public function __construct(
         private readonly InventoryService $inventory,
         private readonly WorkOrderService $workOrders,
-        private readonly WorkOrderPlanBuilder $plans,
         private readonly DocumentNumberService $numbers,
     ) {}
 
     public function receive(int $workOrderId, array $unitIds, int $warehouseId, int $locationId, ?string $remark, object $actor, bool $staging = false): MfgReceipt
     {
         return DB::transaction(function () use ($workOrderId, $unitIds, $warehouseId, $locationId, $remark, $actor, $staging) {
-            $wo = MfgWorkOrder::query()->with('materials')->lockForUpdate()->findOrFail($workOrderId);
+            $orderId = MfgWorkOrder::query()->whereKey($workOrderId)->value('sales_order_id');
+            if ($orderId) SalesOrder::query()->whereKey($orderId)->lockForUpdate()->firstOrFail();
+            $wo = MfgWorkOrder::query()->lockForUpdate()->findOrFail($workOrderId);
+            $wo->setRelation('materials', \App\Models\Erp\MfgWorkOrderMaterial::query()->where('work_order_id', $wo->id)->orderBy('id')->lockForUpdate()->get());
             if (! in_array($wo->status, ['released', 'in_progress', 'paused'], true)) $this->fail('status_invalid', '工单不在生产中，不能入库。');
             $ids = array_values(array_unique(array_filter(array_map('intval', $unitIds))));
             if (! $ids) $this->fail('unit_required', '请选择要入库的台。');
@@ -41,20 +47,43 @@ final class ReceiptService
             if ($units->count() !== count($ids) || $units->contains(fn ($u) => $u->status !== 'completed'))
                 $this->fail('unit_invalid', '只有生产完成、等入库的台可以入库，请刷新后重选。');
             $location = Location::query()->find($locationId);
-            if (! $location || (int) $location->warehouse_id !== $warehouseId) $this->fail('location_invalid', '库位不属于所选仓库。');
-            $semi = $wo->source_type === 'work_order';
-            $materials = $wo->materials->map(fn ($m) => ['component_item_id' => (int) $m->component_item_id, 'required_qty' => (float) $m->required_qty])->all();
-            $unitCost = (float) ($this->plans->estimateMaterialCost($materials, (float) $wo->planned_qty) ?? 0);
+            $warehouse = Warehouse::query()->find($warehouseId);
+            if (! $warehouse || ! in_array($warehouse->status, ['enabled', 'active'], true) || ($warehouse->management_scope && $warehouse->management_scope !== 'factory'))
+                $this->fail('warehouse_invalid', '生产入库必须选择启用的工厂仓库。');
+            if (! $location || (int) $location->warehouse_id !== $warehouseId || ! in_array($location->status, ['enabled', 'active'], true))
+                $this->fail('location_invalid', '库位不属于所选启用仓库，或库位已经停用。');
+            $purposes = self::allowedLocationPurposes($wo);
+            $semi = $purposes === ['general'];
+            if (! in_array($location->location_purpose, $purposes, true))
+                $this->fail('location_purpose_invalid', $semi ? '半成品请入普通库存库位。' : '成品请入成品库位或待发库位，不能入返修等其他用途库位。');
             $qty = $units->count();
+            if (MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('status', 'issued')->lockForUpdate()->first(['id']))
+                $this->fail('cutting_not_settled', '仍有已领入的开料批次未结算，请先确认产出与余料。');
+            foreach ($wo->materials->where('participates_in_kitting', true) as $material) {
+                // 本轮尚无早批在库／已发货成本补差账本，必须先归集整单材料，不能把早批成本漏给后批。
+                if (bccomp((string) $material->issued_qty, (string) $material->required_qty, 4) < 0)
+                    $this->fail('material_cost_incomplete', '整单实际材料成本尚未归集完整，请先完成全部冻结用料的真实收料和开料结算；已完工设备保留待入库。');
+            }
+            $actualCost = '0.0000';
+            foreach (MfgMaterialIssue::query()->where('work_order_id', $wo->id)->lockForUpdate()->get() as $issue) $actualCost = bcadd($actualCost, (string) $issue->cost_amount, 4);
+            foreach (MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('status', 'settled')->lockForUpdate()->get() as $batch) $actualCost = bcadd($actualCost, (string) $batch->net_cost_amount, 4);
+            $alreadyCost = '0.0000';
+            foreach (MfgReceipt::query()->where('work_order_id', $wo->id)->lockForUpdate()->get() as $oldReceipt) $alreadyCost = bcadd($alreadyCost, (string) $oldReceipt->cost_amount, 4);
+            $remainingCost = bcsub($actualCost, $alreadyCost, 4);
+            if (bccomp($remainingCost, '0', 4) < 0) $this->fail('cost_reconciliation_required', '已入库暂估金额超过当前实际材料净耗，请先按正式成本调整核对，不能改写历史入库。');
+            // 尾批承接全部小数尾差；人工、外协和后到费用仍未结算，不能把实际材料成本称为最终制造成本。
+            $costAmount = CuttingDecimal::share($remainingCost, bcsub((string) $wo->planned_qty, (string) $wo->stored_qty, 4), (string) $qty);
+            $unitCost = bcdiv($costAmount, (string) $qty, 4);
             $receipt = MfgReceipt::create([
                 'receipt_no' => $this->numbers->next('mfg_receipt', 'MR'), 'work_order_id' => $wo->id,
                 'warehouse_id' => $warehouseId, 'location_id' => $locationId, 'qty' => $qty,
-                'unit_cost' => $unitCost, 'cost_amount' => round($unitCost * $qty, 4), 'cost_source' => 'material_estimate',
+                'unit_cost' => $unitCost, 'cost_amount' => $costAmount, 'cost_source' => 'actual_materials_provisional',
                 'serial_nos' => $units->pluck('serial_no')->values()->all(),
                 'operator_legacy_id' => $this->actorId($actor), 'operator_name' => $this->actorName($actor), 'remark' => $remark ?: null,
             ]);
             $posted = $this->inventory->postProductionReceipt($receipt, $wo, $units->pluck('serial_no')->all(), $this->actorId($actor));
             $receipt->update(['inventory_transaction_id' => $posted['transaction']->id]);
+            app(InventoryReservationService::class)->reserveProductionReceipt($receipt, $wo);
             foreach ($units as $unit) {
                 $unit->update(['status' => 'stored', 'stored_at' => now(), 'warehouse_id' => $warehouseId, 'location_id' => $locationId,
                     'inventory_serial_id' => $posted['serial_ids'][$unit->serial_no] ?? null]);
@@ -82,7 +111,7 @@ final class ReceiptService
         if (! $unitIds || ! $this->shipsImmediately($wo)) return null;
         $location = $this->stagingLocation($wo);
         if (! $location) {
-            $this->workOrders->log($wo, 'staging_missing', $wo->status, $wo->status, '订单马上要发货，但没有找到“成品待发区”库位，请仓库手工入库（库位名称含“待发区”或在配置 ERP_SHIP_STAGING_LOCATION 指定库位编码）', $actor);
+            $this->workOrders->log($wo, 'staging_missing', $wo->status, $wo->status, '订单待发，但尚未维护启用的待发用途库位，请仓库维护库位用途后办理入库。', $actor);
             return null;
         }
         return $this->receive($wo->id, $unitIds, (int) $location->warehouse_id, (int) $location->id, '总装完工，订单马上发货，自动记入成品待发区', $actor, true);
@@ -99,16 +128,21 @@ final class ReceiptService
         return ! $delayed;
     }
 
-    /** 成品待发区库位：先看配置的库位编码，再找名称/区域含“待发”的启用库位，优先工单仓库。 */
+    public static function allowedLocationPurposes(MfgWorkOrder $wo): array
+    {
+        return $wo->source_type === 'work_order' || $wo->item?->item_type === 'semi_finished' ? ['general'] : ['finished', 'shipping_staging'];
+    }
+
+    /** 待发用途是正式资料，不能用库位名称猜测；指定编码同样不能绕过用途与范围。 */
     public function stagingLocation(MfgWorkOrder $wo): ?Location
     {
-        $enabled = Warehouse::query()->whereIn('status', ['enabled', 'active'])->pluck('id');
-        $query = Location::query()->whereIn('status', ['enabled', 'active'])->whereIn('warehouse_id', $enabled);
+        $enabled = Warehouse::query()->whereIn('status', ['enabled', 'active'])
+            ->where(fn ($q) => $q->whereNull('management_scope')->orWhere('management_scope', 'factory'))->pluck('id');
+        $query = Location::query()->whereIn('status', ['enabled', 'active'])->whereIn('warehouse_id', $enabled)->where('location_purpose', 'shipping_staging');
         if ($code = trim((string) config('erp.ship_staging_location_code'))) {
             $hit = (clone $query)->where('location_code', $code)->first();
             if ($hit) return $hit;
         }
-        return $query->where(fn ($q) => $q->where('location_name', 'like', '%待发%')->orWhere('area', 'like', '%待发%'))
-            ->orderByRaw('warehouse_id = ? DESC', [(int) $wo->warehouse_id])->orderBy('id')->first();
+        return $query->orderByRaw('warehouse_id = ? DESC', [(int) $wo->warehouse_id])->orderBy('id')->first();
     }
 }

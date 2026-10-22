@@ -93,6 +93,15 @@ class MasterDataController extends Controller
         if ($request->route('entity') === 'locations' && $request->filled('area')) {
             $query->whereRaw('TRIM(area) = ?', [trim((string) $request->input('area'))]);
         }
+        if ($request->route('entity') === 'locations' && $request->filled('location_purpose')) {
+            $request->validate(['location_purpose' => 'in:general,finished,shipping_staging,repair']);
+            $query->where('location_purpose', $request->input('location_purpose'));
+        }
+        if ($request->route('entity') === 'locations' && $request->has('location_purposes')) {
+            $data = $request->validate(['location_purposes' => 'required|array|min:1|max:4',
+                'location_purposes.*' => 'required|in:general,finished,shipping_staging,repair|distinct']);
+            $query->whereIn('location_purpose', $data['location_purposes']);
+        }
         if ($request->route('entity') === 'items' && $request->filled('is_stock_item')) {
             $request->validate(['is_stock_item' => 'boolean']);
             $query->where('is_stock_item', $request->boolean('is_stock_item'));
@@ -750,6 +759,7 @@ class MasterDataController extends Controller
             ],
             'locations' => [
                 'location_code' => $unique('erp_locations', 'location_code'), 'location_name' => 'required|string|max:120',
+                'location_purpose' => 'sometimes|required|in:general,finished,shipping_staging,repair',
                 'warehouse_id' => 'required|exists:erp_warehouses,id', 'parent_id' => 'nullable|exists:erp_locations,id',
                 'area' => 'nullable|string|max:60', 'aisle' => 'nullable|string|max:60', 'rack' => 'nullable|string|max:60',
                 'level' => 'nullable|string|max:60', 'standard_capacity' => 'nullable|numeric|min:0',

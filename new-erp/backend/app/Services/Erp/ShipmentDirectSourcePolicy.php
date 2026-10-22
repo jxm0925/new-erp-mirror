@@ -100,7 +100,7 @@ final class ShipmentDirectSourcePolicy
     /** The financial boundary is actual outbound plus transport plus every selected packing node. */
     public function shipmentCompleted(array $line, array $shipment, ?array $outbound, array $route, array $contents, array $operations): bool
     {
-        if (! in_array($shipment['shipment_status'] ?? '', ['shipped', 'completed'], true) || empty($shipment['shipped_at']) || ! $outbound
+        if (! in_array($shipment['shipment_status'] ?? '', ['partially_shipped', 'shipped', 'completed'], true) || empty($shipment['shipped_at']) || ! $outbound
             || ($outbound['posting_status'] ?? '') !== 'posted' || ($outbound['transaction_type'] ?? '') !== 'sales_shipment_outbound'
             || ($outbound['source_type'] ?? '') !== 'sales_shipment' || (int) ($outbound['source_id'] ?? 0) !== (int) ($line['shipment_id'] ?? 0)
             || (int) ($outbound['source_item_id'] ?? 0) !== (int) ($line['id'] ?? 0) || ! $this->positive($line['base_qty'] ?? null)
@@ -119,7 +119,8 @@ final class ShipmentDirectSourcePolicy
             $contentRoute = $this->selectedPackingRoute($line, $route, $content);
             if ($contentRoute === null) return false;
             $contentNodes = array_filter($contentRoute['operations'] ?? [], fn ($node) => ($node['execution_context'] ?? 'production') === 'shipment');
-            $chain = array_filter($contentNodes, fn ($node) => (int) ($node['packaging_scheme_id'] ?? 0) === (int) ($content['packaging_scheme_id'] ?? 0));
+            $chain = array_filter($contentNodes, fn ($node) => ($node['shipment_operation_type'] ?? 'packing') !== 'packing'
+                || (int) ($node['packaging_scheme_id'] ?? 0) === (int) ($content['packaging_scheme_id'] ?? 0));
             if ($chain === []) return false;
             foreach ($chain as $node) {
                 $matches = array_filter($operations, function ($op) use ($line, $content, $node): bool {

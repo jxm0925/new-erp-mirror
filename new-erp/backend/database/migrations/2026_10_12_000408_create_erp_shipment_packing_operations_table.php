@@ -23,6 +23,7 @@ CREATE TABLE `erp_shipment_packing_operations` (
   `operation_id` bigint(20) unsigned NOT NULL,
   `operation_code_snapshot` varchar(80) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `operation_name_snapshot` varchar(120) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `shipment_operation_type_snapshot` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'packing',
   `production_stage_id` bigint(20) unsigned DEFAULT NULL,
   `stage_code_snapshot` varchar(80) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `stage_name_snapshot` varchar(120) COLLATE utf8mb4_unicode_ci DEFAULT NULL,

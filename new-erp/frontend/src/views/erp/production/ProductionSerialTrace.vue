@@ -174,7 +174,7 @@
             {{ result.sales_order ? result.sales_order.sales_order_no : '常规库存备货' }}
           </strong>
           <span class="metric-sub text-truncate">
-            {{ result.sales_order ? result.sales_order.customer_name : '成品入库 / 待试水' }}
+            {{ result.sales_order ? result.sales_order.customer_name : '生产入库' }}
           </span>
         </div>
       </div>
@@ -628,7 +628,7 @@ export default {
         paused: '暂停生产',
         resumed: '恢复生产',
         completed: '完工过站',
-        stored: '入库待试水',
+        stored: '已入库',
         rework: '返工返修',
         rejected: '质检不合格',
         scrapped: '报废处置',
@@ -638,7 +638,7 @@ export default {
         unit_scrap_requested: '申请报废',
         unit_scrap_rejected: '报废驳回',
         unit_scrapped: '报废处置',
-        unit_stored: '入库待试水'
+        unit_stored: '已入库'
       }
       return map[action] || '工序操作'
     },

@@ -266,7 +266,7 @@
                 <i class="el-icon-time" />
                 <h2>工序加工与作业工时实时看板</h2>
               </div>
-              <span class="header-desc-hint">基于车间工序过站报工实时数据自动汇总结算</span>
+              <span class="header-desc-hint">按过站报工实时汇总工时</span>
             </div>
 
             <div class="table-wrap">
@@ -392,6 +392,8 @@
             </div>
           </section>
 
+          <work-order-cutting-panel :work-order="wo" @refresh="load" />
+
           <!-- 卡片 4 与 卡片 5 并排：材料成本预算与操作动态日志 -->
           <div class="two-subcard-grid">
             <!-- 材料成本预算 -->
@@ -399,23 +401,23 @@
               <div class="card-header">
                 <div class="header-title">
                   <i class="el-icon-wallet" />
-                  <h2>材料成本预算与定额</h2>
+                  <h2>{{ hasActualMaterialCost ? '材料成本归集与定额' : '材料成本预算与定额' }}</h2>
                 </div>
-                <el-tag size="mini" type="info" effect="plain">暂估预算 · 未结算</el-tag>
+                <el-tag size="mini" type="info" effect="plain">{{ hasActualMaterialCost ? (wo.material_cost_collection_complete ? '实际材料归集 · 制造未结算' : '部分材料归集 · 制造未结算') : '暂估预算 · 未结算' }}</el-tag>
               </div>
 
-              <template v-if="wo.estimated_material_cost_per_unit !== null && wo.estimated_material_cost_per_unit !== undefined">
+              <template v-if="materialCostPerUnit !== null && materialCostPerUnit !== undefined">
                 <div class="cost-stat-box">
-                  <span class="cost-lbl">每台材料暂估成本</span>
-                  <div class="cost-num font-mono text-success">{{ money(wo.estimated_material_cost_per_unit) }}</div>
-                  <div class="cost-total-sub text-muted">工单总材料暂估：{{ money(wo.estimated_material_cost_per_unit * wo.planned_qty) }}</div>
+                  <span class="cost-lbl">{{ hasActualMaterialCost ? '每台已归集材料成本' : '每台材料暂估成本' }}</span>
+                  <div class="cost-num font-mono text-success">{{ money(materialCostPerUnit) }}</div>
+                  <div class="cost-total-sub text-muted">{{ hasActualMaterialCost ? '工单已归集材料' : '工单总材料暂估' }}：{{ money(materialCostTotal) }}</div>
                 </div>
                 <div class="spec-kv-row">
                   <span class="kv-label">单件标准工时定额</span>
                   <span class="kv-val code-mono font-medium">每台 {{ wo.standard_minutes_per_unit || 0 }} 分钟</span>
                 </div>
                 <p class="cost-footnote text-muted">
-                  依据库存加权平均成本计算暂估；实际领料、直接人工及制费在制造过站后归集并统一核算结算。
+                  {{ hasActualMaterialCost ? (wo.material_cost_collection_complete ? '依据正式收料金额与已结算开料净耗汇总；人工、外协及后到费用仍待制造结算。' : '仅汇总已发生的收料与已结算开料净耗，按计划数量折算每台；其余材料及制造费用仍待归集和结算。') : '按现存加权平均成本或物料标准成本、最近采购价估算；实际材料按正式用料归集，人工及其他费用待制造结算。' }}
                 </p>
               </template>
               <div v-else class="text-muted p-2">
@@ -700,6 +702,7 @@
 <script>
 import { getWorkOrder, getWorkOrderOptions, updateWorkOrder, releaseWorkOrder, pauseWorkOrder, resumeWorkOrder, cancelWorkOrder, createSemiWorkOrder, receiveOperationMaterials } from '../../../api/erp/production'
 import { HERO_PILL, qty, money, shortDate, bomLabel, errorText, isCancel, searchProductionUsers } from './mfg-helpers'
+import WorkOrderCuttingPanel from './WorkOrderCuttingPanel.vue'
 
 const STEPS = [
   { value: 'planned', label: '计划制令' },
@@ -711,6 +714,7 @@ const STEPS = [
 
 export default {
   name: 'WorkOrderDetail',
+  components: { WorkOrderCuttingPanel },
   data: () => ({
     loading: false,
     saving: false,
@@ -734,6 +738,15 @@ export default {
     }
   }),
   computed: {
+    hasActualMaterialCost() {
+      return this.wo && this.wo.actual_material_cost_amount !== null && this.wo.actual_material_cost_amount !== undefined
+    },
+    materialCostPerUnit() {
+      return this.wo ? (this.hasActualMaterialCost ? this.wo.actual_material_cost_per_unit : this.wo.estimated_material_cost_per_unit) : null
+    },
+    materialCostTotal() {
+      return this.wo ? (this.hasActualMaterialCost ? this.wo.actual_material_cost_amount : this.wo.estimated_material_cost_per_unit * this.wo.planned_qty) : null
+    },
     canReceiveMaterials() {
       return this.$can('production.task.execute') || this.$can('production.work_order.edit')
     },

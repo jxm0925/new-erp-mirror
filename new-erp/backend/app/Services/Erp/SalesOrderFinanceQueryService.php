@@ -92,7 +92,7 @@ class SalesOrderFinanceQueryService
     {
         $links = SalesOrderPurchaseLink::where('sales_order_id', $order->id)->where('status', 'active');
         $shipments = DB::table('erp_sales_shipments')->where('sales_order_id', $order->id)
-            ->whereIn('shipment_status', ['outbound_posted', 'shipped', 'completed']);
+            ->whereIn('shipment_status', ['outbound_posted', 'partially_shipped', 'shipped', 'completed']);
         return [
             'sales_order_id' => $order->id, 'sales_order_no' => $order->sales_order_no,
             'order_status' => $order->order_status,

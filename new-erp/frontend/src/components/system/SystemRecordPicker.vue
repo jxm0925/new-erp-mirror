@@ -13,7 +13,7 @@
       <el-table-column v-if="type === 'users'" label="所属部门" min-width="180"><template slot-scope="{ row }">{{ departmentNames(row) }}</template></el-table-column>
       <el-table-column v-else-if="type === 'roles'" label="数据范围" min-width="100"><template slot-scope="{ row }">{{ scopeText(row.data_scope) }}</template></el-table-column>
       <el-table-column v-else-if="type === 'operations'" label="公共标识" min-width="100"><template slot-scope="{ row }"><el-tag v-if="row.is_public" size="mini" type="success">公共工序</el-tag><span v-else>普通工序</span></template></el-table-column>
-      <el-table-column v-else-if="type === 'locations'" prop="area" label="所属区域" min-width="100" />
+      <el-table-column v-else-if="type === 'locations'" label="区域 / 用途" min-width="140"><template slot-scope="{ row }">{{ row.area || '—' }} / {{ locationPurposeText(row.location_purpose) }}</template></el-table-column>
     </el-table>
     <div class="picker-pagination"><span>共 {{ total }} 条</span><el-pagination background small layout="prev, pager, next" :page-size="pageSize" :current-page="page" :total="total" @current-change="changePage" /></div>
     <div class="selected-records"><span>已选择 {{ selectedRows.length }} 项</span><el-tag v-for="row in selectedRows" :key="row.id" closable @close="remove(row.id)">{{ displayName(row) }}</el-tag></div>
@@ -37,6 +37,8 @@ export default {
     value: { type: Array, default: () => [] },
     departmentId: { type: Number, default: 0 },
     warehouseId: { type: Number, default: 0 },
+    locationPurpose: { type: String, default: '' },
+    locationPurposes: { type: Array, default: () => [] },
     managementScope: { type: String, default: '' }
   },
   data: () => ({ rows: [], selected: {}, keyword: '', page: 1, pageSize: 10, total: 0, loading: false, error: '', requestSerial: 0 }),
@@ -67,7 +69,7 @@ export default {
         if (this.type === 'locations' && !this.warehouseId) throw new Error('请先选择仓库')
         const params = { keyword: this.keyword, page: this.page, per_page: this.pageSize }
         const { data } = await (this.masterRecord
-          ? listEntity(this.type, { ...params, status: 'enabled', management_scope: this.managementScope || undefined, warehouse_id: this.type === 'locations' ? this.warehouseId : undefined, include_location_summary: this.type === 'warehouses' ? 1 : undefined })
+          ? listEntity(this.type, { ...params, status: 'enabled', management_scope: this.managementScope || undefined, warehouse_id: this.type === 'locations' ? this.warehouseId : undefined, location_purpose: this.type === 'locations' ? this.locationPurpose || undefined : undefined, location_purposes: this.type === 'locations' && this.locationPurposes.length ? this.locationPurposes : undefined, include_location_summary: this.type === 'warehouses' ? 1 : undefined })
           : this.type === 'operations'
           ? searchProductionOptions('operations', params)
           : (this.type === 'roles' ? listRoleOptions : listSystemUserOptions)({ ...params, department_id: this.departmentId || undefined, status: this.roleStatus }))
@@ -91,6 +93,7 @@ export default {
     displayName(row) { return this.type === 'operations' ? row.operation_name : this.type === 'warehouses' ? row.warehouse_name : this.type === 'locations' ? row.location_name : row.name || row.nickname || row.username || '-' },
     departmentNames(row) { return parseSystemArray(row.department_names).join('、') || '-' },
     scopeText(value) { return ({ all: '全部数据', department: '本部门数据', self: '本人数据' })[value] || '-' },
+    locationPurposeText(value) { return ({ general: '普通存储', finished: '成品', shipping_staging: '待发', repair: '返修' })[value] || '普通存储' },
     confirm() { if (this.singleRecord && this.selectedRows.length !== 1) return; this.$emit('confirm', this.selectedRows.map(row => ({ ...row }))); this.$emit('update:visible', false) }
   }
 }

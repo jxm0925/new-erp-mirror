@@ -23,6 +23,7 @@
               <section class="settings-group"><h3>工序信息</h3>
                 <label><span>所属阶段</span><div class="selector-field"><el-input :value="catalogName('stages',s.row.production_stage_id)" readonly :disabled="viewOnly" suffix-icon="el-icon-search" placeholder="选择阶段（可选）" @click.native="openCatalog('stages',s.row)" /><el-button v-if="!viewOnly && s.row.production_stage_id" type="text" @click="s.row.production_stage_id=null">清除</el-button></div></label>
                 <label><span>执行场景</span><el-select :value="s.row.execution_context" :disabled="viewOnly" @change="changeExecutionContext(s.row,$event)"><el-option label="生产工序" value="production" /><el-option label="发货作业" value="shipment" /></el-select></label>
+                <label v-if="s.row.execution_context==='shipment'"><span>发货作业类型</span><el-select :value="s.row.shipment_operation_type" :disabled="viewOnly" @change="changeShipmentType(s.row,$event)"><el-option label="试水" value="water_test" /><el-option label="打包" value="packing" /><el-option label="装车 / 提货" value="loading" /></el-select></label>
                 <label><span>作业方式</span><el-select v-model="s.row.work_mode" :disabled="viewOnly"><el-option label="人工作业" value="manual" /><el-option label="自动作业" value="automatic" /></el-select></label>
                 <label v-if="s.row.execution_context==='production'"><span>产出物料</span><el-input :value="itemName(s.row.output_item_id)" readonly :disabled="viewOnly" suffix-icon="el-icon-search" @click.native="openItems('operation', s.row)" /></label>
                 <label v-if="s.row.execution_context==='production'"><span>完成去向</span><el-select v-model="s.row.output_mode" :disabled="viewOnly" @change="setOutputMode(s.row)"><el-option v-for="(label,value) in outputModes" :key="value" :label="label" :value="value" /></el-select></label>
@@ -35,8 +36,9 @@
                 <label v-if="canManagePerformance"><span>提成比例（按模板）</span><el-input :value="performanceText(s.row)" disabled><template slot="append">%</template></el-input></label>
                 <label><span>必要参数</span><el-input v-model="s.row.parameters_text" type="textarea" :rows="2" :disabled="viewOnly" /></label>
               </section>
-              <section class="settings-group material-group"><h3>{{ s.row.execution_context==='shipment'?'发货包装':'用料规则' }}</h3>
+              <section class="settings-group material-group"><h3>{{ s.row.execution_context==='shipment'?'发货作业':'用料规则' }}</h3>
                 <template v-if="s.row.execution_context==='shipment'">
+                  <template v-if="s.row.shipment_operation_type==='packing'">
                   <label><span>包装方案</span><div class="selector-field"><el-input :value="catalogName('packaging-schemes',s.row.packaging_scheme_id)" readonly :disabled="viewOnly" suffix-icon="el-icon-search" placeholder="请选择包装方案" @click.native="openCatalog('packaging-schemes',s.row)" /><el-button v-if="!viewOnly && s.row.packaging_scheme_id" type="text" @click="s.row.packaging_scheme_id=null">清除</el-button></div></label>
                   <p class="setting-note">发货作业排在生产工序之后；包装用料填写每件产出的基础单位数量。</p>
                   <el-table :data="s.row.packaging_materials" border size="mini">
@@ -45,6 +47,8 @@
                     <el-table-column label="基础单位" min-width="80"><template slot-scope="r">{{ itemUnit(r.row.component_item_id) }}</template></el-table-column>
                     <el-table-column v-if="!viewOnly" label="操作" width="56"><template slot-scope="r"><el-button type="text" @click="removePackagingMaterial(s.row,r.row)">删除</el-button></template></el-table-column>
                   </el-table>
+                  </template>
+                  <p v-else class="setting-note">本工序无需包装方案或包装用料。</p>
                 </template>
                 <el-table v-else :data="incomingRules(s.row)" border size="mini">
                   <el-table-column label="物料名称" min-width="110"><template slot-scope="r">{{ itemName(r.row.component_item_id) }}</template></el-table-column>
@@ -52,7 +56,7 @@
                   <el-table-column label="供应方式" min-width="130"><template slot-scope="r"><el-select v-model="r.row.supply_mode" :disabled="viewOnly" size="mini"><el-option v-for="(label,value) in supplyModes" :key="value" :label="label" :value="value" /></el-select></template></el-table-column>
                   <el-table-column v-if="!viewOnly" label="操作" width="56"><template slot-scope="r"><el-button type="text" @click="removeMaterial(r.row)">删除</el-button></template></el-table-column>
                 </el-table>
-                <div v-if="!viewOnly" class="setting-actions"><el-button type="success" plain @click="openItems(s.row.execution_context==='shipment'?'packaging':'materials',s.row)">{{ s.row.execution_context==='shipment'?'添加包装用料':'添加用料' }}</el-button><el-button type="success" @click="confirmSettings(s.row)">确认设置</el-button></div>
+                <div v-if="!viewOnly" class="setting-actions"><el-button v-if="s.row.execution_context!=='shipment'||s.row.shipment_operation_type==='packing'" type="success" plain @click="openItems(s.row.execution_context==='shipment'?'packaging':'materials',s.row)">{{ s.row.execution_context==='shipment'?'添加包装用料':'添加用料' }}</el-button><el-button type="success" @click="confirmSettings(s.row)">确认设置</el-button></div>
               </section>
             </div>
           </template></el-table-column>
@@ -62,7 +66,7 @@
           <el-table-column label="用料" min-width="65"><template slot-scope="s">{{ s.row.execution_context==='shipment'?s.row.packaging_materials.length:incomingRules(s.row).length }} 种</template></el-table-column>
           <el-table-column label="产出" min-width="140"><template slot-scope="s">{{ itemName(s.row.output_item_id) || '—' }}</template></el-table-column>
           <el-table-column label="检验要求" min-width="100"><template slot-scope="s">{{ s.row.quality_mode === 'required' ? '必须检验' : '无' }}</template></el-table-column>
-          <el-table-column label="完成去向" min-width="110"><template slot-scope="s">{{ s.row.execution_context==='shipment'?'发货打包':outputModes[s.row.output_mode] }}</template></el-table-column>
+          <el-table-column label="完成去向" min-width="110"><template slot-scope="s">{{ s.row.execution_context==='shipment'?shipmentTypeText(s.row.shipment_operation_type):outputModes[s.row.output_mode] }}</template></el-table-column>
           <el-table-column v-if="!viewOnly" label="操作" width="158"><template slot-scope="s"><div class="row-actions"><el-button type="text" :disabled="!canMove(s.$index,-1)" @click="move(s.$index,-1)">上移</el-button><el-button type="text" :disabled="!canMove(s.$index,1)" @click="move(s.$index,1)">下移</el-button><el-button type="text" @click="remove(s.$index)">删除</el-button></div></template></el-table-column>
         </el-table>
         <el-form-item label="备注" class="remark"><el-input v-model="form.remark" :disabled="viewOnly" type="textarea" :rows="3" /></el-form-item>
@@ -100,6 +104,7 @@ export default {
   methods:{
     performanceText(row){const rates=this.performance&&this.performance.rates;if(!rates)return '';const rate=rates[row.operation_id];return rate===undefined||rate===null?'不计提成':percentFromRate(rate)},
     statusText(v){return({draft:'草稿',active:'已生效',retired:'已退役',disabled:'已退役'})[v]||v},
+    shipmentTypeText(v){return({water_test:'试水',packing:'发货打包',loading:'装车 / 提货'})[v]||'发货作业'},
     isPublic(value){return asBoolean(value)},
     operationName(row){return this.operations.find(operation=>Number(operation.id)===Number(row.operation_id))?.operation_name||''},
     operationIsPublic(row){const operation=this.operations.find(candidate=>Number(candidate.id)===Number(row.operation_id));return asBoolean(operation&&operation.is_public!==undefined?operation.is_public:row.is_public??row.operation?.is_public)},
@@ -125,11 +130,12 @@ export default {
         this.rememberCatalog({type:'stages',row:x.stage||{id:x.production_stage_id,name:x.stage_name,code:x.stage_code}})
         this.rememberCatalog({type:'packaging-schemes',row:x.packaging_scheme||{id:x.packaging_scheme_id,name:x.packaging_scheme_name,code:x.packaging_scheme_code}})
         const ordinary={...x};delete ordinary.performance_rate
-        return {...ordinary,key:byId.get(Number(x.id)),production_stage_id:x.production_stage_id||null,execution_context:x.execution_context||'production',packaging_scheme_id:x.packaging_scheme_id||null,packaging_materials:(x.packaging_materials||[]).map(material=>{this.rememberItem(material.component_item);return {...material}}),parameters_text:x.parameters&&x.parameters.text||'',setup_standard_minutes:Number(x.setup_standard_minutes||0),unit_standard_minutes:Number(x.unit_standard_minutes??x.standard_minutes??0),material_supply_rules:(x.material_supply_rules||[]).map(rule=>{this.rememberItem(rule.component_item);return {...rule,target_key:byId.get(Number(rule.target_routing_operation_id)),percent:Number(percentFromRate(rule.required_qty_ratio))}})}
+        return {...ordinary,key:byId.get(Number(x.id)),production_stage_id:x.production_stage_id||null,execution_context:x.execution_context||'production',shipment_operation_type:x.shipment_operation_type||'packing',packaging_scheme_id:x.packaging_scheme_id||null,packaging_materials:(x.packaging_materials||[]).map(material=>{this.rememberItem(material.component_item);return {...material}}),parameters_text:x.parameters&&x.parameters.text||'',setup_standard_minutes:Number(x.setup_standard_minutes||0),unit_standard_minutes:Number(x.unit_standard_minutes??x.standard_minutes??0),material_supply_rules:(x.material_supply_rules||[]).map(rule=>{this.rememberItem(rule.component_item);return {...rule,target_key:byId.get(Number(rule.target_routing_operation_id)),percent:Number(percentFromRate(rule.required_qty_ratio))}})}
       })
       this.form={...this.form,...data,operations:rows};this.expanded=rows.length?[rows[0].key]:[]
     },
-    addOperation(){const row={key:uuid(),operation_id:null,production_stage_id:null,execution_context:'production',packaging_scheme_id:null,packaging_materials:[],sequence:(this.form.operations.length+1)*10,is_key_operation:false,parameters:null,parameters_text:'',remark:'',setup_standard_minutes:0,unit_standard_minutes:0,output_item_id:this.form.output_item_id,output_mode:'flow_only',quality_mode:'none',work_mode:'manual',allow_continue_without_warehouse:true,material_supply_rules:[]};this.form.operations.push(row);this.orderContexts();this.expanded=[row.key]},
+    addOperation(){const row={key:uuid(),operation_id:null,production_stage_id:null,execution_context:'production',shipment_operation_type:'packing',packaging_scheme_id:null,packaging_materials:[],sequence:(this.form.operations.length+1)*10,is_key_operation:false,parameters:null,parameters_text:'',remark:'',setup_standard_minutes:0,unit_standard_minutes:0,output_item_id:this.form.output_item_id,output_mode:'flow_only',quality_mode:'none',work_mode:'manual',allow_continue_without_warehouse:true,material_supply_rules:[]};this.form.operations.push(row);this.orderContexts();this.expanded=[row.key]},
+    changeShipmentType(row,type){if(this.viewOnly||row.shipment_operation_type===type)return;if(type!=='packing'&&(row.packaging_scheme_id||row.packaging_materials.length)){this.$message.warning('请先移除包装方案和包装用料，再更改发货作业类型');return}row.shipment_operation_type=type},
     incomingRules(row){return this.form.operations.flatMap(x=>x.material_supply_rules).filter(r=>r.target_key===row.key)},
     removeMaterial(rule){this.form.operations.forEach(row=>{row.material_supply_rules=row.material_supply_rules.filter(r=>r!==rule)})},
     removePackagingMaterial(row,material){row.packaging_materials=row.packaging_materials.filter(current=>current!==material)},
@@ -152,7 +158,8 @@ export default {
       if(row.execution_context!=='shipment'&&row.output_mode!=='flow_only'&&!row.output_item_id){this.$message.warning('入库工序必须选择产出物料');return false}
       if([row.setup_standard_minutes,row.unit_standard_minutes].some(value=>value===''||!Number.isFinite(Number(value))||Number(value)<0)){this.$message.warning('工时必须为大于或等于零的数字');return false}
       if(row.execution_context==='shipment'){
-        if(!row.packaging_scheme_id){this.$message.warning('发货作业必须选择包装方案');return false}
+        if(row.shipment_operation_type==='packing'&&!row.packaging_scheme_id){this.$message.warning('打包工序必须选择包装方案');return false}
+        if(row.shipment_operation_type!=='packing'&&(row.packaging_scheme_id||row.packaging_materials.length)){this.$message.warning('试水和装车工序不能配置包装方案或包装用料');return false}
         if(row.material_supply_rules.length||this.incomingRules(row).length){this.$message.warning('发货作业不能使用生产 BOM 用料规则');return false}
         if(row.packaging_materials.some(material=>!/^\d+(?:\.\d+)?$/.test(String(material.base_qty_per_output_unit))||Number(material.base_qty_per_output_unit)<=0||Number(material.base_qty_per_output_unit)>999999999)){this.$message.warning('请填写包装用料每件的基础单位数量，必须大于零');return false}
       }else if(row.material_supply_rules.some(rule=>!validPercent(rule.percent)||emptyPercent(rule.percent)||Number(rule.percent)<=0||!this.form.operations.some(target=>target.key===rule.target_key&&target.execution_context==='production'))){this.$message.warning('生产用料须分配到生产工序，用量占比须大于零且不超过 100%');return false}
@@ -167,6 +174,7 @@ export default {
           // 保留明细标识，后端可按原节点保留当前账号不可见的绩效配置。
           if(Number(row.id)>0)operation.id=Number(row.id)
           if(row.execution_context==='shipment'){
+            operation.shipment_operation_type=row.shipment_operation_type
             operation.packaging_scheme_id=row.packaging_scheme_id
             operation.packaging_materials=row.packaging_materials.map(material=>({component_item_id:material.component_item_id,base_qty_per_output_unit:Number(material.base_qty_per_output_unit)}))
           }else{

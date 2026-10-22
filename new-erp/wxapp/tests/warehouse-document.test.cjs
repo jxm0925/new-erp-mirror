@@ -66,6 +66,31 @@ test('pending command recovery ignores current edited form and preserves origina
   assert.deepEqual(f.submits[0], ['sales_shipment.post', 41, {}]);
 });
 
+test('shipment staging requires a selected location and sends the displayed version without an outbound quantity', async () => {
+  const f = fixture('sales_shipment');
+  f.page.setData({ mainAction: 'sales_shipment.post', header: { id: 41, business_version: 7 } });
+  await f.page.submit();
+  assert.equal(f.submits.length, 0);
+  assert.match(f.page.data.error, /待发仓库和库位/);
+  f.page.setData({ locator: { warehouse_id: 3, location_id: 31 } });
+  f.results.push({ id: 41 }); f.documents.push(doc([], ['sales_shipment.dispatch']));
+  await f.page.submit();
+  assert.deepEqual(f.submits[0], ['sales_shipment.post', 41, { expected_version: 7, staging_location_id: 31 }]);
+});
+
+test('final shipment command requires explicit packages and keeps pickup distinct from staging', async () => {
+  const f = fixture('sales_shipment');
+  f.page.setData({ mainAction: 'sales_shipment.dispatch', header: { id: 41, business_version: 8 }, deliveryMode: 'pickup' });
+  await f.page.submit();
+  assert.equal(f.submits.length, 0);
+  assert.match(f.page.data.error, /就绪包裹/);
+  f.page.setData({ selectedPackageIds: [91] });
+  f.results.push({ id: 41 }); f.documents.push(doc([], []));
+  await f.page.submit();
+  assert.deepEqual(f.submits[0], ['sales_shipment.dispatch', 41, { expected_version: 8, package_ids: [91], delivery_mode: 'pickup' }]);
+  assert.deepEqual(plain(f.page.data.selectedPackageIds), []);
+});
+
 test('stale response cannot overwrite a later document page', async () => {
   const f = fixture('purchase_receipt'); let resolveFirst;
   f.documents.push(new Promise(resolve => { resolveFirst = resolve; }), doc([{ id: 211 }], [], 2, 11));

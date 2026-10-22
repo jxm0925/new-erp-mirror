@@ -1,4 +1,5 @@
 import api from './master'
+import { executeProductionDecision } from './production-decisions'
 
 export const shipmentCommandId = () => `packing-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`
 const pendingKey = (kind, id) => {
@@ -36,8 +37,10 @@ const packingCommand = (kind, id, path, payload) => {
 }
 export const listShipments = params => api.get('/v1/erp/sales/shipments', { params })
 export const getShipment = id => api.get(`/v1/erp/sales/shipments/${id}`)
-export const createShipment = data => api.post('/v1/erp/sales/shipments', data)
-export const actShipment = (id, action, data = {}) => api.post(`/v1/erp/sales/shipments/${id}/${action}`, data)
+export const createShipment = data => executeProductionDecision('shipment_create_' + data.sales_order_id, data, payload => api.post('/v1/erp/sales/shipments', payload))
+export const actShipment = (id, action, data = {}) => executeProductionDecision('shipment_' + id + '_' + action, data, payload => api.post(`/v1/erp/sales/shipments/${id}/${action}`, payload))
+export const listShipmentReworkOperations = (id, lineId, params) => api.get(`/v1/erp/sales/shipments/${id}/serials/${lineId}/rework-operations`, { params })
+export const listShipmentReplacementSerials = (id, lineId, params) => api.get(`/v1/erp/sales/shipments/${id}/serials/${lineId}/replacement-serials`, { params })
 export const listShipmentSources = params => api.get('/v1/erp/sales/shipments/sources', { params })
 export const listShipmentSourceSerials = (id, params) => api.get(`/v1/erp/sales/shipments/sources/${id}/serials`, { params })
 export const getShipmentPacking = (id, params) => api.get(`/v1/erp/sales/shipments/${id}/packing`, { params })

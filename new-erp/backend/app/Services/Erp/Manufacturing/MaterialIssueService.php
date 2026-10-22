@@ -38,8 +38,8 @@ final class MaterialIssueService
     /** 开始前检查：有新台要开工时，本道的料必须已经收够到这些台。 */
     public function assertReceivedForStart(MfgWorkOrder $wo, MfgWorkOrderOperation $op, Collection $units): void
     {
-        if (! $units->contains(fn ($u) => $u->status === 'waiting')) return;
-        $materials = $this->receivable($op);
+        $materials = MfgWorkOrderMaterial::query()->where('work_order_operation_id', $op->id)->where('participates_in_kitting', true)
+            ->where('required_qty', '>', 0)->orderBy('id')->lockForUpdate()->get();
         if ($materials->isEmpty()) return;
         $reached = $this->reachedUnits($op);
         $missing = [];
@@ -47,7 +47,7 @@ final class MaterialIssueService
             $need = $this->neededFor($m, $wo, $reached);
             if ((float) $m->issued_qty + self::EPS < $need) $missing[] = $m->component_item_name.' 还差 '.$this->num($need - (float) $m->issued_qty).($m->unit_name ?: '');
         }
-        if ($missing) $this->fail('material_not_received', $op->operation_name.'的料还没收：'.implode('、', $missing).'。请先在工单里点“收料”；仓库没货的先开半成品工单或找采购。');
+        if ($missing) $this->fail('material_not_received', $op->operation_name.'的料还没收齐：'.implode('、', $missing).'。板材和管材请先完成集中开料，其余物料请收料；仓库没货的先开半成品工单或找采购。');
     }
 
     /**
@@ -125,7 +125,8 @@ final class MaterialIssueService
         $rows = $query->get();
         $physical = Item::query()->whereIn('id', $rows->pluck('component_item_id')->unique())->get()
             ->filter(fn (Item $item) => $item->materialManagementMode() === 'physical')->pluck('id')->map(fn ($id) => (int) $id)->all();
-        return $rows->reject(fn ($m) => in_array((int) $m->component_item_id, $physical, true) || (float) $m->required_qty <= 0)->values();
+        return $rows->reject(fn ($m) => in_array($m->cutting_mode, ['sheet', 'length'], true)
+            || in_array((int) $m->component_item_id, $physical, true) || (float) $m->required_qty <= 0)->values();
     }
 
     /** 已经到过本道的台数：本道首次合格过的 + 现在停在本道还没合格过的。 */

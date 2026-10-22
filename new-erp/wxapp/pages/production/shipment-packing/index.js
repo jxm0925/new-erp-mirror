@@ -11,7 +11,8 @@ Page({
     materialsOpen: false, materialRows: [], materialDrafts: [], materialKeyword: '', materialPage: 1, materialLast: 1, materialError: '',
     categories: [{ id: 0, category_name: '全部分类' }], categoryIndex: 0,
     identityOpen: false, identityRows: [], selectedIdentities: [], identityMaterial: {}, identityPage: 1, identityLast: 1, identityKeyword: '',
-    inspectionOpen: false, inspectionResult: 'passed', inspectionReason: '' },
+    operationSerialIds: [], inspectionOpen: false, inspectionResult: 'passed', inspectionReason: '', inspectionError: '', inspectionNeedsReturn: false,
+    repairLocatorOpen: false, repairLocator: {}, reworkOpen: false, reworkRows: [], reworkPage: 1, reworkLast: 1, reworkKeyword: '', reworkError: '', returnOperation: null },
   onLoad(options) { this.peopleSelected = {}; this.materialSelected = {}; this.identitySelected = {}; this.setData({ shipmentId: Number(options.shipment_id || 0) }); this.load(); },
   onUnload() { this.sequence = (this.sequence || 0) + 1; this.detailSequence = (this.detailSequence || 0) + 1; this.invalidateSelectors(); },
   invalidateSelectors() { ['peopleSequence', 'materialSequence', 'identitySequence'].forEach(key => { this[key] = (this[key] || 0) + 1; }); },
@@ -24,6 +25,11 @@ Page({
     return Object.assign({}, row, { statusLabel: statusLabels[row.status] || row.status, ownerName: owner ? owner.name : '未接单',
       is_public_snapshot: row.is_public_snapshot === true || row.is_public_snapshot === 1 || row.is_public_snapshot === '1',
       qtyText: view.quantity(row.planned_base_qty), allowed_actions: actions,
+      serialResults: (row.serial_results || []).map(serial => Object.assign({}, serial, {
+        selected: this.data.operationSerialIds.includes(serial.inventory_serial_id),
+        canSelect: Boolean(serial.allowed_actions && (serial.allowed_actions.complete || serial.allowed_actions.inspect)),
+        statusLabel: ({ waiting: '等待前序', ready: '可开始', completed: '已完成', wait_quality: '待检验', failed: '不合格' })[serial.status] || serial.status,
+      })),
       materials: (row.materials || []).map(material => {
         const usage = material.usage_snapshot || {}; const labels = { length_mm: '长', width_mm: '宽', thickness_mm: '厚' };
         return Object.assign({}, material, { usageText: Object.keys(labels).filter(axis => usage.dimensions && usage.dimensions[axis] !== undefined && usage.dimensions[axis] !== null)
@@ -42,7 +48,7 @@ Page({
   keywordInput(event) { this.setData({ keyword: event.detail.value }); },
   search() { this.setData({ page: 1 }); this.load(); },
   turnPage(event) { const page = this.data.page + Number(event.currentTarget.dataset.delta); if (page > 0 && page <= this.data.lastPage && !this.data.busy) { this.setData({ page }); this.load(); } },
-  openOperation(event) { return this.showOperation(Number(event.currentTarget.dataset.id)); },
+  openOperation(event) { this.setData({ operationSerialIds: [] }); return this.showOperation(Number(event.currentTarget.dataset.id)); },
   showOperation(id) {
     const sequence = this.detailSequence = (this.detailSequence || 0) + 1;
     this.setData({ detailOpen: true, operation: Number(this.data.operation.id) === Number(id) ? this.data.operation : {}, operationError: '', pending: Boolean(packing.pending(id)) });
@@ -56,7 +62,7 @@ Page({
     this.setData({ busy: true, operationError: '', materialError: '' });
     const op = this.data.operation;
     return packing.action(op.id, Object.assign({ action, expected_version: op.business_version }, payload || {})).then(() => {
-      this.setData({ pending: false, peopleOpen: false, materialsOpen: false, identityOpen: false, inspectionOpen: false });
+      this.setData({ pending: false, peopleOpen: false, materialsOpen: false, identityOpen: false, inspectionOpen: false, operationSerialIds: [] });
       return Promise.all([this.load(), this.showOperation(op.id)]).then(() => true);
     }).catch(error => {
       const details = Object.values(error.errors || (error.details && error.details.errors) || {}).flat().join('；');
@@ -65,7 +71,7 @@ Page({
     }).finally(() => this.setData({ busy: false }));
   },
   recover() { return this.execute('recover'); },
-  complete() { if (this.data.busy) return; wx.showModal({ title: '完成包装工序', content: `确认本包裹 ${this.data.operation.qtyText} 的产品已完成本工序？`, confirmColor: '#008b4b', success: result => { if (result.confirm) this.execute('complete', { completed_base_qty: this.data.operation.planned_base_qty }); } }); },
+  complete() { if (this.data.busy) return; const ids = this.actionSerials('complete'); if (ids === false) return; wx.showModal({ title: '完成发货作业', content: '确认本次选择的 ' + (ids ? ids.length + ' 台' : this.data.operation.qtyText) + ' 已完成本工序？', confirmColor: '#008b4b', success: result => { if (result.confirm) this.execute('complete', ids ? { inventory_serial_ids: ids, completed_base_qty: ids.length } : { completed_base_qty: this.data.operation.planned_base_qty }); } }); },
   openPeople() {
     if (this.data.busy || this.data.pending) return;
     this.peopleSelected = {};
@@ -135,10 +141,47 @@ Page({
   closeIdentities() { if (!this.data.busy) { this.identitySequence = (this.identitySequence || 0) + 1; this.setData({ identityOpen: false }); } },
   saveMaterials() { let materials; try { materials = materialUsage.buildMaterials(Object.values(this.materialSelected)); } catch (error) { return this.setData({ materialError: error.message }); } return this.execute('materials', { materials }); },
   closeMaterials() { if (!this.data.busy) { this.materialSequence = (this.materialSequence || 0) + 1; this.identitySequence = (this.identitySequence || 0) + 1; this.setData({ materialsOpen: false, identityOpen: false }); } },
-  openInspection() { this.setData({ inspectionOpen: true, inspectionResult: 'passed', inspectionReason: '' }); },
+  chooseOperationSerials(event) { const ids = event.detail.value.map(Number); this.setData({ operationSerialIds: ids, 'operation.serialResults': (this.data.operation.serialResults || []).map(row => Object.assign({}, row, { selected: ids.includes(row.inventory_serial_id) })) }); },
+  actionSerials(action) {
+    const rows = this.data.operation.serial_results || [];
+    if (!rows.length) return null;
+    const ids = this.data.operationSerialIds;
+    if (!ids.length || ids.some(id => !rows.some(row => row.inventory_serial_id === id && row.allowed_actions && row.allowed_actions[action]))) { this.setData({ operationError: '请选择满足本次操作条件的设备' }); return false; }
+    return ids.slice();
+  },
+  needsReturnOperation() { return (this.data.operation.serial_results || []).some(row => this.data.operationSerialIds.includes(row.inventory_serial_id) && row.requires_return_operation); },
+  openInspection() { if (this.actionSerials('inspect') === false) return; this.setData({ inspectionOpen: true, inspectionResult: 'passed', inspectionReason: '', inspectionError: '', repairLocator: {}, returnOperation: null, inspectionNeedsReturn: this.needsReturnOperation() }); },
   inspectionChange(event) { this.setData({ inspectionResult: event.detail.value }); },
   inspectionInput(event) { this.setData({ inspectionReason: event.detail.value }); },
-  saveInspection() { return this.execute('inspect', { result: this.data.inspectionResult, reason: this.data.inspectionReason }); },
+  openRepairLocator() { if (!this.data.busy) this.setData({ repairLocatorOpen: true }); },
+  chooseRepairLocator(event) { this.setData({ repairLocator: event.detail, repairLocatorOpen: false }); },
+  closeRepairLocator() { this.setData({ repairLocatorOpen: false }); },
+  openReworkOperations() { this.setData({ reworkOpen: true, reworkPage: 1, reworkKeyword: '', reworkRows: [], reworkError: '' }); this.loadReworkOperations(); },
+  loadReworkOperations() {
+    const op = this.data.operation; const serial = (op.serial_results || []).find(row => this.data.operationSerialIds.includes(row.inventory_serial_id) && row.requires_return_operation);
+    if (!serial) return;
+    const sequence = this.reworkSequence = (this.reworkSequence || 0) + 1;
+    return packing.reworkOperations(this.data.shipmentId || op.shipment_id, serial.shipment_line_id, { page: this.data.reworkPage, per_page: 10, keyword: this.data.reworkKeyword }).then(response => {
+      if (sequence !== this.reworkSequence || !this.data.reworkOpen) return;
+      const result = view.rows(response); this.setData({ reworkRows: result.rows, reworkPage: result.page, reworkLast: result.lastPage });
+    }).catch(error => { if (sequence === this.reworkSequence) this.setData({ reworkError: view.errorText(error) }); });
+  },
+  reworkInput(event) { this.setData({ reworkKeyword: event.detail.value }); },
+  searchReworkOperations() { this.setData({ reworkPage: 1 }); this.loadReworkOperations(); },
+  turnReworkOperations(event) { const page = this.data.reworkPage + Number(event.currentTarget.dataset.delta); if (page > 0 && page <= this.data.reworkLast) { this.setData({ reworkPage: page }); this.loadReworkOperations(); } },
+  chooseReworkOperation(event) { const row = this.data.reworkRows.find(row => Number(row.id) === Number(event.currentTarget.dataset.id)); if (row) this.setData({ returnOperation: row, reworkOpen: false }); },
+  closeReworkOperations() { this.reworkSequence = (this.reworkSequence || 0) + 1; this.setData({ reworkOpen: false }); },
+  saveInspection() {
+    const ids = this.actionSerials('inspect'); if (ids === false) return;
+    const payload = { result: this.data.inspectionResult, reason: this.data.inspectionReason };
+    if (ids) payload.inventory_serial_ids = ids;
+    if (ids && payload.result === 'failed') {
+      const needsReturn = this.needsReturnOperation();
+      if (!payload.reason || !this.data.repairLocator.location_id || needsReturn && !this.data.returnOperation) return this.setData({ inspectionError: needsReturn ? '请填写不合格原因，选择返修库位和返工工序' : '请填写不合格原因并选择返修库位' });
+      payload.repair_location_id = this.data.repairLocator.location_id; if (needsReturn) payload.return_operation_id = this.data.returnOperation.id;
+    }
+    return this.execute('inspect', payload).then(result => { if (!result) this.setData({ inspectionError: this.data.operationError }); });
+  },
   closeInspection() { if (!this.data.busy) this.setData({ inspectionOpen: false }); },
   back: view.back,
   stop() {},

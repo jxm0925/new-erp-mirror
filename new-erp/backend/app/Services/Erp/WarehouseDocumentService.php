@@ -40,8 +40,15 @@ final class WarehouseDocumentService
                 $lines = $document->lines()->with(['orderLine.item.unit', 'reservation.balance.warehouse', 'reservation.balance.location']);
                 $extra['packages'] = $document->packages()->orderBy('id')->paginate($size, ['*'], 'packages_page', max(1, (int) ($filters['packages_page'] ?? 1)))->toArray();
                 if ($document->shipment_status === 'pending_outbound') $actions = ['sales_shipment.post'];
-                if ($document->shipment_status === 'outbound_posted') $actions = ['sales_shipment.dispatch'];
+                if (in_array($document->shipment_status, ['prepared', 'partially_shipped', 'outbound_posted'], true)) $actions = ['sales_shipment.dispatch'];
+                $extra['dispatchable_packages'] = app(ShipmentPackingApplicationService::class)->dispatchablePackages($document);
+                $extra['serial_results'] = app(ShipmentSerialApplicationService::class)->projection($document);
                 $receipt = $this->transaction('sales_shipment', $id);
+                if (! $receipt) {
+                    $transactionId = $document->dispatches()->whereNotNull('inventory_transaction_id')->orderByDesc('id')->value('inventory_transaction_id');
+                    $posting = $transactionId ? InventoryTransaction::find($transactionId) : null;
+                    $receipt = $posting?->only(['id', 'transaction_no', 'transaction_type', 'posted_at', 'source_no', 'source_id']);
+                }
             } elseif (($filters['stage'] ?? 'post') === 'receive') {
                 $document = SalesReturn::with(['order', 'customer'])->whereIn('sales_order_id', $orders)->findOrFail($id);
                 $lines = $document->items()->with(['item.unit', 'baseUnit', 'costAllocations.shipment', 'costAllocations.shipmentLine']);

@@ -1,10 +1,10 @@
 const { quantity } = require('./warehouse-page');
 const labels = { pending: '待入库', posted: '已入库', not_required: '无须库存入库', draft: '草稿', confirmed: '已确认', pending_outbound: '已确认 · 待出库',
-  outbound_posted: '已出库待发运', shipped: '已发运', completed: '已完成', pending_receipt: '退货已确认', partial_received: '部分收货', received: '已收货',
+  outbound_posted: '已出库待发运', prepared: '待发作业', partially_shipped: '部分已发运', shipped: '已发运', completed: '已完成', pending_receipt: '退货已确认', partial_received: '部分收货', received: '已收货',
   SUBMITTED: '待接收', WAIT_QUALITY: '待检验', RECEIVED: '已接收', COMPLETED: '已完成', WAIT_WAREHOUSE: '待入库', PART_WAREHOUSED: '部分入库', WAREHOUSED: '已入库', CREATED: '待办理' };
-const titles = { purchase_receipt: '采购入库', sales_return: '销售退货入库', sales_shipment: '销售出库', purchase_return: '采购退货出库' };
+const titles = { purchase_receipt: '采购入库', sales_return: '销售退货入库', sales_shipment: '销售发货', purchase_return: '采购退货出库' };
 const actionLabels = { 'purchase.post': '确认入库',
-  'sales_return.receive': '确认收货', 'sales_return.post': '确认入库', 'sales_shipment.post': '确认出库', 'sales_shipment.dispatch': '确认发运', 'purchase_return.post': '确认退货出库' };
+  'sales_return.receive': '确认收货', 'sales_return.post': '确认入库', 'sales_shipment.post': '移至待发区', 'sales_shipment.dispatch': '确认发运 / 提货并出库', 'purchase_return.post': '确认退货出库' };
 const fields = entries => entries.filter(entry => entry[1] !== null && entry[1] !== undefined && entry[1] !== '').map(([label, value]) => ({ label, value: String(value) }));
 function dimensions(d) { return ['length_mm', 'width_mm', 'thickness_mm'].map(k => d && d[k]).filter(v => v !== undefined && v !== null && v !== '').map(quantity).join(' × '); }
 function line(row) {
@@ -29,7 +29,7 @@ function header(kind, h, stage) {
   const ret = h.sales_return || h;
   const state = kind === 'sales_return' ? (stage === 'receive' ? h.return_status : h.stock_post_status)
     : kind === 'sales_shipment' ? h.shipment_status : kind === 'purchase_receipt' ? h.stock_post_status : kind === 'purchase_return' ? h.return_status : h.status;
-  const status = labels[state] || state || '—';
+  const status = kind === 'sales_shipment' && state === 'pending_outbound' ? '待移待发区' : labels[state] || state || '—';
   const map = {
     purchase_receipt: [['收货单号', h.receipt_no], ['单据状态', status], ['供应商', h.supplier && h.supplier.supplier_name], ['单据日期', String(h.receipt_date || '').slice(0, 10)], ['备注', h.remark]],
     sales_return: [['退货单号', ret.return_no], ['收货单号', h.receipt_no], ['单据状态', status], ['客户名称', (ret.customer && ret.customer.customer_name) || order.customer_name]],

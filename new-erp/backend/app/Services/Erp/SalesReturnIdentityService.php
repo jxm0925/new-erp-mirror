@@ -92,7 +92,10 @@ class SalesReturnIdentityService
             ->where('shipment_line.sales_order_line_id', $line->sales_order_line_id)
             ->where('serial.serial_status', 'shipped')->where('event.document_type', 'sales_shipment')
             ->where('transaction.transaction_type', 'sales_shipment_outbound')->where('transaction.posting_status', 'posted')->where('outbound.change_qty', '<', 0)
-            ->where('transaction.source_type', 'sales_shipment')->whereColumn('outbound.source_id', 'shipment.id')->whereColumn('transaction.source_id', 'shipment.id')
+            ->whereColumn('outbound.source_id', 'shipment.id')
+            ->where(fn ($q) => $q->where(fn ($old) => $old->where('transaction.source_type', 'sales_shipment')->whereColumn('transaction.source_id', 'shipment.id'))
+                ->orWhere(fn ($batch) => $batch->where('transaction.source_type', 'sales_shipment_dispatch')->whereExists(fn ($d) => $d->selectRaw('1')->from('erp_shipment_dispatches as dispatch')
+                    ->whereColumn('dispatch.id', 'transaction.source_id')->whereColumn('dispatch.shipment_id', 'shipment.id')->whereColumn('dispatch.inventory_transaction_id', 'transaction.id'))))
             ->whereColumn('serial.batch_no', 'shipment_line.batch_no')->whereColumn('outbound.batch_no', 'shipment_line.batch_no')
             ->whereRaw("JSON_CONTAINS(JSON_EXTRACT(shipment_line.serial_snapshot, '$.inventory_serial_ids'), CAST(serial.id AS JSON))")
             // The newest sale is authoritative: an old order cannot reclaim a serial that

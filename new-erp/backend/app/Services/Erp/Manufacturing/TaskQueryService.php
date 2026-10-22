@@ -60,12 +60,13 @@ final class TaskQueryService
         $selectable = $this->tasks->selectableUnits($op)->pluck('id')->all();
         $units = MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->where('current_operation_id', $op->id)->whereIn('status', TaskService::SELECTABLE)->orderBy('unit_no')->get();
         $lastFail = MfgUnitReport::query()->whereIn('unit_id', $units->pluck('id') ?: [0])->whereIn('result', ['failed', 'scrap'])->orderByDesc('id')->get()->unique('unit_id')->keyBy('unit_id');
+        $shipmentRepairReasons = DB::table('erp_shipment_reworks')->whereIn('unit_id', $units->pluck('id'))->where('status', 'in_progress')->pluck('reason', 'unit_id');
         $opNames = $wo->operations->pluck('operation_name', 'id');
         $participants = $this->participants($op);
         $mine = collect($participants)->firstWhere('employee_legacy_id', $me);
         $owner = collect($participants)->firstWhere('role', 'owner');
         $myActive = MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('employee_legacy_id', $me)->where('status', 'active')->first();
-        $runnable = in_array($wo->status, ['released', 'in_progress'], true) && $op->status !== 'done';
+        $runnable = $this->tasks->isRunnable($wo) && $op->status !== 'done';
         $canDo = $this->tasks->canDo($op, $me);
         $tech = MfgWorkOrderTech::query()->where('work_order_id', $wo->id)->first();
         $drawings = MfgDrawing::query()->where('work_order_id', $wo->id)->where('status', 'active')->orderBy('id')->get();
@@ -87,7 +88,7 @@ final class TaskQueryService
                 'status_label' => in_array($u->id, $selectable, true) ? ($u->status === 'rework' ? '返工' : '正在做') : '等报废确认',
                 'selectable' => in_array($u->id, $selectable, true), 'rework_count' => (int) $u->rework_count,
                 'fail_reason' => ($f = $lastFail->get($u->id)) && $u->status === 'rework'
-                    ? trim(implode('：', array_filter([($opNames[$f->work_order_operation_id] ?? '').'不合格', implode('/', $f->reason_tags ?: []) ?: $f->reason]))) : null,
+                    ? trim(implode('：', array_filter([($opNames[$f->work_order_operation_id] ?? '').'不合格', implode('/', $f->reason_tags ?: []) ?: $f->reason]))) : ($shipmentRepairReasons[$u->id] ?? null),
             ])->values()->all(),
             'progress' => ['planned' => (float) $wo->planned_qty, 'done' => (float) $op->completed_qty, 'here' => $here, 'upstream' => $upstream,
                 'next_operation_name' => $ops->get($myPos + 1)?->operation_name],
@@ -136,7 +137,8 @@ final class TaskQueryService
     {
         $this->workOrders->placeWaitingUnits();
         $today = now()->toDateString();
-        $woQuery = MfgWorkOrder::query()->whereIn('status', self::OPEN);
+        $woQuery = MfgWorkOrder::query()->where(fn ($q) => $q->whereIn('status', self::OPEN)
+            ->orWhere(fn ($repair) => $repair->where('status', 'completed')->whereIn('id', DB::table('erp_shipment_reworks')->where('status', 'in_progress')->whereNotNull('work_order_id')->select('work_order_id'))));
         if ($keyword = trim((string) ($filters['keyword'] ?? ''))) {
             $like = '%'.$keyword.'%';
             $woQuery->where(fn ($q) => $q->where('work_order_no', 'like', $like)->orWhere('product_name', 'like', $like)->orWhere('item_name', 'like', $like)
@@ -147,7 +149,7 @@ final class TaskQueryService
         if (! empty($filters['custom_only'])) $woQuery->whereExists(fn ($q) => $q->selectRaw('1')->from('erp_mfg_work_order_techs as t')->whereColumn('t.work_order_id', 'erp_mfg_work_orders.id'));
         if ($owner = (int) ($filters['owner_legacy_id'] ?? 0)) $woQuery->whereExists(fn ($q) => $q->selectRaw('1')->from('erp_mfg_task_participants as p')
             ->whereColumn('p.work_order_id', 'erp_mfg_work_orders.id')->where('p.employee_legacy_id', $owner)->where('p.is_active', true));
-        $wos = $woQuery->with('operations')->orderByDesc('is_urgent')->orderBy('planned_finish_date')->limit(300)->get()->keyBy('id');
+        $wos = $woQuery->with(['operations', 'item:id,item_type'])->orderByDesc('is_urgent')->orderBy('planned_finish_date')->limit(300)->get()->keyBy('id');
         $itemScopes = Item::query()->whereIn('id', $wos->pluck('item_id'))->pluck('management_scope', 'id');
         $woIds = $wos->keys()->all() ?: [0];
         $units = MfgWorkOrderUnit::query()->whereIn('work_order_id', $woIds)->whereIn('status', array_merge(TaskService::SELECTABLE, ['completed']))->orderBy('unit_no')->get();
@@ -200,6 +202,7 @@ final class TaskQueryService
             $lastOp = $wo->operations->where('execution_context', 'production')->last();
             return ['work_order_id' => $wo->id, 'work_order_no' => $wo->work_order_no, 'product_name' => $wo->product_name ?: $wo->item_name, 'sku_name' => $wo->sku_name,
                 'warehouse_id' => $wo->warehouse_id, 'management_scope' => $itemScopes[$wo->item_id] ?? null, 'last_operation_name' => $lastOp?->operation_name,
+                'allowed_location_purposes' => ReceiptService::allowedLocationPurposes($wo),
                 'units' => $group->map(fn ($u) => ['id' => $u->id, 'serial_no' => $u->serial_no, 'short' => substr($u->serial_no, -4),
                     'passed_at' => isset($lastPass[$u->id]) ? substr((string) $lastPass[$u->id], 0, 16) : null])->values()->all()];
         })->values()->all();
@@ -271,10 +274,12 @@ final class TaskQueryService
             ->where('tp.employee_legacy_id', $me)->when($activeOnly, fn ($w) => $w->where('tp.is_active', true));
         if ($tab === 'done') {
             $query->whereExists(fn ($q) => $participant($q, false))
-                ->where(fn ($q) => $q->where('op.status', 'done')->orWhereIn('wo.status', ['completed', 'closed']))
+                ->where(fn ($q) => $q->where('op.status', 'done')->orWhere('wo.status', 'closed')
+                    ->orWhere(fn ($finished) => $finished->where('wo.status', 'completed')->whereNotIn('wo.id', DB::table('erp_shipment_reworks')->where('status', 'in_progress')->whereNotNull('work_order_id')->select('work_order_id'))))
                 ->orderByDesc('op.updated_at');
         } elseif ($tab === 'available') {
-            $query->whereIn('wo.status', ['released', 'in_progress'])->where('op.status', '!=', 'done')
+            $query->where(fn ($q) => $q->whereIn('wo.status', ['released', 'in_progress'])
+                ->orWhere(fn ($repair) => $repair->where('wo.status', 'completed')->whereIn('wo.id', DB::table('erp_shipment_reworks')->where('status', 'in_progress')->whereNotNull('work_order_id')->select('work_order_id'))))->where('op.status', '!=', 'done')
                 ->whereNotExists(fn ($q) => $q->selectRaw('1')->from('erp_mfg_task_participants as ow')->whereColumn('ow.work_order_operation_id', 'op.id')
                     ->where('ow.role', 'owner')->where('ow.is_active', true))
                 ->whereExists(fn ($q) => $q->selectRaw('1')->from('erp_mfg_work_order_units as u')->whereColumn('u.current_operation_id', 'op.id')
@@ -284,7 +289,8 @@ final class TaskQueryService
                     ->orWhereNotExists(fn ($w) => $w->selectRaw('1')->from('erp_production_operation_workers as pw2')->whereColumn('pw2.operation_id', 'op.operation_id')))
                 ->orderByDesc('wo.is_urgent')->orderBy('wo.planned_finish_date')->orderBy('op.sequence');
         } else {
-            $query->whereIn('wo.status', self::OPEN)->where('op.status', '!=', 'done')->whereExists(fn ($q) => $participant($q, true))
+            $query->where(fn ($q) => $q->whereIn('wo.status', self::OPEN)
+                ->orWhere(fn ($repair) => $repair->where('wo.status', 'completed')->whereIn('wo.id', DB::table('erp_shipment_reworks')->where('status', 'in_progress')->whereNotNull('work_order_id')->select('work_order_id'))))->where('op.status', '!=', 'done')->whereExists(fn ($q) => $participant($q, true))
                 ->orderByDesc('wo.is_urgent')->orderBy('wo.planned_finish_date')->orderBy('op.sequence');
         }
         if ($keyword = trim((string) ($filters['keyword'] ?? ''))) {
@@ -315,7 +321,7 @@ final class TaskQueryService
             'assigned_by_name' => $owner && (int) $owner->employee_legacy_id === $me && $owner->assigned_by_legacy_id && (int) $owner->assigned_by_legacy_id !== $me ? $owner->assigned_by_name : null,
             'timing' => MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('employee_legacy_id', $me)->where('status', 'active')->exists(),
             'paused' => $wo->status === 'paused', 'pause_reason' => $wo->pause_reason,
-            'allowed' => ['claim' => $canExecute && in_array($wo->status, ['released', 'in_progress'], true) && $op->status !== 'done'
+            'allowed' => ['claim' => $canExecute && $this->tasks->isRunnable($wo) && $op->status !== 'done'
                 && ! $owner && $this->tasks->canDo($op, $me)],
         ];
     }

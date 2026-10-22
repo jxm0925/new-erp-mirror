@@ -9,6 +9,7 @@ Page({
     page: 1, lastPage: 1, total: 0, actions: [], mainAction: '', mainLabel: '', locator: {}, locatorOpen: false, locatorTarget: '', quantity: '',
     fieldErrors: {}, allocationOpen: false, allocations: [], allocationLine: null, allocationError: '', pendingAction: '', conflictOpen: false,
     packages: [], packagesPage: 1, packagesLast: 1, receipt: null, readonly: false, relatedOpen: false,
+    dispatchPackages: [], selectedPackageIds: [], deliveryMode: 'dispatch', locatorPurpose: '',
     returnSerialOpen: false, returnSerialLine: {}, returnSerialValue: {}, returnSerialExcluded: [], returnSerialConflict: false, canPacking: false },
   onLoad(options) {
     this.drafts = {}; this.returnLineCache = {}; this.returnSerialQueue = [];
@@ -45,6 +46,7 @@ Page({
 actions, mainAction, mainLabel: view.actionLabels[mainAction] || '', canAllocate: actions.includes('purchase.allocate'),
         loading: false, pendingAction, receipt: result.receipt, readonly: !actions.length, item: header.item || {},
         quantity: this.data.quantity || page.quantity(header.remaining_qty), postingEligibility: result.posting_eligibility || null,
+        dispatchPackages: (result.dispatchable_packages || []).map(row => Object.assign({}, row, { selected: this.data.selectedPackageIds.includes(Number(row.id)), blockerText: (row.blockers || []).join('；') })),
         packages: (result.packages && result.packages.data) || [], packagesTotal: (result.packages && result.packages.total) || 0, packagesLast: (result.packages && result.packages.last_page) || 1 });
       wx.setNavigationBarTitle({ title: this.data.kind === 'sales_return' && this.data.stage === 'receive' ? '销售退货收货' : mainAction === 'sales_shipment.dispatch' ? '销售发运' : view.titles[this.data.kind] || '仓库单据' });
     }).catch(error => { if (sequence === this.sequence) this.setData({ loading: false, error: page.errorText(error) }); });
@@ -89,7 +91,7 @@ actions, mainAction, mainLabel: view.actionLabels[mainAction] || '', canAllocate
     if (this.data.busy || this.data.pendingAction) return;
     const target = event.currentTarget.dataset.target || 'output'; const index = Number(event.currentTarget.dataset.index || 0); const id = Number(event.currentTarget.dataset.id || 0);
     const value = target === 'allocation' ? this.data.allocations[index].locator : target === 'return' ? this.drafts[id].locator : this.data.locator;
-    this.setData({ locatorOpen: true, locatorTarget: target, locatorIndex: index, locatorLine: id, locatorValue: value });
+    this.setData({ locatorOpen: true, locatorTarget: target, locatorIndex: index, locatorLine: id, locatorValue: value, locatorPurpose: this.data.mainAction === 'sales_shipment.post' ? 'shipping_staging' : '' });
   },
   chooseLocator(event) {
     const value = event.detail;
@@ -141,12 +143,22 @@ actions, mainAction, mainLabel: view.actionLabels[mainAction] || '', canAllocate
       if (!items.length) return this.setData({ error: '请填写本次实际收到的数量' });
       payload = { items };
     }
+    if (action === 'sales_shipment.post') {
+      if (!this.data.locator.location_id) return this.setData({ error: '请选择待发仓库和库位' });
+      payload = { expected_version: this.data.header.business_version, staging_location_id: this.data.locator.location_id };
+    }
+    if (action === 'sales_shipment.dispatch') {
+      if (!this.data.selectedPackageIds.length) return this.setData({ error: '请选择本次发出的就绪包裹' });
+      payload = { expected_version: this.data.header.business_version, package_ids: this.data.selectedPackageIds, delivery_mode: this.data.deliveryMode };
+    }
     return this.execute(action, payload);
   },
+  chooseDispatchPackages(event) { this.setData({ selectedPackageIds: event.detail.value.map(Number) }); },
+  chooseDeliveryMode(event) { this.setData({ deliveryMode: event.detail.value }); },
   execute(action, payload) {
     this.setData({ busy: true, error: '', allocationError: '', conflictOpen: false });
     return warehouse.submit(action, this.data.id, payload).then(result => {
-      this.setData({ pendingAction: '', allocationOpen: false, allocations: [], allocationLine: null, fieldErrors: {}, locatorOpen: false, quantity: '', locator: {} });
+      this.setData({ pendingAction: '', allocationOpen: false, allocations: [], allocationLine: null, fieldErrors: {}, locatorOpen: false, quantity: '', locator: {}, selectedPackageIds: [] });
       if (action === 'sales_return.receive') { this.drafts = {}; this.returnLineCache = {}; this.returnSerialQueue = []; this.setData({ id: result.id, stage: 'post', page: 1, returnSerialOpen: false, returnSerialLine: {}, returnSerialValue: {}, returnSerialConflict: false }); }
       return this.load();
     }).catch(error => {

@@ -73,7 +73,7 @@
           <div class="lane">
             <div class="lane-h"><b>今天入库</b><span>{{ todayStored }} 台</span></div>
             <div v-for="r in board.today_receipts" :key="r.id" class="bcard">
-              <div class="bc-top"><span class="mono sub">{{ r.work_order_no }}</span><span class="chip c-b">待试水</span></div>
+              <div class="bc-top"><span class="mono sub">{{ r.work_order_no }}</span><span class="chip c-b">已入库</span></div>
               <div class="bc-name">{{ r.product_name }}<template v-if="r.sku_name"> {{ r.sku_name }}</template></div>
               <div class="sns"><span v-for="sn in r.serial_nos" :key="sn" class="sn g" :title="sn">{{ sn.slice(-4) }}</span></div>
               <div class="bc-foot"><span class="sub">{{ r.operator_name }} · {{ r.warehouse_name }} {{ r.location_code }}</span></div>
@@ -147,11 +147,11 @@
           </el-form-item>
           <el-form-item label="备注"><el-input v-model="receipt.remark" maxlength="500" /></el-form-item>
         </el-form>
-        <p class="sub">入库后显示“待试水”；按每台暂估材料成本入账。</p>
+        <p class="sub">入库后显示“已入库”；按每台暂估材料成本入账。</p>
       </template>
       <span slot="footer"><el-button size="small" @click="receipt.visible = false">取消</el-button><el-button size="small" type="primary" :loading="saving" :disabled="!receipt.unit_ids.length || !receipt.location_id" @click="saveReceipt">确认入库</el-button></span>
     </el-dialog>
-    <system-record-picker :visible.sync="receiptPicker.visible" :type="receiptPicker.type" :multiple="false" :value="receiptPickerValue" :warehouse-id="Number(receipt.warehouse_id || 0)" :management-scope="receipt.management_scope || ''" @confirm="selectReceiptLocator" />
+    <system-record-picker :visible.sync="receiptPicker.visible" :type="receiptPicker.type" :multiple="false" :value="receiptPickerValue" :warehouse-id="Number(receipt.warehouse_id || 0)" :location-purposes="receipt.allowed_location_purposes" :management-scope="receipt.management_scope || ''" @confirm="selectReceiptLocator" />
   </section>
 </template>
 
@@ -168,7 +168,7 @@ export default {
     loading: false, saving: false, board: null, timer: null, people: [],
     filters: { keyword: '', owner_legacy_id: null, urgent_only: false, custom_only: false },
     assign: { visible: false, op: null, title: '', employee: null },
-    receipt: { visible: false, row: null, unit_ids: [], management_scope: null, warehouse_id: null, warehouse_name: '', location_id: null, location_name: '', remark: '' },
+    receipt: { visible: false, row: null, unit_ids: [], management_scope: null, allowed_location_purposes: [], warehouse_id: null, warehouse_name: '', location_id: null, location_name: '', remark: '' },
     receiptPicker: { visible: false, type: 'warehouses' }
   }),
   computed: {
@@ -248,7 +248,7 @@ export default {
       }
     },
     async openReceipt(w) {
-      const r = this.receipt = { visible: true, row: w, unit_ids: w.units.map(u => u.id), management_scope: ['factory', 'office'].includes(w.management_scope) ? w.management_scope : null, warehouse_id: null, warehouse_name: '', location_id: null, location_name: '', remark: '' }
+      const r = this.receipt = { visible: true, row: w, unit_ids: w.units.map(u => u.id), management_scope: ['factory', 'office'].includes(w.management_scope) ? w.management_scope : null, allowed_location_purposes: w.allowed_location_purposes || [], warehouse_id: null, warehouse_name: '', location_id: null, location_name: '', remark: '' }
       if (!r.management_scope) {
         this.$message.error('产出物料管理范围未确定，请先核对物料档案')
         return
@@ -268,6 +268,7 @@ export default {
     },
     openReceiptPicker(type) {
       if (this.saving || !this.receipt.visible || !this.receipt.management_scope || (type === 'locations' && !this.receipt.warehouse_id)) return
+      if (!this.receipt.allowed_location_purposes.length) { this.$message.error('入库库位用途未确定，请刷新看板后重试'); return }
       this.receiptPicker = { type, visible: true }
     },
     selectReceiptLocator(rows) {

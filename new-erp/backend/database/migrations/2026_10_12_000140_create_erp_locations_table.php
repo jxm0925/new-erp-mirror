@@ -17,6 +17,7 @@ CREATE TABLE `erp_locations` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `location_code` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `location_name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `location_purpose` varchar(30) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'general',
   `warehouse_id` bigint(20) unsigned NOT NULL,
   `parent_id` bigint(20) unsigned DEFAULT NULL,
   `area` varchar(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,

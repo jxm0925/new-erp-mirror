@@ -9,6 +9,7 @@ use App\Services\Erp\SalesCostVisibilityService;
 use App\Services\Erp\AuthContextService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class SalesShipmentController extends Controller
 {
@@ -19,7 +20,7 @@ class SalesShipmentController extends Controller
         $orderId = $request->integer('sales_order_id');
         $this->assertSalesOrderVisible($request, $orderId);
         $page = \App\Models\Erp\SalesOrderFulfillment::query()->with(['line', 'item'])->where('sales_order_id', $orderId)
-            ->whereIn('fulfillment_type', ['inventory', 'production'])->where('demand_status', 'confirmed')
+            ->whereIn('fulfillment_type', ['inventory', 'production', 'purchase'])->where('demand_status', 'confirmed')
             ->whereExists(function ($q): void {
                 $q->selectRaw('1')->from('erp_inventory_reservations as r')->whereColumn('r.source_order_id', 'erp_sales_order_fulfillments.sales_order_id')
                     ->whereColumn('r.source_order_line_id', 'erp_sales_order_fulfillments.sales_order_line_id')
@@ -83,45 +84,51 @@ class SalesShipmentController extends Controller
             'order.lines', 'lines.orderLine.item', 'lines.reservation', 'packages', 'logs',
         ])->whereKey($id);
         $this->applySalesOrderVisibility($query, $request);
-        return $this->costSafeJson(['data' => $query->firstOrFail()]);
+        $shipment = $query->firstOrFail();
+        $shipment->setAttribute('serial_results', app(\App\Services\Erp\ShipmentSerialApplicationService::class)->projection($shipment));
+        $shipment->setAttribute('dispatchable_packages', app(\App\Services\Erp\ShipmentPackingApplicationService::class)->dispatchablePackages($shipment));
+        return $this->costSafeJson(['data' => $shipment]);
     }
 
     public function store(Request $request, SalesShipmentApplicationService $service)
     {
-        $this->authorizePermission($request, 'sales_order.shipment.create');
+        $actor = $this->authorizePermission($request, 'sales_order.shipment.create');
         $payload = $this->validateShipment($request);
         $this->assertSalesOrderVisible($request, (int) $payload['sales_order_id']);
-        $shipment = $service->create((int) $payload['sales_order_id'], $payload, $this->operator($request));
+        $shipment = $service->create((int) $payload['sales_order_id'], $payload, $this->operator($request), $actor);
         return $this->costSafeJson(['message' => '销售发货单已创建', 'data' => $shipment], 201);
     }
 
     public function confirm(Request $request, int $id, SalesShipmentApplicationService $service)
     {
-        $this->authorizePermission($request, 'sales_order.shipment.confirm');
-        $shipment = $service->confirm($this->visibleShipment($request, $id), $this->operator($request));
-        return $this->costSafeJson(['message' => '销售发货单已确认，等待库存出库过账', 'data' => $shipment]);
+        $actor = $this->authorizePermission($request, 'sales_order.shipment.confirm');
+        $shipment = $service->confirm($this->visibleShipment($request, $id), $this->operator($request), $this->command($request), $actor);
+        return $this->costSafeJson(['message' => '销售发货单已确认，等待移至待发区', 'data' => $shipment]);
     }
 
     public function postOutbound(Request $request, int $id, SalesShipmentApplicationService $service)
     {
-        $this->authorizePermission($request, 'sales_order.shipment.post');
-        $shipment = $service->postOutbound($this->visibleShipment($request, $id), $this->operator($request));
-        return $this->costSafeJson(['message' => '销售出库已过账', 'data' => $shipment]);
+        $actor = $this->authorizePermission($request, 'sales_order.shipment.post');
+        $data = $this->command($request) + $request->validate(['staging_location_id' => 'required|integer|min:1']);
+        $shipment = $service->postOutbound($this->visibleShipment($request, $id), $this->operator($request), $data, $actor);
+        return $this->costSafeJson(['message' => '已移至待发区并锁定库存', 'data' => $shipment]);
     }
 
     public function dispatch(Request $request, int $id, SalesShipmentApplicationService $service)
     {
-        $this->authorizePermission($request, 'sales_order.shipment.dispatch');
-        $shipment = $service->dispatch($this->visibleShipment($request, $id), $this->operator($request));
-        return $this->costSafeJson(['message' => '物流已发运', 'data' => $shipment]);
+        $actor = $this->authorizePermission($request, 'sales_order.shipment.dispatch');
+        $data = $this->command($request) + $request->validate(['package_ids' => 'required|array|min:1|max:100',
+            'package_ids.*' => 'required|integer|min:1|distinct', 'delivery_mode' => 'required|in:dispatch,pickup']);
+        $shipment = $service->dispatch($this->visibleShipment($request, $id), $this->operator($request), $data, $actor);
+        return $this->costSafeJson(['message' => '本次包裹已正式发出', 'data' => $shipment]);
     }
 
     public function cancel(Request $request, int $id, SalesShipmentApplicationService $service)
     {
-        $this->authorizePermission($request, 'sales_order.shipment.cancel');
-        $data = $request->validate(['reason' => 'required|string|max:500']);
-        $shipment = $service->cancel($this->visibleShipment($request, $id), $data['reason'], $this->operator($request));
-        return $this->costSafeJson(['message' => '销售发货单已取消，库存预留已释放', 'data' => $shipment]);
+        $actor = $this->authorizePermission($request, 'sales_order.shipment.cancel');
+        $data = $this->command($request) + $request->validate(['reason' => 'required|string|max:500']);
+        $shipment = $service->cancel($this->visibleShipment($request, $id), $data['reason'], $this->operator($request), $data, $actor);
+        return $this->costSafeJson(['message' => '发货准备已取消，完好设备已退位并恢复订单占用', 'data' => $shipment]);
     }
 
     public function destroyDraft(Request $request, int $id, SalesShipmentApplicationService $service)
@@ -141,6 +148,7 @@ class SalesShipmentController extends Controller
     {
         return $request->validate([
             'sales_order_id' => 'required|integer|exists:erp_sales_orders,id',
+            'client_command_id' => 'required|string|max:100',
             'carrier_name' => 'nullable|string|max:120',
             'tracking_no' => 'nullable|string|max:120',
             'actual_freight_amount' => 'nullable|numeric|min:0',
@@ -160,6 +168,43 @@ class SalesShipmentController extends Controller
             'packages.*.freight_amount' => 'nullable|numeric|min:0',
             'packages.*.remark' => 'nullable|string|max:500',
         ]);
+    }
+
+    private function command(Request $request): array
+    {
+        return $request->validate(['expected_version' => 'required|integer|min:1', 'client_command_id' => 'required|string|max:100']);
+    }
+
+    public function reworkOperations(Request $request, int $id, int $lineId, \App\Services\Erp\ShipmentSerialApplicationService $service)
+    {
+        $this->authorizePermission($request, 'sales_order.shipment.packing.quality');
+        // 质检执行端沿作业范围看本台返工选项，不要求同时成为该订单的销售负责人。
+        $shipment = SalesShipment::query()->whereKey($id)->whereHas('lines', fn ($line) => $line->whereKey($lineId))->firstOrFail();
+        $pending = DB::table('erp_shipment_serial_results as result')->join('erp_sales_shipment_lines as line', 'line.id', '=', 'result.shipment_line_id')
+            ->where('line.shipment_id', $id)->where('line.id', $lineId)->where('line.line_status', 'prepared')
+            ->whereColumn('result.round', 'line.quality_round')->where('result.status', 'wait_quality')->exists();
+        abort_unless($pending, 403, '当前设备不在可办理的发货质检作业中。');
+        return response()->json(['data' => $service->reworkOperations($shipment, $lineId, $request->all())]);
+    }
+
+    public function replacementSerials(Request $request, int $id, int $lineId, \App\Services\Erp\ShipmentSerialApplicationService $service)
+    {
+        $this->authorizePermission($request, 'sales_order.shipment.post');
+        return response()->json(['data' => $service->replacementSerials($this->visibleShipment($request, $id), $lineId, $request->all())]);
+    }
+
+    public function repairReturn(Request $request, int $id, int $lineId, \App\Services\Erp\ShipmentSerialApplicationService $service)
+    {
+        $actor = $this->authorizePermission($request, 'sales_order.shipment.post');
+        $data = $this->command($request) + $request->validate(['finished_location_id' => 'required|integer|min:1', 'reason' => 'required|string|max:500']);
+        return response()->json(['message' => '原设备返修合格已返回', 'data' => $service->repairReturn($this->visibleShipment($request, $id), $lineId, $data, $actor)]);
+    }
+
+    public function replaceSerial(Request $request, int $id, int $lineId, \App\Services\Erp\ShipmentSerialApplicationService $service)
+    {
+        $actor = $this->authorizePermission($request, 'sales_order.shipment.post');
+        $data = $this->command($request) + $request->validate(['replacement_inventory_serial_id' => 'required|integer|min:1', 'reason' => 'required|string|max:500']);
+        return response()->json(['message' => '替换设备已移至待发区', 'data' => $service->replace($this->visibleShipment($request, $id), $lineId, $data, $actor)]);
     }
 
     private function operator(Request $request): string

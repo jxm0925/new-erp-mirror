@@ -44,6 +44,11 @@ export const resumeWorkOrder = (id, data) => api.post(`/v1/erp/production/work-o
 export const cancelWorkOrder = (id, data) => api.post(`/v1/erp/production/work-orders/${id}/cancel`, data)
 export const createSemiWorkOrder = (id, data) => api.post(`/v1/erp/production/work-orders/${id}/semi-orders`, data)
 export const receiveOperationMaterials = (id, operationId, data) => api.post(`/v1/erp/production/work-orders/${id}/operations/${operationId}/material-receipts`, data)
+export const getWorkOrderCutting = (id, params) => api.get(`/v1/erp/production/work-orders/${id}/cutting`, { params })
+export const listWorkOrderCuttingSources = (id, params) => api.get(`/v1/erp/production/work-orders/${id}/cutting/sources`, { params })
+export const previewWorkOrderCutting = (id, data) => api.post(`/v1/erp/production/work-orders/${id}/cutting/preview`, data)
+export const issueWorkOrderCutting = (id, data) => api.post(`/v1/erp/production/work-orders/${id}/cutting/issue`, data)
+export const settleWorkOrderCutting = (id, data) => api.post(`/v1/erp/production/cutting-batches/${id}/settle`, data)
 export const lookupSerial = serialNo => api.get('/v1/erp/production/serials/lookup', { params: { serial_no: serialNo } })
 export const listSalesOrderWorkOrders = orderId => api.get(`/v1/erp/production/sales-orders/${orderId}/work-orders`)
 // 车间报工、作业看板、成品入库、定制技术（第 2 阶段）

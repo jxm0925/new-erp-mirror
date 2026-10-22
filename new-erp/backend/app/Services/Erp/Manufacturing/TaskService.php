@@ -180,6 +180,7 @@ final class TaskService
             $sessions = MfgLaborSession::query()->where('work_order_operation_id', $op->id)->lockForUpdate()->get();
             if ($sessions->isEmpty()) $this->fail('no_labor', '这道工序还没有计时记录，请先点“开始”。');
             $units = $this->pickUnits($op, $unitIds);
+            $this->materials->assertReceivedForStart($wo, $op, $units);
             $ops = $this->productionOps($wo);
             $pos = $ops->pluck('id')->flip();
             $next = $ops->get($pos[$op->id] + 1);
@@ -187,7 +188,9 @@ final class TaskService
             $snapshot = $this->participantsSnapshot($op, $sessions, $reportedAt);
             $firstPass = 0;
             $finished = 0;
+            $receiptUnitIds = [];
             foreach ($units as $unit) {
+                $shipmentRepair = \App\Models\Erp\ShipmentRework::query()->where('unit_id', $unit->id)->where('status', 'in_progress')->lockForUpdate()->first();
                 $wasRework = $unit->status === 'rework';
                 if (! MfgUnitReport::query()->where('unit_id', $unit->id)->where('work_order_operation_id', $op->id)->where('result', 'passed')->lockForUpdate()->first(['id'])) $firstPass++;
                 $this->report($wo, $op, $unit, 'passed', $actor, ['is_rework' => $wasRework, 'participants_snapshot' => $snapshot, 'created_at' => $reportedAt]);
@@ -197,15 +200,23 @@ final class TaskService
                     $stillRework = $failedAt && isset($pos[$failedAt]) && $pos[$failedAt] > $pos[$op->id];
                 }
                 if ($next) {
-                    $unit->update(['status' => $stillRework ? 'rework' : 'in_progress', 'current_operation_id' => $next->id]);
+                    $unit->update(['status' => $stillRework || $shipmentRepair ? 'rework' : 'in_progress', 'current_operation_id' => $next->id]);
                     if ($next->status === 'done') $next->update(['status' => 'in_progress']);
                     $text = "{$op->operation_name}合格，交{$next->operation_name}";
                 } else {
+                    if ($shipmentRepair) {
+                        // 已在库原机返工只完成本轮维修，不增加首次制造成果，也不再入库一台。
+                        $unit->update(['status' => 'stored', 'current_operation_id' => null]);
+                        $shipmentRepair->update(['status' => 'completed', 'completed_at' => $reportedAt]);
+                        $text = "{$op->operation_name}返修合格，等待返回成品位重新试水";
+                    } else {
                     $unit->update(['status' => 'completed', 'current_operation_id' => null, 'completed_at' => $reportedAt]);
                     $finished++;
+                    $receiptUnitIds[] = (int) $unit->id;
                     $text = "{$op->operation_name}合格，生产完成，等入库";
+                    }
                 }
-                $this->workOrders->log($wo, 'unit_passed', $wasRework ? 'rework' : 'in_progress', $next ? null : 'completed',
+                $this->workOrders->log($wo, 'unit_passed', $wasRework ? 'rework' : 'in_progress', $next ? null : ($shipmentRepair ? 'stored' : 'completed'),
                     $unit->serial_no.' '.$text.($wasRework ? '（返工）' : ''), $actor, ['operation_id' => $op->id], $unit->id);
             }
             if ($firstPass) $op->update(['completed_qty' => (float) $op->completed_qty + $firstPass]);
@@ -215,7 +226,7 @@ final class TaskService
             $staged = null;
             if ($finished) {
                 try {
-                    $staged = $this->receipts->autoStage($wo->id, $units->pluck('id')->all(), $actor);
+                    $staged = $this->receipts->autoStage($wo->id, $receiptUnitIds, $actor);
                 } catch (\App\Exceptions\Erp\WorkOrderDomainException|\Illuminate\Validation\ValidationException $e) {
                     // 自动入待发区失败不影响报工，留给仓库手工入库。
                     $message = $e instanceof \Illuminate\Validation\ValidationException ? collect($e->errors())->flatten()->first() : $e->getMessage();
@@ -245,6 +256,8 @@ final class TaskService
             $units = $this->pickUnits($op, $unitIds);
             $extra = ['reason_tags' => $tags ?: null, 'reason' => $reason ?: null, 'photos' => $photos ?: null];
             if (($data['mode'] ?? 'return') === 'scrap') {
+                if (\App\Models\Erp\ShipmentRework::query()->whereIn('unit_id', $units->pluck('id'))->where('status', 'in_progress')->exists())
+                    $this->fail('stored_serial_scrap', '发货返修设备已经入库，须使用正式库存报废处理，不能只从制造产量删除。');
                 foreach ($units as $unit) {
                     $this->report($wo, $op, $unit, 'scrap', $actor, $extra + ['is_rework' => $unit->status === 'rework', 'review_status' => 'pending']);
                     $unit->update(['status' => 'rework']);
@@ -352,6 +365,8 @@ final class TaskService
     {
         $woId = MfgWorkOrderOperation::query()->whereKey($opId)->value('work_order_id');
         if (! $woId) $this->fail('not_found', '生产任务不存在。', 404);
+        $orderId = MfgWorkOrder::query()->whereKey($woId)->value('sales_order_id');
+        if ($orderId) SalesOrder::query()->whereKey($orderId)->lockForUpdate()->firstOrFail();
         $wo = MfgWorkOrder::query()->lockForUpdate()->findOrFail($woId);
         $op = MfgWorkOrderOperation::query()->where('work_order_id', $wo->id)->lockForUpdate()->findOrFail($opId);
         if ($op->execution_context !== 'production') $this->fail('not_production', '这道不是车间工序，不能在这里报工。');
@@ -361,7 +376,13 @@ final class TaskService
     private function assertRunnable(MfgWorkOrder $wo, MfgWorkOrderOperation $op): void
     {
         if ($wo->status === 'paused') $this->fail('paused', '工单已暂停（'.($wo->pause_reason ?: '未写原因').'），暂时不能报工。');
-        if (! in_array($wo->status, ['released', 'in_progress'], true)) $this->fail('status_invalid', '工单不在生产中，不能报工。');
+        if (! $this->isRunnable($wo)) $this->fail('status_invalid', '工单不在生产中，也没有本机发货返工任务，不能报工。');
+    }
+
+    public function isRunnable(MfgWorkOrder $wo): bool
+    {
+        return in_array($wo->status, ['released', 'in_progress'], true) || ($wo->status === 'completed'
+            && \App\Models\Erp\ShipmentRework::query()->where('work_order_id', $wo->id)->where('status', 'in_progress')->exists());
     }
 
     private function assertReporter(MfgWorkOrderOperation $op, object $actor): void

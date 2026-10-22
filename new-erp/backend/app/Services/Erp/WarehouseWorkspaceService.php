@@ -96,7 +96,7 @@ final class WarehouseWorkspaceService
         $salesOrders = SalesOrder::query()->select('id'); $this->salesScope->apply($salesOrders, $user);
         if ($kind === 'sales_shipment') {
             $q = DB::table('erp_sales_shipments as d')->join('erp_sales_orders as so', 'so.id', '=', 'd.sales_order_id')->whereIn('d.sales_order_id', $salesOrders);
-            $done ? $q->whereNotNull('d.outbound_posted_at') : $q->whereIn('d.shipment_status', ['pending_outbound', 'outbound_posted']);
+            $done ? $q->whereIn('d.shipment_status', ['shipped', 'completed']) : $q->whereIn('d.shipment_status', ['pending_outbound', 'prepared', 'partially_shipped', 'outbound_posted']);
             return [$this->row($q, $kind, $done, ['number' => 'd.shipment_no', 'related_number' => 'so.sales_order_no', 'party' => 'so.customer_name', 'status' => 'd.shipment_status', 'completed_at' => 'd.outbound_posted_at'], $f,
                 ['erp_sales_shipment_lines', 'shipment_id', 'item_id', 'base_qty'])];
         }
@@ -123,9 +123,10 @@ final class WarehouseWorkspaceService
         if ($lines) {
             [$table, $foreign, $item, $quantity] = $lines;
             $parent = 'd.id';
-            $columns['item_id'] = "(SELECT MIN(l.$item) FROM $table l WHERE l.$foreign=$parent)";
-            $columns['item_count'] = "(SELECT COUNT(DISTINCT l.$item) FROM $table l WHERE l.$foreign=$parent)";
-            $columns['quantity'] = "(SELECT SUM(l.$quantity) FROM $table l WHERE l.$foreign=$parent)";
+            $active = $kind === 'sales_shipment' ? " AND l.line_status <> 'replaced'" : '';
+            $columns['item_id'] = "(SELECT MIN(l.$item) FROM $table l WHERE l.$foreign=$parent$active)";
+            $columns['item_count'] = "(SELECT COUNT(DISTINCT l.$item) FROM $table l WHERE l.$foreign=$parent$active)";
+            $columns['quantity'] = "(SELECT SUM(l.$quantity) FROM $table l WHERE l.$foreign=$parent$active)";
         }
         if ($done) $columns['sort_at'] = $columns['completed_at'];
         if ($keyword = trim((string) ($filters['keyword'] ?? ''))) {
@@ -159,7 +160,7 @@ final class WarehouseWorkspaceService
         // A sum across different items has no usable unit. Do not expose it as a quantity.
         if ($count > 1) $data['quantity'] = null;
         $data['status_label'] = $row->kind === 'sales_shipment' ? match ($row->status) {
-            'pending_outbound' => '待出库', 'outbound_posted' => '待发运', 'shipped' => '已发运', default => '已出库',
+            'pending_outbound' => '待移至待发区', 'prepared' => '待发运', 'partially_shipped' => '部分已发运', 'outbound_posted' => '待发运', 'shipped' => '已发运', default => '已出库',
         } : ($row->status_group === 'completed' ? '已完成' : match ($row->kind) {
             'sales_shipment', 'purchase_return' => '待出库',
             'sales_return' => $row->stage === 'receive' ? '待收货' : '待入库', default => '待办理',

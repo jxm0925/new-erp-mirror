@@ -38,7 +38,9 @@ class SalesOrderInventoryLockService
 
             $created = 0;
             $plannedByBalance = [];
-            foreach ($order->lines->sortBy('line_no') as $line) {
+            $fullyShipped = $order->lines->every(fn ($line) => ! $this->isPhysical($line)
+                || (float) $line->shipped_qty + 0.00000001 >= SalesOrderFulfillmentPolicy::effectiveQuantity((float) $line->order_qty, (float) $line->cancelled_qty));
+            foreach ($fullyShipped ? collect() : $order->lines->sortBy('line_no') as $line) {
                 if (! $this->isPhysical($line)) continue;
                 $alreadyAllocated = $this->allocatedSalesQty($line);
                 $unallocated = max(0, SalesOrderFulfillmentPolicy::effectiveQuantity((float) $line->order_qty, (float) $line->cancelled_qty) - $alreadyAllocated);
@@ -56,13 +58,14 @@ class SalesOrderInventoryLockService
                 $this->refreshLineAllocation($line);
             }
 
-            $this->reservations->reserveForSalesOrder($order->fresh('fulfillments'));
+            if (! $fullyShipped) $this->reservations->reserveForSalesOrder($order->fresh('fulfillments'));
+            $this->reservations->refreshSalesOrderExecution((int) $order->id);
             $projection = $this->projection($order->fresh(['lines', 'fulfillments']));
             $status = $projection['totals']['locked_inventory_qty'] <= 0.00000001
                 ? 'unavailable'
                 : ($projection['totals']['pending_production_qty'] + $projection['totals']['pending_purchase_qty'] > 0.00000001 ? 'partial' : 'locked');
             if ($projection['totals']['pending_fulfillment_qty'] <= 0.00000001) $status = 'not_required';
-            $changed = $created > 0 || ! $order->inventory_locked_at;
+            $changed = $created > 0 || ! $order->inventory_locked_at || $order->inventory_lock_status !== $status;
             if ($changed) {
                 $order->forceFill([
                     'inventory_lock_status' => $status,
@@ -159,6 +162,12 @@ class SalesOrderInventoryLockService
     public function projection(SalesOrder $order): array
     {
         $order->loadMissing(['lines.item', 'fulfillments']);
+        $execution = $this->reservations->salesOrderExecutionProjection($order, DB::transactionLevel() > 0);
+        foreach ($order->fulfillments->where('demand_status', 'confirmed') as $fulfillment) $fulfillment->fill($execution['fulfillments'][$fulfillment->id]);
+        foreach ($order->lines as $line) {
+            if (array_key_exists($line->id, $execution['production_replenished_qty_by_line'])) $line->setAttribute('production_replenished_qty', $execution['production_replenished_qty_by_line'][$line->id]);
+        }
+        $order->setAttribute('fulfillment_status', $execution['fulfillment_status']);
         $fulfillmentsByLine = $order->fulfillments->where('demand_status', 'confirmed')->groupBy('sales_order_line_id');
         $rows = $order->lines->map(function (SalesOrderLine $line) use ($fulfillmentsByLine): array {
             $physical = $this->isPhysical($line);
@@ -177,6 +186,8 @@ class SalesOrderInventoryLockService
             $pendingProduction = $physical ? max(0, (float) $allocations->where('fulfillment_type', 'production')->sum(fn ($row) => $this->salesQty($row, $line)) - $replenished) : 0.0;
             if ($physical && SalesOrderFulfillmentPolicy::isPurchaseLine($line)) $purchase += $unallocated;
             elseif ($physical) $pendingProduction += $unallocated;
+            $pendingProduction = min($pendingProduction, max(0, $effective - $shipped));
+            $purchase = min($purchase, max(0, $effective - $shipped));
             return [
                 'sales_order_line_id' => (int) $line->id, 'line_no' => (int) $line->line_no, 'order_qty' => $effective,
                 'locked_inventory_qty' => round($inventory, 8), 'pending_production_qty' => round($pendingProduction, 8),

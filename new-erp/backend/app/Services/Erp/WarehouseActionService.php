@@ -36,7 +36,10 @@ final class WarehouseActionService
     public function validate(string $action, array $payload): array
     {
         $rules = match ($action) {
-            'purchase.post', 'sales_return.post', 'sales_shipment.post', 'sales_shipment.dispatch', 'purchase_return.post' => [],
+            'purchase.post', 'sales_return.post', 'purchase_return.post' => [],
+            'sales_shipment.post' => ['expected_version' => 'required|integer|min:1', 'staging_location_id' => 'required|integer|min:1'],
+            'sales_shipment.dispatch' => ['expected_version' => 'required|integer|min:1', 'package_ids' => 'required|array|min:1|max:100',
+                'package_ids.*' => 'required|integer|min:1|distinct', 'delivery_mode' => 'required|in:dispatch,pickup'],
             'purchase.allocate' => [
                 'items' => 'required|array|min:1|max:100', 'items.*.receipt_item_id' => 'required|integer|min:1|distinct',
                 'items.*.expected_revision' => 'required|string|size:64',
@@ -72,8 +75,8 @@ final class WarehouseActionService
             'purchase.allocate' => ['receipt_id' => app(PurchaseReceiptPostingRepairApplicationService::class)->repairSelectedLines($id, $payload['items'], $name)->id],
             'sales_return.receive' => app(SalesReturnApplicationService::class)->receive($payload + ['sales_return_id' => $id], $actor, $name),
             'sales_return.post' => app(SalesReturnApplicationService::class)->postReceipt($id, $actor, $name),
-            'sales_shipment.post' => app(SalesShipmentApplicationService::class)->postOutbound(SalesShipment::findOrFail($id), $name),
-            'sales_shipment.dispatch' => app(SalesShipmentApplicationService::class)->dispatch(SalesShipment::findOrFail($id), $name),
+            'sales_shipment.post' => app(SalesShipmentApplicationService::class)->postOutbound(SalesShipment::findOrFail($id), $name, $command, $user),
+            'sales_shipment.dispatch' => app(SalesShipmentApplicationService::class)->dispatch(SalesShipment::findOrFail($id), $name, $command, $user),
             'purchase_return.post' => app(PurchaseReturnApplicationService::class)->post($id, $actor, $name),
         };
     }
