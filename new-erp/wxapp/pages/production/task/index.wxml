@@ -58,6 +58,19 @@
       <view wx:if="{{task.allowed.material_return}}" class="tk-link mt-gap" bindtap="openMaterialReturn">退料（领多、领错、不良、报废台拆回）</view>
     </view>
 
+    <view wx:if="{{task.deliveries && task.deliveries.length}}" class="mt-card">
+      <view class="mt-card-title"><text>仓库送料</text></view>
+      <view wx:for="{{task.deliveries}}" wx:key="id" class="tk-dlv">
+        <view class="mt-kv"><text class="k mono">{{item.delivery_no}}</text><text class="mt-tag {{item.status === 'dispatched' ? 'amber' : (item.status === 'rejected' ? 'red' : 'gray')}}">{{item.status_label}}</text></view>
+        <view class="mt-muted">{{item.summary}}</view>
+        <view wx:if="{{item.status === 'rejected' && item.reject_reason}}" class="mt-muted">拒收原因：{{item.reject_reason}}</view>
+        <view wx:if="{{task.allowed.delivery_sign && item.status === 'dispatched'}}" class="tk-dlv-ops">
+          <text class="tk-link green" data-id="{{item.id}}" bindtap="signDelivery">核对无误，签收</text>
+          <text class="tk-link amber" data-id="{{item.id}}" bindtap="rejectDelivery">拒收</text>
+        </view>
+      </view>
+    </view>
+
     <view class="mt-card">
       <view class="mt-card-title"><text>一起做的人</text><text wx:if="{{task.allowed.collaborators}}" class="tk-link green" bindtap="openPeople">选协同人</text></view>
       <view wx:if="{{!task.participants.length}}" class="mt-muted">还没人接单</view>

@@ -86,6 +86,7 @@
     "erp_mfg_cutting_batches": "2026_10_22_000003_create_erp_mfg_cutting_batches_table",
     "erp_mfg_drawings": "2026_10_21_000007_create_erp_mfg_drawings_table",
     "erp_mfg_labor_sessions": "2026_10_21_000003_create_erp_mfg_labor_sessions_table",
+    "erp_mfg_material_deliveries": "2026_10_25_000002_create_erp_mfg_material_deliveries_table",
     "erp_mfg_material_issues": "2026_10_22_000002_create_erp_mfg_material_issues_table",
     "erp_mfg_material_return_lines": "2026_10_24_000002_create_erp_mfg_material_return_lines_table",
     "erp_mfg_material_returns": "2026_10_24_000001_create_erp_mfg_material_returns_table",

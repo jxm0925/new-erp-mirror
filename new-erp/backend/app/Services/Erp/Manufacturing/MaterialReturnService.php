@@ -96,6 +96,25 @@ final class MaterialReturnService
         }, 5);
     }
 
+    /**
+     * 收回整张领料单（仓库配送被拒收后收回入库）：按原领料单的批次、单价、库位冲回，冲减已领，编号从台上拆下。
+     * 调用方须在事务内并已锁定工单和工序。
+     */
+    public function recallIssue(MfgWorkOrder $wo, MfgWorkOrderOperation $op, MfgMaterialIssue $issue, string $reason, object $actor): MfgMaterialReturn
+    {
+        $payload = collect((array) $issue->issue_lines)->map(fn ($l) => ['material_id' => (int) $l['material_id'], 'qty' => (float) $l['qty'],
+            'serial_ids' => collect((array) ($l['picks'] ?? []))->flatMap(fn ($p) => (array) ($p['serial_ids'] ?? []))->map(fn ($v) => (int) $v)->values()->all()])->values()->all();
+        $rows = $this->buildLines($wo, $op, 'surplus', $payload, null, (int) $issue->id);
+        $return = MfgMaterialReturn::create([
+            'return_no' => $this->numbers->next('material_return', 'MRT'), 'work_order_id' => $wo->id, 'work_order_operation_id' => $op->id,
+            'return_type' => 'surplus', 'status' => 'pending', 'reason' => mb_substr(trim($reason), 0, 500),
+            'requested_by_legacy_id' => $this->actorId($actor), 'requested_by_name' => $this->actorName($actor), 'requested_at' => now(),
+        ]);
+        foreach ($rows as $row) MfgMaterialReturnLine::create($row + ['return_id' => $return->id, 'work_order_id' => $wo->id]);
+        $this->doApprove($return, $wo, $op, null, $reason, $actor, (int) $issue->id);
+        return $return->fresh(['lines']);
+    }
+
     /** 库管审核通过：再校验一次可退数量，入库冲回、冲减已领、从台上拆下编号。 */
     public function approve(int $id, ?int $locationId, ?string $remark, object $actor): MfgMaterialReturn
     {
@@ -192,11 +211,11 @@ final class MaterialReturnService
         ];
     }
 
-    private function doApprove(MfgMaterialReturn $return, MfgWorkOrder $wo, MfgWorkOrderOperation $op, ?int $locationId, ?string $remark, object $actor): void
+    private function doApprove(MfgMaterialReturn $return, MfgWorkOrder $wo, MfgWorkOrderOperation $op, ?int $locationId, ?string $remark, object $actor, ?int $onlyIssueId = null): void
     {
         $lines = MfgMaterialReturnLine::query()->where('return_id', $return->id)->orderBy('id')->lockForUpdate()->get();
         // 审核时按当前状态重算：其他已审核/待审核的退料、新的收料和报工都可能改变可退数量。
-        $fresh = collect($this->buildLines($wo, $op, $return->return_type, $this->payloadOf($lines), (int) $return->id))
+        $fresh = collect($this->buildLines($wo, $op, $return->return_type, $this->payloadOf($lines), (int) $return->id, $onlyIssueId))
             ->whereNotNull('inventory_serial_id')->keyBy('inventory_serial_id');
         // 申请后编号可能被互换到别的台，按审核时实际装的台拆下。
         foreach ($lines->whereNotNull('inventory_serial_id') as $line) {
@@ -229,7 +248,7 @@ final class MaterialReturnService
      * 校验并生成退料明细。$exceptReturnId 为审核时排除本单自身占用。
      * 按数量的从最近的收料流水往前分配；按编号的每个编号一行。
      */
-    private function buildLines(MfgWorkOrder $wo, MfgWorkOrderOperation $op, string $type, array $lines, ?int $exceptReturnId): array
+    private function buildLines(MfgWorkOrder $wo, MfgWorkOrderOperation $op, string $type, array $lines, ?int $exceptReturnId, ?int $onlyIssueId = null): array
     {
         $materials = $this->issues->receivable($op, true)->keyBy('id');
         $grouped = [];
@@ -244,12 +263,13 @@ final class MaterialReturnService
             $m = $materials->get($materialId);
             if (! $m) $this->fail('return_material_invalid', '所选物料不是本道收料的料（板料、管料请走开料余料），请刷新后重选。');
             $item = Item::query()->findOrFail($m->component_item_id);
-            if ($item->serialTrackingMode() !== 'none') {
+            if ($item->serialTrackingMode() !== 'none' && (! $onlyIssueId || $want['serial_ids'])) {
                 $ids = array_values(array_unique($want['serial_ids']));
                 if (! $ids) $this->fail('return_serial_required', $m->component_item_name.' 启用了单件追溯，请选择要退的编号。');
                 $candidates = $this->serialCandidates($wo, $op, $m, $exceptReturnId, true);
                 foreach ($ids as $serialId) {
                     $c = $candidates[$serialId] ?? null;
+                    if ($c && $onlyIssueId && (int) $c['source']->source_id !== $onlyIssueId) $c = null;
                     if (! $c) $this->fail('return_serial_invalid', $m->component_item_name.' 的编号 #'.$serialId.' 不能退：不是本道领出的、已退过、已在其他退料申请里，或所在的台已入库。');
                     if (($type === 'scrapped') !== ($c['kind'] === 'scrapped'))
                         $this->fail('return_serial_type', '编号 '.$c['serial_no'].($c['kind'] === 'scrapped' ? ' 装在报废台上，请选“报废台拆回”。' : ' 不在报废台上，不能选“报废台拆回”。'));
@@ -260,10 +280,11 @@ final class MaterialReturnService
             }
             $qty = $want['qty'];
             if ($qty <= self::EPS) $this->fail('return_qty_invalid', $m->component_item_name.' 退料数量要大于 0。');
-            $limit = $this->quantityLimit($wo, $op, $m, $type, $exceptReturnId);
+            // 收回配送：整单按原领料单冲回，不受已开工台数限制（签收前不能开工）。
+            $limit = $onlyIssueId ? $qty : $this->quantityLimit($wo, $op, $m, $type, $exceptReturnId);
             if ($qty > $limit + self::EPS) $this->fail('return_qty_exceeded', $m->component_item_name.' 最多可退 '.$this->num($limit).($m->unit_name ?: '').'（'.self::TYPES[$type].'）。');
             $left = $qty;
-            foreach ($this->sources($wo, $m, $exceptReturnId, true) as $source) {
+            foreach ($this->sources($wo, $m, $exceptReturnId, true, $onlyIssueId) as $source) {
                 if ($left <= self::EPS) break;
                 $take = min($left, $source['remaining']);
                 if ($take <= self::EPS) continue;
@@ -316,9 +337,9 @@ final class MaterialReturnService
      * 本工单这种料的收料出库流水（最近的在前），remaining = 原出库数量 − 已审核和待审核的退料。
      * @return Collection<int, array{item: InventoryTransactionItem, remaining: float}>
      */
-    private function sources(MfgWorkOrder $wo, MfgWorkOrderMaterial $m, ?int $exceptReturnId = null, bool $lock = false): Collection
+    private function sources(MfgWorkOrder $wo, MfgWorkOrderMaterial $m, ?int $exceptReturnId = null, bool $lock = false, ?int $onlyIssueId = null): Collection
     {
-        $issueIds = MfgMaterialIssue::query()->where('work_order_id', $wo->id)->pluck('id');
+        $issueIds = $onlyIssueId ? collect([$onlyIssueId]) : MfgMaterialIssue::query()->where('work_order_id', $wo->id)->pluck('id');
         if ($issueIds->isEmpty()) return collect();
         $query = InventoryTransactionItem::query()->where('source_type', 'mfg_material_issue')->whereIn('source_id', $issueIds)
             ->where('source_item_id', $m->id)->where('item_id', $m->component_item_id)->where('change_qty', '<', 0)->orderByDesc('id');

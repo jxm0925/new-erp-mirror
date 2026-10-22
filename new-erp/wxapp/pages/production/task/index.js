@@ -109,6 +109,9 @@ Page({
         // 本道的料还没收：可以当场收料（从库存扣减），收好再点开始。
         wx.showModal({ title: '料还没收', content: view.errorText(error), confirmText: '现在收料', cancelText: '先不收',
           success: res => { if (res.confirm) this.receiveMaterials(); } });
+      } else if (error && error.errorCode === 'material_not_signed') {
+        // 仓库已送料但本道还没签收：核对实物后在“仓库送料”里签收再开工。
+        wx.showModal({ title: '送来的料还没签收', content: view.errorText(error), showCancel: false });
       } else {
         wx.showModal({ title: '没成功', content: view.errorText(error), showCancel: false });
       }
@@ -123,6 +126,30 @@ Page({
       wx.showToast({ title: response.message || '已收料', icon: 'none', duration: 2500 });
       this.load(true);
     }).catch(error => wx.showModal({ title: '收料没成功', content: view.errorText(error), showCancel: false }));
+  },
+  // 仓库送料签收：核对实物无误签收；数量不对、料不对就拒收，库管重新送达或收回入库。
+  signDelivery(e) {
+    const id = Number(e.currentTarget.dataset.id);
+    const row = (this.data.task.deliveries || []).find(d => d.id === id);
+    if (!row) return;
+    wx.showModal({ title: '签收仓库送料', content: `${row.delivery_no}：${row.summary}\n核对实物无误后签收，签收后才能开工。`, confirmText: '确认签收',
+      success: res => { if (res.confirm) this.deliveryAction(id, 'sign', {}, '已签收'); } });
+  },
+  rejectDelivery(e) {
+    const id = Number(e.currentTarget.dataset.id);
+    wx.showModal({ title: '拒收', editable: true, placeholderText: '写明原因，如数量不对、料不对、有损坏', confirmText: '拒收', confirmColor: '#c0261b',
+      success: res => {
+        if (!res.confirm) return;
+        const reason = String(res.content || '').trim();
+        if (!reason) { wx.showToast({ title: '请写拒收原因', icon: 'none' }); return; }
+        this.deliveryAction(id, 'reject', { reason }, '已拒收，等仓库处理');
+      } });
+  },
+  deliveryAction(id, action, payload, okText) {
+    production.deliveryAction(id, action, payload).then(response => {
+      wx.showToast({ title: response.message || okText, icon: 'none', duration: 2500 });
+      this.load(true);
+    }).catch(error => { wx.showModal({ title: '没成功', content: view.errorText(error), showCancel: false }); this.load(true); });
   },
   // 退料：工人提申请，库管在电脑端“生产退料审核”收到实物后入库。
   openMaterialReturn() {

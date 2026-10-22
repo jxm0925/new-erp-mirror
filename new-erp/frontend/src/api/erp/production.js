@@ -74,3 +74,10 @@ export const saveProductionTechBom = (id, data) => api.put(`/v1/erp/production/t
 export const uploadProductionDrawing = (id, formData) => api.post(`/v1/erp/production/tech/${id}/drawings`, formData, { headers: { 'Content-Type': 'multipart/form-data' } })
 export const deleteProductionDrawing = drawingId => api.delete(`/v1/erp/production/tech/drawings/${drawingId}`)
 export const releaseProductionTech = (id, data) => api.post(`/v1/erp/production/tech/${id}/release`, data)
+
+// 仓库配料配送：库管配料、发出、重新送达、收回、取消；车间签收、拒收
+export const listPendingDeliveries = params => api.get('/v1/erp/production/material-deliveries/pending', { params })
+export const listMaterialDeliveries = params => api.get('/v1/erp/production/material-deliveries', { params })
+export const previewMaterialDelivery = (id, operationId, params) => api.get(`/v1/erp/production/work-orders/${id}/operations/${operationId}/delivery-preview`, { params })
+export const createMaterialDelivery = (id, operationId, data) => api.post(`/v1/erp/production/work-orders/${id}/operations/${operationId}/material-deliveries`, data)
+export const materialDeliveryAction = (id, action, data) => api.post(`/v1/erp/production/material-deliveries/${id}/${action}`, data || {})

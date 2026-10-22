@@ -421,6 +421,18 @@
                 <span class="mat-qty code-mono">{{ c.status_label }} · 入库 {{ qty(c.stored_qty) }} / {{ qty(c.planned_qty) }} {{ c.unit_name || '' }}</span>
               </div>
             </div>
+            <div v-if="wo.material_deliveries && wo.material_deliveries.length" class="materials-list">
+              <div v-for="d in wo.material_deliveries" :key="'md-' + d.id" class="material-row">
+                <span class="mat-name text-truncate" :title="d.summary + (d.reject_reason ? '；拒收：' + d.reject_reason : '')">
+                  仓库配送 <b class="code-mono">{{ d.delivery_no }}</b> · {{ d.operation_name }} · {{ d.summary }}
+                </span>
+                <span class="mat-qty code-mono">{{ d.status_label }}{{ d.reject_reason ? '（' + d.reject_reason + '）' : '' }}</span>
+                <template v-if="d.status === 'dispatched' && canReceiveMaterials">
+                  <el-button type="text" size="mini" :disabled="saving" @click="signDelivery(d)">签收</el-button>
+                  <el-button type="text" size="mini" :disabled="saving" @click="rejectDelivery(d)">拒收</el-button>
+                </template>
+              </div>
+            </div>
             <div v-if="wo.purchase_demands && wo.purchase_demands.length" class="materials-list">
               <div v-for="d in wo.purchase_demands" :key="'pd-' + d.id" class="material-row">
                 <span class="mat-name text-truncate">
@@ -810,7 +822,7 @@
 </template>
 
 <script>
-import { getWorkOrder, getWorkOrderOptions, updateWorkOrder, releaseWorkOrder, pauseWorkOrder, resumeWorkOrder, cancelWorkOrder, createSemiWorkOrder, receiveOperationMaterials, getOperationSerialOptions, swapUnitComponents, cancelMaterialReturn } from '../../../api/erp/production'
+import { getWorkOrder, getWorkOrderOptions, updateWorkOrder, releaseWorkOrder, pauseWorkOrder, resumeWorkOrder, cancelWorkOrder, createSemiWorkOrder, receiveOperationMaterials, getOperationSerialOptions, swapUnitComponents, cancelMaterialReturn, materialDeliveryAction } from '../../../api/erp/production'
 import { HERO_PILL, qty, money, shortDate, bomLabel, errorText, isCancel, searchProductionUsers } from './mfg-helpers'
 import WorkOrderCuttingPanel from './WorkOrderCuttingPanel.vue'
 import MaterialReturnDialog from './MaterialReturnDialog.vue'
@@ -993,6 +1005,38 @@ export default {
     },
     openWorkOrder(id) {
       if (id) this.$router.push(`/production/work-orders/${id}`)
+    },
+    async signDelivery(d) {
+      try {
+        await this.$confirm(`核对 ${d.delivery_no} 的实物：${d.summary}。数量和物料都对就签收。`, '签收仓库送料', { confirmButtonText: '签收', type: 'info' })
+      } catch (e) {
+        return
+      }
+      await this.deliveryAction(d, 'sign', {})
+    },
+    async rejectDelivery(d) {
+      let reason
+      try {
+        reason = (await this.$prompt(`${d.delivery_no}：${d.summary}。写明哪里不对（如少了几个、拿错型号），库管会补送或收回。`, '拒收', {
+          inputValidator: v => !!(v && v.trim()) || '请写明拒收原因'
+        })).value.trim()
+      } catch (e) {
+        return
+      }
+      await this.deliveryAction(d, 'reject', { reason })
+    },
+    async deliveryAction(d, action, data) {
+      this.saving = true
+      try {
+        const res = await materialDeliveryAction(d.id, action, { ...data, with_detail: true })
+        this.$message.success(res.data.message || '已处理')
+        if (res.data.data && res.data.data.kitting) this.wo = res.data.data
+        else this.load()
+      } catch (e) {
+        this.$message.error(errorText(e, '操作失败'))
+      } finally {
+        this.saving = false
+      }
     },
     openPurchaseRequest(d) {
       if (d.purchase_request_id && d.request_status !== 'deleted' && this.$can('purchase.request')) this.$router.push(`/purchase/requests/${d.purchase_request_id}/detail`)

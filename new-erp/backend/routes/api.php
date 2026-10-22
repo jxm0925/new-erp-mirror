@@ -28,6 +28,7 @@ use App\Http\Controllers\Api\V1\Erp\PurchaseSupplierRecommendationController;
 use App\Http\Controllers\Api\V1\Erp\ProductionMasterDataController;
 use App\Http\Controllers\Api\V1\Erp\ProductionProcessCatalogController;
 use App\Http\Controllers\Api\V1\Erp\ProductionPerformanceTemplateController;
+use App\Http\Controllers\Api\V1\Erp\MfgMaterialDeliveryController;
 use App\Http\Controllers\Api\V1\Erp\MfgMaterialReturnController;
 use App\Http\Controllers\Api\V1\Erp\MfgShortageController;
 use App\Http\Controllers\Api\V1\Erp\MfgWorkOrderController;
@@ -437,6 +438,14 @@ Route::prefix('v1/erp/production')->group(function () {
     // 生产退料：车间申请、库管审核入库
     Route::get('work-orders/{id}/operations/{operationId}/return-options', [MfgMaterialReturnController::class, 'options'])->whereNumber(['id', 'operationId']);
     Route::post('work-orders/{id}/operations/{operationId}/material-returns', [MfgMaterialReturnController::class, 'store'])->whereNumber(['id', 'operationId']);
+    // 仓库配料配送：库管配料、发出，车间签收
+    Route::get('material-deliveries/pending', [MfgMaterialDeliveryController::class, 'pending']);
+    Route::get('material-deliveries', [MfgMaterialDeliveryController::class, 'index']);
+    Route::get('work-orders/{id}/operations/{operationId}/delivery-preview', [MfgMaterialDeliveryController::class, 'preview'])->whereNumber(['id', 'operationId']);
+    Route::post('work-orders/{id}/operations/{operationId}/material-deliveries', [MfgMaterialDeliveryController::class, 'store'])->whereNumber(['id', 'operationId']);
+    foreach (['dispatch', 'cancel', 'redeliver', 'recall', 'sign', 'reject'] as $action) {
+        Route::post("material-deliveries/{id}/{$action}", [MfgMaterialDeliveryController::class, $action])->whereNumber('id');
+    }
     Route::get('material-returns', [MfgMaterialReturnController::class, 'index']);
     Route::get('material-returns/{id}', [MfgMaterialReturnController::class, 'show'])->whereNumber('id');
     Route::post('material-returns/{id}/approve', [MfgMaterialReturnController::class, 'approve'])->whereNumber('id');

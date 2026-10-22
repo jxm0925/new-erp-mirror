@@ -26,6 +26,8 @@ class RbacBootstrapService
         'production.material_return.approve' => ['warehouse_manager'],
         'inventory.material_return' => ['warehouse_manager'],
         'purchase.production_shortage' => ['production_manager'],
+        'inventory.material_delivery' => ['warehouse_manager'],
+        'production.material_delivery.manage' => ['warehouse_manager'],
         'purchase.production_shortage.convert' => ['production_manager'],
     ];
 
@@ -67,7 +69,7 @@ class RbacBootstrapService
             'inventory.transaction', 'inventory.transaction.view', 'inventory.transaction.export',
             'inventory.adjustment', 'inventory.adjustment.view', 'inventory.adjustment.create', 'inventory.adjustment.delete', 'inventory.physical.manage',
             'inventory.alert', 'inventory.alert.view',
-            'inventory.material_return', 'production.material_return.approve',
+            'inventory.material_return', 'production.material_return.approve', 'inventory.material_delivery', 'production.material_delivery.manage',
             'production.work_order', 'production.work_order.view', 'production.serial', 'production.serial.view',
             'master.item', 'master.item.view', 'master.warehouse_location', 'master.warehouse.view',
         ];
@@ -253,6 +255,7 @@ class RbacBootstrapService
             ['inventory.adjustment', '手工调整', 'menu', 'inventory', '/inventory/adjustments', 'InventoryBoard', 'el-icon-edit-outline', 304],
             ['inventory.alert', '库存预警', 'menu', 'inventory', '/inventory/alerts', 'InventoryAlertWorkbench', 'el-icon-warning-outline', 305],
             ['inventory.material_return', '生产退料审核', 'menu', 'inventory', '/inventory/material-returns', 'ProductionMaterialReturnList', 'el-icon-refresh-left', 306],
+            ['inventory.material_delivery', '生产配料', 'menu', 'inventory', '/inventory/material-deliveries', 'ProductionMaterialDeliveryList', 'el-icon-truck', 307],
 
             // 库存管理 按钮
             ['inventory.post.view', '查看待过账单据', 'button', 'inventory.posting', null, null, 'el-icon-mouse', 1],
@@ -275,6 +278,7 @@ class RbacBootstrapService
             ['inventory.alert.configure', '配置库存预警', 'button', 'inventory.alert', null, null, 'el-icon-mouse', 2],
             ['inventory.alert.create_request', '从预警生成采购需求', 'button', 'inventory.alert', null, null, 'el-icon-mouse', 3],
             ['production.material_return.approve', '审核生产退料', 'button', 'inventory.material_return', null, null, 'el-icon-mouse', 1],
+            ['production.material_delivery.manage', '配料发料', 'button', 'inventory.material_delivery', null, null, 'el-icon-mouse', 1],
 
             // 4. BOM管理 二级菜单
             ['bom.manage', 'BOM管理', 'menu', 'bom', '/bom/boms', 'BomList', 'el-icon-connection', 401],

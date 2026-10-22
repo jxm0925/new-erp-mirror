@@ -109,6 +109,7 @@ final class WorkOrderQueryService
         }
         $row['material_returns'] = app(MaterialReturnService::class)->forWorkOrder((int) $wo->id, $amounts);
         $row['purchase_demands'] = app(ShortageService::class)->forWorkOrder((int) $wo->id);
+        $row['material_deliveries'] = app(MaterialDeliveryService::class)->forWorkOrder((int) $wo->id);
         $row['sales_order'] = $this->salesOrderSummary($wo, $amounts);
         $row['attention'] = $this->attention($row, $kitting);
         $row['created_by_name'] = $wo->created_by_name;
@@ -356,13 +357,14 @@ final class WorkOrderQueryService
         $openWo = in_array($wo->status, ['planned', 'released', 'in_progress', 'paused'], true);
         foreach ($kitting as &$op) {
             $pending = false;
+            $prepared = str_starts_with((string) $op['operation_key'], 'o') ? MaterialDeliveryService::preparedQty((int) substr($op['operation_key'], 1)) : [];
             foreach ($op['materials'] as &$m) {
                 $item = $items->get($m['component_item_id']);
                 $m['can_make'] = $openWo && $item && in_array($item->item_type, ['semi_finished', 'finished_product'], true) && ! $item->isPurchaseFulfilledItem();
                 $m['in_production_qty'] = (float) ($open[$m['component_item_id']] ?? 0);
                 $m['purchasable'] = $item && ShortageService::purchasable($item);
                 $m['make_qty'] = $m['can_make'] ? max(0, ceil(round((float) ($shortByItem[$m['component_item_id']] ?? 0) - $m['in_production_qty'], 4))) : 0;
-                if ($m['participates_in_kitting'] && ($m['issue_mode'] ?? 'receive') === 'receive' && (float) $m['issued_qty'] + 0.00001 < (float) $m['required_qty']) $pending = true;
+                if ($m['participates_in_kitting'] && ($m['issue_mode'] ?? 'receive') === 'receive' && (float) $m['issued_qty'] + (float) ($prepared[$m['id'] ?? 0] ?? 0) + 0.00001 < (float) $m['required_qty']) $pending = true;
             }
             unset($m);
             $op['receive_pending'] = $pending && in_array($wo->status, ['released', 'in_progress', 'paused'], true);

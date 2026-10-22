@@ -132,6 +132,7 @@ class ResetProductionV2 extends Command
         'production.routing.default', 'production.routing.delete', 'production.serial', 'production.serial.view',
         'production.serial.assign', 'production.board', 'production.tech', 'production.task.execute', 'production.task.assign', 'production.scrap.approve',
         'production.receipt.execute', 'production.tech.manage', 'production.material_return.request', 'production.material_return.approve',
+        'production.material_delivery.manage',
     ];
 
     public function handle(InventoryAvailabilityService $availability): int

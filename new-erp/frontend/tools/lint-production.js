@@ -31,6 +31,7 @@ const files = [
   'src/views/erp/inventory/InventoryAlertDetail.vue',
   'src/views/erp/inventory/InventoryAlertWorkbench.vue',
   'src/views/erp/inventory/ProductionMaterialReturnList.vue',
+  'src/views/erp/inventory/ProductionMaterialDeliveryList.vue',
   'src/views/erp/production/MaterialReturnDialog.vue',
   'src/views/erp/purchase/ProductionShortageList.vue',
   'src/views/erp/purchase/ShortagePurchaseDialog.vue',

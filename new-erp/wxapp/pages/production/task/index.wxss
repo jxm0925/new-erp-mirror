@@ -37,3 +37,6 @@
 .tk-photo-x { position: absolute; right: 0; top: 0; width: 40rpx; height: 40rpx; line-height: 36rpx; text-align: center; background: rgba(0, 0, 0, .5); color: #fff; font-size: 30rpx; border-radius: 0 0 0 12rpx; }
 .tk-pct { width: 120rpx; border: 2rpx solid #e3e8f0; border-radius: 10rpx; padding: 6rpx 12rpx; text-align: right; margin-left: auto; }
 .tk-qty { text-align: right; border-bottom: 2rpx solid #e3e8f0; min-width: 160rpx; }
+.tk-dlv { padding: 14rpx 0; border-bottom: 1rpx solid #f0f2f6; }
+.tk-dlv:last-of-type { border-bottom: 0; }
+.tk-dlv-ops { display: flex; gap: 40rpx; margin-top: 12rpx; }

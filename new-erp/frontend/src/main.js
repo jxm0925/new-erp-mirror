@@ -61,6 +61,7 @@ import WorkOrderDetail from './views/erp/production/WorkOrderDetail.vue'
 import WorkOrderForm from './views/erp/production/WorkOrderForm.vue'
 import ProductionSerialTrace from './views/erp/production/ProductionSerialTrace.vue'
 import ProductionMaterialReturnList from './views/erp/inventory/ProductionMaterialReturnList.vue'
+import ProductionMaterialDeliveryList from './views/erp/inventory/ProductionMaterialDeliveryList.vue'
 import ProductionBoard from './views/erp/production/ProductionBoard.vue'
 import ProductionTechList from './views/erp/production/ProductionTechList.vue'
 import ProductionTechDetail from './views/erp/production/ProductionTechDetail.vue'
@@ -166,6 +167,7 @@ const router = new VueRouter({
     { path: '/inventory/alerts/config', component: InventoryAlertConfiguration, meta: { permission: 'inventory.alert' } },
     { path: '/inventory/alerts/:id', component: InventoryAlertDetail, meta: { permission: 'inventory.alert' } },
     { path: '/inventory/material-returns', component: ProductionMaterialReturnList, meta: { permission: 'inventory.material_return' } },
+    { path: '/inventory/material-deliveries', component: ProductionMaterialDeliveryList, meta: { permission: 'inventory.material_delivery' } },
     { path: '/bom', redirect: '/bom/boms' },
     { path: '/bom/boms', component: BomList, meta: { permission: 'bom.manage' } },
     { path: '/bom/create', component: BomForm },

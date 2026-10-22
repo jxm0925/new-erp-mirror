@@ -103,6 +103,8 @@ final class TaskQueryService
             'materials' => MfgWorkOrderMaterial::query()->where('work_order_operation_id', $op->id)->orderBy('id')->get()
                 ->map(fn ($m) => ['component_item_name' => $m->component_item_name, 'component_item_code' => $m->component_item_code, 'unit_name' => $m->unit_name,
                     'unit_qty' => (float) $m->unit_qty, 'required_qty' => (float) $m->required_qty, 'issued_qty' => (float) $m->issued_qty])->values()->all(),
+            // 仓库送来等本道签收的料（拒收待处理的也列出来，看库管怎么处理）
+            'deliveries' => app(MaterialDeliveryService::class)->forOperation((int) $op->id),
             'return_options' => $ops->slice(0, $myPos + 1)->map(function ($o) use ($ops, $pos, $myPos) {
                 $redo = $ops->slice($pos[$o->id], $myPos - $pos[$o->id] + 1)->pluck('operation_name')->all();
                 return ['id' => $o->id, 'operation_name' => $o->operation_name, 'is_current' => $pos[$o->id] === $myPos,
@@ -116,6 +118,7 @@ final class TaskQueryService
                 'report' => $canExecute && $runnable && $mine && $here > 0,
                 'collaborators' => $canExecute && $runnable && $mine && $mine['role'] === 'owner',
                 'assign' => $runnable && ($super || in_array('production.task.assign', $permissions, true)),
+                'delivery_sign' => $canExecute || in_array('production.work_order.edit', $permissions, true),
                 // 退料：工单在生产中、本道收过料，有申请或审核退料权限
                 'material_return' => in_array($wo->status, ['released', 'in_progress', 'paused'], true) && $op->execution_context === 'production'
                     && ($super || array_intersect(['production.material_return.request', 'production.material_return.approve'], $permissions) !== [])
