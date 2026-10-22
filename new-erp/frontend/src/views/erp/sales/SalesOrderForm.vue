@@ -1326,31 +1326,40 @@ export default {
       return this.addLineFile(file)
     },
     async addLineFile(file) {
-      if (!this.selectedLine) return
+      const row = this.selectedLine
+      const fileCategory = this.fileCategory || '设计图纸'
+      if (!row) return
       if (!this.form.draft_token && !(this.isEdit && this.form.id)) {
         this.$message.warning('请先保存销售订单草稿，再上传订单行附件')
         return false
       }
-      if (!this.selectedLine.line_uuid) this.$set(this.selectedLine, 'line_uuid', `line-${Date.now()}-${Math.random().toString(16).slice(2)}`)
+      if (!row.line_uuid) this.$set(row, 'line_uuid', `line-${Date.now()}-${Math.random().toString(16).slice(2)}`)
       const form = new FormData()
       form.append('file', file.raw)
       form.append('attachment_scope', 'line')
-      form.append('attachment_type', this.attachmentTypeValue(this.fileCategory))
-      if (this.isEdit && this.selectedLine.id) {
+      form.append('attachment_type', this.attachmentTypeValue(fileCategory))
+      if (this.isEdit && row.id) {
         form.append('sales_order_id', this.form.id)
-        form.append('sales_order_line_id', this.selectedLine.id)
+        form.append('sales_order_line_id', row.id)
       } else {
         form.append('draft_token', this.form.draft_token)
-        form.append('line_uuid', this.selectedLine.line_uuid)
+        form.append('line_uuid', row.line_uuid)
       }
-      const { data } = await uploadSalesOrderAttachment(form)
+      let data
+      try {
+        const response = await uploadSalesOrderAttachment(form)
+        data = response.data
+      } catch (error) {
+        this.$message.error(error.userMessage || '附件上传失败，请检查文件类型、内容和大小')
+        return false
+      }
       const uploaded = data.data
-      const files = this.files(this.selectedLine)
+      const files = this.files(row)
       files.push({
         attachment_id: uploaded.id,
         uid: uploaded.id,
         file_name: uploaded.original_name,
-        file_type: this.fileCategory || '设计图纸',
+        file_type: fileCategory,
         file_hash: uploaded.file_hash,
         uploaded_at: uploaded.uploaded_at,
         file_size: uploaded.file_size,
@@ -1366,8 +1375,8 @@ export default {
         remark: '',
         locked: false
       })
-      this.selectedLine.technical_attachment_snapshot = { files }
-      this.selectedLine.drawing_snapshot = { files: files.filter(item => item.file_type === '设计图纸').length, main_file: files.find(item => item.is_main) || null }
+      row.technical_attachment_snapshot = { files }
+      row.drawing_snapshot = { files: files.filter(item => item.file_type === '设计图纸').length, main_file: files.find(item => item.is_main) || null }
       return false
     },
     async addContractFile(file, category) {

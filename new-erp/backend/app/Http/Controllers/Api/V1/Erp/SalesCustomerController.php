@@ -39,6 +39,9 @@ class SalesCustomerController extends Controller
             $phone = trim((string) $request->input('phone'));
             $query->where('contact_phone', 'like', "%{$phone}%");
         }
+        if ($request->filled('customer_kind')) {
+            $query->where('customer_kind', $request->input('customer_kind'));
+        }
         $page = $query->paginate(min(100, max(5, $request->integer('per_page', 10))));
         $payload = $page->toArray();
         $payload['summary'] = $summary;
