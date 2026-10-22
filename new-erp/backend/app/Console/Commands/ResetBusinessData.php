@@ -10,10 +10,8 @@ use Throwable;
 require_once database_path('schema/InitialTableMigration.php');
 
 /**
- * 业务数据重置：保留系统设置（管理员、部门、菜单与权限、角色、编号规则及计数器、登录会话）
- * 和不依赖物料的基础字典（审批配置、币种/汇率、收付款方式、销售渠道、计量单位、物料分类、
- * 工序/生产阶段/包装方案/提成模板），清空其余全部业务数据（订单、仓库库位、库存、物料、SKU、BOM、
- * 工艺路线、工单、采购、财务单据等）。
+ * 开发库重置为纯净库：只保留系统设置（管理员、部门、菜单与权限、角色授权、编号规则）和登录会话，
+ * 其余全部清空（含编号计数器、审批配置、基础字典、工序等）；需要的基础数据由 seeder 重新灌入。
  *
  * 被清空的表若与当前迁移定义的结构不一致（如建表语句新增了字段），按当前定义删表重建；
  * 保留表出现结构不一致则拒绝执行。执行后跑结构预检，再执行 php artisan migrate 建新扩展表。
@@ -23,25 +21,14 @@ class ResetBusinessData extends Command
 {
     protected $signature = 'erp:business-data-reset {--force : 确认执行（不带此参数只预览）}';
 
-    protected $description = '清空业务数据（保留系统设置与基础字典），并按当前迁移定义重建结构不一致的业务表';
+    protected $description = '开发库重置为纯净库：只保留系统设置，其余清空（含编号计数器），并按当前迁移定义重建结构不一致的表';
 
-    /** 保留数据的表；彼此之间的外键已闭合，不引用任何被清空的表。 */
+    /** 保留数据的表（系统设置）；彼此之间的外键已闭合，不引用任何被清空的表。 */
     private const KEEP_TABLES = [
-        // 框架
-        'cache', 'cache_locks', 'failed_jobs', 'job_batches', 'jobs', 'sessions',
-        // 系统设置
-        'erp_legacy_admin_users', 'erp_auth_tokens', 'erp_sso_ticket_consumptions', 'erp_departments', 'erp_department_users',
+        'sessions', 'erp_auth_tokens', 'erp_sso_ticket_consumptions',
+        'erp_legacy_admin_users', 'erp_departments', 'erp_department_users',
         'erp_rbac_permissions', 'erp_rbac_role_permissions', 'erp_rbac_roles', 'erp_rbac_user_role_sources', 'erp_rbac_user_roles',
-        // 编号计数器一并保留：工序等保留资料已占用的编号不会被重新发出。
-        'erp_document_number_rules', 'erp_document_numbers', 'erp_system_management_commands', 'erp_operation_logs',
-        // 审批配置（不含审批实例）
-        'erp_approval_business_objects', 'erp_approval_business_object_fields', 'erp_approval_business_actions', 'erp_approval_business_events',
-        'erp_approval_flow_templates', 'erp_approval_flow_versions', 'erp_approval_form_templates', 'erp_approval_form_versions',
-        // 不依赖物料的基础字典
-        'erp_finance_currencies', 'erp_finance_exchange_rates', 'erp_payment_methods', 'erp_sales_channels', 'erp_sales_funding_policies',
-        'erp_sales_order_pay_types', 'erp_sales_order_trade_platforms', 'erp_units', 'erp_unit_conversions', 'erp_item_categories',
-        'erp_production_operations', 'erp_production_operation_workers', 'erp_production_stages', 'erp_production_packaging_schemes',
-        'erp_production_performance_templates', 'erp_production_performance_template_lines', 'erp_production_catalog_commands',
+        'erp_document_number_rules',
     ];
 
     public function handle(): int
@@ -79,7 +66,7 @@ class ResetBusinessData extends Command
             return self::FAILURE;
         }
 
-        $this->info('保留 '.count(array_intersect(self::KEEP_TABLES, $existing)).' 张表的数据：系统设置、审批配置、基础字典、工序/生产阶段/包装方案/提成模板。');
+        $this->info('保留 '.count(array_intersect(self::KEEP_TABLES, $existing)).' 张表的数据：管理员、部门、菜单与权限、角色授权、编号规则、登录会话。');
         $this->info('将清空业务表 '.(count($clear) + count($rebuild)).' 张，共 '.$rows.' 行。');
         if ($rebuild) {
             $this->warn('其中结构与当前迁移定义不一致、将按定义删表重建 '.count($rebuild).' 张：'.implode('、', array_keys($rebuild)));
@@ -107,7 +94,7 @@ class ResetBusinessData extends Command
 
         try {
             $plan = $this->preflight($connection, $definitions);
-            $this->info('结构预检通过（'.$plan['mode'].'）。'.($plan['missing'] ? '待建新表：'.implode('、', $plan['missing']).'，请接着执行 php artisan migrate。' : ''));
+            $this->info('结构预检通过（'.$plan['mode'].'）。'.($plan['missing'] ? '待建新表：'.implode('、', $plan['missing']).'，请接着执行 php artisan migrate。' : '').'基础数据请按需执行 php artisan db:seed。');
         } catch (Throwable $error) {
             $this->error('结构预检未通过：'.$error->getMessage());
             return self::FAILURE;
