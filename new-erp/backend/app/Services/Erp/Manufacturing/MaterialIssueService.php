@@ -173,10 +173,18 @@ final class MaterialIssueService
         $query = MfgWorkOrderMaterial::query()->where('work_order_operation_id', $op->id)->where('participates_in_kitting', true)->orderBy('id');
         if ($lock) $query->lockForUpdate();
         $rows = $query->get();
-        $physical = Item::query()->whereIn('id', $rows->pluck('component_item_id')->unique())->get()
+        // 加锁时同时锁物料行：收料、配料、重新拣货、发出、退料都在物料锁下读库存和配料占用，与库存过账的物料锁一致。
+        $physical = Item::query()->whereIn('id', $rows->pluck('component_item_id')->unique()->sort()->values())->orderBy('id')->when($lock, fn ($q) => $q->lockForUpdate())->get()
             ->filter(fn (Item $item) => $item->materialManagementMode() === 'physical')->pluck('id')->map(fn ($id) => (int) $id)->all();
         return $rows->reject(fn ($m) => in_array($m->cutting_mode, ['sheet', 'length'], true)
             || in_array((int) $m->component_item_id, $physical, true) || (float) $m->required_qty <= 0)->values();
+    }
+
+    /** 按物料 ID 顺序锁物料行，作为分配库存和配料占用的互斥边界（须在本事务任何普通读取之前调用）。 */
+    public function lockItems(iterable $itemIds): void
+    {
+        $ids = collect($itemIds)->map(fn ($id) => (int) $id)->filter()->unique()->sort()->values()->all();
+        if ($ids) Item::query()->whereIn('id', $ids)->orderBy('id')->lockForUpdate()->pluck('id');
     }
 
     /** 已经到过本道的台数：本道首次合格过的 + 现在停在本道还没合格过的。 */

@@ -122,7 +122,7 @@ final class WorkOrderQueryService
         $allClosed = $open && $unitCounts && ! array_diff(array_keys($unitCounts), ['stored', 'scrapped', 'cancelled']);
         $workOrders = app(WorkOrderService::class);
         $row['completion_blockers'] = $allClosed ? $workOrders->completionBlockers($wo, $unitCounts) : [];
-        $row['scrap_settle_allowed'] = $allClosed && $workOrders->scrapSettlementPending($wo, $unitCounts);
+        $row['scrap_settle_allowed'] = $allClosed && $workOrders->canSettleScrap($wo, $unitCounts);
         $row['sales_order'] = $this->salesOrderSummary($wo, $amounts);
         $row['attention'] = $this->attention($row, $kitting);
         $row['created_by_name'] = $wo->created_by_name;

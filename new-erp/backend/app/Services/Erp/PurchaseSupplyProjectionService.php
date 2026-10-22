@@ -60,17 +60,21 @@ final class PurchaseSupplyProjectionService
             ->selectRaw('i.item_id, o.purchase_order_no, i.remaining_qty * CASE WHEN i.conversion_factor_snapshot > 0 THEN i.conversion_factor_snapshot ELSE 1 END AS qty')
             ->get() as $r) $add((int) $r->item_id, 'order', (string) $r->purchase_order_no, (float) $r->qty);
 
-        // 已确认到货、还没过账入库的合格（可入库）数量；换货补发的到货单由换货段计算，避免重复。
+        // 已确认到货、还没过账入库的合格（可入库）数量（含换货补发的到货单；过账后由库存承接）。
         foreach (DB::table('erp_purchase_receipt_items as i')->join('erp_purchase_receipts as r', 'r.id', '=', 'i.receipt_id')
             ->where('r.receipt_status', 'confirmed')->where('r.stock_post_status', 'pending')->where('i.is_stock_item_snapshot', 1)
             ->whereIn('i.item_id', $itemIds)
-            ->whereNotExists(fn ($q) => $q->selectRaw('1')->from('erp_purchase_exchange_orders as e')->whereColumn('e.replacement_receipt_id', 'r.id'))
             ->selectRaw('i.item_id, r.receipt_no, COALESCE(i.final_stockable_base_qty, i.qualified_base_qty, 0) AS qty')
             ->get() as $r) $add((int) $r->item_id, 'receipt', (string) $r->receipt_no, (float) $r->qty);
 
-        foreach (DB::table('erp_purchase_exchange_orders')->whereNotIn('exchange_status', ['completed', 'cancelled'])->whereIn('item_id', $itemIds)
-            ->get(['item_id', 'exchange_no', 'exchange_base_qty', 'replacement_received_base_qty']) as $e)
-            $add((int) $e->item_id, 'exchange', (string) $e->exchange_no, max(0, (float) $e->exchange_base_qty - (float) $e->replacement_received_base_qty));
+        // 换货待补：补发到货单确认后（不论是否已过账、是否已最终验收）就交给到货段/库存，不再算换货在途。
+        foreach (DB::table('erp_purchase_exchange_orders as e')->leftJoin('erp_purchase_receipts as r', 'r.id', '=', 'e.replacement_receipt_id')
+            ->whereNotIn('e.exchange_status', ['completed', 'cancelled'])->whereIn('e.item_id', $itemIds)
+            ->selectRaw("e.item_id, e.exchange_no, e.exchange_base_qty, e.replacement_received_base_qty AS accepted_qty,
+                CASE WHEN r.receipt_status = 'confirmed' THEN COALESCE(r.physical_received_base_qty, 0) ELSE 0 END AS arrived_qty")
+            ->get() as $e)
+            $add((int) $e->item_id, 'exchange', (string) $e->exchange_no,
+                max(0, (float) $e->exchange_base_qty - max((float) $e->accepted_qty, (float) $e->arrived_qty)));
 
         foreach ($out as &$row) {
             $row['total'] = round($row['total'], 4);

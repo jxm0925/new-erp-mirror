@@ -905,10 +905,10 @@ export default {
           .map(x => ({ id: x.id, unit_serial: u.serial_no, component_serial_no: x.component_serial_no })))
     },
     canAssign() {
-      return this.$can('production.serial.assign') && ['released', 'in_progress', 'paused'].includes(this.wo.status)
+      return !!this.wo && this.$can('production.serial.assign') && ['released', 'in_progress', 'paused'].includes(this.wo.status)
     },
     assignUnits() {
-      return (this.wo.units || []).filter(u => this.canSwap(u))
+      return this.wo ? (this.wo.units || []).filter(u => this.canSwap(u)) : []
     },
     hasActualMaterialCost() {
       return this.wo && this.wo.actual_material_cost_amount !== null && this.wo.actual_material_cost_amount !== undefined

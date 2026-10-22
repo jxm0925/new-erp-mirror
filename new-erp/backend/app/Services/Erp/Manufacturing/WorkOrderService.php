@@ -320,7 +320,18 @@ final class WorkOrderService
     {
         if ((int) ($units['scrapped'] ?? 0) <= 0) return false;
         if (! MfgMaterialIssue::query()->where('work_order_id', $wo->id)->exists()) return false;
-        return ! MfgWorkOrderLog::query()->where('work_order_id', $wo->id)->where('action', 'scrap_settled')->exists();
+        $settled = MfgWorkOrderLog::query()->where('work_order_id', $wo->id)->where('action', 'scrap_settled')->orderByDesc('id')->first();
+        if (! $settled) return true;
+        // 确认之后又有拆回申请被驳回或撤回：之前的确认作废，留出更正重提的窗口。
+        return \App\Models\Erp\MfgMaterialReturn::query()->where('work_order_id', $wo->id)->where('return_type', 'scrapped')
+            ->whereIn('status', ['rejected', 'cancelled'])->where('reviewed_at', '>=', $settled->created_at)->exists();
+    }
+
+    /** 能否点“确认报废台已处理”：有待处理的报废台，且没有待审核的拆回申请（审完才知道料回没回来）。 */
+    public function canSettleScrap(MfgWorkOrder $wo, array $units): bool
+    {
+        return $this->scrapSettlementPending($wo, $units) && ! \App\Models\Erp\MfgMaterialReturn::query()->where('work_order_id', $wo->id)
+            ->where('return_type', 'scrapped')->where('status', 'pending')->exists();
     }
 
     /** 主管确认报废台已处理（已申请拆回，或确认无可回收），然后按规则完工。 */
@@ -332,7 +343,8 @@ final class WorkOrderService
             $units = MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->lockForUpdate()->pluck('status')->countBy()->all();
             if (array_diff(array_keys($units), ['stored', 'scrapped', 'cancelled'])) $this->fail('units_open', '还有台在生产中，等所有台入库或报废后再处理报废台。');
             if (! $this->scrapSettlementPending($wo, $units)) $this->fail('nothing_to_settle', '没有待处理的报废台。');
-            $recovered = \App\Models\Erp\MfgMaterialReturn::query()->where('work_order_id', $wo->id)->where('return_type', 'scrapped')->whereIn('status', ['pending', 'approved'])->pluck('return_no')->all();
+            if (! $this->canSettleScrap($wo, $units)) $this->fail('scrap_return_pending', '报废台拆回申请还在等库管审核，审核通过（或驳回后不再重提）再确认。');
+            $recovered = \App\Models\Erp\MfgMaterialReturn::query()->where('work_order_id', $wo->id)->where('return_type', 'scrapped')->where('status', 'approved')->pluck('return_no')->all();
             $this->log($wo, 'scrap_settled', $wo->status, $wo->status, '确认报废台已处理'.($recovered ? '（拆回退料 '.implode('、', $recovered).'）' : '（无可回收）').($remark ? '：'.mb_substr(trim($remark), 0, 300) : ''), $actor);
             $this->refreshCompletion($wo, $actor);
             return $wo->fresh();

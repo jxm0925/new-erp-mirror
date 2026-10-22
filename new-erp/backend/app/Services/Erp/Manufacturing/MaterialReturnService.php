@@ -345,6 +345,7 @@ final class MaterialReturnService
             $item = Item::query()->findOrFail($m->component_item_id);
             $mode = $item->serialTrackingMode();
             $ids = array_values(array_unique($want['serial_ids']));
+            $numbered = 0;
             if ($mode !== 'none' && $ids) {
                 $candidates = $this->serialCandidates($wo, $op, $m, $exceptReturnId, true);
                 foreach ($ids as $serialId) {
@@ -355,6 +356,7 @@ final class MaterialReturnService
                         $this->fail('return_serial_type', '编号 '.$c['serial_no'].($c['kind'] === 'scrapped' ? ' 装在报废台上，请选“报废台拆回”。' : ' 不在报废台上，不能选“报废台拆回”。'));
                     $rows[] = $this->lineRow($m, $c['source'], 1.0) + ['inventory_serial_id' => $serialId, 'serial_no' => $c['serial_no'],
                         'unit_id' => $c['unit_id'], 'unit_serial_no' => $c['unit_serial_no'], 'component_id' => $c['component_id']];
+                    $numbered++;
                 }
             }
             // 必须按编号的料只走编号；收回配送时历史上无编号领出的，仍按原领料单数量冲回。
@@ -366,8 +368,11 @@ final class MaterialReturnService
             $qty = $want['qty'];
             if ($qty <= self::EPS) $this->fail('return_qty_invalid', $m->component_item_name.' 退料数量要大于 0。');
             // 收回配送：整单按原领料单冲回，不受已开工台数限制（签收前不能开工）。
-            $limit = $onlyIssueId ? $qty : $this->quantityLimit($wo, $op, $m, $type, $exceptReturnId);
-            if ($qty > $limit + self::EPS) $this->fail('return_qty_exceeded', $m->component_item_name.' 最多可退 '.$this->num($limit).($m->unit_name ?: '').'（'.self::TYPES[$type].'）。');
+            // 可退总量按本道整体口径算，本次已选的编号也占这个总量，编号 + 无编号合计不能超。
+            $total = $onlyIssueId ? $qty + $numbered : $this->quantityLimit($wo, $op, $m, $type, $exceptReturnId);
+            $limit = max(0, round($total - $numbered, 4));
+            if ($qty > $limit + self::EPS) $this->fail('return_qty_exceeded', $m->component_item_name.' 最多可退 '.$this->num($total).($m->unit_name ?: '').'（'.self::TYPES[$type].'）'
+                .($numbered ? '，已选编号 '.$numbered.' 个，无编号部分最多 '.$this->num($limit) : '').'。');
             $left = $qty;
             foreach ($this->sources($wo, $m, $exceptReturnId, true, $onlyIssueId) as $source) {
                 if ($left <= self::EPS) break;

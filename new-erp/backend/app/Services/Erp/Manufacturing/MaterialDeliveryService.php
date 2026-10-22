@@ -156,6 +156,7 @@ final class MaterialDeliveryService
             $delivery = $this->locked($id, ['prepared']);
             [$wo] = $this->context((int) $delivery->work_order_id, (int) $delivery->work_order_operation_id, true);
             $materials = MfgWorkOrderMaterial::query()->whereIn('id', collect($delivery->lines)->pluck('material_id')->all() ?: [0])->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+            $this->issues->lockItems($materials->pluck('component_item_id'));
             $lines = [];
             $short = [];
             $changes = [];
@@ -185,6 +186,7 @@ final class MaterialDeliveryService
             $delivery = $this->locked($id, ['prepared']);
             [$wo, $op] = $this->context((int) $delivery->work_order_id, (int) $delivery->work_order_operation_id, true);
             $materials = MfgWorkOrderMaterial::query()->whereIn('id', collect($delivery->lines)->pluck('material_id')->all() ?: [0])->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+            $this->issues->lockItems($materials->pluck('component_item_id'));
             $plan = [];
             $problems = [];
             foreach ((array) $delivery->lines as $line) {
