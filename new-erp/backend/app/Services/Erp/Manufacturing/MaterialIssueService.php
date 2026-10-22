@@ -53,10 +53,12 @@ final class MaterialIssueService
     /**
      * 收料：按台数收本道的料，从可用库存扣减。$units 为空就收齐整张工单。
      * 任何一种料库存不够就整单不收，提示缺多少。
+     * 追溯件默认按先入先用自动挑编号；$selections（物料行 ID => 库存序列号 ID，按装配顺序）为人工指定的编号。
+     * 收到的编号按台号顺序登记到每台的装配记录。
      */
-    public function receive(int $workOrderId, int $operationId, ?int $units, ?string $remark, object $actor): MfgMaterialIssue
+    public function receive(int $workOrderId, int $operationId, ?int $units, ?string $remark, object $actor, array $selections = []): MfgMaterialIssue
     {
-        return DB::transaction(function () use ($workOrderId, $operationId, $units, $remark, $actor) {
+        return DB::transaction(function () use ($workOrderId, $operationId, $units, $remark, $actor, $selections) {
             $wo = MfgWorkOrder::query()->lockForUpdate()->findOrFail($workOrderId);
             if (! in_array($wo->status, ['released', 'in_progress', 'paused'], true)) $this->fail('status_invalid', '工单不在生产中，不能收料。');
             $op = MfgWorkOrderOperation::query()->where('work_order_id', $wo->id)->lockForUpdate()->find($operationId);
@@ -68,11 +70,12 @@ final class MaterialIssueService
             $target = $units ? min($planned, $done + max(1, $units)) : $planned;
             $plan = [];
             $short = [];
+            $selections = array_filter(array_map(fn ($ids) => array_values(array_unique(array_map('intval', (array) $ids))), $selections));
             foreach ($materials as $m) {
                 $want = $this->neededFor($m, $wo, $target);
                 $qty = round($want - (float) $m->issued_qty, 4);
                 if ($qty <= self::EPS) continue;
-                [$picks, $left] = $this->allocate($m, $qty, $wo);
+                [$picks, $left] = isset($selections[$m->id]) ? $this->selectedPicks($m, $qty, $wo, $selections[$m->id]) : $this->allocate($m, $qty, $wo);
                 if ($left > self::EPS) {
                     $short[] = $m->component_item_name.' 要 '.$this->num($qty).'，仓库可用 '.$this->num($qty - $left).($m->unit_name ?: '');
                     continue;
@@ -81,6 +84,8 @@ final class MaterialIssueService
             }
             if ($short) $this->fail('stock_short', '库存不够，这次不能收料：'.implode('、', $short).'。半成品可以在缺料处点“开半成品工单”，外购件请找采购。');
             if (! $plan) $this->fail('already_received', $op->operation_name.'这些台的料已经收齐了。');
+            if ($extra = array_diff(array_keys($selections), collect($plan)->map(fn ($p) => (int) $p['material']->id)->all()))
+                $this->fail('serial_selection_invalid', '指定编号的物料不在本次收料范围内（物料行 '.implode('、', $extra).'），请刷新后重选。');
             $issue = MfgMaterialIssue::create([
                 'issue_no' => $this->numbers->next('material_issue', 'MI'), 'work_order_id' => $wo->id, 'work_order_operation_id' => $op->id,
                 'unit_qty' => round($target - $done, 4),
@@ -95,6 +100,7 @@ final class MaterialIssueService
                 $p['material']->update(['issued_qty' => round((float) $p['material']->issued_qty + $p['qty'], 4)]);
             }
             $this->inventory->postProductionMaterialIssue($issue, $wo, $allocations, $this->actorId($actor));
+            app(UnitComponentService::class)->bind($wo, $issue, $plan, $selections, $actor);
             $text = collect($plan)->map(fn ($p) => $p['material']->component_item_name.' '.$this->num($p['qty']).($p['material']->unit_name ?: ''))->implode('、');
             $this->workOrders->log($wo, 'material_received', $wo->status, $wo->status, "{$op->operation_name}收料（{$issue->issue_no}）：{$text}，已扣库存", $actor, ['issue_id' => $issue->id, 'operation_id' => $op->id]);
             return $issue->fresh();
@@ -115,6 +121,33 @@ final class MaterialIssueService
             $out[(int) $link->component_item_id] = round(($out[(int) $link->component_item_id] ?? 0) + max(0, (float) $child->planned_qty - (float) $child->stored_qty), 4);
         }
         return $out;
+    }
+
+    /**
+     * 人工指定编号收料的候选：本道还没收齐、启用单件追溯的料，以及可出库的在库编号（每种最多 200 个，先入库的在前）。
+     */
+    public function serialOptions(int $workOrderId, int $operationId): array
+    {
+        $wo = MfgWorkOrder::query()->findOrFail($workOrderId);
+        $op = MfgWorkOrderOperation::query()->where('work_order_id', $wo->id)->find($operationId);
+        if (! $op || $op->execution_context !== 'production') $this->fail('operation_invalid', '这道不是本工单的车间工序。');
+        $planned = (float) $wo->planned_qty;
+        $rows = [];
+        foreach ($this->receivable($op) as $m) {
+            $item = Item::query()->find($m->component_item_id);
+            $remaining = round((float) $m->required_qty - (float) $m->issued_qty, 4);
+            if (! $item || $item->serialTrackingMode() === 'none' || $remaining <= self::EPS) continue;
+            $balanceIds = $this->balancesFor($item, $wo)->filter(fn ($b) => $this->availability->availableForOutbound($b) > self::EPS)->pluck('id')->all();
+            $serials = InventorySerial::query()->with(['warehouse:id,warehouse_name', 'location:id,location_code,location_name'])
+                ->whereIn('inventory_balance_id', $balanceIds ?: [0])->where('item_id', $item->id)->where('serial_status', 'available')
+                ->orderBy('id')->limit(200)->get();
+            $rows[] = ['material_id' => (int) $m->id, 'component_item_id' => (int) $item->id, 'component_item_name' => $m->component_item_name,
+                'unit_name' => $m->unit_name, 'remaining_qty' => $remaining, 'per_unit_qty' => $planned > 0 ? round((float) $m->required_qty / $planned, 4) : 0,
+                'serials' => $serials->map(fn (InventorySerial $s) => ['id' => (int) $s->id, 'serial_no' => $s->serial_no, 'batch_no' => $s->batch_no,
+                    'warehouse_name' => $s->warehouse?->warehouse_name, 'location_code' => $s->location?->location_code,
+                    'received_at' => $s->received_at?->toDateString()])->values()->all()];
+        }
+        return $rows;
     }
 
     /** 本道要收的料：参与齐套、按数量管理（板料按实物走开料，不在这里收）。 */
@@ -158,9 +191,7 @@ final class MaterialIssueService
     {
         $item = Item::query()->findOrFail($m->component_item_id);
         $mode = $item->serialTrackingMode();
-        $balances = $this->availability->outboundBalanceQuery([(int) $item->id])
-            ->where(fn ($q) => $q->whereNull('erp_warehouses.management_scope')->orWhere('erp_warehouses.management_scope', '!=', 'office'))
-            ->orderByRaw('erp_inventory_balances.warehouse_id = ? DESC', [(int) $wo->warehouse_id])->orderBy('erp_inventory_balances.id')->get();
+        $balances = $this->balancesFor($item, $wo);
         $left = $qty;
         $picks = [];
         foreach ($balances as $balance) {
@@ -184,6 +215,39 @@ final class MaterialIssueService
             $left = round($left - $take, 4);
         }
         return [$picks, max(0, $left)];
+    }
+
+    /** 人工指定编号：编号必须是本物料、在库可用、所在库存行可出库且未被订单占用；数量须与本次应收一致。 */
+    private function selectedPicks(MfgWorkOrderMaterial $m, float $qty, MfgWorkOrder $wo, array $serialIds): array
+    {
+        $item = Item::query()->findOrFail($m->component_item_id);
+        if ($item->serialTrackingMode() === 'none') $this->fail('serial_not_tracked', $m->component_item_name.' 未启用单件追溯，不能指定编号。');
+        if (abs($qty - count($serialIds)) > self::EPS)
+            $this->fail('serial_count_mismatch', $m->component_item_name.' 本次要收 '.$this->num($qty).($m->unit_name ?: '').'，指定了 '.count($serialIds).' 个编号，请指定 '.$this->num($qty).' 个。');
+        $balances = $this->balancesFor($item, $wo)->keyBy('id');
+        $serials = InventorySerial::query()->whereIn('id', $serialIds)->lockForUpdate()->get()->keyBy('id');
+        $groups = [];
+        foreach ($serialIds as $id) {
+            $serial = $serials->get($id);
+            if (! $serial || (int) $serial->item_id !== (int) $item->id || $serial->serial_status !== 'available' || ! $balances->has((int) $serial->inventory_balance_id))
+                $this->fail('serial_unavailable', '编号 '.($serial?->serial_no ?: '#'.$id).' 不是 '.$m->component_item_name.' 的可用库存，请刷新后重选。');
+            $groups[(int) $serial->inventory_balance_id][] = (int) $id;
+        }
+        $picks = [];
+        foreach ($groups as $balanceId => $ids) {
+            if (count($ids) > $this->availability->availableForOutbound($balances->get($balanceId)) + self::EPS)
+                $this->fail('serial_unavailable', $m->component_item_name.' 所选编号所在库位可用数量不足（可能已被订单占用），请改选其他编号。');
+            $picks[] = ['balance_id' => (int) $balanceId, 'qty' => (float) count($ids), 'serial_ids' => $ids];
+        }
+        return [$picks, 0.0];
+    }
+
+    /** 可出库的库存行：工厂仓库优先工单仓库，按库存行先后。 */
+    private function balancesFor(Item $item, MfgWorkOrder $wo): Collection
+    {
+        return $this->availability->outboundBalanceQuery([(int) $item->id])
+            ->where(fn ($q) => $q->whereNull('erp_warehouses.management_scope')->orWhere('erp_warehouses.management_scope', '!=', 'office'))
+            ->orderByRaw('erp_inventory_balances.warehouse_id = ? DESC', [(int) $wo->warehouse_id])->orderBy('erp_inventory_balances.id')->get();
     }
 
     private function num(float $v): string { return rtrim(rtrim(number_format($v, 4, '.', ''), '0'), '.'); }

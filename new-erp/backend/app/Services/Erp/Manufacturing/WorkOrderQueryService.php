@@ -54,7 +54,7 @@ final class WorkOrderQueryService
 
     public function detail(int $id, bool $amounts): array
     {
-        $wo = MfgWorkOrder::query()->with(['operations', 'units', 'materials', 'item:id,item_type'])->findOrFail($id);
+        $wo = MfgWorkOrder::query()->with(['operations', 'units.components', 'materials', 'item:id,item_type'])->findOrFail($id);
         $row = $this->row($wo, $amounts);
         $operations = $wo->operations->map(fn ($op) => $this->operationArray($op))->values()->all();
         $materials = $wo->materials->map(fn ($m) => $this->materialArray($m))->values()->all();
@@ -69,6 +69,8 @@ final class WorkOrderQueryService
             'status_label' => isset($pendingScrap[$u->id]) ? '等报废确认' : (self::UNIT_LABELS[$u->status] ?? $u->status), 'rework_count' => $u->rework_count,
             'current_operation_id' => $u->current_operation_id, 'current_operation_name' => $u->current_operation_id ? ($opNames[$u->current_operation_id] ?? null) : null,
             'stored_at' => $u->stored_at?->toDateTimeString(), 'completed_at' => $u->completed_at?->toDateTimeString(),
+            'components' => $u->components->map(fn ($c) => ['id' => $c->id, 'component_item_id' => $c->component_item_id,
+                'component_item_name' => $c->component_item_name, 'component_serial_no' => $c->component_serial_no])->values()->all(),
         ])->values()->all();
         $row['operations'] = $this->operationProgress($wo, $row['operations']);
         $row['tech'] = $this->techSummary($wo);

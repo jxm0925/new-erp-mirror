@@ -130,7 +130,7 @@ class ResetProductionV2 extends Command
         'production.operation.view', 'production.operation.create', 'production.operation.edit', 'production.operation.toggle', 'production.operation.delete',
         'production.routing.view', 'production.routing.create', 'production.routing.edit', 'production.routing.activate',
         'production.routing.default', 'production.routing.delete', 'production.serial', 'production.serial.view',
-        'production.board', 'production.tech', 'production.task.execute', 'production.task.assign', 'production.scrap.approve',
+        'production.serial.assign', 'production.board', 'production.tech', 'production.task.execute', 'production.task.assign', 'production.scrap.approve',
         'production.receipt.execute', 'production.tech.manage',
     ];
 

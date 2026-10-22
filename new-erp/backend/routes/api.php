@@ -427,6 +427,8 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::post('work-orders/{id}/cancel', [MfgWorkOrderController::class, 'cancel'])->whereNumber('id');
     Route::post('work-orders/{id}/semi-orders', [MfgWorkOrderController::class, 'semiOrder'])->whereNumber('id');
     Route::post('work-orders/{id}/operations/{operationId}/material-receipts', [MfgWorkOrderController::class, 'receiveMaterials'])->whereNumber(['id', 'operationId']);
+    Route::get('work-orders/{id}/operations/{operationId}/serial-options', [MfgWorkOrderController::class, 'serialOptions'])->whereNumber(['id', 'operationId']);
+    Route::post('work-orders/{id}/unit-components/swap', [MfgWorkOrderController::class, 'swapComponents'])->whereNumber('id');
     Route::get('work-orders/{id}/cutting', [MfgCuttingController::class, 'context'])->whereNumber('id');
     Route::get('work-orders/{id}/cutting/sources', [MfgCuttingController::class, 'sources'])->whereNumber('id');
     Route::post('work-orders/{id}/cutting/preview', [MfgCuttingController::class, 'preview'])->whereNumber('id');

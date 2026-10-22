@@ -44,6 +44,8 @@ export const resumeWorkOrder = (id, data) => api.post(`/v1/erp/production/work-o
 export const cancelWorkOrder = (id, data) => api.post(`/v1/erp/production/work-orders/${id}/cancel`, data)
 export const createSemiWorkOrder = (id, data) => api.post(`/v1/erp/production/work-orders/${id}/semi-orders`, data)
 export const receiveOperationMaterials = (id, operationId, data) => api.post(`/v1/erp/production/work-orders/${id}/operations/${operationId}/material-receipts`, data)
+export const getOperationSerialOptions = (id, operationId) => api.get(`/v1/erp/production/work-orders/${id}/operations/${operationId}/serial-options`)
+export const swapUnitComponents = (id, data) => api.post(`/v1/erp/production/work-orders/${id}/unit-components/swap`, data)
 export const getWorkOrderCutting = (id, params) => api.get(`/v1/erp/production/work-orders/${id}/cutting`, { params })
 export const listWorkOrderCuttingSources = (id, params) => api.get(`/v1/erp/production/work-orders/${id}/cutting/sources`, { params })
 export const previewWorkOrderCutting = (id, data) => api.post(`/v1/erp/production/work-orders/${id}/cutting/preview`, data)

@@ -2,7 +2,7 @@
 
 namespace App\Models\Erp;
 
-/** 关键部件追溯（预留）：第 2 阶段总装报工时登记。 */
+/** 装配记录：每台设备装的带编号部件，工序收料时按台登记（UnitComponentService）。 */
 class MfgUnitComponent extends MasterModel
 {
     protected $table = 'erp_mfg_unit_components';

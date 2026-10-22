@@ -6,6 +6,7 @@ use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Http\Controllers\Controller;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\Manufacturing\MaterialIssueService;
+use App\Services\Erp\Manufacturing\UnitComponentService;
 use App\Services\Erp\Manufacturing\WorkOrderQueryService;
 use App\Services\Erp\Manufacturing\WorkOrderService;
 use Illuminate\Http\Request;
@@ -57,14 +58,14 @@ class MfgWorkOrderController extends Controller
             'release' => 'nullable|boolean']);
         if (! empty($data['release'])) $this->user($request, 'production.work_order.publish');
         $wo = $service->createStock($data, $user);
-        return response()->json(['message' => $wo->status === 'released' ? '备货工单已下达，序列号已生成。' : '备货工单已保存为计划。', 'data' => $query->detail($wo->id, $amounts)]);
+        return response()->json(['message' => $wo->status === 'released' ? '备货工单已下达，已按台生成台号。' : '备货工单已保存为计划。', 'data' => $query->detail($wo->id, $amounts)]);
     }
 
     public function release(Request $request, int $id, WorkOrderService $service, WorkOrderQueryService $query)
     {
         [$user, $amounts] = $this->user($request, 'production.work_order.publish');
         $wo = $service->release($id, $this->version($request), $user);
-        return response()->json(['message' => '工单已下达，序列号已生成。', 'data' => $query->detail($wo->id, $amounts)]);
+        return response()->json(['message' => '工单已下达，已按台生成台号。', 'data' => $query->detail($wo->id, $amounts)]);
     }
 
     public function update(Request $request, int $id, WorkOrderService $service, WorkOrderQueryService $query)
@@ -115,9 +116,31 @@ class MfgWorkOrderController extends Controller
     public function receiveMaterials(Request $request, int $id, int $operationId, MaterialIssueService $issues, WorkOrderQueryService $query)
     {
         [$user, $amounts] = $this->user($request, ['production.task.execute', 'production.work_order.edit']);
-        $data = $request->validate(['units' => 'nullable|integer|min:1|max:100000', 'remark' => 'nullable|string|max:500']);
-        $issue = $issues->receive($id, $operationId, isset($data['units']) ? (int) $data['units'] : null, $data['remark'] ?? null, $user);
+        $data = $request->validate(['units' => 'nullable|integer|min:1|max:100000', 'remark' => 'nullable|string|max:500',
+            'serial_selections' => 'nullable|array|max:50', 'serial_selections.*.material_id' => 'required|integer|min:1',
+            'serial_selections.*.serial_ids' => 'required|array|min:1|max:1000', 'serial_selections.*.serial_ids.*' => 'integer|min:1']);
+        $selections = [];
+        foreach ($data['serial_selections'] ?? [] as $row) $selections[(int) $row['material_id']] = $row['serial_ids'];
+        // 人工指定编号前期只开放给有“指定/调整部件编号”权限的账号（默认仅系统管理员）。
+        if ($selections) $this->user($request, 'production.serial.assign');
+        $issue = $issues->receive($id, $operationId, isset($data['units']) ? (int) $data['units'] : null, $data['remark'] ?? null, $user, $selections);
         return response()->json(['message' => "已收料（{$issue->issue_no}），库存已扣减，可以开工了。", 'data' => $query->detail($id, $amounts)]);
+    }
+
+    /** 人工指定编号收料的候选编号。 */
+    public function serialOptions(Request $request, int $id, int $operationId, MaterialIssueService $issues)
+    {
+        $this->user($request, 'production.serial.assign');
+        return response()->json(['data' => $issues->serialOptions($id, $operationId)]);
+    }
+
+    /** 互换同一工单两台的同种部件编号。 */
+    public function swapComponents(Request $request, int $id, UnitComponentService $components, WorkOrderQueryService $query)
+    {
+        [$user, $amounts] = $this->user($request, 'production.serial.assign');
+        $data = $request->validate(['first_id' => 'required|integer|min:1', 'second_id' => 'required|integer|min:1']);
+        $components->swap($id, (int) $data['first_id'], (int) $data['second_id'], $user);
+        return response()->json(['message' => '部件编号已互换。', 'data' => $query->detail($id, $amounts)]);
     }
 
     public function serial(Request $request, WorkOrderQueryService $query)

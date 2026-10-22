@@ -233,6 +233,10 @@
                           · 曾返修 {{ u.rework_count }} 次
                         </span>
                       </div>
+                      <div v-for="c in (u.components || [])" :key="c.id" class="unit-sub-status">
+                        <span class="text-muted">{{ c.component_item_name }} {{ c.component_serial_no }}</span>
+                        <el-button v-if="canSwap(u)" type="text" size="mini" @click="openSwap(u, c)">互换</el-button>
+                      </div>
                     </td>
                     <td v-for="(op, i) in prodOps" :key="op.id" class="matrix-cell-td">
                       <div :class="['matrix-cell', cellState(u, i)]">
@@ -352,6 +356,15 @@
                     @click="receiveMaterials(k)"
                   >
                     收料
+                  </el-button>
+                  <el-button
+                    v-if="k.receive_pending && canReceiveMaterials && $can('production.serial.assign')"
+                    type="text"
+                    size="mini"
+                    :disabled="saving"
+                    @click="openSerialReceive(k)"
+                  >
+                    指定编号收料
                   </el-button>
                 </div>
                 <div class="materials-list">
@@ -696,11 +709,64 @@
         <el-button size="small" type="success" class="btn-theme-create" :loading="saving" @click="saveAdjust">保存调整</el-button>
       </span>
     </el-dialog>
+
+    <el-dialog
+      title="指定编号收料"
+      :visible.sync="serialReceive.visible"
+      width="640px"
+      custom-class="master-style-dialog"
+      :close-on-click-modal="false"
+    >
+      <el-form label-position="top" size="small">
+        <el-form-item label="收料台数（不填收齐整单）">
+          <el-input-number v-model="serialReceive.units" :min="1" :max="100000" controls-position="right" />
+        </el-form-item>
+        <el-form-item
+          v-for="row in serialReceive.rows"
+          :key="row.material_id"
+          :label="`${row.component_item_name}（每台 ${qty(row.per_unit_qty)}，未收 ${qty(row.remaining_qty)} ${row.unit_name || ''}）`"
+        >
+          <el-select v-model="serialReceive.picked[row.material_id]" multiple filterable placeholder="按装配顺序选择编号，不选由系统分配">
+            <el-option
+              v-for="s in row.serials"
+              :key="s.id"
+              :label="`${s.serial_no} · ${s.warehouse_name || ''} ${s.location_code || ''}`"
+              :value="s.id"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <p v-if="!serialReceive.rows.length" class="dialog-hint text-muted">本道没有需要指定编号的追溯物料，直接收料即可。</p>
+      <p class="dialog-hint text-muted">* 所选编号按顺序依次装到尚未配号的台，数量须与本次应收数量一致；未指定的物料由系统按先入先用分配。</p>
+      <span slot="footer">
+        <el-button size="small" @click="serialReceive.visible = false">取消</el-button>
+        <el-button size="small" type="success" class="btn-theme-create" :loading="saving" @click="submitSerialReceive">确认收料</el-button>
+      </span>
+    </el-dialog>
+
+    <el-dialog
+      title="互换部件编号"
+      :visible.sync="swap.visible"
+      width="480px"
+      custom-class="master-style-dialog"
+      :close-on-click-modal="false"
+    >
+      <p v-if="swap.component" class="dialog-hint">
+        {{ swap.unitSerial }} 当前装 {{ swap.component.component_item_name }} {{ swap.component.component_serial_no }}，与哪台互换？
+      </p>
+      <el-select v-model="swap.targetId" filterable size="small" placeholder="选择本工单另一台的同种部件">
+        <el-option v-for="o in swapOptions" :key="o.id" :label="`${o.unit_serial} · ${o.component_serial_no}`" :value="o.id" />
+      </el-select>
+      <span slot="footer">
+        <el-button size="small" @click="swap.visible = false">取消</el-button>
+        <el-button size="small" type="success" class="btn-theme-create" :loading="saving" :disabled="!swap.targetId" @click="submitSwap">确认互换</el-button>
+      </span>
+    </el-dialog>
   </div>
 </template>
 
 <script>
-import { getWorkOrder, getWorkOrderOptions, updateWorkOrder, releaseWorkOrder, pauseWorkOrder, resumeWorkOrder, cancelWorkOrder, createSemiWorkOrder, receiveOperationMaterials } from '../../../api/erp/production'
+import { getWorkOrder, getWorkOrderOptions, updateWorkOrder, releaseWorkOrder, pauseWorkOrder, resumeWorkOrder, cancelWorkOrder, createSemiWorkOrder, receiveOperationMaterials, getOperationSerialOptions, swapUnitComponents } from '../../../api/erp/production'
 import { HERO_PILL, qty, money, shortDate, bomLabel, errorText, isCancel, searchProductionUsers } from './mfg-helpers'
 import WorkOrderCuttingPanel from './WorkOrderCuttingPanel.vue'
 
@@ -721,6 +787,8 @@ export default {
     wo: null,
     owners: [],
     unitLimit: 50,
+    serialReceive: { visible: false, opId: null, units: undefined, rows: [], picked: {} },
+    swap: { visible: false, unitId: null, unitSerial: '', component: null, targetId: null },
     steps: STEPS,
     today: new Date().toISOString().slice(0, 10),
     adjust: {
@@ -738,6 +806,13 @@ export default {
     }
   }),
   computed: {
+    swapOptions() {
+      const c = this.swap.component
+      if (!c || !this.wo) return []
+      return (this.wo.units || []).filter(u => u.id !== this.swap.unitId && this.canSwap(u))
+        .flatMap(u => (u.components || []).filter(x => x.component_item_id === c.component_item_id)
+          .map(x => ({ id: x.id, unit_serial: u.serial_no, component_serial_no: x.component_serial_no })))
+    },
     hasActualMaterialCost() {
       return this.wo && this.wo.actual_material_cost_amount !== null && this.wo.actual_material_cost_amount !== undefined
     },
@@ -892,6 +967,38 @@ export default {
       }
       const opId = Number(String(k.operation_key).replace(/^o/, ''))
       await this.run(() => receiveOperationMaterials(this.wo.id, opId, value ? { units: Number(value) } : {}), '已收料')
+    },
+    async openSerialReceive(k) {
+      const opId = Number(String(k.operation_key).replace(/^o/, ''))
+      try {
+        const { data } = await getOperationSerialOptions(this.wo.id, opId)
+        const rows = data.data || []
+        const picked = {}
+        rows.forEach(r => { picked[r.material_id] = [] })
+        this.serialReceive = { visible: true, opId, units: undefined, rows, picked }
+      } catch (e) {
+        this.$message.error(errorText(e, '读取可选编号失败'))
+      }
+    },
+    async submitSerialReceive() {
+      const f = this.serialReceive
+      const selections = f.rows.filter(r => (f.picked[r.material_id] || []).length)
+        .map(r => ({ material_id: r.material_id, serial_ids: f.picked[r.material_id] }))
+      const payload = {}
+      if (f.units) payload.units = Number(f.units)
+      if (selections.length) payload.serial_selections = selections
+      if (await this.run(() => receiveOperationMaterials(this.wo.id, f.opId, payload), '已收料')) f.visible = false
+    },
+    canSwap(u) {
+      return this.$can('production.serial.assign') && ['released', 'in_progress', 'paused'].includes(this.wo.status) &&
+        ['waiting', 'in_progress', 'rework', 'completed'].includes(u.status)
+    },
+    openSwap(u, c) {
+      this.swap = { visible: true, unitId: u.id, unitSerial: u.serial_no, component: c, targetId: null }
+    },
+    async submitSwap() {
+      const ok = await this.run(() => swapUnitComponents(this.wo.id, { first_id: this.swap.component.id, second_id: this.swap.targetId }), '部件编号已互换')
+      if (ok) this.swap.visible = false
     },
     openSerial(sn) {
       if (sn && this.$can('production.serial.view')) {

@@ -252,6 +252,7 @@ class RbacBootstrapService
             ['production.tech.manage', '上传图纸和定制 BOM', 'button', 'production.tech', null, null, 'el-icon-mouse', 1],
             ['production.performance.manage', '维护提成模板', 'button', 'production.performance', null, null, 'el-icon-setting', 2],
             ['production.serial.view', '查看序列号追溯', 'button', 'production.serial', null, null, 'el-icon-mouse', 1],
+            ['production.serial.assign', '指定/调整部件编号', 'button', 'production.serial', null, null, 'el-icon-mouse', 2],
             ['production.operation.view', '查看工序', 'button', 'production.operation', null, null, 'el-icon-mouse', 1],
             ['production.operation.create', '新增工序', 'button', 'production.operation', null, null, 'el-icon-mouse', 2],
             ['production.operation.edit', '编辑工序', 'button', 'production.operation', null, null, 'el-icon-mouse', 3],
@@ -582,8 +583,10 @@ class RbacBootstrapService
             'production.board', 'production.tech', 'production.task.execute', 'production.task.assign', 'production.scrap.approve',
             'production.receipt.execute', 'production.tech.manage',
         ];
+        // 指定/调整部件编号前期只授系统管理员，放开时再授给车间角色。
+        $adminOnly = ['production.serial.assign'];
         $matrix = [
-            'admin' => $manager,
+            'admin' => array_merge($manager, $adminOnly),
             'production_manager' => $manager,
             'production_operator' => [
                 'production.work_order', 'production.base', 'production.operation', 'production.routing',
@@ -600,7 +603,7 @@ class RbacBootstrapService
                 'production.board', 'production.tech', 'production.task.assign', 'production.scrap.approve',
             ],
         ];
-        $permissionIds = DB::table('erp_rbac_permissions')->whereIn('code', $manager)->pluck('id', 'code');
+        $permissionIds = DB::table('erp_rbac_permissions')->whereIn('code', array_merge($manager, $adminOnly))->pluck('id', 'code');
         if ($permissionIds->isEmpty()) return;
         foreach ($matrix as $roleCode => $codes) {
             if ($onlyCodes !== null && ! in_array($roleCode, $onlyCodes, true)) continue;

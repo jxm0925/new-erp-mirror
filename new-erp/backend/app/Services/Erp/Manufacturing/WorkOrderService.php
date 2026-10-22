@@ -3,8 +3,6 @@
 namespace App\Services\Erp\Manufacturing;
 
 use App\Exceptions\Erp\WorkOrderDomainException;
-use App\Models\Erp\DocumentNumber;
-use App\Models\Erp\InventorySerial;
 use App\Models\Erp\Item;
 use App\Models\Erp\MfgWorkOrder;
 use App\Models\Erp\MfgWorkOrderLink;
@@ -23,7 +21,7 @@ use Illuminate\Support\Facades\DB;
 
 /**
  * 新生产工单：订单生产确认后按“一行一张”自动建单并下达；生产主管只能调整；
- * 也可手动建备货工单。下达时按台生成序列号。BOM/路线缺失时停在“计划”，补齐后再下达。
+ * 也可手动建备货工单。下达时按台生成台号，追溯件按物料策略的生成时机换成正式序列号。BOM/路线缺失时停在“计划”，补齐后再下达。
  */
 final class WorkOrderService
 {
@@ -324,10 +322,9 @@ final class WorkOrderService
     {
         if (! $wo->bom_id || ! $this->plans->isBomEligible((int) $wo->bom_id, (int) $wo->item_id))
             $this->fail('release_blocked', '不能下达：所选 BOM 已失效或不是这个产品的 BOM，请调整工单明确选择有效的 BOM。');
-        $serials = $this->generateUnits($wo);
+        [$serials, $range] = $this->generateUnits($wo);
         $wo->update(['status' => 'released', 'released_at' => now(), 'released_by_legacy_id' => $this->actorId($actor),
             'block_reason' => null, 'business_version' => (int) $wo->business_version + 1]);
-        $range = $serials ? '，生成序列号 '.(count($serials) > 1 ? $serials[0].' ~ '.end($serials) : $serials[0]) : '';
         $this->log($wo, 'released', 'planned', 'released', ($automatic ? '自动下达' : '下达工单').$range, $actor, ['serials' => $serials]);
     }
 
@@ -430,33 +427,29 @@ final class WorkOrderService
         return $id ? (int) $id : null;
     }
 
-    /** 下达时按台生成序列号：整数台数才逐台跟踪；格式 前缀+年月-流水，如 SN2610-0015。 */
+    /**
+     * 下达时按台建立追溯：整数台数才逐台跟踪。每台先用台号（工单号-001）占位，
+     * 启用单件追溯的物料按物料策略的生成时机换成正式序列号（见 UnitSerialService）。
+     * @return array{0: array<int, string>, 1: string} [本次正式序列号, 日志说明]
+     */
     private function generateUnits(MfgWorkOrder $wo): array
     {
         $qty = (float) $wo->planned_qty;
-        if (MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->exists()) return MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->orderBy('unit_no')->pluck('serial_no')->all();
-        if (abs($qty - round($qty)) > 0.00001 || $qty > self::UNIT_LIMIT) return [];
-        $item = Item::query()->find($wo->item_id);
-        $prefix = strtoupper((string) ($item?->serial_number_prefix ?: 'SN'));
-        $prefix = substr(trim((string) preg_replace('/[^A-Z0-9_-]+/', '-', $prefix), '-_') ?: 'SN', 0, 30);
-        $period = now()->format('ym');
-        $type = substr('mfg_sn:'.$prefix, 0, 40);
-        $date = now()->startOfMonth()->toDateString();
-        $counter = DocumentNumber::query()->where('document_type', $type)->whereDate('number_date', $date)->lockForUpdate()->first()
-            ?: DocumentNumber::create(['document_type' => $type, 'number_date' => $date, 'current_sequence' => 0]);
-        $sequence = (int) $counter->current_sequence;
-        $serials = [];
+        if (MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->exists()) return [[], ''];
+        if (abs($qty - round($qty)) > 0.00001 || $qty > self::UNIT_LIMIT) return [[], ''];
+        $serials = app(UnitSerialService::class);
         $firstOp = $this->firstProductionOperationId($wo);
+        $units = collect();
         for ($unit = 1; $unit <= (int) round($qty); $unit++) {
-            do {
-                $sequence++;
-                $serial = $prefix.$period.'-'.str_pad((string) $sequence, 4, '0', STR_PAD_LEFT);
-            } while (MfgWorkOrderUnit::query()->where('serial_no', $serial)->exists() || InventorySerial::query()->where('serial_no', $serial)->exists());
-            MfgWorkOrderUnit::create(['work_order_id' => $wo->id, 'unit_no' => $unit, 'serial_no' => $serial, 'status' => 'waiting', 'current_operation_id' => $firstOp, 'warehouse_id' => $wo->warehouse_id]);
-            $serials[] = $serial;
+            $units->push(MfgWorkOrderUnit::create(['work_order_id' => $wo->id, 'unit_no' => $unit, 'serial_no' => $serials->placeholder($wo, $unit),
+                'status' => 'waiting', 'current_operation_id' => $firstOp, 'warehouse_id' => $wo->warehouse_id]));
         }
-        $counter->update(['current_sequence' => $sequence]);
-        return $serials;
+        $assigned = array_column($serials->assignIfDue($wo, $units, UnitSerialService::EVENT_RELEASED), 1);
+        if ($assigned) return [$assigned, '，生成序列号 '.UnitSerialService::rangeText($assigned)];
+        $stage = $serials->stage(Item::query()->find($wo->item_id));
+        $placeholders = $units->pluck('serial_no')->all();
+        $text = '，生成台号 '.UnitSerialService::rangeText($placeholders);
+        return [[], $stage ? $text.'，序列号在'.UnitSerialService::STAGE_LABELS[$stage].'生成' : $text];
     }
 
     private function specialRequirement($line): ?string
