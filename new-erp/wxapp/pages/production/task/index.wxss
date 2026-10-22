@@ -36,3 +36,4 @@
 .tk-photo.add { border: 2rpx dashed #c9d2e0; background: #fff; text-align: center; line-height: 136rpx; font-size: 56rpx; color: #8a95a8; }
 .tk-photo-x { position: absolute; right: 0; top: 0; width: 40rpx; height: 40rpx; line-height: 36rpx; text-align: center; background: rgba(0, 0, 0, .5); color: #fff; font-size: 30rpx; border-radius: 0 0 0 12rpx; }
 .tk-pct { width: 120rpx; border: 2rpx solid #e3e8f0; border-radius: 10rpx; padding: 6rpx 12rpx; text-align: right; margin-left: auto; }
+.tk-qty { text-align: right; border-bottom: 2rpx solid #e3e8f0; min-width: 160rpx; }

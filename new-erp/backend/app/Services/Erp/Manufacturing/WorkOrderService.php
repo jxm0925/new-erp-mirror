@@ -14,6 +14,7 @@ use App\Models\Erp\MfgWorkOrderUnit;
 use App\Models\Erp\MfgLaborSession;
 use App\Models\Erp\MfgCuttingBatch;
 use App\Models\Erp\MfgMaterialIssue;
+use App\Models\Erp\MfgMaterialReturn;
 use App\Models\Erp\SalesOrder;
 use App\Models\Erp\SalesOrderFulfillment;
 use App\Services\Erp\DocumentNumberService;
@@ -311,8 +312,10 @@ final class WorkOrderService
         }
         if (MfgCuttingBatch::query()->whereIn('work_order_id', $cuttingOrders)->lockForUpdate()->first(['id']))
             $this->fail('cutting_already_issued', '本工单或关联半成品已有开料投入，不能直接取消。请保留原料、余料和半成品去向后再办理业务调整。');
-        if (MfgMaterialIssue::query()->whereIn('work_order_id', $cuttingOrders)->lockForUpdate()->first(['id']))
-            $this->fail('material_already_issued', '本工单或关联半成品已有真实领料，不能直接取消并遗留材料成本。');
+        // 收错料的可以先全部退料，已领数量清零、没有待审核的退料申请后才能取消。
+        if (MfgWorkOrderMaterial::query()->whereIn('work_order_id', $cuttingOrders)->where('issued_qty', '>', 0)->lockForUpdate()->first(['id'])
+            || MfgMaterialReturn::query()->whereIn('work_order_id', $cuttingOrders)->where('status', 'pending')->lockForUpdate()->first(['id']))
+            $this->fail('material_already_issued', '本工单或关联半成品已有真实领料（或待审核的退料），不能直接取消并遗留材料成本；领错的料请先退料并审核入库。');
         $before = $wo->status;
         $wo->update(['status' => 'cancelled', 'cancel_reason' => $reason, 'cancelled_at' => now(), 'business_version' => (int) $wo->business_version + 1, 'updated_by_legacy_id' => $this->actorId($actor)]);
         MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->whereIn('status', ['waiting'])->update(['status' => 'cancelled']);

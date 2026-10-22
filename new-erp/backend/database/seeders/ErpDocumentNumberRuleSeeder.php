@@ -51,7 +51,7 @@ class ErpDocumentNumberRuleSeeder extends Seeder
             ['stock_prebuild', '备货来源号', 'SPB', 'Ymd', 5, 'daily'],
             ['operation_task', '工序任务', 'OT', 'Ymd', 5, 'daily'],
             ['material_issue', '领料单', 'MI', 'Ymd', 5, 'daily'],
-            ['material_return', '退料单', 'MR', 'Ymd', 5, 'daily'],
+            ['material_return', '生产退料单', 'MRT', 'Ymd', 5, 'daily'],
             ['material_replenishment', '补料单', 'RP', 'Ymd', 5, 'daily'],
             ['work_report', '报工单', 'WR', 'Ymd', 5, 'daily'],
             ['production_stock_in', '完工入库单', 'PS', 'Ymd', 5, 'daily'],

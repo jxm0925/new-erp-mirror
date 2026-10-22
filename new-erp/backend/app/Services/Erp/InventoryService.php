@@ -714,6 +714,82 @@ class InventoryService
         }, 5);
     }
 
+    /**
+     * 生产退料入库：按原收料出库流水的批次和单价冲回（同一条流水分次退时最后一次承接尾差），退回原库位或库管选定的库位。
+     * 按编号退的序列号恢复在库可用，挂到退入的库存行。
+     */
+    public function postProductionMaterialReturn(\App\Models\Erp\MfgMaterialReturn $return, \App\Models\Erp\MfgWorkOrder $workOrder, ?int $operatorId = null): InventoryTransaction
+    {
+        return DB::transaction(function () use ($return, $workOrder, $operatorId): InventoryTransaction {
+            if (InventoryTransaction::query()->where('source_type', 'mfg_material_return')->where('source_id', $return->id)
+                ->where('transaction_type', 'production_material_return_inbound')->exists()) {
+                throw ValidationException::withMessages(['return' => '这张退料单已经入过库，不能重复入库。']);
+            }
+            $lines = \App\Models\Erp\MfgMaterialReturnLine::query()->where('return_id', $return->id)->orderBy('id')->lockForUpdate()->get();
+            if ($lines->isEmpty()) throw ValidationException::withMessages(['return' => '退料单没有明细。']);
+            $transaction = InventoryTransaction::create([
+                'transaction_no' => $this->nextNo('ITX'), 'transaction_type' => 'production_material_return_inbound',
+                'source_type' => 'mfg_material_return', 'source_id' => $return->id, 'source_no' => $return->return_no,
+                'posting_status' => 'posted', 'transaction_date' => now()->toDateString(),
+                'posted_by' => $operatorId, 'posted_at' => now(), 'created_by' => $operatorId,
+                'remark' => '生产退料，工单 '.$workOrder->work_order_no,
+            ]);
+            $total = '0.0000';
+            foreach ($lines as $line) {
+                $source = InventoryTransactionItem::query()->with('transaction')->whereKey($line->source_transaction_item_id)->lockForUpdate()->first();
+                if (! $source || $source->transaction?->transaction_type !== 'production_material_issue_outbound' || $source->source_type !== 'mfg_material_issue'
+                    || (int) $source->source_id !== (int) $line->issue_id || (int) $source->item_id !== (int) $line->component_item_id) {
+                    throw ValidationException::withMessages(['return' => $line->component_item_name.' 找不到对应的原收料出库流水，不能退料。']);
+                }
+                $returned = \App\Models\Erp\MfgMaterialReturnLine::query()->where('source_transaction_item_id', $source->id)->where('return_id', '!=', $return->id)
+                    ->whereHas('materialReturn', fn ($q) => $q->where('status', 'approved'))->selectRaw('COALESCE(SUM(qty), 0) AS q, COALESCE(SUM(cost_amount), 0) AS c')->first();
+                $remainingQty = bcsub(number_format(abs((float) $source->change_qty), 8, '.', ''), (string) $returned->q, 8);
+                $remainingCost = bcsub(bcsub('0', (string) $source->cost_amount, 4), (string) $returned->c, 4);
+                $quantity = number_format((float) $line->qty, 8, '.', '');
+                if (bccomp($quantity, '0', 8) <= 0 || bccomp($quantity, $remainingQty, 8) > 0) {
+                    throw ValidationException::withMessages(['return' => $line->component_item_name.' 退料数量超过原收料未退数量，请刷新后重试。']);
+                }
+                $cost = CuttingDecimal::share($remainingCost, $remainingQty, $quantity);
+                $warehouseId = (int) ($return->target_location_id ? $return->target_warehouse_id : $source->warehouse_id);
+                $locationId = (int) ($return->target_location_id ?: $source->location_id);
+                $change = [
+                    'item_id' => $source->item_id, 'warehouse_id' => $warehouseId, 'location_id' => $locationId,
+                    'batch_no' => $source->batch_no, 'unit_id' => $source->unit_id,
+                    'change_qty' => $quantity, 'unit_cost' => (float) bcdiv($cost, $quantity, 4), 'cost_amount' => $cost,
+                    'cost_source_type' => 'production_return_original_cost', 'source_type' => 'mfg_material_return', 'source_id' => $return->id,
+                    'source_item_id' => $line->id, 'remark' => '工单 '.$workOrder->work_order_no.' 生产退料（原单 '.$source->transaction_no.'）',
+                ];
+                if ($source->material_lot_id) $change['material_lot_id'] = $source->material_lot_id;
+                $this->applyInventoryChange($transaction, $change);
+                $total = bcadd($total, $cost, 4);
+                $line->update(['warehouse_id' => $warehouseId, 'location_id' => $locationId, 'unit_cost' => bcdiv($cost, $quantity, 4), 'cost_amount' => $cost]);
+                if ($line->inventory_serial_id) {
+                    $serial = InventorySerial::query()->whereKey($line->inventory_serial_id)->lockForUpdate()->first();
+                    if (! $serial || $serial->serial_status !== 'production_consumed' || (int) $serial->item_id !== (int) $source->item_id) {
+                        throw ValidationException::withMessages(['return' => '编号 '.$line->serial_no.' 当前不是生产已领状态，不能退料。']);
+                    }
+                    $balance = InventoryBalance::query()->where('item_id', $source->item_id)->where('warehouse_id', $warehouseId)
+                        ->where('location_id', $locationId)->where('batch_no', $source->batch_no)->firstOrFail();
+                    $serial->update(['serial_status' => 'available', 'inventory_balance_id' => $balance->id, 'warehouse_id' => $warehouseId,
+                        'location_id' => $locationId, 'outbound_at' => null]);
+                    InventorySerialEvent::create([
+                        'inventory_serial_id' => $serial->id, 'event_type' => 'production_material_returned', 'document_type' => 'mfg_material_return',
+                        'document_id' => $return->id, 'document_no' => $return->return_no, 'from_status' => 'production_consumed', 'to_status' => 'available',
+                        'warehouse_id' => $warehouseId, 'location_id' => $locationId, 'batch_no' => $source->batch_no,
+                        'event_payload' => ['work_order_no' => $workOrder->work_order_no, 'unit_serial_no' => $line->unit_serial_no], 'occurred_at' => now(),
+                    ]);
+                }
+            }
+            InventoryPostingLog::create([
+                'source_type' => 'mfg_material_return', 'source_id' => $return->id, 'source_no' => $return->return_no,
+                'transaction_type' => 'production_material_return_inbound', 'transaction_id' => $transaction->id,
+                'posting_status' => 'posted', 'message' => '生产退料入库成功', 'posted_by' => $operatorId, 'posted_at' => now(),
+            ]);
+            $return->update(['inventory_transaction_id' => $transaction->id, 'cost_amount' => $total]);
+            return $transaction;
+        }, 5);
+    }
+
     /** 开料整根／整张领入：只接受已锁定批次保存的真实来源，不开放普通数量接口扣板。 */
     public function postManufacturingCuttingIssue(\App\Models\Erp\MfgCuttingBatch $batch, \App\Models\Erp\MfgWorkOrder $workOrder, ?int $operatorId = null): array
     {

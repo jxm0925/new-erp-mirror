@@ -151,7 +151,7 @@ final class MaterialIssueService
     }
 
     /** 本道要收的料：参与齐套、按数量管理（板料按实物走开料，不在这里收）。 */
-    private function receivable(MfgWorkOrderOperation $op, bool $lock = false): Collection
+    public function receivable(MfgWorkOrderOperation $op, bool $lock = false): Collection
     {
         $query = MfgWorkOrderMaterial::query()->where('work_order_operation_id', $op->id)->where('participates_in_kitting', true)->orderBy('id');
         if ($lock) $query->lockForUpdate();
@@ -163,7 +163,7 @@ final class MaterialIssueService
     }
 
     /** 已经到过本道的台数：本道首次合格过的 + 现在停在本道还没合格过的。 */
-    private function reachedUnits(MfgWorkOrderOperation $op): float
+    public function reachedUnits(MfgWorkOrderOperation $op): float
     {
         $here = MfgWorkOrderUnit::query()->where('current_operation_id', $op->id)->whereIn('status', TaskService::SELECTABLE)->pluck('id');
         $passed = $here->isEmpty() ? 0 : MfgUnitReport::query()->where('work_order_operation_id', $op->id)->where('result', 'passed')
@@ -172,7 +172,7 @@ final class MaterialIssueService
     }
 
     /** 做到第 N 台时这种料应收多少：按整单用量平均到每台，收到最后一台时按整单用量收齐。 */
-    private function neededFor(MfgWorkOrderMaterial $m, MfgWorkOrder $wo, float $units): float
+    public function neededFor(MfgWorkOrderMaterial $m, MfgWorkOrder $wo, float $units): float
     {
         $planned = (float) $wo->planned_qty;
         if ($planned <= 0 || $units >= $planned - self::EPS) return (float) $m->required_qty;

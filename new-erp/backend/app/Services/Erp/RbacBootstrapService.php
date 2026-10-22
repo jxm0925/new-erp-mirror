@@ -12,8 +12,52 @@ class RbacBootstrapService
         if ($force) {
             $this->syncDepartments(true);
         }
-        $permissionsChanged = $this->seedPermissions($force);
-        $this->seedRoles($force, $permissionsChanged);
+        $created = $this->seedPermissions($force);
+        $this->seedRoles($force, $created !== []);
+        if ($created) $this->grantNewPermissionDefaults($created);
+    }
+
+    /**
+     * 新增权限的默认授权：升级时新建的权限码按默认角色授予，已有角色不用手工补；之后在角色管理里调整的不会被覆盖。
+     * 库管角色若还没有任何权限（审核流程种子建的空角色），一并初始化库管的默认权限。
+     */
+    private const NEW_PERMISSION_DEFAULTS = [
+        'production.material_return.request' => ['production_manager', 'production_operator'],
+        'production.material_return.approve' => ['warehouse_manager'],
+        'inventory.material_return' => ['warehouse_manager'],
+    ];
+
+    private function grantNewPermissionDefaults(array $createdCodes): void
+    {
+        $warehouseRoleId = DB::table('erp_rbac_roles')->where('code', 'warehouse_manager')->value('id');
+        if ($warehouseRoleId && ! DB::table('erp_rbac_role_permissions')->where('role_id', $warehouseRoleId)->exists()) $this->ensureWarehouseRolePermissions();
+        foreach (array_intersect_key(self::NEW_PERMISSION_DEFAULTS, array_flip($createdCodes)) as $code => $roleCodes) {
+            $permissionId = DB::table('erp_rbac_permissions')->where('code', $code)->value('id');
+            if (! $permissionId) continue;
+            foreach (DB::table('erp_rbac_roles')->whereIn('code', $roleCodes)->pluck('id') as $roleId) {
+                DB::table('erp_rbac_role_permissions')->insertOrIgnore(['role_id' => $roleId, 'permission_id' => $permissionId]);
+            }
+        }
+    }
+
+    /** 库管：库存查看与过账、手工调整、库存预警、生产退料审核，以及查看工单和序列号追溯（直接退料要进工单详情）。 */
+    private function ensureWarehouseRolePermissions(): void
+    {
+        $roleId = DB::table('erp_rbac_roles')->where('code', 'warehouse_manager')->value('id');
+        if (! $roleId) return;
+        $codes = [
+            'inventory.posting', 'inventory.post.view', 'inventory.post.execute',
+            'inventory.balance', 'inventory.balance.view', 'inventory.balance.export', 'inventory.quality.handle',
+            'inventory.transaction', 'inventory.transaction.view', 'inventory.transaction.export',
+            'inventory.adjustment', 'inventory.adjustment.view', 'inventory.adjustment.create', 'inventory.adjustment.delete', 'inventory.physical.manage',
+            'inventory.alert', 'inventory.alert.view',
+            'inventory.material_return', 'production.material_return.approve',
+            'production.work_order', 'production.work_order.view', 'production.serial', 'production.serial.view',
+            'master.item', 'master.item.view', 'master.warehouse_location', 'master.warehouse.view',
+        ];
+        foreach (DB::table('erp_rbac_permissions')->whereIn('code', $codes)->pluck('id') as $permissionId) {
+            DB::table('erp_rbac_role_permissions')->insertOrIgnore(['role_id' => $roleId, 'permission_id' => $permissionId]);
+        }
     }
 
     public function syncDepartments(bool $force = false): void
@@ -44,7 +88,8 @@ class RbacBootstrapService
         }
         foreach ([['admin', '系统管理员', 'all'], ['department_principal', '部门负责人', 'department'],
             ['sales_manager', '销售负责人', 'department'], ['sales_user', '销售人员', 'self'],
-            ['production_manager', '生产管理员', 'all'], ['production_operator', '生产操作员', 'department']] as [$code, $name, $scope]) {
+            ['production_manager', '生产管理员', 'all'], ['production_operator', '生产操作员', 'department'],
+            ['warehouse_manager', '库管', 'all']] as [$code, $name, $scope]) {
             \Database\Seeders\Support\SeedSafety::insertMissing('erp_rbac_roles', ['code' => $code], [
                 'name' => $name, 'data_scope' => $scope, 'enabled' => true, 'is_system' => true,
             ]);
@@ -189,6 +234,7 @@ class RbacBootstrapService
             ['inventory.transaction', '库存流水', 'menu', 'inventory', '/inventory/transactions', 'InventoryBoard', 'el-icon-tickets', 303],
             ['inventory.adjustment', '手工调整', 'menu', 'inventory', '/inventory/adjustments', 'InventoryBoard', 'el-icon-edit-outline', 304],
             ['inventory.alert', '库存预警', 'menu', 'inventory', '/inventory/alerts', 'InventoryAlertWorkbench', 'el-icon-warning-outline', 305],
+            ['inventory.material_return', '生产退料审核', 'menu', 'inventory', '/inventory/material-returns', 'ProductionMaterialReturnList', 'el-icon-refresh-left', 306],
 
             // 库存管理 按钮
             ['inventory.post.view', '查看待过账单据', 'button', 'inventory.posting', null, null, 'el-icon-mouse', 1],
@@ -210,6 +256,7 @@ class RbacBootstrapService
             ['inventory.alert.view', '查看库存预警', 'button', 'inventory.alert', null, null, 'el-icon-mouse', 1],
             ['inventory.alert.configure', '配置库存预警', 'button', 'inventory.alert', null, null, 'el-icon-mouse', 2],
             ['inventory.alert.create_request', '从预警生成采购需求', 'button', 'inventory.alert', null, null, 'el-icon-mouse', 3],
+            ['production.material_return.approve', '审核生产退料', 'button', 'inventory.material_return', null, null, 'el-icon-mouse', 1],
 
             // 4. BOM管理 二级菜单
             ['bom.manage', 'BOM管理', 'menu', 'bom', '/bom/boms', 'BomList', 'el-icon-connection', 401],
@@ -249,6 +296,7 @@ class RbacBootstrapService
             ['production.task.assign', '派工', 'button', 'production.board', null, null, 'el-icon-mouse', 2],
             ['production.scrap.approve', '确认报废', 'button', 'production.board', null, null, 'el-icon-mouse', 3],
             ['production.receipt.execute', '成品入库', 'button', 'production.board', null, null, 'el-icon-mouse', 4],
+            ['production.material_return.request', '申请生产退料', 'button', 'production.board', null, null, 'el-icon-mouse', 5],
             ['production.tech.manage', '上传图纸和定制 BOM', 'button', 'production.tech', null, null, 'el-icon-mouse', 1],
             ['production.performance.manage', '维护提成模板', 'button', 'production.performance', null, null, 'el-icon-setting', 2],
             ['production.serial.view', '查看序列号追溯', 'button', 'production.serial', null, null, 'el-icon-mouse', 1],
@@ -412,7 +460,8 @@ class RbacBootstrapService
         ];
     }
 
-    private function seedPermissions(bool $force = false): bool
+    /** @return array<int, string> 本次新建（$force 时为全部）的权限码 */
+    private function seedPermissions(bool $force = false): array
     {
         $permissions = $this->permissionDefinitions();
 
@@ -427,7 +476,7 @@ class RbacBootstrapService
             if (Schema::hasColumn('erp_rbac_permissions', 'is_system')) {
                 DB::table('erp_rbac_permissions')->whereIn('code', $codes)->update(['is_system' => true]);
             }
-            return false;
+            return [];
         }
 
         $existingCodes = $force
@@ -488,7 +537,7 @@ class RbacBootstrapService
             }
         }
 
-        return true;
+        return array_values(array_diff($codes, array_keys($existingCodes)));
     }
 
     private function seedRoles(bool $force = false, bool $permissionsChanged = false): void
@@ -502,6 +551,7 @@ class RbacBootstrapService
 
         $roles[] = ['production_manager', '生产管理员', 'all'];
         $roles[] = ['production_operator', '生产操作员', 'department'];
+        $roles[] = ['warehouse_manager', '库管', 'all'];
         $existingCodes = DB::table('erp_rbac_roles')->whereIn('code', array_column($roles, 0))->pluck('code')->all();
         $missingCodes = array_values(array_diff(array_column($roles, 0), $existingCodes));
         $rebuildAdminPermissions = $force || in_array('admin', $missingCodes, true);
@@ -534,6 +584,7 @@ class RbacBootstrapService
             $this->ensureProductionRolePermissions($onlyCodes);
             $this->ensureSalesInventoryLockPermission($onlyCodes);
             $this->ensureSalesAttachmentPermissions($onlyCodes);
+            if ($onlyCodes === null || in_array('warehouse_manager', $onlyCodes, true)) $this->ensureWarehouseRolePermissions();
         }
     }
 
@@ -581,7 +632,7 @@ class RbacBootstrapService
             'production.operation.view', 'production.operation.create', 'production.operation.edit', 'production.operation.toggle', 'production.operation.delete',
             'production.routing.view', 'production.routing.create', 'production.routing.edit', 'production.routing.activate', 'production.routing.default', 'production.routing.delete',
             'production.board', 'production.tech', 'production.task.execute', 'production.task.assign', 'production.scrap.approve',
-            'production.receipt.execute', 'production.tech.manage',
+            'production.receipt.execute', 'production.tech.manage', 'production.material_return.request',
         ];
         // 指定/调整部件编号前期只授系统管理员，放开时再授给车间角色。
         $adminOnly = ['production.serial.assign'];
@@ -593,7 +644,7 @@ class RbacBootstrapService
                 'production.serial', 'production.serial.view',
                 'production.work_order.view', 'production.task.view', 'production.task.collaborate',
                 'production.operation.view', 'production.routing.view',
-                'production.board', 'production.task.execute',
+                'production.board', 'production.task.execute', 'production.material_return.request',
             ],
             'department_principal' => [
                 'production.work_order', 'production.base', 'production.operation', 'production.routing',

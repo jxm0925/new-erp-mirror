@@ -29,7 +29,7 @@ class ErpRbacSeeder extends Seeder
             'finance_manager' => '财务负责人',
             'fulfillment_manager' => '履约负责人',
             'purchaser' => '采购员',
-            'warehouse_manager' => '仓库管理员',
+            'warehouse_manager' => '库管',
         ] as $code => $name) {
             $this->upsert('erp_rbac_roles', ['code' => $code], [
                 'name' => $name,

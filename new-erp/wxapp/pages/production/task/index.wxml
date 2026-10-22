@@ -55,6 +55,7 @@
       <block wx:if="{{showMaterials}}">
         <view wx:for="{{task.materials}}" wx:key="component_item_code" class="mt-kv"><text class="k">{{item.component_item_name}}</text><text class="v">每台 {{item.unit_qty}} {{item.unit_name || ''}}</text></view>
       </block>
+      <view wx:if="{{task.allowed.material_return}}" class="tk-link mt-gap" bindtap="openMaterialReturn">退料（领多、领错、不良、报废台拆回）</view>
     </view>
 
     <view class="mt-card">
@@ -139,6 +140,36 @@
     <view class="tk-sheet-foot">
       <button class="mt-btn ghost side" disabled="{{busy}}" bindtap="closePanel">{{panel === 'assign' ? '关闭' : '取消'}}</button>
       <button wx:if="{{panel === 'people'}}" class="mt-btn" disabled="{{busy}}" bindtap="savePeople">保存</button>
+    </view>
+  </view>
+</view>
+
+<view wx:if="{{panel === 'return'}}" class="tk-mask" catchtouchmove="stop">
+  <view class="tk-sheet">
+    <view class="mt-row tk-sheet-head"><text class="mt-title">退料</text><text class="mt-muted">{{task.operation_name}} · 库管审核后入库</text></view>
+    <scroll-view scroll-y class="tk-sheet-body">
+      <view class="mt-card-title">退料类型</view>
+      <view wx:for="{{returnForm.types}}" wx:key="value" class="tk-radio" data-type="{{item.value}}" bindtap="pickReturnType">
+        <view class="tk-dot {{returnForm.type === item.value ? 'on' : ''}}"></view><text>{{item.label}}</text>
+      </view>
+      <view wx:if="{{!returnForm.rows.length}}" class="mt-muted mt-gap">按这个类型本道没有可退的料。</view>
+      <block wx:for="{{returnForm.rows}}" wx:key="material_id" wx:for-item="row">
+        <view class="mt-card-title mt-gap"><text>{{row.component_item_name}}</text><text class="mt-muted">已领 {{row.issued_qty}} {{row.unit_name || ''}}</text></view>
+        <view wx:if="{{row.by_number}}" class="tk-chips">
+          <text wx:for="{{row.serials}}" wx:key="id" class="tk-chip {{returnForm.picked[item.id] ? 'on' : ''}}" data-id="{{item.id}}" bindtap="toggleReturnSerial">{{item.serial_no}}{{item.unit_serial_no ? ' · ' + item.unit_serial_no : ''}}</text>
+        </view>
+        <view wx:else class="mt-kv">
+          <text class="k">退多少（最多 {{row.limit}}）</text>
+          <input class="v tk-qty" type="digit" value="{{returnForm.qty[row.material_id]}}" data-id="{{row.material_id}}" bindinput="returnQtyInput" placeholder="0" />
+        </view>
+      </block>
+      <view class="mt-card-title mt-gap">原因</view>
+      <textarea class="tk-textarea" value="{{returnForm.reason}}" maxlength="500" placeholder="例如：多领 2 个、型号领错、来料不良" bindinput="returnReasonInput" />
+      <view class="mt-muted mt-gap">{{returnForm.hint}}</view>
+    </scroll-view>
+    <view class="tk-sheet-foot">
+      <button class="mt-btn ghost side" disabled="{{busy}}" bindtap="closePanel">取消</button>
+      <button class="mt-btn" disabled="{{busy}}" bindtap="submitMaterialReturn">提交退料申请</button>
     </view>
   </view>
 </view>

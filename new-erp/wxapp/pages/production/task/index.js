@@ -17,6 +17,7 @@ Page({
     shareText: '', isImage: {}, panel: '',
     reject: { mode: 'return', returnId: 0, tags: {}, reason: '', photos: [] }, uploading: false,
     peopleKeyword: '', peopleRows: [], picked: [], shareMode: 'labor', ownerPercent: '', showMaterials: false,
+    returnForm: { types: [], type: 'surplus', rows: [], picked: {}, qty: {}, reason: '', hint: '' },
   },
   onLoad(options) { this.setData({ id: Number(options.id || 0) }); this.load(); },
   onShow() { if (this.data.task) this.load(true); },
@@ -122,6 +123,56 @@ Page({
       wx.showToast({ title: response.message || '已收料', icon: 'none', duration: 2500 });
       this.load(true);
     }).catch(error => wx.showModal({ title: '收料没成功', content: view.errorText(error), showCancel: false }));
+  },
+  // 退料：工人提申请，库管在电脑端“生产退料审核”收到实物后入库。
+  openMaterialReturn() {
+    const task = this.data.task;
+    if (!task || !task.work_order || this.data.busy) return;
+    production.returnOptions(task.work_order.id, task.id).then(response => {
+      const d = response.data || response;
+      this.returnOptions = d.materials || [];
+      this.setData({ panel: 'return', returnForm: { types: d.types || [], type: 'surplus', rows: [], picked: {}, qty: {}, reason: '', hint: '' } });
+      this.refreshReturnRows();
+    }).catch(error => wx.showModal({ title: '读取可退物料失败', content: view.errorText(error), showCancel: false }));
+  },
+  refreshReturnRows() {
+    const type = this.data.returnForm.type;
+    const hints = { surplus: '多领或领错的料，冲减已领数量。', defective: '装上后发现不良的料，冲减已领数量，退后要重新收料。', scrapped: '报废台上还能用的料拆回仓库，不冲减已领数量。' };
+    const rows = (this.returnOptions || []).map(m => Object.assign({}, m, {
+      limit: view.quantity((m.limits || {})[type] || 0),
+      serials: (m.serials || []).filter(s => (s.kind === 'scrapped') === (type === 'scrapped')),
+    })).filter(m => (m.by_number ? m.serials.length : Number((m.limits || {})[type] || 0) > 0));
+    this.setData({ 'returnForm.rows': rows, 'returnForm.picked': {}, 'returnForm.qty': {}, 'returnForm.hint': hints[type] || '' });
+  },
+  pickReturnType(event) {
+    this.setData({ 'returnForm.type': event.currentTarget.dataset.type });
+    this.refreshReturnRows();
+  },
+  toggleReturnSerial(event) {
+    const id = Number(event.currentTarget.dataset.id);
+    const picked = Object.assign({}, this.data.returnForm.picked);
+    if (picked[id]) delete picked[id]; else picked[id] = true;
+    this.setData({ 'returnForm.picked': picked });
+  },
+  returnQtyInput(event) { this.setData({ [`returnForm.qty.${event.currentTarget.dataset.id}`]: event.detail.value }); },
+  returnReasonInput(event) { this.setData({ 'returnForm.reason': event.detail.value }); },
+  submitMaterialReturn() {
+    const f = this.data.returnForm;
+    const task = this.data.task;
+    const lines = f.rows.map(row => (row.by_number
+      ? { material_id: row.material_id, serial_ids: row.serials.filter(s => f.picked[s.id]).map(s => s.id) }
+      : { material_id: row.material_id, qty: Number(f.qty[row.material_id] || 0) }))
+      .filter(l => (l.serial_ids ? l.serial_ids.length : l.qty > 0));
+    if (!lines.length) { wx.showToast({ title: '选要退的编号或填数量', icon: 'none' }); return; }
+    if (!String(f.reason || '').trim()) { wx.showToast({ title: '写一下退料原因', icon: 'none' }); return; }
+    if (this.data.busy) return;
+    this.setData({ busy: true });
+    production.createReturn(task.work_order.id, task.id, { return_type: f.type, reason: f.reason.trim(), lines }).then(response => {
+      wx.showToast({ title: response.message || '已提交', icon: 'none', duration: 2500 });
+      this.setData({ panel: '' });
+      this.load(true);
+    }).catch(error => wx.showModal({ title: '退料没成功', content: view.errorText(error), showCancel: false }))
+      .finally(() => this.setData({ busy: false }));
   },
   claim() { this.run({ action: 'claim' }, '接单成功'); },
   start() { this.run({ action: 'start' }, '开始计时'); },

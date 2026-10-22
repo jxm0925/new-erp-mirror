@@ -116,6 +116,10 @@ final class TaskQueryService
                 'report' => $canExecute && $runnable && $mine && $here > 0,
                 'collaborators' => $canExecute && $runnable && $mine && $mine['role'] === 'owner',
                 'assign' => $runnable && ($super || in_array('production.task.assign', $permissions, true)),
+                // 退料：工单在生产中、本道收过料，有申请或审核退料权限
+                'material_return' => in_array($wo->status, ['released', 'in_progress', 'paused'], true) && $op->execution_context === 'production'
+                    && ($super || array_intersect(['production.material_return.request', 'production.material_return.approve'], $permissions) !== [])
+                    && MfgWorkOrderMaterial::query()->where('work_order_operation_id', $op->id)->where('issued_qty', '>', 0)->exists(),
             ],
         ];
     }

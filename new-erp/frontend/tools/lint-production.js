@@ -30,6 +30,8 @@ const files = [
   'src/views/erp/sales/PackingLaborPanel.vue',
   'src/views/erp/inventory/InventoryAlertDetail.vue',
   'src/views/erp/inventory/InventoryAlertWorkbench.vue',
+  'src/views/erp/inventory/ProductionMaterialReturnList.vue',
+  'src/views/erp/production/MaterialReturnDialog.vue',
 ]
 
 function fail(file, message) {

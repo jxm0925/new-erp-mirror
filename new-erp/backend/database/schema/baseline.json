@@ -87,6 +87,8 @@
     "erp_mfg_drawings": "2026_10_21_000007_create_erp_mfg_drawings_table",
     "erp_mfg_labor_sessions": "2026_10_21_000003_create_erp_mfg_labor_sessions_table",
     "erp_mfg_material_issues": "2026_10_22_000002_create_erp_mfg_material_issues_table",
+    "erp_mfg_material_return_lines": "2026_10_24_000002_create_erp_mfg_material_return_lines_table",
+    "erp_mfg_material_returns": "2026_10_24_000001_create_erp_mfg_material_returns_table",
     "erp_mfg_receipts": "2026_10_21_000005_create_erp_mfg_receipts_table",
     "erp_mfg_task_participants": "2026_10_21_000002_create_erp_mfg_task_participants_table",
     "erp_mfg_unit_component_removals": "2026_10_23_000002_create_erp_mfg_unit_component_removals_table",

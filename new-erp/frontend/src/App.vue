@@ -187,7 +187,8 @@ export default {
       { name: '库存余额', path: '/inventory/balances', icon: 'el-icon-coin', permission: 'inventory.balance' },
       { name: '库存流水', path: '/inventory/transactions', icon: 'el-icon-tickets', permission: 'inventory.transaction' },
       { name: '手工调整', path: '/inventory/adjustments', icon: 'el-icon-edit-outline', permission: 'inventory.adjustment' },
-      { name: '库存预警', path: '/inventory/alerts', icon: 'el-icon-warning-outline', permission: 'inventory.alert' }
+      { name: '库存预警', path: '/inventory/alerts', icon: 'el-icon-warning-outline', permission: 'inventory.alert' },
+      { name: '生产退料审核', path: '/inventory/material-returns', icon: 'el-icon-refresh-left', permission: 'inventory.material_return' }
     ],
     bomMenus: [
       { name: 'BOM管理', path: '/bom/boms', icon: 'el-icon-connection', permission: 'bom.manage' },
@@ -634,6 +635,7 @@ export default {
       if (path === '/inventory/transactions') return '库存流水'
       if (path === '/inventory/adjustments') return '手工调整'
       if (path === '/inventory/alerts') return '库存预警'
+      if (path === '/inventory/material-returns') return '生产退料审核'
       if (path.startsWith('/inventory/alerts/')) return '库存预警 / 详情'
 
       // BOM管理

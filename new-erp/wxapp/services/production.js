@@ -29,5 +29,7 @@ module.exports = {
   people: (id, query) => get(`tasks/${Number(id)}/people`, query),
   workOrder: id => get(`work-orders/${Number(id)}`),
   receiveMaterials: (workOrderId, operationId, payload) => request.write(`${base}/work-orders/${Number(workOrderId)}/operations/${Number(operationId)}/material-receipts`, payload || {}, { loading: true, commandPrefix: 'issue' }),
+  returnOptions: (workOrderId, operationId) => get(`work-orders/${Number(workOrderId)}/operations/${Number(operationId)}/return-options`),
+  createReturn: (workOrderId, operationId, payload) => request.write(`${base}/work-orders/${Number(workOrderId)}/operations/${Number(operationId)}/material-returns`, payload, { loading: true, commandPrefix: 'return' }),
   uploadPhoto,
 };

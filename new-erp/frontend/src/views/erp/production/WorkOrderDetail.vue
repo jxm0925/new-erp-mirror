@@ -366,6 +366,15 @@
                   >
                     指定编号收料
                   </el-button>
+                  <el-button
+                    v-if="canReturnMaterials && kitIssued(k)"
+                    type="text"
+                    size="mini"
+                    :disabled="saving"
+                    @click="openReturn(k)"
+                  >
+                    退料
+                  </el-button>
                 </div>
                 <div class="materials-list">
                   <div
@@ -401,6 +410,15 @@
                   半成品工单 <b class="code-mono lk-text" @click="openWorkOrder(c.id)">{{ c.work_order_no }}</b> · {{ c.item_name }}
                 </span>
                 <span class="mat-qty code-mono">{{ c.status_label }} · 入库 {{ qty(c.stored_qty) }} / {{ qty(c.planned_qty) }} {{ c.unit_name || '' }}</span>
+              </div>
+            </div>
+            <div v-if="wo.material_returns && wo.material_returns.length" class="materials-list">
+              <div v-for="r in wo.material_returns" :key="'mrt-' + r.id" class="material-row">
+                <span class="mat-name text-truncate" :title="r.summary + (r.reason ? '；' + r.reason : '')">
+                  退料 <b class="code-mono">{{ r.return_no }}</b> · {{ r.operation_name }} · {{ r.return_type_label }} · {{ r.summary }}
+                </span>
+                <span class="mat-qty code-mono">{{ r.status_label }} · {{ r.requested_by_name || '' }}{{ r.review_remark ? '（' + r.review_remark + '）' : '' }}</span>
+                <el-button v-if="r.status === 'pending' && canCancelReturn(r)" type="text" size="mini" :disabled="saving" @click="cancelReturn(r)">撤回</el-button>
               </div>
             </div>
           </section>
@@ -762,13 +780,22 @@
         <el-button size="small" type="success" class="btn-theme-create" :loading="saving" :disabled="!swap.targetId" @click="submitSwap">确认互换</el-button>
       </span>
     </el-dialog>
+
+    <material-return-dialog
+      :visible.sync="returnDialog.visible"
+      :work-order-id="wo ? wo.id : 0"
+      :operation-id="returnDialog.opId"
+      :operation-name="returnDialog.opName"
+      @done="d => { if (d) wo = d }"
+    />
   </div>
 </template>
 
 <script>
-import { getWorkOrder, getWorkOrderOptions, updateWorkOrder, releaseWorkOrder, pauseWorkOrder, resumeWorkOrder, cancelWorkOrder, createSemiWorkOrder, receiveOperationMaterials, getOperationSerialOptions, swapUnitComponents } from '../../../api/erp/production'
+import { getWorkOrder, getWorkOrderOptions, updateWorkOrder, releaseWorkOrder, pauseWorkOrder, resumeWorkOrder, cancelWorkOrder, createSemiWorkOrder, receiveOperationMaterials, getOperationSerialOptions, swapUnitComponents, cancelMaterialReturn } from '../../../api/erp/production'
 import { HERO_PILL, qty, money, shortDate, bomLabel, errorText, isCancel, searchProductionUsers } from './mfg-helpers'
 import WorkOrderCuttingPanel from './WorkOrderCuttingPanel.vue'
+import MaterialReturnDialog from './MaterialReturnDialog.vue'
 
 const STEPS = [
   { value: 'planned', label: '计划制令' },
@@ -780,7 +807,7 @@ const STEPS = [
 
 export default {
   name: 'WorkOrderDetail',
-  components: { WorkOrderCuttingPanel },
+  components: { WorkOrderCuttingPanel, MaterialReturnDialog },
   data: () => ({
     loading: false,
     saving: false,
@@ -789,6 +816,7 @@ export default {
     unitLimit: 50,
     serialReceive: { visible: false, opId: null, units: undefined, rows: [], picked: {} },
     swap: { visible: false, unitId: null, unitSerial: '', component: null, targetId: null },
+    returnDialog: { visible: false, opId: 0, opName: '' },
     steps: STEPS,
     today: new Date().toISOString().slice(0, 10),
     adjust: {
@@ -824,6 +852,10 @@ export default {
     },
     canReceiveMaterials() {
       return this.$can('production.task.execute') || this.$can('production.work_order.edit')
+    },
+    canReturnMaterials() {
+      return this.wo && ['released', 'in_progress', 'paused'].includes(this.wo.status) &&
+        (this.$can('production.material_return.request') || this.$can('production.material_return.approve'))
     },
     productName() {
       return this.wo ? (this.wo.product_name || this.wo.item_name) : ''
@@ -988,6 +1020,30 @@ export default {
       if (f.units) payload.units = Number(f.units)
       if (selections.length) payload.serial_selections = selections
       if (await this.run(() => receiveOperationMaterials(this.wo.id, f.opId, payload), '已收料')) f.visible = false
+    },
+    kitIssued(k) {
+      return (k.materials || []).some(m => m.issue_mode !== 'cutting' && Number(m.issued_qty) > 0)
+    },
+    openReturn(k) {
+      this.returnDialog = { visible: true, opId: Number(String(k.operation_key).replace(/^o/, '')), opName: k.operation_name }
+    },
+    canCancelReturn(r) {
+      const me = JSON.parse(localStorage.getItem('erp_user') || '{}')
+      return this.$can('production.material_return.approve') || Number(me.legacy_id || me.id || 0) === Number(r.requested_by_legacy_id)
+    },
+    async cancelReturn(r) {
+      try {
+        await this.$confirm(`撤回退料申请 ${r.return_no}？`, '撤回退料', { type: 'warning' })
+      } catch (e) {
+        return
+      }
+      try {
+        const { data } = await cancelMaterialReturn(r.id)
+        this.$message.success(data.message || '已撤回')
+        this.load()
+      } catch (e) {
+        this.$message.error(errorText(e, '撤回失败'))
+      }
     },
     canSwap(u) {
       return this.$can('production.serial.assign') && ['released', 'in_progress', 'paused'].includes(this.wo.status) &&

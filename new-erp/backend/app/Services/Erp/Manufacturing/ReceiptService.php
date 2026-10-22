@@ -6,6 +6,7 @@ use App\Models\Erp\Location;
 use App\Models\Erp\MfgReceipt;
 use App\Models\Erp\MfgCuttingBatch;
 use App\Models\Erp\MfgMaterialIssue;
+use App\Models\Erp\MfgMaterialReturn;
 use App\Models\Erp\MfgWorkOrder;
 use App\Models\Erp\MfgWorkOrderLink;
 use App\Models\Erp\MfgWorkOrderUnit;
@@ -66,6 +67,8 @@ final class ReceiptService
             }
             $actualCost = '0.0000';
             foreach (MfgMaterialIssue::query()->where('work_order_id', $wo->id)->lockForUpdate()->get() as $issue) $actualCost = bcadd($actualCost, (string) $issue->cost_amount, 4);
+            // 已审核的生产退料按原单价冲回，从实际材料成本里扣除。
+            foreach (MfgMaterialReturn::query()->where('work_order_id', $wo->id)->where('status', 'approved')->lockForUpdate()->get() as $return) $actualCost = bcsub($actualCost, (string) $return->cost_amount, 4);
             foreach (MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('status', 'settled')->lockForUpdate()->get() as $batch) $actualCost = bcadd($actualCost, (string) $batch->net_cost_amount, 4);
             $alreadyCost = '0.0000';
             foreach (MfgReceipt::query()->where('work_order_id', $wo->id)->lockForUpdate()->get() as $oldReceipt) $alreadyCost = bcadd($alreadyCost, (string) $oldReceipt->cost_amount, 4);

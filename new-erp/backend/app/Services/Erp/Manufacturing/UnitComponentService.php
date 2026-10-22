@@ -82,6 +82,13 @@ final class UnitComponentService
         }, 5);
     }
 
+    /** 退料拆下：退料单审核通过时把部件从台上拆下（原装配记录不改，登记拆下记录）。 */
+    public function detachForReturn(MfgWorkOrder $wo, MfgUnitComponent $component, object $actor, string $remark, array $document): void
+    {
+        $unit = MfgWorkOrderUnit::query()->lockForUpdate()->findOrFail($component->unit_id);
+        $this->remove($wo, $component, $unit, 'return', $actor, $remark, $document);
+    }
+
     /** 装上：新增装配记录，记工单日志和部件号档案事件。$from 为互换时的原记录（取批次）。 */
     private function install(MfgWorkOrder $wo, MfgWorkOrderUnit $unit, int $itemId, string $itemName, ?string $spec, InventorySerial|string $serial,
         object $actor, string $remark, array $document = [], ?MfgUnitComponent $from = null): MfgUnitComponent
