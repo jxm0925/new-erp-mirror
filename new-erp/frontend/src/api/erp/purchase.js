@@ -57,3 +57,7 @@ export const closePurchaseReturn = id => api.post(`/v1/erp/purchase/returns/${id
 // 采购价格预警：与历史采购价比较（按库存基本单位）
 export const checkPurchasePrices = data => api.post('/v1/erp/purchase/price-check', data)
 export const getOrderPriceCheck = id => api.get(`/v1/erp/purchase/orders/${id}/price-check`)
+
+// 生产缺料：未结束工单外购件缺口汇总，勾选转采购需求
+export const listProductionShortages = params => api.get('/v1/erp/purchase/production-shortages', { params })
+export const createShortagePurchaseRequest = data => api.post('/v1/erp/purchase/production-shortages/requests', data)

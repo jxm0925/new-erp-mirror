@@ -55,13 +55,7 @@ final class WorkOrderPlanBuilder
     public function kitting(array $materials, array $operations): array
     {
         $ids = array_values(array_unique(array_map('intval', array_column($materials, 'component_item_id'))));
-        $available = $this->availability->availableBaseQuantities($ids);
-        $physical = $ids ? Item::query()->whereIn('id', $ids)->get()->filter(fn (Item $i) => $i->materialManagementMode() === 'physical')->pluck('id')->map(fn ($id) => (int) $id)->all() : [];
-        if ($physical) {
-            foreach ($this->availability->outboundBalanceQuery($physical)->get() as $b) {
-                $available[(int) $b->item_id] = ($available[(int) $b->item_id] ?? 0) + $this->availability->calculate((float) $b->quantity_on_hand, (float) $b->quantity_locked, (float) $b->quantity_defective, (float) $b->quantity_pending);
-            }
-        }
+        [$available, $physical] = $this->availableForKitting($ids);
         $remaining = $available;
         $result = [];
         foreach ($operations as $op) {
@@ -86,6 +80,23 @@ final class WorkOrderPlanBuilder
                 'status' => ! $rows ? 'no_material' : ($short ? 'short' : 'ready'), 'shortage_count' => count($short), 'materials' => $rows];
         }
         return $result;
+    }
+
+    /**
+     * 齐套口径的可用量：按数量管理的取可出库量，按实物管理的板料/管料按在库实物估算。
+     * @return array{0: array<int, float>, 1: int[]} 可用量（按物料），按实物管理的物料 id
+     */
+    public function availableForKitting(array $ids): array
+    {
+        $ids = array_values(array_unique(array_map('intval', $ids)));
+        $available = $this->availability->availableBaseQuantities($ids);
+        $physical = $ids ? Item::query()->whereIn('id', $ids)->get()->filter(fn (Item $i) => $i->materialManagementMode() === 'physical')->pluck('id')->map(fn ($id) => (int) $id)->all() : [];
+        if ($physical) {
+            foreach ($this->availability->outboundBalanceQuery($physical)->get() as $b) {
+                $available[(int) $b->item_id] = ($available[(int) $b->item_id] ?? 0) + $this->availability->calculate((float) $b->quantity_on_hand, (float) $b->quantity_locked, (float) $b->quantity_defective, (float) $b->quantity_pending);
+            }
+        }
+        return [$available, $physical];
     }
 
     /** 每台预计材料成本：按库存加权平均成本，没有库存时用标准成本或最近采购价。 */

@@ -352,7 +352,7 @@ export default {
     approvalResult() { return ({ PENDING: '审核中', APPROVED: '已通过', REJECTED: '已驳回', CANCELLED: '已取消' })[this.doc?.approval_task?.task_status] || '-' },
     sourceText() {
       if (this.type === 'orders' && !this.doc?.plan_id && !this.doc?.source_no) return '手工创建'
-      return ({ purchase_plan: '采购计划', manual: '手工创建', production: '生产需求', sales: '销售订单', inventory_alert: '库存预警' })[this.doc?.source_type || this.doc?.data_source] || this.doc?.source_type || this.doc?.data_source || '手工创建'
+      return ({ purchase_plan: '采购计划', manual: '手工创建', production: '生产需求', sales: '销售订单', inventory_alert: '库存预警', production_shortage: '生产缺料' })[this.doc?.source_type || this.doc?.data_source] || this.doc?.source_type || this.doc?.data_source || '手工创建'
     }
   },
   async mounted() {

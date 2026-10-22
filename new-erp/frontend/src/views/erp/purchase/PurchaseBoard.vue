@@ -1185,7 +1185,7 @@ export default {
       if (this.mode === 'plans' && requestNos.length) return `采购需求转入（${requestNos.join('、')}）`
       return this.sourceText(doc && (doc.source_type || doc.data_source))
     },
-    sourceText(value) { return ({ manual: '手工创建', purchase_plan: '采购计划', system: '系统生成', import: '导入', api: '接口', legacy_sync: '旧系统一次性同步' })[value] || value || '手工创建' },
+    sourceText(value) { return ({ production_shortage: '生产缺料', manual: '手工创建', purchase_plan: '采购计划', system: '系统生成', import: '导入', api: '接口', legacy_sync: '旧系统一次性同步' })[value] || value || '手工创建' },
     requestSummary(row) {
       const lines = row.items || row.request_items || []
       const first = lines[0] || {}

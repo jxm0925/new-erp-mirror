@@ -325,6 +325,15 @@
                 <h2>工序物料齐套分析看板</h2>
               </div>
               <span class="header-desc-hint">按工艺路线将 BOM 分解至工序校验物料齐套；缺料提示预警</span>
+              <el-button
+                v-if="canPurchaseShortage"
+                type="text"
+                size="mini"
+                :disabled="saving"
+                @click="shortageDialog = true"
+              >
+                缺料转采购
+              </el-button>
             </div>
 
             <div v-if="!wo.kitting.length" class="empty-state-notice">
@@ -412,6 +421,14 @@
                 <span class="mat-qty code-mono">{{ c.status_label }} · 入库 {{ qty(c.stored_qty) }} / {{ qty(c.planned_qty) }} {{ c.unit_name || '' }}</span>
               </div>
             </div>
+            <div v-if="wo.purchase_demands && wo.purchase_demands.length" class="materials-list">
+              <div v-for="d in wo.purchase_demands" :key="'pd-' + d.id" class="material-row">
+                <span class="mat-name text-truncate">
+                  采购需求 <b class="code-mono" :class="{ 'lk-text': $can('purchase.request') }" @click="openPurchaseRequest(d)">{{ d.request_no }}</b> · {{ d.item_name }} {{ qty(d.qty) }}
+                </span>
+                <span class="mat-qty code-mono">{{ d.request_status_label }} · {{ d.created_by_name || '' }}</span>
+              </div>
+            </div>
             <div v-if="wo.material_returns && wo.material_returns.length" class="materials-list">
               <div v-for="r in wo.material_returns" :key="'mrt-' + r.id" class="material-row">
                 <span class="mat-name text-truncate" :title="r.summary + (r.reason ? '；' + r.reason : '')">
@@ -424,6 +441,7 @@
           </section>
 
           <work-order-cutting-panel :work-order="wo" @refresh="load" />
+          <shortage-purchase-dialog :visible.sync="shortageDialog" :work-order-id="wo.id" :work-order-no="wo.work_order_no" @done="load" />
 
           <!-- 卡片 4 与 卡片 5 并排：材料成本预算与操作动态日志 -->
           <div class="two-subcard-grid">
@@ -796,6 +814,7 @@ import { getWorkOrder, getWorkOrderOptions, updateWorkOrder, releaseWorkOrder, p
 import { HERO_PILL, qty, money, shortDate, bomLabel, errorText, isCancel, searchProductionUsers } from './mfg-helpers'
 import WorkOrderCuttingPanel from './WorkOrderCuttingPanel.vue'
 import MaterialReturnDialog from './MaterialReturnDialog.vue'
+import ShortagePurchaseDialog from '../purchase/ShortagePurchaseDialog.vue'
 
 const STEPS = [
   { value: 'planned', label: '计划制令' },
@@ -807,7 +826,7 @@ const STEPS = [
 
 export default {
   name: 'WorkOrderDetail',
-  components: { WorkOrderCuttingPanel, MaterialReturnDialog },
+  components: { WorkOrderCuttingPanel, MaterialReturnDialog, ShortagePurchaseDialog },
   data: () => ({
     loading: false,
     saving: false,
@@ -817,6 +836,7 @@ export default {
     serialReceive: { visible: false, opId: null, units: undefined, rows: [], picked: {} },
     swap: { visible: false, unitId: null, unitSerial: '', component: null, targetId: null },
     returnDialog: { visible: false, opId: 0, opName: '' },
+    shortageDialog: false,
     steps: STEPS,
     today: new Date().toISOString().slice(0, 10),
     adjust: {
@@ -852,6 +872,10 @@ export default {
     },
     canReceiveMaterials() {
       return this.$can('production.task.execute') || this.$can('production.work_order.edit')
+    },
+    canPurchaseShortage() {
+      return this.wo && ['planned', 'released', 'in_progress', 'paused'].includes(this.wo.status) && this.$can('purchase.production_shortage.convert') &&
+        (this.wo.kitting || []).some(k => k.materials.some(m => m.purchasable && m.shortage_qty > 0))
     },
     canReturnMaterials() {
       return this.wo && ['released', 'in_progress', 'paused'].includes(this.wo.status) &&
@@ -969,6 +993,9 @@ export default {
     },
     openWorkOrder(id) {
       if (id) this.$router.push(`/production/work-orders/${id}`)
+    },
+    openPurchaseRequest(d) {
+      if (d.purchase_request_id && d.request_status !== 'deleted' && this.$can('purchase.request')) this.$router.push(`/purchase/requests/${d.purchase_request_id}/detail`)
     },
     async makeSemi(m) {
       let value

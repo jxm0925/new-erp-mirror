@@ -25,6 +25,14 @@ class RbacBootstrapService
         'production.material_return.request' => ['production_manager', 'production_operator'],
         'production.material_return.approve' => ['warehouse_manager'],
         'inventory.material_return' => ['warehouse_manager'],
+        'purchase.production_shortage' => ['production_manager'],
+        'purchase.production_shortage.convert' => ['production_manager'],
+    ];
+
+    /** 新权限还要授给已有某个权限的角色（如自建的采购员角色有“新增需求”就能看生产缺料并转采购）。 */
+    private const NEW_PERMISSION_FOLLOWERS = [
+        'purchase.production_shortage' => 'purchase.request.create',
+        'purchase.production_shortage.convert' => 'purchase.request.create',
     ];
 
     private function grantNewPermissionDefaults(array $createdCodes): void
@@ -35,6 +43,14 @@ class RbacBootstrapService
             $permissionId = DB::table('erp_rbac_permissions')->where('code', $code)->value('id');
             if (! $permissionId) continue;
             foreach (DB::table('erp_rbac_roles')->whereIn('code', $roleCodes)->pluck('id') as $roleId) {
+                DB::table('erp_rbac_role_permissions')->insertOrIgnore(['role_id' => $roleId, 'permission_id' => $permissionId]);
+            }
+        }
+        foreach (array_intersect_key(self::NEW_PERMISSION_FOLLOWERS, array_flip($createdCodes)) as $code => $followCode) {
+            $permissionId = DB::table('erp_rbac_permissions')->where('code', $code)->value('id');
+            $followId = DB::table('erp_rbac_permissions')->where('code', $followCode)->value('id');
+            if (! $permissionId || ! $followId) continue;
+            foreach (DB::table('erp_rbac_role_permissions')->where('permission_id', $followId)->pluck('role_id') as $roleId) {
                 DB::table('erp_rbac_role_permissions')->insertOrIgnore(['role_id' => $roleId, 'permission_id' => $permissionId]);
             }
         }
@@ -184,6 +200,7 @@ class RbacBootstrapService
             ['purchase.order', '采购订单', 'menu', 'purchase', '/purchase/orders', 'PurchaseOrderList', 'el-icon-s-order', 203],
             ['purchase.receipt', '采购到货', 'menu', 'purchase', '/purchase/receipts', 'PurchaseReceiptList', 'el-icon-box', 204],
             ['purchase.return', '采购退货', 'menu', 'purchase', '/purchase/returns', 'PurchaseReturnList', 'el-icon-refresh-left', 205],
+            ['purchase.production_shortage', '生产缺料', 'menu', 'purchase', '/purchase/production-shortages', 'ProductionShortageList', 'el-icon-warning-outline', 206],
 
             // 采购管理 按钮
             ['purchase.request.view', '查看需求', 'button', 'purchase.request', null, null, 'el-icon-mouse', 1],
@@ -192,6 +209,7 @@ class RbacBootstrapService
             ['purchase.request.delete', '删除需求', 'button', 'purchase.request', null, null, 'el-icon-mouse', 4],
             ['purchase.request.submit', '提交需求', 'button', 'purchase.request', null, null, 'el-icon-mouse', 5],
             ['purchase.request.audit', '审核需求', 'button', 'purchase.request', null, null, 'el-icon-mouse', 6],
+            ['purchase.production_shortage.convert', '生产缺料转采购需求', 'button', 'purchase.production_shortage', null, null, 'el-icon-mouse', 1],
 
             ['purchase.plan.view', '查看计划', 'button', 'purchase.plan', null, null, 'el-icon-mouse', 1],
             ['purchase.plan.create', '新增计划', 'button', 'purchase.plan', null, null, 'el-icon-mouse', 2],
@@ -633,6 +651,7 @@ class RbacBootstrapService
             'production.routing.view', 'production.routing.create', 'production.routing.edit', 'production.routing.activate', 'production.routing.default', 'production.routing.delete',
             'production.board', 'production.tech', 'production.task.execute', 'production.task.assign', 'production.scrap.approve',
             'production.receipt.execute', 'production.tech.manage', 'production.material_return.request',
+            'purchase.production_shortage', 'purchase.production_shortage.convert',
         ];
         // 指定/调整部件编号前期只授系统管理员，放开时再授给车间角色。
         $adminOnly = ['production.serial.assign'];

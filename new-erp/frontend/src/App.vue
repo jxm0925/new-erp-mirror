@@ -180,7 +180,8 @@ export default {
       { name: '采购计划', path: '/purchase/plans', icon: 'el-icon-document', permission: 'purchase.plan' },
       { name: '采购订单', path: '/purchase/orders', icon: 'el-icon-s-order', permission: 'purchase.order' },
       { name: '采购到货', path: '/purchase/receipts', icon: 'el-icon-box', permission: 'purchase.receipt' },
-      { name: '采购退货', path: '/purchase/returns', icon: 'el-icon-refresh-left', permission: 'purchase.return' }
+      { name: '采购退货', path: '/purchase/returns', icon: 'el-icon-refresh-left', permission: 'purchase.return' },
+      { name: '生产缺料', path: '/purchase/production-shortages', icon: 'el-icon-warning-outline', permission: 'purchase.production_shortage' }
     ],
     inventoryMenus: [
       { name: '库存过账工作台', path: '/inventory/posting', icon: 'el-icon-finished', permission: 'inventory.posting' },
@@ -621,6 +622,7 @@ export default {
       if (path === '/purchase/orders') return '采购订单'
       if (path === '/purchase/receipts') return '采购到货'
       if (path === '/purchase/returns') return '采购退货'
+      if (path === '/purchase/production-shortages') return '生产缺料'
       if (path === '/purchase/returns/create') return '采购退货 / 新建'
       if (path.startsWith('/purchase/returns/') && path.endsWith('/detail')) return '采购退货 / 详情'
       if (path === '/purchase/defects') return '不合格品处理'

@@ -29,6 +29,7 @@ use App\Http\Controllers\Api\V1\Erp\ProductionMasterDataController;
 use App\Http\Controllers\Api\V1\Erp\ProductionProcessCatalogController;
 use App\Http\Controllers\Api\V1\Erp\ProductionPerformanceTemplateController;
 use App\Http\Controllers\Api\V1\Erp\MfgMaterialReturnController;
+use App\Http\Controllers\Api\V1\Erp\MfgShortageController;
 use App\Http\Controllers\Api\V1\Erp\MfgWorkOrderController;
 use App\Http\Controllers\Api\V1\Erp\MfgCuttingController;
 use App\Http\Controllers\Api\V1\Erp\MfgTaskController;
@@ -101,6 +102,9 @@ Route::prefix('v1/erp/approvals')->group(function () {
 
 
 Route::prefix('v1/erp/purchase')->group(function () {
+    // 生产缺料：未结束工单外购件缺口汇总，勾选后转采购需求
+    Route::get('production-shortages', [MfgShortageController::class, 'index']);
+    Route::post('production-shortages/requests', [MfgShortageController::class, 'store']);
     Route::post('conversion-preview', [PurchaseController::class, 'conversionPreview']);
     Route::post('attachments/upload', [PurchaseController::class, 'uploadAttachment']);
     Route::get('attachments/{id}/preview', [PurchaseController::class, 'previewAttachment'])->whereNumber('id');

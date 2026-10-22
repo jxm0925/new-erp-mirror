@@ -23,6 +23,7 @@ import WarehouseList from './views/erp/master/WarehouseList.vue'
 import LocationList from './views/erp/master/LocationList.vue'
 import ImportWorkbench from './views/erp/master/ImportWorkbench.vue'
 import PurchaseRequestList from './views/erp/purchase/PurchaseRequestList.vue'
+import ProductionShortageList from './views/erp/purchase/ProductionShortageList.vue'
 import PurchasePlanList from './views/erp/purchase/PurchasePlanList.vue'
 import PurchaseOrderList from './views/erp/purchase/PurchaseOrderList.vue'
 import PurchaseReceiptList from './views/erp/purchase/PurchaseReceiptList.vue'
@@ -135,6 +136,7 @@ const router = new VueRouter({
     { path: '/master/locations', component: LocationList },
     { path: '/master/imports', component: ImportWorkbench, meta: { permission: 'master.import' } },
     { path: '/purchase/requests', component: PurchaseRequestList, meta: { permission: 'purchase.request' } },
+    { path: '/purchase/production-shortages', component: ProductionShortageList, meta: { permission: 'purchase.production_shortage' } },
     { path: '/purchase/requests/create', component: PurchaseDocumentForm, props: { type: 'request' } },
     { path: '/purchase/requests/:id/edit', component: PurchaseDocumentForm, props: { type: 'request' } },
     { path: '/purchase/requests/:id/detail', component: PurchaseSimpleDetail, props: { type: 'requests' } },

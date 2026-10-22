@@ -58,6 +58,7 @@
                 <el-option label="手工创建" value="manual" />
                 <el-option v-if="form.management_scope === 'factory'" label="生产需求" value="production" />
                 <el-option v-if="form.management_scope === 'factory'" label="销售订单" value="sales" />
+                <el-option v-if="form.source_type === 'production_shortage'" label="生产缺料" value="production_shortage" />
                 <el-option label="库存预警" value="inventory_alert" />
               </el-select>
             </el-form-item>
@@ -823,7 +824,7 @@ export default {
   computed: {
     scopeOptions() { return purchaseScopes },
     scopeIssue() { return purchaseScopeIssue(this.form, this.items) },
-    scopeLocked() { return this.scopeChanging || this.saving || purchaseSourceLocked(this.form) || (this.type === 'request' && ['production', 'sales'].includes(this.form.source_type)) },
+    scopeLocked() { return this.scopeChanging || this.saving || purchaseSourceLocked(this.form) || (this.type === 'request' && ['production', 'sales', 'production_shortage'].includes(this.form.source_type)) },
     scopedWarehouses() { return this.warehouses.filter(row => purchaseScopeMatches(row, this.form.management_scope)) },
     validPlanItems() {
       return (this.form.items || []).filter(i => i.item_id)
