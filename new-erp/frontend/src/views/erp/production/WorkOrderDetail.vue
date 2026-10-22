@@ -260,6 +260,13 @@
                   展开查看全部 {{ wo.units.length }} 台设备序列号
                 </el-button>
               </div>
+              <div v-if="(wo.unbound_components || []).length" class="more-expand-bar">
+                <div v-for="c in wo.unbound_components" :key="c.serial_id" class="unit-sub-status">
+                  <span class="text-danger">待登记编号</span>
+                  <span class="text-muted">{{ c.component_item_name }} {{ c.serial_no }}（{{ c.issue_no }}）</span>
+                  <el-button v-if="canAssign" type="text" size="mini" @click="openAssign(c)">装到台</el-button>
+                </div>
+              </div>
             </div>
           </section>
 
@@ -397,6 +404,7 @@
                       {{ qty(m.covered_qty) }} / {{ qty(m.required_qty) }} {{ m.unit_name || '' }}
                     </span>
                     <span v-if="m.in_production_qty > 0" class="text-muted">在做 {{ qty(m.in_production_qty) }}</span>
+                    <span v-if="queueHint(m)" class="text-danger">{{ queueHint(m) }}</span>
                     <el-button
                       v-if="m.can_make && m.make_qty > 0 && $can('production.work_order.create')"
                       type="text"
@@ -597,6 +605,9 @@
                 </div>
                 <p class="att-text">{{ a.text }}</p>
               </div>
+            </div>
+            <div v-if="wo.scrap_settle_allowed && $can('production.scrap.approve')" class="more-expand-bar">
+              <el-button size="mini" type="warning" plain :loading="saving" @click="settleScrap">确认报废台已处理，结束工单</el-button>
             </div>
           </section>
 
@@ -811,6 +822,25 @@
       </span>
     </el-dialog>
 
+    <el-dialog
+      title="登记部件编号"
+      :visible.sync="assign.visible"
+      width="480px"
+      custom-class="master-style-dialog"
+      :close-on-click-modal="false"
+    >
+      <p v-if="assign.component" class="dialog-hint">
+        把 {{ assign.component.component_item_name }} {{ assign.component.serial_no }} 装到哪一台？
+      </p>
+      <el-select v-model="assign.unitId" filterable size="small" placeholder="选择本工单还在生产中的一台">
+        <el-option v-for="u in assignUnits" :key="u.id" :label="`${u.serial_no || ('第 ' + u.unit_no + ' 台')} · ${u.status_label}`" :value="u.id" />
+      </el-select>
+      <span slot="footer">
+        <el-button size="small" @click="assign.visible = false">取消</el-button>
+        <el-button size="small" type="success" class="btn-theme-create" :loading="saving" :disabled="!assign.unitId" @click="submitAssign">确认登记</el-button>
+      </span>
+    </el-dialog>
+
     <material-return-dialog
       :visible.sync="returnDialog.visible"
       :work-order-id="wo ? wo.id : 0"
@@ -822,7 +852,7 @@
 </template>
 
 <script>
-import { getWorkOrder, getWorkOrderOptions, updateWorkOrder, releaseWorkOrder, pauseWorkOrder, resumeWorkOrder, cancelWorkOrder, createSemiWorkOrder, receiveOperationMaterials, getOperationSerialOptions, swapUnitComponents, cancelMaterialReturn, materialDeliveryAction } from '../../../api/erp/production'
+import { getWorkOrder, getWorkOrderOptions, updateWorkOrder, releaseWorkOrder, pauseWorkOrder, resumeWorkOrder, cancelWorkOrder, createSemiWorkOrder, receiveOperationMaterials, getOperationSerialOptions, swapUnitComponents, assignUnitComponent, settleWorkOrderScrap, cancelMaterialReturn, materialDeliveryAction } from '../../../api/erp/production'
 import { HERO_PILL, qty, money, shortDate, bomLabel, errorText, isCancel, searchProductionUsers } from './mfg-helpers'
 import WorkOrderCuttingPanel from './WorkOrderCuttingPanel.vue'
 import MaterialReturnDialog from './MaterialReturnDialog.vue'
@@ -847,6 +877,7 @@ export default {
     unitLimit: 50,
     serialReceive: { visible: false, opId: null, units: undefined, rows: [], picked: {} },
     swap: { visible: false, unitId: null, unitSerial: '', component: null, targetId: null },
+    assign: { visible: false, component: null, unitId: null },
     returnDialog: { visible: false, opId: 0, opName: '' },
     shortageDialog: false,
     steps: STEPS,
@@ -873,6 +904,12 @@ export default {
         .flatMap(u => (u.components || []).filter(x => x.component_item_id === c.component_item_id)
           .map(x => ({ id: x.id, unit_serial: u.serial_no, component_serial_no: x.component_serial_no })))
     },
+    canAssign() {
+      return this.$can('production.serial.assign') && ['released', 'in_progress', 'paused'].includes(this.wo.status)
+    },
+    assignUnits() {
+      return (this.wo.units || []).filter(u => this.canSwap(u))
+    },
     hasActualMaterialCost() {
       return this.wo && this.wo.actual_material_cost_amount !== null && this.wo.actual_material_cost_amount !== undefined
     },
@@ -887,7 +924,7 @@ export default {
     },
     canPurchaseShortage() {
       return this.wo && ['planned', 'released', 'in_progress', 'paused'].includes(this.wo.status) && this.$can('purchase.production_shortage.convert') &&
-        (this.wo.kitting || []).some(k => k.materials.some(m => m.purchasable && m.shortage_qty > 0))
+        ((this.wo.purchase_shortage || []).length > 0 || (this.wo.kitting || []).some(k => k.materials.some(m => m.purchasable && m.shortage_qty > 0)))
     },
     canReturnMaterials() {
       return this.wo && ['released', 'in_progress', 'paused'].includes(this.wo.status) &&
@@ -1116,6 +1153,12 @@ export default {
         this.$message.error(errorText(e, '撤回失败'))
       }
     },
+    queueHint(m) {
+      if (!(m.queue_shortage_qty > 0) || m.shortage_qty > 0) return ''
+      const row = (this.wo.purchase_shortage || []).find(r => r.item_id === m.component_item_id)
+      const ahead = row && row.ahead.length ? `（库存先给 ${row.ahead.map(a => a.work_order_no).join('、')}）` : ''
+      return `排队后缺 ${qty(m.queue_shortage_qty)}${ahead}`
+    },
     canSwap(u) {
       return this.$can('production.serial.assign') && ['released', 'in_progress', 'paused'].includes(this.wo.status) &&
         ['waiting', 'in_progress', 'rework', 'completed'].includes(u.status)
@@ -1126,6 +1169,23 @@ export default {
     async submitSwap() {
       const ok = await this.run(() => swapUnitComponents(this.wo.id, { first_id: this.swap.component.id, second_id: this.swap.targetId }), '部件编号已互换')
       if (ok) this.swap.visible = false
+    },
+    openAssign(c) {
+      this.assign = { visible: true, component: c, unitId: null }
+    },
+    async submitAssign() {
+      const ok = await this.run(() => assignUnitComponent(this.wo.id, { serial_id: this.assign.component.serial_id, unit_id: this.assign.unitId }), '部件编号已登记')
+      if (ok) this.assign.visible = false
+    },
+    async settleScrap() {
+      let remark = ''
+      try {
+        const r = await this.$prompt('报废台上的料已退料“报废台拆回”，或确认没有可回收的料。可填写说明：', '结束工单', { inputPlaceholder: '选填', confirmButtonText: '确认', cancelButtonText: '取消' })
+        remark = r.value || ''
+      } catch (e) {
+        return
+      }
+      await this.run(() => settleWorkOrderScrap(this.wo.id, { remark }), '已确认')
     },
     openSerial(sn) {
       if (sn && this.$can('production.serial.view')) {

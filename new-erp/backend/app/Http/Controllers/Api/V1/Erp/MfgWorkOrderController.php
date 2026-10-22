@@ -143,6 +143,25 @@ class MfgWorkOrderController extends Controller
         return response()->json(['message' => '部件编号已互换。', 'data' => $query->detail($id, $amounts)]);
     }
 
+    /** 待登记编号（收料时没自动绑上台的部件编号）手动装到指定的一台。 */
+    public function assignComponent(Request $request, int $id, UnitComponentService $components, WorkOrderQueryService $query)
+    {
+        [$user, $amounts] = $this->user($request, 'production.serial.assign');
+        $data = $request->validate(['serial_id' => 'required|integer|min:1', 'unit_id' => 'required|integer|min:1']);
+        $components->assign($id, (int) $data['serial_id'], (int) $data['unit_id'], $user);
+        return response()->json(['message' => '部件编号已登记到该台。', 'data' => $query->detail($id, $amounts)]);
+    }
+
+    /** 报废台已处理（料已退回或确认无可回收），满足其他条件即结束工单。 */
+    public function settleScrap(Request $request, int $id, WorkOrderService $service, WorkOrderQueryService $query)
+    {
+        [$user, $amounts] = $this->user($request, 'production.scrap.approve');
+        $data = $request->validate(['remark' => 'nullable|string|max:500']);
+        $wo = $service->settleScrap($id, $data['remark'] ?? null, $user);
+        $text = $wo->status === 'completed' ? '报废台已确认处理，工单已完工。' : '报废台已确认处理，工单还有其他事项未完成。';
+        return response()->json(['message' => $text, 'data' => $query->detail($id, $amounts)]);
+    }
+
     public function serial(Request $request, WorkOrderQueryService $query)
     {
         $this->user($request, 'production.serial.view');

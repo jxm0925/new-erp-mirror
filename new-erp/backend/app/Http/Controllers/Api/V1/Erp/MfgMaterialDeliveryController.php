@@ -56,6 +56,14 @@ class MfgMaterialDeliveryController extends Controller
         return response()->json(['message' => "配料单 {$delivery->delivery_no} 已发出，已扣库存，等车间签收。", 'data' => $deliveries->row($delivery)]);
     }
 
+    /** 拣货来源失效时按先入先用重新拣货（单号不变）。 */
+    public function repick(Request $request, int $id, MaterialDeliveryService $deliveries)
+    {
+        [$user] = $this->user($request, self::MANAGE);
+        $delivery = $deliveries->repick($id, $user);
+        return response()->json(['message' => "配料单 {$delivery->delivery_no} 已重新拣货，请按新拣货单取料后发出。", 'data' => $deliveries->row($delivery)]);
+    }
+
     public function cancel(Request $request, int $id, MaterialDeliveryService $deliveries)
     {
         [$user] = $this->user($request, self::MANAGE);

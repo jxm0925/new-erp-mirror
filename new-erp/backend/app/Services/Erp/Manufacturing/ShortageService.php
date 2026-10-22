@@ -9,11 +9,12 @@ use App\Models\Erp\PurchaseLog;
 use App\Models\Erp\PurchaseRequest;
 use App\Services\Erp\DocumentNumberService;
 use App\Services\Erp\PurchaseRequestCreationApplicationService;
+use App\Services\Erp\PurchaseSupplyProjectionService;
 use Illuminate\Support\Facades\DB;
 
 /**
  * 生产缺料：未结束工单（含计划）还没领的外购件，扣掉可用库存和采购在途后的缺口。
- * 分配顺序：加急 → 计划开工日早 → 工单号小，先分库存再分在途；在途含所有来源未到货的采购需求/计划/订单。
+ * 分配顺序：加急 → 计划开工日早 → 工单号小，先分库存再分在途；在途按需求/计划/订单/到货待入库/换货待补分段，同一数量只算一次。
  * 可自制的半成品不在这里，继续走“开半成品工单”。
  */
 final class ShortageService
@@ -83,7 +84,8 @@ final class ShortageService
         if ($lines->isEmpty()) return [];
         $ids = $lines->pluck('component_item_id')->map(fn ($id) => (int) $id)->unique()->values()->all();
         [$available] = $this->plans->availableForKitting($ids);
-        $transit = $this->inTransit($ids);
+        $projection = app(PurchaseSupplyProjectionService::class)->project($ids);
+        $transit = array_map(fn ($p) => $p['total'], $projection);
         $linked = $this->openLinks($ids);
 
         $rows = [];
@@ -101,8 +103,12 @@ final class ShortageService
                 <=> [$a['is_urgent'] ? 1 : 0, $b['planned_start_date'] ?? '9999-12-31', $b['id']]);
             $stock = max(0, (float) ($available[$itemId] ?? 0));
             $coming = max(0, (float) ($transit[$itemId] ?? 0));
+            $ahead = [];
             foreach ($demands as &$d) {
+                // 排在前面、已分走库存的工单，用来解释“库存够但本单还缺”。
+                $d['ahead'] = $ahead;
                 $fromStock = min($d['need_qty'], $stock); $stock -= $fromStock;
+                if ($fromStock > 0.00001) $ahead[] = ['id' => $d['id'], 'work_order_no' => $d['work_order_no'], 'stock_qty' => round($fromStock, 4)];
                 $fromTransit = min($d['need_qty'] - $fromStock, $coming); $coming -= $fromTransit;
                 $d['stock_qty'] = round($fromStock, 4);
                 $d['transit_qty'] = round($fromTransit, 4);
@@ -117,6 +123,7 @@ final class ShortageService
                 'spec' => $item->spec ?: ($item->model ?: null), 'unit_name' => $first->unit_name,
                 'need_qty' => round(array_sum(array_column($demands, 'need_qty')), 4),
                 'available_qty' => round((float) ($available[$itemId] ?? 0), 4), 'in_transit_qty' => round((float) ($transit[$itemId] ?? 0), 4),
+                'in_transit_detail' => $projection[(int) $itemId] ?? null,
                 'shortage_qty' => round(array_sum(array_column($demands, 'shortage_qty')), 4),
                 'earliest_date' => $dates ? min($dates) : null, 'is_urgent' => collect($short)->contains('is_urgent', true),
                 'default_warehouse_id' => $item->default_warehouse_id ? (int) $item->default_warehouse_id : null,
@@ -210,25 +217,32 @@ final class ShortageService
     }
 
     /**
-     * 采购在途（基本单位）：需求未转计划 + 计划未下单 + 订单未到货，不论来源。
+     * 单张工单的外购件排队结果：每种还没领够的外购件，按全厂分配顺序本单能分到的库存、在途和缺口，以及排在前面分走库存的工单。
+     * @return array<int, array> item_id => 行
+     */
+    public function forWorkOrderQueue(int $workOrderId): array
+    {
+        $ids = DB::table('erp_mfg_work_order_materials')->where('work_order_id', $workOrderId)->where('participates_in_kitting', true)
+            ->whereColumn('required_qty', '>', 'issued_qty')->distinct()->pluck('component_item_id')->map(fn ($id) => (int) $id)->all();
+        if (! $ids) return [];
+        $out = [];
+        foreach ($this->compute($ids) as $itemId => $row) {
+            $mine = collect($row['work_orders'])->firstWhere('id', $workOrderId);
+            if (! $mine) continue;
+            $out[$itemId] = ['item_id' => $itemId, 'item_name' => $row['item_name'], 'unit_name' => $row['unit_name'],
+                'need_qty' => $mine['need_qty'], 'stock_qty' => $mine['stock_qty'], 'transit_qty' => $mine['transit_qty'],
+                'shortage_qty' => $mine['shortage_qty'], 'available_qty' => $row['available_qty'], 'ahead' => array_slice($mine['ahead'], 0, 5)];
+        }
+        return $out;
+    }
+
+    /**
+     * 采购在途（基本单位），口径见 PurchaseSupplyProjectionService。
      * @return array<int, float>
      */
     public function inTransit(array $ids): array
     {
-        if (! $ids) return [];
-        $sum = [];
-        $add = function ($rows) use (&$sum) { foreach ($rows as $r) $sum[(int) $r->item_id] = ($sum[(int) $r->item_id] ?? 0) + (float) $r->qty; };
-        $add(DB::table('erp_purchase_request_items as i')->join('erp_purchase_requests as r', 'r.id', '=', 'i.request_id')
-            ->whereNull('r.deleted_at')->whereNotIn('r.request_status', self::CLOSED)->whereNotIn('i.line_status', self::CLOSED)
-            ->whereIn('i.item_id', $ids)->groupBy('i.item_id')->selectRaw('i.item_id, SUM(i.remaining_qty) AS qty')->get());
-        $add(DB::table('erp_purchase_plan_items as i')->join('erp_purchase_plans as p', 'p.id', '=', 'i.plan_id')
-            ->whereNotIn('p.plan_status', self::CLOSED)->whereNotIn('i.line_status', self::CLOSED)
-            ->whereIn('i.item_id', $ids)->groupBy('i.item_id')->selectRaw('i.item_id, SUM(CASE WHEN i.plan_qty > i.ordered_qty THEN i.plan_qty - i.ordered_qty ELSE 0 END) AS qty')->get());
-        $add(DB::table('erp_purchase_order_items as i')->join('erp_purchase_orders as o', 'o.id', '=', 'i.order_id')
-            ->whereNotIn('o.purchase_status', self::CLOSED)->whereNotIn('i.line_status', [...self::CLOSED, 'received'])->where('i.remaining_qty', '>', 0)
-            ->whereIn('i.item_id', $ids)->groupBy('i.item_id')
-            ->selectRaw('i.item_id, SUM(i.remaining_qty * CASE WHEN i.conversion_factor_snapshot > 0 THEN i.conversion_factor_snapshot ELSE 1 END) AS qty')->get());
-        return array_map(fn ($q) => round($q, 4), $sum);
+        return array_map(fn ($p) => $p['total'], app(PurchaseSupplyProjectionService::class)->project($ids));
     }
 
     /** 每种物料从生产缺料生成、还没关闭的采购需求。 */

@@ -274,20 +274,69 @@ final class WorkOrderService
         return MfgWorkOrder::query()->where('sales_order_id', $orderId)->whereNotNull('started_at')->where('status', '!=', 'cancelled')->exists();
     }
 
-    /** 每台都已入库或报废，工单就完工。 */
+    /**
+     * 每台都已入库或报废，且没有未了结的物料事项，工单就完工：
+     * 有待审核的退料、已发出未签收或被拒收的配料单时先不完工；有报废台且领过料时，要主管确认报废台已处理（申请拆回或确认无可回收）。
+     * 仓库已配好还没发出的配料单在完工时自动取消（没扣库存）。
+     */
     public function refreshCompletion(MfgWorkOrder $wo, ?object $actor): void
     {
         if (! in_array($wo->status, ['released', 'in_progress', 'paused'], true)) return;
         if (MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('status', 'issued')->lockForUpdate()->first(['id'])) return;
         $units = MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->lockForUpdate()->pluck('status')->countBy();
         if ($units->isEmpty() || $units->keys()->diff(['stored', 'scrapped', 'cancelled'])->isNotEmpty()) return;
+        if ($this->completionBlockers($wo, $units->all())) return;
         $before = $wo->status;
+        foreach (\App\Models\Erp\MfgMaterialDelivery::query()->where('work_order_id', $wo->id)->where('status', 'prepared')->lockForUpdate()->get() as $delivery) {
+            $delivery->update(['status' => 'cancelled', 'closed_by_name' => '系统', 'closed_at' => now(), 'close_remark' => '工单完工，未发出的配料单自动取消']);
+            $this->log($wo, 'material_delivery_cancelled', $wo->status, $wo->status, "工单完工，配料单 {$delivery->delivery_no} 未发出，自动取消", $actor, ['delivery_id' => $delivery->id]);
+        }
         // 全单已无在制台，报废等路径遗留的计时也必须在完工事务中结束。
         foreach (MfgLaborSession::query()->where('work_order_id', $wo->id)->where('status', 'active')->lockForUpdate()->get() as $session) {
             TaskService::closeSession($session, 'completed');
         }
         $wo->update(['status' => 'completed', 'completed_at' => now(), 'business_version' => (int) $wo->business_version + 1]);
         $this->log($wo, 'completed', $before, 'completed', '每台都已入库或报废，工单完工（入库 '.(int) ($units['stored'] ?? 0).' 台，报废 '.(int) ($units['scrapped'] ?? 0).' 台）', $actor);
+    }
+
+    /**
+     * 所有台都已入库/报废后仍挡住完工的物料事项（空 = 可以完工）。$units 为各状态台数，不传则现查。
+     * @return array<int, array{type:string, text:string}>
+     */
+    public function completionBlockers(MfgWorkOrder $wo, ?array $units = null): array
+    {
+        $units ??= MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->pluck('status')->countBy()->all();
+        $out = [];
+        $returns = \App\Models\Erp\MfgMaterialReturn::query()->where('work_order_id', $wo->id)->where('status', 'pending')->pluck('return_no')->all();
+        if ($returns) $out[] = ['type' => 'material_return', 'text' => '退料单 '.implode('、', $returns).' 待库管审核'];
+        $deliveries = \App\Models\Erp\MfgMaterialDelivery::query()->where('work_order_id', $wo->id)->whereIn('status', ['dispatched', 'rejected'])->pluck('delivery_no')->all();
+        if ($deliveries) $out[] = ['type' => 'material_delivery', 'text' => '配料单 '.implode('、', $deliveries).' 已发出未签收或被拒收，请签收或由库管收回'];
+        if ($this->scrapSettlementPending($wo, $units)) $out[] = ['type' => 'scrap_settlement', 'text' => (int) ($units['scrapped'] ?? 0).' 台报废，报废台上的料还没处理：可退料“报废台拆回”，或确认无可回收后结束工单'];
+        return $out;
+    }
+
+    /** 报废台待处理：有报废台、工单领过料、还没确认报废台已处理。 */
+    public function scrapSettlementPending(MfgWorkOrder $wo, array $units): bool
+    {
+        if ((int) ($units['scrapped'] ?? 0) <= 0) return false;
+        if (! MfgMaterialIssue::query()->where('work_order_id', $wo->id)->exists()) return false;
+        return ! MfgWorkOrderLog::query()->where('work_order_id', $wo->id)->where('action', 'scrap_settled')->exists();
+    }
+
+    /** 主管确认报废台已处理（已申请拆回，或确认无可回收），然后按规则完工。 */
+    public function settleScrap(int $id, ?string $remark, object $actor): MfgWorkOrder
+    {
+        return DB::transaction(function () use ($id, $remark, $actor) {
+            $wo = MfgWorkOrder::query()->lockForUpdate()->findOrFail($id);
+            if (! in_array($wo->status, ['released', 'in_progress', 'paused'], true)) $this->fail('status_invalid', '工单不在生产中。');
+            $units = MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->lockForUpdate()->pluck('status')->countBy()->all();
+            if (array_diff(array_keys($units), ['stored', 'scrapped', 'cancelled'])) $this->fail('units_open', '还有台在生产中，等所有台入库或报废后再处理报废台。');
+            if (! $this->scrapSettlementPending($wo, $units)) $this->fail('nothing_to_settle', '没有待处理的报废台。');
+            $recovered = \App\Models\Erp\MfgMaterialReturn::query()->where('work_order_id', $wo->id)->where('return_type', 'scrapped')->whereIn('status', ['pending', 'approved'])->pluck('return_no')->all();
+            $this->log($wo, 'scrap_settled', $wo->status, $wo->status, '确认报废台已处理'.($recovered ? '（拆回退料 '.implode('、', $recovered).'）' : '（无可回收）').($remark ? '：'.mb_substr(trim($remark), 0, 300) : ''), $actor);
+            $this->refreshCompletion($wo, $actor);
+            return $wo->fresh();
+        }, 5);
     }
 
     /** 定制技术下发车间：用定制 BOM 快照重算用料，再下达生成序列号。调用方已锁工单。 */

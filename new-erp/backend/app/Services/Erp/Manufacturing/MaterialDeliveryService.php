@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\DB;
  * 仓库配料配送：库管按工序配料（按先入先用给出拣货库位/批次/编号，不扣库存）→ 发出（扣库存、记已领、编号登记到台）
  * → 车间核对实物签收；签收前这批料不能开工。车间拒收后库管重新送达或整单收回入库。
  * 只配“专单配送”的料（工位库存、无需逐单配送的不配；板材管材走集中开料）。车间自领（收料）仍可用，会扣掉仓库正在配的量。
+ * 配好即在生产内部占住拣货来源（库存行数量和编号），其他收料、配料不再分到；发出严格按原拣货单过账，来源失效须“重新拣货”。
  */
 final class MaterialDeliveryService
 {
@@ -42,6 +43,22 @@ final class MaterialDeliveryService
 
     /** 本道已发出还没签收（含拒收待处理）的数量（按物料行）。 */
     public static function unsignedQty(int $operationId): array { return self::sumLines($operationId, ['dispatched', 'rejected']); }
+
+    /**
+     * 待发出配料单占住的拣货来源：库存行 ID => 数量，编号 ID => true。只算还在生产中的工单；$exceptId 为排除的配料单。
+     * @return array{balances: array<int, float>, serials: array<int, bool>}
+     */
+    public static function holds(?int $exceptId = null): array
+    {
+        $out = ['balances' => [], 'serials' => []];
+        $rows = MfgMaterialDelivery::query()->where('status', 'prepared')->when($exceptId, fn ($q, $v) => $q->where('id', '!=', $v))
+            ->whereHas('workOrder', fn ($q) => $q->whereIn('status', self::OPEN_WO))->get(['id', 'lines']);
+        foreach ($rows as $d) foreach ((array) $d->lines as $l) foreach ((array) ($l['picks'] ?? []) as $p) {
+            $out['balances'][(int) $p['balance_id']] = round(($out['balances'][(int) $p['balance_id']] ?? 0) + (float) $p['qty'], 4);
+            foreach ((array) ($p['serial_ids'] ?? []) as $sid) $out['serials'][(int) $sid] = true;
+        }
+        return $out;
+    }
 
     private static function sumLines(int $operationId, array $statuses): array
     {
@@ -130,7 +147,38 @@ final class MaterialDeliveryService
         }, 5);
     }
 
-    /** 发出：按拣货单扣库存、记已领、编号登记到台；拣货单上的编号已被占用时提示取消重配。 */
+    /**
+     * 重新拣货：原拣货来源失效（库位停用、被出库、编号被占）时，按先入先用重新分配同样的数量，单号不变。
+     */
+    public function repick(int $id, object $actor): MfgMaterialDelivery
+    {
+        return DB::transaction(function () use ($id, $actor) {
+            $delivery = $this->locked($id, ['prepared']);
+            [$wo] = $this->context((int) $delivery->work_order_id, (int) $delivery->work_order_operation_id, true);
+            $materials = MfgWorkOrderMaterial::query()->whereIn('id', collect($delivery->lines)->pluck('material_id')->all() ?: [0])->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+            $lines = [];
+            $short = [];
+            $changes = [];
+            foreach ((array) $delivery->lines as $line) {
+                $m = $materials->get((int) $line['material_id']);
+                $qty = round((float) $line['qty'], 4);
+                if (! $m || $qty > (float) $m->required_qty - (float) $m->issued_qty + self::EPS)
+                    $this->fail('delivery_stale', ($line['component_item_name'] ?? '物料').' 车间已经自己收过料，这张配料单多了，请取消后重配。');
+                [$picks, $left] = $this->issues->allocate($m, $qty, $wo, (int) $delivery->id);
+                if ($left > self::EPS) { $short[] = $m->component_item_name.' 要 '.$this->num($qty).'，可用 '.$this->num($qty - $left); continue; }
+                $new = $this->lineOf($m, $qty, $picks);
+                $place = fn ($l) => collect($l['picks'] ?? [])->map(fn ($p) => ($p['location_code'] ?? '').($p['batch_no'] ? '/'.$p['batch_no'] : '').' '.$this->num((float) $p['qty']))->implode('，');
+                if ($place($line) !== $place($new)) $changes[] = $m->component_item_name.'：'.($place($line) ?: '无').' → '.$place($new);
+                $lines[] = $new;
+            }
+            if ($short) $this->fail('stock_short', '库存不够，重新拣货失败：'.implode('、', $short).'。可以取消这张配料单少配几台。');
+            $delivery->update(['lines' => $lines]);
+            $this->logFor($delivery, 'material_delivery_repicked', "配料单 {$delivery->delivery_no} 重新拣货".($changes ? '：'.implode('；', $changes) : '（来源未变）'), $actor);
+            return $delivery->fresh();
+        }, 5);
+    }
+
+    /** 发出：严格按拣货单的库位、批次、编号扣库存、记已领、编号登记到台；来源失效时拒绝发出，提示重新拣货。 */
     public function dispatch(int $id, object $actor): MfgMaterialDelivery
     {
         return DB::transaction(function () use ($id, $actor) {
@@ -138,23 +186,25 @@ final class MaterialDeliveryService
             [$wo, $op] = $this->context((int) $delivery->work_order_id, (int) $delivery->work_order_operation_id, true);
             $materials = MfgWorkOrderMaterial::query()->whereIn('id', collect($delivery->lines)->pluck('material_id')->all() ?: [0])->orderBy('id')->lockForUpdate()->get()->keyBy('id');
             $plan = [];
+            $problems = [];
             foreach ((array) $delivery->lines as $line) {
                 $m = $materials->get((int) $line['material_id']);
                 $qty = round((float) $line['qty'], 4);
                 if (! $m || $qty > (float) $m->required_qty - (float) $m->issued_qty + self::EPS)
                     $this->fail('delivery_stale', ($line['component_item_name'] ?? '物料').' 车间已经自己收过料，这张配料单多了，请取消后重配。');
-                $serialIds = collect((array) ($line['picks'] ?? []))->flatMap(fn ($p) => (array) ($p['serial_ids'] ?? []))->map(fn ($v) => (int) $v)->values()->all();
-                [$picks, $left] = $serialIds && abs(count($serialIds) - $qty) < self::EPS
-                    ? $this->issues->selectedPicks($m, $qty, $wo, $serialIds) : $this->issues->allocate($m, $qty, $wo);
-                if ($left > self::EPS) $this->fail('stock_short', $m->component_item_name.' 库存不够了（要 '.$this->num($qty).'，可用 '.$this->num($qty - $left).'），请取消后重配。');
+                $picks = array_map(fn ($p) => ['balance_id' => (int) $p['balance_id'], 'qty' => round((float) $p['qty'], 4),
+                    'serial_ids' => array_map('intval', (array) ($p['serial_ids'] ?? []))], (array) ($line['picks'] ?? []));
+                if (abs(array_sum(array_column($picks, 'qty')) - $qty) > self::EPS) $this->fail('delivery_source_invalid', ($line['component_item_name'] ?? '物料').' 拣货明细与配料数量不一致，请点“重新拣货”。');
+                $problems = array_merge($problems ?? [], $this->issues->verifyPicks($m, $wo, $picks, (int) $delivery->id, true));
                 $plan[] = ['material' => $m, 'qty' => $qty, 'picks' => $picks];
             }
+            // 照单过账：实物从哪个库位、批次拿的，库存和成本就扣哪里；来源失效不自动换，避免账实不符。
+            if (! empty($problems)) $this->fail('delivery_source_invalid', '拣货来源已变化，不能照单发出：'.implode('；', $problems).'。请点“重新拣货”按新库位拣货后再发出。');
             $issue = $this->issues->post($wo, $op, $plan, (float) $delivery->unit_qty, '仓库配送 '.$delivery->delivery_no, $actor);
-            $lines = array_map(fn ($p) => $this->lineOf($p['material'], $p['qty'], $p['picks']), $plan);
-            $delivery->update(['status' => 'dispatched', 'lines' => $lines, 'material_issue_id' => $issue->id,
+            $delivery->update(['status' => 'dispatched', 'material_issue_id' => $issue->id,
                 'dispatched_by_legacy_id' => $this->actorId($actor), 'dispatched_by_name' => $this->actorName($actor), 'dispatched_at' => now()]);
             $this->workOrders->log($wo, 'material_delivery_dispatched', $wo->status, $wo->status,
-                "配料单 {$delivery->delivery_no} 已发出（领料单 {$issue->issue_no}，已扣库存），等{$op->operation_name}签收：".$this->summary($lines), $actor,
+                "配料单 {$delivery->delivery_no} 已发出（领料单 {$issue->issue_no}，按拣货单扣库存），等{$op->operation_name}签收：".$this->summary((array) $delivery->lines), $actor,
                 ['delivery_id' => $delivery->id, 'issue_id' => $issue->id]);
             return $delivery->fresh();
         }, 5);
@@ -167,6 +217,7 @@ final class MaterialDeliveryService
             $delivery = $this->locked($id, ['dispatched']);
             $delivery->update(['status' => 'signed', 'signed_by_legacy_id' => $this->actorId($actor), 'signed_by_name' => $this->actorName($actor), 'signed_at' => now()]);
             $this->logFor($delivery, 'material_delivery_signed', "配料单 {$delivery->delivery_no} 已签收", $actor);
+            $this->refreshCompletion($delivery, $actor);
             return $delivery->fresh();
         }, 5);
     }
@@ -206,6 +257,7 @@ final class MaterialDeliveryService
                 'closed_by_name' => $this->actorName($actor), 'closed_at' => now()]);
             $this->workOrders->log($wo, 'material_delivery_recalled', $wo->status, $wo->status,
                 "配料单 {$delivery->delivery_no} 已收回入库（退料单 {$return->return_no}）：".trim($reason), $actor, ['delivery_id' => $delivery->id, 'return_id' => $return->id]);
+            $this->workOrders->refreshCompletion($wo, $actor);
             return $delivery->fresh();
         }, 5);
     }
@@ -264,6 +316,7 @@ final class MaterialDeliveryService
             'reject_reason' => $d->reject_reason, 'rejected_by_name' => $d->rejected_by_name, 'rejected_at' => $d->rejected_at?->toDateTimeString(),
             'close_remark' => $d->close_remark, 'closed_by_name' => $d->closed_by_name, 'closed_at' => $d->closed_at?->toDateTimeString(),
             'issue_no' => $issueNo, 'return_no' => $returnNo,
+            'source_problems' => $d->status === 'prepared' ? $this->sourceProblems($d) : [],
         ];
     }
 
@@ -286,6 +339,20 @@ final class MaterialDeliveryService
             $lines[] = $this->lineOf($m, $qty, $picks) + ['short_qty' => round($left, 4)];
         }
         return [$lines, $short, (float) $done, (float) $target];
+    }
+
+    /** 待发出配料单的拣货来源现在是否仍能照单出库（列表提示“来源已失效”）。 */
+    private function sourceProblems(MfgMaterialDelivery $d): array
+    {
+        $wo = $d->workOrder ?: MfgWorkOrder::query()->find($d->work_order_id);
+        if (! $wo || ! in_array($wo->status, self::OPEN_WO, true)) return [];
+        $materials = MfgWorkOrderMaterial::query()->whereIn('id', collect($d->lines)->pluck('material_id')->all() ?: [0])->get()->keyBy('id');
+        $out = [];
+        foreach ((array) $d->lines as $line) {
+            $m = $materials->get((int) $line['material_id']);
+            if ($m) $out = array_merge($out, $this->issues->verifyPicks($m, $wo, (array) ($line['picks'] ?? []), (int) $d->id));
+        }
+        return $out;
     }
 
     /** 明细行：带上拣货库位、批次、编号，方便库管照单拣货。 */
@@ -320,6 +387,13 @@ final class MaterialDeliveryService
         if (! in_array($delivery->status, $statuses, true))
             $this->fail('status_invalid', '配料单 '.$delivery->delivery_no.' 现在是“'.(self::STATUS_LABELS[$delivery->status] ?? $delivery->status).'”，不能这样操作，请刷新。');
         return $delivery;
+    }
+
+    /** 已发出的配料单签收/收回后，可能不再挡住完工。 */
+    private function refreshCompletion(MfgMaterialDelivery $delivery, object $actor): void
+    {
+        $wo = MfgWorkOrder::query()->lockForUpdate()->find($delivery->work_order_id);
+        if ($wo) $this->workOrders->refreshCompletion($wo, $actor);
     }
 
     private function logFor(MfgMaterialDelivery $delivery, string $action, string $text, object $actor): void

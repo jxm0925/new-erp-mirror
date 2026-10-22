@@ -17,13 +17,13 @@
           <div class="text-muted hint">{{ typeHint }}</div>
         </el-form-item>
         <el-form-item v-for="m in visibleMaterials" :key="m.material_id" :label="materialLabel(m)">
-          <el-select v-if="m.by_number" v-model="form.serials[m.material_id]" multiple filterable placeholder="选择要退的编号" class="full">
+          <el-select v-if="m.by_number && serialsFor(m).length" v-model="form.serials[m.material_id]" multiple filterable placeholder="选择要退的编号" class="full">
             <el-option v-for="s in serialsFor(m)" :key="s.id" :label="serialLabel(s)" :value="s.id" />
           </el-select>
-          <template v-else>
+          <div v-if="m.by_qty && limitOf(m) > 0" :class="{ locate: m.by_number && serialsFor(m).length }">
             <el-input-number v-model="form.qty[m.material_id]" :min="0" :max="limitOf(m)" :precision="4" controls-position="right" />
-            <span class="text-muted hint-inline">最多可退 {{ qty(limitOf(m)) }} {{ m.unit_name || '' }}</span>
-          </template>
+            <span class="text-muted hint-inline">{{ m.by_number ? '无编号部分' : '' }}最多可退 {{ qty(limitOf(m)) }} {{ m.unit_name || '' }}</span>
+          </div>
         </el-form-item>
         <p v-if="!loading && !visibleMaterials.length" class="dialog-hint text-muted">本道按“{{ typeLabel }}”没有可退的料。</p>
         <el-form-item label="退料原因">
@@ -81,12 +81,13 @@ export default {
   computed: {
     typeHint() { return HINTS[this.form.return_type] || '' },
     typeLabel() { const t = this.types.find(x => x.value === this.form.return_type); return t ? t.label : '' },
-    visibleMaterials() { return this.materials.filter(m => (m.by_number ? this.serialsFor(m).length : this.limitOf(m) > 0)) },
+    visibleMaterials() { return this.materials.filter(m => (m.by_number && this.serialsFor(m).length) || (m.by_qty && this.limitOf(m) > 0)) },
     lines() {
-      return this.visibleMaterials.map(m => (m.by_number
-        ? { material_id: m.material_id, serial_ids: (this.form.serials[m.material_id] || []).filter(id => this.serialsFor(m).some(s => s.id === id)) }
-        : { material_id: m.material_id, qty: Number(this.form.qty[m.material_id] || 0) }))
-        .filter(l => (l.serial_ids ? l.serial_ids.length : l.qty > 0))
+      return this.visibleMaterials.map(m => ({
+        material_id: m.material_id,
+        serial_ids: m.by_number ? (this.form.serials[m.material_id] || []).filter(id => this.serialsFor(m).some(s => s.id === id)) : [],
+        qty: m.by_qty && this.limitOf(m) > 0 ? Math.min(Number(this.form.qty[m.material_id] || 0), this.limitOf(m)) : 0
+      })).filter(l => l.serial_ids.length || l.qty > 0)
     },
     canSubmit() {
       return this.lines.length && this.form.reason.trim() && (!this.form.direct || this.form.original || this.form.location_id)
@@ -123,7 +124,7 @@ export default {
       return (m.serials || []).filter(s => (s.kind === 'scrapped') === scrapped)
     },
     materialLabel(m) {
-      return `${m.component_item_name}（已领 ${qty(m.issued_qty)} / 应领 ${qty(m.required_qty)} ${m.unit_name || ''}${m.by_number ? '，按编号退' : ''}）`
+      return `${m.component_item_name}（已领 ${qty(m.issued_qty)} / 应领 ${qty(m.required_qty)} ${m.unit_name || ''}${m.serial_mode === 'required' ? '，按编号退' : (m.by_number ? '，有编号的选编号' : '')}）`
     },
     serialLabel(s) {
       const where = s.unit_serial_no ? `装在 ${s.unit_serial_no}${s.kind === 'scrapped' ? '（报废）' : ''}` : '未装到台'

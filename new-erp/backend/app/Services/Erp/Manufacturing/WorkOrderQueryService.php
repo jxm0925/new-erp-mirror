@@ -109,7 +109,20 @@ final class WorkOrderQueryService
         }
         $row['material_returns'] = app(MaterialReturnService::class)->forWorkOrder((int) $wo->id, $amounts);
         $row['purchase_demands'] = app(ShortageService::class)->forWorkOrder((int) $wo->id);
+        // 外购件按全厂排队（加急→开工日→工单号）后本单的缺口；齐套看板只看本单能否用当前库存，两者可能不同。
+        $queue = in_array($wo->status, ShortageService::WORK_ORDER_STATUSES, true) ? app(ShortageService::class)->forWorkOrderQueue((int) $wo->id) : [];
+        $row['purchase_shortage'] = array_values($queue);
+        foreach ($row['kitting'] as &$op) foreach ($op['materials'] as &$m)
+            $m['queue_shortage_qty'] = isset($queue[(int) $m['component_item_id']]) ? $queue[(int) $m['component_item_id']]['shortage_qty'] : null;
+        unset($op, $m);
         $row['material_deliveries'] = app(MaterialDeliveryService::class)->forWorkOrder((int) $wo->id);
+        $open = in_array($wo->status, ['released', 'in_progress', 'paused'], true);
+        $row['unbound_components'] = $open ? app(UnitComponentService::class)->unbound($wo) : [];
+        $unitCounts = $wo->units->pluck('status')->countBy()->all();
+        $allClosed = $open && $unitCounts && ! array_diff(array_keys($unitCounts), ['stored', 'scrapped', 'cancelled']);
+        $workOrders = app(WorkOrderService::class);
+        $row['completion_blockers'] = $allClosed ? $workOrders->completionBlockers($wo, $unitCounts) : [];
+        $row['scrap_settle_allowed'] = $allClosed && $workOrders->scrapSettlementPending($wo, $unitCounts);
         $row['sales_order'] = $this->salesOrderSummary($wo, $amounts);
         $row['attention'] = $this->attention($row, $kitting);
         $row['created_by_name'] = $wo->created_by_name;
@@ -340,6 +353,8 @@ final class WorkOrderQueryService
             $items[] = ['type' => 'warning', 'title' => $op['operation_name'].'缺料', 'text' => $names.'。按当前可用库存算，'
                 .($canMake ? '半成品可在齐套看板点“开半成品工单”交下料组做，外购件请采购跟进；料不齐不能开工。' : '请采购跟进；料不齐不能开工。')];
         }
+        foreach ($row['completion_blockers'] ?? [] as $b) $items[] = ['type' => 'warning', 'title' => '所有台已结束，工单还不能完工', 'text' => $b['text'].'。'];
+        if (! empty($row['unbound_components'])) $items[] = ['type' => 'info', 'title' => '有部件编号待登记', 'text' => count($row['unbound_components']).' 个已收料的部件编号还没装到台上，请在“部件编号”处登记到具体的台。'];
         if ($row['overdue']) $items[] = ['type' => 'danger', 'title' => '已过计划完工日', 'text' => '计划 '.$row['planned_finish_date'].' 完工，请调整计划或加急。'];
         return $items;
     }

@@ -31,7 +31,9 @@
                     <span v-if="w.is_urgent" class="chip c-r">加急</span>
                     <span class="sub">{{ w.item_name }} · 开工 {{ w.planned_start_date || '未排' }}</span>
                     <span>还要 {{ qty(w.need_qty) }} = 库存 {{ qty(w.stock_qty) }} + 在途 {{ qty(w.transit_qty) }} + <b :class="{ danger: w.shortage_qty > 0 }">缺 {{ qty(w.shortage_qty) }}</b></span>
+                    <span v-if="w.shortage_qty > 0 && w.ahead && w.ahead.length" class="sub">库存先给 {{ w.ahead.map(a => a.work_order_no).join('、') }}</span>
                   </div>
+                  <div v-if="s.row.in_transit_detail" class="sub">在途明细：{{ transitText(s.row) }}</div>
                   <div v-if="s.row.requests.length" class="sub">已转采购：{{ s.row.requests.map(r => `${r.request_no}（${r.request_status_label}）${qty(r.qty)}`).join('、') }}</div>
                 </div>
               </template>
@@ -44,7 +46,17 @@
             </el-table-column>
             <el-table-column label="还要领" width="100" align="right"><template slot-scope="s">{{ qty(s.row.need_qty) }}</template></el-table-column>
             <el-table-column label="库存可用" width="100" align="right"><template slot-scope="s">{{ qty(s.row.available_qty) }}</template></el-table-column>
-            <el-table-column label="采购在途" width="100" align="right"><template slot-scope="s">{{ qty(s.row.in_transit_qty) }}</template></el-table-column>
+            <el-table-column label="采购在途" width="100" align="right">
+              <template slot-scope="s">
+                <el-tooltip v-if="s.row.in_transit_detail" placement="top">
+                  <div slot="content">
+                    <div v-for="d in s.row.in_transit_detail.documents" :key="d.stage + d.document_no">{{ d.stage_label }} {{ d.document_no }}：{{ qty(d.qty) }}</div>
+                  </div>
+                  <span class="lk">{{ qty(s.row.in_transit_qty) }}</span>
+                </el-tooltip>
+                <span v-else>{{ qty(s.row.in_transit_qty) }}</span>
+              </template>
+            </el-table-column>
             <el-table-column label="缺口" width="110" align="right">
               <template slot-scope="s"><b :class="{ danger: s.row.shortage_qty > 0 }">{{ qty(s.row.shortage_qty) }}</b> {{ s.row.unit_name || '' }}</template>
             </el-table-column>
@@ -63,6 +75,7 @@
             </div>
             <div class="sub mono">{{ row.item_code }}<span v-if="row.spec"> · {{ row.spec }}</span></div>
             <div class="sub">还要 {{ qty(row.need_qty) }} · 库存 {{ qty(row.available_qty) }} · 在途 {{ qty(row.in_transit_qty) }} · 最早 {{ row.earliest_date || '未排' }}</div>
+            <div v-if="row.in_transit_detail" class="sub">在途：{{ transitText(row) }}</div>
             <div class="sub">
               <span v-for="w in row.work_orders" :key="w.id" class="m-wo"><span class="lk" @click="openWorkOrder(w)">{{ w.work_order_no }}</span> 缺 {{ qty(w.shortage_qty) }}</span>
             </div>
@@ -92,6 +105,11 @@ export default {
   created() { this.load() },
   methods: {
     qty,
+    transitText(row) {
+      const labels = { request: '需求', plan: '计划', order: '订单', receipt: '到货待入库', exchange: '换货待补' }
+      const stages = (row.in_transit_detail && row.in_transit_detail.stages) || {}
+      return Object.keys(labels).filter(k => stages[k] > 0).map(k => `${labels[k]} ${qty(stages[k])}`).join(' · ')
+    },
     async load() {
       this.loading = true
       try {

@@ -12,7 +12,7 @@
     <div class="mfg-body">
       <div class="card">
         <div class="tabs">
-          <span v-for="tab in tabs" :key="tab.value" :class="{ on: filters.status === tab.value }" @click="pickTab(tab.value)">{{ tab.label }}<em v-if="tab.value === 'pending'">{{ summary.pending || 0 }}</em></span>
+          <span v-for="tab in tabs" :key="tab.value" :class="{ on: filters.status === tab.value }" @click="pickTab(tab.value)">{{ tab.label }}<em v-if="tab.value === 'pending' || tab.value === 'holding'">{{ summary[tab.value] || 0 }}</em></span>
         </div>
         <div class="flt">
           <el-input v-model="filters.keyword" class="w" size="small" clearable placeholder="搜退料单号 / 工单号 / 物料 / 编号 / 申请人" prefix-icon="el-icon-search" @keyup.enter.native="search" @clear="search" />
@@ -42,6 +42,7 @@
                 <div v-if="s.row.reviewed_by_name" class="sub">{{ s.row.reviewed_by_name }} {{ s.row.reviewed_at }}</div>
                 <div v-if="s.row.review_remark" class="sub">{{ s.row.review_remark }}</div>
                 <div v-if="s.row.cost_amount !== null" class="sub">冲回成本 {{ money(s.row.cost_amount) }}</div>
+                <div v-if="s.row.held_qty > 0"><span class="chip c-o">不良冻结待处置 {{ qty(s.row.held_qty) }}</span></div>
               </template>
             </el-table-column>
             <el-table-column label="" width="150">
@@ -51,7 +52,7 @@
                   <span v-if="canApprove" class="lk danger" @click="reject(s.row)">驳回</span>
                   <span class="lk muted" @click="cancel(s.row)">撤回</span>
                 </template>
-                <span v-else class="lk" @click="openApprove(s.row)">明细</span>
+                <span v-else class="lk" @click="openApprove(s.row)">{{ s.row.held_qty > 0 && canApprove ? '处置' : '明细' }}</span>
               </template>
             </el-table-column>
           </el-table>
@@ -65,13 +66,14 @@
             <div>{{ row.summary }}</div>
             <div class="sub">原因：{{ row.reason || '-' }} · {{ row.requested_by_name || '' }} {{ row.requested_at }}</div>
             <div v-if="row.review_remark" class="sub">审核：{{ row.review_remark }}</div>
+            <div v-if="row.held_qty > 0"><span class="chip c-o">不良冻结待处置 {{ qty(row.held_qty) }}</span></div>
             <div class="m-foot">
               <template v-if="row.status === 'pending'">
                 <span v-if="canApprove" class="lk" @click="openApprove(row)">审核</span>
                 <span v-if="canApprove" class="lk danger" @click="reject(row)">驳回</span>
                 <span class="lk muted" @click="cancel(row)">撤回</span>
               </template>
-              <span v-else class="lk" @click="openApprove(row)">明细</span>
+              <span v-else class="lk" @click="openApprove(row)">{{ row.held_qty > 0 && canApprove ? '处置' : '明细' }}</span>
             </div>
           </div>
         </div>
@@ -95,7 +97,23 @@
           <el-table-column label="原库位" min-width="120" prop="source_location" />
           <el-table-column v-if="approve.row.status === 'approved'" label="退入" min-width="120" prop="location" />
           <el-table-column label="数量" width="90"><template slot-scope="s">{{ qty(s.row.qty) }} {{ s.row.unit_name || '' }}</template></el-table-column>
+          <el-table-column v-if="isDefect" label="不良处置" min-width="210">
+            <template slot-scope="s">
+              <div v-for="d in s.row.dispositions" :key="d.id" class="sub">{{ d.action_label }} {{ qty(d.qty) }}{{ d.document_no && d.action === 'supplier_return' ? '（' + d.document_no + '）' : '' }} · {{ d.created_by_name }}</div>
+              <template v-if="s.row.held_qty > 0 && canApprove && approve.dispose[s.row.id]">
+                <el-select v-model="approve.dispose[s.row.id].action" size="mini" clearable placeholder="待处置，选处置方式" class="disp-sel">
+                  <el-option v-for="a in actions" :key="a.value" :label="a.label" :value="a.value" />
+                </el-select>
+                <el-input-number v-if="!s.row.serial_no && approve.dispose[s.row.id].action" v-model="approve.dispose[s.row.id].qty" size="mini" :min="0" :max="s.row.held_qty" :precision="4" controls-position="right" class="disp-qty" />
+              </template>
+              <span v-else-if="s.row.held_qty > 0" class="chip c-o">冻结 {{ qty(s.row.held_qty) }}</span>
+            </template>
+          </el-table-column>
         </el-table>
+        <template v-if="isDefect && approve.row.held_qty > 0 && canApprove">
+          <p class="sub">不良退回的料已冻结（不算可用库存、编号不能领用）。判定可用 = 解冻回可用库存；报废 = 按退料单价报废出库；退供应商 = 按原批次追溯采购到货，生成退供应商单。</p>
+          <el-input v-model="approve.remark" size="small" maxlength="500" placeholder="处置备注（选填）" />
+        </template>
         <el-form v-if="approve.row.status === 'pending' && canApprove" label-position="top" size="small" class="approve-form">
           <el-form-item label="退入库位">
             <el-radio-group v-model="approve.original">
@@ -115,6 +133,7 @@
       <span slot="footer">
         <el-button size="small" @click="approve.visible = false">关闭</el-button>
         <el-button v-if="approve.row && approve.row.status === 'pending' && canApprove" size="small" type="success" class="btn-theme-create" :loading="saving" :disabled="!approve.original && !approve.location_id" @click="submitApprove">确认实物已收到，入库</el-button>
+        <el-button v-if="isDefect && approve.row.held_qty > 0 && canApprove" size="small" type="success" class="btn-theme-create" :loading="saving" :disabled="!disposeLines.length" @click="submitDispose">确认处置</el-button>
       </span>
     </el-dialog>
     <system-record-picker :visible.sync="picker.visible" :type="picker.type" :multiple="false" :value="[]" :warehouse-id="Number(approve.warehouse_id || 0)" :location-purposes="['general']" management-scope="factory" @confirm="pick" />
@@ -122,7 +141,7 @@
 </template>
 
 <script>
-import { listMaterialReturns, approveMaterialReturn, rejectMaterialReturn, cancelMaterialReturn } from '../../../api/erp/production'
+import { listMaterialReturns, approveMaterialReturn, rejectMaterialReturn, cancelMaterialReturn, disposeMaterialReturn } from '../../../api/erp/production'
 import SystemRecordPicker from '../../../components/system/SystemRecordPicker.vue'
 import { qty, money, errorText, isCancel } from '../production/mfg-helpers'
 
@@ -134,10 +153,19 @@ export default {
   data: () => ({
     loading: false, saving: false, rows: [], total: 0, page: 1, summary: {}, canApprove: false,
     filters: { status: 'pending', keyword: '' },
-    tabs: [{ value: 'pending', label: '待审核' }, { value: 'approved', label: '已入库' }, { value: 'rejected', label: '已驳回' }, { value: 'cancelled', label: '已撤回' }, { value: '', label: '全部' }],
-    approve: { visible: false, row: null, original: true, warehouse_id: null, warehouse_name: '', location_id: null, location_name: '', remark: '' },
+    tabs: [{ value: 'pending', label: '待审核' }, { value: 'holding', label: '不良待处置' }, { value: 'approved', label: '已入库' }, { value: 'rejected', label: '已驳回' }, { value: 'cancelled', label: '已撤回' }, { value: '', label: '全部' }],
+    approve: { visible: false, row: null, original: true, warehouse_id: null, warehouse_name: '', location_id: null, location_name: '', remark: '', dispose: {} },
+    actions: [{ value: 'release', label: '判定可用' }, { value: 'scrap', label: '报废' }, { value: 'supplier_return', label: '退供应商' }],
     picker: { visible: false, type: 'warehouses' }
   }),
+  computed: {
+    isDefect() { return !!(this.approve.row && this.approve.row.return_type === 'defective' && this.approve.row.status === 'approved') },
+    disposeLines() {
+      const d = this.approve.dispose
+      return ((this.approve.row && this.approve.row.lines) || []).filter(l => d[l.id] && d[l.id].action && (l.serial_no || Number(d[l.id].qty) > 0))
+        .map(l => ({ line_id: l.id, action: d[l.id].action, qty: l.serial_no ? 1 : Number(d[l.id].qty) }))
+    }
+  },
   created() {
     if (this.$route.query.status !== undefined) this.filters.status = String(this.$route.query.status)
     this.load()
@@ -166,7 +194,9 @@ export default {
       if (this.$can('production.work_order.view')) this.$router.push(`/production/work-orders/${row.work_order_id}`)
     },
     openApprove(row) {
-      this.approve = { visible: true, row, original: true, warehouse_id: null, warehouse_name: '', location_id: null, location_name: '', remark: '' }
+      const dispose = {}
+      for (const l of row.lines || []) if (l.held_qty > 0) dispose[l.id] = { action: '', qty: l.held_qty }
+      this.approve = { visible: true, row, original: true, warehouse_id: null, warehouse_name: '', location_id: null, location_name: '', remark: '', dispose }
     },
     openPicker(type) { this.picker = { visible: true, type } },
     pick(rows) {
@@ -185,6 +215,10 @@ export default {
     async submitApprove() {
       const a = this.approve
       if (await this.act(() => approveMaterialReturn(a.row.id, { location_id: a.original ? undefined : a.location_id, remark: a.remark || undefined }), '已入库')) a.visible = false
+    },
+    async submitDispose() {
+      const a = this.approve
+      if (await this.act(() => disposeMaterialReturn(a.row.id, { lines: this.disposeLines, remark: a.remark || undefined }), '已处置')) a.visible = false
     },
     async reject(row) {
       let remark
@@ -242,6 +276,8 @@ export default {
 .picker-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
 .approve-form { margin-top: 12px; }
 .line-table { width: 100%; }
+.disp-sel { width: 130px; margin-right: 6px; }
+.disp-qty { width: 110px; }
 .mobile-only { display: none; }
 .m-row { border: 1px solid #e3e8f0; border-radius: 10px; padding: 12px; margin-bottom: 10px; display: grid; gap: 6px; font-size: 12px; }
 .m-head, .m-foot { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }

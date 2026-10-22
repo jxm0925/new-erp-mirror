@@ -717,10 +717,12 @@ class InventoryService
     /**
      * 生产退料入库：按原收料出库流水的批次和单价冲回（同一条流水分次退时最后一次承接尾差），退回原库位或库管选定的库位。
      * 按编号退的序列号恢复在库可用，挂到退入的库存行。
+     * 不良退回（defective）的料入库即冻结：计入不良数量、不算可用，编号置为质量冻结，等库管处置后才能再领用。
      */
     public function postProductionMaterialReturn(\App\Models\Erp\MfgMaterialReturn $return, \App\Models\Erp\MfgWorkOrder $workOrder, ?int $operatorId = null): InventoryTransaction
     {
         return DB::transaction(function () use ($return, $workOrder, $operatorId): InventoryTransaction {
+            $hold = $return->return_type === 'defective';
             if (InventoryTransaction::query()->where('source_type', 'mfg_material_return')->where('source_id', $return->id)
                 ->where('transaction_type', 'production_material_return_inbound')->exists()) {
                 throw ValidationException::withMessages(['return' => '这张退料单已经入过库，不能重复入库。']);
@@ -763,6 +765,7 @@ class InventoryService
                 $this->applyInventoryChange($transaction, $change);
                 $total = bcadd($total, $cost, 4);
                 $line->update(['warehouse_id' => $warehouseId, 'location_id' => $locationId, 'unit_cost' => bcdiv($cost, $quantity, 4), 'cost_amount' => $cost]);
+                if ($hold) $this->changeDefective((int) $source->item_id, $warehouseId, $locationId, (string) $source->batch_no, (float) $quantity);
                 if ($line->inventory_serial_id) {
                     $serial = InventorySerial::query()->whereKey($line->inventory_serial_id)->lockForUpdate()->first();
                     if (! $serial || $serial->serial_status !== 'production_consumed' || (int) $serial->item_id !== (int) $source->item_id) {
@@ -770,11 +773,11 @@ class InventoryService
                     }
                     $balance = InventoryBalance::query()->where('item_id', $source->item_id)->where('warehouse_id', $warehouseId)
                         ->where('location_id', $locationId)->where('batch_no', $source->batch_no)->firstOrFail();
-                    $serial->update(['serial_status' => 'available', 'inventory_balance_id' => $balance->id, 'warehouse_id' => $warehouseId,
+                    $serial->update(['serial_status' => $hold ? 'quality_hold' : 'available', 'inventory_balance_id' => $balance->id, 'warehouse_id' => $warehouseId,
                         'location_id' => $locationId, 'outbound_at' => null]);
                     InventorySerialEvent::create([
                         'inventory_serial_id' => $serial->id, 'event_type' => 'production_material_returned', 'document_type' => 'mfg_material_return',
-                        'document_id' => $return->id, 'document_no' => $return->return_no, 'from_status' => 'production_consumed', 'to_status' => 'available',
+                        'document_id' => $return->id, 'document_no' => $return->return_no, 'from_status' => 'production_consumed', 'to_status' => $hold ? 'quality_hold' : 'available',
                         'warehouse_id' => $warehouseId, 'location_id' => $locationId, 'batch_no' => $source->batch_no,
                         'event_payload' => ['work_order_no' => $workOrder->work_order_no, 'unit_serial_no' => $line->unit_serial_no], 'occurred_at' => now(),
                     ]);
@@ -788,6 +791,81 @@ class InventoryService
             $return->update(['inventory_transaction_id' => $transaction->id, 'cost_amount' => $total]);
             return $transaction;
         }, 5);
+    }
+
+    /**
+     * 不良退料处置：$mode=release 只解冻不动数量（判定可用、转退供应商前）；scrap 先解冻再按退料单价出库。调用方须在事务内。
+     * 返回报废出库流水（release 为 null）。
+     */
+    public function postProductionDefectDisposition(\App\Models\Erp\MfgMaterialReturnDisposition $disposition, \App\Models\Erp\MfgMaterialReturnLine $line,
+        \App\Models\Erp\MfgWorkOrder $workOrder, string $mode, ?int $operatorId = null): ?InventoryTransaction
+    {
+        if (DB::transactionLevel() < 1) throw new \LogicException('Defect disposition posting requires an application transaction.');
+        $qty = (float) $disposition->qty;
+        $this->changeDefective((int) $line->component_item_id, (int) $line->warehouse_id, (int) $line->location_id, (string) $line->batch_no, -$qty);
+        $serial = $line->inventory_serial_id ? InventorySerial::query()->whereKey($line->inventory_serial_id)->lockForUpdate()->first() : null;
+        if ($line->inventory_serial_id && (! $serial || $serial->serial_status !== 'quality_hold'))
+            throw ValidationException::withMessages(['disposition' => '编号 '.$line->serial_no.' 已不是质量冻结状态，不能重复处置。']);
+        if ($mode === 'release') {
+            if ($serial) {
+                $serial->update(['serial_status' => 'available']);
+                $this->defectSerialEvent($serial, 'production_defect_released', 'available', $disposition, $workOrder, $operatorId);
+            }
+            return null;
+        }
+        $transaction = InventoryTransaction::create([
+            'transaction_no' => $this->nextNo('ITX'), 'transaction_type' => 'production_defect_scrap_outbound',
+            'source_type' => 'mfg_material_return_disposition', 'source_id' => $disposition->id, 'source_no' => $disposition->document_no,
+            'posting_status' => 'posted', 'warehouse_id' => $line->warehouse_id, 'location_id' => $line->location_id, 'transaction_date' => now()->toDateString(),
+            'posted_by' => $operatorId, 'posted_at' => now(), 'created_by' => $operatorId, 'remark' => '生产不良退料报废，工单 '.$workOrder->work_order_no,
+        ]);
+        $quantity = number_format($qty, 8, '.', '');
+        $cost = CuttingDecimal::share((string) $line->cost_amount, number_format((float) $line->qty, 8, '.', ''), $quantity);
+        $balance = InventoryBalance::query()->where('item_id', $line->component_item_id)->where('warehouse_id', $line->warehouse_id)
+            ->where('location_id', $line->location_id)->where('batch_no', $line->batch_no)->lockForUpdate()->firstOrFail();
+        $item = $this->applyInventoryChange($transaction, [
+            'item_id' => $line->component_item_id, 'warehouse_id' => $line->warehouse_id, 'location_id' => $line->location_id, 'batch_no' => $line->batch_no,
+            'unit_id' => $balance->unit_id, 'change_qty' => '-'.$quantity, 'unit_cost' => (float) $line->unit_cost, 'cost_amount' => bcsub('0', $cost, 4),
+            'material_lot_id' => $balance->material_lot_id, 'cost_source_type' => 'production_return_original_cost',
+            'source_type' => 'mfg_material_return_disposition', 'source_id' => $disposition->id, 'source_item_id' => $line->id,
+            'remark' => '不良退料报废（退料单行 #'.$line->id.'）',
+        ]);
+        if ($serial) {
+            $serial->update(['serial_status' => 'scrapped', 'outbound_at' => now()]);
+            $this->defectSerialEvent($serial, 'production_defect_scrapped', 'scrapped', $disposition, $workOrder, $operatorId);
+        }
+        InventoryPostingLog::create([
+            'source_type' => 'mfg_material_return_disposition', 'source_id' => $disposition->id, 'source_no' => $disposition->document_no,
+            'transaction_type' => 'production_defect_scrap_outbound', 'transaction_id' => $transaction->id,
+            'posting_status' => 'posted', 'message' => '不良退料报废出库成功', 'posted_by' => $operatorId, 'posted_at' => now(),
+        ]);
+        $disposition->update(['inventory_transaction_id' => $transaction->id, 'cost_amount' => bcsub('0', (string) $item->cost_amount, 4)]);
+        return $transaction;
+    }
+
+    /** 冻结/解冻不良数量：库存行和库位汇总同步增减，可用数量随之重算。 */
+    private function changeDefective(int $itemId, int $warehouseId, int $locationId, string $batchNo, float $change): void
+    {
+        $balance = InventoryBalance::query()->where('item_id', $itemId)->where('warehouse_id', $warehouseId)->where('location_id', $locationId)
+            ->where('batch_no', $batchNo)->lockForUpdate()->firstOrFail();
+        $location = InventoryLocationBalance::query()->where('item_id', $itemId)->where('warehouse_id', $warehouseId)->where('location_id', $locationId)->lockForUpdate()->firstOrFail();
+        foreach ([$balance, $location] as $row) {
+            $defective = round((float) $row->quantity_defective + $change, 8);
+            if ($defective < -0.00000001) throw ValidationException::withMessages(['disposition' => '库存不良数量不足，可能已被其他处置使用，请刷新后重试。']);
+            $defective = max(0, $defective);
+            $row->update(['quantity_defective' => $defective, 'quantity_available' => $this->availability->calculate((float) $row->quantity_on_hand,
+                (float) $row->quantity_locked, $defective, (float) $row->quantity_pending), 'last_transaction_at' => now()]);
+        }
+    }
+
+    private function defectSerialEvent(InventorySerial $serial, string $type, string $to, \App\Models\Erp\MfgMaterialReturnDisposition $disposition, \App\Models\Erp\MfgWorkOrder $workOrder, ?int $operatorId): void
+    {
+        InventorySerialEvent::create([
+            'inventory_serial_id' => $serial->id, 'event_type' => $type, 'document_type' => 'mfg_material_return_disposition',
+            'document_id' => $disposition->id, 'document_no' => $disposition->document_no, 'from_status' => 'quality_hold', 'to_status' => $to,
+            'warehouse_id' => $serial->warehouse_id, 'location_id' => $serial->location_id, 'batch_no' => $serial->batch_no, 'operator_id' => $operatorId,
+            'event_payload' => ['work_order_no' => $workOrder->work_order_no, 'remark' => $disposition->remark], 'occurred_at' => now(),
+        ]);
     }
 
     /** 开料整根／整张领入：只接受已锁定批次保存的真实来源，不开放普通数量接口扣板。 */

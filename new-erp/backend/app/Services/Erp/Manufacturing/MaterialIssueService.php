@@ -156,6 +156,7 @@ final class MaterialIssueService
             $balanceIds = $this->balancesFor($item, $wo)->filter(fn ($b) => $this->availability->availableForOutbound($b) > self::EPS)->pluck('id')->all();
             $serials = InventorySerial::query()->with(['warehouse:id,warehouse_name', 'location:id,location_code,location_name'])
                 ->whereIn('inventory_balance_id', $balanceIds ?: [0])->where('item_id', $item->id)->where('serial_status', 'available')
+                ->whereNotIn('id', array_keys(MaterialDeliveryService::holds()['serials']) ?: [0])
                 ->orderBy('id')->limit(200)->get();
             $rows[] = ['material_id' => (int) $m->id, 'component_item_id' => (int) $item->id, 'component_item_name' => $m->component_item_name,
                 'unit_name' => $m->unit_name, 'remaining_qty' => $remaining, 'per_unit_qty' => $planned > 0 ? round((float) $m->required_qty / $planned, 4) : 0,
@@ -204,22 +205,27 @@ final class MaterialIssueService
         return floor($have / ((float) $m->required_qty / $planned) + self::EPS);
     }
 
-    /** 从可用库存挑库存行：先挑工单仓库，再挑其他工厂仓库；按序列号管理的自动挑先入库的号。 */
-    public function allocate(MfgWorkOrderMaterial $m, float $qty, MfgWorkOrder $wo): array
+    /**
+     * 从可用库存挑库存行：先挑工单仓库，再挑其他工厂仓库；按序列号管理的自动挑先入库的号。
+     * 仓库已配好、还没发出的配料单占住的数量和编号不再分给别人（$exceptDeliveryId 为重新拣货时排除自己）。
+     */
+    public function allocate(MfgWorkOrderMaterial $m, float $qty, MfgWorkOrder $wo, ?int $exceptDeliveryId = null): array
     {
         $item = Item::query()->findOrFail($m->component_item_id);
         $mode = $item->serialTrackingMode();
         $balances = $this->balancesFor($item, $wo);
+        $holds = MaterialDeliveryService::holds($exceptDeliveryId);
         $left = $qty;
         $picks = [];
         foreach ($balances as $balance) {
             if ($left <= self::EPS) break;
-            $available = $this->availability->availableForOutbound($balance);
+            $available = round($this->availability->availableForOutbound($balance) - (float) ($holds['balances'][(int) $balance->id] ?? 0), 4);
             if ($available <= self::EPS) continue;
             $take = min($available, $left);
             $serialIds = [];
             if ($mode !== 'none') {
-                $serials = InventorySerial::query()->where('inventory_balance_id', $balance->id)->where('serial_status', 'available')->orderBy('id')->lockForUpdate()->pluck('id');
+                $serials = InventorySerial::query()->where('inventory_balance_id', $balance->id)->where('serial_status', 'available')->orderBy('id')->lockForUpdate()->pluck('id')
+                    ->reject(fn ($id) => isset($holds['serials'][(int) $id]))->values();
                 $unnumbered = max(0, $available - $serials->count());
                 if ($mode === 'required') {
                     $take = min(floor($take + self::EPS), $serials->count());
@@ -244,20 +250,50 @@ final class MaterialIssueService
             $this->fail('serial_count_mismatch', $m->component_item_name.' 本次要收 '.$this->num($qty).($m->unit_name ?: '').'，指定了 '.count($serialIds).' 个编号，请指定 '.$this->num($qty).' 个。');
         $balances = $this->balancesFor($item, $wo)->keyBy('id');
         $serials = InventorySerial::query()->whereIn('id', $serialIds)->lockForUpdate()->get()->keyBy('id');
+        $holds = MaterialDeliveryService::holds();
         $groups = [];
         foreach ($serialIds as $id) {
             $serial = $serials->get($id);
             if (! $serial || (int) $serial->item_id !== (int) $item->id || $serial->serial_status !== 'available' || ! $balances->has((int) $serial->inventory_balance_id))
                 $this->fail('serial_unavailable', '编号 '.($serial?->serial_no ?: '#'.$id).' 不是 '.$m->component_item_name.' 的可用库存，请刷新后重选。');
+            if (isset($holds['serials'][(int) $id])) $this->fail('serial_unavailable', '编号 '.$serial->serial_no.' 仓库已配给别的工单（配料单待发出），请改选其他编号。');
             $groups[(int) $serial->inventory_balance_id][] = (int) $id;
         }
         $picks = [];
         foreach ($groups as $balanceId => $ids) {
-            if (count($ids) > $this->availability->availableForOutbound($balances->get($balanceId)) + self::EPS)
+            if (count($ids) > $this->availability->availableForOutbound($balances->get($balanceId)) - (float) ($holds['balances'][$balanceId] ?? 0) + self::EPS)
                 $this->fail('serial_unavailable', $m->component_item_name.' 所选编号所在库位可用数量不足（可能已被订单占用），请改选其他编号。');
             $picks[] = ['balance_id' => (int) $balanceId, 'qty' => (float) count($ids), 'serial_ids' => $ids];
         }
         return [$picks, 0.0];
+    }
+
+    /**
+     * 核对已保存的拣货来源现在还能不能照单出库（库存行可出库、扣掉其他配料单占用后数量够、编号仍在该库存行可用）。
+     * 返回问题说明，空 = 可以照单过账。$lock 为发出时锁库存行和编号。
+     */
+    public function verifyPicks(MfgWorkOrderMaterial $m, MfgWorkOrder $wo, array $picks, ?int $exceptDeliveryId, bool $lock = false): array
+    {
+        $item = Item::query()->findOrFail($m->component_item_id);
+        $eligible = $this->balancesFor($item, $wo)->keyBy('id');
+        $holds = MaterialDeliveryService::holds($exceptDeliveryId);
+        $problems = [];
+        foreach ($picks as $pick) {
+            $balanceId = (int) ($pick['balance_id'] ?? 0);
+            $balance = \App\Models\Erp\InventoryBalance::query()->with('location:id,location_code')->when($lock, fn ($q) => $q->lockForUpdate())->find($balanceId);
+            $where = $balance ? (($balance->location?->location_code ?: '库位').($balance->batch_no ? ' 批次 '.$balance->batch_no : '')) : '原库存行';
+            if (! $balance || ! $eligible->has($balanceId)) { $problems[] = $m->component_item_name.' '.$where.' 已停用或不能出库'; continue; }
+            $available = round($this->availability->availableForOutbound($balance) - (float) ($holds['balances'][$balanceId] ?? 0), 4);
+            if ($available + self::EPS < (float) $pick['qty']) $problems[] = $m->component_item_name.' '.$where.' 现在可用 '.$this->num(max(0, $available)).'，不够 '.$this->num((float) $pick['qty']);
+            $ids = array_map('intval', (array) ($pick['serial_ids'] ?? []));
+            if ($ids) {
+                $ok = InventorySerial::query()->whereIn('id', $ids)->where('inventory_balance_id', $balanceId)->where('serial_status', 'available')
+                    ->when($lock, fn ($q) => $q->lockForUpdate())->pluck('serial_no', 'id');
+                $bad = array_filter($ids, fn ($id) => ! isset($ok[$id]) || isset($holds['serials'][$id]));
+                if ($bad) $problems[] = $m->component_item_name.' 有 '.count($bad).' 个编号已不在 '.$where.' 或已被占用';
+            }
+        }
+        return $problems;
     }
 
     /** 可出库的库存行：工厂仓库优先工单仓库，按库存行先后。 */

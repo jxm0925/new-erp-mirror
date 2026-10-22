@@ -165,10 +165,11 @@ Page({
   refreshReturnRows() {
     const type = this.data.returnForm.type;
     const hints = { surplus: '多领或领错的料，冲减已领数量。', defective: '装上后发现不良的料，冲减已领数量，退后要重新收料。', scrapped: '报废台上还能用的料拆回仓库，不冲减已领数量。' };
-    const rows = (this.returnOptions || []).map(m => Object.assign({}, m, {
-      limit: view.quantity((m.limits || {})[type] || 0),
-      serials: (m.serials || []).filter(s => (s.kind === 'scrapped') === (type === 'scrapped')),
-    })).filter(m => (m.by_number ? m.serials.length : Number((m.limits || {})[type] || 0) > 0));
+    const rows = (this.returnOptions || []).map(m => {
+      const serials = m.by_number ? (m.serials || []).filter(s => (s.kind === 'scrapped') === (type === 'scrapped')) : [];
+      const limitQty = m.by_qty ? Number((m.limits || {})[type] || 0) : 0;
+      return Object.assign({}, m, { serials, limitQty, limit: view.quantity(limitQty), showSerials: serials.length > 0, showQty: limitQty > 0 });
+    }).filter(m => m.showSerials || m.showQty);
     this.setData({ 'returnForm.rows': rows, 'returnForm.picked': {}, 'returnForm.qty': {}, 'returnForm.hint': hints[type] || '' });
   },
   pickReturnType(event) {
@@ -186,10 +187,13 @@ Page({
   submitMaterialReturn() {
     const f = this.data.returnForm;
     const task = this.data.task;
-    const lines = f.rows.map(row => (row.by_number
-      ? { material_id: row.material_id, serial_ids: row.serials.filter(s => f.picked[s.id]).map(s => s.id) }
-      : { material_id: row.material_id, qty: Number(f.qty[row.material_id] || 0) }))
-      .filter(l => (l.serial_ids ? l.serial_ids.length : l.qty > 0));
+    const lines = f.rows.map(row => ({
+      material_id: row.material_id,
+      serial_ids: row.serials.filter(s => f.picked[s.id]).map(s => s.id),
+      qty: row.showQty ? Number(f.qty[row.material_id] || 0) : 0,
+    })).filter(l => l.serial_ids.length || l.qty > 0);
+    const over = f.rows.find(row => row.showQty && Number(f.qty[row.material_id] || 0) > row.limitQty + 0.00001);
+    if (over) { wx.showToast({ title: `${over.component_item_name} 最多退 ${over.limit}`, icon: 'none' }); return; }
     if (!lines.length) { wx.showToast({ title: '选要退的编号或填数量', icon: 'none' }); return; }
     if (!String(f.reason || '').trim()) { wx.showToast({ title: '写一下退料原因', icon: 'none' }); return; }
     if (this.data.busy) return;

@@ -435,6 +435,8 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::post('work-orders/{id}/operations/{operationId}/material-receipts', [MfgWorkOrderController::class, 'receiveMaterials'])->whereNumber(['id', 'operationId']);
     Route::get('work-orders/{id}/operations/{operationId}/serial-options', [MfgWorkOrderController::class, 'serialOptions'])->whereNumber(['id', 'operationId']);
     Route::post('work-orders/{id}/unit-components/swap', [MfgWorkOrderController::class, 'swapComponents'])->whereNumber('id');
+    Route::post('work-orders/{id}/unit-components/assign', [MfgWorkOrderController::class, 'assignComponent'])->whereNumber('id');
+    Route::post('work-orders/{id}/scrap-settle', [MfgWorkOrderController::class, 'settleScrap'])->whereNumber('id');
     // 生产退料：车间申请、库管审核入库
     Route::get('work-orders/{id}/operations/{operationId}/return-options', [MfgMaterialReturnController::class, 'options'])->whereNumber(['id', 'operationId']);
     Route::post('work-orders/{id}/operations/{operationId}/material-returns', [MfgMaterialReturnController::class, 'store'])->whereNumber(['id', 'operationId']);
@@ -443,7 +445,7 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::get('material-deliveries', [MfgMaterialDeliveryController::class, 'index']);
     Route::get('work-orders/{id}/operations/{operationId}/delivery-preview', [MfgMaterialDeliveryController::class, 'preview'])->whereNumber(['id', 'operationId']);
     Route::post('work-orders/{id}/operations/{operationId}/material-deliveries', [MfgMaterialDeliveryController::class, 'store'])->whereNumber(['id', 'operationId']);
-    foreach (['dispatch', 'cancel', 'redeliver', 'recall', 'sign', 'reject'] as $action) {
+    foreach (['dispatch', 'repick', 'cancel', 'redeliver', 'recall', 'sign', 'reject'] as $action) {
         Route::post("material-deliveries/{id}/{$action}", [MfgMaterialDeliveryController::class, $action])->whereNumber('id');
     }
     Route::get('material-returns', [MfgMaterialReturnController::class, 'index']);
@@ -451,6 +453,7 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::post('material-returns/{id}/approve', [MfgMaterialReturnController::class, 'approve'])->whereNumber('id');
     Route::post('material-returns/{id}/reject', [MfgMaterialReturnController::class, 'reject'])->whereNumber('id');
     Route::post('material-returns/{id}/cancel', [MfgMaterialReturnController::class, 'cancel'])->whereNumber('id');
+    Route::post('material-returns/{id}/dispose', [MfgMaterialReturnController::class, 'dispose'])->whereNumber('id');
     Route::get('work-orders/{id}/cutting', [MfgCuttingController::class, 'context'])->whereNumber('id');
     Route::get('work-orders/{id}/cutting/sources', [MfgCuttingController::class, 'sources'])->whereNumber('id');
     Route::post('work-orders/{id}/cutting/preview', [MfgCuttingController::class, 'preview'])->whereNumber('id');

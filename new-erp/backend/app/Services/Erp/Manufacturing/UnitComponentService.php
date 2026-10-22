@@ -28,6 +28,8 @@ final class UnitComponentService
 
     /**
      * 工序收料后装上：收到的编号按台号顺序登记，每台按 BOM 单台用量装满再到下一台。
+     * 同一种料拆在几道工序（几行用料）时，按用料行各自的单台用量计数，焊接装的和总装装的互不挤占；
+     * 同时整台合计不超过各行单台用量之和。装不下的编号留在“待登记编号”，主管可手动指定装到哪台。
      * @param array<int, array{material: \App\Models\Erp\MfgWorkOrderMaterial, picks: array}> $plan
      */
     public function bind(MfgWorkOrder $wo, MfgMaterialIssue $issue, array $plan, array $selections, object $actor): void
@@ -42,21 +44,100 @@ final class UnitComponentService
             if (! $ids) continue;
             $serials = InventorySerial::query()->whereIn('id', $ids)->get()->keyBy('id');
             $spec = Item::query()->whereKey($m->component_item_id)->value('spec');
-            $perUnit = max(1, (int) ceil((float) $m->required_qty / $planned - self::EPS));
-            $counts = MfgUnitComponent::query()->installed()->where('work_order_id', $wo->id)->where('component_item_id', $m->component_item_id)
-                ->selectRaw('unit_id, COUNT(*) AS c')->groupBy('unit_id')->pluck('c', 'unit_id')->map(fn ($c) => (int) $c)->all();
+            [$rowCap, $itemCap, $rowCounts, $itemCounts] = $this->capacity($wo, (int) $m->component_item_id);
+            $perRow = $rowCap[(int) $m->id] ?? max(1, (int) ceil((float) $m->required_qty / $planned - self::EPS));
             $unbound = [];
             foreach ($ids as $id) {
                 $serial = $serials->get($id);
                 if (! $serial) continue;
-                $unit = $units->first(fn ($u) => ($counts[$u->id] ?? 0) < $perUnit);
+                $unit = $units->first(fn ($u) => ($rowCounts[$u->id][$m->id] ?? 0) < $perRow && ($itemCounts[$u->id] ?? 0) < $itemCap);
                 if (! $unit) { $unbound[] = $serial->serial_no; continue; }
                 $this->install($wo, $unit, (int) $m->component_item_id, (string) $m->component_item_name, $spec, $serial, $actor,
                     '收料单 '.$issue->issue_no.($manual ? '，人工指定' : '，系统分配'), ['type' => 'mfg_material_issue', 'id' => $issue->id, 'no' => $issue->issue_no]);
-                $counts[$unit->id] = ($counts[$unit->id] ?? 0) + 1;
+                $rowCounts[$unit->id][$m->id] = ($rowCounts[$unit->id][$m->id] ?? 0) + 1;
+                $itemCounts[$unit->id] = ($itemCounts[$unit->id] ?? 0) + 1;
             }
-            if ($unbound) $this->workOrders->log($wo, 'component_unbound', null, null, "{$m->component_item_name} 编号 ".implode('、', $unbound).' 已收料但各台已按单台用量装满，未登记到台', $actor, ['issue_id' => $issue->id]);
+            if ($unbound) $this->workOrders->log($wo, 'component_unbound', null, null, "{$m->component_item_name} 编号 ".implode('、', $unbound).' 已收料但各台已按单台用量装满，未登记到台，可在工单详情“待登记编号”里手动指定', $actor, ['issue_id' => $issue->id]);
         }
+    }
+
+    /**
+     * 待登记编号：本工单收料领出、仍为生产已领、最近一次领用就是本工单，但没装在本工单任何一台上的编号。
+     * @return array<int, array{serial_id:int, serial_no:string, component_item_id:int, component_item_name:string, batch_no:?string, issue_no:?string}>
+     */
+    public function unbound(MfgWorkOrder $wo): array
+    {
+        $issues = MfgMaterialIssue::query()->where('work_order_id', $wo->id)->orderBy('id')->get(['id', 'issue_no', 'issue_lines']);
+        $picked = [];
+        foreach ($issues as $issue) foreach ((array) $issue->issue_lines as $line) foreach ((array) ($line['picks'] ?? []) as $pick)
+            foreach ((array) ($pick['serial_ids'] ?? []) as $sid) $picked[(int) $sid] = ['issue_id' => (int) $issue->id, 'issue_no' => $issue->issue_no,
+                'item_id' => (int) ($line['component_item_id'] ?? 0), 'item_name' => (string) ($line['component_item_name'] ?? '')];
+        if (! $picked) return [];
+        $serials = InventorySerial::query()->whereIn('id', array_keys($picked))->where('serial_status', 'production_consumed')->orderBy('serial_no')->get();
+        if ($serials->isEmpty()) return [];
+        $last = InventorySerialEvent::query()->whereIn('inventory_serial_id', $serials->pluck('id')->all())->where('event_type', 'production_material_issued')
+            ->selectRaw('inventory_serial_id, MAX(id) AS id')->groupBy('inventory_serial_id')->pluck('id', 'inventory_serial_id');
+        $events = InventorySerialEvent::query()->whereIn('id', $last->values()->all() ?: [0])->get(['id', 'inventory_serial_id', 'document_type', 'document_id'])->keyBy('inventory_serial_id');
+        $installed = MfgUnitComponent::query()->installed()->where('work_order_id', $wo->id)->whereIn('component_serial_no', $serials->pluck('serial_no')->all())
+            ->pluck('component_serial_no')->flip();
+        $out = [];
+        foreach ($serials as $s) {
+            $e = $events->get($s->id);
+            $meta = $picked[(int) $s->id];
+            if (! $e || $e->document_type !== 'mfg_material_issue' || (int) $e->document_id !== $meta['issue_id'] || isset($installed[$s->serial_no])) continue;
+            $out[] = ['serial_id' => (int) $s->id, 'serial_no' => $s->serial_no, 'component_item_id' => (int) $s->item_id,
+                'component_item_name' => $meta['item_name'], 'batch_no' => $s->batch_no, 'issue_no' => $meta['issue_no']];
+        }
+        return $out;
+    }
+
+    /** 手动登记：把待登记编号装到本工单指定的一台上，整台合计不超过该物料各行单台用量之和。 */
+    public function assign(int $workOrderId, int $serialId, int $unitId, object $actor): void
+    {
+        DB::transaction(function () use ($workOrderId, $serialId, $unitId, $actor) {
+            $wo = MfgWorkOrder::query()->lockForUpdate()->findOrFail($workOrderId);
+            if (! in_array($wo->status, ['released', 'in_progress', 'paused'], true)) $this->fail('status_invalid', '工单不在生产中，不能登记部件编号。');
+            $row = collect($this->unbound($wo))->firstWhere('serial_id', $serialId);
+            if (! $row) $this->fail('component_invalid', '这个编号不是本工单待登记的编号（可能已登记或已退料），请刷新。');
+            $unit = MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->lockForUpdate()->find($unitId);
+            if (! $unit || ! in_array($unit->status, self::ADJUSTABLE, true)) $this->fail('unit_locked', '请选择本工单还在生产中的一台（已入库或报废的台不能登记）。');
+            [, $itemCap, , $itemCounts] = $this->capacity($wo, (int) $row['component_item_id']);
+            if (($itemCounts[$unit->id] ?? 0) >= $itemCap) $this->fail('unit_full', "{$unit->serial_no} 的 {$row['component_item_name']} 已按单台用量装满，请先互换或退料拆下。");
+            $serial = InventorySerial::query()->lockForUpdate()->findOrFail($serialId);
+            $spec = Item::query()->whereKey($serial->item_id)->value('spec');
+            $this->install($wo, $unit, (int) $serial->item_id, $row['component_item_name'], $spec, $serial, $actor, '人工登记（收料单 '.$row['issue_no'].'）',
+                ['type' => 'mfg_work_order', 'id' => $wo->id, 'no' => $wo->work_order_no]);
+        }, 5);
+    }
+
+    /**
+     * 单台装配上限和已装计数。按用料行：编号属于哪一行看它是哪张收料单的哪一行领出的；
+     * 找不到来源行的（历史数据、手工录入）只计入整台合计。
+     * @return array{0: array<int,int>, 1: int, 2: array<int, array<int,int>>, 3: array<int,int>} 行上限、整台上限、[台][行]已装、[台]已装
+     */
+    private function capacity(MfgWorkOrder $wo, int $itemId): array
+    {
+        $planned = max(1, (float) $wo->planned_qty);
+        $rows = \App\Models\Erp\MfgWorkOrderMaterial::query()->where('work_order_id', $wo->id)->where('component_item_id', $itemId)->where('required_qty', '>', 0)->get(['id', 'required_qty']);
+        $rowCap = $rows->mapWithKeys(fn ($r) => [(int) $r->id => max(1, (int) ceil((float) $r->required_qty / $planned - self::EPS))])->all();
+        $itemCap = max(1, (int) ceil($rows->sum(fn ($r) => (float) $r->required_qty) / $planned - self::EPS));
+        $rowOf = [];
+        foreach (MfgMaterialIssue::query()->where('work_order_id', $wo->id)->orderBy('id')->get(['id', 'issue_lines']) as $issue) {
+            foreach ((array) $issue->issue_lines as $line) {
+                if ((int) ($line['component_item_id'] ?? 0) !== $itemId) continue;
+                foreach ((array) ($line['picks'] ?? []) as $pick) foreach ((array) ($pick['serial_ids'] ?? []) as $sid) $rowOf[(int) $sid] = (int) $line['material_id'];
+            }
+        }
+        $components = MfgUnitComponent::query()->installed()->where('work_order_id', $wo->id)->where('component_item_id', $itemId)->get(['unit_id', 'component_serial_no']);
+        $serialIds = InventorySerial::query()->where('item_id', $itemId)->whereIn('serial_no', $components->pluck('component_serial_no')->filter()->all() ?: [''])->pluck('id', 'serial_no');
+        $rowCounts = [];
+        $itemCounts = [];
+        foreach ($components as $c) {
+            $itemCounts[$c->unit_id] = ($itemCounts[$c->unit_id] ?? 0) + 1;
+            $row = $rowOf[(int) ($serialIds[$c->component_serial_no] ?? 0)] ?? null;
+            if ($row) $rowCounts[$c->unit_id][$row] = ($rowCounts[$c->unit_id][$row] ?? 0) + 1;
+        }
+        return [$rowCap, $itemCap, $rowCounts, $itemCounts];
     }
 
     /** 互换同一工单两台的同种部件编号：两条原记录拆下，再按对方的编号各装上一条；台入库、报废后不能再调整。 */

@@ -19,7 +19,7 @@ class MfgMaterialReturnController extends Controller
     public function index(Request $request, MaterialReturnService $returns)
     {
         [$user, $amounts, $approver] = $this->user($request, [self::REQUEST, self::APPROVE]);
-        $filters = $request->validate(['status' => 'nullable|in:pending,approved,rejected,cancelled', 'keyword' => 'nullable|string|max:120',
+        $filters = $request->validate(['status' => 'nullable|in:pending,approved,rejected,cancelled,holding', 'keyword' => 'nullable|string|max:120',
             'work_order_id' => 'nullable|integer|min:1', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
         return response()->json($returns->paginate($filters, $approver ? null : (int) ($user->legacy_id ?? $user->id ?? 0), $amounts) + ['can_approve' => $approver]);
     }
@@ -68,6 +68,17 @@ class MfgMaterialReturnController extends Controller
         $data = $request->validate(['remark' => 'required|string|max:500']);
         $return = $returns->reject($id, $data['remark'], $user);
         return response()->json(['message' => "退料单 {$return->return_no} 已驳回。", 'data' => $returns->row($return, $amounts)]);
+    }
+
+    /** 不良退料处置：判定可用、报废、退供应商。 */
+    public function dispose(Request $request, int $id, MaterialReturnService $returns)
+    {
+        [$user, $amounts] = $this->user($request, self::APPROVE);
+        $data = $request->validate(['lines' => 'required|array|min:1|max:200', 'lines.*.line_id' => 'required|integer|min:1',
+            'lines.*.action' => 'required|in:release,scrap,supplier_return', 'lines.*.qty' => 'nullable|numeric|min:0|max:1000000',
+            'remark' => 'nullable|string|max:500']);
+        $return = $returns->dispose($id, $data['lines'], $data['remark'] ?? null, $user);
+        return response()->json(['message' => "不良退料 {$return->return_no} 已处置。", 'data' => $returns->row($return, $amounts)]);
     }
 
     public function cancel(Request $request, int $id, MaterialReturnService $returns)

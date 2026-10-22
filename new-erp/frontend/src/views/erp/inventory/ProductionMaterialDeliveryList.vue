@@ -65,9 +65,11 @@
             </div>
             <div v-if="d.reject_reason" class="sub danger">拒收：{{ d.reject_reason }}（{{ d.rejected_by_name || '' }} {{ d.rejected_at || '' }}）</div>
             <div v-if="d.close_remark" class="sub">处理：{{ d.close_remark }}<template v-if="d.return_no">（退料单 {{ d.return_no }}）</template></div>
+            <div v-if="d.source_problems && d.source_problems.length" class="sub danger">拣货来源已失效：{{ d.source_problems.join('；') }}。请重新拣货后再发出。</div>
             <div v-if="canManage" class="m-foot">
               <template v-if="d.status === 'prepared'">
-                <span class="lk" @click="act(d, 'dispatch', `确认已照单拣好 ${d.delivery_no} 的料并发出？发出后扣库存。`)">发出</span>
+                <span v-if="!(d.source_problems && d.source_problems.length)" class="lk" @click="act(d, 'dispatch', `确认已照单拣好 ${d.delivery_no} 的料并发出？发出后按拣货单的库位、批次扣库存。`)">发出</span>
+                <span class="lk" @click="act(d, 'repick', `按先入先用给 ${d.delivery_no} 重新分配拣货库位？已拣出的料请放回原位，按新拣货单取料。`)">重新拣货</span>
                 <span class="lk muted" @click="act(d, 'cancel', `取消配料单 ${d.delivery_no}？不动库存。`)">取消</span>
               </template>
               <template v-if="d.status === 'rejected'">

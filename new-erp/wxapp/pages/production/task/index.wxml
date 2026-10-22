@@ -168,11 +168,11 @@
       <view wx:if="{{!returnForm.rows.length}}" class="mt-muted mt-gap">按这个类型本道没有可退的料。</view>
       <block wx:for="{{returnForm.rows}}" wx:key="material_id" wx:for-item="row">
         <view class="mt-card-title mt-gap"><text>{{row.component_item_name}}</text><text class="mt-muted">已领 {{row.issued_qty}} {{row.unit_name || ''}}</text></view>
-        <view wx:if="{{row.by_number}}" class="tk-chips">
+        <view wx:if="{{row.showSerials}}" class="tk-chips">
           <text wx:for="{{row.serials}}" wx:key="id" class="tk-chip {{returnForm.picked[item.id] ? 'on' : ''}}" data-id="{{item.id}}" bindtap="toggleReturnSerial">{{item.serial_no}}{{item.unit_serial_no ? ' · ' + item.unit_serial_no : ''}}</text>
         </view>
-        <view wx:else class="mt-kv">
-          <text class="k">退多少（最多 {{row.limit}}）</text>
+        <view wx:if="{{row.showQty}}" class="mt-kv">
+          <text class="k">{{row.by_number ? '无编号部分' : ''}}退多少（最多 {{row.limit}}）</text>
           <input class="v tk-qty" type="digit" value="{{returnForm.qty[row.material_id]}}" data-id="{{row.material_id}}" bindinput="returnQtyInput" placeholder="0" />
         </view>
       </block>
