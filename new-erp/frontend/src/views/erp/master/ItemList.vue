@@ -357,7 +357,7 @@
             </div>
             <div class="info-grid">
               <div class="info-item"><span class="info-label">追溯策略</span><span class="info-val">{{ serialTrackingText(selected) }}</span></div>
-              <div class="info-item"><span class="info-label">编号前缀</span><span class="info-val font-mono">{{ selected.serial_number_prefix || selected.item_code || '-' }}</span></div>
+              <div class="info-item"><span class="info-label">编号前缀</span><span class="info-val font-mono">{{ selected.serial_number_prefix || '-' }}</span></div>
               <div class="info-item full-width"><span class="info-label">入库要求</span><span class="info-val">{{ serialTrackingRequirement(selected) }}</span></div>
             </div>
           </section>

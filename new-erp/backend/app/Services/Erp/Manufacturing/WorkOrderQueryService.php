@@ -166,7 +166,16 @@ final class WorkOrderQueryService
     public function serial(string $serialNo): ?array
     {
         $unit = MfgWorkOrderUnit::query()->with('components')->where('serial_no', $serialNo)->first();
+        $matched = null;
+        if (! $unit) {
+            // 输入的是部件号（外购件或半成品）：查到它当前装在哪台，返回那台整机的追溯。
+            $matched = \App\Models\Erp\MfgUnitComponent::query()->installed()->where('component_serial_no', $serialNo)->orderByDesc('id')->first();
+            $unit = $matched ? MfgWorkOrderUnit::query()->with('components')->find($matched->unit_id) : null;
+        }
         if (! $unit) return null;
+        $installedIn = \App\Models\Erp\MfgUnitComponent::query()->installed()->where('component_serial_no', $unit->serial_no)->orderByDesc('id')->first();
+        $parentSerial = $installedIn ? MfgWorkOrderUnit::query()->whereKey($installedIn->unit_id)->value('serial_no') : null;
+        $history = \App\Models\Erp\MfgUnitComponent::query()->with('removal')->where('unit_id', $unit->id)->whereHas('removal')->orderBy('id')->get();
         $wo = MfgWorkOrder::query()->with('operations')->findOrFail($unit->work_order_id);
         $logs = MfgWorkOrderLog::query()->where('work_order_id', $wo->id)
             ->where(fn ($q) => $q->where('unit_id', $unit->id)->orWhere(fn ($w) => $w->whereNull('unit_id')->whereIn('action', ['released', 'paused', 'resumed', 'cancelled'])))
@@ -186,6 +195,11 @@ final class WorkOrderQueryService
             'components' => $unit->components->map(fn ($c) => ['component_item_name' => $c->component_item_name, 'component_spec' => $c->component_spec,
                 'component_serial_no' => $c->component_serial_no, 'batch_no' => $c->batch_no, 'installed_by_name' => $c->installed_by_name,
                 'installed_at' => $c->installed_at?->toDateTimeString()])->values(),
+            'matched_component_serial_no' => $matched?->component_serial_no,
+            'installed_in_serial_no' => $parentSerial,
+            'removed_components' => $history->map(fn ($c) => ['component_item_name' => $c->component_item_name, 'component_serial_no' => $c->component_serial_no,
+                'installed_at' => $c->installed_at?->toDateTimeString(), 'removed_at' => $c->removal?->removed_at?->toDateTimeString(),
+                'reason' => $c->removal?->reason, 'remark' => $c->removal?->remark])->values(),
         ];
     }
 

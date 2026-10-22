@@ -58,14 +58,14 @@ class MfgWorkOrderController extends Controller
             'release' => 'nullable|boolean']);
         if (! empty($data['release'])) $this->user($request, 'production.work_order.publish');
         $wo = $service->createStock($data, $user);
-        return response()->json(['message' => $wo->status === 'released' ? '备货工单已下达，已按台生成台号。' : '备货工单已保存为计划。', 'data' => $query->detail($wo->id, $amounts)]);
+        return response()->json(['message' => $wo->status === 'released' ? '备货工单已下达，已按台生成序列号。' : '备货工单已保存为计划。', 'data' => $query->detail($wo->id, $amounts)]);
     }
 
     public function release(Request $request, int $id, WorkOrderService $service, WorkOrderQueryService $query)
     {
         [$user, $amounts] = $this->user($request, 'production.work_order.publish');
         $wo = $service->release($id, $this->version($request), $user);
-        return response()->json(['message' => '工单已下达，已按台生成台号。', 'data' => $query->detail($wo->id, $amounts)]);
+        return response()->json(['message' => '工单已下达，已按台生成序列号。', 'data' => $query->detail($wo->id, $amounts)]);
     }
 
     public function update(Request $request, int $id, WorkOrderService $service, WorkOrderQueryService $query)

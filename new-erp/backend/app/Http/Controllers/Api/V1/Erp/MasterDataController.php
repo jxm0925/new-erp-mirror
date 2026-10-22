@@ -699,7 +699,7 @@ class MasterDataController extends Controller
                 'manufacturing_strategy' => 'sometimes|required|in:unspecified,purchase,make',
                 'is_batch_managed' => 'boolean', 'is_serial_managed' => 'boolean',
                 'serial_tracking_mode' => 'nullable|in:none,optional,required',
-                'serial_number_prefix' => 'nullable|string|max:30|regex:/^[A-Za-z0-9_-]+$/',
+                'serial_number_prefix' => 'nullable|string|max:10|regex:/^[A-Za-z]+$/',
                 'equipment_identity_requirement' => 'nullable|in:not_applicable,required',
                 'is_custom_item' => 'boolean',
                 'base_item_id' => 'nullable|exists:erp_items,id',

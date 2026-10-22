@@ -219,10 +219,6 @@ final class TaskService
                 $this->workOrders->log($wo, 'unit_passed', $wasRework ? 'rework' : 'in_progress', $next ? null : ($shipmentRepair ? 'stored' : 'completed'),
                     $unit->serial_no.' '.$text.($wasRework ? '（返工）' : ''), $actor, ['operation_id' => $op->id], $unit->id);
             }
-            // 物料策略设为“指定工序完成时”生成序列号的，这道合格就把台号换成正式序列号。
-            foreach (app(UnitSerialService::class)->assignIfDue($wo, $units, UnitSerialService::EVENT_OPERATION_PASSED, $op) as $unitId => [$from, $to]) {
-                $this->workOrders->log($wo, 'serial_assigned', null, null, "{$op->operation_name}完成，台号 {$from} 生成序列号 {$to}", $actor, ['from' => $from, 'to' => $to], $unitId);
-            }
             if ($firstPass) $op->update(['completed_qty' => (float) $op->completed_qty + $firstPass]);
             if ($finished) $wo->update(['completed_qty' => (float) $wo->completed_qty + $finished]);
             $this->refreshOperation($wo, $op, $reportedAt);

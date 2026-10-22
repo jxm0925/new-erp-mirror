@@ -110,6 +110,14 @@
           <span class="summary-item">制令工单：<b class="code-mono lk-text" @click="openWo">{{ result.work_order.work_order_no }}</b></span>
           <span class="summary-divider">|</span>
           <span class="summary-item">制造产品：<b>{{ result.work_order.product_name || result.work_order.item_name }}</b></span>
+          <template v-if="result.matched_component_serial_no">
+            <span class="summary-divider">|</span>
+            <span class="summary-item">部件 <b class="code-mono">{{ result.matched_component_serial_no }}</b> 装在本机</span>
+          </template>
+          <template v-if="result.installed_in_serial_no">
+            <span class="summary-divider">|</span>
+            <span class="summary-item">已装入整机：<b class="code-mono lk-text" @click="openSerialNo(result.installed_in_serial_no)">{{ result.installed_in_serial_no }}</b></span>
+          </template>
         </div>
       </div>
 
@@ -328,7 +336,12 @@
 
             <div v-else class="empty-components-notice">
               <i class="el-icon-box" />
-              <span>暂无关键部件装配追溯记录（在总装工序过站报工环节登记核心部件条码或物料批次）</span>
+              <span>暂无关键部件装配追溯记录（总装工序收料时按台登记带编号的部件）</span>
+            </div>
+            <div v-if="result.removed_components && result.removed_components.length">
+              <p v-for="(r, i) in result.removed_components" :key="i" class="text-muted">
+                已拆下：{{ r.component_item_name }} {{ r.component_serial_no }}（{{ r.removed_at }}，{{ r.remark || r.reason }}）
+              </p>
             </div>
           </div>
         </section>
@@ -582,6 +595,10 @@ export default {
       if (this.$route.query.sn) {
         this.$router.replace({ query: {} }).catch(() => {})
       }
+    },
+    openSerialNo(sn) {
+      this.keyword = sn
+      this.search()
     },
     selectSuggestion(sn) {
       this.keyword = sn

@@ -370,9 +370,7 @@ class ProductionMasterDataService
             $routingOperationIds = DB::table('erp_production_routing_operations')
                 ->where('routing_id', $routing->id)->lockForUpdate()->pluck('id');
             $referenced = $routingOperationIds->isNotEmpty() && (
-                    DB::table('erp_items')->whereIn('serial_generation_routing_operation_id', $routingOperationIds)->exists()
-                    || DB::table('erp_item_material_policies')->whereIn('serial_generation_routing_operation_id', $routingOperationIds)->exists()
-                    || DB::table('erp_material_lots')->whereIn('stage_id', $routingOperationIds)->exists()
+                    DB::table('erp_material_lots')->whereIn('stage_id', $routingOperationIds)->exists()
                     || DB::table('erp_routing_operation_material_supply_rules')
                         ->whereNotIn('routing_operation_id', $routingOperationIds)
                         ->whereIn('target_routing_operation_id', $routingOperationIds)->exists()

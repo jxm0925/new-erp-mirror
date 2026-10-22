@@ -89,6 +89,7 @@
     "erp_mfg_material_issues": "2026_10_22_000002_create_erp_mfg_material_issues_table",
     "erp_mfg_receipts": "2026_10_21_000005_create_erp_mfg_receipts_table",
     "erp_mfg_task_participants": "2026_10_21_000002_create_erp_mfg_task_participants_table",
+    "erp_mfg_unit_component_removals": "2026_10_23_000002_create_erp_mfg_unit_component_removals_table",
     "erp_mfg_unit_components": "2026_10_20_000006_create_erp_mfg_unit_components_table",
     "erp_mfg_unit_reports": "2026_10_21_000004_create_erp_mfg_unit_reports_table",
     "erp_mfg_work_order_links": "2026_10_22_000001_create_erp_mfg_work_order_links_table",

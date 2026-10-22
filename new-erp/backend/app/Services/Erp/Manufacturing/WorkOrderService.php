@@ -17,11 +17,12 @@ use App\Models\Erp\MfgMaterialIssue;
 use App\Models\Erp\SalesOrder;
 use App\Models\Erp\SalesOrderFulfillment;
 use App\Services\Erp\DocumentNumberService;
+use App\Services\Erp\SerialNumberService;
 use Illuminate\Support\Facades\DB;
 
 /**
  * 新生产工单：订单生产确认后按“一行一张”自动建单并下达；生产主管只能调整；
- * 也可手动建备货工单。下达时按台生成台号，追溯件按物料策略的生成时机换成正式序列号。BOM/路线缺失时停在“计划”，补齐后再下达。
+ * 也可手动建备货工单。下达时按台生成序列号（未启用追溯的用台号）。BOM/路线缺失时停在“计划”，补齐后再下达。
  */
 final class WorkOrderService
 {
@@ -381,6 +382,8 @@ final class WorkOrderService
         $routing = $plan['routing'];
         if (MfgWorkOrderTech::query()->where('work_order_id', $wo->id)->where('status', 'pending')->exists())
             $plan['block_reasons'][] = '定制产品：等技术上传图纸、确认定制 BOM 后下发车间';
+        if ($item->serialTrackingMode() !== 'none' && ! preg_match(SerialNumberService::PREFIX_PATTERN, (string) $item->serial_number_prefix))
+            $plan['block_reasons'][] = '产品启用了序列号追溯但未维护序列号前缀，请先在物料资料里填写';
         $wo->update([
             'bom_id' => $bom['id'] ?? $bomId, 'bom_no' => $bom['bom_no'] ?? null, 'bom_version' => isset($bom['version']) ? (string) $bom['version'] : null,
             'bom_snapshot' => $bom, 'routing_id' => $routing['routing_id'] ?? $routingId, 'routing_no' => $routing['routing_no'] ?? null,
@@ -428,28 +431,29 @@ final class WorkOrderService
     }
 
     /**
-     * 下达时按台建立追溯：整数台数才逐台跟踪。每台先用台号（工单号-001）占位，
-     * 启用单件追溯的物料按物料策略的生成时机换成正式序列号（见 UnitSerialService）。
-     * @return array{0: array<int, string>, 1: string} [本次正式序列号, 日志说明]
+     * 下达时按台建立追溯：整数台数才逐台跟踪。启用序列号追溯的物料直接生成正式序列号，之后不再改号；
+     * 未启用追溯的只用台号（工单号-001）区分第几台。
+     * @return array{0: list<string>, 1: string} [本次正式序列号, 日志说明]
      */
     private function generateUnits(MfgWorkOrder $wo): array
     {
         $qty = (float) $wo->planned_qty;
         if (MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->exists()) return [[], ''];
         if (abs($qty - round($qty)) > 0.00001 || $qty > self::UNIT_LIMIT) return [[], ''];
-        $serials = app(UnitSerialService::class);
+        $count = (int) round($qty);
+        $item = Item::query()->find($wo->item_id);
+        $numbers = app(SerialNumberService::class);
+        $tracked = $item && $item->serialTrackingMode() !== 'none';
+        $serials = $tracked ? $numbers->next($item, $count) : [];
         $firstOp = $this->firstProductionOperationId($wo);
-        $units = collect();
-        for ($unit = 1; $unit <= (int) round($qty); $unit++) {
-            $units->push(MfgWorkOrderUnit::create(['work_order_id' => $wo->id, 'unit_no' => $unit, 'serial_no' => $serials->placeholder($wo, $unit),
-                'status' => 'waiting', 'current_operation_id' => $firstOp, 'warehouse_id' => $wo->warehouse_id]));
+        $codes = [];
+        for ($unit = 1; $unit <= $count; $unit++) {
+            $codes[] = $code = $tracked ? $serials[$unit - 1] : $numbers->unitNo($wo, $unit);
+            MfgWorkOrderUnit::create(['work_order_id' => $wo->id, 'unit_no' => $unit, 'serial_no' => $code,
+                'status' => 'waiting', 'current_operation_id' => $firstOp, 'warehouse_id' => $wo->warehouse_id]);
         }
-        $assigned = array_column($serials->assignIfDue($wo, $units, UnitSerialService::EVENT_RELEASED), 1);
-        if ($assigned) return [$assigned, '，生成序列号 '.UnitSerialService::rangeText($assigned)];
-        $stage = $serials->stage(Item::query()->find($wo->item_id));
-        $placeholders = $units->pluck('serial_no')->all();
-        $text = '，生成台号 '.UnitSerialService::rangeText($placeholders);
-        return [[], $stage ? $text.'，序列号在'.UnitSerialService::STAGE_LABELS[$stage].'生成' : $text];
+        $range = count($codes) > 1 ? $codes[0].' ~ '.end($codes) : ($codes[0] ?? '');
+        return [$serials, $range === '' ? '' : ($tracked ? '，生成序列号 ' : '，生成台号 ').$range];
     }
 
     private function specialRequirement($line): ?string

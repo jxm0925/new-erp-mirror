@@ -141,29 +141,16 @@ class MaterialPolicyApplicationService
         $route = (string) $attributes['future_route'];
         $action = (string) $attributes['post_purchase_action'];
         $executionMode = (string) ($attributes['production_execution_mode'] ?? 'unit');
-        $serialStage = (string) ($attributes['serial_generation_stage'] ?? 'before_finished_goods_posting');
 
         if ($item->managementScope() === 'office') {
             abort_unless(in_array((string) $attributes['future_bearer_type'], ['company', 'department', 'employee'], true), 422, '办公物资的承担主体只能选择公司、部门或员工。');
             abort_unless(isset(self::ROUTE_SETTINGS[$route]) && in_array($action, ['inventory_receipt', 'issue_confirmation', 'asset_acceptance', 'expense_confirmation'], true), 422, '办公物资不能选择工单成本或销售直记成本。');
-            // Validate the submitted production reference before the common
-            // normalization below can clear it for the default serial stage.
-            abort_if($serialStage !== 'before_finished_goods_posting' || filled($attributes['serial_generation_routing_operation_id'] ?? null), 422, '办公物资不能设置生产编号生成节点或指定生产工序。');
         }
 
         abort_unless(in_array($executionMode, ['unit', 'quantity'], true), 422, '生产执行模式只能选择逐件生产或按数量生产。');
-        abort_unless(in_array($serialStage, ['production_unit_created', 'routing_operation_completed', 'before_finished_goods_posting'], true), 422, '设备编号生成节点无效。');
-        if ($serialStage === 'routing_operation_completed') {
-            $routingOperationId = (int) ($attributes['serial_generation_routing_operation_id'] ?? 0);
-            $belongsToItem = $routingOperationId > 0 && DB::table('erp_production_routing_operations as ro')
-                ->join('erp_production_routings as r', 'r.id', '=', 'ro.routing_id')
-                ->where('ro.id', $routingOperationId)
-                ->where('r.output_item_id', $item->id)
-                ->exists();
-            abort_unless($belongsToItem, 422, '指定的设备编号生成工序不属于该产出物料的工艺路线。');
-        } else {
-            $attributes['serial_generation_routing_operation_id'] = null;
-        }
+        // 序列号统一在工单下达（自制）或到货（外购）时生成，生成时机字段已停用，只保留默认值。
+        $attributes['serial_generation_stage'] = 'before_finished_goods_posting';
+        $attributes['serial_generation_routing_operation_id'] = null;
 
         abort_if($stockManaged && !in_array($route, ['inventory', 'expense'], true), 422, '库存管理物资当前只能选择库存或库存后领用费用意图。');
         abort_if(!$stockManaged && $route === 'inventory', 422, '非库存管理物资不能选择库存处理意图。');

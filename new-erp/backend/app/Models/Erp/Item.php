@@ -13,6 +13,24 @@ class Item extends MasterModel
         'standard_stock_length_mm' => 'decimal:2',
         'serial_generation_routing_operation_id' => 'integer',
     ];
+    /**
+     * 启用序列号追溯的物料：序列号前缀必填、1～10 位英文字母、各追溯物料不重复，
+     * 这样看到号就知道是什么物料（统一规则见 SerialNumberService）。只在追溯方式或前缀变化时校验。
+     */
+    protected static function booted(): void
+    {
+        static::saving(function (Item $item): void {
+            $prefix = strtoupper(trim((string) $item->serial_number_prefix));
+            $item->serial_number_prefix = $prefix !== '' ? $prefix : null;
+            if ($item->serialTrackingMode() === 'none' || ! $item->isDirty(['serial_tracking_mode', 'is_serial_managed', 'serial_number_prefix'])) return;
+            if (! preg_match(\App\Services\Erp\SerialNumberService::PREFIX_PATTERN, $prefix))
+                throw \Illuminate\Validation\ValidationException::withMessages(['serial_number_prefix' => '启用序列号追溯的物料必须填写序列号前缀（1～10 位英文字母），例如一体机 DF、架子 JZ。']);
+            $used = static::query()->where('serial_number_prefix', $prefix)->where('serial_tracking_mode', '!=', 'none')
+                ->when($item->exists, fn ($q) => $q->whereKeyNot($item->getKey()))->value('item_code');
+            if ($used) throw \Illuminate\Validation\ValidationException::withMessages(['serial_number_prefix' => "序列号前缀 {$prefix} 已被物料 {$used} 使用，请换一个。"]);
+        });
+    }
+
     public function serialTrackingMode(): string
     {
         return $this->serial_tracking_mode ?: ($this->is_serial_managed ? 'required' : 'none');

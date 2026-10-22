@@ -64,10 +64,6 @@ final class ReceiptService
                 if (bccomp((string) $material->issued_qty, (string) $material->required_qty, 4) < 0)
                     $this->fail('material_cost_incomplete', '整单实际材料成本尚未归集完整，请先完成全部冻结用料的真实收料和开料结算；已完工设备保留待入库。');
             }
-            // 追溯件入库前必须有正式序列号：未到生成时机或指定工序不在本路线上的，这里兜底生成。
-            foreach (app(UnitSerialService::class)->assignIfDue($wo, $units, UnitSerialService::EVENT_BEFORE_RECEIPT) as $unitId => [$from, $to]) {
-                $this->workOrders->log($wo, 'serial_assigned', null, null, "入库前，台号 {$from} 生成序列号 {$to}", $actor, ['from' => $from, 'to' => $to], $unitId);
-            }
             $actualCost = '0.0000';
             foreach (MfgMaterialIssue::query()->where('work_order_id', $wo->id)->lockForUpdate()->get() as $issue) $actualCost = bcadd($actualCost, (string) $issue->cost_amount, 4);
             foreach (MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('status', 'settled')->lockForUpdate()->get() as $batch) $actualCost = bcadd($actualCost, (string) $batch->net_cost_amount, 4);

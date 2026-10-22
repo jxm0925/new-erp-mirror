@@ -272,18 +272,24 @@
                   </el-select>
                 </el-form-item>
 
-                <el-form-item label="系统编号前缀" class="flex-item">
+                <el-form-item
+                  label="序列号前缀"
+                  prop="serial_number_prefix"
+                  :required="policy.serial_tracking_mode !== 'none'"
+                  class="flex-item"
+                >
                   <el-input
                     v-model.trim="form.serial_number_prefix"
-                    maxlength="30"
+                    maxlength="10"
                     clearable
-                    placeholder="如：MAT、BW（选填）"
+                    :disabled="policy.serial_tracking_mode === 'none'"
+                    placeholder="1～10 位英文字母，如一体机 DF、架子 JZ"
                   />
                 </el-form-item>
               </div>
 
               <div class="serial-rules-compact">
-                <span><i class="el-icon-info text-theme" /> 无需序列号适用于普通批次耗材；逐件编号出入库时系统自动或扫码记录唯一 SN。</span>
+                <span><i class="el-icon-info text-theme" /> 序列号格式：前缀 + 年月 + 4 位流水，如 DF2610-0001；自制品在工单下达时生成，外购件在到货时登记供应商号或由系统生成，生成后不再改号。前缀各物料不能重复。</span>
               </div>
             </div>
           </section>
@@ -831,6 +837,16 @@ export default {
         item_type: [{ required: true, message: '请选择物料类型', trigger: 'change' }],
         category_id: [{ required: true, message: '请选择末级 物料类目', trigger: 'change' }],
         unit_id: [{ required: true, message: '请选择库存基本单位', trigger: 'change' }],
+        serial_number_prefix: [
+          {
+            validator: (rule, value, callback) => {
+              if (this.policy.serial_tracking_mode === 'none') return callback()
+              if (!/^[A-Za-z]{1,10}$/.test(value || '')) return callback(new Error('启用序列号追溯须填写 1～10 位英文字母前缀'))
+              callback()
+            },
+            trigger: 'blur'
+          }
+        ],
         standard_stock_length_mm: [
           {
             validator: (rule, value, callback) => {
@@ -909,9 +925,7 @@ export default {
       return this.isOffice && (
         ['work_order', 'sales_order'].includes(this.policy.future_bearer_type) ||
         ['work_order_cost', 'sales_order_direct_cost'].includes(this.policy.future_route) ||
-        ['work_order_cost', 'sales_order_direct_cost'].includes(this.policy.post_purchase_action) ||
-        ['production_unit_created', 'routing_operation_completed'].includes(this.policy.serial_generation_stage) ||
-        !!this.policy.serial_generation_routing_operation_id
+        ['work_order_cost', 'sales_order_direct_cost'].includes(this.policy.post_purchase_action)
       )
     },
     actionOptions() {
@@ -1147,10 +1161,6 @@ export default {
       if (['work_order', 'sales_order'].includes(this.policy.future_bearer_type)) this.policy.future_bearer_type = ''
       if (['work_order_cost', 'sales_order_direct_cost'].includes(this.policy.future_route)) this.policy.future_route = ''
       if (['work_order_cost', 'sales_order_direct_cost'].includes(this.policy.post_purchase_action)) this.policy.post_purchase_action = ''
-      if (['production_unit_created', 'routing_operation_completed'].includes(this.policy.serial_generation_stage) || this.policy.serial_generation_routing_operation_id) {
-        this.policy.serial_generation_stage = 'before_finished_goods_posting'
-        this.policy.serial_generation_routing_operation_id = null
-      }
     },
     async reserveCode(version = this.pageLoadVersion) {
       try {

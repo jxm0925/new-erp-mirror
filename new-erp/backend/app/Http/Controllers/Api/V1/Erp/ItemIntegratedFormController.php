@@ -75,7 +75,7 @@ class ItemIntegratedFormController extends Controller
             'item.is_purchase_item' => 'boolean', 'item.is_stock_item' => 'boolean', 'item.is_production_item' => 'boolean',
             'item.manufacturing_strategy' => 'sometimes|required|in:unspecified,purchase,make',
             'item.serial_tracking_mode' => 'nullable|in:none,optional,required',
-            'item.serial_number_prefix' => 'nullable|string|max:30|regex:/^[A-Za-z0-9_-]+$/',
+            'item.serial_number_prefix' => 'nullable|string|max:10|regex:/^[A-Za-z]+$/',
             'item.equipment_identity_requirement' => 'nullable|in:not_applicable,required',
             'item.cost_method' => 'required|in:weighted_average,standard,fifo',
             'item.status' => 'required|in:enabled,disabled', 'item.remark' => 'nullable|string|max:200',

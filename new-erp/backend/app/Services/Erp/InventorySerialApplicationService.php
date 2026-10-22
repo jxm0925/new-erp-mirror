@@ -9,32 +9,14 @@ use App\Models\Erp\PurchaseReceipt;
 use App\Models\Erp\PurchaseReceiptItem;
 use App\Models\Erp\PurchaseReceiptItemAllocation;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 class InventorySerialApplicationService
 {
+    /** 采购到货、库存调整没有供应商号时按统一规则生成（前缀+年月+流水）。 */
     public function generateForItem(\App\Models\Erp\Item $item, int $quantity): array
     {
-        if ($item->serialTrackingMode() === 'none') {
-            throw ValidationException::withMessages([
-                'item_id' => '当前物料未启用单件编号追溯，不能生成序列号。',
-            ]);
-        }
-
-        $prefix = strtoupper((string) ($item->serial_number_prefix ?: $item->item_code));
-        $prefix = trim((string) preg_replace('/[^A-Z0-9_-]+/', '-', $prefix), '-_');
-        $prefix = substr($prefix ?: 'SN', 0, 30);
-        $date = now()->format('ymd');
-        $generated = [];
-
-        while (count($generated) < $quantity) {
-            $serialNo = sprintf('%s-%s-%s', $prefix, $date, strtoupper(substr((string) Str::ulid(), -8)));
-            if (isset($generated[$serialNo]) || InventorySerial::where('serial_no', $serialNo)->exists()) continue;
-            $generated[$serialNo] = $serialNo;
-        }
-
-        return array_values($generated);
+        return app(SerialNumberService::class)->next($item, $quantity);
     }
 
     public function registerAcceptedReceipt(PurchaseReceipt $receipt): void
@@ -64,6 +46,11 @@ class InventorySerialApplicationService
                     throw ValidationException::withMessages(['allocations' => "设备编号 {$serialNo} 尚未分配入库库位。"]);
                 }
                 $existing = InventorySerial::query()->where('serial_no', $serialNo)->lockForUpdate()->first();
+                if (!$existing && \App\Models\Erp\MfgWorkOrderUnit::query()->where('serial_no', $serialNo)->exists()) {
+                    throw ValidationException::withMessages([
+                        'serial_text' => "设备编号 {$serialNo} 已被生产工单的设备使用，不能重复建档。",
+                    ]);
+                }
                 if ($existing && (int) $existing->source_receipt_item_id !== (int) $line->id) {
                     throw ValidationException::withMessages([
                         'serial_text' => "设备编号 {$serialNo} 已属于其他实物，不能重复建档。",
