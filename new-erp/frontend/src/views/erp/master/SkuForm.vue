@@ -569,13 +569,23 @@ export default {
       return current && current.item_id
     },
     async save (status) {
-      if (!this.form.sku_code || !this.form.sku_name || !this.form.product_id || !this.form.spec_model) {
+      if (!this.form.sku_code || !this.form.sku_name || !this.form.product_id || !this.form.spec_model || !this.form.spec_model.trim()) {
         return this.$message.error('请完成 SKU 编码、名称、所属 Product 与规格型号')
+      }
+      const selectedItemId = this.defaultRelation && this.defaultRelation.item && this.defaultRelation.item.id
+      if (status === 'enabled') {
+        if (!this.form.sales_unit_id) return this.$message.error('请先维护销售单位后再启用 SKU。')
+        if (this.form.sale_price == null || this.form.sale_price === '') return this.$message.error('请先维护默认销售价格后再启用 SKU。')
+        const product = this.products.find(item => Number(item.id) === Number(this.form.product_id))
+        if (!product || product.status !== 'enabled') return this.$message.error('所属 Product 必须处于启用状态。')
+        if (!this.currentSalesUnit || this.currentSalesUnit.status !== 'enabled') return this.$message.error('销售单位必须处于启用状态。')
+        if (this.form.line_type === 'physical' && (!selectedItemId || this.defaultRelation.item.status !== 'enabled')) {
+          return this.$message.error('实物 SKU 保存并启用前必须绑定一个有效默认物料；可先保存草稿。')
+        }
       }
       this.loading = true
       try {
-        const selectedItemId = this.defaultRelation && this.defaultRelation.item && this.defaultRelation.item.id
-        const relationChanged = !!(selectedItemId && Number(selectedItemId) !== Number(this.currentPrimaryItemId()))
+        const relationChanged = this.form.line_type === 'physical' && !!(selectedItemId && Number(selectedItemId) !== Number(this.currentPrimaryItemId()))
         const stageBeforeEnable = status === 'enabled' && (!this.editing || relationChanged)
         const firstStatus = stageBeforeEnable ? 'draft' : status
         const payload = { ...this.form, status: firstStatus }
@@ -598,10 +608,7 @@ export default {
           await saveEntity('skus', { ...sku, ...this.form, id: sku.id, status: 'enabled' })
         }
         this.$message.success(status === 'enabled' ? 'SKU 已成功启用' : status === 'disabled' ? 'SKU 已停用' : '草稿保存成功')
-        this.$router.push({
-          path: '/master/skus/' + sku.id,
-          query: this.$route.query.from === 'product' ? { from: 'product' } : {}
-        })
+        this.$router.push('/master/skus')
       } catch (e) {
         this.$message.error(e.userMessage || '保存失败')
       } finally {
