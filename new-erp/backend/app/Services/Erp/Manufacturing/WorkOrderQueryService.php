@@ -349,11 +349,31 @@ final class WorkOrderQueryService
         foreach ($kitting as $op) {
             if ($op['status'] !== 'short') continue;
             $names = collect($op['materials'])->filter(fn ($m) => $m['shortage_qty'] > 0)->map(fn ($m) => $m['component_item_name'].' 缺 '.rtrim(rtrim(number_format($m['shortage_qty'], 4, '.', ''), '0'), '.').($m['unit_name'] ?: ''))->implode('、');
-            $canMake = collect($op['materials'])->contains(fn ($m) => $m['shortage_qty'] > 0 && ! empty($m['can_make']));
+            $short = collect($op['materials'])->filter(fn ($m) => $m['shortage_qty'] > 0);
+            // 已开的半成品工单（含已完工待入库）按在做数量扣减，扣完仍缺才提示再开单。
+            $canMake = $short->contains(fn ($m) => ! empty($m['can_make']) && ($m['make_qty'] ?? 0) > 0);
+            $making = $short->filter(fn ($m) => ($m['in_production_qty'] ?? 0) > 0)
+                ->map(fn ($m) => $m['component_item_name'].' 在做 '.rtrim(rtrim(number_format((float) $m['in_production_qty'], 4, '.', ''), '0'), '.').($m['unit_name'] ?: ''))->implode('、');
+            $purchase = $short->contains(fn ($m) => empty($m['can_make']));
+            $advice = collect([
+                $making !== '' ? '已开半成品工单：'.$making.'，入库后即可配料' : null,
+                $canMake ? '其余半成品可在齐套看板点“开半成品工单”交下料组做' : null,
+                $purchase ? '外购件请采购跟进' : null,
+            ])->filter()->implode('；');
             $items[] = ['type' => 'warning', 'title' => $op['operation_name'].'缺料', 'text' => $names.'。按当前可用库存算，'
-                .($canMake ? '半成品可在齐套看板点“开半成品工单”交下料组做，外购件请采购跟进；料不齐不能开工。' : '请采购跟进；料不齐不能开工。')];
+                .($advice !== '' ? $advice : '请采购跟进').'；料不齐不能开工。'];
         }
         foreach ($row['completion_blockers'] ?? [] as $b) $items[] = ['type' => 'warning', 'title' => '所有台已结束，工单还不能完工', 'text' => $b['text'].'。'];
+        // 入库要求整单冻结用料已全部实收（不良退料、少收都会拉低实收）：有完工待入库的台时提前说明还差哪些料。
+        if ($row['completed_qty'] > $row['stored_qty'] + 0.00001) {
+            $missing = collect($kitting)->flatMap(fn ($op) => collect($op['materials'])->map(fn ($m) => $m + ['operation_name' => $op['operation_name']]))
+                ->filter(fn ($m) => ($m['participates_in_kitting'] ?? true) && (float) $m['issued_qty'] + 0.00001 < (float) $m['required_qty'])
+                ->map(fn ($m) => $m['operation_name'].'·'.$m['component_item_name'].' 还差 '.rtrim(rtrim(number_format((float) $m['required_qty'] - (float) $m['issued_qty'], 4, '.', ''), '0'), '.').($m['unit_name'] ?: ''));
+            if ($missing->isNotEmpty()) $items[] = ['type' => 'warning', 'title' => '完工设备暂不能入库：整单用料未收齐',
+                'text' => $missing->implode('、').'。入库按整单实际材料归集成本，请让仓库补料配送并签收（或工位收料）后再入库。'];
+            if (MfgCuttingBatch::query()->where('work_order_id', $row['id'])->where('status', 'issued')->exists())
+                $items[] = ['type' => 'warning', 'title' => '完工设备暂不能入库：开料未结算', 'text' => '仍有已领入的开料批次未结算，请先在开料页确认产出与余料。'];
+        }
         if (! empty($row['unbound_components'])) $items[] = ['type' => 'info', 'title' => '有部件编号待登记', 'text' => count($row['unbound_components']).' 个已收料的部件编号还没装到台上，请在“部件编号”处登记到具体的台。'];
         if ($row['overdue']) $items[] = ['type' => 'danger', 'title' => '已过计划完工日', 'text' => '计划 '.$row['planned_finish_date'].' 完工，请调整计划或加急。'];
         return $items;

@@ -189,6 +189,7 @@ final class TaskService
             $firstPass = 0;
             $finished = 0;
             $receiptUnitIds = [];
+            $repaired = 0;
             foreach ($units as $unit) {
                 $shipmentRepair = \App\Models\Erp\ShipmentRework::query()->where('unit_id', $unit->id)->where('status', 'in_progress')->lockForUpdate()->first();
                 $wasRework = $unit->status === 'rework';
@@ -208,6 +209,7 @@ final class TaskService
                         // 已在库原机返工只完成本轮维修，不增加首次制造成果，也不再入库一台。
                         $unit->update(['status' => 'stored', 'current_operation_id' => null]);
                         $shipmentRepair->update(['status' => 'completed', 'completed_at' => $reportedAt]);
+                        $repaired++;
                         $text = "{$op->operation_name}返修合格，等待返回成品位重新试水";
                     } else {
                     $unit->update(['status' => 'completed', 'current_operation_id' => null, 'completed_at' => $reportedAt]);
@@ -233,7 +235,7 @@ final class TaskService
                     $this->workOrders->log($wo, 'staging_failed', $wo->status, $wo->status, '自动记入成品待发区没成功：'.$message.'，请仓库手工入库', $actor);
                 }
             }
-            return ['passed' => $units->count(), 'finished' => $finished, 'next_operation_name' => $next?->operation_name,
+            return ['passed' => $units->count(), 'finished' => $finished, 'repaired' => $repaired, 'next_operation_name' => $next?->operation_name,
                 'staged_qty' => $staged ? (int) $staged->qty : 0, 'staged_receipt_no' => $staged?->receipt_no];
         }, 5);
     }

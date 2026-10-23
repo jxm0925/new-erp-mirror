@@ -596,6 +596,11 @@ abstract class InitialTableMigration extends Migration
                 && ($clause[4] ?? '') === ')' && !in_array('zerofill', $clause, true)) {
                 array_splice($clause, 2, 3);
             }
+            // 列只写 COLLATE 时补上排序规则对应的 CHARACTER SET：MySQL 8 各小版本 SHOW CREATE 是否输出字符集不一致。
+            if (str_starts_with($clause[0] ?? '', chr(96)) && ($k = array_search('collate', $clause, true)) !== false
+                && !in_array('character', $clause, true) && isset($clause[$k + 1])) {
+                array_splice($clause, $k, 0, ['character', 'set', explode('_', $clause[$k + 1])[0]]);
+            }
         }
         unset($clause);
         for ($i = 0; $i < count($tail); $i++) {

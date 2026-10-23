@@ -85,7 +85,7 @@ final class WorkOrderService
                 'is_urgent' => (bool) ($data['is_urgent'] ?? false),
                 'planned_start_date' => $data['planned_start_date'], 'planned_finish_date' => $data['planned_finish_date'],
                 'required_date' => $data['planned_finish_date'],
-                'owner_legacy_id' => $data['owner_legacy_id'] ?? null, 'owner_name' => $data['owner_name'] ?? null,
+                'owner_legacy_id' => $data['owner_legacy_id'] ?? null, 'owner_name' => $this->ownerName($data['owner_legacy_id'] ?? null, $data['owner_name'] ?? null),
                 'warehouse_id' => $data['warehouse_id'] ?? null, 'remark' => $data['remark'] ?? null,
             ], $item, (float) $data['planned_qty'], $actor);
             $this->applyPlan($wo, $item, $data['bom_id'] ?? null, $data['routing_id'] ?? null);
@@ -102,6 +102,13 @@ final class WorkOrderService
      * 总装工单缺半成品：给下料组开半成品工单（不填数量就按缺口开：还要的 − 仓库可用 − 已开还没入库的）。
      * 半成品工单按半成品自己的 BOM 和路线（下料→焊接→打磨）生产，完工入半成品仓，总装再收料。
      */
+    private function ownerName(mixed $legacyId, ?string $name): ?string
+    {
+        if (trim((string) $name) !== '' || ! $legacyId) return trim((string) $name) !== '' ? trim((string) $name) : null;
+        $user = DB::table('erp_legacy_admin_users')->where('legacy_id', (int) $legacyId)->first(['nickname', 'username']);
+        return $user ? ($user->nickname ?: $user->username) : null;
+    }
+
     public function createForParent(int $parentId, int $componentItemId, ?float $qty, object $actor): MfgWorkOrder
     {
         return DB::transaction(function () use ($parentId, $componentItemId, $qty, $actor) {
@@ -169,6 +176,10 @@ final class WorkOrderService
             $wo = $this->locked($id, (int) $data['expected_version']);
             if (in_array($wo->status, ['completed', 'closed', 'cancelled'], true)) $this->fail('status_invalid', '工单已结束，不能再调整。');
             $changes = [];
+            // 只传负责人账号时按账号回填姓名；清空账号且未传姓名时一并清空。
+            if (array_key_exists('owner_legacy_id', $data) && trim((string) ($data['owner_name'] ?? '')) === '') {
+                $data['owner_name'] = $this->ownerName($data['owner_legacy_id'], null);
+            }
             foreach (['owner_legacy_id', 'owner_name', 'planned_start_date', 'planned_finish_date', 'is_urgent', 'remark', 'warehouse_id'] as $field) {
                 if (! array_key_exists($field, $data)) continue;
                 $old = $field === 'is_urgent' ? (bool) $wo->is_urgent : ($wo->{$field} instanceof \DateTimeInterface ? $wo->{$field}->format('Y-m-d') : $wo->{$field});

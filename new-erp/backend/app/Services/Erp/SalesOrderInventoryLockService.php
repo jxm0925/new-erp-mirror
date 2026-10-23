@@ -60,11 +60,7 @@ class SalesOrderInventoryLockService
 
             if (! $fullyShipped) $this->reservations->reserveForSalesOrder($order->fresh('fulfillments'));
             $this->reservations->refreshSalesOrderExecution((int) $order->id);
-            $projection = $this->projection($order->fresh(['lines', 'fulfillments']));
-            $status = $projection['totals']['locked_inventory_qty'] <= 0.00000001
-                ? 'unavailable'
-                : ($projection['totals']['pending_production_qty'] + $projection['totals']['pending_purchase_qty'] > 0.00000001 ? 'partial' : 'locked');
-            if ($projection['totals']['pending_fulfillment_qty'] <= 0.00000001) $status = 'not_required';
+            $status = $this->lockStatus($order->fresh(['lines', 'fulfillments']));
             $changed = $created > 0 || ! $order->inventory_locked_at || $order->inventory_lock_status !== $status;
             if ($changed) {
                 $order->forceFill([
@@ -157,6 +153,15 @@ class SalesOrderInventoryLockService
             'inventory_fulfilled_qty' => $rows->where('fulfillment_type', 'inventory')->sum(fn ($row) => $this->salesQty($row, $line)),
             'undetermined_qty' => $unallocated,
         ]);
+    }
+
+    /** 锁库结果：locked 全部锁定 / partial 部分待生产或采购 / unavailable 没锁到库存 / not_required 无待交付。生产确认也按此回写。 */
+    public function lockStatus(SalesOrder $order): string
+    {
+        $totals = $this->projection($order)['totals'];
+        if ($totals['pending_fulfillment_qty'] <= 0.00000001) return 'not_required';
+        if ($totals['locked_inventory_qty'] <= 0.00000001) return 'unavailable';
+        return $totals['pending_production_qty'] + $totals['pending_purchase_qty'] > 0.00000001 ? 'partial' : 'locked';
     }
 
     public function projection(SalesOrder $order): array

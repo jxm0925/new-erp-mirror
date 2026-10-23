@@ -38,6 +38,10 @@ class PurchaseConversionApplicationService
             }
             $purchaseUnitId = (int) ($line['purchase_unit_id'] ?? 0);
             $itemBaseUnit = $this->conversions->canonicalUnit($item->unit);
+            // 未选采购单位且物料没有维护默认采购换算：按基本单位采购（换算 1）。
+            if (!$purchaseUnitId && $itemBaseUnit && !$this->conversions->activePurchaseConversions($item->id)->where('is_default', true)->exists()) {
+                $purchaseUnitId = (int) $itemBaseUnit->id;
+            }
             if ($purchaseUnitId && $itemBaseUnit && $purchaseUnitId === (int) $itemBaseUnit->id) {
                 $quantity = (float) ($line['order_qty'] ?? $line['purchase_qty']);
                 $purchaseUnitPrice = (float) ($line['unit_price'] ?? $line['purchase_unit_price'] ?? 0);
@@ -121,7 +125,9 @@ class PurchaseConversionApplicationService
                 $allowActual = (bool) $orderLine->allow_actual_conversion_snapshot;
             } else {
                 $itemBaseUnit = $this->conversions->canonicalUnit($item->unit);
-                if (!empty($line['purchase_unit_id']) && $itemBaseUnit && (int) $line['purchase_unit_id'] === (int) $itemBaseUnit->id) {
+                $baseFallback = empty($line['purchase_unit_id']) && $itemBaseUnit
+                    && !$this->conversions->activePurchaseConversions($item->id)->where('is_default', true)->exists();
+                if ($baseFallback || (!empty($line['purchase_unit_id']) && $itemBaseUnit && (int) $line['purchase_unit_id'] === (int) $itemBaseUnit->id)) {
                     $purchaseUnit = $itemBaseUnit;
                     $baseUnit = $itemBaseUnit;
                     $factor = 1.0;

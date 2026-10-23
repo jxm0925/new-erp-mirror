@@ -20,6 +20,8 @@ class SalesOrderAmountService
             'total_qty' => (float) $totals->qty,
             'total_amount' => $receivable,
             'final_receivable_amount' => $receivable,
+            // 本币金额 = 应收 × 订单业务汇率（本币订单汇率为 1），供财务汇总和分析按本币口径统计。
+            'base_total_amount' => round($receivable * (float) ($order->business_exchange_rate ?: 1), 4),
         ];
         foreach (['funding_policy_snapshot', 'payment_terms_snapshot'] as $field) {
             $snapshot = $order->getAttribute($field);

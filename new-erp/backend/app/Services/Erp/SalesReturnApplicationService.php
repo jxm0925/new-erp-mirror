@@ -392,6 +392,7 @@ class SalesReturnApplicationService
         $allPosted = $return->receipts->every(fn (SalesReturnReceipt $receipt) => in_array($receipt->stock_post_status, ['posted', 'not_required'], true));
         if ($allReceived && $allPosted && !in_array($return->return_status, ['cancelled', 'closed'], true)) {
             $return->update(['return_status' => 'completed']);
+            app(SalesOrderCompletionService::class)->refresh((int) $return->sales_order_id);
         }
     }
 
@@ -427,5 +428,7 @@ class SalesReturnApplicationService
             'operator_name' => $operatorName,
             'content' => $content,
         ]);
+        // 退货确认会重新打开已完成订单；取消/关闭/完成后重新判定订单是否完结。
+        app(SalesOrderCompletionService::class)->refresh((int) $return->sales_order_id);
     }
 }

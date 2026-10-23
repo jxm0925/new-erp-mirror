@@ -26,9 +26,13 @@ class SalesOrderDraftService
         return DB::transaction(function () use ($payload, $operator) {
             [$header, $lines, $deletedLineIds, $draftToken] = $this->split($payload);
             $reservationToken = $header['reservation_token'] ?? null;
+            $creationSessionId = $header['creation_session_id'] ?? null;
             unset($header['reservation_token'], $header['creation_session_id']);
             $header = $this->normalize($header);
-            $header['sales_order_no'] = $header['sales_order_no'] ?: $this->numbers->next('sales_order', 'SO');
+            // 带预占令牌时以预占号为准，避免另取新号与预占号不一致而创建失败、跳号。
+            $header['sales_order_no'] = $reservationToken
+                ? $this->numbers->reservedNumber($reservationToken, 'sales_order', $header['created_by_legacy_id'] ?? null, $creationSessionId)
+                : ($header['sales_order_no'] ?: $this->numbers->next('sales_order', 'SO'));
             $header['order_status'] = 'draft';
             $header['confirm_status'] = 'unconfirmed';
             $header['fulfillment_status'] = 'pending';

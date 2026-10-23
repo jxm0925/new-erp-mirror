@@ -27,6 +27,10 @@ class FinanceCashConfirmationApplicationService
                 // Purchase purposes are already frozen on this exact document.
                 // A lost confirmation response is safe to replay without posting again.
                 if ($document->status === FinanceConstants::STATUS_CONFIRMED && (int) $document->purchase_order_allocation_version > 0) return $this->currentDocument($id);
+                // 草稿里登记了待核销意向却不带核销明细确认，会把意向直接清空；必须逐项核对后随确认提交。
+                if ($document->status === FinanceConstants::STATUS_DRAFT && ! empty($document->draft_allocation_items)) {
+                    throw ValidationException::withMessages(['items' => '本单登记了待核销业务，请在单据页逐项核对核销金额后再确认；不核销请先在草稿中移除。']);
+                }
                 return $this->cashDocuments->confirm($id, $operatorId, $operatorName);
             }, 5);
         }

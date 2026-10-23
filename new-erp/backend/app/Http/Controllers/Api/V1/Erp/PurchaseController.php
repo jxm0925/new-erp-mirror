@@ -117,7 +117,9 @@ class PurchaseController extends Controller
             'items.*.spec_model' => 'nullable|string|max:255',
             'items.*.remark' => 'nullable|string',
         ]);
-        $data['request_no'] = $request->input('request_no') ?: $this->nextNo('PRQ');
+        $data['request_no'] = !empty($data['reservation_token'])
+            ? $this->reservedDocumentNo($data, 'purchase_request', app(AuthContextService::class)->currentUser($request)?->legacy_id)
+            : ($request->input('request_no') ?: $this->nextNo('PRQ'));
         $data['request_date'] = $data['request_date'] ?? now()->toDateString();
         $data['source_type'] = $data['source_type'] ?? 'manual';
         $data['request_status'] = 'draft';
@@ -298,7 +300,7 @@ class PurchaseController extends Controller
             $plan = PurchasePlan::create([
                 'created_by' => $operator,
                 'management_scope' => app(PurchaseManagementScopeService::class)->resolveDocumentScope($payload['items'], $payload),
-                'plan_no' => $payload['plan_no'] ?? $this->nextNo('PPL'),
+                'plan_no' => !empty($payload['reservation_token']) ? $this->reservedDocumentNo($payload, 'purchase_plan', $operatorId) : ($payload['plan_no'] ?? $this->nextNo('PPL')),
                 'plan_date' => $payload['plan_date'] ?? now()->toDateString(),
                 'plan_status' => 'draft',
                 'audit_status' => 'pending',
@@ -499,7 +501,7 @@ class PurchaseController extends Controller
         return DB::transaction(function () use ($payload, $numbers, $operatorId) {
             $order = PurchaseOrder::create([
                 'management_scope' => app(PurchaseManagementScopeService::class)->resolveDocumentScope($payload['items'], $payload),
-                'purchase_order_no' => $payload['purchase_order_no'] ?? $this->nextNo('POD'),
+                'purchase_order_no' => !empty($payload['reservation_token']) ? $this->reservedDocumentNo($payload, 'purchase_order', $operatorId) : ($payload['purchase_order_no'] ?? $this->nextNo('POD')),
                 'supplier_id' => $payload['supplier_id'],
                 'order_date' => $payload['order_date'] ?? now()->toDateString(),
                 'expected_arrival_date' => $payload['expected_arrival_date'] ?? null,
@@ -1308,7 +1310,7 @@ class PurchaseController extends Controller
         if (!$receipt) {
             $receipt = PurchaseReceipt::create([
                 'management_scope' => $scope,
-                'receipt_no' => $payload['receipt_no'] ?? $this->nextNo('PRC'),
+                'receipt_no' => !empty($payload['reservation_token']) ? $this->reservedDocumentNo($payload, 'purchase_receipt', $payload['_operator_id'] ?? null) : ($payload['receipt_no'] ?? $this->nextNo('PRC')),
                 'order_id' => $payload['order_id'] ?? null,
                 'supplier_id' => $payload['supplier_id'],
                 'receipt_date' => $payload['receipt_date'] ?? now()->toDateString(),
@@ -1361,10 +1363,13 @@ class PurchaseController extends Controller
                 : (bool) data_get($materialPolicy, 'material_policy_snapshot.is_stock_managed');
             abort_if($stockManaged !== (bool) $item->is_stock_item, 422, '冻结库存政策与当前物料不一致，请核对物料档案和来源单据');
             $line['is_stock_item_snapshot'] = $stockManaged;
+            // 未指定入库仓库时沿用采购单行的目标仓库。
+            if ($stockManaged && empty($line['warehouse_id']) && $orderItem?->target_warehouse_id) $line['warehouse_id'] = (int) $orderItem->target_warehouse_id;
             if ($stockManaged && !empty($line['warehouse_id'])) app(\App\Services\Erp\WarehouseManagementScopeService::class)
                 ->assertWarehouseItem($item, (int) $line['warehouse_id'], 'warehouse_id', $scope);
             $qty = (float) $line['receipt_qty'];
-            $price = (float) ($line['unit_price'] ?? 0);
+            // 修改到货单时未传单价：沿用原到货行单价，新行取采购单行单价，不能清零。
+            $price = (float) ($line['unit_price'] ?? ($priorLine ? $priorLine->unit_price : ($orderItem && $receipt->settlement_mode !== 'replacement_no_charge' ? $orderItem->unit_price : 0)));
             $batchNo = $stockManaged ? trim((string) ($line['batch_no'] ?? '')) : null;
             if ($stockManaged && $batchNo === '') {
                 $batchNo = app(DocumentNumberService::class)->next('inventory_batch', 'BAT');
@@ -1391,7 +1396,9 @@ class PurchaseController extends Controller
                 ...$conversion,
                 'batch_no' => $batchNo,
                 'expected_arrival_date' => $line['expected_arrival_date'] ?? null,
-                'serial_text' => $stockManaged ? ($line['serial_text'] ?? null) : null,
+                // 只做了逐台结构化录入时同步出编号文本，确认/过账按同一份编号校验。
+                'serial_text' => $stockManaged ? (trim((string) ($line['serial_text'] ?? '')) !== '' ? $line['serial_text']
+                    : (collect($line['serial_entries'] ?? [])->pluck('serial_no')->map(fn ($no) => trim((string) $no))->filter()->implode("\n") ?: null)) : null,
                 'serial_entries' => $stockManaged ? ($line['serial_entries'] ?? null) : null,
                 'serial_number_source' => $stockManaged ? ($line['serial_number_source'] ?? null) : null,
                 'inventory_posting_status' => $stockManaged ? 'pending' : 'not_required',
@@ -1633,6 +1640,12 @@ class PurchaseController extends Controller
     {
         $scopes = app(PurchaseManagementScopeService::class);
         $scopes->applyFilter($query, $scopes->requestScope($request));
+    }
+
+    /** 带预占令牌新建时以预占号为准，不再另取新号（另取会与预占号不一致导致创建失败并跳号）。 */
+    private function reservedDocumentNo(array $payload, string $documentType, ?int $operatorId): string
+    {
+        return app(DocumentNumberService::class)->reservedNumber((string) $payload['reservation_token'], $documentType, $operatorId, $payload['creation_session_id'] ?? null);
     }
 
     private function nextNo(string $prefix): string

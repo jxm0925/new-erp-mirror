@@ -223,3 +223,12 @@ export function statusTag(value) {
 export function shipmentStatusText(value) {
   return value === 'not_required' ? '无需发货' : statusText(value)
 }
+
+// 销售订单收齐款、全部发出后自动完结（order_status=closed），对外显示“已完成”。
+export function orderStatusText(value) {
+  return value === 'closed' ? '已完成' : statusText(value)
+}
+
+export function orderStatusTag(value) {
+  return value === 'closed' ? 'success' : statusTag(value)
+}

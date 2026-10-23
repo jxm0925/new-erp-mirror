@@ -320,7 +320,10 @@ class SalesShipmentApplicationService
     {
         $location = \App\Models\Erp\Location::query()->whereKey($id)->where('location_purpose', $purpose)
             ->whereIn('status', ['enabled', 'active'])->whereHas('warehouse', fn ($q) => $q->whereIn('status', ['enabled', 'active']))->first();
-        if (! $location) throw ValidationException::withMessages(['location_id' => '请选择已启用、用途正确的正式库位。']);
+        if (! $location) {
+            $label = ['repair' => '返修区', 'finished' => '成品', 'shipping_staging' => '发货待发区'][$purpose] ?? $purpose;
+            throw ValidationException::withMessages(['location_id' => "所选库位不是已启用的{$label}库位，请重新选择{$label}用途的库位。"]);
+        }
         return $location;
     }
 
@@ -381,6 +384,7 @@ class SalesShipmentApplicationService
         foreach ($order->lines as $line) $line->update(['shipped_qty' => $shippedByLine[$line->id] ?? 0]);
         $order->update(['shipment_status' => SalesOrderFulfillmentPolicy::shipmentStatus($order->lines->map(fn ($line) => $line->getAttributes())->all())]);
         $this->actualCosts->refresh($orderId);
+        app(SalesOrderCompletionService::class)->refresh($order);
     }
 
     private function log(SalesShipment $shipment, string $action, ?string $before, ?string $after, string $operator, string $content): void

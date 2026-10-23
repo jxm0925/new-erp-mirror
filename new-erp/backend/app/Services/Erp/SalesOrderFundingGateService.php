@@ -80,6 +80,7 @@ final class SalesOrderFundingGateService
             'shipment_funding_status' => $status['shipment_funding_status'],
             'final_receivable_amount' => $status['contract_amount'],
         ]);
+        app(SalesOrderCompletionService::class)->refresh($order);
         return $status;
     }
 

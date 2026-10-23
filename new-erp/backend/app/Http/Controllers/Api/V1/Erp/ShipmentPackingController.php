@@ -245,6 +245,9 @@ class ShipmentPackingController extends Controller
         $query->where(fn ($q) => $q->where(fn ($ready) => $ready->where('status', 'READY')->whereNull('owner_legacy_id'))
             ->orWhereHas('participants', fn ($p) => $p->where('employee_legacy_id', $actor->legacy_id))
             ->orWhere('inspected_by_legacy_id', $actor->legacy_id)
+            // 按台试水的判定人记在逐台结果上；工序完成后质检员仍可回看自己判定过的工序。
+            ->orWhereExists(fn ($inspected) => $inspected->selectRaw('1')->from('erp_shipment_serial_results as inspected')
+                ->whereColumn('inspected.operation_id', 'erp_shipment_packing_operations.id')->where('inspected.inspected_by_legacy_id', $actor->legacy_id))
             ->when(in_array('sales_order.shipment.packing.quality', $auth->permissionCodes($actor), true), fn ($quality) => $quality->orWhere('status', 'WAIT_QUALITY')
                 ->orWhereExists(fn ($pending) => $pending->selectRaw('1')->from('erp_shipment_serial_results as result')
                     ->join('erp_sales_shipment_lines as line', 'line.id', '=', 'result.shipment_line_id')

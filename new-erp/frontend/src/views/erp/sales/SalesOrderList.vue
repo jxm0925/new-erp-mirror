@@ -42,7 +42,7 @@ Design status: 按“基础档案”页面风格重做（页头卡片 / 提示�
           <el-select v-model="query.order_status" clearable size="small" placeholder="订单状态" class="filter-select">
             <el-option label="草稿" value="draft" />
             <el-option label="已确认" value="confirmed" />
-            <el-option label="已关闭" value="closed" />
+            <el-option label="已完成" value="closed" />
             <el-option label="已取消" value="cancelled" />
           </el-select>
           <el-select v-model="query.fulfillment_status" clearable size="small" placeholder="交付状态" class="filter-select">
@@ -88,7 +88,7 @@ Design status: 按“基础档案”页面风格重做（页头卡片 / 提示�
             <template slot-scope="{row}">¥{{ money(row.total_amount) }}</template>
           </el-table-column>
           <el-table-column label="订单状态" width="88">
-            <template slot-scope="{row}"><el-tag size="mini" :type="statusTag(row.order_status)">{{ statusText(row.order_status) }}</el-tag></template>
+            <template slot-scope="{row}"><el-tag size="mini" :type="orderStatusTag(row.order_status)">{{ orderStatusText(row.order_status) }}</el-tag></template>
           </el-table-column>
           <el-table-column label="订单阶段" width="150">
             <template slot-scope="{row}">
@@ -184,7 +184,7 @@ Design status: 按“基础档案”页面风格重做（页头卡片 / 提示�
 
 <script>
 import { confirmSalesOrder, deleteSalesOrderDraft, listSalesOrders } from '@/api/erp/sales'
-import { statusTag, statusText, shipmentStatusText } from '@/utils/erpStatus'
+import { statusTag, statusText, shipmentStatusText, orderStatusText, orderStatusTag } from '@/utils/erpStatus'
 
 const TABS = [
   { label: '全部', value: '', countKey: 'all' },
@@ -276,7 +276,7 @@ export default {
       const actions = row.allowed_actions || {}
       if (row.order_status === 'draft') return { label: '草稿', type: 'info', hint: '可随意修改' }
       if (row.order_status === 'cancelled') return { label: '已取消', type: 'danger', hint: '' }
-      if (row.order_status === 'closed') return { label: '已关闭', type: 'info', hint: '' }
+      if (row.order_status === 'closed') return { label: '已完成', type: 'success', hint: '已收齐款并全部发出' }
       if (row.order_status !== 'confirmed') return { label: statusText(row.order_status), type: 'info', hint: '' }
       if (actions.production_released) return { label: '工单已发布', type: 'warning', hint: '修改需审核' }
       if (['pending', 'blocked'].includes(row.production_confirm_status)) return { label: '核实期', type: 'success', hint: '待生产确认，可直接修改' }
@@ -335,6 +335,8 @@ export default {
       return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     },
     statusText,
+    orderStatusText,
+    orderStatusTag,
     statusTag,
     shipmentStatusText,
     productionText(value) { return ({ pending: '待生产确认', blocked: '受阻', confirmed: '已确认', not_required: '无需确认' })[value] || value || '-' },

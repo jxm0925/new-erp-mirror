@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\Validator;
 /** Local accounts, roles and departments share the existing business identity. */
 class SystemAdministrationApplicationService
 {
+    private const SALES_ROLE_CODES = ['sales_user', 'sales_manager'];
+
     public function __construct(private readonly RbacUserRoleOwnershipService $ownership, private readonly AuthContextService $auth)
     {
     }
@@ -98,6 +100,7 @@ class SystemAdministrationApplicationService
             }
             $this->replaceManualRoles($id, $selectedRoles->pluck('id')->map(fn ($v) => (int) $v)->all());
             $this->refreshPrincipalRole($id);
+            $this->refreshSalesFlag($id);
             if ($existing && $this->auth->isSuperAdmin($existing) && ! $this->auth->isSuperAdmin(DB::table('erp_legacy_admin_users')->where('legacy_id', $id)->first())) {
                 $this->assertRemainingAdministrator();
             }
@@ -254,6 +257,7 @@ class SystemAdministrationApplicationService
                 if ($role->code === 'admin') $this->assertRemainingAdministrator();
             }
             foreach ($added as $userId) $this->ownership->addManualRole((int) $userId, $roleId);
+            if (in_array($role->code, self::SALES_ROLE_CODES, true)) foreach (array_unique(array_merge($added, $removed)) as $userId) $this->refreshSalesFlag((int) $userId);
             DB::table('erp_legacy_admin_users')->whereIn('legacy_id', array_unique(array_merge($added, $removed)))
                 ->increment('business_version', 1, ['updated_at' => now()]);
             DB::table('erp_rbac_roles')->where('id', $roleId)->update(['business_version' => $role->business_version + 1, 'updated_at' => now()]);
@@ -483,9 +487,22 @@ class SystemAdministrationApplicationService
         DB::table('erp_legacy_admin_users')->where('legacy_id', $userId)->update([
             'department_ids' => $this->json($rows->pluck('legacy_id')->map(fn ($v) => (int) $v)->all()),
             'department_names' => $this->json($rows->pluck('name')->all()),
-            'is_sales' => $rows->contains(fn ($row) => str_contains($row->name, '销售')),
             'business_version' => DB::raw('business_version + 1'), 'updated_at' => now(),
         ]);
+        $this->refreshSalesFlag($userId);
+    }
+
+    /**
+     * 业务员标记（订单负责人候选、按业务员看单）：持有销售角色即算业务员；
+     * 部门名含“销售”的兼容旧数据口径继续保留。
+     */
+    private function refreshSalesFlag(int $userId): void
+    {
+        $byDepartment = DB::table('erp_department_users as du')->join('erp_departments as d', 'd.legacy_id', '=', 'du.department_legacy_id')
+            ->where('du.user_legacy_id', $userId)->whereNull('d.deleted_at')->where('d.name', 'like', '%销售%')->exists();
+        $byRole = DB::table('erp_rbac_user_roles as ur')->join('erp_rbac_roles as r', 'r.id', '=', 'ur.role_id')
+            ->where('ur.user_legacy_id', $userId)->whereIn('r.code', self::SALES_ROLE_CODES)->exists();
+        DB::table('erp_legacy_admin_users')->where('legacy_id', $userId)->update(['is_sales' => $byDepartment || $byRole]);
     }
 
     private function roleSnapshot(int $id): array

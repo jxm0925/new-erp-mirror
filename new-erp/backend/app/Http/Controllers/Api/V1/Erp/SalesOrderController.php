@@ -233,10 +233,11 @@ class SalesOrderController extends Controller
         $result = $service->precheckConfirmation($order);
         if (!$result['passed']) {
             $result['message'] = '确认前检查未通过，请按下列提示处理后重新确认。';
+            // 检查未通过属于业务校验失败，返回 422；data.checks 保留逐项结果供页面展示。
             return response()->json([
                 'message' => $result['message'],
                 'data' => $result,
-            ]);
+            ], 422);
         }
 
         if ($order->confirm_status !== 'pending_confirmation') {
@@ -441,7 +442,7 @@ class SalesOrderController extends Controller
             'pending_production' => $base()->where('order_status', 'confirmed')->whereIn('production_confirm_status', ['pending', 'blocked'])->count(),
             'pending' => $base()->where('order_status', 'confirmed')->where('fulfillment_status', 'pending')->count(),
             'partial' => $base()->where('order_status', 'confirmed')->where('fulfillment_status', 'partial')->count(),
-            'fulfilled' => $base()->where('order_status', 'confirmed')->where('fulfillment_status', 'fulfilled')->count(),
+            'fulfilled' => $base()->whereIn('order_status', ['confirmed', 'closed'])->where('fulfillment_status', 'fulfilled')->count(),
         ];
     }
 
@@ -1857,6 +1858,7 @@ class SalesOrderController extends Controller
         $order->update([
             'total_qty' => $totals->qty,
             'total_amount' => (float) $totals->amount + (float) $order->freight_amount,
+            'base_total_amount' => round(((float) $totals->amount + (float) $order->freight_amount) * (float) ($order->business_exchange_rate ?: 1), 4),
         ]);
     }
 

@@ -5,7 +5,11 @@ export const getSalesOrder = (id, params) => api.get(`/v1/erp/sales/orders/${id}
 export const saveSalesOrder = data => data.id
   ? api.put(`/v1/erp/sales/orders/${data.id}`, data)
   : api.post('/v1/erp/sales/orders', data)
-export const confirmSalesOrder = id => api.post(`/v1/erp/sales/orders/${id}/confirm`)
+// 确认前检查未通过时服务端返回 422 + 逐项检查结果；这里按正常结果交给页面展示阻塞项。
+export const confirmSalesOrder = id => api.post(`/v1/erp/sales/orders/${id}/confirm`).catch(error => {
+  if (error.response && error.response.status === 422 && error.response.data && error.response.data.data && Array.isArray(error.response.data.data.checks)) return error.response
+  throw error
+})
 export const formalConfirmSalesOrder = id => api.post(`/v1/erp/sales/orders/${id}/formal-confirm`)
 export const cancelSalesOrder = (id, data) => api.post(`/v1/erp/sales/orders/${id}/cancel`, data)
 export const listSalesCustomers = params => api.get('/v1/erp/sales/customers', { params })

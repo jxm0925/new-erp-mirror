@@ -86,6 +86,6 @@ SQL;
 
     public const DECLARED_CHECKS = [
         'mfg_wo_status_chk' => "(`status` IN ('planned', 'released', 'in_progress', 'paused', 'completed', 'closed', 'cancelled'))",
-        'mfg_wo_source_chk' => "(`source_type` IN ('sales_order', 'stock'))",
+        'mfg_wo_source_chk' => "(`source_type` IN ('sales_order', 'stock', 'work_order'))",
     ];
 };

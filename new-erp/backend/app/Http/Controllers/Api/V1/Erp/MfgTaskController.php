@@ -122,6 +122,7 @@ class MfgTaskController extends Controller
         $data = $request->validate(['unit_ids' => 'required|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1']);
         $result = $tasks->pass($id, $data['unit_ids'], $user);
         if ($result['next_operation_name']) return $result['passed'].' 台合格，已交'.$result['next_operation_name'].'。';
+        if (($result['repaired'] ?? 0) > 0 && $result['repaired'] === $result['passed']) return $result['passed'].' 台返修合格，请仓库在发货单上把设备返回成品位后重新试水。';
         return $result['passed'].' 台合格，生产完成，'.($result['staged_qty'] ? '已自动记入成品待发区（'.$result['staged_receipt_no'].'），等发货试水。' : '等入库。');
     }
 

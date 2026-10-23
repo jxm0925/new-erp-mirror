@@ -11,7 +11,7 @@ Design status: 新增“订单阶段提示条”（基础档案风格），其�
         <div class="title-row">
           <h1 class="order-no-title">{{ order.sales_order_no || '-' }}</h1>
           <div class="header-tags">
-            <el-tag size="small" :type="statusTag(order.order_status)" effect="light">{{ statusText(order.order_status) }}</el-tag>
+            <el-tag size="small" :type="orderStatusTag(order.order_status)" effect="light">{{ orderStatusText(order.order_status) }}</el-tag>
             <el-tag size="small" :type="fulfillmentStatusTag(order.fulfillment_status)" effect="plain">
               {{ fulfillmentStatusText(order.fulfillment_status) }}
             </el-tag>
@@ -540,7 +540,7 @@ import cachedPageRoute from '@/utils/cachedPageRoute'
 import { confirmSalesOrder, formalConfirmSalesOrder, cancelSalesOrder, deleteSalesOrderAttachment, deleteSalesOrderDraft, downloadSalesOrderAttachment, getSalesOrder, listSalesOrderChanges, lockSalesOrderInventory } from '@/api/erp/sales'
 import SalesOrderAttachmentPreviewDialog from '@/components/sales/SalesOrderAttachmentPreviewDialog.vue'
 import SalesOrderFinancePanel from '@/components/sales/SalesOrderFinancePanel.vue'
-import { statusTag, statusText, shipmentStatusText } from '@/utils/erpStatus'
+import { statusTag, statusText, shipmentStatusText, orderStatusText, orderStatusTag } from '@/utils/erpStatus'
 import { listSalesOrderWorkOrders } from '@/api/erp/production'
 
 export default {
@@ -839,6 +839,8 @@ export default {
       return v.name || v.bom_name || v.version || '已锁定'
     },
     statusText,
+    orderStatusText,
+    orderStatusTag,
     statusTag,
     shipmentStatusText,
     fulfillmentStatusText(value) { return ({ pending: '待交付', partial: '部分交付', fulfilled: '已交付', cancelled: '已取消' })[value] || value || '-' },

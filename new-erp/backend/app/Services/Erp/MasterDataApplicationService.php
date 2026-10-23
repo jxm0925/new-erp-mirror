@@ -29,6 +29,11 @@ class MasterDataApplicationService
             if ($entity === 'items') $this->assertManufacturingStrategy($data);
             $categoryIds = $data['category_ids'] ?? [];
             $reservationToken = $data['reservation_token'] ?? null;
+            if ($reservationToken) {
+                // 带预占令牌时编码以预占号为准，避免与预占号不一致而创建失败、跳号。
+                [$documentType, $codeField] = $this->numberConfig($entity);
+                $data[$codeField] = $this->numbers->reservedNumber($reservationToken, $documentType, $operatorLegacyId, $data['creation_session_id'] ?? null);
+            }
             unset($data['category_ids'], $data['reservation_token'], $data['creation_session_id']);
 
             /** @var Model $record */

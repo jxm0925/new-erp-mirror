@@ -13,8 +13,98 @@ class RbacBootstrapService
             $this->syncDepartments(true);
         }
         $created = $this->seedPermissions($force);
+        // 全新安装（种子只建目录、整库还没有任何授权）时内置角色按默认矩阵初始化一次；已有授权的库绝不重置。
+        $freshInstall = Schema::hasTable('erp_rbac_role_permissions') && ! DB::table('erp_rbac_role_permissions')->exists();
         $this->seedRoles($force, $created !== []);
         if ($created) $this->grantNewPermissionDefaults($created);
+        if ($freshInstall) $this->initializeBuiltinRoleDefaults();
+        $this->ensureShipmentPackingExecutors();
+    }
+
+    /** 内置角色默认权限：精确码或“前缀.*”；授予按钮时自动带上各级父菜单。 */
+    private const BUILTIN_ROLE_DEFAULTS = [
+        'sales_manager' => [
+            'sales.*', 'sales_order.*', 'sales_return.*', 'master.product.view', 'master.sku.view', 'master.item.view',
+            'master.sku_item_relation.view', 'finance.receipt.view', 'approval.todo', 'approval.task.view', 'approval.task.decide', 'approval.processed',
+        ],
+        'sales_user' => [
+            'sales.customer.view', 'sales.customer.create', 'sales.customer.edit', 'sales_order.view', 'sales_order.amount.view',
+            'sales_order.create', 'sales_order.edit_draft', 'sales_order.delete_draft', 'sales_order.submit_confirmation',
+            'sales_order.inventory_lock', 'sales_order.change', 'sales_order.change.submit', 'sales_order.upload_attachment',
+            'sales_order.view_attachment', 'sales_order.delete_attachment', 'sales_order.shipment.view', 'sales_order.shipment.packing.view',
+            'sales_return.view', 'sales_return.create', 'master.product.view', 'master.sku.view', 'approval.todo', 'approval.task.view', 'approval.processed',
+        ],
+        'department_principal' => ['approval.todo', 'approval.task.view', 'approval.task.decide', 'approval.processed', 'sales_order.view'],
+        'finance_manager' => [
+            'finance.*', 'sales.customer.view', 'sales_order.view', 'sales_order.amount.view', 'sales_order.change.approve_finance',
+            'master.supplier.view', 'purchase.order.view', 'purchase.receipt.view', 'purchase_return.view',
+            'approval.todo', 'approval.task.view', 'approval.task.decide', 'approval.processed',
+        ],
+        'fulfillment_manager' => [
+            'sales_order.view', 'sales_order.production_confirm', 'sales_order.change.approve_fulfillment', 'sales_order.shipment.*',
+            'sales_return.view', 'sales_return.receive', 'inventory.balance.view', 'production.work_order.view',
+            'approval.todo', 'approval.task.view', 'approval.task.decide', 'approval.processed',
+        ],
+        'purchaser' => [
+            'purchase.*', 'purchase_return.*', 'master.supplier.*', 'supplier_capability.edit', 'supplier_quotation.edit',
+            'master.item.view', 'inventory.balance.view', 'approval.todo', 'approval.task.view', 'approval.processed',
+        ],
+        'warehouse_manager' => [
+            'purchase.receipt.view', 'purchase.receipt.create', 'purchase.receipt.confirm', 'purchase.quality.view', 'purchase.quality.handle',
+            'purchase_return.view', 'purchase_return.post', 'sales_order.shipment.view', 'sales_order.shipment.post', 'sales_order.shipment.dispatch',
+            'sales_order.shipment.packing.view', 'sales_return.view', 'sales_return.receive', 'sales_return.post',
+        ],
+    ];
+
+    private function initializeBuiltinRoleDefaults(): void
+    {
+        $adminRoleId = DB::table('erp_rbac_roles')->where('code', 'admin')->value('id');
+        if ($adminRoleId) {
+            DB::table('erp_rbac_role_permissions')->insertOrIgnore(DB::table('erp_rbac_permissions')->pluck('id')
+                ->map(fn ($id) => ['role_id' => $adminRoleId, 'permission_id' => $id])->all());
+        }
+        $this->ensureProductionRolePermissions();
+        $this->ensureSalesInventoryLockPermission();
+        $this->ensureSalesAttachmentPermissions();
+        $this->ensureWarehouseRolePermissions();
+        $permissions = DB::table('erp_rbac_permissions')->get(['id', 'code', 'parent_id']);
+        $byCode = $permissions->keyBy('code');
+        $byId = $permissions->keyBy('id');
+        foreach (self::BUILTIN_ROLE_DEFAULTS as $roleCode => $patterns) {
+            $roleId = DB::table('erp_rbac_roles')->where('code', $roleCode)->value('id');
+            if (! $roleId) continue;
+            $ids = [];
+            foreach ($patterns as $pattern) {
+                $matched = str_ends_with($pattern, '.*')
+                    ? $permissions->filter(fn ($p) => str_starts_with($p->code, substr($pattern, 0, -1)) || $p->code === substr($pattern, 0, -2))
+                    : collect([$byCode[$pattern] ?? null])->filter();
+                foreach ($matched as $permission) {
+                    for ($node = $permission; $node && ! isset($ids[$node->id]); $node = $byId[$node->parent_id] ?? null) $ids[$node->id] = true;
+                }
+            }
+            DB::table('erp_rbac_role_permissions')->insertOrIgnore(array_map(fn ($id) => ['role_id' => $roleId, 'permission_id' => $id], array_keys($ids)));
+        }
+    }
+
+    /** 发货试水/包装由车间执行：整库没有任何角色能执行包装工序时，补给生产操作员/生产管理员（含父菜单）。 */
+    private function ensureShipmentPackingExecutors(): void
+    {
+        $execute = DB::table('erp_rbac_permissions')->where('code', 'sales_order.shipment.packing.execute')->value('id');
+        if (! $execute) return;
+        $adminRoleId = DB::table('erp_rbac_roles')->where('code', 'admin')->value('id');
+        if (DB::table('erp_rbac_role_permissions')->where('permission_id', $execute)->where('role_id', '<>', (int) $adminRoleId)->exists()) return;
+        $grants = [
+            'production_operator' => ['sales_order.shipment.packing.execute', 'sales_order.shipment.packing.quality'],
+            'production_manager' => ['sales_order.shipment.packing.view', 'sales_order.shipment.packing.execute', 'sales_order.shipment.packing.quality'],
+        ];
+        $permissionIds = DB::table('erp_rbac_permissions')->whereIn('code', array_merge(...array_values($grants)))->pluck('id', 'code');
+        foreach ($grants as $roleCode => $codes) {
+            $roleId = DB::table('erp_rbac_roles')->where('code', $roleCode)->value('id');
+            if (! $roleId) continue;
+            foreach ($codes as $code) {
+                if (isset($permissionIds[$code])) DB::table('erp_rbac_role_permissions')->insertOrIgnore(['role_id' => $roleId, 'permission_id' => $permissionIds[$code]]);
+            }
+        }
     }
 
     /**

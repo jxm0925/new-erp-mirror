@@ -52,6 +52,9 @@ class ApprovalExpressionEngine
 
     public function validate(array $expression, array $allowedFields, array $fieldTypes = []): array
     {
+        // 与 matches() 口径一致：空条件视为无条件；条件列表按 AND 组校验。
+        if ($expression === []) return [];
+        if (array_is_list($expression)) $expression = ['logic' => 'AND', 'children' => $expression];
         $errors = [];
         $walk = function (array $node, string $path) use (&$walk, &$errors, $allowedFields, $fieldTypes) {
             if (isset($node['children'])) {
