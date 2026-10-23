@@ -46,7 +46,7 @@
           </el-form-item>
           <div class="grid-4" v-if="type==='request'">
             <el-form-item label="需求单号">
-              <el-input v-model="form.request_no" disabled placeholder="系统预占生成">
+              <el-input v-model="form.request_no" disabled class="erp-system-number" placeholder="系统预占生成">
                 <template slot="append">系统预占</template>
               </el-input>
             </el-form-item>
@@ -76,7 +76,7 @@
           </div>
           <div class="grid-4" v-if="type==='plan'">
             <el-form-item label="计划单号">
-              <el-input v-model="form.plan_no" disabled placeholder="系统预占生成">
+              <el-input v-model="form.plan_no" disabled class="erp-system-number" placeholder="系统预占生成">
                 <template slot="append">系统预占</template>
               </el-input>
             </el-form-item>
@@ -96,7 +96,7 @@
             </el-form-item>
           </div>
           <div class="grid-3" v-if="type==='order'">
-            <el-form-item label="采购订单号"><el-input v-model="form.purchase_order_no" disabled placeholder="系统预占生成"><template slot="append">系统预占</template></el-input></el-form-item>
+            <el-form-item label="采购订单号"><el-input v-model="form.purchase_order_no" disabled class="erp-system-number" placeholder="系统预占生成"><template slot="append">系统预占</template></el-input></el-form-item>
             <el-form-item label="供应商" prop="supplier_id"><el-select v-model="form.supplier_id" :disabled="type==='order' && Boolean(form.plan_id)" filterable placeholder="请选择供应商" style="width: 100%"><el-option v-for="s in validSuppliers" :key="s.id" :label="`${s.supplier_code} / ${s.supplier_name}`" :value="s.id" /></el-select></el-form-item>
             <el-form-item label="订单日期" prop="order_date"><el-date-picker v-model="form.order_date" value-format="yyyy-MM-dd" style="width: 100%" /></el-form-item>
             <el-form-item label="预计到货" prop="expected_arrival_date"><el-date-picker v-model="form.expected_arrival_date" value-format="yyyy-MM-dd" placeholder="提交审核前必填" style="width: 100%" /></el-form-item>
@@ -107,7 +107,7 @@
             <el-form-item label="运费"><el-input-number v-model="form.freight_amount" :min="0" style="width: 100%" /></el-form-item>
           </div>
           <div class="grid-3" v-if="type==='receipt'">
-            <el-form-item label="到货单号"><el-input v-model="form.receipt_no" disabled placeholder="系统预占生成"><template slot="append">系统预占</template></el-input></el-form-item>
+            <el-form-item label="到货单号"><el-input v-model="form.receipt_no" disabled class="erp-system-number" placeholder="系统预占生成"><template slot="append">系统预占</template></el-input></el-form-item>
             <el-form-item label="供应商" prop="supplier_id"><el-select v-model="form.supplier_id" filterable placeholder="请选择供应商" style="width: 100%"><el-option v-for="s in validSuppliers" :key="s.id" :label="`${s.supplier_code} / ${s.supplier_name}`" :value="s.id" /></el-select></el-form-item>
             <el-form-item label="到货日期" prop="receipt_date"><el-date-picker v-model="form.receipt_date" value-format="yyyy-MM-dd" style="width: 100%" /></el-form-item>
             <el-form-item label="确认状态"><el-tag size="small" type="info">草稿</el-tag></el-form-item>

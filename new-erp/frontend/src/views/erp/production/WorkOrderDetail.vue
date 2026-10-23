@@ -520,12 +520,12 @@
 
         <!-- 右侧侧边栏 -->
         <aside class="side-column">
-          <!-- 卡片 6：定制技术与图纸 -->
+          <!-- 卡片 6：定制工艺与图纸 -->
           <section v-if="wo.tech" class="detail-card">
             <div class="card-header">
               <div class="header-title">
                 <i class="el-icon-picture-outline" />
-                <h2>技术图纸与定制要求</h2>
+                <h2>工艺图纸与定制要求</h2>
               </div>
               <el-tag size="mini" :type="wo.tech.status === 'pending' ? 'warning' : 'success'" effect="plain">
                 {{ wo.tech.status_label || wo.tech.status }}
@@ -534,11 +534,11 @@
 
             <div class="spec-kv-list">
               <div class="spec-kv-row">
-                <span class="kv-label">技术负责人</span>
-                <span class="kv-val font-medium">{{ wo.tech.tech_owner_name || '待技术认领' }}</span>
+                <span class="kv-label">工艺负责人</span>
+                <span class="kv-val font-medium">{{ wo.tech.tech_owner_name || '待工艺认领' }}</span>
               </div>
               <div v-if="wo.tech.released_at" class="spec-kv-row">
-                <span class="kv-label">图纸下发时间</span>
+                <span class="kv-label">工艺图纸下发时间</span>
                 <span class="kv-val code-mono">{{ wo.tech.released_at.slice(5, 16) }}</span>
               </div>
               <div v-if="wo.tech.drawings_updated_at" class="alert-notice-box">
@@ -564,9 +564,9 @@
                 </span>
               </div>
               <div v-if="$can(['production.tech', 'production.tech.manage'])" class="spec-kv-row">
-                <span class="kv-label">技术工作台</span>
+                <span class="kv-label">工艺工作台</span>
                 <span class="kv-val">
-                  <a class="action-link-theme" @click="$router.push(`/production/tech/${wo.id}`)">前往定制技术中心 →</a>
+                  <a class="action-link-theme" @click="$router.push(`/production/tech/${wo.id}`)">前往定制工艺中心 →</a>
                 </span>
               </div>
             </div>

@@ -408,8 +408,8 @@
         <section class="matrix-block">
           <h5>生成规则</h5>
           <el-form label-width="90px" size="small" class="matrix-rules-form" inline>
-            <el-form-item label="编码前缀">
-              <el-input v-model="skuMatrix.codePrefix" placeholder="如 SKU" style="width: 160px;" />
+            <el-form-item label="SKU编码">
+              <el-input value="按编号规则生成" disabled class="erp-system-number" style="width: 160px;" />
             </el-form-item>
             <el-form-item label="默认售价">
               <el-input-number v-model="skuMatrix.sale_price" :min="0" :precision="2" controls-position="right" style="width: 140px;" />
@@ -450,7 +450,7 @@
 import { erpDateTime } from '../../../utils/dateTime'
 import { saveProductSkuMatrix } from '../../../api/erp/master'
 import { listEntity, saveEntity, disableEntity, enableEntity, deleteEntity } from '../../../api/erp/master'
-import { reserveFreshDocumentNumber } from '../../../utils/documentNumberReservation'
+import { reserveForCreatePage, clearCreatePageReservation } from '../../../utils/documentNumberReservation'
 
 export default {
   name: 'ProductList',
@@ -469,7 +469,7 @@ export default {
       filters: { keyword: '', category_id: '', status: '', page: 1, per_page: 10 },
       total: 0,
       stats: {},
-      skuMatrix: { codePrefix: '', sale_price: 0, status: 'enabled', dimensions: [] }
+      skuMatrix: { sale_price: 0, status: 'enabled', dimensions: [] }
     }
   },
   computed: {
@@ -495,22 +495,17 @@ export default {
         if (index >= dims.length) return [picked]
         return dims[index].values.flatMap(v => combine(index + 1, [...picked, { name: dims[index].name, value: v }]))
       }
-      const existedCodes = new Set(this.skuList(this.selectedProduct).map(s => String(s.sku_code || '').toUpperCase()))
       const existedSpecs = new Set(this.skuList(this.selectedProduct).map(s => this.normalSpec(s.spec_text || s.sku_name)))
-      const seenCodes = new Set()
       const seenSpecs = new Set()
-      return combine(0, []).map((combo, index) => {
+      return combine(0, []).map(combo => {
         const spec = combo.map(x => x.value).join(' / ')
-        const suffix = combo.map(x => this.shortSpec(x.value)).join('-') || String(index + 1).padStart(3, '0')
-        const code = `${this.skuMatrix.codePrefix}-${suffix}`.toUpperCase()
         const specKey = this.normalSpec(spec)
-        const duplicatedInPreview = seenCodes.has(code) || seenSpecs.has(specKey)
-        const exists = existedCodes.has(code) || existedSpecs.has(specKey)
-        seenCodes.add(code)
+        const duplicatedInPreview = seenSpecs.has(specKey)
+        const exists = existedSpecs.has(specKey)
         seenSpecs.add(specKey)
         return {
           product_id: this.selectedProduct.id,
-          sku_code: code,
+          sku_code: '按编号规则生成',
           sku_name: `${this.selectedProduct.product_name}-${spec}`,
           spec_model: spec,
           sale_price: this.skuMatrix.sale_price,
@@ -640,7 +635,6 @@ export default {
     openSkuMatrix(product) {
       this.selectedProduct = { ...product }
       this.skuMatrix = {
-        codePrefix: product.product_code || 'SKU',
         sale_price: null,
         status: 'draft',
         dimensions: [
@@ -675,13 +669,17 @@ export default {
       try {
         const productId = this.selectedProduct.id
         const matrix = []
+        const matrixReservations = []
         for (const row of creatableRows) {
-          const reservation = await reserveFreshDocumentNumber('sku', `/master/products/${productId}#sku-matrix`)
+          const page = `/master/products/${productId}#sku-matrix`
+          const reservation = await reserveForCreatePage('sku', page, `${page}:${this.normalSpec(row.spec_model)}`)
+          matrixReservations.push(reservation)
           matrix.push({ sku_name: row.sku_name, spec_text: row.spec_model, sale_price: row.sale_price,
             sku_code: reservation.document_no, reservation_token: reservation.reservation_token,
             creation_session_id: reservation.creation_session_id })
         }
         await saveProductSkuMatrix(productId, matrix)
+        matrixReservations.forEach(clearCreatePageReservation)
         this.$message.success(`已生成 ${creatableRows.length} 个 SKU，跳过 ${rows.length - creatableRows.length} 个已存在/重复项`)
         this.matrixDialogVisible = false
         await this.fetchAll()
@@ -692,10 +690,6 @@ export default {
       } finally {
         this.saving = false
       }
-    },
-    shortSpec(value) {
-      const map = { 黑: 'BLK', 白: 'WHT', 红: 'RED', 蓝: 'BLU', 绿: 'GRN', 黄: 'YLW' }
-      return map[value] || String(value).replace(/\s+/g, '').slice(0, 8)
     },
     normalSpec(value) {
       return String(value || '').replace(/\s+/g, '').toLowerCase()

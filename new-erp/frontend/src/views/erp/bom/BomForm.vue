@@ -86,7 +86,7 @@
             <div class="card-fields-grid-2">
               <div class="form-field-unit required">
                 <label class="field-label">BOM 编号</label>
-                <el-input v-model="form.bom_no" size="small" placeholder="系统自动预生成" disabled class="code-mono full-width">
+                <el-input v-model="form.bom_no" size="small" placeholder="系统自动预生成" disabled class="code-mono full-width erp-system-number">
                   <i slot="prefix" class="el-icon-lock input-lock-icon" />
                 </el-input>
               </div>

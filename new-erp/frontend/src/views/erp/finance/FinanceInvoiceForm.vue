@@ -28,7 +28,7 @@
           <h2>发票基本信息</h2>
 
           <el-form-item label="系统发票记录号">
-            <el-input :value="form.document_no ? `${form.document_no}（系统预生成）` : 'INV202508180001 (系统预生成)'" disabled class="disabled-input" />
+            <el-input :value="form.document_no" disabled class="disabled-input erp-system-number" placeholder="正在生成编号" />
           </el-form-item>
 
           <el-form-item label="发票号码" prop="invoice_no" required>

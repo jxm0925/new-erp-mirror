@@ -55,7 +55,7 @@ Do not change layout without approval.
           <div class="field-grid">
             <div class="field">
               <label>订单号</label>
-              <el-input :value="form.sales_order_no || '保存后系统生成'" size="small" disabled />
+              <el-input :value="form.sales_order_no || '保存后系统生成'" size="small" disabled class="erp-system-number" />
             </div>
             <div class="field">
               <label>原始单号</label>

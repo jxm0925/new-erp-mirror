@@ -116,6 +116,9 @@ import { statusText } from '@/utils/erpStatus'
 import { legacyMediaUrl } from '@/utils/legacyMedia'
 
 export default {
+  props: {
+    productOrderAvailable: { type: Boolean, default: true }
+  },
   data: () => ({
     visible: false,
     mode: 'product',
@@ -176,7 +179,8 @@ export default {
     },
     async load() {
       const requestToken = ++this.requestToken
-      const params = { ...this.query, order_available: 1 }
+      const params = { ...this.query }
+      if (this.mode !== 'product' || this.productOrderAvailable) params.order_available = 1
       if (this.mode !== 'product') {
         const { data } = await searchSalesOrderSkus({ ...params, product_id: this.mode === 'sku' ? this.productId : undefined })
         if (requestToken !== this.requestToken) return

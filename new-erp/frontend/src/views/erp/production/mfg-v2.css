@@ -28,8 +28,8 @@
 .chip { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 600; white-space: nowrap; line-height: 18px; }
 .c-b { background: #e8f0ff; color: #1f5bd6; } .c-p { background: #f1e9ff; color: #7a3fd1; } .c-g { background: #e6f7ef; color: #11804a; }
 .c-o { background: #fff1e0; color: #b25c00; } .c-n { background: #eef1f5; color: #5b6780; } .c-r { background: #ffe9e7; color: #c0261b; }
-.note { border-left: 3px solid #ffb020; background: #fffaf0; border-radius: 6px; padding: 9px 12px; font-size: 12px; line-height: 1.7; color: #5b4a1f; }
-.lk { color: #1f6feb; font-weight: 600; cursor: pointer; }
+.lk { color: #008b4b; font-weight: 600; cursor: pointer; text-decoration: none; }
+.lk:hover { color: #00763f; text-decoration: underline; }
 .kv { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid #f0f2f6; }
 .kv:last-child { border-bottom: 0; }
 .kv span { color: #5b6780; } .kv b { text-align: right; word-break: break-all; }

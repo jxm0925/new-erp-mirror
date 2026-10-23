@@ -1,70 +1,207 @@
 <template>
   <section class="production-page operation-page">
+    <!-- 顶部统一标头 (.page-head) -->
+    <header class="page-head">
+      <div class="head-left">
+        <span class="head-icon"><i class="el-icon-set-up" /></span>
+        <div class="head-title-wrap">
+          <div class="title-row">
+            <h1 class="page-title">工序管理</h1>
+            <el-tag size="small" type="success" effect="plain" class="head-tag">
+              共 {{ total }} 项
+            </el-tag>
+          </div>
+          <div class="sub-row">
+            维护工艺路线引用的标准工序主数据、作业准入人员资质及自动化派工规则
+          </div>
+        </div>
+      </div>
+      <div class="head-actions">
+        <el-button size="small" icon="el-icon-refresh" class="btn-refresh" :loading="loading" @click="load">
+          刷新
+        </el-button>
+        <el-button v-if="$can('production.operation.create')" size="small" type="success" icon="el-icon-plus" class="btn-theme-create" @click="openCreate">
+          新增工序
+        </el-button>
+      </div>
+    </header>
+
     <div class="operation-layout">
       <main class="operation-main" v-loading="loading">
-        <div class="page-heading">
-          <div><p class="eyebrow">生产管理 / 生产基础</p><h1>工序管理</h1><p>维护生产路线所引用的正式工序主数据</p></div>
-          <el-button v-if="$can('production.operation.create')" type="success" icon="el-icon-plus" @click="openCreate">新增工序</el-button>
-        </div>
-
+        <!-- 筛选工具栏 -->
         <section class="filter-card operation-filters">
-          <label><span>工序编码 / 名称</span><el-input v-model.trim="filters.keyword" clearable prefix-icon="el-icon-search" placeholder="请输入工序编码或名称" @keyup.enter.native="search" /></label>
-          <label><span>状态</span><el-select v-model="filters.status" clearable placeholder="全部"><el-option label="已启用" value="enabled"/><el-option label="已停用" value="disabled"/></el-select></label>
-          <label><span>引用状态</span><el-select v-model="filters.reference_status" clearable placeholder="全部"><el-option label="被生效路线引用" value="referenced"/><el-option label="未被生效路线引用" value="unreferenced"/></el-select></label>
-          <label><span>公共工序</span><el-select v-model="filters.is_public" clearable placeholder="全部"><el-option label="公共工序" value="1"/><el-option label="非公共工序" value="0"/></el-select></label>
-          <div class="filter-actions"><el-button type="success" @click="search">查询</el-button><el-button @click="reset">重置</el-button></div>
+          <label>
+            <span>工序编码 / 名称</span>
+            <el-input v-model.trim="filters.keyword" size="small" clearable prefix-icon="el-icon-search" placeholder="请输入工序编码或名称" @keyup.enter.native="search" />
+          </label>
+          <label>
+            <span>状态</span>
+            <el-select v-model="filters.status" size="small" clearable placeholder="全部状态">
+              <el-option label="已启用" value="enabled" />
+              <el-option label="已停用" value="disabled" />
+            </el-select>
+          </label>
+          <label>
+            <span>引用状态</span>
+            <el-select v-model="filters.reference_status" size="small" clearable placeholder="全部引用状态">
+              <el-option label="被生效路线引用" value="referenced" />
+              <el-option label="未被生效路线引用" value="unreferenced" />
+            </el-select>
+          </label>
+          <label>
+            <span>工序属性</span>
+            <el-select v-model="filters.is_public" size="small" clearable placeholder="全部属性">
+              <el-option label="公共工序" value="1" />
+              <el-option label="专用工序" value="0" />
+            </el-select>
+          </label>
+          <div class="filter-actions">
+            <el-button size="small" type="success" icon="el-icon-search" class="btn-theme-search" @click="search">查询</el-button>
+            <el-button size="small" icon="el-icon-refresh-right" class="btn-theme-reset" @click="reset">重置</el-button>
+          </div>
         </section>
 
+        <!-- 数据表格卡片 -->
         <section class="table-card operation-table-card">
           <el-table :data="rows" border highlight-current-row :row-class-name="rowClass" @row-click="selectRow">
-            <el-table-column prop="operation_no" label="工序编码" width="110"/>
-            <el-table-column prop="operation_name" label="工序名称" min-width="84"><template slot-scope="s"><span class="operation-name">{{ s.row.operation_name }}</span><el-tag v-if="booleanFlag(s.row.is_public)" size="mini" type="success" class="public-operation-tag">公共工序</el-tag></template></el-table-column>
-            <el-table-column label="状态" width="60"><template slot-scope="s"><el-tag size="mini" :type="s.row.status==='enabled'?'success':'info'">{{ s.row.status==='enabled'?'启用':'停用' }}</el-tag></template></el-table-column>
-            <el-table-column prop="sort" label="排序" width="48" align="center"/>
-            <el-table-column label="使用中的路线数量" width="92" align="center"><template slot-scope="s"><button class="reference-count" :class="{ active:Number(s.row.active_routing_count)>0 }" @click.stop="selectRow(s.row)">{{ Number(s.row.active_routing_count || 0) }}</button></template></el-table-column>
-            <el-table-column prop="description" label="说明" min-width="128"><template slot-scope="s"><span class="description-text">{{ s.row.description || '-' }}</span></template></el-table-column>
-            <el-table-column label="更新时间" width="104"><template slot-scope="s"><span class="date-text">{{ time(s.row.updated_at) }}</span></template></el-table-column>
-            <el-table-column label="操作" width="116"><template slot-scope="s"><span class="row-actions" @click.stop><el-button type="text" @click="selectRow(s.row)">查看</el-button><el-button v-if="$can('production.operation.edit')" type="text" @click="openEdit(s.row)">编辑</el-button><el-button v-if="$can('production.operation.toggle')" type="text" :class="s.row.status==='enabled'?'danger-link':'success-link'" @click="toggle(s.row)">{{ s.row.status==='enabled'?'停用':'启用' }}</el-button></span></template></el-table-column>
+            <el-table-column prop="operation_no" label="工序编码" min-width="120">
+              <template slot-scope="s">
+                <span class="mono-code">{{ s.row.operation_no }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column prop="operation_name" label="工序名称" min-width="130">
+              <template slot-scope="s">
+                <span class="operation-name">{{ s.row.operation_name }}</span>
+                <el-tag v-if="booleanFlag(s.row.is_public)" size="mini" type="success" effect="plain" class="public-operation-tag">公共工序</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="75" align="center">
+              <template slot-scope="s">
+                <el-tag size="mini" :type="s.row.status==='enabled'?'success':'info'">{{ s.row.status==='enabled'?'启用':'停用' }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="sort" label="排序" width="55" align="center" />
+            <el-table-column label="生效路线引用" width="115" align="center">
+              <template slot-scope="s">
+                <button class="reference-count" :class="{ active:Number(s.row.active_routing_count)>0 }" @click.stop="selectRow(s.row)">
+                  {{ Number(s.row.active_routing_count || 0) }} 条
+                </button>
+              </template>
+            </el-table-column>
+            <el-table-column prop="description" label="工序说明" min-width="150">
+              <template slot-scope="s">
+                <span class="description-text">{{ s.row.description || '-' }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="更新时间" width="135">
+              <template slot-scope="s">
+                <span class="date-text">{{ time(s.row.updated_at) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="140" align="center" fixed="right">
+              <template slot-scope="s">
+                <span class="row-actions" @click.stop>
+                  <el-button type="text" @click="selectRow(s.row)">查看</el-button>
+                  <el-button v-if="$can('production.operation.edit')" type="text" @click="openEdit(s.row)">编辑</el-button>
+                  <el-button v-if="$can('production.operation.toggle')" type="text" :class="s.row.status==='enabled'?'danger-link':'success-link'" @click="toggle(s.row)">
+                    {{ s.row.status==='enabled'?'停用':'启用' }}
+                  </el-button>
+                </span>
+              </template>
+            </el-table-column>
           </el-table>
-          <div class="table-footer"><span>共 {{ total }} 条</span><el-pagination background layout="sizes, prev, pager, next" :current-page="page" :page-size="perPage" :page-sizes="[10,15,20]" :total="total" @current-change="changePage" @size-change="changePageSize"/></div>
+          <div class="table-footer">
+            <span>共 {{ total }} 条</span>
+            <el-pagination background layout="sizes, prev, pager, next" :current-page="page" :page-size="perPage" :page-sizes="[10,15,20]" :total="total" @current-change="changePage" @size-change="changePageSize" />
+          </div>
         </section>
       </main>
 
+      <!-- 右侧工序详情检查器 -->
       <aside class="operation-inspector" v-loading="detailLoading">
         <template v-if="selected">
-          <header><h2>工序详情</h2><el-button type="text" icon="el-icon-close" aria-label="关闭工序详情" @click="selected=null"/></header>
-          <dl class="operation-facts"><div><dt>工序编码</dt><dd>{{ selected.operation_no }}</dd></div><div><dt>工序名称</dt><dd>{{ selected.operation_name }}</dd></div><div><dt>状态</dt><dd><el-tag size="mini" :type="selected.status==='enabled'?'success':'info'">{{ selected.status==='enabled'?'启用':'停用' }}</el-tag></dd></div><div><dt>排序</dt><dd>{{ selected.sort }}</dd></div><div><dt>公共工序</dt><dd><el-tag size="mini" :type="booleanFlag(selected.is_public)?'success':'info'">{{ booleanFlag(selected.is_public)?'是':'否' }}</el-tag></dd></div><div><dt>效率优先派工</dt><dd>{{ booleanFlag(selected.auto_assignment_enabled)?'启用':'关闭' }}</dd></div><div><dt>使用中的路线数量</dt><dd>{{ selected.active_routing_count || 0 }}</dd></div><div class="wide"><dt>说明</dt><dd>{{ selected.description || '-' }}</dd></div><div><dt>更新时间</dt><dd>{{ time(selected.updated_at) }}</dd></div><div><dt>更新人</dt><dd>{{ selected.updated_by_legacy_id ? `用户 #${selected.updated_by_legacy_id}` : '-' }}</dd></div></dl>
-          <section class="routing-references"><h3>已生效路线引用</h3><p>该工序当前被以下已生效路线引用：</p><el-table :data="selected.active_routings || []" size="mini" border empty-text="当前没有已生效路线引用"><el-table-column prop="routing_no" label="路线编码" width="92"/><el-table-column prop="routing_name" label="路线名称" min-width="86"/><el-table-column label="版本" width="48"><template slot-scope="s">V{{ s.row.version }}</template></el-table-column><el-table-column label="产出物料" min-width="90"><template slot-scope="s">{{ s.row.output_item && (s.row.output_item.item_name || s.row.output_item.item_code) || '-' }}</template></el-table-column></el-table></section>
-          <section class="routing-references worker-section" v-loading="workersLoading"><h3>能做的人</h3><p>车间小程序里只有这些人能接、能报这道工序；没设则所有有报工权限的人都能做。</p><div class="worker-tags"><el-tag v-for="w in workers" :key="w.id" size="mini" type="success">{{ w.name }}</el-tag><span v-if="!workers.length" class="field-help">没设：所有有报工权限的人都能做</span></div><el-button v-if="$can('production.operation.edit')" size="mini" icon="el-icon-user" @click="openWorkers">设置能做的人</el-button></section>
-          <el-alert v-if="Number(selected.active_routing_count)>0 && selected.status==='enabled'" title="该工序正被已生效路线引用，暂不可停用" type="warning" :closable="false" show-icon/>
-          <div class="inspector-actions"><el-button @click="$router.push(`/production/operations/${selected.id}`)">查看</el-button><el-button v-if="$can('production.operation.edit')" type="primary" plain @click="openEdit(selected)">编辑</el-button><el-button v-if="$can('production.operation.toggle')" type="danger" plain :disabled="selected.status!=='enabled' || Number(selected.active_routing_count)>0" @click="toggle(selected)">停用</el-button><el-button v-if="$can('production.operation.toggle')" type="success" plain :disabled="selected.status==='enabled'" @click="toggle(selected)">启用</el-button></div>
+          <header class="inspector-header">
+            <div class="card-title">工序详情</div>
+            <el-button type="text" icon="el-icon-close" class="close-btn" aria-label="关闭工序详情" @click="selected=null" />
+          </header>
+          <dl class="operation-facts">
+            <div><dt>工序编码</dt><dd class="mono-code">{{ selected.operation_no }}</dd></div>
+            <div><dt>工序名称</dt><dd><b>{{ selected.operation_name }}</b></dd></div>
+            <div><dt>状态</dt><dd><el-tag size="mini" :type="selected.status==='enabled'?'success':'info'">{{ selected.status==='enabled'?'启用':'停用' }}</el-tag></dd></div>
+            <div><dt>排序</dt><dd>{{ selected.sort }}</dd></div>
+            <div><dt>工序属性</dt><dd><el-tag size="mini" :type="booleanFlag(selected.is_public)?'success':'info'">{{ booleanFlag(selected.is_public)?'公共工序':'专用工序' }}</el-tag></dd></div>
+            <div><dt>效率优先派工</dt><dd>{{ booleanFlag(selected.auto_assignment_enabled)?'已启用':'未启用' }}</dd></div>
+            <div><dt>生效路线引用</dt><dd>{{ selected.active_routing_count || 0 }} 条</dd></div>
+            <div><dt>更新人</dt><dd>{{ selected.updated_by_legacy_id ? `用户 #${selected.updated_by_legacy_id}` : '-' }}</dd></div>
+            <div class="wide"><dt>说明</dt><dd>{{ selected.description || '-' }}</dd></div>
+            <div class="wide"><dt>更新时间</dt><dd>{{ time(selected.updated_at) }}</dd></div>
+          </dl>
+
+          <section class="routing-references">
+            <div class="card-title sub">已生效路线引用</div>
+            <p class="section-desc">当前工序已被下列生效工艺路线所引用：</p>
+            <el-table :data="selected.active_routings || []" size="mini" border empty-text="当前没有已生效路线引用">
+              <el-table-column prop="routing_no" label="路线编码" width="96" />
+              <el-table-column prop="routing_name" label="路线名称" min-width="90" />
+              <el-table-column label="版本" width="50" align="center"><template slot-scope="s">V{{ s.row.version }}</template></el-table-column>
+              <el-table-column label="产出物料" min-width="100"><template slot-scope="s">{{ s.row.output_item && (s.row.output_item.item_name || s.row.output_item.item_code) || '-' }}</template></el-table-column>
+            </el-table>
+          </section>
+
+          <section class="routing-references worker-section" v-loading="workersLoading">
+            <div class="card-title sub">工序准入人员资质</div>
+            <p class="section-desc">仅具备本工序资质的人员可在移动端接单及报工；未配置时，具备车间作业权限的人员均可作业。</p>
+            <div class="worker-tags">
+              <el-tag v-for="w in workers" :key="w.id" size="small" type="success" effect="plain">{{ w.name }}</el-tag>
+              <span v-if="!workers.length" class="field-help">未配置准入人员（全部报工权限人员可作业）</span>
+            </div>
+            <el-button v-if="$can('production.operation.edit')" size="small" icon="el-icon-user" class="btn-workers" @click="openWorkers">配置准入人员</el-button>
+          </section>
+
+          <el-alert v-if="Number(selected.active_routing_count)>0 && selected.status==='enabled'" title="该工序正被已生效路线引用，暂不可停用" type="warning" :closable="false" show-icon />
+
+          <div class="inspector-actions">
+            <el-button size="small" @click="$router.push(`/production/operations/${selected.id}`)">查看详情</el-button>
+            <el-button v-if="$can('production.operation.edit')" size="small" type="success" plain @click="openEdit(selected)">编辑</el-button>
+            <el-button v-if="$can('production.operation.toggle')" size="small" type="danger" plain :disabled="selected.status!=='enabled' || Number(selected.active_routing_count)>0" @click="toggle(selected)">停用</el-button>
+            <el-button v-if="$can('production.operation.toggle')" size="small" type="success" plain :disabled="selected.status==='enabled'" @click="toggle(selected)">启用</el-button>
+          </div>
         </template>
-        <el-empty v-else description="选择一条工序查看详情" :image-size="72"/>
+        <el-empty v-else description="选择左侧工序查看详情" :image-size="72" />
       </aside>
     </div>
 
+    <!-- 新增 / 编辑工序弹窗 -->
     <el-dialog :title="dialogMode==='edit'?'编辑工序':'新增工序'" :visible.sync="createDialog" width="540px" custom-class="operation-create-dialog" :close-on-click-modal="false" :close-on-press-escape="!createSaving" :show-close="!createSaving" @close="closeCreate">
       <div v-loading="createLoading || createSaving" class="operation-create-body">
-        <el-form :key="createFormKey" ref="createForm" :model="createForm" :rules="createRules" label-position="top">
+        <el-form :key="createFormKey" ref="createForm" :model="createForm" :rules="createRules" label-position="top" size="small">
           <div class="operation-create-grid">
-            <el-form-item label="工序编码"><el-input v-model="createForm.operation_no" disabled /></el-form-item>
+            <el-form-item label="工序编码"><el-input v-model="createForm.operation_no" disabled class="erp-system-number" /></el-form-item>
             <el-form-item label="工序名称" prop="operation_name"><el-input v-model.trim="createForm.operation_name" maxlength="160" placeholder="请输入工序名称" /></el-form-item>
-            <el-form-item label="排序" prop="sort"><el-input-number v-model="createForm.sort" controls-position="right" :min="0" :max="999999" /><p class="field-help">数值越小越靠前</p></el-form-item>
+            <el-form-item label="排序" prop="sort"><el-input-number v-model="createForm.sort" controls-position="right" :min="0" :max="999999" /><p class="field-help">数值越小排在越前</p></el-form-item>
             <el-form-item label="状态" prop="status"><el-radio-group v-model="createForm.status" :disabled="statusRadioDisabled"><el-radio label="enabled">启用</el-radio><el-radio label="disabled">停用</el-radio></el-radio-group><p v-if="statusLockReason" class="field-help status-lock-help"><i class="el-icon-warning"/> {{ statusLockReason }}</p></el-form-item>
-            <el-form-item label="公共工序"><el-switch v-model="createForm.is_public" active-color="#008b4b" active-text="是" inactive-text="否" /><p class="field-help">工序只需建立一份，可被多条物料路线引用</p></el-form-item>
-            <el-form-item label="效率优先派工"><el-switch v-model="createForm.auto_assignment_enabled" active-color="#008b4b" active-text="启用" inactive-text="关闭" /><p class="field-help">按相同产品、工艺、数量的独立合格历史推荐，本人接受后接单。没有可比历史时保留手动接单。</p></el-form-item>
+            <el-form-item label="工序属性"><el-switch v-model="createForm.is_public" active-color="#008b4b" active-text="公共工序" inactive-text="专用工序" /><p class="field-help">公共工序可被多个产品的工艺路线共享引用</p></el-form-item>
+            <el-form-item label="效率优先派工"><el-switch v-model="createForm.auto_assignment_enabled" active-color="#008b4b" active-text="启用" inactive-text="关闭" /><p class="field-help">按相同产品、工艺合格记录智能推荐并派工</p></el-form-item>
           </div>
-          <el-form-item label="说明"><el-input v-model="createForm.description" type="textarea" :rows="3" maxlength="2000" show-word-limit placeholder="请输入说明（选填）" /></el-form-item>
+          <el-form-item label="工序说明"><el-input v-model="createForm.description" type="textarea" :rows="3" maxlength="2000" show-word-limit placeholder="请输入工序说明（选填）" /></el-form-item>
         </el-form>
       </div>
-      <template slot="footer"><el-button :disabled="createSaving" @click="createDialog=false">取消</el-button><el-button type="success" :loading="createSaving" :disabled="createLoading" @click="saveCreate">保存</el-button></template>
+      <template slot="footer">
+        <el-button :disabled="createSaving" @click="createDialog=false">取消</el-button>
+        <el-button type="success" :loading="createSaving" :disabled="createLoading" @click="saveCreate">保存</el-button>
+      </template>
     </el-dialog>
-    <el-dialog :title="`能做的人 · ${selected ? selected.operation_name : ''}`" :visible.sync="workerDialog" width="480px" :close-on-click-modal="false" append-to-body>
-      <p class="field-help worker-help">不选任何人 = 所有有报工权限的人都能做。选了之后，别人在小程序里看不到这道工序的任务。</p>
-      <el-select v-model="workerIds" multiple filterable remote :remote-method="searchWorkers" :loading="workerSearching" placeholder="搜姓名添加" class="worker-select" @focus="searchWorkers('')">
+
+    <!-- 配置准入人员弹窗 -->
+    <el-dialog :title="`工序准入人员资质 · ${selected ? selected.operation_name : ''}`" :visible.sync="workerDialog" width="480px" :close-on-click-modal="false" append-to-body>
+      <p class="field-help worker-help">说明：未指定人员时，所有具备生产报工权限的员工均可作业；指定后仅名单内人员可在移动端申领及报工。</p>
+      <el-select v-model="workerIds" multiple filterable remote :remote-method="searchWorkers" :loading="workerSearching" placeholder="输入姓名搜索添加人员" class="worker-select" @focus="searchWorkers('')">
         <el-option v-for="u in workerOptions" :key="u.id" :label="u.name" :value="u.id" />
       </el-select>
-      <template slot="footer"><el-button @click="workerDialog=false">取消</el-button><el-button type="success" :loading="workerSaving" @click="saveWorkers">保存</el-button></template>
+      <template slot="footer">
+        <el-button @click="workerDialog=false">取消</el-button>
+        <el-button type="success" :loading="workerSaving" @click="saveWorkers">保存</el-button>
+      </template>
     </el-dialog>
   </section>
 </template>
@@ -143,7 +280,7 @@ export default {
         const { data } = await saveOperationWorkers(this.selected.id, { employee_legacy_ids: this.workerIds })
         this.workers = data.data || []
         this.workerDialog = false
-        this.$message.success(data.message || '能做的人已保存')
+        this.$message.success(data.message || '工序准入人员资质已保存')
       } catch (error) { this.$message.error(error.userMessage || '保存失败') } finally { this.workerSaving = false }
     },
     search() { this.page = 1; this.load() },
@@ -245,40 +382,501 @@ export default {
 
 <style scoped src="./production-master.css"></style>
 <style scoped>
-.operation-page{padding:16px 18px}.operation-layout{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:10px;align-items:stretch}.operation-main,.operation-inspector{min-width:0;background:#fff;border:1px solid #e4e9ef;border-radius:5px}.operation-main{padding:17px 16px 12px}.operation-main .page-heading{align-items:center;margin-bottom:15px}.operation-main .page-heading h1{font-size:22px}.operation-filters{display:grid;grid-template-columns:minmax(190px,1.1fr) minmax(150px,.7fr) minmax(170px,.8fr) auto;gap:14px;align-items:end;padding:14px;margin-bottom:12px}.operation-filters label>span{display:block;margin-bottom:7px;color:#526276;font-size:12px;font-weight:600}.operation-filters .el-select{width:100%}.operation-filters .filter-actions{margin:0;white-space:nowrap}.operation-table-card{padding:0;border-radius:4px;overflow:hidden}.operation-table-card ::v-deep .el-table td{height:auto;padding:9px 0}.operation-table-card ::v-deep .el-table .cell{padding-left:8px;padding-right:8px;overflow-wrap:anywhere}.operation-table-card ::v-deep .selected-operation-row td{background:#f0faf4!important}.description-text,.date-text{display:block;white-space:normal;line-height:1.45}.reference-count{border:0;background:transparent;color:#607084;cursor:pointer}.reference-count.active{color:#008b4b;font-weight:700}.row-actions{display:flex;align-items:center;white-space:nowrap}.row-actions .el-button{margin-left:6px;padding-left:0;padding-right:0}.row-actions .el-button:first-child{margin-left:0}.danger-link{color:#e64b52}.success-link{color:#008b4b}.operation-table-card .table-footer{padding:12px 13px}.operation-inspector{display:flex;flex-direction:column;padding:0 16px 16px}.operation-inspector>header{display:flex;align-items:center;justify-content:space-between;height:56px;margin:0 -16px 12px;padding:0 16px;border-bottom:1px solid #e9edf1}.operation-inspector h2{margin:0;font-size:17px;color:#1d3048}.operation-facts{display:grid;grid-template-columns:1fr 1fr;gap:14px 20px;margin:0;padding:6px 0 18px;border-bottom:1px solid #e9edf1}.operation-facts div{min-width:0}.operation-facts .wide{grid-column:1/-1}.operation-facts dt{margin-bottom:5px;color:#8895a5;font-size:12px}.operation-facts dd{margin:0;color:#27384e;line-height:1.5;overflow-wrap:anywhere}.routing-references{margin-top:18px}.routing-references h3{margin:0 0 7px;font-size:14px;color:#1d3048}.routing-references>p{margin:0 0 10px;color:#7d8998;font-size:12px}.routing-references ::v-deep .el-table .cell{padding-left:7px;padding-right:7px;white-space:normal;line-height:1.35;overflow-wrap:anywhere}.operation-inspector .el-alert{margin-top:16px}.inspector-actions{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:auto;padding-top:18px}.inspector-actions .el-button{min-width:0;margin:0;padding-left:4px;padding-right:4px}
-.operation-create-body{min-height:0}.operation-create-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}.operation-create-grid .el-input-number{width:100%}.field-help{margin:6px 0 0;color:#8a96a6;font-size:12px;line-height:1.3}.operation-page ::v-deep .operation-create-dialog{top:50%;margin:0 auto!important;transform:translateY(-50%);border-radius:5px}.operation-page ::v-deep .operation-create-dialog .el-dialog__header{padding:18px 26px 13px;border-bottom:1px solid #e9edf1}.operation-page ::v-deep .operation-create-dialog .el-dialog__title{font-size:18px;font-weight:600;color:#1d3048}.operation-page ::v-deep .operation-create-dialog .el-dialog__body{padding:16px 26px 6px}.operation-page ::v-deep .operation-create-dialog .el-dialog__footer{padding:13px 26px 18px;border-top:1px solid #edf0f3}.operation-page ::v-deep .operation-create-dialog .el-form-item{margin-bottom:15px}.operation-page ::v-deep .operation-create-dialog .el-form-item__label{padding-bottom:6px;color:#35465c;font-weight:600;line-height:20px}.operation-page ::v-deep .operation-create-dialog .el-textarea__inner{resize:none}
-.operation-page ::v-deep .operation-create-dialog .el-radio-group{display:flex;align-items:center;height:40px}.status-lock-help{color:#d89020;white-space:normal}.status-lock-help i{margin-right:2px}
-.operation-page ::v-deep .operation-create-dialog .el-radio__input.is-checked .el-radio__inner{background:#008b4b;border-color:#008b4b}.operation-page ::v-deep .operation-create-dialog .el-radio__input.is-checked+.el-radio__label{color:#008b4b}
-.operation-filters {
-  grid-template-columns: minmax(0, 1.1fr) repeat(3, minmax(0, .7fr)) auto;
+.operation-page {
+  padding: 16px 20px 30px;
+  background: #f8fafc;
+  min-height: calc(100vh - 52px);
+  box-sizing: border-box;
 }
-.operation-filters > label {
+
+/* 顶部页面标头 (.page-head) */
+.page-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 16px 20px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  margin-bottom: 14px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+}
+.head-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.head-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  background: #f0fdf4;
+  color: #008b4b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+.head-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.page-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.head-tag {
+  border-radius: 4px;
+  font-weight: 500;
+}
+.sub-row {
+  font-size: 13px;
+  color: #64748b;
+}
+.head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.btn-refresh {
+  border-color: #cbd5e1 !important;
+  color: #475569 !important;
+}
+.btn-refresh:hover {
+  border-color: #008b4b !important;
+  color: #008b4b !important;
+}
+.btn-theme-create {
+  background: #008b4b !important;
+  border-color: #008b4b !important;
+  color: #ffffff !important;
+}
+.btn-theme-create:hover {
+  background: #00763f !important;
+  border-color: #00763f !important;
+}
+
+/* 布局：左主表格 + 右详情检查器 */
+.operation-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 14px;
+  align-items: stretch;
+}
+.operation-main,
+.operation-inspector {
   min-width: 0;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+}
+.operation-main {
+  padding: 16px;
+}
+
+/* 筛选区 */
+.operation-filters {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) repeat(3, minmax(130px, 0.8fr)) auto;
+  gap: 12px;
+  align-items: end;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+}
+.operation-filters label > span {
+  display: block;
+  margin-bottom: 6px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+}
+.operation-filters .el-select {
+  width: 100%;
+}
+.operation-filters .filter-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  white-space: nowrap;
+}
+.btn-theme-search {
+  background: #008b4b !important;
+  border-color: #008b4b !important;
+  color: #ffffff !important;
+}
+.btn-theme-search:hover {
+  background: #00763f !important;
+  border-color: #00763f !important;
+}
+.btn-theme-reset {
+  border-color: #cbd5e1 !important;
+  color: #475569 !important;
+}
+.btn-theme-reset:hover {
+  border-color: #008b4b !important;
+  color: #008b4b !important;
+}
+
+/* 表格卡片 */
+.operation-table-card {
+  padding: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+}
+.operation-table-card ::v-deep .el-table th {
+  background: #f8fafc;
+  color: #334155;
+  font-weight: 600;
+  height: 44px;
+  padding: 6px 0;
+}
+.operation-table-card ::v-deep .el-table td {
+  height: auto;
+  padding: 9px 0;
+}
+.operation-table-card ::v-deep .el-table .cell {
+  padding-left: 10px;
+  padding-right: 10px;
+  overflow-wrap: anywhere;
+}
+.operation-table-card ::v-deep .selected-operation-row td {
+  background: #f0fdf4 !important;
+}
+
+.mono-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  color: #0f172a;
+  font-weight: 600;
 }
 .operation-name {
-  display: block;
+  display: inline-block;
+  font-weight: 600;
+  color: #1e293b;
   overflow-wrap: anywhere;
 }
 .public-operation-tag {
-  margin-top: 4px;
+  margin-left: 6px;
+  vertical-align: middle;
 }
+.description-text,
+.date-text {
+  display: block;
+  font-size: 12px;
+  color: #64748b;
+  white-space: normal;
+  line-height: 1.45;
+}
+.reference-count {
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.reference-count.active {
+  color: #008b4b;
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  font-weight: 600;
+}
+.reference-count:hover {
+  border-color: #008b4b;
+  color: #008b4b;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  gap: 8px;
+}
+.row-actions .el-button {
+  padding: 0;
+  font-size: 12px;
+  color: #008b4b;
+}
+.row-actions .el-button:hover {
+  color: #00763f;
+}
+.danger-link {
+  color: #dc2626 !important;
+}
+.danger-link:hover {
+  color: #b91c1c !important;
+}
+.success-link {
+  color: #008b4b !important;
+}
+.table-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: #ffffff;
+  border-top: 1px solid #f1f5f9;
+  color: #64748b;
+  font-size: 13px;
+}
+.table-footer ::v-deep .el-pagination.is-background .el-pager li:not(.disabled).active {
+  background-color: #008b4b !important;
+  color: #ffffff;
+}
+
+/* 详情检查器 */
+.operation-inspector {
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  box-sizing: border-box;
+}
+.inspector-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 12px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.card-title::before {
+  content: "";
+  display: inline-block;
+  width: 3px;
+  height: 14px;
+  background: #008b4b;
+  border-radius: 2px;
+}
+.card-title.sub {
+  font-size: 13px;
+  margin-bottom: 4px;
+}
+.card-title.sub::before {
+  height: 12px;
+}
+.close-btn {
+  color: #94a3b8;
+  padding: 0;
+  font-size: 16px;
+}
+.close-btn:hover {
+  color: #0f172a;
+}
+
+.operation-facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 16px;
+  margin: 0;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.operation-facts div {
+  min-width: 0;
+}
+.operation-facts .wide {
+  grid-column: 1 / -1;
+}
+.operation-facts dt {
+  margin-bottom: 3px;
+  color: #64748b;
+  font-size: 12px;
+}
+.operation-facts dd {
+  margin: 0;
+  color: #1e293b;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.routing-references {
+  margin-top: 16px;
+}
+.section-desc {
+  margin: 0 0 10px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.routing-references ::v-deep .el-table th {
+  background: #f8fafc;
+  color: #475569;
+  font-weight: 600;
+}
+.routing-references ::v-deep .el-table .cell {
+  padding-left: 6px;
+  padding-right: 6px;
+  white-space: normal;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.worker-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.btn-workers {
+  border-color: #cbd5e1 !important;
+  color: #334155 !important;
+}
+.btn-workers:hover {
+  border-color: #008b4b !important;
+  color: #008b4b !important;
+}
+.operation-inspector .el-alert {
+  margin-top: 14px;
+}
+.inspector-actions {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px solid #f1f5f9;
+}
+.inspector-actions .el-button {
+  min-width: 0;
+  margin: 0;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+/* 弹窗样式 */
+.operation-create-body {
+  min-height: 0;
+}
+.operation-create-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 16px;
+}
+.operation-create-grid .el-input-number {
+  width: 100%;
+}
+.field-help {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.worker-help {
+  margin-bottom: 12px;
+}
+.worker-select {
+  width: 100%;
+}
+
 .operation-page ::v-deep .operation-create-dialog {
+  top: 50%;
+  margin: 0 auto !important;
+  transform: translateY(-50%);
+  border-radius: 8px;
   display: flex;
   flex-direction: column;
   max-height: 85vh;
 }
-.operation-page ::v-deep .operation-create-dialog .el-dialog__header,
-.operation-page ::v-deep .operation-create-dialog .el-dialog__footer {
-  flex-shrink: 0;
+.operation-page ::v-deep .operation-create-dialog .el-dialog__header {
+  padding: 16px 22px 12px;
+  border-bottom: 1px solid #e2e8f0;
+}
+.operation-page ::v-deep .operation-create-dialog .el-dialog__title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
 }
 .operation-page ::v-deep .operation-create-dialog .el-dialog__body {
+  padding: 16px 22px 6px;
   min-height: 0;
   overflow-y: auto;
 }
-.operation-page .operation-create-body {
-  min-height: 0;
+.operation-page ::v-deep .operation-create-dialog .el-dialog__footer {
+  padding: 12px 22px 16px;
+  border-top: 1px solid #f1f5f9;
 }
-@media(max-width:1200px){.operation-layout{grid-template-columns:1fr}.operation-inspector{min-height:340px}.operation-filters{grid-template-columns:repeat(3,minmax(0,1fr))}.operation-filters .filter-actions{grid-column:1/-1;justify-content:flex-end}.inspector-actions{margin-top:10px}}
-@media(max-width:767px){.operation-page{padding:12px}.operation-main{padding:14px 12px}.operation-filters{grid-template-columns:1fr}.operation-filters .filter-actions{grid-column:auto}.operation-table-card{overflow-x:auto}.operation-table-card .el-table{min-width:1120px}.operation-table-card .table-footer{min-width:760px}.operation-inspector{padding-bottom:12px}.operation-facts,.operation-create-grid{grid-template-columns:1fr}.operation-facts .wide{grid-column:auto}.operation-page ::v-deep .operation-create-dialog{top:0;width:calc(100% - 24px)!important;margin-top:4vh!important;transform:none}.operation-create-body{min-height:510px}}
-.worker-tags{margin-bottom:10px}.worker-tags .el-tag{margin:0 6px 6px 0}.worker-help{margin:0 0 12px}.worker-select{width:100%}
+.operation-page ::v-deep .operation-create-dialog .el-radio-group {
+  display: flex;
+  align-items: center;
+  height: 32px;
+}
+.operation-page ::v-deep .operation-create-dialog .el-radio__input.is-checked .el-radio__inner {
+  background: #008b4b;
+  border-color: #008b4b;
+}
+.operation-page ::v-deep .operation-create-dialog .el-radio__input.is-checked + .el-radio__label {
+  color: #008b4b;
+}
+.status-lock-help {
+  color: #d97706;
+}
+
+@media (max-width: 1200px) {
+  .operation-layout {
+    grid-template-columns: 1fr;
+  }
+  .operation-inspector {
+    min-height: 340px;
+  }
+  .operation-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .operation-filters .filter-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
+}
+@media (max-width: 767px) {
+  .operation-page {
+    padding: 12px;
+  }
+  .operation-filters {
+    grid-template-columns: 1fr;
+  }
+  .operation-filters .filter-actions {
+    grid-column: auto;
+  }
+  .operation-facts,
+  .operation-create-grid {
+    grid-template-columns: 1fr;
+  }
+  .operation-facts .wide {
+    grid-column: auto;
+  }
+  .operation-page ::v-deep .operation-create-dialog {
+    width: calc(100% - 24px) !important;
+    top: 4vh;
+    transform: none;
+  }
+}
 </style>
+

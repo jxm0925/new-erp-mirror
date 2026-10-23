@@ -20,7 +20,7 @@
         <label class="field-block required"><span>管理类型</span><el-select :value="form.management_scope" :disabled="scopeLocked" size="small" placeholder="请选择管理类型" @change="changeManagementScope"><el-option v-for="scope in scopeOptions" :key="scope.value" :label="scope.label" :value="scope.value" /></el-select></label>
         <label class="field-block receipt-no-field">
           <span>到货单号</span>
-          <el-input v-model="form.receipt_no" size="small" disabled>
+          <el-input v-model="form.receipt_no" size="small" disabled class="erp-system-number">
             <template slot="append">系统预生成</template>
           </el-input>
         </label>
@@ -105,7 +105,7 @@
             <label class="compact-field required"><span>合格数量</span><el-input v-model.number="activeLine.qualified_qty" type="number" size="small" min="0" @change="syncQualityQty(activeLine, 'qualified_qty')" /></label>
             <label class="compact-field required"><span>不合格数量</span><el-input v-model.number="activeLine.unqualified_qty" type="number" size="small" min="0" @change="syncQualityQty(activeLine, 'unqualified_qty')" /></label>
             <template v-if="isStockManaged(activeLine)">
-              <label class="compact-field required"><span>批次号</span><el-input :value="activeLine.batch_no || '保存时系统自动生成'" size="small" disabled /></label>
+              <label class="compact-field required"><span>批次号</span><el-input :value="activeLine.batch_no || '保存时系统自动生成'" size="small" disabled class="erp-system-number" /></label>
               <label class="compact-field" :class="{ required: qualifiedBaseQty(activeLine) > 0 }"><span>默认仓库</span><el-select v-model="activeLine.warehouse_id" size="small" :placeholder="qualifiedBaseQty(activeLine) > 0 ? '请选择仓库' : '无需入库'" :disabled="qualifiedBaseQty(activeLine) <= 0" @change="onDefaultWarehouseChange(activeLine)"><el-option v-for="warehouse in scopedWarehouses" :key="warehouse.id" :value="warehouse.id" :label="warehouse.warehouse_name" /></el-select></label>
               <label class="compact-field" :class="{ required: qualifiedBaseQty(activeLine) > 0 }"><span>默认库位</span><el-select v-model="activeLine.location_id" size="small" :placeholder="qualifiedBaseQty(activeLine) > 0 ? '请选择库位' : '无需入库'" :disabled="qualifiedBaseQty(activeLine) <= 0" @change="onDefaultLocationChange(activeLine)"><el-option v-for="location in filteredLocations(activeLine.warehouse_id)" :key="location.id" :value="location.id" :label="location.location_name" /></el-select></label>
               <div class="allocation-entry"><span>入库库位分配</span><div><el-button size="mini" type="success" plain icon="el-icon-s-grid" :disabled="qualifiedBaseQty(activeLine) <= 0" @click="openAllocationDialog(activeLine)">多库位分配</el-button><small>{{ allocationProgressText(activeLine) }}</small></div></div>

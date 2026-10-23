@@ -52,7 +52,7 @@
 
           <el-form-item label="选择原蓝票" required>
             <div class="invoice-source">
-              <el-input :value="blueLabel" disabled class="disabled-input" />
+              <el-input :value="blueLabel" disabled class="disabled-input erp-system-number" />
               <el-button class="btn-default" @click="selectOriginal">选择蓝票</el-button>
             </div>
           </el-form-item>

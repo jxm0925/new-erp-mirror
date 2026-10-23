@@ -414,7 +414,7 @@
             <div class="form-grid-3">
               <!-- 第 1 行：编码 (1列), 全称 (2列) -->
               <el-form-item label="供应商编码" prop="supplier_code">
-                <el-input v-model="form.supplier_code" disabled class="font-tabular">
+                <el-input v-model="form.supplier_code" disabled class="font-tabular erp-system-number">
                   <template slot="append">{{ supplierDialogMode === 'create' ? '系统预生成' : '锁定' }}</template>
                 </el-input>
               </el-form-item>
@@ -551,7 +551,7 @@
         </div>
         <div class="footer-right">
           <el-button size="small" class="btn-dialog-cancel" @click="closeSupplierDialog">取消</el-button>
-          <el-button size="small" type="success" :loading="saving" class="btn-theme-create" icon="el-icon-check" @click="saveSupplier">
+          <el-button size="small" type="success" :loading="saving" :disabled="saving || (supplierDialogMode === 'create' && !reservation)" class="btn-theme-create" icon="el-icon-check" @click="saveSupplier">
             保存供应商档案
           </el-button>
         </div>
@@ -1021,16 +1021,22 @@ export default {
       this.applyPage(response.data, this.purchaseHistory, 'purchaseHistory', this.purchasePagination)
     },
     async openCreate () {
-      this.form = emptyForm()
+      const form = emptyForm()
+      this.form = form
+      this.reservation = null
       this.selectedCategoryIds = []
       this.activeTab = 'basic'
       this.supplierDialogMode = 'create'
       this.supplierDialogVisible = true
       try {
-        this.reservation = await reserveForCreatePage('supplier', '/master/suppliers/create')
-        this.form.supplier_code = this.reservation.document_no
+        const reservation = await reserveForCreatePage('supplier', '/master/suppliers/create')
+        if (!this.supplierDialogVisible || this.supplierDialogMode !== 'create' || this.form !== form) return
+        this.reservation = reservation
+        form.supplier_code = reservation.document_no
       } catch (e) {
-        this.$message.error(e.userMessage || '供应商编码预生成失败')
+        if (this.supplierDialogVisible && this.supplierDialogMode === 'create' && this.form === form) {
+          this.$message.error(e.userMessage || '供应商编码预生成失败')
+        }
       }
       this.$nextTick(() => { if (this.$refs.form) this.$refs.form.clearValidate() })
     },
@@ -1047,12 +1053,12 @@ export default {
     },
     closeSupplierDialog () {
       if (this.supplierDialogMode === 'create' && this.reservation) {
-        clearCreatePageReservation(this.reservation)
         this.reservation = null
       }
       this.supplierDialogVisible = false
     },
     saveSupplier () {
+      if (this.saving || (this.supplierDialogMode === 'create' && !this.reservation)) return
       this.$refs.form.validate(async valid => {
         if (!valid) {
           if (!this.form.supplier_name) {
@@ -1062,13 +1068,14 @@ export default {
         }
         this.saving = true
         try {
+          const reservation = this.reservation
           const payload = { ...this.form, category_ids: Array.from(new Set(this.selectedCategoryIds.map(Number))) }
-          if (this.supplierDialogMode === 'create' && this.reservation) {
-            payload.reservation_token = this.reservation.reservation_token
-            payload.creation_session_id = this.reservation.creation_session_id
+          if (!payload.id && reservation) {
+            payload.reservation_token = reservation.reservation_token
+            payload.creation_session_id = reservation.creation_session_id
           }
           const response = await saveEntity('suppliers', payload)
-          if (this.supplierDialogMode === 'create') clearCreatePageReservation(this.reservation)
+          if (!payload.id) clearCreatePageReservation(reservation)
           this.reservation = null
           this.$message.success('供应商档案已保存')
           this.supplierDialogVisible = false

@@ -3,14 +3,14 @@
     <template v-if="kind === 'purchase'">
       <div class="design-action-row">
         <span class="design-crumb">采购管理　/　采购退货　/　<b>新建采购退货单</b></span>
-        <div><el-button size="small" icon="el-icon-back" @click="$router.push(basePath)">返回列表</el-button><el-button size="small" class="draft-button" :loading="saving" @click="save(false)">保存草稿</el-button><el-button size="small" type="success" :loading="saving" @click="save(true)">保存并提交</el-button></div>
+        <div><el-button size="small" icon="el-icon-back" @click="$router.push(basePath)">返回列表</el-button><el-button size="small" class="draft-button" :loading="saving" :disabled="!reservation" @click="save(false)">保存草稿</el-button><el-button size="small" type="success" :loading="saving" :disabled="!reservation" @click="save(true)">保存并提交</el-button></div>
       </div>
 
       <div class="purchase-layout">
         <main class="purchase-main">
           <div class="card purchase-header-card">
             <el-form label-position="top" size="small" class="purchase-header-form">
-              <el-form-item label="管理类型" required><el-select :value="form.management_scope" :disabled="saving || scopeChanging" @change="changeManagementScope"><el-option v-for="scope in scopeOptions" :key="scope.value" :label="scope.label" :value="scope.value" /></el-select></el-form-item><el-form-item label="退货单号"><el-input value="保存时按编号规则生成" disabled /></el-form-item>
+              <el-form-item label="管理类型" required><el-select :value="form.management_scope" :disabled="saving || scopeChanging" @change="changeManagementScope"><el-option v-for="scope in scopeOptions" :key="scope.value" :label="scope.label" :value="scope.value" /></el-select></el-form-item><el-form-item label="退货单号"><el-input :value="reservation && reservation.document_no" disabled class="erp-system-number" /></el-form-item>
               <el-form-item label="退货日期"><el-date-picker v-model="form.return_date" value-format="yyyy-MM-dd" style="width:100%" /></el-form-item>
               <el-form-item label="供应商" required><el-input :value="selectedSource && selectedSource.supplier_name" placeholder="选择原到货批次后带出" disabled /></el-form-item>
               <el-form-item label="退货原因" required><el-select v-model="form.return_reason" placeholder="请选择退货原因" style="width:100%"><el-option v-for="reason in purchaseReasons" :key="reason" :label="reason" :value="reason" /></el-select></el-form-item>
@@ -82,11 +82,11 @@
     </template>
 
     <template v-else>
-      <div class="design-action-row sales-action-row"><span class="design-crumb">销售管理　/　销售退货　/　<b>新建退货单</b></span><div><el-button size="small" icon="el-icon-back" @click="$router.push(basePath)">返回列表</el-button><el-button size="small" :loading="saving" @click="save(false)">保存草稿</el-button><el-button size="small" type="success" :loading="saving" @click="save(true)">保存并提交确认</el-button></div></div>
+      <div class="design-action-row sales-action-row"><span class="design-crumb">销售管理　/　销售退货　/　<b>新建退货单</b></span><div><el-button size="small" icon="el-icon-back" @click="$router.push(basePath)">返回列表</el-button><el-button size="small" :loading="saving" :disabled="!reservation" @click="save(false)">保存草稿</el-button><el-button size="small" type="success" :loading="saving" :disabled="!reservation" @click="save(true)">保存并提交确认</el-button></div></div>
       <div class="sales-layout">
         <main class="sales-main">
           <div class="card sales-header-card">
-            <div class="sales-header-col"><label>退货单号</label><el-input value="保存时按编号规则生成" size="small" disabled /><label>退货日期 <b>*</b></label><el-date-picker v-model="form.return_date" size="small" value-format="yyyy-MM-dd" style="width:100%" /></div>
+            <div class="sales-header-col"><label>退货单号</label><el-input :value="reservation && reservation.document_no" size="small" disabled class="erp-system-number" /><label>退货日期 <b>*</b></label><el-date-picker v-model="form.return_date" size="small" value-format="yyyy-MM-dd" style="width:100%" /></div>
             <div class="sales-header-col"><label>退货原因 <b>*</b></label><el-select v-model="form.return_reason" size="small" placeholder="请选择退货原因" style="width:100%"><el-option v-for="reason in salesReasons" :key="reason" :label="reason" :value="reason" /></el-select><label>备注</label><el-input v-model.trim="form.remark" type="textarea" :rows="2" maxlength="200" show-word-limit placeholder="请输入备注（选填）" /></div>
             <div class="order-snapshot"><h3>原销售订单信息（快照）</h3><dl><dt>订单号</dt><dd>{{ selectedSource&&selectedSource.sales_order_no||'-' }}</dd><dt>订单金额</dt><dd>{{ money(selectedSource&&selectedSource.order_amount) }}</dd><dt>客户名称</dt><dd>{{ selectedSource&&selectedSource.customer_name||'-' }}</dd><dt>已发货金额</dt><dd>{{ money(selectedSource&&selectedSource.shipped_amount) }}</dd><dt>下单日期</dt><dd>{{ selectedSource&&selectedSource.order_date||'-' }}</dd><dt>已申请退货金额</dt><dd>{{ money(selectedSource&&selectedSource.returned_amount) }}</dd></dl></div>
           </div>
@@ -111,9 +111,10 @@
 import { purchaseScopes, purchaseScopeLabel, purchaseScopeMatches, validPurchaseScope } from '@/utils/purchaseManagementScope.mjs'
 import { createPurchaseReturn, listPurchaseReturnSources, listPurchaseReturnSourceSerials, submitPurchaseReturn } from '@/api/erp/purchase'
 import { confirmSalesReturn, createSalesReturn, listSalesReturnSources } from '@/api/erp/sales'
+import { clearCreatePageReservation, reserveForCreatePage } from '@/utils/documentNumberReservation'
 export default {
   props:{ kind:{type:String,required:true} },
-  data:()=>({ saving:false,loading:false,sourceRevision:0,scopeChanging:false,sources:[],sourceTotal:0,selectedSource:null,selectedSourceId:null,selectedLines:[],sourceDateRange:[],sourceQuery:{keyword:'',order_no:'',customer_keyword:'',shipment_status:'',page:1,per_page:10},serialDialog:{visible:false,loading:false,line:null,rows:[],total:0,keyword:'',page:1,per_page:10,draftEntries:[]},purchaseReasons:['质量问题','采购错误','规格不符','包装破损','供应商责任','其他'],salesReasons:['商品质量问题','客户多发','包装破损','发错商品','客户拒收','其他'],form:{management_scope:'factory',return_date:(()=>{const date=new Date();const offset=date.getTimezoneOffset()*60000;return new Date(date.getTime()-offset).toISOString().slice(0,10)})(),return_reason:'',remark:''} }),
+  data:()=>({ saving:false,loading:false,reservation:null,sourceRevision:0,scopeChanging:false,sources:[],sourceTotal:0,selectedSource:null,selectedSourceId:null,selectedLines:[],sourceDateRange:[],sourceQuery:{keyword:'',order_no:'',customer_keyword:'',shipment_status:'',page:1,per_page:10},serialDialog:{visible:false,loading:false,line:null,rows:[],total:0,keyword:'',page:1,per_page:10,draftEntries:[]},purchaseReasons:['质量问题','采购错误','规格不符','包装破损','供应商责任','其他'],salesReasons:['商品质量问题','客户多发','包装破损','发错商品','客户拒收','其他'],form:{management_scope:'factory',return_date:(()=>{const date=new Date();const offset=date.getTimezoneOffset()*60000;return new Date(date.getTime()-offset).toISOString().slice(0,10)})(),return_reason:'',remark:''} }),
   computed:{
     scopeOptions(){return purchaseScopes},
     title(){return this.kind==='purchase'?'采购退货':'销售退货'}, basePath(){return this.kind==='purchase'?'/purchase/returns':'/sales/returns'},
@@ -123,8 +124,13 @@ export default {
     purchaseAvailableTotal(){return this.selectedLines.reduce((sum,row)=>sum+Number(row.available_return_base_qty||0),0).toFixed(2)},
     purchaseRequestedTotal(){return this.selectedLines.reduce((sum,row)=>sum+this.purchaseRequestedBaseQty(row),0).toFixed(2)}
   },
-  created(){if(this.kind==='purchase'&&validPurchaseScope(this.$route.query.management_scope))this.form.management_scope=this.$route.query.management_scope;this.loadSources()},
+  created(){if(this.kind==='purchase'&&validPurchaseScope(this.$route.query.management_scope))this.form.management_scope=this.$route.query.management_scope;this.reserveNumber();this.loadSources()},
   methods:{
+    async reserveNumber(){
+      try{
+        this.reservation=await reserveForCreatePage(`${this.kind}_return`, `${this.basePath}/create`)
+      }catch(error){this.$message.error(error.userMessage||'退货单号预生成失败')}
+    },
     async changeManagementScope(scope){
       if(this.kind!=='purchase'||scope===this.form.management_scope||this.saving||this.scopeChanging)return
       this.scopeChanging=true
@@ -178,9 +184,27 @@ export default {
     handlePurchaseQtyInput(row,value){const raw=String(value==null?'':value).replace(/[^0-9.]/g,'');const firstDot=raw.indexOf('.');const cleaned=firstDot<0?raw:raw.slice(0,firstDot+1)+raw.slice(firstDot+1).replace(/\./g,'');this.$set(row,'requested_qty_input',cleaned);const numeric=cleaned!==''&&cleaned!=='.'?Number(cleaned):NaN;this.$set(row,'requested_qty',Number.isFinite(numeric)?numeric:null);this.handlePurchaseQtyChange(row)},
     normalizePurchaseQty(row){const numeric=Number(row.requested_qty);if(!(numeric>0)){this.$set(row,'requested_qty',null);this.$set(row,'requested_qty_input','');this.handlePurchaseQtyChange(row);return}const precision=this.returnUnitPrecision(row);const normalized=Math.min(this.purchaseReturnMax(row),Math.max(this.purchaseReturnMin(row),this.floorToPrecision(numeric,precision)));this.$set(row,'requested_qty',normalized);this.$set(row,'requested_qty_input',String(normalized));this.handlePurchaseQtyChange(row)},
     handlePurchaseQtyChange(row){if(!row||row.serial_tracking_mode==='none')return;const required=this.serialRequiredCount(row);if((row.serial_entries||[]).length>required)this.$set(row,'serial_entries',row.serial_entries.slice(0,required))},
-    payload(){if(this.kind==='purchase')return{...this.form,return_scope:'posted_inventory',source_receipt_id:this.selectedSource&&this.selectedSource.source_receipt_id,supplier_id:this.selectedSource&&this.selectedSource.supplier_id,items:this.selectedLines.map(row=>({source_receipt_item_id:row.source_receipt_item_id,warehouse_id:row.warehouse_id,location_id:row.location_id,batch_no:row.batch_no,requested_return_qty:row.requested_qty,return_unit_id:row.return_unit_id,serial_ids:(row.serial_entries||[]).map(entry=>entry.id),remark:row.remark||null}))};return{...this.form,sales_order_id:this.selectedSource&&this.selectedSource.id,items:this.activeLines.map(row=>({sales_order_line_id:row.sales_order_line_id,requested_sales_qty:row.requested_qty,remark:row.remark||null}))}},
+    payload(){const header={...this.form,reservation_token:this.reservation.reservation_token,creation_session_id:this.reservation.creation_session_id};if(this.kind==='purchase')return{...header,return_scope:'posted_inventory',source_receipt_id:this.selectedSource&&this.selectedSource.source_receipt_id,supplier_id:this.selectedSource&&this.selectedSource.supplier_id,items:this.selectedLines.map(row=>({source_receipt_item_id:row.source_receipt_item_id,warehouse_id:row.warehouse_id,location_id:row.location_id,batch_no:row.batch_no,requested_return_qty:row.requested_qty,return_unit_id:row.return_unit_id,serial_ids:(row.serial_entries||[]).map(entry=>entry.id),remark:row.remark||null}))};return{...header,sales_order_id:this.selectedSource&&this.selectedSource.id,items:this.activeLines.map(row=>({sales_order_line_id:row.sales_order_line_id,requested_sales_qty:row.requested_qty,remark:row.remark||null}))}},
     money(value){return `¥ ${Number(value||0).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2})}`},
-    async save(advance){if(this.scopeChanging)return;if(this.kind==='purchase'&&(!validPurchaseScope(this.form.management_scope)||this.selectedLines.some(row=>!purchaseScopeMatches(row,this.form.management_scope))))return this.$message.error('采购退货明细必须与单据管理类型一致');const validations=this.kind==='purchase'?this.purchaseChecks:this.checks;if(!this.form.return_reason||!validations.every(item=>item.ok))return this.$message.error('请先补全退货原因、业务来源、合法数量和设备编号');this.saving=true;try{const response=await(this.kind==='purchase'?createPurchaseReturn(this.payload()):createSalesReturn(this.payload()));const row=response.data.data||response.data;if(advance)await(this.kind==='purchase'?submitPurchaseReturn(row.id):confirmSalesReturn(row.id));this.$message.success(advance?'已保存并进入下一状态':'草稿已保存');this.$router.replace(`${this.basePath}/${row.id}/detail`)}finally{this.saving=false}}
+    async save(advance){
+      if(this.saving||this.scopeChanging||!this.reservation)return
+      if(this.kind==='purchase'&&(!validPurchaseScope(this.form.management_scope)||this.selectedLines.some(row=>!purchaseScopeMatches(row,this.form.management_scope))))return this.$message.error('采购退货明细必须与单据管理类型一致')
+      const validations=this.kind==='purchase'?this.purchaseChecks:this.checks
+      if(!this.form.return_reason||!validations.every(item=>item.ok))return this.$message.error('请先补全退货原因、业务来源、合法数量和设备编号')
+      this.saving=true
+      let draftSaved=false
+      try{
+        const response=await(this.kind==='purchase'?createPurchaseReturn(this.payload()):createSalesReturn(this.payload()))
+        const row=response.data.data||response.data
+        clearCreatePageReservation(this.reservation)
+        draftSaved=true
+        try{
+          if(advance)await(this.kind==='purchase'?submitPurchaseReturn(row.id):confirmSalesReturn(row.id))
+        }finally{this.$router.replace(`${this.basePath}/${row.id}/detail`)}
+        this.$message.success(advance?'已保存并进入下一状态':'草稿已保存')
+      }catch(error){this.$message.error((draftSaved?'草稿已保存，提交失败：':'')+(error.userMessage||'退货单保存失败'))}
+      finally{this.saving=false}
+    }
   }
 }
 </script>

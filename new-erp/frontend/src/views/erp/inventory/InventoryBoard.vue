@@ -721,7 +721,7 @@
             <strong>{{ line.item_code }} / {{ line.item_name }}{{ line.item_spec ? '（' + line.item_spec + '）' : '' }}</strong>
             <div v-if="line.is_stock_item_snapshot === false">无需入库，实际入库 {{ line.stockable_display }}</div>
             <div v-if="postingLineNeedsAllocation(line) && !(line.allocations || []).length" class="posting-allocation-missing">未完成入库库位分配，禁止过账</div>
-            <label v-if="postingLineNeedsAllocation(line)">批次号<el-input :value="line.batch_no || (line.allocations || []).map(a => a.batch_no).filter(Boolean)[0] || '过账时自动生成'" size="small" disabled /></label>
+            <label v-if="postingLineNeedsAllocation(line)">批次号<el-input :value="line.batch_no || (line.allocations || []).map(a => a.batch_no).filter(Boolean)[0] || '过账时自动生成'" size="small" disabled class="erp-system-number" /></label>
             <div v-if="postingLineNeedsAllocation(line) && (line.allocations || []).length" class="posting-allocation-review">
               <div v-for="allocation in line.allocations" :key="allocation.id || `${allocation.warehouse_id}-${allocation.location_id}`">
                 <strong>{{ allocation.warehouse ? allocation.warehouse.warehouse_name : '-' }} / {{ allocation.location ? allocation.location.location_name : '-' }}</strong>

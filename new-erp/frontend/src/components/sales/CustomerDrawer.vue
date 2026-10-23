@@ -76,7 +76,7 @@
             <el-row :gutter="14">
               <el-col :xs="24" :sm="12">
                 <el-form-item label="客户编码">
-                  <el-input v-model.trim="form.customer_code" placeholder="留空自动生成编码" clearable />
+                  <el-input v-model.trim="form.customer_code" disabled class="erp-system-number" placeholder="自动生成客户编码" />
                 </el-form-item>
               </el-col>
               <el-col :xs="24" :sm="12">
@@ -198,7 +198,7 @@
 
       <footer class="drawer-footer">
         <el-button size="small" @click="innerVisible = false">取消</el-button>
-        <el-button size="small" type="success" :loading="saving" :disabled="loading" @click="save">
+        <el-button size="small" type="success" :loading="saving" :disabled="loading || (!form.id && !numberReservation)" @click="save">
           {{ submitButtonText }}
         </el-button>
       </footer>
@@ -208,6 +208,7 @@
 
 <script>
 import { createSalesCustomer, getSalesCustomer, updateSalesCustomer } from '@/api/erp/sales'
+import { clearCreatePageReservation, reserveForCreatePage } from '@/utils/documentNumberReservation'
 
 const blankContact = () => ({
   localId: `contact-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -266,6 +267,7 @@ export default {
     loading: false,
     saving: false,
     openSession: 0,
+    numberReservation: null,
     rawInputText: '',
     recognizedCustomerName: '',
     form: blankForm()
@@ -287,17 +289,34 @@ export default {
   },
   methods: {
     // 关闭或重开后，晚到请求不能回填或结束新客户会话。
-    openCreate(defaultKind = 'individual') {
+    openForm(defaultKind = 'individual') {
       this.openSession += 1
       this.form = blankForm(defaultKind)
+      this.numberReservation = null
       this.rawInputText = ''
       this.recognizedCustomerName = ''
       this.loading = false
       this.saving = false
       this.innerVisible = true
     },
+    async openCreate(defaultKind = 'individual') {
+      this.openForm(defaultKind)
+      const session = this.openSession
+      this.loading = true
+      try {
+        const reservation = await reserveForCreatePage('customer', '/sales/customers/create')
+        if (session !== this.openSession || !this.innerVisible) return
+        this.numberReservation = reservation
+        this.form.customer_code = reservation.document_no
+      } catch (error) {
+        if (session !== this.openSession || !this.innerVisible) return
+        this.$message.error(error.userMessage || '客户编码生成失败，请重新打开新增窗口')
+      } finally {
+        if (session === this.openSession) this.loading = false
+      }
+    },
     async openEdit(id) {
-      this.openCreate()
+      this.openForm()
       const session = this.openSession
       this.loading = true
       try {
@@ -322,6 +341,7 @@ export default {
     handleClosed() {
       if (this.innerVisible) return
       this.form = blankForm()
+      this.numberReservation = null
       this.rawInputText = ''
       this.recognizedCustomerName = ''
       this.saving = false
@@ -441,6 +461,7 @@ export default {
     },
     async save() {
       if (this.loading || this.saving || !this.innerVisible) return
+      if (!this.form.id && !this.numberReservation) return this.$message.warning('请重新打开新增窗口生成客户编码')
       if (!this.form.customer_name) {
         return this.$message.warning(this.form.customer_kind === 'enterprise' ? '请填写企业客户全称' : '请填写客户姓名')
       }
@@ -455,6 +476,7 @@ export default {
       }
 
       const session = this.openSession
+      const reservation = this.numberReservation
       this.saving = true
       try {
         const payload = {
@@ -464,11 +486,16 @@ export default {
           contacts: this.normalizeDefaults(this.form.contacts).map(({ localId, ...item }) => item),
           addresses: this.normalizeDefaults(this.form.addresses).map(({ localId, ...item }) => item)
         }
+        if (!payload.id) {
+          payload.reservation_token = reservation.reservation_token
+          payload.creation_session_id = reservation.creation_session_id
+        }
 
         const res = this.form.id
           ? await updateSalesCustomer(this.form.id, payload)
           : await createSalesCustomer(payload)
 
+        if (!payload.id) clearCreatePageReservation(reservation)
         if (session !== this.openSession || !this.innerVisible) return
         const savedData = res.data.data
         this.$message.success(res.data.message || '客户资料已保存')

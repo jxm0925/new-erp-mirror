@@ -104,7 +104,7 @@
               </el-form-item>
               <!-- 物料编码 -->
               <el-form-item label="物料编码" prop="item_code">
-                <el-input :value="form.item_code" disabled class="code-tabular-input">
+                <el-input :value="form.item_code" disabled class="code-tabular-input erp-system-number">
                   <template slot="append">系统预占</template>
                 </el-input>
               </el-form-item>

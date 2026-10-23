@@ -70,7 +70,7 @@
         >
           <div class="fields-grid">
             <el-form-item :label="title + '单号'">
-              <el-input v-model="doc.document_no" disabled placeholder="系统预生成" />
+              <el-input v-model="doc.document_no" disabled class="erp-system-number" placeholder="系统预生成" />
             </el-form-item>
 
             <el-form-item :label="title + '日期'" prop="business_date">

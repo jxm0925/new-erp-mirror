@@ -594,7 +594,7 @@
       <el-form ref="warehouseForm" :model="warehouseForm" :rules="warehouseRules" label-position="top" size="small" class="compact-modal-form">
         <div class="form-grid-2">
           <el-form-item label="仓库编码" prop="warehouse_code">
-            <el-input v-model.trim="warehouseForm.warehouse_code" :disabled="!!warehouseForm.id" class="font-tabular" placeholder="如 WH-RAW-01" />
+            <el-input v-model.trim="warehouseForm.warehouse_code" disabled class="font-tabular erp-system-number" placeholder="自动生成仓库编码" />
           </el-form-item>
           <el-form-item label="仓库名称" prop="warehouse_name">
             <el-input v-model.trim="warehouseForm.warehouse_name" placeholder="如 原材料一号总仓" />
@@ -642,7 +642,7 @@
 
       <div slot="footer" class="dialog-footer">
         <el-button size="small" class="btn-dialog-cancel" @click="warehouseDialogVisible = false">取消</el-button>
-        <el-button size="small" type="success" :loading="saving" class="btn-theme-create" icon="el-icon-check" @click="saveWarehouse">
+        <el-button size="small" type="success" :loading="saving" :disabled="warehouseNumberLoading || (!warehouseForm.id && !warehouseReservation)" class="btn-theme-create" icon="el-icon-check" @click="saveWarehouse">
           保存仓库档案
         </el-button>
       </div>
@@ -668,7 +668,7 @@
 
         <div class="form-grid-2">
           <el-form-item label="库位编码" prop="location_code">
-            <el-input v-model.trim="locationForm.location_code" :disabled="!!locationForm.id" class="font-tabular" placeholder="如 A-01-01-01" />
+            <el-input v-model.trim="locationForm.location_code" disabled class="font-tabular erp-system-number" placeholder="自动生成库位编码" />
           </el-form-item>
           <el-form-item label="库位名称" prop="location_name">
             <el-input v-model.trim="locationForm.location_name" placeholder="如 A区1号架1层位" />
@@ -725,7 +725,7 @@
 
       <div slot="footer" class="dialog-footer">
         <el-button size="small" class="btn-dialog-cancel" @click="locationDialogVisible = false">取消</el-button>
-        <el-button size="small" type="success" :loading="saving" class="btn-theme-create" icon="el-icon-check" @click="saveLocation">
+        <el-button size="small" type="success" :loading="saving" :disabled="locationNumberLoading || (!locationForm.id && !locationReservation)" class="btn-theme-create" icon="el-icon-check" @click="saveLocation">
           保存库位档案
         </el-button>
       </div>
@@ -737,6 +737,7 @@
 import { erpDateTime } from '../../../utils/dateTime'
 import pagedScroll from '../../../directives/pagedScroll'
 import { createPageState, queryPage } from '../../../utils/pagedQuery'
+import { clearCreatePageReservation, reserveForCreatePage } from '../../../utils/documentNumberReservation'
 import { deleteEntity, disableEntity, enableEntity, getEntity, listEntity, saveEntity } from '../../../api/erp/master'
 import { listInventoryBalances } from '../../../api/erp/inventory'
 import WarehouseManagerPicker from '../../../components/master/WarehouseManagerPicker.vue'
@@ -783,6 +784,10 @@ export default {
       viewMode: 'card',
       warehouseDialogVisible: false,
       locationDialogVisible: false,
+      warehouseReservation: null,
+      warehouseNumberLoading: false,
+      locationReservation: null,
+      locationNumberLoading: false,
       warehouses: [],
       warehousePage: createPageState(10),
       locationPage: createPageState(10),
@@ -1009,27 +1014,48 @@ export default {
     reset () {
       this.filters = { keyword: '', area: '', status: '' }
     },
-    openWarehouseCreate () {
+    async openWarehouseCreate () {
       this.warehouseOriginalScope = null
       this.warehouseForm = { ...emptyWh(), management_scope: this.warehouseManagementScope || 'factory' }
+      const form = this.warehouseForm
+      this.warehouseReservation = null
+      this.warehouseNumberLoading = true
       this.warehouseDialogVisible = true
       this.$nextTick(() => { if (this.$refs.warehouseForm) this.$refs.warehouseForm.clearValidate() })
+      try {
+        const reservation = await reserveForCreatePage('warehouse', '/master/warehouses/create')
+        if (form !== this.warehouseForm || !this.warehouseDialogVisible) return
+        this.warehouseReservation = reservation
+        form.warehouse_code = reservation.document_no
+      } catch (error) {
+        if (form === this.warehouseForm && this.warehouseDialogVisible) this.$message.error(error.userMessage || '仓库编码生成失败，请重新打开新增窗口')
+      } finally {
+        if (form === this.warehouseForm) this.warehouseNumberLoading = false
+      }
     },
     editWarehouse (row) {
+      this.warehouseReservation = null
+      this.warehouseNumberLoading = false
       this.warehouseOriginalScope = row.management_scope || null
       this.warehouseForm = { ...emptyWh(), ...row, expected_manager_user_id: row.manager_user_id || null }
       this.warehouseDialogVisible = true
       this.$nextTick(() => { if (this.$refs.warehouseForm) this.$refs.warehouseForm.clearValidate() })
     },
     saveWarehouse () {
-      if (this.saving) return
+      if (this.saving || this.warehouseNumberLoading || (!this.warehouseForm.id && !this.warehouseReservation)) return
       if (this.warehouseForm.manager && !this.warehouseForm.manager_user_id) return this.$message.warning('请重新选择仓管负责人，或清除原负责人')
       this.$refs.warehouseForm.validate(async ok => {
         if (!ok) return
         this.saving = true
         try {
           const { manager, manager_user: managerUser, locations, ...payload } = this.warehouseForm
+          const reservation = this.warehouseReservation
+          if (!payload.id) {
+            payload.reservation_token = reservation.reservation_token
+            payload.creation_session_id = reservation.creation_session_id
+          }
           await saveEntity('warehouses', payload)
+          if (!payload.id) clearCreatePageReservation(reservation)
           this.$message.success('仓库档案已保存')
           this.warehouseDialogVisible = false
           await this.fetchAll()
@@ -1040,13 +1066,28 @@ export default {
         }
       })
     },
-    openLocationCreate () {
+    async openLocationCreate () {
       if (!this.selectedWarehouse.id) return this.$message.warning('请先在左侧选择仓库')
       this.locationForm = { ...emptyLoc(), warehouse_id: this.selectedWarehouse.id }
+      const form = this.locationForm
+      this.locationReservation = null
+      this.locationNumberLoading = true
       this.locationDialogVisible = true
       this.$nextTick(() => { if (this.$refs.locationForm) this.$refs.locationForm.clearValidate() })
+      try {
+        const reservation = await reserveForCreatePage('location', '/master/locations/create')
+        if (form !== this.locationForm || !this.locationDialogVisible) return
+        this.locationReservation = reservation
+        form.location_code = reservation.document_no
+      } catch (error) {
+        if (form === this.locationForm && this.locationDialogVisible) this.$message.error(error.userMessage || '库位编码生成失败，请重新打开新增窗口')
+      } finally {
+        if (form === this.locationForm) this.locationNumberLoading = false
+      }
     },
     editLocation (row) {
+      this.locationReservation = null
+      this.locationNumberLoading = false
       this.locationForm = {
         ...emptyLoc(),
         ...row,
@@ -1057,11 +1098,19 @@ export default {
       this.$nextTick(() => { if (this.$refs.locationForm) this.$refs.locationForm.clearValidate() })
     },
     saveLocation () {
+      if (this.saving || this.locationNumberLoading || (!this.locationForm.id && !this.locationReservation)) return
       this.$refs.locationForm.validate(async ok => {
         if (!ok) return
         this.saving = true
         try {
-          await saveEntity('locations', this.locationForm)
+          const payload = { ...this.locationForm }
+          const reservation = this.locationReservation
+          if (!payload.id) {
+            payload.reservation_token = reservation.reservation_token
+            payload.creation_session_id = reservation.creation_session_id
+          }
+          await saveEntity('locations', payload)
+          if (!payload.id) clearCreatePageReservation(reservation)
           this.$message.success('库位档案已保存')
           this.locationDialogVisible = false
           await this.fetchAll()

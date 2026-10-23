@@ -1,6 +1,6 @@
 <template>
   <section class="sku-editor-page" v-loading="loading">
-    <product-sku-picker ref="productPicker" @select="selectProduct" />
+    <product-sku-picker ref="productPicker" :product-order-available="false" @select="selectProduct" />
 
     <!-- 顶部统一页面头部卡片 -->
     <header class="page-head">
@@ -62,7 +62,7 @@
             <div class="form-column">
               <div class="form-row">
                 <label><i>*</i> SKU编码</label>
-                <el-input v-model="form.sku_code" size="small" disabled placeholder="正在预生成">
+                <el-input v-model="form.sku_code" size="small" disabled class="erp-system-number" placeholder="正在预生成">
                   <template slot="append">系统预生成</template>
                 </el-input>
               </div>

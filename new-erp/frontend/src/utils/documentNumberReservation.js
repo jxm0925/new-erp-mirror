@@ -10,8 +10,9 @@ const uuid = () => {
   })
 }
 
-export const reserveForCreatePage = async (documentType, page) => {
-  const key = sessionKey(documentType, page)
+// 矩阵用规格区分缓存会话，发送后端的页面路径保持长度受限。
+export const reserveForCreatePage = async (documentType, page, storageContext = page) => {
+  const key = sessionKey(documentType, storageContext)
   let creationSessionId = sessionStorage.getItem(key)
   if (!creationSessionId) {
     creationSessionId = uuid()
@@ -29,20 +30,9 @@ export const reserveForCreatePage = async (documentType, page) => {
   }
 }
 
-export const reserveFreshDocumentNumber = async (documentType, page) => {
-  const creationSessionId = uuid()
-  const response = await reserveDocumentNumber({
-    document_type: documentType,
-    creation_session_id: creationSessionId,
-    page
-  })
-
-  return {
-    ...response.data.data,
-    creation_session_id: creationSessionId
-  }
-}
-
 export const clearCreatePageReservation = reservation => {
-  if (reservation?.storage_key) sessionStorage.removeItem(reservation.storage_key)
+  if (reservation?.storage_key && reservation.creation_session_id
+    && sessionStorage.getItem(reservation.storage_key) === reservation.creation_session_id) {
+    sessionStorage.removeItem(reservation.storage_key)
+  }
 }

@@ -7,6 +7,7 @@ use App\Models\Erp\SalesCustomer;
 use App\Models\Erp\SalesCustomerAddress;
 use App\Models\Erp\SalesCustomerContact;
 use App\Services\Erp\AuthContextService;
+use App\Services\Erp\DocumentNumberService;
 use App\Services\Erp\SalesCustomerDeletionApplicationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -57,18 +58,24 @@ class SalesCustomerController extends Controller
         return response()->json(SalesCustomer::with(['contacts' => fn ($q) => $q->orderByDesc('is_default')->orderBy('id'), 'addresses' => fn ($q) => $q->orderByDesc('is_default')->orderBy('id')])->findOrFail($id));
     }
 
-    public function store(Request $request)
+    public function store(Request $request, DocumentNumberService $numbers)
     {
         $this->authorize($request, 'sales.customer.create');
-        return DB::transaction(function () use ($request) {
+        return DB::transaction(function () use ($request, $numbers) {
             $data = $this->validated($request);
+            $reservationToken = $data['reservation_token'] ?? null;
+            $operatorId = app(AuthContextService::class)->currentUser($request)?->legacy_id;
             $contacts = $data['contacts'] ?? [];
             $addresses = $data['addresses'] ?? [];
-            unset($data['contacts'], $data['addresses']);
+            $creationSessionId = $data['creation_session_id'] ?? null;
+            unset($data['contacts'], $data['addresses'], $data['reservation_token'], $data['creation_session_id']);
             $data = $this->withDedupeIdentity($data);
-            $data['customer_code'] ??= 'CUST-'.now()->format('YmdHis').'-'.random_int(100, 999);
+            $data['customer_code'] = $reservationToken
+                ? $numbers->reservedNumber($reservationToken, 'customer', $operatorId, $creationSessionId)
+                : ($data['customer_code'] ?? $numbers->next('customer'));
             $customer = SalesCustomer::create($data);
             $this->syncChildren($customer, $contacts, $addresses);
+            if ($reservationToken) $numbers->consume($reservationToken, 'customer', $customer->customer_code, $operatorId, 'customer', $customer->id);
             return response()->json(['message' => '客户已新增', 'data' => $customer->fresh(['contacts', 'addresses'])], 201);
         });
     }
@@ -131,6 +138,8 @@ class SalesCustomerController extends Controller
     {
         return $request->validate([
             'customer_code' => ['nullable', 'string', 'max:80', Rule::unique('erp_sales_customers', 'customer_code')->ignore($id)],
+            'reservation_token' => $id ? 'prohibited' : 'nullable|required_with:creation_session_id|uuid',
+            'creation_session_id' => $id ? 'prohibited' : 'nullable|required_with:reservation_token|uuid',
             'customer_name' => 'required|string|max:160', 'customer_short_name' => 'nullable|string|max:160', 'customer_type' => 'nullable|string|max:40',
             'customer_kind' => ['nullable', Rule::in(['enterprise', 'individual'])], 'source_platform' => 'nullable|string|max:160', 'platform_buyer_id' => 'nullable|string|max:160',
             'owner_legacy_id' => 'nullable|integer', 'owner_name' => 'nullable|string|max:80', 'status' => 'required|in:enabled,disabled,blacklisted,potential', 'remark' => 'nullable|string',

@@ -39,7 +39,7 @@
 
         <div class="fields-grid">
           <el-form-item label="商品编码" prop="product_code">
-            <el-input v-model.trim="form.product_code" disabled placeholder="系统预生成">
+            <el-input v-model.trim="form.product_code" disabled class="erp-system-number" placeholder="系统预生成">
               <template slot="append">预生成</template>
             </el-input>
           </el-form-item>
@@ -228,8 +228,8 @@
           <!-- 批量预设参数栏 -->
           <div class="batch-settings-panel">
             <div class="batch-col">
-              <span class="batch-label"><i class="el-icon-postcard" /> SKU编码前缀</span>
-              <el-input v-model.trim="matrix.codePrefix" size="small" placeholder="默认 SKU" class="batch-input" />
+              <span class="batch-label"><i class="el-icon-postcard" /> SKU编码</span>
+              <el-input value="按编号规则生成" size="small" disabled class="batch-input erp-system-number" />
             </div>
             <div class="batch-col">
               <span class="batch-label"><i class="el-icon-money" /> 统一预设销售价</span>
@@ -333,7 +333,7 @@
 
 <script>
 import { getEntity, listEntity, saveEntity, uploadProductImage } from '../../../api/erp/master'
-import { clearCreatePageReservation, reserveForCreatePage, reserveFreshDocumentNumber } from '../../../utils/documentNumberReservation'
+import { clearCreatePageReservation, reserveForCreatePage } from '../../../utils/documentNumberReservation'
 
 const empty = () => ({
   id: null,
@@ -361,7 +361,6 @@ export default {
       categories: [],
       units: [],
       matrix: {
-        codePrefix: 'SKU',
         sale_price: null,
         dimensions: [
           { name: '规格', valuesText: '' }
@@ -395,7 +394,7 @@ export default {
       return group(0, []).map(combo => {
         const spec = combo.map(x => x.value).join(' / ')
         return {
-          sku_code: '保存时系统预分配',
+          sku_code: '按编号规则生成',
           sku_name: `${this.form.product_name || '商品'}-${spec}`,
           spec_text: spec,
           sale_price: this.matrix.sale_price
@@ -478,15 +477,20 @@ export default {
             productPayload.creation_session_id = this.reservation.creation_session_id
           }
           const matrix = mode === 'save' ? this.matrixRows : []
+          const matrixReservations = []
           if (matrix.length) {
             productPayload.sku_matrix = []
+            const productKey = this.isEdit ? this.$route.params.id : `new:${this.reservation.creation_session_id}`
             for (const row of matrix) {
-              const reservation = await reserveFreshDocumentNumber('sku', '/master/products/new#sku-matrix')
+              const specKey = String(row.spec_text || '').replace(/\s+/g, '').toLowerCase()
+              const reservation = await reserveForCreatePage('sku', '/master/products/new#sku-matrix', `/master/products/${productKey}#sku-matrix:${specKey}`)
+              matrixReservations.push(reservation)
               productPayload.sku_matrix.push({ ...row, sku_code: reservation.document_no,
                 reservation_token: reservation.reservation_token, creation_session_id: reservation.creation_session_id })
             }
           }
           await saveEntity('products', productPayload)
+          matrixReservations.forEach(clearCreatePageReservation)
           if (!this.isEdit) clearCreatePageReservation(this.reservation)
           if (matrix.length) this.$message.success(`商品已保存，并成功生成 ${matrix.length} 款规格 SKU`)
           else this.$message.success('商品档案保存成功')

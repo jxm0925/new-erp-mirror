@@ -407,7 +407,7 @@
         </el-form-item>
         <div class="dialog-grid-2">
           <el-form-item label="类目编码" prop="category_code">
-            <el-input v-model.trim="form.category_code" disabled placeholder="系统预占生成" class="code-mono">
+            <el-input v-model.trim="form.category_code" disabled placeholder="系统预占生成" class="code-mono erp-system-number">
               <template slot="append">系统预占</template>
             </el-input>
           </el-form-item>
@@ -488,7 +488,6 @@ import {
 } from '../../../api/erp/master'
 import {
   reserveForCreatePage,
-  reserveFreshDocumentNumber,
   clearCreatePageReservation
 } from '../../../utils/documentNumberReservation'
 
@@ -725,7 +724,6 @@ export default {
     },
     async openEdit(row) {
       this.numberVersion++
-      clearCreatePageReservation(this.reservation)
       this.reservation = null
       this.numberLoading = false
       const scope = this.categoryScope(row)
@@ -755,15 +753,13 @@ export default {
       if (this.isDisposed || !this.drawerVisible) return
       const version = ++this.numberVersion
       const scope = this.form.management_scope
-      clearCreatePageReservation(this.reservation)
+      if (fresh) clearCreatePageReservation(this.reservation)
       this.reservation = null
       this.form.category_code = ''
       this.numberLoading = true
       try {
-        const reserve = fresh ? reserveFreshDocumentNumber : reserveForCreatePage
-        const candidate = await reserve('item_category', materialCategoryPath(scope) + '#create:' + scope)
+        const candidate = await reserveForCreatePage('item_category', materialCategoryPath(scope) + '#create:' + scope)
         if (version !== this.numberVersion || !this.drawerVisible || scope !== this.form.management_scope || this.isDisposed) {
-          clearCreatePageReservation(candidate)
           return
         }
         this.reservation = candidate
@@ -776,7 +772,6 @@ export default {
     },
     closeForm() {
       this.numberVersion++
-      clearCreatePageReservation(this.reservation)
       this.reservation = null
       this.numberLoading = false
     },

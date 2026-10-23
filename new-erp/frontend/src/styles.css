@@ -1206,3 +1206,11 @@ select {
   background: #fdecee;
   color: #b4233c;
 }
+
+/* 系统编号含挂在 body 的弹窗，统一覆盖页面各自的禁用配色。 */
+body .erp-system-number.el-input.is-disabled .el-input__inner:disabled {
+  background-color: #f8fafc !important;
+  color: #475569 !important;
+  border-color: #e2e8f0 !important;
+  cursor: not-allowed !important;
+}
