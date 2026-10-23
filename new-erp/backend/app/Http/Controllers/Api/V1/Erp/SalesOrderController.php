@@ -414,6 +414,8 @@ class SalesOrderController extends Controller
         $stage = (string) $request->input('stage');
         if ($stage === 'draft') $query->where('order_status', 'draft');
         if ($stage === 'pending_production') $query->where('order_status', 'confirmed')->whereIn('production_confirm_status', ['pending', 'blocked']);
+        // 已交付：含交付完成后自动完结（closed）的订单，与页签计数口径一致。
+        if ($stage === 'fulfilled') $query->whereIn('order_status', ['confirmed', 'closed'])->where('fulfillment_status', 'fulfilled');
 
         $page = $query->paginate($this->perPage($request));
         $canViewAmounts = $this->canViewAmounts($request);

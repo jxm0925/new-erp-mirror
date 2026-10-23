@@ -18,7 +18,6 @@ class RbacBootstrapService
         $this->seedRoles($force, $created !== []);
         if ($created) $this->grantNewPermissionDefaults($created);
         if ($freshInstall) $this->initializeBuiltinRoleDefaults();
-        $this->ensureShipmentPackingExecutors();
     }
 
     /** 内置角色默认权限：精确码或“前缀.*”；授予按钮时自动带上各级父菜单。 */
@@ -84,15 +83,15 @@ class RbacBootstrapService
             }
             DB::table('erp_rbac_role_permissions')->insertOrIgnore(array_map(fn ($id) => ['role_id' => $roleId, 'permission_id' => $id], array_keys($ids)));
         }
+        $this->grantShipmentPackingDefaults();
     }
 
-    /** 发货试水/包装由车间执行：整库没有任何角色能执行包装工序时，补给生产操作员/生产管理员（含父菜单）。 */
-    private function ensureShipmentPackingExecutors(): void
+    /**
+     * 发货试水/包装由车间执行：仅在全新安装初始化时授给生产操作员/生产管理员（不带发货菜单）。
+     * 已有授权的库不在运行时补授，管理员在角色管理里撤销的包装权限不会被恢复。
+     */
+    private function grantShipmentPackingDefaults(): void
     {
-        $execute = DB::table('erp_rbac_permissions')->where('code', 'sales_order.shipment.packing.execute')->value('id');
-        if (! $execute) return;
-        $adminRoleId = DB::table('erp_rbac_roles')->where('code', 'admin')->value('id');
-        if (DB::table('erp_rbac_role_permissions')->where('permission_id', $execute)->where('role_id', '<>', (int) $adminRoleId)->exists()) return;
         $grants = [
             'production_operator' => ['sales_order.shipment.packing.execute', 'sales_order.shipment.packing.quality'],
             'production_manager' => ['sales_order.shipment.packing.view', 'sales_order.shipment.packing.execute', 'sales_order.shipment.packing.quality'],

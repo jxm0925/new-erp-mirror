@@ -23,7 +23,7 @@ class InventoryReservationService
     {
         $order->loadMissing(['lines', 'fulfillments']);
         $fulfillments = $order->fulfillments->where('demand_status', 'confirmed');
-        if ($order->order_status !== 'confirmed') {
+        if (! in_array($order->order_status, ['confirmed', 'closed'], true)) {
             return ['fulfillments' => $fulfillments->mapWithKeys(fn ($row) => [$row->id => ['reservation_status' => $row->reservation_status, 'production_requirement_status' => $row->production_requirement_status]])->all(),
                 'production_replenished_qty_by_line' => [], 'fulfillment_status' => $order->fulfillment_status];
         }
@@ -103,7 +103,7 @@ class InventoryReservationService
     {
         DB::transaction(function () use ($orderId): void {
             $order = SalesOrder::query()->whereKey($orderId)->lockForUpdate()->firstOrFail();
-            if ($order->order_status !== 'confirmed') return;
+            if (! in_array($order->order_status, ['confirmed', 'closed'], true)) return;
             $order->setRelation('lines', $order->lines()->orderBy('id')->lockForUpdate()->get());
             $order->setRelation('fulfillments', $order->fulfillments()->orderBy('id')->lockForUpdate()->get());
             $projection = $this->salesOrderExecutionProjection($order, true);
