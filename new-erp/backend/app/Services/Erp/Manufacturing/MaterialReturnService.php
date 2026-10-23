@@ -369,8 +369,11 @@ final class MaterialReturnService
             if ($qty <= self::EPS) $this->fail('return_qty_invalid', $m->component_item_name.' 退料数量要大于 0。');
             // 收回配送：整单按原领料单冲回，不受已开工台数限制（签收前不能开工）。
             // 可退总量按本道整体口径算，本次已选的编号也占这个总量，编号 + 无编号合计不能超。
-            $total = $onlyIssueId ? $qty + $numbered : $this->quantityLimit($wo, $op, $m, $type, $exceptReturnId);
-            $limit = max(0, round($total - $numbered, 4));
+            // 业务上限（不封顶到无编号余量）含本次编号，扣掉编号后再受无编号实物余量约束。
+            $total = $onlyIssueId ? $qty + $numbered : $this->quantityLimit($wo, $op, $m, $type, $exceptReturnId, false);
+            $unnumbered = $onlyIssueId ? $qty : round($this->sources($wo, $m, $exceptReturnId)->sum('remaining'), 4);
+            $limit = max(0, round(min($total - $numbered, $unnumbered), 4));
+            $total = round($limit + $numbered, 4);
             if ($qty > $limit + self::EPS) $this->fail('return_qty_exceeded', $m->component_item_name.' 最多可退 '.$this->num($total).($m->unit_name ?: '').'（'.self::TYPES[$type].'）'
                 .($numbered ? '，已选编号 '.$numbered.' 个，无编号部分最多 '.$this->num($limit) : '').'。');
             $left = $qty;
@@ -404,7 +407,7 @@ final class MaterialReturnService
     /**
      * 按数量的可退上限。占用 = 其他待审核申请；已审核的退料已体现在已领数量里（报废台拆回除外，单独累计）。
      */
-    private function quantityLimit(MfgWorkOrder $wo, MfgWorkOrderOperation $op, MfgWorkOrderMaterial $m, string $type, ?int $exceptReturnId = null): float
+    private function quantityLimit(MfgWorkOrder $wo, MfgWorkOrderOperation $op, MfgWorkOrderMaterial $m, string $type, ?int $exceptReturnId = null, bool $capUnnumbered = true): float
     {
         $pending = fn (array $types, array $statuses) => (float) MfgMaterialReturnLine::query()->where('work_order_id', $wo->id)->where('material_id', $m->id)
             ->whereHas('materialReturn', fn ($q) => $q->whereIn('return_type', $types)->whereIn('status', $statuses)
@@ -420,7 +423,7 @@ final class MaterialReturnService
                 : (float) MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->where('status', 'stored')->count();
             $limit = (float) $m->issued_qty - $this->issues->neededFor($m, $wo, $used) - $pending(['surplus', 'defective'], ['pending']);
         }
-        return max(0, round(min($limit, $unreturned), 4));
+        return max(0, round($capUnnumbered ? min($limit, $unreturned) : $limit, 4));
     }
 
     /**

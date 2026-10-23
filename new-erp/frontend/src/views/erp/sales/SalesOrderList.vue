@@ -251,8 +251,8 @@ export default {
       this.query.production_confirm_status = ''
       this.query.fulfillment_status = ''
       this.query.stage = ''
-      if (tab === 'draft' || tab === 'pending_production') this.query.stage = tab
-      if (['pending', 'partial', 'fulfilled'].includes(tab)) {
+      if (['draft', 'pending_production', 'fulfilled'].includes(tab)) this.query.stage = tab
+      if (['pending', 'partial'].includes(tab)) {
         this.query.order_status = 'confirmed'
         this.query.fulfillment_status = tab
       }
