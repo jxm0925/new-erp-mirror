@@ -91,7 +91,7 @@ Do not change layout without approval.
             </div>
             <div v-if="depositSupported" class="field">
               <label>约定定金</label>
-              <el-input-number v-model="depositInput" size="small" :min="0" :precision="2" :controls="false" placeholder="与客户约定的开工定金" />
+              <el-input-number :value="depositInput" size="small" :min="0" :precision="2" :controls="false" placeholder="与客户约定的开工定金" @change="changeDeposit" />
               <span class="deposit-hint">
                 {{ depositEdited ? '已按与客户约定填写' : `按付款条件默认：${defaultDepositText}` }}
                 <el-button v-if="depositEdited" type="text" size="mini" @click="resetDeposit">恢复默认</el-button>
@@ -793,12 +793,8 @@ export default {
       const rule = policy.production_threshold_type === 'ratio' ? `合同额 ${Number((Number(policy.production_threshold_value || 0) * 100).toFixed(2))}%` : '固定金额'
       return `${rule}，¥${this.money(this.defaultDepositAmount)}`
     },
-    depositInput: {
-      get() { return this.depositEdited ? this.agreedDeposit : this.defaultDepositAmount },
-      set(value) {
-        this.depositEdited = true
-        this.agreedDeposit = value === undefined || value === null ? 0 : value
-      }
+    depositInput() {
+      return this.depositEdited ? this.agreedDeposit : this.defaultDepositAmount
     },
     agreedDepositPayload() {
       return this.depositSupported && this.depositEdited ? this.agreedDeposit : null
@@ -1691,8 +1687,16 @@ export default {
         const depositChanged = this.depositSupported && cents(this.agreedDepositPayload) !== cents(this.loadedAgreedDeposit)
         if (depositChanged) {
           if (!(this.editOrderMeta.allowed_actions || {}).edit_agreed_deposit) return this.$message.error('没有修改约定定金的权限')
-          await updateSalesOrderAgreedDeposit(this.pageRoute.params.id, { agreed_deposit_amount: this.agreedDepositPayload })
-          this.loadedAgreedDeposit = this.agreedDepositPayload
+          await updateSalesOrderAgreedDeposit(this.pageRoute.params.id, { agreed_deposit_amount: payload.agreed_deposit_amount })
+          this.loadedAgreedDeposit = payload.agreed_deposit_amount
+          for (const field of ['funding_policy_snapshot', 'payment_terms_snapshot']) {
+            const snapshot = { ...(this.form[field] || {}) }
+            if (field === 'payment_terms_snapshot' && !Object.prototype.hasOwnProperty.call(snapshot, 'policy_type')) continue
+            if (payload.agreed_deposit_amount === null) delete snapshot.agreed_deposit_amount
+            else snapshot.agreed_deposit_amount = payload.agreed_deposit_amount
+            this.$set(this.form, field, snapshot)
+            payload[field] = snapshot
+          }
         }
         const { data } = await previewSalesOrderEditImpact(this.pageRoute.params.id, payload)
         const impact = data.data
@@ -1745,6 +1749,10 @@ export default {
           this.$router.push(editPath)
         }
       }
+    },
+    changeDeposit(value) {
+      this.depositEdited = true
+      this.agreedDeposit = value === undefined || value === null ? 0 : value
     },
     resetDeposit() {
       this.depositEdited = false

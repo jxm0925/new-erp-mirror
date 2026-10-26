@@ -296,6 +296,7 @@ class SalesOrderEditImpactService
     {
         $order->load(['lines', 'shipments', 'salesReturns']);
         $this->assertChangeable($order);
+        $candidate['header'] = $this->preserveAgreedDeposit($candidate['header'], $order);
         $before = $order->fresh(['lines', 'fulfillments'])->toArray();
         $hasOperationalImpact = collect($impact['diffs'] ?? [])->contains(fn ($diff) => collect($diff['impact_types'] ?? [])->intersect(['FULFILLMENT', 'PRODUCTION'])->isNotEmpty());
         // Approval can happen after internal costs change. Restore current
@@ -389,10 +390,25 @@ class SalesOrderEditImpactService
         $deletedIds = collect($payload['deleted_line_ids'] ?? [])->map(fn ($id) => (int) $id)
             ->merge($omittedIds)->filter()->unique()->values()->all();
         return [
-            'header' => Arr::only($payload, self::HEADER_FIELDS),
+            'header' => $this->preserveAgreedDeposit(Arr::only($payload, self::HEADER_FIELDS), $order),
             'lines' => $lines,
             'deleted_line_ids' => $deletedIds,
         ];
+    }
+    private function preserveAgreedDeposit(array $header, SalesOrder $order): array
+    {
+        // 定金独立维护，旧页面或待审候选不能覆盖其最新约定；其他付款规则仍按订单变更处理。
+        foreach (['funding_policy_snapshot', 'payment_terms_snapshot'] as $field) {
+            if (!array_key_exists($field, $header)) continue;
+            $snapshot = (array) $header[$field];
+            $current = (array) $order->getAttribute($field);
+            unset($snapshot['agreed_deposit_amount']);
+            if (array_key_exists('agreed_deposit_amount', $current)) {
+                $snapshot['agreed_deposit_amount'] = $current['agreed_deposit_amount'];
+            }
+            $header[$field] = $snapshot;
+        }
+        return $header;
     }
     private function headerImpacts(string $field, mixed $before, mixed $after, array $facts): array
     {
