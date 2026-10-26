@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp;
 
+use App\Services\Erp\Inventory\SalesInventoryPosting;
 use App\Models\Erp\{InventoryBalance, InventorySerial, InventorySerialEvent, Location, MfgWorkOrder, MfgWorkOrderOperation, MfgWorkOrderUnit, SalesShipment, SalesShipmentLine, ShipmentPackingOperation, ShipmentRework};
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -9,7 +10,7 @@ use Illuminate\Validation\ValidationException;
 /** 发货失败仍是公司库存；返修沿用原台身份，换机另留原台到新台的关系。 */
 final class ShipmentSerialApplicationService
 {
-    public function __construct(private readonly InventoryService $inventory, private readonly InventoryReservationService $reservations,
+    public function __construct(private readonly SalesInventoryPosting $inventory, private readonly InventoryReservationService $reservations,
         private readonly ShipmentCommandService $commands, private readonly DocumentNumberService $numbers) {}
 
     public function reworkOperations(SalesShipment $shipment, int $lineId, array $filters): array

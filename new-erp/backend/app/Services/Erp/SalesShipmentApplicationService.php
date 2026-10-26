@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp;
 
+use App\Services\Erp\Inventory\SalesInventoryPosting;
 use App\Models\Erp\InventoryReservation;
 use App\Models\Erp\InventorySerial;
 use App\Models\Erp\SalesOrder;
@@ -22,7 +23,7 @@ class SalesShipmentApplicationService
         private readonly DocumentNumberService $numbers,
         private readonly SalesOrderFundingGateService $fundingGates,
         private readonly InventoryReservationService $reservations,
-        private readonly InventoryService $inventory,
+        private readonly SalesInventoryPosting $inventory,
         private readonly SalesOrderActualCostService $actualCosts,
         private readonly ShipmentPackingApplicationService $packing,
         private readonly ShipmentCommandService $commands,

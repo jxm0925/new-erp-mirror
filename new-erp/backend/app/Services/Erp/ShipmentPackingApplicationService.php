@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp;
 
+use App\Services\Erp\Inventory\SalesInventoryPosting;
 use App\Models\Erp\InventoryBalance;
 use App\Models\Erp\Item;
 use App\Models\Erp\ProductionRouting;
@@ -20,7 +21,7 @@ use Illuminate\Validation\ValidationException;
 /** Packing is factual shipment execution; no sale price or earned amount is calculated here. */
 class ShipmentPackingApplicationService
 {
-    public function __construct(private readonly InventoryService $inventory, private readonly ShipmentCommandService $commands) {}
+    public function __construct(private readonly SalesInventoryPosting $inventory, private readonly ShipmentCommandService $commands) {}
 
     public function freezeRequirements(SalesShipment $shipment): void
     {

@@ -219,6 +219,30 @@ class InventoryPostingKernel
         ]);
     }
 
+    /**
+     * 严格变更状态数量（批次行 + 库位汇总同时变化）：不足即报错，不做归零掩盖。
+     * 用于不良冻结/解冻等必须与在库数量同口径对账的场景。
+     */
+    public function changeStatusQuantity(array $locator, string $bucket, float $change, string $field, string $message): void
+    {
+        if (! in_array($bucket, ['quantity_locked', 'quantity_pending', 'quantity_defective'], true)) {
+            throw new \InvalidArgumentException("Unsupported inventory bucket {$bucket}.");
+        }
+        $where = fn ($query) => $query->where('item_id', $locator['item_id'])->where('warehouse_id', $locator['warehouse_id'])
+            ->where('location_id', $locator['location_id']);
+        $balance = $where(InventoryBalance::query())->where('batch_no', $locator['batch_no'])->lockForUpdate()->firstOrFail();
+        $location = $where(InventoryLocationBalance::query())->lockForUpdate()->firstOrFail();
+        foreach ([$balance, $location] as $row) {
+            $value = round((float) $row->{$bucket} + $change, 8);
+            if ($value < -0.00000001) throw ValidationException::withMessages([$field => $message]);
+            $values = ['quantity_locked' => (float) $row->quantity_locked, 'quantity_pending' => (float) $row->quantity_pending,
+                'quantity_defective' => (float) $row->quantity_defective];
+            $values[$bucket] = max(0, $value);
+            $row->update([$bucket => $values[$bucket], 'quantity_available' => $this->availability->calculate((float) $row->quantity_on_hand,
+                $values['quantity_locked'], $values['quantity_defective'], $values['quantity_pending']), 'last_transaction_at' => now()]);
+        }
+    }
+
     public function nextNo(string $prefix): string
     {
         // Several stock postings can share one second. A random three-digit suffix collided

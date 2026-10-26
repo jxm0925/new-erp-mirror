@@ -12,7 +12,7 @@ use App\Models\Erp\PurchaseReceiptItem;
 use App\Models\Erp\Supplier;
 use App\Models\Erp\Unit;
 use App\Models\Erp\Warehouse;
-use App\Services\Erp\InventoryService;
+use App\Services\Erp\Inventory\PurchaseInventoryPosting;
 use App\Services\Erp\InventoryQualityApplicationService;
 use App\Services\Erp\PurchaseReturnApplicationService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
@@ -441,7 +441,7 @@ class PurchaseReturnFlowTest extends TestCase
             'batch_no' => 'B-RETURN-001',
             'inventory_posting_status' => 'pending',
         ]);
-        app(InventoryService::class)->postPurchaseReceipt($receipt->id);
+        app(PurchaseInventoryPosting::class)->postPurchaseReceipt($receipt->id);
 
         return [$receipt->fresh(), $line->fresh(), $warehouse, $location];
     }

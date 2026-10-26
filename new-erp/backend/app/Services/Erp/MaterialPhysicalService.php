@@ -19,7 +19,7 @@ use Illuminate\Validation\ValidationException;
 /**
  * Owns the identity side of physical-managed inventory.
  *
- * InventoryService remains the only quantity/value ledger writer. This service
+ * InventoryPostingKernel remains the only quantity/value ledger writer. This service
  * creates or moves exactly one material identity for every accepted +/-1 ledger
  * line, inside the caller's transaction.
  */

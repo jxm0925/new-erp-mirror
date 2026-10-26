@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp;
 
+use App\Services\Erp\Inventory\SalesReturnInventoryPosting;
 use App\Models\Erp\SalesOrder;
 use App\Models\Erp\SalesOrderLine;
 use App\Models\Erp\InventoryTransactionItem;
@@ -18,7 +19,7 @@ class SalesReturnApplicationService
 {
     public function __construct(
         private readonly DocumentNumberService $numbers,
-        private readonly InventoryService $inventory,
+        private readonly SalesReturnInventoryPosting $inventory,
         private readonly SalesOrderActualCostService $actualCosts,
     ) {
     }

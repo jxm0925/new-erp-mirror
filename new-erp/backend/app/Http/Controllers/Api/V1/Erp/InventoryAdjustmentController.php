@@ -8,7 +8,7 @@ use App\Models\Erp\Item;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\InventoryAdjustmentApplicationService;
 use App\Services\Erp\InventorySerialApplicationService;
-use App\Services\Erp\InventoryService;
+use App\Services\Erp\Inventory\WarehouseInventoryPosting;
 use Illuminate\Http\Request;
 
 class InventoryAdjustmentController extends Controller
@@ -83,7 +83,7 @@ class InventoryAdjustmentController extends Controller
         return response()->json(['message' => '调整单已提交', 'data' => $service->submit($id, (int) $user->legacy_id)]);
     }
 
-    public function post(Request $request, int $id, InventoryService $service)
+    public function post(Request $request, int $id, WarehouseInventoryPosting $service)
     {
         // 过账直接改变库存余额，必须单独授权，不能只凭能建调整单就过账。
         $user = $this->authorizePermission($request, 'inventory.adjustment.confirm');

@@ -5,7 +5,7 @@ namespace App\Http\Controllers\Api\V1\Erp;
 use App\Http\Controllers\Controller;
 use App\Models\Erp\{InventoryTransaction, PurchaseReceipt};
 use App\Services\Erp\AuthContextService;
-use App\Services\Erp\InventoryService;
+use App\Services\Erp\Inventory\PurchaseInventoryPosting;
 use App\Services\Erp\PurchaseReceiptPostingEligibilityService;
 use App\Services\Erp\PurchaseReceiptPostingRepairApplicationService;
 use Illuminate\Http\Request;
@@ -89,7 +89,7 @@ class InventoryPostingController extends Controller
         return response()->json(['message' => '入库分配已补充，可返回工作台执行过账。', 'data' => $receipt]);
     }
 
-    public function postReceipt(Request $request, int $id, InventoryService $service)
+    public function postReceipt(Request $request, int $id, PurchaseInventoryPosting $service)
     {
         $user = $this->authorizePermission($request, 'inventory.post.execute');
         $transaction = $service->postPurchaseReceipt($id, (int) $user->legacy_id);

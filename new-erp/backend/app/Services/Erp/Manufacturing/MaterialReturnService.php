@@ -19,7 +19,7 @@ use App\Models\Erp\MfgWorkOrderOperation;
 use App\Models\Erp\MfgWorkOrderUnit;
 use App\Models\Erp\Warehouse;
 use App\Services\Erp\DocumentNumberService;
-use App\Services\Erp\InventoryService;
+use App\Services\Erp\Inventory\ProductionInventoryPosting;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -44,7 +44,7 @@ final class MaterialReturnService
     private const ACTIVE_UNIT = ['waiting', 'in_progress', 'rework', 'completed'];
 
     public function __construct(
-        private readonly InventoryService $inventory,
+        private readonly ProductionInventoryPosting $inventory,
         private readonly WorkOrderService $workOrders,
         private readonly DocumentNumberService $numbers,
         private readonly MaterialIssueService $issues,

@@ -13,7 +13,7 @@ use App\Models\Erp\MfgWorkOrderUnit;
 use App\Models\Erp\SalesOrder;
 use App\Models\Erp\Warehouse;
 use App\Services\Erp\DocumentNumberService;
-use App\Services\Erp\InventoryService;
+use App\Services\Erp\Inventory\ProductionInventoryPosting;
 use App\Services\Erp\InventoryReservationService;
 use App\Services\Erp\CuttingDecimal;
 use Illuminate\Support\Facades\DB;
@@ -29,7 +29,7 @@ final class ReceiptService
     use ProductionActor;
 
     public function __construct(
-        private readonly InventoryService $inventory,
+        private readonly ProductionInventoryPosting $inventory,
         private readonly WorkOrderService $workOrders,
         private readonly DocumentNumberService $numbers,
     ) {}

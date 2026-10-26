@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp;
 
+use App\Services\Erp\Inventory\PurchaseInventoryPosting;
 use App\Models\Erp\PurchaseDefectHandling;
 use App\Models\Erp\PurchaseDefectHandlingLog;
 use App\Models\Erp\PurchaseReceipt;
@@ -138,7 +139,7 @@ class PurchaseDefectApplicationService
             $this->settlementSources->syncReceipt($handling->receipt_id, null, $operatorName);
             // 合格部分已先过账时，让步接收/返修合格的数量在这里补入库。
             if (in_array($handling->current_step, ['concession_completed', 'repair_completed'], true)) {
-                app(InventoryService::class)->postPurchaseReceiptQualityRelease((int) $handling->receipt_item_id, $operatorId, $handling);
+                app(PurchaseInventoryPosting::class)->postPurchaseReceiptQualityRelease((int) $handling->receipt_item_id, $operatorId, $handling);
             }
 
             return $this->load($handling);
