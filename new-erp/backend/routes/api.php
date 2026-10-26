@@ -404,6 +404,9 @@ Route::prefix('v1/erp/sales')->group(function () {
     Route::post('returns/{id}/confirm', [SalesReturnController::class, 'confirm'])->whereNumber('id');
     Route::post('returns/{id}/receive', [SalesReturnController::class, 'receive'])->whereNumber('id');
     Route::post('returns/{id}/receipts/{receiptId}/post', [SalesReturnController::class, 'postReceipt'])->whereNumber('id')->whereNumber('receiptId');
+    Route::post('returns/{id}/dispose', [SalesReturnController::class, 'dispose'])->whereNumber('id');
+    Route::get('returns/{id}/serial-candidates', [SalesReturnController::class, 'serialCandidates'])->whereNumber('id');
+    Route::get('returns/{id}/receipts/{receiptId}/serials', [SalesReturnController::class, 'receiptSerials'])->whereNumber('id')->whereNumber('receiptId');
     Route::post('returns/{id}/cancel', [SalesReturnController::class, 'cancel'])->whereNumber('id');
     Route::post('returns/{id}/close', [SalesReturnController::class, 'close'])->whereNumber('id');
     Route::delete('returns/{id}', [SalesReturnController::class, 'destroy'])->whereNumber('id');

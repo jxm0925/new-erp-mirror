@@ -9,6 +9,8 @@ use App\Models\Erp\SalesReturnItem;
 use App\Models\Erp\SalesReturnReceipt;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\SalesReturnApplicationService;
+use App\Services\Erp\SalesReturnSettlementService;
+use App\Services\Erp\SalesReturnIdentityService;
 use App\Services\Erp\SalesCostVisibilityService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -19,7 +21,8 @@ class SalesReturnController extends Controller
     {
         $this->authorizePermission($request, 'sales_return.view');
         $query = SalesReturn::query()
-            ->with(['order', 'customer', 'items.item', 'items.baseUnit'])
+            ->with(['order', 'customer', 'items.item', 'items.baseUnit',
+                $this->canViewAmounts($request) ? 'terms' : 'terms:id,sales_return_id,return_type'])
             ->latest('updated_at');
         $this->applyOrderVisibility($query, $request);
 
@@ -34,21 +37,21 @@ class SalesReturnController extends Controller
         }
         if ($request->filled('order_no')) {
             $orderNo = trim((string) $request->input('order_no'));
-            $query->where(function ($builder) use ($orderNo): void {
-                $builder->where('sales_order_no', 'like', "%{$orderNo}%")
-                    ->orWhere('origin_order_no', 'like', "%{$orderNo}%");
-            });
+            $query->whereHas('order', fn ($order) => $order->where(fn ($builder) => $builder
+                ->where('sales_order_no', 'like', "%{$orderNo}%")
+                ->orWhere('origin_order_no', 'like', "%{$orderNo}%")));
         }
         if ($request->filled('customer_keyword')) {
             $customerKeyword = trim((string) $request->input('customer_keyword'));
-            $query->where(function ($builder) use ($customerKeyword): void {
-                $builder->where('customer_name', 'like', "%{$customerKeyword}%")
-                    ->orWhere('customer_phone', 'like', "%{$customerKeyword}%");
-            });
+            // 退货单本身不存客户名/订单日期/发货状态，这些条件都落在原销售订单上。
+            $query->whereHas('order', fn ($order) => $order->where(fn ($builder) => $builder
+                ->where('customer_name', 'like', "%{$customerKeyword}%")
+                ->orWhere('customer_phone', 'like', "%{$customerKeyword}%")));
         }
-        if ($request->filled('order_date_from')) $query->whereDate('order_date', '>=', $request->input('order_date_from'));
-        if ($request->filled('order_date_to')) $query->whereDate('order_date', '<=', $request->input('order_date_to'));
-        if ($request->filled('shipment_status')) $query->where('shipment_status', $request->input('shipment_status'));
+        if ($request->filled('order_date_from')) $query->whereHas('order', fn ($order) => $order->whereDate('order_date', '>=', $request->input('order_date_from')));
+        if ($request->filled('order_date_to')) $query->whereHas('order', fn ($order) => $order->whereDate('order_date', '<=', $request->input('order_date_to')));
+        if ($request->filled('shipment_status')) $query->whereHas('order', fn ($order) => $order->where('shipment_status', $request->input('shipment_status')));
+        if ($request->filled('return_type')) $query->whereHas('terms', fn ($terms) => $terms->where('return_type', $request->input('return_type')));
         if ($request->filled('return_status')) $query->where('return_status', $request->input('return_status'));
         if ($request->filled('customer_id')) $query->where('customer_id', $request->integer('customer_id'));
         if ($request->filled('sales_user_legacy_id')) {
@@ -121,6 +124,8 @@ class SalesReturnController extends Controller
                         'reserved_return_qty' => $reserved,
                         'available_return_qty' => max(0, (float) $line->shipped_qty - $reserved),
                         'fulfillment_factor_snapshot' => (float) ($line->fulfillment_factor_snapshot ?: 1),
+                        // 退货单价默认值：原订单行含税净单价（销售单位）。
+                        'refund_unit_price' => (float) SalesReturnSettlementService::lineUnitPrice($line),
                     ];
                 })->values(),
             ];
@@ -144,10 +149,26 @@ class SalesReturnController extends Controller
             'receipts.items.item',
             'receipts.items.warehouse',
             'receipts.items.location',
+            'terms',
+            'items.credit',
+            'dispositions',
             'logs',
         ])->whereKey($id);
         $this->applyOrderVisibility($query, $request);
-        return $this->costSafeJson($query->firstOrFail());
+        $return = $query->firstOrFail();
+        $data = $return->toArray();
+        // 前端据此决定收货/处置时是否必须逐件选择序列号。
+        $identities = app(SalesReturnIdentityService::class);
+        foreach ($return->items as $index => $item) $data['items'][$index]['serial_required'] = $identities->requiresIdentities($item);
+        // 金额口径只给有销售金额/财务权限的人；仓库收货人员只看数量与处置。
+        if ($this->canViewAmounts($request)) {
+            $data['settlement'] = app(SalesReturnSettlementService::class)->summary($return);
+        } else {
+            unset($data['terms']['credit_amount']);
+            foreach ($data['items'] as &$item) unset($item['credit']);
+            unset($item);
+        }
+        return $this->costSafeJson($data);
     }
 
     public function orderReturns(Request $request, int $orderId)
@@ -175,11 +196,13 @@ class SalesReturnController extends Controller
             'sales_order_id' => 'required|exists:erp_sales_orders,id',
             'return_date' => 'nullable|date',
             'return_reason' => 'required|string|max:160',
+            'return_type' => 'nullable|in:refund,exchange',
             'remark' => 'nullable|string',
             'items' => 'required|array|min:1',
             'items.*.sales_order_line_id' => 'required|exists:erp_sales_order_lines,id',
             'items.*.fulfillment_id' => 'nullable|exists:erp_sales_order_fulfillments,id',
             'items.*.requested_sales_qty' => 'required|numeric|min:0.00000001',
+            'items.*.refund_unit_price' => 'nullable|numeric|min:0',
             'items.*.remark' => 'nullable|string',
         ]);
         $orderQuery = SalesOrder::query()->whereKey($payload['sales_order_id']);
@@ -246,6 +269,48 @@ class SalesReturnController extends Controller
         ]);
     }
 
+    /** 收货候选序列：只列该退货行原发货、当前仍在客户手里的序列。 */
+    public function serialCandidates(Request $request, int $id, SalesReturnIdentityService $identities)
+    {
+        $this->authorizePermission($request, 'sales_return.receive');
+        $this->assertReturnVisible($request, $id);
+        $filters = $request->validate(['return_item_id' => 'required|integer|min:1', 'keyword' => 'nullable|string|max:120',
+            'batch_no' => 'nullable|string|max:80', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
+        return response()->json($identities->candidates($id, (int) $filters['return_item_id'], $filters));
+    }
+
+    /** 到货单逐件追溯：序列号、处理去向、原发货单与入库状态（不含成本）。 */
+    public function receiptSerials(Request $request, int $id, int $receiptId, SalesReturnIdentityService $identities)
+    {
+        $this->authorizePermission($request, 'sales_return.view');
+        $this->assertReturnVisible($request, $id);
+        SalesReturnReceipt::query()->where('sales_return_id', $id)->findOrFail($receiptId);
+        $filters = $request->validate(['line_id' => 'nullable|integer|min:1', 'disposition' => 'nullable|in:restock,pending,scrap,rejected',
+            'keyword' => 'nullable|string|max:120', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
+        return response()->json($identities->receiptIdentities($receiptId, $filters));
+    }
+
+    public function dispose(Request $request, int $id, SalesReturnApplicationService $service)
+    {
+        $this->authorizePermission($request, 'sales_return.receive');
+        $this->assertReturnVisible($request, $id);
+        $payload = $request->validate([
+            'receipt_item_id' => 'required|integer|exists:erp_sales_return_receipt_items,id',
+            'disposition' => 'required|in:restock,scrap,rejected',
+            'base_qty' => 'required|numeric|min:0.00000001',
+            'warehouse_id' => 'nullable|exists:erp_warehouses,id',
+            'location_id' => 'nullable|exists:erp_locations,id',
+            'batch_no' => 'nullable|string|max:80',
+            'serial_ids' => 'nullable|array|max:1000',
+            'serial_ids.*' => 'integer|min:1|distinct',
+            'remark' => 'nullable|string|max:500',
+        ]);
+        return $this->costSafeJson([
+            'message' => '待处理数量已处置',
+            'data' => $service->disposePending($id, $payload, ...$this->operator($request)),
+        ]);
+    }
+
     public function cancel(Request $request, int $id, SalesReturnApplicationService $service)
     {
         $this->authorizePermission($request, 'sales_return.cancel');
@@ -287,6 +352,13 @@ class SalesReturnController extends Controller
         $query = SalesReturn::query()->whereKey($id);
         $this->applyOrderVisibility($query, $request);
         abort_unless($query->exists(), 403, '当前退货单不在可操作的数据范围内。');
+    }
+
+    private function canViewAmounts(Request $request): bool
+    {
+        $auth = app(AuthContextService::class);
+        $user = $auth->currentUser($request);
+        return $user && ($auth->isSuperAdmin($user) || array_intersect(['sales_order.amount.view', 'finance.view'], $auth->permissionCodes($user)) !== []);
     }
 
     private function operator(Request $request): array

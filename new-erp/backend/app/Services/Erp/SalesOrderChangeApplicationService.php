@@ -22,7 +22,7 @@ class SalesOrderChangeApplicationService
         private readonly DocumentNumberService $numbers,
         private readonly InventoryReservationService $reservations,
         private readonly SalesOrderAmountService $amounts,
-        private readonly SalesOrderFundingGateService $fundingGates,
+        private readonly SalesOrderStateCoordinator $orderStates,
     ) {
     }
 
@@ -73,7 +73,7 @@ class SalesOrderChangeApplicationService
                 'fulfillment_status' => 'pending', 'production_confirm_status' => 'pending',
                 'inventory_lock_status' => 'pending', 'inventory_locked_at' => null, 'inventory_locked_by_legacy_id' => null,
             ] : []));
-            $this->fundingGates->refreshProjection($order->fresh());
+            $this->orderStates->handle(SalesOrderStateCoordinator::ORDER_TERMS_CHANGED, $order->fresh());
 
             $after = $order->fresh(['lines', 'fulfillments'])->toArray();
             $versionNo = (int) SalesOrderVersion::where('sales_order_id', $order->id)->max('version_no') + 1;

@@ -73,7 +73,7 @@ class SalesOrderEditImpactService
         private readonly DocumentNumberService $numbers,
         private readonly SalesOrderLineService $lines,
         private readonly SalesOrderAmountService $amounts,
-        private readonly SalesOrderFundingGateService $fundingGates,
+        private readonly SalesOrderStateCoordinator $orderStates,
         private readonly InventoryReservationService $reservations,
     ) {}
 
@@ -315,7 +315,7 @@ class SalesOrderEditImpactService
         }
         $order->update(['business_version' => (int) $order->business_version + 1,
             'shipment_status' => SalesOrderFulfillmentPolicy::shipmentStatus($order->fresh('lines')->lines->map(fn ($line) => $line->getAttributes())->all())]);
-        $this->fundingGates->refreshProjection($order->fresh());
+        $this->orderStates->handle(SalesOrderStateCoordinator::ORDER_TERMS_CHANGED, $order->fresh());
         $after = $order->fresh(['lines', 'fulfillments'])->toArray();
         $versionNo = $candidateModel?->candidate_version ?: $this->nextCandidateVersion($order, $this->version($order));
         $appliedAt = now();

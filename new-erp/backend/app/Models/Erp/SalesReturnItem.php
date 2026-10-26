@@ -23,5 +23,6 @@ class SalesReturnItem extends MasterModel
     public function item() { return $this->belongsTo(Item::class); }
     public function baseUnit() { return $this->belongsTo(Unit::class, 'base_unit_id'); }
     public function receiptItems() { return $this->hasMany(SalesReturnReceiptItem::class, 'sales_return_item_id'); }
+    public function credit() { return $this->hasOne(SalesReturnItemCredit::class, 'sales_return_item_id'); }
     public function costAllocations() { return $this->hasMany(SalesReturnCostAllocation::class, 'sales_return_item_id'); }
 }

@@ -17,5 +17,7 @@ class SalesReturn extends MasterModel
     public function customer() { return $this->belongsTo(SalesCustomer::class, 'customer_id'); }
     public function items() { return $this->hasMany(SalesReturnItem::class, 'sales_return_id'); }
     public function receipts() { return $this->hasMany(SalesReturnReceipt::class, 'sales_return_id'); }
+    public function terms() { return $this->hasOne(SalesReturnTerm::class, 'sales_return_id'); }
+    public function dispositions() { return $this->hasMany(SalesReturnDisposition::class, 'sales_return_id'); }
     public function logs() { return $this->hasMany(SalesReturnLog::class, 'sales_return_id'); }
 }

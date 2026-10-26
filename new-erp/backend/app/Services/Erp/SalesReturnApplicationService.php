@@ -8,6 +8,7 @@ use App\Models\Erp\SalesOrderLine;
 use App\Models\Erp\InventoryTransactionItem;
 use App\Models\Erp\SalesReturn;
 use App\Models\Erp\SalesReturnCostAllocation;
+use App\Models\Erp\SalesReturnDisposition;
 use App\Models\Erp\SalesReturnItem;
 use App\Models\Erp\SalesReturnLog;
 use App\Models\Erp\SalesReturnReceipt;
@@ -20,7 +21,8 @@ class SalesReturnApplicationService
     public function __construct(
         private readonly DocumentNumberService $numbers,
         private readonly SalesReturnInventoryPosting $inventory,
-        private readonly SalesOrderActualCostService $actualCosts,
+        private readonly SalesOrderStateCoordinator $orderStates,
+        private readonly SalesReturnSettlementService $settlements,
     ) {
     }
 
@@ -53,6 +55,7 @@ class SalesReturnApplicationService
                 'remark' => $payload['remark'] ?? null,
                 'created_by' => $operatorId,
             ]);
+            $this->settlements->initialize($salesReturn, $payload['return_type'] ?? null);
 
             foreach ($payload['items'] as $row) {
                 /** @var SalesOrderLine $line */
@@ -90,6 +93,8 @@ class SalesReturnApplicationService
                     ],
                     'remark' => $row['remark'] ?? null,
                 ]);
+
+                $this->settlements->initializeItem($returnItem, $line, $row['refund_unit_price'] ?? null);
 
                 // Lock and reserve exact original outbound facts now. This keeps a
                 // later return receipt from being valued with today's moving cost.
@@ -224,6 +229,7 @@ class SalesReturnApplicationService
             $allReceived = $return->items->every(fn (SalesReturnItem $item) => (float) $item->received_base_qty >= (float) $item->requested_base_qty);
             $from = $return->return_status;
             $return->update(['return_status' => $allReceived ? 'received' : 'partial_received']);
+            $this->settlements->refresh($return);
             $this->log($return, 'receive', $from, $return->return_status, $operatorId, $operatorName, "销售退货到货 {$receiptNo}");
 
             if ((float) $receipt->items()->sum('restock_base_qty') <= 0) {
@@ -239,11 +245,107 @@ class SalesReturnApplicationService
     {
         $this->inventory->postSalesReturnReceipt($receiptId, $operatorId);
         $receipt = SalesReturnReceipt::with('salesReturn')->findOrFail($receiptId);
-        $this->actualCosts->refresh((int) $receipt->salesReturn->sales_order_id);
         $this->log($receipt->salesReturn, 'post_receipt', null, null, $operatorId, $operatorName, "销售退货到货 {$receipt->receipt_no} 重新入库完成");
         $this->refreshCompletion($receipt->salesReturn);
 
         return $receipt->fresh(['salesReturn.order', 'items.salesReturnItem', 'items.item', 'items.warehouse', 'items.location']);
+    }
+
+    /**
+     * 待处理数量处置：restock 生成处置到货单（待入库过账，按原发运成本入库）；scrap 报废；rejected 退回客户（不冲减应收）。
+     * 原到货行的待处理数量转出，序列身份随之迁移，处置记录留痕。
+     */
+    public function disposePending(int $returnId, array $payload, ?int $operatorId, ?string $operatorName): SalesReturn
+    {
+        return DB::transaction(function () use ($returnId, $payload, $operatorId, $operatorName): SalesReturn {
+            $return = SalesReturn::query()->lockForUpdate()->findOrFail($returnId);
+            if (!in_array($return->return_status, ['partial_received', 'received'], true)) {
+                throw ValidationException::withMessages(['return_status' => '只有部分收货或已收货的销售退货单可以处置待处理数量。']);
+            }
+            $source = SalesReturnReceiptItem::query()->with(['receipt', 'salesReturnItem'])->lockForUpdate()->findOrFail($payload['receipt_item_id']);
+            if ((int) $source->receipt?->sales_return_id !== (int) $return->id) {
+                throw ValidationException::withMessages(['receipt_item_id' => '到货明细不属于当前销售退货单。']);
+            }
+            $disposition = (string) $payload['disposition'];
+            $qty = round((float) $payload['base_qty'], 8);
+            if ($qty <= 0 || $qty > (float) $source->pending_base_qty + 0.00000001) {
+                throw ValidationException::withMessages(['base_qty' => '处置数量必须大于 0 且不超过该到货行待处理数量 '.(float) $source->pending_base_qty.'。']);
+            }
+            $serialIds = array_values($payload['serial_ids'] ?? []);
+            if ($serialIds && count($serialIds) != $qty) {
+                throw ValidationException::withMessages(['serial_ids' => '所选序列号数量必须等于处置数量。']);
+            }
+            $returnItem = SalesReturnItem::query()->lockForUpdate()->findOrFail($source->sales_return_item_id);
+
+            $target = $source;
+            $receiptNo = null;
+            if ($disposition === 'restock') {
+                $warehouseId = $payload['warehouse_id'] ?? $source->warehouse_id;
+                $locationId = $payload['location_id'] ?? $source->location_id;
+                // 序列商品入库批次必须与原发货批次一致，沿用原到货行批次。
+                $batchNo = $serialIds ? $source->batch_no : ($payload['batch_no'] ?? $source->batch_no);
+                if (!$warehouseId || !$locationId || !$batchNo) {
+                    throw ValidationException::withMessages(['items' => '转入库必须选择仓库、库位并确认退货批次。']);
+                }
+                $receiptNo = $this->numbers->next('sales_return_receipt', 'SRR');
+                $receipt = SalesReturnReceipt::create([
+                    'receipt_no' => $receiptNo,
+                    'sales_return_id' => $return->id,
+                    'receipt_date' => now()->toDateString(),
+                    'receipt_status' => 'confirmed',
+                    'stock_post_status' => 'pending',
+                    'remark' => "待处理转入库（来源到货单 {$source->receipt->receipt_no}）".(!empty($payload['remark']) ? '；'.$payload['remark'] : ''),
+                    'created_by' => $operatorId,
+                    'confirmed_by' => $operatorId,
+                    'confirmed_at' => now(),
+                ]);
+                $target = SalesReturnReceiptItem::create([
+                    'receipt_id' => $receipt->id,
+                    'sales_return_item_id' => $returnItem->id,
+                    'item_id' => $returnItem->item_id,
+                    'warehouse_id' => $warehouseId,
+                    'location_id' => $locationId,
+                    'batch_no' => $batchNo,
+                    'base_unit_id' => $returnItem->base_unit_id,
+                    'received_base_qty' => $qty,
+                    'restock_base_qty' => $qty,
+                    'inspection_remark' => $payload['remark'] ?? null,
+                ]);
+                // 数量从原到货行转出，保持各到货行“实收 = 各去向之和”。
+                $source->update([
+                    'received_base_qty' => round((float) $source->received_base_qty - $qty, 8),
+                    'pending_base_qty' => round((float) $source->pending_base_qty - $qty, 8),
+                ]);
+            } else {
+                $source->update([
+                    'pending_base_qty' => round((float) $source->pending_base_qty - $qty, 8),
+                    $disposition.'_base_qty' => round((float) $source->{$disposition.'_base_qty'} + $qty, 8),
+                ]);
+            }
+            app(SalesReturnIdentityService::class)->redisposePending($source, $target, $disposition, $serialIds, $operatorId);
+            $returnItem->update([
+                'pending_base_qty' => round((float) $returnItem->pending_base_qty - $qty, 8),
+                $disposition.'_base_qty' => round((float) $returnItem->{$disposition.'_base_qty'} + $qty, 8),
+            ]);
+            SalesReturnDisposition::create([
+                'sales_return_id' => $return->id,
+                'sales_return_item_id' => $returnItem->id,
+                'source_receipt_item_id' => $source->id,
+                'target_receipt_item_id' => $target->id,
+                'disposition' => $disposition,
+                'base_qty' => $qty,
+                'remark' => $payload['remark'] ?? null,
+                'operator_id' => $operatorId,
+                'operator_name' => $operatorName,
+            ]);
+            $this->settlements->refresh($return);
+            $label = ['restock' => '转入库', 'scrap' => '报废', 'rejected' => '退回客户'][$disposition];
+            $this->log($return, 'dispose', null, null, $operatorId, $operatorName,
+                "待处理数量 {$qty} {$label}".($receiptNo ? "，生成处置到货单 {$receiptNo} 待入库过账" : ''));
+            $this->refreshCompletion($return);
+
+            return $this->load($return);
+        }, 5);
     }
 
     public function cancel(int $id, ?int $operatorId, ?string $operatorName): SalesReturn
@@ -273,7 +375,11 @@ class SalesReturnApplicationService
                 throw ValidationException::withMessages(['return_status' => '仍有退货到货单等待库存处理，请先完成或处理到货单后再关闭。']);
             }
             $from = $return->return_status;
+            if ($return->items()->where('pending_base_qty', '>', 0)->exists()) {
+                throw ValidationException::withMessages(['return_status' => '仍有待处理的退货数量，请先处置（转入库/报废/退回客户）后再关闭。']);
+            }
             $return->update(['return_status' => 'closed', 'closed_by' => $operatorId, 'closed_at' => now()]);
+            $this->settlements->refresh($return);
             $this->log($return, 'close', $from, 'closed', $operatorId, $operatorName, '关闭销售退货剩余未收数量');
 
             return $this->load($return);
@@ -391,9 +497,10 @@ class SalesReturnApplicationService
         $return->refresh()->load(['items', 'receipts']);
         $allReceived = $return->items->every(fn (SalesReturnItem $item) => (float) $item->received_base_qty >= (float) $item->requested_base_qty);
         $allPosted = $return->receipts->every(fn (SalesReturnReceipt $receipt) => in_array($receipt->stock_post_status, ['posted', 'not_required'], true));
-        if ($allReceived && $allPosted && !in_array($return->return_status, ['cancelled', 'closed'], true)) {
+        $noPending = $return->items->every(fn (SalesReturnItem $item) => (float) $item->pending_base_qty <= 0.00000001);
+        if ($allReceived && $allPosted && $noPending && !in_array($return->return_status, ['cancelled', 'closed'], true)) {
             $return->update(['return_status' => 'completed']);
-            app(SalesOrderCompletionService::class)->refresh((int) $return->sales_order_id);
+            $this->orderStates->handle(SalesOrderStateCoordinator::RETURN_CHANGED, (int) $return->sales_order_id);
         }
     }
 
@@ -407,6 +514,9 @@ class SalesReturnApplicationService
             'items.item',
             'items.baseUnit',
             'receipts.items',
+            'terms',
+            'items.credit',
+            'dispositions',
             'logs',
         ]);
     }
@@ -430,6 +540,6 @@ class SalesReturnApplicationService
             'content' => $content,
         ]);
         // 退货确认会重新打开已完成订单；取消/关闭/完成后重新判定订单是否完结。
-        app(SalesOrderCompletionService::class)->refresh((int) $return->sales_order_id);
+        $this->orderStates->handle(SalesOrderStateCoordinator::RETURN_CHANGED, (int) $return->sales_order_id);
     }
 }

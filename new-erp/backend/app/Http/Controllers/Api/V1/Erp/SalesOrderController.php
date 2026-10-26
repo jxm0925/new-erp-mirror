@@ -32,6 +32,7 @@ use App\Services\Erp\LengthCutRequirementService;
 use App\Services\Erp\SalesOrderDraftService;
 use App\Services\Erp\SalesOrderAttachmentService;
 use App\Services\Erp\SalesOrderFundingGateService;
+use App\Services\Erp\SalesOrderStateCoordinator;
 use App\Services\Erp\SalesOrderEditImpactService;
 use App\Services\Erp\SalesOrderInventoryLockService;
 use App\Services\Erp\SalesOrderFulfillmentPolicy;
@@ -115,7 +116,7 @@ class SalesOrderController extends Controller
                 $updates['payment_terms_snapshot'] = $terms;
             }
             $order->update($updates);
-            $after = $gate->refreshProjection($order->fresh());
+            $after = app(SalesOrderStateCoordinator::class)->handle(SalesOrderStateCoordinator::ORDER_TERMS_CHANGED, $order);
 
             // 日志正文不写金额，金额只放在按字段名脱敏的 payload 中，避免无金额权限的人从日志看到。
             $content = ($amount === null ? '约定定金恢复为付款条件默认值' : '修改约定定金')

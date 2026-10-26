@@ -15,6 +15,7 @@ final class SalesOrderFundingGateService
         'allocated_amount', 'unallocated_amount', 'receipt_ratio',
         'production_required_amount', 'policy_deposit_amount', 'agreed_deposit_amount',
         'deposit_outstanding_amount', 'balance_outstanding_amount',
+        'return_credit_amount', 'net_receivable_amount',
     ];
 
     /** 只有“定金开工”类付款条件允许销售按与客户的约定逐单填写定金；全额预付仍须收满才开工。 */
@@ -46,7 +47,8 @@ final class SalesOrderFundingGateService
     {
         $order = $order instanceof SalesOrder ? $order : SalesOrder::findOrFail($order);
         $settlement = $this->settlements->status($order);
-        $receivable = $settlement['contract_amount'];
+        // 退货退款冲减后的净应收是定金/尾款门槛的口径基数。
+        $receivable = $settlement['net_receivable_amount'];
         $policy = $this->normalizePolicy((array) $order->funding_policy_snapshot, $receivable);
         $net = $settlement['net_received_amount'];
         $productionPassed = $policy['production_valid']
@@ -104,7 +106,8 @@ final class SalesOrderFundingGateService
         if (! $status['shipment_funds_satisfied']) throw ValidationException::withMessages(['funding' => $status['shipment_block_message']]);
     }
 
-    public function refreshProjection(SalesOrder $order): array
+    /** 只写资金放行投影；完成状态等后续步骤由 SalesOrderStateCoordinator 统一编排。 */
+    public function writeProjection(SalesOrder $order): array
     {
         $status = $this->status($order);
         $order->update([
@@ -113,7 +116,6 @@ final class SalesOrderFundingGateService
             'shipment_funding_status' => $status['shipment_funding_status'],
             'final_receivable_amount' => $status['contract_amount'],
         ]);
-        app(SalesOrderCompletionService::class)->refresh($order);
         return $status;
     }
 
