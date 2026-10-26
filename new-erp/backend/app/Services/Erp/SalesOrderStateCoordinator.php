@@ -55,7 +55,7 @@ final class SalesOrderStateCoordinator
             match ($step) {
                 self::STEP_SHIPMENT => $this->refreshShipment($locked),
                 self::STEP_COST => $this->actualCosts->refresh($orderId),
-                self::STEP_FUNDING => $funding = $this->fundingGates->writeProjection($locked->fresh()),
+                self::STEP_FUNDING => $funding = $this->fundingGates->writeProjection($locked),
                 self::STEP_COMPLETION => $this->completion->refresh($orderId),
             };
         }
@@ -65,10 +65,19 @@ final class SalesOrderStateCoordinator
     /** 实际发运后才累计销售已发货数量，并据此计算订单交付状态。 */
     private function refreshShipment(SalesOrder $order): void
     {
-        $order->load('lines');
-        $shippedByLine = SalesShipmentLine::query()->where('line_status', 'shipped')
-            ->whereHas('shipment', fn ($q) => $q->where('sales_order_id', $order->id)->whereIn('shipment_status', ['partially_shipped', 'shipped', 'completed']))
-            ->selectRaw('sales_order_line_id, SUM(sales_qty) AS shipped_qty')->groupBy('sales_order_line_id')->pluck('shipped_qty', 'sales_order_line_id');
+        $order->setRelation('lines', $order->lines()->orderBy('id')->lockForUpdate()->get());
+        // 调用方可能已建立 RR 快照；发运单状态与数量必须在同一次当前读中取得。
+        $shipments = SalesShipmentLine::query()
+            ->join('erp_sales_shipments', 'erp_sales_shipments.id', '=', 'erp_sales_shipment_lines.shipment_id')
+            ->where('erp_sales_shipment_lines.line_status', 'shipped')
+            ->where('erp_sales_shipments.sales_order_id', $order->id)
+            ->whereIn('erp_sales_shipments.shipment_status', ['partially_shipped', 'shipped', 'completed'])
+            ->orderBy('erp_sales_shipment_lines.id')->lockForUpdate()
+            ->get(['erp_sales_shipment_lines.sales_order_line_id', 'erp_sales_shipment_lines.sales_qty']);
+        $shippedByLine = [];
+        foreach ($shipments as $line) {
+            $shippedByLine[$line->sales_order_line_id] = bcadd($shippedByLine[$line->sales_order_line_id] ?? '0', (string) $line->sales_qty, 8);
+        }
         foreach ($order->lines as $line) $line->update(['shipped_qty' => $shippedByLine[$line->id] ?? 0]);
         $order->update(['shipment_status' => SalesOrderFulfillmentPolicy::shipmentStatus($order->lines->map(fn ($line) => $line->getAttributes())->all())]);
     }

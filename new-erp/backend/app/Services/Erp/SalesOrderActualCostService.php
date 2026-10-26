@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp;
 
+use App\Domain\Finance\Money;
 use App\Models\Erp\InventoryTransactionItem;
 use App\Models\Erp\SalesOrder;
 use App\Models\Erp\SalesShipment;
@@ -11,12 +12,14 @@ class SalesOrderActualCostService
 {
     public function refresh(int $salesOrderId): void
     {
-        $outboundCost = (float) SalesShipment::query()
+        // 根订单锁由协调器持有；锁读明细避免沿用业务入口更早的 RR 快照。
+        $outboundCost = SalesShipment::query()
             ->where('sales_order_id', $salesOrderId)
             ->whereIn('shipment_status', ['outbound_posted', 'partially_shipped', 'shipped', 'completed'])
-            ->sum('actual_cost_amount');
+            ->orderBy('id')->lockForUpdate()->get(['actual_cost_amount'])
+            ->reduce(fn (string $sum, SalesShipment $row): string => Money::add($sum, (string) $row->actual_cost_amount), '0.0000');
 
-        $reversedReturnCost = (float) InventoryTransactionItem::query()
+        $reversedReturnCost = InventoryTransactionItem::query()
             ->join('erp_inventory_transactions', 'erp_inventory_transactions.id', '=', 'erp_inventory_transaction_items.transaction_id')
             ->join('erp_sales_return_receipts', function ($join): void {
                 $join->on('erp_sales_return_receipts.id', '=', 'erp_inventory_transaction_items.source_id')
@@ -26,10 +29,11 @@ class SalesOrderActualCostService
             ->where('erp_sales_returns.sales_order_id', $salesOrderId)
             ->where('erp_inventory_transactions.transaction_type', 'sales_return_inbound')
             ->where('erp_inventory_transactions.posting_status', 'posted')
-            ->sum('erp_inventory_transaction_items.cost_amount');
+            ->orderBy('erp_inventory_transaction_items.id')->lockForUpdate()->get(['erp_inventory_transaction_items.cost_amount'])
+            ->reduce(fn (string $sum, InventoryTransactionItem $row): string => Money::add($sum, (string) $row->cost_amount), '0.0000');
 
         SalesOrder::query()->whereKey($salesOrderId)->update([
-            'actual_sales_cost_amount' => round(max(0, $outboundCost - $reversedReturnCost), 4),
+            'actual_sales_cost_amount' => Money::maxZero(Money::sub($outboundCost, $reversedReturnCost)),
         ]);
     }
 }

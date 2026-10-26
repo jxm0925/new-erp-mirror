@@ -4,6 +4,7 @@ namespace App\Services\Erp;
 
 use App\Domain\Finance\Money;
 use App\Models\Erp\SalesOrder;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Throwable;
 
@@ -45,7 +46,11 @@ final class SalesOrderFundingGateService
 
     public function status(SalesOrder|int $order): array
     {
-        $order = $order instanceof SalesOrder ? $order : SalesOrder::findOrFail($order);
+        if (! $order instanceof SalesOrder) {
+            $query = SalesOrder::query();
+            if (DB::transactionLevel() > 0) $query->lockForUpdate();
+            $order = $query->findOrFail($order);
+        }
         $settlement = $this->settlements->status($order);
         // 退货退款冲减后的净应收是定金/尾款门槛的口径基数。
         $receivable = $settlement['net_receivable_amount'];

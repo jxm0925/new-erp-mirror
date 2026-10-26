@@ -24,7 +24,7 @@ class SalesReturnInventoryPosting
     {
         return DB::transaction(function () use ($receiptId, $operatorId): InventoryTransaction {
             $receipt = SalesReturnReceipt::query()
-                ->with(['salesReturn', 'items.item'])
+                ->with(['items' => fn ($query) => $query->with('item')->orderBy('id')->lockForUpdate()])
                 ->lockForUpdate()
                 ->findOrFail($receiptId);
             if ($receipt->receipt_status !== 'confirmed' || $receipt->stock_post_status !== 'pending') {

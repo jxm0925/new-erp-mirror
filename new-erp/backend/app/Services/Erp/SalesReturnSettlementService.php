@@ -8,6 +8,7 @@ use App\Models\Erp\SalesReturn;
 use App\Models\Erp\SalesReturnItem;
 use App\Models\Erp\SalesReturnItemCredit;
 use App\Models\Erp\SalesReturnTerm;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -26,20 +27,23 @@ class SalesReturnSettlementService
     /** 订单上仍有效的退货冲减应收合计（草稿/取消不计；关闭单保留已认可部分）。 */
     public static function orderCreditAmount(int $salesOrderId): string
     {
-        return Money::normalize((string) SalesReturnTerm::query()
+        $query = SalesReturnTerm::query()
             ->join('erp_sales_returns', 'erp_sales_returns.id', '=', 'erp_sales_return_terms.sales_return_id')
             ->where('erp_sales_returns.sales_order_id', $salesOrderId)
             ->whereNotIn('erp_sales_returns.return_status', ['draft', 'cancelled'])
-            ->where('erp_sales_return_terms.return_type', self::TYPE_REFUND)
-            ->sum('erp_sales_return_terms.credit_amount'));
+            ->where('erp_sales_return_terms.return_type', self::TYPE_REFUND);
+        // 订单锁不会刷新调用方已有的 RR 快照，必须锁读真实明细后按十进制汇总。
+        if (DB::transactionLevel() > 0) $query->lockForUpdate();
+        return $query->orderBy('erp_sales_return_terms.id')->get(['erp_sales_return_terms.credit_amount'])
+            ->reduce(fn (string $sum, SalesReturnTerm $row): string => Money::add($sum, (string) $row->credit_amount), '0.0000');
     }
 
     public static function lineUnitPrice(SalesOrderLine $line): string
     {
-        $qty = (float) $line->order_qty;
-        if ($qty <= 0) return '0.0000';
-        $amount = (float) ($line->amount_incl_tax ?: $line->amount);
-        return Money::normalize(number_format($amount / $qty, 4, '.', ''));
+        $qty = (string) $line->order_qty;
+        if (bccomp($qty, '0', 8) <= 0) return '0.0000';
+        $amount = (string) ($line->amount_incl_tax ?: $line->amount);
+        return Money::normalize(bcdiv($amount, $qty, Money::CALC_SCALE));
     }
 
     public function initialize(SalesReturn $return, ?string $type): void
@@ -55,7 +59,7 @@ class SalesReturnSettlementService
         $max = self::lineUnitPrice($line);
         $price = $unitPrice === null || $unitPrice === '' ? $max : Money::normalize((string) $unitPrice);
         if (Money::compare($price, '0') < 0 || Money::compare($price, $max) > 0) {
-            throw ValidationException::withMessages(['items' => "退货单价必须在 0 到原订单单价 {$max} 之间。"]);
+            throw ValidationException::withMessages(['items' => '退货单价不能小于 0 或超过原订单单价。']);
         }
         SalesReturnItemCredit::query()->updateOrCreate(['sales_return_item_id' => $item->id], ['unit_price_snapshot' => $price]);
     }
@@ -63,7 +67,8 @@ class SalesReturnSettlementService
     /** 按当前到货/处置事实重算行与单据冲减金额；历史无口径记录的退货按“退货退款 + 原单价”补齐。 */
     public function refresh(SalesReturn $return): SalesReturnTerm
     {
-        $return->loadMissing('items.orderLine');
+        $return->load(['items' => fn ($query) => $query->orderBy('id')->lockForUpdate(),
+            'items.orderLine' => fn ($query) => $query->lockForUpdate()]);
         $terms = SalesReturnTerm::query()->lockForUpdate()->firstOrCreate(['sales_return_id' => $return->id], ['return_type' => self::TYPE_REFUND]);
         $total = '0.0000';
         foreach ($return->items as $item) {
@@ -71,10 +76,14 @@ class SalesReturnSettlementService
                 ['sales_return_item_id' => $item->id],
                 ['unit_price_snapshot' => $item->orderLine ? self::lineUnitPrice($item->orderLine) : '0'],
             );
-            $factor = (float) data_get($item->fulfillment_snapshot, 'fulfillment_factor_snapshot', 1) ?: 1.0;
-            $acceptedBase = max(0, (float) $item->received_base_qty - (float) $item->rejected_base_qty);
-            $salesQty = $terms->return_type === self::TYPE_REFUND ? round($acceptedBase / $factor, 8) : 0.0;
-            $amount = Money::normalize(number_format($salesQty * (float) $credit->unit_price_snapshot, 2, '.', ''));
+            $factor = data_get($item->fulfillment_snapshot, 'fulfillment_factor_snapshot', '1');
+            // 历史 JSON 曾写入浮点因子；先还原原有八位数量精度，后续计算保持十进制。
+            $factor = is_float($factor) ? number_format($factor, 8, '.', '') : (string) $factor;
+            if (bccomp($factor, '0', 8) <= 0) $factor = '1';
+            $acceptedBase = bcsub((string) $item->received_base_qty, (string) $item->rejected_base_qty, 8);
+            if (bccomp($acceptedBase, '0', 8) < 0) $acceptedBase = '0';
+            $salesQty = $terms->return_type === self::TYPE_REFUND ? bcadd(bcdiv($acceptedBase, $factor, 9), '0.000000005', 8) : '0';
+            $amount = Money::normalize(bcmul($salesQty, (string) $credit->unit_price_snapshot, 12));
             $credit->update(['credited_sales_qty' => $salesQty, 'credit_amount' => $amount]);
             $total = Money::add($total, $amount);
         }

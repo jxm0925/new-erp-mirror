@@ -31,14 +31,16 @@ class SalesReturnIdentityService
         if ($line->item?->materialManagementMode() === 'physical') return false;
         if ($line->item?->serialTrackingMode() === 'required') return true;
         // Turning tracking off later must not erase the identity of an already shipped unit.
-        return DB::table('erp_sales_shipment_lines as shipment_line')
+        $query = DB::table('erp_sales_shipment_lines as shipment_line')
             ->join('erp_inventory_transaction_items as outbound', function ($join): void {
                 $join->on('outbound.source_item_id', '=', 'shipment_line.id')->where('outbound.source_type', 'sales_shipment');
             })
             ->join('erp_inventory_transactions as transaction', 'transaction.id', '=', 'outbound.transaction_id')
             ->where('shipment_line.sales_order_line_id', $line->sales_order_line_id)->where('shipment_line.item_id', $line->item_id)
             ->where('transaction.transaction_type', 'sales_shipment_outbound')->where('transaction.posting_status', 'posted')
-            ->whereRaw("JSON_LENGTH(JSON_EXTRACT(shipment_line.serial_snapshot, '$.inventory_serial_ids')) > 0")->exists();
+            ->whereRaw("JSON_LENGTH(JSON_EXTRACT(shipment_line.serial_snapshot, '$.inventory_serial_ids')) > 0");
+        if (DB::transactionLevel() > 0) $query->lockForUpdate();
+        return $query->orderBy('outbound.id')->first(['outbound.id']) !== null;
     }
 
     /** Caller must authorize this return's order scope before exposing any candidates. */
@@ -65,17 +67,19 @@ class SalesReturnIdentityService
             ->join('erp_sales_shipment_lines as shipment_line', 'shipment_line.id', '=', 'identity.sales_shipment_line_id')
             ->join('erp_sales_shipments as shipment', 'shipment.id', '=', 'shipment_line.shipment_id')
             ->where('receipt_line.receipt_id', $receiptId);
+        if (isset($filters['ids'])) $query->whereIn('identity.inventory_serial_id', $filters['ids']);
         if (!empty($filters['line_id'])) $query->where('identity.sales_return_receipt_item_id', (int) $filters['line_id']);
         if (!empty($filters['disposition'])) $query->where('identity.disposition', (string) $filters['disposition']);
         if ($keyword = trim((string) ($filters['keyword'] ?? ''))) $query->where('identity.serial_no_snapshot', 'like', '%'.$keyword.'%');
         return $query->select(['identity.id as identity_id', 'identity.inventory_serial_id as id', 'identity.sales_return_receipt_item_id as receipt_item_id',
             'identity.serial_no_snapshot as serial_no', 'identity.source_batch_no as batch_no', 'identity.disposition', 'shipment.shipment_no',
             'identity.sales_shipment_line_id', 'identity.outbound_transaction_item_id', 'identity.inventory_transaction_item_id', 'identity.received_at', 'identity.posted_at'])
-            ->orderBy('identity.id')->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 10))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
+            ->orderBy('identity.id')->paginate(isset($filters['ids']) ? max(1, count($filters['ids'])) : min(100, max(1, (int) ($filters['per_page'] ?? 10))), ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
     }
 
     private function candidateQuery(SalesReturnItem $line): Builder
     {
+        $current = DB::transactionLevel() > 0;
         return DB::table('erp_inventory_serials as serial')
             ->join('erp_inventory_serial_events as event', function ($join): void {
                 $join->on('event.inventory_serial_id', '=', 'serial.id')->where('event.event_type', 'sales_shipment_outbound');
@@ -96,16 +100,19 @@ class SalesReturnIdentityService
             ->whereColumn('outbound.source_id', 'shipment.id')
             ->where(fn ($q) => $q->where(fn ($old) => $old->where('transaction.source_type', 'sales_shipment')->whereColumn('transaction.source_id', 'shipment.id'))
                 ->orWhere(fn ($batch) => $batch->where('transaction.source_type', 'sales_shipment_dispatch')->whereExists(fn ($d) => $d->selectRaw('1')->from('erp_shipment_dispatches as dispatch')
-                    ->whereColumn('dispatch.id', 'transaction.source_id')->whereColumn('dispatch.shipment_id', 'shipment.id')->whereColumn('dispatch.inventory_transaction_id', 'transaction.id'))))
+                    ->whereColumn('dispatch.id', 'transaction.source_id')->whereColumn('dispatch.shipment_id', 'shipment.id')->whereColumn('dispatch.inventory_transaction_id', 'transaction.id')
+                    ->when($current, fn ($query) => $query->lockForUpdate()))))
             ->whereColumn('serial.batch_no', 'shipment_line.batch_no')->whereColumn('outbound.batch_no', 'shipment_line.batch_no')
             ->whereRaw("JSON_CONTAINS(JSON_EXTRACT(shipment_line.serial_snapshot, '$.inventory_serial_ids'), CAST(serial.id AS JSON))")
             // The newest sale is authoritative: an old order cannot reclaim a serial that
             // has already returned, been sold again, and now belongs to another shipment.
-            ->whereRaw("event.id = (SELECT MAX(newer.id) FROM erp_inventory_serial_events newer WHERE newer.inventory_serial_id = serial.id AND newer.event_type = 'sales_shipment_outbound')")
-            ->whereNotExists(function ($query): void {
+            // 外层锁不覆盖子查询；写事务中最新发运和已退身份也必须读取当前事实。
+            ->whereRaw("event.id = (SELECT newer.id FROM erp_inventory_serial_events newer WHERE newer.inventory_serial_id = serial.id AND newer.event_type = 'sales_shipment_outbound' ORDER BY newer.id DESC LIMIT 1".($current ? ' FOR UPDATE' : '').')')
+            ->whereNotExists(function ($query) use ($current): void {
                 $query->selectRaw('1')->from('erp_sales_return_serial_identities as identity')
                     ->whereColumn('identity.inventory_serial_id', 'serial.id')->whereColumn('identity.outbound_transaction_item_id', 'outbound.id');
-            });
+                if ($current) $query->lockForUpdate();
+            })->when($current, fn ($query) => $query->lockForUpdate());
     }
 
     /** Called inside the receipt transaction before quantities are accumulated. */
@@ -135,7 +142,7 @@ class SalesReturnIdentityService
             'serial.id', 'serial.serial_no', 'shipment_line.batch_no', 'shipment_line.serial_snapshot',
             'shipment_line.id as shipment_line_id', 'shipment_line.shipment_id', 'outbound.id as outbound_id',
             'outbound.change_qty', 'outbound.unit_cost', 'outbound.cost_amount',
-        ])->get();
+        ])->orderBy('serial.id')->get();
         if ($facts->count() !== count($selected) || $facts->pluck('id')->unique()->count() !== count($selected)) $this->fail('所选序列号不属于当前订单原发货，或已退回、已被其他业务处理，请重新核对。');
         $batches = $facts->pluck('batch_no')->unique()->values();
         if ($batches->count() !== 1 || (string) $receiptLine->batch_no !== (string) $batches->first()) $this->fail('同一退货行本次只能接收同一个原发货批次，批次必须与所选序列号一致；不同批次请分次收货。');
@@ -163,11 +170,12 @@ class SalesReturnIdentityService
         // already received identities and posted quantities must never change their source cost.
         $outboundIds = DB::table('erp_sales_shipment_lines as shipment_line')
             ->join('erp_inventory_transaction_items as outbound', function ($join): void { $join->on('outbound.source_item_id', '=', 'shipment_line.id')->where('outbound.source_type', 'sales_shipment'); })
-            ->where('shipment_line.sales_order_line_id', $line->sales_order_line_id)->pluck('outbound.id');
+            ->where('shipment_line.sales_order_line_id', $line->sales_order_line_id)->orderBy('outbound.id')->lockForUpdate()->pluck('outbound.id');
         $outbounds = InventoryTransactionItem::whereIn('id', $outboundIds)->orderBy('id')->lockForUpdate()->get()->keyBy('id');
         $all = SalesReturnCostAllocation::whereIn('outbound_transaction_item_id', $outboundIds)->orderBy('id')->lockForUpdate()->get();
         $own = $all->where('sales_return_item_id', $line->id)->values();
-        $bound = SalesReturnSerialIdentity::whereIn('cost_allocation_id', $all->pluck('id'))->selectRaw('cost_allocation_id, COUNT(*) as aggregate')->groupBy('cost_allocation_id')->pluck('aggregate', 'cost_allocation_id');
+        $bound = SalesReturnSerialIdentity::whereIn('cost_allocation_id', $all->pluck('id'))->orderBy('id')->lockForUpdate()
+            ->get(['cost_allocation_id'])->countBy('cost_allocation_id');
         $needed = $facts->groupBy('outbound_id')->map(fn ($rows) => $rows->count());
         $byOutbound = $own->keyBy('outbound_transaction_item_id');
         if ($byOutbound->count() !== $own->count()) $this->fail('原发货成本分配重复，请先核对成本事实。');
@@ -183,7 +191,7 @@ class SalesReturnIdentityService
         $missing = array_sum($deficits);
         if ($missing > array_sum($free) + 0.00000001) $this->fail('当前退货单没有足够未接收的原出库成本预留，不能重复接收序列号。');
         $statuses = DB::table('erp_sales_return_items as item')->join('erp_sales_returns as document', 'document.id', '=', 'item.sales_return_id')
-            ->whereIn('item.id', $all->pluck('sales_return_item_id'))->pluck('document.return_status', 'item.id');
+            ->whereIn('item.id', $all->pluck('sales_return_item_id'))->orderBy('item.id')->lockForUpdate()->pluck('document.return_status', 'item.id');
         foreach ($deficits as $outboundId => $count) {
             if ($count <= 0) continue;
             $outbound = $outbounds->get($outboundId);
@@ -283,7 +291,10 @@ class SalesReturnIdentityService
 
     public function completeRestock(int $identityId, InventoryTransactionItem $transactionItem, ?int $operatorId): void
     {
-        $identity = SalesReturnSerialIdentity::with('receiptItem.receipt')->lockForUpdate()->findOrFail($identityId);
+        $identity = SalesReturnSerialIdentity::with([
+            'receiptItem' => fn ($query) => $query->lockForUpdate(),
+            'receiptItem.receipt' => fn ($query) => $query->lockForUpdate(),
+        ])->lockForUpdate()->findOrFail($identityId);
         $line = $identity->receiptItem;
         $serial = InventorySerial::lockForUpdate()->findOrFail($identity->inventory_serial_id);
         if ($identity->inventory_transaction_item_id || $identity->disposition !== 'restock' || $serial->serial_status !== self::STATES['restock']

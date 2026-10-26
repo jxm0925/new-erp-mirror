@@ -17,13 +17,14 @@ final class SalesOrderCompletionService
     public function refresh(SalesOrder|int|null $order): void
     {
         if ($order === null) return;
-        $order = $order instanceof SalesOrder ? $order->fresh() : SalesOrder::query()->find($order);
+        $order = SalesOrder::query()->lockForUpdate()->find($order instanceof SalesOrder ? $order->id : $order);
         if (! $order || ! in_array($order->order_status, ['confirmed', 'closed'], true)) return;
         $done = $order->production_confirm_status === 'confirmed'
             && in_array($order->shipment_status, ['shipped', 'not_required'], true)
             && $order->shipment_funding_status === 'passed'
             && $order->change_status !== 'processing'
-            && ! SalesReturn::query()->where('sales_order_id', $order->id)->whereIn('return_status', self::OPEN_RETURN_STATUSES)->exists()
+            && SalesReturn::query()->where('sales_order_id', $order->id)->whereIn('return_status', self::OPEN_RETURN_STATUSES)
+                ->orderBy('id')->lockForUpdate()->first(['id']) === null
             && ! $this->hasPendingReturnRefund($order);
         $target = $done ? 'closed' : 'confirmed';
         if ($order->order_status !== $target) $order->update(['order_status' => $target]);

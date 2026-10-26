@@ -29,7 +29,8 @@ class SalesReturnApplicationService
     public function create(array $payload, ?int $operatorId, ?string $operatorName): SalesReturn
     {
         return DB::transaction(function () use ($payload, $operatorId, $operatorName): SalesReturn {
-            $order = SalesOrder::query()->with('lines')->lockForUpdate()->findOrFail($payload['sales_order_id']);
+            $order = SalesOrder::query()->lockForUpdate()->findOrFail($payload['sales_order_id']);
+            $order->setRelation('lines', $order->lines()->orderBy('id')->lockForUpdate()->get());
             $lineIds = collect($payload['items'])->pluck('sales_order_line_id')->unique()->values();
             $lines = $order->lines->whereIn('id', $lineIds)->keyBy('id');
             if ($lines->count() !== $lineIds->count()) {
@@ -120,7 +121,7 @@ class SalesReturnApplicationService
     public function confirm(int $id, ?int $operatorId, ?string $operatorName): SalesReturn
     {
         return DB::transaction(function () use ($id, $operatorId, $operatorName): SalesReturn {
-            $return = SalesReturn::with('items.orderLine')->lockForUpdate()->findOrFail($id);
+            $return = $this->lockReturn($id);
             if ($return->return_status !== 'draft') {
                 throw ValidationException::withMessages(['return_status' => '只有草稿销售退货单可以确认。']);
             }
@@ -144,7 +145,7 @@ class SalesReturnApplicationService
     public function receive(array $payload, ?int $operatorId, ?string $operatorName): SalesReturnReceipt
     {
         return DB::transaction(function () use ($payload, $operatorId, $operatorName): SalesReturnReceipt {
-            $return = SalesReturn::with('items')->lockForUpdate()->findOrFail($payload['sales_return_id']);
+            $return = $this->lockReturn((int) $payload['sales_return_id']);
             if (!in_array($return->return_status, ['pending_receipt', 'partial_received'], true)) {
                 throw ValidationException::withMessages(['return_status' => '只有待收货或部分收货的销售退货单可以登记退货到货。']);
             }
@@ -225,7 +226,7 @@ class SalesReturnApplicationService
                 );
             }
 
-            $return->refresh()->load('items');
+            $return = $this->lockReturn((int) $return->id);
             $allReceived = $return->items->every(fn (SalesReturnItem $item) => (float) $item->received_base_qty >= (float) $item->requested_base_qty);
             $from = $return->return_status;
             $return->update(['return_status' => $allReceived ? 'received' : 'partial_received']);
@@ -243,12 +244,17 @@ class SalesReturnApplicationService
 
     public function postReceipt(int $receiptId, ?int $operatorId, ?string $operatorName): SalesReturnReceipt
     {
-        $this->inventory->postSalesReturnReceipt($receiptId, $operatorId);
-        $receipt = SalesReturnReceipt::with('salesReturn')->findOrFail($receiptId);
-        $this->log($receipt->salesReturn, 'post_receipt', null, null, $operatorId, $operatorName, "销售退货到货 {$receipt->receipt_no} 重新入库完成");
-        $this->refreshCompletion($receipt->salesReturn);
+        return DB::transaction(function () use ($receiptId, $operatorId, $operatorName): SalesReturnReceipt {
+            $returnId = SalesReturnReceipt::query()->whereKey($receiptId)->value('sales_return_id');
+            $return = $this->lockReturn((int) $returnId);
+            // 库存、日志和订单投影必须一起提交；内层过账只使用外层事务的保存点。
+            $this->inventory->postSalesReturnReceipt($receiptId, $operatorId);
+            $receipt = SalesReturnReceipt::query()->lockForUpdate()->findOrFail($receiptId);
+            $this->log($return, 'post_receipt', null, null, $operatorId, $operatorName, "销售退货到货 {$receipt->receipt_no} 重新入库完成");
+            $this->refreshCompletion($return);
 
-        return $receipt->fresh(['salesReturn.order', 'items.salesReturnItem', 'items.item', 'items.warehouse', 'items.location']);
+            return $receipt->fresh(['salesReturn.order', 'items.salesReturnItem', 'items.item', 'items.warehouse', 'items.location']);
+        }, 5);
     }
 
     /**
@@ -258,11 +264,14 @@ class SalesReturnApplicationService
     public function disposePending(int $returnId, array $payload, ?int $operatorId, ?string $operatorName): SalesReturn
     {
         return DB::transaction(function () use ($returnId, $payload, $operatorId, $operatorName): SalesReturn {
-            $return = SalesReturn::query()->lockForUpdate()->findOrFail($returnId);
+            $return = $this->lockReturn($returnId);
             if (!in_array($return->return_status, ['partial_received', 'received'], true)) {
                 throw ValidationException::withMessages(['return_status' => '只有部分收货或已收货的销售退货单可以处置待处理数量。']);
             }
-            $source = SalesReturnReceiptItem::query()->with(['receipt', 'salesReturnItem'])->lockForUpdate()->findOrFail($payload['receipt_item_id']);
+            $source = SalesReturnReceiptItem::query()->with([
+                'receipt' => fn ($query) => $query->lockForUpdate(),
+                'salesReturnItem' => fn ($query) => $query->lockForUpdate(),
+            ])->lockForUpdate()->findOrFail($payload['receipt_item_id']);
             if ((int) $source->receipt?->sales_return_id !== (int) $return->id) {
                 throw ValidationException::withMessages(['receipt_item_id' => '到货明细不属于当前销售退货单。']);
             }
@@ -351,7 +360,7 @@ class SalesReturnApplicationService
     public function cancel(int $id, ?int $operatorId, ?string $operatorName): SalesReturn
     {
         return DB::transaction(function () use ($id, $operatorId, $operatorName): SalesReturn {
-            $return = SalesReturn::with('items')->lockForUpdate()->findOrFail($id);
+            $return = $this->lockReturn($id);
             if (!in_array($return->return_status, ['draft', 'pending_receipt'], true)
                 || $return->items->sum('received_base_qty') > 0) {
                 throw ValidationException::withMessages(['return_status' => '已经发生退货到货的销售退货单不能取消。']);
@@ -367,7 +376,7 @@ class SalesReturnApplicationService
     public function close(int $id, ?int $operatorId, ?string $operatorName): SalesReturn
     {
         return DB::transaction(function () use ($id, $operatorId, $operatorName): SalesReturn {
-            $return = SalesReturn::with('receipts')->lockForUpdate()->findOrFail($id);
+            $return = $this->lockReturn($id);
             if (!in_array($return->return_status, ['pending_receipt', 'partial_received', 'received'], true)) {
                 throw ValidationException::withMessages(['return_status' => '当前销售退货状态不能关闭未完成数量。']);
             }
@@ -375,7 +384,7 @@ class SalesReturnApplicationService
                 throw ValidationException::withMessages(['return_status' => '仍有退货到货单等待库存处理，请先完成或处理到货单后再关闭。']);
             }
             $from = $return->return_status;
-            if ($return->items()->where('pending_base_qty', '>', 0)->exists()) {
+            if ($return->items->contains(fn (SalesReturnItem $item) => (float) $item->pending_base_qty > 0)) {
                 throw ValidationException::withMessages(['return_status' => '仍有待处理的退货数量，请先处置（转入库/报废/退回客户）后再关闭。']);
             }
             $return->update(['return_status' => 'closed', 'closed_by' => $operatorId, 'closed_at' => now()]);
@@ -389,7 +398,7 @@ class SalesReturnApplicationService
     public function deleteDraft(int $id): void
     {
         DB::transaction(function () use ($id): void {
-            $salesReturn = SalesReturn::query()->with(['items', 'receipts'])->lockForUpdate()->findOrFail($id);
+            $salesReturn = $this->lockReturn($id);
             if ($salesReturn->return_status !== 'draft' || $salesReturn->confirmed_at !== null) {
                 throw ValidationException::withMessages(['return_status' => '只有从未确认、未产生收货事实的销售退货草稿可以删除。']);
             }
@@ -405,25 +414,26 @@ class SalesReturnApplicationService
 
     private function availableSalesQuantity(SalesOrderLine $line, ?int $exceptReturnId): float
     {
-        $reserved = (float) SalesReturnItem::query()
+        $reserved = SalesReturnItem::query()
             ->join('erp_sales_returns', 'erp_sales_returns.id', '=', 'erp_sales_return_items.sales_return_id')
             ->where('erp_sales_return_items.sales_order_line_id', $line->id)
             ->whereNotIn('erp_sales_returns.return_status', ['cancelled', 'closed'])
             ->when($exceptReturnId, fn ($query) => $query->where('erp_sales_returns.id', '<>', $exceptReturnId))
-            ->sum('erp_sales_return_items.requested_sales_qty');
+            ->orderBy('erp_sales_return_items.id')->lockForUpdate()->get(['erp_sales_return_items.requested_sales_qty'])
+            ->sum('requested_sales_qty');
 
         return max(0, (float) $line->shipped_qty - $reserved);
     }
 
-    private function fulfillmentFactor(SalesOrderLine $line): float
+    private function fulfillmentFactor(SalesOrderLine $line): string
     {
-        $factor = (float) $line->fulfillment_factor_snapshot;
-        if ($factor > 0) return $factor;
-        if ((float) $line->order_qty > 0 && (float) $line->item_base_required_qty > 0) {
-            return round((float) $line->item_base_required_qty / (float) $line->order_qty, 8);
+        $factor = (string) ($line->fulfillment_factor_snapshot ?? '0');
+        if (bccomp($factor, '0', 8) > 0) return $factor;
+        if (bccomp((string) $line->order_qty, '0', 8) > 0 && bccomp((string) ($line->item_base_required_qty ?? '0'), '0', 8) > 0) {
+            return bcadd(bcdiv((string) $line->item_base_required_qty, (string) $line->order_qty, 9), '0.000000005', 8);
         }
 
-        return 1.0;
+        return '1.00000000';
     }
 
     /**
@@ -459,7 +469,8 @@ class SalesReturnApplicationService
                 ->join('erp_sales_returns', 'erp_sales_returns.id', '=', 'erp_sales_return_items.sales_return_id')
                 ->where('erp_sales_return_cost_allocations.outbound_transaction_item_id', $outbound->id)
                 ->whereNotIn('erp_sales_returns.return_status', ['cancelled', 'closed'])
-                ->sum('erp_sales_return_cost_allocations.allocated_base_qty');
+                ->orderBy('erp_sales_return_cost_allocations.id')->lockForUpdate()->get(['erp_sales_return_cost_allocations.allocated_base_qty'])
+                ->sum('allocated_base_qty');
             $available = max(0, abs((float) $outbound->change_qty) - $alreadyAllocated);
             if ($available <= 0.00000001) {
                 continue;
@@ -468,7 +479,7 @@ class SalesReturnApplicationService
             $allocated = min($remaining, $available);
             $unitCost = abs((float) $outbound->unit_cost);
             $shipmentLineId = (int) $outbound->source_item_id;
-            $shipmentId = (int) DB::table('erp_sales_shipment_lines')->where('id', $shipmentLineId)->value('shipment_id');
+            $shipmentId = (int) DB::table('erp_sales_shipment_lines')->where('id', $shipmentLineId)->lockForUpdate()->value('shipment_id');
             if (!$shipmentId) {
                 continue;
             }
@@ -494,7 +505,7 @@ class SalesReturnApplicationService
 
     private function refreshCompletion(SalesReturn $return): void
     {
-        $return->refresh()->load(['items', 'receipts']);
+        $return = $this->lockReturn((int) $return->id);
         $allReceived = $return->items->every(fn (SalesReturnItem $item) => (float) $item->received_base_qty >= (float) $item->requested_base_qty);
         $allPosted = $return->receipts->every(fn (SalesReturnReceipt $receipt) => in_array($receipt->stock_post_status, ['posted', 'not_required'], true));
         $noPending = $return->items->every(fn (SalesReturnItem $item) => (float) $item->pending_base_qty <= 0.00000001);
@@ -502,6 +513,18 @@ class SalesReturnApplicationService
             $return->update(['return_status' => 'completed']);
             $this->orderStates->handle(SalesOrderStateCoordinator::RETURN_CHANGED, (int) $return->sales_order_id);
         }
+    }
+
+    private function lockReturn(int $returnId): SalesReturn
+    {
+        // 归属 ID 创建后不变；仅用于找根锁，所有状态/数量随后用当前读重取。
+        $orderId = SalesReturn::query()->whereKey($returnId)->value('sales_order_id');
+        SalesOrder::query()->whereKey($orderId)->lockForUpdate()->firstOrFail();
+        return SalesReturn::query()->with([
+            'items' => fn ($query) => $query->orderBy('id')->lockForUpdate(),
+            'items.orderLine' => fn ($query) => $query->lockForUpdate(),
+            'receipts' => fn ($query) => $query->orderBy('id')->lockForUpdate(),
+        ])->lockForUpdate()->findOrFail($returnId);
     }
 
     private function load(SalesReturn $return): SalesReturn

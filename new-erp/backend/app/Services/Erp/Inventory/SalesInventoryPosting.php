@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp\Inventory;
 
+use App\Domain\Finance\Money;
 use App\Models\Erp\InventoryBalance;
 use App\Models\Erp\InventoryLocationBalance;
 use App\Models\Erp\InventoryPostingLog;
@@ -175,7 +176,9 @@ class SalesInventoryPosting
                     'event_payload' => ['shipment_line_id' => $line->id, 'dispatch_id' => $dispatch->id], 'occurred_at' => now()]);
             }
         }
-        $shipment->update(['actual_cost_amount' => (string) $shipment->lines()->sum('cost_amount_snapshot')]);
+        $cost = $shipment->lines()->orderBy('id')->lockForUpdate()->get(['cost_amount_snapshot'])
+            ->reduce(fn (string $sum, $line): string => Money::add($sum, (string) $line->cost_amount_snapshot), '0.0000');
+        $shipment->update(['actual_cost_amount' => $cost]);
         InventoryPostingLog::create(['source_type' => 'sales_shipment_dispatch', 'source_id' => $dispatch->id, 'source_no' => $dispatch->dispatch_no,
             'transaction_type' => 'sales_shipment_outbound', 'transaction_id' => $transaction->id, 'posting_status' => 'posted', 'posted_at' => now(), 'message' => '发运批次正式销售出库成功']);
         return $transaction->fresh('items');
