@@ -104,7 +104,8 @@ final class SalesOrderFundingGateService
         if (! $status['shipment_funds_satisfied']) throw ValidationException::withMessages(['funding' => $status['shipment_block_message']]);
     }
 
-    public function refreshProjection(SalesOrder $order): array
+    /** 只写资金放行投影；完成状态等后续步骤由 SalesOrderStateCoordinator 统一编排。 */
+    public function writeProjection(SalesOrder $order): array
     {
         $status = $this->status($order);
         $order->update([
@@ -113,7 +114,6 @@ final class SalesOrderFundingGateService
             'shipment_funding_status' => $status['shipment_funding_status'],
             'final_receivable_amount' => $status['contract_amount'],
         ]);
-        app(SalesOrderCompletionService::class)->refresh($order);
         return $status;
     }
 

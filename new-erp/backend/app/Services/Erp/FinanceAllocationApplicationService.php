@@ -20,7 +20,7 @@ class FinanceAllocationApplicationService
     public function __construct(
         private readonly FinanceBusinessSourceResolver $sources,
         private readonly PurchaseSettlementSourceApplicationService $purchaseSettlementSources,
-        private readonly SalesOrderFundingGateService $fundingGates,
+        private readonly SalesOrderStateCoordinator $orderStates,
         private readonly FinanceAllocationBalanceQueryService $balances,
         private readonly FinanceCashPurchaseAllocationApplicationService $purchasePurposes,
     ) {}
@@ -65,7 +65,7 @@ class FinanceAllocationApplicationService
                     'operator_id' => $operatorId, 'operator_name' => $operatorName, 'content' => '新增资金核销事实',
                 ]);
                 foreach ($salesOrderIds as $salesOrderId) {
-                    $this->fundingGates->refreshProjection(SalesOrder::query()->lockForUpdate()->findOrFail($salesOrderId));
+                    $this->orderStates->handle(SalesOrderStateCoordinator::PAYMENT_CHANGED, $salesOrderId);
                 }
                 $this->purchasePurposes->assertNetAvailableForCash($document->id);
                 return ['allocations' => $created, 'remaining_amount' => $remainingFunds];
@@ -110,7 +110,7 @@ class FinanceAllocationApplicationService
                 $this->purchaseSettlementSources->refresh((int) $allocation->source_document_id, $operatorId, $operatorName);
             }
             foreach ($salesOrderIds as $salesOrderId) {
-                $this->fundingGates->refreshProjection(SalesOrder::query()->lockForUpdate()->findOrFail($salesOrderId));
+                $this->orderStates->handle(SalesOrderStateCoordinator::PAYMENT_CHANGED, $salesOrderId);
             }
             $this->purchasePurposes->assertNetAvailableForCash((int) $allocation->cash_document_id);
             return $reversal;

@@ -20,7 +20,7 @@ class SalesReturnApplicationService
     public function __construct(
         private readonly DocumentNumberService $numbers,
         private readonly SalesReturnInventoryPosting $inventory,
-        private readonly SalesOrderActualCostService $actualCosts,
+        private readonly SalesOrderStateCoordinator $orderStates,
     ) {
     }
 
@@ -239,7 +239,6 @@ class SalesReturnApplicationService
     {
         $this->inventory->postSalesReturnReceipt($receiptId, $operatorId);
         $receipt = SalesReturnReceipt::with('salesReturn')->findOrFail($receiptId);
-        $this->actualCosts->refresh((int) $receipt->salesReturn->sales_order_id);
         $this->log($receipt->salesReturn, 'post_receipt', null, null, $operatorId, $operatorName, "销售退货到货 {$receipt->receipt_no} 重新入库完成");
         $this->refreshCompletion($receipt->salesReturn);
 
@@ -393,7 +392,7 @@ class SalesReturnApplicationService
         $allPosted = $return->receipts->every(fn (SalesReturnReceipt $receipt) => in_array($receipt->stock_post_status, ['posted', 'not_required'], true));
         if ($allReceived && $allPosted && !in_array($return->return_status, ['cancelled', 'closed'], true)) {
             $return->update(['return_status' => 'completed']);
-            app(SalesOrderCompletionService::class)->refresh((int) $return->sales_order_id);
+            $this->orderStates->handle(SalesOrderStateCoordinator::RETURN_CHANGED, (int) $return->sales_order_id);
         }
     }
 
@@ -430,6 +429,6 @@ class SalesReturnApplicationService
             'content' => $content,
         ]);
         // 退货确认会重新打开已完成订单；取消/关闭/完成后重新判定订单是否完结。
-        app(SalesOrderCompletionService::class)->refresh((int) $return->sales_order_id);
+        $this->orderStates->handle(SalesOrderStateCoordinator::RETURN_CHANGED, (int) $return->sales_order_id);
     }
 }

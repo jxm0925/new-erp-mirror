@@ -543,7 +543,7 @@ class SalesOrderFulfillmentApplicationService
                     'business_version' => (int) $order->business_version + 1,
                 ]);
                 // 免发货/费用订单可能先收齐款再做生产确认：确认后立即按完结规则判定一次。
-                app(SalesOrderCompletionService::class)->refresh($order);
+                app(SalesOrderStateCoordinator::class)->handle(SalesOrderStateCoordinator::PRODUCTION_CONFIRMED, $order);
                 $this->log($order, 'production_confirm', 'pending', $productionConfirmStatus, $automatic
                     ? '销售订单已按实时库存自动锁定备货数量，生产行已生成工单。'
                     : '订单生产确认已保存库存备货，生产行已生成工单。', $operatorName);

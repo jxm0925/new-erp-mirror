@@ -24,7 +24,7 @@ class SalesShipmentApplicationService
         private readonly SalesOrderFundingGateService $fundingGates,
         private readonly InventoryReservationService $reservations,
         private readonly SalesInventoryPosting $inventory,
-        private readonly SalesOrderActualCostService $actualCosts,
+        private readonly SalesOrderStateCoordinator $orderStates,
         private readonly ShipmentPackingApplicationService $packing,
         private readonly ShipmentCommandService $commands,
     ) {}
@@ -276,7 +276,7 @@ class SalesShipmentApplicationService
             $before = $shipment->shipment_status;
             $shipment->update(['shipment_status' => $remaining ? 'partially_shipped' : 'shipped', 'delivery_mode' => $mode,
                 'shipped_at' => now(), 'outbound_posted_at' => $shipment->outbound_posted_at ?: now(), 'outbound_posted_by' => $operator]);
-            $this->refreshOrderShipmentStatus((int) $shipment->sales_order_id);
+            $this->orderStates->handle(SalesOrderStateCoordinator::SHIPMENT_CHANGED, (int) $shipment->sales_order_id);
             $this->log($shipment, 'dispatch', $before, $shipment->shipment_status, $operator, ($mode === 'pickup' ? '客户已提货' : '物流已发运').'，批次 '.$dispatch->dispatch_no.'；正式出库 '.$transaction->transaction_no);
         });
     }
@@ -374,18 +374,6 @@ class SalesShipmentApplicationService
                 'remark' => $package['remark'] ?? null,
             ]);
         }
-    }
-
-    private function refreshOrderShipmentStatus(int $orderId): void
-    {
-        $order = SalesOrder::query()->with('lines')->lockForUpdate()->findOrFail($orderId);
-        // 出库只形成库存与成本事实；实际发运后才累计销售已发货数量。
-        $shippedByLine = SalesShipmentLine::query()->where('line_status', 'shipped')->whereHas('shipment', fn ($q) => $q->where('sales_order_id', $orderId)->whereIn('shipment_status', ['partially_shipped', 'shipped', 'completed']))
-            ->selectRaw('sales_order_line_id, SUM(sales_qty) AS shipped_qty')->groupBy('sales_order_line_id')->pluck('shipped_qty', 'sales_order_line_id');
-        foreach ($order->lines as $line) $line->update(['shipped_qty' => $shippedByLine[$line->id] ?? 0]);
-        $order->update(['shipment_status' => SalesOrderFulfillmentPolicy::shipmentStatus($order->lines->map(fn ($line) => $line->getAttributes())->all())]);
-        $this->actualCosts->refresh($orderId);
-        app(SalesOrderCompletionService::class)->refresh($order);
     }
 
     private function log(SalesShipment $shipment, string $action, ?string $before, ?string $after, string $operator, string $content): void

@@ -17,7 +17,7 @@ class SalesOrderDraftService
         private readonly SalesOrderLineService $lines,
         private readonly SalesOrderAttachmentService $attachments,
         private readonly SalesOrderAmountService $amounts,
-        private readonly SalesOrderFundingGateService $fundingGates,
+        private readonly SalesOrderStateCoordinator $orderStates,
     ) {
     }
 
@@ -53,7 +53,7 @@ class SalesOrderDraftService
             $this->lines->sync($order, $lines, $deletedLineIds, $draftToken, $operator);
             $this->attachments->bindOrderDraft($order->id, $draftToken);
             $order = $this->amounts->refresh($order);
-            $this->fundingGates->refreshProjection($order);
+            $this->orderStates->handle(SalesOrderStateCoordinator::ORDER_TERMS_CHANGED, $order);
             $this->recordVersion($order, 'create', null, $order->fresh('lines')->toArray(), $operator);
             $this->recordLog($order, 'create', null, 'draft', '新增销售订单草稿', $operator);
 
@@ -89,7 +89,7 @@ class SalesOrderDraftService
             $this->lines->sync($order, $lines, $deletedLineIds, $draftToken, $operator);
             $this->attachments->bindOrderDraft($order->id, $draftToken);
             $order = $this->amounts->refresh($order);
-            $this->fundingGates->refreshProjection($order);
+            $this->orderStates->handle(SalesOrderStateCoordinator::ORDER_TERMS_CHANGED, $order);
             $after = $order->fresh('lines')->toArray();
             $this->recordVersion($order, 'update', $before, $after, $operator);
             $this->recordLog($order, 'update', 'draft', 'draft', '编辑销售订单草稿', $operator);
