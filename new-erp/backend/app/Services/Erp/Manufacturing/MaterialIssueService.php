@@ -13,7 +13,7 @@ use App\Models\Erp\MfgWorkOrderOperation;
 use App\Models\Erp\MfgWorkOrderUnit;
 use App\Services\Erp\DocumentNumberService;
 use App\Services\Erp\InventoryAvailabilityService;
-use App\Services\Erp\InventoryService;
+use App\Services\Erp\Inventory\ProductionInventoryPosting;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -29,7 +29,7 @@ final class MaterialIssueService
     private const EPS = 0.00001;
 
     public function __construct(
-        private readonly InventoryService $inventory,
+        private readonly ProductionInventoryPosting $inventory,
         private readonly InventoryAvailabilityService $availability,
         private readonly WorkOrderService $workOrders,
         private readonly DocumentNumberService $numbers,

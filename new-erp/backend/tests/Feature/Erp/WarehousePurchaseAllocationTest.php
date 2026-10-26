@@ -3,7 +3,8 @@
 namespace Tests\Feature\Erp;
 
 use App\Models\Erp\{InventorySerial, InventoryTransaction, Item, Location, PurchaseReceipt, PurchaseReceiptItem};
-use App\Services\Erp\{InventoryService, PurchaseReceiptPostingEligibilityService, PurchaseReceiptPostingRepairApplicationService};
+use App\Services\Erp\Inventory\PurchaseInventoryPosting;
+use App\Services\Erp\{PurchaseReceiptPostingEligibilityService, PurchaseReceiptPostingRepairApplicationService};
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -30,7 +31,7 @@ class WarehousePurchaseAllocationTest extends TestCase
         $this->assertFalse(app(PurchaseReceiptPostingEligibilityService::class)->evaluate($saved)['can_post']);
         $beforeTransactions = InventoryTransaction::count();
         try {
-            app(InventoryService::class)->postPurchaseReceipt($receipt->id);
+            app(PurchaseInventoryPosting::class)->postPurchaseReceipt($receipt->id);
             $this->fail('An unseen unallocated line must prevent posting.');
         } catch (ValidationException $error) {
             $this->assertArrayHasKey('allocations', $error->errors());
@@ -43,7 +44,7 @@ class WarehousePurchaseAllocationTest extends TestCase
             [['800', '500', '2'], ['900', '550', '2']])], '分页仓库员');
         $this->assertSame($firstSnapshot, $first->fresh()->allocations()->with('physicalEntries')->firstOrFail()->toArray());
         $this->assertTrue(app(PurchaseReceiptPostingEligibilityService::class)->evaluate($saved)['can_post']);
-        $transaction = app(InventoryService::class)->postPurchaseReceipt($receipt->id);
+        $transaction = app(PurchaseInventoryPosting::class)->postPurchaseReceipt($receipt->id);
         $this->assertSame('posted', $receipt->fresh()->stock_post_status);
         $this->assertSame($beforeTransactions + 1, InventoryTransaction::count());
         $this->assertCount(2, $transaction->items);
@@ -93,7 +94,7 @@ class WarehousePurchaseAllocationTest extends TestCase
             ->where('event_type', 'receipt_accepted')->count());
 
         $repair->repairSelectedLines($receipt->id, [$payload($second, $secondNos, $f['location']->id)], '分页仓库员');
-        app(InventoryService::class)->postPurchaseReceipt($receipt->id);
+        app(PurchaseInventoryPosting::class)->postPurchaseReceipt($receipt->id);
         $this->assertSame(4, InventorySerial::where('source_receipt_id', $receipt->id)->where('serial_status', 'available')->count());
         $this->assertSame($identities, InventorySerial::where('source_receipt_item_id', $first->id)->orderBy('serial_no')->pluck('id', 'serial_no')->all());
         $this->assertSame(2, InventorySerial::where('source_receipt_item_id', $first->id)->where('location_id', $newLocation->id)->count());

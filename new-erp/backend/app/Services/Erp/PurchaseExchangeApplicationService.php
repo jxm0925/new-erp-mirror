@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp;
 
+use App\Services\Erp\Inventory\WarehouseInventoryPosting;
 use App\Models\Erp\PurchaseDefectHandling;
 use App\Models\Erp\InventoryBalance;
 use App\Models\Erp\InventoryQualityEvent;
@@ -19,7 +20,7 @@ class PurchaseExchangeApplicationService
         private readonly DocumentNumberService $numbers,
         private readonly PurchaseReceiptSettlementService $settlements,
         private readonly PurchaseSettlementSourceApplicationService $settlementSources,
-        private readonly InventoryService $inventory,
+        private readonly WarehouseInventoryPosting $inventory,
         private readonly PurchaseFinancialFactService $finance,
     ) {
     }

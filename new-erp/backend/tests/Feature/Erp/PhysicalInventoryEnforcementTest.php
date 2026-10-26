@@ -9,7 +9,7 @@ use App\Models\Erp\PurchaseReceipt;
 use App\Models\Erp\PurchaseReceiptItem;
 use App\Models\Erp\Warehouse;
 use App\Services\Erp\InventoryAdjustmentApplicationService;
-use App\Services\Erp\InventoryService;
+use App\Services\Erp\Inventory\WarehouseInventoryPosting;
 use App\Services\Erp\PhysicalInventoryApplicationService;
 use App\Services\Erp\PurchaseReceiptPostingRepairApplicationService;
 use App\Services\Erp\PurchaseReturnApplicationService;
@@ -71,7 +71,7 @@ class PhysicalInventoryEnforcementTest extends TestCase
             'physical_entries' => [['physical_material_id' => $fixture['physicals'][0]]],
         ]]]);
         $service->submit($decrease->id);
-        app(InventoryService::class)->postAdjustment($decrease->id);
+        app(WarehouseInventoryPosting::class)->postAdjustment($decrease->id);
         $this->assertEquals(1.0, (float) $fixture['balance']->fresh()->quantity_on_hand);
         $this->assertSame('ADJUSTED_OUT', DB::table('erp_material_physicals')->where('id', $fixture['physicals'][0])->value('status'));
 
@@ -83,7 +83,7 @@ class PhysicalInventoryEnforcementTest extends TestCase
             ]],
         ]]]);
         $service->submit($increase->id);
-        app(InventoryService::class)->postAdjustment($increase->id);
+        app(WarehouseInventoryPosting::class)->postAdjustment($increase->id);
 
         $entry = DB::table('erp_inventory_adjustment_item_physicals as entry')
             ->join('erp_inventory_adjustment_items as line', 'line.id', '=', 'entry.adjustment_item_id')

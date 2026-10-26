@@ -21,7 +21,7 @@ use App\Models\Erp\SalesShipment;
 use App\Models\Erp\SalesShipmentLine;
 use App\Models\Erp\Unit;
 use App\Models\Erp\Warehouse;
-use App\Services\Erp\InventoryService;
+use App\Services\Erp\Inventory\SalesInventoryPosting;
 use App\Services\Erp\SalesReturnApplicationService;
 use App\Services\Erp\SalesReturnIdentityService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
@@ -264,7 +264,7 @@ class SalesReturnSerialIdentityTest extends TestCase
             'item_id' => $f['item']->id, 'warehouse_id' => $balance->warehouse_id, 'location_id' => $balance->location_id, 'batch_no' => $balance->batch_no,
             'unit_id' => $f['unit']->id, 'sales_qty' => $quantity, 'base_qty' => $quantity, 'line_status' => 'confirmed',
             'serial_snapshot' => ['inventory_serial_ids' => array_map(fn ($serial) => $serial->id, $serials)]]);
-        $transaction = app(InventoryService::class)->postSalesShipment($shipment, '测试');
+        $transaction = app(SalesInventoryPosting::class)->postSalesShipment($shipment, '测试');
         $shipment->update(['shipment_status' => 'shipped']); $shipmentLine->update(['line_status' => 'outbound_posted']);
         $outbound = $transaction->items->first();
         return compact('balance', 'serials', 'shipment', 'shipmentLine', 'outbound');

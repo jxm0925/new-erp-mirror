@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp;
 
+use App\Services\Erp\Inventory\WarehouseInventoryPosting;
 use App\Models\Erp\InventoryBalance;
 use App\Models\Erp\Location;
 use App\Models\Erp\Warehouse;
@@ -11,7 +12,7 @@ use Illuminate\Validation\ValidationException;
 final class PhysicalInventoryApplicationService
 {
     public function __construct(
-        private readonly InventoryService $inventory,
+        private readonly WarehouseInventoryPosting $inventory,
         private readonly MaterialPhysicalService $physicalMaterials,
         private readonly DocumentNumberService $numbers,
     ) {}

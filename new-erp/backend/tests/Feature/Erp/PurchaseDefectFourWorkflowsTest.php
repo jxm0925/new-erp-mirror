@@ -12,7 +12,7 @@ use App\Models\Erp\PurchaseSettlementSource;
 use App\Models\Erp\Supplier;
 use App\Models\Erp\Unit;
 use App\Models\Erp\Warehouse;
-use App\Services\Erp\InventoryService;
+use App\Services\Erp\Inventory\PurchaseInventoryPosting;
 use App\Services\Erp\PurchaseDefectApplicationService;
 use App\Services\Erp\PurchaseExchangeApplicationService;
 use App\Services\Erp\PurchaseReceiptSettlementService;
@@ -103,7 +103,7 @@ class PurchaseDefectFourWorkflowsTest extends TestCase
         ]);
         app(PurchaseReceiptSettlementService::class)->refresh($replacement);
         $exchangeService->syncReplacementReceiptConfirmed($replacement->fresh(), '仓库负责人');
-        app(InventoryService::class)->postPurchaseReceipt($replacement->id);
+        app(PurchaseInventoryPosting::class)->postPurchaseReceipt($replacement->id);
         $exchangeOrder = $exchangeService->action($exchangeOrder->id, 'confirm_replacement_acceptance', [
             'result_description' => '替换品已到货，验收合格。',
         ], '质量负责人');
@@ -146,7 +146,7 @@ class PurchaseDefectFourWorkflowsTest extends TestCase
             'source_receipt_id' => $replacement->id,
         ]);
 
-        app(InventoryService::class)->postPurchaseReceipt($receipt->id);
+        app(PurchaseInventoryPosting::class)->postPurchaseReceipt($receipt->id);
         $this->assertSame(4.0, (float) InventoryBalance::sum('quantity_on_hand') - $inventoryQtyBefore);
         $this->assertSame(400.0, (float) InventoryBalance::sum('inventory_value') - $inventoryValueBefore);
 

@@ -15,6 +15,7 @@ use Illuminate\Validation\ValidationException;
 class InventoryQualityApplicationService
 {
     public function __construct(
+        private readonly \App\Services\Erp\Inventory\InventoryPostingKernel $kernel,
         private readonly DocumentNumberService $numbers,
         private readonly PurchaseReturnApplicationService $returns,
         private readonly PurchaseExchangeApplicationService $exchanges,
@@ -373,25 +374,7 @@ class InventoryQualityApplicationService
 
     private function changeLocationPending(InventoryBalance $balance, float $change): void
     {
-        $location = InventoryLocationBalance::query()
-            ->where('item_id', $balance->item_id)
-            ->where('warehouse_id', $balance->warehouse_id)
-            ->where('location_id', $balance->location_id)
-            ->lockForUpdate()
-            ->first();
-        if (!$location) return;
-
-        $pending = max(0, (float) $location->quantity_pending + $change);
-        $location->update([
-            'quantity_pending' => $pending,
-            'quantity_available' => $this->availability->calculate(
-                (float) $location->quantity_on_hand,
-                (float) $location->quantity_locked,
-                (float) $location->quantity_defective,
-                $pending,
-            ),
-            'last_transaction_at' => now(),
-        ]);
+        $this->kernel->adjustLocationBucket($balance, 'quantity_pending', $change);
     }
 
     private function releaseHold(

@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp;
 
+use App\Services\Erp\Inventory\PurchaseInventoryPosting;
 use App\Domain\Finance\FinanceConstants;
 use App\Domain\Finance\Money;
 use App\Models\Erp\FinanceInvoiceAllocation;
@@ -26,7 +27,7 @@ class PurchaseReturnApplicationService
 {
     public function __construct(
         private readonly DocumentNumberService $numbers,
-        private readonly InventoryService $inventory,
+        private readonly PurchaseInventoryPosting $inventory,
         private readonly SupplierPerformanceService $supplierPerformance,
         private readonly InventoryAvailabilityService $availability,
         private readonly PurchaseFinancialFactService $finance,

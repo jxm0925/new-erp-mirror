@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\DB;
 class InventoryReservationService
 {
     public function __construct(
+        private readonly \App\Services\Erp\Inventory\InventoryPostingKernel $kernel,
         private readonly InventoryAvailabilityService $availability,
         private readonly InventoryAlertApplicationService $alerts,
     )
@@ -458,25 +459,9 @@ class InventoryReservationService
         $this->alerts->recalculateForItemWarehouse((int) $balance->item_id, (int) $balance->warehouse_id, $reason);
     }
 
-    private function changeLocationLock(InventoryBalance $balance, float $changeQty): void
+    private function changeLocationLock(InventoryBalance $balance, float $change): void
     {
-        $location = InventoryLocationBalance::where([
-            'item_id' => $balance->item_id,
-            'warehouse_id' => $balance->warehouse_id,
-            'location_id' => $balance->location_id,
-        ])->lockForUpdate()->first();
-        if (!$location) return;
-        $locked = max(0, (float) $location->quantity_locked + $changeQty);
-        $location->update([
-            'quantity_locked' => $locked,
-            'quantity_available' => $this->availability->calculate(
-                (float) $location->quantity_on_hand,
-                $locked,
-                (float) $location->quantity_defective,
-                (float) $location->quantity_pending,
-            ),
-            'last_transaction_at' => now(),
-        ]);
+        $this->kernel->adjustLocationBucket($balance, 'quantity_locked', $change);
     }
 
     private function consumeLocationReservation(InventoryBalance $balance, float $qty): void

@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp;
 
+use App\Services\Erp\Inventory\PurchaseInventoryPosting;
 use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Models\Erp\{PurchaseReceipt, PurchaseReturn, SalesOrder, SalesReturn, SalesReturnReceipt, SalesShipment};
 use Illuminate\Support\Facades\Validator;
@@ -71,7 +72,7 @@ final class WarehouseActionService
         $actor = (int) ($user->legacy_id ?? $user->id ?? 0); $name = (string) ($user->nickname ?? $user->username ?? $user->name ?? '');
         $command = $payload + ['client_command_id' => $commandId];
         return match ($action) {
-            'purchase.post' => app(InventoryService::class)->postPurchaseReceipt($id, $actor ?: null),
+            'purchase.post' => app(PurchaseInventoryPosting::class)->postPurchaseReceipt($id, $actor ?: null),
             'purchase.allocate' => ['receipt_id' => app(PurchaseReceiptPostingRepairApplicationService::class)->repairSelectedLines($id, $payload['items'], $name)->id],
             'sales_return.receive' => app(SalesReturnApplicationService::class)->receive($payload + ['sales_return_id' => $id], $actor, $name),
             'sales_return.post' => app(SalesReturnApplicationService::class)->postReceipt($id, $actor, $name),

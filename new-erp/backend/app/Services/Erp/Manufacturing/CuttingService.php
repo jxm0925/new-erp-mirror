@@ -17,7 +17,7 @@ use App\Services\Erp\AuthContextService;
 use App\Services\Erp\CuttingQuantityCalculator;
 use App\Services\Erp\DocumentNumberService;
 use App\Services\Erp\InventoryAvailabilityService;
-use App\Services\Erp\InventoryService;
+use App\Services\Erp\Inventory\ProductionInventoryPosting;
 use App\Services\Erp\MaterialPhysicalService;
 use App\Services\Erp\SalesOrderFundingGateService;
 use App\Services\Erp\UnitConversionDomainService;
@@ -29,7 +29,7 @@ final class CuttingService
     use ProductionActor;
 
     public function __construct(
-        private readonly InventoryService $inventory,
+        private readonly ProductionInventoryPosting $inventory,
         private readonly MaterialPhysicalService $physicals,
         private readonly InventoryAvailabilityService $availability,
         private readonly CuttingQuantityCalculator $quantities,

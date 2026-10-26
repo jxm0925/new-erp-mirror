@@ -602,7 +602,7 @@
       </div>
 
       <section v-if="activeView === 'transactions'" class="filter-panel tx-filter">
-        <label>事务类型<el-select v-model="txQuery.type" size="small" clearable placeholder="全部"><el-option label="采购到货入库" value="purchase_receipt_posting" /><el-option label="不合格品转合格补入库" value="purchase_receipt_quality_release" /><el-option label="手工库存调整" value="manual_adjustment" /></el-select></label>
+        <label>事务类型<el-select v-model="txQuery.type" size="small" clearable placeholder="全部"><el-option label="采购到货入库" value="purchase_receipt_posting" /><el-option label="不合格品转合格补入库" value="purchase_receipt_quality_release" /><el-option label="手工库存调整" value="manual_adjustment" /><el-option label="库存调拨" value="inventory_transfer" /></el-select></label>
         <label>来源单号<el-input v-model="txQuery.sourceNo" size="small" placeholder="请输入来源单号" /></label>
         <label>物料编码/名称<el-input v-model="txQuery.keyword" size="small" placeholder="支持编码/名称查询" /></label>
         <label>仓库<paged-record-select v-model="txQuery.warehouse" entity="warehouses" title="选择仓库" placeholder="全部" @change="txQuery.location = ''" /></label>
@@ -2007,7 +2007,7 @@ export default {
       return ({ pending: 'warning', posted: 'success', failed: 'danger', cancelled: 'info' })[status] || 'info'
     },
     transactionTypeText(type) {
-      return ({ purchase_receipt_posting: '采购到货入库', purchase_receipt_quality_release: '不合格品转合格补入库', purchase_return_outbound: '采购退货出库', inventory_quality_outbound: '库存质量换货原品出库', manual_adjustment: '手工库存调整' })[type] || '业务库存事务'
+      return ({ purchase_receipt_posting: '采购到货入库', purchase_receipt_quality_release: '不合格品转合格补入库', purchase_return_outbound: '采购退货出库', inventory_quality_outbound: '库存质量换货原品出库', manual_adjustment: '手工库存调整', inventory_transfer: '库存调拨' })[type] || '业务库存事务'
     },
     sourceTypeText(type) {
       return ({ purchase_receipt: '采购到货单', purchase_defect_handling: '不合格品处理单', purchase_return: '采购退货单', inventory_quality_event: '库存质量事件', inventory_adjustment: '手工调整单' })[type] || '业务来源'

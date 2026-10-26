@@ -190,7 +190,9 @@ export default {
       { name: '手工调整', path: '/inventory/adjustments', icon: 'el-icon-edit-outline', permission: 'inventory.adjustment' },
       { name: '库存预警', path: '/inventory/alerts', icon: 'el-icon-warning-outline', permission: 'inventory.alert' },
       { name: '生产退料审核', path: '/inventory/material-returns', icon: 'el-icon-refresh-left', permission: 'inventory.material_return' },
-      { name: '生产配料', path: '/inventory/material-deliveries', icon: 'el-icon-truck', permission: 'inventory.material_delivery' }
+      { name: '生产配料', path: '/inventory/material-deliveries', icon: 'el-icon-truck', permission: 'inventory.material_delivery' },
+      { name: '库存盘点', path: '/inventory/stocktakes', icon: 'el-icon-s-check', permission: 'inventory.stocktake' },
+      { name: '库存调拨', path: '/inventory/transfers', icon: 'el-icon-sort', permission: 'inventory.transfer' }
     ],
     bomMenus: [
       { name: 'BOM管理', path: '/bom/boms', icon: 'el-icon-connection', permission: 'bom.manage' },
@@ -642,6 +644,8 @@ export default {
       if (path === '/inventory/alerts') return '库存预警'
       if (path === '/inventory/material-returns') return '生产退料审核'
       if (path === '/inventory/material-deliveries') return '生产配料'
+      if (path === '/inventory/stocktakes') return '库存盘点'
+      if (path === '/inventory/transfers') return '库存调拨'
       if (path.startsWith('/inventory/alerts/')) return '库存预警 / 详情'
 
       // BOM管理

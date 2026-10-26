@@ -9,7 +9,7 @@ use App\Models\Erp\Location;
 use App\Models\Erp\Unit;
 use App\Models\Erp\Warehouse;
 use App\Services\Erp\InventoryAdjustmentApplicationService;
-use App\Services\Erp\InventoryService;
+use App\Services\Erp\Inventory\WarehouseInventoryPosting;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Validation\ValidationException;
 use Tests\TestCase;
@@ -30,7 +30,7 @@ class InventoryAdjustmentSerialTest extends TestCase
     {
         [$required, , , $balance] = $this->fixture();
         $adjustments = app(InventoryAdjustmentApplicationService::class);
-        $inventory = app(InventoryService::class);
+        $inventory = app(WarehouseInventoryPosting::class);
 
         $increase = $adjustments->save($this->payload($required, $balance, 2, [
             ['serial_no' => $this->sn('ADJ-0001'), 'source' => 'system'],
@@ -119,7 +119,7 @@ class InventoryAdjustmentSerialTest extends TestCase
 
         $adjustment = $adjustments->save($this->payload($none, $noneBalance, -1, []));
         $adjustments->submit($adjustment->id);
-        app(InventoryService::class)->postAdjustment($adjustment->id);
+        app(WarehouseInventoryPosting::class)->postAdjustment($adjustment->id);
 
         $this->assertSame(4.0, (float) $noneBalance->fresh()->quantity_on_hand);
         $this->assertDatabaseHas('erp_inventory_transactions', [
