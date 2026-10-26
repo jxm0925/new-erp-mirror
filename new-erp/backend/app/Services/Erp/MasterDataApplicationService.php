@@ -241,6 +241,10 @@ class MasterDataApplicationService
             && (int) $record?->manager_user_id !== (int) $id)) {
             throw ValidationException::withMessages(['manager_user_id' => '请选择正常启用的员工账号。']);
         }
+        // 新分配的负责人须是业务员档案中有效的仓管员；未变更的历史负责人保留。
+        if ((int) $record?->manager_user_id !== (int) $id && !app(BusinessStaffService::class)->isActive((int) $id, 'warehouse')) {
+            throw ValidationException::withMessages(['manager_user_id' => '所选人员不是有效的仓管员，请先在“系统管理 / 业务员档案”登记并启用。']);
+        }
         // 已任职员工停用后仍保留历史关联，允许编辑仓库其他字段；不得新分配停用账号。
         return [...$data, 'manager' => mb_substr($account->nickname ?: $account->username ?: (string) $id, 0, 80)];
     }

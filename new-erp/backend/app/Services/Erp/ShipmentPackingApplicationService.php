@@ -230,6 +230,12 @@ class ShipmentPackingApplicationService
                 foreach ($users as $user) {
                     if (! $auth->isSuperAdmin($user) && ! in_array('sales_order.shipment.packing.execute', $auth->permissionCodes($user), true)) $this->fail('所选协同人没有包装执行权限。');
                 }
+                // 已在协同的人保留；新增协同人须是有效的生产工人档案。
+                $current = $op->participants()->where('role', 'COLLABORATOR')->where('is_active', true)->pluck('employee_legacy_id')->map(fn ($v) => (int) $v)->all();
+                foreach ($users as $user) {
+                    if (! in_array((int) $user->legacy_id, $current, true) && ! app(BusinessStaffService::class)->isActive((int) $user->legacy_id, 'production_worker'))
+                        $this->fail(($user->nickname ?: $user->username).' 不是有效的生产工人，请先在“系统管理 / 业务员档案”登记并启用。');
+                }
                 $removed = $op->participants()->where('role', 'COLLABORATOR')->whereNotIn('employee_legacy_id', $ids)->pluck('employee_legacy_id');
                 if ($op->laborSessions()->whereIn('employee_legacy_id', $removed)->where('status', 'ACTIVE')->exists()) $this->fail('仍在计时的协同人须先暂停自己的作业。');
                 $op->participants()->where('role', 'COLLABORATOR')->whereNotIn('employee_legacy_id', $ids)->update(['is_active' => false]);

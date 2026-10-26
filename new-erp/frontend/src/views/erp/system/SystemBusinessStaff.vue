@@ -16,7 +16,7 @@
 
     <div class="erp-page-tip">
       <i class="el-icon-info" />
-      <span>业务员档案决定账号“能被选成谁”（如订单的销售人员），与角色权限（能做什么）分开维护。离职或调岗请停用或设置失效日期，已有单据的档案不能删除，保证历史订单和提成可追溯。</span>
+      <span>业务员档案决定账号“能被选成谁”：订单销售人员、工单负责人、工序工人与协同人、仓库负责人都只能从对应的有效档案中选择；能不能操作仍由角色权限决定。离职或调岗请停用或设置失效日期，已有单据的档案不能删除，保证历史订单和提成可追溯。</span>
     </div>
 
     <section class="metric-overview-grid">
@@ -241,7 +241,7 @@ export default {
       this.query()
     },
     typeIcon(type) {
-      return { sales: 'el-icon-s-custom', purchase: 'el-icon-shopping-cart-2', warehouse: 'el-icon-box', quality: 'el-icon-finished' }[type] || 'el-icon-user'
+      return { sales: 'el-icon-s-custom', production_manager: 'el-icon-s-management', production_worker: 'el-icon-s-tools', warehouse: 'el-icon-box', purchase: 'el-icon-shopping-cart-2', quality: 'el-icon-finished' }[type] || 'el-icon-user'
     },
     sourceLabel(source) {
       return { manual: '手工登记', sso: '统一身份同步', legacy_flag: '旧标记迁移' }[source] || source || '—'
@@ -332,7 +332,7 @@ export default {
 .title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .page-title { margin: 0; font-size: 18px; font-weight: 700; color: #0f172a; }
 .head-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.metric-overview-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 16px; }
+.metric-overview-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; margin-bottom: 16px; }
 .metric-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px 16px; display: flex; align-items: center; gap: 14px; cursor: pointer; user-select: none; }
 .metric-card:hover { border-color: #cbd5e1; }
 .metric-card.active { border-color: #008b4b; box-shadow: 0 2px 8px rgba(0, 139, 75, 0.12); }
@@ -353,8 +353,11 @@ export default {
 .user-cell { display: flex; flex-direction: column; line-height: 1.4; }
 .user-cell span { font-size: 12px; color: #94a3b8; }
 .table-pagination-footer { display: flex; justify-content: flex-end; padding: 10px 16px 14px; overflow-x: auto; }
-@media (max-width: 1200px) {
-  .metric-overview-grid { grid-template-columns: repeat(2, 1fr); }
+@media (max-width: 1400px) {
+  .metric-overview-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 900px) {
+  .metric-overview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 640px) {
   .staff-page-container { padding: 12px; }

@@ -37,7 +37,17 @@ class ErpUserDirectoryService
             $staff->applyActive($query, 'sales');
             if ($actor) app(SalesOrderVisibilityService::class)->applySalesUserScope($query, $actor);
         }
+        if ($warehouseScope) {
+            // 仓库负责人候选：业务员档案中有效的仓管员。
+            $staff = app(BusinessStaffService::class);
+            $staff->ensureBackfilled();
+            $staff->applyActive($query, 'warehouse');
+        }
         if (($filters['scope'] ?? null) === 'production') {
+            // 候选 = 业务员档案（工单负责人取生产负责人，工序工人/协同人取生产工人）∩ 对应操作权限。
+            $staff = app(BusinessStaffService::class);
+            $staff->ensureBackfilled();
+            $staff->applyActive($query, in_array($filters['capability'] ?? null, ['execute', 'collaborate'], true) ? 'production_worker' : 'production_manager');
             // 工单负责人仍按查看能力筛选；工序工人入口只要求生产报工能力。
             $permission = ($filters['capability'] ?? null) === 'execute' ? 'production.task.execute' : 'production.work_order.view';
             $query->whereExists(function ($productionUser) use ($permission): void {

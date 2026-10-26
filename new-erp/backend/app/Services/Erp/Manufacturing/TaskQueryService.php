@@ -127,13 +127,16 @@ final class TaskQueryService
         ];
     }
 
-    /** 接单人选协同人：有报工权限、在职的人。 */
+    /** 接单人选协同人：有报工权限、在职、业务员档案中有效的生产工人。 */
     public function people(int $opId, ?string $keyword): array
     {
         MfgWorkOrderOperation::query()->findOrFail($opId);
         $ids = DB::table('erp_rbac_user_roles as ur')->join('erp_rbac_role_permissions as rp', 'rp.role_id', '=', 'ur.role_id')
             ->join('erp_rbac_permissions as p', 'p.id', '=', 'rp.permission_id')->where('p.code', 'production.task.execute')->distinct()->pluck('ur.user_legacy_id');
         $query = DB::table('erp_legacy_admin_users')->whereIn('legacy_id', $ids)->whereIn(DB::raw('LOWER(status)'), ['normal', 'active']);
+        $staff = app(\App\Services\Erp\BusinessStaffService::class);
+        $staff->ensureBackfilled();
+        $staff->applyActive($query, 'production_worker');
         if ($keyword = trim((string) $keyword)) $query->where(fn ($q) => $q->where('nickname', 'like', "%{$keyword}%")->orWhere('username', 'like', "%{$keyword}%"));
         return $query->orderBy('legacy_id')->limit(50)->get(['legacy_id', 'nickname', 'username'])
             ->map(fn ($u) => ['id' => (int) $u->legacy_id, 'name' => $u->nickname ?: $u->username])->values()->all();

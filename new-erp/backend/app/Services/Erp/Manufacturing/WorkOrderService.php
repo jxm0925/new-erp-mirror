@@ -78,6 +78,7 @@ final class WorkOrderService
         return DB::transaction(function () use ($data, $actor) {
             $item = Item::query()->where('status', 'enabled')->findOrFail($data['item_id']);
             if ($item->isPurchaseFulfilledItem()) $this->fail('purchase_item', '这个物料是外购件，不能建生产工单，请走采购。');
+            $this->assertOwnerStaff($data['owner_legacy_id'] ?? null);
             $wo = $this->newWorkOrder([
                 'source_type' => 'stock', 'stock_reason' => $data['stock_reason'] ?? 'regular',
                 'product_id' => $data['product_id'] ?? null, 'sku_id' => $data['sku_id'] ?? null,
@@ -102,6 +103,13 @@ final class WorkOrderService
      * 总装工单缺半成品：给下料组开半成品工单（不填数量就按缺口开：还要的 − 仓库可用 − 已开还没入库的）。
      * 半成品工单按半成品自己的 BOM 和路线（下料→焊接→打磨）生产，完工入半成品仓，总装再收料。
      */
+    private function assertOwnerStaff(mixed $legacyId): void
+    {
+        if (! $legacyId) return;
+        if (! app(\App\Services\Erp\BusinessStaffService::class)->isActive((int) $legacyId, 'production_manager'))
+            $this->fail('owner_invalid', '所选负责人不是有效的生产负责人，请先在“系统管理 / 业务员档案”登记并启用。');
+    }
+
     private function ownerName(mixed $legacyId, ?string $name): ?string
     {
         if (trim((string) $name) !== '' || ! $legacyId) return trim((string) $name) !== '' ? trim((string) $name) : null;
@@ -177,6 +185,10 @@ final class WorkOrderService
             if (in_array($wo->status, ['completed', 'closed', 'cancelled'], true)) $this->fail('status_invalid', '工单已结束，不能再调整。');
             $changes = [];
             // 只传负责人账号时按账号回填姓名；清空账号且未传姓名时一并清空。
+            // 换负责人时新负责人须是有效的生产负责人档案；未变更的历史负责人保留。
+            if (array_key_exists('owner_legacy_id', $data) && (int) ($data['owner_legacy_id'] ?? 0) !== (int) $wo->owner_legacy_id) {
+                $this->assertOwnerStaff($data['owner_legacy_id']);
+            }
             if (array_key_exists('owner_legacy_id', $data) && trim((string) ($data['owner_name'] ?? '')) === '') {
                 $data['owner_name'] = $this->ownerName($data['owner_legacy_id'], null);
             }

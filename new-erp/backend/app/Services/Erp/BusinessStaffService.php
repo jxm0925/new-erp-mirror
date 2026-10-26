@@ -18,9 +18,26 @@ final class BusinessStaffService
 
     public const TYPES = [
         'sales' => '销售员',
-        'purchase' => '采购员',
+        'production_manager' => '生产负责人',
+        'production_worker' => '生产工人',
         'warehouse' => '仓管员',
+        'purchase' => '采购员',
         'quality' => '质检员',
+    ];
+
+    /**
+     * 首次启用某类档案时按旧口径一次性登记，保证升级后各选择器候选不丢：
+     * 权限来源排除系统管理员角色；已在单据上任职的人员一律登记。
+     */
+    private const BACKFILL_PERMISSIONS = [
+        'production_manager' => ['production.work_order.edit', 'production.work_order.publish'],
+        'production_worker' => ['production.task.execute', 'sales_order.shipment.packing.execute'],
+    ];
+
+    private const BACKFILL_ROLES = [
+        'warehouse' => ['warehouse_manager'],
+        'production_manager' => ['production_manager'],
+        'production_worker' => ['production_operator'],
     ];
 
     /** 限定账号查询为某类有效业务员；$userColumn 为外层账号主键列。 */
@@ -39,6 +56,23 @@ final class BusinessStaffService
                 ->where(fn ($q) => $q->whereNull('bs.effective_from')->orWhere('bs.effective_from', '<=', $today))
                 ->where(fn ($q) => $q->whereNull('bs.effective_to')->orWhere('bs.effective_to', '>=', $today));
         });
+    }
+
+    /** 账号是否为某类有效业务员（账号在职 + 档案启用 + 生效期内）。 */
+    public function isActive(int $userId, string $type): bool
+    {
+        if (! $this->ready()) return true;
+        $this->ensureBackfilled();
+        $users = DB::table('erp_legacy_admin_users')->where('legacy_id', $userId)->whereNull('deleted_at')
+            ->whereIn(DB::raw('LOWER(TRIM(status))'), ['normal', 'active']);
+        $this->applyActive($users, $type);
+
+        return $users->exists();
+    }
+
+    public static function label(string $type): string
+    {
+        return self::TYPES[$type] ?? $type;
     }
 
     public function paginate(array $filters)
@@ -172,8 +206,16 @@ final class BusinessStaffService
                 abort_unless((int) $row->business_version === (int) $payload['expected_version'], 409, '档案已被其他操作修改，请刷新后重试。');
             }
             // 已有业务单据归属的档案只能停用或设置失效日期，保证历史订单与提成可追溯。
-            abort_if($row->staff_type === 'sales' && DB::table('erp_sales_orders')->where('sales_user_legacy_id', $row->user_legacy_id)->exists(),
-                422, '该销售员已有销售订单，不能删除档案，请改为停用或设置失效日期。');
+            $references = [
+                'sales' => [['erp_sales_orders', 'sales_user_legacy_id', '销售订单']],
+                'production_manager' => [['erp_mfg_work_orders', 'owner_legacy_id', '生产工单']],
+                'production_worker' => [['erp_mfg_task_participants', 'employee_legacy_id', '生产任务']],
+                'warehouse' => [['erp_warehouses', 'manager_user_id', '仓库负责人记录']],
+            ][$row->staff_type] ?? [];
+            foreach ($references as [$table, $column, $label]) {
+                abort_if(Schema::hasTable($table) && DB::table($table)->where($column, $row->user_legacy_id)->exists(),
+                    422, '该'.self::label($row->staff_type).'已有'.$label.'，不能删除档案，请改为停用或设置失效日期。');
+            }
             DB::table(self::TABLE)->where('id', $id)->delete();
             $this->refreshProjection((int) $row->user_legacy_id);
             $this->audit($id, 'delete', (array) $row, null, $actor);
@@ -203,23 +245,68 @@ final class BusinessStaffService
     }
 
     /**
-     * 首次启用档案时，把旧口径（销售角色/部门名含“销售”）已标记的销售人员一次性登记为销售员。
-     * 档案表一旦有记录就不再回填；之后 is_sales 只跟随档案。
+     * 每类档案只回填一次（以操作日志 backfill:{类型} 为标记，删除档案后不会被重新补回）：
+     * 销售员取原 is_sales 标记；生产负责人/生产工人/仓管员取对应内置角色、对应权限持有人及已在单据上任职的人。
      */
     public function ensureBackfilled(): void
     {
-        if (! $this->ready() || DB::table(self::TABLE)->exists()) return;
-        DB::transaction(function (): void {
-            if (DB::table(self::TABLE)->lockForUpdate()->exists()) return;
-            $users = DB::table('erp_legacy_admin_users')->whereNull('deleted_at')->where('is_sales', true)->pluck('legacy_id');
-            foreach ($users as $userId) {
-                DB::table(self::TABLE)->insertOrIgnore([
-                    'user_legacy_id' => (int) $userId, 'staff_type' => 'sales', 'department_legacy_id' => $this->primaryDepartment((int) $userId),
-                    'status' => 'enabled', 'source' => 'legacy_flag', 'remark' => '按原销售标记自动登记',
-                    'business_version' => 1, 'created_at' => now(), 'updated_at' => now(),
+        static $done = false;
+        if ($done || ! $this->ready()) return;
+        $markers = DB::table('erp_operation_logs')->where('module', 'system_management')->where('target_type', 'business_staff_backfill')
+            ->pluck('action')->all();
+        $pending = array_values(array_diff(array_map(fn ($type) => 'backfill:'.$type, ['sales', 'production_manager', 'production_worker', 'warehouse']), $markers));
+        if (! $pending) { $done = true; return; }
+        DB::transaction(function () use ($pending): void {
+            foreach ($pending as $marker) {
+                $type = substr($marker, strlen('backfill:'));
+                if (DB::table('erp_operation_logs')->where('module', 'system_management')->where('target_type', 'business_staff_backfill')
+                    ->where('action', $marker)->lockForUpdate()->exists()) continue;
+                $userIds = $this->backfillCandidates($type);
+                foreach ($userIds as $userId) {
+                    DB::table(self::TABLE)->insertOrIgnore([
+                        'user_legacy_id' => $userId, 'staff_type' => $type, 'department_legacy_id' => $this->primaryDepartment($userId),
+                        'status' => 'enabled', 'source' => 'legacy_flag', 'remark' => '升级时按原有角色/任职自动登记',
+                        'business_version' => 1, 'created_at' => now(), 'updated_at' => now(),
+                    ]);
+                }
+                DB::table('erp_operation_logs')->insert([
+                    'module' => 'system_management', 'action' => $marker, 'target_type' => 'business_staff_backfill', 'target_id' => null,
+                    'new_snapshot' => json_encode(['staff_type' => $type, 'user_ids' => $userIds]), 'operator_name' => 'system', 'created_at' => now(),
                 ]);
             }
         });
+        $done = true;
+    }
+
+    /** @return array<int, int> */
+    private function backfillCandidates(string $type): array
+    {
+        $ids = collect();
+        if ($type === 'sales') {
+            $ids = $ids->merge(DB::table('erp_legacy_admin_users')->where('is_sales', true)->pluck('legacy_id'));
+        }
+        if ($roles = self::BACKFILL_ROLES[$type] ?? null) {
+            $ids = $ids->merge(DB::table('erp_rbac_user_roles as ur')->join('erp_rbac_roles as r', 'r.id', '=', 'ur.role_id')
+                ->whereIn('r.code', $roles)->pluck('ur.user_legacy_id'));
+        }
+        if ($permissions = self::BACKFILL_PERMISSIONS[$type] ?? null) {
+            $ids = $ids->merge(DB::table('erp_rbac_user_roles as ur')->join('erp_rbac_roles as r', 'r.id', '=', 'ur.role_id')
+                ->join('erp_rbac_role_permissions as rp', 'rp.role_id', '=', 'r.id')->join('erp_rbac_permissions as p', 'p.id', '=', 'rp.permission_id')
+                ->where('r.enabled', true)->where('p.enabled', true)->where('r.code', '<>', 'admin')->whereIn('p.code', $permissions)
+                ->pluck('ur.user_legacy_id'));
+        }
+        $references = [
+            'warehouse' => [['erp_warehouses', 'manager_user_id']],
+            'production_manager' => [['erp_mfg_work_orders', 'owner_legacy_id']],
+            'production_worker' => [['erp_production_operation_workers', 'employee_legacy_id'], ['erp_mfg_task_participants', 'employee_legacy_id']],
+        ][$type] ?? [];
+        foreach ($references as [$table, $column]) {
+            if (Schema::hasTable($table)) $ids = $ids->merge(DB::table($table)->whereNotNull($column)->distinct()->pluck($column));
+        }
+        $ids = $ids->map(fn ($id) => (int) $id)->filter()->unique()->values()->all();
+
+        return $ids ? DB::table('erp_legacy_admin_users')->whereIn('legacy_id', $ids)->whereNull('deleted_at')
+            ->orderBy('legacy_id')->pluck('legacy_id')->map(fn ($id) => (int) $id)->all() : [];
     }
 
     private function find(int $id): object

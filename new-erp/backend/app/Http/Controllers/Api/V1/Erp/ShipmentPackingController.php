@@ -163,6 +163,10 @@ class ShipmentPackingController extends Controller
             ->join('erp_rbac_permissions as p', 'p.id', '=', 'rp.permission_id')->join('erp_rbac_roles as r', 'r.id', '=', 'ur.role_id')
             ->where('r.enabled', true)->where('p.enabled', true)->where('p.code', 'sales_order.shipment.packing.execute')->select('ur.user_legacy_id');
         $query->where(fn ($q) => $q->whereIn('legacy_id', $ids)->orWhere('username', 'admin'));
+        // 协同人须同时是业务员档案中有效的生产工人。
+        $staff = app(\App\Services\Erp\BusinessStaffService::class);
+        $staff->ensureBackfilled();
+        $staff->applyActive($query, 'production_worker');
         return response()->json(['data' => $query->paginate($this->pageSize($request), ['legacy_id', 'username', 'nickname']),
             'departments' => $request->boolean('include_departments') ? DB::table('erp_departments')->whereNull('deleted_at')->orderBy('sort')->get(['legacy_id as id', 'parent_legacy_id as parent_id', 'name']) : null]);
     }

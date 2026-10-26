@@ -57,6 +57,7 @@ final class TaskService
             $user = $this->activeUser($employeeId);
             if (! $user) $this->fail('user_invalid', '所选人员不存在或已停用。');
             $this->assertExecutor($user);
+            $this->assertWorkerStaff($user);
             if (! $this->canDo($op, $employeeId)) $this->fail('not_worker', '这个人不在这道工序“能做的人”里，请先在工序管理里加上。');
             $old = $this->owner($op);
             if ($old && (int) $old->employee_legacy_id === $employeeId) $this->fail('no_change', '这道工序已经是他在做。');
@@ -95,6 +96,9 @@ final class TaskService
                 ->whereIn(DB::raw('LOWER(TRIM(status))'), ['normal', 'active'])->orderBy('legacy_id')->lockForUpdate()->get() : collect();
             if ($users->count() !== count($ids)) $this->fail('user_invalid', '协同人必须是在职的账号。');
             foreach ($users as $user) $this->assertExecutor($user);
+            // 已在本工序协同的人保留；新增协同人须是有效的生产工人档案。
+            $current = MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('is_active', true)->pluck('employee_legacy_id')->map(fn ($v) => (int) $v)->all();
+            foreach ($users as $user) if (! in_array((int) $user->legacy_id, $current, true)) $this->assertWorkerStaff($user);
             $fixed = $ownerShare !== null || in_array(true, array_map(fn ($v) => $v !== null, $shares), true);
             if ($fixed) {
                 if ($ownerShare === null || in_array(null, $shares, true)) $this->fail('share_invalid', '要固定份额就每个人都填，不填就按实际工时分。');
@@ -323,6 +327,9 @@ final class TaskService
                 ->whereIn(DB::raw('LOWER(TRIM(status))'), ['normal', 'active'])->orderBy('legacy_id')->lockForUpdate()->get()->keyBy('legacy_id') : collect();
             if ($users->count() !== count($ids)) $this->fail('user_invalid', '所选人员必须是未删除的在职账号，请刷新后重选。');
             foreach ($users as $user) $this->assertExecutor($user);
+            // 已在“能做的人”里的保留；新加入的须是有效的生产工人档案。
+            $current = ProductionOperationWorker::query()->where('operation_id', $operationId)->pluck('employee_legacy_id')->map(fn ($v) => (int) $v)->all();
+            foreach ($users as $user) if (! in_array((int) $user->legacy_id, $current, true)) $this->assertWorkerStaff($user);
             ProductionOperationWorker::query()->where('operation_id', $operationId)->whereNotIn('employee_legacy_id', $ids ?: [0])->delete();
             foreach ($ids as $id) {
                 ProductionOperationWorker::query()->lockForUpdate()->updateOrCreate(['operation_id' => $operationId, 'employee_legacy_id' => $id],
@@ -482,6 +489,12 @@ final class TaskService
         $auth = app(AuthContextService::class);
         if (! $auth->isSuperAdmin($user) && ! in_array('production.task.execute', $auth->permissionCodes($user), true))
             $this->fail('user_invalid', $this->userName($user).' 没有生产报工权限，不能参与这道工序。');
+    }
+
+    private function assertWorkerStaff(object $user): void
+    {
+        if (! app(\App\Services\Erp\BusinessStaffService::class)->isActive((int) $user->legacy_id, 'production_worker'))
+            $this->fail('user_invalid', $this->userName($user).' 不是有效的生产工人，请先在“系统管理 / 业务员档案”登记并启用。');
     }
 
     private function userName(object $user): string { return (string) (($user->nickname ?? null) ?: ($user->username ?? null) ?: ('#'.$user->legacy_id)); }
