@@ -219,6 +219,33 @@ class SalesReturnIdentityService
     }
 
     /** Returns null for ordinary quantity lines; serialized rows consume their exact source. */
+    /**
+     * 待处理序列的后续处置：只允许从 pending 转出，序列身份随数量迁到目标到货行（转入库）或在原行改去向（报废/退回客户），
+     * 保证每个到货行上各去向的序列数量与行数量始终一致，入库仍按原发货成本消费。
+     */
+    public function redisposePending(SalesReturnReceiptItem $source, SalesReturnReceiptItem $target, string $disposition, array $serialIds, ?int $operatorId): void
+    {
+        if (!isset(self::STATES[$disposition]) || $disposition === 'pending') $this->fail('待处理序列的处置去向无效。');
+        $identities = SalesReturnSerialIdentity::where('sales_return_receipt_item_id', $source->id)->where('disposition', 'pending')->orderBy('id')->lockForUpdate()->get();
+        if ($identities->isEmpty()) {
+            if (array_filter($serialIds)) $this->fail('当前待处理数量没有序列身份，不允许携带序列号。');
+            if ($this->requiresIdentities($source->salesReturnItem)) $this->fail('序列商品待处理数量缺少逐件身份，不能只按数量处置。');
+            return;
+        }
+        $ids = array_values(array_unique(array_map('intval', $serialIds)));
+        if (!$ids || count($ids) !== count($serialIds)) $this->fail('序列号无效或重复。');
+        $chosen = $identities->whereIn('inventory_serial_id', $ids);
+        if ($chosen->count() !== count($ids)) $this->fail('所选序列号不在该到货行的待处理清单中。');
+        $serials = InventorySerial::whereIn('id', $ids)->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+        foreach ($chosen as $identity) {
+            $serial = $serials->get($identity->inventory_serial_id);
+            if (!$serial || $serial->serial_status !== self::STATES['pending']) $this->fail('序列号状态已变化，请刷新后重试。');
+            $identity->update(['sales_return_receipt_item_id' => $target->id, 'disposition' => $disposition]);
+            $serial->update(['serial_status' => self::STATES[$disposition]]);
+            $this->event($serial, $target, $identity, 'sales_return_disposed', self::STATES['pending'], self::STATES[$disposition], $operatorId);
+        }
+    }
+
     public function consumeRestock(SalesReturnReceiptItem $line): ?array
     {
         $identities = SalesReturnSerialIdentity::where('sales_return_receipt_item_id', $line->id)->orderBy('id')->lockForUpdate()->get();

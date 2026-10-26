@@ -17,11 +17,16 @@ class SalesFinanceSettlementService
         $received = $this->allocated(FinanceConstants::SOURCE_SALES_ORDER, $order->id, FinanceConstants::DIRECTION_RECEIPT);
         $refunded = $this->allocated(FinanceConstants::SOURCE_SALES_ORDER_REFUND, $order->id, FinanceConstants::DIRECTION_PAYMENT);
         $net = Money::maxZero(Money::sub($received, $refunded));
-        $outstanding = Money::maxZero(Money::sub($contract, $net));
-        $prepayment = Money::maxZero(Money::sub($net, $contract));
-        $ratio = Money::ratio($net, $contract);
+        // 退货退款按已认可退货数量冲减应收；合同金额保持原值，未收/应退均按净应收计算。
+        $returnCredit = SalesReturnSettlementService::orderCreditAmount((int) $order->id);
+        $netReceivable = Money::maxZero(Money::sub($contract, $returnCredit));
+        $outstanding = Money::maxZero(Money::sub($netReceivable, $net));
+        $prepayment = Money::maxZero(Money::sub($net, $netReceivable));
+        $ratio = Money::ratio($net, $netReceivable);
         return [
             'contract_amount' => $contract,
+            'return_credit_amount' => $returnCredit,
+            'net_receivable_amount' => $netReceivable,
             'received_amount' => $received,
             'outstanding_amount' => $outstanding,
             'available_prepayment_amount' => $prepayment,
@@ -31,7 +36,7 @@ class SalesFinanceSettlementService
             'unallocated_amount' => $outstanding,
             'receipt_ratio' => $ratio,
             'production_funds_satisfied' => Money::compare($net, '0') > 0,
-            'shipment_funds_satisfied' => Money::compare($net, $contract) >= 0,
+            'shipment_funds_satisfied' => Money::compare($net, $netReceivable) >= 0,
         ];
     }
 

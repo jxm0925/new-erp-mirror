@@ -3,6 +3,7 @@
 namespace App\Services\Erp;
 
 use App\Models\Erp\SalesOrder;
+use App\Domain\Finance\Money;
 use App\Models\Erp\SalesReturn;
 
 /**
@@ -22,8 +23,16 @@ final class SalesOrderCompletionService
             && in_array($order->shipment_status, ['shipped', 'not_required'], true)
             && $order->shipment_funding_status === 'passed'
             && $order->change_status !== 'processing'
-            && ! SalesReturn::query()->where('sales_order_id', $order->id)->whereIn('return_status', self::OPEN_RETURN_STATUSES)->exists();
+            && ! SalesReturn::query()->where('sales_order_id', $order->id)->whereIn('return_status', self::OPEN_RETURN_STATUSES)->exists()
+            && ! $this->hasPendingReturnRefund($order);
         $target = $done ? 'closed' : 'confirmed';
         if ($order->order_status !== $target) $order->update(['order_status' => $target]);
+    }
+
+    /** 退货退款冲减应收后，客户多付的部分须由财务退款核销完毕，订单才算完结。 */
+    private function hasPendingReturnRefund(SalesOrder $order): bool
+    {
+        if (Money::compare(SalesReturnSettlementService::orderCreditAmount((int) $order->id), '0') <= 0) return false;
+        return Money::compare(app(SalesFinanceSettlementService::class)->status($order)['available_prepayment_amount'], '0') > 0;
     }
 }
