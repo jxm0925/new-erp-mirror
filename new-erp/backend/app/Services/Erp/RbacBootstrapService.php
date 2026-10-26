@@ -18,6 +18,8 @@ class RbacBootstrapService
         $this->seedRoles($force, $created !== []);
         if ($created) $this->grantNewPermissionDefaults($created);
         if ($freshInstall) $this->initializeBuiltinRoleDefaults();
+        // 升级到业务员档案后，按原销售标记一次性登记销售员，保证订单业务员候选不丢。
+        app(BusinessStaffService::class)->ensureBackfilled();
     }
 
     /** 内置角色默认权限：精确码或“前缀.*”；授予按钮时自动带上各级父菜单。 */
@@ -122,6 +124,11 @@ class RbacBootstrapService
 
     /** 新权限还要授给已有某个权限的角色（如自建的采购员角色有“新增需求”就能看生产缺料并转采购）。 */
     private const NEW_PERMISSION_FOLLOWERS = [
+        // 业务员档案从部门管理拆出：已能维护部门的角色同步获得档案的对应能力。
+        'system.business_staff' => 'system.department',
+        'system.business_staff.view' => 'system.department.view',
+        'system.business_staff.save' => 'system.department.save',
+        'system.business_staff.delete' => 'system.department.delete',
         'purchase.production_shortage' => 'purchase.request.create',
         'purchase.production_shortage.convert' => 'purchase.request.create',
     ];
@@ -543,6 +550,7 @@ class RbacBootstrapService
             ['system.menu', '菜单管理', 'menu', 'system', '/system/menus', 'SystemMenuManagement', 'el-icon-menu', 903],
             ['system.department', '部门管理', 'menu', 'system', '/system/departments', 'SystemDepartmentManagement', 'el-icon-office-building', 904],
             ['system.document_number_rule', '编号规则', 'menu', 'system', '/system/document-number-rules', 'DocumentNumberRuleList', 'el-icon-postcard', 905],
+            ['system.business_staff', '业务员档案', 'menu', 'system', '/system/business-staff', 'SystemBusinessStaff', 'el-icon-s-custom', 906],
 
             // 系统管理 按钮
             ['system.admin.view', '查看管理员列表', 'button', 'system.admin', null, null, 'el-icon-mouse', 1],
@@ -564,6 +572,10 @@ class RbacBootstrapService
             ['system.department.save', '新增/编辑部门', 'button', 'system.department', null, null, 'el-icon-mouse', 2],
             ['system.department.set_principal', '设置部门负责人', 'button', 'system.department', null, null, 'el-icon-mouse', 3],
             ['system.department.delete', '删除未引用部门', 'button', 'system.department', null, null, 'el-icon-delete', 4],
+
+            ['system.business_staff.view', '查看业务员档案', 'button', 'system.business_staff', null, null, 'el-icon-mouse', 1],
+            ['system.business_staff.save', '新增/编辑业务员档案', 'button', 'system.business_staff', null, null, 'el-icon-mouse', 2],
+            ['system.business_staff.delete', '删除业务员档案', 'button', 'system.business_staff', null, null, 'el-icon-delete', 3],
 
             ['document_number_rule.view', '查看编号规则', 'button', 'system.document_number_rule', null, null, 'el-icon-mouse', 1],
             ['document_number_rule.edit', '编辑编号规则', 'button', 'system.document_number_rule', null, null, 'el-icon-mouse', 2],

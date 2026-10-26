@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Erp;
 
 use App\Http\Controllers\Controller;
 use App\Services\Erp\AuthContextService;
+use App\Services\Erp\BusinessStaffService;
 use App\Services\Erp\RbacBootstrapService;
 use App\Services\Erp\SystemAdministrationApplicationService;
 use Illuminate\Http\Request;
@@ -81,7 +82,7 @@ class DepartmentController extends Controller
             ->when($request->filled('status'), fn ($q) => $q->whereIn('u.status', $request->input('status') === 'normal' ? ['normal', 'active'] : ['hidden', 'disabled']))
             ->when($request->input('role') === 'principal', fn ($q) => $q->where('du.is_principal', true))
             ->when($request->input('role') === 'normal', fn ($q) => $q->where('du.is_principal', false))
-            ->when($request->input('role') === 'sales', fn ($q) => $q->where('u.is_sales', true))
+            ->when($request->input('role') === 'sales', fn ($q) => app(BusinessStaffService::class)->applyActive($q, 'sales', 'u.legacy_id'))
             ->orderByDesc('du.is_principal')
             ->orderBy('u.legacy_id')
             ->select([

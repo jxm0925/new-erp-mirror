@@ -107,6 +107,10 @@ class LegacySsoService
                 ]);
             }
 
+            // 来源系统声明为销售的账号补登记业务员档案（不覆盖本地停用），is_sales 随档案投影。
+            if (array_key_exists('is_sales', $identity)) {
+                app(BusinessStaffService::class)->syncSourceSalesFlag($legacyId, (bool) $identity['is_sales']);
+            }
             $this->roleOwnership->syncSsoRole($legacyId, $this->roleFromPayload($identity), $previousRoleCandidate);
 
             return $legacyId;

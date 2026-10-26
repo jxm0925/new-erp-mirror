@@ -77,6 +77,7 @@ import SystemRolePermission from './views/erp/system/SystemRolePermission.vue'
 import SystemMenuManagement from './views/erp/system/SystemMenuManagement.vue'
 import SystemDepartmentManagement from './views/erp/system/SystemDepartmentManagement.vue'
 import DocumentNumberRuleList from './views/erp/system/DocumentNumberRuleList.vue'
+import SystemBusinessStaff from './views/erp/system/SystemBusinessStaff.vue'
 import FinanceAccountList from './views/erp/finance/FinanceAccountList.vue'
 import FinanceCashList from './views/erp/finance/FinanceCashList.vue'
 import FinanceCashForm from './views/erp/finance/FinanceCashForm.vue'
@@ -256,6 +257,7 @@ const router = new VueRouter({
     { path: '/system/roles', component: SystemRolePermission, meta: { permission: 'system.role.view' } },
     { path: '/system/menus', component: SystemMenuManagement, meta: { permission: 'system.menu.view' } },
     { path: '/system/departments', component: SystemDepartmentManagement, meta: { permission: 'system.department.view' } },
+    { path: '/system/business-staff', component: SystemBusinessStaff, meta: { permission: 'system.business_staff.view' } },
     { path: '*', redirect: '/console' }
   ]
 })

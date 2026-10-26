@@ -24,10 +24,13 @@ final class SalesOrderVisibilityService
     public function assertAssignableSalesUser(mixed $id, object $actor): void
     {
         $users = DB::table('erp_legacy_admin_users')->where('legacy_id', (int) $id)
-            ->whereNull('deleted_at')->whereIn(DB::raw('LOWER(TRIM(status))'), ['normal', 'active'])->where('is_sales', true);
+            ->whereNull('deleted_at')->whereIn(DB::raw('LOWER(TRIM(status))'), ['normal', 'active']);
+        $staff = app(BusinessStaffService::class);
+        $staff->ensureBackfilled();
+        $staff->applyActive($users, 'sales');
         $this->applySalesUserScope($users, $actor);
         if (! $users->exists()) {
-            throw ValidationException::withMessages(['sales_user_legacy_id' => '请选择授权范围内有效的销售人员。']);
+            throw ValidationException::withMessages(['sales_user_legacy_id' => '请选择授权范围内有效的销售人员（需在“业务员档案”登记为销售员，且已启用、在生效期内）。']);
         }
     }
 

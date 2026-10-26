@@ -31,7 +31,10 @@ class ErpUserDirectoryService
             });
         }
         if ($salesScope) {
-            $query->where('is_sales', true);
+            // 业务员候选以业务员档案为准（启用、生效期内），与角色、部门名无关。
+            $staff = app(BusinessStaffService::class);
+            $staff->ensureBackfilled();
+            $staff->applyActive($query, 'sales');
             if ($actor) app(SalesOrderVisibilityService::class)->applySalesUserScope($query, $actor);
         }
         if (($filters['scope'] ?? null) === 'production') {

@@ -234,7 +234,8 @@ export default {
       { name: '管理员管理', path: '/system/admins', icon: 'el-icon-user', permission: 'system.admin' },
       { name: '角色权限', path: '/system/roles', icon: 'el-icon-user-solid', permission: 'system.role' },
       { name: '菜单管理', path: '/system/menus', icon: 'el-icon-menu', permission: 'system.menu' },
-      { name: '部门管理', path: '/system/departments', icon: 'el-icon-office-building', permission: 'system.department' }
+      { name: '部门管理', path: '/system/departments', icon: 'el-icon-office-building', permission: 'system.department' },
+      { name: '业务员档案', path: '/system/business-staff', icon: 'el-icon-s-custom', permission: 'system.business_staff' }
     ],
     openedMenus: [],
     sidebarCollapsed: false,
@@ -709,6 +710,7 @@ export default {
       if (path === '/system/roles') return '角色权限'
       if (path === '/system/menus') return '菜单管理'
       if (path === '/system/departments') return '部门管理'
+      if (path === '/system/business-staff') return '业务员档案'
 
       return '业务管理'
     },

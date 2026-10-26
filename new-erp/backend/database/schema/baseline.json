@@ -25,6 +25,7 @@
     "erp_bom_items": "2026_10_12_000024_create_erp_bom_items_table",
     "erp_bom_logs": "2026_10_12_000025_create_erp_bom_logs_table",
     "erp_boms": "2026_10_12_000026_create_erp_boms_table",
+    "erp_business_staff": "2026_10_27_000001_create_erp_business_staff_table",
     "erp_custom_configuration_scopes": "2026_10_12_000027_create_erp_custom_configuration_scopes_table",
     "erp_custom_configurations": "2026_10_12_000028_create_erp_custom_configurations_table",
     "erp_customization_records": "2026_10_12_000029_create_erp_customization_records_table",

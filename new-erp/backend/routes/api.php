@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\Erp\AftersalesReservedController;
 use App\Http\Controllers\Api\V1\Erp\AuthController;
 use App\Http\Controllers\Api\V1\Erp\ApprovalController;
 use App\Http\Controllers\Api\V1\Erp\ApprovalFormController;
+use App\Http\Controllers\Api\V1\Erp\BusinessStaffController;
 use App\Http\Controllers\Api\V1\Erp\DepartmentController;
 use App\Http\Controllers\Api\V1\Erp\DocumentNumberController;
 use App\Http\Controllers\Api\V1\Erp\FinanceController;
@@ -518,6 +519,14 @@ Route::prefix('v1/erp/rbac')->group(function () {
     Route::delete('roles/{id}', [RbacController::class, 'deleteRole'])->whereNumber('id');
     Route::get('role-users', [RbacController::class, 'roleUsers']);
     Route::post('role-users', [RbacController::class, 'saveRoleUsers']);
+});
+
+Route::prefix('v1/erp/business-staff')->group(function () {
+    Route::get('', [BusinessStaffController::class, 'index']);
+    Route::get('options', [BusinessStaffController::class, 'options']);
+    Route::post('', [BusinessStaffController::class, 'store']);
+    Route::put('{id}', [BusinessStaffController::class, 'update'])->whereNumber('id');
+    Route::delete('{id}', [BusinessStaffController::class, 'destroy'])->whereNumber('id');
 });
 
 Route::prefix('v1/erp/departments')->group(function () {
