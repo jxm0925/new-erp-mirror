@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api\V1\Erp;
 
 use App\Http\Controllers\Controller;
 use App\Models\Erp\InventoryBalance;
-use App\Models\Erp\InventorySerial;
 use App\Models\Erp\InventoryTransfer;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\Inventory\InventoryTransferService;
@@ -33,32 +32,44 @@ class InventoryTransferController extends Controller
     {
         $this->authorizePermission($request, 'inventory.transfer.view');
         return response()->json(['data' => [
-            'warehouses' => InventoryStocktakeController::warehouseOptions(),
             'transfer_statuses' => InventoryTransferService::STATUSES,
         ]]);
     }
 
-    /** 调出仓库中可调拨的数量库存批次（可用量 > 0），附带可用序列号。 */
+    /** 调出仓库中可调拨的数量库存批次；资格先于分页，已选来源按 ID 回显。 */
     public function balances(Request $request)
     {
         $this->authorizePermission($request, 'inventory.transfer.create');
-        $data = $request->validate(['warehouse_id' => 'required|integer', 'keyword' => 'nullable|string|max:80', 'location_id' => 'nullable|integer']);
+        $data = $request->validate([
+            'warehouse_id' => 'required|integer|min:1', 'keyword' => 'nullable|string|max:80',
+            'location_id' => 'nullable|integer', 'category_id' => 'nullable|integer',
+            'ids' => 'sometimes|required|array|min:1|max:200', 'ids.*' => 'required|integer|min:1|distinct',
+            'page' => 'sometimes|integer|min:1', 'per_page' => 'sometimes|integer|min:1|max:100',
+        ]);
         $query = InventoryBalance::query()->with(['item:id,item_code,item_name,spec,material_management_mode,serial_tracking_mode,is_serial_managed',
             'location:id,location_code,location_name', 'unit:id,unit_name'])
+            ->withCount(['serials as available_serials_count' => fn ($q) => $q->where('serial_status', 'available')])
             ->where('warehouse_id', (int) $data['warehouse_id'])->where('quantity_available', '>', 0)
+            ->whereHas('item', fn ($item) => $item->where(fn ($mode) => $mode
+                ->whereIn('material_management_mode', ['quantity', ''])->orWhereNull('material_management_mode')))
             ->when($data['location_id'] ?? null, fn ($q, $id) => $q->where('location_id', (int) $id))
+            ->when($data['category_id'] ?? null, fn ($q, $id) => $q->whereHas('item', fn ($item) => $item->where('category_id', $id)))
+            ->when($data['ids'] ?? null, fn ($q, $ids) => $q->whereIn('id', $ids))
             ->when($data['keyword'] ?? null, fn ($q, $keyword) => $q->where(fn ($w) => $w->where('batch_no', 'like', "%{$keyword}%")
-                ->orWhereHas('item', fn ($item) => $item->where('item_code', 'like', "%{$keyword}%")->orWhere('item_name', 'like', "%{$keyword}%"))))
-            ->orderBy('item_id')->limit(200)->get();
-        $serials = InventorySerial::query()->whereIn('inventory_balance_id', $query->pluck('id'))->where('serial_status', 'available')
-            ->orderBy('serial_no')->get(['id', 'inventory_balance_id', 'serial_no'])->groupBy('inventory_balance_id');
-        return response()->json(['data' => $query->filter(fn ($row) => $row->item?->materialManagementMode() === 'quantity')->map(fn ($row) => [
+                ->orWhereHas('item', fn ($item) => $item->where('item_code', 'like', "%{$keyword}%")
+                    ->orWhere('item_name', 'like', "%{$keyword}%")->orWhere('spec', 'like', "%{$keyword}%"))
+                ->orWhereHas('location', fn ($location) => $location->where('location_code', 'like', "%{$keyword}%")
+                    ->orWhere('location_name', 'like', "%{$keyword}%"))))
+            ->orderBy('item_id')->orderBy('id');
+        $paginator = $query->paginate(isset($data['ids']) ? count($data['ids']) : ($data['per_page'] ?? 10));
+        $paginator->getCollection()->transform(fn ($row) => [
             'id' => $row->id, 'item_id' => $row->item_id, 'item_code' => $row->item?->item_code, 'item_name' => $row->item?->item_name,
             'spec' => $row->item?->spec, 'location_id' => $row->location_id, 'location_name' => $row->location?->location_name,
             'location_code' => $row->location?->location_code, 'batch_no' => $row->batch_no, 'unit_name' => $row->unit?->unit_name,
             'quantity_available' => (float) $row->quantity_available,
-            'serials' => ($serials[$row->id] ?? collect())->map(fn ($s) => ['id' => $s->id, 'serial_no' => $s->serial_no])->values(),
-        ])->values()]);
+            'available_serials_count' => (int) $row->available_serials_count,
+        ]);
+        return response()->json($paginator);
     }
 
     public function show(Request $request, int $id)

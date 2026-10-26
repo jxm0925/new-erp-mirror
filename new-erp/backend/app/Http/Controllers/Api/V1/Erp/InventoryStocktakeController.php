@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Erp;
 
 use App\Http\Controllers\Controller;
 use App\Models\Erp\InventoryStocktake;
+use App\Models\Erp\InventoryAdjustment;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\Inventory\InventoryStocktakeService;
 use Illuminate\Http\Request;
@@ -38,6 +39,14 @@ class InventoryStocktakeController extends Controller
         $stocktake = InventoryStocktake::query()->with(['warehouse:id,warehouse_code,warehouse_name', 'location:id,location_code,location_name',
             'adjustment:id,adjustment_no,adjustment_status', 'lines.item:id,item_code,item_name,spec', 'lines.location:id,location_code,location_name',
             'lines.unit:id,unit_name'])->findOrFail($id);
+        $adjustmentIds = DB::table('erp_inventory_posting_logs as log')
+            ->join('erp_inventory_transactions as transaction', 'transaction.id', '=', 'log.transaction_id')
+            ->where('log.source_type', 'inventory_stocktake')->where('log.source_id', $id)
+            ->where('log.transaction_type', 'stocktake_difference')->where('log.posting_status', 'posted')
+            ->where('transaction.source_type', 'inventory_adjustment')->where('transaction.posting_status', 'posted')
+            ->pluck('transaction.source_id')->push($stocktake->adjustment_id)->filter()->unique();
+        $stocktake->setAttribute('adjustments', InventoryAdjustment::query()->whereIn('id', $adjustmentIds)
+            ->orderBy('id')->get(['id', 'adjustment_no', 'adjustment_status']));
         $this->attachNames([$stocktake]);
         return response()->json(['data' => $stocktake]);
     }

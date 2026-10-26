@@ -22,7 +22,7 @@ class ShipmentSourceResolver
                 continue;
             }
             if (($source['source_origin'] ?? '') === 'legacy_production_stock') {
-                $evidence = $this->legacyProductionEvidence($line);
+                $evidence = $this->legacyProductionEvidence($line, $source['source_evidence'] ?? null);
                 if (! $evidence || ! $this->sameEvidence($source['source_evidence'] ?? null, $evidence)) $blockers[] = '历史成品缺少匹配原批次的正式入库证明。';
                 continue;
             }
@@ -257,7 +257,7 @@ class ShipmentSourceResolver
             'inventory_transaction_id' => (int) $posted->id, 'routing_snapshot' => json_decode($wo->routing_snapshot ?: 'null', true)];
     }
 
-    private function legacyProductionEvidence(SalesShipmentLine $line): ?array
+    private function legacyProductionEvidence(SalesShipmentLine $line, ?array $frozen = null): ?array
     {
         $balanceId = data_get($line->preparation_snapshot, 'inventory_balance_id');
         if (! $balanceId) $balanceId = DB::table('erp_inventory_reservations')->where('id', $line->inventory_reservation_id)->value('inventory_balance_id');
@@ -266,13 +266,149 @@ class ShipmentSourceResolver
         $lot = $balance?->material_lot_id ? DB::table('erp_material_lots')->where('id', $balance->material_lot_id)->where('item_id', $line->item_id)
             ->where('material_form', 'PRODUCT')->where('source_type', 'production_output_record')->whereNull('configuration_id')->whereNull('stage_id')->first() : null;
         if (! $lot || $item?->item_type !== 'finished_product' || $item->materialManagementMode() !== 'quantity') return null;
+        if (($frozen['version'] ?? null) === 2) return $this->legacyTransferredEvidence($line, $balance, $lot, $frozen);
+        if ($frozen !== null && (($frozen['version'] ?? null) !== 1 || ! is_array($frozen['inbound_facts'] ?? null))) return null;
         $facts = DB::table('erp_inventory_transaction_items as inbound')->join('erp_inventory_transactions as tx', 'tx.id', '=', 'inbound.transaction_id')
             ->where('inbound.item_id', $line->item_id)->where('inbound.material_lot_id', $lot->id)->where('inbound.warehouse_id', $balance->warehouse_id)
             ->where('inbound.location_id', $balance->location_id)->where('inbound.batch_no', $line->batch_no)->where('inbound.change_qty', '>', 0)
             ->where('inbound.source_type', 'work_order_finished_goods_receipt')->where('tx.transaction_type', 'finished_goods_receipt')->where('tx.posting_status', 'posted')
+            ->when($frozen !== null, fn ($query) => $query->whereIn('inbound.id', array_column($frozen['inbound_facts'] ?? [], 'id')))
             ->orderBy('inbound.id')->get(['inbound.id', 'inbound.transaction_id', 'inbound.change_qty', 'inbound.source_type', 'inbound.source_id'])->map(fn ($row) => (array) $row)->all();
-        if ($facts === [] || bccomp((string) collect($facts)->sum('change_qty'), (string) $line->base_qty, 8) < 0) return null;
+        $quantity = array_reduce($facts, fn ($sum, $fact) => bcadd($sum, (string) $fact['change_qty'], 8), '0');
+        if ($facts === [] || bccomp($quantity, (string) $line->base_qty, 8) < 0) {
+            return $frozen === null ? $this->legacyTransferredEvidence($line, $balance, $lot) : null;
+        }
         return ['version' => 1, 'source_origin' => 'legacy_production_stock', 'material_lot_id' => (int) $lot->id,
             'inventory_balance_id' => (int) $balance->id, 'item_id' => (int) $line->item_id, 'source_output_id' => (int) $lot->source_id, 'inbound_facts' => $facts];
+    }
+
+    /** 历史无号成品按正式流水守恒追溯；冻结截止后自身待发移位、出库不能改写原来源。 */
+    private function legacyTransferredEvidence(SalesShipmentLine $line, object $balance, object $lot, ?array $frozen = null): ?array
+    {
+        if ((string) $balance->batch_no !== (string) $line->batch_no || (int) $balance->unit_id !== (int) $line->unit_id
+            || bccomp((string) $line->base_qty, '0', 8) <= 0) return null;
+        $cutoff = $frozen['ledger_through_id'] ?? null;
+        if ($frozen !== null && (! is_int($cutoff) || $cutoff <= 0)) return null;
+        $facts = DB::table('erp_inventory_transaction_items as fact')->join('erp_inventory_transactions as tx', 'tx.id', '=', 'fact.transaction_id')
+            ->where('fact.item_id', $line->item_id)->where('fact.batch_no', $line->batch_no)->where('tx.posting_status', 'posted')
+            ->when($cutoff !== null, fn ($query) => $query->where('fact.id', '<=', $cutoff))->orderBy('fact.id')
+            ->get(['fact.id', 'fact.transaction_id', 'fact.item_id', 'fact.warehouse_id', 'fact.location_id', 'fact.batch_no', 'fact.unit_id',
+                'fact.material_lot_id', 'fact.change_qty', 'fact.cost_amount', 'fact.source_type', 'fact.source_id', 'fact.source_item_id',
+                'tx.transaction_type', 'tx.source_type as transaction_source_type', 'tx.source_id as transaction_source_id'])
+            ->map(fn ($fact) => (array) $fact)->all();
+        if ($facts === [] || ($cutoff !== null && (int) end($facts)['id'] !== $cutoff)) return null;
+        $pairs = $this->legacyMovementPairs($facts, (int) $lot->id, (int) $line->unit_id);
+        $returns = $this->legacyReturnLinks($facts);
+        $proven = []; $moving = []; $sold = []; $returned = []; $restocked = []; $receipts = []; $returnProof = [];
+        foreach ($facts as $fact) {
+            $key = $fact['warehouse_id'].':'.$fact['location_id'];
+            $quantity = (string) $fact['change_qty'];
+            $available = $proven[$key] ?? '0';
+            $matchesLot = (int) $fact['material_lot_id'] === (int) $lot->id && (int) $fact['unit_id'] === (int) $line->unit_id;
+            if (bccomp($quantity, '0', 8) < 0) {
+                $required = bcsub('0', $quantity, 8);
+                $covered = $matchesLot && bccomp($available, $required, 8) >= 0;
+                if ($covered && isset($pairs[$fact['id']])) $moving[$pairs[$fact['id']]] = $required;
+                if ($covered && $fact['transaction_type'] === 'sales_shipment_outbound' && $fact['source_type'] === 'sales_shipment') $sold[$fact['id']] = $required;
+                // 无法证明的入库不扩充来源；所有出库先扣证明量，不能用回流重复放大原入库。
+                $proven[$key] = bccomp($available, $required, 8) > 0 ? bcsub($available, $required, 8) : '0';
+                continue;
+            }
+            if (! $matchesLot || bccomp($quantity, '0', 8) <= 0) continue;
+            $credit = $moving[$fact['id']] ?? '0';
+            if ($fact['source_type'] === 'work_order_finished_goods_receipt' && $fact['transaction_type'] === 'finished_goods_receipt') {
+                $credit = $quantity; $receipts[] = $fact;
+            } elseif ($fact['source_type'] === 'sales_return_receipt' && $fact['transaction_type'] === 'sales_return_inbound'
+                && $fact['transaction_source_type'] === 'sales_return_receipt' && (int) $fact['transaction_source_id'] === (int) $fact['source_id']) {
+                $remaining = $quantity; $eventProof = [];
+                foreach ($returns[$fact['source_item_id']] ?? [] as $link) {
+                    if ((int) $link['receipt_id'] !== (int) $fact['source_id'] || (int) $link['item_id'] !== (int) $fact['item_id']
+                        || (int) $link['warehouse_id'] !== (int) $fact['warehouse_id'] || (int) $link['location_id'] !== (int) $fact['location_id']
+                        || (string) $link['batch_no'] !== (string) $fact['batch_no']
+                        || ($link['base_unit_id'] !== null && (int) $link['base_unit_id'] !== (int) $fact['unit_id'])) continue;
+                    $limit = bcsub((string) $link['allocated_base_qty'], $returned[$link['id']] ?? '0', 8);
+                    $lineLimit = bcsub((string) $link['restock_base_qty'], $restocked[$fact['source_item_id']] ?? '0', 8);
+                    $take = $remaining;
+                    foreach ([$limit, $lineLimit, $sold[$link['outbound_transaction_item_id']] ?? '0'] as $maximum) {
+                        if (bccomp($maximum, $take, 8) < 0) $take = $maximum;
+                    }
+                    if (bccomp($take, '0', 8) <= 0) continue;
+                    $remaining = bcsub($remaining, $take, 8);
+                    $returned[$link['id']] = bcadd($returned[$link['id']] ?? '0', $take, 8);
+                    $restocked[$fact['source_item_id']] = bcadd($restocked[$fact['source_item_id']] ?? '0', $take, 8);
+                    $sold[$link['outbound_transaction_item_id']] = bcsub($sold[$link['outbound_transaction_item_id']], $take, 8);
+                    $eventProof[] = ['inbound_id' => (int) $fact['id'], 'allocation_id' => (int) $link['id'],
+                        'outbound_id' => (int) $link['outbound_transaction_item_id'], 'quantity' => $take];
+                    if (bccomp($remaining, '0', 8) === 0) break;
+                }
+                if (bccomp($remaining, '0', 8) === 0) { $credit = $quantity; array_push($returnProof, ...$eventProof); }
+            }
+            $proven[$key] = bcadd($available, $credit, 8);
+        }
+        $quantity = $proven[$balance->warehouse_id.':'.$balance->location_id] ?? '0';
+        if ($receipts === [] || bccomp($quantity, (string) $line->base_qty, 8) < 0) return null;
+        return ['version' => 2, 'source_origin' => 'legacy_production_stock', 'material_lot_id' => (int) $lot->id,
+            'inventory_balance_id' => (int) $balance->id, 'item_id' => (int) $line->item_id, 'source_output_id' => (int) $lot->source_id,
+            'ledger_through_id' => (int) end($facts)['id'], 'proven_qty' => $quantity, 'inbound_facts' => $receipts,
+            // 只冻结已发生的退回分配；后续分次收货增加 posted 数量或调整未接收额度不改旧证明。
+            'ledger_hash' => hash('sha256', json_encode([$facts, $pairs, $returnProof], JSON_THROW_ON_ERROR))];
+    }
+
+    /** 调拨必须有已过账单据和真实源余额；发货内部移位只认同一次正式日志的成对流水。 */
+    private function legacyMovementPairs(array $facts, int $lotId, int $unitId): array
+    {
+        $groups = [];
+        foreach ($facts as $fact) {
+            if (in_array($fact['source_type'], ['inventory_transfer', 'sales_shipment_movement'], true)) {
+                $groups[$fact['transaction_id'].':'.$fact['source_type'].':'.$fact['source_item_id']][] = $fact;
+            }
+        }
+        $pairs = [];
+        foreach ($groups as $group) {
+            if (count($group) !== 2) continue;
+            [$out, $in] = $group;
+            if (bccomp((string) $out['change_qty'], '0', 8) >= 0 || bccomp((string) $in['change_qty'], '0', 8) <= 0
+                || bccomp(bcadd((string) $out['change_qty'], (string) $in['change_qty'], 8), '0', 8) !== 0
+                || bccomp(bcadd((string) $out['cost_amount'], (string) $in['cost_amount'], 4), '0', 4) !== 0
+                || bccomp((string) $out['cost_amount'], '0', 4) > 0 || bccomp((string) $in['cost_amount'], '0', 4) < 0
+                || (int) $out['material_lot_id'] !== $lotId || (int) $in['material_lot_id'] !== $lotId
+                || (int) $out['unit_id'] !== $unitId || (int) $in['unit_id'] !== $unitId
+                || (int) $out['source_id'] !== (int) $in['source_id'] || (int) $out['location_id'] === (int) $in['location_id']
+                || $out['transaction_source_type'] !== $out['source_type'] || (int) $out['transaction_source_id'] !== (int) $out['source_id']) continue;
+            if ($out['source_type'] === 'inventory_transfer') {
+                $transfer = DB::table('erp_inventory_transfer_lines as line')->join('erp_inventory_transfers as transfer', 'transfer.id', '=', 'line.transfer_id')
+                    ->join('erp_inventory_balances as balance', 'balance.id', '=', 'line.inventory_balance_id')
+                    ->where('line.id', $out['source_item_id'])->where('line.transfer_id', $out['source_id'])->where('transfer.transfer_status', 'posted')
+                    ->where('transfer.inventory_transaction_id', $out['transaction_id'])->where('transfer.source_warehouse_id', $out['warehouse_id'])
+                    ->where('transfer.target_warehouse_id', $in['warehouse_id'])->where('line.item_id', $out['item_id'])
+                    ->where('line.source_location_id', $out['location_id'])->where('line.target_location_id', $in['location_id'])
+                    ->where('line.batch_no', $out['batch_no'])->where('line.unit_id', $unitId)->where('line.quantity', $in['change_qty'])
+                    ->where('line.cost_amount', $in['cost_amount'])->where('balance.item_id', $out['item_id'])->where('balance.warehouse_id', $out['warehouse_id'])
+                    ->where('balance.location_id', $out['location_id'])->where('balance.batch_no', $out['batch_no'])->where('balance.material_lot_id', $lotId)
+                    ->where('balance.unit_id', $unitId)->exists();
+                if (! $transfer || $out['transaction_type'] !== 'inventory_transfer') continue;
+            } else {
+                $movement = DB::table('erp_sales_shipment_logs as log')->join('erp_sales_shipment_lines as line', 'line.shipment_id', '=', 'log.shipment_id')
+                    ->where('log.id', $out['source_id'])->where('log.action', 'internal_move')->where('line.id', $out['source_item_id'])
+                    ->where('line.item_id', $out['item_id'])->where('line.batch_no', $out['batch_no'])->where('line.unit_id', $unitId)->where('line.base_qty', $in['change_qty'])->exists();
+                if (! $movement || $out['transaction_type'] !== 'shipment_internal_transfer') continue;
+            }
+            $pairs[$out['id']] = (int) $in['id'];
+        }
+        return $pairs;
+    }
+
+    /** 退回只能恢复已证明的原销售出库数量，并受原成本分摊及本次合格入库数量约束。 */
+    private function legacyReturnLinks(array $facts): array
+    {
+        $ids = array_column(array_filter($facts, fn ($fact) => $fact['source_type'] === 'sales_return_receipt'), 'source_item_id');
+        if ($ids === []) return [];
+        return DB::table('erp_sales_return_receipt_items as line')->join('erp_sales_return_receipts as receipt', 'receipt.id', '=', 'line.receipt_id')
+            ->join('erp_sales_return_cost_allocations as allocation', 'allocation.sales_return_item_id', '=', 'line.sales_return_item_id')
+            ->whereIn('line.id', $ids)->where('receipt.receipt_status', 'confirmed')->where('receipt.stock_post_status', 'posted')
+            ->whereIn('allocation.allocation_status', ['reserved', 'posted'])->orderBy('line.id')->orderBy('allocation.id')
+            ->get(['line.id as receipt_line_id', 'line.receipt_id', 'line.item_id', 'line.warehouse_id', 'line.location_id', 'line.batch_no', 'line.base_unit_id',
+                'line.restock_base_qty', 'allocation.id', 'allocation.outbound_transaction_item_id', 'allocation.allocated_base_qty'])
+            ->groupBy('receipt_line_id')->map(fn ($rows) => $rows->map(fn ($row) => (array) $row)->all())->all();
     }
 }

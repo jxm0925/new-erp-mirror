@@ -14,9 +14,7 @@
     <section class="simple-card">
       <div class="simple-filters">
         <el-input v-model.trim="filters.keyword" size="small" clearable placeholder="调拨单号" @keyup.enter.native="query" />
-        <el-select v-model="filters.warehouse_id" size="small" clearable placeholder="全部仓库">
-          <el-option v-for="w in warehouses" :key="w.id" :label="w.warehouse_name" :value="w.id" />
-        </el-select>
+        <paged-record-select v-model="filters.warehouse_id" entity="warehouses" :params="warehouseParams" title="选择仓库" placeholder="全部仓库" />
         <el-select v-model="filters.status" size="small" clearable placeholder="全部状态">
           <el-option v-for="(label, value) in statuses" :key="value" :label="label" :value="value" />
         </el-select>
@@ -57,14 +55,10 @@
       <el-form ref="form" :model="form" label-width="80px" size="small">
         <div class="simple-form-row">
           <el-form-item label="调出仓库" required>
-            <el-select v-model="form.source_warehouse_id" filterable placeholder="选择调出仓库" style="width: 100%" @change="changeSource">
-              <el-option v-for="w in warehouses" :key="w.id" :label="`${w.warehouse_code} ${w.warehouse_name}`" :value="w.id" />
-            </el-select>
+            <paged-record-select v-model="form.source_warehouse_id" entity="warehouses" :params="warehouseParams" title="选择调出仓库" placeholder="选择调出仓库" @change="changeSource" />
           </el-form-item>
           <el-form-item label="调入仓库" required>
-            <el-select v-model="form.target_warehouse_id" filterable placeholder="选择调入仓库" style="width: 100%" @change="form.lines.forEach(l => { l.target_location_id = null })">
-              <el-option v-for="w in warehouses" :key="w.id" :label="`${w.warehouse_code} ${w.warehouse_name}`" :value="w.id" />
-            </el-select>
+            <paged-record-select v-model="form.target_warehouse_id" entity="warehouses" :params="warehouseParams" title="选择调入仓库" placeholder="选择调入仓库" @change="form.lines.forEach(l => { l.target_location_id = null })" />
           </el-form-item>
         </div>
         <el-form-item label="备注">
@@ -74,16 +68,12 @@
       <el-table :data="form.lines" border size="small">
         <el-table-column label="来源库存" min-width="260">
           <template slot-scope="{ row }">
-            <el-select v-model="row.inventory_balance_id" filterable size="mini" placeholder="物料 / 库位 / 批次" style="width: 100%" @change="row.serial_ids = []">
-              <el-option v-for="b in balances" :key="b.id" :label="balanceLabel(b)" :value="b.id" />
-            </el-select>
+            <paged-record-select v-model="row.inventory_balance_id" :request="listTransferBalances" :params="{ warehouse_id: form.source_warehouse_id }" :selected-rows.sync="balances" :label="balanceLabel" :columns="balanceColumns" :category-request="listSourceCategories" :disabled="!form.source_warehouse_id" size="mini" title="选择来源库存" placeholder="物料 / 规格 / 库位 / 批次" @change="row.serial_ids = []" />
           </template>
         </el-table-column>
         <el-table-column label="调入库位" min-width="160">
           <template slot-scope="{ row }">
-            <el-select v-model="row.target_location_id" filterable size="mini" placeholder="调入库位" style="width: 100%">
-              <el-option v-for="l in locationsOf(form.target_warehouse_id)" :key="l.id" :label="`${l.location_code} ${l.location_name}`" :value="l.id" />
-            </el-select>
+            <paged-record-select v-model="row.target_location_id" entity="locations" :params="{ warehouse_id: form.target_warehouse_id, statuses: warehouseParams.statuses }" :disabled="!form.target_warehouse_id" size="mini" title="选择调入库位" placeholder="调入库位" />
           </template>
         </el-table-column>
         <el-table-column label="数量" width="140">
@@ -93,9 +83,7 @@
         </el-table-column>
         <el-table-column label="序列号" min-width="200">
           <template slot-scope="{ row }">
-            <el-select v-if="serialsOf(row).length" v-model="row.serial_ids" multiple filterable collapse-tags size="mini" placeholder="选择序列号" style="width: 100%" @change="row.quantity = row.serial_ids.length">
-              <el-option v-for="s in serialsOf(row)" :key="s.id" :label="s.serial_no" :value="s.id" />
-            </el-select>
+            <paged-record-select v-if="hasSerials(row)" v-model="row.serial_ids" :request="listSourceSerials" :params="{ inventory_balance_id: row.inventory_balance_id, warehouse_id: form.source_warehouse_id, for_transfer: 1 }" :columns="[{ prop: 'serial_no', label: '序列号' }]" :label="serialLabel" multiple size="mini" title="选择序列号" placeholder="选择序列号" @change="row.quantity = row.serial_ids.length" />
             <span v-else>—</span>
           </template>
         </el-table-column>
@@ -147,13 +135,16 @@
 </template>
 
 <script>
-import { listTransfers, getTransferOptions, listTransferBalances, getTransfer, saveTransfer, postTransfer, cancelTransfer, deleteTransfer } from '@/api/erp/inventory'
+import { listTransfers, getTransferOptions, listTransferBalances, listInventoryBalanceSerials, getTransfer, saveTransfer, postTransfer, cancelTransfer, deleteTransfer } from '@/api/erp/inventory'
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
+import { listEntity } from '@/api/erp/master'
 import './inventory-simple.css'
 
 const emptyLine = () => ({ inventory_balance_id: null, target_location_id: null, quantity: undefined, serial_ids: [], remark: '' })
 
 export default {
   name: 'InventoryTransferList',
+  components: { PagedRecordSelect },
   data() {
     return {
       loading: false,
@@ -163,9 +154,17 @@ export default {
       page: 1,
       pageSize: 10,
       filters: { keyword: '', warehouse_id: null, status: '' },
-      warehouses: [],
+      warehouseParams: { statuses: ['enabled', 'active'], include_location_summary: 1 },
       statuses: {},
       balances: [],
+      balanceColumns: [
+        { prop: 'item_code', label: '物料编码', width: 150 },
+        { prop: 'item_name', label: '物料名称', width: 150 },
+        { prop: 'spec', label: '规格', width: 120 },
+        { prop: 'location_name', label: '来源库位', width: 120 },
+        { prop: 'batch_no', label: '批次', width: 140 },
+        { prop: 'quantity_available', label: '可用数量', width: 110, format: row => `${this.num(row.quantity_available)} ${row.unit_name || ''}` }
+      ],
       formVisible: false,
       form: { id: null, source_warehouse_id: null, target_warehouse_id: null, remark: '', lines: [] },
       detailVisible: false,
@@ -182,6 +181,10 @@ export default {
     window.removeEventListener('resize', this.onResize)
   },
   methods: {
+    listTransferBalances,
+    listSourceCategories() { return listEntity('categories', { category_type: 'item', tree: 1 }) },
+    listSourceSerials({ inventory_balance_id: id, ...params }) { return listInventoryBalanceSerials(id, params) },
+    serialLabel(row) { return row.serial_no },
     onResize() { this.windowWidth = window.innerWidth },
     dialogWidth(width) { return this.windowWidth < 768 ? '96%' : width },
     num(value) {
@@ -190,33 +193,20 @@ export default {
     },
     statusType(status) { return { draft: 'warning', posted: 'success', cancelled: 'info' }[status] || '' },
     fail(error) { this.$message.error((error && error.userMessage) || '操作失败') },
-    locationsOf(warehouseId) {
-      const warehouse = this.warehouses.find(w => w.id === warehouseId)
-      return warehouse ? warehouse.locations : []
-    },
     balanceOf(row) { return this.balances.find(b => b.id === row.inventory_balance_id) },
     balanceLabel(b) { return `${b.item_code} ${b.item_name} | ${b.location_name} | ${b.batch_no} | 可用 ${this.num(b.quantity_available)}${b.unit_name ? ' ' + b.unit_name : ''}` },
     maxQty(row) {
       const balance = this.balanceOf(row)
       return balance ? balance.quantity_available : Infinity
     },
-    serialsOf(row) {
+    hasSerials(row) {
       const balance = this.balanceOf(row)
-      return balance ? balance.serials : []
+      return row.serial_ids.length > 0 || !!(balance && balance.available_serials_count > 0)
     },
     async loadOptions() {
       try {
         const { data } = await getTransferOptions()
-        this.warehouses = data.data.warehouses || []
         this.statuses = data.data.transfer_statuses || {}
-      } catch (e) { this.fail(e) }
-    },
-    async loadBalances() {
-      this.balances = []
-      if (!this.form.source_warehouse_id) return
-      try {
-        const { data } = await listTransferBalances({ warehouse_id: this.form.source_warehouse_id })
-        this.balances = data.data || []
       } catch (e) { this.fail(e) }
     },
     async load() {
@@ -235,7 +225,7 @@ export default {
     changePage(page) { this.page = page; this.load() },
     changeSource() {
       this.form.lines = [emptyLine()]
-      this.loadBalances()
+      this.balances = []
     },
     addLine() { this.form.lines.push(emptyLine()) },
     async openForm(id) {
@@ -252,7 +242,6 @@ export default {
             remark: t.remark || '',
             lines: t.lines.map(l => ({ inventory_balance_id: l.inventory_balance_id, target_location_id: l.target_location_id, quantity: Number(l.quantity), serial_ids: l.serial_ids || [], remark: l.remark || '' }))
           }
-          await this.loadBalances()
         } catch (e) {
           this.fail(e)
           return
@@ -300,3 +289,14 @@ export default {
   }
 }
 </script>
+
+<style scoped>
+.simple-filters > .paged-record-select {
+  width: 170px;
+}
+@media (max-width: 768px) {
+  .simple-filters > .paged-record-select {
+    width: 100%;
+  }
+}
+</style>

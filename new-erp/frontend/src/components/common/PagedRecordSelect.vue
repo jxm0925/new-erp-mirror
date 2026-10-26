@@ -19,6 +19,7 @@ export default {
   props: {
     value: { default: null },
     request: Function,
+    categoryRequest: Function,
     entity: { type: String, default: '' },
     params: { type: Object, default: () => ({}) },
     label: Function,
@@ -84,9 +85,9 @@ export default {
       const serial = ++this.openSerial
       await this.resolveSelected()
       if (serial !== this.openSerial || this.disabled) return
-      if (this.categoryType) {
+      if (this.categoryRequest || this.categoryType) {
         try {
-          const { data } = await (this.categoryType === 'product' ? listEntity('categories', { category_type: 'product', tree: 1 }) : getItemCategoryTree({ management_scope: this.managementScope || this.params.management_scope || undefined }))
+          const { data } = await (this.categoryRequest ? this.categoryRequest() : this.categoryType === 'product' ? listEntity('categories', { category_type: 'product', tree: 1 }) : getItemCategoryTree({ management_scope: this.managementScope || this.params.management_scope || undefined }))
           if (serial !== this.openSerial) return
           this.categories = data.data || []
         } catch (error) {

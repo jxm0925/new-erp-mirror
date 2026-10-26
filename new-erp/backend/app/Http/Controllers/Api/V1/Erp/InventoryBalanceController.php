@@ -79,11 +79,23 @@ class InventoryBalanceController extends Controller
 
     public function serials(Request $request, int $id)
     {
-        $this->erpAuthorize($request, 'inventory.balance.view');
-        $balance = InventoryBalance::query()->with('item')->findOrFail($id);
+        $forTransfer = $request->boolean('for_transfer');
+        $this->erpAuthorize($request, $forTransfer ? 'inventory.transfer.create' : 'inventory.balance.view');
+        $data = $request->validate([
+            'warehouse_id' => ($forTransfer ? 'required' : 'nullable').'|integer|min:1',
+            'ids' => 'sometimes|required|array|min:1|max:500', 'ids.*' => 'required|integer|min:1|distinct',
+        ]);
+        $balance = InventoryBalance::query()->with('item')
+            ->when($forTransfer, fn ($q) => $q->where('warehouse_id', $data['warehouse_id'])->where('quantity_available', '>', 0)
+                ->whereHas('item', fn ($item) => $item->where(fn ($mode) => $mode
+                    ->whereIn('material_management_mode', ['quantity', ''])->orWhereNull('material_management_mode'))))
+            ->findOrFail($id);
         app(ItemManagementScopeService::class)->assertContext($balance->item, $this->managementScope($request));
         $query = InventorySerial::query()
             ->where('inventory_balance_id', $id)
+            ->when($forTransfer, fn ($q) => $q->where('serial_status', 'available'))
+            ->when($forTransfer, fn ($q) => $q->select(['id', 'inventory_balance_id', 'serial_no']))
+            ->when($data['ids'] ?? null, fn ($q, $ids) => $q->whereIn('id', $ids))
             ->orderBy('serial_no');
         if ($request->filled('keyword')) {
             $keyword = trim((string) $request->input('keyword'));
@@ -93,7 +105,7 @@ class InventoryBalanceController extends Controller
             $query->where('serial_status', $request->input('serial_status'));
         }
 
-        return response()->json($query->paginate($this->perPage($request)));
+        return response()->json($query->paginate(isset($data['ids']) ? count($data['ids']) : $this->perPage($request)));
     }
 
     public function itemBatches(Request $request, int $itemId)

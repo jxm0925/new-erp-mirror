@@ -134,7 +134,7 @@ class InventoryTransferService
                 'message' => '库存调拨过账成功', 'posted_by' => $operatorId, 'posted_at' => now(),
             ]);
             return $transfer->fresh('lines');
-        });
+        }, 5);
     }
 
     public function cancel(int $id, ?int $operatorId): InventoryTransfer

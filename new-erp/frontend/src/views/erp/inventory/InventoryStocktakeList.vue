@@ -78,7 +78,7 @@
           <div><span>范围：</span>{{ detail.warehouse && detail.warehouse.warehouse_name }} / {{ detail.location ? detail.location.location_name : '全部库位' }}</div>
           <div><span>状态：</span>{{ detail.status_label }}</div>
           <div><span>制单：</span>{{ detail.created_by_name || '—' }} {{ detail.stocktake_date }}</div>
-          <div v-if="detail.adjustment"><span>差异调整单：</span>{{ detail.adjustment.adjustment_no }}</div>
+          <div v-if="adjustmentNumbers"><span>差异调整单：</span>{{ adjustmentNumbers }}</div>
           <div v-if="detail.remark"><span>备注：</span>{{ detail.remark }}</div>
         </div>
         <el-table :data="detail.lines" border size="small" max-height="460">
@@ -150,6 +150,9 @@ export default {
     }
   },
   computed: {
+    adjustmentNumbers() {
+      return this.detail ? (this.detail.adjustments || [this.detail.adjustment]).filter(Boolean).map(row => row.adjustment_no).join('、') : ''
+    },
     editable() {
       return !!this.detail && this.detail.stocktake_status === 'counting' && this.$can('inventory.stocktake.create')
     }

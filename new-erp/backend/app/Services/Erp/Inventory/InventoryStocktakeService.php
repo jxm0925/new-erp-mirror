@@ -10,6 +10,7 @@ use App\Models\Erp\Location;
 use App\Models\Erp\Warehouse;
 use App\Services\Erp\DocumentNumberService;
 use App\Services\Erp\InventoryAdjustmentApplicationService;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -31,7 +32,7 @@ class InventoryStocktakeService
 
     public function create(array $data, ?int $operatorId): InventoryStocktake
     {
-        return DB::transaction(function () use ($data, $operatorId): InventoryStocktake {
+        return $this->transaction(function () use ($data, $operatorId): InventoryStocktake {
             $warehouse = Warehouse::query()->whereKey((int) $data['warehouse_id'])->lockForUpdate()->first();
             if (! $warehouse || ! in_array($warehouse->status, ['enabled', 'active'], true)) {
                 throw ValidationException::withMessages(['warehouse_id' => '仓库不存在或已停用。']);
@@ -48,7 +49,7 @@ class InventoryStocktakeService
             $balances = InventoryBalance::query()->where('warehouse_id', $warehouse->id)
                 ->when($locationId, fn ($query) => $query->where('location_id', $locationId))
                 ->where('quantity_on_hand', '<>', 0)->orderBy('location_id')->orderBy('item_id')->orderBy('batch_no')
-                ->lockForUpdate()->get();
+                ->lock('FOR UPDATE NOWAIT')->get();
             if ($balances->isEmpty()) throw ValidationException::withMessages(['warehouse_id' => '所选范围没有在库库存，无需盘点。']);
 
             $stocktake = InventoryStocktake::create([
@@ -81,7 +82,7 @@ class InventoryStocktakeService
     /** 录入实盘数：counted_qty 传 null 表示清空，可多次保存。 */
     public function saveCounts(int $id, array $lines, ?int $operatorId): InventoryStocktake
     {
-        return DB::transaction(function () use ($id, $lines, $operatorId): InventoryStocktake {
+        return $this->transaction(function () use ($id, $lines, $operatorId): InventoryStocktake {
             $stocktake = $this->lockCounting($id);
             $rows = InventoryStocktakeLine::query()->where('stocktake_id', $stocktake->id)->lockForUpdate()->get()->keyBy('id');
             foreach ($lines as $input) {
@@ -105,30 +106,37 @@ class InventoryStocktakeService
         });
     }
 
-    /** 完成盘点：按当前账面重算差异，差异行生成“盘点差异”调整单并立即过账，随后解除冻结。 */
+    /** 保留开盘差异，仅对尚未处理的数量过账；手工与自动处理均按正式流水核对。 */
     public function complete(int $id, ?int $operatorId): InventoryStocktake
     {
-        return DB::transaction(function () use ($id, $operatorId): InventoryStocktake {
+        return $this->transaction(function () use ($id, $operatorId): InventoryStocktake {
             $stocktake = $this->lockCounting($id);
             $lines = InventoryStocktakeLine::query()->where('stocktake_id', $stocktake->id)->lockForUpdate()->get();
             $uncounted = $lines->whereNull('counted_qty')->count();
             if ($uncounted > 0) throw ValidationException::withMessages(['lines' => "还有 {$uncounted} 行未录入实盘数。"]);
 
-            $items = Item::query()->whereIn('id', $lines->pluck('item_id')->unique())->get()->keyBy('id');
+            // 适配器可能已预锁物料/余额，不持范围锁等待它们，失败后整笔盘点回滚重试。
+            $items = Item::query()->whereIn('id', $lines->pluck('item_id')->unique())->orderBy('id')
+                ->lock('FOR UPDATE NOWAIT')->get()->keyBy('id');
+            $facts = $this->adjustmentFacts($stocktake);
             $differences = [];
             $blocked = [];
             foreach ($lines as $line) {
-                $balance = InventoryBalance::query()->whereKey($line->inventory_balance_id)->lockForUpdate()->first();
-                $book = (float) ($balance->quantity_on_hand ?? 0);
-                $difference = round((float) $line->counted_qty - $book, 4);
+                $balance = InventoryBalance::query()->whereKey($line->inventory_balance_id)->lock('FOR UPDATE NOWAIT')->firstOrFail();
+                $processed = $facts->get($this->factKey($line), collect());
+                if (abs(round((float) $balance->quantity_on_hand - (float) $line->book_qty - $processed->sum('change_qty'), 4)) >= 0.00005) {
+                    throw ValidationException::withMessages(['lines' => '盘点账面变化与已关联的差异调整流水不一致，请核对后重试。']);
+                }
+                $difference = round((float) $line->counted_qty - (float) $line->book_qty, 4);
                 $line->update(['difference_qty' => $difference, 'difference_amount' => round($difference * (float) $line->unit_cost, 4)]);
-                if (abs($difference) < 0.00005) continue;
+                $remaining = round((float) $line->counted_qty - (float) $balance->quantity_on_hand, 4);
+                if (abs($remaining) < 0.00005) continue;
                 $item = $items->get($line->item_id);
                 if ($item && ($item->serialTrackingMode() !== 'none' || $item->materialManagementMode() !== 'quantity')) {
                     $blocked[] = $item->item_code.'（'.$line->batch_no.'）';
                     continue;
                 }
-                $differences[] = ['line' => $line, 'difference' => $difference];
+                $differences[] = ['line' => $line, 'difference' => $remaining];
             }
             if ($blocked) {
                 throw ValidationException::withMessages(['lines' => '以下物料按序列号/实物管理，差异须先用“手工调整（原因：盘点差异）”逐个处理后再完成盘点：'.implode('、', $blocked)]);
@@ -155,14 +163,23 @@ class InventoryStocktakeService
                 $adjustmentId = $adjustment->id;
             }
 
-            $diffs = collect($differences)->pluck('difference');
+            $facts = $this->adjustmentFacts($stocktake);
+            foreach ($lines as $line) {
+                $processed = $facts->get($this->factKey($line), collect());
+                if (abs(round((float) $line->difference_qty - $processed->sum('change_qty'), 4)) >= 0.00005) {
+                    throw ValidationException::withMessages(['lines' => '盘点差异与实际调整数量不一致，不能完成盘点。']);
+                }
+                $line->update(['difference_amount' => $processed->reduce(fn ($sum, $fact) => bcadd($sum, (string) $fact->cost_amount, 4), '0')]);
+            }
+            $diffs = $lines->pluck('difference_qty');
+            $adjustmentId ??= $facts->flatten(1)->first()?->adjustment_id;
             $stocktake->update([
                 'stocktake_status' => 'completed',
                 'adjustment_id' => $adjustmentId,
-                'difference_count' => count($differences),
+                'difference_count' => $diffs->filter(fn ($q) => abs((float) $q) >= 0.00005)->count(),
                 'gain_qty' => round($diffs->filter(fn ($q) => $q > 0)->sum(), 4),
                 'loss_qty' => round(abs($diffs->filter(fn ($q) => $q < 0)->sum()), 4),
-                'difference_amount' => round(collect($differences)->sum(fn ($row) => $row['difference'] * (float) $row['line']->unit_cost), 4),
+                'difference_amount' => $lines->reduce(fn ($sum, $line) => bcadd($sum, (string) $line->difference_amount, 4), '0'),
                 'completed_by' => $operatorId,
                 'completed_at' => now(),
                 'business_version' => (int) $stocktake->business_version + 1,
@@ -173,7 +190,7 @@ class InventoryStocktakeService
 
     public function cancel(int $id, ?int $operatorId): InventoryStocktake
     {
-        return DB::transaction(function () use ($id, $operatorId): InventoryStocktake {
+        return $this->transaction(function () use ($id, $operatorId): InventoryStocktake {
             $stocktake = $this->lockCounting($id);
             $stocktake->update(['stocktake_status' => 'cancelled', 'cancelled_by' => $operatorId, 'cancelled_at' => now(),
                 'business_version' => (int) $stocktake->business_version + 1]);
@@ -183,10 +200,44 @@ class InventoryStocktakeService
 
     private function lockCounting(int $id): InventoryStocktake
     {
+        $warehouseId = InventoryStocktake::query()->whereKey($id)->value('warehouse_id');
+        if ($warehouseId) Warehouse::query()->whereKey($warehouseId)->lockForUpdate()->firstOrFail();
         $stocktake = InventoryStocktake::query()->lockForUpdate()->findOrFail($id);
         if ($stocktake->stocktake_status !== 'counting') {
             throw ValidationException::withMessages(['status' => '只有盘点中的单据可以操作。']);
         }
         return $stocktake;
+    }
+
+    private function factKey(object $row): string
+    {
+        return $row->item_id.':'.$row->warehouse_id.':'.$row->location_id.':'.$row->batch_no;
+    }
+
+    private function adjustmentFacts(InventoryStocktake $stocktake): \Illuminate\Support\Collection
+    {
+        $transactionIds = DB::table('erp_inventory_posting_logs')->where('source_type', 'inventory_stocktake')
+            ->where('source_id', $stocktake->id)->where('transaction_type', 'stocktake_difference')
+            ->where('posting_status', 'posted')->lock('FOR UPDATE NOWAIT')->pluck('transaction_id')->unique();
+        if ($transactionIds->isEmpty()) return collect();
+        return DB::table('erp_inventory_transaction_items as fact')
+            ->join('erp_inventory_transactions as transaction', 'transaction.id', '=', 'fact.transaction_id')
+            ->whereIn('transaction.id', $transactionIds)->where('transaction.posting_status', 'posted')
+            ->where('transaction.source_type', 'inventory_adjustment')->where('transaction.transaction_type', 'manual_adjustment')
+            ->lock('FOR UPDATE NOWAIT')->get(['fact.*', 'transaction.source_id as adjustment_id'])
+            ->groupBy(fn ($row) => $this->factKey($row));
+    }
+
+    private function transaction(callable $callback): InventoryStocktake
+    {
+        for ($attempt = 1; ; $attempt++) {
+            try {
+                return DB::transaction($callback, 5);
+            } catch (QueryException $exception) {
+                if ((int) ($exception->errorInfo[1] ?? 0) !== 3572) throw $exception;
+                if ($attempt >= 5) throw ValidationException::withMessages(['stock' => '库存正在变动，本次盘点操作未生效，请稍后重试。']);
+                usleep(50000);
+            }
+        }
     }
 }

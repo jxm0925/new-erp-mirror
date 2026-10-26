@@ -9,7 +9,9 @@ use App\Models\Erp\InventoryQualityEvent;
 use App\Models\Erp\InventorySerial;
 use App\Models\Erp\InventorySerialEvent;
 use App\Models\Erp\InventoryTransaction;
+use App\Models\Erp\InventoryTransactionItem;
 use App\Models\Erp\Item;
+use App\Services\Erp\CuttingDecimal;
 use App\Services\Erp\InventoryAdjustmentApplicationService;
 use App\Services\Erp\MaterialPhysicalService;
 use Illuminate\Support\Facades\DB;
@@ -137,7 +139,29 @@ class WarehouseInventoryPosting
                     }
                     continue;
                 }
-                $this->kernel->apply($transaction, [
+                $cost = [];
+                if ($balance->material_lot_id) {
+                    $quantity = (string) $line->change_qty;
+                    $amount = (string) $balance->inventory_value;
+                    $onHand = (string) $balance->quantity_on_hand;
+                    if (bccomp($quantity, '0', 8) < 0) {
+                        $amount = bcsub('0', CuttingDecimal::share($amount, $onHand, bcsub('0', $quantity, 8)), 4);
+                    } else {
+                        if (bccomp($onHand, '0', 8) === 0) {
+                            $fact = InventoryTransactionItem::query()->where('item_id', $balance->item_id)
+                                ->where('warehouse_id', $balance->warehouse_id)->where('location_id', $balance->location_id)
+                                ->where('batch_no', $balance->batch_no)->where('material_lot_id', $balance->material_lot_id)
+                                ->where('change_qty', '>', 0)->whereHas('transaction', fn ($query) => $query->where('posting_status', 'posted'))
+                                ->latest('id')->lockForUpdate()->first();
+                            if (! $fact) throw ValidationException::withMessages(['cost_amount' => '该材料批次没有可追溯的入库金额，不能确定盘盈成本。']);
+                            $amount = (string) $fact->cost_amount;
+                            $onHand = (string) $fact->change_qty;
+                        }
+                        $amount = bcdiv(bcmul($amount, $quantity, 12), $onHand, 4);
+                    }
+                    $cost = ['cost_amount' => $amount, 'unit_cost' => bcdiv($amount, $quantity, 8), 'material_lot_id' => $balance->material_lot_id];
+                }
+                $this->kernel->apply($transaction, $cost + [
                     'item_id' => $line->item_id,
                     'warehouse_id' => $line->warehouse_id,
                     'location_id' => $line->location_id,
@@ -166,7 +190,7 @@ class WarehouseInventoryPosting
             ]);
 
             return $transaction->fresh(['items.item', 'items.warehouse', 'items.location']);
-        });
+        }, 5);
     }
 
     private function applyAdjustmentSerials(InventoryAdjustment $adjustment, $line, InventoryBalance $balance): void

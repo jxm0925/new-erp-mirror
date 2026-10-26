@@ -47,19 +47,20 @@ class InventoryPostingKernel
      */
     public function apply(InventoryTransaction $transaction, array $line): InventoryTransactionItem
     {
-        $this->freeze->assertWritable($transaction, $line);
         $item = Item::query()->whereKey($line['item_id'])->lockForUpdate()->firstOrFail();
+        $this->freeze->assertWritable($transaction, $line);
         if ((float) $line['change_qty'] > 0) {
             $item = $this->originalReturns->supports($transaction, $line)
                 ? ($this->originalReturns->verify($transaction, $line) ?? $item)
                 : $this->assertForwardStockLocator($line);
         }
-        $balance = InventoryBalance::firstOrNew([
+        $locator = [
             'item_id' => $line['item_id'],
             'warehouse_id' => $line['warehouse_id'],
             'location_id' => $line['location_id'],
             'batch_no' => $line['batch_no'],
-        ]);
+        ];
+        $balance = InventoryBalance::query()->where($locator)->lockForUpdate()->first() ?? new InventoryBalance($locator);
 
         if ($item->materialManagementMode() === 'physical') {
             $this->physicalGuard->assertChange($transaction, $line, $item, $balance);
@@ -106,11 +107,13 @@ class InventoryPostingKernel
         if ($decimalLot) $balance->update(['material_lot_id' => $line['material_lot_id'],
             'average_unit_cost' => $onHand > 0 ? bcdiv($inventoryValue, number_format($onHand, 8, '.', ''), 8) : '0']);
 
-        $locationBalance = InventoryLocationBalance::firstOrNew([
+        $locationLocator = [
             'item_id' => $line['item_id'],
             'warehouse_id' => $line['warehouse_id'],
             'location_id' => $line['location_id'],
-        ]);
+        ];
+        $locationBalance = InventoryLocationBalance::query()->where($locationLocator)->lockForUpdate()->first()
+            ?? new InventoryLocationBalance($locationLocator);
         $locationOnHand = (float) ($locationBalance->quantity_on_hand ?? 0) + (float) $line['change_qty'];
         $locationLocked = (float) ($locationBalance->quantity_locked ?? 0);
         $locationBalance->fill([

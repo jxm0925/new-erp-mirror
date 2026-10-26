@@ -157,7 +157,7 @@ class PurchaseInventoryPosting
             }
 
             return $transaction->fresh(['items.item', 'items.warehouse', 'items.location']);
-        });
+        }, 5);
     }
 
     /**
@@ -241,7 +241,7 @@ class PurchaseInventoryPosting
             ]);
 
             return $transaction->fresh(['items.item', 'items.warehouse', 'items.location']);
-        });
+        }, 5);
     }
 
     public function postPurchaseReturn(int $returnId, ?int $operatorId = null): InventoryTransaction

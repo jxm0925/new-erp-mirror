@@ -6,7 +6,7 @@ use Database\Schema\InitialTableMigration;
 
 require_once __DIR__.'/../schema/InitialTableMigration.php';
 
-// 盘点明细：开盘时按库存批次行快照账面数与平均成本；实盘数由仓管录入，差异在完成时按当前账面重算。
+// 盘点明细：差异数量始终按开盘账面计算，完成金额取关联调整流水的实际金额。
 return new class extends InitialTableMigration
 {
     public const TABLE = 'erp_inventory_stocktake_lines';
