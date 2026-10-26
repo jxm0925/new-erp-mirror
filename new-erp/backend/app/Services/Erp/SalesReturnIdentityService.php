@@ -66,6 +66,7 @@ class SalesReturnIdentityService
             ->join('erp_sales_shipments as shipment', 'shipment.id', '=', 'shipment_line.shipment_id')
             ->where('receipt_line.receipt_id', $receiptId);
         if (!empty($filters['line_id'])) $query->where('identity.sales_return_receipt_item_id', (int) $filters['line_id']);
+        if (!empty($filters['disposition'])) $query->where('identity.disposition', (string) $filters['disposition']);
         if ($keyword = trim((string) ($filters['keyword'] ?? ''))) $query->where('identity.serial_no_snapshot', 'like', '%'.$keyword.'%');
         return $query->select(['identity.id as identity_id', 'identity.inventory_serial_id as id', 'identity.sales_return_receipt_item_id as receipt_item_id',
             'identity.serial_no_snapshot as serial_no', 'identity.source_batch_no as batch_no', 'identity.disposition', 'shipment.shipment_no',
@@ -233,7 +234,9 @@ class SalesReturnIdentityService
             return;
         }
         $ids = array_values(array_unique(array_map('intval', $serialIds)));
-        if (!$ids || count($ids) !== count($serialIds)) $this->fail('序列号无效或重复。');
+        if (!$ids) $this->fail('序列商品处置必须逐件选择序列号，不允许只填写数量。');
+        if (count($ids) !== count($serialIds)) $this->fail('序列号重复。');
+        if (bccomp((string) count($ids), (string) ($disposition === 'restock' ? $target->restock_base_qty : bcsub((string) $target->{$disposition.'_base_qty'}, '0', 8)), 8) > 0) $this->fail('所选序列号数量超过处置数量。');
         $chosen = $identities->whereIn('inventory_serial_id', $ids);
         if ($chosen->count() !== count($ids)) $this->fail('所选序列号不在该到货行的待处理清单中。');
         $serials = InventorySerial::whereIn('id', $ids)->orderBy('id')->lockForUpdate()->get()->keyBy('id');

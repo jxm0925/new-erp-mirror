@@ -10,6 +10,7 @@ use App\Models\Erp\SalesReturnReceipt;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\SalesReturnApplicationService;
 use App\Services\Erp\SalesReturnSettlementService;
+use App\Services\Erp\SalesReturnIdentityService;
 use App\Services\Erp\SalesCostVisibilityService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -156,6 +157,9 @@ class SalesReturnController extends Controller
         $this->applyOrderVisibility($query, $request);
         $return = $query->firstOrFail();
         $data = $return->toArray();
+        // 前端据此决定收货/处置时是否必须逐件选择序列号。
+        $identities = app(SalesReturnIdentityService::class);
+        foreach ($return->items as $index => $item) $data['items'][$index]['serial_required'] = $identities->requiresIdentities($item);
         // 金额口径只给有销售金额/财务权限的人；仓库收货人员只看数量与处置。
         if ($this->canViewAmounts($request)) {
             $data['settlement'] = app(SalesReturnSettlementService::class)->summary($return);
@@ -263,6 +267,27 @@ class SalesReturnController extends Controller
             'message' => '销售退货重新入库完成',
             'data' => $service->postReceipt($receipt->id, ...$this->operator($request)),
         ]);
+    }
+
+    /** 收货候选序列：只列该退货行原发货、当前仍在客户手里的序列。 */
+    public function serialCandidates(Request $request, int $id, SalesReturnIdentityService $identities)
+    {
+        $this->authorizePermission($request, 'sales_return.receive');
+        $this->assertReturnVisible($request, $id);
+        $filters = $request->validate(['return_item_id' => 'required|integer|min:1', 'keyword' => 'nullable|string|max:120',
+            'batch_no' => 'nullable|string|max:80', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
+        return response()->json($identities->candidates($id, (int) $filters['return_item_id'], $filters));
+    }
+
+    /** 到货单逐件追溯：序列号、处理去向、原发货单与入库状态（不含成本）。 */
+    public function receiptSerials(Request $request, int $id, int $receiptId, SalesReturnIdentityService $identities)
+    {
+        $this->authorizePermission($request, 'sales_return.view');
+        $this->assertReturnVisible($request, $id);
+        SalesReturnReceipt::query()->where('sales_return_id', $id)->findOrFail($receiptId);
+        $filters = $request->validate(['line_id' => 'nullable|integer|min:1', 'disposition' => 'nullable|in:restock,pending,scrap,rejected',
+            'keyword' => 'nullable|string|max:120', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
+        return response()->json($identities->receiptIdentities($receiptId, $filters));
     }
 
     public function dispose(Request $request, int $id, SalesReturnApplicationService $service)
