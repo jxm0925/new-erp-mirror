@@ -146,15 +146,27 @@ class ShipmentSourceResolver
     private function inboundFacts(SalesShipmentLine $line): \Illuminate\Database\Query\Builder
     {
         $origin = $line->preparation_snapshot ?? [];
+        return $this->inboundFactsAt((int) $line->item_id, (int) ($origin['warehouse_id'] ?? $line->warehouse_id),
+            (int) ($origin['location_id'] ?? $line->location_id), (string) $line->batch_no);
+    }
+
+    /**
+     * 某库存批次行的直接来源入库事实：采购到货、手工调整，以及携带来源口径的库存调拨入库。
+     * 调拨入库的 cost_source_type 记录其来源口径（见 ShipmentDirectSourcePolicy::TRANSFER_*）。
+     */
+    public function inboundFactsAt(int $itemId, int $warehouseId, int $locationId, string $batchNo): \Illuminate\Database\Query\Builder
+    {
         return DB::table('erp_inventory_transaction_items as inbound')->join('erp_inventory_transactions as tx', 'tx.id', '=', 'inbound.transaction_id')
-            ->where('inbound.item_id', $line->item_id)->where('inbound.warehouse_id', $origin['warehouse_id'] ?? $line->warehouse_id)
-            ->where('inbound.location_id', $origin['location_id'] ?? $line->location_id)->where('inbound.batch_no', $line->batch_no)
+            ->where('inbound.item_id', $itemId)->where('inbound.warehouse_id', $warehouseId)
+            ->where('inbound.location_id', $locationId)->where('inbound.batch_no', $batchNo)
             ->where('inbound.change_qty', '>', 0)->where('tx.posting_status', 'posted')
             ->where(fn ($types) => $types->where(fn ($purchase) => $purchase->where('inbound.source_type', 'purchase_receipt')
                 ->whereIn('tx.transaction_type', ['purchase_receipt_posting', 'purchase_receipt_quality_release']))
-                ->orWhere(fn ($stock) => $stock->where('inbound.source_type', 'inventory_adjustment')->where('tx.source_type', 'inventory_adjustment')->where('tx.transaction_type', 'manual_adjustment')))
+                ->orWhere(fn ($stock) => $stock->where('inbound.source_type', 'inventory_adjustment')->where('tx.source_type', 'inventory_adjustment')->where('tx.transaction_type', 'manual_adjustment'))
+                ->orWhere(fn ($transfer) => $transfer->where('inbound.source_type', 'inventory_transfer')->where('tx.transaction_type', 'inventory_transfer')
+                    ->whereIn('inbound.cost_source_type', ShipmentDirectSourcePolicy::TRANSFER_SOURCES)))
             ->select('inbound.id', 'inbound.transaction_id', 'inbound.item_id', 'inbound.warehouse_id', 'inbound.location_id', 'inbound.batch_no', 'inbound.unit_id',
-                'inbound.source_type', 'inbound.source_id', 'inbound.source_item_id', 'inbound.change_qty', 'tx.transaction_type', 'tx.posting_status');
+                'inbound.source_type', 'inbound.source_id', 'inbound.source_item_id', 'inbound.change_qty', 'inbound.cost_source_type', 'tx.transaction_type', 'tx.posting_status');
     }
 
     private function validFrozenDirectEvidence(SalesShipmentLine $line, array $source): bool

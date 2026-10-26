@@ -8,6 +8,32 @@ use App\Models\Erp\Item;
 final class ShipmentDirectSourcePolicy
 {
     public const ORIGINS = ['direct_purchase_shipment', 'direct_inventory_shipment'];
+    /** 调拨入库沿用来源库位的口径：全部来自采购 → 采购来源；含手工调整 → 库存来源；其他（如生产）不构成直接来源。 */
+    public const TRANSFER_PURCHASE = 'inventory_transfer_purchase';
+    public const TRANSFER_STOCK = 'inventory_transfer_stock';
+    public const TRANSFER_NONE = 'inventory_transfer';
+    public const TRANSFER_SOURCES = [self::TRANSFER_PURCHASE, self::TRANSFER_STOCK];
+
+    /** 直接来源事实的口径：purchase / stock；不是直接来源返回 null。 */
+    public function factKind(array $fact): ?string
+    {
+        $source = $fact['source_type'] ?? '';
+        $type = $fact['transaction_type'] ?? '';
+        if ($source === 'purchase_receipt' && in_array($type, ['purchase_receipt_posting', 'purchase_receipt_quality_release'], true)) return 'purchase';
+        if ($source === 'inventory_adjustment' && $type === 'manual_adjustment') return 'stock';
+        if ($source === 'inventory_transfer' && $type === 'inventory_transfer') {
+            return match ($fact['cost_source_type'] ?? null) { self::TRANSFER_PURCHASE => 'purchase', self::TRANSFER_STOCK => 'stock', default => null };
+        }
+        return null;
+    }
+
+    /** 调拨时由来源批次行的直接来源事实决定调入行口径。 */
+    public function transferProvenance(array $facts): string
+    {
+        $kinds = array_map(fn ($fact) => $this->factKind((array) $fact), $facts);
+        if ($kinds === [] || in_array(null, $kinds, true)) return self::TRANSFER_NONE;
+        return in_array('stock', $kinds, true) ? self::TRANSFER_STOCK : self::TRANSFER_PURCHASE;
+    }
 
     public function allowsShipmentOnlyRouting(Item $item): bool
     {
@@ -39,11 +65,11 @@ final class ShipmentDirectSourcePolicy
             foreach (['item_id', 'warehouse_id', 'location_id', 'batch_no', 'unit_id'] as $field) {
                 if ((string) ($fact[$field] ?? '') !== (string) $line[$field]) return null;
             }
-            $isPurchase = ($fact['source_type'] ?? '') === 'purchase_receipt'
-                && in_array($fact['transaction_type'] ?? '', ['purchase_receipt_posting', 'purchase_receipt_quality_release'], true);
-            $isAdjustment = ($fact['source_type'] ?? '') === 'inventory_adjustment' && ($fact['transaction_type'] ?? '') === 'manual_adjustment';
-            if (! $isPurchase && ! $isAdjustment) return null;
-            if ($serial && (($serial['source_document_type'] ?? '') !== $fact['source_type']
+            $kind = $this->factKind($fact);
+            if ($kind === null) return null;
+            $isPurchase = $kind === 'purchase';
+            // 调拨入库不改变序列号的原始来源单据，按调拨事实计入。
+            if ($serial && ($fact['source_type'] ?? '') !== 'inventory_transfer' && (($serial['source_document_type'] ?? '') !== $fact['source_type']
                 || (int) ($serial['source_document_id'] ?? 0) !== (int) ($fact['source_id'] ?? 0))) continue;
             if ((int) ($fact['id'] ?? 0) <= 0 || (int) ($fact['transaction_id'] ?? 0) <= 0) return null;
             $facts[] = $fact; $quantity = bcadd($quantity, (string) $fact['change_qty'], 8); $purchase = $purchase && $isPurchase;
@@ -75,9 +101,9 @@ final class ShipmentDirectSourcePolicy
             foreach (['item_id', 'warehouse_id', 'location_id', 'batch_no', 'unit_id'] as $field) {
                 if ((string) ($fact[$field] ?? '') !== (string) ($evidence[$field] ?? '')) return false;
             }
-            $isPurchase = ($fact['source_type'] ?? '') === 'purchase_receipt'
-                && in_array($fact['transaction_type'] ?? '', ['purchase_receipt_posting', 'purchase_receipt_quality_release'], true);
-            if (! $isPurchase && (($fact['source_type'] ?? '') !== 'inventory_adjustment' || ($fact['transaction_type'] ?? '') !== 'manual_adjustment')) return false;
+            $kind = $this->factKind($fact);
+            if ($kind === null) return false;
+            $isPurchase = $kind === 'purchase';
             $ids[$fact['id']] = true; $purchase = $purchase && $isPurchase; $quantity = bcadd($quantity, (string) $fact['change_qty'], 8);
         }
         return bccomp($quantity, (string) $source['base_qty'], 8) >= 0

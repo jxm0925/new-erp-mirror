@@ -38,6 +38,8 @@ import PurchaseReceiptForm from './views/erp/purchase/PurchaseReceiptForm.vue'
 import PurchasePlanDetail from './views/erp/purchase/PurchasePlanDetail.vue'
 import PurchaseSimpleDetail from './views/erp/purchase/PurchaseSimpleDetail.vue'
 import InventoryBoard from './views/erp/inventory/InventoryBoard.vue'
+import InventoryStocktakeList from './views/erp/inventory/InventoryStocktakeList.vue'
+import InventoryTransferList from './views/erp/inventory/InventoryTransferList.vue'
 import InventoryAlertWorkbench from './views/erp/inventory/InventoryAlertWorkbench.vue'
 import InventoryAlertConfiguration from './views/erp/inventory/InventoryAlertConfiguration.vue'
 import InventoryAlertDetail from './views/erp/inventory/InventoryAlertDetail.vue'
@@ -164,6 +166,8 @@ const router = new VueRouter({
     { path: '/inventory/balances', component: InventoryBoard, meta: { permission: 'inventory.balance' } },
     { path: '/inventory/transactions', component: InventoryBoard, meta: { permission: 'inventory.transaction' } },
     { path: '/inventory/adjustments', component: InventoryBoard, meta: { permission: 'inventory.adjustment' } },
+    { path: '/inventory/stocktakes', component: InventoryStocktakeList, meta: { permission: 'inventory.stocktake' } },
+    { path: '/inventory/transfers', component: InventoryTransferList, meta: { permission: 'inventory.transfer' } },
     { path: '/inventory/alerts', component: InventoryAlertWorkbench, meta: { permission: 'inventory.alert' } },
     { path: '/inventory/alerts/config', component: InventoryAlertConfiguration, meta: { permission: 'inventory.alert' } },
     { path: '/inventory/alerts/:id', component: InventoryAlertDetail, meta: { permission: 'inventory.alert' } },

@@ -29,6 +29,7 @@ class InventoryPostingKernel
         private readonly WarehouseManagementScopeService $scope,
         private readonly DocumentNumberService $numbers,
         private readonly InventoryAlertApplicationService $alerts,
+        private readonly StocktakeFreezeGuard $freeze,
     )
     {
     }
@@ -42,10 +43,11 @@ class InventoryPostingKernel
     /**
      * 唯一的在库数量过账入口：锁物料、校验库位/实物/原事实退回、计算成本、
      * 更新批次余额与库位汇总、写流水明细并刷新预警。业务单据只负责组装行。
-     * 后续盘点冻结等全局校验统一加在这里。
+     * 盘点冻结等全局校验统一在入口执行。
      */
     public function apply(InventoryTransaction $transaction, array $line): InventoryTransactionItem
     {
+        $this->freeze->assertWritable($transaction, $line);
         $item = Item::query()->whereKey($line['item_id'])->lockForUpdate()->firstOrFail();
         if ((float) $line['change_qty'] > 0) {
             $item = $this->originalReturns->supports($transaction, $line)

@@ -38,3 +38,22 @@ export const disableInventoryAlertPolicy = (itemId, data = {}) => api.post(`/v1/
 export const markInventoryAlertRead = id => api.post(`/v1/erp/inventory/alerts/${id}/read`)
 export const listUnreadInventoryAlerts = params => api.get('/v1/erp/inventory/alerts/unread', { params })
 export const createPurchaseRequestFromInventoryAlert = id => api.post(`/v1/erp/inventory/alerts/${id}/purchase-request`)
+
+export const listStocktakes = params => api.get('/v1/erp/inventory/stocktakes', { params })
+export const getStocktakeOptions = () => api.get('/v1/erp/inventory/stocktakes/options')
+export const getStocktake = id => api.get(`/v1/erp/inventory/stocktakes/${id}`)
+export const createStocktake = data => api.post('/v1/erp/inventory/stocktakes', data)
+export const saveStocktakeCounts = (id, lines) => api.put(`/v1/erp/inventory/stocktakes/${id}/counts`, { lines })
+export const completeStocktake = id => api.post(`/v1/erp/inventory/stocktakes/${id}/complete`)
+export const cancelStocktake = id => api.post(`/v1/erp/inventory/stocktakes/${id}/cancel`)
+
+export const listTransfers = params => api.get('/v1/erp/inventory/transfers', { params })
+export const getTransferOptions = () => api.get('/v1/erp/inventory/transfers/options')
+export const listTransferBalances = params => api.get('/v1/erp/inventory/transfers/balances', { params })
+export const getTransfer = id => api.get(`/v1/erp/inventory/transfers/${id}`)
+export const saveTransfer = data => data.id
+  ? api.put(`/v1/erp/inventory/transfers/${data.id}`, data)
+  : api.post('/v1/erp/inventory/transfers', data)
+export const postTransfer = id => api.post(`/v1/erp/inventory/transfers/${id}/post`)
+export const cancelTransfer = id => api.post(`/v1/erp/inventory/transfers/${id}/cancel`)
+export const deleteTransfer = id => api.delete(`/v1/erp/inventory/transfers/${id}`)
