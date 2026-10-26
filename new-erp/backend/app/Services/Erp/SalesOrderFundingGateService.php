@@ -13,8 +13,32 @@ final class SalesOrderFundingGateService
         'contract_amount', 'received_amount', 'outstanding_amount',
         'available_prepayment_amount', 'refunded_amount', 'net_received_amount',
         'allocated_amount', 'unallocated_amount', 'receipt_ratio',
-        'production_required_amount',
+        'production_required_amount', 'policy_deposit_amount', 'agreed_deposit_amount',
+        'deposit_outstanding_amount', 'balance_outstanding_amount',
     ];
+
+    /** 只有“定金开工”类付款条件允许销售按与客户的约定逐单填写定金；全额预付仍须收满才开工。 */
+    public const AGREED_DEPOSIT_POLICY_TYPES = ['deposit_production', 'installment_contract', 'custom_threshold'];
+
+    public static function supportsAgreedDeposit(?string $policyType): bool
+    {
+        return in_array((string) $policyType, self::AGREED_DEPOSIT_POLICY_TYPES, true);
+    }
+
+    /** 统一校验销售填写的约定定金：空值表示按付款条件默认值计算。 */
+    public static function normalizeAgreedDeposit(mixed $value): ?string
+    {
+        if ($value === null || (is_string($value) && trim($value) === '')) return null;
+        try {
+            $amount = Money::normalize(trim((string) $value));
+        } catch (Throwable) {
+            throw ValidationException::withMessages(['agreed_deposit_amount' => '约定定金必须是有效金额。']);
+        }
+        if (Money::compare($amount, '0') < 0) {
+            throw ValidationException::withMessages(['agreed_deposit_amount' => '约定定金不能小于 0。']);
+        }
+        return $amount;
+    }
 
     public function __construct(private readonly SalesFinanceSettlementService $settlements) {}
 
@@ -31,6 +55,9 @@ final class SalesOrderFundingGateService
             && Money::compare($net, $receivable) >= 0;
         $productionReason = $productionPassed ? null : ($policy['production_block_reason'] ?: 'production_funds_insufficient');
         $shipmentReason = $shipmentPassed ? null : ($policy['shipment_block_reason'] ?: 'shipment_funds_insufficient');
+        // 未收金额拆成“还差定金”和“定金之后的尾款”，避免把含定金的全部未收款显示成尾款。
+        $depositOutstanding = Money::maxZero(Money::sub($policy['production_required_amount'], $net));
+        $balanceOutstanding = Money::maxZero(Money::sub($settlement['outstanding_amount'], $depositOutstanding));
 
         return array_merge($settlement, [
             'policy_configured' => $policy['configured'],
@@ -39,6 +66,12 @@ final class SalesOrderFundingGateService
             'policy_name' => $policy['policy_name'],
             'shipment_requires_full_payment' => $policy['shipment_requires_full_payment'],
             'production_required_amount' => $policy['production_required_amount'],
+            'deposit_source' => $policy['deposit_source'],
+            'agreed_deposit_supported' => self::supportsAgreedDeposit($policy['policy_type']),
+            'policy_deposit_amount' => $policy['policy_deposit_amount'],
+            'agreed_deposit_amount' => $policy['agreed_deposit_amount'],
+            'deposit_outstanding_amount' => $depositOutstanding,
+            'balance_outstanding_amount' => $balanceOutstanding,
             'production_funds_satisfied' => $productionPassed,
             'shipment_funds_satisfied' => $shipmentPassed,
             'production_block_reason' => $productionReason,
@@ -100,6 +133,9 @@ final class SalesOrderFundingGateService
             'policy_name' => $policyName,
             'shipment_requires_full_payment' => true,
             'production_required_amount' => $receivable,
+            'deposit_source' => 'policy',
+            'policy_deposit_amount' => null,
+            'agreed_deposit_amount' => null,
             'production_valid' => false,
             'shipment_valid' => false,
             'production_block_reason' => 'funding_policy_missing',
@@ -115,6 +151,7 @@ final class SalesOrderFundingGateService
         $base['shipment_block_reason'] = $shipmentFull ? null : 'credit_policy_not_enabled';
 
         if ($policyType === 'full_prepay') {
+            $base['deposit_source'] = 'full_prepay';
             $base['production_valid'] = true;
             $base['production_block_reason'] = null;
             return $base;
@@ -144,6 +181,21 @@ final class SalesOrderFundingGateService
             $base['shipment_valid'] = false;
             $base['shipment_block_reason'] = 'funding_policy_invalid';
             return $base;
+        }
+        $base['policy_deposit_amount'] = Money::normalize($required);
+        // 销售与客户谈定的定金优先于付款条件默认值；超过合同应收时按合同应收封顶。
+        $agreed = $snapshot['agreed_deposit_amount'] ?? null;
+        if ($agreed !== null && $agreed !== '') {
+            try {
+                $agreed = Money::normalize((string) $agreed);
+            } catch (Throwable) {
+                $agreed = null;
+            }
+            if ($agreed !== null && Money::compare($agreed, '0') >= 0) {
+                $base['agreed_deposit_amount'] = $agreed;
+                $base['deposit_source'] = 'agreed';
+                $required = Money::compare($agreed, $receivable) > 0 ? $receivable : $agreed;
+            }
         }
         $base['production_required_amount'] = Money::normalize($required);
         $base['production_valid'] = true;

@@ -2,6 +2,7 @@
 
 namespace App\Services\Erp;
 
+use App\Domain\Finance\Money;
 use App\Models\Erp\SalesCustomer;
 use App\Models\Erp\SalesCustomerAddress;
 use App\Models\Erp\SalesCustomerContact;
@@ -16,6 +17,9 @@ class SalesOrderSnapshotService
 
     public function lock(array $payload): array
     {
+        // 约定定金不是订单表字段，只随付款资金策略快照保存，先从表头载荷中取出。
+        $agreedDeposit = SalesOrderFundingGateService::normalizeAgreedDeposit($payload['agreed_deposit_amount'] ?? null);
+        unset($payload['agreed_deposit_amount']);
         $addressSupplied = array_key_exists('full_address', $payload) || array_key_exists('address', $payload);
         $enteredAddress = trim((string) (array_key_exists('full_address', $payload) ? $payload['full_address'] : ($payload['address'] ?? '')));
         if ($addressSupplied) {
@@ -101,6 +105,9 @@ class SalesOrderSnapshotService
             'production_threshold_value' => (string) $policy->production_threshold_value,
             'shipment_requires_full_payment' => (bool) $policy->shipment_requires_full_payment,
         ];
+        if ($agreedDeposit !== null && SalesOrderFundingGateService::supportsAgreedDeposit($policy->policy_type)) {
+            $payload['funding_policy_snapshot']['agreed_deposit_amount'] = $agreedDeposit;
+        }
         $payload['payment_method_id'] = $paymentMethod->id;
         $payload['payment_method_snapshot'] = $this->paymentMethods->snapshot($paymentMethod);
         // pay_type is retained as the compact display/search field, but its
@@ -151,6 +158,11 @@ class SalesOrderSnapshotService
                 'receivable_amount' => (string) ($order->final_receivable_amount ?: $order->total_amount),
                 'frozen_at' => now()->toISOString(),
             ];
+            // 正式确认重新冻结付款条件时，保留销售已与客户约定的定金，不被默认比例覆盖。
+            $agreedDeposit = data_get($order->funding_policy_snapshot, 'agreed_deposit_amount');
+            if ($agreedDeposit !== null && $agreedDeposit !== '' && SalesOrderFundingGateService::supportsAgreedDeposit($policy->policy_type)) {
+                $updates['funding_policy_snapshot']['agreed_deposit_amount'] = Money::normalize((string) $agreedDeposit);
+            }
             $updates['payment_terms_snapshot'] = $updates['funding_policy_snapshot'];
         }
         if ($updates !== []) $order->update($updates);

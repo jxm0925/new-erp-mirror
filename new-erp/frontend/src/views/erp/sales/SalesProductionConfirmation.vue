@@ -26,6 +26,7 @@
             <span>付款条件：<b>{{ funding ? (funding.policy_name || '标准收款') : '-' }}</b></span>
             <span v-if="funding">
               开工款项：<b :class="funding.production_funds_satisfied ? 'text-success font-medium' : 'text-warning font-medium'">{{ productionFundingText }}</b>
+              <el-button v-if="canEditDeposit" type="text" size="mini" :loading="depositSaving" @click="editAgreedDeposit">修改定金</el-button>
             </span>
             <span v-if="funding">
               发货款项：<b :class="funding.shipment_funds_satisfied ? 'text-success font-medium' : 'text-warning font-medium'">{{ shipmentFundingText }}</b>
@@ -327,12 +328,14 @@
 import { erpDateTime } from '../../../utils/dateTime'
 import cachedPageRoute from '@/utils/cachedPageRoute'
 import { confirmProduction, getProductionPreview } from '@/api/erp/sales'
+import { promptAgreedDeposit } from '@/utils/salesAgreedDeposit'
 import { confirmationAllocationSum, currentConfirmationSuggestion, confirmationIsAdjusted, buildSalesProductionConfirmation } from '../../../utils/sales-production-confirmation.mjs'
 
 export default {
   mixins: [cachedPageRoute],
   name: 'SalesProductionConfirmation',
   data: () => ({
+    depositSaving: false,
     loading: false,
     submitting: false,
     preview: {},
@@ -384,12 +387,27 @@ export default {
     productionFundingText () {
       const f = this.funding
       const got = f.net_received_amount !== undefined ? `已收 ${this.money(f.net_received_amount)} · ` : ''
-      return f.production_funds_satisfied ? `${got}满足开工条件` : `${got}${f.production_required_amount !== undefined ? '需付定金 ' + this.money(f.production_required_amount) : '定金未到'}`
+      if (f.production_funds_satisfied) return `${got}满足开工条件`
+      if (f.production_required_amount === undefined) return `${got}定金未到`
+      const label = f.deposit_source === 'agreed' ? '约定定金' : '需付定金'
+      const short = Number(f.net_received_amount || 0) > 0 && f.deposit_outstanding_amount !== undefined ? `，还差 ${this.money(f.deposit_outstanding_amount)}` : ''
+      return `${got}${label} ${this.money(f.production_required_amount)}${short}`
     },
     shipmentFundingText () {
       const f = this.funding
       if (f.shipment_funds_satisfied) return '已结清满足发运'
-      return f.outstanding_amount !== undefined ? `待付尾款 ${this.money(f.outstanding_amount)}` : '尾款未结清'
+      if (f.outstanding_amount === undefined) return '尾款未结清'
+      // 未收金额包含尚未到账的定金时拆开显示，避免把全部未收款当成尾款。
+      if (Number(f.deposit_outstanding_amount || 0) > 0 && f.balance_outstanding_amount !== undefined) {
+        return `未收 ${this.money(f.outstanding_amount)}（定金 ${this.money(f.deposit_outstanding_amount)} + 尾款 ${this.money(f.balance_outstanding_amount)}）`
+      }
+      return `待付尾款 ${this.money(f.outstanding_amount)}`
+    },
+    canEditDeposit () {
+      const f = this.funding
+      return Boolean(f && f.agreed_deposit_supported && f.production_required_amount !== undefined && this.order
+        && ['draft', 'confirmed'].includes(this.order.order_status)
+        && (this.$can('sales_order.edit_draft') || this.$can('sales_order.change') || this.$can('sales_order.change.submit')))
     },
     attention () {
       const list = []
@@ -407,6 +425,16 @@ export default {
     'pageRoute.params.id' () { this.load() }
   },
   methods: {
+    async editAgreedDeposit () {
+      if (this.depositSaving || !this.order) return
+      this.depositSaving = true
+      try {
+        await promptAgreedDeposit(this, this.order.id, this.funding)
+        await this.load()
+      } catch (error) {
+        if (!['cancel', 'close'].includes(error)) this.$message.error(error.userMessage || '约定定金保存失败')
+      } finally { this.depositSaving = false }
+    },
     returnToOrder () {
       if (!this.order || !this.order.id) return this.$router.push('/sales/orders')
       return this.$router.push(`/sales/orders/${this.order.id}/detail`)

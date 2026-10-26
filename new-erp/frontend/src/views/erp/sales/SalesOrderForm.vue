@@ -89,6 +89,14 @@ Do not change layout without approval.
                 <el-option v-for="item in fundingPolicyOptions" :key="item.id" :label="item.policy_name" :value="item.id" />
               </el-select>
             </div>
+            <div v-if="depositSupported" class="field">
+              <label>约定定金</label>
+              <el-input-number v-model="depositInput" size="small" :min="0" :precision="2" :controls="false" placeholder="与客户约定的开工定金" />
+              <span class="deposit-hint">
+                {{ depositEdited ? '已按与客户约定填写' : `按付款条件默认：${defaultDepositText}` }}
+                <el-button v-if="depositEdited" type="text" size="mini" @click="resetDeposit">恢复默认</el-button>
+              </span>
+            </div>
             <div class="field span-2">
               <label class="required">成交平台</label>
               <div class="inline-pair">
@@ -601,7 +609,7 @@ import { legacyMediaUrl } from '@/utils/legacyMedia'
 import CustomerPicker from '@/components/sales/CustomerPicker.vue'
 import WarehouseManagerPicker from '@/components/master/WarehouseManagerPicker.vue'
 import SalesCarrierPicker from '@/components/sales/SalesCarrierPicker.vue'
-import { getSalesOrder, saveSalesOrder, confirmSalesOrder, getSalesOrderOptions, uploadSalesOrderAttachment, deleteSalesOrderAttachment, downloadSalesOrderAttachment, previewSalesOrderEditImpact, submitSalesOrderEditImpact } from '@/api/erp/sales'
+import { getSalesOrder, saveSalesOrder, confirmSalesOrder, getSalesOrderOptions, uploadSalesOrderAttachment, deleteSalesOrderAttachment, downloadSalesOrderAttachment, previewSalesOrderEditImpact, submitSalesOrderEditImpact, updateSalesOrderAgreedDeposit } from '@/api/erp/sales'
 import { reserveForCreatePage, clearCreatePageReservation } from '@/utils/documentNumberReservation'
 
 const withoutInternalFreight = source => {
@@ -685,6 +693,11 @@ export default {
     },
     payTypeOptions: [],
     fundingPolicyOptions: [],
+    salesChannelOptions: [],
+    // 约定定金：未手动修改时按付款条件默认值显示和计算；修改后按销售填写的金额保存。
+    depositEdited: false,
+    agreedDeposit: null,
+    loadedAgreedDeposit: null,
     platformRawOptions: [],
     shareUserOptions: [],
     pickerLine: null,
@@ -757,6 +770,39 @@ export default {
     totalAmount() {
       return this.form.lines.reduce((sum, line) => sum + this.lineAmount(line), 0)
     },
+    effectiveFundingPolicy() {
+      const id = this.form.funding_policy_id
+      if (id) return this.fundingPolicyOptions.find(item => Number(item.id) === Number(id)) || null
+      const channel = this.salesChannelOptions.find(item => item.is_default) || null
+      return channel ? (this.fundingPolicyOptions.find(item => item.policy_code === channel.default_funding_policy_code) || null) : null
+    },
+    depositSupported() {
+      const policy = this.effectiveFundingPolicy
+      return Boolean(policy && ['deposit_production', 'installment_contract', 'custom_threshold'].includes(policy.policy_type))
+    },
+    defaultDepositAmount() {
+      const policy = this.effectiveFundingPolicy
+      if (!policy) return 0
+      const receivable = this.totalAmount + Number(this.form.freight_amount || 0)
+      const value = Number(policy.production_threshold_value || 0)
+      const amount = policy.production_threshold_type === 'ratio' ? receivable * value : Math.min(value, receivable)
+      return Math.round(amount * 100) / 100
+    },
+    defaultDepositText() {
+      const policy = this.effectiveFundingPolicy || {}
+      const rule = policy.production_threshold_type === 'ratio' ? `合同额 ${Number((Number(policy.production_threshold_value || 0) * 100).toFixed(2))}%` : '固定金额'
+      return `${rule}，¥${this.money(this.defaultDepositAmount)}`
+    },
+    depositInput: {
+      get() { return this.depositEdited ? this.agreedDeposit : this.defaultDepositAmount },
+      set(value) {
+        this.depositEdited = true
+        this.agreedDeposit = value === undefined || value === null ? 0 : value
+      }
+    },
+    agreedDepositPayload() {
+      return this.depositSupported && this.depositEdited ? this.agreedDeposit : null
+    },
     productionLineCount() {
       return this.form.lines.filter(line => line.sku_id && this.lineNeedsItem(line) && !line.is_purchase_fulfilled).length
     },
@@ -818,6 +864,8 @@ export default {
           await this.load()
         } else {
           this.form = this.emptyForm()
+          this.resetDeposit()
+          this.loadedAgreedDeposit = null
           this.selectedLine = this.form.lines[0]
           await this.reserveSalesOrderNumber()
         }
@@ -886,6 +934,7 @@ export default {
         const { data } = await getSalesOrderOptions({ include_carriers: 0 })
         this.payTypeOptions = data.pay_types || []
         this.fundingPolicyOptions = data.funding_policies || []
+        this.salesChannelOptions = data.sales_channels || []
         this.platformRawOptions = data.platforms || []
         this.shareUserOptions = data.share_users || []
       } catch (error) {
@@ -930,6 +979,13 @@ export default {
           technical_attachment_snapshot: { files: this.mergeAttachmentFiles((line.technical_attachment_snapshot && line.technical_attachment_snapshot.files) || [], (line.attachments || []).map(this.mapAttachment)) }
         }))
       }
+      const funding = data.funding_status || {}
+      const agreed = funding.agreed_deposit_amount !== undefined && funding.agreed_deposit_amount !== null
+        ? funding.agreed_deposit_amount
+        : ((data.funding_policy_snapshot || {}).agreed_deposit_amount ?? null)
+      this.depositEdited = agreed !== null && agreed !== ''
+      this.agreedDeposit = this.depositEdited ? Number(agreed) : null
+      this.loadedAgreedDeposit = this.depositEdited ? Number(agreed) : null
       const salesUser = data.sales_user
       this.selectedSalesUser = salesUser ? { id: salesUser.user_id, nickname: salesUser.display_name, department_names: salesUser.department_name } : (data.sales_user_legacy_id ? { id: Number(data.sales_user_legacy_id), nickname: `账号 ${data.sales_user_legacy_id}` } : null)
       this.selectedCarrier = this.form.carrier_id ? { carrier_option_id: Number(this.form.carrier_id), name: data.default_carrier_name_snapshot || (data.shipping_snapshot || {}).default_carrier_name || (data.shipping_snapshot || {}).carrier_name || '' } : null
@@ -1596,6 +1652,7 @@ export default {
         ...withoutInternalFreight(this.form),
         deleted_line_ids: this.deletedLineIds,
         funding_policy_id: this.form.funding_policy_id || null,
+        agreed_deposit_amount: this.agreedDepositPayload,
         share_user: this.form.is_share ? this.form.share_user : [],
         default_carrier_id: this.form.carrier_id || null,
         order_remark: this.form.remark || null,
@@ -1629,11 +1686,24 @@ export default {
         }))
       }
       if (this.isConfirmedEdit) {
+        // 约定定金不走订单变更审核：销售修改后立即生效并留痕，再继续处理其他订单修改。
+        const cents = value => (value === null || value === undefined || value === '' ? null : Math.round(Number(value) * 100))
+        const depositChanged = this.depositSupported && cents(this.agreedDepositPayload) !== cents(this.loadedAgreedDeposit)
+        if (depositChanged) {
+          if (!(this.editOrderMeta.allowed_actions || {}).edit_agreed_deposit) return this.$message.error('没有修改约定定金的权限')
+          await updateSalesOrderAgreedDeposit(this.pageRoute.params.id, { agreed_deposit_amount: this.agreedDepositPayload })
+          this.loadedAgreedDeposit = this.agreedDepositPayload
+        }
         const { data } = await previewSalesOrderEditImpact(this.pageRoute.params.id, payload)
         const impact = data.data
         if (!impact || Number(impact.change_count || 0) === 0) {
           this.impactPayload = null
           this.impactDialogVisible = false
+          if (depositChanged) {
+            this.$message.success('约定定金已更新')
+            this.$router.push(`/sales/orders/${this.pageRoute.params.id}/detail`)
+            return
+          }
           this.$message.info('未检测到需要保存的订单修改')
           return
         }
@@ -1675,6 +1745,10 @@ export default {
           this.$router.push(editPath)
         }
       }
+    },
+    resetDeposit() {
+      this.depositEdited = false
+      this.agreedDeposit = null
     },
     lineAmount(line) {
       return Number(line.order_qty || 0) * Number(line.unit_price || 0)
@@ -1862,6 +1936,8 @@ export default {
 .field ::v-deep .el-input-number { width: 100%; }
 .field ::v-deep .el-input-number .el-input__inner { text-align: left; }
 .inline-pair { display: flex; gap: 8px; min-width: 0; }
+.deposit-hint { color: #909399; font-size: 12px; line-height: 18px; }
+.deposit-hint .el-button { padding: 0; margin-left: 4px; font-size: 12px; }
 .inline-pair > * { flex: 1 1 0; min-width: 0; }
 .inline-pair > .el-button { flex: 0 0 auto; }
 .switch-pair { display: flex; align-items: center; gap: 16px; height: 32px; }

@@ -128,11 +128,22 @@ Design status: 新增“订单阶段提示条”（基础档案风格），其�
             <span class="kv-label">付款条件</span>
             <span class="kv-value">{{ (order.funding_status && order.funding_status.policy_name) || '未配置' }}</span>
           </div>
+          <div v-if="order.funding_status && order.funding_status.agreed_deposit_supported" class="kv-item">
+            <span class="kv-label">开工定金</span>
+            <span class="kv-value">
+              <template v-if="order.funding_status.production_required_amount !== undefined">
+                ¥{{ Number(order.funding_status.production_required_amount || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}
+                <small style="color: #909399">{{ order.funding_status.deposit_source === 'agreed' ? '（与客户约定）' : '（按付款条件默认）' }}</small>
+              </template>
+              <template v-else>{{ order.funding_status.deposit_source === 'agreed' ? '与客户约定' : '按付款条件默认' }}</template>
+              <el-button v-if="order.allowed_actions && order.allowed_actions.edit_agreed_deposit" type="text" size="mini" :loading="depositSaving" @click="editAgreedDeposit">修改</el-button>
+            </span>
+          </div>
           <div v-if="order.funding_status" class="kv-item">
             <span class="kv-label">资金状态</span>
             <span class="kv-value">
               <el-tag size="mini" :type="order.funding_status.production_funds_satisfied ? 'success' : 'warning'">{{ order.funding_status.production_funds_satisfied ? '可开工' : '定金未到' }}</el-tag>
-              <el-tag size="mini" :type="order.funding_status.shipment_funds_satisfied ? 'success' : 'warning'">{{ order.funding_status.shipment_funds_satisfied ? '可发货' : (order.funding_status.outstanding_amount !== undefined ? `差尾款 ¥${Number(order.funding_status.outstanding_amount || 0).toLocaleString('zh-CN')}` : '尾款未齐') }}</el-tag>
+              <el-tag size="mini" :type="order.funding_status.shipment_funds_satisfied ? 'success' : 'warning'">{{ order.funding_status.shipment_funds_satisfied ? '可发货' : (order.funding_status.outstanding_amount !== undefined ? `未收 ¥${Number(order.funding_status.outstanding_amount || 0).toLocaleString('zh-CN')}` : '尾款未齐') }}</el-tag>
             </span>
           </div>
         </div>
@@ -540,6 +551,7 @@ import cachedPageRoute from '@/utils/cachedPageRoute'
 import { confirmSalesOrder, formalConfirmSalesOrder, cancelSalesOrder, deleteSalesOrderAttachment, deleteSalesOrderDraft, downloadSalesOrderAttachment, getSalesOrder, listSalesOrderChanges, lockSalesOrderInventory } from '@/api/erp/sales'
 import SalesOrderAttachmentPreviewDialog from '@/components/sales/SalesOrderAttachmentPreviewDialog.vue'
 import SalesOrderFinancePanel from '@/components/sales/SalesOrderFinancePanel.vue'
+import { promptAgreedDeposit } from '@/utils/salesAgreedDeposit'
 import { statusTag, statusText, shipmentStatusText, orderStatusText, orderStatusTag } from '@/utils/erpStatus'
 import { listSalesOrderWorkOrders } from '@/api/erp/production'
 
@@ -562,6 +574,7 @@ export default {
     inventoryLockVisible: false,
     inventoryLockBusy: false,
     cancelling: false,
+    depositSaving: false,
     inventoryLockPending: null,
     inventoryLockStorageKey: '',
     loadSequence: 0
@@ -741,6 +754,17 @@ export default {
         }
         if (Number(this.pageRoute.params.id) === Number(orderId)) this.$message.error(error.userMessage || error.message || '库存锁定失败，请重试原操作')
       } finally { this.inventoryLockBusy = false }
+    },
+    async editAgreedDeposit() {
+      if (this.depositSaving) return
+      const orderId = this.order.id
+      this.depositSaving = true
+      try {
+        await promptAgreedDeposit(this, orderId, this.order.funding_status)
+        if (this.isPageRouteActive && String(this.pageRoute.params.id) === String(orderId)) await this.load()
+      } catch (error) {
+        if (!['cancel', 'close'].includes(error)) this.$message.error(error.userMessage || '约定定金保存失败')
+      } finally { this.depositSaving = false }
     },
     async cancelOrder() {
       if (this.cancelling || !this.order.allowed_actions?.cancel) return

@@ -356,6 +356,7 @@ Route::prefix('v1/erp/sales')->group(function () {
     Route::get('orders/{id}/production-confirmation-preview', [SalesOrderController::class, 'productionConfirmationPreview'])->whereNumber('id');
     Route::post('orders/{id}/production-confirmation', [SalesOrderController::class, 'confirmProduction'])->whereNumber('id');
     Route::post('orders/{id}/cancel', [SalesOrderController::class, 'cancelWithReason'])->whereNumber('id');
+    Route::put('orders/{id}/agreed-deposit', [SalesOrderController::class, 'updateAgreedDeposit'])->whereNumber('id');
     Route::get('shipments', [SalesShipmentController::class, 'index']);
     Route::post('shipments', [SalesShipmentController::class, 'store']);
     Route::get('shipments/sources', [SalesShipmentController::class, 'sources']);

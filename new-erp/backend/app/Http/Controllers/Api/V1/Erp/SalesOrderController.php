@@ -66,6 +66,7 @@ class SalesOrderController extends Controller
     {
         $this->abortUnlessPermission($request, 'sales_order.create');
         $payload = $this->attachCurrentOperator($this->validateOrder($request), $request);
+        $payload['agreed_deposit_amount'] = $this->validatedAgreedDeposit($request);
         $order = app(SalesOrderDraftService::class)->create($payload, $this->operatorName($request));
 
         return response()->json(['message' => '销售订单草稿已保存', 'data' => $order], 201);
@@ -77,9 +78,78 @@ class SalesOrderController extends Controller
         $order = SalesOrder::findOrFail($id);
         $this->abortUnlessOrderVisible($request, $order);
         $payload = $this->attachCurrentOperator($this->validateOrder($request, true), $request);
+        $payload['agreed_deposit_amount'] = $this->validatedAgreedDeposit($request);
         $order = app(SalesOrderDraftService::class)->update($order, $payload, $this->operatorName($request));
 
         return response()->json(['message' => '销售订单草稿已更新', 'data' => $order]);
+    }
+
+    /**
+     * 销售按与客户的实际约定修改开工定金。定金只影响开工资金门槛，不改合同金额、
+     * 收款或发货条件，因此草稿和已确认订单都由销售直接修改、立即生效并留痕，不走订单变更审核。
+     */
+    public function updateAgreedDeposit(Request $request, int $id)
+    {
+        $this->abortUnlessAnyPermission($request, ['sales_order.edit_draft', 'sales_order.change', 'sales_order.change.submit']);
+        $request->validate(['reason' => 'nullable|string|max:500']);
+        $amount = $this->validatedAgreedDeposit($request);
+        $reason = trim((string) $request->input('reason', ''));
+
+        DB::transaction(function () use ($request, $id, $amount, $reason) {
+            $order = SalesOrder::query()->lockForUpdate()->findOrFail($id);
+            $this->abortUnlessOrderVisible($request, $order);
+            abort_unless(in_array($order->order_status, ['draft', 'confirmed'], true), 422, '只有草稿或已确认的订单可以修改约定定金');
+            $snapshot = (array) $order->funding_policy_snapshot;
+            abort_unless(SalesOrderFundingGateService::supportsAgreedDeposit($snapshot['policy_type'] ?? null), 422, '当前付款条件不是定金开工，不能填写约定定金');
+
+            $gate = app(SalesOrderFundingGateService::class);
+            $before = $gate->status($order);
+            if ($amount === null) unset($snapshot['agreed_deposit_amount']);
+            else $snapshot['agreed_deposit_amount'] = $amount;
+            $updates = ['funding_policy_snapshot' => $snapshot];
+            // 确认后付款规则快照与资金策略快照保持一致；草稿只记录付款条件名称。
+            $terms = (array) $order->payment_terms_snapshot;
+            if (array_key_exists('policy_type', $terms)) {
+                if ($amount === null) unset($terms['agreed_deposit_amount']);
+                else $terms['agreed_deposit_amount'] = $amount;
+                $updates['payment_terms_snapshot'] = $terms;
+            }
+            $order->update($updates);
+            $after = $gate->refreshProjection($order->fresh());
+
+            // 日志正文不写金额，金额只放在按字段名脱敏的 payload 中，避免无金额权限的人从日志看到。
+            $content = ($amount === null ? '约定定金恢复为付款条件默认值' : '修改约定定金')
+                .($reason !== '' ? '；原因：'.$reason : '');
+            SalesOrderLog::create([
+                'sales_order_id' => $order->id,
+                'order_no_snapshot' => $order->sales_order_no,
+                'action' => 'agreed_deposit_update',
+                'before_status' => $order->order_status,
+                'after_status' => $order->order_status,
+                'payload' => [
+                    'before_required_amount' => $before['production_required_amount'],
+                    'after_required_amount' => $after['production_required_amount'],
+                    'agreed_deposit_amount' => $amount,
+                    'reason' => $reason ?: null,
+                ],
+                'operator' => $this->operatorName($request),
+                'content' => $content,
+            ]);
+        });
+
+        $auth = app(AuthContextService::class);
+        $user = $auth->currentUser($request);
+        $permissions = $user ? $auth->permissionCodes($user) : [];
+        $superAdmin = $user ? $auth->isSuperAdmin($user) : false;
+        $visible = app(SalesOrderFundingGateService::class)->statusForPermissions($id, $permissions, $superAdmin);
+
+        return response()->json(['message' => '约定定金已更新', 'data' => $visible]);
+    }
+
+    private function validatedAgreedDeposit(Request $request): ?string
+    {
+        $request->validate(['agreed_deposit_amount' => 'nullable|numeric|min:0|max:999999999999']);
+        return SalesOrderFundingGateService::normalizeAgreedDeposit($request->input('agreed_deposit_amount'));
     }
 
     /** Real server-side Before/After analysis; it never writes a confirmed order. */
@@ -479,7 +549,7 @@ class SalesOrderController extends Controller
             'sales_channels' => SalesChannel::query()
                 ->where('status', 'enabled')
                 ->orderBy('sort')->orderBy('id')
-                ->get(['id', 'channel_code', 'channel_name', 'channel_type', 'requires_external_order_no', 'default_funding_policy_code']),
+                ->get(['id', 'channel_code', 'channel_name', 'channel_type', 'requires_external_order_no', 'default_funding_policy_code', 'is_default']),
             'funding_policies' => SalesFundingPolicy::query()
                 ->where('status', 'enabled')
                 ->orderBy('id')
@@ -1331,6 +1401,10 @@ class SalesOrderController extends Controller
                 || (($changeEligibility['allowed'] ?? ($order->order_status === 'confirmed' && in_array($order->shipment_status, ['not_shipped', 'not_required'], true)))
                     && ($released ? $canChange : ($canChange || in_array('sales_order.edit_draft', $codes, true)))),
             'production_released' => $released,
+            // 约定定金由销售按客户约定直接维护；确认后也可改，立即生效并留痕。
+            'edit_agreed_deposit' => in_array($order->order_status, ['draft', 'confirmed'], true)
+                && SalesOrderFundingGateService::supportsAgreedDeposit(data_get($order->funding_policy_snapshot, 'policy_type'))
+                && (in_array('sales_order.edit_draft', $codes, true) || $canChange),
             'change' => false,
             'view_attachment' => in_array('sales_order.view_attachment', $codes, true),
             'upload_attachment' => $draft && in_array('sales_order.upload_attachment', $codes, true),
