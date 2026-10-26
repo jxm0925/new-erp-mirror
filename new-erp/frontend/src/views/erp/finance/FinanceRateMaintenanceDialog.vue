@@ -16,8 +16,8 @@
 
     <section class="rate-filter-card">
       <el-form inline size="small" class="rate-filter">
-        <el-form-item label="源币"><el-select v-model="query.source_currency" clearable filterable placeholder="请选择源币"><el-option v-for="c in currencies" :key="c.currency_code" :label="c.currency_code" :value="c.currency_code" /></el-select></el-form-item>
-        <el-form-item label="目标币"><el-select v-model="query.target_currency" clearable filterable placeholder="请选择目标币"><el-option v-for="c in currencies" :key="c.currency_code" :label="c.currency_code" :value="c.currency_code" /></el-select></el-form-item>
+        <el-form-item label="源币"><paged-record-select v-model="query.source_currency" clearable placeholder="请选择源币" :request="listCurrencies" :columns="[{ prop: 'currency_code', label: '币种编码' }, { prop: 'currency_name', label: '币种名称' }]" :params="{ status: 'enabled' }" value-key="currency_code" :label="currencyLabel" title="选择币种" /></el-form-item>
+        <el-form-item label="目标币"><paged-record-select v-model="query.target_currency" clearable placeholder="请选择目标币" :request="listCurrencies" :columns="[{ prop: 'currency_code', label: '币种编码' }, { prop: 'currency_name', label: '币种名称' }]" :params="{ status: 'enabled' }" value-key="currency_code" :label="currencyLabel" title="选择币种" /></el-form-item>
         <el-form-item label="生效日期"><el-date-picker v-model="dateRange" type="daterange" value-format="yyyy-MM-dd" start-placeholder="开始日期" end-placeholder="结束日期" @change="syncRange" /></el-form-item>
         <el-form-item label="状态"><el-select v-model="query.status" clearable placeholder="请选择状态"><el-option label="启用" value="enabled" /><el-option label="停用" value="disabled" /><el-option label="已固化" value="frozen" /></el-select></el-form-item>
         <el-form-item class="filter-actions"><el-button type="success" class="green" @click="search">查询</el-button><el-button @click="reset">重置</el-button></el-form-item>
@@ -43,8 +43,8 @@
     <el-dialog title="新增估值汇率" :visible.sync="createVisible" append-to-body width="560px" :close-on-click-modal="false">
       <el-alert title="已被正式业务引用的历史汇率不会被编辑覆盖；后续变化请新增版本。" type="info" :closable="false" show-icon />
       <el-form ref="rateForm" :model="form" :rules="rules" label-width="104px" class="create-rate-form">
-        <el-form-item label="源币" prop="source_currency"><el-select v-model="form.source_currency" filterable><el-option v-for="c in currencies" :key="c.currency_code" :label="`${c.currency_code} · ${c.currency_name}`" :value="c.currency_code" /></el-select></el-form-item>
-        <el-form-item label="目标币" prop="target_currency"><el-select v-model="form.target_currency" filterable><el-option v-for="c in currencies" :key="c.currency_code" :label="`${c.currency_code} · ${c.currency_name}`" :value="c.currency_code" /></el-select></el-form-item>
+        <el-form-item label="源币" prop="source_currency"><paged-record-select v-model="form.source_currency" :request="listCurrencies" :columns="[{ prop: 'currency_code', label: '币种编码' }, { prop: 'currency_name', label: '币种名称' }]" :params="{ status: 'enabled' }" value-key="currency_code" :label="currencyLabel" title="选择币种" /></el-form-item>
+        <el-form-item label="目标币" prop="target_currency"><paged-record-select v-model="form.target_currency" :request="listCurrencies" :columns="[{ prop: 'currency_code', label: '币种编码' }, { prop: 'currency_name', label: '币种名称' }]" :params="{ status: 'enabled' }" value-key="currency_code" :label="currencyLabel" title="选择币种" /></el-form-item>
         <el-form-item label="1 源币 =" prop="rate"><el-input v-model.trim="form.rate"><template slot="append">目标币</template></el-input></el-form-item>
         <el-form-item label="生效日期" prop="effective_at"><el-date-picker v-model="form.effective_at" type="date" value-format="yyyy-MM-dd" /></el-form-item>
         <el-form-item label="备注"><el-input v-model.trim="form.remark" type="textarea" :rows="3" /></el-form-item>
@@ -55,16 +55,19 @@
 </template>
 
 <script>
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { createExchangeRate, disableExchangeRate, listExchangeRateHistory, listFinanceCurrencies } from '../../../api/erp/finance'
 
 const blank = () => ({ source_currency: 'USD', target_currency: 'CNY', rate_type: 'valuation', source: 'manual', rate: '', effective_at: new Date().toISOString().slice(0, 10), remark: '' })
 
-export default {
+export default { components: { PagedRecordSelect },
   props: { visible: { type: Boolean, default: false } },
   data: () => ({ loading: false, saving: false, createVisible: false, rows: [], currencies: [], total: 0, page: 1, perPage: 10, dateRange: [], query: { source_currency: '', target_currency: '', status: '', effective_start: '', effective_end: '' }, form: blank(), rules: { source_currency: [{ required: true, message: '请选择源币', trigger: 'change' }], target_currency: [{ required: true, message: '请选择目标币', trigger: 'change' }], rate: [{ required: true, message: '请输入汇率', trigger: 'blur' }], effective_at: [{ required: true, message: '请选择日期', trigger: 'change' }] } }),
   computed: { dialogVisible: { get () { return this.visible }, set (value) { this.$emit('update:visible', value) } } },
   methods: {
-    async bootstrap () { if (!this.currencies.length) { const r = await listFinanceCurrencies({ per_page: 100, status: 'enabled' }); this.currencies = r.data.data || [] } this.load() },
+    listCurrencies: listFinanceCurrencies,
+    currencyLabel(row) { return `${row.currency_code} · ${row.currency_name}` },
+    bootstrap() { this.load() },
     async load () { this.loading = true; try { const r = await listExchangeRateHistory({ ...this.query, rate_type: 'valuation', page: this.page, per_page: this.perPage }); this.rows = r.data.data || []; this.total = Number(r.data.total || 0) } catch (e) { this.$message.error(e.userMessage || '汇率历史加载失败') } finally { this.loading = false } },
     syncRange () { this.query.effective_start = this.dateRange?.[0] || ''; this.query.effective_end = this.dateRange?.[1] || '' },
     search () { this.page = 1; this.load() }, reset () { this.dateRange = []; this.query = { source_currency: '', target_currency: '', status: '', effective_start: '', effective_end: '' }; this.search() }, changePage (page) { this.page = page; this.load() }, changeSize (size) { this.perPage = size; this.page = 1; this.load() },

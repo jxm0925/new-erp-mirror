@@ -55,9 +55,7 @@
           </el-form-item>
 
           <el-form-item label="所属分类">
-            <el-select v-model="form.category_id" clearable class="full-width" placeholder="请选择商品所属类目">
-              <el-option v-for="item in categories" :key="item.id" :label="item.category_name" :value="item.id" />
-            </el-select>
+            <paged-record-select v-model="form.category_id" clearable class="full-width" placeholder="请选择商品所属类目" entity="categories" title="选择商品类目" :params="{ category_type: 'product' }" />
           </el-form-item>
 
           <el-form-item label="商品类型" prop="product_type">
@@ -68,9 +66,7 @@
           </el-form-item>
 
           <el-form-item label="计量单位" prop="unit_id">
-            <el-select v-model="form.unit_id" clearable class="full-width" placeholder="SKU 将统一继承此销售单位">
-              <el-option v-for="item in units" :key="item.id" :label="item.unit_name" :value="item.id" />
-            </el-select>
+            <paged-record-select v-model="form.unit_id" clearable class="full-width" placeholder="SKU 将统一继承此销售单位" entity="units" title="选择销售单位" :params="{ status: 'enabled' }" :selected-rows.sync="units" />
           </el-form-item>
 
           <el-form-item label="销售状态">
@@ -332,6 +328,7 @@
 </template>
 
 <script>
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { getEntity, listEntity, saveEntity, uploadProductImage } from '../../../api/erp/master'
 import { clearCreatePageReservation, reserveForCreatePage } from '../../../utils/documentNumberReservation'
 
@@ -351,6 +348,7 @@ const empty = () => ({
 })
 
 export default {
+  components: { PagedRecordSelect },
   name: 'ProductForm',
   data() {
     return {
@@ -403,7 +401,6 @@ export default {
     }
   },
   async created() {
-    await this.loadOptions()
     if (this.isEdit) await this.loadProduct()
     else await this.reserveProductNumber()
   },
@@ -416,18 +413,11 @@ export default {
         this.$message.error(e.userMessage || '商品编码预生成失败，请重新打开新增页')
       }
     },
-    async loadOptions() {
-      const [categories, units] = await Promise.all([
-        listEntity('categories', { per_page: 100, category_type: 'product' }),
-        listEntity('units', { per_page: 100, status: 'enabled' })
-      ])
-      this.categories = categories.data.data || []
-      this.units = units.data.data || []
-    },
     async loadProduct() {
       this.loading = true
       try {
         const { data } = await getEntity('products', this.$route.params.id)
+        this.units = data.unit ? [data.unit] : []
         this.form = { ...empty(), ...data }
       } catch (e) {
         this.$message.error(e.userMessage || '商品不存在')

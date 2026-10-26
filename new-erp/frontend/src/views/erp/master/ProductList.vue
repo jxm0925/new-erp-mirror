@@ -70,16 +70,14 @@
             @keyup.enter.native="applyFilters"
             @clear="applyFilters"
           />
-          <el-select
+          <paged-record-select
             v-model="filters.category_id"
             size="small"
             clearable
             placeholder="所属分类"
             class="filter-select"
             @change="applyFilters"
-          >
-            <el-option v-for="c in categories" :key="c.id" :label="c.category_name" :value="c.id" />
-          </el-select>
+           entity="categories" title="选择商品类目" :params="{ category_type: 'product' }" />
           <el-select
             v-model="filters.status"
             size="small"
@@ -447,12 +445,14 @@
 </template>
 
 <script>
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { erpDateTime } from '../../../utils/dateTime'
 import { saveProductSkuMatrix } from '../../../api/erp/master'
 import { listEntity, saveEntity, disableEntity, enableEntity, deleteEntity } from '../../../api/erp/master'
 import { reserveForCreatePage, clearCreatePageReservation } from '../../../utils/documentNumberReservation'
 
 export default {
+  components: { PagedRecordSelect },
   name: 'ProductList',
   data() {
     return {
@@ -526,16 +526,10 @@ export default {
     async fetchAll() {
       this.loading = true
       try {
-        const [products, categories, units] = await Promise.all([
-          listEntity('products', { ...this.filters, include_stats: 1 }),
-          listEntity('categories', { per_page: 100, category_type: 'product' }),
-          listEntity('units', { per_page: 100 })
-        ])
+        const products = await listEntity('products', { ...this.filters, include_stats: 1 })
         this.products = products.data.data || []
         this.total = products.data.total || 0
         this.stats = products.data.stats || {}
-        this.categories = categories.data.data || []
-        this.units = units.data.data || []
 
         for (const expandedId of this.expandedKeys) {
           const expandedProduct = this.products.find(item => Number(item.id) === Number(expandedId))

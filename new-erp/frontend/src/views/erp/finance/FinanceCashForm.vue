@@ -114,15 +114,7 @@
             </el-form-item>
 
             <el-form-item label="资金账户" prop="finance_account_id">
-              <el-select v-model="doc.finance_account_id" :disabled="!canEdit" placeholder="请选择过账资金账户" class="full-width" @change="accountChanged">
-                <el-option
-                  v-for="a in accounts"
-                  :key="a.id"
-                  :label="`${a.account_name}（${a.currency}）`"
-                  :value="a.id"
-                  :disabled="(Boolean(doc.id) || Boolean(sourceContext) || Boolean(purchaseOrderContext)) && a.currency !== doc.currency"
-                />
-              </el-select>
+              <paged-record-select v-model="doc.finance_account_id" :disabled="!canEdit" placeholder="请选择过账资金账户" class="full-width" :request="listAccounts" :columns="[{ prop: 'account_no', label: '账户编号' }, { prop: 'account_name', label: '账户名称' }, { prop: 'currency', label: '币种' }]" :params="{ status: 'enabled', currency: (Boolean(doc.id) || Boolean(sourceContext) || Boolean(purchaseOrderContext)) ? doc.currency : undefined }" :selected-rows.sync="accounts" :label="accountLabel" title="选择资金账户" @change="accountChanged" />
             </el-form-item>
 
             <el-form-item label="结算币种" prop="currency">
@@ -141,14 +133,7 @@
             </el-form-item>
 
             <el-form-item :label="title + '结算方式'" prop="payment_method_id">
-              <el-select v-model="doc.payment_method_id" :disabled="!canEdit" placeholder="请选择结算方式" class="full-width">
-                <el-option
-                  v-for="m in methods"
-                  :key="m.id"
-                  :label="m.method_name"
-                  :value="m.id"
-                />
-              </el-select>
+              <paged-record-select v-model="doc.payment_method_id" :disabled="!canEdit" placeholder="请选择结算方式" class="full-width" :request="listMethods" :columns="[{ prop: 'method_code', label: '方式编码' }, { prop: 'method_name', label: '结算方式' }]" :params="{ status: 'enabled', usage: direction }" :selected-rows.sync="methods" :label="methodLabel" title="选择结算方式" />
             </el-form-item>
 
             <el-form-item label="平台/手续费">
@@ -450,6 +435,7 @@
 </template>
 
 <script>
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { listFinanceAccounts, listPaymentMethods, getCashDocument, createCashDocument, updateCashDocument, confirmCashDocument, resolveFinanceSource, uploadFinanceAttachment, previewFinanceAttachment, deleteFinanceAttachment } from '../../../api/erp/finance'
 import { listEntity } from '../../../api/erp/master'
 import { listSalesCustomers } from '../../../api/erp/sales'
@@ -502,7 +488,7 @@ const blank = () => ({
 })
 
 export default {
-  components: {
+  components: { PagedRecordSelect,
     FinanceAllocation, FinanceSourcePicker, FinancePendingAllocations,
     PurchasePaymentLinks: () => import('../../../components/finance/PurchasePaymentLinks.vue'),
     PurchasePaymentLinkDialog: () => import('../../../components/finance/PurchasePaymentLinkDialog.vue'),
@@ -642,6 +628,10 @@ export default {
     this.closePreview()
   },
   methods: {
+    listAccounts: listFinanceAccounts,
+    listMethods: listPaymentMethods,
+    accountLabel(row) { return `${row.account_name}（${row.currency}）` },
+    methodLabel(row) { return row.method_name },
     money(v) {
       return Number(v || 0).toLocaleString("zh-CN", {
         minimumFractionDigits: 2,
@@ -708,8 +698,8 @@ export default {
       this.closePreview()
       try {
         const [accounts, methods] = await Promise.all([
-          listFinanceAccounts({ status: 'enabled', page: 1, per_page: 100 }),
-          listPaymentMethods({ status: 'enabled', usage: this.direction, page: 1, per_page: 100 }),
+          listFinanceAccounts({ status: 'enabled', page: 1, per_page: 10 }),
+          listPaymentMethods({ status: 'enabled', usage: this.direction, page: 1, per_page: 10 }),
         ])
         if (revision !== this.initRevision) return
         this.accounts = accounts.data.data || []

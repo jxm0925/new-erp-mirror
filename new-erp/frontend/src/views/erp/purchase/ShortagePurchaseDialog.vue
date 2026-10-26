@@ -1,5 +1,5 @@
 <template>
-  <el-dialog :title="workOrderNo ? `缺料转采购 · ${workOrderNo}` : '生成采购需求'" :visible="visible" :width="dialogWidth" custom-class="master-style-dialog" :close-on-click-modal="false" append-to-body @update:visible="v => $emit('update:visible', v)" @open="init">
+  <el-dialog :title="workOrderNo ? `缺料转采购 · ${workOrderNo}` : '生成采购需求'" :visible="visible" :width="dialogWidth" custom-class="master-style-dialog" :close-on-click-modal="false" append-to-body @update:visible="v => $emit('update:visible', v)" @open="init" @closed="loadRevision++">
     <div v-loading="loading">
       <p class="sub">按缺口生成一张采购需求（草稿），每种物料一行；数量可改，期望到货日取相关工单最早计划开工日。已在途的采购已经扣掉。</p>
       <div v-if="!lines.length && !loading" class="empty">没有需要采购的缺料</div>
@@ -18,11 +18,12 @@
           <el-button v-if="lines.length > 1" type="text" size="mini" @click="lines.splice(i, 1)">移除</el-button>
         </div>
       </div>
+      <el-button v-if="workOrderId && page * 10 < total" size="small" :loading="loading" :disabled="saving" @click="loadMore">继续加载缺料（已加载 {{ Math.min(page * 10, total) }} / {{ total }} 项）</el-button>
       <el-input v-model="remark" class="remark" size="small" maxlength="500" placeholder="备注（选填，不填自动写涉及的工单）" />
     </div>
     <span slot="footer">
       <el-button size="small" @click="$emit('update:visible', false)">取消</el-button>
-      <el-button size="small" type="primary" :loading="saving" :disabled="!lines.length" @click="submit">生成采购需求</el-button>
+      <el-button size="small" type="primary" :loading="saving" :disabled="loading || !lines.length" @click="submit">生成采购需求</el-button>
     </span>
   </el-dialog>
 </template>
@@ -39,28 +40,41 @@ export default {
     workOrderId: { type: [Number, String], default: null },
     workOrderNo: { type: String, default: '' }
   },
-  data: () => ({ loading: false, saving: false, lines: [], remark: '' }),
+  data: () => ({ loading: false, saving: false, lines: [], remark: '', page: 0, total: 0, loadRevision: 0 }),
   computed: {
     dialogWidth() { return window.innerWidth < 768 ? '94%' : '760px' }
   },
+  watch: { visible(value) { if (!value) this.loadRevision++ }, workOrderId() { if (this.visible) this.init() } },
   methods: {
     qty,
     toLine(r) { return { ...r, qty: Number(r.shortage_qty) } },
     async init() {
+      this.loadRevision++
       this.remark = ''
-      if (!this.workOrderId) { this.lines = this.rows.map(this.toLine); return }
-      this.loading = true
+      this.loading = false
+      this.page = 0
+      this.total = 0
       this.lines = []
+      if (!this.workOrderId) { this.lines = this.rows.map(this.toLine); return }
+      await this.loadMore()
+    },
+    async loadMore() {
+      const revision = this.loadRevision
+      const workOrderId = this.workOrderId
+      const page = this.page + 1
+      this.loading = true
       try {
-        const { data } = await listProductionShortages({ work_order_id: this.workOrderId, per_page: 100 })
-        this.lines = (data.data || []).map(this.toLine)
+        const { data } = await listProductionShortages({ work_order_id: workOrderId, page, per_page: 10 })
+        if (revision !== this.loadRevision || workOrderId !== this.workOrderId || !this.visible) return
+        this.lines.push(...(data.data || []).filter(row => !this.lines.some(line => Number(line.item_id) === Number(row.item_id))).map(this.toLine))
+        this.page = Number(data.current_page || page)
+        this.total = Number(data.total || 0)
       } catch (e) {
-        this.$message.error(errorText(e, '缺料加载失败'))
-      } finally {
-        this.loading = false
-      }
+        if (revision === this.loadRevision) this.$message.error(errorText(e, '缺料加载失败'))
+      } finally { if (revision === this.loadRevision) this.loading = false }
     },
     async submit() {
+      if (this.lines.length > 100) return this.$message.warning('每张采购需求最多 100 种物料，请移除多余物料后分批生成')
       if (this.lines.some(l => !(Number(l.qty) > 0))) return this.$message.warning('采购数量要大于 0')
       this.saving = true
       try {

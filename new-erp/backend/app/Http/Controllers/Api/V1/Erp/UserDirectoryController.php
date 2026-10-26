@@ -31,6 +31,7 @@ class UserDirectoryController extends Controller
             ], 403);
         }
 
+        $selected = $request->validate(['ids' => 'nullable|array|max:1000', 'ids.*' => 'required|integer|min:1|distinct']);
         $result = $service->users([
             'scope' => $scope,
             'capability' => $scope === 'production' && in_array($request->input('capability'), ['collaborate', 'execute'], true) ? $request->input('capability') : null,
@@ -41,6 +42,7 @@ class UserDirectoryController extends Controller
             'role_id' => $request->integer('role_id'),
             'data_scope' => $request->input('data_scope'),
             'keyword' => $request->input('keyword'),
+            ...array_intersect_key($selected, ['ids' => true]),
             'page' => $request->input('page'),
             'per_page' => $request->input('per_page'),
         ], $user);

@@ -5,6 +5,7 @@ namespace App\Services\Erp;
 use App\Domain\Finance\FinanceConstants;
 use App\Domain\Finance\Money;
 use App\Models\Erp\FinanceAllocation;
+use App\Models\Erp\FinanceCashDocument;
 use App\Models\Erp\FinanceInvoiceAllocation;
 use App\Models\Erp\PurchaseReturn;
 use App\Models\Erp\PurchaseReturnItem;
@@ -29,12 +30,21 @@ class PurchasePayableQueryService
         $page = $query->latest('business_date')->latest('id')->paginate($perPage);
 
         $sourceExtras = $this->sourceExtras($page->getCollection());
+        $allocated = FinanceAllocation::query()->selectRaw('COALESCE(SUM(allocated_amount), 0)')
+            ->whereColumn('cash_document_id', 'erp_finance_cash_documents.id')
+            ->where('status', FinanceConstants::ALLOCATION_ACTIVE);
+        $prepaidSuppliers = FinanceCashDocument::query()
+            ->where('direction', FinanceConstants::DIRECTION_PAYMENT)
+            ->where('party_type', 'supplier')->where('status', FinanceConstants::STATUS_CONFIRMED)
+            ->whereIn('party_id', $page->getCollection()->pluck('supplier_id')->unique())
+            ->where('amount', '>', $allocated)->distinct()->pluck('party_id')->map(fn ($id) => (int) $id)->all();
 
         return [
             ...$page->toArray(),
             'data' => $page->getCollection()->map(fn (PurchaseSettlementSource $source) => $this->payablePayload(
                 $source,
                 $sourceExtras[(int) $source->id] ?? ['prepayment_applied_amount' => '0.0000', 'pending_refund_amount' => '0.0000', 'red_invoice_amount' => '0.0000'],
+                in_array((int) $source->supplier_id, $prepaidSuppliers, true),
             ))->values(),
             'summary' => $summary,
         ];
@@ -111,7 +121,7 @@ class PurchasePayableQueryService
         ]);
     }
 
-    private function payablePayload(PurchaseSettlementSource $source, array $extras): array
+    private function payablePayload(PurchaseSettlementSource $source, array $extras, bool $hasAvailablePrepayment): array
     {
         $payable = Money::maxZero(Money::sub((string) $source->eligible_amount, (string) $source->ap_offset_amount));
         $paid = Money::normalize((string) $source->allocated_amount);
@@ -131,6 +141,7 @@ class PurchasePayableQueryService
             'paid_amount' => $paid,
             'unpaid_amount' => Money::maxZero(Money::sub($payable, $paid)),
             'prepayment_applied_amount' => $extras['prepayment_applied_amount'],
+            'has_available_prepayment' => $hasAvailablePrepayment,
             'pending_refund_amount' => $extras['pending_refund_amount'],
             'red_invoice_amount' => $extras['red_invoice_amount'],
             'received_invoice_amount' => $receivedInvoice,

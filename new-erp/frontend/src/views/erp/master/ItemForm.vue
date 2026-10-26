@@ -137,9 +137,7 @@
 
               <!-- 库存基本单位 -->
               <el-form-item label="库存基本单位" prop="unit_id" required>
-                <el-select v-model="form.unit_id" :disabled="form.base_unit_locked" class="full-width" placeholder="请选择基本计量单位">
-                  <el-option v-for="row in units" :key="row.id" :label="unitLabel(row)" :value="row.id" />
-                </el-select>
+                <paged-record-select v-model="form.unit_id" :disabled="form.base_unit_locked" class="full-width" placeholder="请选择基本计量单位" entity="units" title="选择基本计量单位" :params="{ status: 'enabled' }" :selected-rows.sync="units" :clearable="false" />
               </el-form-item>
 
               <!-- 规格型号 -->
@@ -715,6 +713,7 @@
 </template>
 
 <script>
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { erpDateTime } from '../../../utils/dateTime'
 import cachedPageRoute from '../../../utils/cachedPageRoute'
 import { materialScopes, routeMaterialScope, materialScopeLabel, materialListPath, materialTypesForScope } from '../../../utils/materialManagementScope.mjs'
@@ -765,7 +764,7 @@ const blankPolicy = () => ({
 export default {
   mixins: [cachedPageRoute],
   name: 'ItemForm',
-  components: {
+  components: { PagedRecordSelect,
     ItemCategoryManagerDialog: () => import('../../../components/master/ItemCategoryManagerDialog.vue')
   },
   data() {
@@ -1090,10 +1089,7 @@ export default {
       const scope = this.managementScope
       this.categoriesLoading = true
       try {
-        const [tree, units] = await Promise.all([
-        this.canViewCategories ? getItemCategoryTree({ management_scope: scope }) : Promise.resolve({ data: { data: [] } }),
-        listEntity('units', { page: 1, per_page: 100, status: 'enabled' })
-      ])
+        const tree = this.canViewCategories ? await getItemCategoryTree({ management_scope: scope }) : { data: { data: [] } }
       if (version !== this.optionsVersion || scope !== this.managementScope) return
       const flat = []
       const visit = rows =>
@@ -1106,7 +1102,6 @@ export default {
         flat.push({ ...this.legacyCategory, full_path: `${this.legacyCategory.category_name}（历史分类，需调整）`, legacy_scope_mismatch: true })
       }
       this.categories = flat
-      this.units = (units.data.data || []).filter(x => !x.is_legacy)
       } catch (e) {
         if (version === this.optionsVersion) this.$message.error(e.userMessage || '物料分类和单位加载失败')
       } finally {
@@ -1178,6 +1173,7 @@ export default {
         const scope = routeMaterialScope(this.pageRoute)
         const { data } = await getItemIntegratedForm(this.pageRoute.params.id, scope ? { management_scope: scope } : undefined)
         if (version !== this.pageLoadVersion) return
+        this.units = data.item.unit ? [data.item.unit] : []
         this.form = {
           ...blankItem(),
           ...data.item,

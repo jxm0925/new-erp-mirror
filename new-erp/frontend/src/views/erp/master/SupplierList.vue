@@ -618,14 +618,7 @@
             </el-select>
           </el-form-item>
           <el-form-item label="采购单位" prop="unit_id">
-            <el-select v-model="quoteForm.unit_id" class="full" placeholder="请选择采购单位">
-              <el-option
-                v-for="relation in quoteConversions"
-                :key="relation.id"
-                :label="relation.purchase_unit && `${relation.purchase_unit.unit_name} (${relation.purchase_unit.unit_code})`"
-                :value="relation.purchase_unit_id"
-              />
-            </el-select>
+            <paged-record-select v-model="quoteForm.unit_id" :request="requestQuoteConversions" :params="{ item_id: quoteForm.item_id }" value-key="purchase_unit_id" :selected-rows.sync="quoteConversions" :label="quoteUnitLabel" :columns="[{ prop: 'purchase_unit.unit_code', label: '单位编码' }, { prop: 'purchase_unit.unit_name', label: '采购单位' }, { prop: 'factor', label: '换算系数' }]" :disabled="!quoteForm.item_id" :clearable="false" class="full" title="选择采购单位" placeholder="请选择采购单位" />
           </el-form-item>
         </div>
 
@@ -686,6 +679,7 @@
 </template>
 
 <script>
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { erpDateTime } from '../../../utils/dateTime'
 import pagedScroll from '../../../directives/pagedScroll'
 import { createPageState, queryPage, includeSelected } from '../../../utils/pagedQuery'
@@ -752,7 +746,7 @@ const emptyQuote = () => ({
 export default {
   directives: { pagedScroll },
   name: 'SupplierList',
-  components: { ItemCategoryTreePicker },
+  components: { PagedRecordSelect, ItemCategoryTreePicker },
   data () {
     return {
       compact: typeof window !== 'undefined' ? window.innerWidth <= 1400 : false,
@@ -770,7 +764,6 @@ export default {
       itemPage: createPageState(10),
       itemKeyword: '',
       selectedItems: [],
-      units: [],
       categories: [],
       selectedSupplier: {},
       categoryCapabilities: [],
@@ -898,11 +891,7 @@ export default {
     },
     async fetchOptions () {
       try {
-        const [units, categories] = await Promise.all([
-          listEntity('units', { status: 'enabled', per_page: 100 }),
-          getItemCategoryTree()
-        ])
-        this.units = units.data.data || []
+        const categories = await getItemCategoryTree()
         this.categoryTree = categories.data.data || []
         this.categories = this.flattenCategories(this.categoryTree)
       } catch (e) {
@@ -1124,11 +1113,13 @@ export default {
       this.searchSupplierItems('')
       this.$nextTick(() => { if (this.$refs.quoteForm) this.$refs.quoteForm.clearValidate() })
     },
+    requestQuoteConversions(params) { return listItemPurchaseConversionOptions(this.quoteForm.item_id, params) },
+    quoteUnitLabel(row) { return row.purchase_unit ? `${row.purchase_unit.unit_name} (${row.purchase_unit.unit_code})` : '' },
     async loadQuoteConversions () {
       this.quoteConversions = []
       this.quoteForm.unit_id = null
       if (!this.quoteForm.item_id) return
-      const { data } = await listItemPurchaseConversionOptions(this.quoteForm.item_id, { page: 1, per_page: 100 })
+      const { data } = await listItemPurchaseConversionOptions(this.quoteForm.item_id, { page: 1, per_page: 10 })
       this.quoteConversions = data.data || []
       const selected = this.quoteConversions.find(row => row.is_default) || this.quoteConversions[0]
       if (selected) this.quoteForm.unit_id = selected.purchase_unit_id

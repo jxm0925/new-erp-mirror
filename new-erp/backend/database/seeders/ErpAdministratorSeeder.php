@@ -3,15 +3,25 @@
 namespace Database\Seeders;
 
 use Database\Seeders\Support\RunsSafeSeed;
+use Database\Seeders\Support\SeedSafety;
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 
-/** 保留旧调用入口，但账号和授权必须由正式账号管理处理，环境变量不再触发安全变更。 */
+/** 仅补缺默认本地管理员，已有账号、密码、状态和授权保持原样。 */
 class ErpAdministratorSeeder extends Seeder
 {
     use RunsSafeSeed;
 
     private function seed(): void
     {
-        $this->command?->warn('管理员Seeder未创建账号、修改密码或分配权限；请通过正式账号管理或另行审批的安装流程处理。');
+        SeedSafety::insertMissing('erp_legacy_admin_users', ['username' => 'admin'], [
+            'legacy_id' => max(1, (int) DB::table('erp_legacy_admin_users')->max('legacy_id') + 1),
+            'password_hash' => Hash::make('123456'),
+            'nickname' => '管理员',
+            'status' => 'normal',
+            'local_managed' => true,
+            'legacy_payload' => json_encode(['auth_source' => 'local_management']),
+        ]);
     }
 }

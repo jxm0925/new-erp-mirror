@@ -97,7 +97,7 @@
           </div>
           <div class="grid-3" v-if="type==='order'">
             <el-form-item label="采购订单号"><el-input v-model="form.purchase_order_no" disabled class="erp-system-number" placeholder="系统预占生成"><template slot="append">系统预占</template></el-input></el-form-item>
-            <el-form-item label="供应商" prop="supplier_id"><el-select v-model="form.supplier_id" :disabled="type==='order' && Boolean(form.plan_id)" filterable placeholder="请选择供应商" style="width: 100%"><el-option v-for="s in validSuppliers" :key="s.id" :label="`${s.supplier_code} / ${s.supplier_name}`" :value="s.id" /></el-select></el-form-item>
+            <el-form-item label="供应商" prop="supplier_id"><paged-record-select v-model="form.supplier_id" :disabled="type==='order' && Boolean(form.plan_id)" placeholder="请选择供应商" style="width: 100%" entity="suppliers" :params="{ purchase_available: 1 }" :selected-rows.sync="suppliers" title="选择供应商" /></el-form-item>
             <el-form-item label="订单日期" prop="order_date"><el-date-picker v-model="form.order_date" value-format="yyyy-MM-dd" style="width: 100%" /></el-form-item>
             <el-form-item label="预计到货" prop="expected_arrival_date"><el-date-picker v-model="form.expected_arrival_date" value-format="yyyy-MM-dd" placeholder="提交审核前必填" style="width: 100%" /></el-form-item>
             <el-form-item label="币种"><el-input v-model="form.currency" /></el-form-item>
@@ -108,7 +108,7 @@
           </div>
           <div class="grid-3" v-if="type==='receipt'">
             <el-form-item label="到货单号"><el-input v-model="form.receipt_no" disabled class="erp-system-number" placeholder="系统预占生成"><template slot="append">系统预占</template></el-input></el-form-item>
-            <el-form-item label="供应商" prop="supplier_id"><el-select v-model="form.supplier_id" filterable placeholder="请选择供应商" style="width: 100%"><el-option v-for="s in validSuppliers" :key="s.id" :label="`${s.supplier_code} / ${s.supplier_name}`" :value="s.id" /></el-select></el-form-item>
+            <el-form-item label="供应商" prop="supplier_id"><paged-record-select v-model="form.supplier_id" placeholder="请选择供应商" style="width: 100%" entity="suppliers" :params="{ purchase_available: 1 }" :selected-rows.sync="suppliers" title="选择供应商" /></el-form-item>
             <el-form-item label="到货日期" prop="receipt_date"><el-date-picker v-model="form.receipt_date" value-format="yyyy-MM-dd" style="width: 100%" /></el-form-item>
             <el-form-item label="确认状态"><el-tag size="small" type="info">草稿</el-tag></el-form-item>
             <el-form-item label="库存过账状态"><el-tag size="small" type="warning">待库存过账</el-tag></el-form-item>
@@ -175,9 +175,7 @@
             </el-table-column>
             <el-table-column label="采购单位" width="175">
               <template slot-scope="{row}">
-                <el-select v-model="row.purchase_unit_id" size="small" placeholder="选择采购单位" :disabled="!row.item_id" style="width: 100%" @change="refreshPlanning(row)">
-                  <el-option v-for="c in row._conversionOptions || []" :key="c.purchase_unit_id" :label="purchaseOptionLabel(c)" :value="c.purchase_unit_id" />
-                </el-select>
+                <paged-record-select v-model="row.purchase_unit_id" size="small" placeholder="选择采购单位" :disabled="!row.item_id" style="width: 100%" @change="refreshPlanning(row)" :key="'purchase-unit-' + row.item_id" :params="{ item_id: row.item_id }" :request="params => purchaseConversions(row, params)" value-key="purchase_unit_id" :selected-rows.sync="row._conversionOptions" :local-rows="localConversionOptions(row)" :label="purchaseOptionLabel" :columns="[{ prop: 'purchase_unit.unit_name', label: '采购单位' }, { prop: 'factor', label: '换算比例' }, { prop: 'base_unit.unit_name', label: '基本单位' }]" title="选择采购单位" />
               </template>
             </el-table-column>
             <el-table-column label="折合库存" width="125">
@@ -208,9 +206,7 @@
             </el-table-column>
             <el-table-column label="目标仓库" width="160">
               <template slot-scope="{row}">
-                <el-select v-model="row.warehouse_id" clearable placeholder="请选择仓库" size="small" style="width: 100%">
-                  <el-option v-for="w in scopedWarehouses" :key="w.id" :label="w.warehouse_name" :value="w.id" />
-                </el-select>
+                <paged-record-select v-model="row.warehouse_id" clearable placeholder="请选择仓库" size="small" style="width: 100%" entity="warehouses" :params="{ management_scope: form.management_scope, statuses: ['enabled', 'active'] }" :selected-rows.sync="warehouses" title="选择仓库" />
               </template>
             </el-table-column>
             <el-table-column label="优先级" width="105" align="center">
@@ -239,14 +235,7 @@
             <div class="batch-quick-tools" v-if="selectedRequestRows.length">
               <span class="selected-hint">已勾选 <strong>{{ selectedRequestRows.length }}</strong> 行：</span>
               <el-button size="mini" plain icon="el-icon-date" @click="batchSetDeliveryDate">批量设交期</el-button>
-              <el-dropdown trigger="click" @command="batchSetWarehouse">
-                <el-button size="mini" plain icon="el-icon-office-building">
-                  批量设仓库 <i class="el-icon-arrow-down el-icon--right" />
-                </el-button>
-                <el-dropdown-menu slot="dropdown">
-                  <el-dropdown-item v-for="w in scopedWarehouses" :key="w.id" :command="w.id">{{ w.warehouse_name }}</el-dropdown-item>
-                </el-dropdown-menu>
-              </el-dropdown>
+              <paged-record-select :value="null" entity="warehouses" :params="{ management_scope: form.management_scope, statuses: ['enabled', 'active'] }" :selected-rows.sync="warehouses" title="批量设仓库" placeholder="批量设仓库" :clearable="false" style="width:150px" @change="batchSetWarehouse" />
             </div>
             <div v-else></div>
             <div class="summary-metrics">
@@ -326,9 +315,7 @@
             </el-table-column>
             <el-table-column label="采购单位" width="175">
               <template slot-scope="{row}">
-                <el-select v-model="row.purchase_unit_id" size="small" placeholder="选择采购单位" :disabled="!row.item_id" style="width: 100%" @change="changePlanUnit(row)">
-                  <el-option v-for="c in row._conversionOptions || []" :key="c.purchase_unit_id" :label="purchaseOptionLabel(c)" :value="c.purchase_unit_id" />
-                </el-select>
+                <paged-record-select v-model="row.purchase_unit_id" size="small" placeholder="选择采购单位" :disabled="!row.item_id" style="width: 100%" @change="changePlanUnit(row)" :key="'purchase-unit-' + row.item_id" :params="{ item_id: row.item_id }" :request="params => purchaseConversions(row, params)" value-key="purchase_unit_id" :selected-rows.sync="row._conversionOptions" :local-rows="localConversionOptions(row)" :label="purchaseOptionLabel" :columns="[{ prop: 'purchase_unit.unit_name', label: '采购单位' }, { prop: 'factor', label: '换算比例' }, { prop: 'base_unit.unit_name', label: '基本单位' }]" title="选择采购单位" />
               </template>
             </el-table-column>
             <el-table-column label="折合库存" width="115">
@@ -488,7 +475,7 @@
             <el-table-column :label="type==='order' ? '采购包装数量' : '到货采购数量'" width="126"><template slot-scope="{row}"><el-input v-model.number="row.qty" type="number" min="0.0001" :step="purchaseStep(row)" :disabled="type==='order' && Boolean(form.plan_id)" @input="syncReceiptActualQty(row)" /></template></el-table-column>
             <el-table-column width="200">
               <template slot="header"><span>采购单位 <el-tooltip content="来自当前物料已生效的采购换算；库存基本单位按 1:1 补充" placement="top"><i class="el-icon-question unit-source-help" /></el-tooltip></span></template>
-              <template slot-scope="{row}"><el-select v-if="type==='order'" v-model="row.purchase_unit_id" :disabled="Boolean(form.plan_id)" placeholder="请选择采购单位" no-data-text="当前物料未维护有效采购换算" @change="changePurchaseUnit(row)"><el-option v-for="c in row._conversionOptions || []" :key="c.id || `base-${c.purchase_unit_id}`" :label="purchaseOptionLabel(c)" :value="c.purchase_unit_id" /></el-select><span v-else>{{ row.purchase_unit_name_snapshot || conversionUnitName(row) }}</span></template>
+              <template slot-scope="{row}"><paged-record-select v-if="type==='order'" v-model="row.purchase_unit_id" :disabled="Boolean(form.plan_id)" placeholder="请选择采购单位" no-data-text="当前物料未维护有效采购换算" @change="changePurchaseUnit(row)" :key="'purchase-unit-' + row.item_id" :params="{ item_id: row.item_id }" :request="params => purchaseConversions(row, params)" value-key="purchase_unit_id" :selected-rows.sync="row._conversionOptions" :local-rows="localConversionOptions(row)" :label="purchaseOptionLabel" :columns="[{ prop: 'purchase_unit.unit_name', label: '采购单位' }, { prop: 'factor', label: '换算比例' }, { prop: 'base_unit.unit_name', label: '基本单位' }]" title="选择采购单位" /><span v-else>{{ row.purchase_unit_name_snapshot || conversionUnitName(row) }}</span></template>
             </el-table-column>
             <el-table-column label="换算因子" width="88" align="right"><template slot-scope="{row}">{{ conversionFactor(row) }}</template></el-table-column>
             <el-table-column :label="type==='order' ? '计划基本数量' : '标准基本数量'" width="120" align="right"><template slot-scope="{row}">{{ standardBaseQty(row) }} {{ baseUnitName(row) }}</template></el-table-column>
@@ -513,8 +500,8 @@
               </div>
               <span v-else>无需单件编号</span>
             </template></el-table-column>
-            <el-table-column v-if="type==='receipt'" label="目标仓库" width="150"><template slot-scope="{row}"><el-select v-model="row.warehouse_id" clearable><el-option v-for="w in scopedWarehouses" :key="w.id" :label="w.warehouse_name" :value="w.id" /></el-select></template></el-table-column>
-            <el-table-column v-if="type==='receipt'" label="目标库位" width="150"><template slot-scope="{row}"><el-select v-model="row.location_id" clearable><el-option v-for="l in filteredLocations(row.warehouse_id)" :key="l.id" :label="l.location_name" :value="l.id" /></el-select></template></el-table-column>
+            <el-table-column v-if="type==='receipt'" label="目标仓库" width="150"><template slot-scope="{row}"><paged-record-select v-model="row.warehouse_id" clearable entity="warehouses" :params="{ management_scope: form.management_scope, statuses: ['enabled', 'active'] }" :selected-rows.sync="warehouses" title="选择仓库" /></template></el-table-column>
+            <el-table-column v-if="type==='receipt'" label="目标库位" width="150"><template slot-scope="{row}"><paged-record-select v-model="row.location_id" clearable :disabled="!row.warehouse_id" entity="locations" :params="{ management_scope: form.management_scope, warehouse_id: row.warehouse_id, statuses: ['enabled', 'active'] }" :selected-rows.sync="locations" title="选择库位" /></template></el-table-column>
             <el-table-column label="预计到货" width="158"><template slot-scope="{row}"><el-date-picker v-model="row.expected_arrival_date" value-format="yyyy-MM-dd" /></template></el-table-column>
             <el-table-column label="备注" width="147"><template slot-scope="{row}"><el-input v-model="row.remark" /></template></el-table-column>
             <el-table-column label="操作" width="70"><template slot-scope="{$index}"><el-button type="text" class="danger-link" :disabled="type==='order' && Boolean(form.plan_id)" @click="form.items.splice($index,1)">删除</el-button></template></el-table-column>
@@ -653,40 +640,25 @@
           <el-table-column type="index" label="#" width="45" align="center" />
           <el-table-column label="供应商 *" min-width="210">
             <template slot-scope="scope">
-              <el-select
+              <paged-record-select
                 v-model="scope.row.supplier_id"
-                filterable
                 size="small"
                 placeholder="请选择供应商"
                 style="width: 100%"
                 @change="handleDialogSplitSupplierChange(activeSplitRow, scope.row)"
-              >
-                <el-option
-                  v-for="s in validSuppliers"
-                  :key="s.id"
-                  :label="s.supplier_name + (s.supplier_code ? ' (' + s.supplier_code + ')' : '')"
-                  :value="s.id"
-                />
-              </el-select>
+               entity="suppliers" :params="{ purchase_available: 1 }" :selected-rows.sync="suppliers" title="选择供应商" />
             </template>
           </el-table-column>
           <el-table-column label="采购单位" width="160">
             <template slot-scope="scope">
               <div class="table-cell-unit-wrapper">
-                <el-select
+                <paged-record-select
                   v-model="scope.row.purchase_unit_id"
                   size="small"
                   style="width: 100%"
                   :loading="Boolean(scope.row._planningPending)"
                   @change="handleDialogSplitUnitChange(activeSplitRow, scope.row)"
-                >
-                  <el-option
-                    v-for="c in scope.row._conversionOptions || activeSplitRow._conversionOptions || []"
-                    :key="c.purchase_unit_id"
-                    :label="purchaseOptionLabel(c)"
-                    :value="c.purchase_unit_id"
-                  />
-                </el-select>
+                 :key="'purchase-unit-' + activeSplitRow.item_id" :params="{ item_id: activeSplitRow.item_id }" :request="params => purchaseConversions(activeSplitRow, params)" value-key="purchase_unit_id" :selected-rows.sync="scope.row._conversionOptions" :local-rows="localConversionOptions(scope.row)" :label="purchaseOptionLabel" :columns="[{ prop: 'purchase_unit.unit_name', label: '采购单位' }, { prop: 'factor', label: '换算比例' }, { prop: 'base_unit.unit_name', label: '基本单位' }]" title="选择采购单位" />
                 <el-tooltip v-if="scope.row._planningError" :content="scope.row._planningError" placement="top">
                   <i class="el-icon-warning text-danger unit-cell-error-icon" />
                 </el-tooltip>
@@ -795,6 +767,7 @@
 </template>
 
 <script>
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { erpDateTime } from '../../../utils/dateTime'
 import { listEntity, listItemPurchaseConversionOptions } from '@/api/erp/master'
 import { minimalValidPurchaseQuantity } from '@/utils/unitConversion'
@@ -808,7 +781,7 @@ import { purchaseScopes, purchaseScopeLabel, purchaseScopeIssue, purchaseSourceL
 import { planAllocation, planAllocationLabel, planAllocationTag, planTargetBaseQty, planAllocatedBaseQty } from '@/utils/purchasePlanAllocation'
 
 export default {
-  components: { PurchaseItemPicker, PurchaseAttachmentPanel, PurchaseConversionFacts },
+  components: { PagedRecordSelect, PurchaseItemPicker, PurchaseAttachmentPanel, PurchaseConversionFacts },
   props: { type: { type: String, required: true } },
   data: () => ({
     form: { management_scope: 'factory', items: [] }, documentRevision: 0, warehouseRevision: 0, scopeChanging: false, saving: false, items: [], suppliers: [], warehouses: [], locations: [], activeIndex: 0,
@@ -953,24 +926,29 @@ export default {
       ;(this.form.items || []).forEach(line => this.fillReferencePrice(line))
     }
   },
-  async mounted() {
-    const [suppliers, locations] = await Promise.allSettled([listEntity('suppliers', { status: 'enabled', per_page: 100 }), listEntity('locations', { per_page: 100 })])
-    this.suppliers = suppliers.status === 'fulfilled' ? suppliers.value.data.data || [] : []
-    this.locations = locations.status === 'fulfilled' ? (locations.value.data.data || []).filter(row => ['active', 'enabled'].includes(row.status)) : []
-    await this.initializeDocument()
-  },
+  async mounted() { await this.initializeDocument() },
   methods: {
+    purchaseConversions(line, params) { return listItemPurchaseConversionOptions(line.item_id, params) },
+    localConversionOptions(line) { return (line._conversionOptions || []).filter(row => row.identity_conversion || row.snapshot_option) },
     scopeLabel(scope) { return purchaseScopeLabel(scope) },
     async loadScopedWarehouses() {
       const revision = ++this.warehouseRevision
       const scope = this.form.management_scope
       this.warehouses = []
+      this.locations = []
       if (!validPurchaseScope(scope)) return
+      const rows = (this.form.items || []).flatMap(line => [line, ...(line._allocations || line.allocations || [])])
+      const warehouseIds = [...new Set(rows.map(row => row.warehouse_id).filter(Boolean))]
+      const locationIds = [...new Set(rows.map(row => row.location_id).filter(Boolean))]
       try {
-        const { data } = await listEntity('warehouses', { management_scope: scope, page: 1, per_page: 100 })
+        const [warehouses, locations] = await Promise.all([
+          warehouseIds.length ? listEntity('warehouses', { management_scope: scope, statuses: ['enabled', 'active'], ids: warehouseIds, per_page: warehouseIds.length }) : null,
+          locationIds.length ? listEntity('locations', { management_scope: scope, statuses: ['enabled', 'active'], ids: locationIds, per_page: locationIds.length }) : null
+        ])
         if (revision !== this.warehouseRevision || scope !== this.form.management_scope) return
-        this.warehouses = (data.data || []).filter(row => ['enabled', 'active'].includes(row.status) && purchaseScopeMatches(row, scope))
-      } catch (error) { if (revision === this.warehouseRevision) this.$message.error(error.userMessage || '仓库加载失败') }
+        this.warehouses = warehouses?.data.data || []
+        this.locations = locations?.data.data || []
+      } catch (error) { if (revision === this.warehouseRevision) this.$message.error(error.userMessage || '仓库库位加载失败') }
     },
     async changeManagementScope(scope) {
       if (scope === this.form.management_scope || !validPurchaseScope(scope) || this.scopeLocked) return
@@ -1016,7 +994,7 @@ export default {
     withSnapshotOption(options, snapshot) {
       const current = options.find(option => Number(option.purchase_unit_id) === Number(snapshot.purchase_unit_id))
       return [{
-        purchase_unit_id: snapshot.purchase_unit_id, base_unit_id: snapshot.base_unit_id,
+        snapshot_option: true, purchase_unit_id: snapshot.purchase_unit_id, base_unit_id: snapshot.base_unit_id,
         factor: snapshot.conversion_factor_snapshot, allow_actual_conversion: snapshot.allow_actual_conversion_snapshot,
         purchase_unit: { id: snapshot.purchase_unit_id, unit_name: snapshot.purchase_unit_name_snapshot, decimal_places: snapshot.purchase_decimal_places ?? this.canonicalUnit(current?.purchase_unit)?.decimal_places ?? 4 },
         base_unit: { id: snapshot.base_unit_id, unit_name: snapshot.base_unit_name_snapshot, decimal_places: snapshot.base_decimal_places ?? this.canonicalUnit(current?.base_unit)?.decimal_places ?? 4 },
@@ -1279,6 +1257,7 @@ export default {
       const res = await getPurchase(map[this.type], this.$route.params.id)
       if (revision !== this.documentRevision) return
       const data = res.data
+      if (data.supplier) this.suppliers = [data.supplier]
       this.attachmentDraftToken = ''
       ;(data.items || []).forEach(line => this.rememberItem(line.item))
       if (this.type === 'request') this.form = { ...data, items: (data.items || []).map(i => ({ ...i, spec_model: i.spec_model || i.item?.spec_model || i.item?.spec || i.item?.model || '', purchase_quantity: Number(i.purchase_conversion_snapshot?.purchase_qty ?? i.request_qty), purchase_unit_id: i.purchase_conversion_snapshot?.purchase_unit_id || i.unit_id })) }
@@ -1508,7 +1487,7 @@ export default {
       if (!line.item_id) return this.$set(line, '_conversionOptions', [])
       const documentRevision = this.documentRevision
       const itemId = line.item_id
-      const { data } = await listItemPurchaseConversionOptions(itemId, { page: 1, per_page: 100 })
+      const { data } = await listItemPurchaseConversionOptions(itemId, { page: 1, per_page: 10, ids: !chooseDefault && line.purchase_unit_id ? [line.purchase_unit_id] : undefined })
       if (line.item_id !== itemId || documentRevision !== this.documentRevision || !this.form.items.includes(line)) return
       const item = this.items.find(row => Number(row.id) === Number(line.item_id))
       const itemUnit = item && (item.unit?.standard_unit || item.unit?.standardUnit || item.unit)

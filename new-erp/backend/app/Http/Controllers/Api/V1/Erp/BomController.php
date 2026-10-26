@@ -25,6 +25,10 @@ class BomController extends Controller
     {
         $this->authorizePermission($request, 'bom.manage.view');
         $query = Bom::with(['product', 'sku.product', 'outputItem.unit'])->latest('updated_at');
+        if ($request->has('ids')) {
+            $selected = $request->validate(['ids' => 'required|array|min:1|max:1000', 'ids.*' => 'required|integer|min:1|distinct']);
+            $query->whereIn('id', $selected['ids']);
+        }
         if ($request->input('deleted') === 'only') $query->onlyTrashed();
         $keyword = trim((string) $request->input('keyword'));
         if ($keyword !== '') {
@@ -50,7 +54,7 @@ class BomController extends Controller
             'default' => Bom::where('is_default', true)->count(),
         ];
         return response()->json([
-            ...$query->paginate($this->perPage($request))->toArray(),
+            ...$query->orderByDesc('id')->paginate(isset($selected) ? count($selected['ids']) : $this->perPage($request))->toArray(),
             'stats' => $stats,
         ]);
     }

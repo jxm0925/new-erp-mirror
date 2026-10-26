@@ -47,42 +47,26 @@
       <div class="expand-form-grid">
         <div class="form-field-group">
           <label class="field-label">BOM 方案版本</label>
-          <el-select
+          <paged-record-select
             v-model="form.bom_id"
-            filterable
             clearable
             size="small"
             :disabled="mode !== 'bom'"
             placeholder="请选择 BOM 方案版本"
             class="full-width"
-          >
-            <el-option
-              v-for="b in boms"
-              :key="b.id"
-              :label="`${b.bom_no} / ${b.bom_name} / ${b.version}`"
-              :value="b.id"
-            />
-          </el-select>
+           :request="requestBoms" title="选择BOM方案" :label="bomLabel" :columns="bomColumns" />
         </div>
 
         <div class="form-field-group">
           <label class="field-label">目标 SKU</label>
-          <el-select
+          <paged-record-select
             v-model="form.sku_id"
-            filterable
             clearable
             size="small"
             :disabled="mode !== 'sku'"
             placeholder="请选择关联 SKU"
             class="full-width"
-          >
-            <el-option
-              v-for="s in skus"
-              :key="s.id"
-              :label="`${s.sku_code} / ${s.sku_name}`"
-              :value="s.id"
-            />
-          </el-select>
+           entity="skus" title="选择SKU" category-type="product" />
         </div>
 
         <div class="form-field-group">
@@ -345,17 +329,20 @@
 </template>
 
 <script>
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { listEntity } from '@/api/erp/master'
 import { listBoms, expandBom } from '@/api/erp/bom'
 import { cuttingQuantityBasis, totalLengthMetres } from '@/utils/cutting-quantity.mjs'
 
 export default {
+  components: { PagedRecordSelect },
   name: 'BomExpand',
   data: () => ({
     mode: 'bom',
     form: { bom_id: null, sku_id: null, output_item_id: null, planned_qty: 1 },
     outputItem: null,
     boms: [],
+    bomColumns: [{ prop: 'bom_no', label: 'BOM编码' }, { prop: 'bom_name', label: 'BOM名称' }, { prop: 'version', label: '版本' }],
     skus: [],
     result: null,
     activeTab: 'summary',
@@ -370,10 +357,11 @@ export default {
     this.form.bom_id = this.$route.query.bom_id ? Number(this.$route.query.bom_id) : null
     this.form.planned_qty = this.$route.query.planned_qty ? Number(this.$route.query.planned_qty) : this.form.planned_qty
     if (this.form.bom_id) this.mode = 'bom'
-    await this.loadRefs()
     if (this.form.bom_id) this.expand()
   },
   methods: {
+    requestBoms: listBoms,
+    bomLabel(row) { return [row.bom_no, row.bom_name, row.version].filter(Boolean).join(' / ') },
     cutRequirement(row, aggregate) {
       if (cuttingQuantityBasis(row) === 'total_length') {
         const length = totalLengthMetres(aggregate ? row.required_total_length_mm : (row.total_length_mm ?? row.cutting_quantity_snapshot?.total_length_mm))
@@ -386,11 +374,6 @@ export default {
         .map(value => Number(value).toLocaleString('zh-CN'))
         .join(' × ')
       return `${dimensions} mm × ${Number(pieces).toLocaleString('zh-CN')}${row.cut_width_mm != null ? '件' : '段'}`
-    },
-    async loadRefs() {
-      const [b, s] = await Promise.all([listBoms({ per_page: 100 }), listEntity('skus', { per_page: 100 })])
-      this.boms = b.data.data || []
-      this.skus = s.data.data || []
     },
     requestPayload() {
       return {

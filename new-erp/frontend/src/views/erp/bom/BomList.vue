@@ -119,17 +119,11 @@
             @clear="search"
           />
 
-          <el-select v-model="query.product_id" size="small" clearable filterable placeholder="归属商品" class="filter-select-md" @change="search">
-            <el-option v-for="p in products" :key="p.id" :label="`${p.product_code} / ${p.product_name}`" :value="p.id" />
-          </el-select>
+          <paged-record-select v-model="query.product_id" size="small" clearable placeholder="归属商品" class="filter-select-md" @change="search" entity="products" title="选择归属商品" category-type="product" />
 
-          <el-select v-model="query.sku_id" size="small" clearable filterable placeholder="关联SKU" class="filter-select-md" @change="search">
-            <el-option v-for="s in skus" :key="s.id" :label="`${s.sku_code} / ${s.sku_name}`" :value="s.id" />
-          </el-select>
+          <paged-record-select v-model="query.sku_id" size="small" clearable placeholder="关联SKU" class="filter-select-md" @change="search" entity="skus" title="选择关联SKU" category-type="product" />
 
-          <el-select v-model="query.output_item_id" size="small" clearable filterable placeholder="产出物料" class="filter-select-md" @change="search">
-            <el-option v-for="i in items" :key="i.id" :label="`${i.item_code} / ${i.item_name}`" :value="i.id" />
-          </el-select>
+          <paged-record-select v-model="query.output_item_id" size="small" clearable placeholder="产出物料" class="filter-select-md" @change="search" entity="items" title="选择产出物料" :params="{ management_scope: 'factory' }" category-type="item" />
 
           <el-select v-model="query.status" size="small" clearable placeholder="启用状态" class="filter-select-xs" @change="search">
             <el-option label="全部状态" value="" />
@@ -722,11 +716,13 @@
 </template>
 
 <script>
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { listEntity } from '@/api/erp/master'
 import { listBoms, getBom, deleteBom, restoreBom, submitBom, approveBom, rejectBom, activateBom, deactivateBom, setDefaultBom, copyBomVersion } from '@/api/erp/bom'
 import { cuttingQuantityBasis, totalLengthMetres } from '@/utils/cutting-quantity.mjs'
 
 export default {
+  components: { PagedRecordSelect },
   name: 'BomList',
   data: () => ({
     loading: false,
@@ -765,7 +761,6 @@ export default {
     }
   },
   created() {
-    this.loadRefs()
     this.load()
     const viewId = this.$route.query.view_id || this.$route.query.bom_id
     const deleted = this.$route.query.deleted === 'only'
@@ -775,16 +770,6 @@ export default {
     }
   },
   methods: {
-    async loadRefs() {
-      const [p, s, i] = await Promise.all([
-        listEntity('products', { per_page: 100 }),
-        listEntity('skus', { per_page: 100 }),
-        listEntity('items', { per_page: 100, management_scope: 'factory' })
-      ])
-      this.products = p.data.data || []
-      this.skus = s.data.data || []
-      this.items = i.data.data || []
-    },
     params() {
       const [date_from, date_to] = this.query.dateRange || []
       return {

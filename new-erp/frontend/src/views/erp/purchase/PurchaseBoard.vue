@@ -472,13 +472,13 @@
     <el-drawer :title="editorTitle" :visible.sync="drawer" size="420px" custom-class="purchase-drawer">
       <el-form label-width="92px" size="small" class="purchase-form">
         <template v-if="mode==='requests'">
-          <el-form-item label="物料"><el-select v-model="form.item_id" filterable><el-option v-for="i in items" :key="i.id" :label="`${i.item_code} / ${i.item_name}`" :value="i.id" /></el-select></el-form-item>
+          <el-form-item label="物料"><paged-record-select v-model="form.item_id" entity="items" :params="{ management_scope: form.management_scope || undefined }" :selected-rows.sync="items" category-type="item" /></el-form-item>
           <el-form-item label="需求数量"><el-input-number v-model="form.request_qty" :min="1" /></el-form-item>
           <el-form-item label="期望日期"><el-date-picker v-model="form.required_date" value-format="yyyy-MM-dd" /></el-form-item>
           <el-form-item label="优先级"><el-select v-model="form.priority"><el-option label="高" value="high" /><el-option label="中" value="normal" /><el-option label="低" value="low" /></el-select></el-form-item>
         </template>
         <template v-else>
-          <el-form-item v-if="mode!=='plans'" label="供应商"><el-select v-model="form.supplier_id" filterable><el-option v-for="s in suppliers" :key="s.id" :label="`${s.supplier_code} / ${s.supplier_name}`" :value="s.id" /></el-select></el-form-item>
+          <el-form-item v-if="mode!=='plans'" label="供应商"><paged-record-select v-model="form.supplier_id" entity="suppliers" :selected-rows.sync="suppliers" /></el-form-item>
           <el-form-item :label="meta.short + '日期'"><el-date-picker v-model="formDate" value-format="yyyy-MM-dd" /></el-form-item>
           <div v-if="mode==='receipts'" class="receipt-editor">
             <div class="line-head"><b>到货明细</b><span>采购单位快照与换算因子不可修改</span></div>
@@ -497,8 +497,8 @@
                 <label>不合格基本数量<el-input :value="`${number(unqualifiedBaseQty(line))} ${line.base_unit_name_snapshot || ''}`" disabled /></label>
                 <label>差异原因<el-input v-model="line.difference_reason" :disabled="!hasReceiptDifference(line)" :placeholder="hasReceiptDifference(line) ? '必填' : '无差异'" /></label>
                 <label>批次号<el-input v-model="line.batch_no" /></label>
-                <label>目标仓库<el-select v-model="line.warehouse_id" clearable><el-option v-for="w in warehouses" :key="w.id" :label="w.warehouse_name" :value="w.id" /></el-select></label>
-                <label>目标库位<el-select v-model="line.location_id" clearable><el-option v-for="l in filteredLocations(line.warehouse_id)" :key="l.id" :label="l.location_name" :value="l.id" /></el-select></label>
+                <label>目标仓库<paged-record-select v-model="line.warehouse_id" clearable @change="line.location_id=null" entity="warehouses" :params="{ management_scope: form.management_scope || undefined, statuses: ['enabled', 'active'] }" :selected-rows.sync="warehouses" /></label>
+                <label>目标库位<paged-record-select v-model="line.location_id" clearable :disabled="!line.warehouse_id" entity="locations" :params="{ management_scope: form.management_scope || undefined, warehouse_id: line.warehouse_id, statuses: ['enabled', 'active'] }" :selected-rows.sync="locations" /></label>
                 <label v-if="isSerialManaged(line)" class="receipt-serial-field">设备编号 / 序列号<div class="serial-entry-tools"><span>{{ serialTrackingMode(line)==='required' ? '必须逐件编号' : '按需逐件编号' }}</span><el-button size="mini" type="success" plain @click.stop="generateLineSerials(line)">{{ serialGenerationButtonText(line) }}</el-button></div><el-input v-model="line.serial_text" type="textarea" :rows="3" resize="vertical" placeholder="供应商SN可直接粘贴；每台一行" @input="markSupplierSerials(line)" /><div v-if="serialNumberList(line.serial_text).length" class="serial-number-panel"><div class="serial-number-summary"><span>已录入 {{ serialNumberList(line.serial_text).length }} 个</span><el-button type="text" size="mini" icon="el-icon-printer" @click.stop="printSerialLabels(line)">全部打印</el-button></div><div class="serial-number-list"><div v-for="serialNo in serialNumberList(line.serial_text)" :key="serialNo" class="serial-number-item"><span :title="serialNo">{{ serialNo }}</span><el-button type="text" size="mini" icon="el-icon-printer" @click.stop="printSerialLabels(line, serialNo)">打印</el-button></div></div></div></label>
               </div>
               <p :class="receiptLineValid(line) ? 'receipt-pass' : 'receipt-fail'">合格 + 不合格必须等于到货数量；合格基本量 + 不合格基本量必须等于实际基本量。</p>
@@ -507,8 +507,8 @@
           <div v-else class="line-editor">
             <div class="line-head"><b>明细</b><el-button type="text" icon="el-icon-plus" @click="addLine">添加行</el-button></div>
             <div v-for="(line,index) in form.items" :key="index" class="form-line">
-              <el-select v-model="line.item_id" filterable placeholder="物料"><el-option v-for="i in items" :key="i.id" :label="`${i.item_code}/${i.item_name}`" :value="i.id" /></el-select>
-              <el-select v-if="mode==='plans'" v-model="line.supplier_id" filterable placeholder="供应商"><el-option v-for="s in suppliers" :key="s.id" :label="s.supplier_name" :value="s.id" /></el-select>
+              <paged-record-select v-model="line.item_id" placeholder="物料" entity="items" :params="{ management_scope: form.management_scope || undefined }" :selected-rows.sync="items" category-type="item" />
+              <paged-record-select v-if="mode==='plans'" v-model="line.supplier_id" placeholder="供应商" entity="suppliers" :selected-rows.sync="suppliers" />
               <el-input-number v-model="line.qty" :min="1" controls-position="right" />
               <el-input-number v-model="line.unit_price" :min="0" controls-position="right" />
               <el-input v-if="mode==='receipts'" v-model="line.batch_no" placeholder="批次号" />
@@ -560,8 +560,8 @@
 </template>
 
 <script>
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { erpDateTime } from '../../../utils/dateTime'
-import { listEntity } from '@/api/erp/master'
 import {
   generateReceiptSerials, listPurchase, getPurchase, savePurchaseRequest, savePurchasePlan, savePurchaseOrder, savePurchaseReceipt,
   submitRequest, requestToPlan, submitPlan, approvePlan, rejectPlan, previewPlanOrders, generatePlanOrders,
@@ -630,7 +630,7 @@ const metaMap = {
 }
 
 export default {
-  components: { PurchaseAttachmentPanel, PurchaseConversionFacts, PurchasePaymentPlanDialog: () => import('@/components/finance/PurchasePaymentPlanDialog.vue') },
+  components: { PagedRecordSelect, PurchaseAttachmentPanel, PurchaseConversionFacts, PurchasePaymentPlanDialog: () => import('@/components/finance/PurchasePaymentPlanDialog.vue') },
   props: { mode: { type: String, required: true } },
   data: () => ({
     rows: [],
@@ -832,19 +832,7 @@ export default {
     async bootstrap() {
       // 从订单详情“业务进度”等处带单号跳转时，直接按单号筛选。
       if (this.$route.query.keyword) this.filters.keyword = String(this.$route.query.keyword)
-      await Promise.all([this.load(), this.loadOptions()])
-    },
-    async loadOptions() {
-      const [items, suppliers, warehouses, locations] = await Promise.all([
-        listEntity('items', { per_page: 100 }),
-        listEntity('suppliers', { per_page: 100 }),
-        listEntity('warehouses', { per_page: 100 }),
-        listEntity('locations', { per_page: 100 })
-      ])
-      this.items = items.data.data || []
-      this.suppliers = suppliers.data.data || []
-      this.warehouses = (warehouses.data.data || []).filter(row => ['active', 'enabled'].includes(row.status))
-      this.locations = (locations.data.data || []).filter(row => ['active', 'enabled'].includes(row.status))
+      await this.load()
     },
     async load() {
       const revision = ++this.listRevision
@@ -870,6 +858,8 @@ export default {
       const res = await getPurchase(this.mode, id, isDeleted ? { deleted: 'only' } : undefined)
       if (revision !== this.detailRevision || mode !== this.mode) return
       this.selected = res.data
+      const suppliers = [res.data.supplier, ...(res.data.items || []).flatMap(line => [line.supplier, ...(line.splits || []).map(split => split.supplier)])].filter(Boolean)
+      this.suppliers = [...new Map([...this.suppliers, ...suppliers].map(row => [row.id, row])).values()]
       if (this.mode === 'plans' && !this.scopeIssue(this.selected)) this.preview(this.selected)
     },
     async afterBusinessAction(id) {

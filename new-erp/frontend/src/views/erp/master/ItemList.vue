@@ -121,16 +121,14 @@
           >
             <el-option v-for="row in selectableCategories" :key="row.id" :label="row.full_path" :value="row.id" />
           </el-select>
-          <el-select
+          <paged-record-select
             v-model="query.unit_id"
             size="small"
             clearable
             placeholder="基本单位"
             class="filter-select-sm"
             @change="search"
-          >
-            <el-option v-for="row in businessUnits" :key="row.id" :label="`${row.unit_code} / ${row.unit_name}`" :value="row.id" />
-          </el-select>
+           entity="units" title="选择基本单位" :params="{ status: 'enabled' }" :selected-rows.sync="units" />
           <el-select
             v-model="query.status"
             size="small"
@@ -467,9 +465,7 @@
         </div>
 
         <el-form-item label="采购单位" prop="purchase_unit_id">
-          <el-select v-model="conversionForm.purchase_unit_id" filterable class="full-width" placeholder="请选择采购业务所用单位">
-            <el-option v-for="unit in enabledUnits" :key="unit.id" :label="`${unit.unit_code} ${unit.unit_name}`" :value="unit.id" />
-          </el-select>
+          <paged-record-select v-model="conversionForm.purchase_unit_id" class="full-width" placeholder="请选择采购业务所用单位" entity="units" title="选择采购单位" :params="{ status: 'enabled' }" :selected-rows.sync="units" :clearable="false" />
         </el-form-item>
 
         <el-form-item label="换算公式" prop="factor">
@@ -525,6 +521,7 @@
 </template>
 
 <script>
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { erpDateTime } from '../../../utils/dateTime'
 import { minimalValidPurchaseQuantity } from '../../../utils/unitConversion'
 import cachedPageRoute from '../../../utils/cachedPageRoute'
@@ -562,7 +559,7 @@ const scopeCountsCache = {
 export default {
   mixins: [cachedPageRoute],
   name: 'ItemList',
-  components: {
+  components: { PagedRecordSelect,
     ItemCategoryManagerDialog: () => import('../../../components/master/ItemCategoryManagerDialog.vue')
   },
   data () {
@@ -762,16 +759,10 @@ export default {
     async loadOptions () {
       if (!this.canViewItems) return
       const version = ++this.optionsVersion
-      const [categories, units, suppliers] = await Promise.all([
-        this.canViewCategories ? getItemCategoryTree(this.scopeParams()) : Promise.resolve({ data: { data: [] } }),
-        listEntity('units', { page: 1, per_page: 100, status: 'enabled' }),
-        listEntity('suppliers', { page: 1, per_page: 100, status: 'enabled' })
-      ])
+      const categories = this.canViewCategories ? await getItemCategoryTree(this.scopeParams()) : { data: { data: [] } }
       if (version !== this.optionsVersion) return
       this.categoryTree = categories.data.data || []
       this.categories = this.flatten(this.categoryTree)
-      this.units = units.data.data || []
-      this.suppliers = suppliers.data.data || []
     },
     flatten (tree) {
       const rows = []

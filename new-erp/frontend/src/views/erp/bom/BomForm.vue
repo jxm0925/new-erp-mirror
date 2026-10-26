@@ -128,21 +128,15 @@
                 <div class="trace-fields-grid">
                   <div class="form-field-unit required">
                     <label class="field-label">来源商品</label>
-                    <el-select v-model="form.source_product_id" filterable clearable size="small" :disabled="!canEdit" placeholder="请选择来源商品" class="full-width">
-                      <el-option v-for="p in products" :key="p.id" :label="`${p.product_code} / ${p.product_name}`" :value="p.id" />
-                    </el-select>
+                    <paged-record-select v-model="form.source_product_id" clearable size="small" :disabled="!canEdit" placeholder="请选择来源商品" class="full-width" entity="products" title="选择来源商品" category-type="product" />
                   </div>
                   <div class="form-field-unit required">
                     <label class="field-label">来源 SKU</label>
-                    <el-select v-model="form.source_sku_id" filterable clearable size="small" :disabled="!canEdit" placeholder="请选择来源 SKU" class="full-width">
-                      <el-option v-for="s in skus" :key="s.id" :label="`${s.sku_code} / ${s.sku_name}`" :value="s.id" />
-                    </el-select>
+                    <paged-record-select v-model="form.source_sku_id" clearable size="small" :disabled="!canEdit" placeholder="请选择来源 SKU" class="full-width" entity="skus" title="选择来源SKU" category-type="product" />
                   </div>
                   <div class="form-field-unit required col-span-2">
                     <label class="field-label">来源标准 BOM</label>
-                    <el-select v-model="form.source_standard_bom_id" filterable clearable size="small" :disabled="!canEdit" placeholder="请选择来源标准 BOM" class="full-width">
-                      <el-option v-for="b in boms" :key="b.id" :label="`${b.bom_no} / ${b.bom_name} / ${b.version}`" :value="b.id" />
-                    </el-select>
+                    <paged-record-select v-model="form.source_standard_bom_id" clearable size="small" :disabled="!canEdit" placeholder="请选择来源标准 BOM" class="full-width" :request="requestBoms" title="选择来源标准BOM" :params="{ bom_type: 'standard' }" :label="bomLabel" :columns="bomColumns" />
                   </div>
                 </div>
               </div>
@@ -196,15 +190,11 @@
               </div>
               <div class="form-field-unit">
                 <label class="field-label" title="可选；须与关联SKU同时填写">归属商品（可选）</label>
-                <el-select v-model="form.product_id" filterable clearable size="small" :disabled="!canEdit" placeholder="与关联SKU成对选填" class="full-width">
-                  <el-option v-for="p in products" :key="p.id" :label="`${p.product_code} / ${p.product_name}`" :value="p.id" />
-                </el-select>
+                <paged-record-select v-model="form.product_id" clearable size="small" :disabled="!canEdit" placeholder="与关联SKU成对选填" class="full-width" entity="products" title="选择归属商品" category-type="product" />
               </div>
               <div class="form-field-unit">
                 <label class="field-label" title="可选；须与归属商品同时填写">关联 SKU（可选）</label>
-                <el-select v-model="form.sku_id" filterable clearable size="small" :disabled="!canEdit" placeholder="与归属商品成对选填" class="full-width">
-                  <el-option v-for="s in skus" :key="s.id" :label="`${s.sku_code} / ${s.sku_name}`" :value="s.id" />
-                </el-select>
+                <paged-record-select v-model="form.sku_id" clearable size="small" :disabled="!canEdit" placeholder="与归属商品成对选填" class="full-width" entity="skus" title="选择关联SKU" category-type="product" />
               </div>
               <div class="output-tip-strip col-span-2">
                 <i class="el-icon-info" />
@@ -457,13 +447,12 @@
         </div>
       </div>
 
+      <div class="bom-item-picker-body"><aside class="bom-item-categories"><el-button type="text" @click="picker.category_id = ''; searchItems()">全部分类</el-button><el-tree :data="categories" :props="{ label: 'category_name', children: 'children' }" node-key="id" highlight-current @node-click="selectItemCategory" /></aside><div class="bom-item-results">
       <div class="picker-filter-toolbar">
         <el-input v-model="picker.keyword" size="small" clearable placeholder="物料编码 / 名称 / 规格" class="filter-search" @keyup.enter.native="searchItems" @clear="searchItems">
           <i slot="prefix" class="el-icon-search"></i>
         </el-input>
-        <el-select v-model="picker.category_id" size="small" clearable placeholder="物料分类" class="filter-select" @change="searchItems">
-          <el-option v-for="c in categories" :key="c.id" :label="c.category_name" :value="c.id" />
-        </el-select>
+
         <el-select v-model="picker.item_type" size="small" clearable placeholder="物料类型" class="filter-select" @change="searchItems">
           <el-option label="成品" value="finished_product" />
           <el-option label="半成品" value="semi_finished" />
@@ -545,6 +534,7 @@
         />
       </div>
 
+      </div></div>
       <span slot="footer" class="dialog-footer">
         <el-button size="small" @click="picker.visible = false">{{ picker.multiple ? '取消' : '关闭' }}</el-button>
         <el-button v-if="picker.multiple" size="small" type="success" :disabled="!canEdit || !picker.selected.length" @click="confirmPickerItems">确认添加（{{ picker.selected.length }}）</el-button>
@@ -554,6 +544,7 @@
 </template>
 
 <script>
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { listEntity } from '@/api/erp/master'
 import { listBoms, getBom, saveBom, submitBom } from '@/api/erp/bom'
 import { clearCreatePageReservation, reserveForCreatePage } from '@/utils/documentNumberReservation'
@@ -585,6 +576,7 @@ const emptyLine = i => ({
 })
 
 export default {
+  components: { PagedRecordSelect },
   name: 'BomForm',
   data: () => ({
     form: {
@@ -613,6 +605,7 @@ export default {
     units: [],
     categories: [],
     boms: [],
+    bomColumns: [{ prop: 'bom_no', label: 'BOM编码' }, { prop: 'bom_name', label: 'BOM名称' }, { prop: 'version', label: '版本' }],
     numberReservation: null,
     saving: false,
     picker: {
@@ -729,20 +722,12 @@ export default {
         this.$message.error(e.userMessage || 'BOM 编号预生成失败，请刷新后重试')
       }
     },
+    requestBoms: listBoms,
+    bomLabel(row) { return [row.bom_no, row.bom_name, row.version].filter(Boolean).join(' / ') },
     async loadRefs() {
-      const [p, s, u, c, b] = await Promise.all([
-        listEntity('products', { per_page: 100 }),
-        listEntity('skus', { per_page: 100 }),
-        listEntity('units', { per_page: 100 }),
-        listEntity('categories', { per_page: 100, category_type: 'item', management_scope: 'factory' }),
-        listBoms({ per_page: 100, bom_type: 'standard' })
-      ])
-      this.products = p.data.data || []
-      this.skus = s.data.data || []
-      this.units = u.data.data || []
+      const { data } = await listEntity('categories', { category_type: 'item', management_scope: 'factory', tree: 1 })
+      this.categories = data.data || []
       this.form.items.forEach(row => this.recalculateCutLine(row))
-      this.categories = c.data.data || []
-      this.boms = b.data.data || []
     },
     async loadDetail() {
       const { data } = await getBom(this.$route.params.id)
@@ -788,6 +773,7 @@ export default {
       this.picker = { ...this.picker, visible: true, mode, index, multiple: mode === 'component' && (!target || !target.component_item_id), selected: [], page: options.keepQuery ? this.picker.page : 1, perPage: 10 }
       this.loadItems()
     },
+    selectItemCategory(row) { this.picker.category_id = row.id; this.searchItems() },
     searchItems() {
       this.picker.page = 1
       this.loadItems()
@@ -970,6 +956,30 @@ export default {
 </script>
 
 <style scoped>
+.bom-item-picker-body {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 14px;
+}
+.bom-item-categories {
+  max-height: 450px;
+  overflow: auto;
+  border-right: 1px solid #e2e8f0;
+  padding-right: 10px;
+  box-sizing: border-box;
+}
+.bom-item-results {
+  min-width: 0;
+}
+@media (max-width: 780px) {
+  .bom-item-picker-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .bom-item-categories {
+    max-height: 140px;
+  }
+}
+
 .bom-form-page {
   min-width: 0;
   max-width: 100%;

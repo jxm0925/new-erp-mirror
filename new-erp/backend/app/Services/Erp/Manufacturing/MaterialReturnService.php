@@ -7,10 +7,12 @@ use App\Models\Erp\InventorySerialEvent;
 use App\Models\Erp\InventoryTransactionItem;
 use App\Models\Erp\Item;
 use App\Models\Erp\Location;
+use App\Models\Erp\MfgLaborSession;
 use App\Models\Erp\MfgMaterialIssue;
 use App\Models\Erp\MfgMaterialReturn;
 use App\Models\Erp\MfgMaterialReturnDisposition;
 use App\Models\Erp\MfgMaterialReturnLine;
+use App\Models\Erp\MfgReceipt;
 use App\Models\Erp\MfgUnitComponent;
 use App\Models\Erp\MfgUnitReport;
 use App\Models\Erp\MfgWorkOrder;
@@ -109,6 +111,16 @@ final class MaterialReturnService
      */
     public function recallIssue(MfgWorkOrder $wo, MfgWorkOrderOperation $op, MfgMaterialIssue $issue, string $reason, object $actor): MfgMaterialReturn
     {
+        if ((int) $issue->work_order_id !== (int) $wo->id || (int) $issue->work_order_operation_id !== (int) $op->id)
+            $this->fail('delivery_issue_invalid', '配料单的原领料记录不属于本工单和工序，不能收回。');
+        // 入库已把整单领料成本摊入成品；直接收回会让原料与成品重复计成本，不能只看配送是否签收。
+        if ($wo->cost_status !== 'open' || (float) $wo->stored_qty > self::EPS
+            || MfgReceipt::query()->where('work_order_id', $wo->id)->lockForUpdate()->first(['id']))
+            $this->fail('material_cost_transferred', '工单已有生产入库或成本结转，不能直接收回配送，请先核对材料去向和已入库成本。');
+        if (! in_array($wo->status, self::OPEN_WO, true) && ((float) $op->completed_qty > self::EPS
+            || MfgLaborSession::query()->where('work_order_operation_id', $op->id)->lockForUpdate()->first(['id'])
+            || MfgUnitReport::query()->where('work_order_operation_id', $op->id)->lockForUpdate()->first(['id'])))
+            $this->fail('material_usage_unconfirmed', '已结束工单的这道工序已有加工记录，不能直接整单收回，请先核对材料是否已消耗。');
         $payload = collect((array) $issue->issue_lines)->map(function ($l) {
             $serialIds = collect((array) ($l['picks'] ?? []))->flatMap(fn ($p) => (array) ($p['serial_ids'] ?? []))->map(fn ($v) => (int) $v)->values()->all();
             return ['material_id' => (int) $l['material_id'], 'qty' => max(0, round((float) $l['qty'] - count($serialIds), 4)), 'serial_ids' => $serialIds];
@@ -347,7 +359,7 @@ final class MaterialReturnService
             $ids = array_values(array_unique($want['serial_ids']));
             $numbered = 0;
             if ($mode !== 'none' && $ids) {
-                $candidates = $this->serialCandidates($wo, $op, $m, $exceptReturnId, true);
+                $candidates = $this->serialCandidates($wo, $op, $m, $exceptReturnId, true, (bool) $onlyIssueId);
                 foreach ($ids as $serialId) {
                     $c = $candidates[$serialId] ?? null;
                     if ($c && $onlyIssueId && (int) $c['source']->source_id !== $onlyIssueId) $c = null;
@@ -470,9 +482,9 @@ final class MaterialReturnService
 
     /**
      * 可退编号：本道收料领出、最近一次领用就是本工单、现在仍为生产已领、不在其他待审核申请里；
-     * 装在未入库的台上（active）、报废台上（scrapped）或没登记到台（unbound）。键为库存序列号 ID。
+     * 装在未入库的台上（active）、报废台上（scrapped）或没登记到台（unbound）；整单配送收回也接纳已取消台。键为库存序列号 ID。
      */
-    private function serialCandidates(MfgWorkOrder $wo, MfgWorkOrderOperation $op, MfgWorkOrderMaterial $m, ?int $exceptReturnId = null, bool $lock = false): array
+    private function serialCandidates(MfgWorkOrder $wo, MfgWorkOrderOperation $op, MfgWorkOrderMaterial $m, ?int $exceptReturnId = null, bool $lock = false, bool $allowCancelledUnits = false): array
     {
         $issues = MfgMaterialIssue::query()->where('work_order_id', $wo->id)->where('work_order_operation_id', $op->id)->orderBy('id')->get();
         $picked = [];
@@ -503,7 +515,7 @@ final class MaterialReturnService
             if (isset($busy[(int) $s->id]) || ! $event || $event->document_type !== 'mfg_material_issue' || (int) $event->document_id !== (int) $picked[$s->id]) continue;
             $component = $components->get($s->serial_no);
             $unit = $component ? $units->get($component->unit_id) : null;
-            if ($unit && ! in_array($unit->status, array_merge(self::ACTIVE_UNIT, ['scrapped']), true)) continue;
+            if ($unit && ! in_array($unit->status, array_merge(self::ACTIVE_UNIT, $allowCancelledUnits ? ['scrapped', 'cancelled'] : ['scrapped']), true)) continue;
             $source = $sourceItems->first(fn ($i) => (int) $i->source_id === (int) $picked[$s->id] && (int) $i->warehouse_id === (int) $event->warehouse_id
                 && (int) $i->location_id === (int) $event->location_id && (string) $i->batch_no === (string) $event->batch_no);
             if (! $source) continue;

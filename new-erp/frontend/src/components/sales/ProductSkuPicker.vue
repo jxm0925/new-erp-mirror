@@ -9,9 +9,6 @@
     >
       <div v-if="mode === 'product'" class="picker-filters">
         <el-input v-model="query.keyword" size="small" clearable placeholder="产品名称 / 产品编码" @keyup.enter.native="load" />
-        <el-select v-model="query.category_id" size="small" clearable placeholder="产品分类">
-          <el-option v-for="item in categories" :key="item.id" :label="item.category_name" :value="item.id" />
-        </el-select>
         <el-select v-model="query.status" size="small" clearable placeholder="产品状态">
           <el-option label="启用" value="enabled" />
           <el-option label="停用" value="disabled" />
@@ -29,6 +26,9 @@
         <span class="picker-tip">{{ mode === 'global_sku' ? '全局 SKU 搜索，结果按后端分页返回' : '仅展示当前 Product 下可用 SKU' }}</span>
       </div>
 
+      <div class="product-picker-body" :class="{ 'with-categories': mode === 'product' }">
+        <aside v-if="mode === 'product'" class="product-picker-categories"><el-button type="text" @click="selectCategory(null)">全部分类</el-button><el-tree :data="categories" :props="{ label: 'category_name', children: 'children' }" node-key="id" highlight-current @node-click="selectCategory" /></aside>
+        <div class="product-picker-results">
       <el-table
         v-if="mode === 'product'"
         :data="rows"
@@ -90,6 +90,8 @@
         <el-table-column label="销售状态" width="90"><template slot-scope="{row}"><el-tag size="mini" :type="row.status === 'enabled' ? 'success' : 'info'">{{ statusText(row.status) }}</el-tag></template></el-table-column>
       </el-table>
 
+        </div>
+      </div>
       <div class="picker-footer">
         <el-pagination
           layout="total, sizes, prev, pager, next"
@@ -173,8 +175,9 @@ export default {
       clearTimeout(this.searchTimer)
       this.searchTimer = setTimeout(() => { this.query.page = 1; this.load() }, 280)
     },
+    selectCategory(row) { this.query.category_id = row ? row.id : ''; this.query.page = 1; this.load() },
     async loadCategories() {
-      const { data } = await listEntity('categories', { category_type: 'product', status: 'enabled', per_page: 100 })
+      const { data } = await listEntity('categories', { category_type: 'product', status: 'enabled', tree: 1 })
       this.categories = data.data || []
     },
     async load() {
@@ -204,5 +207,32 @@ export default {
 </script>
 
 <style scoped>
+.product-picker-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+}
+.product-picker-body.with-categories {
+  grid-template-columns: 190px minmax(0, 1fr);
+}
+.product-picker-categories {
+  max-height: 420px;
+  overflow: auto;
+  border-right: 1px solid #e2e8f0;
+  padding-right: 10px;
+  box-sizing: border-box;
+}
+.product-picker-results {
+  min-width: 0;
+}
+@media (max-width: 780px) {
+  .product-picker-body.with-categories {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .product-picker-categories {
+    max-height: 140px;
+  }
+}
+
 .picker-filters{display:grid;grid-template-columns:1fr 160px 140px 82px auto;gap:10px;margin-bottom:12px;align-items:center}.picker-tip{color:#64748b}.picker-img{width:54px;height:44px;border:1px solid #e4e9f0;border-radius:4px;display:grid;place-items:center;color:#94a3b8;background:#f8fafc}.picker-img img{max-width:100%;max-height:100%;object-fit:cover}.picker-footer{display:flex;justify-content:space-between;align-items:center;margin-top:12px}.dash{color:#94a3b8}.sales-picker-dialog :deep(.el-dialog__header){border-bottom:1px solid #edf0f4}.sales-picker-dialog :deep(.el-table th){background:#f8fafc;color:#334155}.sales-picker-dialog :deep(.el-button--success){background:#00984f;border-color:#00984f}
 </style>

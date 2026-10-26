@@ -132,22 +132,7 @@
           <div class="filter-fields">
             <div class="filter-item">
               <span class="filter-label">供应商</span>
-              <el-select
-                v-model="filters.supplier_id"
-                size="small"
-                clearable
-                filterable
-                placeholder="选择或搜索供应商"
-                class="filter-select-supplier"
-                @change="search"
-              >
-                <el-option
-                  v-for="row in suppliers"
-                  :key="row.id"
-                  :label="`${row.supplier_code ? row.supplier_code + ' ' : ''}${row.supplier_name}`"
-                  :value="row.id"
-                />
-              </el-select>
+              <paged-record-select v-model="filters.supplier_id" size="small" placeholder="选择或搜索供应商" class="filter-select-supplier" entity="suppliers" :params="{ status: 'enabled' }" :selected-rows.sync="suppliers" title="选择供应商" @change="search" />
             </div>
 
             <div class="filter-item">
@@ -510,9 +495,9 @@
 </template>
 
 <script>
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import Vue from 'vue'
-import { listFinancePayables, listCashDocuments } from '../../../api/erp/finance'
-import { listEntity } from '../../../api/erp/master'
+import { listFinancePayables } from '../../../api/erp/finance'
 import FinanceSupplierLedgerList from './FinanceSupplierLedgerList.vue'
 
 const blankFilters = () => ({
@@ -530,11 +515,9 @@ Vue.component('money-column', {
 })
 
 export default {
-  components: { FinanceSupplierLedgerList },
+  components: { PagedRecordSelect, FinanceSupplierLedgerList },
   data: () => ({
     rows: [],
-    // 有未核销付款余额（可当预付款使用）的供应商；null 表示未能查询，按钮照旧显示。
-    prepaidSupplierIds: null,
     suppliers: [],
     loading: false,
     page: 1,
@@ -544,7 +527,6 @@ export default {
     filters: blankFilters(),
     summary: {},
     documentsLoaded: false,
-    suppliersLoaded: false,
     supplierVisited: false,
     requestId: 0,
     detailDialogVisible: false,
@@ -609,7 +591,6 @@ export default {
       if (this.activeView === 'suppliers') this.supplierVisited = true
       if (this.activeView === 'documents') {
         if (contextChanged || (!this.documentsLoaded && !this.loading)) this.load()
-        if (!this.suppliersLoaded) this.loadSuppliers()
         this.$nextTick(() => this.$refs.documentsTable?.doLayout())
       }
     },
@@ -619,16 +600,6 @@ export default {
       if (view === this.activeView) return
       return this.$router.push({ path: '/finance/payables', query: { ...this.$route.query, view } })
     },
-    async loadSuppliers() {
-      if (!this.canViewDocuments) return
-      this.suppliersLoaded = true
-      try {
-        const r = await listEntity('suppliers', { per_page: 100, status: 'enabled' })
-        this.suppliers = r.data.data || []
-      } catch (e) {
-        this.suppliersLoaded = false
-      }
-    },
     async load() {
       if (!this.canViewDocuments) return
       const requestId = ++this.requestId
@@ -637,7 +608,6 @@ export default {
         const r = await listFinancePayables(this.params())
         if (requestId !== this.requestId) return
         this.rows = r.data.data || []
-        this.loadPrepaidSuppliers()
         this.total = Number(r.data.total || 0)
         this.summary = r.data.summary || {}
         this.documentsLoaded = true
@@ -702,16 +672,7 @@ export default {
     },
     canUsePrepayment(row) {
       return this.$can('finance.allocation.create') && this.$can('finance.view') && Number(row.unpaid_amount) > 0
-        && (this.prepaidSupplierIds === null || this.prepaidSupplierIds.includes(Number(row.supplier_id)))
-    },
-    async loadPrepaidSuppliers() {
-      if (!this.$can('finance.view')) return
-      try {
-        const r = await listCashDocuments('payment', { party_type: 'supplier', allocation_status: 'pending', per_page: 100 })
-        this.prepaidSupplierIds = [...new Set((r.data.data || []).filter(doc => Number(doc.unallocated_amount) > 0).map(doc => Number(doc.party_id)))]
-      } catch (e) {
-        this.prepaidSupplierIds = null
-      }
+        && row.has_available_prepayment
     },
     pay(row) {
       if (!this.canPay(row)) return

@@ -43,7 +43,7 @@
           <el-input-number v-else-if="field.type === 'number'" v-model="form[field.prop]" :min="0" :precision="field.precision || 0" />
           <el-switch v-else-if="field.type === 'boolean'" v-model="form[field.prop]" />
           <el-select v-else-if="field.type === 'select'" v-model="form[field.prop]" filterable clearable style="width:100%"><el-option v-for="opt in field.options" :key="opt.value" :label="opt.label" :value="opt.value" /></el-select>
-          <el-select v-else-if="field.type === 'remote'" v-model="form[field.prop]" filterable clearable style="width:100%"><el-option v-for="opt in options[field.source] || []" :key="opt.id" :label="`${opt[field.labelKey]} (${opt[field.codeKey]})`" :value="opt.id" /></el-select>
+          <paged-record-select v-else-if="field.type === 'remote'" v-model="form[field.prop]" :entity="field.source" :title="`选择${field.label}`" :placeholder="`请选择${field.label}`" />
         </el-form-item>
       </el-form>
       <span slot="footer"><el-button size="small" @click="formVisible=false">取消</el-button><el-button size="small" type="success" :loading="saving" @click="save">保存</el-button></span>
@@ -52,9 +52,11 @@
 </template>
 
 <script>
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { listEntity, saveEntity, disableEntity } from '../../api/erp/master'
 
 export default {
+  components: { PagedRecordSelect },
   props: { config: { type: Object, required: true } },
   data: () => ({ rows: [], total: 0, loading: false, saving: false, drawer: false, formVisible: false, selected: null, form: {}, options: {}, query: { keyword: '', status: '', page: 1, per_page: 10 } }),
   computed: {
@@ -64,15 +66,11 @@ export default {
       return result
     }
   },
-  created() { this.load(); this.loadOptions() },
+  created() { this.load() },
   methods: {
     async load() {
       this.loading = true
       try { const { data } = await listEntity(this.config.entity, this.query); this.rows = data.data; this.total = data.total } catch (e) { this.$message.error(e.userMessage) } finally { this.loading = false }
-    },
-    async loadOptions() {
-      const sources = [...new Set(this.config.fields.filter(f => f.type === 'remote').map(f => f.source))]
-      await Promise.all(sources.map(async source => { const { data } = await listEntity(source, { per_page: 100 }); this.$set(this.options, source, data.data) }))
     },
     reset() { this.query = { keyword: '', status: '', page: 1, per_page: 10 }; this.load() },
     displayValue(row, col) {

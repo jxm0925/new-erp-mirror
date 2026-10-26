@@ -252,7 +252,8 @@ final class MaterialDeliveryService
     {
         return DB::transaction(function () use ($id, $reason, $actor) {
             $delivery = $this->locked($id, ['dispatched', 'rejected']);
-            [$wo, $op] = $this->context((int) $delivery->work_order_id, (int) $delivery->work_order_operation_id, true);
+            // 历史已结束工单仍可能遗留未签收配送，能否冲回由原领料、加工事实和成本校验决定。
+            [$wo, $op] = $this->context((int) $delivery->work_order_id, (int) $delivery->work_order_operation_id, true, true);
             $issue = MfgMaterialIssue::query()->lockForUpdate()->findOrFail($delivery->material_issue_id);
             $return = $this->returns->recallIssue($wo, $op, $issue, '配料单 '.$delivery->delivery_no.' 收回：'.trim($reason), $actor);
             $delivery->update(['status' => 'recalled', 'material_return_id' => $return->id, 'close_remark' => mb_substr(trim($reason), 0, 500),
@@ -374,10 +375,11 @@ final class MaterialDeliveryService
             }, $picks)];
     }
 
-    private function context(int $workOrderId, int $operationId, bool $lock): array
+    private function context(int $workOrderId, int $operationId, bool $lock, bool $allowEnded = false): array
     {
         $wo = MfgWorkOrder::query()->when($lock, fn ($q) => $q->lockForUpdate())->findOrFail($workOrderId);
-        if (! in_array($wo->status, self::OPEN_WO, true)) $this->fail('status_invalid', '工单不在生产中，不能配送。');
+        if (! in_array($wo->status, self::OPEN_WO, true) && ! ($allowEnded && in_array($wo->status, ['completed', 'closed', 'cancelled'], true)))
+            $this->fail('status_invalid', '工单不在生产中，不能配送。');
         $op = MfgWorkOrderOperation::query()->where('work_order_id', $wo->id)->when($lock, fn ($q) => $q->lockForUpdate())->find($operationId);
         if (! $op || $op->execution_context !== 'production') $this->fail('operation_invalid', '这道不是本工单的车间工序。');
         return [$wo, $op];

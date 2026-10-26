@@ -1,5 +1,5 @@
 <template>
-  <el-drawer title="到货不合格品处理" :visible.sync="localVisible" size="440px" append-to-body @open="load">
+  <el-dialog title="到货不合格品处理" :visible.sync="localVisible" width="min(960px, calc(100vw - 40px))" top="5vh" append-to-body :close-on-click-modal="false" @open="open" @closed="loadRevision++">
     <div class="defect-drawer-body" v-loading="loading">
       <el-alert title="处理动作均记录业务单号、操作人和时间；库存只接收合格数量，未决金额保持冻结。" type="warning" :closable="false" show-icon />
       <section v-for="row in rows" :key="row.id" class="defect-line-card">
@@ -23,8 +23,9 @@
         </div>
       </section>
       <el-empty v-if="!loading && !rows.length" description="本到货单没有不合格品" :image-size="64" />
+      <el-pagination background layout="total, sizes, prev, pager, next" :current-page.sync="page" :page-size.sync="perPage" :page-sizes="[10,20,50,100]" :total="total" @current-change="load" @size-change="page=1;load()" />
     </div>
-  </el-drawer>
+  </el-dialog>
 </template>
 
 <script>
@@ -34,24 +35,39 @@ import { actionDefectHandling, listDefectHandlings, saveDefectHandling } from '@
 export default {
   name: 'PurchaseDefectDrawer',
   props: { visible: Boolean, receiptNo: { type: String, default: '' } },
-  data: () => ({ loading: false, rows: [], forms: {}, methods: [{ value: 'return_supplier', label: '退供应商' }, { value: 'exchange', label: '换货' }, { value: 'concession', label: '让步接收' }, { value: 'repair', label: '返修' }, { value: 'scrap', label: '报废' }, { value: 'pending', label: '待决定' }] }),
+  data: () => ({ loading: false, loadRevision: 0, page: 1, perPage: 10, total: 0, rows: [], forms: {}, methods: [{ value: 'return_supplier', label: '退供应商' }, { value: 'exchange', label: '换货' }, { value: 'concession', label: '让步接收' }, { value: 'repair', label: '返修' }, { value: 'scrap', label: '报废' }, { value: 'pending', label: '待决定' }] }),
   computed: {
     localVisible: { get() { return this.visible }, set(value) { this.$emit('update:visible', value) } }
   },
+  watch: { receiptNo() { if (this.visible) this.open() }, visible(value) { if (!value) this.loadRevision++ } },
   methods: {
+    open() { this.loadRevision++; this.page = 1; this.perPage = 10; this.forms = {}; this.rows = []; this.total = 0; this.loading = false; this.load() },
+    emptyForm(row) { return { receipt_item_id: row.receipt_item_id, handling_method: 'return_supplier', handling_qty: Number(row.remaining_qty || 0), defect_reason: '', responsible_party: '供应商', remark: '' } },
     async load() {
       if (!this.receiptNo) return
+      const revision = ++this.loadRevision
+      const receiptNo = this.receiptNo
       this.loading = true
       try {
-        const res = await listDefectHandlings({ receipt_no: this.receiptNo, page: 1, per_page: 100 })
+        const res = await listDefectHandlings({ receipt_no: receiptNo, page: this.page, per_page: this.perPage })
+        if (revision !== this.loadRevision || receiptNo !== this.receiptNo || !this.visible) return
         this.rows = res.data.data || []
-        this.rows.forEach(row => this.$set(this.forms, row.id, { receipt_item_id: row.receipt_item_id, handling_method: 'return_supplier', handling_qty: Number(row.remaining_qty || 0), defect_reason: '', responsible_party: '供应商', remark: '' }))
-      } finally { this.loading = false }
+        this.total = Number(res.data.total || 0)
+        this.rows.filter(row => !this.forms[row.id]).forEach(row => this.$set(this.forms, row.id, this.emptyForm(row)))
+      } catch (error) { if (revision === this.loadRevision) this.$message.error(error.userMessage || '不合格品加载失败') }
+      finally { if (revision === this.loadRevision) this.loading = false }
     },
     async createHandling(row) {
       const form = this.forms[row.id]
       if (!String(form.defect_reason || '').trim()) return this.$message.warning('请填写瑕疵原因')
-      try { await saveDefectHandling(form); this.$message.success('处理单已创建，请继续执行后续动作'); await this.load(); this.$emit('changed') } catch (e) { this.$message.error(e.userMessage || '创建处理失败') }
+      try {
+        await saveDefectHandling(form)
+        this.$message.success('处理单已创建，请继续执行后续动作')
+        await this.load()
+        const current = this.rows.find(record => record.id === row.id)
+        if (current) this.$set(this.forms, row.id, this.emptyForm(current))
+        this.$emit('changed')
+      } catch (e) { this.$message.error(e.userMessage || '创建处理失败') }
     },
     actions(h) {
       const map = { concession_pending_approval: [{ value: 'approve_concession', label: '批准让步接收', result: true }], repair_pending_start: [{ value: 'start_repair', label: '开始返修' }], repair_in_progress: [{ value: 'complete_repair', label: '完成返修并复检', result: true }], scrap_pending_approval: [{ value: 'approve_scrap', label: '批准报废' }], scrap_pending_confirmation: [{ value: 'confirm_scrap', label: '确认实物报废', result: true }], exchange_pending_original_return: [{ value: 'confirm_exchange_return', label: '确认原件退回' }], exchange_pending_replacement_receipt: [{ value: 'complete_exchange', label: '确认替换品验收', result: true }] }
@@ -75,5 +91,5 @@ export default {
 </script>
 
 <style scoped>
-.defect-drawer-body{padding:0 16px 24px}.defect-line-card{margin-top:12px;padding:12px;border:1px solid #dfe5e9;border-radius:4px}.defect-line-card>header,.handling-card>div:first-child{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}.defect-line-card header div{display:grid;gap:4px}.defect-line-card small,.handling-card p{color:#74808a}.create-form{display:grid;grid-template-columns:1fr 130px;gap:8px;margin-top:12px}.create-form .el-input-number,.create-form .el-button{width:100%}.handling-card{margin-top:10px;padding:10px;background:#f7f9fa;border-left:3px solid #10a15c}.handling-card p{margin:5px 0;font-size:12px}.handling-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+.defect-drawer-body{padding:0 16px 24px;max-height:calc(85vh - 110px);overflow-y:auto}.defect-drawer-body .el-pagination{margin-top:16px;text-align:right}.defect-line-card{margin-top:12px;padding:12px;border:1px solid #dfe5e9;border-radius:4px}.defect-line-card>header,.handling-card>div:first-child{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}.defect-line-card header div{display:grid;gap:4px}.defect-line-card small,.handling-card p{color:#74808a}.create-form{display:grid;grid-template-columns:1fr 130px;gap:8px;margin-top:12px}.create-form .el-input-number,.create-form .el-button{width:100%}.handling-card{margin-top:10px;padding:10px;background:#f7f9fa;border-left:3px solid #10a15c}.handling-card p{margin:5px 0;font-size:12px}.handling-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
 </style>

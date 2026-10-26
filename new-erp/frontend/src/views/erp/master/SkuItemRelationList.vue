@@ -104,9 +104,7 @@
       <div class="filter-inputs">
         <div class="filter-item">
           <span class="filter-label">所属商品</span>
-          <el-select v-model="filters.product_id" size="small" clearable filterable placeholder="请选择商品" class="filter-select-lg">
-            <el-option v-for="p in products" :key="p.id" :label="`${p.product_code || '-'}｜${p.product_name}`" :value="p.id" />
-          </el-select>
+          <paged-record-select v-model="filters.product_id" size="small" clearable placeholder="请选择商品" class="filter-select-lg" entity="products" title="选择商品" category-type="product" />
         </div>
         <div class="filter-item">
           <span class="filter-label">SKU检索</span>
@@ -786,6 +784,7 @@
 </template>
 
 <script>
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { erpDateTime } from '../../../utils/dateTime'
 import pagedScroll from '../../../directives/pagedScroll'
 import { materialListPath } from '../../../utils/materialManagementScope.mjs'
@@ -802,6 +801,7 @@ import {
 } from '../../../api/erp/master'
 
 export default {
+  components: { PagedRecordSelect },
   name: 'SkuItemRelationList',
   directives: { pagedScroll },
   data () {
@@ -914,18 +914,11 @@ export default {
     }
   },
   created () {
-    this.loadProducts()
     this.load()
   },
   methods: {
     defaultItemPath(item) {
       return materialListPath(item.management_scope || (item.item_type === 'office_consumable' ? 'office' : 'factory'))
-    },
-    async loadProducts () {
-      try {
-        const { data } = await listEntity('products', { per_page: 100 })
-        this.products = data.data || []
-      } catch (e) {}
     },
     async load () {
       this.loading = true

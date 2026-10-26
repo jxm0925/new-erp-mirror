@@ -20,14 +20,16 @@ class DatabaseSeeder extends Seeder
     private function seed(): void
     {
         $this->call([
-            ErpStandardUnitSeeder::class,
-            ErpDocumentNumberRuleSeeder::class,
-            ErpApprovedMasterDataSeeder::class,
-            ErpProductionCatalogSeeder::class,
-            ErpFinanceReferenceSeeder::class,
-            ErpSalesReferenceSeeder::class,
-            ErpRbacSeeder::class,
+            ErpAdministratorSeeder::class,
             ErpApprovalConfigurationSeeder::class,
+            ErpApprovedMasterDataSeeder::class,
+            ErpDocumentNumberRuleSeeder::class,
+            ErpDualFilterMaterialSeeder::class,
+            ErpFinanceReferenceSeeder::class,
+            ErpProductionCatalogSeeder::class,
+            ErpRbacSeeder::class,
+            ErpSalesReferenceSeeder::class,
+            ErpStandardUnitSeeder::class
         ]);
     }
 }

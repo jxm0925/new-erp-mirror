@@ -19,16 +19,16 @@
           <el-date-picker v-model="dateRange" type="daterange" value-format="yyyy-MM-dd" range-separator="~" start-placeholder="开始日期" end-placeholder="结束日期" @change="syncDateRange" />
         </label>
         <label>转出账户
-          <el-select v-model="query.source_account_id" clearable filterable placeholder="请选择转出账户"><el-option v-for="a in accounts" :key="`s-${a.id}`" :label="`${a.account_name} · ${a.currency}`" :value="a.id" /></el-select>
+          <paged-record-select v-model="query.source_account_id" clearable :request="listAccounts" :columns="[{ prop: 'account_no', label: '账户编号' }, { prop: 'account_name', label: '账户名称' }, { prop: 'currency', label: '币种' }]" :label="accountLabel" title="选择资金账户" />
         </label>
         <label>转入账户
-          <el-select v-model="query.target_account_id" clearable filterable placeholder="请选择转入账户"><el-option v-for="a in accounts" :key="`t-${a.id}`" :label="`${a.account_name} · ${a.currency}`" :value="a.id" /></el-select>
+          <paged-record-select v-model="query.target_account_id" clearable :request="listAccounts" :columns="[{ prop: 'account_no', label: '账户编号' }, { prop: 'account_name', label: '账户名称' }, { prop: 'currency', label: '币种' }]" :label="accountLabel" title="选择资金账户" />
         </label>
         <label>源币
-          <el-select v-model="query.source_currency" clearable placeholder="请选择源币"><el-option v-for="c in currencies" :key="`sc-${c}`" :label="c" :value="c" /></el-select>
+          <paged-record-select v-model="query.source_currency" clearable :request="listCurrencies" :columns="[{ prop: 'currency_code', label: '币种编码' }, { prop: 'currency_name', label: '币种名称' }]" value-key="currency_code" :label="currencyLabel" title="选择币种" />
         </label>
         <label>目标币
-          <el-select v-model="query.target_currency" clearable placeholder="请选择目标币"><el-option v-for="c in currencies" :key="`tc-${c}`" :label="c" :value="c" /></el-select>
+          <paged-record-select v-model="query.target_currency" clearable :request="listCurrencies" :columns="[{ prop: 'currency_code', label: '币种编码' }, { prop: 'currency_name', label: '币种名称' }]" value-key="currency_code" :label="currencyLabel" title="选择币种" />
         </label>
         <label>单据状态
           <el-select v-model="query.status" clearable placeholder="请选择状态"><el-option label="草稿" value="draft" /><el-option label="已确认" value="confirmed" /><el-option label="已作废" value="voided" /></el-select>
@@ -67,22 +67,21 @@
 </template>
 
 <script>
-import { listFinanceAccounts, listFinanceTransfers } from '../../../api/erp/finance'
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
+import { listFinanceAccounts, listFinanceTransfers, listFinanceCurrencies } from '../../../api/erp/finance'
 
 const blankQuery = () => ({ source_account_id: '', target_account_id: '', source_currency: '', target_currency: '', status: '', keyword: '', business_date_start: '', business_date_end: '' })
 
 export default {
+  components: { PagedRecordSelect },
   data: () => ({ loading: false, accounts: [], rows: [], currencies: [], dateRange: [], query: blankQuery(), page: 1, perPage: 10, total: 0, summary: { all: 0, draft: 0, confirmed: 0, voided: 0 } }),
   created () { this.bootstrap() },
   methods: {
-    async bootstrap () {
-      try {
-        const accountResult = await listFinanceAccounts({ page: 1, per_page: 100 })
-        this.accounts = accountResult.data.data || []
-        this.currencies = [...new Set(this.accounts.map(x => x.currency).filter(Boolean))]
-      } catch (e) { this.$message.error(e.userMessage || '资金账户加载失败') }
-      this.load()
-    },
+    listAccounts: listFinanceAccounts,
+    listCurrencies: listFinanceCurrencies,
+    accountLabel(row) { return `${row.account_name} · ${row.currency}` },
+    currencyLabel(row) { return `${row.currency_code} · ${row.currency_name}` },
+    bootstrap () { this.load() },
     async load () {
       this.loading = true
       try {

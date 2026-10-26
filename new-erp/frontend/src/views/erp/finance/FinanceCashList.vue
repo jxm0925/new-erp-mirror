@@ -63,9 +63,7 @@
           </div>
           <div class="filter-item">
             <span class="filter-label">资金账户</span>
-            <el-select v-model="query.finance_account_id" size="small" clearable placeholder="全部账户" @change="search">
-              <el-option v-for="a in accounts" :key="a.id" :label="a.account_name" :value="a.id" />
-            </el-select>
+            <paged-record-select v-model="query.finance_account_id" size="small" clearable placeholder="全部账户" @change="search" :request="listAccounts" :columns="[{ prop: 'account_no', label: '账户编号' }, { prop: 'account_name', label: '账户名称' }, { prop: 'currency', label: '币种' }]" :params="{ status: 'enabled' }" :label="accountLabel" title="选择资金账户" />
           </div>
           <div class="filter-item">
             <span class="filter-label">单据状态</span>
@@ -483,6 +481,7 @@
 </template>
 
 <script>
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { listCashDocuments, confirmCashDocument, voidCashDocument, listFinanceAccounts, resolveFinanceSource, getCashDocument } from '../../../api/erp/finance'
 import FinanceAllocation from './FinanceAllocation.vue'
 
@@ -490,7 +489,7 @@ const blankQuery = () => ({ keyword: '', party_keyword: '', finance_account_id: 
 const positiveId = value => /^\d+$/.test(String(value || '')) && Number(value) > 0 ? Number(value) : null
 
 export default {
-  components: { FinanceAllocation, PurchasePaymentLinkDialog: () => import('../../../components/finance/PurchasePaymentLinkDialog.vue') },
+  components: { PagedRecordSelect, FinanceAllocation, PurchasePaymentLinkDialog: () => import('../../../components/finance/PurchasePaymentLinkDialog.vue') },
   props: { direction: { type: String, required: true } },
   data: () => ({
     loading: false, rows: [], accounts: [], page: 1, perPage: 10, total: 0,
@@ -517,9 +516,10 @@ export default {
   watch: {
     routeContextKey: { immediate: true, handler() { this.initializeFromRoute() } },
   },
-  created() { this.loadAccounts() },
   beforeDestroy() { this.contextRevision++; this.loadRevision++ },
   methods: {
+    listAccounts: listFinanceAccounts,
+    accountLabel(row) { return row.account_name },
     money(value) { return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) },
     dateText(value) { return String(value || '').slice(0, 10) || '—' },
     tagType(value) { return value === 'confirmed' ? 'success' : value === 'voided' ? 'danger' : 'warning' },
@@ -585,10 +585,6 @@ export default {
         const body = this.$refs.cashTableCard?.querySelector('.el-table__body-wrapper')
         if (body) body.scrollLeft = 0
       })
-    },
-    async loadAccounts() {
-      try { const response = await listFinanceAccounts({ status: 'enabled', page: 1, per_page: 100 }); this.accounts = response.data.data || [] }
-      catch (error) { this.$message.error(error.userMessage || '资金账户加载失败') }
     },
     async load() {
       const revision = ++this.loadRevision

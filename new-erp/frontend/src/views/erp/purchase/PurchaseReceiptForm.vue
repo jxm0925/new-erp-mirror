@@ -26,9 +26,7 @@
         </label>
         <label class="field-block required">
           <span>供应商</span>
-          <el-select v-model="form.supplier_id" size="small" filterable :disabled="isReplacement" placeholder="请选择供应商">
-            <el-option v-for="supplier in validSuppliers" :key="supplier.id" :value="supplier.id" :label="supplier.supplier_name" />
-          </el-select>
+          <paged-record-select v-model="form.supplier_id" size="small" :disabled="isReplacement" placeholder="请选择供应商" entity="suppliers" :params="{ purchase_receipt_available: 1 }" :selected-rows.sync="suppliers" title="选择供应商" />
         </label>
         <label class="field-block required">
           <span>到货日期</span>
@@ -91,7 +89,7 @@
           <section class="editor-group">
             <h3>数量与换算</h3>
             <label class="compact-field required"><span>到货采购数量</span><el-input v-model.number="activeLine.qty" type="number" size="small" min="0.0001" :disabled="isReplacement" @input="syncReceiptActualQty(activeLine)"><template slot="append">{{ purchaseUnitName(activeLine) }}</template></el-input></label>
-            <label class="compact-field required"><span>采购单位</span><el-select v-model="activeLine.purchase_unit_id" size="small" :disabled="isReplacement" placeholder="请选择采购单位" @change="applyConversion(activeLine)"><el-option v-for="option in activeLine._conversionOptions || []" :key="option.purchase_unit_id" :value="option.purchase_unit_id" :label="purchaseOptionLabel(option)" /></el-select></label>
+            <label class="compact-field required"><span>采购单位</span><paged-record-select v-model="activeLine.purchase_unit_id" size="small" :disabled="isReplacement" placeholder="请选择采购单位" @change="applyConversion(activeLine)" :key="'purchase-unit-' + activeLine.item_id" :params="{ item_id: activeLine.item_id }" :request="params => purchaseConversions(activeLine, params)" value-key="purchase_unit_id" :selected-rows.sync="activeLine._conversionOptions" :local-rows="localConversionOptions(activeLine)" :label="purchaseOptionLabel" :columns="[{ prop: 'purchase_unit.unit_name', label: '采购单位' }, { prop: 'factor', label: '换算比例' }, { prop: 'base_unit.unit_name', label: '基本单位' }]" title="选择采购单位" /></label>
             <label class="compact-field required"><span>换算因子</span><el-input :value="conversionFactor(activeLine)" size="small" disabled /></label>
             <label class="compact-field"><span>标准基本数量</span><el-input :value="standardBaseQty(activeLine)" size="small" disabled /></label>
             <label class="compact-field"><span>实际基本数量</span><el-input v-model.number="activeLine.actual_base_qty" type="number" size="small" min="0" :disabled="!actualConversionAllowed(activeLine)" /></label>
@@ -106,8 +104,8 @@
             <label class="compact-field required"><span>不合格数量</span><el-input v-model.number="activeLine.unqualified_qty" type="number" size="small" min="0" @change="syncQualityQty(activeLine, 'unqualified_qty')" /></label>
             <template v-if="isStockManaged(activeLine)">
               <label class="compact-field required"><span>批次号</span><el-input :value="activeLine.batch_no || '保存时系统自动生成'" size="small" disabled class="erp-system-number" /></label>
-              <label class="compact-field" :class="{ required: qualifiedBaseQty(activeLine) > 0 }"><span>默认仓库</span><el-select v-model="activeLine.warehouse_id" size="small" :placeholder="qualifiedBaseQty(activeLine) > 0 ? '请选择仓库' : '无需入库'" :disabled="qualifiedBaseQty(activeLine) <= 0" @change="onDefaultWarehouseChange(activeLine)"><el-option v-for="warehouse in scopedWarehouses" :key="warehouse.id" :value="warehouse.id" :label="warehouse.warehouse_name" /></el-select></label>
-              <label class="compact-field" :class="{ required: qualifiedBaseQty(activeLine) > 0 }"><span>默认库位</span><el-select v-model="activeLine.location_id" size="small" :placeholder="qualifiedBaseQty(activeLine) > 0 ? '请选择库位' : '无需入库'" :disabled="qualifiedBaseQty(activeLine) <= 0" @change="onDefaultLocationChange(activeLine)"><el-option v-for="location in filteredLocations(activeLine.warehouse_id)" :key="location.id" :value="location.id" :label="location.location_name" /></el-select></label>
+              <label class="compact-field" :class="{ required: qualifiedBaseQty(activeLine) > 0 }"><span>默认仓库</span><paged-record-select v-model="activeLine.warehouse_id" size="small" :placeholder="qualifiedBaseQty(activeLine) > 0 ? '请选择仓库' : '无需入库'" :disabled="qualifiedBaseQty(activeLine) <= 0" @change="onDefaultWarehouseChange(activeLine)" entity="warehouses" :params="{ management_scope: form.management_scope, statuses: ['enabled', 'active'] }" :selected-rows.sync="warehouses" title="选择仓库" /></label>
+              <label class="compact-field" :class="{ required: qualifiedBaseQty(activeLine) > 0 }"><span>默认库位</span><paged-record-select v-model="activeLine.location_id" size="small" :placeholder="qualifiedBaseQty(activeLine) > 0 ? '请选择库位' : '无需入库'" :disabled="qualifiedBaseQty(activeLine) <= 0 || !activeLine.warehouse_id" @change="onDefaultLocationChange(activeLine)" entity="locations" :params="{ management_scope: form.management_scope, warehouse_id: activeLine.warehouse_id, statuses: ['enabled', 'active'] }" :selected-rows.sync="locations" title="选择库位" /></label>
               <div class="allocation-entry"><span>入库库位分配</span><div><el-button size="mini" type="success" plain icon="el-icon-s-grid" :disabled="qualifiedBaseQty(activeLine) <= 0" @click="openAllocationDialog(activeLine)">多库位分配</el-button><small>{{ allocationProgressText(activeLine) }}</small></div></div>
             </template>
             <el-alert v-else title="该物料按非库存方式采购：验收完成后直接形成履约与结算事实，不要求仓库、库位、批次或库存过账。" type="info" :closable="false" />
@@ -172,8 +170,8 @@
         <div class="allocation-toolbar"><strong>{{ activeAllocationItemName }}</strong><el-button size="mini" type="success" icon="el-icon-plus" @click="addAllocationRow">添加库位</el-button></div>
         <el-table :data="allocationDialog.rows" size="mini" border>
           <el-table-column type="index" label="序号" width="52" align="center" />
-          <el-table-column label="仓库" width="132"><template slot-scope="{row}"><el-select v-model="row.warehouse_id" size="small" placeholder="选择仓库" @change="row.location_id=null"><el-option v-for="warehouse in scopedWarehouses" :key="warehouse.id" :value="warehouse.id" :label="warehouse.warehouse_name" /></el-select></template></el-table-column>
-          <el-table-column label="库位" width="142"><template slot-scope="{row}"><el-select v-model="row.location_id" size="small" placeholder="选择库位"><el-option v-for="location in filteredLocations(row.warehouse_id)" :key="location.id" :value="location.id" :label="location.location_name" /></el-select></template></el-table-column>
+          <el-table-column label="仓库" width="132"><template slot-scope="{row}"><paged-record-select v-model="row.warehouse_id" size="small" placeholder="选择仓库" @change="row.location_id=null" entity="warehouses" :params="{ management_scope: form.management_scope, statuses: ['enabled', 'active'] }" :selected-rows.sync="warehouses" title="选择仓库" /></template></el-table-column>
+          <el-table-column label="库位" width="142"><template slot-scope="{row}"><paged-record-select v-model="row.location_id" size="small" placeholder="选择库位" :disabled="!row.warehouse_id" entity="locations" :params="{ management_scope: form.management_scope, warehouse_id: row.warehouse_id, statuses: ['enabled', 'active'] }" :selected-rows.sync="locations" title="选择库位" /></template></el-table-column>
           <el-table-column label="基本数量" width="105"><template slot-scope="{row}"><el-input-number v-model="row.base_qty" size="small" :min="0" :precision="allocationPrecision" :controls="false" :disabled="allocationUsesSerials" /></template></el-table-column>
           <el-table-column v-if="allocationUsesSerials" label="设备编号 / 序列号" min-width="235"><template slot-scope="{row}"><el-select v-model="row.serial_nos" size="small" multiple filterable collapse-tags placeholder="分配已录入编号" @change="row.base_qty=row.serial_nos.length"><el-option v-for="entry in allocationSerialOptions" :key="entry.serial_no" :value="entry.serial_no" :label="entry.serial_no" :disabled="serialAssignedElsewhere(entry.serial_no,row)" /></el-select></template></el-table-column>
           <el-table-column label="操作" width="55" align="center"><template slot-scope="{$index}"><el-button type="text" class="danger-link" @click="removeAllocationRow($index)">删除</el-button></template></el-table-column>
@@ -188,6 +186,7 @@
 </template>
 
 <script>
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { listEntity, listItemPurchaseConversionOptions } from '@/api/erp/master'
 import { generateReceiptSerials, getPurchase, savePurchaseReceipt } from '@/api/erp/purchase'
 import { reserveForCreatePage, clearCreatePageReservation } from '@/utils/documentNumberReservation'
@@ -197,7 +196,7 @@ import { purchaseScopes, purchaseScopeLabel, purchaseScopeIssue, purchaseSourceL
 import ReceiptPhysicalEntries from '@/components/purchase/ReceiptPhysicalEntries.vue'
 
 export default {
-  components: { PurchaseItemPicker, PurchaseAttachmentPanel, ReceiptPhysicalEntries },
+  components: { PagedRecordSelect, PurchaseItemPicker, PurchaseAttachmentPanel, ReceiptPhysicalEntries },
   data: () => ({
     form: { management_scope: 'factory', receipt_no: '', supplier_id: null, receipt_date: '', confirm_status: 'draft', stock_post_status: 'pending', remark: '', items: [] },
     items: [], suppliers: [], warehouses: [], locations: [], activeIndex: 0, reservation: null, saving: false, pickerTarget: null, attachmentDraftToken: '',
@@ -248,28 +247,30 @@ export default {
     }
   },
   watch: { '$route.fullPath'(next, previous) { if (next !== previous) this.initializeDocument() } },
-  async mounted() {
-    const [suppliers, locations] = await Promise.allSettled([
-      listEntity('suppliers', { status: 'enabled', page: 1, per_page: 100 }),
-      listEntity('locations', { page: 1, per_page: 100 })
-    ])
-    this.suppliers = suppliers.status === 'fulfilled' ? suppliers.value.data.data || [] : []
-    this.locations = locations.status === 'fulfilled' ? (locations.value.data.data || []).filter(row => ['active', 'enabled'].includes(row.status)) : []
-    await this.initializeDocument()
-  },
+  async mounted() { await this.initializeDocument() },
   methods: {
+    purchaseConversions(line, params) { return listItemPurchaseConversionOptions(line.item_id, params) },
+    localConversionOptions(line) { return (line._conversionOptions || []).filter(row => row.identity_conversion || row.snapshot_option) },
     scopeLabel(scope) { return purchaseScopeLabel(scope) },
     warehouseMatches(id) { return this.scopedWarehouses.some(row => Number(row.id) === Number(id)) },
     async loadScopedWarehouses() {
       const revision = ++this.warehouseRevision
       const scope = this.form.management_scope
       this.warehouses = []
+      this.locations = []
       if (!validPurchaseScope(scope)) return
+      const rows = (this.form.items || []).flatMap(line => [line, ...(line._allocations || line.allocations || [])])
+      const warehouseIds = [...new Set(rows.map(row => row.warehouse_id).filter(Boolean))]
+      const locationIds = [...new Set(rows.map(row => row.location_id).filter(Boolean))]
       try {
-        const { data } = await listEntity('warehouses', { management_scope: scope, page: 1, per_page: 100 })
+        const [warehouses, locations] = await Promise.all([
+          warehouseIds.length ? listEntity('warehouses', { management_scope: scope, statuses: ['enabled', 'active'], ids: warehouseIds, per_page: warehouseIds.length }) : null,
+          locationIds.length ? listEntity('locations', { management_scope: scope, statuses: ['enabled', 'active'], ids: locationIds, per_page: locationIds.length }) : null
+        ])
         if (revision !== this.warehouseRevision || scope !== this.form.management_scope) return
-        this.warehouses = (data.data || []).filter(row => ['enabled', 'active'].includes(row.status) && purchaseScopeMatches(row, scope))
-      } catch (error) { if (revision === this.warehouseRevision) this.$message.error(error.userMessage || '仓库加载失败') }
+        this.warehouses = warehouses?.data.data || []
+        this.locations = locations?.data.data || []
+      } catch (error) { if (revision === this.warehouseRevision) this.$message.error(error.userMessage || '仓库库位加载失败') }
     },
     async changeManagementScope(scope) {
       if (scope === this.form.management_scope || !validPurchaseScope(scope) || this.scopeLocked) return
@@ -319,6 +320,7 @@ export default {
         const response = await getPurchase('receipts', this.$route.params.id)
         if (revision !== this.documentRevision) return
         const data = response.data
+        if (data.supplier) this.suppliers = [data.supplier]
         this.attachmentDraftToken = ''
         ;(data.items || []).forEach(line => this.rememberItem(line.item))
         this.form = { ...data, items: (data.items || []).map(this.normalizeLine) }
@@ -383,7 +385,7 @@ export default {
       if (!line.item_id) return this.$set(line, '_conversionOptions', [])
       const revision = this.documentRevision
       const itemId = line.item_id
-      const { data } = await listItemPurchaseConversionOptions(itemId, { page: 1, per_page: 100 })
+      const { data } = await listItemPurchaseConversionOptions(itemId, { page: 1, per_page: 10, ids: !chooseDefault && line.purchase_unit_id ? [line.purchase_unit_id] : undefined })
       if (revision !== this.documentRevision || line.item_id !== itemId || !this.form.items.includes(line)) return
       const item = this.itemById(line.item_id)
       const itemUnit = item && (item.unit?.standard_unit || item.unit?.standardUnit || item.unit)

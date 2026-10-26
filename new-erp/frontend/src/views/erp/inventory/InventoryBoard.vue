@@ -19,7 +19,7 @@
       <section class="filter-panel posting-filter">
         <label>到货日期：<el-date-picker v-model="postingQuery.dateRange" size="small" type="daterange" start-placeholder="开始日期" end-placeholder="结束日期" /></label>
         <label>供应商：<el-select v-model="postingQuery.supplier" size="small" clearable placeholder="请选择"><el-option label="苏州华成电子有限公司" value="苏州华成电子有限公司" /><el-option label="东莞市怡达塑胶有限公司" value="东莞市怡达塑胶有限公司" /></el-select></label>
-        <label>仓库：<el-select v-model="postingQuery.warehouse" size="small" clearable placeholder="请选择"><el-option v-for="w in warehouses" :key="w.id" :label="w.warehouse_name" :value="w.id" /></el-select></label>
+        <label>仓库：<paged-record-select v-model="postingQuery.warehouse" entity="warehouses" title="选择仓库" placeholder="请选择" /></label>
         <label>单据号：<el-input v-model="postingQuery.keyword" size="small" placeholder="请输入到货单号" /></label>
         <el-button size="small" type="success" @click="searchPostingRows">查询</el-button>
         <el-button size="small" @click="resetPostingQuery">重置</el-button>
@@ -135,8 +135,8 @@
       <section class="filter-panel balance-filter">
         <label>管理范围<el-select v-model="balanceQuery.management_scope" size="small" clearable placeholder="全部" @change="changeBalanceScope"><el-option label="工厂物料" value="factory" /><el-option label="办公用品" value="office" /></el-select></label>
         <label>物料编码/名称<el-input v-model="balanceQuery.keyword" size="small" placeholder="支持编码、名称模糊查询" /></label>
-        <label>仓库<el-select v-model="balanceQuery.warehouse" size="small" clearable placeholder="全部"><el-option v-for="w in warehouses" :key="w.id" :label="w.warehouse_name" :value="w.id" /></el-select></label>
-        <label>库位<el-select v-model="balanceQuery.location" size="small" clearable placeholder="全部"><el-option v-for="l in locations" :key="l.id" :label="l.location_name" :value="l.id" /></el-select></label>
+        <label>仓库<paged-record-select v-model="balanceQuery.warehouse" entity="warehouses" :params="{ management_scope: balanceQuery.management_scope || undefined }" title="选择仓库" placeholder="全部" @change="balanceQuery.location = ''" /></label>
+        <label>库位<paged-record-select v-model="balanceQuery.location" entity="locations" :params="{ warehouse_id: balanceQuery.warehouse || undefined, management_scope: balanceQuery.management_scope || undefined }" title="选择库位" placeholder="全部" /></label>
         <label>批次号<el-input v-model="balanceQuery.batch" size="small" placeholder="请输入批次号" /></label>
         <label>库存状态<el-select v-model="balanceQuery.status" size="small" clearable placeholder="全部状态"><el-option label="有库存" value="has_stock" /><el-option label="有异常数量" value="has_quality" /></el-select></label>
         <el-button size="small" type="success" class="btn-green-search" @click="searchBalances">查询</el-button>
@@ -605,8 +605,8 @@
         <label>事务类型<el-select v-model="txQuery.type" size="small" clearable placeholder="全部"><el-option label="采购到货入库" value="purchase_receipt_posting" /><el-option label="不合格品转合格补入库" value="purchase_receipt_quality_release" /><el-option label="手工库存调整" value="manual_adjustment" /></el-select></label>
         <label>来源单号<el-input v-model="txQuery.sourceNo" size="small" placeholder="请输入来源单号" /></label>
         <label>物料编码/名称<el-input v-model="txQuery.keyword" size="small" placeholder="支持编码/名称查询" /></label>
-        <label>仓库<el-select v-model="txQuery.warehouse" size="small" clearable placeholder="全部"><el-option v-for="w in warehouses" :key="w.id" :label="w.warehouse_name" :value="w.id" /></el-select></label>
-        <label>库位<el-select v-model="txQuery.location" size="small" clearable placeholder="全部"><el-option v-for="l in locations" :key="l.id" :label="l.location_name" :value="l.id" /></el-select></label>
+        <label>仓库<paged-record-select v-model="txQuery.warehouse" entity="warehouses" title="选择仓库" placeholder="全部" @change="txQuery.location = ''" /></label>
+        <label>库位<paged-record-select v-model="txQuery.location" entity="locations" :params="{ warehouse_id: txQuery.warehouse || undefined }" title="选择库位" placeholder="全部" /></label>
         <label>批次号<el-input v-model="txQuery.batch" size="small" placeholder="请输入批次号" /></label>
         <label>过账日期<el-date-picker v-model="txQuery.dateRange" type="daterange" size="small" range-separator="至" start-placeholder="开始日期" end-placeholder="结束日期" value-format="yyyy-MM-dd" /></label>
         <el-button size="small" type="success" @click="searchTransactions">查询</el-button>
@@ -755,8 +755,8 @@
             <el-button size="mini" type="success" plain @click="addPostingRepairAllocation(line)">添加库位</el-button>
           </header>
           <div v-for="(allocation,index) in line.allocations" :key="index" class="posting-repair-allocation">
-            <label>仓库<el-select v-model="allocation.warehouse_id" size="small" placeholder="请选择仓库" @change="allocation.location_id = null"><el-option v-for="w in warehouses" :key="w.id" :label="w.warehouse_name" :value="w.id" /></el-select></label>
-            <label>库位<el-select v-model="allocation.location_id" size="small" placeholder="请选择库位"><el-option v-for="l in filteredPostingLocations(allocation.warehouse_id)" :key="l.id" :label="l.location_name" :value="l.id" /></el-select></label>
+            <label>仓库<paged-record-select v-model="allocation.warehouse_id" entity="warehouses" :selected-rows="allocation.warehouse ? [allocation.warehouse] : []" title="选择仓库" placeholder="请选择仓库" :clearable="false" @change="allocation.location_id = null" /></label>
+            <label>库位<paged-record-select v-model="allocation.location_id" entity="locations" :params="{ warehouse_id: allocation.warehouse_id, statuses: ['active', 'enabled'] }" :selected-rows="allocation.location ? [allocation.location] : []" :disabled="!allocation.warehouse_id" title="选择库位" placeholder="请选择库位" :clearable="false" /></label>
             <label>分配基本数量<el-input-number v-model="allocation.base_qty" size="small" :min="0.00000001" :max="line.stockable_qty" :precision="4" controls-position="right" /></label>
             <label v-if="line.serial_tracking_mode !== 'none'" class="posting-repair-serials">设备编号<el-select v-model="allocation.serial_nos" size="small" multiple filterable placeholder="选择分配到该库位的编号"><el-option v-for="serial in serialNumberList(line.serial_text)" :key="serial" :label="serial" :value="serial" :disabled="postingSerialAssignedElsewhere(line, allocation, serial)" /></el-select></label>
             <el-button size="mini" type="text" class="posting-repair-remove" :disabled="line.allocations.length === 1" @click="removePostingRepairAllocation(line,index)">删除</el-button>
@@ -994,8 +994,8 @@
     <el-dialog title="选择库存对象" :visible.sync="balancePickerVisible" width="820px" class="balance-picker-dialog">
       <section class="filter-panel picker-filter">
         <label>物料编码/名称<el-input v-model="balancePickerQuery.keyword" size="small" placeholder="支持编码、名称模糊查询" /></label>
-        <label>仓库<el-select v-model="balancePickerQuery.warehouse" size="small" clearable placeholder="全部"><el-option v-for="w in warehouses" :key="w.id" :label="w.warehouse_name" :value="w.id" /></el-select></label>
-        <label>库位<el-select v-model="balancePickerQuery.location" size="small" clearable placeholder="全部"><el-option v-for="l in locations" :key="l.id" :label="l.location_name" :value="l.id" /></el-select></label>
+        <label>仓库<paged-record-select v-model="balancePickerQuery.warehouse" entity="warehouses" title="选择仓库" placeholder="全部" @change="balancePickerQuery.location = ''" /></label>
+        <label>库位<paged-record-select v-model="balancePickerQuery.location" entity="locations" :params="{ warehouse_id: balancePickerQuery.warehouse || undefined }" title="选择库位" placeholder="全部" /></label>
         <label>批次号<el-input v-model="balancePickerQuery.batch" size="small" placeholder="请输入批次号" /></label>
         <label>库存状态<el-select v-model="balancePickerQuery.status" size="small" clearable placeholder="全部"><el-option label="有库存" value="has_stock" /><el-option label="有异常数量" value="has_quality" /></el-select></label>
         <el-button size="small" type="success" @click="searchBalancePickerRows">查询</el-button>
@@ -1028,12 +1028,13 @@
 import { erpDateTime } from '../../../utils/dateTime'
 import cachedPageRoute from '@/utils/cachedPageRoute'
 import PopupManager from 'element-ui/lib/utils/popup/popup-manager'
-import { listEntity } from '@/api/erp/master'
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { listPendingReceipts, repairPostingReceiptAllocations, postPostingReceipt, listInventoryBalances, listInventoryItemBatches, getInventoryBatchContext, listInventoryBalanceSerials, listInventoryTransactions, listInventoryAdjustments, listInventoryAdjustmentReasons, generateInventoryAdjustmentSerials, saveInventoryAdjustment, submitInventoryAdjustment, postInventoryAdjustment, cancelInventoryAdjustment, deleteInventoryAdjustment, getInventoryQualityContext, createInventoryQualityEvent, getInventoryAlertPolicy, activateInventoryAlertPolicy, disableInventoryAlertPolicy } from '@/api/erp/inventory'
 
 export default {
   mixins: [cachedPageRoute],
   name: 'InventoryBoard',
+  components: { PagedRecordSelect },
   data() {
     return {
       activeView: 'posting',
@@ -1107,10 +1108,7 @@ export default {
       adjustmentSerialTotal: 0,
       balanceRows: [], balanceStats: { item_count: 0, stock_item_count: 0, batch_count: 0, quality_item_count: 0, inventory_value: 0 },
       transactions: [],
-      adjustmentRows: [],
-      items: [],
-      warehouses: [],
-      locations: []
+      adjustmentRows: []
     }
   },
   computed: {
@@ -1243,7 +1241,7 @@ export default {
     balancePickerQuery: { deep: true, handler() { this.balancePickerPagination.page = 1 } }
   },
   mounted() {
-    this.loadDictionaries()
+    this.loadAdjustmentReasons()
     this.loadCurrentView()
   },
   methods: {
@@ -1257,17 +1255,6 @@ export default {
         this.adjustmentQuery.no = String(query.adjustment_no)
         this.adjustmentPagination.page = 1
       }
-    },
-    async loadDictionaries() {
-      const [items, warehouses, locations] = await Promise.all([
-        listEntity('items', { per_page: 200 }),
-        listEntity('warehouses', { per_page: 200 }),
-        listEntity('locations', { per_page: 200 })
-      ])
-      this.items = items.data.data || []
-      this.warehouses = warehouses.data.data || []
-      this.locations = locations.data.data || []
-      await this.loadAdjustmentReasons()
     },
     async loadAdjustmentReasons() {
       try {
@@ -1463,6 +1450,8 @@ export default {
     },
     scopeLabel(scope) { return scope === 'office' ? '办公用品' : '工厂物料' },
     changeBalanceScope() {
+      this.balanceQuery.warehouse = ''
+      this.balanceQuery.location = ''
       this.selectedBalance = null
       this.balanceSelectedRows = []
       this.balanceDetailVisible = false
@@ -2145,9 +2134,6 @@ export default {
       if (!nonZero.length) return '0'
       return nonZero.map(([unit, qty]) => `${this.quantityNumber(qty)} ${unit}`).join(' + ')
     },
-    filteredPostingLocations(warehouseId) {
-      return this.locations.filter(location => Number(location.warehouse_id) === Number(warehouseId) && ['active', 'enabled'].includes(location.status))
-    },
     async confirmPosting() {
       const row = this.postingCandidate
       if (!row) return
@@ -2462,7 +2448,7 @@ export default {
 .purple { color: #7c3aed; background: #f5f3ff !important; }
 .filter-panel { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; padding: 12px 14px; background: #fff; border: 1px solid #e5e7eb; border-radius: 4px; margin-bottom: 14px; }
 .filter-panel label { display: flex; align-items: center; gap: 8px; color: #374151; white-space: nowrap; }
-.filter-panel .el-input, .filter-panel .el-select { width: 168px; }
+.filter-panel .el-input, .filter-panel .el-select, .filter-panel .paged-record-select { width: 168px; }
 .posting-filter .el-date-editor { width: 240px; }
 .posting-layout, .balance-layout { display: grid; grid-template-columns: minmax(0, 1fr) 430px; gap: 12px; }
 .tx-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
@@ -2778,7 +2764,7 @@ export default {
 }
 @media (max-width: 760px) {
   .balance-filter label { flex-direction: column; align-items: stretch; width: 100%; min-width: 0; }
-  .balance-filter .el-input, .balance-filter .el-select { width: 100%; min-width: 0; max-width: 100%; }
+  .balance-filter .el-input, .balance-filter .el-select, .balance-filter .paged-record-select { width: 100%; min-width: 0; max-width: 100%; }
   .inventory-view >>> .el-pagination { display: flex; flex-wrap: wrap; max-width: 100%; white-space: normal; }
   .inventory-view >>> .el-pagination__sizes, .inventory-view >>> .el-pagination__jump { margin: 0; }
   .serial-locator-summary { grid-template-columns:1fr 1fr; }

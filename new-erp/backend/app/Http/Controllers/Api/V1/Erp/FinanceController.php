@@ -55,12 +55,15 @@ class FinanceController extends Controller
             'status' => 'nullable|in:enabled,disabled',
             'usage' => 'nullable|in:sales,receipt,payment',
             'keyword' => 'nullable|string|max:120',
+            'ids' => 'nullable|array|max:1000',
+            'ids.*' => 'required|integer|min:1|distinct',
             'page' => 'nullable|integer|min:1',
             'per_page' => 'nullable|integer|min:1|max:100',
         ]);
         $query = PaymentMethod::query()->orderBy('sort')->orderBy('id');
         if (! empty($data['status'])) $query->where('status', $data['status']);
         if (! empty($data['usage'])) $query->where('available_for_'.$data['usage'], true);
+        if (isset($data['ids'])) $query->whereIn('id', $data['ids']);
         if ($keyword = trim((string) ($data['keyword'] ?? ''))) {
             $query->where(fn ($q) => $q->where('method_code', 'like', "%{$keyword}%")
                 ->orWhere('method_name', 'like', "%{$keyword}%"));
@@ -70,7 +73,7 @@ class FinanceController extends Controller
             'sales' => (clone $query)->where('available_for_sales', true)->count(),
             'payment' => (clone $query)->where('available_for_payment', true)->count(),
         ] : null;
-        $page = $query->paginate($this->perPage($request));
+        $page = $query->paginate(isset($data['ids']) ? max(1, count($data['ids'])) : $this->perPage($request));
         return response()->json([...$page->toArray(), ...($stats === null ? [] : ['stats' => $stats])]);
     }
 
@@ -130,10 +133,12 @@ class FinanceController extends Controller
     public function currencies(Request $request)
     {
         $this->authorizePermission($request, 'finance.view');
+        $selected = $request->validate(['ids' => 'nullable|array|max:1000', 'ids.*' => 'required|string|max:10|distinct']);
         $query = FinanceCurrency::query()->orderByDesc('is_base')->orderBy('sort')->orderBy('currency_code');
+        if (isset($selected['ids'])) $query->whereIn('currency_code', $selected['ids']);
         if ($request->filled('status')) $query->where('status', $request->string('status'));
         if ($keyword = trim((string) $request->input('keyword'))) $query->where(fn ($q) => $q->where('currency_code', 'like', "%{$keyword}%")->orWhere('currency_name', 'like', "%{$keyword}%"));
-        return response()->json($query->paginate($this->perPage($request)));
+        return response()->json($query->paginate(isset($selected['ids']) ? max(1, count($selected['ids'])) : $this->perPage($request)));
     }
 
     public function storeCurrency(Request $request, FinanceCurrencyApplicationService $service)
@@ -196,6 +201,7 @@ class FinanceController extends Controller
     public function accounts(Request $request)
     {
         $this->authorizePermission($request, 'finance.view');
+        $selected = $request->validate(['ids' => 'nullable|array|max:1000', 'ids.*' => 'required|integer|min:1|distinct']);
         // 余额由已确认的账户流水实时汇总（与 FinanceAccountLedgerService::carryingBalance 口径一致），不另存余额字段。
         $query = FinanceAccount::query()->withExists('movements')
             ->addSelect(['current_balance' => DB::table('erp_finance_account_movements')
@@ -203,12 +209,13 @@ class FinanceController extends Controller
                 ->whereColumn('finance_account_id', 'erp_finance_accounts.id')
                 ->where('status', 'confirmed')])
             ->orderBy('sort')->orderByDesc('id');
+        if (isset($selected['ids'])) $query->whereIn('id', $selected['ids']);
         if ($request->filled('status')) $query->where('status', $request->string('status'));
         if ($request->filled('account_type')) $query->where('account_type', $request->string('account_type'));
         if ($request->filled('currency')) $query->where('currency', $request->string('currency'));
         if ($accountName = trim((string) $request->input('account_name'))) $query->where('account_name', 'like', "%{$accountName}%");
         if ($keyword = trim((string) $request->input('keyword'))) $query->where(fn ($q) => $q->where('account_no', 'like', "%{$keyword}%")->orWhere('account_name', 'like', "%{$keyword}%")->orWhere('bank_account_no', 'like', "%{$keyword}%"));
-        return response()->json($query->paginate($this->perPage($request)));
+        return response()->json($query->paginate(isset($selected['ids']) ? max(1, count($selected['ids'])) : $this->perPage($request)));
     }
 
     public function storeAccount(Request $request, FinanceAccountApplicationService $service)

@@ -58,9 +58,7 @@
 
             <!-- Account Selector (editable state) -->
             <div v-if="!confirmed" class="account-selector-wrap">
-              <el-select v-model="form.source_account_id" filterable size="small" placeholder="选择转出账户" @change="accountChanged">
-                <el-option v-for="a in accounts" :key="a.id" :label="`${a.account_name} · ${a.currency}`" :value="a.id" :disabled="a.status !== 'enabled'" />
-              </el-select>
+              <paged-record-select v-model="form.source_account_id" size="small" placeholder="选择转出账户" :request="listAccounts" :columns="[{ prop: 'account_no', label: '账户编号' }, { prop: 'account_name', label: '账户名称' }, { prop: 'currency', label: '币种' }]" :params="{ status: 'enabled' }" :selected-rows.sync="accounts" :label="accountLabel" title="选择资金账户" @change="accountChanged" />
             </div>
 
             <!-- Account Profile -->
@@ -203,9 +201,7 @@
 
             <!-- Account Selector (editable state) -->
             <div v-if="!confirmed" class="account-selector-wrap">
-              <el-select v-model="form.target_account_id" filterable size="small" placeholder="选择转入账户" @change="accountChanged">
-                <el-option v-for="a in accounts" :key="a.id" :label="`${a.account_name} · ${a.currency}`" :value="a.id" :disabled="a.status !== 'enabled'" />
-              </el-select>
+              <paged-record-select v-model="form.target_account_id" size="small" placeholder="选择转入账户" :request="listAccounts" :columns="[{ prop: 'account_no', label: '账户编号' }, { prop: 'account_name', label: '账户名称' }, { prop: 'currency', label: '币种' }]" :params="{ status: 'enabled' }" :selected-rows.sync="accounts" :label="accountLabel" title="选择资金账户" @change="accountChanged" />
             </div>
 
             <!-- Account Profile -->
@@ -454,6 +450,7 @@
 </template>
 
 <script>
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { erpDateTime } from '../../../utils/dateTime'
 import {
   listFinanceAccounts,
@@ -480,6 +477,7 @@ const blank = () => ({
 })
 
 export default {
+  components: { PagedRecordSelect },
   data: () => ({
     loading: false,
     saving: false,
@@ -508,10 +506,10 @@ export default {
       return this.status === 'confirmed' || this.status === 'voided'
     },
     source() {
-      return this.accounts.find(x => Number(x.id) === Number(this.form.source_account_id)) || (this.accounts[0] || {})
+      return this.accounts.find(x => Number(x.id) === Number(this.form.source_account_id)) || this.detail.source_account || {}
     },
     target() {
-      return this.accounts.find(x => Number(x.id) === Number(this.form.target_account_id)) || (this.accounts[1] || {})
+      return this.accounts.find(x => Number(x.id) === Number(this.form.target_account_id)) || this.detail.target_account || {}
     },
     sourceCurrency() {
       return this.source.currency || ''
@@ -571,13 +569,15 @@ export default {
     this.bootstrap()
   },
   methods: {
+    listAccounts: listFinanceAccounts,
+    accountLabel(row) { return `${row.account_name} · ${row.currency}` },
     async bootstrap() {
       clearTimeout(this.previewTimer)
       this.previewRequestId += 1
       this.previewData = null
       this.loading = true
       try {
-        const r = await listFinanceAccounts({ per_page: 100 })
+        const r = await listFinanceAccounts({ page: 1, per_page: 10 })
         this.accounts = r.data.data || []
         if (this.docId) {
           await this.loadDetail()
@@ -601,6 +601,7 @@ export default {
     async loadDetail() {
       const r = await getFinanceTransfer(this.docId)
       this.detail = r.data.data || {}
+      this.accounts = [...this.accounts.filter(row => ![this.detail.source_account_id, this.detail.target_account_id].some(id => Number(id) === Number(row.id))), ...[this.detail.source_account, this.detail.target_account].filter(Boolean)]
       this.status = this.detail.status
       this.form = { ...blank(), ...this.detail }
       this.mode = this.detail.source_currency === this.detail.target_currency ? 'transfer' : 'exchange'

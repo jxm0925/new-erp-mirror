@@ -18,6 +18,7 @@ class SalesCustomerController extends Controller
     public function index(Request $request)
     {
         $this->authorize($request, 'sales.customer');
+        $selected = $request->validate(['ids' => 'nullable|array|max:1000', 'ids.*' => 'required|integer|min:1|distinct']);
         $summary = [
             'total' => SalesCustomer::count(),
             'enabled' => SalesCustomer::where('status', 'enabled')->count(),
@@ -29,6 +30,7 @@ class SalesCustomerController extends Controller
             'contacts' => fn ($q) => $q->where('status', 'enabled')->orderByDesc('is_default')->orderBy('id'),
             'addresses' => fn ($q) => $q->where('status', 'enabled')->orderByDesc('is_default')->orderBy('id'),
         ])->latest('updated_at');
+        if (isset($selected['ids'])) $query->whereIn('id', $selected['ids']);
         if ($request->filled('keyword')) {
             $keyword = trim((string) $request->input('keyword'));
             $query->where(fn ($q) => $q->where('customer_name', 'like', "%{$keyword}%")->orWhere('customer_code', 'like', "%{$keyword}%")->orWhere('contact_phone', 'like', "%{$keyword}%"));
@@ -43,7 +45,7 @@ class SalesCustomerController extends Controller
         if ($request->filled('customer_kind')) {
             $query->where('customer_kind', $request->input('customer_kind'));
         }
-        $page = $query->paginate(min(100, max(5, $request->integer('per_page', 10))));
+        $page = $query->paginate(isset($selected['ids']) ? max(1, count($selected['ids'])) : min(100, max(5, $request->integer('per_page', 10))));
         $payload = $page->toArray();
         $payload['summary'] = $summary;
         $payload['owner_options'] = SalesCustomer::query()

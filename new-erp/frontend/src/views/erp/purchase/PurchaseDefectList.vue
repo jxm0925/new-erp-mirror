@@ -16,9 +16,7 @@
       <el-select v-model="query.management_scope" size="small" clearable placeholder="全部管理类型" @change="search"><el-option v-for="scope in scopeOptions" :key="scope.value" :label="scope.label" :value="scope.value" /></el-select>
       <el-input v-model="query.receipt_no" size="small" placeholder="到货单号" clearable />
       <el-input v-model="query.purchase_order_no" size="small" placeholder="采购订单号" clearable />
-      <el-select v-model="query.supplier_id" size="small" clearable filterable placeholder="供应商">
-        <el-option v-for="s in suppliers" :key="s.id" :label="s.supplier_name" :value="s.id" />
-      </el-select>
+      <paged-record-select v-model="query.supplier_id" entity="suppliers" title="选择供应商" placeholder="供应商" />
       <el-input v-model="query.keyword" size="small" placeholder="物料编码/名称" clearable />
       <el-select v-model="query.handling_status" size="small" clearable placeholder="处理状态">
         <el-option label="待处理" value="pending" />
@@ -149,12 +147,13 @@
 </template>
 
 <script>
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { erpDateTime } from '../../../utils/dateTime'
-import { listEntity } from '@/api/erp/master'
 import { purchaseScopes, purchaseScopeLabel, validPurchaseScope } from '@/utils/purchaseManagementScope.mjs'
 import { actionDefectHandling, listDefectHandlings, saveDefectHandling } from '@/api/erp/purchase'
 
 export default {
+  components: { PagedRecordSelect },
   name: 'PurchaseDefectList',
   data() {
     return {
@@ -201,15 +200,10 @@ export default {
   },
   created() {
     if (this.$route.query.receipt_no) this.query.receipt_no = this.$route.query.receipt_no
-    this.loadSuppliers()
     this.load()
   },
   methods: {
     scopeLabel(scope) { return purchaseScopeLabel(scope) },
-    async loadSuppliers() {
-      const res = await listEntity('suppliers', { per_page: 200 })
-      this.suppliers = res.data.data || []
-    },
     async load() {
       const revision = ++this.listRevision
       this.loading = true

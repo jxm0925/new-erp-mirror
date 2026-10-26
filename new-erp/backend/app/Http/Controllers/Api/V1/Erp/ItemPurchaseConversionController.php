@@ -21,10 +21,17 @@ class ItemPurchaseConversionController extends Controller
     public function options(Request $request, int $itemId, UnitConversionDomainService $domain)
     {
         Item::findOrFail($itemId);
-        return response()->json($domain->activePurchaseConversions($itemId)
+        $data = $request->validate(['ids' => 'nullable|array|max:1000', 'ids.*' => 'required|integer|min:1|distinct',
+            'keyword' => 'nullable|string|max:120']);
+        $query = $domain->activePurchaseConversions($itemId)
             ->with(['purchaseUnit.standardUnit', 'baseUnit.standardUnit'])
-            ->orderByDesc('is_default')
-            ->paginate(min(100, max(5, $request->integer('per_page', 10)))));
+            ->orderByDesc('is_default')->orderBy('id');
+        if (isset($data['ids'])) $query->whereIn('purchase_unit_id', $data['ids']);
+        if ($keyword = trim((string) ($data['keyword'] ?? ''))) {
+            $query->whereHas('purchaseUnit', fn ($unit) => $unit->where(fn ($match) => $match
+                ->where('unit_code', 'like', "%{$keyword}%")->orWhere('unit_name', 'like', "%{$keyword}%")));
+        }
+        return response()->json($query->paginate(isset($data['ids']) ? max(1, count($data['ids'])) : min(100, max(5, $request->integer('per_page', 10)))));
     }
 
     public function store(Request $request, int $itemId, ItemPurchaseConversionApplicationService $service)

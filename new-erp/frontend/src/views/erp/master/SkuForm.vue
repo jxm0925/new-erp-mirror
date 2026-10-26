@@ -83,9 +83,7 @@
               <div class="form-row sales-unit-row">
                 <label><i>*</i> 销售单位</label>
                 <div class="field-wrap">
-                  <el-select v-model="form.sales_unit_id" :disabled="form.sales_unit_locked" size="small" class="fill">
-                    <el-option v-for="u in salesUnitOptions" :key="u.id" :value="u.id" :label="unitLabel(u)" />
-                  </el-select>
+                  <paged-record-select v-model="form.sales_unit_id" :disabled="form.sales_unit_locked" size="small" class="fill" entity="units" title="选择销售单位" :params="{ status: 'enabled' }" :selected-rows.sync="units" :clearable="false" />
                   <small class="field-sub">销售订单数量按此单位录入，小数位数 {{ selectedUnitPlaces }}</small>
                   <p v-if="form.sales_unit_locked" class="unit-lock"><i class="el-icon-lock" /> 已有生效订单，销售单位锁定不可修改</p>
                 </div>
@@ -381,6 +379,7 @@
 </template>
 
 <script>
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { listEntity, getEntity, saveEntity, replacePrimaryRelation, uploadSkuImage } from '../../../api/erp/master'
 import { legacyMediaUrl } from '../../../utils/legacyMedia'
 import { reserveForCreatePage, clearCreatePageReservation } from '../../../utils/documentNumberReservation'
@@ -409,7 +408,7 @@ const empty = () => ({
 
 export default {
   name: 'SkuForm',
-  components: { ProductSkuPicker },
+  components: { PagedRecordSelect, ProductSkuPicker },
   data () {
     return {
       loading: false,
@@ -471,14 +470,9 @@ export default {
     async init () {
       this.loading = true
       try {
-        const [products, units] = await Promise.all([
-          listEntity('products', { status: 'enabled', page: 1, per_page: 100 }),
-          listEntity('units', { status: 'enabled', page: 1, per_page: 100 })
-        ])
-        this.products = products.data.data || []
-        this.units = units.data.data || []
         if (this.editing) {
           const r = await getEntity('skus', this.$route.params.id)
+          this.units = r.data.sales_unit ? [r.data.sales_unit] : []
           this.form = {
             ...empty(),
             ...r.data,

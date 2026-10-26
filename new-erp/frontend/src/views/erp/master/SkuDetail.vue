@@ -295,7 +295,7 @@
 
 <script>
 import { erpDateTime } from '../../../utils/dateTime'
-import { getEntity, listRelations } from '../../../api/erp/master'
+import { getEntity } from '../../../api/erp/master'
 import { legacyMediaUrl } from '../../../utils/legacyMedia'
 
 export default {
@@ -366,12 +366,9 @@ export default {
     async refresh () {
       this.loading = true
       try {
-        const [sku, relations] = await Promise.all([
-          getEntity('skus', this.id),
-          listRelations({ sku_id: this.id, per_page: 100 })
-        ])
+        const sku = await getEntity('skus', this.id)
         this.sku = sku.data
-        this.relations = relations.data.data || []
+        this.relations = sku.data.item_relations || []
       } catch (error) {
         this.$message.error(error.userMessage || 'SKU详情加载失败')
       } finally {

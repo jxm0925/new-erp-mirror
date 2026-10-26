@@ -39,9 +39,7 @@
                 </el-select>
               </label>
               <label><span>入库仓库</span>
-                <el-select v-model="form.warehouse_id" clearable filterable :placeholder="warehouses.length ? '默认用物料的默认仓库' : '物料默认仓库'" :disabled="!warehouses.length">
-                  <el-option v-for="w in warehouses" :key="w.id" :label="w.warehouse_name" :value="w.id" />
-                </el-select>
+                <paged-record-select v-model="form.warehouse_id" entity="warehouses" :params="{ status: 'enabled' }" title="选择入库仓库" placeholder="默认用物料的默认仓库" size="medium" />
               </label>
               <label class="span4"><span>备注</span><el-input v-model="form.remark" maxlength="500" placeholder="例如：双十一前备货" /></label>
               <label class="span4"><el-checkbox v-model="form.is_urgent">加急</el-checkbox></label>
@@ -118,16 +116,17 @@
 
 <script>
 import { searchProductionOptions, previewWorkOrder, createWorkOrder } from '../../../api/erp/production'
-import { listEntity } from '../../../api/erp/master'
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { qty, money, bomLabel, errorText, searchProductionUsers } from './mfg-helpers'
 
 const day = offset => { const d = new Date(); d.setDate(d.getDate() + offset); return d.toISOString().slice(0, 10) }
 
 export default {
   name: 'WorkOrderForm',
+  components: { PagedRecordSelect },
   data: () => ({
     form: { item_id: null, planned_qty: 1, stock_reason: 'alert', planned_start_date: day(0), planned_finish_date: day(7), owner_legacy_id: null, warehouse_id: null, bom_id: null, routing_id: null, remark: '', is_urgent: false },
-    items: [], itemLoading: false, owners: [], warehouses: [], preview: null, previewLoading: false, saving: '', timer: null, previewSeq: 0
+    items: [], itemLoading: false, owners: [], preview: null, previewLoading: false, saving: '', timer: null, previewSeq: 0
   }),
   computed: {
     prodOps() { return this.preview ? this.preview.operations.filter(o => o.execution_context === 'production') : [] },
@@ -138,9 +137,6 @@ export default {
       this.preview.kitting.forEach(k => k.materials.forEach(m => { if (m.shortage_qty > 0) list.push(`${m.component_item_name}缺 ${qty(m.shortage_qty)}${m.unit_name || ''}`) }))
       return list.length ? list.join('、') + '，请采购跟进。' : ''
     }
-  },
-  created() {
-    listEntity('warehouses', { status: 'enabled', per_page: 100 }).then(({ data }) => { this.warehouses = data.data || [] }).catch(() => { this.warehouses = [] })
   },
   beforeDestroy() { clearTimeout(this.timer) },
   methods: {

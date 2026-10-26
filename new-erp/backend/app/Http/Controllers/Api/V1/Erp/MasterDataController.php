@@ -45,6 +45,10 @@ class MasterDataController extends Controller
             $relations = ['managerUser'];
         }
         $query = $model::query()->with($relations);
+        if ($request->has('ids')) {
+            $selected = $request->validate(['ids' => 'required|array|min:1|max:1000', 'ids.*' => 'required|integer|min:1|distinct']);
+            $query->whereIn('id', $selected['ids']);
+        }
         if (in_array($request->route('entity'), ['items', 'categories'], true)) {
             $scopes = app(ItemManagementScopeService::class);
             $scopes->applyScope($query, $scopes->requestScope($request));
@@ -102,6 +106,10 @@ class MasterDataController extends Controller
                 'location_purposes.*' => 'required|in:general,finished,shipping_staging,repair|distinct']);
             $query->whereIn('location_purpose', $data['location_purposes']);
         }
+        if (in_array($request->route('entity'), ['warehouses', 'locations'], true) && $request->has('statuses')) {
+            $data = $request->validate(['statuses' => 'required|array|min:1|max:2', 'statuses.*' => 'required|in:active,enabled|distinct']);
+            $query->whereIn('status', $data['statuses']);
+        }
         if ($request->route('entity') === 'items' && $request->filled('is_stock_item')) {
             $request->validate(['is_stock_item' => 'boolean']);
             $query->where('is_stock_item', $request->boolean('is_stock_item'));
@@ -113,6 +121,10 @@ class MasterDataController extends Controller
                 $categoryId = $request->integer('category_id');
                 $query->whereHas('categoryCapabilities', fn ($scope) => $scope
                     ->where('item_category_id', $categoryId)->where('status', 'active'));
+                continue;
+            }
+            if ($request->route('entity') === 'skus' && $field === 'category_id') {
+                $query->whereHas('product', fn (Builder $product) => $product->where('category_id', $request->input($field)));
                 continue;
             }
             $query->where($field, $request->input($field));
@@ -128,6 +140,15 @@ class MasterDataController extends Controller
                     ->where('contact_name', 'like', "%{$contact}%")
                     ->orWhere('contact_phone', 'like', "%{$contact}%")
                     ->orWhere('phone', 'like', "%{$contact}%"));
+            }
+            if ($request->boolean('purchase_available') || $request->boolean('purchase_receipt_available')) {
+                $query->whereNotNull('supplier_name')->where('supplier_name', '<>', '')->where('status', 'enabled')
+                    ->whereRaw("COALESCE(NULLIF(approval_status, ''), 'approved') = 'approved'")
+                    ->whereRaw('COALESCE(is_blacklisted, 0) = 0')->whereRaw('COALESCE(purchase_restricted, 0) = 0');
+                if ($request->boolean('purchase_available')) {
+                    $query->whereRaw("COALESCE(NULLIF(cooperation_status, ''), 'normal') = 'normal'")
+                        ->whereRaw("COALESCE(NULLIF(quality_status, ''), 'normal') <> 'frozen'");
+                }
             }
         }
         if ($request->route('entity') === 'units') {
@@ -174,6 +195,17 @@ class MasterDataController extends Controller
                     });
             });
         }
+        if ($request->route('entity') === 'categories' && $request->boolean('tree')) {
+            $nodes = $query->orderBy('sort_order')->orderBy('id')->get();
+            $nodeIds = $nodes->pluck('id')->map(fn ($id) => (int) $id)->all();
+            $build = function ($parentId = null) use (&$build, $nodes, $nodeIds) {
+                return $nodes->filter(fn ($row) => $parentId === null
+                    ? !$row->parent_id || !in_array((int) $row->parent_id, $nodeIds, true)
+                    : (int) $row->parent_id === (int) $parentId)
+                    ->map(fn ($row) => [...$row->toArray(), 'children' => $build($row->id)->values()->all()])->values();
+            };
+            return response()->json(['data' => $build()]);
+        }
         $stats = $request->boolean('include_stats')
             ? app(MasterDataSummaryService::class)->summarize((string) $request->route('entity'), $query) : null;
         if ($request->route('entity') === 'items' && $stats !== null) {
@@ -199,7 +231,8 @@ class MasterDataController extends Controller
         $warehouseStats = $request->route('entity') === 'locations' && $request->boolean('include_stats') && $request->filled('warehouse_id')
             ? app(MasterDataSummaryService::class)->locations($request->integer('warehouse_id')) : null;
         // 稳定的次级排序保证更新时间相同的记录不会跨页重复或遗漏。
-        $data = $query->latest('updated_at')->orderByDesc('id')->paginate(min(100, max(5, (int) $request->input('per_page', 10))));
+        $perPage = isset($selected) ? count($selected['ids']) : min(100, max(5, (int) $request->input('per_page', 10)));
+        $data = $query->latest('updated_at')->orderByDesc('id')->paginate($perPage);
         if ($request->route('entity') === 'items') {
             $data->getCollection()->transform(function (Item $item): Item {
                 $relationSupplier = $item->activeDefaultSupplierRelation?->supplier;

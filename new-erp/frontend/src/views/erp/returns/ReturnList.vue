@@ -30,7 +30,7 @@
             <label v-if="kind==='purchase'">管理类型<el-select v-model="query.management_scope" size="small" clearable placeholder="全部管理类型" @change="reload"><el-option v-for="scope in scopeOptions" :key="scope.value" :label="scope.label" :value="scope.value" /></el-select></label><label>退货单号<el-input v-model="query.return_no" clearable size="small" placeholder="请输入退货单号" @keyup.enter.native="reload" /></label>
             <label>到货单<el-input v-model="query.receipt_no" clearable size="small" placeholder="请输入到货单号" @keyup.enter.native="reload" /></label>
             <label>采购订单关键字<el-input v-model="query.purchase_keyword" clearable size="small" suffix-icon="el-icon-search" placeholder="采购订单号 / 物料名称 / 物料编码" @keyup.enter.native="reload" /></label>
-            <label>供应商<el-select v-model="query.supplier_id" clearable filterable size="small" placeholder="请选择供应商"><el-option v-for="item in suppliers" :key="item.id" :label="item.supplier_name" :value="item.id" /></el-select></label>
+            <label>供应商<paged-record-select v-model="query.supplier_id" entity="suppliers" :params="{ status: 'enabled' }" title="选择供应商" placeholder="请选择供应商" /></label>
             <label>退货范围<el-select v-model="query.return_scope" clearable size="small" placeholder="请选择"><el-option label="入库后退货" value="posted_inventory" /><el-option label="未入库拒收" value="rejected_before_posting" /></el-select></label>
             <label>退货状态<el-select v-model="query.return_status" clearable size="small" placeholder="请选择"><el-option v-for="item in statusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select></label>
             <label class="date-field">退货日期范围<el-date-picker v-model="dateRange" size="small" type="daterange" value-format="yyyy-MM-dd" range-separator="~" start-placeholder="开始日期" end-placeholder="结束日期" /></label>
@@ -38,8 +38,8 @@
           </template>
           <template v-else>
             <label>退货单号/销售订单/原始单号<el-input v-model="query.keyword" clearable size="small" placeholder="请输入退货单号/销售订单/原始单号" @keyup.enter.native="reload" /></label>
-            <label>客户<el-select v-model="query.customer_id" clearable filterable size="small" placeholder="请选择客户"><el-option v-for="item in customers" :key="item.id" :label="item.customer_name" :value="item.id" /></el-select></label>
-            <label>销售人员<el-select v-model="query.sales_user_legacy_id" clearable filterable size="small" placeholder="请选择销售人员"><el-option v-for="item in salesUsers" :key="item.legacy_id" :label="item.nickname || item.username" :value="item.legacy_id" /></el-select></label>
+            <label>客户<paged-record-select v-model="query.customer_id" :request="listCustomers" :label="customerLabel" :columns="[{ prop: 'customer_code', label: '客户编码' }, { prop: 'customer_name', label: '客户名称' }]" title="选择客户" placeholder="请选择客户" /></label>
+            <label>销售人员<paged-record-select v-model="query.sales_user_legacy_id" :request="listSalesUsers" :params="{ scope: 'sales', status: 'normal' }" :label="userLabel" :columns="[{ prop: 'username', label: '账号' }, { prop: 'nickname', label: '姓名' }]" title="选择销售人员" placeholder="请选择销售人员" /></label>
             <label>退货状态<el-select v-model="query.return_status" clearable size="small" placeholder="请选择退货状态"><el-option v-for="item in statusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select></label>
             <label class="date-field">退货日期<el-date-picker v-model="dateRange" size="small" type="daterange" value-format="yyyy-MM-dd" range-separator="~" start-placeholder="开始日期" end-placeholder="结束日期" /></label>
             <div class="filter-actions"><el-button size="small" type="success" @click="reload">查询</el-button><el-button size="small" @click="reset">重置</el-button></div>
@@ -96,16 +96,17 @@
 </template>
 
 <script>
+import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { erpDateTime } from '../../../utils/dateTime'
 import { purchaseScopes, purchaseScopeLabel, purchaseScopeIssue } from '@/utils/purchaseManagementScope.mjs'
 import { listPurchaseReturns, submitPurchaseReturn, postPurchaseReturn } from '@/api/erp/purchase'
 import { listSalesReturns, confirmSalesReturn, listSalesCustomers } from '@/api/erp/sales'
-import { listEntity } from '@/api/erp/master'
 import { listUsers } from '@/api/erp/rbac'
 
 const baseQuery = () => ({ management_scope: '', keyword: '', return_no: '', receipt_no: '', purchase_keyword: '', supplier_id: '', customer_id: '', sales_user_legacy_id: '', return_scope: '', return_status: '', page: 1, per_page: 10 })
 
 export default {
+  components: { PagedRecordSelect },
   props: { kind: { type: String, required: true } },
   data: () => ({ listRevision: 0, loading: false, rows: [], total: 0, dateRange: [], suppliers: [], customers: [], salesUsers: [], query: baseQuery() }),
   computed: {
@@ -146,20 +147,14 @@ export default {
     }
   },
   // 从不合格品处理等页面跳转过来时带着退货单号，直接定位到该单据。
-  created() { if (this.$route.query.return_no) this.query.return_no = String(this.$route.query.return_no); this.loadOptions(); this.load() },
+  created() { if (this.$route.query.return_no) this.query.return_no = String(this.$route.query.return_no); this.load() },
   methods: {
+    listCustomers: listSalesCustomers,
+    listSalesUsers: listUsers,
+    customerLabel(row) { return row.customer_name },
+    userLabel(row) { return row.nickname || row.username },
     scopeLabel(scope) { return purchaseScopeLabel(scope) },
     scopeIssue(row) { return this.kind === 'purchase' ? purchaseScopeIssue(row) : '' },
-    async loadOptions() {
-      if (this.kind === 'purchase') {
-        const { data } = await listEntity('suppliers', { status: 'enabled', page: 1, per_page: 100 })
-        this.suppliers = data.data || []
-        return
-      }
-      const [customers, users] = await Promise.all([listSalesCustomers({ page: 1, per_page: 100 }), listUsers({ scope: 'sales', status: 'normal', page: 1, per_page: 100 })])
-      this.customers = customers.data.data || customers.data || []
-      this.salesUsers = users.data.data || users.data || []
-    },
     async load() {
       const revision = ++this.listRevision
       this.loading = true
