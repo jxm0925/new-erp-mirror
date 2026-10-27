@@ -134,6 +134,13 @@ class ProductionMasterDataService
                 ->where('ro.operation_id', $id)->where('r.status', 'active')->exists()) {
                 throw ValidationException::withMessages(['status' => '工序已被生效工艺路线使用，不能停用。']);
             }
+            if (! $enabled && $operation->status === 'enabled' && DB::table('erp_bom_item_operations as bo')
+                ->join('erp_bom_items as bi', 'bi.id', '=', 'bo.bom_item_id')
+                ->join('erp_boms as b', 'b.id', '=', 'bi.bom_id')
+                ->where('bo.operation_id', $id)->whereNull('bi.deleted_at')->whereNull('b.deleted_at')
+                ->where('b.status', 'active')->exists()) {
+                throw ValidationException::withMessages(['status' => '工序已被生效 BOM 的用料行绑定，不能停用。']);
+            }
             $operation->status = $enabled ? 'enabled' : 'disabled';
             $operation->business_version++;
             $operation->updated_by_legacy_id = $this->userId($user);
@@ -154,6 +161,10 @@ class ProductionMasterDataService
             if (DB::table('erp_production_routing_operations')->where('operation_id', $operation->id)->exists()) {
                 throw ValidationException::withMessages(['operation' => '该工序已被工艺路线引用；即使路线已退役也必须保留历史，不能删除。']);
             }
+            // BOM 用料行绑定的工序被删除后会留下失效引用，工单下达时无法匹配，因此同样保留。
+            if (DB::table('erp_bom_item_operations')->where('operation_id', $operation->id)->exists()) {
+                throw ValidationException::withMessages(['operation' => '该工序已被 BOM 用料行绑定；请先在 BOM 中解除绑定，不能删除。']);
+            }
             $operation->delete();
         });
     }
@@ -171,7 +182,7 @@ class ProductionMasterDataService
     public function routing(int $id, array $permissions, bool $superAdmin): ProductionRouting
     {
         $this->authorize($permissions, $superAdmin, 'production.routing.view');
-        $routing = ProductionRouting::with(['applicabilities.item:id,item_code,item_name,spec', 'applicabilities.category:id,category_code,category_name', 'outputItem.unit.standardUnit', 'product', 'sku', 'operations.operation', 'operations.outputItem.unit.standardUnit', 'operations.materialSupplyRules.componentItem', 'operations.stage', 'operations.packagingScheme'])->findOrFail($id);
+        $routing = ProductionRouting::with(['applicabilities.item:id,item_code,item_name,spec,item_type,management_scope', 'applicabilities.category:id,category_code,category_name', 'outputItem.unit.standardUnit', 'product', 'sku', 'operations.operation', 'operations.outputItem.unit.standardUnit', 'operations.materialSupplyRules.componentItem', 'operations.stage', 'operations.packagingScheme'])->findOrFail($id);
         $itemIds = $routing->operations->flatMap(fn ($operation) => $operation->packaging_materials ?? [])
             ->pluck('component_item_id')->filter(fn ($itemId) => (int) $itemId > 0)->map(fn ($itemId) => (int) $itemId)->unique()->values();
         $routing->setRelation('packaging_material_items', $itemIds->isEmpty() ? collect()

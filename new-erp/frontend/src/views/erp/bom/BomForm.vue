@@ -326,6 +326,7 @@
               <template slot-scope="{ row }">
                 <el-select v-model="row.operation_id" size="mini" :disabled="!canEdit" clearable filterable remote :remote-method="searchOperations" placeholder="按路线规则">
                   <el-option v-for="op in operationOptions" :key="op.id" :label="op.operation_name" :value="op.id" />
+                  <el-option v-if="row.operation_id && !operationOptions.some(op => Number(op.id) === Number(row.operation_id))" v-show="false" :key="'selected-' + row.operation_id" :label="operationLabel(row.operation_id)" :value="row.operation_id" />
                 </el-select>
               </template>
             </el-table-column>
@@ -683,6 +684,8 @@ export default {
   name: 'BomForm',
   data: () => ({
     operationOptions: [],
+    operationNames: {},
+    operationSearchSeq: 0,
     form: {
       bom_no: '',
       bom_name: '',
@@ -838,14 +841,22 @@ export default {
   },
   methods: {
     async searchOperations(keyword = '') {
+      // 每次搜索以结果替换候选；序号保证慢返回的旧请求不会覆盖新结果。
+      const seq = ++this.operationSearchSeq
       try {
         const { data } = await searchProductionOptions('operations', { keyword: keyword || undefined, per_page: 50 })
-        this.mergeOperations(data.data || [])
+        if (seq !== this.operationSearchSeq) return
+        const rows = (data.data || []).filter(op => op && op.id).map(op => ({ id: Number(op.id), operation_name: op.operation_name }))
+        this.rememberOperations(rows)
+        this.operationOptions = rows
       } catch (e) { /* 工序下拉加载失败时保留已选工序 */ }
     },
-    mergeOperations(rows) {
-      const known = new Set(this.operationOptions.map(op => Number(op.id)))
-      rows.filter(op => op && !known.has(Number(op.id))).forEach(op => this.operationOptions.push({ id: Number(op.id), operation_name: op.operation_name }))
+    // 已选工序名称单独保存，候选被搜索结果替换后仍能显示名称。
+    rememberOperations(rows) {
+      rows.filter(op => op && op.id).forEach(op => this.$set(this.operationNames, Number(op.id), op.operation_name))
+    },
+    operationLabel(id) {
+      return this.operationNames[Number(id)] || `工序 ${id}`
     },
     async reserveBomNumber() {
       try {
@@ -864,7 +875,7 @@ export default {
     },
     async loadDetail() {
       const { data } = await getBom(this.$route.params.id)
-      this.mergeOperations((data.items || []).map(item => item.operation_binding && item.operation_binding.operation).filter(Boolean))
+      this.rememberOperations((data.items || []).map(item => item.operation_binding && item.operation_binding.operation).filter(Boolean))
       this.form = {
         ...data,
         items: (data.items || []).map((item, index) => ({
