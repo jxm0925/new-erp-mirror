@@ -103,7 +103,7 @@
           <el-table-column label="备注" min-width="140" show-overflow-tooltip>
             <template slot-scope="{ row }">{{ row.remark || '—' }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="130" fixed="right">
+          <el-table-column label="操作" width="160" fixed="right" align="center">
             <template slot-scope="{ row }">
               <el-button v-if="$can('system.business_staff.save')" type="text" size="mini" @click="openForm(row)">编辑</el-button>
               <el-button v-if="$can('system.business_staff.save')" type="text" size="mini" @click="toggleStatus(row)">{{ row.status === 'enabled' ? '停用' : '启用' }}</el-button>

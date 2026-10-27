@@ -347,7 +347,7 @@
                   </template>
                 </el-table-column>
 
-                <el-table-column label="操作" width="160" fixed="right" align="center">
+                <el-table-column label="操作" width="180" fixed="right" align="center">
                   <template slot-scope="{ row }">
                     <div class="row-actions">
                       <el-button type="text" size="small" class="text-theme-btn" @click.stop="selectCategory(row)">下钻</el-button>

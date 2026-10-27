@@ -266,7 +266,7 @@
               </template>
             </el-table-column>
 
-            <el-table-column label="操作" width="190" fixed="right" align="center">
+            <el-table-column label="操作" width="240" fixed="right" align="center">
               <template slot-scope="{ row }">
                 <div class="row-actions">
                   <el-button type="text" size="mini" class="btn-action-view" icon="el-icon-view" @click.stop="selectUser(row)">详情</el-button>

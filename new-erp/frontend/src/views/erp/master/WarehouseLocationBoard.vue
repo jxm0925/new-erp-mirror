@@ -198,7 +198,7 @@
                 </template>
               </el-table-column>
 
-              <el-table-column label="操作" width="125" align="center">
+              <el-table-column label="操作" width="165" align="center">
                 <template slot-scope="{ row }">
                   <div class="row-actions">
                     <el-button type="text" size="mini" class="btn-action-edit" icon="el-icon-edit" @click.stop="editWarehouse(row)">编辑</el-button>
@@ -547,7 +547,7 @@
                 </template>
               </el-table-column>
 
-              <el-table-column label="操作" width="150" align="center">
+              <el-table-column label="操作" width="165" align="center">
                 <template slot-scope="{ row }">
                   <div class="row-actions">
                     <el-button type="text" size="mini" class="btn-action-edit" icon="el-icon-edit" @click.stop="editLocation(row)">编辑</el-button>

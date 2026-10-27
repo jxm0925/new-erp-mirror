@@ -243,7 +243,7 @@
             </template>
           </el-table-column>
 
-          <el-table-column label="操作" width="160" fixed="right" align="center">
+          <el-table-column label="操作" width="220" fixed="right" align="center">
             <template slot-scope="{ row }">
               <el-button type="text" size="small" icon="el-icon-view" class="action-link-theme" @click="openDetail(row)">详情</el-button>
               <el-button type="text" size="small" icon="el-icon-edit" class="action-link-theme" @click="openEdit(row)">编辑</el-button>

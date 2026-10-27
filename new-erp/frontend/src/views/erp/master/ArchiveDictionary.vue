@@ -215,7 +215,7 @@
               </template>
             </el-table-column>
 
-            <el-table-column v-if="canManage" label="操作" :width="['payments', 'carriers'].includes(kind) ? 160 : 220" :fixed="compact ? false : 'right'" align="center">
+            <el-table-column v-if="canManage" label="操作" :width="['payments', 'carriers'].includes(kind) ? 160 : 260" :fixed="compact ? false : 'right'" align="center">
               <template slot-scope="{ row }">
                 <div class="row-actions">
                   <el-button v-if="canCreateChild(row)" type="text" size="mini" class="btn-action-child" icon="el-icon-plus" @click="openCreate(row)">新增下级</el-button>

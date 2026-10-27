@@ -170,7 +170,7 @@
                 <span class="code-mono text-muted date-text">{{ formatDate(row.updated_at) }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="165" :fixed="compact ? false : 'right'" align="center">
+            <el-table-column label="操作" width="200" :fixed="compact ? false : 'right'" align="center">
               <template slot-scope="{ row }">
                 <div class="row-actions">
                   <el-button type="text" size="mini" class="btn-action-edit" icon="el-icon-edit" @click="openEdit(row)">编辑</el-button>
@@ -874,13 +874,13 @@ export default {
 }
 
 .btn-action-edit {
-  color: #2563eb !important;
+  color: #008b4b !important;
   font-weight: 500;
   padding: 0 !important;
 }
 
 .btn-action-edit:hover {
-  color: #1d4ed8 !important;
+  color: #00763f !important;
 }
 
 .btn-action-disable {

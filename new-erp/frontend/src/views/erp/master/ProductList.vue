@@ -168,7 +168,7 @@
                       <span class="status-pill" :class="sku.status">{{ statusText(sku.status) }}</span>
                     </template>
                   </el-table-column>
-                  <el-table-column label="操作" min-width="160" align="center">
+                  <el-table-column label="操作" min-width="210" align="center">
                     <template slot-scope="{ row: sku }">
                       <el-button type="text" size="mini" icon="el-icon-view" @click.stop="openSkuDetail(sku)">详情</el-button>
                       <el-button type="text" size="mini" icon="el-icon-edit" @click.stop="openSkuEdit(sku)">编辑</el-button>
@@ -254,7 +254,7 @@
               <span class="time-text">{{ formatDate(row.updated_at) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="160" align="center">
+          <el-table-column label="操作" width="220" fixed="right" align="center">
             <template slot-scope="{ row }">
               <el-button type="text" size="small" icon="el-icon-view" @click.stop="openProductDetail(row)">详情</el-button>
               <el-button type="text" size="small" icon="el-icon-edit" @click.stop="openProductEdit(row)">编辑</el-button>

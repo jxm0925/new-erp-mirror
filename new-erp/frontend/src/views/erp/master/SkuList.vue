@@ -217,7 +217,7 @@
           </el-table-column>
 
           <!-- 操作列 -->
-          <el-table-column label="操作" fixed="right" width="180" align="center">
+          <el-table-column label="操作" fixed="right" width="230" align="center">
             <template slot-scope="{ row }">
               <div class="row-actions">
                 <el-button type="text" size="small" icon="el-icon-view" class="action-link-theme" @click.stop="$router.push('/master/skus/' + row.id)">

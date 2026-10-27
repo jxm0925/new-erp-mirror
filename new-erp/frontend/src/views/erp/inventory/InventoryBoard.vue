@@ -55,7 +55,7 @@
                 </div>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="190" fixed="right">
+            <el-table-column label="操作" width="220" fixed="right">
               <template slot-scope="{ row }">
                 <div class="row-actions row-actions-wide">
                   <el-button size="mini" plain @click.stop="selectReceipt(row)">查看来源</el-button>
@@ -515,7 +515,7 @@
                 <el-table-column prop="quantity_on_hand" label="账面" width="72" align="right" />
                 <el-table-column prop="quantity_available" label="可用" width="72" align="right" />
                 <el-table-column prop="quantity_pending" label="待处理" width="76" align="right" />
-                <el-table-column label="操作" width="142">
+                <el-table-column label="操作" width="195">
                   <template slot-scope="{row}">
                     <el-button v-if="Number(row.serials_count || 0) > 0" size="mini" type="text" @click="openBalanceSerials(row)">查看编号</el-button>
                     <el-button size="mini" type="text" :disabled="Number(row.quantity_on_hand || 0) <= 0" @click="openAdjustmentFromBalance(row)">库存调整</el-button>

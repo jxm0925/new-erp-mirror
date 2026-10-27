@@ -1214,3 +1214,13 @@ body .erp-system-number.el-input.is-disabled .el-input__inner:disabled {
   border-color: #e2e8f0 !important;
   cursor: not-allowed !important;
 }
+
+/* 统一消除表格操作列 flex 容器内 Element UI 相邻按钮默认的 10px 左外边距叠加，并允许极端窄列自动换行防裁切 */
+.row-actions,
+.row-action-links {
+  flex-wrap: wrap;
+}
+.row-actions .el-button + .el-button,
+.row-action-links .el-button + .el-button {
+  margin-left: 0 !important;
+}
