@@ -132,6 +132,8 @@
           v-for="row in selectedRows"
           :key="row.id"
           class="selected-chip"
+          :class="{ 'chip-out-of-scope': outOfScope(row) }"
+          :title="outOfScope(row) ? '不属于当前管理类型，请移除后再确定' : ''"
         >
           <span class="chip-code">{{ row.item_code }}</span>
           <span class="chip-name" :title="row.item_name">{{ row.item_name }}</span>
@@ -222,7 +224,8 @@ export default {
       this.preferredId = currentId
       this.multiple = multiple
       this.dialogTitle = title
-      this.selectedById = Object.fromEntries((selected || []).filter(row => row && row.id && (!params.management_scope || purchaseScopeMatches(row, params.management_scope))).map(row => [row.id, row]))
+      // 原已选物料全部保留，不在这里静默剔除；不属于当前管理类型的会标红并在确定时提示移除。
+      this.selectedById = Object.fromEntries((selected || []).filter(row => row && row.id).map(row => [row.id, row]))
       this.extraParams = { status: 'enabled', is_purchase_item: 1, ...params }
       this.query = { keyword: '', item_type: '', category_id: null, management_scope: params.management_scope || '', page: 1, per_page: 10 }
       this.current = null
@@ -317,9 +320,15 @@ export default {
       }
     },
     removeSelected(row) { this.$delete(this.selectedById, row.id) },
-    confirm(row) {
+    // 仅在物料带有管理类型且与当前入口不一致时判为越界；缺少该字段时交由后端校验，不在前端猜测。
+    outOfScope(row) {
       const scope = this.extraParams.management_scope || this.query.management_scope
-      if (scope && ((row && !purchaseScopeMatches(row, scope)) || this.selectedRows.some(item => !purchaseScopeMatches(item, scope)) || (!this.multiple && this.current && !purchaseScopeMatches(this.current, scope)))) return this.$message.warning('只能选择当前管理类型的物料，请重新选择')
+      return Boolean(scope && row && row.management_scope && !purchaseScopeMatches(row, scope))
+    },
+    confirm(row) {
+      const invalid = this.selectedRows.filter(item => this.outOfScope(item))
+      if (invalid.length) return this.$message.warning(`已选物料 ${invalid.map(item => item.item_name).join('、')} 不属于当前管理类型，请移除后再确定`)
+      if ((row && this.outOfScope(row)) || (!this.multiple && this.current && this.outOfScope(this.current))) return this.$message.warning('只能选择当前管理类型的物料，请重新选择')
       if (row && this.multiple) {
         if (!this.selectedById[row.id]) {
           this.$set(this.selectedById, row.id, row)
@@ -514,6 +523,10 @@ export default {
   line-height: 1.4;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
   transition: all 0.15s ease;
+}
+.selected-chip.chip-out-of-scope {
+  border-color: #f56c6c;
+  background: #fef0f0;
 }
 .selected-chip:hover {
   border-color: #94a3b8;

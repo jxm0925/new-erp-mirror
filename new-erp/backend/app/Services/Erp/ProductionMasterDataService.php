@@ -107,6 +107,7 @@ class ProductionMasterDataService
                 if ($this->hasActiveRoutingReference($id)) {
                     throw ValidationException::withMessages(['status' => '工序已被生效工艺路线使用，状态不可修改。']);
                 }
+                if ($data['status'] === 'disabled') $this->prepareOperationDisable($operation, $user);
                 $operation->status = $data['status'];
             }
             $operation->fill(array_filter([
@@ -129,17 +130,11 @@ class ProductionMasterDataService
         return $this->command($enabled ? 'enable_operation' : 'disable_operation', 'operation', $data + ['id' => $id], $user, function () use ($id, $enabled, $data, $user): ProductionOperation {
             $operation = ProductionOperation::lockForUpdate()->findOrFail($id);
             $this->version($operation, $data);
-            if (! $enabled && $operation->status === 'enabled' && DB::table('erp_production_routing_operations as ro')
-                ->join('erp_production_routings as r', 'r.id', '=', 'ro.routing_id')
-                ->where('ro.operation_id', $id)->where('r.status', 'active')->exists()) {
-                throw ValidationException::withMessages(['status' => '工序已被生效工艺路线使用，不能停用。']);
-            }
-            if (! $enabled && $operation->status === 'enabled' && DB::table('erp_bom_item_operations as bo')
-                ->join('erp_bom_items as bi', 'bi.id', '=', 'bo.bom_item_id')
-                ->join('erp_boms as b', 'b.id', '=', 'bi.bom_id')
-                ->where('bo.operation_id', $id)->whereNull('bi.deleted_at')->whereNull('b.deleted_at')
-                ->where('b.status', 'active')->exists()) {
-                throw ValidationException::withMessages(['status' => '工序已被生效 BOM 的用料行绑定，不能停用。']);
+            if (! $enabled && $operation->status === 'enabled') {
+                if ($this->hasActiveRoutingReference($id)) {
+                    throw ValidationException::withMessages(['status' => '工序已被生效工艺路线使用，不能停用。']);
+                }
+                $this->prepareOperationDisable($operation, $user);
             }
             $operation->status = $enabled ? 'enabled' : 'disabled';
             $operation->business_version++;
@@ -161,8 +156,10 @@ class ProductionMasterDataService
             if (DB::table('erp_production_routing_operations')->where('operation_id', $operation->id)->exists()) {
                 throw ValidationException::withMessages(['operation' => '该工序已被工艺路线引用；即使路线已退役也必须保留历史，不能删除。']);
             }
-            // BOM 用料行绑定的工序被删除后会留下失效引用，工单下达时无法匹配，因此同样保留。
-            if (DB::table('erp_bom_item_operations')->where('operation_id', $operation->id)->exists()) {
+            // BOM 用料行绑定的工序被删除后会留下失效引用（回收站里的 BOM 也可能恢复），因此同样保留。
+            // 编辑 BOM 时被替换掉的旧明细行不算引用。
+            if (DB::table('erp_bom_item_operations as bo')->join('erp_bom_items as bi', 'bi.id', '=', 'bo.bom_item_id')
+                ->where('bo.operation_id', $operation->id)->whereNull('bi.deleted_at')->exists()) {
                 throw ValidationException::withMessages(['operation' => '该工序已被 BOM 用料行绑定；请先在 BOM 中解除绑定，不能删除。']);
             }
             $operation->delete();
@@ -186,7 +183,7 @@ class ProductionMasterDataService
         $itemIds = $routing->operations->flatMap(fn ($operation) => $operation->packaging_materials ?? [])
             ->pluck('component_item_id')->filter(fn ($itemId) => (int) $itemId > 0)->map(fn ($itemId) => (int) $itemId)->unique()->values();
         $routing->setRelation('packaging_material_items', $itemIds->isEmpty() ? collect()
-            : Item::with('unit.standardUnit')->whereIn('id', $itemIds)->get(['id', 'item_name', 'unit_id']));
+            : Item::with('unit.standardUnit')->whereIn('id', $itemIds)->get(['id', 'item_code', 'item_name', 'unit_id', 'item_type', 'management_scope']));
         return $this->withPerformance($routing);
     }
 
@@ -788,6 +785,29 @@ class ProductionMasterDataService
     private function version($model, array $data): void
     {
         if ((int) ($data['expected_version'] ?? 0) !== (int) $model->business_version) throw ValidationException::withMessages(['expected_version' => '数据版本已变化，请刷新后重试。']);
+    }
+
+    /** 工序被哪些路线和 BOM 引用，供停用前提醒。 */
+    public function operationReferences(int $id, array $permissions, bool $superAdmin): array
+    {
+        $this->authorize($permissions, $superAdmin, 'production.operation.view');
+        ProductionOperation::query()->findOrFail($id);
+        $routings = DB::table('erp_production_routing_operations as ro')
+            ->join('erp_production_routings as r', 'r.id', '=', 'ro.routing_id')
+            ->where('ro.operation_id', $id)->whereIn('r.status', ['draft', 'active'])
+            ->distinct()->orderBy('r.id')->get(['r.id', 'r.routing_no', 'r.routing_name', 'r.status']);
+        return ['routings' => $routings->map(fn ($r) => (array) $r)->all(), 'boms' => app(BomOperationBindingService::class)->referencesForOperation($id)];
+    }
+
+    /** 停用工序的 BOM 规则：生效 BOM 引用时阻止；草稿 BOM 不阻止，停用后解除其绑定。 */
+    private function prepareOperationDisable(ProductionOperation $operation, object $user): void
+    {
+        $bindings = app(BomOperationBindingService::class);
+        $active = $bindings->referencesForOperation((int) $operation->id)['active'];
+        if ($active) {
+            throw ValidationException::withMessages(['status' => '工序已被生效 BOM 的用料行绑定，不能停用：'.collect($active)->pluck('bom_no')->implode('、').'。请先在新版本 BOM 中改用其他工序。']);
+        }
+        $bindings->clearDraftBindings((int) $operation->id, (string) $operation->operation_name, $this->userId($user));
     }
 
     private function hasActiveRoutingReference(int $operationId): bool

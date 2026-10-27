@@ -9,6 +9,7 @@ export const getProductionOperation = id => api.get(`/v1/erp/production/operatio
 export const createProductionOperation = data => api.post('/v1/erp/production/operations', data)
 export const updateProductionOperation = (id, data) => api.put(`/v1/erp/production/operations/${id}`, data)
 export const enableProductionOperation = (id, data) => api.post(`/v1/erp/production/operations/${id}/enable`, data)
+export const getOperationReferences = id => api.get(`/v1/erp/production/operations/${id}/references`)
 export const disableProductionOperation = (id, data) => api.post(`/v1/erp/production/operations/${id}/disable`, data)
 export const listProductionRoutings = params => api.get('/v1/erp/production/routings', { params })
 export const getProductionRouting = id => api.get(`/v1/erp/production/routings/${id}`)

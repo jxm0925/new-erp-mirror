@@ -1,6 +1,7 @@
 import api from './master'
 
 export const listBoms = params => api.get('/v1/erp/bom/boms', { params })
+export const getBomOperationOptions = params => api.get('/v1/erp/bom/operation-options', { params })
 export const getBom = (id, params) => api.get(`/v1/erp/bom/boms/${id}`, { params })
 export const saveBom = data => data.id ? api.put(`/v1/erp/bom/boms/${data.id}`, data) : api.post('/v1/erp/bom/boms', data)
 export const deleteBom = id => api.delete(`/v1/erp/bom/boms/${id}`)

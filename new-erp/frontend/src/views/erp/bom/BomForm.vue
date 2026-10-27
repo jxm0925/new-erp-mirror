@@ -324,9 +324,13 @@
             </el-table-column>
             <el-table-column label="用料工序" width="130" align="center">
               <template slot-scope="{ row }">
-                <el-select v-model="row.operation_id" size="mini" :disabled="!canEdit" clearable filterable remote :remote-method="searchOperations" placeholder="按路线规则">
-                  <el-option v-for="op in operationOptions" :key="op.id" :label="op.operation_name" :value="op.id" />
-                  <el-option v-if="row.operation_id && !operationOptions.some(op => Number(op.id) === Number(row.operation_id))" v-show="false" :key="'selected-' + row.operation_id" :label="operationLabel(row.operation_id)" :value="row.operation_id" />
+                <el-select v-model="row.operation_id" size="mini" :disabled="!canEdit" clearable filterable :placeholder="form.output_item_id ? '按路线规则' : '先选产出物料'" :no-data-text="form.output_item_id ? '适用工艺路线里没有车间工序' : '请先选择产出物料'">
+                  <el-option v-for="op in operationOptions" :key="op.id" :label="op.operation_name" :value="op.id">
+                    <span>{{ op.operation_name }}</span>
+                    <span class="operation-routing-hint">{{ op.routings.map(r => r.routing_name || r.routing_no).join('、') }}</span>
+                  </el-option>
+                  <!-- 已保存但已不在适用路线中的工序：只用于显示名称，不作为候选；保存时后端会要求重新选择。 -->
+                  <el-option v-if="row.operation_id && !operationValid(row.operation_id)" v-show="false" :key="'selected-' + row.operation_id" :label="operationLabel(row.operation_id) + '（不在适用路线）'" :value="row.operation_id" />
                 </el-select>
               </template>
             </el-table-column>
@@ -648,8 +652,7 @@
 <script>
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { listEntity } from '@/api/erp/master'
-import { listBoms, getBom, saveBom, submitBom } from '@/api/erp/bom'
-import { searchProductionOptions } from '@/api/erp/production'
+import { listBoms, getBom, saveBom, submitBom, getBomOperationOptions } from '@/api/erp/bom'
 import { clearCreatePageReservation, reserveForCreatePage } from '@/utils/documentNumberReservation'
 import { cuttingUnitKind, cuttingQuantityBasis, previewCuttingQuantity, totalLengthMetres, totalLengthMillimetres } from '@/utils/cutting-quantity.mjs'
 
@@ -685,7 +688,7 @@ export default {
   data: () => ({
     operationOptions: [],
     operationNames: {},
-    operationSearchSeq: 0,
+    operationOptionsSeq: 0,
     form: {
       bom_no: '',
       bom_name: '',
@@ -732,6 +735,10 @@ export default {
     }
   }),
   watch: {
+    // 用料工序候选来自产出物料的适用工艺路线；换产出物料时，原绑定不在新路线里的行改回按路线规则。
+    'form.output_item_id'(value, oldValue) {
+      this.loadOperationOptions({ clearInvalid: Boolean(oldValue) && Number(value) !== Number(oldValue) })
+    },
     'form.items': {
       deep: true,
       handler(lines) { lines.forEach(row => this.recalculateCutLine(row)) }
@@ -825,7 +832,6 @@ export default {
     }
   },
   async created() {
-    this.searchOperations()
     await this.loadRefs()
     if (this.isEdit) await this.loadDetail()
     else await this.reserveBomNumber()
@@ -840,16 +846,25 @@ export default {
     }
   },
   methods: {
-    async searchOperations(keyword = '') {
-      // 每次搜索以结果替换候选；序号保证慢返回的旧请求不会覆盖新结果。
-      const seq = ++this.operationSearchSeq
+    async loadOperationOptions({ clearInvalid = false } = {}) {
+      const itemId = this.form.output_item_id
+      const seq = ++this.operationOptionsSeq
+      if (!itemId) { this.operationOptions = []; return }
       try {
-        const { data } = await searchProductionOptions('operations', { keyword: keyword || undefined, per_page: 50 })
-        if (seq !== this.operationSearchSeq) return
-        const rows = (data.data || []).filter(op => op && op.id).map(op => ({ id: Number(op.id), operation_name: op.operation_name }))
-        this.rememberOperations(rows)
-        this.operationOptions = rows
-      } catch (e) { /* 工序下拉加载失败时保留已选工序 */ }
+        const { data } = await getBomOperationOptions({ output_item_id: itemId })
+        if (seq !== this.operationOptionsSeq) return
+        this.operationOptions = (data.data || []).map(op => ({ ...op, id: Number(op.id) }))
+        this.rememberOperations(this.operationOptions)
+        if (!clearInvalid) return
+        const cleared = this.form.items.filter(row => row.operation_id && !this.operationValid(row.operation_id))
+        cleared.forEach(row => { row.operation_id = null })
+        if (cleared.length) this.$message.warning(`产出物料已更换，${cleared.map(row => row.component_item_name || '物料').join('、')} 原指定的用料工序不在新物料的适用路线中，已改回按路线规则`)
+      } catch (e) {
+        if (seq === this.operationOptionsSeq) this.$message.error(e.userMessage || '用料工序候选加载失败')
+      }
+    },
+    operationValid(id) {
+      return this.operationOptions.some(op => Number(op.id) === Number(id))
     },
     // 已选工序名称单独保存，候选被搜索结果替换后仍能显示名称。
     rememberOperations(rows) {
@@ -2402,5 +2417,11 @@ export default {
   .item-picker-dialog .el-dialog__footer {
     padding: 10px 14px !important;
   }
+}
+.operation-routing-hint {
+  float: right;
+  margin-left: 12px;
+  color: #909399;
+  font-size: 12px;
 }
 </style>

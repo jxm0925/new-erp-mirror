@@ -84,6 +84,14 @@ class BomController extends Controller
         });
     }
 
+    /** BOM 行可选的用料工序：产出物料适用工艺路线里的车间工序。 */
+    public function operationOptions(Request $request)
+    {
+        $this->authorizePermission($request, 'bom.manage.view');
+        $data = $request->validate(['output_item_id' => 'required|integer|exists:erp_items,id']);
+        return response()->json(['data' => app(\App\Services\Erp\BomOperationBindingService::class)->options((int) $data['output_item_id'])]);
+    }
+
     public function show(Request $request, int $id)
     {
         $this->authorizePermission($request, 'bom.manage.view');
@@ -127,6 +135,7 @@ class BomController extends Controller
             abort_if($bom->submitted_at, 422, 'BOM 已提交审核，请勿重复提交。');
             abort_if($bom->items->isEmpty(), 422, 'BOM 至少需要一行物料明细。');
             $this->assertFactoryBom($bom);
+            app(\App\Services\Erp\BomOperationBindingService::class)->assertBomBindings($bom);
             $this->assertNoCycle($bom);
             $bom->update(['audit_status' => 'pending', 'submitted_at' => now()]);
             $this->log($bom, 'submit', '提交审核', (int) $operator->legacy_id);
@@ -141,6 +150,7 @@ class BomController extends Controller
             $bom = Bom::with('items.componentItem')->lockForUpdate()->findOrFail($id);
             abort_if($bom->audit_status !== 'pending' || !$bom->submitted_at, 422, '只有已提交的待审核 BOM 可以审核通过。');
             $this->assertFactoryBom($bom);
+            app(\App\Services\Erp\BomOperationBindingService::class)->assertBomBindings($bom);
             $this->assertNoCycle($bom);
             $bom->update(['audit_status' => 'approved']);
             $this->log($bom, 'approve', '审核通过', (int) $operator->legacy_id);
@@ -168,6 +178,8 @@ class BomController extends Controller
             abort_if($bom->audit_status !== 'approved', 422, 'BOM 审核通过后才能启用。');
             abort_if($bom->status === 'archived', 422, '已归档 BOM 不能启用。');
             $this->assertFactoryBom($bom);
+            // 停用期间工序或路线可能已调整，启用前按当前路线重新校验用料工序。
+            app(\App\Services\Erp\BomOperationBindingService::class)->assertBomBindings($bom);
             $this->assertNoCycle($bom);
             $bom->update(['status' => 'active']);
             $this->log($bom, 'activate', '启用 BOM', (int) $operator->legacy_id);
@@ -252,15 +264,24 @@ class BomController extends Controller
                 'custom_description' => $source->custom_description,
                 'remark' => $source->remark,
             ]);
+            // 目标物料的适用路线可能不同：不在其路线车间工序里的绑定不复制，该行改按路线规则，并提示用户确认。
+            $allowedOperations = app(\App\Services\Erp\BomOperationBindingService::class)->options($targetItemId)->pluck('id')->map(fn ($v) => (int) $v)->all();
+            $unbound = [];
             foreach ($source->items as $line) {
                 $created = BomItem::create($line->only([
                     'line_no', 'component_item_id', 'component_item_code', 'component_item_name',
                     'cut_length_mm', 'cut_width_mm', 'cut_thickness_mm', 'allow_cut_rotation', 'piece_qty', 'cutting_quantity_snapshot', 'qty', 'unit_id', 'loss_rate', 'fixed_qty', 'replaceable', 'remark',
                 ]) + ['bom_id' => $copy->id]);
-                if ($line->operationBinding) BomItemOperation::create(['bom_item_id' => $created->id, 'operation_id' => $line->operationBinding->operation_id]);
+                if (! $line->operationBinding) continue;
+                if (in_array((int) $line->operationBinding->operation_id, $allowedOperations, true)) {
+                    BomItemOperation::create(['bom_item_id' => $created->id, 'operation_id' => $line->operationBinding->operation_id]);
+                } else {
+                    $unbound[] = $line->component_item_name;
+                }
             }
-            $this->log($copy, 'copy_version', $crossItem ? "由 {$source->bom_no} 复制到物料 {$targetItem->item_code}" : "由 {$source->bom_no} 复制为新版本", (int) $operator->legacy_id);
-            return response()->json(['message' => $crossItem ? '已复制到所选物料，生成草稿' : '已复制为新版本草稿', 'data' => $copy->fresh(self::RELATIONS)], 201);
+            $unboundNote = $unbound ? '；物料 '.implode('、', array_unique($unbound)).' 原指定的用料工序不在当前适用路线中，已改按路线规则，请确认' : '';
+            $this->log($copy, 'copy_version', ($crossItem ? "由 {$source->bom_no} 复制到物料 {$targetItem->item_code}" : "由 {$source->bom_no} 复制为新版本").$unboundNote, (int) $operator->legacy_id);
+            return response()->json(['message' => ($crossItem ? '已复制到所选物料，生成草稿' : '已复制为新版本草稿').$unboundNote, 'data' => $copy->fresh(self::RELATIONS), 'unbound_component_names' => array_values(array_unique($unbound))], 201);
         }, 5);
     }
 
@@ -414,6 +435,10 @@ class BomController extends Controller
 
     private function saveItems(Bom $bom, array $items): void
     {
+        // 用料工序只能选产出物料适用路线里的车间工序，否则工单下达时匹配不到。
+        app(\App\Services\Erp\BomOperationBindingService::class)->assertBindings((int) $bom->output_item_id,
+            collect($items)->map(fn (array $line) => ['operation_id' => $line['operation_id'] ?? null,
+                'label' => $line['component_item_name'] ?? \App\Models\Erp\Item::query()->whereKey($line['component_item_id'] ?? 0)->value('item_name')])->all());
         app(ItemManagementScopeService::class)->assertProductionAllowed(Item::query()->lockForUpdate()->findOrFail($bom->output_item_id), 'output_item_id');
         $duplicates = collect($items)->countBy(function (array $line): string {
             $length = array_key_exists('cut_length_mm', $line) && $line['cut_length_mm'] !== null
@@ -459,8 +484,6 @@ class BomController extends Controller
                 abort_if(abs($fixed - round($fixed, 4)) > 0.00000001 || $fixed > 9999999999.9999, 422, '下料固定用量最多保留四位小数。');
             }
             $operationId = (int) ($line['operation_id'] ?? 0);
-            abort_if($operationId && ! \App\Models\Erp\ProductionOperation::query()->whereKey($operationId)->where('status', 'enabled')->exists(), 422,
-                "物料 {$item->item_name} 指定的用料工序不存在或已停用。");
             $created = BomItem::create([
                 'bom_id' => $bom->id,
                 'line_no' => $line['line_no'] ?? (($index + 1) * 10),

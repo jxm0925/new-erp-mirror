@@ -208,7 +208,7 @@
 
 <script>
 import { erpDateTime } from '../../../utils/dateTime'
-import { listProductionOperations, getProductionOperation, createProductionOperation, updateProductionOperation, enableProductionOperation, disableProductionOperation, getOperationWorkers, saveOperationWorkers } from '../../../api/erp/production'
+import { listProductionOperations, getProductionOperation, createProductionOperation, updateProductionOperation, enableProductionOperation, disableProductionOperation, getOperationReferences, getOperationWorkers, saveOperationWorkers } from '../../../api/erp/production'
 import { listUsers } from '../../../api/erp/rbac'
 import { reserveForCreatePage, clearCreatePageReservation } from '../../../utils/documentNumberReservation'
 
@@ -217,7 +217,7 @@ const blankCreateForm = () => ({ operation_no: '', operation_name: '', sort: 0, 
 
 export default {
   name: 'ProductionOperationList',
-  data: () => ({ loading: false, detailLoading: false, rows: [], selected: null, total: 0, page: 1, perPage: 10, filters: { keyword: '', status: '', reference_status: '', is_public: '' }, createDialog: false, createLoading: false, createSaving: false, createReservation: null, createFormKey: 0, dialogMode: 'create', createForm: blankCreateForm(), createRules: { operation_name: [{ required: true, message: '请输入工序名称', trigger: 'blur' }] }, workers: [], workersLoading: false, workerDialog: false, workerIds: [], workerOptions: [], workerSearching: false, workerSaving: false }),
+  data: () => ({ loading: false, detailLoading: false, rows: [], selected: null, total: 0, page: 1, perPage: 10, filters: { keyword: '', status: '', reference_status: '', is_public: '' }, createDialog: false, createLoading: false, createSaving: false, editOriginalStatus: null, createReservation: null, createFormKey: 0, dialogMode: 'create', createForm: blankCreateForm(), createRules: { operation_name: [{ required: true, message: '请输入工序名称', trigger: 'blur' }] }, workers: [], workersLoading: false, workerDialog: false, workerIds: [], workerOptions: [], workerSearching: false, workerSaving: false }),
   computed: {
     statusRadioDisabled() { return this.dialogMode === 'edit' && !this.createForm.status_editable },
     statusLockReason() { return this.dialogMode === 'edit' && !this.createForm.status_editable ? this.createForm.status_lock_reason || '当前工序状态不可修改' : '' }
@@ -315,6 +315,7 @@ export default {
       this.$nextTick(() => this.$refs.createForm && this.$refs.createForm.clearValidate())
       try {
         const response = await getProductionOperation(row.id)
+        this.editOriginalStatus = response.data.data.status
         this.createForm = { ...blankCreateForm(), ...response.data.data, is_public: asBoolean(response.data.data.is_public), auto_assignment_enabled: asBoolean(response.data.data.auto_assignment_enabled) }
       } catch (error) {
         this.createDialog = false
@@ -329,6 +330,8 @@ export default {
     saveCreate() {
       this.$refs.createForm.validate(async valid => {
         if (!valid || (this.dialogMode === 'create' && !this.createReservation)) return
+        if (this.dialogMode === 'edit' && this.editOriginalStatus === 'enabled' && this.createForm.status === 'disabled'
+          && !await this.confirmDisable(this.createForm.id, this.createForm.operation_name)) return
         this.createSaving = true
         try {
           const response = this.dialogMode === 'edit'
@@ -365,9 +368,29 @@ export default {
         } catch (error) { this.$message.error(error.userMessage || '工序保存失败') } finally { this.createSaving = false }
       })
     },
+    // 停用前列出引用：生效路线或生效 BOM 会被后端阻止；草稿 BOM 不阻止，但停用后会解除其用料工序绑定。
+    async confirmDisable(id, name) {
+      let refs = null
+      try { refs = (await getOperationReferences(id)).data.data } catch (e) { refs = null }
+      const boms = refs ? refs.boms : { active: [], draft: [] }
+      const label = bom => [bom.bom_no, bom.bom_name, bom.version].filter(Boolean).join(' / ')
+      const esc = text => String(text == null ? '' : text).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch])
+      const lines = [`确认停用工序“${name}”？`]
+      if (boms.active.length) lines.push(`以下生效 BOM 仍绑定此工序，停用会被阻止：${boms.active.map(label).join('；')}`)
+      if (boms.draft.length) lines.push(`以下草稿 BOM 绑定了此工序，停用后会解除这些行的用料工序，改按工艺路线规则用料${boms.draft.some(bom => bom.submitted) ? '（已提交审核的会撤回提交）' : ''}：${boms.draft.map(bom => `${label(bom)}（${bom.component_item_names.join('、')}）`).join('；')}`)
+      if (!refs) lines.push('引用情况加载失败，后端仍会校验。')
+      try {
+        await this.$confirm(lines.map(esc).join('<br/><br/>'), '停用确认', { type: 'warning', dangerouslyUseHTMLString: true })
+        return true
+      } catch (e) { return false }
+    },
     async toggle(row) {
       try {
-        await this.$confirm(`确认${row.status === 'enabled' ? '停用' : '启用'}工序“${row.operation_name}”？`, '状态确认', { type: 'warning' })
+        if (row.status === 'enabled') {
+          if (!await this.confirmDisable(row.id, row.operation_name)) return
+        } else {
+          await this.$confirm(`确认启用工序“${row.operation_name}”？`, '状态确认', { type: 'warning' })
+        }
         const request = row.status === 'enabled' ? disableProductionOperation : enableProductionOperation
         await request(row.id, { client_command_id: `operation-toggle-${row.id}-${Date.now()}`, expected_version: row.business_version })
         this.$message.success('工序状态已更新')

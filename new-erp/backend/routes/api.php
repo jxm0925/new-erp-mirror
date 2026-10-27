@@ -333,6 +333,7 @@ Route::prefix('v1/erp/bom')->group(function () {
     Route::get('boms', [BomController::class, 'index']);
     Route::post('boms', [BomController::class, 'store']);
     Route::post('expand', [BomController::class, 'expand']);
+    Route::get('operation-options', [BomController::class, 'operationOptions']);
     Route::get('boms/{id}', [BomController::class, 'show'])->whereNumber('id');
     Route::put('boms/{id}', [BomController::class, 'update'])->whereNumber('id');
     Route::post('boms/{id}/submit', [BomController::class, 'submit'])->whereNumber('id');
@@ -420,6 +421,7 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::put('operations/{id}', [ProductionMasterDataController::class, 'updateOperation'])->whereNumber('id');
     Route::post('operations/{id}/enable', [ProductionMasterDataController::class, 'enableOperation'])->whereNumber('id');
     Route::post('operations/{id}/disable', [ProductionMasterDataController::class, 'disableOperation'])->whereNumber('id');
+    Route::get('operations/{id}/references', [ProductionMasterDataController::class, 'operationReferences'])->whereNumber('id');
     Route::delete('operations/{id}', [ProductionMasterDataController::class, 'destroyOperation'])->whereNumber('id');
     Route::get('routings', [ProductionMasterDataController::class, 'routings']);
     Route::post('routings', [ProductionMasterDataController::class, 'storeRouting']);
