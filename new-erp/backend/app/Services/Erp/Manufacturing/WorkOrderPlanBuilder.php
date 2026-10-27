@@ -37,7 +37,7 @@ final class WorkOrderPlanBuilder
         $operations = $routing ? $routing['operations'] : [];
         $production = array_values(array_filter($operations, fn ($op) => $op['execution_context'] === 'production'));
         if ($routing && ! $production) $blocks[] = '工艺路线里没有车间工序，请在路线里补上生产工序';
-        $materials = $bom ? $this->materials($bom['items'], $operations, $qty) : [];
+        $materials = $bom ? $this->materials($bom['items'], $operations, $qty, $blocks) : [];
 
         return ['bom' => $bom, 'routing' => $routing, 'operations' => $operations, 'materials' => $materials, 'block_reasons' => $blocks];
     }
@@ -145,7 +145,7 @@ final class WorkOrderPlanBuilder
     private function routing(Item $item, ?int $productId, ?int $skuId, ?int $routingId, array &$blocks): ?array
     {
         if ($routingId) {
-            $routing = ProductionRouting::query()->where('status', 'active')->where('output_item_id', $item->id)->find($routingId);
+            $routing = ProductionRouting::query()->where('status', 'active')->applicableToItem((int) $item->id)->find($routingId);
             if (! $routing) { $blocks[] = '所选工艺路线已失效或不是这个产品的路线'; return null; }
         } else {
             $matches = $this->masterData->defaultRoutingMatches((int) $item->id, $productId, $skuId);
@@ -153,7 +153,7 @@ final class WorkOrderPlanBuilder
             if ($matches->count() > 1) { $blocks[] = '默认工艺路线不唯一，请指定路线'; return null; }
             $routing = $matches->first();
         }
-        $snapshot = $this->masterData->snapshot($routing);
+        $snapshot = $this->masterData->snapshot($routing, (int) $item->id);
         $snapshot['is_default'] = (bool) $routing->is_default;
         $snapshot['operations'] = array_map(fn ($op) => $op + ['key' => 'r'.$op['routing_operation_id']], $snapshot['operations']);
         return $snapshot;
@@ -167,7 +167,7 @@ final class WorkOrderPlanBuilder
     }
 
     /** BOM 决定总量，路线的供料规则决定分到哪道工序；没有规则的料默认给第一道车间工序。 */
-    private function materials(array $bomItems, array $operations, float $qty): array
+    private function materials(array $bomItems, array $operations, float $qty, array &$blocks = []): array
     {
         $production = array_values(array_filter($operations, fn ($op) => $op['execution_context'] === 'production'));
         $firstKey = $production[0]['key'] ?? null;
@@ -187,13 +187,23 @@ final class WorkOrderPlanBuilder
             if ($lineTarget && (! $byRouting->has($lineTarget) || $byRouting->get($lineTarget)['execution_context'] !== 'production')) {
                 throw new WorkOrderDomainException('operation_invalid', '定制 BOM 的用料工序已不在当前车间路线中，请重新确认物料对应的工序。');
             }
+            // 标准 BOM 行可按工序主档指定用料工序（共用路线时各规格用料不同也不用改路线），优先于路线供料规则。
+            $bomOperationId = (int) ($line['operation_id'] ?? 0);
+            $bomTarget = null;
+            if (! $lineTarget && $bomOperationId) {
+                $bomTarget = collect($production)->where('operation_id', $bomOperationId)->sortBy('sequence')->first();
+                if (! $bomTarget) $blocks[] = 'BOM 物料 '.($line['component_item_name'] ?? '').' 指定的用料工序不在工艺路线的车间工序中，请调整 BOM 或路线';
+            }
+            $bomRule = $bomTarget ? $componentRules->first(fn ($rule) => (int) $rule['target_routing_operation_id'] === (int) $bomTarget['routing_operation_id']) : null;
             $targets = $lineTarget
                 ? [['key' => $byRouting->get($lineTarget)['key'], 'ratio' => 1.0, 'supply_mode' => null, 'kitting' => true]]
+                : ($bomTarget ? [['key' => $bomTarget['key'], 'ratio' => 1.0, 'supply_mode' => $bomRule['supply_mode'] ?? null,
+                    'kitting' => (bool) ($bomRule['participates_in_kitting'] ?? true)]]
                 : ($componentRules->isNotEmpty()
                 ? $componentRules->map(fn ($rule) => ['key' => $byRouting->get($rule['target_routing_operation_id'])['key'] ?? $rule['host_key'],
                     'ratio' => (float) $rule['required_qty_ratio'], 'supply_mode' => $rule['supply_mode'] ?? null,
                     'kitting' => (bool) ($rule['participates_in_kitting'] ?? true)])->values()->all()
-                : [['key' => $firstKey, 'ratio' => 1.0, 'supply_mode' => null, 'kitting' => true]]);
+                : [['key' => $firstKey, 'ratio' => 1.0, 'supply_mode' => null, 'kitting' => true]]));
             $item = $items->get($componentId);
             foreach ($targets as $target) {
                 $rows[] = [

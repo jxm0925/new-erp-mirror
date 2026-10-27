@@ -322,6 +322,13 @@
                 <el-input v-model="row.remark" size="mini" :disabled="!canEdit" placeholder="工艺备注" />
               </template>
             </el-table-column>
+            <el-table-column label="用料工序" width="130" align="center">
+              <template slot-scope="{ row }">
+                <el-select v-model="row.operation_id" size="mini" :disabled="!canEdit" clearable filterable remote :remote-method="searchOperations" placeholder="按路线规则">
+                  <el-option v-for="op in operationOptions" :key="op.id" :label="op.operation_name" :value="op.id" />
+                </el-select>
+              </template>
+            </el-table-column>
             <el-table-column label="操作" width="60" align="center" fixed="right">
               <template slot-scope="{ $index }">
                 <el-button :disabled="!canEdit" type="text" size="mini" class="delete-btn-link" @click="removeLine($index)">删除</el-button>
@@ -547,6 +554,7 @@
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { listEntity } from '@/api/erp/master'
 import { listBoms, getBom, saveBom, submitBom } from '@/api/erp/bom'
+import { searchProductionOptions } from '@/api/erp/production'
 import { clearCreatePageReservation, reserveForCreatePage } from '@/utils/documentNumberReservation'
 import { cuttingUnitKind, cuttingQuantityBasis, previewCuttingQuantity, totalLengthMetres, totalLengthMillimetres } from '@/utils/cutting-quantity.mjs'
 
@@ -572,13 +580,15 @@ const emptyLine = i => ({
   loss_rate: 0,
   fixed_qty: 0,
   replaceable: false,
-  remark: ''
+  remark: '',
+  operation_id: null
 })
 
 export default {
   components: { PagedRecordSelect },
   name: 'BomForm',
   data: () => ({
+    operationOptions: [],
     form: {
       bom_no: '',
       bom_name: '',
@@ -700,6 +710,7 @@ export default {
     }
   },
   async created() {
+    this.searchOperations()
     await this.loadRefs()
     if (this.isEdit) await this.loadDetail()
     else await this.reserveBomNumber()
@@ -714,6 +725,16 @@ export default {
     }
   },
   methods: {
+    async searchOperations(keyword = '') {
+      try {
+        const { data } = await searchProductionOptions('operations', { keyword: keyword || undefined, per_page: 50 })
+        this.mergeOperations(data.data || [])
+      } catch (e) { /* 工序下拉加载失败时保留已选工序 */ }
+    },
+    mergeOperations(rows) {
+      const known = new Set(this.operationOptions.map(op => Number(op.id)))
+      rows.filter(op => op && !known.has(Number(op.id))).forEach(op => this.operationOptions.push({ id: Number(op.id), operation_name: op.operation_name }))
+    },
     async reserveBomNumber() {
       try {
         this.numberReservation = await reserveForCreatePage('bom', '/bom/create')
@@ -731,10 +752,12 @@ export default {
     },
     async loadDetail() {
       const { data } = await getBom(this.$route.params.id)
+      this.mergeOperations((data.items || []).map(item => item.operation_binding && item.operation_binding.operation).filter(Boolean))
       this.form = {
         ...data,
         items: (data.items || []).map((item, index) => ({
           ...item,
+          operation_id: item.operation_binding ? Number(item.operation_binding.operation_id) : null,
           component_item_spec: (item.component_item && item.component_item.spec) || '',
           line_no: index + 1,
           qty: Number(item.qty),

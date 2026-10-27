@@ -285,12 +285,17 @@ final class TechService
         $custom = $tech->custom_bom;
         if (is_array($custom) && (int) ($custom['base_bom_id'] ?? 0) === (int) $wo->bom_id && isset($custom['base_items'])) return $custom['base_items'];
         if ($tech->status === 'released') return $custom['base_items'] ?? [];
+        // 标准 BOM 行按工序主档指定的用料工序，换算成本工单路线里的车间节点，作为定制 BOM 的默认工序。
+        $byOperation = collect((array) data_get($wo->routing_snapshot, 'operations', []))
+            ->filter(fn ($op) => ($op['execution_context'] ?? 'production') === 'production')->sortBy('sequence')
+            ->groupBy(fn ($op) => (int) ($op['operation_id'] ?? 0))->map(fn ($ops) => (int) $ops->first()['routing_operation_id']);
         return array_values(array_map(fn ($l) => [
             'id' => isset($l['id']) ? (int) $l['id'] : null, 'component_item_id' => (int) ($l['component_item_id'] ?? 0),
             'component_item_code' => $l['component_item_code'] ?? null, 'component_item_name' => $l['component_item_name'] ?? null,
             'qty' => (float) (data_get($l, 'cutting_quantity_snapshot.theoretical_qty') ?? ($l['qty'] ?? 0)),
             'loss_rate' => (float) ($l['loss_rate'] ?? 0), 'fixed_qty' => (float) ($l['fixed_qty'] ?? 0),
-            'target_routing_operation_id' => isset($l['target_routing_operation_id']) ? (int) $l['target_routing_operation_id'] : null, 'remark' => $l['remark'] ?? null,
+            'target_routing_operation_id' => isset($l['target_routing_operation_id']) ? (int) $l['target_routing_operation_id']
+                : (! empty($l['operation_id']) ? ($byOperation[(int) $l['operation_id']] ?? null) : null), 'remark' => $l['remark'] ?? null,
         ], array_filter((array) data_get($wo->bom_snapshot, 'items', []), fn ($l) => is_array($l) && isset($l['id']))));
     }
 

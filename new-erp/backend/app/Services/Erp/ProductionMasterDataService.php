@@ -9,6 +9,7 @@ use App\Models\Erp\ProductionPerformanceBinding;
 use App\Models\Erp\ProductionStage;
 use App\Models\Erp\ProductionPackagingScheme;
 use App\Models\Erp\ProductionRouting;
+use App\Models\Erp\ProductionRoutingApplicability;
 use App\Models\Erp\Sku;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\QueryException;
@@ -160,17 +161,17 @@ class ProductionMasterDataService
     public function routings(array $filters, array $permissions, bool $superAdmin): LengthAwarePaginator
     {
         $this->authorize($permissions, $superAdmin, 'production.routing.view');
-        return ProductionRouting::with(['outputItem', 'product', 'sku'])->withCount('operations')
+        return ProductionRouting::with(['outputItem', 'product', 'sku', 'applicabilities.item:id,item_code,item_name', 'applicabilities.category:id,category_name'])->withCount('operations')
             ->when($filters['keyword'] ?? null, fn ($q, $v) => $q->where(fn ($x) => $x->where('routing_no', 'like', "%{$v}%")->orWhere('routing_name', 'like', "%{$v}%")))
             ->when($filters['status'] ?? null, fn ($q, $v) => $q->where('status', $v))
-            ->when($filters['output_item_id'] ?? null, fn ($q, $v) => $q->where('output_item_id', $v))
+            ->when($filters['output_item_id'] ?? null, fn ($q, $v) => $q->applicableToItem((int) $v))
             ->orderByDesc('is_default')->orderByDesc('id')->paginate((int) ($filters['per_page'] ?? 10));
     }
 
     public function routing(int $id, array $permissions, bool $superAdmin): ProductionRouting
     {
         $this->authorize($permissions, $superAdmin, 'production.routing.view');
-        $routing = ProductionRouting::with(['outputItem.unit.standardUnit', 'product', 'sku', 'operations.operation', 'operations.outputItem.unit.standardUnit', 'operations.materialSupplyRules.componentItem', 'operations.stage', 'operations.packagingScheme'])->findOrFail($id);
+        $routing = ProductionRouting::with(['applicabilities.item:id,item_code,item_name,spec', 'applicabilities.category:id,category_code,category_name', 'outputItem.unit.standardUnit', 'product', 'sku', 'operations.operation', 'operations.outputItem.unit.standardUnit', 'operations.materialSupplyRules.componentItem', 'operations.stage', 'operations.packagingScheme'])->findOrFail($id);
         $itemIds = $routing->operations->flatMap(fn ($operation) => $operation->packaging_materials ?? [])
             ->pluck('component_item_id')->filter(fn ($itemId) => (int) $itemId > 0)->map(fn ($itemId) => (int) $itemId)->unique()->values();
         $routing->setRelation('packaging_material_items', $itemIds->isEmpty() ? collect()
@@ -199,6 +200,7 @@ class ProductionMasterDataService
                 'updated_by_legacy_id' => $this->userId($user),
             ]);
             $this->syncOperations($routing, $data['operations'], $user);
+            $this->syncApplicabilities($routing, $data);
             $this->numbers->consume($data['reservation_token'], 'routing', $number, $this->userId($user), 'production_routing', $routing->id);
             return $this->withPerformance($routing->load(['outputItem.unit.standardUnit', 'product', 'sku', 'operations.operation', 'operations.outputItem.unit.standardUnit']));
         });
@@ -221,6 +223,7 @@ class ProductionMasterDataService
             $routing->updated_by_legacy_id = $this->userId($user);
             $routing->save();
             if (isset($data['operations'])) $this->syncOperations($routing, $data['operations'], $user);
+            $this->syncApplicabilities($routing, $data);
             $this->assertRoutingManagementScope($routing);
             return $this->withPerformance($routing->load(['outputItem.unit.standardUnit', 'product', 'sku', 'operations.operation', 'operations.outputItem.unit.standardUnit']));
         });
@@ -331,6 +334,9 @@ class ProductionMasterDataService
                     ]) + ['target_routing_operation_id' => $newTarget->id]);
                 }
             }
+            foreach ($source->applicabilities()->get() as $scope) {
+                $copy->applicabilities()->create($scope->only(['scope_type', 'item_id', 'item_category_id', 'scope_key']));
+            }
             // 新版本沿用来源路线指定的提成模板；未指定的继续走默认模板。
             $binding = ProductionPerformanceBinding::query()->where('binding_key', ProductionPerformanceBinding::routingKey((int) $source->id))->first();
             if ($binding) ProductionPerformanceBinding::query()->create(['binding_key' => ProductionPerformanceBinding::routingKey((int) $copy->id),
@@ -384,6 +390,7 @@ class ProductionMasterDataService
                 DB::table('erp_routing_operation_material_supply_rules')
                     ->whereIn('routing_operation_id', $routingOperationIds)->delete();
             }
+            ProductionRoutingApplicability::query()->where('routing_id', $routing->id)->delete();
             $routing->delete();
         });
     }
@@ -414,24 +421,40 @@ class ProductionMasterDataService
                 ->when($keyword, fn ($q) => $q->where(fn ($x) => $x->where('sku_code', 'like', "%{$keyword}%")->orWhere('sku_name', 'like', "%{$keyword}%")))->orderBy('sku_name'),
             'routings' => ProductionRouting::with('outputItem')->where('status', 'active')
                 ->whereHas('outputItem', fn ($q) => app(ItemManagementScopeService::class)->applyScope($q, 'factory'))
-                ->when($filters['output_item_id'] ?? null, fn ($q, $id) => $q->where('output_item_id', $id))
+                ->when($filters['output_item_id'] ?? null, fn ($q, $id) => $q->applicableToItem((int) $id))
                 ->when($keyword, fn ($q) => $q->where(fn ($x) => $x->where('routing_no', 'like', "%{$keyword}%")->orWhere('routing_name', 'like', "%{$keyword}%")))->orderByDesc('is_default')->orderByDesc('version'),
             default => throw ValidationException::withMessages(['type' => '不支持的生产主数据选择器类型。']),
         };
         return $query->paginate($perPage);
     }
 
-    public function defaultRoutingMatches(int $itemId, ?int $productId, ?int $skuId): \Illuminate\Support\Collection
+    public function defaultRoutingMatches(int $itemId, ?int $productId, ?int $skuId, bool $lock = true): \Illuminate\Support\Collection
     {
         $matches = ProductionRouting::with(['outputItem', 'product', 'sku', 'operations.operation'])
             ->where('output_item_id', $itemId)->where('status', 'active')->where('is_default', true)
             ->where(fn ($q) => $q->whereNull('product_id')->orWhere('product_id', $productId))
             ->where(fn ($q) => $q->whereNull('sku_id')->orWhere('sku_id', $skuId))
-            ->orderBy('id')->lockForUpdate()->get();
+            ->orderBy('id')->when($lock, fn ($q) => $q->lockForUpdate())->get();
         // SKU 专用默认优先于物料通用默认；同一优先级不唯一时交给调用方明确阻断。
         $rank = static fn ($row): int => ($row->sku_id ? 2 : 0) + ($row->product_id ? 1 : 0);
-        $highest = $matches->max($rank);
-        return $matches->filter(fn ($row) => $rank($row) === $highest)->values();
+        if ($matches->isNotEmpty()) {
+            $highest = $matches->max($rank);
+            return $matches->filter(fn ($row) => $rank($row) === $highest)->values();
+        }
+        // 物料自己没有默认路线时，取适用范围包含它的共用默认路线：指定物料 > 最近的类目 > 上级类目。
+        $categories = ProductionRoutingApplicability::categoryChain($itemId);
+        $shared = ProductionRouting::with(['outputItem', 'product', 'sku', 'operations.operation', 'applicabilities'])
+            ->where('status', 'active')->where('is_default', true)->whereNull('product_id')->whereNull('sku_id')
+            ->whereHas('applicabilities', fn ($a) => $a->where('item_id', $itemId)->orWhereIn('item_category_id', $categories ?: [0]))
+            ->orderBy('id')->when($lock, fn ($q) => $q->lockForUpdate())->get();
+        if ($shared->isEmpty()) return $shared;
+        $sharedRank = static function ($row) use ($itemId, $categories): int {
+            if ($row->applicabilities->contains(fn ($a) => (int) $a->item_id === $itemId)) return 1000;
+            $depth = $row->applicabilities->map(fn ($a) => array_search((int) $a->item_category_id, $categories, true))->filter(fn ($i) => $i !== false)->min();
+            return 100 - (int) $depth;
+        };
+        $highest = $shared->max($sharedRank);
+        return $shared->filter(fn ($row) => $sharedRank($row) === $highest)->values();
     }
 
     /** 比例只来自提成模板（路线指定或默认），路线工序上的旧比例列不再读取；无权限时由控制器整体脱敏。 */
@@ -443,7 +466,19 @@ class ProductionMasterDataService
         return $routing;
     }
 
-    public function snapshot(ProductionRouting $routing): array
+    /** $forItemId：共用路线用于其他物料时，快照的产出物料取实际生产/发货的物料，原路线产出物料另存 routing_output_item_id。 */
+    public function snapshot(ProductionRouting $routing, ?int $forItemId = null): array
+    {
+        $snapshot = $this->routingSnapshot($routing);
+        if ($forItemId && $forItemId !== (int) $routing->output_item_id) {
+            $item = Item::query()->find($forItemId, ['id', 'item_code', 'item_name']);
+            $snapshot = array_merge($snapshot, ['routing_output_item_id' => (int) $routing->output_item_id, 'shared_routing' => true,
+                'output_item_id' => $forItemId, 'output_item_code' => $item?->item_code, 'output_item_name' => $item?->item_name]);
+        }
+        return $snapshot;
+    }
+
+    private function routingSnapshot(ProductionRouting $routing): array
     {
         $routing->loadMissing(['outputItem', 'product', 'sku', 'operations.operation', 'operations.outputItem', 'operations.materialSupplyRules', 'operations.stage', 'operations.packagingScheme']);
         $performance = app(ProductionPerformanceRateResolver::class)->forRouting((int) $routing->id);
@@ -615,6 +650,28 @@ class ProductionMasterDataService
                 throw ValidationException::withMessages(['operations' => '同一物料的工序用量占比必须合计为100%，目标工序不能重复，且物料必须启用。']);
             }
         }
+    }
+
+    /** 共用范围：只允许不限定产品/SKU 的路线；物料须为可生产物料且不等于路线自身产出物料；类目须为 Item 类目。 */
+    private function syncApplicabilities(ProductionRouting $routing, array $data): void
+    {
+        if (! array_key_exists('applicable_item_ids', $data) && ! array_key_exists('applicable_category_ids', $data)) {
+            if (($routing->product_id || $routing->sku_id) && $routing->applicabilities()->exists())
+                throw ValidationException::withMessages(['applicable_item_ids' => '限定产品/SKU 的工艺路线不能设置共用范围。']);
+            return;
+        }
+        $itemIds = array_values(array_unique(array_map('intval', (array) ($data['applicable_item_ids'] ?? $routing->applicabilities()->where('scope_type', 'item')->pluck('item_id')->all()))));
+        $categoryIds = array_values(array_unique(array_map('intval', (array) ($data['applicable_category_ids'] ?? $routing->applicabilities()->where('scope_type', 'category')->pluck('item_category_id')->all()))));
+        if (($itemIds || $categoryIds) && ($routing->product_id || $routing->sku_id))
+            throw ValidationException::withMessages(['applicable_item_ids' => '限定产品/SKU 的工艺路线不能设置共用范围，请清空产品/SKU 后再共用。']);
+        if (in_array((int) $routing->output_item_id, $itemIds, true))
+            throw ValidationException::withMessages(['applicable_item_ids' => '共用物料不能包含路线自身的产出物料。']);
+        if ($itemIds) $this->assertProductionItems($itemIds, 'applicable_item_ids');
+        if ($categoryIds && DB::table('erp_item_categories')->whereIn('id', $categoryIds)->where('category_type', 'item')->count() !== count($categoryIds))
+            throw ValidationException::withMessages(['applicable_category_ids' => '共用类目必须是已存在的物料类目。']);
+        ProductionRoutingApplicability::query()->where('routing_id', $routing->id)->delete();
+        foreach ($itemIds as $id) $routing->applicabilities()->create(['scope_type' => 'item', 'item_id' => $id, 'scope_key' => 'item:'.$id]);
+        foreach ($categoryIds as $id) $routing->applicabilities()->create(['scope_type' => 'category', 'item_category_id' => $id, 'scope_key' => 'category:'.$id]);
     }
 
     private function assertObjectRelation(int $outputItemId, mixed $productId, mixed $skuId): void

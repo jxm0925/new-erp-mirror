@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Erp;
 
 use App\Http\Controllers\Controller;
-use App\Models\Erp\{Bom, BomItem, BomLog, InventoryBalance, Item, Product, Sku};
+use App\Models\Erp\{Bom, BomItem, BomItemOperation, BomLog, InventoryBalance, Item, Product, Sku};
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\BomLifecycleApplicationService;
 use App\Services\Erp\DocumentNumberService;
@@ -18,7 +18,7 @@ class BomController extends Controller
 {
     private const RELATIONS = [
         'product', 'sku.product', 'outputItem.unit', 'items.componentItem.category', 'items.componentItem.unit.standardUnit',
-        'items.unit.standardUnit', 'sourceProduct', 'sourceSku', 'sourceStandardBom', 'logs',
+        'items.unit.standardUnit', 'items.operationBinding.operation:id,operation_no,operation_name', 'sourceProduct', 'sourceSku', 'sourceStandardBom', 'logs',
     ];
 
     public function index(Request $request)
@@ -217,18 +217,29 @@ class BomController extends Controller
         $data = $request->validate([
             'version' => 'nullable|string|max:40',
             'bom_name' => 'nullable|string|max:160',
+            'output_item_id' => 'nullable|integer|exists:erp_items,id',
         ]);
         return DB::transaction(function () use ($id, $data, $operator) {
-            $source = Bom::with('items')->lockForUpdate()->findOrFail($id);
+            $source = Bom::with('items.operationBinding')->lockForUpdate()->findOrFail($id);
             $this->assertFactoryBom($source);
+            // 指定其他产出物料时为“复制到其他物料”：同类不同规格先复制再改尺寸，不带产品/SKU 限定。
+            $targetItemId = (int) ($data['output_item_id'] ?? $source->output_item_id);
+            $crossItem = $targetItemId !== (int) $source->output_item_id;
+            if ($crossItem) {
+                abort_if($source->bom_type === 'custom', 422, '定制 BOM 不能复制到其他物料。');
+                abort_if($source->items->contains(fn ($line) => (int) $line->component_item_id === $targetItemId), 422, 'BOM 组成物料不能等于产出物料。');
+                $this->assertProductionTarget(['output_item_id' => $targetItemId]);
+                $this->assertNoCycleForCandidate($targetItemId, $source->items->map(fn ($line) => ['component_item_id' => (int) $line->component_item_id])->all());
+                $targetItem = Item::query()->findOrFail($targetItemId);
+            }
             $copy = Bom::create([
                 'bom_no' => $this->nextNo('BOM'),
-                'bom_name' => $data['bom_name'] ?? ($source->bom_name . ' - 新版本'),
-                'product_id' => $source->product_id,
-                'sku_id' => $source->sku_id,
-                'output_item_id' => $source->output_item_id,
+                'bom_name' => $data['bom_name'] ?? ($crossItem ? $targetItem->item_name : $source->bom_name . ' - 新版本'),
+                'product_id' => $crossItem ? null : $source->product_id,
+                'sku_id' => $crossItem ? null : $source->sku_id,
+                'output_item_id' => $targetItemId,
                 'bom_type' => $source->bom_type,
-                'version' => $data['version'] ?? $this->nextVersion($source->version),
+                'version' => $data['version'] ?? ($crossItem ? 'V1.0' : $this->nextVersion($source->version)),
                 'is_default' => false,
                 'status' => 'draft',
                 'audit_status' => 'pending',
@@ -242,13 +253,14 @@ class BomController extends Controller
                 'remark' => $source->remark,
             ]);
             foreach ($source->items as $line) {
-                BomItem::create($line->only([
+                $created = BomItem::create($line->only([
                     'line_no', 'component_item_id', 'component_item_code', 'component_item_name',
                     'cut_length_mm', 'cut_width_mm', 'cut_thickness_mm', 'allow_cut_rotation', 'piece_qty', 'cutting_quantity_snapshot', 'qty', 'unit_id', 'loss_rate', 'fixed_qty', 'replaceable', 'remark',
                 ]) + ['bom_id' => $copy->id]);
+                if ($line->operationBinding) BomItemOperation::create(['bom_item_id' => $created->id, 'operation_id' => $line->operationBinding->operation_id]);
             }
-            $this->log($copy, 'copy_version', "由 {$source->bom_no} 复制为新版本", (int) $operator->legacy_id);
-            return response()->json(['message' => '已复制为新版本草稿', 'data' => $copy->fresh(self::RELATIONS)], 201);
+            $this->log($copy, 'copy_version', $crossItem ? "由 {$source->bom_no} 复制到物料 {$targetItem->item_code}" : "由 {$source->bom_no} 复制为新版本", (int) $operator->legacy_id);
+            return response()->json(['message' => $crossItem ? '已复制到所选物料，生成草稿' : '已复制为新版本草稿', 'data' => $copy->fresh(self::RELATIONS)], 201);
         }, 5);
     }
 
@@ -360,6 +372,7 @@ class BomController extends Controller
             'items.*.fixed_qty' => 'nullable|numeric|min:0',
             'items.*.replaceable' => 'boolean',
             'items.*.remark' => 'nullable|string',
+            'items.*.operation_id' => 'nullable|integer|exists:erp_production_operations,id',
         ]);
         $data['product_id'] = $data['product_id'] ?? null;
         $data['sku_id'] = $data['sku_id'] ?? null;
@@ -445,7 +458,10 @@ class BomController extends Controller
                 $fixed = (float) ($line['fixed_qty'] ?? 0);
                 abort_if(abs($fixed - round($fixed, 4)) > 0.00000001 || $fixed > 9999999999.9999, 422, '下料固定用量最多保留四位小数。');
             }
-            BomItem::create([
+            $operationId = (int) ($line['operation_id'] ?? 0);
+            abort_if($operationId && ! \App\Models\Erp\ProductionOperation::query()->whereKey($operationId)->where('status', 'enabled')->exists(), 422,
+                "物料 {$item->item_name} 指定的用料工序不存在或已停用。");
+            $created = BomItem::create([
                 'bom_id' => $bom->id,
                 'line_no' => $line['line_no'] ?? (($index + 1) * 10),
                 'component_item_id' => $item->id,
@@ -464,6 +480,7 @@ class BomController extends Controller
                 'replaceable' => $line['replaceable'] ?? false,
                 'remark' => $line['remark'] ?? null,
             ]);
+            if ($operationId) BomItemOperation::create(['bom_item_id' => $created->id, 'operation_id' => $operationId]);
         }
     }
 

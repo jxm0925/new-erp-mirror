@@ -74,8 +74,8 @@ class ShipmentPackingApplicationService
                 ->orWhere('routing_name', 'like', '%'.trim($filters['keyword']).'%')));
         $page = $query->orderByDesc('version')->orderByDesc('id')->paginate(10, ['*'], 'page', max(1, (int) ($filters['page'] ?? 1)));
         $before = $this->packingMaterials($this->originRoute($line));
-        $page->setCollection($page->getCollection()->map(function ($route) use ($before) {
-            $snapshot = app(ProductionMasterDataService::class)->snapshot($route);
+        $page->setCollection($page->getCollection()->map(function ($route) use ($before, $line) {
+            $snapshot = app(ProductionMasterDataService::class)->snapshot($route, (int) $line->item_id);
             return ['id' => (int) $route->id, 'routing_no' => $route->routing_no, 'routing_name' => $route->routing_name,
                 'version' => (int) $route->version, 'business_version' => (int) $route->business_version,
                 'schemes' => $this->shipmentNodes($snapshot)->filter(fn ($node) => ($node['shipment_operation_type'] ?? 'packing') === 'packing')->groupBy('packaging_scheme_id')->map(fn ($nodes, $id) => [
@@ -584,7 +584,7 @@ class ShipmentPackingApplicationService
     {
         $schemes = $this->shipmentNodes($this->originRoute($line))->filter(fn ($node) => ($node['shipment_operation_type'] ?? 'packing') === 'packing')
             ->pluck('packaging_scheme_id')->filter()->map('intval')->unique()->all();
-        return ProductionRouting::where('output_item_id', $line->item_id)->where('status', 'active')
+        return ProductionRouting::query()->applicableToItem((int) $line->item_id)->where('status', 'active')
             ->where(fn ($q) => $q->whereNull('product_id')->orWhere('product_id', $line->orderLine?->product_id))
             ->where(fn ($q) => $q->whereNull('sku_id')->orWhere('sku_id', $line->orderLine?->sku_id))
             ->whereHas('operations', fn ($q) => $q->where('execution_context', 'shipment'))
@@ -611,7 +611,7 @@ class ShipmentPackingApplicationService
             $candidate = $this->candidateQuery($line)->lockForUpdate()->find((int) ($selection['production_routing_id'] ?? 0));
             if (! $candidate || (int) $candidate->business_version !== (int) ($selection['expected_routing_version'] ?? 0))
                 throw new \App\Exceptions\Erp\WorkOrderDomainException('packing_routing_changed', '所选包装版本已变化或失效，请重新选择后提交。', 409);
-            $route = app(ProductionMasterDataService::class)->snapshot($candidate);
+            $route = app(ProductionMasterDataService::class)->snapshot($candidate, (int) $line->item_id);
             // Only the shipment tail is chosen here. The WO and shipment-line production facts remain frozen.
             $route['operations'] = $this->shipmentNodes($route)->values()->all();
             $route['snapshot_scope'] = 'shipment_tail'; $route['operation_count'] = count($route['operations']);

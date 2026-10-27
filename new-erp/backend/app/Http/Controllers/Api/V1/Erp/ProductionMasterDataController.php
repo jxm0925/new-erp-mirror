@@ -49,6 +49,8 @@ class ProductionMasterDataController extends Controller
         'client_command_id' => 'required|string|max:120', 'creation_session_id' => $editing ? 'prohibited' : 'required|uuid', 'reservation_token' => $editing ? 'prohibited' : 'required|uuid',
         'routing_name' => ($editing ? 'sometimes' : 'required').'|string|max:160', 'output_item_id' => ($editing ? 'sometimes' : 'required').'|integer|exists:erp_items,id',
         'product_id' => 'nullable|integer|exists:erp_products,id', 'sku_id' => 'nullable|integer|exists:erp_skus,id', 'version' => 'prohibited', 'remark' => 'nullable|string|max:2000',
+        'applicable_item_ids' => 'sometimes|array|max:500', 'applicable_item_ids.*' => 'integer|distinct|exists:erp_items,id',
+        'applicable_category_ids' => 'sometimes|array|max:100', 'applicable_category_ids.*' => 'integer|distinct|exists:erp_item_categories,id',
         'operations' => ($editing ? 'sometimes' : 'required').'|array|min:1', 'operations.*.operation_id' => 'required|integer|exists:erp_production_operations,id',
         'operations.*.sequence' => 'required|integer|min:1|max:999999', 'operations.*.parameters' => 'nullable|array', 'operations.*.is_key_operation' => 'nullable|boolean', 'operations.*.remark' => 'nullable|string|max:500',
         'operations.*.id' => 'nullable|integer|min:1',
