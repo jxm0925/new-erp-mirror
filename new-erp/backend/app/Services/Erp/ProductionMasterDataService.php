@@ -153,14 +153,20 @@ class ProductionMasterDataService
             if ($operation->status !== 'disabled') {
                 throw ValidationException::withMessages(['status' => '工序必须先停用，且确认无业务引用后才能删除。']);
             }
-            if (DB::table('erp_production_routing_operations')->where('operation_id', $operation->id)->exists()) {
-                throw ValidationException::withMessages(['operation' => '该工序已被工艺路线引用；即使路线已退役也必须保留历史，不能删除。']);
-            }
-            // BOM 用料行绑定的工序被删除后会留下失效引用（回收站里的 BOM 也可能恢复），因此同样保留。
-            // 编辑 BOM 时被替换掉的旧明细行不算引用。
-            if (DB::table('erp_bom_item_operations as bo')->join('erp_bom_items as bi', 'bi.id', '=', 'bo.bom_item_id')
-                ->where('bo.operation_id', $operation->id)->whereNull('bi.deleted_at')->exists()) {
-                throw ValidationException::withMessages(['operation' => '该工序已被 BOM 用料行绑定；请先在 BOM 中解除绑定，不能删除。']);
+            try {
+                if (DB::table('erp_production_routing_operations')->where('operation_id', $operation->id)
+                    ->lock('FOR UPDATE NOWAIT')->first(['id'])) {
+                    throw ValidationException::withMessages(['operation' => '该工序已被工艺路线引用；即使路线已退役也必须保留历史，不能删除。']);
+                }
+                // 当前读保留回收站 BOM 的引用；编辑时软删的旧明细不算引用，反向取锁不得等待。
+                if (DB::table('erp_bom_item_operations as bo')->join('erp_bom_items as bi', 'bi.id', '=', 'bo.bom_item_id')
+                    ->where('bo.operation_id', $operation->id)->whereNull('bi.deleted_at')
+                    ->lock('FOR UPDATE NOWAIT')->first(['bo.id'])) {
+                    throw ValidationException::withMessages(['operation' => '该工序已被 BOM 用料行绑定；请先在 BOM 中解除绑定，不能删除。']);
+                }
+            } catch (QueryException $exception) {
+                if ((int) ($exception->errorInfo[1] ?? 0) !== 3572) throw $exception;
+                throw ValidationException::withMessages(['operation' => '关联 BOM 或路线正在变更，本次删除未生效，请稍后重试。']);
             }
             $operation->delete();
         });
@@ -838,20 +844,20 @@ class ProductionMasterDataService
     private function prepareOperationDisable(ProductionOperation $operation, object $user): void
     {
         $bindings = app(BomOperationBindingService::class);
-        $active = $bindings->referencesForOperation((int) $operation->id)['active'];
-        if ($active) {
-            throw ValidationException::withMessages(['status' => '工序已被生效 BOM 的用料行绑定，不能停用：'.collect($active)->pluck('bom_no')->implode('、').'。请先在新版本 BOM 中改用其他工序。']);
-        }
         $bindings->clearDraftBindings((int) $operation->id, (string) $operation->operation_name, $this->userId($user));
     }
 
     private function hasActiveRoutingReference(int $operationId): bool
     {
-        return DB::table('erp_production_routing_operations as ro')
-            ->join('erp_production_routings as r', 'r.id', '=', 'ro.routing_id')
-            ->where('ro.operation_id', $operationId)
-            ->where('r.status', 'active')
-            ->exists();
+        try {
+            return DB::table('erp_production_routing_operations as ro')
+                ->join('erp_production_routings as r', 'r.id', '=', 'ro.routing_id')
+                ->where('ro.operation_id', $operationId)->where('r.status', 'active')
+                ->lock('FOR UPDATE NOWAIT')->first(['ro.id']) !== null;
+        } catch (QueryException $exception) {
+            if ((int) ($exception->errorInfo[1] ?? 0) !== 3572) throw $exception;
+            throw ValidationException::withMessages(['status' => '关联工艺路线正在变更，本次工序启停未生效，请稍后重试。']);
+        }
     }
 
     private function authorize(array $permissions, bool $superAdmin, string|array $required): void

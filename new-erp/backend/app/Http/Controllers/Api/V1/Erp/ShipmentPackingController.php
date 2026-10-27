@@ -95,14 +95,22 @@ class ShipmentPackingController extends Controller
     public function operations(Request $request, ShipmentPackingApplicationService $service)
     {
         $actor = $this->authorizeExecutionRead($request);
+        $request->validate(['unfinished' => 'nullable|boolean', 'include_summary' => 'nullable|boolean']);
         $query = ShipmentPackingOperation::query()->whereHas('shipment', fn ($q) => $q->whereIn('shipment_status', ['draft', 'pending_outbound', 'prepared', 'partially_shipped', 'outbound_posted']))
             ->when($request->filled('shipment_id'), fn ($q) => $q->where('shipment_id', $request->integer('shipment_id')))
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->input('status')))
+            ->when($request->boolean('unfinished'), fn ($q) => $q->whereNotIn('status', ['COMPLETED', 'CANCELLED']))
             ->when($request->filled('keyword'), fn ($q) => $q->where('operation_name_snapshot', 'like', '%'.trim((string) $request->input('keyword')).'%'));
         $this->applyExecutionScope($query, $actor);
+        $summary = $request->boolean('include_summary') ? (clone $query)
+            ->selectRaw('shipment_operation_type_snapshot, COUNT(*) AS operation_count')
+            ->groupBy('shipment_operation_type_snapshot')->pluck('operation_count', 'shipment_operation_type_snapshot') : null;
         $page = $query->orderBy('shipment_id')->orderBy('package_id')->orderBy('sequence')->paginate($this->pageSize($request));
         $page->setCollection($page->getCollection()->map(fn ($op) => $service->projection($op, (int) $actor->legacy_id)));
-        return response()->json(['data' => $page]);
+        return response()->json(['data' => $page] + ($summary === null ? [] : ['summary' => [
+            'total' => (int) $summary->sum(), 'water_test' => (int) ($summary['water_test'] ?? 0),
+            'packing' => (int) ($summary['packing'] ?? 0), 'loading' => (int) ($summary['loading'] ?? 0),
+        ]]));
     }
 
     public function operation(Request $request, int $id, ShipmentPackingApplicationService $service)

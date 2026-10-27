@@ -1,18 +1,53 @@
-<view class="container" style="height: {{pageHeight}};" >
-  <swiper class="banner" indicator-dots="true" autoplay="true" interval="3000" duration="1000">
-    <swiper-item wx:for="{{banner}}" wx:key="id">
-      <navigator url="{{item.path}}">
-        <image src="{{item.img}}" background-size="cover"></image>
-      </navigator>
-    </swiper-item>
-  </swiper>
-  <view style="margin-top: 10rpx;">
-  <van-notice-bar mode="link" text="技术是开发它的人的共同灵魂。" bind:click="toAllNotice"/>
+<view class="container">
+  <!-- 顶部轮播或品牌横幅 -->
+  <view class="banner-wrap">
+    <swiper wx:if="{{banner && banner.length}}" class="banner" indicator-dots="true" indicator-color="rgba(255,255,255,0.45)" indicator-active-color="#ffffff" autoplay="true" interval="3000" duration="1000">
+      <swiper-item wx:for="{{banner}}" wx:key="id">
+        <navigator url="{{item.path}}">
+          <image src="{{item.img}}" mode="aspectFill"></image>
+        </navigator>
+      </swiper-item>
+    </swiper>
+    <view wx:else class="banner-fallback">
+      <view class="banner-brand">
+        <text class="banner-logo-badge">简谈制造 · ERP</text>
+        <text class="banner-tag">2026 精益生产管理</text>
+      </view>
+      <view class="banner-main">
+        <view class="banner-slogan-top">聚光灯照亮奋斗者 · 龙马劲奔赴新征程</view>
+        <view class="banner-slogan-title">品质交付 · 生产仓储全链路协同</view>
+      </view>
+      <view class="banner-dots">
+        <view class="banner-dot active"></view>
+        <view class="banner-dot"></view>
+        <view class="banner-dot"></view>
+      </view>
+    </view>
   </view>
-  <view>
-    <van-grid column-num="3" clickable>
-      <van-grid-item wx:for="{{list}}" wx:key="index" data-index="{{index}}" icon="{{item.icon}}" text="{{item.name}}" bind:click="jumpUrl"/>
-    </van-grid>
+
+  <!-- 公告栏 -->
+  <view class="notice-wrap">
+    <van-notice-bar mode="link" text="技术是开发它的人的共同灵魂。" bind:click="toAllNotice" />
+  </view>
+
+  <!-- 九宫格导航区 -->
+  <view class="home-grid">
+    <view
+      wx:for="{{list}}"
+      wx:key="key"
+      class="home-grid-item {{item.highlight ? 'highlight' : ''}}"
+      hover-class="home-grid-item-hover"
+      data-index="{{index}}"
+      data-key="{{item.key}}"
+      bindtap="jumpUrl"
+    >
+      <text wx:if="{{item.badge}}" class="grid-badge">{{item.badge}}</text>
+      <view class="grid-icon-box">
+        <van-icon name="{{item.vanIcon}}" size="46rpx" color="{{item.highlight ? '#ffffff' : '#d81e06'}}" />
+      </view>
+      <text class="grid-title">{{item.name}}</text>
+      <text wx:if="{{item.sub}}" class="grid-sub">{{item.sub}}</text>
+    </view>
   </view>
 </view>
 

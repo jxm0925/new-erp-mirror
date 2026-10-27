@@ -201,7 +201,11 @@ final class WorkOrderService
                 if ((string) $old !== (string) $new) { $changes[$field] = [$old, $new]; $wo->{$field} = $new; }
             }
             if ($wo->planned_start_date && $wo->planned_finish_date && $wo->planned_finish_date->lt($wo->planned_start_date)) $this->fail('date_invalid', '计划完工不能早于计划开工。');
-            $replan = false;
+            // 明确保存同一 BOM 只重做已失败的展开；成功冻结的快照仍沿用原依据。
+            $refreshBom = $wo->status === 'planned' && ! $wo->started_at && ! empty($data['bom_id'])
+                && (int) $data['bom_id'] === (int) $wo->bom_id && $this->bomExpansionIncomplete($wo);
+            $replan = $refreshBom;
+            if ($refreshBom) $changes['bom_snapshot'] = ['虚拟件展开未完成', '重新规划'];
             foreach (['bom_id', 'routing_id'] as $field) {
                 if (! array_key_exists($field, $data) || (int) $data[$field] === (int) $wo->{$field}) continue;
                 if ($wo->started_at) $this->fail('started', '工单已开工，不能再换 BOM 或工艺路线。');
@@ -226,8 +230,8 @@ final class WorkOrderService
             if ($replan) {
                 $this->applyPlan($wo, Item::query()->findOrFail($wo->item_id),
                     array_key_exists('bom_id', $data) ? ($data['bom_id'] ?: null) : $wo->bom_id,
-                    array_key_exists('routing_id', $data) ? ($data['routing_id'] ?: null) : $wo->routing_id, true);
-                if (isset($changes['bom_id']) || isset($changes['routing_id'])) {
+                    array_key_exists('routing_id', $data) ? ($data['routing_id'] ?: null) : $wo->routing_id, true, $refreshBom);
+                if (isset($changes['bom_id']) || isset($changes['routing_id']) || $refreshBom) {
                     // 换回原版本也要重新确认，不能复用变更前的技术签认。
                     MfgWorkOrderTech::query()->where('work_order_id', $wo->id)->where('status', 'pending')->update(['bom_confirmed' => false]);
                 }
@@ -416,6 +420,8 @@ final class WorkOrderService
 
     private function doRelease(MfgWorkOrder $wo, object $actor, bool $automatic = false): void
     {
+        if ($this->bomExpansionIncomplete($wo))
+            $this->fail('bom_expansion_incomplete', '不能下达：虚拟件用料尚未完整展开，请补齐资料后在“调整工单”中选择 BOM 并保存，重新规划用料。');
         if (! $wo->bom_id || ! $this->plans->isBomEligible((int) $wo->bom_id, (int) $wo->item_id))
             $this->fail('release_blocked', '不能下达：所选 BOM 已失效或不是这个产品的 BOM，请调整工单明确选择有效的 BOM。');
         [$serials, $range] = $this->generateUnits($wo);
@@ -439,10 +445,12 @@ final class WorkOrderService
     }
 
     /** 写入 BOM/路线快照、工序、用料；已下达工单换版本时只重建工序和用料，序列号不变。 */
-    private function applyPlan(MfgWorkOrder $wo, Item $item, ?int $bomId, ?int $routingId, bool $replace = false): void
+    private function applyPlan(MfgWorkOrder $wo, Item $item, ?int $bomId, ?int $routingId, bool $replace = false, bool $refreshBom = false): void
     {
         $bomSnapshot = null;
-        if ($replace && (int) $bomId === (int) $wo->bom_id) {
+        if ($replace && ! $refreshBom && (int) $bomId === (int) $wo->bom_id) {
+            if ($this->bomExpansionIncomplete($wo))
+                $this->fail('bom_expansion_incomplete', '虚拟件用料尚未完整展开，请补齐资料后在“调整工单”中选择 BOM 并保存，重新规划用料；不能沿用原快照下达。');
             $snapshot = $wo->bom_snapshot;
             // 空明细或缺用量不能被转成零需求后覆盖原工单用料。
             $validSnapshot = $wo->bom_id && is_array($snapshot) && (int) ($snapshot['id'] ?? 0) === (int) $wo->bom_id
@@ -509,6 +517,13 @@ final class WorkOrderService
         }
     }
 
+    private function bomExpansionIncomplete(MfgWorkOrder $wo): bool
+    {
+        $complete = data_get($wo->bom_snapshot, 'phantom_expansion_complete');
+        // 旧版失败快照没有完整标记，但会保留虚拟件阻断原因；不能让重下达抹掉该证据。
+        return $complete === false || ($complete === null && str_contains((string) $wo->block_reason, '虚拟件'));
+    }
+
     /** 第 1 阶段下达的工单台没有记当前工序：未开工的统一放到第一道车间工序。 */
     public function placeWaitingUnits(): void
     {
@@ -565,7 +580,7 @@ final class WorkOrderService
     private function changeText(array $changes): string
     {
         $labels = ['owner_legacy_id' => null, 'owner_name' => '负责人', 'planned_start_date' => '计划开工', 'planned_finish_date' => '计划完工',
-            'is_urgent' => '加急', 'remark' => '备注', 'warehouse_id' => '入库仓库', 'bom_id' => '换 BOM', 'routing_id' => '换工艺路线', 'planned_qty' => '数量'];
+            'is_urgent' => '加急', 'remark' => '备注', 'warehouse_id' => '入库仓库', 'bom_id' => '换 BOM', 'bom_snapshot' => '用料依据', 'routing_id' => '换工艺路线', 'planned_qty' => '数量'];
         $parts = [];
         foreach ($changes as $field => [$old, $new]) {
             if (! ($labels[$field] ?? null)) continue;

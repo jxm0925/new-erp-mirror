@@ -1,6 +1,7 @@
 {
   "pages": [
     "pages/index/index",
+    "pages/production/hub/index",
     "pages/warehouse/workbench/index",
     "pages/warehouse/list/index",
     "pages/warehouse/document/index",

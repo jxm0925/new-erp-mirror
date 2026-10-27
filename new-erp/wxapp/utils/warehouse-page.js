@@ -20,5 +20,5 @@ function openDocument(row) {
   return wx.navigateTo({ url: `/pages/warehouse/document/index?${common}` });
 }
 function errorText(error) { return error && error.message ? error.message : '加载失败，请稍后重试'; }
-function back() { if (getCurrentPages().length > 1) wx.navigateBack(); else wx.redirectTo({ url: '/pages/warehouse/workbench/index' }); }
+function back() { if (getCurrentPages().length > 1) wx.navigateBack(); else wx.redirectTo({ url: '/pages/production/hub/index' }); }
 module.exports = { permissions, quantity, rows, decorate, openDocument, errorText, back };

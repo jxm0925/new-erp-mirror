@@ -2,33 +2,61 @@
 import Notify from '@vant/weapp/notify/notify';
 var util = require('../../utils/util.js');
 var api = require('../../config/api.js');
+
 Page({
   data: {
     autosize: {
       minHeight: 100
     },
-    pageHeight:0,
-    list:[{
-      url:"",
-      icon:"/static/images/order.png",
-      name:"订单"
-    },{
-      url:"",
-      icon:"/static/images/up.png",
-      name:"改良改善"
-    },{
-      url:"",
-      icon:"/static/images/points-mall.png",
-      name:"积分商城"
-    },{
-        url:"",
-        icon:"/static/images/work_order.png",
-        name:"工单"
-      },{
-        url:"/pages/warehouse/workbench/index",
-        icon:"/static/images/work_order.png",
-        name:"仓库"
-      }]
+    pageHeight: 0,
+    banner: [],
+    list: [
+      {
+        key: 'orders',
+        url: '/pages/orders/index/index',
+        icon: '/static/images/order.png',
+        vanIcon: 'description',
+        name: '订单'
+      },
+      {
+        key: 'suggests',
+        url: '/pages/suggests/sub/index',
+        icon: '/static/images/up.png',
+        vanIcon: 'chart-trending-o',
+        name: '改良改善'
+      },
+      {
+        key: 'mall',
+        url: '/pages/mall/index/index',
+        icon: '/static/images/points-mall.png',
+        vanIcon: 'shop-o',
+        name: '积分商城'
+      },
+      {
+        key: 'production_warehouse',
+        url: '/pages/production/hub/index',
+        icon: '/static/images/work_order.png',
+        vanIcon: 'apps-o',
+        name: '生产仓储',
+        sub: '工单·仓库·发货·统计',
+        badge: '整合入口',
+        highlight: true
+      },
+      {
+        key: 'report',
+        url: '/pages/my/report/index/index',
+        icon: '/static/images/todo.png',
+        vanIcon: 'edit',
+        name: '汇报中心'
+      },
+      {
+        key: 'needs',
+        url: '/pages/my/needs/needs',
+        icon: '/static/images/needs.png',
+        vanIcon: 'contact',
+        name: '客户需求单'
+      }
+    ]
   },
   onLoad: function () {
     this.getIndexData();
@@ -44,66 +72,57 @@ Page({
       });
     }
   },
-  onReady: function () {
-    
-  },
-  onHide: function () {
-    // 页面隐藏
-
-  },
+  onReady: function () {},
+  onHide: function () {},
   getIndexData: function () {
     let that = this;
-    var data = new Object();
     util.request(api.IndexUrlHome).then(function (res) {
-        if (res.code) {
-          data.banner = res.data.banner
-          that.setData(data);
-        }
-    });
+      if (res && res.code && res.data && Array.isArray(res.data.banner)) {
+        that.setData({ banner: res.data.banner });
+      }
+    }).catch(function () {});
   },
-  jumpUrl:function(event){
-    var info = event.currentTarget.dataset;
-    
-    var that = this;
-    // 工单页会校验统一登录是否包含 ERP 会话，避免旧版本遗留的单边 token 阻塞首页跳转。
-    if(info.index!=1 && info.index!=3 && info.index!=4 && !(wx.getStorageSync('userInfo') || {}).user_id){
+  jumpUrl: function (event) {
+    var info = event.currentTarget.dataset || {};
+    var index = Number(info.index);
+    var item = this.data.list[index] || {};
+    var userInfo = wx.getStorageSync('userInfo') || {};
+
+    // 生产仓储页会自行校验统一登录是否包含 ERP 会话，避免旧版本遗留的单边 token 阻塞首页跳转。
+    if (item.key === 'production_warehouse' || index === 3) {
+      wx.navigateTo({
+        url: '/pages/production/hub/index'
+      });
+      return;
+    }
+    if (item.key === 'suggests' || index === 1) {
+      wx.navigateTo({
+        url: '/pages/suggests/sub/index'
+      });
+      return;
+    }
+    if (item.key === 'mall' || index === 2) {
+      wx.switchTab({
+        url: '/pages/mall/index/index'
+      });
+      return;
+    }
+    if (!userInfo.user_id) {
       util.BadgePopup();
       return;
     }
-    if(info.index==0 && !that.data.userInfo.scope){
+    if ((item.key === 'orders' || index === 0) && !(this.data.userInfo && this.data.userInfo.scope)) {
       Notify({ type: 'danger', message: '暂无权限，请联系管理员' });
       return;
     }
-    console.log(info.index);
-    switch (info.index) {
-      case 0:
-          wx.navigateTo({
-              url: '/pages/orders/index/index',
-          })
-          break;
-      case 1:
-          wx.navigateTo({
-              url: '/pages/suggests/sub/index',
-          })
-          break;
-      case 2:
-          wx.switchTab({
-              url: '/pages/mall/index/index',
-          })
-          break;
-      case 3:
-          wx.navigateTo({
-              url: '/pages/production/shipment-packing/index',
-          })
-          break;
-      case 4:
-          wx.navigateTo({ url: '/pages/warehouse/workbench/index' });
-          break;
-      default:
-          wx.navigateTo({
-              url: '/pages/ucenter/help/help',
-          })
-          break;
+    if (item.url) {
+      wx.navigateTo({
+        url: item.url
+      });
+      return;
     }
+    wx.navigateTo({
+      url: '/pages/ucenter/help/help'
+    });
   }
-})
+});

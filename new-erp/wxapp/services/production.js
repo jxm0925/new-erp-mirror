@@ -25,6 +25,8 @@ function uploadPhoto(filePath) {
 module.exports = {
   tasks: query => get('tasks', query),
   task: id => get(`tasks/${Number(id)}`),
+  board: query => get('board', query),
+  serialLookup: query => get('serials/lookup', query),
   action: (id, payload) => request.write(`${base}/tasks/${Number(id)}/actions`, payload, { loading: false, commandPrefix: 'task' }),
   people: (id, query) => get(`tasks/${Number(id)}/people`, query),
   workOrder: id => get(`work-orders/${Number(id)}`),

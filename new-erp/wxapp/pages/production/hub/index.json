@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "生产仓储",
+  "navigationBarBackgroundColor": "#d81e06",
+  "navigationBarTextStyle": "white",
+  "enablePullDownRefresh": true,
+  "usingComponents": {}
+}

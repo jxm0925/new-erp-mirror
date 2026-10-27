@@ -9,6 +9,8 @@ use App\Models\Erp\BomItem;
 use App\Models\Erp\BomItemOperation;
 use App\Models\Erp\BomLog;
 use App\Models\Erp\ProductionRouting;
+use App\Models\Erp\ProductionOperation;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -63,7 +65,7 @@ class BomOperationBindingService
     {
         $lines = collect($lines)->filter(fn ($line) => (int) ($line['operation_id'] ?? 0) > 0);
         if ($lines->isEmpty()) return;
-        $allowed = $this->options($outputItemId)->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $allowed = $this->allowedOperationIds($outputItemId, $lines->pluck('operation_id')->all());
         $errors = [];
         foreach ($lines as $index => $line) {
             if (! in_array((int) $line['operation_id'], $allowed, true)) {
@@ -73,11 +75,20 @@ class BomOperationBindingService
         if ($errors) throw ValidationException::withMessages($errors);
     }
 
+    /** 调用方已持有 BOM 根锁；所有绑定写入与工序启停共用工序行锁，资格以当前状态为准。 */
+    public function allowedOperationIds(int $outputItemId, array $operationIds): array
+    {
+        $enabled = ProductionOperation::query()->whereIn('id', array_unique($operationIds))->orderBy('id')
+            ->lockForUpdate()->get(['id', 'status'])->where('status', 'enabled')->pluck('id')->map(fn ($id) => (int) $id)->all();
+        return array_values(array_intersect($this->options($outputItemId)->pluck('id')->all(), $enabled));
+    }
+
     /** 按已保存 BOM 的明细校验（提交、审核、启用时使用）。 */
     public function assertBomBindings(Bom $bom): void
     {
-        $lines = BomItem::query()->where('bom_id', $bom->id)->with('operationBinding')->orderBy('line_no')->get()
-            ->map(fn (BomItem $line) => ['operation_id' => $line->operationBinding?->operation_id, 'label' => $line->component_item_name])->all();
+        $lines = BomItem::query()->leftJoin('erp_bom_item_operations as bo', 'bo.bom_item_id', '=', 'erp_bom_items.id')
+            ->where('erp_bom_items.bom_id', $bom->id)->orderBy('erp_bom_items.line_no')->lockForUpdate()
+            ->get(['bo.operation_id', 'erp_bom_items.component_item_name as label'])->toArray();
         $this->assertBindings((int) $bom->output_item_id, $lines);
     }
 
@@ -103,12 +114,24 @@ class BomOperationBindingService
      */
     public function clearDraftBindings(int $operationId, string $operationName, ?int $operatorId): array
     {
-        $bindings = BomItemOperation::query()->from('erp_bom_item_operations as bo')
-            ->join('erp_bom_items as bi', 'bi.id', '=', 'bo.bom_item_id')
-            ->join('erp_boms as b', 'b.id', '=', 'bi.bom_id')
-            ->where('bo.operation_id', $operationId)->whereNull('bi.deleted_at')->whereNull('b.deleted_at')
-            ->where('b.status', 'draft')
-            ->get(['bo.id', 'bi.bom_id', 'bi.component_item_name']);
+        try {
+            // 启用/保存已持有 BOM 后会等待工序锁；停用已持工序锁时不得反向等待 BOM。
+            // NOWAIT 冲突让整个停用事务回滚；锁后当前读同时确认绑定与 BOM 状态，不能复用锁前 ID。
+            $bindings = DB::table('erp_bom_item_operations as bo')
+                ->join('erp_bom_items as bi', 'bi.id', '=', 'bo.bom_item_id')
+                ->join('erp_boms as b', 'b.id', '=', 'bi.bom_id')
+                ->where('bo.operation_id', $operationId)->whereNull('bi.deleted_at')->whereNull('b.deleted_at')
+                ->whereIn('b.status', ['draft', 'active'])->orderBy('b.id')->orderBy('bo.id')
+                ->lock('FOR UPDATE NOWAIT')->get(['bo.id', 'bi.bom_id', 'bi.component_item_name', 'b.status', 'b.bom_no']);
+        } catch (QueryException $exception) {
+            if ((int) ($exception->errorInfo[1] ?? 0) !== 3572) throw $exception;
+            throw ValidationException::withMessages(['status' => '关联 BOM 正在编辑或启用，本次停用未生效，请稍后重试。']);
+        }
+        $active = $bindings->where('status', 'active');
+        if ($active->isNotEmpty()) {
+            throw ValidationException::withMessages(['status' => '工序已被生效 BOM 的用料行绑定，不能停用：'.$active->pluck('bom_no')->unique()->implode('、').'。请先在新版本 BOM 中改用其他工序。']);
+        }
+        $bindings = $bindings->where('status', 'draft');
         if ($bindings->isEmpty()) return [];
         $boms = Bom::query()->whereIn('id', $bindings->pluck('bom_id')->unique())->orderBy('id')->lockForUpdate()->get();
         BomItemOperation::query()->whereIn('id', $bindings->pluck('id'))->delete();

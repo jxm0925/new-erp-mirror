@@ -201,7 +201,7 @@ final class WorkOrderQueryService
         $current = $unit->current_operation_id ? $wo->operations->firstWhere('id', $unit->current_operation_id) : null;
         return [
             'serial_no' => $unit->serial_no, 'status' => $unit->status, 'status_label' => self::UNIT_LABELS[$unit->status] ?? $unit->status,
-            'current_operation_name' => $current?->operation_name, 'rework_count' => $unit->rework_count,
+            'current_operation_id' => $current?->id, 'current_operation_name' => $current?->operation_name, 'rework_count' => $unit->rework_count,
             'work_order' => ['id' => $wo->id, 'work_order_no' => $wo->work_order_no, 'status' => $wo->status, 'status_label' => self::STATUS_LABELS[$wo->status] ?? $wo->status,
                 'item_name' => $wo->item_name, 'item_code' => $wo->item_code, 'product_name' => $wo->product_name, 'sku_code' => $wo->sku_code, 'sku_name' => $wo->sku_name,
                 'bom_no' => $wo->bom_no, 'bom_name' => data_get($wo->bom_snapshot, 'bom_name'), 'bom_version' => $wo->bom_version,

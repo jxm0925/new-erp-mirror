@@ -21,7 +21,7 @@ Page({
     loading: true, busy: false, error: '', keyword: '', userName: '', canExecute: false },
   onLoad(options) {
     const user = wx.getStorageSync('erp_user') || {};
-    this.setData({ tab: TABS.some(t => t.key === options.tab) ? options.tab : 'mine', userName: user.nickname || user.display_name || user.username || '' });
+    this.setData({ tab: options && TABS.some(t => t.key === options.tab) ? options.tab : 'mine', keyword: options && options.keyword ? decodeURIComponent(options.keyword) : '', userName: user.nickname || user.display_name || user.username || '' });
   },
   onShow() { this.load(); },
   onPullDownRefresh() { this.load().finally(() => wx.stopPullDownRefresh()); },

@@ -1300,7 +1300,7 @@ export default {
       })
       if (a.is_urgent !== wo.is_urgent) payload.is_urgent = a.is_urgent
       if (!wo.started) {
-        if (a.bom_id !== wo.bom_id) payload.bom_id = a.bom_id
+        if (a.bom_id !== wo.bom_id || (wo.status === 'planned' && (wo.block_reason || '').includes('虚拟件'))) payload.bom_id = a.bom_id
         if (a.routing_id !== wo.routing_id) payload.routing_id = a.routing_id
       }
       if (wo.source_type === 'stock' && wo.status === 'planned' && Number(a.planned_qty) !== Number(wo.planned_qty)) {

@@ -35,6 +35,9 @@ class BomLifecycleApplicationService
             $bom = Bom::withTrashed()->lockForUpdate()->findOrFail($id);
             if (! $bom->trashed()) return $bom;
 
+            // 历史回收记录若保留启用状态，恢复也必须遵守当前工序资格，不能绕过启用校验。
+            if ($bom->status === 'active') app(BomOperationBindingService::class)->assertBomBindings($bom);
+
             // 明细的 deleted_at 表示编辑时被替换，恢复主记录绝不能复活旧版本明细。
             $bom->updated_by = $operatorId;
             $bom->restore();

@@ -13,7 +13,7 @@ Page({
     identityOpen: false, identityRows: [], selectedIdentities: [], identityMaterial: {}, identityPage: 1, identityLast: 1, identityKeyword: '',
     operationSerialIds: [], inspectionOpen: false, inspectionResult: 'passed', inspectionReason: '', inspectionError: '', inspectionNeedsReturn: false,
     repairLocatorOpen: false, repairLocator: {}, reworkOpen: false, reworkRows: [], reworkPage: 1, reworkLast: 1, reworkKeyword: '', reworkError: '', returnOperation: null },
-  onLoad(options) { this.peopleSelected = {}; this.materialSelected = {}; this.identitySelected = {}; this.setData({ shipmentId: Number(options.shipment_id || 0) }); this.load(); },
+  onLoad(options = {}) { this.peopleSelected = {}; this.materialSelected = {}; this.identitySelected = {}; this.setData({ shipmentId: Number(options.shipment_id || 0) }); this.load(); if (options.operation_id) { this.showOperation(Number(options.operation_id)); } },
   onUnload() { this.sequence = (this.sequence || 0) + 1; this.detailSequence = (this.detailSequence || 0) + 1; this.invalidateSelectors(); },
   invalidateSelectors() { ['peopleSequence', 'materialSequence', 'identitySequence'].forEach(key => { this[key] = (this[key] || 0) + 1; }); },
   onPullDownRefresh() { this.load().finally(() => wx.stopPullDownRefresh()); },

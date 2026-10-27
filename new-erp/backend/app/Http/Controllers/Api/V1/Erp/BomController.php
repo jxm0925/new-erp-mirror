@@ -81,7 +81,7 @@ class BomController extends Controller
             $numbers->consume($payload['reservation_token'], 'bom', $bomNo, $operatorId, 'bom', $bom->id);
             $this->log($bom, 'create', '新增 BOM 草稿', $operatorId);
             return response()->json(['message' => 'BOM 已保存为草稿', 'data' => $bom->fresh(self::RELATIONS)], 201);
-        });
+        }, 5);
     }
 
     /** BOM 行可选的用料工序：产出物料适用工艺路线里的车间工序。 */
@@ -265,7 +265,8 @@ class BomController extends Controller
                 'remark' => $source->remark,
             ]);
             // 目标物料的适用路线可能不同：不在其路线车间工序里的绑定不复制，该行改按路线规则，并提示用户确认。
-            $allowedOperations = app(\App\Services\Erp\BomOperationBindingService::class)->options($targetItemId)->pluck('id')->map(fn ($v) => (int) $v)->all();
+            $allowedOperations = app(\App\Services\Erp\BomOperationBindingService::class)->allowedOperationIds($targetItemId,
+                $source->items->pluck('operationBinding.operation_id')->filter()->all());
             $unbound = [];
             foreach ($source->items as $line) {
                 $created = BomItem::create($line->only([

@@ -35,12 +35,22 @@ final class WorkOrderPlanBuilder
         if ($item->isPhantom()) $blocks[] = '这个物料是虚拟件，不单独建工单，用料会在上级工单里直接展开';
         $bom = $bomSnapshot ?? $this->bom($item, $productId, $skuId, $configuration, $bomId, $blocks);
         // 虚拟件在冻结 BOM 时展开成其下层用料；已保存工单沿用自身快照，不再重新展开。
-        if ($bom && $bomSnapshot === null) $bom['items'] = $this->explodePhantoms($bom['items'], [(int) $item->id], $blocks);
+        if ($bom && $bomSnapshot === null) {
+            $expansionBlocks = [];
+            $expanded = $this->explodePhantoms($bom['items'], [(int) $item->id], $expansionBlocks);
+            $bom['phantom_expansion_complete'] = ! $expansionBlocks;
+            // 失败时保留原始行与原因，不能把缺少分支的部分结果冻结为完整用料。
+            if (! $expansionBlocks) $bom['items'] = $expanded;
+            else $bom['phantom_expansion_block_reasons'] = $expansionBlocks;
+        }
+        if (($bom['phantom_expansion_complete'] ?? null) === false) {
+            $blocks = array_merge($blocks, $bom['phantom_expansion_block_reasons'] ?? ['虚拟件用料尚未完整展开，请调整工单重新选择 BOM 后保存。']);
+        }
         $routing = $this->routing($item, $productId, $skuId, $routingId, $blocks);
         $operations = $routing ? $routing['operations'] : [];
         $production = array_values(array_filter($operations, fn ($op) => $op['execution_context'] === 'production'));
         if ($routing && ! $production) $blocks[] = '工艺路线里没有车间工序，请在路线里补上生产工序';
-        $materials = $bom ? $this->materials($bom['items'], $operations, $qty, $blocks) : [];
+        $materials = $bom && ($bom['phantom_expansion_complete'] ?? null) !== false ? $this->materials($bom['items'], $operations, $qty, $blocks) : [];
 
         return ['bom' => $bom, 'routing' => $routing, 'operations' => $operations, 'materials' => $materials, 'block_reasons' => $blocks];
     }
