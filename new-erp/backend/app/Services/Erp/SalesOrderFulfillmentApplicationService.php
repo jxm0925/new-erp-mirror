@@ -580,13 +580,11 @@ class SalesOrderFulfillmentApplicationService
     /** 订单确认页显示的“车间做哪些工序、发货做哪些作业”：取默认工艺路线（只读，不加锁）。 */
     private function routingSummary(SalesOrderLine $line): ?array
     {
-        $matches = \App\Models\Erp\ProductionRouting::query()->with(['operations.operation', 'operations.packagingScheme'])
-            ->where('output_item_id', $line->item_id)->where('status', 'active')->where('is_default', true)
-            ->where(fn ($q) => $q->whereNull('product_id')->orWhere('product_id', $line->product_id))
-            ->where(fn ($q) => $q->whereNull('sku_id')->orWhere('sku_id', $line->sku_id))->orderBy('id')->get();
-        if ($matches->isEmpty()) return null;
-        $rank = static fn ($row): int => ($row->sku_id ? 2 : 0) + ($row->product_id ? 1 : 0);
-        $routing = $matches->sortByDesc($rank)->first();
+        if (! $line->item_id) return null;
+        $routing = app(\App\Services\Erp\ProductionMasterDataService::class)
+            ->defaultRoutingMatches((int) $line->item_id, $line->product_id ? (int) $line->product_id : null, $line->sku_id ? (int) $line->sku_id : null, false)->first();
+        if (! $routing) return null;
+        $routing->loadMissing(['operations.operation', 'operations.packagingScheme']);
         $name = fn ($op) => $op->operation?->operation_name ?: '工序';
         $operations = $routing->operations->sortBy('sequence');
         return [

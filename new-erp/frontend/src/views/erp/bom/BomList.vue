@@ -403,6 +403,15 @@
         <el-form-item label="原 BOM 编号">
           <span class="code-mono fw-bold">{{ versionDialog.row ? versionDialog.row.bom_no : '-' }}</span>
         </el-form-item>
+        <el-form-item v-if="versionDialog.row && versionDialog.row.bom_type !== 'custom'" label="复制到">
+          <el-radio-group v-model="versionDialog.target" @change="versionDialog.version = versionDialog.target === 'other' ? 'V1.0' : nextVersion(versionDialog.row.version)">
+            <el-radio label="same">本物料新版本</el-radio>
+            <el-radio label="other">其他物料（同类其他规格）</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="versionDialog.target === 'other'" label="目标物料" required>
+          <paged-record-select v-model="versionDialog.output_item_id" size="small" clearable placeholder="选择要复制到的物料" entity="items" title="选择目标物料" :params="{ management_scope: 'factory' }" category-type="item" />
+        </el-form-item>
         <el-form-item label="新版本号" required>
           <el-input v-model.trim="versionDialog.version" placeholder="例如：V1.1 / V2.0" />
         </el-form-item>
@@ -746,7 +755,7 @@ export default {
       dateRange: []
     },
     opDialog: { visible: false, loading: false, row: null, type: '', text: '' },
-    versionDialog: { visible: false, loading: false, row: null, version: '' },
+    versionDialog: { visible: false, loading: false, row: null, version: '', target: 'same', output_item_id: null },
     deletedDialog: { visible: false, loading: false, keyword: '', rows: [], total: 0, page: 1, perPage: 10 },
     detailDialog: { visible: false, loading: false, activeTab: 'basic', data: null, deleted: false }
   }),
@@ -1113,16 +1122,17 @@ export default {
     },
     copyVersion(row) {
       if (!row || row.deleted_at || !this.$can('bom.manage.create')) return
-      this.versionDialog = { visible: true, loading: false, row, version: this.nextVersion(row.version) }
+      this.versionDialog = { visible: true, loading: false, row, version: this.nextVersion(row.version), target: 'same', output_item_id: null }
     },
     async confirmCopyVersion() {
-      const { row, version } = this.versionDialog
+      const { row, version, target, output_item_id: outputItemId } = this.versionDialog
       if (!row || !this.$can('bom.manage.create') || this.versionDialog.loading) return
       if (!version) return this.$message.error('请输入新版本号')
+      if (target === 'other' && !outputItemId) return this.$message.error('请选择目标物料')
       this.versionDialog.loading = true
       try {
-        const { data } = await copyBomVersion(row.id, { version })
-        this.$message.success('已复制为新版本草稿')
+        const { data } = await copyBomVersion(row.id, target === 'other' ? { version, output_item_id: outputItemId } : { version })
+        this.$message.success(data.message || '已复制为新版本草稿')
         this.versionDialog.visible = false
         if (this.detailDialog.visible) {
           this.detailDialog.visible = false

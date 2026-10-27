@@ -66,6 +66,7 @@
             <div class="wrap-text">
               <span class="item-name">{{ s.row.output_item && s.row.output_item.item_name || '-' }}</span>
               <small v-if="s.row.output_item && s.row.output_item.item_code" class="item-code">{{ s.row.output_item.item_code }}</small>
+              <small v-if="(s.row.applicabilities || []).length" class="item-code">共用：{{ s.row.applicabilities.map(x => x.item ? x.item.item_name : (x.category ? x.category.category_name + '（类目）' : '')).join('、') }}</small>
             </div>
           </template>
         </el-table-column>

@@ -36,14 +36,10 @@ class ShipmentSourceResolver
         $route = $line->packing_source_snapshot !== null ? $line->packing_routing_snapshot : ($routes === [] ? null : reset($routes));
         if ($route === null && $line->packing_source_snapshot === null) {
             $orderLine = $line->orderLine;
-            $matches = ProductionRouting::query()->where('output_item_id', $line->item_id)->where('status', 'active')->where('is_default', true)
-                ->where(fn ($q) => $q->whereNull('product_id')->orWhere('product_id', $orderLine?->product_id))
-                ->where(fn ($q) => $q->whereNull('sku_id')->orWhere('sku_id', $orderLine?->sku_id))->get();
-            $rank = static fn ($candidate): int => ($candidate->sku_id ? 2 : 0) + ($candidate->product_id ? 1 : 0);
-            $highest = $matches->max($rank);
-            $matches = $matches->filter(fn ($candidate) => $rank($candidate) === $highest);
+            $matches = app(ProductionMasterDataService::class)->defaultRoutingMatches((int) $line->item_id,
+                $orderLine?->product_id ? (int) $orderLine->product_id : null, $orderLine?->sku_id ? (int) $orderLine->sku_id : null, false);
             if ($matches->count() > 1) $blockers[] = '该产品的默认包装工艺不唯一，请先核对工艺配置。';
-            elseif ($matches->count() === 1) $route = app(ProductionMasterDataService::class)->snapshot($matches->first());
+            elseif ($matches->count() === 1) $route = app(ProductionMasterDataService::class)->snapshot($matches->first(), (int) $line->item_id);
         }
         return ['routing_snapshot' => $route, 'source_rows' => $sources, 'production_ready' => $blockers === [],
             'blockers' => array_values(array_unique($blockers)), 'continuations' => $continuations];

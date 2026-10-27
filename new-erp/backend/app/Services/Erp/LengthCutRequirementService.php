@@ -62,6 +62,7 @@ class LengthCutRequirementService
             || ! $line->relationLoaded('unit') || ($line->componentItem && ! $line->componentItem->relationLoaded('unit')))) {
             $bom->loadMissing(['items.componentItem.unit.standardUnit', 'items.unit.standardUnit']);
         }
+        $bom->loadMissing('items.operationBinding');
         $base = $bom->items->values();
         $resolved = $base->map(fn ($line) => $this->lineArray($line));
         $technical = collect((array) data_get($configuration, 'technical_bom_lines', []));
@@ -150,6 +151,7 @@ class LengthCutRequirementService
             'cutting_quantity_basis' => $line->cutting_quantity_snapshot['quantity_basis'] ?? 'dimensions_pieces',
             'total_length_mm' => $line->cutting_quantity_snapshot['total_length_mm'] ?? null,
             'remark' => $line->remark, 'cut_requirement_source' => $line->cutting_quantity_snapshot === null ? null : 'bom',
+            'operation_id' => $line->operationBinding?->operation_id ? (int) $line->operationBinding->operation_id : null,
         ];
     }
 }
