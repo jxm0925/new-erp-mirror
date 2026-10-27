@@ -51,7 +51,7 @@ final class TradePlatformController extends Controller
     private function payload(Request $request, bool $editing): array
     {
         return $request->validate([
-            'name' => 'required|string|max:160', 'short_name' => 'nullable|string|max:160', 'trade_type' => 'nullable|string|max:40',
+            'name' => 'required|string|max:160', 'short_name' => 'nullable|string|max:160', 'trade_type' => 'nullable|in:domestic,foreign',
             'parent_legacy_id' => 'required|integer|min:0', 'sort' => 'required|integer|min:0|max:9999', 'status' => 'required|in:enabled,disabled',
             'expected_version' => $editing ? 'required|string|size:64' : 'prohibited',
             'client_request_id' => $editing ? 'prohibited' : 'required|uuid',

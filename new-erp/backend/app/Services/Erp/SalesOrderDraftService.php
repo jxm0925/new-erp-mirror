@@ -207,6 +207,8 @@ class SalesOrderDraftService
         $add('DRAFT_STATUS', $order->order_status === 'draft', '订单处于草稿状态', '订单状态不是草稿，不能执行确认前检查', 'order_status');
         $add('CUSTOMER_COMPLETE', $requirements['customer_complete'] && $requirements['shipping_complete'], $requirements['requires_delivery'] ? '客户及收货信息完整' : '客户及联系信息完整', '客户名称、联系电话或实物收货地址不完整', 'customer');
         $add('DEFAULT_CARRIER_REQUIRED', $requirements['carrier_complete'], $requirements['requires_delivery'] ? '默认承运方式已选择' : '本订单无需配送', '请选择默认承运方式', 'default_carrier_id');
+        $platformProblem = app(SalesTradePlatformService::class)->problem($order->trade_type ?: 'domestic', $order->platform, $order->platform2);
+        $add('TRADE_PLATFORM', $platformProblem === null, '成交平台已选择', (string) $platformProblem, 'platform');
         $add('ORDER_LINES_REQUIRED', $order->lines->isNotEmpty(), '订单明细已填写', '订单至少需要一行明细', 'lines');
         foreach ($order->lines as $line) {
             $prefix = "LINE_{$line->line_no}_";

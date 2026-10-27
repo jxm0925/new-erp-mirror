@@ -51,6 +51,12 @@ final class TradePlatformApplicationService
                 'parent_legacy_id' => (int) $data['parent_legacy_id'], 'sort' => (int) $data['sort'],
                 'enabled' => $data['status'] === 'enabled',
             ];
+            // 交易类型只有国内（domestic）/国外（foreign）；子平台跟随主平台，订单按此筛选主平台。
+            if ($values['parent_legacy_id']) {
+                $values['trade_type'] = DB::table(self::TABLE)->where('legacy_id', $values['parent_legacy_id'])->value('trade_type') ?: 'domestic';
+            } elseif (!in_array($values['trade_type'], ['domestic', 'foreign'], true)) {
+                $this->fail('trade_type', '请选择交易类型：国内交易或国外交易。');
+            }
             $fingerprint = hash('sha256', json_encode($values, JSON_UNESCAPED_UNICODE));
             if (!$id) {
                 $existing = DB::table(self::TABLE)->where('legacy_payload->base_archive_request_id', $data['client_request_id'])->first();
@@ -66,6 +72,9 @@ final class TradePlatformApplicationService
             if ($duplicate->exists()) $this->fail('name', '同一上级下已存在同名成交平台。');
             if ($old) {
                 DB::table(self::TABLE)->where('id', $id)->update([...$values, 'legacy_payload' => $this->nextMetadata($old), 'updated_at' => now()]);
+                if (!$values['parent_legacy_id'] && $values['trade_type'] !== $old->trade_type) {
+                    DB::table(self::TABLE)->where('parent_legacy_id', $old->legacy_id)->update(['trade_type' => $values['trade_type'], 'updated_at' => now()]);
+                }
             } else {
                 $counter = DB::table('erp_document_numbers')->where('document_type', 'trade_platform_identity')->where('number_date', '1970-01-01');
                 $identity = max((int) $counter->value('current_sequence'), (int) DB::table(self::TABLE)->max('legacy_id')) + 1;

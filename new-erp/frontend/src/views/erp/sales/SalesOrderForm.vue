@@ -100,10 +100,10 @@ Do not change layout without approval.
             <div class="field span-2">
               <label class="required">成交平台</label>
               <div class="inline-pair">
-                <el-select v-model="form.platform" size="small" placeholder="主平台" clearable @change="handlePlatformChange">
+                <el-select v-model="form.platform" size="small" filterable :placeholder="form.trade_type === 'foreign' ? '国外交易平台' : '国内交易平台'" clearable @change="handlePlatformChange">
                   <el-option v-for="item in platformOptions" :key="item.id" :label="item.name" :value="String(item.id)" />
                 </el-select>
-                <el-select v-if="platformChildrenOptions.length" v-model="form.platform2" size="small" placeholder="子平台" clearable>
+                <el-select v-if="platformChildrenOptions.length" v-model="form.platform2" size="small" filterable placeholder="请选择子平台（必选）" clearable>
                   <el-option v-for="item in platformChildrenOptions" :key="item.id" :label="item.name" :value="String(item.id)" />
                 </el-select>
               </div>
@@ -808,12 +808,24 @@ export default {
     missingDataCount() {
       return this.form.lines.filter(line => line.sku_id && (this.lineAttributeMessage(line) || this.lineCustomizationMessage(line) || (this.lineNeedsItem(line) && line.item_match_status !== 'matched'))).length
     },
-    platformOptions() {
-      return this.platformRawOptions.filter(item => Number(item.pid || 0) === 0)
+    // 订单原选的平台已停用时不在可选项里，补一条只读项，保证编辑时仍显示原名称。
+    platformAllOptions() {
+      const rows = [...this.platformRawOptions]
+      const meta = this.editOrderMeta || {}
+      const has = id => rows.some(item => String(item.id) === String(id))
+      if (meta.platform && !has(meta.platform)) rows.push({ id: meta.platform, pid: 0, name: `${meta.platform_name || meta.platform}（已停用）`, trade_type: meta.trade_type || 'domestic', stale: true })
+      if (meta.platform2 && !has(meta.platform2)) rows.push({ id: meta.platform2, pid: meta.platform, name: `${meta.platform2_name || meta.platform2}（已停用）`, stale: true })
+      return rows
     },
+    // 主平台按贸易类型筛选：domestic 国内交易、foreign 国外交易。
+    platformOptions() {
+      const trade = this.form.trade_type || 'domestic'
+      return this.platformAllOptions.filter(item => Number(item.pid || 0) === 0 && (!item.trade_type || item.trade_type === trade))
+    },
+    // 主平台下有子平台时展开第二级（如“线下转款”下的各线索来源），没有就不显示。
     platformChildrenOptions() {
       if (!this.form.platform) return []
-      return this.platformRawOptions.filter(item => String(item.pid || 0) === String(this.form.platform))
+      return this.platformAllOptions.filter(item => String(item.pid || 0) === String(this.form.platform))
     },
     validationState() {
       const requiredOk = Boolean(
@@ -848,6 +860,12 @@ export default {
     this.$nextTick(() => window.setTimeout(() => this.focusRequestedField(), 300))
   },
   watch: {
+    'form.trade_type'() {
+      if (this.form.platform && !this.platformOptions.some(item => String(item.id) === String(this.form.platform))) {
+        this.form.platform = ''
+        this.form.platform2 = ''
+      }
+    },
     selectedLine(row) {
       if (!row || !this.expandedLineKeys.includes(row.line_uuid)) this.expandedLineKeys = []
     },
@@ -1633,6 +1651,7 @@ export default {
       if (!this.form.customer_id) return this.$message.error('请通过客户选择框选择客户')
       if (!this.form.sales_user_legacy_id) return this.$message.error('请选择销售人员')
       if (!this.form.platform) return this.$message.error('请选择成交平台')
+      if (this.platformChildrenOptions.length && !this.form.platform2) return this.$message.error('该成交平台下有子平台，请选择子平台')
       if (!this.form.payment_method_id) return this.$message.error('请选择付款方式')
       if (this.form.lines.some(line => !line.sku_id)) return this.$message.error('订单行必须通过全局搜索选择SKU')
       if (this.form.lines.some(line => !line.product_id)) return this.$message.error('所选SKU缺少所属Product，请维护SKU主数据后重试')

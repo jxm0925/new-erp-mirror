@@ -67,6 +67,7 @@ class SalesOrderController extends Controller
     {
         $this->abortUnlessPermission($request, 'sales_order.create');
         $payload = $this->attachCurrentOperator($this->validateOrder($request), $request);
+        $this->assertTradePlatform($payload, null, false);
         $payload['agreed_deposit_amount'] = $this->validatedAgreedDeposit($request);
         $order = app(SalesOrderDraftService::class)->create($payload, $this->operatorName($request));
 
@@ -79,6 +80,7 @@ class SalesOrderController extends Controller
         $order = SalesOrder::findOrFail($id);
         $this->abortUnlessOrderVisible($request, $order);
         $payload = $this->attachCurrentOperator($this->validateOrder($request, true), $request);
+        $this->assertTradePlatform($payload, $order, false);
         $payload['agreed_deposit_amount'] = $this->validatedAgreedDeposit($request);
         $order = app(SalesOrderDraftService::class)->update($order, $payload, $this->operatorName($request));
 
@@ -160,6 +162,7 @@ class SalesOrderController extends Controller
         $this->abortUnlessOrderVisible($request, $order);
         $this->authorizeConfirmedEdit($request, $order, $service);
         $payload = $this->attachCurrentOperator($this->validateOrder($request, true), $request);
+        $this->assertTradePlatform($payload, $order, true);
         return response()->json(['data' => $service->preview($order, $payload)]);
     }
 
@@ -170,6 +173,7 @@ class SalesOrderController extends Controller
         $this->abortUnlessOrderVisible($request, $order);
         $this->authorizeConfirmedEdit($request, $order, $service);
         $payload = $this->attachCurrentOperator($this->validateOrder($request, true), $request);
+        $this->assertTradePlatform($payload, $order, true);
         $payload['change_reason'] = $request->validate(['change_reason' => 'nullable|string|max:500'])['change_reason'] ?? null;
         $result = $service->submit($id, $payload, $this->operatorName($request), app(AuthContextService::class)->currentUser($request));
         return response()->json(['message' => $result['mode'] === 'candidate' ? '工单已发布，订单修改已提交审核，正式订单暂未变更。' : '订单修改已立即生效并完整留痕。', 'data' => $result]);
@@ -489,6 +493,7 @@ class SalesOrderController extends Controller
         if ($stage === 'fulfilled') $query->whereIn('order_status', ['confirmed', 'closed'])->where('fulfillment_status', 'fulfilled');
 
         $page = $query->paginate($this->perPage($request));
+        app(\App\Services\Erp\SalesTradePlatformService::class)->decorate($page->getCollection());
         $canViewAmounts = $this->canViewAmounts($request);
         $page->getCollection()->transform(function (SalesOrder $order) use ($request, $canViewAmounts) {
             $order->setAttribute('allowed_actions', $this->orderAllowedActions($request, $order));
@@ -534,7 +539,9 @@ class SalesOrderController extends Controller
                 ->orderBy('parent_legacy_id')
                 ->orderBy('sort')
                 ->orderBy('legacy_id')
-                ->get(['legacy_id as id', 'parent_legacy_id as pid', 'name', 'short_name', 'trade_type']),
+                ->get(['legacy_id as id', 'parent_legacy_id as pid', 'name', 'short_name', 'trade_type'])
+                // 停用的主平台连同其子平台一起隐藏，避免只剩子平台的孤立选项。
+                ->pipe(fn ($rows) => $rows->filter(fn ($row) => (int) $row->pid === 0 || $rows->contains(fn ($p) => (int) $p->id === (int) $row->pid))->values()),
             'carriers' => (! $request->has('include_carriers') || $request->boolean('include_carriers')) ? DB::table('erp_sales_order_deliveries')
                 ->where('enabled', true)
                 ->orderBy('sort')
@@ -562,6 +569,7 @@ class SalesOrderController extends Controller
     {
         $this->abortUnlessPermission($request, 'sales.order.create');
         $payload = $this->validateOrder($request);
+        $this->assertTradePlatform($payload, null, true);
         $payload = $this->attachCurrentOperator($payload, $request);
 
         return DB::transaction(function () use ($payload) {
@@ -613,6 +621,7 @@ class SalesOrderController extends Controller
         $this->applySalesOrderVisibility($query, $request);
         $order = $query->findOrFail($id);
         $order->setAttribute('sales_user', app(ErpUserProjectionService::class)->one($order->sales_user_legacy_id));
+        app(\App\Services\Erp\SalesTradePlatformService::class)->decorate([$order]);
         $order->lines->each(function ($line): void {
             $line->setAttribute('system_item', $this->orderLineItemProjection($line));
             $line->setAttribute('is_purchase_fulfilled', SalesOrderFulfillmentPolicy::isPurchaseLine($line));
@@ -661,6 +670,7 @@ class SalesOrderController extends Controller
         abort_if($order->shipment_status !== 'not_shipped', 422, '已有发货记录的订单不能直接编辑，请走订单变更或售后流程');
 
         $payload = $this->validateOrder($request, true);
+        $this->assertTradePlatform($payload, $order, true);
         $payload = $this->attachCurrentOperator($payload, $request);
 
         return DB::transaction(function () use ($order, $payload) {
@@ -1011,6 +1021,17 @@ class SalesOrderController extends Controller
                 '绕过 BOM、路线、图纸、交付检验快照生成工单',
             ],
         ]);
+    }
+
+    /** 成交平台两级校验；部分字段未传时沿用订单原值。 */
+    private function assertTradePlatform(array $payload, ?SalesOrder $current, bool $requireComplete): void
+    {
+        $value = fn (string $key) => array_key_exists($key, $payload) ? $payload[$key] : $current?->{$key};
+        app(\App\Services\Erp\SalesTradePlatformService::class)->assert(
+            $value('trade_type') ?: 'domestic', $value('platform'), $value('platform2'),
+            $current ? ['platform' => $current->platform, 'platform2' => $current->platform2, 'trade_type' => $current->trade_type ?: 'domestic'] : null,
+            $requireComplete,
+        );
     }
 
     private function validateOrder(Request $request, bool $isUpdate = false): array

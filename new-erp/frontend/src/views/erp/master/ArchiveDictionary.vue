@@ -170,9 +170,9 @@
               </template>
             </el-table-column>
 
-            <el-table-column v-if="kind === 'platforms'" prop="trade_type" label="平台类型" min-width="110">
+            <el-table-column v-if="kind === 'platforms'" prop="trade_type" label="交易类型" min-width="110">
               <template slot-scope="{ row }">
-                <el-tag v-if="row.trade_type" size="mini" effect="plain">{{ row.trade_type }}</el-tag>
+                <el-tag v-if="row.trade_type" size="mini" effect="plain">{{ tradeTypeText(row.trade_type) }}</el-tag>
                 <span v-else class="text-muted">-</span>
               </template>
             </el-table-column>
@@ -322,8 +322,12 @@
         </div>
 
         <div v-if="kind === 'platforms'" class="form-grid-2col">
-          <el-form-item label="平台类型">
-            <el-input v-model.trim="form.trade_type" maxlength="40" placeholder="选填，如 电商、线下门店、分销" />
+          <el-form-item label="交易类型" :required="!Number(form.parent_legacy_id)">
+            <el-select v-model="form.trade_type" class="full" :disabled="!!Number(form.parent_legacy_id)" placeholder="请选择交易类型">
+              <el-option label="国内交易" value="domestic" />
+              <el-option label="国外交易" value="foreign" />
+            </el-select>
+            <div v-if="Number(form.parent_legacy_id)" class="field-help">子平台自动继承上级平台的交易类型</div>
           </el-form-item>
         </div>
 
@@ -501,6 +505,9 @@ export default {
     canCreateChild (row) {
       return !['payments', 'carriers'].includes(this.kind) && this.isEnabled(row) && (this.kind === 'categories' || !Number(row.parent_legacy_id))
     },
+    tradeTypeText (value) {
+      return { domestic: '国内交易', foreign: '国外交易' }[value] || value
+    },
     dateText (value) {
       return value ? erpDateTime(value, 16) : '—'
     },
@@ -514,7 +521,7 @@ export default {
         parent_id: parent ? parent.id : null,
         parent_legacy_id: parent ? parent.legacy_id : 0,
         short_name: '',
-        trade_type: '',
+        trade_type: parent && this.kind === 'platforms' ? (parent.trade_type || '') : '',
         available_for_sales: true,
         available_for_receipt: true,
         available_for_payment: true
@@ -548,6 +555,9 @@ export default {
         if (!valid) return
         if (this.kind === 'payments' && !this.form.available_for_sales && !this.form.available_for_receipt && !this.form.available_for_payment) {
           return this.$message.error('请至少选择一个适用业务')
+        }
+        if (this.kind === 'platforms' && !Number(this.form.parent_legacy_id) && !['domestic', 'foreign'].includes(this.form.trade_type)) {
+          return this.$message.error('请选择交易类型（国内交易 / 国外交易）')
         }
         const f = this.form
         let payload
@@ -584,7 +594,7 @@ export default {
             id: f.id,
             name: f.name,
             short_name: f.short_name,
-            trade_type: f.trade_type,
+            trade_type: f.trade_type || null,
             parent_legacy_id: Number(f.parent_legacy_id || 0),
             sort: f.sort,
             status: f.status

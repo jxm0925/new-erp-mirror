@@ -113,6 +113,10 @@ Design status: 新增“订单阶段提示条”（基础档案风格），其�
             <span class="kv-value">{{ order.trade_type === 'foreign' ? '外贸出口' : '国内贸易' }}</span>
           </div>
           <div class="kv-item">
+            <span class="kv-label">成交平台</span>
+            <span class="kv-value">{{ order.platform_label || '-' }}</span>
+          </div>
+          <div class="kv-item">
             <span class="kv-label">当前版本</span>
             <span class="kv-value font-semibold">V{{ currentVersion }}</span>
           </div>

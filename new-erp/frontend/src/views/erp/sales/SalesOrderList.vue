@@ -78,6 +78,7 @@ Design status: 按“基础档案”页面风格重做（页头卡片 / 提示�
             </template>
           </el-table-column>
           <el-table-column prop="created_by" label="销售人员" width="88" show-overflow-tooltip />
+          <el-table-column label="成交平台" width="150" show-overflow-tooltip><template slot-scope="{ row }">{{ row.platform_label || '-' }}</template></el-table-column>
           <el-table-column label="订单日期" width="104">
             <template slot-scope="{row}">{{ dateOnly(row.order_time) }}</template>
           </el-table-column>
