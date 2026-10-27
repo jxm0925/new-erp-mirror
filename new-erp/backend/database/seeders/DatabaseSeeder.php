@@ -13,7 +13,7 @@ class DatabaseSeeder extends Seeder
     /**
      * Seed only stable ERP bootstrap/reference data.
      *
-     * The user-approved supplier/category baseline is the explicit exception
+     * The user-approved supplier/category and sales-reference baselines are explicit exceptions
      * for business master data. Do not add other customers, suppliers,
      * warehouses, items, SKUs, BOMs, QA fixtures, or acceptance accounts.
      */
@@ -23,6 +23,7 @@ class DatabaseSeeder extends Seeder
             ErpAdministratorSeeder::class,
             ErpApprovalConfigurationSeeder::class,
             ErpApprovedMasterDataSeeder::class,
+            ErpApprovedSalesReferenceSeeder::class,
             ErpDocumentNumberRuleSeeder::class,
             ErpDualFilterMaterialSeeder::class,
             ErpFinanceReferenceSeeder::class,

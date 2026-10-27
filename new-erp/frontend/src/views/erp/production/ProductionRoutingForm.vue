@@ -58,15 +58,28 @@
             路线工序清单
             <el-tag v-if="canManagePerformance" size="small" type="info" class="perf-tag">提成模板：{{ performanceLabel }}</el-tag>
           </div>
-          <div v-if="!viewOnly" class="catalog-actions">
-            <el-button size="small" type="success" plain class="btn-theme-plain" icon="el-icon-collection-tag" @click="openCatalog('stages')">维护生产阶段</el-button>
-            <el-button size="small" type="success" plain class="btn-theme-plain" icon="el-icon-box" @click="openCatalog('packaging-schemes')">维护包装方案</el-button>
-            <el-button size="small" type="success" icon="el-icon-plus" class="btn-theme-create" @click="addOperation">
-              {{ form.operations.length ? '添加下一道工序' : '添加第一道工序' }}
+          <div class="catalog-actions">
+            <el-button
+              v-if="viewOnly && form.operations.length > 1"
+              size="small"
+              type="success"
+              plain
+              class="btn-theme-plain"
+              :icon="allOperationsExpanded ? 'el-icon-arrow-up' : 'el-icon-arrow-down'"
+              @click="toggleAllOperations"
+            >
+              {{ allOperationsExpanded ? '收起全部工序' : '展开全部工序' }}
             </el-button>
+            <template v-if="!viewOnly">
+              <el-button size="small" type="success" plain class="btn-theme-plain" icon="el-icon-collection-tag" @click="openCatalog('stages')">维护生产阶段</el-button>
+              <el-button size="small" type="success" plain class="btn-theme-plain" icon="el-icon-box" @click="openCatalog('packaging-schemes')">维护包装方案</el-button>
+              <el-button size="small" type="success" icon="el-icon-plus" class="btn-theme-create" @click="addOperation">
+                {{ form.operations.length ? '添加下一道工序' : '添加第一道工序' }}
+              </el-button>
+            </template>
           </div>
         </div>
-        <el-table ref="operations" :data="form.operations" border row-key="key" :expand-row-keys="expanded" :row-class-name="tableRowClassName" @expand-change="onExpand">
+        <el-table ref="operations" :data="form.operations" border row-key="key" :expand-row-keys="expanded" :row-class-name="tableRowClassName" @expand-change="onExpand" @row-click="onOperationRowClick">
           <template slot="empty">
             <div class="empty-routing-op">
               <i class="el-icon-guide" style="font-size: 32px; color: #94a3b8; margin-bottom: 8px;" />
@@ -93,11 +106,14 @@
                       公共工序
                     </el-tag>
                     <span class="op-panel-tip">
-                      <i class="el-icon-info" /> 配置该道工序的参数、工时及用料规则
+                      <i class="el-icon-info" /> {{ viewOnly ? '查看该道工序的参数、工时及用料规则' : '配置该道工序的参数、工时及用料规则' }}
                     </span>
                   </div>
-                  <div v-if="!viewOnly" class="op-panel-btns">
-                    <el-button size="mini" type="success" plain icon="el-icon-check" @click="confirmSettings(s.row)">
+                  <div class="op-panel-btns">
+                    <el-button v-if="viewOnly" size="mini" type="success" plain icon="el-icon-arrow-up" @click.stop="toggleOperation(s.row)">
+                      收起详情
+                    </el-button>
+                    <el-button v-else size="mini" type="success" plain icon="el-icon-check" @click="confirmSettings(s.row)">
                       完成配置并收起
                     </el-button>
                   </div>
@@ -176,7 +192,52 @@
                 </section>
 
                 <section class="settings-group material-group">
-                  <h3>{{ s.row.execution_context==='shipment'?'发货作业':'用料规则' }}</h3>
+                  <div class="material-group-head">
+                    <div class="material-group-title">
+                      <h3>{{ s.row.execution_context==='shipment'?'发货作业':'用料规则' }}</h3>
+                      <el-tag
+                        v-if="s.row.execution_context!=='shipment' || s.row.shipment_operation_type==='packing'"
+                        size="mini"
+                        type="info"
+                        effect="plain"
+                        class="material-count-tag"
+                      >
+                        共 {{ operationMaterialCount(s.row) }} 项
+                      </el-tag>
+                    </div>
+                    <div class="material-group-tools">
+                      <el-input
+                        v-if="operationMaterialCount(s.row) > 4"
+                        :value="getMaterialKeyword(s.row)"
+                        size="mini"
+                        clearable
+                        prefix-icon="el-icon-search"
+                        placeholder="筛选本工序物料"
+                        class="material-filter-input"
+                        @input="setMaterialKeyword(s.row, $event)"
+                      />
+                      <el-button
+                        v-if="operationMaterialCount(s.row) > 5"
+                        type="text"
+                        size="mini"
+                        class="material-expand-btn"
+                        @click="toggleMaterialTableTall(s.row)"
+                      >
+                        {{ isMaterialTableTall(s.row) ? '紧凑滚动' : '展开更多' }}
+                      </el-button>
+                      <el-button
+                        v-if="!viewOnly && (s.row.execution_context!=='shipment'||s.row.shipment_operation_type==='packing')"
+                        type="success"
+                        plain
+                        size="mini"
+                        icon="el-icon-plus"
+                        class="btn-theme-plain"
+                        @click="openItems(s.row.execution_context==='shipment'?'packaging':'materials',s.row)"
+                      >
+                        {{ s.row.execution_context==='shipment'?'添加包装用料':'添加用料' }}
+                      </el-button>
+                    </div>
+                  </div>
                   <template v-if="s.row.execution_context==='shipment'">
                     <template v-if="s.row.shipment_operation_type==='packing'">
                       <label>
@@ -187,7 +248,7 @@
                         </div>
                       </label>
                       <p class="setting-note">发货作业排在生产工序之后；包装用料填写每件产出的基础单位数量。</p>
-                      <el-table :data="s.row.packaging_materials" border size="mini">
+                      <el-table :data="filteredPackagingMaterials(s.row)" border size="mini" :max-height="isMaterialTableTall(s.row) ? 460 : 240" class="compact-material-table">
                         <el-table-column label="包装物料" min-width="140"><template slot-scope="r">{{ itemName(r.row.component_item_id) }}</template></el-table-column>
                         <el-table-column label="每件用量" min-width="120"><template slot-scope="r"><el-input v-model="r.row.base_qty_per_output_unit" :disabled="viewOnly" size="mini" placeholder="请填写数量" /></template></el-table-column>
                         <el-table-column label="基础单位" min-width="80"><template slot-scope="r">{{ itemUnit(r.row.component_item_id) }}</template></el-table-column>
@@ -196,7 +257,7 @@
                     </template>
                     <p v-else class="setting-note">本工序无需包装方案或包装用料。</p>
                   </template>
-                  <el-table v-else :data="incomingRules(s.row)" border size="mini">
+                  <el-table v-else :data="filteredIncomingRules(s.row)" border size="mini" :max-height="isMaterialTableTall(s.row) ? 460 : 240" class="compact-material-table">
                     <el-table-column label="物料名称" min-width="110"><template slot-scope="r">{{ itemName(r.row.component_item_id) }}</template></el-table-column>
                     <el-table-column label="BOM 用量占比" min-width="130"><template slot-scope="r"><el-input-number v-model="r.row.percent" :disabled="viewOnly" :controls="false" :min="0.0001" :max="100" :precision="4" size="mini" /><span>%</span></template></el-table-column>
                     <el-table-column label="供应方式" min-width="130"><template slot-scope="r"><el-select v-model="r.row.supply_mode" :disabled="viewOnly" size="mini"><el-option v-for="(label,value) in supplyModes" :key="value" :label="label" :value="value" /></el-select></template></el-table-column>
@@ -248,15 +309,21 @@
               {{ s.row.execution_context==='shipment'?shipmentTypeText(s.row.shipment_operation_type):outputModes[s.row.output_mode] }}
             </template>
           </el-table-column>
-          <el-table-column v-if="!viewOnly" label="操作" width="180" align="center">
+          <el-table-column label="操作" :width="viewOnly ? 115 : 185" align="center">
             <template slot-scope="s">
-              <div class="row-actions">
-                <el-button type="text" @click="toggleOperation(s.row)">
+              <div v-if="viewOnly" class="row-actions">
+                <el-button type="text" @click.stop="toggleOperation(s.row)">
+                  <i :class="expanded.includes(s.row.key) ? 'el-icon-arrow-up' : 'el-icon-arrow-down'" />
+                  {{ expanded.includes(s.row.key) ? '收起详情' : '查看详情' }}
+                </el-button>
+              </div>
+              <div v-else class="row-actions">
+                <el-button type="text" @click.stop="toggleOperation(s.row)">
                   {{ expanded.includes(s.row.key) ? '收起配置' : '编辑配置' }}
                 </el-button>
-                <el-button type="text" :disabled="!canMove(s.$index,-1)" @click="move(s.$index,-1)">上移</el-button>
-                <el-button type="text" :disabled="!canMove(s.$index,1)" @click="move(s.$index,1)">下移</el-button>
-                <el-button type="text" class="btn-del" @click="remove(s.$index)">删除</el-button>
+                <el-button type="text" :disabled="!canMove(s.$index,-1)" @click.stop="move(s.$index,-1)">上移</el-button>
+                <el-button type="text" :disabled="!canMove(s.$index,1)" @click.stop="move(s.$index,1)">下移</el-button>
+                <el-button type="text" class="btn-del" @click.stop="remove(s.$index)">删除</el-button>
               </div>
             </template>
           </el-table-column>
@@ -289,11 +356,12 @@ export default {
   mixins: [cachedPageRoute],
   name:'ProductionRoutingForm', components:{PurchaseItemPicker,ProductSkuPicker,ProductionProcessCatalogPanel,SystemRecordPicker},
   data:()=>({performance:null,loading:false,sessionId:'',reservationToken:'',reservation:null,savedId:null,operations:[],operationPickerOpen:false,operationPickerTarget:null,operationPickerValue:[],items:{},catalogs:{stages:{},'packaging-schemes':{}},expanded:[],pickerTarget:null,catalogTarget:null,pendingSave:null,pendingActivation:null,
+    materialKeywordByOp:{},materialTallByOp:{},
     outputModes:{flow_only:'直接交接',warehouse_optional:'可选入库',warehouse_required:'合格后入库'},
     supplyModes:{dedicated_delivery:'专单配送',workstation_stock:'工位库存',no_per_order_delivery:'无需逐单配送'},
     form:{routing_no:'正在生成…',routing_name:'',product_id:null,sku_id:null,product:null,sku:null,version:1,status:'draft',is_default:false,remark:'',business_version:1,operations:[],applicable_items:[],applicable_category_ids:[]},categoryTree:[],
     rules:{routing_name:[{required:true,message:'请输入路线名称',trigger:'blur'}]}}),
-  computed:{id(){return this.savedId || this.pageRoute.params.id},viewOnly(){return (Boolean(this.pageRoute.params.id)&&!this.pageRoute.path.endsWith('/edit')) || this.form.status!=='draft'},title(){return this.id?(this.viewOnly?'查看工艺路线':'编辑工艺路线'):'新增工艺路线'},canManagePerformance(){return this.$can('production.performance.manage')},performanceLabel(){const p=this.performance;if(!p)return '保存后显示';if(!p.template)return '未配置（不计提成）';return p.template.template_name+(p.source==='default'?'（默认）':'（指定）')}},
+  computed:{id(){return this.savedId || this.pageRoute.params.id},viewOnly(){return (Boolean(this.pageRoute.params.id)&&!this.pageRoute.path.endsWith('/edit')) || this.form.status!=='draft'},title(){return this.id?(this.viewOnly?'查看工艺路线':'编辑工艺路线'):'新增工艺路线'},canManagePerformance(){return this.$can('production.performance.manage')},performanceLabel(){const p=this.performance;if(!p)return '保存后显示';if(!p.template)return '未配置（不计提成）';return p.template.template_name+(p.source==='default'?'（默认）':'（指定）')},allOperationsExpanded(){return this.form.operations.length>0&&this.form.operations.every(row=>this.expanded.includes(row.key))}},
   async created(){this.loadCategories();if(this.id)await this.load();else await this.reserve()},
   methods:{
     performanceText(row){const rates=this.performance&&this.performance.rates;if(!rates)return '';const rate=rates[row.operation_id];return rate===undefined||rate===null?'不计提成':percentFromRate(rate)},
@@ -331,10 +399,72 @@ export default {
       })
       this.form={...this.form,...data,operations:rows};this.expanded=rows.length?[rows[0].key]:[]
     },
-    tableRowClassName({ row }){return this.expanded.includes(row.key)?'row-is-expanded':''},
+    tableRowClassName({ row }){
+      const classes=[]
+      if(this.expanded.includes(row.key))classes.push('row-is-expanded')
+      if(this.viewOnly)classes.push('row-view-clickable')
+      return classes.join(' ')
+    },
+    operationMaterialCount(row){
+      if(!row)return 0
+      return row.execution_context==='shipment'?(row.packaging_materials||[]).length:this.incomingRules(row).length
+    },
+    getMaterialKeyword(row){
+      return (row&&this.materialKeywordByOp[row.key])||''
+    },
+    setMaterialKeyword(row,val){
+      if(!row)return
+      this.$set(this.materialKeywordByOp,row.key,val)
+    },
+    isMaterialTableTall(row){
+      return Boolean(row&&this.materialTallByOp[row.key])
+    },
+    toggleMaterialTableTall(row){
+      if(!row)return
+      this.$set(this.materialTallByOp,row.key,!this.isMaterialTableTall(row))
+    },
+    filteredIncomingRules(row){
+      const list=this.incomingRules(row)
+      const kw=String(this.getMaterialKeyword(row)||'').trim().toLowerCase()
+      if(!kw)return list
+      return list.filter(rule=>{
+        const item=this.items[rule.component_item_id]||{}
+        const name=String(this.itemName(rule.component_item_id)||'').toLowerCase()
+        const code=String(item.item_code||'').toLowerCase()
+        return name.includes(kw)||code.includes(kw)
+      })
+    },
+    filteredPackagingMaterials(row){
+      const list=(row&&row.packaging_materials)||[]
+      const kw=String(this.getMaterialKeyword(row)||'').trim().toLowerCase()
+      if(!kw)return list
+      return list.filter(material=>{
+        const item=this.items[material.component_item_id]||{}
+        const name=String(this.itemName(material.component_item_id)||'').toLowerCase()
+        const code=String(item.item_code||'').toLowerCase()
+        return name.includes(kw)||code.includes(kw)
+      })
+    },
+    toggleAllOperations(){
+      if(this.allOperationsExpanded){
+        this.expanded=[]
+      }else{
+        this.expanded=this.form.operations.map(row=>row.key)
+      }
+    },
+    onOperationRowClick(row){
+      if(this.viewOnly&&row&&this.form.operations.includes(row)){
+        this.toggleOperation(row)
+      }
+    },
     doAddOperation(options = {}){
+      const lastOp=this.form.operations[this.form.operations.length-1];
+      const hasShipment=this.form.operations.some(r=>r.execution_context==='shipment');
+      const defaultContext=(lastOp&&lastOp.execution_context==='shipment')||hasShipment?'shipment':'production';
+      const usedShipmentTypes=this.form.operations.filter(r=>r.execution_context==='shipment').map(r=>r.shipment_operation_type);
+      const defaultShipmentType=!usedShipmentTypes.includes('water_test')?'water_test':(!usedShipmentTypes.includes('packing')?'packing':'loading');
       const nextSeq=(this.form.operations.length+1)*10;
-      const row={key:uuid(),operation_id:null,production_stage_id:null,execution_context:'production',shipment_operation_type:'packing',packaging_scheme_id:null,packaging_materials:[],sequence:nextSeq,is_key_operation:false,parameters:null,parameters_text:'',remark:'',setup_standard_minutes:0,unit_standard_minutes:0,output_mode:'flow_only',quality_mode:'none',work_mode:'manual',allow_continue_without_warehouse:true,material_supply_rules:[]};
+      const row={key:uuid(),operation_id:null,production_stage_id:null,execution_context:defaultContext,shipment_operation_type:defaultShipmentType,packaging_scheme_id:null,packaging_materials:[],sequence:nextSeq,is_key_operation:false,parameters:null,parameters_text:'',remark:'',setup_standard_minutes:0,unit_standard_minutes:0,output_mode:'flow_only',quality_mode:'none',work_mode:'manual',allow_continue_without_warehouse:true,material_supply_rules:[]};
       this.form.operations.push(row);
       this.orderContexts();
       this.expanded=[row.key];
@@ -396,17 +526,27 @@ export default {
         this.form.operations.splice(index,1);
         this.form.operations.forEach(x=>{x.material_supply_rules=x.material_supply_rules.filter(r=>r.target_key!==row.key)});
         this.renumber();
+        this.normalizeProductionOutputModes();
         this.expanded=this.expanded.filter(k=>k!==row.key);
         this.$message.success(`已移除工序【${name}】`);
       }).catch(()=>{})
     },
     canMove(index,delta){const next=index+delta;return next>=0&&next<this.form.operations.length&&this.form.operations[index].execution_context===this.form.operations[next].execution_context},
-    move(index,delta){if(!this.canMove(index,delta))return;const row=this.form.operations.splice(index,1)[0];this.form.operations.splice(index+delta,0,row);this.renumber()},
-    orderContexts(){this.form.operations=[...this.form.operations.filter(row=>row.execution_context!=='shipment'),...this.form.operations.filter(row=>row.execution_context==='shipment')];this.renumber()},
-    changeExecutionContext(row,context){if(this.viewOnly||row.execution_context===context)return;if(context==='shipment'&&(row.material_supply_rules.length||this.incomingRules(row).length)){this.$message.warning('请先清除本工序相关的生产用料，再改为发货作业');return}if(context==='production'&&(row.packaging_scheme_id||row.packaging_materials.length)){this.$message.warning('请先清除包装方案和包装用料，再改为生产工序');return}row.execution_context=context;if(context==='shipment'){row.output_mode='flow_only';row.allow_continue_without_warehouse=true}this.orderContexts()},
+    move(index,delta){if(!this.canMove(index,delta))return;const row=this.form.operations.splice(index,1)[0];this.form.operations.splice(index+delta,0,row);this.renumber();this.normalizeProductionOutputModes()},
+    orderContexts(){this.form.operations=[...this.form.operations.filter(row=>row.execution_context!=='shipment'),...this.form.operations.filter(row=>row.execution_context==='shipment')];this.renumber();this.normalizeProductionOutputModes()},
+    changeExecutionContext(row,context){if(this.viewOnly||row.execution_context===context)return;if(context==='shipment'&&(row.material_supply_rules.length||this.incomingRules(row).length)){this.$message.warning('请先清除本工序相关的生产用料，再改为发货作业');return}if(context==='production'&&(row.packaging_scheme_id||row.packaging_materials.length)){this.$message.warning('请先清除包装方案和包装用料，再改为生产工序');return}const prevOutputMode=row.output_mode;row.execution_context=context;if(context==='shipment'){row.output_mode='flow_only';row.allow_continue_without_warehouse=true;const prodOps=this.form.operations.filter(op=>op.execution_context==='production');if(prevOutputMode&&prevOutputMode!=='flow_only'&&prodOps.length){const lastProd=prodOps[prodOps.length-1];if(lastProd.output_mode==='flow_only'){lastProd.output_mode=prevOutputMode;lastProd.allow_continue_without_warehouse=prevOutputMode!=='warehouse_required'}}}this.orderContexts()},
     renumber(){this.form.operations.forEach((r,i)=>{r.sequence=(i+1)*10})},
+    normalizeProductionOutputModes(){const prodOps=this.form.operations.filter(op=>op.execution_context==='production');if(prodOps.length<=1)return;const lastProd=prodOps[prodOps.length-1];let carried=null;prodOps.slice(0,-1).forEach(op=>{if(op.output_mode&&op.output_mode!=='flow_only'){carried=op.output_mode;op.output_mode='flow_only';op.allow_continue_without_warehouse=true}});if(carried&&lastProd.output_mode==='flow_only'){lastProd.output_mode=carried;lastProd.allow_continue_without_warehouse=carried!=='warehouse_required'}},
     onExpand(row,expanded){this.expanded=expanded.map(x=>x.key)},
     toggleOperation(row){
+      if(this.viewOnly){
+        if(this.expanded.includes(row.key)){
+          this.expanded=this.expanded.filter(key=>key!==row.key);
+        }else{
+          this.expanded=[...this.expanded,row.key];
+        }
+        return;
+      }
       if(this.expanded.includes(row.key)){
         this.confirmSettings(row);
       }else{
@@ -684,6 +824,9 @@ export default {
   background: #008b4b;
   color: #ffffff;
 }
+.routing-editor ::v-deep .el-table .row-view-clickable {
+  cursor: pointer;
+}
 
 .sequence-control {
   display: flex;
@@ -720,6 +863,50 @@ export default {
 }
 .material-group ::v-deep .el-input-number .el-input__inner {
   padding: 0 5px;
+}
+.material-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.material-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.material-group-title h3 {
+  margin: 0 !important;
+}
+.material-count-tag {
+  font-weight: 600;
+}
+.material-group-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.material-filter-input {
+  width: 150px;
+}
+.material-filter-input ::v-deep .el-input__inner {
+  height: 28px !important;
+  line-height: 28px !important;
+}
+.material-filter-input ::v-deep .el-input__icon {
+  line-height: 28px !important;
+}
+.material-expand-btn {
+  padding: 0 4px !important;
+  color: #008b4b !important;
+}
+.compact-material-table ::v-deep th,
+.compact-material-table ::v-deep td {
+  padding: 5px 0 !important;
+  height: 34px !important;
 }
 .catalog-actions {
   display: flex;
@@ -802,6 +989,7 @@ export default {
 .operation-settings {
   display: grid;
   grid-template-columns: 1fr 0.85fr 1.4fr;
+  align-items: start;
   margin: -12px -16px;
   background: #ffffff;
   border: 1px solid #bbf7d0;
@@ -857,6 +1045,7 @@ export default {
   padding: 16px;
   border-right: 1px solid #e2e8f0;
   min-width: 0;
+  align-self: stretch;
 }
 .settings-group:last-child {
   border: 0;
@@ -881,8 +1070,9 @@ export default {
   min-width: 0;
 }
 .setting-actions {
-  margin-top: 16px;
+  margin-top: 12px;
   gap: 8px;
+  flex-wrap: wrap;
 }
 .remark {
   margin-top: 18px;
@@ -965,6 +1155,8 @@ export default {
     gap: 8px;
     flex-wrap: wrap;
   }
+  .material-filter-input {
+    width: 100%;
+  }
 }
 </style>
-
