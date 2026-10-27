@@ -32,7 +32,10 @@ final class WorkOrderPlanBuilder
     {
         $blocks = [];
         // 已保存工单的用量依据来自自身快照，换路线不能重新解析已修改的 BOM 主档。
+        if ($item->isPhantom()) $blocks[] = '这个物料是虚拟件，不单独建工单，用料会在上级工单里直接展开';
         $bom = $bomSnapshot ?? $this->bom($item, $productId, $skuId, $configuration, $bomId, $blocks);
+        // 虚拟件在冻结 BOM 时展开成其下层用料；已保存工单沿用自身快照，不再重新展开。
+        if ($bom && $bomSnapshot === null) $bom['items'] = $this->explodePhantoms($bom['items'], [(int) $item->id], $blocks);
         $routing = $this->routing($item, $productId, $skuId, $routingId, $blocks);
         $operations = $routing ? $routing['operations'] : [];
         $production = array_values(array_filter($operations, fn ($op) => $op['execution_context'] === 'production'));
@@ -149,14 +152,67 @@ final class WorkOrderPlanBuilder
             if (! $routing) { $blocks[] = '所选工艺路线已失效或不是这个产品的路线'; return null; }
         } else {
             $matches = $this->masterData->defaultRoutingMatches((int) $item->id, $productId, $skuId);
-            if ($matches->isEmpty()) { $blocks[] = '没有生效的默认工艺路线，请先建路线'; return null; }
-            if ($matches->count() > 1) { $blocks[] = '默认工艺路线不唯一，请指定路线'; return null; }
+            if ($matches->isEmpty()) { $blocks[] = '没有适用的生效工艺路线，请先建路线'; return null; }
+            if ($matches->count() > 1) { $blocks[] = '适用工艺路线不唯一且没有唯一默认，请指定路线'; return null; }
             $routing = $matches->first();
         }
         $snapshot = $this->masterData->snapshot($routing, (int) $item->id);
         $snapshot['is_default'] = (bool) $routing->is_default;
         $snapshot['operations'] = array_map(fn ($op) => $op + ['key' => 'r'.$op['routing_operation_id']], $snapshot['operations']);
         return $snapshot;
+    }
+
+    /**
+     * 虚拟件展开：上级行用量 c、损耗 lc、固定 fc，下层行用量 q、损耗 l、固定 f，
+     * 下层总需求 = (c×Q×(1+lc)+fc)×q×(1+l)+f，即单件用量 c×(1+lc)×q、损耗 l、固定 fc×q×(1+l)+f。
+     * 下层行未指定用料工序时沿用虚拟件行的工序。
+     */
+    private function explodePhantoms(array $lines, array $path, array &$blocks): array
+    {
+        $ids = array_values(array_unique(array_map(fn ($line) => (int) $line['component_item_id'], $lines)));
+        $phantoms = $ids ? Item::query()->whereIn('id', $ids)->where('manufacturing_strategy', 'phantom')->get()->keyBy('id') : collect();
+        if ($phantoms->isEmpty()) return $lines;
+        $out = [];
+        foreach ($lines as $line) {
+            $phantom = $phantoms->get((int) $line['component_item_id']);
+            if (! $phantom) { $out[] = $line; continue; }
+            $name = $phantom->item_name ?: $phantom->item_code;
+            if (in_array((int) $phantom->id, $path, true) || count($path) > 8) { $blocks[] = '虚拟件 '.$name.' 的 BOM 层级循环或过深，请检查 BOM'; continue; }
+            $match = $this->bomMatcher->match(null, null, (int) $phantom->id, null);
+            if (($match['status'] ?? null) !== 'matched') { $blocks[] = '虚拟件 '.$name.' 没有唯一可用的已审核 BOM（物料级），无法展开用料'; continue; }
+            $children = $this->explodePhantoms($match['bom_snapshot']['items'], [...$path, (int) $phantom->id], $blocks);
+            $multiplier = (float) $line['qty'] * (1 + (float) ($line['loss_rate'] ?? 0) / 100);
+            $parentFixed = (float) ($line['fixed_qty'] ?? 0);
+            foreach ($children as $child) {
+                $childQty = (float) $child['qty'];
+                $childLoss = (float) ($child['loss_rate'] ?? 0);
+                $child['qty'] = (string) round($multiplier * $childQty, 6);
+                $child['fixed_qty'] = (string) round($parentFixed * $childQty * (1 + $childLoss / 100) + (float) ($child['fixed_qty'] ?? 0), 6);
+                if (is_array($child['cutting_quantity_snapshot'] ?? null)) {
+                    if (abs($multiplier - round($multiplier)) > 0.000001 || $parentFixed > 0) {
+                        $blocks[] = '虚拟件 '.$name.' 下的下料物料 '.($child['component_item_name'] ?? '').' 需要虚拟件用量为整数且无固定用量，请调整 BOM';
+                    } else {
+                        $times = (int) round($multiplier);
+                        $snapshot = $child['cutting_quantity_snapshot'];
+                        foreach (['theoretical_qty', 'total_length_mm'] as $key) if (isset($snapshot[$key])) $snapshot[$key] = round((float) $snapshot[$key] * $times, 6);
+                        if (isset($snapshot['dimensions']['piece_qty'])) $snapshot['dimensions']['piece_qty'] = (int) $snapshot['dimensions']['piece_qty'] * $times;
+                        $child['cutting_quantity_snapshot'] = $snapshot;
+                        if (isset($child['piece_qty'])) $child['piece_qty'] = (int) $child['piece_qty'] * $times;
+                        if (isset($child['total_length_mm'])) $child['total_length_mm'] = round((float) $child['total_length_mm'] * $times, 6);
+                    }
+                }
+                if (empty($child['operation_id']) && empty($child['target_routing_operation_id'])) {
+                    $child['operation_id'] = $line['operation_id'] ?? null;
+                    if (! empty($line['target_routing_operation_id'])) $child['target_routing_operation_id'] = $line['target_routing_operation_id'];
+                }
+                $child['phantom_item_id'] = (int) $phantom->id;
+                $child['phantom_item_name'] = trim(($child['phantom_item_name'] ?? '') ? $name.' / '.$child['phantom_item_name'] : $name);
+                $out[] = $child;
+            }
+        }
+        $duplicates = collect($out)->pluck('id')->filter()->duplicates();
+        if ($duplicates->isNotEmpty()) $blocks[] = '同一个虚拟件在 BOM 里被重复引用，请合并为一行';
+        return $out;
     }
 
     /** 正式需求和技术缺料提醒共用同一数量口径，固定用量只按整张工单加一次。 */
@@ -215,7 +271,8 @@ final class WorkOrderPlanBuilder
                     'unit_qty' => $unitQty, 'loss_rate' => $loss, 'fixed_qty' => $fixed, 'qty_ratio' => $target['ratio'],
                     'required_qty' => round($total * $target['ratio'], 4), 'issued_qty' => 0,
                     'supply_mode' => $target['supply_mode'], 'participates_in_kitting' => $target['kitting'],
-                    'cutting_mode' => $item ? $item->cuttingMode() : null, 'remark' => $line['remark'] ?? null,
+                    'cutting_mode' => $item ? $item->cuttingMode() : null,
+                    'remark' => ($line['phantom_item_name'] ?? null) ? trim('来自虚拟件 '.$line['phantom_item_name'].' '.($line['remark'] ?? '')) : ($line['remark'] ?? null),
                 ];
             }
         }

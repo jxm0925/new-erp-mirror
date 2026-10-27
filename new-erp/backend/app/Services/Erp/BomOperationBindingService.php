@@ -25,6 +25,12 @@ class BomOperationBindingService
     /** 产出物料可绑定的工序：适用路线里已启用的车间工序，附带所在路线供用户按情况选择。 */
     public function options(int $outputItemId): Collection
     {
+        // 虚拟件不单独走路线，用料并入上级工单，可指定任意已启用的车间工序（不在上级路线里时上级工单会提示）。
+        if (\App\Models\Erp\Item::query()->whereKey($outputItemId)->value('manufacturing_strategy') === 'phantom') {
+            return DB::table('erp_production_operations as o')->where('o.status', 'enabled')->orderBy('o.sort')->orderBy('o.operation_no')
+                ->get(['o.id', 'o.operation_no', 'o.operation_name'])
+                ->map(fn ($row) => ['id' => (int) $row->id, 'operation_no' => $row->operation_no, 'operation_name' => $row->operation_name, 'routings' => []])->values();
+        }
         $routingIds = ProductionRouting::query()->whereIn('status', ['draft', 'active'])
             ->applicableToItem($outputItemId)->pluck('id');
         if ($routingIds->isEmpty()) return collect();

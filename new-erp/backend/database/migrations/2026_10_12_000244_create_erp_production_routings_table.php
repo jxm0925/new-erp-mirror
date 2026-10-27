@@ -7,6 +7,7 @@ use Database\Schema\InitialTableMigration;
 require_once __DIR__.'/../schema/InitialTableMigration.php';
 
 // 本表唯一完整初始定义；历史变更已合并。修改前先核对实际库，禁止另加 ALTER 迁移。
+// 路线不挂产出物料：适用物料/类目见 erp_production_routing_applicabilities，产出取工单物料。
 // MySQL 精确类型、生成列、索引、外键及删除策略保留在同一处；不含数据回填。
 return new class extends InitialTableMigration
 {
@@ -17,7 +18,6 @@ CREATE TABLE `erp_production_routings` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `routing_no` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `routing_name` varchar(160) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `output_item_id` bigint(20) unsigned NOT NULL,
   `product_id` bigint(20) unsigned DEFAULT NULL,
   `sku_id` bigint(20) unsigned DEFAULT NULL,
   `version` int(10) unsigned NOT NULL DEFAULT '1',
@@ -33,10 +33,9 @@ CREATE TABLE `erp_production_routings` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `erp_prod_routing_no_version_uq` (`routing_no`,`version`),
   UNIQUE KEY `erp_prod_routing_default_scope_uq` (`default_scope_key`),
-  KEY `erp_prod_routing_item_status_idx` (`output_item_id`,`status`),
+  KEY `erp_prod_routing_status_idx` (`status`),
   KEY `erp_prod_routing_product_fk` (`product_id`),
   KEY `erp_prod_routing_sku_fk` (`sku_id`),
-  CONSTRAINT `erp_prod_routing_output_item_fk` FOREIGN KEY (`output_item_id`) REFERENCES `erp_items` (`id`),
   CONSTRAINT `erp_prod_routing_product_fk` FOREIGN KEY (`product_id`) REFERENCES `erp_products` (`id`) ON DELETE SET NULL,
   CONSTRAINT `erp_prod_routing_sku_fk` FOREIGN KEY (`sku_id`) REFERENCES `erp_skus` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci

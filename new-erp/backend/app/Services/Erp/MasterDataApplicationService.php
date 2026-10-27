@@ -162,7 +162,7 @@ class MasterDataApplicationService
     private function assertManufacturingStrategy(array $data, ?Model $record = null): void
     {
         $strategy = $data['manufacturing_strategy'] ?? $record?->manufacturing_strategy ?? 'unspecified';
-        if (!in_array($strategy, ['unspecified', 'purchase', 'make'], true)) {
+        if (!in_array($strategy, ['unspecified', 'purchase', 'make', 'phantom'], true)) {
             throw ValidationException::withMessages(['manufacturing_strategy' => '请选择有效的生产供给方式。']);
         }
         if ($strategy === 'unspecified') return;
@@ -174,6 +174,13 @@ class MasterDataApplicationService
             || !(bool) ($data['is_production_item'] ?? $record?->is_production_item)
         )) {
             throw ValidationException::withMessages(['manufacturing_strategy' => '自制物料必须启用库存管理和生产使用，且不能是服务物料。']);
+        }
+        if ($strategy === 'phantom' && (
+            ($data['item_type'] ?? $record?->item_type) === 'service'
+            || !(bool) ($data['is_production_item'] ?? $record?->is_production_item)
+            || (($data['cutting_mode'] ?? $record?->cutting_mode) ?: 'none') !== 'none'
+        )) {
+            throw ValidationException::withMessages(['manufacturing_strategy' => '虚拟件必须启用生产使用，不能是服务物料，也不能按下料管理。']);
         }
         if ($strategy === 'purchase' && !(bool) ($data['is_purchase_item'] ?? $record?->is_purchase_item)) {
             throw ValidationException::withMessages(['manufacturing_strategy' => '外购物料必须启用可采购。']);

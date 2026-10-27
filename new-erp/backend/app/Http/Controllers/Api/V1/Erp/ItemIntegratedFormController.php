@@ -73,7 +73,7 @@ class ItemIntegratedFormController extends Controller
             'item.is_length_cut_material' => 'required|boolean',
             'item.unit_id' => 'required|integer|exists:erp_units,id',
             'item.is_purchase_item' => 'boolean', 'item.is_stock_item' => 'boolean', 'item.is_production_item' => 'boolean',
-            'item.manufacturing_strategy' => 'sometimes|required|in:unspecified,purchase,make',
+            'item.manufacturing_strategy' => 'sometimes|required|in:unspecified,purchase,make,phantom',
             'item.serial_tracking_mode' => 'nullable|in:none,optional,required',
             'item.serial_number_prefix' => 'nullable|string|max:10|regex:/^[A-Za-z]+$/',
             'item.equipment_identity_requirement' => 'nullable|in:not_applicable,required',

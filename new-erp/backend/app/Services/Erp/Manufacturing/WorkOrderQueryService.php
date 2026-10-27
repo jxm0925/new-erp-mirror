@@ -236,7 +236,7 @@ final class WorkOrderQueryService
 
     public function routingOptions(int $itemId): array
     {
-        return ProductionRouting::query()->where('status', 'active')->applicableToItem($itemId)->orderByRaw('output_item_id = ? DESC', [$itemId])->orderByDesc('is_default')->orderByDesc('version')->limit(30)
+        return ProductionRouting::query()->where('status', 'active')->applicableToItem($itemId)->orderByDesc('is_default')->orderByDesc('version')->limit(30)
             ->get(['id', 'routing_no', 'routing_name', 'version', 'is_default'])->map(fn ($r) => ['id' => $r->id, 'routing_no' => $r->routing_no,
                 'routing_name' => $r->routing_name, 'version' => $r->version, 'is_default' => (bool) $r->is_default])->all();
     }

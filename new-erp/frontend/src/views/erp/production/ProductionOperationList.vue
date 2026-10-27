@@ -144,7 +144,7 @@
               <el-table-column prop="routing_no" label="路线编码" width="96" />
               <el-table-column prop="routing_name" label="路线名称" min-width="90" />
               <el-table-column label="版本" width="50" align="center"><template slot-scope="s">V{{ s.row.version }}</template></el-table-column>
-              <el-table-column label="产出物料" min-width="100"><template slot-scope="s">{{ s.row.output_item && (s.row.output_item.item_name || s.row.output_item.item_code) || '-' }}</template></el-table-column>
+              <el-table-column label="适用物料 / 类目" min-width="100"><template slot-scope="s">{{ (s.row.applicabilities || []).map(x => x.item ? x.item.item_name : (x.category ? x.category.category_name + '（类目）' : '')).filter(Boolean).join('、') || '-' }}</template></el-table-column>
             </el-table>
           </section>
 

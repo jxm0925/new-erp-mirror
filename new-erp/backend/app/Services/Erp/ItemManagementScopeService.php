@@ -77,7 +77,7 @@ final class ItemManagementScopeService
                 ?? ((bool) ($data['is_length_cut_material'] ?? false) ? 'length' : 'none');
             if ((bool) ($data['is_production_item'] ?? $existing?->is_production_item)
                 || $mode !== 'none' || (bool) ($data['is_length_cut_material'] ?? $existing?->is_length_cut_material)
-                || ($data['manufacturing_strategy'] ?? $existing?->manufacturing_strategy ?? 'unspecified') === 'make') {
+                || in_array($data['manufacturing_strategy'] ?? $existing?->manufacturing_strategy ?? 'unspecified', ['make', 'phantom'], true)) {
                 throw ValidationException::withMessages(['management_scope' => '办公用品不能启用生产、自制或下料；采购、库存、责任人和资产策略可以独立维护。']);
             }
         }
@@ -154,7 +154,7 @@ final class ItemManagementScopeService
             ['erp_purchase_order_items', 'item_id'], ['erp_purchase_receipt_items', 'item_id'],
             ['erp_purchase_return_items', 'item_id'], ['erp_purchase_exchange_orders', 'item_id'],
             ['erp_boms', 'output_item_id'], ['erp_bom_items', 'component_item_id'],
-            ['erp_production_routings', 'output_item_id'], ['erp_production_routing_operations', 'output_item_id'],
+            ['erp_production_routing_applicabilities', 'item_id'],
             ['erp_routing_operation_material_supply_rules', 'component_item_id'], ['erp_sku_item_relations', 'item_id'],
         ];
         foreach ($references as [$table, $column]) if (Schema::hasTable($table) && Schema::hasColumn($table, $column)

@@ -327,9 +327,10 @@ class MaterialPolicyManagementScopeTest extends TestCase
     {
         $operation = ProductionOperation::create(['operation_no' => $this->code('OP'), 'operation_name' => '策略验证工序', 'status' => 'enabled']);
         $routing = ProductionRouting::create(['routing_no' => $this->code('RT'), 'routing_name' => '策略验证路线',
-            'output_item_id' => $item->id, 'version' => 1, 'status' => 'draft', 'is_default' => false]);
+            'version' => 1, 'status' => 'draft', 'is_default' => false]);
+        $routing->applicabilities()->create(['scope_type' => 'item', 'item_id' => $item->id, 'scope_key' => 'item:'.$item->id]);
         return ProductionRoutingOperation::create(['routing_id' => $routing->id, 'operation_id' => $operation->id,
-            'sequence' => 10, 'output_item_id' => $item->id]);
+            'sequence' => 10]);
     }
 
     private function policyRows(Item $item): array

@@ -243,6 +243,7 @@
                   <el-option label="未指定" value="unspecified" />
                   <el-option label="外购" value="purchase" />
                   <el-option label="自制" value="make" />
+                  <el-option label="虚拟件（不单独生产，用料并入上级工单）" value="phantom" />
                 </el-select>
               </el-form-item>
             </div>

@@ -94,7 +94,7 @@ final class ProductionPerformanceTemplateService
     {
         $template = ProductionPerformanceTemplate::query()->with('lines')->findOrFail($id);
         $rates = $template->lines->mapWithKeys(fn ($line) => [(int) $line->operation_id => bcadd((string) $line->performance_rate, '0', 6)])->all();
-        $routings = ProductionRouting::query()->with(['operations.operation:id,operation_name', 'outputItem:id,item_code,item_name'])
+        $routings = ProductionRouting::query()->with(['operations.operation:id,operation_name', 'applicabilities.item:id,item_code,item_name', 'applicabilities.category:id,category_name'])
             ->whereIn('id', $routingIds)->orderBy('id')->get();
         if ($routings->count() !== count(array_unique($routingIds))) $this->fail('performance_template_routing_missing', '部分工艺路线不存在，请刷新后重新选择。', 422);
         $resolver = app(ProductionPerformanceRateResolver::class);
@@ -111,7 +111,7 @@ final class ProductionPerformanceTemplateService
             $blocked = in_array($routing->status, ['retired', 'disabled'], true) ? '已停用的路线不能指定' : null;
             return ['routing_id' => (int) $routing->id, 'routing_no' => $routing->routing_no, 'routing_name' => $routing->routing_name,
                 'version' => (int) $routing->version, 'status' => $routing->status, 'business_version' => (int) $routing->business_version,
-                'output_item' => $routing->outputItem ? ['item_code' => $routing->outputItem->item_code, 'item_name' => $routing->outputItem->item_name] : null,
+                'applicable_scope' => $this->scopeText($routing),
                 'current_template' => $current['template'] ? $current['template'] + ['source' => $current['source']] : null,
                 'already_bound' => $current['source'] === 'routing' && (int) $current['template']['id'] === (int) $template->id,
                 'operations' => $operations, 'changed_count' => count(array_filter($operations, fn ($row) => $row['changed'])),
@@ -201,14 +201,22 @@ final class ProductionPerformanceTemplateService
         }, $rows);
     }
 
+    /** 路线适用范围文字：物料名、类目名（类目加“类目:”前缀）。 */
+    private function scopeText(ProductionRouting $routing): string
+    {
+        return $routing->applicabilities->map(fn ($a) => $a->scope_type === 'category'
+            ? '类目:'.($a->category?->category_name ?? $a->item_category_id)
+            : ($a->item?->item_name ?: $a->item?->item_code ?: (string) $a->item_id))->implode('、');
+    }
+
     private function present(ProductionPerformanceTemplate $template, bool $withRoutings = false): array
     {
         $bindings = ProductionPerformanceBinding::query()->where('template_id', $template->id)->get();
         $routingIds = $bindings->whereNotNull('routing_id')->pluck('routing_id')->all();
-        $routings = $withRoutings && $routingIds ? ProductionRouting::query()->with('outputItem:id,item_code,item_name')->whereIn('id', $routingIds)
+        $routings = $withRoutings && $routingIds ? ProductionRouting::query()->with('applicabilities.item:id,item_code,item_name', 'applicabilities.category:id,category_name')->whereIn('id', $routingIds)
             ->orderBy('routing_no')->orderBy('version')->limit(200)->get()->map(fn ($routing) => ['id' => (int) $routing->id,
                 'routing_no' => $routing->routing_no, 'routing_name' => $routing->routing_name, 'version' => (int) $routing->version,
-                'status' => $routing->status, 'output_item_name' => $routing->outputItem?->item_name])->values()->all() : [];
+                'status' => $routing->status, 'applicable_scope' => $this->scopeText($routing)])->values()->all() : [];
         $lines = $template->lines->map(fn ($line) => ['operation_id' => (int) $line->operation_id, 'performance_rate' => (string) $line->performance_rate,
             'operation_no' => $line->operation?->operation_no, 'operation_name' => $line->operation?->operation_name])->values()->all();
         return ['id' => (int) $template->id, 'template_name' => $template->template_name, 'remark' => $template->remark,

@@ -61,12 +61,11 @@
             <span class="routing-name">{{ s.row.routing_name }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="产出物料" min-width="190">
+        <el-table-column label="适用物料 / 类目" min-width="190">
           <template slot-scope="s">
             <div class="wrap-text">
-              <span class="item-name">{{ s.row.output_item && s.row.output_item.item_name || '-' }}</span>
-              <small v-if="s.row.output_item && s.row.output_item.item_code" class="item-code">{{ s.row.output_item.item_code }}</small>
-              <small v-if="(s.row.applicabilities || []).length" class="item-code">共用：{{ s.row.applicabilities.map(x => x.item ? x.item.item_name : (x.category ? x.category.category_name + '（类目）' : '')).join('、') }}</small>
+              <span class="item-name">{{ (s.row.applicabilities || []).map(x => x.item ? x.item.item_name : (x.category ? x.category.category_name + '（类目）' : '')).filter(Boolean).join('、') || '-' }}</span>
+              <small v-if="s.row.sku" class="item-code">限定 SKU：{{ s.row.sku.sku_name || s.row.sku.sku_code }}</small>
             </div>
           </template>
         </el-table-column>
@@ -176,9 +175,10 @@ export default {
     },
     async setDefault(row) {
       try {
-        await this.$confirm('确认将该版本设为当前产出物料的默认生效路线？', '设置默认路线')
-        await setDefaultProductionRouting(row.id, { client_command_id: `routing-default-${row.id}-${Date.now()}`, expected_version: row.business_version })
-        this.$message.success('默认路线已更新')
+        await this.$confirm('确认将该版本设为默认生效路线？适用范围与它重叠的其他默认路线会被取消默认。', '设置默认路线')
+        const r = await setDefaultProductionRouting(row.id, { client_command_id: `routing-default-${row.id}-${Date.now()}`, expected_version: row.business_version })
+        const replaced = (r && r.data && r.data.data && r.data.data.replaced_defaults) || []
+        this.$message.success(replaced.length ? `默认路线已更新，已取消 ${replaced.map(x => x.routing_no).join('、')} 的默认` : '默认路线已更新')
         this.load()
       } catch (e) {
         if (e !== 'cancel' && e !== 'close') this.$message.error(e.userMessage || '设置失败')

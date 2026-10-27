@@ -161,7 +161,7 @@
           <el-table-column type="selection" width="44" reserve-selection :selectable="row => !['retired', 'disabled'].includes(row.status)" />
           <el-table-column prop="routing_no" label="路线编码" min-width="130" />
           <el-table-column prop="routing_name" label="路线名称" min-width="150" />
-          <el-table-column label="产出物料" min-width="150"><template slot-scope="{ row }">{{ row.output_item ? row.output_item.item_name : '-' }}</template></el-table-column>
+          <el-table-column label="适用物料 / 类目" min-width="150"><template slot-scope="{ row }">{{ row.applicable_scope || (row.applicabilities || []).map(x => x.item ? x.item.item_name : (x.category ? x.category.category_name + '（类目）' : '')).filter(Boolean).join('、') || '-' }}</template></el-table-column>
           <el-table-column label="版本" width="60" align="center"><template slot-scope="{ row }">V{{ row.version }}</template></el-table-column>
           <el-table-column prop="operations_count" label="工序数" width="70" align="center" />
         </el-table>

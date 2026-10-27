@@ -14,7 +14,6 @@ class ProductionRoutingOperation extends MasterModel
 
     public function operation() { return $this->belongsTo(ProductionOperation::class, 'operation_id'); }
     public function routing() { return $this->belongsTo(ProductionRouting::class, 'routing_id'); }
-    public function outputItem() { return $this->belongsTo(Item::class, 'output_item_id'); }
     public function materialSupplyRules() { return $this->hasMany(RoutingOperationMaterialSupplyRule::class, 'routing_operation_id'); }
     public function stage() { return $this->belongsTo(ProductionStage::class, 'production_stage_id'); }
     public function packagingScheme() { return $this->belongsTo(ProductionPackagingScheme::class, 'packaging_scheme_id'); }

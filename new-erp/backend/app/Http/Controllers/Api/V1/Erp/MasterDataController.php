@@ -729,7 +729,7 @@ class MasterDataController extends Controller
                 'is_length_cut_material' => 'boolean',
                 'unit_id' => 'required|exists:erp_units,id', 'brand' => 'nullable|string|max:100', 'model' => 'nullable|string|max:100',
                 'is_purchase_item' => 'boolean', 'is_stock_item' => 'boolean', 'is_production_item' => 'boolean',
-                'manufacturing_strategy' => 'sometimes|required|in:unspecified,purchase,make',
+                'manufacturing_strategy' => 'sometimes|required|in:unspecified,purchase,make,phantom',
                 'is_batch_managed' => 'boolean', 'is_serial_managed' => 'boolean',
                 'serial_tracking_mode' => 'nullable|in:none,optional,required',
                 'serial_number_prefix' => 'nullable|string|max:10|regex:/^[A-Za-z]+$/',

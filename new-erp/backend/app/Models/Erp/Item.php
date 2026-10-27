@@ -47,6 +47,11 @@ class Item extends MasterModel
         return in_array($this->manufacturing_strategy, [null, '', 'unspecified'], true)
             && $this->is_purchase_item && ! $this->is_production_item;
     }
+    /** 虚拟件：有 BOM 但不单独建工单、不入库，上级工单直接展开其用料。 */
+    public function isPhantom(): bool
+    {
+        return $this->manufacturing_strategy === 'phantom';
+    }
     public function managementScope(): string
     {
         return $this->management_scope ?: ($this->item_type === 'office_consumable' ? 'office' : 'factory');

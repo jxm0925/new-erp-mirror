@@ -41,14 +41,13 @@
         <div class="form-grid">
           <el-form-item label="路线编码"><el-input v-model="form.routing_no" disabled class="erp-system-number" /></el-form-item>
           <el-form-item label="路线名称" prop="routing_name"><el-input v-model="form.routing_name" :disabled="viewOnly" placeholder="请输入路线名称" /></el-form-item>
-          <el-form-item label="产出物料" prop="output_item_id"><el-input :value="itemName(form.output_item_id)" readonly :disabled="viewOnly" suffix-icon="el-icon-search" placeholder="点击选择产出物料" @click.native="openItems('output')" /></el-form-item>
           <el-form-item label="版本（系统递增）"><el-input :value="`V${form.version}`" disabled /></el-form-item>
           <el-form-item label="关联产品（可选）"><el-input :value="form.product && form.product.product_name" readonly :disabled="viewOnly" suffix-icon="el-icon-search" placeholder="点击选择关联产品" @click.native="!viewOnly && $refs.productPicker.openProduct()" /></el-form-item>
           <el-form-item label="关联 SKU（可选）"><el-input :value="form.sku && (form.sku.sku_name || form.sku.sku_code)" readonly :disabled="viewOnly" suffix-icon="el-icon-search" placeholder="点击选择关联 SKU" @click.native="!viewOnly && (form.product_id ? $refs.productPicker.openSku(form.product_id) : $refs.productPicker.openGlobalSku())" /></el-form-item>
           <el-form-item label="状态"><el-input :value="statusText(form.status)" disabled /></el-form-item>
           <el-form-item label="是否默认"><el-input :value="form.is_default ? '是' : '否'" disabled /></el-form-item>
-          <el-form-item label="共用物料（可选）"><el-input :value="form.applicable_items.map(item => item.item_name).join('、')" readonly :disabled="viewOnly || !!form.sku_id" suffix-icon="el-icon-search" placeholder="同类其他规格也用本路线" @click.native="!form.sku_id && openItems('shared')" /></el-form-item>
-          <el-form-item label="共用物料类目（可选）"><el-cascader v-model="form.applicable_category_ids" :options="categoryTree" :props="{ multiple: true, checkStrictly: true, emitPath: false, value: 'id', label: 'category_name', children: 'children' }" :disabled="viewOnly || !!form.sku_id" clearable filterable collapse-tags placeholder="类目下的物料都用本路线" /></el-form-item>
+          <el-form-item label="适用物料" :required="!form.sku_id"><el-input :value="form.sku_id ? 'SKU 当前默认物料（自动）' : form.applicable_items.map(item => item.item_name).join('、')" readonly :disabled="viewOnly || !!form.sku_id" suffix-icon="el-icon-search" placeholder="可多选；与适用类目至少填一项" @click.native="!form.sku_id && openItems('shared')" /></el-form-item>
+          <el-form-item label="适用类目" :required="!form.sku_id"><el-cascader v-model="form.applicable_category_ids" :options="categoryTree" :props="{ multiple: true, checkStrictly: true, emitPath: false, value: 'id', label: 'category_name', children: 'children' }" :disabled="viewOnly || !!form.sku_id" clearable filterable collapse-tags :placeholder="form.sku_id ? '限定 SKU 时不适用' : '类目（含下级）下的物料都用本路线'" /></el-form-item>
         </div>
       </section>
 
@@ -136,13 +135,9 @@
                     </el-select>
                   </label>
                   <label v-if="s.row.execution_context==='production'">
-                    <span>产出物料</span>
-                    <el-input :value="itemName(s.row.output_item_id)" readonly :disabled="viewOnly" suffix-icon="el-icon-search" placeholder="流转工序可不选" @click.native="openItems('operation', s.row)" />
-                  </label>
-                  <label v-if="s.row.execution_context==='production'">
                     <span>完成去向</span>
                     <el-select v-model="s.row.output_mode" :disabled="viewOnly" @change="setOutputMode(s.row)">
-                      <el-option v-for="(label,value) in outputModes" :key="value" :label="label" :value="value" />
+                      <el-option v-for="(label,value) in outputModes" :key="value" :label="value==='flow_only'?label:`${label}（产出本物料）`" :value="value" :disabled="value!=='flow_only'&&!isLastProduction(s.row)" />
                     </el-select>
                   </label>
                   <label>
@@ -296,8 +291,8 @@ export default {
   data:()=>({performance:null,loading:false,sessionId:'',reservationToken:'',reservation:null,savedId:null,operations:[],operationPickerOpen:false,operationPickerTarget:null,operationPickerValue:[],items:{},catalogs:{stages:{},'packaging-schemes':{}},expanded:[],pickerTarget:null,catalogTarget:null,pendingSave:null,pendingActivation:null,
     outputModes:{flow_only:'直接交接',warehouse_optional:'可选入库',warehouse_required:'合格后入库'},
     supplyModes:{dedicated_delivery:'专单配送',workstation_stock:'工位库存',no_per_order_delivery:'无需逐单配送'},
-    form:{routing_no:'正在生成…',routing_name:'',output_item_id:null,product_id:null,sku_id:null,product:null,sku:null,version:1,status:'draft',is_default:false,remark:'',business_version:1,operations:[],applicable_items:[],applicable_category_ids:[]},categoryTree:[],
-    rules:{routing_name:[{required:true,message:'请输入路线名称',trigger:'blur'}],output_item_id:[{required:true,message:'请选择产出物料',trigger:'change'}]}}),
+    form:{routing_no:'正在生成…',routing_name:'',product_id:null,sku_id:null,product:null,sku:null,version:1,status:'draft',is_default:false,remark:'',business_version:1,operations:[],applicable_items:[],applicable_category_ids:[]},categoryTree:[],
+    rules:{routing_name:[{required:true,message:'请输入路线名称',trigger:'blur'}]}}),
   computed:{id(){return this.savedId || this.pageRoute.params.id},viewOnly(){return (Boolean(this.pageRoute.params.id)&&!this.pageRoute.path.endsWith('/edit')) || this.form.status!=='draft'},title(){return this.id?(this.viewOnly?'查看工艺路线':'编辑工艺路线'):'新增工艺路线'},canManagePerformance(){return this.$can('production.performance.manage')},performanceLabel(){const p=this.performance;if(!p)return '保存后显示';if(!p.template)return '未配置（不计提成）';return p.template.template_name+(p.source==='default'?'（默认）':'（指定）')}},
   async created(){this.loadCategories();if(this.id)await this.load();else await this.reserve()},
   methods:{
@@ -320,7 +315,6 @@ export default {
     async load(){this.loading=true;try{const r=await getProductionRouting(this.id);this.applyData(r.data.data)}catch(e){this.$message.error(e.userMessage||'路线加载失败')}finally{this.loading=false}},
     async loadCategories(){try{const r=await getItemCategoryTree({management_scope:'factory'});this.categoryTree=r.data.data||[]}catch(e){this.categoryTree=[]}},
     applyData(data){
-      this.rememberItem(data.output_item)
       const scopes=data.applicabilities||[]
       data.applicable_items=scopes.filter(x=>x.scope_type==='item'&&x.item).map(x=>x.item)
       data.applicable_category_ids=scopes.filter(x=>x.scope_type==='category').map(x=>Number(x.item_category_id))
@@ -329,7 +323,6 @@ export default {
       ;(data.packaging_material_items||[]).forEach(item=>this.rememberItem(item))
       const byId=new Map((data.operations||[]).map(x=>[Number(x.id),`op-${x.id}`]))
       const rows=(data.operations||[]).map(x=>{
-        this.rememberItem(x.output_item)
         if(x.operation){const index=this.operations.findIndex(o=>Number(o.id)===Number(x.operation.id));const operation={...x.operation,is_public:asBoolean(x.is_public??x.operation.is_public)};if(index<0)this.operations.push(operation);else this.$set(this.operations,index,{...this.operations[index],...operation})}
         this.rememberCatalog({type:'stages',row:x.stage||{id:x.production_stage_id,name:x.stage_name,code:x.stage_code}})
         this.rememberCatalog({type:'packaging-schemes',row:x.packaging_scheme||{id:x.packaging_scheme_id,name:x.packaging_scheme_name,code:x.packaging_scheme_code}})
@@ -341,7 +334,7 @@ export default {
     tableRowClassName({ row }){return this.expanded.includes(row.key)?'row-is-expanded':''},
     doAddOperation(options = {}){
       const nextSeq=(this.form.operations.length+1)*10;
-      const row={key:uuid(),operation_id:null,production_stage_id:null,execution_context:'production',shipment_operation_type:'packing',packaging_scheme_id:null,packaging_materials:[],sequence:nextSeq,is_key_operation:false,parameters:null,parameters_text:'',remark:'',setup_standard_minutes:0,unit_standard_minutes:0,output_item_id:null,output_mode:'flow_only',quality_mode:'none',work_mode:'manual',allow_continue_without_warehouse:true,material_supply_rules:[]};
+      const row={key:uuid(),operation_id:null,production_stage_id:null,execution_context:'production',shipment_operation_type:'packing',packaging_scheme_id:null,packaging_materials:[],sequence:nextSeq,is_key_operation:false,parameters:null,parameters_text:'',remark:'',setup_standard_minutes:0,unit_standard_minutes:0,output_mode:'flow_only',quality_mode:'none',work_mode:'manual',allow_continue_without_warehouse:true,material_supply_rules:[]};
       this.form.operations.push(row);
       this.orderContexts();
       this.expanded=[row.key];
@@ -410,7 +403,7 @@ export default {
     canMove(index,delta){const next=index+delta;return next>=0&&next<this.form.operations.length&&this.form.operations[index].execution_context===this.form.operations[next].execution_context},
     move(index,delta){if(!this.canMove(index,delta))return;const row=this.form.operations.splice(index,1)[0];this.form.operations.splice(index+delta,0,row);this.renumber()},
     orderContexts(){this.form.operations=[...this.form.operations.filter(row=>row.execution_context!=='shipment'),...this.form.operations.filter(row=>row.execution_context==='shipment')];this.renumber()},
-    changeExecutionContext(row,context){if(this.viewOnly||row.execution_context===context)return;if(context==='shipment'&&(row.material_supply_rules.length||this.incomingRules(row).length)){this.$message.warning('请先清除本工序相关的生产用料，再改为发货作业');return}if(context==='production'&&(row.packaging_scheme_id||row.packaging_materials.length)){this.$message.warning('请先清除包装方案和包装用料，再改为生产工序');return}row.execution_context=context;if(context==='shipment'){row.output_item_id=null;row.output_mode='flow_only';row.allow_continue_without_warehouse=true}this.orderContexts()},
+    changeExecutionContext(row,context){if(this.viewOnly||row.execution_context===context)return;if(context==='shipment'&&(row.material_supply_rules.length||this.incomingRules(row).length)){this.$message.warning('请先清除本工序相关的生产用料，再改为发货作业');return}if(context==='production'&&(row.packaging_scheme_id||row.packaging_materials.length)){this.$message.warning('请先清除包装方案和包装用料，再改为生产工序');return}row.execution_context=context;if(context==='shipment'){row.output_mode='flow_only';row.allow_continue_without_warehouse=true}this.orderContexts()},
     renumber(){this.form.operations.forEach((r,i)=>{r.sequence=(i+1)*10})},
     onExpand(row,expanded){this.expanded=expanded.map(x=>x.key)},
     toggleOperation(row){
@@ -449,10 +442,9 @@ export default {
     },
     setOutputMode(row){
       row.allow_continue_without_warehouse=row.output_mode!=='warehouse_required';
-      if(row.output_mode!=='flow_only'&&!row.output_item_id&&this.form.output_item_id){
-        row.output_item_id=this.form.output_item_id
-      }
     },
+    // 入库只能放在最后一道车间工序，入库的就是工单本身的物料；中间工序只做流转，半成品请用多级 BOM 单独开工单。
+    isLastProduction(row){const production=this.form.operations.filter(op=>op.execution_context==='production');return production.length>0&&production.reduce((a,b)=>Number(b.sequence)>Number(a.sequence)?b:a)===row},
     confirmSettings(row, options = {}){
       if(this.validateOperation(row)){
         this.expanded=this.expanded.filter(key=>key!==row.key);
@@ -465,14 +457,14 @@ export default {
       }
       return false;
     },
-    openItems(mode,row=null){if(this.viewOnly)return;this.pickerTarget={mode,row};const multiple=['materials','packaging','shared'].includes(mode);const materials=mode==='packaging'?row.packaging_materials:(mode==='materials'?this.incomingRules(row):(mode==='shared'?this.form.applicable_items.map(item=>({component_item_id:item.id,item})):[]));const selected=materials.map(material=>material.item||this.items[material.component_item_id]||{id:material.component_item_id,item_name:this.itemName(material.component_item_id)});this.$refs.itemPicker.open({currentId:mode==='output'?this.form.output_item_id:row&&row.output_item_id,multiple,selected,params:{management_scope:'factory',is_purchase_item:undefined},title:mode==='packaging'?'选择包装用料':mode==='materials'?'选择工序用料':mode==='shared'?'选择共用物料':'选择产出物料'})},
-    selectItem(item){if(!this.pickerTarget||this.viewOnly)return;this.rememberItem(item);if(this.pickerTarget.mode==='output')this.form.output_item_id=item.id;else if(this.form.operations.includes(this.pickerTarget.row))this.pickerTarget.row.output_item_id=item.id},
-    selectMaterials(items){if(this.pickerTarget&&this.pickerTarget.mode==='shared'){items.forEach(item=>this.rememberItem(item));this.form.applicable_items=items.filter(item=>Number(item.id)!==Number(this.form.output_item_id)).map(item=>({id:item.id,item_code:item.item_code,item_name:item.item_name,item_type:item.item_type,management_scope:item.management_scope}));return}if(!this.pickerTarget||!this.form.operations.includes(this.pickerTarget.row))return;const {row,mode}=this.pickerTarget;items.forEach(item=>{this.rememberItem(item);if(mode==='packaging'){if(!row.packaging_materials.some(material=>Number(material.component_item_id)===Number(item.id)))row.packaging_materials.push({component_item_id:item.id,base_qty_per_output_unit:''})}else if(!this.incomingRules(row).some(r=>Number(r.component_item_id)===Number(item.id)))row.material_supply_rules.push({component_item_id:item.id,target_key:row.key,percent:100,supply_mode:'dedicated_delivery',participates_in_kitting:true,allow_partial_delivery:false,delivery_location_type:'operation_station'})})},
+    openItems(mode,row=null){if(this.viewOnly)return;this.pickerTarget={mode,row};const multiple=['materials','packaging','shared'].includes(mode);const materials=mode==='packaging'?row.packaging_materials:(mode==='materials'?this.incomingRules(row):(mode==='shared'?this.form.applicable_items.map(item=>({component_item_id:item.id,item})):[]));const selected=materials.map(material=>material.item||this.items[material.component_item_id]||{id:material.component_item_id,item_name:this.itemName(material.component_item_id)});this.$refs.itemPicker.open({currentId:null,multiple,selected,params:{management_scope:'factory',is_purchase_item:undefined},title:mode==='packaging'?'选择包装用料':mode==='materials'?'选择工序用料':mode==='shared'?'选择适用物料':'选择物料'})},
+    selectItem(item){if(!this.pickerTarget||this.viewOnly)return;this.rememberItem(item)},
+    selectMaterials(items){if(this.pickerTarget&&this.pickerTarget.mode==='shared'){items.forEach(item=>this.rememberItem(item));this.form.applicable_items=items.map(item=>({id:item.id,item_code:item.item_code,item_name:item.item_name,item_type:item.item_type,management_scope:item.management_scope}));return}if(!this.pickerTarget||!this.form.operations.includes(this.pickerTarget.row))return;const {row,mode}=this.pickerTarget;items.forEach(item=>{this.rememberItem(item);if(mode==='packaging'){if(!row.packaging_materials.some(material=>Number(material.component_item_id)===Number(item.id)))row.packaging_materials.push({component_item_id:item.id,base_qty_per_output_unit:''})}else if(!this.incomingRules(row).some(r=>Number(r.component_item_id)===Number(item.id)))row.material_supply_rules.push({component_item_id:item.id,target_key:row.key,percent:100,supply_mode:'dedicated_delivery',participates_in_kitting:true,allow_partial_delivery:false,delivery_location_type:'operation_station'})})},
     selectProduct({mode,row}){if(mode==='product'){this.form.product_id=row.id;this.form.product=row;this.form.sku_id=null;this.form.sku=null}else{this.form.sku_id=row.id;this.form.sku=row;this.form.product_id=row.product_id;this.form.product=row.product||{product_name:row.product_name||''}}},
     validateOperation(row){
       const opIndex=Math.floor(row.sequence/10);
       if(!row.operation_id){this.$message.warning(`请为第 ${opIndex} 道工序选择工序名称`);return false}
-      if(row.execution_context!=='shipment'&&row.output_mode!=='flow_only'&&!row.output_item_id){this.$message.warning(`第 ${opIndex} 道工序设置了入库，必须选择产出物料`);return false}
+      if(row.execution_context!=='shipment'&&row.output_mode!=='flow_only'&&!this.isLastProduction(row)){this.$message.warning(`第 ${opIndex} 道工序不是最后一道车间工序，只能直接交接；入库只能设在最后一道车间工序`);return false}
       if([row.setup_standard_minutes,row.unit_standard_minutes].some(value=>value===''||!Number.isFinite(Number(value))||Number(value)<0)){this.$message.warning(`第 ${opIndex} 道工序工时必须为大于或等于 0 的数字`);return false}
       if(row.execution_context==='shipment'){
         if(row.shipment_operation_type==='packing'&&!row.packaging_scheme_id){this.$message.warning(`第 ${opIndex} 道打包工序必须选择包装方案`);return false}
@@ -483,12 +475,12 @@ export default {
       return true
     },
     payload(){
-      return {routing_name:this.form.routing_name,output_item_id:this.form.output_item_id,product_id:this.form.product_id,sku_id:this.form.sku_id,remark:this.form.remark,
+      return {routing_name:this.form.routing_name,product_id:this.form.product_id,sku_id:this.form.sku_id,remark:this.form.remark,
         applicable_item_ids:this.form.sku_id?[]:this.form.applicable_items.map(item=>item.id),applicable_category_ids:this.form.sku_id?[]:this.form.applicable_category_ids,
         operations:this.form.operations.map(row=>{
           const operation={operation_id:row.operation_id,production_stage_id:row.production_stage_id||null,execution_context:row.execution_context,sequence:row.sequence,is_key_operation:row.is_key_operation,
             parameters:{...(row.parameters||{}),text:row.parameters_text},remark:row.remark||null,setup_standard_minutes:Number(row.setup_standard_minutes),unit_standard_minutes:Number(row.unit_standard_minutes),standard_minutes:Number(row.unit_standard_minutes),
-            output_item_id:row.execution_context==='shipment'?null:row.output_item_id,output_mode:row.output_mode,quality_mode:row.quality_mode,work_mode:row.work_mode,allow_continue_without_warehouse:row.allow_continue_without_warehouse}
+            output_mode:row.output_mode,quality_mode:row.quality_mode,work_mode:row.work_mode,allow_continue_without_warehouse:row.allow_continue_without_warehouse}
           // 保留明细标识，后端可按原节点保留当前账号不可见的绩效配置。
           if(Number(row.id)>0)operation.id=Number(row.id)
           if(row.execution_context==='shipment'){
@@ -507,6 +499,7 @@ export default {
       // 启用响应丢失时只重试原启用命令，不能先重复保存已启用的版本。
       if(activate&&this.pendingActivation){this.loading=true;try{await this.finishActivation();await this.load()}catch(e){this.showSaveError(e)}finally{this.loading=false}return}
       if(!await this.$refs.form.validate().catch(()=>false))return
+      if(!this.form.sku_id&&!this.form.applicable_items.length&&!(this.form.applicable_category_ids||[]).length)return this.$message.warning('请至少选择一个适用物料或适用类目')
       if(!this.form.operations.length)return this.$message.warning('请至少添加一道工序')
       if(!this.form.operations.every(this.validateOperation))return
       const common=this.payload();const signature=JSON.stringify(common)

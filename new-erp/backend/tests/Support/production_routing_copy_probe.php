@@ -32,11 +32,13 @@ try {
         foreach ([1, 2] as $version) {
             $ids[] = DB::table('erp_production_routings')->insertGetId([
                 'routing_no' => $routingNo, 'routing_name' => '并发路线 V'.$version,
-                'output_item_id' => $item->id, 'version' => $version, 'status' => $version === 1 ? 'active' : 'draft',
-                'is_default' => $version === 1, 'default_scope_key' => $version === 1 ? $item->id : null,
+                'version' => $version, 'status' => $version === 1 ? 'active' : 'draft',
+                'is_default' => $version === 1, 'default_scope_key' => $version === 1 ? 'routing:'.$routingNo : null,
                 'business_version' => 1, 'created_by_legacy_id' => $ownerId,
                 'updated_by_legacy_id' => $ownerId, 'created_at' => now(), 'updated_at' => now(),
             ]);
+            DB::table('erp_production_routing_applicabilities')->insert(['routing_id' => end($ids), 'scope_type' => 'item',
+                'item_id' => $item->id, 'scope_key' => 'item:'.$item->id, 'created_at' => now(), 'updated_at' => now()]);
             DB::table('erp_production_routing_operations')->insert([
                 'routing_id' => end($ids), 'operation_id' => $operationId, 'sequence' => 10,
                 'parameters' => json_encode(['fixture' => 'C1']), 'is_key_operation' => true,

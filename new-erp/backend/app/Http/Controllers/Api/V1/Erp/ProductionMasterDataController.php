@@ -48,7 +48,7 @@ class ProductionMasterDataController extends Controller
     ]); }
     private function routingData(Request $request, bool $editing): array { return $request->validate([
         'client_command_id' => 'required|string|max:120', 'creation_session_id' => $editing ? 'prohibited' : 'required|uuid', 'reservation_token' => $editing ? 'prohibited' : 'required|uuid',
-        'routing_name' => ($editing ? 'sometimes' : 'required').'|string|max:160', 'output_item_id' => ($editing ? 'sometimes' : 'required').'|integer|exists:erp_items,id',
+        'routing_name' => ($editing ? 'sometimes' : 'required').'|string|max:160', 'output_item_id' => 'prohibited',
         'product_id' => 'nullable|integer|exists:erp_products,id', 'sku_id' => 'nullable|integer|exists:erp_skus,id', 'version' => 'prohibited', 'remark' => 'nullable|string|max:2000',
         'applicable_item_ids' => 'sometimes|array|max:500', 'applicable_item_ids.*' => 'integer|distinct|exists:erp_items,id',
         'applicable_category_ids' => 'sometimes|array|max:100', 'applicable_category_ids.*' => 'integer|distinct|exists:erp_item_categories,id',
@@ -65,7 +65,7 @@ class ProductionMasterDataController extends Controller
         'operations.*.standard_minutes' => 'nullable|numeric|min:0|max:999999',
         'operations.*.setup_standard_minutes' => 'nullable|numeric|min:0|max:999999',
         'operations.*.unit_standard_minutes' => 'nullable|numeric|min:0|max:999999',
-        'operations.*.output_item_id' => 'nullable|integer|exists:erp_items,id',
+        'operations.*.output_item_id' => 'prohibited',
         'operations.*.output_mode' => 'nullable|in:flow_only,warehouse_optional,warehouse_required', 'operations.*.quality_mode' => 'nullable|in:none,required',
         'operations.*.work_mode' => 'nullable|in:manual,automatic',
         'operations.*.allow_continue_without_warehouse' => 'nullable|boolean', 'operations.*.material_supply_rules' => 'nullable|array',

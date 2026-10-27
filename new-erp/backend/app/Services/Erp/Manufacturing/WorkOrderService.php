@@ -78,6 +78,7 @@ final class WorkOrderService
         return DB::transaction(function () use ($data, $actor) {
             $item = Item::query()->where('status', 'enabled')->findOrFail($data['item_id']);
             if ($item->isPurchaseFulfilledItem()) $this->fail('purchase_item', '这个物料是外购件，不能建生产工单，请走采购。');
+            if ($item->isPhantom()) $this->fail('phantom_item', '这个物料是虚拟件，不单独建工单，用料会在上级工单里直接展开。');
             $this->assertOwnerStaff($data['owner_legacy_id'] ?? null);
             $wo = $this->newWorkOrder([
                 'source_type' => 'stock', 'stock_reason' => $data['stock_reason'] ?? 'regular',
@@ -125,6 +126,7 @@ final class WorkOrderService
             if ($parent->materials->where('component_item_id', $componentItemId)->isEmpty()) $this->fail('component_invalid', '这个物料不在本工单的用料里。');
             $item = Item::query()->with('unit')->where('status', 'enabled')->find($componentItemId);
             if (! $item) $this->fail('component_invalid', '这个物料不存在或已停用。');
+            if ($item->isPhantom()) $this->fail('phantom_item', $item->item_name.' 是虚拟件，用料已展开在本工单里，不单独开工单。');
             if ($item->isPurchaseFulfilledItem() || ! in_array($item->item_type, ['semi_finished', 'finished_product'], true))
                 $this->fail('purchase_item', $item->item_name.' 不是自制半成品（外购件、原料请找采购），不能开生产工单。');
             $gap = $this->semiGap($parent, $componentItemId);
