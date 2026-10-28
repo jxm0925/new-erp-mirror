@@ -201,6 +201,15 @@
             <el-option label="半成品补做" value="work_order" />
           </el-select>
           <el-checkbox
+            v-model="filters.flat"
+            border
+            size="small"
+            class="filter-checkbox"
+            @change="search"
+          >
+            平铺显示半成品工单
+          </el-checkbox>
+          <el-checkbox
             v-model="filters.stuck_only"
             border
             size="small"
@@ -222,6 +231,8 @@
           :data="rows"
           size="small"
           border
+          row-key="id"
+          :tree-props="{ children: 'children' }"
           class="custom-wo-table"
           empty-text="暂无匹配的生产工单数据"
           @row-click="open"
@@ -237,6 +248,14 @@
               <div class="product-title-row">
                 <span class="product-name font-medium">{{ productName(row) }}</span>
                 <span class="qty-badge font-mono">× {{ qty(row.planned_qty) }} {{ row.unit_name || '台' }}</span>
+              </div>
+              <div v-if="row.semi_summary && row.semi_summary.length" :class="['semi-line', row.semi_ready ? 'semi-ready' : 'semi-wait']">
+                <i :class="row.semi_ready ? 'el-icon-circle-check' : 'el-icon-time'" />
+                半成品：{{ semiText(row) }}{{ row.semi_ready ? ' · 已齐' : '' }}
+              </div>
+              <div v-if="row.parent_work_order && !isNested(row)" class="semi-line semi-parent">
+                <i class="el-icon-top" /> 给总装工单
+                <span class="code-mono wo-no-link" @click.stop="open(row.parent_work_order)">{{ row.parent_work_order.work_order_no }}</span>
               </div>
             </template>
           </el-table-column>
@@ -341,6 +360,13 @@
             {{ productName(row) }}
             <b class="qty-badge font-mono">× {{ qty(row.planned_qty) }} {{ row.unit_name || '台' }}</b>
           </div>
+          <div v-if="row.semi_summary && row.semi_summary.length" :class="['semi-line', row.semi_ready ? 'semi-ready' : 'semi-wait']">
+            半成品：{{ semiText(row) }}{{ row.semi_ready ? ' · 已齐' : '' }}
+          </div>
+          <div v-for="c in (row.children || [])" :key="'c' + c.id" class="semi-line semi-child" @click.stop="open(c)">
+            └ <span class="code-mono">{{ c.work_order_no }}</span> {{ c.item_name }} · {{ c.status_label }} · 入库 {{ qty(c.stored_qty) }}/{{ qty(c.planned_qty) }}
+          </div>
+          <div v-if="row.parent_work_order" class="semi-line semi-parent">给总装工单 {{ row.parent_work_order.work_order_no }}</div>
           <div class="mobile-source-sub">
             {{ row.source_type === 'stock' ? '备货 · ' + (row.stock_reason_label || '常规备货') : (row.source_type === 'work_order' ? '半成品补做 · ' : '') + (row.sales_order_no || '总装缺料') + ' · ' + (row.customer_name || '—') }}
           </div>
@@ -387,7 +413,7 @@
 import { listWorkOrders } from '../../../api/erp/production'
 import { STATUS_CHIP, STATUS_TABS, qty, shortDate, errorText, searchProductionUsers } from './mfg-helpers'
 
-const emptyFilters = () => ({ keyword: '', status: '', owner_legacy_id: '', source_type: '', stuck_only: false })
+const emptyFilters = () => ({ keyword: '', status: '', owner_legacy_id: '', source_type: '', stuck_only: false, flat: false })
 
 export default {
   name: 'WorkOrderList',
@@ -414,6 +440,7 @@ export default {
       try {
         const params = { ...this.filters, page: this.page, per_page: 10 }
         params.stuck_only = this.filters.stuck_only ? 1 : undefined
+        params.flat = this.filters.flat ? 1 : undefined
         if (this.dueRange && this.dueRange.length) {
           params.due_from = this.dueRange[0]
           params.due_to = this.dueRange[1]
@@ -430,6 +457,12 @@ export default {
       } finally {
         this.loading = false
       }
+    },
+    semiText(row) {
+      return row.semi_summary.map(x => `${x.item_name} ${qty(x.stored_qty)}/${qty(x.planned_qty)}`).join(' · ')
+    },
+    isNested(row) {
+      return !this.rows.some(r => r.id === row.id)
     },
     search() {
       this.page = 1
@@ -1212,4 +1245,9 @@ export default {
     grid-template-columns: 1fr;
   }
 }
+.semi-line { margin-top: 4px; font-size: 12px; line-height: 18px; }
+.semi-ready { color: #16a34a; }
+.semi-wait { color: #d97706; }
+.semi-parent { color: #64748b; }
+.semi-child { color: #475569; padding-left: 6px; }
 </style>
