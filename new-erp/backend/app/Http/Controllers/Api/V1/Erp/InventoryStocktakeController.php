@@ -36,9 +36,13 @@ class InventoryStocktakeController extends Controller
     public function show(Request $request, int $id)
     {
         $this->authorizePermission($request, 'inventory.stocktake.view');
+        $page = $request->validate(['page' => 'sometimes|integer|min:1', 'per_page' => 'sometimes|integer|min:1|max:100']);
         $stocktake = InventoryStocktake::query()->with(['warehouse:id,warehouse_code,warehouse_name', 'location:id,location_code,location_name',
-            'adjustment:id,adjustment_no,adjustment_status', 'lines.item:id,item_code,item_name,spec', 'lines.location:id,location_code,location_name',
-            'lines.unit:id,unit_name'])->findOrFail($id);
+            'adjustment:id,adjustment_no,adjustment_status'])->findOrFail($id);
+        $lines = $stocktake->lines()->with(['item:id,item_code,item_name,spec', 'location:id,location_code,location_name', 'unit:id,unit_name'])
+            ->paginate($page['per_page'] ?? 10);
+        $stocktake->setRelation('lines', $lines->getCollection());
+        $stocktake->setAttribute('lines_pagination', ['current_page' => $lines->currentPage(), 'per_page' => $lines->perPage(), 'total' => $lines->total()]);
         $adjustmentIds = DB::table('erp_inventory_posting_logs as log')
             ->join('erp_inventory_transactions as transaction', 'transaction.id', '=', 'log.transaction_id')
             ->where('log.source_type', 'inventory_stocktake')->where('log.source_id', $id)
@@ -56,6 +60,7 @@ class InventoryStocktakeController extends Controller
         $user = $this->authorizePermission($request, 'inventory.stocktake.create');
         $data = $request->validate([
             'warehouse_id' => 'required|integer|exists:erp_warehouses,id',
+            'scope' => 'sometimes|required|in:location,warehouse',
             'location_id' => 'nullable|integer|exists:erp_locations,id',
             'stocktake_date' => 'nullable|date',
             'remark' => 'nullable|string|max:500',
@@ -69,10 +74,11 @@ class InventoryStocktakeController extends Controller
         $data = $request->validate([
             'lines' => 'required|array|min:1',
             'lines.*.id' => 'required|integer',
+            'expected_version' => 'required|integer|min:1',
             'lines.*.counted_qty' => 'nullable|numeric|min:0',
             'lines.*.remark' => 'nullable|string|max:500',
         ]);
-        return response()->json(['message' => '实盘数已保存', 'data' => $service->saveCounts($id, $data['lines'], (int) $user->legacy_id)]);
+        return response()->json(['message' => '实盘数已保存', 'data' => $service->saveCounts($id, $data['lines'], (int) $user->legacy_id, $data['expected_version'])]);
     }
 
     public function complete(Request $request, int $id, InventoryStocktakeService $service)

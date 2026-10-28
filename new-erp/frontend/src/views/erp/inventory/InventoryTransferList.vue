@@ -55,10 +55,10 @@
       <el-form ref="form" :model="form" label-width="80px" size="small">
         <div class="simple-form-row">
           <el-form-item label="调出仓库" required>
-            <paged-record-select v-model="form.source_warehouse_id" entity="warehouses" :params="warehouseParams" title="选择调出仓库" placeholder="选择调出仓库" @change="changeSource" />
+            <paged-record-select v-model="form.source_warehouse_id" entity="warehouses" :params="warehouseParams" title="选择调出仓库" placeholder="选择调出仓库" @change="changeSource" @select="sourceWarehouse = $event" />
           </el-form-item>
           <el-form-item label="调入仓库" required>
-            <paged-record-select v-model="form.target_warehouse_id" entity="warehouses" :params="warehouseParams" title="选择调入仓库" placeholder="选择调入仓库" @change="form.lines.forEach(l => { l.target_location_id = null })" />
+            <paged-record-select v-model="form.target_warehouse_id" entity="warehouses" :params="targetWarehouseParams" :disabled="!sourceWarehouse || !sourceWarehouse.management_scope" title="选择调入仓库" placeholder="先选择调出仓库" @change="form.lines.forEach(l => { l.target_location_id = null })" />
           </el-form-item>
         </div>
         <el-form-item label="备注">
@@ -73,7 +73,7 @@
         </el-table-column>
         <el-table-column label="调入库位" min-width="160">
           <template slot-scope="{ row }">
-            <paged-record-select v-model="row.target_location_id" entity="locations" :params="{ warehouse_id: form.target_warehouse_id, statuses: warehouseParams.statuses }" :disabled="!form.target_warehouse_id" size="mini" title="选择调入库位" placeholder="调入库位" />
+            <paged-record-select v-model="row.target_location_id" entity="locations" :params="{ warehouse_id: form.target_warehouse_id, statuses: warehouseParams.statuses, location_purposes: ['general', 'finished'] }" :disabled="!form.target_warehouse_id" size="mini" title="选择调入库位" placeholder="普通或成品库位" />
           </template>
         </el-table-column>
         <el-table-column label="数量" width="140">
@@ -155,6 +155,7 @@ export default {
       pageSize: 10,
       filters: { keyword: '', warehouse_id: null, status: '' },
       warehouseParams: { statuses: ['enabled', 'active'], include_location_summary: 1 },
+      sourceWarehouse: null,
       statuses: {},
       balances: [],
       balanceColumns: [
@@ -171,6 +172,9 @@ export default {
       detail: null,
       windowWidth: window.innerWidth
     }
+  },
+  computed: {
+    targetWarehouseParams() { return { ...this.warehouseParams, ...(this.sourceWarehouse && this.sourceWarehouse.management_scope ? { management_scope: this.sourceWarehouse.management_scope } : {}) } }
   },
   created() {
     this.loadOptions()
@@ -225,16 +229,19 @@ export default {
     changePage(page) { this.page = page; this.load() },
     changeSource() {
       this.form.lines = [emptyLine()]
+      this.form.target_warehouse_id = null
       this.balances = []
     },
     addLine() { this.form.lines.push(emptyLine()) },
     async openForm(id) {
+      this.sourceWarehouse = null
       this.form = { id: null, source_warehouse_id: null, target_warehouse_id: null, remark: '', lines: [emptyLine()] }
       this.balances = []
       if (id) {
         try {
           const { data } = await getTransfer(id)
           const t = data.data
+          this.sourceWarehouse = t.source_warehouse
           this.form = {
             id: t.id,
             source_warehouse_id: t.source_warehouse_id,

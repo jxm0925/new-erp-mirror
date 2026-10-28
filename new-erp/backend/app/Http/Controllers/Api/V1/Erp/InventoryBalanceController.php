@@ -66,7 +66,7 @@ class InventoryBalanceController extends Controller
             ])->all();
         }
         $paginator = $query->paginate($this->perPage($request));
-        return response()->json([...$paginator->toArray(), 'stats' => $stats]);
+        return response()->json([...$paginator->toArray(), 'stats' => $stats, 'stocktake_freezes' => $this->stocktakeFreezes($request)]);
     }
 
     public function show(Request $request, int $id)
@@ -86,6 +86,7 @@ class InventoryBalanceController extends Controller
             'ids' => 'sometimes|required|array|min:1|max:500', 'ids.*' => 'required|integer|min:1|distinct',
         ]);
         $balance = InventoryBalance::query()->with('item')
+            ->when($forTransfer, fn ($q) => $q->whereIn('id', app(\App\Services\Erp\Inventory\InventoryTransferService::class)->transferableBalances()->select('erp_inventory_balances.id')))
             ->when($forTransfer, fn ($q) => $q->where('warehouse_id', $data['warehouse_id'])->where('quantity_available', '>', 0)
                 ->whereHas('item', fn ($item) => $item->where(fn ($mode) => $mode
                     ->whereIn('material_management_mode', ['quantity', ''])->orWhereNull('material_management_mode'))))
@@ -199,7 +200,18 @@ class InventoryBalanceController extends Controller
             $row->item = $items->get($row->item_id);
             return $row;
         });
-        return response()->json([...$paginator->toArray(), 'stats' => $stats]);
+        return response()->json([...$paginator->toArray(), 'stats' => $stats, 'stocktake_freezes' => $this->stocktakeFreezes($request)]);
+    }
+
+    private function stocktakeFreezes(Request $request): array
+    {
+        $request->validate(['freeze_page' => 'sometimes|integer|min:1']);
+        return \App\Models\Erp\InventoryStocktake::query()->where('stocktake_status', 'counting')
+            ->with(['warehouse:id,warehouse_name', 'location:id,location_name'])
+            ->when($this->managementScope($request), fn ($q, $scope) => $q->whereHas('warehouse', fn ($w) => $w->where('management_scope', $scope)))
+            ->when($request->input('warehouse_id'), fn ($q, $id) => $q->where('warehouse_id', $id))
+            ->when($request->input('location_id'), fn ($q, $id) => $q->where(fn ($l) => $l->whereNull('location_id')->orWhere('location_id', $id)))
+            ->orderBy('id')->paginate(10, ['id', 'stocktake_no', 'warehouse_id', 'location_id'], 'freeze_page')->toArray();
     }
 
     private function activeBalanceQuery(Request $request)

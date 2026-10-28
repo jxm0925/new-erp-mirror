@@ -16,6 +16,7 @@ use App\Services\Erp\DocumentNumberService;
 use App\Services\Erp\InventoryAvailabilityService;
 use App\Services\Erp\ShipmentDirectSourcePolicy;
 use App\Services\Erp\ShipmentSourceResolver;
+use App\Services\Erp\WarehouseManagementScopeService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -26,6 +27,7 @@ use Illuminate\Validation\ValidationException;
  */
 class InventoryTransferService
 {
+    public const TARGET_LOCATION_PURPOSES = ['general', 'finished'];
     public const STATUSES = ['draft' => '草稿', 'posted' => '已过账', 'cancelled' => '已取消'];
 
     public function __construct(
@@ -159,20 +161,21 @@ class InventoryTransferService
     private function validatedLine(int $sourceWarehouseId, int $targetWarehouseId, array $line, int $rowNo, bool $lock): array
     {
         $fail = fn (string $message) => throw ValidationException::withMessages(['lines' => "第 {$rowNo} 行：{$message}"]);
-        $balance = InventoryBalance::query()->whereKey((int) ($line['inventory_balance_id'] ?? 0))->when($lock, fn ($q) => $q->lockForUpdate())->first();
-        if (! $balance || (int) $balance->warehouse_id !== $sourceWarehouseId) $fail('来源库存不存在或不属于调出仓库。');
+        $balance = $this->transferableBalances()->whereKey((int) ($line['inventory_balance_id'] ?? 0))->when($lock, fn ($q) => $q->lockForUpdate())->first();
+        if (! $balance || (int) $balance->warehouse_id !== $sourceWarehouseId) $fail('来源库存不可调拨，请检查仓库、库位、批次有效期、管理范围及可用数量。');
         $item = Item::query()->find($balance->item_id);
         if (! $item) $fail('物料不存在。');
         if ($item->materialManagementMode() !== 'quantity') $fail("{$item->item_code} 为实物逐张管理物料，请在库存余额中使用“实物材料调拨”。");
-        $target = Location::query()->whereKey((int) ($line['target_location_id'] ?? 0))->first();
+        app(WarehouseManagementScopeService::class)->assertForward($item, $targetWarehouseId);
+        $target = Location::query()->whereKey((int) ($line['target_location_id'] ?? 0))->lockForUpdate()->first();
         if (! $target || (int) $target->warehouse_id !== $targetWarehouseId || ! in_array($target->status, ['enabled', 'active'], true)) {
             $fail('调入库位不存在、已停用或不属于调入仓库。');
         }
         if ((int) $target->id === (int) $balance->location_id) $fail('调入库位与来源库位相同。');
+        if (! in_array($target->location_purpose, self::TARGET_LOCATION_PURPOSES, true)) $fail('调拨只能调入普通库位或成品库位，不能调入发货待发区、返修区。');
         $qty = round((float) ($line['quantity'] ?? 0), 4);
         if ($qty <= 0) $fail('调拨数量必须大于 0。');
-        $available = $this->availability->calculate((float) $balance->quantity_on_hand, (float) $balance->quantity_locked,
-            (float) $balance->quantity_defective, (float) $balance->quantity_pending);
+        $available = $this->availability->availableForOutbound($balance);
         if ($qty > $available + 0.00000001) $fail("{$item->item_code} 可调拨数量不足（可用 ".rtrim(rtrim(number_format($available, 4, '.', ''), '0'), '.').'）。');
 
         $serialIds = array_values(array_unique(array_map('intval', $line['serial_ids'] ?? [])));
@@ -190,6 +193,28 @@ class InventoryTransferService
             'target_location_id' => $target->id, 'batch_no' => $balance->batch_no, 'unit_id' => $balance->unit_id,
             'quantity' => $qty, 'serial_ids' => $serialIds ?: null, 'remark' => $line['remark'] ?? null,
         ];
+    }
+
+    /** 候选、保存和过账共用资格；必须在分页前剔除不可用的配置/阶段材料批次。 */
+    public function transferableBalances(): \Illuminate\Database\Eloquent\Builder
+    {
+        return $this->availability->outboundBalanceQuery()
+            ->join('erp_items as transfer_item', 'transfer_item.id', '=', 'erp_inventory_balances.item_id')
+            ->leftJoin('erp_material_lots as transfer_lot', 'transfer_lot.id', '=', 'erp_inventory_balances.material_lot_id')
+            ->whereColumn('transfer_item.management_scope', 'erp_warehouses.management_scope')
+            ->whereIn('transfer_item.management_scope', ['factory', 'office'])
+            ->where('transfer_item.is_stock_item', true)
+            ->where(fn ($q) => $q->whereNull('transfer_item.material_management_mode')->orWhereIn('transfer_item.material_management_mode', ['', 'quantity']))
+            ->where('erp_inventory_balances.quantity_available', '>', 0)
+            ->whereRaw('(erp_inventory_balances.quantity_on_hand - erp_inventory_balances.quantity_locked - erp_inventory_balances.quantity_defective - erp_inventory_balances.quantity_pending) > 0')
+            ->where(function ($q) {
+                $q->whereNull('erp_inventory_balances.material_lot_id')->orWhere(function ($lot) {
+                    $lot->whereColumn('transfer_lot.item_id', 'erp_inventory_balances.item_id')
+                        ->whereNull('transfer_lot.configuration_id')->whereNull('transfer_lot.stage_id')
+                        ->where(fn ($form) => $form->whereIn('transfer_lot.material_form', ['FULL_STOCK', 'STANDARD_LENGTH'])
+                            ->orWhere(fn ($product) => $product->where('transfer_lot.material_form', 'PRODUCT')->where('transfer_item.item_type', 'finished_product')));
+                });
+            });
     }
 
     private function moveSerials(InventoryTransfer $transfer, InventoryTransferLine $line, InventoryBalance $source, Location $target, ?int $operatorId, int $transactionId): void

@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api\V1\Erp;
 use App\Http\Controllers\Controller;
 use App\Models\Erp\InventoryBalance;
 use App\Models\Erp\InventoryTransfer;
+use App\Models\Erp\InventorySerial;
+use App\Services\Erp\InventoryAvailabilityService;
 use App\Services\Erp\AuthContextService;
 use App\Services\Erp\Inventory\InventoryTransferService;
 use Illuminate\Http\Request;
@@ -37,7 +39,7 @@ class InventoryTransferController extends Controller
     }
 
     /** 调出仓库中可调拨的数量库存批次；资格先于分页，已选来源按 ID 回显。 */
-    public function balances(Request $request)
+    public function balances(Request $request, InventoryTransferService $service, InventoryAvailabilityService $availability)
     {
         $this->authorizePermission($request, 'inventory.transfer.create');
         $data = $request->validate([
@@ -46,10 +48,11 @@ class InventoryTransferController extends Controller
             'ids' => 'sometimes|required|array|min:1|max:200', 'ids.*' => 'required|integer|min:1|distinct',
             'page' => 'sometimes|integer|min:1', 'per_page' => 'sometimes|integer|min:1|max:100',
         ]);
-        $query = InventoryBalance::query()->with(['item:id,item_code,item_name,spec,material_management_mode,serial_tracking_mode,is_serial_managed',
+        $query = InventoryBalance::query()->with(['item:id,item_code,item_name,spec,item_type,material_management_mode,serial_tracking_mode,is_serial_managed',
             'location:id,location_code,location_name', 'unit:id,unit_name'])
             ->withCount(['serials as available_serials_count' => fn ($q) => $q->where('serial_status', 'available')])
-            ->where('warehouse_id', (int) $data['warehouse_id'])->where('quantity_available', '>', 0)
+            ->where('warehouse_id', (int) $data['warehouse_id'])
+            ->whereIn('id', $service->transferableBalances()->select('erp_inventory_balances.id'))
             ->whereHas('item', fn ($item) => $item->where(fn ($mode) => $mode
                 ->whereIn('material_management_mode', ['quantity', ''])->orWhereNull('material_management_mode')))
             ->when($data['location_id'] ?? null, fn ($q, $id) => $q->where('location_id', (int) $id))
@@ -66,7 +69,7 @@ class InventoryTransferController extends Controller
             'id' => $row->id, 'item_id' => $row->item_id, 'item_code' => $row->item?->item_code, 'item_name' => $row->item?->item_name,
             'spec' => $row->item?->spec, 'location_id' => $row->location_id, 'location_name' => $row->location?->location_name,
             'location_code' => $row->location?->location_code, 'batch_no' => $row->batch_no, 'unit_name' => $row->unit?->unit_name,
-            'quantity_available' => (float) $row->quantity_available,
+            'quantity_available' => $availability->availableForOutbound($row),
             'available_serials_count' => (int) $row->available_serials_count,
         ]);
         return response()->json($paginator);
@@ -75,7 +78,7 @@ class InventoryTransferController extends Controller
     public function show(Request $request, int $id)
     {
         $this->authorizePermission($request, 'inventory.transfer.view');
-        $transfer = InventoryTransfer::query()->with(['sourceWarehouse:id,warehouse_code,warehouse_name', 'targetWarehouse:id,warehouse_code,warehouse_name',
+        $transfer = InventoryTransfer::query()->with(['sourceWarehouse:id,warehouse_code,warehouse_name,management_scope', 'targetWarehouse:id,warehouse_code,warehouse_name',
             'lines.item:id,item_code,item_name,spec', 'lines.sourceLocation:id,location_code,location_name', 'lines.targetLocation:id,location_code,location_name',
             'lines.unit:id,unit_name'])->findOrFail($id);
         $serialNos = InventorySerial::query()->whereIn('id', $transfer->lines->flatMap(fn ($line) => $line->serial_ids ?? []))->pluck('serial_no', 'id');

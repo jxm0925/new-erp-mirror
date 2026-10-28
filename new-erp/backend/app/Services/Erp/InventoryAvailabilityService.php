@@ -32,7 +32,7 @@ class InventoryAvailabilityService
     }
 
     /** 可出库的库存行（仓库、库位、批次都有效且未过期）；可用量再按 availableForOutbound 计算。 */
-    public function outboundBalanceQuery(array $itemIds)
+    public function outboundBalanceQuery(?array $itemIds = null)
     {
         return InventoryBalance::query()
             ->select('erp_inventory_balances.*')
@@ -42,7 +42,7 @@ class InventoryAvailabilityService
                 $join->on('erp_inventory_batches.item_id', '=', 'erp_inventory_balances.item_id')
                     ->on('erp_inventory_batches.batch_no', '=', 'erp_inventory_balances.batch_no');
             })
-            ->whereIn('erp_inventory_balances.item_id', $itemIds)
+            ->when($itemIds !== null, fn ($query) => $query->whereIn('erp_inventory_balances.item_id', $itemIds))
             ->whereIn('erp_warehouses.status', ['enabled', 'active'])
             ->whereIn('erp_locations.status', ['enabled', 'active'])
             ->whereIn('erp_inventory_batches.status', ['enabled', 'active'])

@@ -38,8 +38,14 @@ class InventoryStocktakeService
                 throw ValidationException::withMessages(['warehouse_id' => '仓库不存在或已停用。']);
             }
             $locationId = ! empty($data['location_id']) ? (int) $data['location_id'] : null;
-            if ($locationId && ! Location::query()->whereKey($locationId)->where('warehouse_id', $warehouse->id)->exists()) {
-                throw ValidationException::withMessages(['location_id' => '库位不属于所选仓库。']);
+            if (($data['scope'] ?? 'location') === 'location' && !$locationId) {
+                throw ValidationException::withMessages(['location_id' => '请选择盘点库位；整仓盘点须明确选择整仓范围。']);
+            }
+            if (($data['scope'] ?? 'location') === 'warehouse' && $locationId) {
+                throw ValidationException::withMessages(['location_id' => '整仓盘点不能同时指定库位。']);
+            }
+            if ($locationId && ! Location::query()->whereKey($locationId)->where('warehouse_id', $warehouse->id)->whereIn('status', ['enabled', 'active'])->lockForUpdate()->first()) {
+                throw ValidationException::withMessages(['location_id' => '库位已停用或不属于所选仓库。']);
             }
             $overlap = InventoryStocktake::query()->where('warehouse_id', $warehouse->id)->where('stocktake_status', 'counting')
                 ->when($locationId, fn ($query) => $query->where(fn ($q) => $q->whereNull('location_id')->orWhere('location_id', $locationId)))
@@ -80,11 +86,12 @@ class InventoryStocktakeService
     }
 
     /** 录入实盘数：counted_qty 传 null 表示清空，可多次保存。 */
-    public function saveCounts(int $id, array $lines, ?int $operatorId): InventoryStocktake
+    public function saveCounts(int $id, array $lines, ?int $operatorId, int $expectedVersion): InventoryStocktake
     {
-        return $this->transaction(function () use ($id, $lines, $operatorId): InventoryStocktake {
+        return $this->transaction(function () use ($id, $lines, $operatorId, $expectedVersion): InventoryStocktake {
             $stocktake = $this->lockCounting($id);
-            $rows = InventoryStocktakeLine::query()->where('stocktake_id', $stocktake->id)->lockForUpdate()->get()->keyBy('id');
+            if ((int) $stocktake->business_version !== $expectedVersion) throw ValidationException::withMessages(['expected_version' => '盘点单已被其他人修改，请重新打开后核对实盘数。']);
+            $rows = InventoryStocktakeLine::query()->where('stocktake_id', $stocktake->id)->whereIn('id', array_column($lines, 'id'))->lockForUpdate()->get()->keyBy('id');
             foreach ($lines as $input) {
                 $line = $rows->get((int) $input['id']);
                 if (! $line) throw ValidationException::withMessages(['lines' => '盘点明细不属于当前盘点单。']);

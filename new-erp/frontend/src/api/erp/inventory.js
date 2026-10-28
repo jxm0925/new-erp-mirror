@@ -41,9 +41,9 @@ export const createPurchaseRequestFromInventoryAlert = id => api.post(`/v1/erp/i
 
 export const listStocktakes = params => api.get('/v1/erp/inventory/stocktakes', { params })
 export const getStocktakeOptions = () => api.get('/v1/erp/inventory/stocktakes/options')
-export const getStocktake = id => api.get(`/v1/erp/inventory/stocktakes/${id}`)
+export const getStocktake = (id, params = {}) => api.get(`/v1/erp/inventory/stocktakes/${id}`, { params })
 export const createStocktake = data => api.post('/v1/erp/inventory/stocktakes', data)
-export const saveStocktakeCounts = (id, lines) => api.put(`/v1/erp/inventory/stocktakes/${id}/counts`, { lines })
+export const saveStocktakeCounts = (id, lines, expected_version) => api.put(`/v1/erp/inventory/stocktakes/${id}/counts`, { lines, expected_version })
 export const completeStocktake = id => api.post(`/v1/erp/inventory/stocktakes/${id}/complete`)
 export const cancelStocktake = id => api.post(`/v1/erp/inventory/stocktakes/${id}/cancel`)
 
