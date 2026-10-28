@@ -11,4 +11,5 @@ class InventoryStocktakeLine extends MasterModel
     public function item() { return $this->belongsTo(Item::class); }
     public function location() { return $this->belongsTo(Location::class); }
     public function unit() { return $this->belongsTo(Unit::class); }
+    public function entries() { return $this->hasMany(InventoryStocktakeEntry::class, 'line_id'); }
 }

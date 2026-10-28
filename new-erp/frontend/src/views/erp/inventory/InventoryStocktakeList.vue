@@ -78,6 +78,8 @@
       </span>
     </el-dialog>
 
+    <stocktake-entry-dialog :visible.sync="entryVisible" :stocktake="detail" :line="entryLine" :editable="editable" @saved="entrySaved" />
+
     <el-dialog :title="detail ? `盘点单 ${detail.stocktake_no}` : '盘点单'" :visible.sync="detailVisible" :width="dialogWidth('1100px')" :before-close="closeDetail" append-to-body>
       <div v-if="detail" v-loading="detailLoading">
         <el-alert v-if="detail.stocktake_status === 'counting'" :title="`${detail.warehouse ? detail.warehouse.warehouse_name : ''} / ${detail.location ? detail.location.location_name : '全部库位'} 正在盘点，范围内暂停出入库，完成或取消后解除冻结。`" type="warning" show-icon :closable="false" />
@@ -120,10 +122,15 @@
           <el-table-column label="账面数" width="100">
             <template slot-scope="{ row }">{{ num(row.book_qty) }} {{ row.unit && row.unit.unit_name }}</template>
           </el-table-column>
-          <el-table-column label="实盘数" width="150">
+          <el-table-column label="实盘数" width="170">
             <template slot-scope="{ row }">
-              <el-input-number v-if="editable" v-model="row.counted_qty" :disabled="saving || detailLoading" :min="0" :precision="4" :controls="false" size="mini" style="width: 120px" />
-              <span v-else>{{ row.counted_qty === null ? '—' : num(row.counted_qty) }}</span>
+              <template v-if="row.count_mode && row.count_mode !== 'quantity'">
+                <span>{{ row.counted_qty == null ? '—' : num(row.counted_qty) }}</span>
+                <el-button type="text" size="mini" :disabled="saving || detailLoading" @click="openEntries(row)">{{ editable ? '逐件盘点' : '逐件明细' }}</el-button>
+                <div v-if="row.entry_stats" class="entry-progress">{{ row.count_mode === 'serial' ? '编号' : '实物' }}已确认 {{ row.entry_stats.present + row.entry_stats.missing }}/{{ row.entry_stats.book }}<template v-if="row.entry_stats.new">，补录 {{ row.entry_stats.new }}</template></div>
+              </template>
+              <el-input-number v-else-if="editable" v-model="row.counted_qty" :disabled="saving || detailLoading" :min="0" :precision="4" :controls="false" size="mini" style="width: 120px" />
+              <span v-else>{{ row.counted_qty == null ? '—' : num(row.counted_qty) }}</span>
             </template>
           </el-table-column>
           <el-table-column label="差异" width="100">
@@ -156,10 +163,12 @@
 
 <script>
 import { listStocktakes, getStocktakeOptions, getStocktake, createStocktake, saveStocktakeCounts, completeStocktake, cancelStocktake } from '@/api/erp/inventory'
+import StocktakeEntryDialog from './StocktakeEntryDialog.vue'
 import './inventory-simple.css'
 
 export default {
   name: 'InventoryStocktakeList',
+  components: { StocktakeEntryDialog },
   data() {
     return {
       loading: false,
@@ -182,6 +191,8 @@ export default {
       draftCounts: {},
       originalCounts: {},
       lineFilters: { keyword: '', location_id: null, line_status: '' },
+      entryVisible: false,
+      entryLine: null,
       windowWidth: window.innerWidth
     }
   },
@@ -286,7 +297,18 @@ export default {
       await this.loadDetailPage(id, 1)
     },
     countInput(line) {
+      // 逐件行的实盘数由后端按逐件结果计算，主表只提交备注。
+      if (line.count_mode && line.count_mode !== 'quantity') return { id: line.id, remark: line.remark || null }
       return { id: line.id, counted_qty: line.counted_qty == null ? null : Number(line.counted_qty), remark: line.remark || null }
+    },
+    openEntries(line) {
+      this.entryLine = line
+      this.entryVisible = true
+    },
+    async entrySaved(version) {
+      // 逐件保存后版本前进；主表未保存的草稿仍保留，按新版本继续提交。
+      this.detail.business_version = version
+      await this.loadDetailPage(this.detail.id, this.detailPage)
     },
     captureEdits() {
       if (!this.detail || !this.editable) return
@@ -402,6 +424,11 @@ export default {
 }
 .stocktake-draft {
   color: #e6a23c;
+}
+.entry-progress {
+  color: #909399;
+  font-size: 12px;
+  line-height: 16px;
 }
 .stocktake-line-filters {
   margin-bottom: 8px;

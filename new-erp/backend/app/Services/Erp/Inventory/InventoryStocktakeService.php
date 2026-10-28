@@ -26,6 +26,7 @@ class InventoryStocktakeService
         private readonly InventoryAdjustmentApplicationService $adjustments,
         private readonly WarehouseInventoryPosting $posting,
         private readonly DocumentNumberService $numbers,
+        private readonly InventoryStocktakeEntryService $entries,
     )
     {
     }
@@ -68,8 +69,11 @@ class InventoryStocktakeService
                 'line_count' => $balances->count(),
                 'created_by' => $operatorId,
             ]);
+            $items = Item::query()->whereIn('id', $balances->pluck('item_id')->unique())->get()->keyBy('id');
+            $written = 0;
             foreach ($balances as $balance) {
-                InventoryStocktakeLine::create([
+                $item = $items->get($balance->item_id);
+                $line = InventoryStocktakeLine::create([
                     'stocktake_id' => $stocktake->id,
                     'inventory_balance_id' => $balance->id,
                     'item_id' => $balance->item_id,
@@ -79,7 +83,10 @@ class InventoryStocktakeService
                     'unit_id' => $balance->unit_id,
                     'book_qty' => $balance->quantity_on_hand,
                     'unit_cost' => $balance->average_unit_cost ?? 0,
+                    'count_mode' => $item ? $this->entries->countMode($item) : 'quantity',
                 ]);
+                // 序列号/实物物料逐件拍快照，录入按件勾选，完成时自动生成带编号/实物的差异调整。
+                if ($line->count_mode !== 'quantity') $written += $this->entries->snapshot($line, $balance, $written);
             }
             return $stocktake;
         });
@@ -95,6 +102,11 @@ class InventoryStocktakeService
             foreach ($lines as $input) {
                 $line = $rows->get((int) $input['id']);
                 if (! $line) throw ValidationException::withMessages(['lines' => '盘点明细不属于当前盘点单。']);
+                if ($line->count_mode !== 'quantity') {
+                    if (array_key_exists('remark', $input)) $line->update(['remark' => $input['remark']]);
+                    $this->entries->saveLine($line, $input, $operatorId);
+                    continue;
+                }
                 $counted = array_key_exists('counted_qty', $input) && $input['counted_qty'] !== null && $input['counted_qty'] !== ''
                     ? round((float) $input['counted_qty'], 4) : null;
                 if ($counted !== null && $counted < 0) throw ValidationException::withMessages(['lines' => '实盘数不能小于 0。']);
@@ -126,7 +138,7 @@ class InventoryStocktakeService
             $items = Item::query()->whereIn('id', $lines->pluck('item_id')->unique())->orderBy('id')
                 ->lock('FOR UPDATE NOWAIT')->get()->keyBy('id');
             $facts = $this->adjustmentFacts($stocktake);
-            $differences = [];
+            $adjustmentRows = [];
             $blocked = [];
             foreach ($lines as $line) {
                 $balance = InventoryBalance::query()->whereKey($line->inventory_balance_id)->lock('FOR UPDATE NOWAIT')->firstOrFail();
@@ -139,31 +151,34 @@ class InventoryStocktakeService
                 $remaining = round((float) $line->counted_qty - (float) $balance->quantity_on_hand, 4);
                 if (abs($remaining) < 0.00005) continue;
                 $item = $items->get($line->item_id);
+                if ($line->count_mode !== 'quantity') {
+                    if (abs($processed->sum('change_qty')) >= 0.00005) {
+                        throw ValidationException::withMessages(['lines' => "{$item->item_code}（批次 {$line->batch_no}）已有部分手工差异调整，不能再按逐件结果自动处理，请核对后取消重盘或手工处理剩余差异。"]);
+                    }
+                    array_push($adjustmentRows, ...$this->entries->adjustmentLines($line, $item, $remaining));
+                    continue;
+                }
                 if ($item && ($item->serialTrackingMode() !== 'none' || $item->materialManagementMode() !== 'quantity')) {
+                    // 历史盘点单（逐件快照上线前开盘）仍需手工处理。
                     $blocked[] = $item->item_code.'（'.$line->batch_no.'）';
                     continue;
                 }
-                $differences[] = ['line' => $line, 'difference' => $remaining];
+                $adjustmentRows[] = [
+                    'item_id' => $line->item_id, 'warehouse_id' => $line->warehouse_id, 'location_id' => $line->location_id,
+                    'batch_no' => $line->batch_no, 'unit_id' => $line->unit_id, 'change_qty' => $remaining, 'remark' => $line->remark,
+                ];
             }
             if ($blocked) {
                 throw ValidationException::withMessages(['lines' => '以下物料按序列号/实物管理，差异须先用“手工调整（原因：盘点差异）”逐个处理后再完成盘点：'.implode('、', $blocked)]);
             }
 
             $adjustmentId = null;
-            if ($differences) {
+            if ($adjustmentRows) {
                 $adjustment = $this->adjustments->save([
                     'adjustment_date' => now()->toDateString(),
                     'reason' => StocktakeFreezeGuard::EXEMPT_ADJUSTMENT_REASON,
                     'remark' => "盘点单 {$stocktake->stocktake_no} 差异",
-                    'items' => array_map(fn ($row) => [
-                        'item_id' => $row['line']->item_id,
-                        'warehouse_id' => $row['line']->warehouse_id,
-                        'location_id' => $row['line']->location_id,
-                        'batch_no' => $row['line']->batch_no,
-                        'unit_id' => $row['line']->unit_id,
-                        'change_qty' => $row['difference'],
-                        'remark' => $row['line']->remark,
-                    ], $differences),
+                    'items' => $adjustmentRows,
                 ], null, $operatorId);
                 $this->adjustments->submit($adjustment->id, $operatorId);
                 $this->posting->postAdjustment($adjustment->id, $operatorId);

@@ -70,6 +70,7 @@
     "erp_inventory_serial_events": "2026_10_12_000129_create_erp_inventory_serial_events_table",
     "erp_inventory_serial_participants": "2026_10_12_000130_create_erp_inventory_serial_participants_table",
     "erp_inventory_serials": "2026_10_12_000131_create_erp_inventory_serials_table",
+    "erp_inventory_stocktake_entries": "2026_10_31_000001_create_erp_inventory_stocktake_entries_table",
     "erp_inventory_stocktake_lines": "2026_10_28_000002_create_erp_inventory_stocktake_lines_table",
     "erp_inventory_stocktakes": "2026_10_28_000001_create_erp_inventory_stocktakes_table",
     "erp_inventory_transaction_items": "2026_10_12_000132_create_erp_inventory_transaction_items_table",

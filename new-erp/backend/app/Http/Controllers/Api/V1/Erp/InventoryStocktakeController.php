@@ -70,6 +70,10 @@ class InventoryStocktakeController extends Controller
         $stocktake->setAttribute('location_options', DB::table('erp_inventory_stocktake_lines as line')
             ->join('erp_locations as location', 'location.id', '=', 'line.location_id')->where('line.stocktake_id', $stocktake->id)
             ->distinct()->orderBy('location.location_code')->limit(500)->get(['location.id', 'location.location_code', 'location.location_name']));
+        $entryStats = app(\App\Services\Erp\Inventory\InventoryStocktakeEntryService::class)
+            ->stats($lines->getCollection()->where('count_mode', '!=', 'quantity')->pluck('id')->all());
+        $lines->getCollection()->each(fn ($line) => $line->setAttribute('entry_stats', $line->count_mode === 'quantity' ? null
+            : ($entryStats[$line->id] ?? app(\App\Services\Erp\Inventory\InventoryStocktakeEntryService::class)->emptyStats())));
         $stocktake->setRelation('lines', $lines->getCollection());
         $stocktake->setAttribute('lines_pagination', ['current_page' => $lines->currentPage(), 'per_page' => $lines->perPage(), 'total' => $lines->total()]);
         $adjustmentIds = DB::table('erp_inventory_posting_logs as log')
@@ -106,8 +110,46 @@ class InventoryStocktakeController extends Controller
             'expected_version' => 'required|integer|min:1',
             'lines.*.counted_qty' => 'nullable|numeric|min:0',
             'lines.*.remark' => 'nullable|string|max:500',
+            // 序列号/实物逐件行：在/不在、全部在/全部不在、补录新件、删除补录件、无编号实盘数。
+            'lines.*.mark_all_present' => 'nullable|boolean',
+            'lines.*.entries' => 'nullable|array|max:500',
+            'lines.*.entries.*.id' => 'required|integer',
+            'lines.*.entries.*.counted_present' => 'nullable|boolean',
+            'lines.*.delete_entry_ids' => 'nullable|array|max:500',
+            'lines.*.delete_entry_ids.*' => 'integer',
+            'lines.*.unnumbered_counted_qty' => 'nullable|numeric|min:0',
+            'lines.*.new_entries' => 'nullable|array|max:500',
+            'lines.*.new_entries.*.serial_no' => 'nullable|string|max:120',
+            'lines.*.new_entries.*.physical_label' => 'nullable|string|max:120',
+            'lines.*.new_entries.*.dimensions' => 'nullable|array',
+            'lines.*.new_entries.*.dimensions.length_mm' => ['nullable', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],
+            'lines.*.new_entries.*.dimensions.width_mm' => ['nullable', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],
+            'lines.*.new_entries.*.dimensions.thickness_mm' => ['nullable', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],
+            'lines.*.new_entries.*.dimensions.nominal_thickness_mm' => ['nullable', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],
+            'lines.*.new_entries.*.total_cost' => ['nullable', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/'],
         ]);
         return response()->json(['message' => '实盘数已保存', 'data' => $service->saveCounts($id, $data['lines'], (int) $user->legacy_id, $data['expected_version'])]);
+    }
+
+    /** 逐件明细（序列号/实物），分页并支持按编号搜索。 */
+    public function entries(Request $request, int $id, int $lineId)
+    {
+        $this->authorizePermission($request, 'inventory.stocktake.view');
+        $data = $request->validate(['keyword' => 'nullable|string|max:120', 'filter' => 'nullable|in:undecided,missing,new,locked',
+            'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
+        $line = \App\Models\Erp\InventoryStocktakeLine::query()->where('stocktake_id', $id)->findOrFail($lineId);
+        $keyword = trim((string) ($data['keyword'] ?? ''));
+        $filter = $data['filter'] ?? null;
+        $paginator = \App\Models\Erp\InventoryStocktakeEntry::query()->where('line_id', $line->id)
+            ->when($keyword !== '', fn ($q) => $q->where(fn ($w) => $w->where('serial_no', 'like', "%{$keyword}%")->orWhere('physical_label', 'like', "%{$keyword}%")))
+            ->when($filter === 'undecided', fn ($q) => $q->where('book_present', true)->where('is_locked', false)->whereNull('counted_present'))
+            ->when($filter === 'missing', fn ($q) => $q->where('book_present', true)->where('is_locked', false)->where('counted_present', false))
+            ->when($filter === 'new', fn ($q) => $q->where('is_new', true))
+            ->when($filter === 'locked', fn ($q) => $q->where('is_locked', true))
+            ->orderBy('is_new')->orderBy('is_locked')->orderBy('id')
+            ->paginate($data['per_page'] ?? 10, ['id', 'entry_type', 'serial_no', 'physical_label', 'book_present', 'counted_present',
+                'is_new', 'is_locked', 'book_status', 'dimensions', 'total_cost', 'counted_at']);
+        return response()->json($paginator);
     }
 
     public function complete(Request $request, int $id, InventoryStocktakeService $service)
