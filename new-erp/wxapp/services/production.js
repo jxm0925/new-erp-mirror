@@ -33,6 +33,12 @@ module.exports = {
   receiveMaterials: (workOrderId, operationId, payload) => request.write(`${base}/work-orders/${Number(workOrderId)}/operations/${Number(operationId)}/material-receipts`, payload || {}, { loading: true, commandPrefix: 'issue' }),
   returnOptions: (workOrderId, operationId) => get(`work-orders/${Number(workOrderId)}/operations/${Number(operationId)}/return-options`),
   createReturn: (workOrderId, operationId, payload) => request.write(`${base}/work-orders/${Number(workOrderId)}/operations/${Number(operationId)}/material-returns`, payload, { loading: true, commandPrefix: 'return' }),
+  // 工序内开料：读需求和批次、选原料、算方案、领料、登记产出与余料
+  cutting: (workOrderId, query) => get(`work-orders/${Number(workOrderId)}/cutting`, query),
+  cuttingSources: (workOrderId, query) => get(`work-orders/${Number(workOrderId)}/cutting/sources`, query),
+  cuttingPreview: (workOrderId, payload) => request.request({ path: `${base}/work-orders/${Number(workOrderId)}/cutting/preview`, method: 'POST', data: payload, loading: true, loadingTitle: '计算中...' }),
+  cuttingIssue: (workOrderId, payload) => request.write(`${base}/work-orders/${Number(workOrderId)}/cutting/issue`, payload, { loading: true, commandPrefix: 'cut' }),
+  cuttingSettle: (batchId, payload) => request.write(`${base}/cutting-batches/${Number(batchId)}/settle`, payload, { loading: true, commandPrefix: 'cut' }),
   deliveryAction: (id, action, payload) => request.write(`${base}/material-deliveries/${Number(id)}/${action}`, payload || {}, { loading: true, commandPrefix: 'delivery' }),
   uploadPhoto,
 };

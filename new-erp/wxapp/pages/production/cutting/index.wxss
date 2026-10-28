@@ -1,0 +1,18 @@
+@import "../task/index.wxss";
+.ct-step { display: flex; align-items: center; gap: 12rpx; }
+.ct-step-btn { width: 60rpx; height: 60rpx; line-height: 56rpx; text-align: center; border: 2rpx solid #d5dbe5; border-radius: 12rpx; font-size: 34rpx; color: #14213d; background: #fff; }
+.ct-step-btn.off { color: #c9d2e0; }
+.ct-step-input { width: 110rpx; height: 60rpx; text-align: center; border: 2rpx solid #e3e8f0; border-radius: 12rpx; font-size: 28rpx; }
+.ct-row { padding: 16rpx 0; border-bottom: 1rpx solid #f0f2f6; }
+.ct-row:last-child { border-bottom: 0; }
+.ct-row .mt-muted { font-size: 23rpx; line-height: 1.6; }
+.ct-line { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; }
+.ct-line .k { flex: 1; min-width: 0; }
+.ct-input { width: 170rpx; height: 56rpx; text-align: right; border: 2rpx solid #e3e8f0; border-radius: 10rpx; padding: 0 12rpx; font-size: 27rpx; background: #fff; }
+.ct-group { background: #f6f8fb; border-radius: 14rpx; padding: 16rpx 18rpx; margin-top: 16rpx; }
+.ct-group-head { font-weight: 600; font-size: 27rpx; margin-bottom: 6rpx; }
+.ct-actions { display: flex; gap: 16rpx; margin-top: 18rpx; }
+.ct-actions .mt-btn { margin: 0; flex: 1; }
+.ct-confirm { display: flex; align-items: center; gap: 14rpx; margin-top: 18rpx; font-size: 26rpx; }
+.ct-select { border: 2rpx solid #e3e8f0; border-radius: 12rpx; padding: 14rpx 18rpx; font-size: 26rpx; background: #fff; margin-bottom: 14rpx; }
+.ct-locator { color: #1f6feb; font-size: 26rpx; }

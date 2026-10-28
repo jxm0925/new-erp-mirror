@@ -16,7 +16,7 @@ class MfgCuttingController extends Controller
     public function context(Request $request, int $id, CuttingService $cutting)
     {
         [, $amounts] = $this->user($request, false, null, $id);
-        $data = $request->validate(['page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50']);
+        $data = $request->validate(['page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50', 'operation_id' => 'nullable|integer|min:1']);
         return response()->json(['data' => $cutting->context($id, $data, $amounts)]);
     }
 

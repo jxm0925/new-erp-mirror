@@ -53,9 +53,15 @@
       </view>
       <view class="mt-kv" bindtap="toggleMaterials"><text class="k">本道用料</text><text class="v mt-muted">{{task.materials.length ? task.materials.length + ' 项 ' + (showMaterials ? '收起' : '展开') : '不领料'}}</text></view>
       <block wx:if="{{showMaterials}}">
-        <view wx:for="{{task.materials}}" wx:key="component_item_code" class="mt-kv"><text class="k">{{item.component_item_name}}</text><text class="v">每台 {{item.unit_qty}} {{item.unit_name || ''}}</text></view>
+        <view wx:for="{{task.materials}}" wx:key="component_item_code" class="mt-kv"><text class="k">{{item.component_item_name}}<text wx:if="{{item.cutting}}" class="mt-tag blue">开料</text></text><text class="v">每台 {{item.unit_qty}} {{item.unit_name || ''}}</text></view>
       </block>
       <view wx:if="{{task.allowed.material_return}}" class="tk-link mt-gap" bindtap="openMaterialReturn">退料（领多、领错、不良、报废台拆回）</view>
+    </view>
+
+    <view wx:if="{{task.cutting}}" class="mt-card">
+      <view class="mt-card-title"><text>开料</text><text wx:if="{{task.allowed.cutting}}" class="tk-link green" bindtap="openCutting">去开料 ›</text></view>
+      <view class="mt-muted">本道用板材／管材，在这里直接领原料开料。已登记 {{task.cutting.settled_units}} / {{task.cutting.planned_units}} 台<text wx:if="{{task.cutting.pending_batches}}">，有 {{task.cutting.pending_batches}} 批切完还没登记产出和余料</text>。</view>
+      <view wx:if="{{!task.allowed.cutting}}" class="mt-muted mt-gap">接单后就能开料。</view>
     </view>
 
     <view wx:if="{{task.deliveries && task.deliveries.length}}" class="mt-card">
@@ -94,7 +100,8 @@
   <view class="tk-sheet">
     <view class="mt-row tk-sheet-head"><text class="mt-title">报不合格</text><text class="mt-muted">{{task.operation_name}} · {{selectedCount}} 台</text></view>
     <scroll-view scroll-y class="tk-sheet-body">
-      <view class="mt-card-title">退回到哪道</view>
+      <view class="mt-card-title">{{task.return_options.length ? '退回到哪道' : '处理方式'}}</view>
+      <view wx:if="{{task.cutting}}" class="mt-muted">本道要用板材／管材开料，切坏的不能直接重做，请申请报废。</view>
       <view wx:for="{{task.return_options}}" wx:key="id" class="tk-radio" data-id="{{item.id}}" bindtap="pickReturn">
         <view class="tk-dot {{reject.mode === 'return' && reject.returnId === item.id ? 'on' : ''}}"></view>
         <text>{{item.is_current ? '本道重做（' + item.operation_name + '）' : item.operation_name}}</text>
@@ -120,7 +127,7 @@
     </scroll-view>
     <view class="tk-sheet-foot">
       <button class="mt-btn ghost side" disabled="{{busy}}" bindtap="closePanel">取消</button>
-      <button class="mt-btn danger" disabled="{{busy || uploading}}" bindtap="submitReject">{{reject.mode === 'scrap' ? '申请报废' : '确认退回'}}</button>
+      <button class="mt-btn danger" disabled="{{busy || uploading}}" bindtap="submitReject">{{reject.mode === 'scrap' ? '申请报废' : (rejectCurrent ? '确认重做' : '确认退回')}}</button>
     </view>
   </view>
 </view>

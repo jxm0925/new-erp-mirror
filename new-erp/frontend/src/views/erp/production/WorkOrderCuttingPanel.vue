@@ -1,7 +1,7 @@
 <template>
   <div v-if="hasCutting" class="cutting-panel">
-    <el-button type="text" size="small" icon="el-icon-scissors" @click="open">自主下料</el-button>
-    <el-dialog title="自主下料" :visible.sync="visible" append-to-body top="5vh" width="min(1080px, calc(100vw - 32px))" custom-class="mfg-cutting-dialog" :close-on-click-modal="false" :close-on-press-escape="!busy" :show-close="!busy" @close="close">
+    <el-button type="text" size="small" icon="el-icon-scissors" @click="open">开料</el-button>
+    <el-dialog title="开料" :visible.sync="visible" append-to-body top="5vh" width="min(1080px, calc(100vw - 32px))" custom-class="mfg-cutting-dialog" :close-on-click-modal="false" :close-on-press-escape="!busy" :show-close="!busy" @close="close">
       <div v-loading="loading">
         <div class="cutting-summary">
           <div><strong>{{ workOrder.item_name || workOrder.product_name }}</strong><p>{{ workOrder.work_order_no }}</p></div>

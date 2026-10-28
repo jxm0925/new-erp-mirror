@@ -4,6 +4,7 @@ namespace App\Services\Erp\Manufacturing;
 
 use App\Models\Erp\Location;
 use App\Models\Erp\Item;
+use App\Models\Erp\MfgCuttingBatch;
 use App\Models\Erp\MfgDrawing;
 use App\Models\Erp\MfgLaborSession;
 use App\Models\Erp\MfgReceipt;
@@ -78,6 +79,9 @@ final class TaskQueryService
         $upstream = $myPos > 0 ? MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->whereIn('status', TaskService::SELECTABLE)
             ->whereIn('current_operation_id', $ops->slice(0, $myPos)->pluck('id'))->count() : 0;
         $here = count($selectable);
+        $cuttingOps = MaterialIssueService::cuttingOperationIds((int) $wo->id);
+        $hasCutting = in_array((int) $op->id, $cuttingOps, true);
+        $cuttingBatches = $hasCutting ? MfgCuttingBatch::query()->where('work_order_operation_id', $op->id)->get(['status', 'unit_qty', 'completed_unit_qty']) : collect();
         return [
             'id' => $op->id, 'operation_name' => $op->operation_name, 'stage_name' => $op->stage_name, 'status' => $op->status,
             'work_order' => [
@@ -106,10 +110,18 @@ final class TaskQueryService
             'drawings_updated_at' => $tech?->drawings_updated_at && $myLast && $tech->drawings_updated_at->gt($myLast) ? $tech->drawings_updated_at->toDateTimeString() : null,
             'materials' => MfgWorkOrderMaterial::query()->where('work_order_operation_id', $op->id)->orderBy('id')->get()
                 ->map(fn ($m) => ['component_item_name' => $m->component_item_name, 'component_item_code' => $m->component_item_code, 'unit_name' => $m->unit_name,
-                    'unit_qty' => (float) $m->unit_qty, 'required_qty' => (float) $m->required_qty, 'issued_qty' => (float) $m->issued_qty])->values()->all(),
+                    'unit_qty' => (float) $m->unit_qty, 'required_qty' => (float) $m->required_qty, 'issued_qty' => (float) $m->issued_qty,
+                    'cutting' => MaterialIssueService::isCutting($m)])->values()->all(),
+            // 本道用板材／管材：在本道直接开料（领原料 → 登记切出的件和余料）。
+            'cutting' => $hasCutting ? [
+                'planned_units' => (float) $wo->planned_qty,
+                'settled_units' => (int) $cuttingBatches->where('status', 'settled')->sum('completed_unit_qty'),
+                'pending_batches' => $cuttingBatches->where('status', 'issued')->count(),
+            ] : null,
             // 仓库送来等本道签收的料（拒收待处理的也列出来，看库管怎么处理）
             'deliveries' => app(MaterialDeliveryService::class)->forOperation((int) $op->id),
-            'return_options' => $ops->slice(0, $myPos + 1)->map(function ($o) use ($ops, $pos, $myPos) {
+            // 开料工序不能退回重做（要重新耗原料），切坏的只能报废。
+            'return_options' => $ops->slice(0, $myPos + 1)->reject(fn ($o) => in_array((int) $o->id, $cuttingOps, true))->map(function ($o) use ($ops, $pos, $myPos) {
                 $redo = $ops->slice($pos[$o->id], $myPos - $pos[$o->id] + 1)->pluck('operation_name')->all();
                 return ['id' => $o->id, 'operation_name' => $o->operation_name, 'is_current' => $pos[$o->id] === $myPos,
                     'hint' => $pos[$o->id] === $myPos ? '本道重做' : implode('、', array_slice($redo, 1)).'要重做'];
@@ -119,6 +131,7 @@ final class TaskQueryService
                 'claim' => $canExecute && $runnable && ! $owner && $canDo,
                 'start' => $canExecute && $runnable && ! $myActive && $here > 0 && (($mine && ($mine['role'] === 'owner' || $op->status === 'in_progress')) || (! $owner && $canDo)),
                 'pause' => $canExecute && (bool) $myActive,
+                'cutting' => $hasCutting && $canExecute && $mine && in_array($wo->status, ['released', 'in_progress'], true),
                 'report' => $canExecute && $runnable && $mine && $here > 0,
                 'collaborators' => $canExecute && $runnable && $mine && $mine['role'] === 'owner',
                 'assign' => $runnable && ($super || in_array('production.task.assign', $permissions, true)),

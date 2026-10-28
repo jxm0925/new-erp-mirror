@@ -61,7 +61,8 @@ final class WarehouseWorkspaceController extends Controller
     public function locators(Request $request)
     {
         [, $permissions] = $this->context($request);
-        $allowed = ['inventory.post.repair', 'sales_return.receive', 'sales_order.shipment.post', 'sales_order.shipment.packing.execute', 'sales_order.shipment.packing.quality'];
+        // production.task.execute：车间开料登记余料回库位置，只能选工厂仓。
+        $allowed = ['inventory.post.repair', 'sales_return.receive', 'sales_order.shipment.post', 'sales_order.shipment.packing.execute', 'sales_order.shipment.packing.quality', 'production.task.execute'];
         if (! array_intersect($allowed, $permissions)) throw new WorkOrderDomainException('permission_denied', '没有选择入出库位置的权限。', 403);
         $filters = $request->validate(['mode' => 'required|in:warehouse,location', 'warehouse_id' => 'required_if:mode,location|integer|min:1',
             'keyword' => 'nullable|string|max:100', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100',
@@ -70,7 +71,7 @@ final class WarehouseWorkspaceController extends Controller
         $query = DB::table($mode === 'warehouse' ? 'erp_warehouses' : 'erp_locations')->where('status', 'enabled');
         if ($mode === 'location') $query->where('warehouse_id', $filters['warehouse_id']);
         if ($mode === 'location' && ! empty($filters['location_purpose'])) $query->where('location_purpose', $filters['location_purpose']);
-        if (array_intersect(['sales_order.shipment.post', 'sales_order.shipment.packing.execute', 'sales_order.shipment.packing.quality'], $permissions)
+        if (array_intersect(['sales_order.shipment.post', 'sales_order.shipment.packing.execute', 'sales_order.shipment.packing.quality', 'production.task.execute'], $permissions)
             && ! array_intersect(['inventory.post.repair', 'sales_return.receive'], $permissions)) {
             if ($mode === 'warehouse') $query->where('management_scope', 'factory');
             else $query->whereIn('warehouse_id', DB::table('erp_warehouses')->where('management_scope', 'factory')->where('status', 'enabled')->select('id'));

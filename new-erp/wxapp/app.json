@@ -7,6 +7,7 @@
     "pages/warehouse/document/index",
     "pages/production/tasks/index",
     "pages/production/task/index",
+    "pages/production/cutting/index",
     "pages/production/work-order/index",
     "pages/production/shipment-packing/index",
     "pages/logs/logs",

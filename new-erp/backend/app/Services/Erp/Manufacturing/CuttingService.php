@@ -48,7 +48,8 @@ final class CuttingService
             $remaining[$op->id] = $this->remainingUnits($wo, (int) $op->id);
             $requirements = array_merge($requirements, $this->requirements($wo, (int) $op->id));
         }
-        $batches = MfgCuttingBatch::query()->where('work_order_id', $wo->id)->orderByDesc('id')
+        $batches = MfgCuttingBatch::query()->where('work_order_id', $wo->id)
+            ->when(! empty($filters['operation_id']), fn ($q) => $q->where('work_order_operation_id', (int) $filters['operation_id']))->orderByDesc('id')
             ->paginate($filters['per_page'] ?? 10, ['*'], 'page', $filters['page'] ?? 1);
         $batches->getCollection()->transform(fn ($batch) => $this->batch($batch, $amounts));
         return ['work_order_id' => (int) $wo->id, 'business_version' => (int) $wo->business_version,

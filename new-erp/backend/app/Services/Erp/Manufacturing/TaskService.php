@@ -148,8 +148,8 @@ final class TaskService
                 $this->fail('already_timing', '你有打包作业正在计时，请先暂停。');
             $units = $this->selectableUnits($op);
             if ($units->isEmpty()) $this->fail('no_unit', '这道工序现在没有要做的台，等前道交过来再开始。');
-            // 本道的料（总装的半成品、外购件）收到才能开工；缺货就停在这里。
-            $this->materials->assertReceivedForStart($wo, $op, $units);
+            // 本道的料（总装的半成品、外购件）收到才能开工；板材／管材在本道开工后开料，报合格时再查。
+            $this->materials->assertReceivedForStart($wo, $op, $units, false);
             if (! $wo->started_at) {
                 $before = $wo->status;
                 $wo->update(['status' => 'in_progress', 'started_at' => now(), 'business_version' => (int) $wo->business_version + 1]);
@@ -245,7 +245,7 @@ final class TaskService
     }
 
     /**
-     * 不合格：退回本道或之前某道重做（直接生效）；或申请报废（主管确认前台停在本道、不能再报）。
+     * 不合格：退回本道或之前某道重做（直接生效，开料工序除外）；或申请报废（主管确认前台停在本道、不能再报）。
      * @param array{mode:string, return_operation_id:?int, reason_tags:array, reason:?string, photos:array} $data
      */
     public function reject(int $opId, array $unitIds, array $data, object $actor): array
@@ -275,6 +275,9 @@ final class TaskService
             $pos = $ops->pluck('id')->flip();
             $target = $ops->firstWhere('id', (int) ($data['return_operation_id'] ?? 0));
             if (! $target || $pos[$target->id] > $pos[$op->id]) $this->fail('return_invalid', '只能退回本道或之前的工序。');
+            // 开料工序重做要重新耗板材／管材，不能直接退回；切坏的走报废。
+            if (in_array((int) $target->id, MaterialIssueService::cuttingOperationIds((int) $wo->id), true))
+                $this->fail('return_invalid', $target->operation_name.'要用板材或管材开料，不能退回重做；切坏的请申请报废。');
             foreach ($units as $unit) {
                 $this->report($wo, $op, $unit, 'failed', $actor, $extra + ['is_rework' => $unit->status === 'rework',
                     'return_operation_id' => $target->id, 'return_operation_name' => $target->operation_name]);

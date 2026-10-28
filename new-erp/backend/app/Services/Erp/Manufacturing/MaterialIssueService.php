@@ -35,24 +35,47 @@ final class MaterialIssueService
         private readonly DocumentNumberService $numbers,
     ) {}
 
-    /** 开始前检查：有新台要开工时，本道的料必须已经收够到这些台。 */
-    public function assertReceivedForStart(MfgWorkOrder $wo, MfgWorkOrderOperation $op, Collection $units): void
+    /** 板材／管材按开料满足，不走收料。 */
+    public static function isCutting(MfgWorkOrderMaterial $m): bool
+    {
+        return in_array($m->cutting_mode, ['sheet', 'length'], true);
+    }
+
+    /** 工单里用板材／管材的车间工序：这些工序在本道直接开料。 */
+    public static function cuttingOperationIds(int $workOrderId): array
+    {
+        return MfgWorkOrderMaterial::query()->where('work_order_id', $workOrderId)->whereIn('cutting_mode', ['sheet', 'length'])
+            ->where('required_qty', '>', 0)->whereNotNull('work_order_operation_id')->distinct()->pluck('work_order_operation_id')->map(fn ($id) => (int) $id)->all();
+    }
+
+    /**
+     * 本道的料必须已经收够到这些台。
+     * 开工时不查板材／管材（本道开工后再开料）；报合格时查，开料结算的套数要够到报的台。
+     */
+    public function assertReceivedForStart(MfgWorkOrder $wo, MfgWorkOrderOperation $op, Collection $units, bool $includeCutting = true): void
     {
         $materials = MfgWorkOrderMaterial::query()->where('work_order_operation_id', $op->id)->where('participates_in_kitting', true)
             ->where('required_qty', '>', 0)->orderBy('id')->lockForUpdate()->get();
+        if (! $includeCutting) $materials = $materials->reject(fn ($m) => self::isCutting($m))->values();
         if ($materials->isEmpty()) return;
         $reached = $this->reachedUnits($op);
         $unsigned = MaterialDeliveryService::unsignedQty((int) $op->id);
         $missing = [];
         $waiting = [];
+        $uncut = [];
         foreach ($materials as $m) {
             $need = $this->neededFor($m, $wo, $reached);
+            if (self::isCutting($m)) {
+                if ((float) $m->issued_qty + self::EPS < $need) $uncut[] = $m->component_item_name;
+                continue;
+            }
             $have = (float) $m->issued_qty - (float) ($unsigned[$m->id] ?? 0);
             if ((float) $m->issued_qty + self::EPS < $need) $missing[] = $m->component_item_name.' 还差 '.$this->num($need - (float) $m->issued_qty).($m->unit_name ?: '');
             elseif ($have + self::EPS < $need) $waiting[] = $m->component_item_name;
         }
         if ($waiting && ! $missing) $this->fail('material_not_signed', '仓库送来的料还没签收：'.implode('、', $waiting).'。请先核对实物并签收，再开工。');
-        if ($missing) $this->fail('material_not_received', $op->operation_name.'的料还没收齐：'.implode('、', $missing).'。板材和管材请先完成集中开料，其余物料请收料；仓库没货的先开半成品工单或找采购。');
+        if ($missing) $this->fail('material_not_received', $op->operation_name.'的料还没收齐：'.implode('、', $missing).'。请先收料；仓库没货的先开半成品工单或找采购。');
+        if ($uncut) $this->fail('cutting_not_settled', $op->operation_name.'的开料还没登记够这些台：'.implode('、', array_unique($uncut)).'。请在本道「开料」里领原料、登记切出的件和余料后再报合格。');
     }
 
     /**

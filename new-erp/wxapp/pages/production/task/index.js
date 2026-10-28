@@ -14,7 +14,7 @@ function minutesText(m) {
 Page({
   data: {
     id: 0, task: null, loading: true, busy: false, error: '', selected: {}, selectedCount: 0, clockText: '00:00:00',
-    shareText: '', isImage: {}, panel: '',
+    shareText: '', isImage: {}, panel: '', rejectCurrent: false,
     reject: { mode: 'return', returnId: 0, tags: {}, reason: '', photos: [] }, uploading: false,
     peopleKeyword: '', peopleRows: [], picked: [], shareMode: 'labor', ownerPercent: '', showMaterials: false,
     returnForm: { types: [], type: 'surplus', rows: [], picked: {}, qty: {}, reason: '', hint: '' },
@@ -109,6 +109,10 @@ Page({
         // 本道的料还没收：可以当场收料（从库存扣减），收好再点开始。
         wx.showModal({ title: '料还没收', content: view.errorText(error), confirmText: '现在收料', cancelText: '先不收',
           success: res => { if (res.confirm) this.receiveMaterials(); } });
+      } else if (error && error.errorCode === 'cutting_not_settled') {
+        // 板材／管材在本道开料：切完登记产出和余料后才能报合格。
+        wx.showModal({ title: '开料还没登记', content: view.errorText(error), confirmText: '去开料', cancelText: '先不去',
+          success: res => { if (res.confirm) this.openCutting(); } });
       } else if (error && error.errorCode === 'material_not_signed') {
         // 仓库已送料但本道还没签收：核对实物后在“仓库送料”里签收再开工。
         wx.showModal({ title: '送来的料还没签收', content: view.errorText(error), showCancel: false });
@@ -218,12 +222,16 @@ Page({
 
   openReject() {
     if (!this.selectedIds().length) { wx.showToast({ title: '先勾选不合格的台', icon: 'none' }); return; }
-    const current = (this.data.task.return_options || []).find(o => o.is_current);
-    this.setData({ panel: 'reject', reject: { mode: 'return', returnId: current ? current.id : 0, tags: {}, reason: '', photos: [] } });
+    // 开料工序不能退回重做（后端已从可选里去掉），没有可退的道时只能报废。
+    const options = this.data.task.return_options || [];
+    const current = options.find(o => o.is_current);
+    this.setData({ panel: 'reject', rejectCurrent: Boolean(current && current.is_current),
+      reject: { mode: current ? 'return' : 'scrap', returnId: current ? current.id : 0, tags: {}, reason: '', photos: [] } });
   },
   pickReturn(event) {
     const id = Number(event.currentTarget.dataset.id);
-    this.setData({ 'reject.mode': id ? 'return' : 'scrap', 'reject.returnId': id });
+    const option = (this.data.task.return_options || []).find(o => o.id === id);
+    this.setData({ 'reject.mode': id ? 'return' : 'scrap', 'reject.returnId': id, rejectCurrent: Boolean(option && option.is_current) });
   },
   toggleTag(event) {
     const tag = event.currentTarget.dataset.tag;
@@ -345,6 +353,12 @@ Page({
           fail: () => wx.setClipboardData({ data: drawing.url, success: () => wx.showToast({ title: '手机打不开这种图纸，链接已复制', icon: 'none' }) }) });
       },
       fail: () => { wx.hideLoading(); wx.showToast({ title: '图纸下载失败', icon: 'none' }); } });
+  },
+  openCutting() {
+    const task = this.data.task;
+    if (!task || !task.cutting) return;
+    if (!task.allowed.cutting) { wx.showToast({ title: '接单后才能开料', icon: 'none' }); return; }
+    wx.navigateTo({ url: `/pages/production/cutting/index?wo=${Number(task.work_order.id)}&op=${Number(task.id)}&name=${encodeURIComponent(task.operation_name || '')}` });
   },
   toggleMaterials() { this.setData({ showMaterials: !this.data.showMaterials }); },
   openWorkOrder() { wx.navigateTo({ url: `/pages/production/work-order/index?id=${Number(this.data.task.work_order.id)}` }); },
