@@ -855,9 +855,9 @@ export default {
       this.suppliers = [...new Map([...this.suppliers, ...suppliers].map(row => [row.id, row])).values()]
       if (this.mode === 'plans' && !this.scopeIssue(this.selected)) this.preview(this.selected)
     },
-    async afterBusinessAction(id) {
+    async afterBusinessAction(id, command = '') {
+      if (['submitOrder', 'confirmReceipt'].includes(command)) this.selected = null
       await this.load()
-      if (id && this.rows.find(r => Number(r.id) === Number(id))) await this.reloadDetail(id)
     },
     reset() { this.filters = { management_scope: '', keyword: '', status: '', dateRange: [] }; this.page = 1; this.load() },
     hasItemAllocatedSupplier(row) {
@@ -1033,7 +1033,7 @@ export default {
         if (command === 'requestToPlan' && nextId) return this.$router.push(`/purchase/plans/${nextId}/edit`)
         if (command === 'orderToReceipt' && nextId) return this.$router.push(`/purchase/receipts/${nextId}/edit`)
         if (command === 'generatePlanOrders') return this.$router.push('/purchase/orders')
-        await this.afterBusinessAction(row.id)
+        await this.afterBusinessAction(row.id, command)
       } catch (error) {
         if (error === 'cancel' || error === 'close') return
         const errors = error && error.response && error.response.data && error.response.data.errors
