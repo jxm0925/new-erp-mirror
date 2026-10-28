@@ -10,6 +10,7 @@ use App\Models\Erp\PurchaseRequest;
 use App\Services\Erp\DocumentNumberService;
 use App\Services\Erp\PurchaseRequestCreationApplicationService;
 use App\Services\Erp\PurchaseSupplyProjectionService;
+use App\Services\Erp\UnitConversionDomainService;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -59,11 +60,24 @@ final class ShortageService
         $perPage = min(100, max(1, (int) ($filters['per_page'] ?? 10)));
         $page = max(1, (int) ($filters['page'] ?? 1));
         $short = array_filter($rows, fn ($r) => $r['shortage_qty'] > 0.00001);
+        $slice = array_slice($rows, ($page - 1) * $perPage, $perPage);
+        $units = $this->purchaseUnits(array_column($slice, 'item_id'));
+        foreach ($slice as &$r) $r['purchase_units'] = $units[$r['item_id']] ?? [];
+        unset($r);
         return [
-            'data' => array_slice($rows, ($page - 1) * $perPage, $perPage), 'total' => count($rows), 'current_page' => $page, 'per_page' => $perPage,
+            'data' => $slice, 'total' => count($rows), 'current_page' => $page, 'per_page' => $perPage,
             'summary' => ['short_item_count' => count($short),
                 'work_order_count' => collect($short)->flatMap(fn ($r) => collect($r['work_orders'])->where('shortage_qty', '>', 0.00001)->pluck('id'))->unique()->count()],
         ];
+    }
+
+    /**
+     * 转采购时可选的采购单位：库存单位（就是工单里的单位）+ 物料档案里维护的有效采购换算（如 1 卷 = 300 米）。
+     * @return array<int, array> item_id => 单位列表，默认采购单位排第一
+     */
+    public function purchaseUnits(array $itemIds): array
+    {
+        return app(UnitConversionDomainService::class)->itemUnitOptions($itemIds);
     }
 
     /**
@@ -159,6 +173,21 @@ final class ShortageService
                 $gap = round($demands->sum('shortage_qty'), 4);
                 if (! $item || $gap <= 0.00001) $this->fail('no_shortage', ($item?->item_name ?: '物料').' 已经不缺了（可能已转过采购或已到货），请刷新。');
                 $qty = isset($line['qty']) && $line['qty'] !== null && $line['qty'] !== '' ? round((float) $line['qty'], 4) : $gap;
+                // 选了采购单位（如卷）就按采购单位下数量，折成库存单位（米）去冲缺口；多出来的到货后入库。
+                $unitId = (int) ($line['purchase_unit_id'] ?? 0);
+                $unitLine = [];
+                if ($unitId) {
+                    $unit = collect($this->purchaseUnits([$itemId])[$itemId] ?? [])->firstWhere('unit_id', $unitId);
+                    if (! $unit) $this->fail('unit_invalid', $item->item_name.' 没有这个采购单位的换算，请先在物料档案维护“采购换算”。');
+                    if (! $unit['is_base']) {
+                        $purchaseQty = round((float) ($line['purchase_qty'] ?? 0), 4);
+                        if ($purchaseQty <= 0) $this->fail('qty_invalid', $item->item_name.' 采购数量要大于 0。');
+                        $qty = round($purchaseQty * $unit['factor'], 4);
+                        $unitLine = ['purchase_unit_id' => $unitId, 'purchase_quantity' => $purchaseQty];
+                    } else {
+                        $unitLine = ['purchase_unit_id' => $unitId];
+                    }
+                }
                 if ($qty <= 0) $this->fail('qty_invalid', $item->item_name.' 采购数量要大于 0。');
                 $left = $qty; $parts = [];
                 foreach ($demands as $d) {
@@ -169,7 +198,7 @@ final class ShortageService
                     $woNos[$d['id']] = $d['work_order_no'];
                 }
                 $date = collect($parts)->map(fn ($p) => $demands->firstWhere('id', $p['work_order_id'])['planned_start_date'] ?? null)->filter()->min();
-                $requestItems[] = ['item_id' => $itemId, 'request_qty' => $qty,
+                $requestItems[] = $unitLine + ['item_id' => $itemId, 'request_qty' => $qty,
                     'expected_date' => $date && $date > now()->toDateString() ? $date : now()->toDateString(),
                     'warehouse_id' => $item->default_warehouse_id ?: null, 'priority' => collect($parts)->contains(fn ($p) => $demands->firstWhere('id', $p['work_order_id'])['is_urgent'] ?? false) ? 'urgent' : 'high',
                     'remark' => '生产缺料：'.collect($parts)->map(fn ($p) => $p['work_order_no'].' 缺 '.$this->num($p['qty']))->implode('、')];

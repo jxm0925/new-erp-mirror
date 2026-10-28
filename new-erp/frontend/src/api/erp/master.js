@@ -52,6 +52,7 @@ export const removeWrongSkuItemBinding = (skuId, data) => api.post(`/v1/erp/mast
 export const listRelations = params => api.get('/v1/erp/master/sku-item-relations', { params })
 export const replacePrimaryRelation = data => api.post('/v1/erp/master/sku-item-relations/replace-primary', data)
 export const listItemPurchaseConversions = (itemId, params) => api.get(`/v1/erp/master/items/${itemId}/purchase-conversions`, { params })
+export const listItemUnitOptions = ids => api.get('/v1/erp/master/items/unit-options', { params: { ids } })
 export const listItemPurchaseConversionOptions = (itemId, params) => api.get(`/v1/erp/master/items/${itemId}/purchase-conversions/options`, { params })
 export const saveItemPurchaseConversion = (itemId, data) => data.id
   ? api.put(`/v1/erp/master/items/${itemId}/purchase-conversions/${data.id}`, data)

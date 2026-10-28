@@ -165,6 +165,7 @@
                         <b :class="r.change === 'removed' ? 'text-removed' : 'text-main'">
                           {{ r.change === 'removed' ? '0' : qty(r.qty) + ' ' + (r.unit_name || '') }}
                         </b>
+                        <div v-if="r.change !== 'removed' && altQtyText(r.component_item_id, r.qty)" class="text-muted small">{{ altQtyText(r.component_item_id, r.qty) }}</div>
                         <div v-if="r.loss_rate || r.fixed_qty" class="text-muted small">
                           损耗率 {{ qty(r.loss_rate) }}%<span v-if="r.fixed_qty"> · 固定 {{ qty(r.fixed_qty) }}</span>
                         </div>
@@ -289,6 +290,7 @@
             <tr>
               <th style="min-width: 220px;">物料编码与名称</th>
               <th style="width: 100px;">单台用量</th>
+              <th style="width: 110px;">单位</th>
               <th style="width: 90px;">损耗率%</th>
               <th style="width: 90px;">固定用量</th>
               <th style="width: 130px;">关联工序</th>
@@ -302,6 +304,7 @@
                 <el-select
                   v-model="r.component_item_id"
                   size="mini"
+                  @change="r.unit_id = null; ensureUnitOptions([r.component_item_id])"
                   filterable
                   remote
                   :remote-method="k => searchItems(k, r)"
@@ -319,7 +322,16 @@
                 <div v-if="r.base_line_id" class="sub-indicator text-muted">基准物料：{{ r.base_name }}</div>
                 <div v-else class="sub-indicator text-success">定制新增物料</div>
               </td>
-              <td><el-input-number v-model="r.qty" size="mini" :min="0" :precision="4" :controls="false" class="num-input" /></td>
+              <td>
+                <el-input-number v-model="r.qty" size="mini" :min="0" :precision="4" :controls="false" class="num-input" />
+                <div v-if="editUnit(r) && !editUnit(r).is_base" class="sub-indicator text-muted">= {{ qty(editBaseQty(r)) }} {{ baseUnitName(r) }}</div>
+              </td>
+              <td>
+                <el-select v-if="unitOptionsOf(r.component_item_id).length > 1" :value="r.unit_id || (editUnit(r) || {}).unit_id" size="mini" @change="v => changeEditUnit(r, v)">
+                  <el-option v-for="u in unitOptionsOf(r.component_item_id)" :key="u.unit_id" :value="u.unit_id" :label="u.is_base ? u.unit_name : `${u.unit_name}（1${u.unit_name}=${qty(u.factor)}${baseUnitName(r)}）`" />
+                </el-select>
+                <span v-else class="text-muted">{{ baseUnitName(r) || '-' }}</span>
+              </td>
               <td><el-input-number v-model="r.loss_rate" size="mini" :min="0" :max="99.99" :precision="2" :controls="false" class="num-input" /></td>
               <td><el-input-number v-model="r.fixed_qty" size="mini" :min="0" :precision="4" :controls="false" class="num-input" /></td>
               <td>
@@ -346,6 +358,7 @@
 </template>
 
 <script>
+import unitOptionsMixin from './unit-options-mixin'
 import { getProductionTech, saveProductionTechBom, uploadProductionDrawing, deleteProductionDrawing, releaseProductionTech, searchProductionOptions } from '../../../api/erp/production'
 import { qty, shortDate, bomLabel, errorText, isCancel } from './mfg-helpers'
 
@@ -354,6 +367,7 @@ let uid = 0
 
 export default {
   name: 'ProductionTechDetail',
+  mixins: [unitOptionsMixin],
   data: () => ({
     CHANGE,
     loading: false,
@@ -401,6 +415,7 @@ export default {
       }
     },
     apply(data) {
+      this.ensureUnitOptions(((data && data.bom_lines) || []).map(r => r.component_item_id))
       if (!data) return this.load()
       const canManage = data.can_manage === undefined && this.d ? this.d.can_manage : data.can_manage
       this.d = { ...data, can_manage: canManage }
@@ -458,9 +473,11 @@ export default {
         fixed_qty: r.fixed_qty,
         target_routing_operation_id: r.target_routing_operation_id || null,
         remark: r.remark || '',
+        unit_id: null,
         options: [{ id: r.component_item_id, item_name: r.component_item_name, item_code: r.component_item_code }],
         loading: false
       }))
+      this.ensureUnitOptions(this.editRows.map(r => r.component_item_id))
       this.bomDialog = true
     },
     addLine() {
@@ -474,9 +491,29 @@ export default {
         fixed_qty: 0,
         target_routing_operation_id: null,
         remark: '',
+        unit_id: null,
         options: [],
         loading: false
       })
+    },
+    // 录入单位：默认库存单位；选采购换算单位（如卷）时按换算折成库存单位保存。
+    editUnit(r) {
+      const list = this.unitOptionsOf(r.component_item_id)
+      return list.find(u => u.unit_id === r.unit_id) || list.find(u => u.is_base) || null
+    },
+    baseUnitName(r) {
+      const base = this.unitOptionsOf(r.component_item_id).find(u => u.is_base)
+      return base ? base.unit_name : ''
+    },
+    editBaseQty(r) {
+      const unit = this.editUnit(r)
+      return Math.round(Number(r.qty || 0) * Number(unit ? unit.factor : 1) * 10000) / 10000
+    },
+    changeEditUnit(r, unitId) {
+      const base = this.editBaseQty(r)
+      const unit = this.unitOptionsOf(r.component_item_id).find(u => u.unit_id === unitId)
+      r.unit_id = unit && !unit.is_base ? unit.unit_id : null
+      r.qty = Math.round(base / Number(unit ? unit.factor : 1) * 10000) / 10000
     },
     async searchItems(keyword, row) {
       row.loading = true
@@ -500,7 +537,7 @@ export default {
         const lines = this.editRows.map(r => ({
           base_line_id: r.base_line_id || null,
           component_item_id: r.component_item_id,
-          qty: r.qty,
+          qty: this.editBaseQty(r),
           loss_rate: r.loss_rate || 0,
           fixed_qty: r.fixed_qty || 0,
           target_routing_operation_id: r.target_routing_operation_id || null,

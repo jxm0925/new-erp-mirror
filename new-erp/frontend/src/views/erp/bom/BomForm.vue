@@ -293,13 +293,30 @@
                 <span class="required-head">定额用量</span>
               </template>
               <template slot-scope="{ row }">
-                <el-input-number v-model="row.qty" size="mini" :min="0" :precision="4" :disabled="!canEdit || isCuttingLine(row)" controls-position="right" class="qty-number-input" />
+                <template v-if="entryOption(row)">
+                  <el-input-number v-model="row.entry_qty" size="mini" :min="0" :precision="4" :disabled="!canEdit" controls-position="right" class="qty-number-input" />
+                  <small class="auto-calc-tag">= {{ entryBaseText(row) }}</small>
+                </template>
+                <el-input-number v-else v-model="row.qty" size="mini" :min="0" :precision="4" :disabled="!canEdit || isCuttingLine(row)" controls-position="right" class="qty-number-input" />
                 <small v-if="isCuttingLine(row)" class="auto-calc-tag">系统试算</small>
               </template>
             </el-table-column>
-            <el-table-column label="单位" width="75" align="center">
+            <el-table-column label="单位" width="110" align="center">
               <template slot-scope="{ row }">
-                <span class="unit-badge">{{ lineUnitName(row) }}</span>
+                <el-select
+                  v-if="!isCuttingLine(row) && lineUnitOptions(row).length > 1"
+                  :value="row.entry_unit_id || baseUnitId(row)"
+                  size="mini"
+                  :disabled="!canEdit"
+                  class="w-100"
+                  @change="v => changeEntryUnit(row, v)"
+                >
+                  <el-option v-for="u in lineUnitOptions(row)" :key="u.unit_id" :value="u.unit_id" :label="u.unit_name">
+                    <span>{{ u.unit_name }}</span>
+                    <span class="operation-routing-hint">{{ u.is_base ? '库存单位' : `1${u.unit_name}=${fmtNum(u.factor)}${lineUnitName(row)}` }}</span>
+                  </el-option>
+                </el-select>
+                <span v-else class="unit-badge">{{ lineUnitName(row) }}</span>
               </template>
             </el-table-column>
             <el-table-column label="损耗率(%)" width="95" align="center">
@@ -651,7 +668,7 @@
 
 <script>
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
-import { listEntity } from '@/api/erp/master'
+import { listEntity, listItemUnitOptions } from '@/api/erp/master'
 import { listBoms, getBom, saveBom, submitBom, getBomOperationOptions } from '@/api/erp/bom'
 import { clearCreatePageReservation, reserveForCreatePage } from '@/utils/documentNumberReservation'
 import { cuttingUnitKind, cuttingQuantityBasis, previewCuttingQuantity, totalLengthMetres, totalLengthMillimetres } from '@/utils/cutting-quantity.mjs'
@@ -675,6 +692,8 @@ const emptyLine = i => ({
   piece_qty: null,
   qty: 1,
   unit_id: null,
+  entry_unit_id: null,
+  entry_qty: null,
   loss_rate: 0,
   fixed_qty: 0,
   replaceable: false,
@@ -713,6 +732,7 @@ export default {
     products: [],
     skus: [],
     units: [],
+    itemUnitOptions: {},
     categories: [],
     boms: [],
     bomColumns: [{ prop: 'bom_no', label: 'BOM编码' }, { prop: 'bom_name', label: 'BOM名称' }, { prop: 'version', label: '版本' }],
@@ -915,9 +935,54 @@ export default {
           cut_thickness_mm: item.cut_thickness_mm == null ? null : Number(item.cut_thickness_mm),
           allow_cut_rotation: Boolean(item.allow_cut_rotation),
           piece_qty: item.piece_qty === null ? null : Number(item.piece_qty),
+          entry_unit_id: item.entry_unit_id ? Number(item.entry_unit_id) : null,
+          entry_qty: item.entry_qty === null || item.entry_qty === undefined ? null : Number(item.entry_qty),
           replaceable: Boolean(item.replaceable)
         }))
       }
+      this.ensureUnitOptions(this.form.items.map(row => row.component_item_id))
+    },
+    // 用料单位：库存单位 + 物料档案“采购换算”里的单位（如 1 卷 = 300 米），保存时折成库存单位。
+    async ensureUnitOptions(ids) {
+      const missing = [...new Set(ids.filter(Boolean).map(Number))].filter(id => !this.itemUnitOptions[id])
+      if (!missing.length) return
+      try {
+        const { data } = await listItemUnitOptions(missing)
+        Object.entries(data.data || {}).forEach(([id, list]) => this.$set(this.itemUnitOptions, Number(id), list || []))
+      } catch (e) { /* 拿不到换算时只按库存单位录入 */ }
+    },
+    lineUnitOptions(row) {
+      return this.itemUnitOptions[Number(row.component_item_id)] || []
+    },
+    baseUnitId(row) {
+      const base = this.lineUnitOptions(row).find(u => u.is_base)
+      return base ? base.unit_id : null
+    },
+    entryOption(row) {
+      if (!row.entry_unit_id || this.isCuttingLine(row)) return null
+      return this.lineUnitOptions(row).find(u => u.unit_id === Number(row.entry_unit_id) && !u.is_base) || null
+    },
+    entryBaseQty(row) {
+      const option = this.entryOption(row)
+      return option ? Math.round(Number(row.entry_qty || 0) * Number(option.factor) * 10000) / 10000 : Number(row.qty)
+    },
+    entryBaseText(row) {
+      return `${this.fmtNum(this.entryBaseQty(row))} ${this.lineUnitName(row)}`
+    },
+    fmtNum(v) {
+      return String(Math.round(Number(v || 0) * 10000) / 10000)
+    },
+    changeEntryUnit(row, unitId) {
+      const current = this.entryBaseQty(row)
+      const option = this.lineUnitOptions(row).find(u => u.unit_id === Number(unitId))
+      if (!option || option.is_base) {
+        this.$set(row, 'qty', current)
+        this.$set(row, 'entry_unit_id', null)
+        this.$set(row, 'entry_qty', null)
+        return
+      }
+      this.$set(row, 'entry_unit_id', option.unit_id)
+      this.$set(row, 'entry_qty', Math.round(current / Number(option.factor) * 10000) / 10000)
     },
     addLine() {
       if (!this.canEdit) return
@@ -1064,6 +1129,9 @@ export default {
       this.$set(row, 'piece_qty', null)
       this.$set(row, 'unit_id', item.unit_id)
       this.$set(row, 'unit', item.unit ? { ...item.unit } : null)
+      this.$set(row, 'entry_unit_id', null)
+      this.$set(row, 'entry_qty', null)
+      this.ensureUnitOptions([item.id])
       this.recalculateCutLine(row)
     },
     async save(andSubmit = false) {
@@ -1072,6 +1140,7 @@ export default {
         ...this.form,
         items: this.form.items.map((line, index) => ({
           ...line,
+          ...(this.entryOption(line) ? { qty: this.entryBaseQty(line) } : { entry_unit_id: null, entry_qty: null }),
           line_no: (index + 1) * 10,
           stock_dimensions: Object.fromEntries(Object.entries(line.stock_dimensions || {}).filter(([, value]) => value !== null && value !== undefined && value !== ''))
         }))

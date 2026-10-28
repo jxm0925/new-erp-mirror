@@ -27,7 +27,7 @@ class MfgShortageController extends Controller
     {
         [$user] = $this->user($request, self::CONVERT);
         $data = $request->validate(['lines' => 'required|array|min:1|max:100', 'lines.*.item_id' => 'required|integer|min:1',
-            'lines.*.qty' => 'nullable|numeric|min:0.0001|max:100000000|decimal:0,4', 'work_order_id' => 'nullable|integer|min:1',
+            'lines.*.qty' => 'nullable|numeric|min:0.0001|max:100000000|decimal:0,4', 'lines.*.purchase_unit_id' => 'nullable|integer|min:1', 'lines.*.purchase_qty' => 'nullable|numeric|min:0.0001|max:100000000|decimal:0,4', 'work_order_id' => 'nullable|integer|min:1',
             'remark' => 'nullable|string|max:500']);
         $record = $shortages->createRequest($data['lines'], isset($data['work_order_id']) ? (int) $data['work_order_id'] : null, $data['remark'] ?? null, $user);
         return response()->json(['message' => "已生成采购需求 {$record->request_no}（草稿），请采购确认后转计划。",

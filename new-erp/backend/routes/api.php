@@ -592,6 +592,7 @@ Route::prefix('v1/erp/master')->group(function () {
     Route::get('items/{itemId}/material-policy/history', [ItemMaterialPolicyController::class, 'history'])->whereNumber('itemId');
     Route::put('items/{itemId}/material-policy/draft', [ItemMaterialPolicyController::class, 'saveDraft'])->whereNumber('itemId');
     Route::post('items/{itemId}/material-policy/activate', [ItemMaterialPolicyController::class, 'activate'])->whereNumber('itemId');
+    Route::get('items/unit-options', [ItemPurchaseConversionController::class, 'unitOptions']);
     Route::get('items/{itemId}/purchase-conversions/options', [ItemPurchaseConversionController::class, 'options'])->whereNumber('itemId');
     Route::get('items/{itemId}/purchase-conversions', [ItemPurchaseConversionController::class, 'index'])->whereNumber('itemId');
     Route::post('items/{itemId}/purchase-conversions', [ItemPurchaseConversionController::class, 'store'])->whereNumber('itemId');

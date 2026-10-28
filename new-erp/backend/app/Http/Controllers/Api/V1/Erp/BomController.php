@@ -18,7 +18,7 @@ class BomController extends Controller
 {
     private const RELATIONS = [
         'product', 'sku.product', 'outputItem.unit', 'items.componentItem.category', 'items.componentItem.unit.standardUnit',
-        'items.unit.standardUnit', 'items.operationBinding.operation:id,operation_no,operation_name', 'sourceProduct', 'sourceSku', 'sourceStandardBom', 'logs',
+        'items.unit.standardUnit', 'items.entryUnit:id,unit_name,unit_code,decimal_places', 'items.operationBinding.operation:id,operation_no,operation_name', 'sourceProduct', 'sourceSku', 'sourceStandardBom', 'logs',
     ];
 
     public function index(Request $request)
@@ -272,6 +272,7 @@ class BomController extends Controller
                 $created = BomItem::create($line->only([
                     'line_no', 'component_item_id', 'component_item_code', 'component_item_name',
                     'cut_length_mm', 'cut_width_mm', 'cut_thickness_mm', 'allow_cut_rotation', 'piece_qty', 'cutting_quantity_snapshot', 'qty', 'unit_id', 'loss_rate', 'fixed_qty', 'replaceable', 'remark',
+                    'entry_unit_id', 'entry_qty', 'entry_factor',
                 ]) + ['bom_id' => $copy->id]);
                 if (! $line->operationBinding) continue;
                 if (in_array((int) $line->operationBinding->operation_id, $allowedOperations, true)) {
@@ -390,6 +391,8 @@ class BomController extends Controller
             'items.*.stock_dimensions.nominal_thickness_mm' => 'nullable|numeric|min:0.01|max:9999999999.99',
             'items.*.qty' => 'required|numeric|min:0',
             'items.*.unit_id' => 'nullable|exists:erp_units,id',
+            'items.*.entry_unit_id' => 'nullable|integer|min:1',
+            'items.*.entry_qty' => 'nullable|numeric|min:0|max:9999999999.9999',
             'items.*.loss_rate' => 'nullable|numeric|min:0|max:100',
             'items.*.fixed_qty' => 'nullable|numeric|min:0',
             'items.*.replaceable' => 'boolean',
@@ -475,6 +478,16 @@ class BomController extends Controller
                 && bccomp($quantitySnapshot['stock_dimensions']['length_mm'], (string) $item->standard_stock_length_mm, 2) === 0) {
                 $quantitySnapshot['stock_source'] = ['type' => 'item_standard_length', 'item_id' => (int) $item->id];
             }
+            // 按其他单位录入（如 0.01 卷）：换算统一取物料档案的采购换算，保存时折成库存单位，原录入一并留存显示。
+            $entry = ['entry_unit_id' => null, 'entry_qty' => null, 'entry_factor' => null];
+            $entryUnitId = (int) ($line['entry_unit_id'] ?? 0);
+            if (! $cutting && $entryUnitId && $entryUnitId !== (int) $baseUnit->id) {
+                $option = collect($domain->itemUnitOptions([(int) $item->id])[(int) $item->id] ?? [])->firstWhere('unit_id', $entryUnitId);
+                abort_unless($option, 422, "物料 {$item->item_name} 没有所选单位的换算，请先在物料档案维护“采购换算”。");
+                $entryQty = round((float) ($line['entry_qty'] ?? 0), 4);
+                $line['qty'] = round($entryQty * $option['factor'], 4);
+                $entry = ['entry_unit_id' => $entryUnitId, 'entry_qty' => $entryQty, 'entry_factor' => $option['factor']];
+            }
             if (! $cutting) {
                 $domain->assertUnitPrecision($line['qty'], $baseUnit, 'items.'.$index.'.qty');
                 $domain->assertUnitPrecision($line['fixed_qty'] ?? 0, $baseUnit, 'items.'.$index.'.fixed_qty');
@@ -503,7 +516,7 @@ class BomController extends Controller
                 'fixed_qty' => $line['fixed_qty'] ?? 0,
                 'replaceable' => $line['replaceable'] ?? false,
                 'remark' => $line['remark'] ?? null,
-            ]);
+            ] + $entry);
             if ($operationId) BomItemOperation::create(['bom_item_id' => $created->id, 'operation_id' => $operationId]);
         }
     }

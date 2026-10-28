@@ -644,6 +644,7 @@
                   <el-table-column label="单位" width="75" align="center">
                     <template slot-scope="{ row }">
                       <span class="unit-tag">{{ (row.unit && row.unit.unit_name) || '-' }}</span>
+                      <div v-if="row.entry_unit_id && row.entry_unit" class="unit-tag">录入 {{ Number(row.entry_qty) }} {{ row.entry_unit.unit_name }}</div>
                     </template>
                   </el-table-column>
                   <el-table-column prop="loss_rate" label="损耗率(%)" width="90" align="right">

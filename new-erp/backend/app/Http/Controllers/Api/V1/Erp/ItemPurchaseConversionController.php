@@ -18,6 +18,13 @@ class ItemPurchaseConversionController extends Controller
         return response()->json($query->paginate(min(100, max(5, $request->integer('per_page', 10)))));
     }
 
+    /** BOM / 工单用料录入、转采购时可选的单位：库存单位 + 有效采购换算（批量）。 */
+    public function unitOptions(Request $request, UnitConversionDomainService $domain)
+    {
+        $data = $request->validate(['ids' => 'required|array|min:1|max:500', 'ids.*' => 'required|integer|min:1']);
+        return response()->json(['data' => (object) $domain->itemUnitOptions(array_values(array_unique(array_map('intval', $data['ids']))))]);
+    }
+
     public function options(Request $request, int $itemId, UnitConversionDomainService $domain)
     {
         Item::findOrFail($itemId);
