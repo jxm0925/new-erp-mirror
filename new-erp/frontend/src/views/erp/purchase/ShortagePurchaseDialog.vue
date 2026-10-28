@@ -1,7 +1,7 @@
 <template>
   <el-dialog :title="workOrderNo ? `缺料转采购 · ${workOrderNo}` : '生成采购需求'" :visible="visible" :width="dialogWidth" custom-class="master-style-dialog" :close-on-click-modal="false" append-to-body @update:visible="v => $emit('update:visible', v)" @open="init" @closed="loadRevision++">
     <div v-loading="loading">
-      <p class="sub">按缺口生成一张采购需求（草稿），每种物料一行；数量可改，期望到货日取相关工单最早计划开工日。已在途的采购已经扣掉。</p>
+      <p class="sub">按缺口生成一张采购需求（草稿），每种物料一行；可选采购单位（如按卷买电线，按缺口向上取整），数量可改，期望到货日取相关工单最早计划开工日。已在途的采购已经扣掉。</p>
       <div v-if="!lines.length && !loading" class="empty">没有需要采购的缺料</div>
       <div v-for="(l, i) in lines" :key="l.item_id" class="line">
         <div class="line-main">
@@ -13,9 +13,18 @@
           <div class="sub">{{ l.work_orders.filter(w => w.shortage_qty > 0).map(w => `${w.work_order_no} 缺 ${qty(w.shortage_qty)}`).join('、') }}</div>
         </div>
         <div class="line-qty">
-          <el-input-number v-model="l.qty" size="small" :min="0.0001" :precision="4" :step="1" controls-position="right" />
-          <span class="sub">{{ l.unit_name || '' }}</span>
-          <el-button v-if="lines.length > 1" type="text" size="mini" @click="lines.splice(i, 1)">移除</el-button>
+          <div class="qty-row">
+            <el-input-number v-model="l.qty" size="small" :min="0.0001" :precision="unitOf(l).decimal_places" :step="1" controls-position="right" />
+            <el-select v-if="l.purchase_units && l.purchase_units.length > 1" v-model="l.unit_id" size="small" class="unit-select" @change="onUnit(l)">
+              <el-option v-for="u in l.purchase_units" :key="u.unit_id" :value="u.unit_id" :label="unitLabel(u, l)" />
+            </el-select>
+            <span v-else class="sub">{{ l.unit_name || '' }}</span>
+            <el-button v-if="lines.length > 1" type="text" size="mini" @click="lines.splice(i, 1)">移除</el-button>
+          </div>
+          <div v-if="!unitOf(l).is_base" :class="['sub', baseOf(l) + 0.00001 < l.shortage_qty ? 'danger' : '']">
+            = {{ qty(baseOf(l)) }} {{ l.unit_name }}<template v-if="baseOf(l) > l.shortage_qty + 0.00001">，多出 {{ qty(baseOf(l) - l.shortage_qty) }} {{ l.unit_name }} 到货入库</template><template v-else-if="baseOf(l) + 0.00001 < l.shortage_qty">，少于缺口</template>
+          </div>
+          <div v-else-if="l.purchase_units && l.purchase_units.length <= 1" class="sub warn">未维护采购换算，将按{{ l.unit_name || '库存单位' }}采购；整卷/整箱采购请先到物料档案维护“采购换算”</div>
         </div>
       </div>
       <el-button v-if="workOrderId && page * 10 < total" size="small" :loading="loading" :disabled="saving" @click="loadMore">继续加载缺料（已加载 {{ Math.min(page * 10, total) }} / {{ total }} 项）</el-button>
@@ -47,7 +56,30 @@ export default {
   watch: { visible(value) { if (!value) this.loadRevision++ }, workOrderId() { if (this.visible) this.init() } },
   methods: {
     qty,
-    toLine(r) { return { ...r, qty: Number(r.shortage_qty) } },
+    toLine(r) {
+      const units = r.purchase_units || []
+      const unit = units[0] || { unit_id: null, factor: 1, decimal_places: 4, is_base: true }
+      return { ...r, unit_id: unit.unit_id, qty: this.suggest(Number(r.shortage_qty), unit) }
+    },
+    unitOf(l) {
+      return (l.purchase_units || []).find(u => u.unit_id === l.unit_id) || { unit_id: null, unit_name: l.unit_name, factor: 1, decimal_places: 4, is_base: true }
+    },
+    // 按缺口向上取整到采购单位的精度：缺 3 米、1 卷 = 300 米 → 1 卷。
+    suggest(base, unit) {
+      const places = Math.min(4, Number(unit.decimal_places || 0))
+      const scale = Math.pow(10, places)
+      return Math.max(1 / scale, Math.ceil(base / Number(unit.factor || 1) * scale - 1e-9) / scale)
+    },
+    baseOf(l) {
+      return Math.round(Number(l.qty || 0) * Number(this.unitOf(l).factor || 1) * 10000) / 10000
+    },
+    unitLabel(u, l) {
+      if (u.is_base) return `${u.unit_name}（库存单位）`
+      return `${u.unit_name}（采购单位，1${u.unit_name}=${qty(u.factor)}${l.unit_name || ''}）`
+    },
+    onUnit(l) {
+      l.qty = this.suggest(Number(l.shortage_qty), this.unitOf(l))
+    },
     async init() {
       this.loadRevision++
       this.remark = ''
@@ -79,7 +111,12 @@ export default {
       this.saving = true
       try {
         const { data } = await createShortagePurchaseRequest({
-          lines: this.lines.map(l => ({ item_id: l.item_id, qty: Number(l.qty) })),
+          lines: this.lines.map(l => {
+            const unit = this.unitOf(l)
+            if (!l.unit_id) return { item_id: l.item_id, qty: Number(l.qty) }
+            return unit.is_base ? { item_id: l.item_id, qty: Number(l.qty), purchase_unit_id: l.unit_id }
+              : { item_id: l.item_id, purchase_unit_id: l.unit_id, purchase_qty: Number(l.qty) }
+          }),
           work_order_id: this.workOrderId ? Number(this.workOrderId) : undefined,
           remark: this.remark || undefined
         })
@@ -104,6 +141,9 @@ export default {
 .line { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid #eef1f5; flex-wrap: wrap; }
 .line-main { flex: 1; min-width: 240px; display: grid; gap: 4px; }
 .line-main .name { font-weight: 600; }
-.line-qty { display: flex; align-items: center; gap: 6px; }
+.line-qty { display: grid; gap: 4px; justify-items: end; }
+.qty-row { display: flex; align-items: center; gap: 6px; }
+.unit-select { width: 230px; }
+.warn { color: #d97706; max-width: 320px; text-align: right; }
 .remark { margin-top: 12px; }
 </style>

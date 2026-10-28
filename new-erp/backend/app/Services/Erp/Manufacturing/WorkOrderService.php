@@ -140,6 +140,7 @@ final class WorkOrderService
                 'source_type' => 'work_order', 'sales_order_no' => $parent->sales_order_no, 'customer_name' => $parent->customer_name,
                 'is_urgent' => (bool) $parent->is_urgent, 'planned_start_date' => now()->toDateString(), 'planned_finish_date' => $finish, 'required_date' => $finish,
                 'remark' => "总装工单 {$parent->work_order_no} 缺 {$item->item_name}，补做半成品",
+                'work_order_no' => $this->childNo($parent),
             ], $item, (float) $qty, $actor);
             MfgWorkOrderLink::create(['parent_work_order_id' => $parent->id, 'child_work_order_id' => $child->id, 'component_item_id' => $item->id,
                 'qty' => $qty, 'created_by_legacy_id' => $this->actorId($actor), 'created_by_name' => $this->actorName($actor)]);
@@ -154,6 +155,16 @@ final class WorkOrderService
     }
 
     /** 半成品缺口：本工单还要的 − 仓库可用 − 已开还没入库的半成品工单。 */
+    /** 半成品工单编号跟着总装工单走：WO26100012-01、-02……一眼看出是给谁做的。 */
+    private function childNo(MfgWorkOrder $parent): string
+    {
+        $seq = MfgWorkOrderLink::query()->where('parent_work_order_id', $parent->id)->count();
+        do {
+            $no = $parent->work_order_no.'-'.str_pad((string) ++$seq, 2, '0', STR_PAD_LEFT);
+        } while (MfgWorkOrder::query()->where('work_order_no', $no)->exists());
+        return $no;
+    }
+
     public function semiGap(MfgWorkOrder $parent, int $componentItemId): float
     {
         $operations = $parent->operations->map(fn ($op) => ['key' => 'o'.$op->id, 'operation_name' => $op->operation_name, 'sequence' => (int) $op->sequence,
@@ -434,7 +445,7 @@ final class WorkOrderService
     {
         if ($qty <= 0) $this->fail('qty_invalid', '工单数量必须大于 0。');
         return MfgWorkOrder::create($attributes + [
-            'work_order_no' => $this->numbers->next('work_order', 'WO'),
+            'work_order_no' => $attributes['work_order_no'] ?? $this->numbers->next('work_order', 'WO'),
             'item_id' => $item->id, 'item_code' => $item->item_code, 'item_name' => $item->item_name,
             'unit_name' => $item->unit?->unit_name, 'planned_qty' => $qty,
             'warehouse_id' => $attributes['warehouse_id'] ?? $item->default_warehouse_id,

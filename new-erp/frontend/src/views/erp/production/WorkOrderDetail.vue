@@ -461,6 +461,7 @@
                         <span v-else class="mat-qty code-mono" :class="{ 'text-danger font-medium': m.shortage_qty > 0 }">
                           {{ qty(m.covered_qty) }} / {{ qty(m.required_qty) }} {{ m.unit_name || '' }}
                         </span>
+                        <span v-if="altQtyText(m.component_item_id, m.required_qty)" class="text-muted">{{ altQtyText(m.component_item_id, m.required_qty) }}</span>
                       </div>
                       <div
                         v-if="m.in_production_qty > 0 || queueHint(m) || (m.can_make && m.make_qty > 0 && $can('production.work_order.create'))"
@@ -966,6 +967,7 @@ import { HERO_PILL, qty, money, shortDate, bomLabel, errorText, isCancel, search
 import WorkOrderCuttingPanel from './WorkOrderCuttingPanel.vue'
 import MaterialReturnDialog from './MaterialReturnDialog.vue'
 import ShortagePurchaseDialog from '../purchase/ShortagePurchaseDialog.vue'
+import unitOptionsMixin from './unit-options-mixin'
 
 const STEPS = [
   { value: 'planned', label: '计划制令' },
@@ -978,6 +980,7 @@ const STEPS = [
 export default {
   name: 'WorkOrderDetail',
   components: { WorkOrderCuttingPanel, MaterialReturnDialog, ShortagePurchaseDialog },
+  mixins: [unitOptionsMixin],
   data: () => ({
     loading: false,
     saving: false,
@@ -1087,6 +1090,9 @@ export default {
     }
   },
   watch: {
+    'wo.kitting'(kitting) {
+      this.ensureUnitOptions((kitting || []).flatMap(k => (k.materials || []).map(m => m.component_item_id)))
+    },
     '$route.params.id'() {
       this.load()
     }

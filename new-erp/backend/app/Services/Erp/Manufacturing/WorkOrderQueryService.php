@@ -44,13 +44,64 @@ final class WorkOrderQueryService
     public function paginate(array $filters, bool $amounts): array
     {
         $query = $this->filtered($filters);
+        $tree = empty($filters['flat']);
+        // 树形显示：半成品工单挂在总装工单下面；只有它的总装工单不在本次结果里时，才单独显示一行。
+        // 多层时看所有上级（最多 4 层），任何一级上级在结果里就挂到它下面，避免同一张工单出现两次。
+        if ($tree) for ($level = 1; $level <= 4; $level++) {
+            $query->whereNotExists(function ($q) use ($level, $filters) {
+                $q->selectRaw('1')->from('erp_mfg_work_order_links as l1')->whereColumn('l1.child_work_order_id', 'erp_mfg_work_orders.id');
+                for ($i = 2; $i <= $level; $i++) $q->join("erp_mfg_work_order_links as l{$i}", "l{$i}.child_work_order_id", '=', 'l'.($i - 1).'.parent_work_order_id');
+                $q->whereIn("l{$level}.parent_work_order_id", $this->filtered($filters)->select('id'));
+            });
+        }
         $page = $query->with(['operations:id,work_order_id,operation_name,execution_context,sequence,completed_qty'])
             ->withCount(['units', 'units as stored_units_count' => fn ($q) => $q->where('status', 'stored')])
             ->orderByRaw("FIELD(status, 'paused', 'planned', 'in_progress', 'released', 'completed', 'closed', 'cancelled')")
             ->orderByDesc('is_urgent')->orderBy('planned_finish_date')->orderByDesc('id')
             ->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 10))));
-        $page->getCollection()->transform(fn (MfgWorkOrder $wo) => $this->row($wo, $amounts));
+        $rows = $page->getCollection()->map(fn (MfgWorkOrder $wo) => $this->row($wo, $amounts))->all();
+        $page->setCollection(collect($this->attachLinks($rows, $amounts, $tree)));
         return $page->toArray() + ['summary' => $this->summary()];
+    }
+
+    /**
+     * 给列表行补上下挂关系：总装工单汇总半成品入库情况（如“架子 0/1”），树形模式下带出下挂的半成品工单（最多 4 层）；
+     * 半成品工单标出是给哪张总装工单做的。
+     */
+    private function attachLinks(array $rows, bool $amounts, bool $tree, int $depth = 0): array
+    {
+        if (! $rows) return $rows;
+        $ids = array_column($rows, 'id');
+        $links = MfgWorkOrderLink::query()->whereIn('parent_work_order_id', $ids)->orderBy('id')->get();
+        $children = $links->isEmpty() ? collect() : MfgWorkOrder::query()->with(['operations:id,work_order_id,operation_name,execution_context,sequence,completed_qty'])
+            ->withCount(['units', 'units as stored_units_count' => fn ($q) => $q->where('status', 'stored')])
+            ->whereIn('id', $links->pluck('child_work_order_id'))->where('status', '!=', 'cancelled')->get()->keyBy('id');
+        $childRows = [];
+        if ($tree && $depth < 4 && $children->isNotEmpty()) {
+            $built = $this->attachLinks($children->map(fn ($wo) => $this->row($wo, $amounts))->values()->all(), $amounts, true, $depth + 1);
+            foreach ($built as $r) $childRows[$r['id']] = $r;
+        }
+        $parentIds = MfgWorkOrderLink::query()->whereIn('child_work_order_id', $ids)->pluck('parent_work_order_id', 'child_work_order_id');
+        $parentNos = $parentIds->isEmpty() ? collect() : MfgWorkOrder::query()->whereIn('id', $parentIds->values())->pluck('work_order_no', 'id');
+        foreach ($rows as &$row) {
+            $pid = $parentIds[$row['id']] ?? null;
+            $row['parent_work_order'] = $pid ? ['id' => (int) $pid, 'work_order_no' => $parentNos[$pid] ?? null] : null;
+            $mine = $links->where('parent_work_order_id', $row['id']);
+            $semi = [];
+            foreach ($mine as $link) {
+                $child = $children->get($link->child_work_order_id);
+                if (! $child) continue;
+                $key = (int) $link->component_item_id;
+                $semi[$key] ??= ['item_id' => $key, 'item_name' => $child->item_name, 'planned_qty' => 0.0, 'stored_qty' => 0.0, 'unit_name' => $child->unit_name];
+                $semi[$key]['planned_qty'] = round($semi[$key]['planned_qty'] + (float) $child->planned_qty, 4);
+                $semi[$key]['stored_qty'] = round($semi[$key]['stored_qty'] + (float) $child->stored_qty, 4);
+                if ($tree && isset($childRows[$child->id])) $row['children'][] = $childRows[$child->id];
+            }
+            $row['semi_summary'] = array_values($semi);
+            $row['semi_ready'] = $semi ? collect($semi)->every(fn ($s) => $s['stored_qty'] + 0.00001 >= $s['planned_qty']) : null;
+        }
+        unset($row);
+        return $rows;
     }
 
     public function detail(int $id, bool $amounts): array

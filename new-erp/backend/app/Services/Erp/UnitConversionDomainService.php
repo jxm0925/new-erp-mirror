@@ -19,6 +19,33 @@ class UnitConversionDomainService
             ->where(fn (Builder $query) => $query->whereNull('effective_to')->orWhere('effective_to', '>', $at));
     }
 
+    /**
+     * 物料可用单位：库存单位 + 物料档案里有效的采购换算单位（如 1 卷 = 300 米），默认采购单位排第一。
+     * 转采购选采购单位、BOM 选录入单位共用这一份，避免同一物料出现两套换算。factor = 1 个该单位折合多少库存单位。
+     */
+    public function itemUnitOptions(array $itemIds): array
+    {
+        if (! $itemIds) return [];
+        $domain = $this;
+        $out = [];
+        foreach (\App\Models\Erp\Item::query()->with('unit.standardUnit')->whereIn('id', $itemIds)->get() as $item) {
+            $base = $domain->canonicalUnit($item->unit);
+            $list = [];
+            if ($base) $list[] = ['unit_id' => (int) $base->id, 'unit_name' => $base->unit_name, 'factor' => 1.0, 'decimal_places' => (int) $base->decimal_places,
+                'is_default' => false, 'is_base' => true];
+            foreach ($domain->activePurchaseConversions((int) $item->id)->with(['purchaseUnit.standardUnit', 'baseUnit.standardUnit'])->orderByDesc('is_default')->orderBy('id')->get() as $c) {
+                $unit = $domain->canonicalUnit($c->purchaseUnit);
+                if (! $unit || ! $base || (int) $domain->canonicalUnit($c->baseUnit)?->id !== (int) $base->id || (int) $unit->id === (int) $base->id) continue;
+                if (collect($list)->contains('unit_id', (int) $unit->id)) continue;
+                $list[] = ['unit_id' => (int) $unit->id, 'unit_name' => $unit->unit_name, 'factor' => (float) $c->factor, 'decimal_places' => (int) $unit->decimal_places,
+                    'is_default' => (bool) $c->is_default, 'is_base' => false];
+            }
+            usort($list, fn ($a, $b) => [$b['is_default'], $a['is_base'] ? 1 : 0] <=> [$a['is_default'], $b['is_base'] ? 1 : 0]);
+            $out[(int) $item->id] = $list;
+        }
+        return $out;
+    }
+
     public function defaultPurchaseConversion(int $itemId, ?\DateTimeInterface $at = null): ItemPurchaseConversion
     {
         $conversion = $this->activePurchaseConversions($itemId, $at)

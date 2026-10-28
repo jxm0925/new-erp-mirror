@@ -165,6 +165,7 @@
                         <b :class="r.change === 'removed' ? 'text-removed' : 'text-main'">
                           {{ r.change === 'removed' ? '0' : qty(r.qty) + ' ' + (r.unit_name || '') }}
                         </b>
+                        <div v-if="r.change !== 'removed' && altQtyText(r.component_item_id, r.qty)" class="text-muted small">{{ altQtyText(r.component_item_id, r.qty) }}</div>
                         <div v-if="r.loss_rate || r.fixed_qty" class="text-muted small">
                           损耗率 {{ qty(r.loss_rate) }}%<span v-if="r.fixed_qty"> · 固定 {{ qty(r.fixed_qty) }}</span>
                         </div>
@@ -346,6 +347,7 @@
 </template>
 
 <script>
+import unitOptionsMixin from './unit-options-mixin'
 import { getProductionTech, saveProductionTechBom, uploadProductionDrawing, deleteProductionDrawing, releaseProductionTech, searchProductionOptions } from '../../../api/erp/production'
 import { qty, shortDate, bomLabel, errorText, isCancel } from './mfg-helpers'
 
@@ -354,6 +356,7 @@ let uid = 0
 
 export default {
   name: 'ProductionTechDetail',
+  mixins: [unitOptionsMixin],
   data: () => ({
     CHANGE,
     loading: false,
@@ -401,6 +404,7 @@ export default {
       }
     },
     apply(data) {
+      this.ensureUnitOptions(((data && data.bom_lines) || []).map(r => r.component_item_id))
       if (!data) return this.load()
       const canManage = data.can_manage === undefined && this.d ? this.d.can_manage : data.can_manage
       this.d = { ...data, can_manage: canManage }

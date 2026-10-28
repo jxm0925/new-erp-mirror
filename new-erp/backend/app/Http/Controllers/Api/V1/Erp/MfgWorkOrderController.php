@@ -18,7 +18,7 @@ class MfgWorkOrderController extends Controller
     {
         [, $amounts] = $this->user($request, 'production.work_order.view');
         $filters = $request->validate(['keyword' => 'nullable|string|max:120', 'status' => 'nullable|in:planned,released,in_progress,paused,completed,closed,cancelled',
-            'source_type' => 'nullable|in:sales_order,stock', 'owner_legacy_id' => 'nullable|integer|min:1', 'due_from' => 'nullable|date', 'due_to' => 'nullable|date',
+            'source_type' => 'nullable|in:sales_order,stock,work_order', 'flat' => 'nullable|boolean', 'owner_legacy_id' => 'nullable|integer|min:1', 'due_from' => 'nullable|date', 'due_to' => 'nullable|date',
             'stuck_only' => 'nullable|boolean', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
         return response()->json($query->paginate($filters, $amounts));
     }
