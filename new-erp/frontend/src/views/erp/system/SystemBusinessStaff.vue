@@ -241,7 +241,7 @@ export default {
       this.query()
     },
     typeIcon(type) {
-      return { sales: 'el-icon-s-custom', production_manager: 'el-icon-s-management', production_worker: 'el-icon-s-tools', warehouse: 'el-icon-box', purchase: 'el-icon-shopping-cart-2', quality: 'el-icon-finished', reviewer: 'el-icon-circle-check', finance_manager: 'el-icon-s-check' }[type] || 'el-icon-user'
+      return { sales: 'el-icon-s-custom', production_manager: 'el-icon-s-management', production_worker: 'el-icon-s-tools', warehouse: 'el-icon-box', purchase: 'el-icon-shopping-cart-2', quality: 'el-icon-finished' }[type] || 'el-icon-user'
     },
     sourceLabel(source) {
       return { manual: '手工登记', sso: '统一身份同步', legacy_flag: '旧标记迁移' }[source] || source || '—'

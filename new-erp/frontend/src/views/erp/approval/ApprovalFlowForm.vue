@@ -244,7 +244,6 @@
             <h3>处理人来源</h3>
             <el-radio-group v-model="approverRuleMode" class="approver-rule-tabs" size="small" :disabled="readonly">
               <el-radio-button label="role">角色</el-radio-button>
-              <el-radio-button label="business_staff">业务员档案</el-radio-button>
               <el-radio-button label="department_principal">部门负责人</el-radio-button>
               <el-radio-button label="specified_users">指定人</el-radio-button>
               <el-radio-button label="expression">表达式</el-radio-button>
@@ -263,11 +262,6 @@
                   :label="item.label"
                   :value="item.value" /></el-select
             ></el-form-item>
-            <el-form-item v-else-if="selected.approver_rule.type === 'business_staff'" label="业务员类型">
-              <el-select v-model="selected.approver_rule.value" multiple :disabled="readonly" @change="syncApproverLabel">
-                <el-option v-for="item in options.business_staff_types" :key="item.value" :label="item.label" :value="item.value" />
-              </el-select>
-            </el-form-item>
             <el-form-item
               v-else-if="selected.approver_rule.type === 'department_principal'"
               label="部门负责人"
@@ -319,7 +313,7 @@
               <el-form-item label="会签策略"
                 ><el-select
                   v-model="selected.completion_strategy"
-                  :disabled="readonly || selected.approver_rule.type === 'business_staff'"
+                  :disabled="readonly"
                   ><el-option
                     label="任一指定人员通过"
                     value="ANY" /><el-option
@@ -763,7 +757,6 @@ export default {
       roles: [],
       users: [],
       approver_sources: [],
-      business_staff_types: [],
       operators: [],
       trigger_modes: [],
       execution_modes: [],
@@ -825,7 +818,6 @@ export default {
       get() {
         const type = this.selected && this.selected.approver_rule ? this.selected.approver_rule.type : "role";
         if (type === "role") return "role";
-        if (type === "business_staff") return "business_staff";
         if (type === "department_principal") return "department_principal";
         if (["user", "specified_users"].includes(type)) return "specified_users";
         return "expression";
@@ -1331,9 +1323,7 @@ export default {
       };
       return (
         r.label ||
-        (r.type === "business_staff"
-          ? "业务员档案"
-          : r.type === "department_principal"
+        (r.type === "department_principal"
           ? "部门负责人"
           : ["user", "specified_users"].includes(r.type)
           ? "指定人员"
@@ -1342,11 +1332,10 @@ export default {
     },
     approverTypeChanged(t) {
       this.selected.approver_rule.type = t;
-      this.selected.approver_rule.value = ["user", "specified_users", "business_staff"].includes(t) ? [] : "";
+      this.selected.approver_rule.value = ["user", "specified_users"].includes(t) ? [] : "";
       this.selected.approver_rule.field = "";
       this.selected.approver_rule.label = "";
       this.selected.processing_strategy = "sequential";
-      if (t === "business_staff") this.selected.completion_strategy = "ANY";
     },
     dynamicApproverChanged() {
       this.selected.approver_rule.value = "";
@@ -1359,8 +1348,6 @@ export default {
         r.label =
           (this.options.roles.find((x) => x.value === r.value) || {}).label ||
           "";
-      else if (r.type === "business_staff")
-        r.label = (r.value || []).map((type) => (this.options.business_staff_types.find((item) => item.value === type) || {}).label).filter(Boolean).join("、");
       else if (r.type === "department_principal")
         r.label =
           r.value === "task_department"

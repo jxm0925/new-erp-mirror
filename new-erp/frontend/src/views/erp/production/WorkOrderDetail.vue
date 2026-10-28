@@ -470,6 +470,7 @@
                             <span v-else class="mat-qty-badge code-mono" :class="m.shortage_qty > 0 ? 'qty-short' : 'qty-ok'">
                               {{ qty(m.covered_qty) }} / {{ qty(m.required_qty) }} {{ m.unit_name || '' }}
                             </span>
+                            <div v-if="altQtyText(m.component_item_id, m.required_qty)" class="mat-alt-qty text-muted">{{ altQtyText(m.component_item_id, m.required_qty) }}</div>
                           </td>
                           <td class="col-mat-state">
                             <div class="material-sub-badges">
@@ -990,6 +991,7 @@ import { HERO_PILL, qty, money, shortDate, bomLabel, errorText, isCancel, search
 import WorkOrderCuttingPanel from './WorkOrderCuttingPanel.vue'
 import MaterialReturnDialog from './MaterialReturnDialog.vue'
 import ShortagePurchaseDialog from '../purchase/ShortagePurchaseDialog.vue'
+import unitOptionsMixin from './unit-options-mixin'
 
 const STEPS = [
   { value: 'planned', label: '计划制令' },
@@ -1002,6 +1004,7 @@ const STEPS = [
 export default {
   name: 'WorkOrderDetail',
   components: { WorkOrderCuttingPanel, MaterialReturnDialog, ShortagePurchaseDialog },
+  mixins: [unitOptionsMixin],
   data: () => ({
     loading: false,
     saving: false,
@@ -1111,6 +1114,9 @@ export default {
     }
   },
   watch: {
+    'wo.kitting'(kitting) {
+      this.ensureUnitOptions((kitting || []).flatMap(k => (k.materials || []).map(m => m.component_item_id)))
+    },
     '$route.params.id'() {
       this.load()
     }
@@ -2292,6 +2298,7 @@ export default {
   color: #1e293b;
 }
 
+.mat-alt-qty { margin-top: 2px; font-size: 12px; }
 .mat-qty-badge {
   display: inline-block;
   padding: 1px 7px;

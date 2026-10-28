@@ -131,7 +131,7 @@ class AuthContextService
             return DB::table('erp_rbac_permissions')->where('enabled', true)->pluck('code')->all();
         }
 
-        $codes = DB::table('erp_rbac_user_roles as ur')
+        return DB::table('erp_rbac_user_roles as ur')
             ->join('erp_rbac_roles as r', 'r.id', '=', 'ur.role_id')
             ->join('erp_rbac_role_permissions as rp', 'ur.role_id', '=', 'rp.role_id')
             ->join('erp_rbac_permissions as p', 'rp.permission_id', '=', 'p.id')
@@ -142,12 +142,5 @@ class AuthContextService
             ->unique()
             ->values()
             ->all();
-
-        if (app(BusinessStaffService::class)->approvalMembers(BusinessStaffService::APPROVAL_TYPES)->where('u.legacy_id', $user->legacy_id)->exists()) {
-            $codes = array_merge($codes, DB::table('erp_rbac_permissions')->where('enabled', true)
-                ->whereIn('code', ['approval', 'approval.todo', 'approval.processed', 'approval.task.view', 'approval.task.decide'])
-                ->pluck('code')->all());
-        }
-        return array_values(array_unique($codes));
     }
 }
