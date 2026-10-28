@@ -109,8 +109,8 @@ class PurchaseWorkflowApplicationService
     {
         return DB::transaction(function () use ($id, $operator, $initiator): PurchaseOrder {
             $order = PurchaseOrder::query()->with('items')->lockForUpdate()->findOrFail($id);
-            if ($order->purchase_status !== 'draft' && $order->audit_status !== 'rejected') {
-                throw ValidationException::withMessages(['purchase_status' => '只有草稿或已驳回的采购订单可以重新提交审批。']);
+            if ($order->purchase_status !== 'draft') {
+                throw ValidationException::withMessages(['purchase_status' => '只有草稿采购订单可以提交审批。']);
             }
             if ($order->items->isEmpty()) {
                 throw ValidationException::withMessages(['items' => '采购订单没有明细，不能提交审批。']);
@@ -124,7 +124,7 @@ class PurchaseWorkflowApplicationService
                 if ($lineDates->count() !== $order->items->count()) {
                     throw ValidationException::withMessages(['expected_arrival_date' => '提交审核前请填写预计到货日期，便于跟踪交期和逾期提醒。']);
                 }
-                $order->update(['expected_arrival_date' => $lineDates->map(fn ($date) => (string) IlluminateSupportCarbon::parse($date)->toDateString())->min()]);
+                $order->update(['expected_arrival_date' => $lineDates->map(fn ($date) => (string) \Illuminate\Support\Carbon::parse($date)->toDateString())->min()]);
             }
 
             app(PurchaseManagementScopeService::class)->assertDocumentScope($order);
@@ -185,14 +185,17 @@ class PurchaseWorkflowApplicationService
     {
         return DB::transaction(function () use ($id, $operator): PurchaseOrder {
             $order = PurchaseOrder::query()->with(['receipts', 'items'])->lockForUpdate()->findOrFail($id);
-            $this->releasePlanAllocation($order);
-            if (!in_array($order->purchase_status, ['draft', 'submitted'], true)) {
-                throw ValidationException::withMessages(['purchase_status' => '只有草稿或待审核且未执行的采购订单可以取消；已审核订单请关闭未履约数量。']);
+            if ($order->purchase_status === 'submitted') {
+                throw ValidationException::withMessages(['purchase_status' => '采购订单正在审核，请先在审核中心驳回后再取消。']);
+            }
+            if ($order->purchase_status !== 'draft') {
+                throw ValidationException::withMessages(['purchase_status' => '只有草稿采购订单可以取消；已审核订单请关闭未履约数量。']);
             }
             if ($order->receipts->contains(fn ($receipt) => $receipt->confirm_status === 'confirmed')) {
                 throw ValidationException::withMessages(['receipt_status' => '该订单已发生有效到货，不能取消。']);
             }
 
+            $this->releasePlanAllocation($order);
             return $this->updateOrder($order, ['purchase_status' => 'cancelled', 'receipt_status' => 'cancelled'], 'cancel', '采购订单已取消', $operator);
         }, 5);
     }

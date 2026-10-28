@@ -223,6 +223,7 @@
         </section>
         <section class="card side-card history">
           <h2>审核记录</h2>
+          <el-alert v-if="task.action_status === 'FAILED' && task.action_error" :title="task.action_error" type="error" :closable="false" show-icon />
           <div
             v-for="record in decisionHistory"
             :key="`decision-${record.id}`"
@@ -251,15 +252,15 @@
       </aside>
     </div>
 
-    <footer v-if="task.can_decide || task.action_status === 'FAILED'" class="fixed-actions">
+    <footer v-if="task.can_decide || task.can_transfer || task.can_retry_action" class="fixed-actions">
       <p>
         <i class="el-icon-info" />
         通过全部必需节点后执行流程中配置的业务动作；审核任务始终保留版本快照和操作记录。
       </p>
       <div>
-        <el-button v-if="task.action_status === 'FAILED' && !task.can_decide" size="medium" type="danger" @click="retryAction">重试失败动作</el-button>
-        <template v-else-if="task.can_decide">
         <el-button v-if="task.can_transfer" size="medium" @click="transferDialog.visible = true">转交</el-button>
+        <el-button v-if="task.can_retry_action && !task.can_decide" size="medium" type="danger" @click="retryAction">重试失败动作</el-button>
+        <template v-else-if="task.can_decide">
         <el-button
           v-if="task.can_reject"
           size="medium"
@@ -437,11 +438,15 @@ export default {
         const response = await getApprovalTask(this.$route.params.id);
         this.task = (response && response.data && response.data.data) ||
           (response && response.data) || {};
-        if (!this.users.length) {
+        if (Array.isArray(this.task.transfer_users)) {
+          this.users = this.task.transfer_users;
+        } else if (this.task.can_transfer && this.$can('approval.flow.view')) {
           const options = await getApprovalFlowConfigOptions();
           const optionPayload = (options && options.data && options.data.data) ||
             (options && options.data) || {};
           this.users = optionPayload.users || [];
+        } else {
+          this.users = [];
         }
       } catch (error) {
         this.task = {};

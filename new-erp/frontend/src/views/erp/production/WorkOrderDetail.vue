@@ -389,7 +389,7 @@
             </div>
 
             <template v-else>
-              <!-- 含领料需求工序卡片网格（单工序或奇数末项自动铺满并启用双列物料网格） -->
+              <!-- 含领料需求工序卡片网格（内部采用紧凑表格对齐，让物料名称与数量紧邻易读） -->
               <div
                 v-if="materialKittingOps.length"
                 class="kitting-grid-wrap"
@@ -446,48 +446,61 @@
                       </el-button>
                     </div>
                   </div>
-                  <div
-                    class="materials-list"
-                    :class="{ 'materials-grid-2col': isFullSpanKittingCard(idx, k) && k.materials.length > 2 }"
-                  >
-                    <div
-                      v-for="m in k.materials"
-                      :key="m.id || m.component_item_id"
-                      class="material-item"
-                    >
-                      <div class="material-main-line">
-                        <span class="mat-name" :title="m.component_item_name">{{ m.component_item_name }}</span>
-                        <span v-if="!m.participates_in_kitting" class="text-muted mat-auxiliary">辅料（免齐套）</span>
-                        <span v-else class="mat-qty code-mono" :class="{ 'text-danger font-medium': m.shortage_qty > 0 }">
-                          {{ qty(m.covered_qty) }} / {{ qty(m.required_qty) }} {{ m.unit_name || '' }}
-                        </span>
-                        <span v-if="altQtyText(m.component_item_id, m.required_qty)" class="text-muted">{{ altQtyText(m.component_item_id, m.required_qty) }}</span>
-                      </div>
-                      <div
-                        v-if="m.in_production_qty > 0 || queueHint(m) || (m.can_make && m.make_qty > 0 && $can('production.work_order.create'))"
-                        class="material-sub-line"
-                      >
-                        <div class="material-sub-badges">
-                          <span v-if="m.in_production_qty > 0" class="mat-sub-tag">在做 {{ qty(m.in_production_qty) }}</span>
-                          <span v-if="queueHint(m)" class="text-danger mat-queue-hint">{{ queueHint(m) }}</span>
-                        </div>
-                        <el-button
-                          v-if="m.can_make && m.make_qty > 0 && $can('production.work_order.create')"
-                          type="text"
-                          size="mini"
-                          class="btn-make-semi"
-                          :disabled="saving"
-                          @click="makeSemi(m)"
+                  <div class="materials-table-scroll">
+                    <table class="kitting-mat-table">
+                      <thead>
+                        <tr>
+                          <th class="col-mat-name">物料名称</th>
+                          <th class="col-mat-qty">齐套 / 需用数量</th>
+                          <th class="col-mat-state">状态与提示</th>
+                          <th class="col-mat-act">操作</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr
+                          v-for="m in k.materials"
+                          :key="m.id || m.component_item_id"
+                          :class="{ 'row-shortage': m.participates_in_kitting && m.shortage_qty > 0 }"
                         >
-                          + 开半成品工单
-                        </el-button>
-                      </div>
-                    </div>
+                          <td class="col-mat-name" :title="m.component_item_name">
+                            <span class="mat-name-text">{{ m.component_item_name }}</span>
+                          </td>
+                          <td class="col-mat-qty">
+                            <span v-if="!m.participates_in_kitting" class="text-muted mat-auxiliary">辅料（免齐套）</span>
+                            <span v-else class="mat-qty-badge code-mono" :class="m.shortage_qty > 0 ? 'qty-short' : 'qty-ok'">
+                              {{ qty(m.covered_qty) }} / {{ qty(m.required_qty) }} {{ m.unit_name || '' }}
+                            </span>
+                          </td>
+                          <td class="col-mat-state">
+                            <div class="material-sub-badges">
+                              <span v-if="m.in_production_qty > 0" class="mat-sub-tag">在做 {{ qty(m.in_production_qty) }}</span>
+                              <span v-if="queueHint(m)" class="text-danger mat-queue-hint">{{ queueHint(m) }}</span>
+                              <span v-if="!(m.in_production_qty > 0) && !queueHint(m)" class="text-muted">
+                                {{ !m.participates_in_kitting ? '—' : (m.shortage_qty > 0 ? `缺 ${qty(m.shortage_qty)} ${m.unit_name || ''}` : '已齐套') }}
+                              </span>
+                            </div>
+                          </td>
+                          <td class="col-mat-act">
+                            <el-button
+                              v-if="m.can_make && m.make_qty > 0 && $can('production.work_order.create')"
+                              type="text"
+                              size="mini"
+                              class="btn-make-semi"
+                              :disabled="saving"
+                              @click="makeSemi(m)"
+                            >
+                              开半成品工单
+                            </el-button>
+                            <span v-else class="text-muted">—</span>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               </div>
 
-              <!-- 免领料工序紧凑汇总条（避免无领料工序占用独立大卡片造成空白） -->
+              <!-- 免领料工序紧凑汇总条 -->
               <div v-if="noMaterialKittingOps.length" class="no-mat-ops-bar">
                 <span class="no-mat-bar-label">
                   <i class="el-icon-circle-check text-success" />
@@ -513,10 +526,13 @@
                 </div>
                 <div class="related-doc-list">
                   <div v-for="c in wo.child_work_orders" :key="c.id" class="related-doc-row">
-                    <span class="mat-name text-truncate">
-                      半成品工单 <b class="code-mono lk-text" @click="openWorkOrder(c.id)">{{ c.work_order_no }}</b> · {{ c.item_name }}
-                    </span>
-                    <span class="mat-qty code-mono">{{ c.status_label }} · 入库 {{ qty(c.stored_qty) }} / {{ qty(c.planned_qty) }} {{ c.unit_name || '' }}</span>
+                    <div class="related-doc-main">
+                      <span class="mat-name">
+                        半成品工单 <b class="code-mono lk-text" @click="openWorkOrder(c.id)">{{ c.work_order_no }}</b> · {{ c.item_name }}
+                      </span>
+                      <span class="mat-qty-inline code-mono">入库 {{ qty(c.stored_qty) }} / {{ qty(c.planned_qty) }} {{ c.unit_name || '' }}</span>
+                    </div>
+                    <el-tag size="mini" type="info" effect="plain">{{ c.status_label }}</el-tag>
                   </div>
                 </div>
               </div>
@@ -527,9 +543,11 @@
                 </div>
                 <div class="related-doc-list">
                   <div v-for="d in wo.material_deliveries" :key="'md-' + d.id" class="related-doc-row">
-                    <span class="mat-name text-truncate" :title="d.summary + (d.reject_reason ? '；拒收：' + d.reject_reason : '')">
-                      仓库配送 <b class="code-mono">{{ d.delivery_no }}</b> · {{ d.operation_name }} · {{ d.summary }}
-                    </span>
+                    <div class="related-doc-main" :title="d.summary + (d.reject_reason ? '；拒收：' + d.reject_reason : '')">
+                      <span class="mat-name">
+                        仓库配送 <b class="code-mono">{{ d.delivery_no }}</b> · {{ d.operation_name }} · {{ d.summary }}
+                      </span>
+                    </div>
                     <div class="related-doc-right">
                       <span class="mat-qty code-mono">{{ d.status_label }}{{ d.reject_reason ? '（' + d.reject_reason + '）' : '' }}</span>
                       <template v-if="d.status === 'dispatched' && canReceiveMaterials">
@@ -547,9 +565,12 @@
                 </div>
                 <div class="related-doc-list">
                   <div v-for="d in wo.purchase_demands" :key="'pd-' + d.id" class="related-doc-row">
-                    <span class="mat-name text-truncate">
-                      采购需求 <b class="code-mono" :class="{ 'lk-text': $can('purchase.request') }" @click="openPurchaseRequest(d)">{{ d.request_no }}</b> · {{ d.item_name }} {{ qty(d.qty) }}
-                    </span>
+                    <div class="related-doc-main">
+                      <span class="mat-name">
+                        采购需求 <b class="code-mono" :class="{ 'lk-text': $can('purchase.request') }" @click="openPurchaseRequest(d)">{{ d.request_no }}</b> · {{ d.item_name }}
+                      </span>
+                      <span class="mat-qty-inline code-mono">数量 {{ qty(d.qty) }}</span>
+                    </div>
                     <span class="mat-qty code-mono">{{ d.request_status_label }} · {{ d.created_by_name || '' }}</span>
                   </div>
                 </div>
@@ -561,9 +582,11 @@
                 </div>
                 <div class="related-doc-list">
                   <div v-for="r in wo.material_returns" :key="'mrt-' + r.id" class="related-doc-row">
-                    <span class="mat-name text-truncate" :title="r.summary + (r.reason ? '；' + r.reason : '')">
-                      退料 <b class="code-mono">{{ r.return_no }}</b> · {{ r.operation_name }} · {{ r.return_type_label }} · {{ r.summary }}
-                    </span>
+                    <div class="related-doc-main" :title="r.summary + (r.reason ? '；' + r.reason : '')">
+                      <span class="mat-name">
+                        退料 <b class="code-mono">{{ r.return_no }}</b> · {{ r.operation_name }} · {{ r.return_type_label }} · {{ r.summary }}
+                      </span>
+                    </div>
                     <div class="related-doc-right">
                       <span class="mat-qty code-mono">{{ r.status_label }} · {{ r.requested_by_name || '' }}{{ r.review_remark ? '（' + r.review_remark + '）' : '' }}</span>
                       <el-button v-if="r.status === 'pending' && canCancelReturn(r)" type="text" size="mini" :disabled="saving" @click="cancelReturn(r)">撤回</el-button>
@@ -577,7 +600,7 @@
           <shortage-purchase-dialog :visible.sync="shortageDialog" :work-order-id="wo.id" :work-order-no="wo.work_order_no" @done="load" />
         </div>
 
-        <!-- 右侧侧边栏：异常告警、业务单据、工艺图纸、材料成本与流转日志（填满右侧高度，消除空白） -->
+        <!-- 右侧侧边栏：异常告警、业务单据、工艺图纸、材料成本与流转日志 -->
         <aside class="side-column">
           <!-- 卡片 4：异常告警与关注事项 -->
           <section class="detail-card">
@@ -967,7 +990,6 @@ import { HERO_PILL, qty, money, shortDate, bomLabel, errorText, isCancel, search
 import WorkOrderCuttingPanel from './WorkOrderCuttingPanel.vue'
 import MaterialReturnDialog from './MaterialReturnDialog.vue'
 import ShortagePurchaseDialog from '../purchase/ShortagePurchaseDialog.vue'
-import unitOptionsMixin from './unit-options-mixin'
 
 const STEPS = [
   { value: 'planned', label: '计划制令' },
@@ -980,7 +1002,6 @@ const STEPS = [
 export default {
   name: 'WorkOrderDetail',
   components: { WorkOrderCuttingPanel, MaterialReturnDialog, ShortagePurchaseDialog },
-  mixins: [unitOptionsMixin],
   data: () => ({
     loading: false,
     saving: false,
@@ -1090,9 +1111,6 @@ export default {
     }
   },
   watch: {
-    'wo.kitting'(kitting) {
-      this.ensureUnitOptions((kitting || []).flatMap(k => (k.materials || []).map(m => m.component_item_id)))
-    },
     '$route.params.id'() {
       this.load()
     }
@@ -1988,7 +2006,6 @@ export default {
 .sn-head-line {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
   flex-wrap: wrap;
 }
@@ -2200,73 +2217,102 @@ export default {
   color: #0f172a;
 }
 
-.materials-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+/* 工序齐套紧凑表格：让物料名称与数量紧邻对齐，告别左右大跨度空白 */
+.materials-table-scroll {
   max-height: 260px;
   overflow-y: auto;
-  padding-right: 2px;
-}
-
-.materials-list.materials-grid-2col {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  align-content: start;
-}
-
-.material-item {
-  padding: 6px 8px;
-  border-radius: 4px;
-  background: #f8fafc;
-  border: 1px solid #f1f5f9;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.kitting-shortage .material-item {
+  border: 1px solid #eef2f6;
+  border-radius: 5px;
   background: #ffffff;
-  border-color: #fee2e2;
 }
 
-.material-main-line {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
+.kitting-mat-table {
+  width: 100%;
+  border-collapse: collapse;
   font-size: 12px;
+  table-layout: fixed;
 }
 
-.mat-name {
+.kitting-mat-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f8fafc;
+  color: #64748b;
+  font-weight: 600;
+  font-size: 11px;
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.kitting-mat-table tbody td {
+  padding: 6px 10px;
+  border-bottom: 1px solid #f1f5f9;
+  vertical-align: middle;
   color: #334155;
-  font-weight: 500;
-  flex: 1;
-  min-width: 0;
+}
+
+.kitting-mat-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.kitting-mat-table tbody tr:hover {
+  background: #f8fafc;
+}
+
+.kitting-mat-table tbody tr.row-shortage {
+  background: #fff5f5;
+}
+
+.kitting-mat-table .col-mat-name {
+  width: 36%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.mat-qty {
-  flex-shrink: 0;
-  color: #475569;
+.kitting-mat-table .col-mat-qty {
+  width: 24%;
+  white-space: nowrap;
+}
+
+.kitting-mat-table .col-mat-state {
+  width: 26%;
+}
+
+.kitting-mat-table .col-mat-act {
+  width: 14%;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.mat-name-text {
+  font-weight: 500;
+  color: #1e293b;
+}
+
+.mat-qty-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.mat-qty-badge.qty-ok {
+  background: #f0fdf4;
+  color: #00763f;
+  font-weight: 600;
+}
+
+.mat-qty-badge.qty-short {
+  background: #fef2f2;
+  color: #dc2626;
+  font-weight: 600;
 }
 
 .mat-auxiliary {
   font-size: 11px;
-  flex-shrink: 0;
-}
-
-.material-sub-line {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  padding-top: 2px;
-  border-top: 1px dashed #e2e8f0;
 }
 
 .material-sub-badges {
@@ -2274,7 +2320,6 @@ export default {
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
-  min-width: 0;
 }
 
 .mat-sub-tag {
@@ -2292,7 +2337,6 @@ export default {
 .btn-make-semi {
   padding: 0 !important;
   font-size: 11px !important;
-  flex-shrink: 0;
 }
 
 /* 免领料工序紧凑汇总条 */
@@ -2383,8 +2427,37 @@ export default {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   font-size: 12px;
+}
+
+.related-doc-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  flex-wrap: wrap;
+}
+
+.mat-name {
+  color: #334155;
+  font-weight: 500;
+}
+
+.mat-qty-inline {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  padding: 0 6px;
+  color: #00763f;
+  font-weight: 600;
+  font-size: 11px;
+}
+
+.mat-qty {
+  flex-shrink: 0;
+  color: #475569;
 }
 
 .related-doc-right {
@@ -2463,7 +2536,7 @@ export default {
   color: #64748b;
 }
 
-/* 右侧栏样式 */
+/* 右侧栏样式：标签定宽、数值紧邻左对齐，消除名称与数值之间的大跨度空白 */
 .spec-kv-list {
   display: flex;
   flex-direction: column;
@@ -2471,9 +2544,9 @@ export default {
 
 .spec-kv-row {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: flex-start;
-  padding: 8px 0;
+  padding: 7px 0;
   border-bottom: 1px solid #f1f5f9;
   gap: 12px;
   font-size: 13px;
@@ -2485,12 +2558,15 @@ export default {
 
 .kv-label {
   color: #64748b;
+  width: 96px;
   flex-shrink: 0;
 }
 
 .kv-val {
   color: #0f172a;
-  text-align: right;
+  text-align: left;
+  flex: 1;
+  min-width: 0;
   word-break: break-all;
 }
 
@@ -2512,7 +2588,7 @@ export default {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-left: 8px;
+  margin-right: 8px;
 }
 
 .normal-status-box {
@@ -2734,7 +2810,6 @@ export default {
   }
   .master-meta-grid,
   .kitting-grid-wrap,
-  .materials-list.materials-grid-2col,
   .kitting-related-docs,
   .adj-form {
     grid-template-columns: 1fr;

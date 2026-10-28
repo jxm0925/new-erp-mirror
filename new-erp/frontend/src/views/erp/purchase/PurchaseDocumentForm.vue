@@ -1253,10 +1253,16 @@ export default {
     },
     async loadExisting() {
       const revision = this.documentRevision
+      const saving = this.saving
       const map = { request: 'requests', plan: 'plans', order: 'orders', receipt: 'receipts' }
       const res = await getPurchase(map[this.type], this.$route.params.id)
       if (revision !== this.documentRevision) return
       const data = res.data
+      // 新建提交会先跳转编辑地址，其并行详情请求可能读到本次提交后的状态。
+      if (this.type === 'order' && data.purchase_status !== 'draft' && !saving) {
+        this.$message.error('只有草稿采购订单可以编辑或提交审核')
+        return this.$router.replace('/purchase/orders')
+      }
       if (data.supplier) this.suppliers = [data.supplier]
       this.attachmentDraftToken = ''
       ;(data.items || []).forEach(line => this.rememberItem(line.item))
@@ -1936,6 +1942,7 @@ export default {
     newDraftToken() { return window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : `purchase-${Date.now()}-${Math.random().toString(16).slice(2)}` },
     async save(submit) {
       if (this.scopeChanging || this.saving) return
+      if (this.type === 'order' && this.$route.params.id && this.form.purchase_status !== 'draft') return this.$message.error('只有草稿采购订单可以编辑或提交审核')
       if (this.scopeIssue) return this.$message.error(this.scopeIssue)
       if (this.form.items.some(line => line.warehouse_id && !this.scopedWarehouses.some(row => Number(row.id) === Number(line.warehouse_id)))) return this.$message.error('目标仓库与单据管理类型不一致或不可用，请重新选择')
       if (!this.form.items.length) return this.$message.error('请至少添加一行采购物料')

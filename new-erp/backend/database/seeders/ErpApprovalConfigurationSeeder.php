@@ -278,8 +278,8 @@ class ErpApprovalConfigurationSeeder extends Seeder
             'priority' => 100,
             'match_strategy' => 'FIRST_MATCH',
             'start_conditions' => [],
-            // 完成动作需要业务负责人确认，不能从旧版回调字符串猜测当前执行语义。
-            'completion_actions' => [],
+            // 销售变更按每个审核节点记录决定，全部业务要求满足后才激活候选版本。
+            'completion_actions' => [['event' => 'node_decision', 'action_key' => 'sales_order_change.decide', 'config' => []]],
             'processing_mode' => 'sequential',
             'source_table' => 'erp_sales_order_change_candidates',
             'applicable_scope' => [

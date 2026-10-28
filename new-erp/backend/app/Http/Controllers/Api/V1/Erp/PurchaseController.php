@@ -567,12 +567,12 @@ class PurchaseController extends Controller
     {
         $this->erpAuthorize($request, 'purchase.order.edit');
         $order = PurchaseOrder::findOrFail($id);
-        abort_if(!($order->purchase_status === 'draft' || $order->audit_status === 'rejected'), 422, '只有草稿或驳回的采购订单可以编辑');
+        abort_if($order->purchase_status !== 'draft', 422, '只有草稿采购订单可以编辑');
         $payload = $this->validateOrder($request);
         $this->assertSupplierValid((int) $payload['supplier_id']);
         return DB::transaction(function () use ($order, $payload) {
             $order = PurchaseOrder::lockForUpdate()->findOrFail($order->id);
-            abort_if(!($order->purchase_status === 'draft' || $order->audit_status === 'rejected'), 422, '只有草稿或驳回的采购订单可以编辑');
+            abort_if($order->purchase_status !== 'draft', 422, '只有草稿采购订单可以编辑');
             $priorItems = $order->items()->lockForUpdate()->get()->keyBy('id');
             app(\App\Services\Erp\PurchasePlanningConversionService::class)->assertOrderEdit($order, $payload, $priorItems);
             $order->update([
@@ -689,7 +689,7 @@ class PurchaseController extends Controller
                 'exchange' => PurchaseExchangeOrder::findOrFail($payload['document_id']),
             };
             $editable = $payload['document_type'] === 'order'
-                ? ($document->purchase_status === 'draft' || $document->audit_status === 'rejected')
+                ? $document->purchase_status === 'draft'
                 : ($payload['document_type'] === 'receipt' ? $document->confirm_status === 'draft' : $document->exchange_status === 'processing');
             abort_unless($editable, 422, '只有可编辑状态的采购单据允许新增附件');
         }
@@ -736,7 +736,7 @@ class PurchaseController extends Controller
                 'exchange' => PurchaseExchangeOrder::findOrFail($attachment->document_id),
             };
             $editable = $attachment->document_type === 'order'
-                ? ($document->purchase_status === 'draft' || $document->audit_status === 'rejected')
+                ? $document->purchase_status === 'draft'
                 : ($attachment->document_type === 'receipt' ? $document->confirm_status === 'draft' : $document->exchange_status === 'processing');
             abort_unless($editable, 422, '只有可编辑状态的采购单据允许删除附件');
         }

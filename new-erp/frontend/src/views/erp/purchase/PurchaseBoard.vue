@@ -163,23 +163,23 @@
             <span class="bar-accent"></span>
             <h4>{{ mode==='requests' ? '需求物料明细' : '明细信息' }} (共 {{ detailLines(selected).length }} 行)</h4>
           </div>
-          <el-table :data="detailLines(selected)" size="mini" border stripe class="detail-dialog-table">
-            <el-table-column type="index" label="#" width="40" align="center" />
-            <el-table-column prop="item.item_code" label="物料编码" width="115">
+          <el-table :data="detailLines(selected)" size="mini" border stripe fit class="detail-dialog-table">
+            <el-table-column type="index" label="#" width="36" align="center" />
+            <el-table-column prop="item.item_code" label="物料编码" min-width="96" show-overflow-tooltip>
               <template slot-scope="{row}">
                 <span class="code-badge">{{ row.item ? row.item.item_code : (row.item_code || '--') }}</span>
               </template>
             </el-table-column>
-            <el-table-column prop="item.item_name" label="物料名称" min-width="130" show-overflow-tooltip>
+            <el-table-column prop="item.item_name" label="物料名称" min-width="105" show-overflow-tooltip>
               <template slot-scope="{row}">{{ row.item ? row.item.item_name : (row.item_name || '--') }}</template>
             </el-table-column>
-            <el-table-column v-if="['requests', 'plans'].includes(mode)" label="规格型号" min-width="130" show-overflow-tooltip>
+            <el-table-column v-if="['requests', 'plans', 'orders'].includes(mode)" label="规格型号" min-width="85" show-overflow-tooltip>
               <template slot-scope="{row}">{{ lineSpec(row) }}</template>
             </el-table-column>
-            <el-table-column label="采购数量" width="95" align="right">
+            <el-table-column label="采购数量" min-width="72" align="left">
               <template slot-scope="{row}"><strong class="highlight-qty">{{ row.purchase_conversion_snapshot?.purchase_qty ?? lineQty(row) }}</strong> {{ row.purchase_conversion_snapshot?.purchase_unit_name_snapshot || lineUnit(row) }}</template>
             </el-table-column>
-            <el-table-column v-if="['requests', 'plans'].includes(mode)" label="折合库存" width="105" align="right">
+            <el-table-column v-if="['requests', 'plans', 'orders'].includes(mode)" label="折合库存" min-width="76" align="left">
               <template slot-scope="{row}">
                 <span>{{ lineStockQty(row) }} {{ lineStockUnit(row) }}</span>
                 <el-tooltip v-if="isLineConverted(row)" :content="lineConversionTip(row)" placement="top">
@@ -229,31 +229,24 @@
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="remark" label="行备注" min-width="90" show-overflow-tooltip />
+            <el-table-column v-if="mode==='orders'" label="采购单价" min-width="84" align="left" show-overflow-tooltip>
+              <template slot-scope="{row}">¥{{ money(row.purchase_unit_price || row.unit_price) }}/{{ row.purchase_unit_name_snapshot || lineUnit(row) }}</template>
+            </el-table-column>
+            <el-table-column v-if="mode==='orders'" label="税率" width="54" align="center">
+              <template slot-scope="{row}">{{ number(row.tax_rate) }}%</template>
+            </el-table-column>
+            <el-table-column v-if="mode==='orders'" label="行金额" min-width="76" align="left" show-overflow-tooltip>
+              <template slot-scope="{row}"><strong class="highlight-qty">¥{{ money(row.amount) }}</strong></template>
+            </el-table-column>
+            <el-table-column v-if="mode==='orders'" label="已到 / 未到" min-width="74" align="center">
+              <template slot-scope="{row}">{{ number(row.received_qty) }} / <span :class="{ 'red-money': Number(row.remaining_qty) > 0 }">{{ number(row.remaining_qty) }}</span></template>
+            </el-table-column>
+            <el-table-column v-if="mode==='orders'" label="预计到货" width="90" align="center">
+              <template slot-scope="{row}">{{ row.expected_arrival_date || selected.expected_arrival_date || '--' }}</template>
+            </el-table-column>
+            <el-table-column prop="remark" label="行备注" min-width="68" show-overflow-tooltip />
           </el-table>
 
-          <!-- 订单模式下的明细扩展快照 -->
-          <div v-if="mode==='orders'" class="order-lines-snapshot-list">
-            <div v-for="line in detailLines(selected)" :key="line.id || line.item_id" class="detail-line-card">
-              <div class="line-card-header">
-                <b>{{ line.item ? line.item.item_code : '--' }} · {{ line.item ? line.item.item_name : '--' }}</b>
-                <span class="line-card-qty">{{ lineQty(line) }} {{ lineUnit(line) }}</span>
-              </div>
-              <div class="unit-snapshot-grid">
-                <label>采购数量<strong>{{ number(line.purchase_qty || line.order_qty) }}</strong></label>
-                <label>采购单位<strong>{{ line.purchase_unit_name_snapshot || lineUnit(line) }}</strong></label>
-                <label>换算因子<strong>{{ number(line.conversion_factor_snapshot) }}</strong></label>
-                <label>计划基本数量<strong>{{ number(line.planned_base_qty) }} {{ line.base_unit_name_snapshot || '-' }}</strong></label>
-                <label v-if="line.purchase_conversion_snapshot">原需求 / 多采购<strong>{{ number(line.purchase_conversion_snapshot.required_base_qty) }} / {{ number(line.purchase_conversion_snapshot.excess_base_qty) }} {{ line.base_unit_name_snapshot }}</strong></label>
-                <label>采购单价<strong>¥{{ money(line.purchase_unit_price || line.unit_price) }}/{{ line.purchase_unit_name_snapshot || lineUnit(line) }}</strong></label>
-                <label>基本单价<strong>¥{{ money(line.base_unit_price) }}/{{ line.base_unit_name_snapshot || '-' }}</strong></label>
-                <label>税率<strong>{{ number(line.tax_rate) }}%</strong></label>
-                <label>行金额<strong>¥{{ money(line.amount) }}</strong></label>
-                <label>预计到货<strong>{{ line.expected_arrival_date || selected.expected_arrival_date || '-' }}</strong></label>
-                <label>已到/未到<strong>{{ number(line.received_qty) }} / {{ number(line.remaining_qty) }}</strong></label>
-              </div>
-            </div>
-          </div>
           <!-- 到货模式下的明细扩展 -->
           <div v-if="mode==='receipts'" class="receipt-lines-extra-list">
             <div v-for="line in detailLines(selected)" :key="line.id || line.item_id" class="receipt-line-summary">
@@ -1072,8 +1065,8 @@ export default {
       }
       if (this.mode === 'orders') {
         if (['closed', 'cancelled', 'received'].includes(row.purchase_status) || row.receipt_status === 'received') return []
-        if (row.purchase_status === 'draft' || row.audit_status === 'rejected') return [{ command: 'submitOrder', label: '提交审核' }, { command: 'cancelOrder', label: '取消订单' }]
-        if (row.purchase_status === 'submitted' && row.audit_status === 'pending') return [{ command: 'viewApproval', label: '查看审核进度' }, { command: 'cancelOrder', label: '取消订单' }]
+        if (row.purchase_status === 'draft') return [{ command: 'submitOrder', label: '提交审核' }, { command: 'cancelOrder', label: '取消订单' }]
+        if (row.purchase_status === 'submitted' && row.audit_status === 'pending') return [{ command: 'viewApproval', label: '查看审核进度' }]
         if (row.audit_status === 'approved' && ['not_received', 'partial'].includes(row.receipt_status) && !['closed', 'cancelled'].includes(row.purchase_status)) {
           const actions = []
           if (row.open_receipt_id) actions.push({ command: 'goOpenReceipt', label: '查看待确认到货单' })
@@ -1126,7 +1119,7 @@ export default {
       if (editPermission && !this.$can(editPermission)) return false
       if (this.mode === 'requests') return row.can_edit === true
       if (this.mode === 'plans') return row.plan_status === 'draft' || row.audit_status === 'rejected'
-      if (this.mode === 'orders') return row.purchase_status === 'draft' || row.audit_status === 'rejected'
+      if (this.mode === 'orders') return row.purchase_status === 'draft'
       if (this.mode === 'receipts') return row.confirm_status === 'draft'
       return false
     },
@@ -1786,55 +1779,14 @@ export default {
   width: 100%;
 }
 
-.order-lines-snapshot-list {
-  margin-top: 10px;
-  display: grid;
-  gap: 8px;
+::v-deep .detail-dialog-table th > .cell,
+::v-deep .detail-dialog-table td > .cell {
+  padding-left: 8px;
+  padding-right: 8px;
 }
 
-.detail-line-card {
-  padding: 10px 12px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  border-radius: 6px;
-}
-
-.line-card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.line-card-header b {
-  color: #1e293b;
-  font-size: 13px;
-}
-
-.line-card-qty {
-  color: #008b4b;
-  font-weight: 600;
-  font-size: 13px;
-}
-
-.unit-snapshot-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 8px;
-  padding-top: 8px;
-  border-top: 1px dashed #e2e8f0;
-}
-
-.unit-snapshot-grid label {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 11px;
-  color: #64748b;
-}
-
-.unit-snapshot-grid strong {
-  color: #0f172a;
+::v-deep .detail-dialog-table .el-table__body-wrapper {
+  overflow-x: hidden;
 }
 
 .receipt-lines-extra-list {

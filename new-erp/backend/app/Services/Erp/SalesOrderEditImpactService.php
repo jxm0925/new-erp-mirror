@@ -22,6 +22,14 @@ use Illuminate\Validation\ValidationException;
  */
 class SalesOrderEditImpactService
 {
+    public const APPROVAL_WRITABLE_FIELDS = [
+        'remark' => ['label' => '订单备注', 'type' => 'text'],
+        'origin_order_no' => ['label' => '原始单号', 'type' => 'text'],
+        'external_order_no' => ['label' => '外部订单号', 'type' => 'text'],
+        'platform_buyer_id' => ['label' => '平台买家账号', 'type' => 'text'],
+        'is_urgent' => ['label' => '是否加急', 'type' => 'boolean'],
+    ];
+
     private const HEADER_FIELDS = [
         'origin_order_no', 'trade_type', 'order_source', 'platform', 'platform2',
         'customer_id', 'customer_contact_id', 'customer_address_id', 'customer_kind',
@@ -81,6 +89,27 @@ class SalesOrderEditImpactService
     {
         $this->assertChangeable($order);
         return $this->analyse($order, $this->candidatePayload($payload, $order));
+    }
+
+    public function updateApprovalFields(int $orderId, array $updates, string $operator, int $taskId): void
+    {
+        DB::transaction(function () use ($orderId, $updates, $operator, $taskId) {
+            if (!$updates || array_diff(array_keys($updates), array_keys(self::APPROVAL_WRITABLE_FIELDS))) {
+                throw ValidationException::withMessages(['completion_action' => '订单字段不允许由审批完成动作直接更新。']);
+            }
+            $order = $this->lockedOrder($orderId);
+            $this->assertChangeable($order);
+            // 复用正式订单变更与版本记录；完整保留明细，避免局部字段更新被解释为删除订单行。
+            $candidate = ['header' => $updates, 'lines' => $order->lines->toArray(), 'deleted_line_ids' => []];
+            $impact = $this->analyse($order, $candidate);
+            if (!$impact['change_count']) return;
+            if (collect($impact['diffs'])->contains(fn ($diff) => array_diff($diff['impact_types'], ['INFO']))) {
+                throw ValidationException::withMessages(['completion_action' => '该字段变化涉及业务审核，不能作为附加字段动作执行。']);
+            }
+            if (array_key_exists('remark', $updates)) $candidate['header']['order_remark'] = $updates['remark'];
+            if (array_key_exists('is_urgent', $updates)) $candidate['header']['quickly'] = $updates['is_urgent'];
+            $this->applyOfficial($order, $candidate, $impact, $operator, null, '审批任务 '.$taskId.' 的字段更新');
+        });
     }
 
     /**
@@ -216,7 +245,7 @@ class SalesOrderEditImpactService
         foreach (self::HEADER_FIELDS as $field) {
             if (in_array($field, self::HIDDEN_HEADER_DIFF_FIELDS, true)) continue;
             $before = $this->headerValue($field, $order->getAttribute($field));
-            $after = $this->headerValue($field, $candidate['header'][$field] ?? $order->getAttribute($field));
+            $after = $this->headerValue($field, array_key_exists($field, $candidate['header']) ? $candidate['header'][$field] : $order->getAttribute($field));
             if ($before === $after) continue;
             $impacts = $this->headerImpacts($field, $before, $after, $facts);
             $diffs[] = $this->diff('header', null, $field, $before, $after, $impacts);

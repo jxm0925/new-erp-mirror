@@ -60,6 +60,8 @@ class ApprovalBusinessObjectRegistry
             'source_type' => $object->source_type, 'table' => $object->source_table, 'id_field' => $object->primary_key,
             'route_pattern' => $object->route_pattern, 'display_fields' => $object->display_fields ?: [], 'search_fields' => $object->search_fields ?: [],
             'number_field' => $numberField, 'status_fields' => $statusFields, 'triggers' => $events,
+            'field_update_targets' => collect(app(ApprovalActions\UpdateRegisteredFieldsAction::class)->targets($object))
+                ->map(fn ($target) => \Illuminate\Support\Arr::only($target, ['value', 'label', 'fields']))->all(),
             'fields' => $exposedFields->map(fn ($field) => [
                 'value' => $field->field_code, 'label' => $field->field_name, 'type' => $field->field_type,
                 'source_path' => $field->source_path, 'options' => $field->options ?: [],

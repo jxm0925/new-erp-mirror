@@ -8,6 +8,7 @@ use App\Models\Erp\ApprovalActionExecution;
 use App\Models\Erp\ApprovalTask;
 use App\Models\Erp\ApprovalTaskNode;
 use App\Services\Erp\Contracts\ApprovalBusinessActionHandler;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class BusinessActionRegistry
@@ -27,26 +28,29 @@ class BusinessActionRegistry
             ])->all();
     }
 
-    public function execute(string $actionCode, ApprovalTask $task, ?ApprovalTaskNode $node, array $config, string $operator, ?string $decision = null, ?string $comment = null): array
+    public function execute(string $actionCode, ApprovalTask $task, ?ApprovalTaskNode $node, array $config, string $operator, ?string $decision = null, ?string $comment = null, ?string $event = null): array
     {
-        $action = ApprovalBusinessAction::query()->where('action_code', $actionCode)->where('enabled', true)->with('businessObject')->first();
-        if (!$action) throw ValidationException::withMessages(['completion_action' => '业务动作未注册或已停用。']);
-        if ($action->businessObject && $action->businessObject->object_code !== $task->business_object_code) {
-            throw ValidationException::withMessages(['completion_action' => '业务动作不适用于当前业务对象。']);
-        }
-        $handler = app($action->handler_class);
-        if (!$handler instanceof ApprovalBusinessActionHandler) throw ValidationException::withMessages(['completion_action' => '业务动作处理器类型无效。']);
-        $attempt = ApprovalActionExecution::query()->where('approval_task_id', $task->id)
-            ->where('action_code', $actionCode)->count() + 1;
-        $execution = ApprovalActionExecution::create([
-            'approval_task_id' => $task->id, 'approval_task_node_id' => $node?->id,
-            'action_code' => $actionCode, 'attempt_no' => $attempt, 'execution_status' => 'RUNNING',
-            'config_snapshot' => $config, 'operator_name' => $operator, 'started_at' => now(),
-        ]);
         try {
-            $result = $handler->execute($action, $task, $node, $config, $operator, $decision, $comment);
-            $execution->update(['execution_status' => 'SUCCEEDED', 'result_snapshot' => $result, 'finished_at' => now()]);
-            return $result;
+            $action = ApprovalBusinessAction::query()->where('action_code', $actionCode)->where('enabled', true)->with('businessObject')->first();
+            if (!$action) throw ValidationException::withMessages(['completion_action' => '业务动作未注册或已停用。']);
+            if ($event !== null && $action->result_event !== $event) throw ValidationException::withMessages(['completion_action' => '处理动作与审核结果不匹配。']);
+            if ($action->businessObject && $action->businessObject->object_code !== $task->business_object_code) {
+                throw ValidationException::withMessages(['completion_action' => '业务动作不适用于当前业务对象。']);
+            }
+            $handler = app($action->handler_class);
+            if (!$handler instanceof ApprovalBusinessActionHandler) throw ValidationException::withMessages(['completion_action' => '业务动作处理器类型无效。']);
+            $attempt = ApprovalActionExecution::query()->where('approval_task_id', $task->id)
+                ->where('action_code', $actionCode)->count() + 1;
+            $execution = ApprovalActionExecution::create([
+                'approval_task_id' => $task->id, 'approval_task_node_id' => $node?->id,
+                'action_code' => $actionCode, 'attempt_no' => $attempt, 'execution_status' => 'RUNNING',
+                'config_snapshot' => $config, 'operator_name' => $operator, 'started_at' => now(),
+            ]);
+            return DB::transaction(function () use ($handler, $action, $task, $node, $config, $operator, $decision, $comment, $execution) {
+                $result = $handler->execute($action, $task, $node, $config, $operator, $decision, $comment);
+                $execution->update(['execution_status' => 'SUCCEEDED', 'result_snapshot' => $result, 'finished_at' => now()]);
+                return $result;
+            });
         } catch (\Throwable $exception) {
             throw new ApprovalActionExecutionException($actionCode, $exception->getMessage(), $exception);
         }

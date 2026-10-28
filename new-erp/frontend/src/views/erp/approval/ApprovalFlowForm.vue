@@ -244,6 +244,7 @@
             <h3>处理人来源</h3>
             <el-radio-group v-model="approverRuleMode" class="approver-rule-tabs" size="small" :disabled="readonly">
               <el-radio-button label="role">角色</el-radio-button>
+              <el-radio-button label="business_staff">业务员档案</el-radio-button>
               <el-radio-button label="department_principal">部门负责人</el-radio-button>
               <el-radio-button label="specified_users">指定人</el-radio-button>
               <el-radio-button label="expression">表达式</el-radio-button>
@@ -262,6 +263,11 @@
                   :label="item.label"
                   :value="item.value" /></el-select
             ></el-form-item>
+            <el-form-item v-else-if="selected.approver_rule.type === 'business_staff'" label="业务员类型">
+              <el-select v-model="selected.approver_rule.value" multiple :disabled="readonly" @change="syncApproverLabel">
+                <el-option v-for="item in options.business_staff_types" :key="item.value" :label="item.label" :value="item.value" />
+              </el-select>
+            </el-form-item>
             <el-form-item
               v-else-if="selected.approver_rule.type === 'department_principal'"
               label="部门负责人"
@@ -313,7 +319,7 @@
               <el-form-item label="会签策略"
                 ><el-select
                   v-model="selected.completion_strategy"
-                  :disabled="readonly"
+                  :disabled="readonly || selected.approver_rule.type === 'business_staff'"
                   ><el-option
                     label="任一指定人员通过"
                     value="ANY" /><el-option
@@ -380,7 +386,7 @@
     <div class="bottom-grid">
       <section class="card actions">
         <h2><i class="el-icon-finished" /> 业务处理动作</h2>
-        <p>只可选择已注册的安全业务动作，不支持填写URL或Controller。</p>
+        <p>同一审核结果的动作按下列顺序执行；任一动作失败时整组回滚。</p>
         <el-table :data="definition.completion_actions" size="mini"
           ><el-table-column label="触发场景" width="95"
             ><template slot-scope="{ row }">{{
@@ -388,17 +394,19 @@
             }}</template></el-table-column
           ><el-table-column label="动作名称"
             ><template slot-scope="{ row }">{{
-              actionText(row.action_key)
+              row.name || actionText(row.action_key)
             }}</template></el-table-column
-          ><el-table-column label="操作" width="62"
-            ><template slot-scope="{ row }"
+          ><el-table-column label="操作" width="185"
+            ><template slot-scope="{ row, $index }"
               ><el-button
                 type="text"
                 size="mini"
-                :disabled="readonly"
                 @click="configureAction(row)"
-                >配置</el-button
-              ></template
+                >{{ readonly ? '查看' : '配置' }}</el-button>
+              <el-button v-if="!readonly" type="text" size="mini" :disabled="$index === 0" @click="moveCompletionAction($index, -1)">上移</el-button>
+              <el-button v-if="!readonly" type="text" size="mini" :disabled="$index === definition.completion_actions.length - 1" @click="moveCompletionAction($index, 1)">下移</el-button>
+              <el-button v-if="!readonly" type="text" size="mini" class="danger" @click="definition.completion_actions.splice($index, 1)">删除</el-button>
+              </template
             ></el-table-column
           ></el-table
         ><el-button
@@ -449,12 +457,16 @@
       title="配置业务处理动作"
       :visible.sync="actionDialog.visible"
       width="620px"
+      custom-class="approval-action-dialog"
       :close-on-click-modal="false"
-      ><el-form label-position="top" size="small"
+      ><el-form label-position="top" size="small" :disabled="readonly"
         ><el-form-item label="触发场景"
-          ><el-input
-            :value="eventText(actionDialog.row.event)"
-            disabled /></el-form-item
+          ><el-select v-model="actionDialog.row.event" style="width: 100%" @change="actionEventChanged">
+            <el-option v-for="event in completionEvents" :key="event" :label="eventText(event)" :value="event" />
+          </el-select></el-form-item
+        ><el-form-item label="动作名称">
+          <el-input v-model="actionDialog.row.name" maxlength="80" placeholder="可选，便于区分多条处理动作" />
+        </el-form-item
         ><el-form-item label="处理动作"
           ><el-select
             v-model="actionDialog.row.action_key"
@@ -467,6 +479,11 @@
               :value="item.key" /></el-select
         ></el-form-item>
         <template v-if="currentActionNeedsUpdates">
+          <el-form-item label="更新对象">
+            <el-select v-model="actionDialog.row.config.target" style="width: 100%" @change="actionTargetChanged">
+              <el-option v-for="target in actionUpdateTargets" :key="target.value" :label="target.label" :value="target.value" />
+            </el-select>
+          </el-form-item>
           <div class="action-rule-head">
             <b>业务字段更新规则</b>
             <el-button
@@ -485,13 +502,13 @@
             <el-select
               v-model="update.field"
               filterable
-              placeholder="选择要更新的数据库字段"
+              placeholder="选择要更新的业务字段"
               @change="actionUpdateFieldChanged(update)"
             >
               <el-option
                 v-for="field in actionUpdateFields"
                 :key="field.value"
-                :label="field.label + '（' + field.value + '）'"
+                :label="field.label"
                 :value="field.value"
               />
             </el-select>
@@ -502,7 +519,6 @@
               "
               v-model="update.value"
               filterable
-              allow-create
               placeholder="选择目标值"
             >
               <el-option
@@ -512,33 +528,40 @@
                 :value="option.value"
               />
             </el-select>
+            <el-select v-else-if="actionUpdateMeta(update).type === 'boolean'" v-model="update.value" placeholder="选择目标值">
+              <el-option label="是" :value="true" /><el-option label="否" :value="false" />
+            </el-select>
+            <el-date-picker v-else-if="['date', 'datetime'].includes(actionUpdateMeta(update).type)" v-model="update.value"
+              :type="actionUpdateMeta(update).type" :value-format="actionUpdateMeta(update).type === 'date' ? 'yyyy-MM-dd' : 'yyyy-MM-dd HH:mm:ss'" placeholder="选择目标日期" style="width: 100%" />
             <el-input
               v-else
               v-model="update.value"
+              :type="actionUpdateMeta(update).type === 'json' ? 'textarea' : 'text'"
               placeholder="填写审核完成后写入的目标值"
             />
             <el-button
               type="text"
               class="danger"
               icon="el-icon-delete"
+              :aria-label="'删除第' + (index + 1) + '项字段'"
               @click="actionUpdates.splice(index, 1)"
             />
           </div>
           <el-alert
-            title="字段名从当前业务单据数据库字段中选择；流程发布后由通用审批引擎执行，不需要再为此流程编写接口。"
-            type="success"
+            :title="actionUpdateFields.length ? '只更新所选字段；金额、库存和业务状态由对应业务动作处理。' : '当前对象尚未开放可写字段，请选择其他更新对象。'"
+            type="info"
             :closable="false"
           />
         </template>
         <el-alert
-          v-else
-          title="该动作只记录审核结果，不修改业务单据字段。"
+          v-else-if="currentAction"
+          title="该动作按既定业务规则处理单据，无需配置字段更新。"
           type="info"
           :closable="false" /></el-form
       ><span slot="footer"
         ><el-button size="small" @click="actionDialog.visible = false"
           >取消</el-button
-        ><el-button size="small" type="success" @click="confirmAction"
+        ><el-button v-if="!readonly" size="small" type="success" @click="confirmAction"
           >确定</el-button
         ></span
       ></el-dialog
@@ -740,6 +763,7 @@ export default {
       roles: [],
       users: [],
       approver_sources: [],
+      business_staff_types: [],
       operators: [],
       trigger_modes: [],
       execution_modes: [],
@@ -759,6 +783,7 @@ export default {
     selectedIndex: 0,
     actionDialog: {
       visible: false,
+      index: -1,
       row: { event: "approved", action_key: "", config: {} },
     },
     registryDialog: {
@@ -800,6 +825,7 @@ export default {
       get() {
         const type = this.selected && this.selected.approver_rule ? this.selected.approver_rule.type : "role";
         if (type === "role") return "role";
+        if (type === "business_staff") return "business_staff";
         if (type === "department_principal") return "department_principal";
         if (["user", "specified_users"].includes(type)) return "specified_users";
         return "expression";
@@ -844,6 +870,13 @@ export default {
     currentActionNeedsUpdates() {
       return Boolean(this.currentAction && this.currentAction.requires_updates);
     },
+    completionEvents() {
+      return this.options.completion_actions.some((action) => action.event === "node_decision" && action.object_code === this.definition.business_object_code)
+        ? ["approved", "rejected", "node_decision"] : ["approved", "rejected"];
+    },
+    requiredCompletionEvents() {
+      return this.completionEvents.includes("node_decision") ? ["node_decision"] : ["approved", "rejected"];
+    },
     actionUpdates() {
       const row = this.actionDialog.row;
       if (!row.config) this.$set(row, "config", {});
@@ -851,9 +884,11 @@ export default {
       return row.config.updates;
     },
     actionUpdateFields() {
-      return ((this.currentObject && this.currentObject.fields) || []).filter(
-        (field) => field.approval_writable === true
-      );
+      const target = this.actionUpdateTargets.find((row) => row.value === (this.actionDialog.row.config.target || "business"));
+      return target ? target.fields : [];
+    },
+    actionUpdateTargets() {
+      return (this.currentObject && this.currentObject.field_update_targets) || [];
     },
     nodeActionOptions() {
       return (this.options.completion_actions || []).filter((item) => item.event === "node_action" && (!item.object_code || (this.currentObject && item.object_code === this.currentObject.code)));
@@ -889,7 +924,8 @@ export default {
         },
         {
           text: "业务处理动作",
-          ok: this.definition.completion_actions.every((row) => row.action_key),
+          ok: this.requiredCompletionEvents.every((event) => this.definition.completion_actions.some((row) => row.event === event && row.action_key))
+            && !errors.some((error) => error.includes("动作")),
         },
       ];
     },
@@ -1192,18 +1228,11 @@ export default {
       this.syncActions();
     },
     syncActions() {
-      const approved = this.definition.completion_actions.find(
-          (r) => r.event === "approved"
-        ),
-        rejected = this.definition.completion_actions.find(
-          (r) => r.event === "rejected"
-        );
-      const objectCode = this.currentObject && this.currentObject.code;
-      const available = (this.options.completion_actions || []).filter((action) => !action.object_code || action.object_code === objectCode);
-      approved.action_key = ((available.find((action) => action.event === "approved") || {}).key || "");
-      approved.config = {};
-      rejected.action_key = ((available.find((action) => action.event === "rejected") || {}).key || "");
-      rejected.config = {};
+      this.definition.completion_actions = this.requiredCompletionEvents.map((event) => {
+        const available = this.availableActions(event);
+        const action = available.find((row) => row.object_code === this.definition.business_object_code) || available.find((row) => !row.requires_updates);
+        return { event, action_key: action ? action.key : "", config: {} };
+      });
     },
     showObjectFields() {
       if (!this.currentObject)
@@ -1302,7 +1331,9 @@ export default {
       };
       return (
         r.label ||
-        (r.type === "department_principal"
+        (r.type === "business_staff"
+          ? "业务员档案"
+          : r.type === "department_principal"
           ? "部门负责人"
           : ["user", "specified_users"].includes(r.type)
           ? "指定人员"
@@ -1311,10 +1342,11 @@ export default {
     },
     approverTypeChanged(t) {
       this.selected.approver_rule.type = t;
-      this.selected.approver_rule.value = ["user", "specified_users"].includes(t) ? [] : "";
+      this.selected.approver_rule.value = ["user", "specified_users", "business_staff"].includes(t) ? [] : "";
       this.selected.approver_rule.field = "";
       this.selected.approver_rule.label = "";
       this.selected.processing_strategy = "sequential";
+      if (t === "business_staff") this.selected.completion_strategy = "ANY";
     },
     dynamicApproverChanged() {
       this.selected.approver_rule.value = "";
@@ -1327,6 +1359,8 @@ export default {
         r.label =
           (this.options.roles.find((x) => x.value === r.value) || {}).label ||
           "";
+      else if (r.type === "business_staff")
+        r.label = (r.value || []).map((type) => (this.options.business_staff_types.find((item) => item.value === type) || {}).label).filter(Boolean).join("、");
       else if (r.type === "department_principal")
         r.label =
           r.value === "task_department"
@@ -1363,8 +1397,8 @@ export default {
       }
     },
     configureAction(row) {
-      this.actionDialog = { visible: true, row };
-      if (!row.config) this.$set(row, "config", {});
+      this.actionDialog = { visible: true, index: this.definition.completion_actions.indexOf(row), row: JSON.parse(JSON.stringify({ ...row, config: row.config || {} })) };
+      if (this.currentActionNeedsUpdates && !this.actionDialog.row.config.target) this.$set(this.actionDialog.row.config, "target", "business");
     },
     availableActions(event) {
       return this.options.completion_actions.filter(
@@ -1376,10 +1410,18 @@ export default {
     },
     actionChanged() {
       this.$set(this.actionDialog.row, "config", {});
-      if (this.currentActionNeedsUpdates)
-        this.$set(this.actionDialog.row.config, "updates", [
-          { field: "", value: "" },
-        ]);
+      if (this.currentActionNeedsUpdates) {
+        this.$set(this.actionDialog.row.config, "target", (this.actionUpdateTargets[0] || {}).value || "business");
+        this.actionTargetChanged();
+      }
+    },
+    actionEventChanged() {
+      const options = this.availableActions(this.actionDialog.row.event);
+      this.actionDialog.row.action_key = ((this.actionUpdateTargets.length && options.find((row) => row.requires_updates)) || options[0] || {}).key || "";
+      this.actionChanged();
+    },
+    actionTargetChanged() {
+      this.$set(this.actionDialog.row.config, "updates", [{ field: "", value: "" }]);
     },
     addActionUpdate() {
       this.actionUpdates.push({ field: "", value: "" });
@@ -1394,9 +1436,22 @@ export default {
       update.value = "";
     },
     confirmAction() {
+      if (this.readonly) return;
+      if (!this.availableActions(this.actionDialog.row.event).some((action) => action.key === this.actionDialog.row.action_key))
+        return this.$message.warning("请选择当前业务对象可用的处理动作");
       if (this.currentActionNeedsUpdates && !this.actionUpdates.length)
         return this.$message.warning("请至少添加一个业务字段更新规则");
+      if (this.currentActionNeedsUpdates) {
+        const fields = this.actionUpdates.map((update) => update.field);
+        if (fields.some((field) => !this.actionUpdateFields.some((allowed) => allowed.value === field))) return this.$message.warning("请选择允许更新的业务字段");
+        if (new Set(fields).size !== fields.length) return this.$message.warning("同一动作不能重复选择同一字段");
+        if (this.actionUpdates.some((update) => update.value === undefined)) return this.$message.warning("请填写目标值");
+      }
+      const row = JSON.parse(JSON.stringify(this.actionDialog.row));
+      if (this.actionDialog.index < 0) this.definition.completion_actions.push(row);
+      else this.$set(this.definition.completion_actions, this.actionDialog.index, row);
       this.actionDialog.visible = false;
+      this.validate(false);
     },
     actionText(key) {
       return (
@@ -1406,13 +1461,20 @@ export default {
     },
     eventText(e) {
       return (
-        { approved: "审核通过", rejected: "审核驳回", cancelled: "审核取消" }[
+        { approved: "审核通过", rejected: "审核驳回", cancelled: "审核取消", node_decision: "节点审核时" }[
           e
         ] || e
       );
     },
     addCompletionAction() {
-      this.$message.info("当前通过与驳回动作已完整配置");
+      this.actionDialog = { visible: true, index: -1, row: { event: "approved", name: "", action_key: "", config: {} } };
+      this.actionEventChanged();
+    },
+    moveCompletionAction(index, offset) {
+      const rows = this.definition.completion_actions;
+      const target = index + offset;
+      if (this.readonly || target < 0 || target >= rows.length) return;
+      rows.splice(target, 0, rows.splice(index, 1)[0]);
     },
     time(v) {
       return v
@@ -1733,6 +1795,8 @@ export default {
 .action-update-row .el-select {
   width: 100%;
 }
+::v-deep .approval-action-dialog { max-width: calc(100vw - 32px); }
+::v-deep .approval-action-dialog .el-dialog__body { max-height: 65vh; overflow-y: auto; }
 ::v-deep .approval-registry-dialog {
   max-width: calc(100vw - 36px);
   border-radius: 5px;

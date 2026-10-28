@@ -16,7 +16,7 @@
 
     <div class="erp-page-tip">
       <i class="el-icon-info" />
-      <span>业务员档案决定账号“能被选成谁”：订单销售人员、工单负责人、工序工人与协同人、仓库负责人都只能从对应的有效档案中选择；能不能操作仍由角色权限决定。离职或调岗请停用或设置失效日期，已有单据的档案不能删除，保证历史订单和提成可追溯。</span>
+      <span>业务员档案决定账号的业务身份：订单销售人员、工单负责人、工序工人与协同人、仓库负责人都从对应有效档案中选择；有效审核员、财务负责人可在审核工作台处理分配给自己的任务。离职或调岗请停用或设置失效日期，历史单据与审核记录保留追溯。</span>
     </div>
 
     <section class="metric-overview-grid">
@@ -241,7 +241,7 @@ export default {
       this.query()
     },
     typeIcon(type) {
-      return { sales: 'el-icon-s-custom', production_manager: 'el-icon-s-management', production_worker: 'el-icon-s-tools', warehouse: 'el-icon-box', purchase: 'el-icon-shopping-cart-2', quality: 'el-icon-finished' }[type] || 'el-icon-user'
+      return { sales: 'el-icon-s-custom', production_manager: 'el-icon-s-management', production_worker: 'el-icon-s-tools', warehouse: 'el-icon-box', purchase: 'el-icon-shopping-cart-2', quality: 'el-icon-finished', reviewer: 'el-icon-circle-check', finance_manager: 'el-icon-s-check' }[type] || 'el-icon-user'
     },
     sourceLabel(source) {
       return { manual: '手工登记', sso: '统一身份同步', legacy_flag: '旧标记迁移' }[source] || source || '—'

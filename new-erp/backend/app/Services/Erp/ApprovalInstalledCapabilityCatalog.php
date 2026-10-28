@@ -4,6 +4,7 @@ namespace App\Services\Erp;
 
 use App\Services\Erp\ApprovalActions\CompleteApplicationAction;
 use App\Services\Erp\ApprovalActions\SalesOrderChangeAction;
+use App\Services\Erp\ApprovalActions\UpdateRegisteredFieldsAction;
 
 /**
  * Code-installed approval capabilities.
@@ -85,6 +86,14 @@ class ApprovalInstalledCapabilityCatalog
     public function globalActions(): array
     {
         return [
+            [
+                'action_code' => 'generic.approve.update_fields', 'action_name' => '审核通过后更新业务字段',
+                'result_event' => 'approved', 'handler_class' => UpdateRegisteredFieldsAction::class,
+            ],
+            [
+                'action_code' => 'generic.reject.update_fields', 'action_name' => '审核驳回后更新业务字段',
+                'result_event' => 'rejected', 'handler_class' => UpdateRegisteredFieldsAction::class,
+            ],
             [
                 'action_code' => 'approval.complete',
                 'action_name' => '完成审核并保留申请结果',

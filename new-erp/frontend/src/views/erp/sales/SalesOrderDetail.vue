@@ -224,46 +224,46 @@ Design status: 新增“订单阶段提示条”（基础档案风格），其�
         <el-table-column label="行号" width="55" align="center">
           <template slot-scope="{$index}"><span class="line-index">{{ $index + 1 }}</span></template>
         </el-table-column>
-        <el-table-column prop="product_name" label="产品名称" min-width="140" show-overflow-tooltip>
+        <el-table-column prop="product_name" label="产品名称" width="155" show-overflow-tooltip>
           <template slot-scope="{row}">
             <span class="product-title">{{ row.product_name }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="sku_name" label="SKU规格" min-width="140" show-overflow-tooltip>
+        <el-table-column prop="sku_name" label="SKU规格" width="145" show-overflow-tooltip>
           <template slot-scope="{row}">
             <span class="sku-subtitle">{{ row.sku_name }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="系统物料编码" min-width="120" show-overflow-tooltip>
+        <el-table-column label="系统物料编码" width="120" show-overflow-tooltip>
           <template slot-scope="{row}">
             <span v-if="lineItem(row).status === 'matched'" class="font-mono item-code-text">{{ lineItem(row).item_code }}</span>
             <el-tag v-else-if="lineItem(row).status === 'not_required'" size="mini" type="info">无需 Item</el-tag>
             <el-tag v-else size="mini" type="danger">Item 异常</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="系统物料名称" min-width="130" show-overflow-tooltip>
+        <el-table-column label="系统物料名称" width="140" show-overflow-tooltip>
           <template slot-scope="{row}">
             <span v-if="lineItem(row).status === 'matched'">{{ lineItem(row).item_name }}</span>
             <span v-else-if="lineItem(row).status === 'not_required'" class="text-muted">—</span>
             <span v-else class="item-abnormal">{{ lineItem(row).message }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="order_qty" label="订单数量" width="85" align="right">
+        <el-table-column prop="order_qty" label="订单数量" width="88" align="left">
           <template slot-scope="{row}">
             <b class="font-mono">{{ row.order_qty }}</b>
           </template>
         </el-table-column>
-        <el-table-column label="销售单价" width="100" align="right">
+        <el-table-column label="销售单价" width="100" align="left">
           <template slot-scope="{row}">
             <span class="font-mono price-cell">¥{{ money(row.unit_price) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="小计金额" width="115" align="right">
+        <el-table-column label="小计金额" width="115" align="left">
           <template slot-scope="{row}">
             <b class="font-mono amount-cell">¥{{ money(Number(row.order_qty || 0) * Number(row.unit_price || 0)) }}</b>
           </template>
         </el-table-column>
-        <el-table-column label="配置摘要" min-width="120">
+        <el-table-column label="配置摘要" min-width="180">
           <template slot-scope="{row}">
             <div class="config-tags-cell">
               <el-tag v-if="row.is_customized" size="mini" effect="plain">定制</el-tag>

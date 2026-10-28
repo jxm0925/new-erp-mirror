@@ -91,6 +91,7 @@ class ApprovalFlowApplicationService
                 ->values()->all(),
             'approver_sources' => [
                 ['value' => 'user', 'label' => '指定人员'], ['value' => 'role', 'label' => '角色'],
+                ['value' => 'business_staff', 'label' => '业务员档案'],
                 ['value' => 'position', 'label' => '岗位'], ['value' => 'department', 'label' => '部门成员'],
                 ['value' => 'department_manager', 'label' => '指定部门负责人'],
                 ['value' => 'initiator_manager', 'label' => '发起人直属负责人'],
@@ -101,6 +102,8 @@ class ApprovalFlowApplicationService
                 ['value' => 'field_user_manager', 'label' => '表单人员字段的负责人'],
                 ['value' => 'field_department_manager', 'label' => '表单部门字段负责人'],
             ],
+            'business_staff_types' => collect(BusinessStaffService::APPROVAL_TYPES)
+                ->map(fn ($type) => ['value' => $type, 'label' => BusinessStaffService::label($type)])->all(),
             'business_types' => ApprovalFlowTemplate::query()->select('business_type', 'business_module', 'business_scene')
                 ->whereNotNull('business_type')->orderBy('business_module')->get()->unique('business_type')->map(fn ($row) => [
                     'value' => $row->business_type,
@@ -380,30 +383,49 @@ class ApprovalFlowApplicationService
                 else $conditionFields = collect($this->customFormSchema($formId)['fields'] ?? [])->pluck('key')->filter()->values()->all();
             }
             $actions = array_values((array) ($definition['completion_actions'] ?? []));
-            foreach (['approved', 'rejected'] as $event) {
+            $hasNodeDecision = collect($this->catalog->actions())->contains(fn ($action) => $action['event'] === 'node_decision'
+                && $action['object_code'] === ($definition['business_object_code'] ?? ''));
+            $requiredEvents = $hasNodeDecision ? ['node_decision'] : ['approved', 'rejected'];
+            foreach ($requiredEvents as $event) {
                 $row = collect($actions)->firstWhere('event', $event);
-                if (!$row || empty($row['action_key'])) $errors[] = '缺少'.($event === 'approved' ? '审核通过' : '审核驳回').'处理动作。';
-                else {
-                    try {
-                        $action = $this->catalog->assertActionAllowed($definition, $event, (string) $row['action_key']);
-                        if (!empty($action['requires_updates'])) {
-                            $object = $this->catalog->linkedObject($definition);
-                            $updates = array_values((array) data_get($row, 'config.updates', []));
-                            if (!$object) $errors[] = '字段更新动作必须先选择现有ERP业务单据。';
-                            if (!$updates) $errors[] = ($event === 'approved' ? '审核通过' : '审核驳回').'字段更新动作至少配置一个字段。';
-                            $allowedFields = collect($object['fields'] ?? [])->where('approval_writable', true)->pluck('value')->all();
-                            foreach ($updates as $updateIndex => $update) {
-                                $field = (string) ($update['field'] ?? '');
-                                if (!$field || !in_array($field, $allowedFields, true) || in_array($field, ['id', 'created_at', 'updated_at'], true)) {
-                                    $errors[] = ($event === 'approved' ? '审核通过' : '审核驳回').'字段更新动作第'.($updateIndex + 1).'项字段无效。';
-                                }
-                                if (!array_key_exists('value', $update) || $update['value'] === '') {
-                                    $errors[] = ($event === 'approved' ? '审核通过' : '审核驳回').'字段更新动作第'.($updateIndex + 1).'项未填写目标值。';
-                                }
-                            }
-                        }
+                $eventLabel = ['approved' => '审核通过', 'rejected' => '审核驳回', 'node_decision' => '节点审核'][$event];
+                if ($event === 'node_decision' && collect($actions)->where('event', $event)->count() > 1) $errors[] = '节点审核只能配置一个业务决策动作。';
+                if (!$row || empty($row['action_key'])) $errors[] = '缺少'.$eventLabel.'处理动作。';
+                foreach (collect($this->catalog->actions())->where('event', $event)->where('object_code', $definition['business_object_code'] ?? '') as $requiredAction) {
+                    if (!collect($actions)->contains(fn ($configured) => ($configured['event'] ?? '') === $event && ($configured['action_key'] ?? '') === $requiredAction['key'])) {
+                        $errors[] = '缺少必要业务处理动作：'.$requiredAction['label'].'。';
                     }
-                    catch (ValidationException $exception) { $errors[] = $exception->getMessage(); }
+                }
+            }
+            $seen = [];
+            foreach ($actions as $index => $row) {
+                $prefix = '第'.($index + 1).'条处理动作：';
+                $shape = \Illuminate\Support\Facades\Validator::make(['action' => $row], [
+                    'action' => ['required', 'array'], 'action.event' => ['required', 'string'],
+                    'action.action_key' => ['required', 'string'], 'action.name' => ['nullable', 'string', 'max:80'],
+                    'action.config' => ['sometimes', 'array'],
+                ]);
+                if ($shape->fails()) {
+                    foreach ($shape->errors()->all() as $error) $errors[] = $prefix.$error;
+                    continue;
+                }
+                $event = (string) ($row['event'] ?? '');
+                if (!in_array($event, $hasNodeDecision ? ['node_decision', 'approved', 'rejected'] : ['approved', 'rejected'], true)) {
+                    $errors[] = $prefix.'触发场景不适用于当前业务对象。';
+                    continue;
+                }
+                try {
+                    $action = $this->catalog->assertActionAllowed($definition, $event, (string) ($row['action_key'] ?? ''));
+                    if (!empty($action['requires_updates'])) {
+                        $linked = $this->catalog->linkedObject($definition);
+                        if (!$linked) $errors[] = $prefix.'字段更新必须先选择业务对象。';
+                        else app(ApprovalActions\UpdateRegisteredFieldsAction::class)->validatedUpdates($linked['code'], (array) ($row['config'] ?? []));
+                    } elseif (in_array($action['key'], $seen, true)) {
+                        $errors[] = $prefix.'同一业务处理不能重复执行，请删除重复动作。';
+                    }
+                    $seen[] = $action['key'];
+                } catch (ValidationException $exception) {
+                    foreach (\Illuminate\Support\Arr::flatten($exception->errors()) as $error) $errors[] = $prefix.$error;
                 }
             }
         } else {
@@ -432,7 +454,7 @@ class ApprovalFlowApplicationService
             $keys[] = $key;
             $ruleType = (string) data_get($node, 'approver_rule.type', '');
             $ruleValue = data_get($node, 'approver_rule.value');
-            $supportedAssignees = ['role', 'department_principal', 'user', 'specified_users', 'position', 'department', 'department_manager', 'initiator_manager', 'initiator_department_manager', 'business_record_owner', 'business_record_department_manager', 'field_user', 'field_user_manager', 'field_department_manager'];
+            $supportedAssignees = ['role', 'business_staff', 'department_principal', 'user', 'specified_users', 'position', 'department', 'department_manager', 'initiator_manager', 'initiator_department_manager', 'business_record_owner', 'business_record_department_manager', 'field_user', 'field_user_manager', 'field_department_manager'];
             if (in_array($nodeType, ['APPROVAL', 'CC'], true)) {
                 if (!in_array($ruleType, $supportedAssignees, true)) {
                     $errors[] = $prefix.'处理人来源无效。';
@@ -443,6 +465,13 @@ class ApprovalFlowApplicationService
                 } elseif ($ruleType === 'role' && !$this->roleHasActiveMember((string) $ruleValue)) {
                     // 运行时按角色成员派发任务，角色下没有启用账号时提交单据会直接失败；发布前就拦下来。
                     $errors[] = $prefix.'处理角色下没有启用的账号，提交单据时无法派发审核任务，请先在角色权限中添加成员。';
+                } elseif ($ruleType === 'business_staff') {
+                    if (!is_array($ruleValue) || !$ruleValue || !array_is_list($ruleValue) || count(array_filter($ruleValue, fn ($type) => is_string($type) && in_array($type, BusinessStaffService::APPROVAL_TYPES, true))) !== count($ruleValue)) {
+                        $errors[] = $prefix.'请选择审核员或财务负责人业务员类型。';
+                    } elseif (!app(BusinessStaffService::class)->approvalMembers($ruleValue)->exists()) {
+                        $errors[] = $prefix.'所选业务员类型没有有效档案，请先登记启用且在生效期内的员工账号。';
+                    }
+                    if ($nodeType === 'APPROVAL' && ($node['permission_code'] ?? '') !== 'approval.task.decide') $errors[] = $prefix.'业务员档案审批节点必须使用处理审核任务权限。';
                 } elseif ($ruleType === 'department_principal' && !trim((string) $ruleValue)) {
                     $errors[] = $prefix.'未选择负责人所属部门规则。';
                 } elseif ($ruleType === 'department_principal' && $ruleValue !== 'task_department' && !DB::table('erp_departments')->where('legacy_id', (int) $ruleValue)->exists()) {
@@ -472,6 +501,7 @@ class ApprovalFlowApplicationService
             if ($nodeType === 'APPROVAL') {
                 $completionStrategy = strtoupper((string) ($node['completion_strategy'] ?? ($processingStrategy === 'parallel' ? 'ALL' : 'ANY')));
                 if (!in_array($completionStrategy, ['ANY', 'ALL', 'COUNT', 'RATIO'], true)) $errors[] = $prefix.'节点完成规则无效。';
+                if ($ruleType === 'business_staff' && $completionStrategy !== 'ANY') $errors[] = $prefix.'业务员档案审批节点采用任一人员通过。';
                 if ($completionStrategy === 'COUNT' && (int) ($node['required_approver_count'] ?? 0) < 1) $errors[] = $prefix.'指定人数通过规则必须填写大于零的人数。';
                 $ratio = (float) ($node['required_approver_ratio'] ?? 0);
                 if ($completionStrategy === 'RATIO' && ($ratio <= 0 || $ratio > 1)) $errors[] = $prefix.'指定比例通过规则必须填写大于0且不超过1的比例。';

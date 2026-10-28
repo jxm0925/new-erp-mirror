@@ -24,7 +24,10 @@ class SalesOrderChangeAction implements ApprovalBusinessActionHandler
             ->orderByDesc('decided_at')->orderByDesc('id')->first() : null;
         $actor = $approval ? DB::table('erp_legacy_admin_users')->where('legacy_id', $approval->approver_id)
             ->whereIn(DB::raw('LOWER(status)'), ['normal', 'active'])->first() : null;
-        $result = app(SalesOrderEditImpactService::class)->decide($candidate->id, (string) $node?->approval_type, $decision === 'approve', $operator, $comment, $actor);
+        // 后续抄送或自动节点只检查已确定的结果，不能再次提交同一个销售审核决定。
+        $result = $node && strtoupper((string) ($node->node_type ?: 'APPROVAL')) === 'APPROVAL'
+            ? app(SalesOrderEditImpactService::class)->decide($candidate->id, (string) $node->approval_type, $decision === 'approve', $operator, $comment, $actor)
+            : $candidate;
         return ['candidate_id' => $result->id, 'candidate_status' => $result->candidate_status,
             'activated_at' => optional($result->activated_at)->toDateTimeString(), 'conflict_reason' => $result->conflict_reason];
     }

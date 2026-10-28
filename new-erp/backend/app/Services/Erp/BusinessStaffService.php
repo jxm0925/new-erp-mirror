@@ -23,7 +23,27 @@ final class BusinessStaffService
         'warehouse' => '仓管员',
         'purchase' => '采购员',
         'quality' => '质检员',
+        'reviewer' => '审核员',
+        'finance_manager' => '财务负责人',
     ];
+
+    public const APPROVAL_TYPES = ['reviewer', 'finance_manager'];
+
+    /** 审核身份只读取人工维护的有效档案；缺表时拒绝授权，不能触发历史身份回填。 */
+    public function approvalMembers(array $types): QueryBuilder
+    {
+        $users = DB::table('erp_legacy_admin_users as u')->whereNull('u.deleted_at')
+            ->whereIn(DB::raw('LOWER(TRIM(u.status))'), ['normal', 'active']);
+        if (!$types || !array_is_list($types) || count(array_filter($types, fn ($type) => is_string($type) && in_array($type, self::APPROVAL_TYPES, true))) !== count($types) || !$this->ready()) {
+            return $users->whereRaw('1 = 0');
+        }
+        $today = now()->toDateString();
+        return $users->join(self::TABLE.' as bs', 'bs.user_legacy_id', '=', 'u.legacy_id')
+            ->whereIn('bs.staff_type', $types)->where('bs.status', 'enabled')
+            ->where(fn ($q) => $q->whereNull('bs.effective_from')->orWhere('bs.effective_from', '<=', $today))
+            ->where(fn ($q) => $q->whereNull('bs.effective_to')->orWhere('bs.effective_to', '>=', $today))
+            ->distinct();
+    }
 
     /**
      * 首次启用某类档案时按旧口径一次性登记，保证升级后各选择器候选不丢：

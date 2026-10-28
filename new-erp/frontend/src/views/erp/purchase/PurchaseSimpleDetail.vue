@@ -135,22 +135,22 @@
               <span class="code-badge">{{ itemCode(row) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="物料名称" min-width="150" show-overflow-tooltip>
+          <el-table-column label="物料名称" width="160" show-overflow-tooltip>
             <template slot-scope="{row}">
               <span class="item-name-text">{{ itemName(row) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="规格型号" min-width="150" show-overflow-tooltip>
+          <el-table-column label="规格型号" width="145" show-overflow-tooltip>
             <template slot-scope="{row}">
               <span class="item-spec-text">{{ itemSpec(row) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="采购数量" width="110" align="right">
+          <el-table-column label="采购数量" width="105" align="left">
             <template slot-scope="{row}">
               <strong class="qty-num highlight-green">{{ qty(row) }}</strong> {{ purchaseUnitName(row) }}
             </template>
           </el-table-column>
-          <el-table-column label="折合库存" width="125" align="right">
+          <el-table-column label="折合库存" width="120" align="left">
             <template slot-scope="{row}">
               <div class="stock-cell">
                 <span class="stock-qty-text">{{ baseQty(row) }} {{ baseUnitName(row) }}</span>
@@ -180,7 +180,7 @@
               <el-tag size="mini" :type="tagType(row.line_status)">{{ statusText(row.line_status) }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="行备注" min-width="120" show-overflow-tooltip>
+          <el-table-column label="行备注" min-width="150" show-overflow-tooltip>
             <template slot-scope="{row}">
               <span class="text-muted">{{ row.remark || '-' }}</span>
             </template>
@@ -195,31 +195,31 @@
               <span class="code-badge">{{ itemCode(row) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="物料名称" min-width="140" show-overflow-tooltip>
+          <el-table-column label="物料名称" width="155" show-overflow-tooltip>
             <template slot-scope="{row}">
               <span class="item-name-text">{{ itemName(row) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="规格型号" min-width="140" show-overflow-tooltip>
+          <el-table-column label="规格型号" width="140" show-overflow-tooltip>
             <template slot-scope="{row}">
               <span class="item-spec-text">{{ itemSpec(row) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="采购数量" width="100" align="right">
+          <el-table-column label="采购数量" width="100" align="left">
             <template slot-scope="{row}">
               <strong class="qty-num">{{ qty(row) }}</strong> {{ purchaseUnitName(row) }}
             </template>
           </el-table-column>
-          <el-table-column label="单价" width="95" align="right">
+          <el-table-column label="单价" width="95" align="left">
             <template slot-scope="{row}">¥{{ Number(row.unit_price || 0).toFixed(2) }}</template>
           </el-table-column>
-          <el-table-column label="金额" width="105" align="right">
+          <el-table-column label="金额" width="105" align="left">
             <template slot-scope="{row}">¥{{ Number(row.amount || 0).toFixed(2) }}</template>
           </el-table-column>
-          <el-table-column label="到货数量" width="85" align="right">
+          <el-table-column label="到货数量" width="85" align="left">
             <template slot-scope="{row}">{{ row.received_qty || 0 }}</template>
           </el-table-column>
-          <el-table-column label="剩余未到货" width="90" align="right">
+          <el-table-column label="剩余未到货" width="90" align="left">
             <template slot-scope="{row}">
               <span :class="{'danger-qty': remainingQty(row) > 0}">{{ remainingQty(row) }}</span>
             </template>
@@ -227,7 +227,7 @@
           <el-table-column label="预计到货" width="105" align="center">
             <template slot-scope="{row}">{{ row.expected_arrival_date || '-' }}</template>
           </el-table-column>
-          <el-table-column label="目标仓库" width="110">
+          <el-table-column label="目标仓库" min-width="120">
             <template slot-scope="{row}">{{ warehouseName(row) }}</template>
           </el-table-column>
           <el-table-column label="状态" width="85" align="center">
@@ -332,6 +332,7 @@ export default {
     canEdit() {
       if (!this.doc) return false
       if (this.type === 'requests') return Boolean(this.doc.can_edit) && this.$can(['purchase.request.edit', 'purchase.request'])
+      if (this.type === 'orders') return this.doc.purchase_status === 'draft'
       const status = this.mainStatus
       return status === 'draft' || status === 'rejected'
     },
@@ -650,7 +651,7 @@ export default {
 .stock-cell {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 4px;
 }
 .stock-info-icon {
