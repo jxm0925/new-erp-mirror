@@ -461,10 +461,6 @@ class ApprovalTaskApplicationService
             $node = ApprovalTaskNode::query()->where('approval_task_id', $task->id)->where('node_status', 'PENDING')->lockForUpdate()->firstOrFail();
             $definition = collect(data_get($task->flow_snapshot, 'definition.nodes', []))->firstWhere('key', $node->node_key) ?: [];
             if (($definition['allow_transfer'] ?? false) !== true) throw ValidationException::withMessages(['transfer' => '当前节点不允许转交。']);
-            $businessStaffNode = data_get($node->approver_rule, 'type') === 'business_staff';
-            if ($businessStaffNode && !$isSuperAdmin && !$this->assignees->canAct($node, (int) $user->legacy_id, false, true)) {
-                throw ValidationException::withMessages(['transfer' => '当前业务员档案无效或未分配此节点，不能转交。']);
-            }
             $sourceQuery = $node->assignees()->where('status', 'PENDING')->lockForUpdate();
             if ($isSuperAdmin) {
                 if (!$sourceAssigneeId) throw ValidationException::withMessages(['source_assignee_id' => '管理员转交必须明确选择一个真实的当前待处理人。']);
@@ -476,12 +472,8 @@ class ApprovalTaskApplicationService
             if (!$isSuperAdmin && !$source) throw ValidationException::withMessages(['transfer' => '您不是当前节点待处理人，不能转交。']);
             if ($isSuperAdmin && !$source) throw ValidationException::withMessages(['source_assignee_id' => '所选来源处理人不是当前节点的待处理人。']);
             $target = DB::table('erp_legacy_admin_users')->where('legacy_id', $targetUserId)
-                ->when($businessStaffNode, fn ($users) => $users->whereNull('deleted_at')->whereIn(DB::raw('LOWER(TRIM(status))'), ['normal', 'active']),
-                    fn ($users) => $users->where('status', 'normal'))->first();
+                ->where('status', 'normal')->first();
             if (!$target) throw ValidationException::withMessages(['target_user_id' => '目标处理人不存在或已停用。']);
-            if ($businessStaffNode && !$this->assignees->isCurrentBusinessStaff($node, $targetUserId, true)) {
-                throw ValidationException::withMessages(['target_user_id' => '目标处理人必须具有当前节点所选类型的有效业务员档案。']);
-            }
             if ((int) $targetUserId === (int) $source->user_id) throw ValidationException::withMessages(['target_user_id' => '不能转交给原处理人本人。']);
             if ($node->assignees()->where('user_id', $targetUserId)->where('status', 'PENDING')->exists()) {
                 throw ValidationException::withMessages(['target_user_id' => '目标人员已是当前节点待处理人，转交会改变会签分母。']);
@@ -654,13 +646,8 @@ class ApprovalTaskApplicationService
                 || (bool) data_get($task->flow_snapshot, 'definition.allow_self_approval', false)));
         $nodeDefinition = $current ? collect(data_get($task->flow_snapshot, 'definition.nodes', []))->firstWhere('key', $current->node_key) : [];
         $task->setAttribute('can_reject', (bool) $task->can_decide && (($nodeDefinition['allow_reject'] ?? true) !== false));
-        $task->setAttribute('can_transfer', ((bool) $task->can_decide || ($isSuperAdmin && $task->task_status === 'PENDING'
-                && $current && data_get($current->approver_rule, 'type') === 'business_staff'))
-            && (($nodeDefinition['allow_transfer'] ?? true) !== false));
+        $task->setAttribute('can_transfer', (bool) $task->can_decide && (($nodeDefinition['allow_transfer'] ?? true) !== false));
         $task->setAttribute('can_retry_action', $this->canRetryAction($task, $user, $permissionCodes, $isSuperAdmin));
-        if ($current && data_get($current->approver_rule, 'type') === 'business_staff') {
-            $task->setAttribute('transfer_users', $task->can_transfer ? $this->assignees->businessStaffOptions($current) : []);
-        }
         return $task;
     }
 
@@ -670,12 +657,7 @@ class ApprovalTaskApplicationService
             || (!$isSuperAdmin && !in_array('approval.task.decide', $permissionCodes, true))) return false;
         // 人工审核失败会连同本次决定一起回滚，必须重新通过/驳回，不能借自动重试跳过审核。
         if ($task->nodes->contains(fn ($node) => $node->node_status === 'PENDING' && strtoupper((string) ($node->node_type ?: 'APPROVAL')) === 'APPROVAL')) return false;
-        if ($isSuperAdmin) return true;
-        $staffNodes = $task->nodes->filter(fn ($node) => $node->node_type === 'APPROVAL' && data_get($node->approver_rule, 'type') === 'business_staff');
-        if ($staffNodes->isEmpty()) return true;
-        return $staffNodes->contains(fn ($node) => $this->assignees->isCurrentBusinessStaff($node, (int) $user->legacy_id, DB::transactionLevel() > 0)
-            && $node->assignees->contains(fn ($row) => (int) $row->user_id === (int) $user->legacy_id && $row->status !== 'TRANSFERRED')
-            && ($isSuperAdmin || $node->decisions->contains(fn ($row) => (int) $row->approver_id === (int) $user->legacy_id && $row->decision === 'APPROVE')));
+        return true;
     }
 
     private function applyActionableTaskScope(Builder $query, object $user, array $permissionCodes, bool $isSuperAdmin): void
@@ -704,7 +686,6 @@ class ApprovalTaskApplicationService
             $node->where('node_status', 'PENDING')
                 ->whereIn('permission_code', $permissionCodes ?: ['__none__'])
                 ->whereHas('assignees', fn ($assignee) => $assignee->where('user_id', $user->legacy_id)->where('status', 'PENDING'));
-            $this->assignees->applyCurrentStaffScope($node, (int) $user->legacy_id);
         });
     }
 

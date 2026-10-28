@@ -91,7 +91,6 @@ class ApprovalFlowApplicationService
                 ->values()->all(),
             'approver_sources' => [
                 ['value' => 'user', 'label' => '指定人员'], ['value' => 'role', 'label' => '角色'],
-                ['value' => 'business_staff', 'label' => '业务员档案'],
                 ['value' => 'position', 'label' => '岗位'], ['value' => 'department', 'label' => '部门成员'],
                 ['value' => 'department_manager', 'label' => '指定部门负责人'],
                 ['value' => 'initiator_manager', 'label' => '发起人直属负责人'],
@@ -102,8 +101,6 @@ class ApprovalFlowApplicationService
                 ['value' => 'field_user_manager', 'label' => '表单人员字段的负责人'],
                 ['value' => 'field_department_manager', 'label' => '表单部门字段负责人'],
             ],
-            'business_staff_types' => collect(BusinessStaffService::APPROVAL_TYPES)
-                ->map(fn ($type) => ['value' => $type, 'label' => BusinessStaffService::label($type)])->all(),
             'business_types' => ApprovalFlowTemplate::query()->select('business_type', 'business_module', 'business_scene')
                 ->whereNotNull('business_type')->orderBy('business_module')->get()->unique('business_type')->map(fn ($row) => [
                     'value' => $row->business_type,
@@ -454,7 +451,7 @@ class ApprovalFlowApplicationService
             $keys[] = $key;
             $ruleType = (string) data_get($node, 'approver_rule.type', '');
             $ruleValue = data_get($node, 'approver_rule.value');
-            $supportedAssignees = ['role', 'business_staff', 'department_principal', 'user', 'specified_users', 'position', 'department', 'department_manager', 'initiator_manager', 'initiator_department_manager', 'business_record_owner', 'business_record_department_manager', 'field_user', 'field_user_manager', 'field_department_manager'];
+            $supportedAssignees = ['role', 'department_principal', 'user', 'specified_users', 'position', 'department', 'department_manager', 'initiator_manager', 'initiator_department_manager', 'business_record_owner', 'business_record_department_manager', 'field_user', 'field_user_manager', 'field_department_manager'];
             if (in_array($nodeType, ['APPROVAL', 'CC'], true)) {
                 if (!in_array($ruleType, $supportedAssignees, true)) {
                     $errors[] = $prefix.'处理人来源无效。';
@@ -465,13 +462,6 @@ class ApprovalFlowApplicationService
                 } elseif ($ruleType === 'role' && !$this->roleHasActiveMember((string) $ruleValue)) {
                     // 运行时按角色成员派发任务，角色下没有启用账号时提交单据会直接失败；发布前就拦下来。
                     $errors[] = $prefix.'处理角色下没有启用的账号，提交单据时无法派发审核任务，请先在角色权限中添加成员。';
-                } elseif ($ruleType === 'business_staff') {
-                    if (!is_array($ruleValue) || !$ruleValue || !array_is_list($ruleValue) || count(array_filter($ruleValue, fn ($type) => is_string($type) && in_array($type, BusinessStaffService::APPROVAL_TYPES, true))) !== count($ruleValue)) {
-                        $errors[] = $prefix.'请选择审核员或财务负责人业务员类型。';
-                    } elseif (!app(BusinessStaffService::class)->approvalMembers($ruleValue)->exists()) {
-                        $errors[] = $prefix.'所选业务员类型没有有效档案，请先登记启用且在生效期内的员工账号。';
-                    }
-                    if ($nodeType === 'APPROVAL' && ($node['permission_code'] ?? '') !== 'approval.task.decide') $errors[] = $prefix.'业务员档案审批节点必须使用处理审核任务权限。';
                 } elseif ($ruleType === 'department_principal' && !trim((string) $ruleValue)) {
                     $errors[] = $prefix.'未选择负责人所属部门规则。';
                 } elseif ($ruleType === 'department_principal' && $ruleValue !== 'task_department' && !DB::table('erp_departments')->where('legacy_id', (int) $ruleValue)->exists()) {
@@ -501,7 +491,6 @@ class ApprovalFlowApplicationService
             if ($nodeType === 'APPROVAL') {
                 $completionStrategy = strtoupper((string) ($node['completion_strategy'] ?? ($processingStrategy === 'parallel' ? 'ALL' : 'ANY')));
                 if (!in_array($completionStrategy, ['ANY', 'ALL', 'COUNT', 'RATIO'], true)) $errors[] = $prefix.'节点完成规则无效。';
-                if ($ruleType === 'business_staff' && $completionStrategy !== 'ANY') $errors[] = $prefix.'业务员档案审批节点采用任一人员通过。';
                 if ($completionStrategy === 'COUNT' && (int) ($node['required_approver_count'] ?? 0) < 1) $errors[] = $prefix.'指定人数通过规则必须填写大于零的人数。';
                 $ratio = (float) ($node['required_approver_ratio'] ?? 0);
                 if ($completionStrategy === 'RATIO' && ($ratio <= 0 || $ratio > 1)) $errors[] = $prefix.'指定比例通过规则必须填写大于0且不超过1的比例。';
