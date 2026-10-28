@@ -33,7 +33,8 @@ final class SalesOrderCompletionService
     /** 退货退款冲减应收后，客户多付的部分须由财务退款核销完毕，订单才算完结。 */
     private function hasPendingReturnRefund(SalesOrder $order): bool
     {
-        if (Money::compare(SalesReturnSettlementService::orderCreditAmount((int) $order->id), '0') <= 0) return false;
+        // 短交关闭后已收可能超过新应收，同样须财务退款核销完毕才算完结。
+        if (! $order->short_closed_at && Money::compare(SalesReturnSettlementService::orderCreditAmount((int) $order->id), '0') <= 0) return false;
         return Money::compare(app(SalesFinanceSettlementService::class)->status($order)['available_prepayment_amount'], '0') > 0;
     }
 }

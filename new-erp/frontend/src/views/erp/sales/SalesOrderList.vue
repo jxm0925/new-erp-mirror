@@ -279,6 +279,7 @@ export default {
       if (row.order_status === 'cancelled') return { label: '已取消', type: 'danger', hint: '' }
       if (row.order_status === 'closed') return { label: '已完成', type: 'success', hint: '已收齐款并全部发出' }
       if (row.order_status !== 'confirmed') return { label: statusText(row.order_status), type: 'info', hint: '' }
+      if (row.short_closed_at) return { label: '已短交', type: 'warning', hint: '剩余未发已关闭，待收款/退款后完成' }
       if (actions.production_released) return { label: '工单已发布', type: 'warning', hint: '修改需审核' }
       if (['pending', 'blocked'].includes(row.production_confirm_status)) return { label: '核实期', type: 'success', hint: '待生产确认，可直接修改' }
       if (row.production_confirm_status === 'not_required') return { label: '已确认', type: 'success', hint: '无需生产确认' }
@@ -288,6 +289,7 @@ export default {
       const actions = row.allowed_actions || {}
       if (row.order_status === 'draft') return '请核对订单信息，无误后点击“确认订单”。草稿可随意修改。'
       if (row.order_status !== 'confirmed') return '该订单已结束，无需处理。'
+      if (row.short_closed_at) return '订单已短交关闭，剩余未发不再发货；应收已按实发金额调整，收齐款或办完退款后自动完成。'
       if (actions.production_released) return '工单已发布，订单修改须提交并经相关负责人审核后才会生效。'
       if (['pending', 'blocked'].includes(row.production_confirm_status)) return '订单已确认，尚未生成工单。请核实订单（此阶段可直接修改），无误后执行“生产确认”。'
       if (row.production_confirm_status === 'not_required') return '该订单无需生产确认。'

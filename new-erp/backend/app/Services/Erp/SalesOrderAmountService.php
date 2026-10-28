@@ -10,6 +10,8 @@ class SalesOrderAmountService
 {
     public function refresh(SalesOrder $order): SalesOrder
     {
+        // 短交关闭后应收已按实发金额定格，不能再按订单行全额回算。
+        if ($order->short_closed_at) return $order->fresh();
         $totals = SalesOrderLine::query()
             ->where('sales_order_id', $order->id)
             ->selectRaw('COALESCE(SUM(order_qty), 0) AS qty, COALESCE(SUM(COALESCE(amount_incl_tax, amount)), 0) AS amount')

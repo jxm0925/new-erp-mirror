@@ -870,6 +870,60 @@ class SalesOrderController extends Controller
         });
     }
 
+    /** 短交关闭预览：只读，无金额权限时隐藏金额字段。 */
+    public function shortClosePreview(Request $request, int $id, \App\Services\Erp\SalesOrderShortCloseService $service)
+    {
+        $this->abortUnlessPermission($request, 'sales_order.short_close');
+        $order = SalesOrder::with('lines')->findOrFail($id);
+        $this->abortUnlessOrderVisible($request, $order);
+        $preview = $service->preview($order);
+        return response()->json(['data' => $this->shortCloseView($request, $preview)]);
+    }
+
+    /** 短交关闭：取消剩余未发、应收改为实发金额 + 运费，交给状态协调器判断是否完成。 */
+    public function shortClose(Request $request, int $id, \App\Services\Erp\SalesOrderShortCloseService $service)
+    {
+        $this->abortUnlessPermission($request, 'sales_order.short_close');
+        $payload = $request->validate(['reason' => 'required|string|max:500']);
+        $actor = app(AuthContextService::class)->currentUser($request);
+        abort_unless($actor, 401, '请先登录 ERP');
+        return DB::transaction(function () use ($request, $id, $payload, $service, $actor) {
+            $order = SalesOrder::with(['lines', 'fulfillments'])->lockForUpdate()->findOrFail($id);
+            $this->abortUnlessOrderVisible($request, $order);
+            $order->setRelation('lines', $order->lines()->orderBy('id')->lockForUpdate()->get());
+            $beforeStatus = $order->order_status;
+            $result = $service->close($order, trim($payload['reason']), $this->operatorName($request), $actor);
+            $closed = collect($result['lines'])->filter(fn ($line) => $line['close_qty'] > 0)
+                ->map(fn ($line) => ($line['name'] ?: '第'.$line['line_no'].'行').' 关闭 '.rtrim(rtrim(number_format($line['close_qty'], 4, '.', ''), '0'), '.'))->implode('、');
+            $order->refresh();
+            $workOrders = $result['work_orders'];
+            // 日志正文不写金额，金额放在 payload 中按字段脱敏。
+            $this->log($order->id, null, 'short_close', $beforeStatus, $order->order_status, '订单短交关闭：'.$payload['reason'].'；'.$closed
+                .($workOrders['cancelled'] ? '；已取消工单 '.implode('、', $workOrders['cancelled']) : '')
+                .($workOrders['kept'] ? '；已开工工单 '.implode('、', $workOrders['kept']).' 请生产主管处理' : ''), [
+                'receivable_before' => $result['receivable_before'], 'receivable_after' => $result['receivable_after'],
+                'short_closed_amount' => $result['short_closed_amount'], 'overpaid_amount' => $result['overpaid_amount'],
+                'lines' => collect($result['lines'])->map(fn ($line) => ['id' => $line['id'], 'close_qty' => $line['close_qty']])->values()->all(),
+            ]);
+            $message = \App\Domain\Finance\Money::compare($result['overpaid_amount'], '0') > 0 && $this->canViewAmounts($request)
+                ? '订单已短交关闭，客户多付 '.$result['overpaid_amount'].'，需财务办理退款后订单才会完成'
+                : '订单已短交关闭';
+            // 只回状态字段，详情由前端按金额权限重新加载，避免绕过金额脱敏。
+            return response()->json(['message' => $message, 'data' => [
+                'id' => $order->id, 'order_status' => $order->order_status, 'short_closed_at' => $order->short_closed_at,
+            ]]);
+        });
+    }
+
+    private function shortCloseView(Request $request, array $preview): array
+    {
+        $preview['can_close'] = $preview['blockers'] === [];
+        if ($this->canViewAmounts($request)) return $preview;
+        $preview['lines'] = array_map(fn ($line) => array_diff_key($line, array_flip(['amount', 'shipped_amount'])), $preview['lines']);
+        return array_diff_key($preview, array_flip(['contract_amount', 'receivable_before', 'receivable_after', 'short_closed_amount',
+            'return_credit_amount', 'net_received_amount', 'overpaid_amount'])) + ['has_overpaid' => \App\Domain\Finance\Money::compare($preview['overpaid_amount'], '0') > 0];
+    }
+
     public function cancel(Request $request, int $id)
     {
         $request->merge(['reason' => trim((string) $request->input('reason')) ?: '业务取消']);
@@ -1600,7 +1654,7 @@ class SalesOrderController extends Controller
     private function hideOrderAmounts(SalesOrder $order): void
     {
         $order->makeHidden([
-            'total_amount', 'final_receivable_amount', 'cost_amount',
+            'total_amount', 'final_receivable_amount', 'cost_amount', 'short_closed_amount', 'receivable_before_short_close',
             'actual_sales_cost_amount', 'freight_amount', 'carrier_fee',
         ]);
     }

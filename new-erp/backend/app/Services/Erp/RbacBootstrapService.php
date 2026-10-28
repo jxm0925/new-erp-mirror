@@ -465,6 +465,7 @@ class RbacBootstrapService
             ['sales_order.production_confirm', '销售订单生产确认', 'button', 'sales.order', null, null, 'el-icon-mouse', 7],
             ['sales_order.inventory_lock', '销售订单锁库存', 'button', 'sales.order', null, null, 'el-icon-mouse', 71],
             ['sales_order.cancel', '销售订单取消', 'button', 'sales.order', null, null, 'el-icon-mouse', 8],
+            ['sales_order.short_close', '销售订单短交关闭', 'button', 'sales.order', null, null, 'el-icon-mouse', 81],
             ['sales_order.change', '销售订单变更', 'button', 'sales.order', null, null, 'el-icon-mouse', 9],
             ['sales_order.change.submit', '提交销售订单变更审核', 'button', 'sales.order', null, null, 'el-icon-mouse', 91],
             ['sales_order.change.approve_business', '审核销售订单业务变更', 'button', 'sales.order', null, null, 'el-icon-mouse', 92],

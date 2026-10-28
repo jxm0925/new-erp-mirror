@@ -12,6 +12,9 @@ export const confirmSalesOrder = id => api.post(`/v1/erp/sales/orders/${id}/conf
 })
 export const formalConfirmSalesOrder = id => api.post(`/v1/erp/sales/orders/${id}/formal-confirm`)
 export const cancelSalesOrder = (id, data) => api.post(`/v1/erp/sales/orders/${id}/cancel`, data)
+// 短交关闭：剩余未发不再发，应收改为实发金额 + 运费。
+export const previewShortCloseSalesOrder = id => api.get(`/v1/erp/sales/orders/${id}/short-close-preview`)
+export const shortCloseSalesOrder = (id, data) => api.post(`/v1/erp/sales/orders/${id}/short-close`, data)
 export const listSalesCustomers = params => api.get('/v1/erp/sales/customers', { params })
 export const getSalesCustomer = id => api.get(`/v1/erp/sales/customers/${id}`)
 export const createSalesCustomer = data => api.post('/v1/erp/sales/customers', data)

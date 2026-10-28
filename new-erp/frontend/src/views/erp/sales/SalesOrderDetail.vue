@@ -33,6 +33,7 @@ Design status: 新增“订单阶段提示条”（基础档案风格），其�
         <el-button v-if="order.allowed_actions && order.allowed_actions.submit_confirmation" size="small" type="success" icon="el-icon-check" @click="doConfirm">确认订单</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.lock_inventory" class="inventory-lock-button" size="small" type="danger" icon="el-icon-lock" @click="openInventoryLock">锁库存</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.production_confirmation" size="small" type="primary" icon="el-icon-s-operation" @click="$router.push(`/sales/orders/${order.id}/production-confirmation`)">生产确认</el-button>
+        <el-button v-if="canShortClose" size="small" type="warning" plain icon="el-icon-scissors" :loading="shortClose.loading" @click="openShortClose">短交关闭</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.cancel" size="small" type="danger" plain :loading="cancelling" @click="cancelOrder">取消订单</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.delete_draft" size="small" type="danger" plain icon="el-icon-delete" @click="deleteDraft">删除草稿</el-button>
       </div>
@@ -67,12 +68,45 @@ Design status: 新增“订单阶段提示条”（基础档案风格），其�
       <span slot="footer"><el-button @click="inventoryLockVisible=false">取消</el-button><el-button type="danger" :loading="inventoryLockBusy" @click="confirmInventoryLock">确认锁库存</el-button></span>
     </el-dialog>
 
+    <!-- 短交关闭弹窗：剩余未发不再发，应收改为实发金额 + 运费 -->
+    <el-dialog title="短交关闭" :visible.sync="shortClose.visible" width="min(720px, calc(100vw - 32px))" :close-on-click-modal="false" append-to-body>
+      <template v-if="shortClose.preview">
+        <el-alert v-if="shortClose.preview.blockers && shortClose.preview.blockers.length" type="error" :closable="false" show-icon title="当前不能短交关闭">
+          <div v-for="item in shortClose.preview.blockers" :key="item">{{ item }}</div>
+        </el-alert>
+        <el-alert v-else type="warning" :closable="false" show-icon title="关闭后剩余未发数量不再发货，未开工的关联工单会取消，已占用库存会释放。此操作不能撤销。" />
+        <el-table class="short-close-table" :data="shortCloseLines" border size="mini" max-height="260">
+          <el-table-column prop="line_no" label="行" width="48" align="center" />
+          <el-table-column label="产品" min-width="150" show-overflow-tooltip><template slot-scope="{row}">{{ row.name || row.sku_name || '-' }}</template></el-table-column>
+          <el-table-column label="订单数" width="80" align="right"><template slot-scope="{row}">{{ numberText(row.order_qty) }}</template></el-table-column>
+          <el-table-column label="已发" width="80" align="right"><template slot-scope="{row}">{{ numberText(row.shipped_qty) }}</template></el-table-column>
+          <el-table-column label="关闭数量" width="90" align="right"><template slot-scope="{row}"><b class="orange">{{ numberText(row.close_qty) }}</b></template></el-table-column>
+          <el-table-column v-if="shortClose.preview.receivable_after !== undefined" label="实发金额" width="110" align="right"><template slot-scope="{row}">¥{{ money(row.shipped_amount) }}</template></el-table-column>
+        </el-table>
+        <div v-if="shortClose.preview.receivable_after !== undefined" class="short-close-summary">
+          <div><span>原应收</span><b>¥{{ money(shortClose.preview.receivable_before) }}</b></div>
+          <div><span>新应收</span><b class="green">¥{{ money(shortClose.preview.receivable_after) }}</b></div>
+          <div><span>短交关闭金额</span><b class="orange">¥{{ money(shortClose.preview.short_closed_amount) }}</b></div>
+          <div><span>已收净额</span><b>¥{{ money(shortClose.preview.net_received_amount) }}</b></div>
+        </div>
+        <el-alert v-if="shortCloseOverpaid" class="short-close-overpaid" type="error" :closable="false" show-icon
+          :title="shortClose.preview.overpaid_amount !== undefined ? `客户多付 ¥${money(shortClose.preview.overpaid_amount)}，关闭后需财务办理退款，订单才会完成。` : '客户已付款超过新应收，关闭后需财务办理退款，订单才会完成。'" />
+        <el-input v-if="shortClose.preview.can_close" v-model="shortClose.reason" class="short-close-reason" type="textarea" :rows="3" maxlength="500" show-word-limit placeholder="请填写短交原因，例如：客户确认剩余不再需要" />
+      </template>
+      <span slot="footer">
+        <el-button @click="shortClose.visible = false">返回</el-button>
+        <el-button type="warning" :disabled="!shortClose.preview || !shortClose.preview.can_close" :loading="shortClose.saving" @click="confirmShortClose">确认短交关闭</el-button>
+      </span>
+    </el-dialog>
+
     <!-- 核心业务指标看板 (KPI Strip) -->
     <div class="kpi-metric-strip">
       <div class="kpi-card kpi-card--amount">
-        <div class="kpi-label"><i class="el-icon-wallet" /> 订单金额</div>
+        <div class="kpi-label"><i class="el-icon-wallet" /> 订单金额<el-tag v-if="order.short_closed_at" class="short-closed-tag" size="mini" type="warning" effect="plain">已短交</el-tag></div>
         <div class="kpi-value amount">¥{{ money(order.total_amount) }}</div>
-        <div class="kpi-sub">共 {{ totalLineCount }} 项明细 · 总计 {{ totalOrderQty }} 件</div>
+        <div v-if="order.short_closed_at && order.final_receivable_amount !== undefined" class="kpi-sub">短交关闭 ¥{{ money(order.short_closed_amount) }} · 应收 ¥{{ money(order.final_receivable_amount) }}</div>
+        <div v-else-if="order.short_closed_at" class="kpi-sub">已短交关闭 · {{ date(order.short_closed_at) }}</div>
+        <div v-else class="kpi-sub">共 {{ totalLineCount }} 项明细 · 总计 {{ totalOrderQty }} 件</div>
       </div>
       <div class="kpi-card">
         <div class="kpi-label"><i class="el-icon-user" /> 客户信息</div>
@@ -552,7 +586,7 @@ Design status: 新增“订单阶段提示条”（基础档案风格），其�
 <script>
 import { erpDateTime } from '../../../utils/dateTime'
 import cachedPageRoute from '@/utils/cachedPageRoute'
-import { confirmSalesOrder, formalConfirmSalesOrder, cancelSalesOrder, deleteSalesOrderAttachment, deleteSalesOrderDraft, downloadSalesOrderAttachment, getSalesOrder, listSalesOrderChanges, lockSalesOrderInventory } from '@/api/erp/sales'
+import { confirmSalesOrder, formalConfirmSalesOrder, cancelSalesOrder, previewShortCloseSalesOrder, shortCloseSalesOrder, deleteSalesOrderAttachment, deleteSalesOrderDraft, downloadSalesOrderAttachment, getSalesOrder, listSalesOrderChanges, lockSalesOrderInventory } from '@/api/erp/sales'
 import SalesOrderAttachmentPreviewDialog from '@/components/sales/SalesOrderAttachmentPreviewDialog.vue'
 import SalesOrderFinancePanel from '@/components/sales/SalesOrderFinancePanel.vue'
 import { promptAgreedDeposit } from '@/utils/salesAgreedDeposit'
@@ -578,12 +612,25 @@ export default {
     inventoryLockVisible: false,
     inventoryLockBusy: false,
     cancelling: false,
+    shortClose: { visible: false, loading: false, saving: false, preview: null, reason: '' },
     depositSaving: false,
     inventoryLockPending: null,
     inventoryLockStorageKey: '',
     loadSequence: 0
   }),
   computed: {
+    canShortClose() {
+      if (this.order.order_status !== 'confirmed' || this.order.short_closed_at || !this.$can('sales_order.short_close')) return false
+      return (this.order.lines || []).some(line => Number(line.shipped_qty || 0) > 0)
+    },
+    shortCloseLines() {
+      return ((this.shortClose.preview && this.shortClose.preview.lines) || []).filter(line => line.is_physical)
+    },
+    shortCloseOverpaid() {
+      const preview = this.shortClose.preview || {}
+      if (preview.overpaid_amount !== undefined) return Number(preview.overpaid_amount) > 0
+      return Boolean(preview.has_overpaid)
+    },
     shippingCarrierName() {
       const name = this.order.default_carrier_name_snapshot || (this.order.shipping_snapshot && (this.order.shipping_snapshot.default_carrier_name || this.order.shipping_snapshot.carrier_name))
       if (name) return name
@@ -790,6 +837,37 @@ export default {
       } catch (error) {
         if (!['cancel', 'close'].includes(error)) this.$message.error(cancelled ? '销售订单已取消，详情刷新失败，请重新打开本单核对' : (error.userMessage || '取消订单失败'))
       } finally { this.cancelling = false }
+    },
+    async openShortClose() {
+      if (this.shortClose.loading) return
+      const orderId = this.order.id
+      this.shortClose.loading = true
+      try {
+        const res = await previewShortCloseSalesOrder(orderId)
+        if (!this.isPageRouteActive || String(this.pageRoute.params.id) !== String(orderId)) return
+        this.shortClose.preview = res.data.data
+        this.shortClose.reason = ''
+        this.shortClose.visible = true
+      } catch (error) {
+        this.$message.error(error.userMessage || '短交关闭预览加载失败')
+      } finally { this.shortClose.loading = false }
+    },
+    async confirmShortClose() {
+      const reason = String(this.shortClose.reason || '').trim()
+      if (!reason) return this.$message.warning('请填写短交原因')
+      if (this.shortClose.saving) return
+      const orderId = this.order.id
+      let closed = false
+      this.shortClose.saving = true
+      try {
+        const res = await shortCloseSalesOrder(orderId, { reason })
+        closed = true
+        this.shortClose.visible = false
+        this.$message.success((res.data && res.data.message) || '订单已短交关闭')
+        if (this.isPageRouteActive && String(this.pageRoute.params.id) === String(orderId)) await this.load()
+      } catch (error) {
+        this.$message.error(closed ? '订单已短交关闭，详情刷新失败，请重新打开本单核对' : (error.userMessage || '短交关闭失败'))
+      } finally { this.shortClose.saving = false }
     },
     async deleteDraft() {
       await this.$confirm('删除后草稿及其订单行将不能恢复，附件绑定会保留审计记录。确认删除？', '删除销售订单草稿', { type: 'warning' })
@@ -1127,6 +1205,12 @@ export default {
   min-width: 0;
 }
 
+.short-close-table { margin-top: 12px; }
+.short-close-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.short-close-summary div { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; background: #f7f8fa; border-radius: 6px; }
+.short-close-summary span { color: #909399; font-size: 12px; }
+.short-close-overpaid, .short-close-reason { margin-top: 12px; }
+.short-closed-tag { margin-left: 6px; }
 .kpi-card--amount {
   border-left: 3px solid #008b4b;
 }
