@@ -311,6 +311,7 @@ Route::prefix('v1/erp/inventory')->group(function () {
     Route::delete('adjustments/{id}', [InventoryAdjustmentController::class, 'destroy'])->whereNumber('id');
     Route::get('stocktakes', [InventoryStocktakeController::class, 'index']);
     Route::get('stocktakes/options', [InventoryStocktakeController::class, 'options']);
+    Route::get('stocktakes/active', [InventoryStocktakeController::class, 'active']);
     Route::post('stocktakes', [InventoryStocktakeController::class, 'store']);
     Route::get('stocktakes/{id}', [InventoryStocktakeController::class, 'show'])->whereNumber('id');
     Route::put('stocktakes/{id}/counts', [InventoryStocktakeController::class, 'saveCounts'])->whereNumber('id');

@@ -3,6 +3,11 @@
   <view wx:elif="{{loading}}" class="warehouse-empty"><van-loading color="#ee160b" /></view>
   <view wx:elif="{{error}}" class="warehouse-empty"><text>{{error}}</text><button class="warehouse-secondary" bindtap="load">重新加载</button></view>
   <block wx:elif="{{summary}}">
+    <view wx:if="{{freezes.length}}" class="workspace-freeze {{freezeOverdue ? 'overdue' : ''}}">
+      <view class="workspace-freeze-title">{{freezeOverdue ? '有盘点超过 3 天未完成，请尽快处理' : '以下范围正在盘点，暂停出入库'}}</view>
+      <view wx:for="{{freezes}}" wx:key="id" class="workspace-freeze-row">{{item.warehouse.warehouse_name}}（{{item.location ? item.location.location_name : '整仓'}}）{{item.stocktake_no}}，已持续 {{item.days}} 天</view>
+      <view wx:if="{{freezeTotal > freezes.length}}" class="workspace-freeze-row">另有 {{freezeTotal - freezes.length}} 张盘点单，请到网页端查看</view>
+    </view>
     <view class="workspace-totals">
       <view><text>今日已入库</text><view class="workspace-total"><text>{{summary.today_inbound}}</text><text>单</text></view></view>
       <view class="workspace-divider"></view>

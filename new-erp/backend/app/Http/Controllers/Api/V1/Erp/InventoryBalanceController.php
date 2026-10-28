@@ -206,12 +206,11 @@ class InventoryBalanceController extends Controller
     private function stocktakeFreezes(Request $request): array
     {
         $request->validate(['freeze_page' => 'sometimes|integer|min:1']);
-        return \App\Models\Erp\InventoryStocktake::query()->where('stocktake_status', 'counting')
-            ->with(['warehouse:id,warehouse_name', 'location:id,location_name'])
-            ->when($this->managementScope($request), fn ($q, $scope) => $q->whereHas('warehouse', fn ($w) => $w->where('management_scope', $scope)))
-            ->when($request->input('warehouse_id'), fn ($q, $id) => $q->where('warehouse_id', $id))
-            ->when($request->input('location_id'), fn ($q, $id) => $q->where(fn ($l) => $l->whereNull('location_id')->orWhere('location_id', $id)))
-            ->orderBy('id')->paginate(10, ['id', 'stocktake_no', 'warehouse_id', 'location_id'], 'freeze_page')->toArray();
+        return app(\App\Services\Erp\Inventory\StocktakeFreezeQuery::class)->paginate([
+            'management_scope' => $this->managementScope($request),
+            'warehouse_id' => $request->input('warehouse_id'),
+            'location_id' => $request->input('location_id'),
+        ], (int) $request->input('freeze_page', 1), 'freeze_page');
     }
 
     private function activeBalanceQuery(Request $request)

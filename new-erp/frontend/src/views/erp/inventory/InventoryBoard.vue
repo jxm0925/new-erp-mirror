@@ -1,12 +1,7 @@
 <template>
   <div class="inventory-page">
-    <el-alert v-if="activeView === 'balances' && stocktakeFreezes.total" title="库存正在盘点，以下范围暂停出入库，完成或取消盘点后解除冻结" type="warning" show-icon :closable="false">
-      <div v-for="freeze in stocktakeFreezes.data" :key="freeze.id">
-        {{ freeze.warehouse && freeze.warehouse.warehouse_name }} / {{ freeze.location ? freeze.location.location_name : '全部库位' }} 正在盘点（{{ freeze.stocktake_no }}）
-      </div>
-      <el-button v-if="$can('inventory.stocktake.view')" type="text" @click="$router.push('/inventory/stocktakes')">查看盘点单</el-button>
-      <el-pagination v-if="stocktakeFreezes.total > 10" small layout="prev, pager, next" :page-size="10" :total="stocktakeFreezes.total" :current-page="stocktakeFreezes.current_page" @current-change="loadFreezePage" />
-    </el-alert>
+    <stocktake-freeze-alert v-if="activeView === 'balances'" :value="stocktakeFreezes" @page-change="loadFreezePage" />
+    <stocktake-freeze-alert v-else-if="activeView === 'posting'" />
     <section v-if="activeView === 'posting'" class="inventory-view posting-view">
       <div class="page-head">
         <div>
@@ -1036,15 +1031,16 @@ import { erpDateTime } from '../../../utils/dateTime'
 import cachedPageRoute from '@/utils/cachedPageRoute'
 import PopupManager from 'element-ui/lib/utils/popup/popup-manager'
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
+import StocktakeFreezeAlert from '@/components/common/StocktakeFreezeAlert.vue'
 import { listPendingReceipts, repairPostingReceiptAllocations, postPostingReceipt, listInventoryBalances, listInventoryItemBatches, getInventoryBatchContext, listInventoryBalanceSerials, listInventoryTransactions, listInventoryAdjustments, listInventoryAdjustmentReasons, generateInventoryAdjustmentSerials, saveInventoryAdjustment, submitInventoryAdjustment, postInventoryAdjustment, cancelInventoryAdjustment, deleteInventoryAdjustment, getInventoryQualityContext, createInventoryQualityEvent, getInventoryAlertPolicy, activateInventoryAlertPolicy, disableInventoryAlertPolicy } from '@/api/erp/inventory'
 
 export default {
   mixins: [cachedPageRoute],
   name: 'InventoryBoard',
-  components: { PagedRecordSelect },
+  components: { PagedRecordSelect, StocktakeFreezeAlert },
   data() {
     return {
-      stocktakeFreezes: { data: [], total: 0, current_page: 1 },
+      stocktakeFreezes: { data: [], total: 0, current_page: 1, overdue: false },
       activeView: 'posting',
       postingRows: [],
       postingStats: { posted_today: 0 },
@@ -1308,7 +1304,7 @@ export default {
       if (seq !== this.balanceRequestSeq) return
       this.balanceRows = (res.data.data || []).map(this.mapBalance)
       this.balanceStats = res.data.stats || this.balanceStats
-      this.stocktakeFreezes = res.data.stocktake_freezes || { data: [], total: 0, current_page: 1 }
+      this.stocktakeFreezes = res.data.stocktake_freezes || { data: [], total: 0, current_page: 1, overdue: false }
       this.applyPagination(this.balancePagination, res.data)
       this.selectedBalance = this.selectedBalance ? this.balanceRows.find(r => Number(r.item_id) === Number(this.selectedBalance.item_id)) || null : null
     },

@@ -21,7 +21,12 @@ final class WarehouseWorkspaceController extends Controller
     }
 
     public function summary(Request $request, WarehouseWorkspaceService $service)
-    { return response()->json(['data' => app(\App\Services\Erp\ProductionFinancialProjectionService::class)->redact($service->summary(...$this->context($request)))]); }
+    {
+        $summary = app(\App\Services\Erp\ProductionFinancialProjectionService::class)->redact($service->summary(...$this->context($request)));
+        // 盘点中提示与网页端同源，仓库人员在小程序上也能看到哪些范围暂停出入库。
+        $summary['stocktake_freezes'] = app(\App\Services\Erp\Inventory\StocktakeFreezeQuery::class)->paginate();
+        return response()->json(['data' => $summary]);
+    }
 
     public function document(Request $request, string $kind, int $id, \App\Services\Erp\WarehouseDocumentService $service)
     {

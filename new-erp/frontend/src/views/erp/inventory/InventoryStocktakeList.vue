@@ -88,6 +88,27 @@
           <div v-if="adjustmentNumbers"><span>差异调整单：</span>{{ adjustmentNumbers }}</div>
           <div v-if="detail.remark"><span>备注：</span>{{ detail.remark }}</div>
         </div>
+        <div v-if="detail.summary" class="stocktake-progress">
+          <span>已盘 <b>{{ detail.summary.counted_lines }}</b> / 共 {{ detail.summary.total_lines }} 行</span>
+          <span>未盘 {{ detail.summary.uncounted_lines }} 行</span>
+          <span>有差异 {{ detail.summary.diff_lines }} 行</span>
+          <span>盘盈 {{ num(detail.summary.gain_qty) }}</span>
+          <span>盘亏 {{ num(detail.summary.loss_qty) }}</span>
+          <span>差异金额 {{ num(detail.summary.difference_amount) }}</span>
+          <span v-if="draftCount" class="stocktake-draft">有 {{ draftCount }} 行修改尚未保存</span>
+        </div>
+        <div class="simple-filters stocktake-line-filters">
+          <el-input v-model.trim="lineFilters.keyword" size="small" clearable placeholder="物料编码 / 名称 / 批次" :disabled="detailLoading || saving" @keyup.enter.native="filterLines" @clear="filterLines" />
+          <el-select v-model="lineFilters.location_id" size="small" clearable filterable placeholder="全部库位" :disabled="detailLoading || saving" @change="filterLines">
+            <el-option v-for="l in detail.location_options || []" :key="l.id" :label="`${l.location_code} ${l.location_name}`" :value="l.id" />
+          </el-select>
+          <el-radio-group v-model="lineFilters.line_status" size="small" :disabled="detailLoading || saving" @change="filterLines">
+            <el-radio-button label="">全部</el-radio-button>
+            <el-radio-button label="uncounted">只看未盘</el-radio-button>
+            <el-radio-button label="diff">只看差异</el-radio-button>
+          </el-radio-group>
+          <el-button size="small" type="primary" plain :disabled="detailLoading || saving" @click="filterLines">查询</el-button>
+        </div>
         <el-table :data="detail.lines" border size="small" max-height="460">
           <el-table-column label="物料" min-width="180">
             <template slot-scope="{ row }">{{ row.item && row.item.item_code }} {{ row.item && row.item.item_name }}</template>
@@ -160,6 +181,7 @@ export default {
       detailTotal: 0,
       draftCounts: {},
       originalCounts: {},
+      lineFilters: { keyword: '', location_id: null, line_status: '' },
       windowWidth: window.innerWidth
     }
   },
@@ -167,6 +189,7 @@ export default {
     adjustmentNumbers() {
       return this.detail ? (this.detail.adjustments || [this.detail.adjustment]).filter(Boolean).map(row => row.adjustment_no).join('、') : ''
     },
+    draftCount() { return Object.keys(this.draftCounts).length },
     editable() {
       return !!this.detail && this.detail.stocktake_status === 'counting' && this.$can('inventory.stocktake.create')
     }
@@ -174,6 +197,8 @@ export default {
   created() {
     this.loadOptions()
     this.load()
+    // 从各页面的盘点中提示条跳转过来时直接打开对应盘点单。
+    if (Number(this.$route.query.id) > 0) this.openDetail(Number(this.$route.query.id))
     window.addEventListener('resize', this.onResize)
   },
   beforeDestroy() {
@@ -235,7 +260,7 @@ export default {
       this.$refs.createForm.validate(async valid => {
         if (!valid) return
         if (this.createForm.scope === 'warehouse') {
-          try { await this.$confirm('整仓盘点期间，该仓库所有库位均暂停出入库。确认开始整仓盘点？', '确认整仓盘点', { type: 'warning' }) } catch (e) { return }
+          try { await this.$confirm('整仓盘点期间，该仓库所有出入库（含生产领料、发货）都会被拦住，建议按库位分批盘点。确认开始整仓盘点？', '确认整仓盘点', { type: 'warning' }) } catch (e) { return }
         }
         this.saving = true
         try {
@@ -256,6 +281,7 @@ export default {
       this.detailPage = 1
       this.draftCounts = {}
       this.originalCounts = {}
+      this.lineFilters = { keyword: '', location_id: null, line_status: '' }
       this.detailVisible = true
       await this.loadDetailPage(id, 1)
     },
@@ -279,6 +305,12 @@ export default {
       if (typeof done === 'function') done()
       else this.detailVisible = false
     },
+    // 切换筛选与翻页一样先暂存本页修改，草稿跨筛选保留，统一保存。
+    async filterLines() {
+      if (!this.detail || this.detailLoading || this.saving) return
+      this.captureEdits()
+      await this.loadDetailPage(this.detail.id, 1)
+    },
     async changeDetailPage(page) {
       if (this.detailLoading || this.saving) return
       this.captureEdits()
@@ -287,7 +319,8 @@ export default {
     async loadDetailPage(id, page) {
       this.detailLoading = true
       try {
-        const { data } = await getStocktake(id, { page, per_page: 10 })
+        const filters = Object.fromEntries(Object.entries(this.lineFilters).filter(([, value]) => value !== '' && value !== null))
+        const { data } = await getStocktake(id, { ...filters, page, per_page: 10 })
         // 留有跨页修改时保留原版本，服务端拒绝覆盖他人的新保存。
         if (this.detail && Object.keys(this.draftCounts).length) data.data.business_version = this.detail.business_version
         data.data.lines.forEach(line => {
@@ -319,6 +352,7 @@ export default {
         await this.persistCounts()
         this.$message.success('实盘数已保存')
         this.load()
+        await this.loadDetailPage(this.detail.id, this.detailPage)
       } catch (e) {
         this.fail(e)
       } finally {
@@ -356,3 +390,20 @@ export default {
   }
 }
 </script>
+
+<style scoped>
+.stocktake-progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 8px 0;
+  color: #606266;
+  font-size: 13px;
+}
+.stocktake-draft {
+  color: #e6a23c;
+}
+.stocktake-line-filters {
+  margin-bottom: 8px;
+}
+</style>

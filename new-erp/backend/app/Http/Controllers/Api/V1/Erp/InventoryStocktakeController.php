@@ -33,14 +33,43 @@ class InventoryStocktakeController extends Controller
         ]]);
     }
 
+    /** 盘点中提示：库存、配料、发货相关岗位都能看到冻结范围，权限与各页面入口一致。 */
+    public function active(Request $request, \App\Services\Erp\Inventory\StocktakeFreezeQuery $freezes)
+    {
+        $this->authorizeAnyPermission($request, ['inventory.stocktake.view', 'inventory.balance.view', 'inventory.post.view',
+            'inventory.material_delivery', 'production.material_delivery.manage', 'sales_order.shipment.view',
+            'sales_order.shipment.post', 'sales_order.shipment.packing.execute', 'sales_order.shipment.packing.quality']);
+        $data = $request->validate(['warehouse_id' => 'nullable|integer|min:1', 'page' => 'nullable|integer|min:1']);
+        return response()->json($freezes->paginate($data, (int) ($data['page'] ?? 1)));
+    }
+
     public function show(Request $request, int $id)
     {
         $this->authorizePermission($request, 'inventory.stocktake.view');
-        $page = $request->validate(['page' => 'sometimes|integer|min:1', 'per_page' => 'sometimes|integer|min:1|max:100']);
+        $page = $request->validate(['page' => 'sometimes|integer|min:1', 'per_page' => 'sometimes|integer|min:1|max:100',
+            'keyword' => 'nullable|string|max:120', 'location_id' => 'nullable|integer|min:1', 'line_status' => 'nullable|in:uncounted,diff']);
         $stocktake = InventoryStocktake::query()->with(['warehouse:id,warehouse_code,warehouse_name', 'location:id,location_code,location_name',
             'adjustment:id,adjustment_no,adjustment_status'])->findOrFail($id);
+        $keyword = trim((string) ($page['keyword'] ?? ''));
         $lines = $stocktake->lines()->with(['item:id,item_code,item_name,spec', 'location:id,location_code,location_name', 'unit:id,unit_name'])
+            ->when($keyword !== '', fn ($q) => $q->where(fn ($w) => $w->where('batch_no', 'like', "%{$keyword}%")
+                ->orWhereHas('item', fn ($item) => $item->where('item_code', 'like', "%{$keyword}%")->orWhere('item_name', 'like', "%{$keyword}%"))))
+            ->when($page['location_id'] ?? null, fn ($q, $locationId) => $q->where('location_id', $locationId))
+            ->when(($page['line_status'] ?? null) === 'uncounted', fn ($q) => $q->whereNull('counted_qty'))
+            ->when(($page['line_status'] ?? null) === 'diff', fn ($q) => $q->whereNotNull('difference_qty')->where('difference_qty', '<>', 0))
+            ->orderBy('location_id')->orderBy('item_id')->orderBy('batch_no')->orderBy('id')
             ->paginate($page['per_page'] ?? 10);
+        // 进度与差异汇总按整张单一条聚合 SQL 计算，不受当前页和筛选影响。
+        $summary = (array) DB::table('erp_inventory_stocktake_lines')->where('stocktake_id', $stocktake->id)->selectRaw(
+            'COUNT(*) AS total_lines, SUM(counted_qty IS NOT NULL) AS counted_lines, SUM(counted_qty IS NULL) AS uncounted_lines,
+            SUM(difference_qty IS NOT NULL AND difference_qty <> 0) AS diff_lines,
+            COALESCE(SUM(CASE WHEN difference_qty > 0 THEN difference_qty ELSE 0 END), 0) AS gain_qty,
+            COALESCE(SUM(CASE WHEN difference_qty < 0 THEN -difference_qty ELSE 0 END), 0) AS loss_qty,
+            COALESCE(SUM(difference_amount), 0) AS difference_amount')->first();
+        $stocktake->setAttribute('summary', array_map(fn ($value) => $value === null ? 0 : (float) $value, $summary));
+        $stocktake->setAttribute('location_options', DB::table('erp_inventory_stocktake_lines as line')
+            ->join('erp_locations as location', 'location.id', '=', 'line.location_id')->where('line.stocktake_id', $stocktake->id)
+            ->distinct()->orderBy('location.location_code')->limit(500)->get(['location.id', 'location.location_code', 'location.location_name']));
         $stocktake->setRelation('lines', $lines->getCollection());
         $stocktake->setAttribute('lines_pagination', ['current_page' => $lines->currentPage(), 'per_page' => $lines->perPage(), 'total' => $lines->total()]);
         $adjustmentIds = DB::table('erp_inventory_posting_logs as log')

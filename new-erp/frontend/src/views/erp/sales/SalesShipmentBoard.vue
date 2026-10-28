@@ -2,6 +2,7 @@
   <section class="shipment-board">
     <shipment-packing-panel v-if="executionOnly" execution-only />
     <template v-else>
+    <stocktake-freeze-alert />
     <header class="shipment-header"><h1>销售发货</h1><el-button v-if="$can('sales_order.shipment.create')" type="success" size="small" icon="el-icon-plus" @click="openCreate">新建发货单</el-button></header>
     <form class="shipment-filter" @submit.prevent="search"><el-input v-model.trim="query.keyword" size="small" clearable placeholder="发货单号 / 运单号" /><el-select v-model="query.shipment_status" size="small" clearable placeholder="发货状态"><el-option v-for="state in states" :key="state.value" :value="state.value" :label="state.label" /></el-select><el-button type="success" size="small" native-type="submit" icon="el-icon-search">查询</el-button><el-button size="small" icon="el-icon-refresh" @click="reset">重置</el-button></form>
     <div class="shipment-card">
@@ -125,13 +126,14 @@
 import { erpDateTime } from '../../../utils/dateTime'
 import ShipmentPackingPanel from './ShipmentPackingPanel.vue'
 import SystemRecordPicker from '@/components/system/SystemRecordPicker.vue'
+import StocktakeFreezeAlert from '@/components/common/StocktakeFreezeAlert.vue'
 import { listShipments, getShipment, createShipment, actShipment, listShipmentSources, listShipmentSourceSerials, listShipmentReplacementSerials } from '@/api/erp/shipment-packing'
 import { pendingProductionDecision } from '@/api/erp/production-decisions'
 import { listSalesOrders, getSalesOrder } from '@/api/erp/sales'
 
 export default {
   name: 'SalesShipmentBoard',
-  components: { ShipmentPackingPanel, SystemRecordPicker },
+  components: { ShipmentPackingPanel, SystemRecordPicker, StocktakeFreezeAlert },
   data: () => ({ loading: false, busy: false, error: '', rows: [], total: 0, query: { keyword: '', shipment_status: '', sales_order_id: '', page: 1, per_page: 10 },
     states: [{ value: 'draft', label: '草稿' }, { value: 'pending_outbound', label: '待移待发区' }, { value: 'prepared', label: '待发作业' }, { value: 'partially_shipped', label: '部分已发运' }, { value: 'outbound_posted', label: '已出库待发运' }, { value: 'shipped', label: '已发运' }, { value: 'cancelled', label: '已取消' }],
     detailOpen: false, detailLoading: false, detail: {}, detailError: '', createOpen: false, createError: '', pendingCreate: false, selectedOrder: {}, createForm: { carrier_name: '', tracking_no: '', remark: '' },

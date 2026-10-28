@@ -10,6 +10,7 @@
       </div>
     </div>
     <div class="mfg-body">
+      <stocktake-freeze-alert />
       <div class="card">
         <div class="tabs">
           <span v-for="tab in tabs" :key="tab.value" :class="{ on: status === tab.value }" @click="pickTab(tab.value)">{{ tab.label }}<em v-if="tab.count !== undefined && summary[tab.count]">{{ summary[tab.count] }}</em></span>
@@ -117,11 +118,13 @@
 <script>
 import { listPendingDeliveries, listMaterialDeliveries, previewMaterialDelivery, createMaterialDelivery, materialDeliveryAction } from '../../../api/erp/production'
 import { qty, errorText } from '../production/mfg-helpers'
+import StocktakeFreezeAlert from '@/components/common/StocktakeFreezeAlert.vue'
 
 const CHIP = { prepared: 'c-o', dispatched: 'c-b', signed: 'c-g', rejected: 'c-r', recalled: 'c-n', cancelled: 'c-n' }
 
 export default {
   name: 'ProductionMaterialDeliveryList',
+  components: { StocktakeFreezeAlert },
   data: () => ({
     loading: false, saving: false, rows: [], total: 0, page: 1, summary: {}, canManage: false, keyword: '', status: 'pending',
     tabs: [
