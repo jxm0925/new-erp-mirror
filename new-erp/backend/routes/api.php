@@ -394,6 +394,7 @@ Route::prefix('v1/erp/sales')->group(function () {
     Route::post('shipments/{id}/serials/{lineId}/repair-return', [SalesShipmentController::class, 'repairReturn'])->whereNumber(['id', 'lineId']);
     Route::post('shipments/{id}/serials/{lineId}/replace', [SalesShipmentController::class, 'replaceSerial'])->whereNumber(['id', 'lineId']);
     Route::post('shipments/{id}/cancel', [SalesShipmentController::class, 'cancel'])->whereNumber('id');
+    Route::post('shipments/{id}/cancel-remaining', [SalesShipmentController::class, 'cancelRemaining'])->whereNumber('id');
     Route::delete('shipments/{id}', [SalesShipmentController::class, 'destroyDraft'])->whereNumber('id');
     Route::get('orders/{id}/logs', [SalesOrderController::class, 'logs'])->whereNumber('id');
     Route::get('orders/{id}/versions', [SalesOrderController::class, 'versions'])->whereNumber('id');

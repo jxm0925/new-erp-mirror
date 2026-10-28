@@ -131,6 +131,14 @@ class SalesShipmentController extends Controller
         return $this->costSafeJson(['message' => '发货准备已取消，完好设备已退位并恢复订单占用', 'data' => $shipment]);
     }
 
+    public function cancelRemaining(Request $request, int $id, SalesShipmentApplicationService $service)
+    {
+        $actor = $this->authorizePermission($request, 'sales_order.shipment.cancel');
+        $data = $this->command($request) + $request->validate(['reason' => 'required|string|max:500']);
+        $shipment = $service->cancelRemaining($this->visibleShipment($request, $id), $data['reason'], $this->operator($request), $data, $actor);
+        return $this->costSafeJson(['message' => '剩余未发已取消，未发设备已退位并恢复订单占用', 'data' => $shipment]);
+    }
+
     public function destroyDraft(Request $request, int $id, SalesShipmentApplicationService $service)
     {
         $this->authorizePermission($request, 'sales_order.shipment.delete_draft');

@@ -305,6 +305,39 @@ class SalesShipmentApplicationService
         });
     }
 
+    /**
+     * 部分发运后取消剩余未发：未发明细按整单取消的方式退位、恢复订单占用并释放序列号，
+     * 已发部分保持不变；发货单收口为已发运，订单交付状态由协调器按实发重算。
+     */
+    public function cancelRemaining(SalesShipment $shipment, string $reason, string $operator, array $payload, object $actor): SalesShipment
+    {
+        return $this->mutate('cancel_shipment_remaining', $shipment, $payload, $actor, function ($shipment) use ($reason, $operator, $actor): void {
+            if ($shipment->shipment_status !== 'partially_shipped') {
+                throw ValidationException::withMessages(['shipment' => '只有部分发运的发货单可以取消剩余未发；未发运的单据请直接取消。']);
+            }
+            if ($shipment->packingOperations()->whereHas('laborSessions', fn ($q) => $q->where('status', 'ACTIVE'))->exists()) throw ValidationException::withMessages(['shipment' => '请参与人员先暂停本人工时，再取消剩余未发。']);
+            $lines = $shipment->lines()->whereNotIn('line_status', ['shipped', 'replaced', 'cancelled'])->orderBy('id')->lockForUpdate()->get();
+            if ($lines->isEmpty()) throw ValidationException::withMessages(['shipment' => '发货单没有剩余未发明细。']);
+            $cancelled = 0;
+            foreach ($lines as $line) {
+                if ($line->line_status === 'repair') {
+                    $this->reservations->releaseShipmentReservation((int) $line->inventory_reservation_id, '取消剩余未发，失败设备保留返修：'.$reason);
+                    continue;
+                }
+                if ($line->prepared_at) $this->inventory->moveSalesShipmentLine($line, (int) data_get($line->preparation_snapshot, 'location_id'), 'return', $actor);
+                $this->reservations->restoreShipmentReservationToOrder([(int) $line->inventory_reservation_id], '取消剩余未发，恢复原订单库存锁定：'.$reason);
+                InventorySerial::query()->whereIn('id', $line->serial_snapshot['inventory_serial_ids'] ?? [])->where('serial_status', '!=', 'repair')->update(['serial_status' => 'available', 'reserved_at' => null]);
+                $line->update(['line_status' => 'cancelled']);
+                $cancelled++;
+            }
+            $shipment->packages()->where('package_status', '!=', 'shipped')->update(['package_status' => 'cancelled']);
+            $shipment->packingOperations()->where('status', '!=', 'COMPLETED')->update(['status' => 'CANCELLED']);
+            $shipment->update(['shipment_status' => 'shipped', 'cancel_reason' => $reason]);
+            $this->orderStates->handle(SalesOrderStateCoordinator::SHIPMENT_CHANGED, (int) $shipment->sales_order_id);
+            $this->log($shipment, 'cancel_remaining', 'partially_shipped', 'shipped', $operator, "取消剩余未发 {$cancelled} 行：{$reason}");
+        });
+    }
+
     private function mutate(string $action, SalesShipment $shipment, array $payload, object $actor, \Closure $mutation): SalesShipment
     {
         $response = $this->commands->run($action, (int) $shipment->id, $payload, $actor, function ($locked) use ($payload, $mutation): array {

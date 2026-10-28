@@ -44,6 +44,7 @@
           <el-button v-if="detail.shipment_status === 'pending_outbound' && $can('sales_order.shipment.post')" size="small" type="success" :loading="busy" @click="openPrepare">移至待发区</el-button>
           <el-button v-if="['prepared', 'partially_shipped', 'outbound_posted'].includes(detail.shipment_status) && $can('sales_order.shipment.dispatch')" size="small" type="success" :loading="busy" @click="openDispatch">确认发运 / 提货</el-button>
           <el-button v-if="['draft', 'pending_outbound', 'prepared'].includes(detail.shipment_status) && $can('sales_order.shipment.cancel')" size="small" :loading="busy" @click="cancelShipment">取消发货单</el-button>
+          <el-button v-if="detail.shipment_status === 'partially_shipped' && $can('sales_order.shipment.cancel')" size="small" :loading="busy" @click="cancelRemaining">取消剩余未发</el-button>
         </template>
       </div>
     </el-dialog>
@@ -173,7 +174,7 @@ export default {
     async openDetail (id) { this.detailOpen = true; this.detailLoading = true; this.detailError = ''; this.detail = {}; this.pendingAction = ''; try { const { data } = await getShipment(id); this.detail = data.data; this.readPendingAction() } catch (e) { this.detailError = e.userMessage || '发货详情读取失败' } finally { this.detailLoading = false } },
     async refreshDetail () { if (!this.detail.id) return; const { data } = await getShipment(this.detail.id); this.detail = data.data; this.readPendingAction(); await this.load() },
     readPendingAction () {
-      const actions = ['confirm', 'post-outbound', 'dispatch', 'cancel']
+      const actions = ['confirm', 'post-outbound', 'dispatch', 'cancel', 'cancel-remaining']
       for (const row of this.detail.serial_results || []) actions.push('serials/' + row.shipment_line_id + '/repair-return', 'serials/' + row.shipment_line_id + '/replace')
       this.pendingAction = actions.find(action => pendingProductionDecision('shipment_' + this.detail.id + '_' + action)) || ''
     },
@@ -208,7 +209,7 @@ export default {
     },
     async shipmentAction (action, payload = {}, retry = false) {
       if (this.busy || this.pendingAction && !retry) return
-      const label = { confirm: '确认发货单', 'post-outbound': '移至待发区', dispatch: payload.delivery_mode === 'pickup' ? '确认提货并出库' : '确认发运并出库', cancel: '取消发货单' }[action] || (action.endsWith('/replace') ? '更换发货设备' : '返修合格返回')
+      const label = { confirm: '确认发货单', 'post-outbound': '移至待发区', dispatch: payload.delivery_mode === 'pickup' ? '确认提货并出库' : '确认发运并出库', cancel: '取消发货单', 'cancel-remaining': '取消剩余未发' }[action] || (action.endsWith('/replace') ? '更换发货设备' : '返修合格返回')
       try {
         if (!retry) await this.$confirm('确认执行“' + label + '”？', label, { type: 'warning' })
         this.busy = true; this.detailError = ''
@@ -219,6 +220,8 @@ export default {
       finally { this.busy = false }
     },
     async cancelShipment () { try { const result = await this.$prompt('请填写取消原因', '取消发货单', { inputValidator: value => Boolean(value && value.trim()) || '请填写取消原因', inputType: 'textarea' }); await this.shipmentAction('cancel', { reason: result.value }) } catch (_) { /* User cancelled. */ } },
+    // 部分发运后不再发剩余部分：未发设备退回原库位并恢复订单占用，发货单收口为已发运。
+    async cancelRemaining () { try { const result = await this.$prompt('剩余未发的明细将取消，设备退回原库位并恢复订单库存锁定。请填写原因', '取消剩余未发', { inputValidator: value => Boolean(value && value.trim()) || '请填写取消原因', inputType: 'textarea' }); await this.shipmentAction('cancel-remaining', { reason: result.value }, false) } catch (_) { /* User cancelled. */ } },
     async openCreate () { this.createOpen = true; this.createError = ''; this.pendingCreate = false; this.selectedOrder = {}; this.sourceRows = []; this.sourceSelected = {}; this.sourcePage = 1; this.sourceTotal = 0; this.createForm = { carrier_name: '', tracking_no: '', remark: '' }; if (this.query.sales_order_id) { try { const { data } = await getSalesOrder(this.query.sales_order_id); await this.chooseOrder(data) } catch (e) { this.createError = e.userMessage || '订单读取失败' } } },
     openOrderPicker () { this.orderQuery = { keyword: '', page: 1, per_page: 10 }; this.orderPickerOpen = true; this.loadOrders() },
     async loadOrders () { try { const { data } = await listSalesOrders(this.orderQuery); this.orderRows = data.data || []; this.orderTotal = data.total || 0 } catch (e) { this.$message.error(e.userMessage || '订单读取失败') } },
