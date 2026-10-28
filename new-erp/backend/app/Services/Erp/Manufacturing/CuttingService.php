@@ -168,7 +168,7 @@ final class CuttingService
                     $location = DB::table('erp_locations')->where('id', (int) $row['location_id'])->lockForUpdate()->first();
                     if (! $location || (int) $location->warehouse_id !== (int) $row['warehouse_id'] || ! in_array($location->status, ['enabled', 'active'], true)
                         || $location->location_purpose !== 'general') $this->fail('remnant_location_invalid', '原料余料必须回到所选仓库内启用的普通库存库位。');
-                    $warehouse = DB::table('erp_warehouses')->where('id', (int) $row['warehouse_id'])->lockForUpdate()->first();
+                    $warehouse = DB::table('erp_warehouses')->where('id', (int) $row['warehouse_id'])->sharedLock()->first();
                     if (! $warehouse || ! in_array($warehouse->status, ['enabled', 'active'], true) || ($warehouse->management_scope && $warehouse->management_scope !== 'factory'))
                         $this->fail('remnant_warehouse_invalid', '原料余料必须回到启用的工厂仓库。');
                 }

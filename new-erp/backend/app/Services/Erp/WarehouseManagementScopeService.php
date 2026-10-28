@@ -28,7 +28,8 @@ final class WarehouseManagementScopeService
     ): array {
         $this->assertTransaction();
         $item = Item::query()->whereKey($item instanceof Item ? $item->id : $item)->lockForUpdate()->first();
-        $warehouse = Warehouse::query()->whereKey($warehouse instanceof Warehouse ? $warehouse->id : $warehouse)->lockForUpdate()->first();
+        // 共享锁足以防止仓库档案并发修改；与盘点冻结守卫一致，避免过账事务内 S→X 升级死锁。
+        $warehouse = Warehouse::query()->whereKey($warehouse instanceof Warehouse ? $warehouse->id : $warehouse)->sharedLock()->first();
         if (!$item || !in_array($item->management_scope, ['factory', 'office'], true)) {
             throw ValidationException::withMessages([$field => '物料管理范围未确定，请核对物料档案后再办理库存业务。']);
         }
@@ -63,7 +64,7 @@ final class WarehouseManagementScopeService
             || (string) $source->batch_no !== (string) ($line['batch_no'] ?? '')) {
             throw ValidationException::withMessages(['stock' => '历史退回只能恢复已证实的原出库物料、仓库、库位和批次，数量不能超过原出库事实。']);
         }
-        Warehouse::query()->whereKey($source->warehouse_id)->lockForUpdate()->firstOrFail();
+        Warehouse::query()->whereKey($source->warehouse_id)->sharedLock()->firstOrFail();
         return Item::query()->whereKey($source->item_id)->lockForUpdate()->firstOrFail();
     }
 

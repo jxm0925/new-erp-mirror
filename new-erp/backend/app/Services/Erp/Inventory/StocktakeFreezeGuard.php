@@ -16,16 +16,25 @@ class StocktakeFreezeGuard
 {
     public const EXEMPT_ADJUSTMENT_REASON = 'stocktaking_difference';
 
+    /**
+     * 锁协议（仓库行锁只用于“开盘/完成/取消盘点”与“过账”互斥，过账之间不互斥）：
+     * 1. 过账：先锁物料（内核入口 X），再对仓库行与盘点中单据加共享锁（S）。同仓不同物料的过账可并行持有 S。
+     *    入库路径的 WarehouseManagementScopeService 同样只加 S，避免同一事务内 S→X 升级造成并发过账互相死锁。
+     * 2. InventoryStocktakeService::create()/lockCounting()（完成、取消、录入）对仓库行加排他锁（X）：
+     *    等待正在进行的过账提交后才拍快照，同时挡住新的过账；之后用 NOWAIT 锁余额和物料，冲突即重试，不会反向等待过账。
+     * 3. 完成盘点时同一事务已持有仓库 X，内核再加 S 不冲突。
+     * 4. “盘点差异”豁免分支对调整单和快照行仍加 X，只在盘点过账时走到，频率很低。
+     * 共享锁为当前读，不受业务事务已有的 RR 快照影响。
+     */
     public function assertWritable(InventoryTransaction $transaction, array $line): void
     {
         if (DB::transactionLevel() < 1) throw new \LogicException('Inventory posting requires an application transaction.');
-        // 与开盘共用仓库范围锁；当前读不受业务事务已有的 RR 快照影响。
-        Warehouse::query()->whereKey((int) $line['warehouse_id'])->lockForUpdate()->firstOrFail();
+        Warehouse::query()->whereKey((int) $line['warehouse_id'])->sharedLock()->firstOrFail();
         $stocktake = DB::table('erp_inventory_stocktakes')
             ->where('stocktake_status', 'counting')
             ->where('warehouse_id', (int) $line['warehouse_id'])
             ->where(fn ($query) => $query->whereNull('location_id')->orWhere('location_id', (int) $line['location_id']))
-            ->lockForUpdate()->first(['id', 'stocktake_no']);
+            ->sharedLock()->first(['id', 'stocktake_no']);
         if (! $stocktake) return;
         if ($transaction->source_type === 'inventory_adjustment' && DB::table('erp_inventory_adjustments')
             ->where('id', $transaction->source_id)->lockForUpdate()->value('reason') === self::EXEMPT_ADJUSTMENT_REASON) {
