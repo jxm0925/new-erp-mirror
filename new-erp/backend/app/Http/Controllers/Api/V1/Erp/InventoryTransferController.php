@@ -69,8 +69,10 @@ class InventoryTransferController extends Controller
             'id' => $row->id, 'item_id' => $row->item_id, 'item_code' => $row->item?->item_code, 'item_name' => $row->item?->item_name,
             'spec' => $row->item?->spec, 'location_id' => $row->location_id, 'location_name' => $row->location?->location_name,
             'location_code' => $row->location?->location_code, 'batch_no' => $row->batch_no, 'unit_name' => $row->unit?->unit_name,
-            'quantity_available' => $availability->availableForOutbound($row),
+            'quantity_available' => $available = $availability->availableForOutbound($row),
             'available_serials_count' => (int) $row->available_serials_count,
+            'unnumbered_available' => max(0, $available - (int) $row->available_serials_count),
+            'serial_tracking_mode' => $row->item?->serialTrackingMode() ?? 'none',
         ]);
         return response()->json($paginator);
     }

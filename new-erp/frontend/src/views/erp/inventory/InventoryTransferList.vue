@@ -83,7 +83,10 @@
         </el-table-column>
         <el-table-column label="序列号" min-width="200">
           <template slot-scope="{ row }">
-            <paged-record-select v-if="hasSerials(row)" v-model="row.serial_ids" :request="listSourceSerials" :params="{ inventory_balance_id: row.inventory_balance_id, warehouse_id: form.source_warehouse_id, for_transfer: 1 }" :columns="[{ prop: 'serial_no', label: '序列号' }]" :label="serialLabel" multiple size="mini" title="选择序列号" placeholder="选择序列号" @change="row.quantity = row.serial_ids.length" />
+            <template v-if="hasSerials(row)">
+              <paged-record-select v-model="row.serial_ids" :request="listSourceSerials" :params="{ inventory_balance_id: row.inventory_balance_id, warehouse_id: form.source_warehouse_id, for_transfer: 1 }" :columns="[{ prop: 'serial_no', label: '序列号' }]" :label="serialLabel" multiple size="mini" title="选择序列号" :placeholder="serialRequired(row) ? '选择序列号（必选）' : '选择序列号（可选）'" @change="changeSerials(row)" />
+              <div class="serial-hint">{{ serialHint(row) }}</div>
+            </template>
             <span v-else>—</span>
           </template>
         </el-table-column>
@@ -205,7 +208,35 @@ export default {
     },
     hasSerials(row) {
       const balance = this.balanceOf(row)
-      return row.serial_ids.length > 0 || !!(balance && balance.available_serials_count > 0)
+      return row.serial_ids.length > 0 || !!(balance && (balance.available_serials_count > 0 || balance.serial_tracking_mode !== 'none'))
+    },
+    // 必须编号且没有历史无编号库存时，数量只能等于所选编号数。
+    serialRequired(row) {
+      const balance = this.balanceOf(row)
+      return !!balance && balance.serial_tracking_mode === 'required' && !(Number(balance.unnumbered_available) > 0)
+    },
+    serialHint(row) {
+      const balance = this.balanceOf(row)
+      if (!balance) return ''
+      const picked = row.serial_ids.length
+      const unnumbered = Math.max(0, Math.round(Number(row.quantity) || 0) - picked)
+      return `可用编号 ${balance.available_serials_count} 件，无编号 ${this.num(balance.unnumbered_available)} 件；本行：编号 ${picked} 件 + 无编号 ${unnumbered} 件`
+    },
+    changeSerials(row) {
+      const picked = row.serial_ids.length
+      if (this.serialRequired(row) || !(Number(row.quantity) >= picked)) row.quantity = picked
+    },
+    serialLineError(row, index) {
+      const balance = this.balanceOf(row)
+      if (!balance || !this.hasSerials(row)) return ''
+      const qty = Number(row.quantity) || 0
+      const picked = row.serial_ids.length
+      const prefix = `第 ${index + 1} 行（${balance.item_code}）`
+      if (!Number.isInteger(qty)) return `${prefix}涉及单件编号，数量必须为整数`
+      if (picked > qty) return `${prefix}所选编号数不能超过调拨数量`
+      if (this.serialRequired(row) && picked !== qty) return `${prefix}必须逐件选择与数量一致的序列号`
+      if (qty - picked > Number(balance.unnumbered_available)) return `${prefix}无编号可用 ${this.num(balance.unnumbered_available)} 件，本行编号 ${picked} 件 + 无编号 ${qty - picked} 件，请补选序列号`
+      return ''
     },
     async loadOptions() {
       try {
@@ -261,6 +292,8 @@ export default {
       const lines = this.form.lines.filter(l => l.inventory_balance_id)
       if (!lines.length) return this.$message.warning('请至少添加一行明细')
       if (lines.some(l => !l.target_location_id || !(l.quantity > 0))) return this.$message.warning('请填写每行的调入库位和数量')
+      const serialError = lines.map(this.serialLineError).find(Boolean)
+      if (serialError) return this.$message.warning(serialError)
       this.saving = true
       try {
         await saveTransfer({ ...this.form, lines: lines.map(l => ({ ...l, serial_ids: l.serial_ids.length ? l.serial_ids : null })) })
@@ -298,6 +331,12 @@ export default {
 </script>
 
 <style scoped>
+.serial-hint {
+  margin-top: 2px;
+  color: #909399;
+  font-size: 12px;
+  line-height: 16px;
+}
 .simple-filters > .paged-record-select {
   width: 170px;
 }

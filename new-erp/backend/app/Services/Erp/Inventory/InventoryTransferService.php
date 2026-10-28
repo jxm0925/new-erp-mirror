@@ -176,22 +176,43 @@ class InventoryTransferService
         $qty = round((float) ($line['quantity'] ?? 0), 4);
         if ($qty <= 0) $fail('调拨数量必须大于 0。');
         $available = $this->availability->availableForOutbound($balance);
-        if ($qty > $available + 0.00000001) $fail("{$item->item_code} 可调拨数量不足（可用 ".rtrim(rtrim(number_format($available, 4, '.', ''), '0'), '.').'）。');
+        if ($qty > $available + 0.00000001) $fail("{$item->item_code} 可调拨数量不足（可用 ".$this->qtyText($available).'）。');
 
         $serialIds = array_values(array_unique(array_map('intval', $line['serial_ids'] ?? [])));
         $serialStock = InventorySerial::query()->where('inventory_balance_id', $balance->id)->where('serial_status', 'available');
-        $needsSerial = $item->serialTrackingMode() === 'required' || (clone $serialStock)->exists();
-        if ($needsSerial) {
-            if (abs($qty - round($qty)) > 0.00000001 || count($serialIds) !== (int) round($qty)) $fail("{$item->item_code} 按序列号管理，须逐个选择与数量一致的序列号。");
-            $found = (clone $serialStock)->whereIn('id', $serialIds)->when($lock, fn ($q) => $q->lockForUpdate())->count();
-            if ($found !== count($serialIds)) $fail('所选序列号不在该库存批次或不是可用状态。');
-        } elseif ($serialIds) {
-            $fail('该库存批次没有可调拨的序列号。');
+        $serialCount = (clone $serialStock)->count();
+        $mode = $item->serialTrackingMode();
+        // 系统追加的“含无编号 N 件”每次按本次数量重算，避免重复保存后残留旧数字。
+        $remark = trim((string) preg_replace('/(；)?含无编号 \d+ 件/u', '', (string) ($line['remark'] ?? ''))) ?: null;
+        if ($mode === 'none' && $serialCount === 0) {
+            // 未启用编号且批次内无历史编号：纯数量调拨。
+            if ($serialIds) $fail('该库存批次没有可调拨的序列号。');
+        } else {
+            // 规则与库存调整减少方向一致：编号件按所选编号移动，其余数量只能从无编号可用量中扣。
+            if (abs($qty - round($qty)) > 0.00000001) $fail("{$item->item_code} 涉及单件编号，调拨数量必须为整数。");
+            $pieces = (int) round($qty);
+            if (count($serialIds) > $pieces) $fail('所选序列号数量不能超过调拨数量。');
+            if ($serialIds) {
+                $found = (clone $serialStock)->whereIn('id', $serialIds)->when($lock, fn ($q) => $q->lockForUpdate())->count();
+                if ($found !== count($serialIds)) $fail('所选序列号不在该库存批次或不是可用状态。');
+            }
+            $unnumbered = $pieces - count($serialIds);
+            $unnumberedAvailable = max(0, $available - $serialCount);
+            if ($unnumbered > 0) {
+                if ($unnumbered > $unnumberedAvailable + 0.00000001) {
+                    $fail("{$item->item_code} 无编号可用 ".$this->qtyText($unnumberedAvailable).' 件，本行编号 '.count($serialIds)." 件 + 无编号 {$unnumbered} 件，请补选序列号。");
+                }
+                if ($mode === 'required') {
+                    // 必须编号的物料只为历史无编号库存放行，并在明细上留痕。
+                    $tag = "含无编号 {$unnumbered} 件";
+                    $remark = $remark ? "{$remark}；{$tag}" : $tag;
+                }
+            }
         }
         return [
             'inventory_balance_id' => $balance->id, 'item_id' => $balance->item_id, 'source_location_id' => $balance->location_id,
             'target_location_id' => $target->id, 'batch_no' => $balance->batch_no, 'unit_id' => $balance->unit_id,
-            'quantity' => $qty, 'serial_ids' => $serialIds ?: null, 'remark' => $line['remark'] ?? null,
+            'quantity' => $qty, 'serial_ids' => $serialIds ?: null, 'remark' => $remark,
         ];
     }
 
@@ -234,6 +255,11 @@ class InventoryTransferService
                 'occurred_at' => now(),
             ]);
         }
+    }
+
+    private function qtyText(float $qty): string
+    {
+        return rtrim(rtrim(number_format($qty, 4, '.', ''), '0'), '.');
     }
 
     private function assertWarehouse(int $id): void
