@@ -1,7 +1,7 @@
 <template>
   <div class="work-order-detail-page" v-loading="loading">
     <template v-if="wo">
-      <!-- 页面全局头部卡片 (100% 对齐主数据中心规范) -->
+      <!-- 页面全局头部卡片 -->
       <header class="page-head">
         <div class="head-left">
           <el-button
@@ -117,67 +117,90 @@
         </div>
       </header>
 
-      <!-- 全局统一页面业务提示条 -->
-      <div class="erp-page-tip">
-        <i class="el-icon-info" />
-        <span>
-          制造产品：<b>{{ productName }}</b> × <b>{{ qty(wo.planned_qty) }} {{ wo.unit_name || '台' }}</b>
-          ｜ SKU 规格编码：<b class="code-mono">{{ wo.sku_code || '—' }}</b>
-          ｜ 工艺路线：<b>{{ wo.routing ? `${wo.routing.routing_name} V${wo.routing.version}` : '未配置工艺路线' }}</b>
-          ｜ 制造 BOM：<b>{{ wo.bom ? bomLabel(wo.bom.bom_name, wo.bom.bom_no, wo.bom.version) : '未配置 BOM' }}</b>
-          ｜ 生产负责人：<b>{{ wo.owner_name || '未指定' }}</b>
-          ｜ 目标入库仓：<b>{{ wo.warehouse_name || '物料默认仓库' }}</b>
-        </span>
-      </div>
-
-      <!-- 计划交期与制程进度横幅卡片 -->
-      <section class="detail-card schedule-stepper-card">
-        <div class="stepper-wrap">
-          <div class="stepper-title">生命周期状态演进</div>
-          <div class="stepper-flow">
-            <div
-              v-for="(s, i) in steps"
-              :key="s.value"
-              class="step-node"
-              :class="{
-                'step-active': s.value === stepValue,
-                'step-completed': i < stepIndex
-              }"
-            >
-              <div class="node-circle font-mono">
-                <i v-if="i < stepIndex" class="el-icon-check" />
-                <span v-else>{{ i + 1 }}</span>
-              </div>
-              <span class="node-label">{{ s.label }}</span>
-              <div v-if="i < steps.length - 1" class="node-divider" />
+      <!-- 工单主档参数与生命周期进度概览卡片 -->
+      <section class="detail-card overview-master-card">
+        <div class="master-meta-grid">
+          <div class="meta-cell meta-cell-primary">
+            <span class="meta-label">制造产品 / 计划数量</span>
+            <div class="meta-val-main">
+              <strong class="product-title" :title="productName">{{ productName }}</strong>
+              <span class="qty-pill code-mono">{{ qty(wo.planned_qty) }} {{ wo.unit_name || '台' }}</span>
             </div>
+          </div>
+          <div class="meta-cell">
+            <span class="meta-label">SKU 规格编码</span>
+            <div class="meta-val code-mono" :title="wo.sku_code || '—'">{{ wo.sku_code || '—' }}</div>
+          </div>
+          <div class="meta-cell">
+            <span class="meta-label">工艺路线</span>
+            <div class="meta-val" :title="wo.routing ? `${wo.routing.routing_name} V${wo.routing.version}` : '未配置工艺路线'">
+              {{ wo.routing ? `${wo.routing.routing_name} V${wo.routing.version}` : '未配置工艺路线' }}
+            </div>
+          </div>
+          <div class="meta-cell">
+            <span class="meta-label">制造 BOM</span>
+            <div class="meta-val" :title="wo.bom ? bomLabel(wo.bom.bom_name, wo.bom.bom_no, wo.bom.version) : '未配置 BOM'">
+              {{ wo.bom ? bomLabel(wo.bom.bom_name, wo.bom.bom_no, wo.bom.version) : '未配置 BOM' }}
+            </div>
+          </div>
+          <div class="meta-cell">
+            <span class="meta-label">生产负责人</span>
+            <div class="meta-val">{{ wo.owner_name || '未指定' }}</div>
+          </div>
+          <div class="meta-cell">
+            <span class="meta-label">目标入库仓</span>
+            <div class="meta-val">{{ wo.warehouse_name || '物料默认仓库' }}</div>
           </div>
         </div>
 
-        <div class="due-summary-box">
-          <div class="due-box-header">
-            <span class="due-box-label">计划完工交期进度</span>
-            <span v-if="dueDiff !== null" :class="['due-diff-tag', dueDiff >= 0 ? 'text-success' : 'text-danger font-medium']">
-              {{ dueDiff >= 0 ? `较约定交期提前 ${dueDiff} 天` : `较约定交期滞后 ${-dueDiff} 天` }}
-            </span>
+        <div class="schedule-stepper-row">
+          <div class="stepper-wrap">
+            <div class="stepper-title">生命周期状态演进</div>
+            <div class="stepper-flow">
+              <div
+                v-for="(s, i) in steps"
+                :key="s.value"
+                class="step-node"
+                :class="{
+                  'step-active': s.value === stepValue,
+                  'step-completed': i < stepIndex
+                }"
+              >
+                <div class="node-circle font-mono">
+                  <i v-if="i < stepIndex" class="el-icon-check" />
+                  <span v-else>{{ i + 1 }}</span>
+                </div>
+                <span class="node-label">{{ s.label }}</span>
+                <div v-if="i < steps.length - 1" class="node-divider" />
+              </div>
+            </div>
           </div>
-          <div class="due-main-date code-mono">
-            {{ wo.planned_finish_date || '未指定计划完工日' }}
-          </div>
-          <div class="schedule-progress-bar">
-            <div class="progress-fill" :style="{ width: barPercent + '%' }" />
-          </div>
-          <div class="schedule-milestones">
-            <span>计划开工：{{ shortDate(wo.planned_start_date) }}</span>
-            <span>当前基准：{{ shortDate(today) }}</span>
-            <span v-if="wo.required_date">合同交期：{{ shortDate(wo.required_date) }}</span>
+
+          <div class="due-summary-box">
+            <div class="due-box-header">
+              <span class="due-box-label">计划完工交期进度</span>
+              <span v-if="dueDiff !== null" :class="['due-diff-tag', dueDiff >= 0 ? 'text-success' : 'text-danger font-medium']">
+                {{ dueDiff >= 0 ? `较约定交期提前 ${dueDiff} 天` : `较约定交期滞后 ${-dueDiff} 天` }}
+              </span>
+            </div>
+            <div class="due-main-date code-mono">
+              {{ wo.planned_finish_date || '未指定计划完工日' }}
+            </div>
+            <div class="schedule-progress-bar">
+              <div class="progress-fill" :style="{ width: barPercent + '%' }" />
+            </div>
+            <div class="schedule-milestones">
+              <span>计划开工：{{ shortDate(wo.planned_start_date) }}</span>
+              <span>当前基准：{{ shortDate(today) }}</span>
+              <span v-if="wo.required_date">合同交期：{{ shortDate(wo.required_date) }}</span>
+            </div>
           </div>
         </div>
       </section>
 
       <!-- 双栏响应式主体工作区 -->
       <main class="content-grid">
-        <!-- 左侧主体列 -->
+        <!-- 左侧主体列：三大核心制程与齐套看板 -->
         <div class="main-column">
           <!-- 卡片 1：整机序列号在制进度与工序过站看板 -->
           <section class="detail-card">
@@ -187,10 +210,10 @@
                 <h2>整机序列号在制进度与过站看板</h2>
               </div>
               <div class="unit-status-counters">
-                <span class="counter-pill">已入库 <b class="text-success">{{ unitCount('stored') }}</b></span>
+                <span class="counter-pill pill-success">已入库 <b class="text-success">{{ unitCount('stored') }}</b></span>
                 <span class="counter-pill">待入库 <b>{{ unitCount('completed') }}</b></span>
-                <span class="counter-pill">在制加工 <b class="text-primary">{{ unitCount('in_progress') }}</b></span>
-                <span class="counter-pill">质量返修 <b class="text-danger">{{ unitCount('rework') }}</b></span>
+                <span class="counter-pill pill-primary">在制加工 <b class="text-primary">{{ unitCount('in_progress') }}</b></span>
+                <span class="counter-pill pill-danger">质量返修 <b class="text-danger">{{ unitCount('rework') }}</b></span>
                 <span class="counter-pill">待开工 <b>{{ unitCount('waiting') }}</b></span>
               </div>
             </div>
@@ -209,33 +232,37 @@
                     <th v-if="shipOps.length" :colspan="shipOps.length" class="col-grp-ship">仓配与发运工序（销售交付阶段）</th>
                   </tr>
                   <tr class="table-col-header">
-                    <th>序列号 / 状态</th>
+                    <th class="col-sn-sub">序列号 / 状态 / 绑定部件</th>
                     <th v-for="op in prodOps" :key="op.id" class="op-th">{{ op.operation_name }}</th>
                     <th v-if="!prodOps.length" class="op-th">—</th>
                     <th v-for="op in shipOps" :key="op.id" class="op-th ship-th">{{ op.operation_name }}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="u in visibleUnits" :key="u.id">
+                  <tr v-for="u in visibleUnits" :key="u.id" class="unit-matrix-row">
                     <td class="unit-sn-cell">
-                      <div class="sn-text code-mono" @click="openSerial(u.serial_no)">
-                        <i class="el-icon-postcard text-success" />
-                        {{ u.serial_no || ('第 ' + u.unit_no + ' 台') }}
+                      <div class="sn-head-line">
+                        <div class="sn-text code-mono" @click="openSerial(u.serial_no)">
+                          <i class="el-icon-postcard text-success" />
+                          {{ u.serial_no || ('第 ' + u.unit_no + ' 台') }}
+                        </div>
+                        <div class="unit-sub-status">
+                          <span :class="u.status === 'rework' ? 'text-danger font-medium' : 'text-muted'">
+                            {{ u.status === 'rework' ? `返修第 ${u.rework_count || 1} 次` : u.status_label }}
+                          </span>
+                          <span v-if="u.current_operation_name && ['in_progress', 'rework'].includes(u.status)" class="cur-op-sub">
+                            · {{ u.current_operation_name }}
+                          </span>
+                          <span v-if="u.rework_count && u.status !== 'rework'" class="rework-history-sub">
+                            · 曾返修 {{ u.rework_count }} 次
+                          </span>
+                        </div>
                       </div>
-                      <div class="unit-sub-status">
-                        <span :class="u.status === 'rework' ? 'text-danger font-medium' : 'text-muted'">
-                          {{ u.status === 'rework' ? `返修第 ${u.rework_count || 1} 次` : u.status_label }}
+                      <div v-if="u.components && u.components.length" class="unit-comp-tags">
+                        <span v-for="c in u.components" :key="c.id" class="unit-comp-chip">
+                          <span class="comp-chip-text">{{ c.component_item_name }} <b class="code-mono">{{ c.component_serial_no }}</b></span>
+                          <el-button v-if="canSwap(u)" type="text" size="mini" class="comp-swap-btn" @click="openSwap(u, c)">互换</el-button>
                         </span>
-                        <span v-if="u.current_operation_name && ['in_progress', 'rework'].includes(u.status)" class="cur-op-sub">
-                          · 当前工序：{{ u.current_operation_name }}
-                        </span>
-                        <span v-if="u.rework_count && u.status !== 'rework'" class="rework-history-sub">
-                          · 曾返修 {{ u.rework_count }} 次
-                        </span>
-                      </div>
-                      <div v-for="c in (u.components || [])" :key="c.id" class="unit-sub-status">
-                        <span class="text-muted">{{ c.component_item_name }} {{ c.component_serial_no }}</span>
-                        <el-button v-if="canSwap(u)" type="text" size="mini" @click="openSwap(u, c)">互换</el-button>
                       </div>
                     </td>
                     <td v-for="(op, i) in prodOps" :key="op.id" class="matrix-cell-td">
@@ -248,7 +275,7 @@
                     </td>
                     <td v-for="op in shipOps" :key="op.id" class="matrix-cell-td ship-td">
                       <div class="matrix-cell cell-dash">
-                        {{ u.status === 'stored' ? '待开发货单' : '' }}
+                        {{ u.status === 'stored' ? '待开发货单' : '—' }}
                       </div>
                     </td>
                   </tr>
@@ -260,11 +287,17 @@
                   展开查看全部 {{ wo.units.length }} 台设备序列号
                 </el-button>
               </div>
-              <div v-if="(wo.unbound_components || []).length" class="more-expand-bar">
-                <div v-for="c in wo.unbound_components" :key="c.serial_id" class="unit-sub-status">
-                  <span class="text-danger">待登记编号</span>
-                  <span class="text-muted">{{ c.component_item_name }} {{ c.serial_no }}（{{ c.issue_no }}）</span>
-                  <el-button v-if="canAssign" type="text" size="mini" @click="openAssign(c)">装到台</el-button>
+              <div v-if="(wo.unbound_components || []).length" class="unbound-comp-panel">
+                <div class="unbound-panel-title">
+                  <i class="el-icon-warning-outline text-danger" />
+                  <span>待登记装机部件编号（{{ wo.unbound_components.length }} 项）</span>
+                </div>
+                <div class="unbound-chip-list">
+                  <div v-for="c in wo.unbound_components" :key="c.serial_id" class="unbound-chip-item">
+                    <span class="text-danger font-medium">待登记编号</span>
+                    <span class="text-muted">{{ c.component_item_name }} <b class="code-mono">{{ c.serial_no }}</b>（{{ c.issue_no }}）</span>
+                    <el-button v-if="canAssign" type="text" size="mini" @click="openAssign(c)">装到台</el-button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -327,20 +360,27 @@
           <!-- 卡片 3：工序物料齐套分析看板 -->
           <section class="detail-card">
             <div class="card-header">
-              <div class="header-title">
-                <i class="el-icon-connection" />
-                <h2>工序物料齐套分析看板</h2>
+              <div class="header-left-group">
+                <div class="header-title">
+                  <i class="el-icon-connection" />
+                  <h2>工序物料齐套分析看板</h2>
+                </div>
+                <span class="header-desc-hint">按工艺路线将 BOM 分解至工序校验物料齐套；缺料提示预警</span>
               </div>
-              <span class="header-desc-hint">按工艺路线将 BOM 分解至工序校验物料齐套；缺料提示预警</span>
-              <el-button
-                v-if="canPurchaseShortage"
-                type="text"
-                size="mini"
-                :disabled="saving"
-                @click="shortageDialog = true"
-              >
-                缺料转采购
-              </el-button>
+              <div class="card-header-actions">
+                <work-order-cutting-panel :work-order="wo" @refresh="load" />
+                <el-button
+                  v-if="canPurchaseShortage"
+                  size="mini"
+                  type="warning"
+                  plain
+                  icon="el-icon-shopping-cart-full"
+                  :disabled="saving"
+                  @click="shortageDialog = true"
+                >
+                  缺料转采购
+                </el-button>
+              </div>
             </div>
 
             <div v-if="!wo.kitting.length" class="empty-state-notice">
@@ -348,231 +388,197 @@
               <span>本工单未配置工艺路线或制造 BOM，暂无法按工序测算物料齐套率</span>
             </div>
 
-            <div v-else class="kitting-grid-wrap">
+            <template v-else>
+              <!-- 含领料需求工序卡片网格（单工序或奇数末项自动铺满并启用双列物料网格） -->
               <div
-                v-for="k in wo.kitting"
-                :key="k.operation_key"
-                class="kitting-op-card"
-                :class="{ 'kitting-shortage': k.status === 'short' }"
+                v-if="materialKittingOps.length"
+                class="kitting-grid-wrap"
+                :class="{ 'kitting-grid-single': materialKittingOps.length === 1 }"
               >
-                <div class="kitting-op-head">
-                  <span class="op-title font-medium">{{ k.operation_name }}</span>
-                  <el-tag
-                    size="mini"
-                    :type="k.status === 'short' ? 'danger' : (k.status === 'ready' ? 'success' : 'info')"
-                    effect="plain"
-                  >
-                    {{ kitLabel(k) }}
-                  </el-tag>
-                  <el-button
-                    v-if="k.receive_pending && canReceiveMaterials"
-                    type="text"
-                    size="mini"
-                    :disabled="saving"
-                    @click="receiveMaterials(k)"
-                  >
-                    收料
-                  </el-button>
-                  <el-button
-                    v-if="k.receive_pending && canReceiveMaterials && $can('production.serial.assign')"
-                    type="text"
-                    size="mini"
-                    :disabled="saving"
-                    @click="openSerialReceive(k)"
-                  >
-                    指定编号收料
-                  </el-button>
-                  <el-button
-                    v-if="canReturnMaterials && kitIssued(k)"
-                    type="text"
-                    size="mini"
-                    :disabled="saving"
-                    @click="openReturn(k)"
-                  >
-                    退料
-                  </el-button>
-                </div>
-                <div class="materials-list">
+                <div
+                  v-for="(k, idx) in materialKittingOps"
+                  :key="k.operation_key"
+                  class="kitting-op-card"
+                  :class="{
+                    'kitting-shortage': k.status === 'short',
+                    'kitting-op-span-full': isFullSpanKittingCard(idx, k)
+                  }"
+                >
+                  <div class="kitting-op-head">
+                    <div class="kitting-op-title-group">
+                      <span class="op-title font-medium">{{ k.operation_name }}</span>
+                      <el-tag
+                        size="mini"
+                        :type="k.status === 'short' ? 'danger' : (k.status === 'ready' ? 'success' : 'info')"
+                        effect="plain"
+                      >
+                        {{ kitLabel(k) }}
+                      </el-tag>
+                      <span class="op-mat-count text-muted">共 {{ k.materials.length }} 项物料</span>
+                    </div>
+                    <div class="kitting-op-actions">
+                      <el-button
+                        v-if="k.receive_pending && canReceiveMaterials"
+                        type="text"
+                        size="mini"
+                        :disabled="saving"
+                        @click="receiveMaterials(k)"
+                      >
+                        收料
+                      </el-button>
+                      <el-button
+                        v-if="k.receive_pending && canReceiveMaterials && $can('production.serial.assign')"
+                        type="text"
+                        size="mini"
+                        :disabled="saving"
+                        @click="openSerialReceive(k)"
+                      >
+                        指定编号收料
+                      </el-button>
+                      <el-button
+                        v-if="canReturnMaterials && kitIssued(k)"
+                        type="text"
+                        size="mini"
+                        :disabled="saving"
+                        @click="openReturn(k)"
+                      >
+                        退料
+                      </el-button>
+                    </div>
+                  </div>
                   <div
-                    v-for="m in k.materials"
-                    :key="m.id || m.component_item_id"
-                    class="material-row"
+                    class="materials-list"
+                    :class="{ 'materials-grid-2col': isFullSpanKittingCard(idx, k) && k.materials.length > 2 }"
                   >
-                    <span class="mat-name text-truncate" :title="m.component_item_name">{{ m.component_item_name }}</span>
-                    <span v-if="!m.participates_in_kitting" class="text-muted mat-auxiliary">辅料（免齐套）</span>
-                    <span v-else class="mat-qty code-mono" :class="{ 'text-danger font-medium': m.shortage_qty > 0 }">
-                      {{ qty(m.covered_qty) }} / {{ qty(m.required_qty) }} {{ m.unit_name || '' }}
-                    </span>
-                    <span v-if="m.in_production_qty > 0" class="text-muted">在做 {{ qty(m.in_production_qty) }}</span>
-                    <span v-if="queueHint(m)" class="text-danger">{{ queueHint(m) }}</span>
-                    <el-button
-                      v-if="m.can_make && m.make_qty > 0 && $can('production.work_order.create')"
-                      type="text"
-                      size="mini"
-                      :disabled="saving"
-                      @click="makeSemi(m)"
+                    <div
+                      v-for="m in k.materials"
+                      :key="m.id || m.component_item_id"
+                      class="material-item"
                     >
-                      开半成品工单
-                    </el-button>
-                  </div>
-                  <div v-if="!k.materials.length" class="no-material-row text-muted">
-                    本工序无领料需求
+                      <div class="material-main-line">
+                        <span class="mat-name" :title="m.component_item_name">{{ m.component_item_name }}</span>
+                        <span v-if="!m.participates_in_kitting" class="text-muted mat-auxiliary">辅料（免齐套）</span>
+                        <span v-else class="mat-qty code-mono" :class="{ 'text-danger font-medium': m.shortage_qty > 0 }">
+                          {{ qty(m.covered_qty) }} / {{ qty(m.required_qty) }} {{ m.unit_name || '' }}
+                        </span>
+                      </div>
+                      <div
+                        v-if="m.in_production_qty > 0 || queueHint(m) || (m.can_make && m.make_qty > 0 && $can('production.work_order.create'))"
+                        class="material-sub-line"
+                      >
+                        <div class="material-sub-badges">
+                          <span v-if="m.in_production_qty > 0" class="mat-sub-tag">在做 {{ qty(m.in_production_qty) }}</span>
+                          <span v-if="queueHint(m)" class="text-danger mat-queue-hint">{{ queueHint(m) }}</span>
+                        </div>
+                        <el-button
+                          v-if="m.can_make && m.make_qty > 0 && $can('production.work_order.create')"
+                          type="text"
+                          size="mini"
+                          class="btn-make-semi"
+                          :disabled="saving"
+                          @click="makeSemi(m)"
+                        >
+                          + 开半成品工单
+                        </el-button>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-            <div v-if="wo.child_work_orders && wo.child_work_orders.length" class="materials-list">
-              <div v-for="c in wo.child_work_orders" :key="c.id" class="material-row">
-                <span class="mat-name text-truncate">
-                  半成品工单 <b class="code-mono lk-text" @click="openWorkOrder(c.id)">{{ c.work_order_no }}</b> · {{ c.item_name }}
+
+              <!-- 免领料工序紧凑汇总条（避免无领料工序占用独立大卡片造成空白） -->
+              <div v-if="noMaterialKittingOps.length" class="no-mat-ops-bar">
+                <span class="no-mat-bar-label">
+                  <i class="el-icon-circle-check text-success" />
+                  免领料工序（无需领料）：
                 </span>
-                <span class="mat-qty code-mono">{{ c.status_label }} · 入库 {{ qty(c.stored_qty) }} / {{ qty(c.planned_qty) }} {{ c.unit_name || '' }}</span>
+                <div class="no-mat-bar-tags">
+                  <span v-for="k in noMaterialKittingOps" :key="k.operation_key" class="no-mat-op-pill">
+                    <b>{{ k.operation_name }}</b>
+                    <span class="text-muted">· {{ kitLabel(k) }}</span>
+                  </span>
+                </div>
               </div>
-            </div>
-            <div v-if="wo.material_deliveries && wo.material_deliveries.length" class="materials-list">
-              <div v-for="d in wo.material_deliveries" :key="'md-' + d.id" class="material-row">
-                <span class="mat-name text-truncate" :title="d.summary + (d.reject_reason ? '；拒收：' + d.reject_reason : '')">
-                  仓库配送 <b class="code-mono">{{ d.delivery_no }}</b> · {{ d.operation_name }} · {{ d.summary }}
-                </span>
-                <span class="mat-qty code-mono">{{ d.status_label }}{{ d.reject_reason ? '（' + d.reject_reason + '）' : '' }}</span>
-                <template v-if="d.status === 'dispatched' && canReceiveMaterials">
-                  <el-button type="text" size="mini" :disabled="saving" @click="signDelivery(d)">签收</el-button>
-                  <el-button type="text" size="mini" :disabled="saving" @click="rejectDelivery(d)">拒收</el-button>
-                </template>
+            </template>
+
+            <!-- 关联半成品工单、仓库配送、采购需求、退料记录分组面板 -->
+            <div
+              v-if="(wo.child_work_orders && wo.child_work_orders.length) || (wo.material_deliveries && wo.material_deliveries.length) || (wo.purchase_demands && wo.purchase_demands.length) || (wo.material_returns && wo.material_returns.length)"
+              class="kitting-related-docs"
+            >
+              <div v-if="wo.child_work_orders && wo.child_work_orders.length" class="related-doc-block">
+                <div class="related-doc-head">
+                  <span class="related-doc-title"><i class="el-icon-s-operation" /> 关联半成品工单（{{ wo.child_work_orders.length }}）</span>
+                </div>
+                <div class="related-doc-list">
+                  <div v-for="c in wo.child_work_orders" :key="c.id" class="related-doc-row">
+                    <span class="mat-name text-truncate">
+                      半成品工单 <b class="code-mono lk-text" @click="openWorkOrder(c.id)">{{ c.work_order_no }}</b> · {{ c.item_name }}
+                    </span>
+                    <span class="mat-qty code-mono">{{ c.status_label }} · 入库 {{ qty(c.stored_qty) }} / {{ qty(c.planned_qty) }} {{ c.unit_name || '' }}</span>
+                  </div>
+                </div>
               </div>
-            </div>
-            <div v-if="wo.purchase_demands && wo.purchase_demands.length" class="materials-list">
-              <div v-for="d in wo.purchase_demands" :key="'pd-' + d.id" class="material-row">
-                <span class="mat-name text-truncate">
-                  采购需求 <b class="code-mono" :class="{ 'lk-text': $can('purchase.request') }" @click="openPurchaseRequest(d)">{{ d.request_no }}</b> · {{ d.item_name }} {{ qty(d.qty) }}
-                </span>
-                <span class="mat-qty code-mono">{{ d.request_status_label }} · {{ d.created_by_name || '' }}</span>
+
+              <div v-if="wo.material_deliveries && wo.material_deliveries.length" class="related-doc-block">
+                <div class="related-doc-head">
+                  <span class="related-doc-title"><i class="el-icon-truck" /> 仓库配送记录（{{ wo.material_deliveries.length }}）</span>
+                </div>
+                <div class="related-doc-list">
+                  <div v-for="d in wo.material_deliveries" :key="'md-' + d.id" class="related-doc-row">
+                    <span class="mat-name text-truncate" :title="d.summary + (d.reject_reason ? '；拒收：' + d.reject_reason : '')">
+                      仓库配送 <b class="code-mono">{{ d.delivery_no }}</b> · {{ d.operation_name }} · {{ d.summary }}
+                    </span>
+                    <div class="related-doc-right">
+                      <span class="mat-qty code-mono">{{ d.status_label }}{{ d.reject_reason ? '（' + d.reject_reason + '）' : '' }}</span>
+                      <template v-if="d.status === 'dispatched' && canReceiveMaterials">
+                        <el-button type="text" size="mini" :disabled="saving" @click="signDelivery(d)">签收</el-button>
+                        <el-button type="text" size="mini" class="text-danger" :disabled="saving" @click="rejectDelivery(d)">拒收</el-button>
+                      </template>
+                    </div>
+                  </div>
+                </div>
               </div>
-            </div>
-            <div v-if="wo.material_returns && wo.material_returns.length" class="materials-list">
-              <div v-for="r in wo.material_returns" :key="'mrt-' + r.id" class="material-row">
-                <span class="mat-name text-truncate" :title="r.summary + (r.reason ? '；' + r.reason : '')">
-                  退料 <b class="code-mono">{{ r.return_no }}</b> · {{ r.operation_name }} · {{ r.return_type_label }} · {{ r.summary }}
-                </span>
-                <span class="mat-qty code-mono">{{ r.status_label }} · {{ r.requested_by_name || '' }}{{ r.review_remark ? '（' + r.review_remark + '）' : '' }}</span>
-                <el-button v-if="r.status === 'pending' && canCancelReturn(r)" type="text" size="mini" :disabled="saving" @click="cancelReturn(r)">撤回</el-button>
+
+              <div v-if="wo.purchase_demands && wo.purchase_demands.length" class="related-doc-block">
+                <div class="related-doc-head">
+                  <span class="related-doc-title"><i class="el-icon-shopping-bag-1" /> 缺料采购需求（{{ wo.purchase_demands.length }}）</span>
+                </div>
+                <div class="related-doc-list">
+                  <div v-for="d in wo.purchase_demands" :key="'pd-' + d.id" class="related-doc-row">
+                    <span class="mat-name text-truncate">
+                      采购需求 <b class="code-mono" :class="{ 'lk-text': $can('purchase.request') }" @click="openPurchaseRequest(d)">{{ d.request_no }}</b> · {{ d.item_name }} {{ qty(d.qty) }}
+                    </span>
+                    <span class="mat-qty code-mono">{{ d.request_status_label }} · {{ d.created_by_name || '' }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="wo.material_returns && wo.material_returns.length" class="related-doc-block">
+                <div class="related-doc-head">
+                  <span class="related-doc-title"><i class="el-icon-refresh-left" /> 工序退料记录（{{ wo.material_returns.length }}）</span>
+                </div>
+                <div class="related-doc-list">
+                  <div v-for="r in wo.material_returns" :key="'mrt-' + r.id" class="related-doc-row">
+                    <span class="mat-name text-truncate" :title="r.summary + (r.reason ? '；' + r.reason : '')">
+                      退料 <b class="code-mono">{{ r.return_no }}</b> · {{ r.operation_name }} · {{ r.return_type_label }} · {{ r.summary }}
+                    </span>
+                    <div class="related-doc-right">
+                      <span class="mat-qty code-mono">{{ r.status_label }} · {{ r.requested_by_name || '' }}{{ r.review_remark ? '（' + r.review_remark + '）' : '' }}</span>
+                      <el-button v-if="r.status === 'pending' && canCancelReturn(r)" type="text" size="mini" :disabled="saving" @click="cancelReturn(r)">撤回</el-button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </section>
 
-          <work-order-cutting-panel :work-order="wo" @refresh="load" />
           <shortage-purchase-dialog :visible.sync="shortageDialog" :work-order-id="wo.id" :work-order-no="wo.work_order_no" @done="load" />
-
-          <!-- 卡片 4 与 卡片 5 并排：材料成本预算与操作动态日志 -->
-          <div class="two-subcard-grid">
-            <!-- 材料成本预算 -->
-            <section class="detail-card">
-              <div class="card-header">
-                <div class="header-title">
-                  <i class="el-icon-wallet" />
-                  <h2>{{ hasActualMaterialCost ? '材料成本归集与定额' : '材料成本预算与定额' }}</h2>
-                </div>
-                <el-tag size="mini" type="info" effect="plain">{{ hasActualMaterialCost ? (wo.material_cost_collection_complete ? '实际材料归集 · 制造未结算' : '部分材料归集 · 制造未结算') : '暂估预算 · 未结算' }}</el-tag>
-              </div>
-
-              <template v-if="materialCostPerUnit !== null && materialCostPerUnit !== undefined">
-                <div class="cost-stat-box">
-                  <span class="cost-lbl">{{ hasActualMaterialCost ? '每台已归集材料成本' : '每台材料暂估成本' }}</span>
-                  <div class="cost-num font-mono text-success">{{ money(materialCostPerUnit) }}</div>
-                  <div class="cost-total-sub text-muted">{{ hasActualMaterialCost ? '工单已归集材料' : '工单总材料暂估' }}：{{ money(materialCostTotal) }}</div>
-                </div>
-                <div class="spec-kv-row">
-                  <span class="kv-label">单件标准工时定额</span>
-                  <span class="kv-val code-mono font-medium">每台 {{ wo.standard_minutes_per_unit || 0 }} 分钟</span>
-                </div>
-                <p class="cost-footnote text-muted">
-                  {{ hasActualMaterialCost ? (wo.material_cost_collection_complete ? '依据正式收料金额与已结算开料净耗汇总；人工、外协及后到费用仍待制造结算。' : '仅汇总已发生的收料与已结算开料净耗，按计划数量折算每台；其余材料及制造费用仍待归集和结算。') : '按现存加权平均成本或物料标准成本、最近采购价估算；实际材料按正式用料归集，人工及其他费用待制造结算。' }}
-                </p>
-              </template>
-              <div v-else class="text-muted p-2">
-                当前账号无权查看成本金额数据。台件标准工时定额：每台 {{ wo.standard_minutes_per_unit || 0 }} 分钟。
-              </div>
-            </section>
-
-            <!-- 操作与流转日志 -->
-            <section class="detail-card">
-              <div class="card-header">
-                <div class="header-title">
-                  <i class="el-icon-document-copy" />
-                  <h2>工单操作流转日志</h2>
-                </div>
-                <span class="header-desc-hint">记录最近 {{ wo.logs ? wo.logs.slice(0, 8).length : 0 }} 条操作</span>
-              </div>
-
-              <div v-if="!wo.logs || !wo.logs.length" class="text-muted p-2">暂无操作日志记录</div>
-              <div v-else class="logs-timeline-list">
-                <div v-for="log in wo.logs.slice(0, 8)" :key="log.id" class="log-timeline-row">
-                  <span class="log-date code-mono text-muted">{{ shortDate(log.created_at) }}</span>
-                  <div class="log-body">
-                    <span class="log-operator font-medium">{{ log.operator_name || '系统自动' }}</span>
-                    <span class="log-content">{{ log.content }}</span>
-                  </div>
-                </div>
-              </div>
-            </section>
-          </div>
         </div>
 
-        <!-- 右侧侧边栏 -->
+        <!-- 右侧侧边栏：异常告警、业务单据、工艺图纸、材料成本与流转日志（填满右侧高度，消除空白） -->
         <aside class="side-column">
-          <!-- 卡片 6：定制工艺与图纸 -->
-          <section v-if="wo.tech" class="detail-card">
-            <div class="card-header">
-              <div class="header-title">
-                <i class="el-icon-picture-outline" />
-                <h2>工艺图纸与定制要求</h2>
-              </div>
-              <el-tag size="mini" :type="wo.tech.status === 'pending' ? 'warning' : 'success'" effect="plain">
-                {{ wo.tech.status_label || wo.tech.status }}
-              </el-tag>
-            </div>
-
-            <div class="spec-kv-list">
-              <div class="spec-kv-row">
-                <span class="kv-label">工艺负责人</span>
-                <span class="kv-val font-medium">{{ wo.tech.tech_owner_name || '待工艺认领' }}</span>
-              </div>
-              <div v-if="wo.tech.released_at" class="spec-kv-row">
-                <span class="kv-label">工艺图纸下发时间</span>
-                <span class="kv-val code-mono">{{ wo.tech.released_at.slice(5, 16) }}</span>
-              </div>
-              <div v-if="wo.tech.drawings_updated_at" class="alert-notice-box">
-                <i class="el-icon-warning text-warning" />
-                <span>下发后图纸已更新（{{ wo.tech.drawings_updated_at.slice(5, 16) }}），车间报工终端将提示图纸已更新。</span>
-              </div>
-              <div class="spec-kv-row">
-                <span class="kv-label">设计图纸附件</span>
-                <span class="kv-val">
-                  <template v-if="wo.tech.drawings && wo.tech.drawings.length">
-                    <a
-                      v-for="g in wo.tech.drawings"
-                      :key="g.id"
-                      class="table-link drawing-link code-mono"
-                      :href="g.url"
-                      target="_blank"
-                      rel="noopener"
-                    >
-                      <i class="el-icon-document" /> {{ g.drawing_name }} V{{ g.version_no }}
-                    </a>
-                  </template>
-                  <span v-else class="text-muted">未上传技术图纸</span>
-                </span>
-              </div>
-              <div v-if="$can(['production.tech', 'production.tech.manage'])" class="spec-kv-row">
-                <span class="kv-label">工艺工作台</span>
-                <span class="kv-val">
-                  <a class="action-link-theme" @click="$router.push(`/production/tech/${wo.id}`)">前往定制工艺中心 →</a>
-                </span>
-              </div>
-            </div>
-          </section>
-
-          <!-- 卡片 7：异常告警与关注事项 -->
+          <!-- 卡片 4：异常告警与关注事项 -->
           <section class="detail-card">
             <div class="card-header">
               <div class="header-title">
@@ -611,7 +617,7 @@
             </div>
           </section>
 
-          <!-- 卡片 8：业务需求与单据关联 -->
+          <!-- 卡片 5：业务需求与单据关联 -->
           <section class="detail-card">
             <div class="card-header">
               <div class="header-title">
@@ -693,6 +699,109 @@
                 <span class="kv-val text-muted">
                   {{ wo.created_by_name || '系统自动' }} · {{ shortDate(wo.created_at) }}
                 </span>
+              </div>
+            </div>
+          </section>
+
+          <!-- 卡片 6：定制工艺与图纸 -->
+          <section v-if="wo.tech" class="detail-card">
+            <div class="card-header">
+              <div class="header-title">
+                <i class="el-icon-picture-outline" />
+                <h2>工艺图纸与定制要求</h2>
+              </div>
+              <el-tag size="mini" :type="wo.tech.status === 'pending' ? 'warning' : 'success'" effect="plain">
+                {{ wo.tech.status_label || wo.tech.status }}
+              </el-tag>
+            </div>
+
+            <div class="spec-kv-list">
+              <div class="spec-kv-row">
+                <span class="kv-label">工艺负责人</span>
+                <span class="kv-val font-medium">{{ wo.tech.tech_owner_name || '待工艺认领' }}</span>
+              </div>
+              <div v-if="wo.tech.released_at" class="spec-kv-row">
+                <span class="kv-label">工艺图纸下发时间</span>
+                <span class="kv-val code-mono">{{ wo.tech.released_at.slice(5, 16) }}</span>
+              </div>
+              <div v-if="wo.tech.drawings_updated_at" class="alert-notice-box">
+                <i class="el-icon-warning text-warning" />
+                <span>下发后图纸已更新（{{ wo.tech.drawings_updated_at.slice(5, 16) }}），车间报工终端将提示图纸已更新。</span>
+              </div>
+              <div class="spec-kv-row">
+                <span class="kv-label">设计图纸附件</span>
+                <span class="kv-val">
+                  <template v-if="wo.tech.drawings && wo.tech.drawings.length">
+                    <a
+                      v-for="g in wo.tech.drawings"
+                      :key="g.id"
+                      class="table-link drawing-link code-mono"
+                      :href="g.url"
+                      target="_blank"
+                      rel="noopener"
+                    >
+                      <i class="el-icon-document" /> {{ g.drawing_name }} V{{ g.version_no }}
+                    </a>
+                  </template>
+                  <span v-else class="text-muted">未上传技术图纸</span>
+                </span>
+              </div>
+              <div v-if="$can(['production.tech', 'production.tech.manage'])" class="spec-kv-row">
+                <span class="kv-label">工艺工作台</span>
+                <span class="kv-val">
+                  <a class="action-link-theme" @click="$router.push(`/production/tech/${wo.id}`)">前往定制工艺中心 →</a>
+                </span>
+              </div>
+            </div>
+          </section>
+
+          <!-- 卡片 7：材料成本归集与定额 -->
+          <section class="detail-card">
+            <div class="card-header">
+              <div class="header-title">
+                <i class="el-icon-wallet" />
+                <h2>{{ hasActualMaterialCost ? '材料成本归集与定额' : '材料成本预算与定额' }}</h2>
+              </div>
+              <el-tag size="mini" type="info" effect="plain">{{ hasActualMaterialCost ? (wo.material_cost_collection_complete ? '实际归集 · 未结算' : '部分归集 · 未结算') : '暂估预算 · 未结算' }}</el-tag>
+            </div>
+
+            <template v-if="materialCostPerUnit !== null && materialCostPerUnit !== undefined">
+              <div class="cost-stat-box">
+                <span class="cost-lbl">{{ hasActualMaterialCost ? '每台已归集材料成本' : '每台材料暂估成本' }}</span>
+                <div class="cost-num font-mono text-success">{{ money(materialCostPerUnit) }}</div>
+                <div class="cost-total-sub text-muted">{{ hasActualMaterialCost ? '工单已归集材料' : '工单总材料暂估' }}：{{ money(materialCostTotal) }}</div>
+              </div>
+              <div class="spec-kv-row">
+                <span class="kv-label">单件标准工时定额</span>
+                <span class="kv-val code-mono font-medium">每台 {{ wo.standard_minutes_per_unit || 0 }} 分钟</span>
+              </div>
+              <p class="cost-footnote text-muted">
+                {{ hasActualMaterialCost ? (wo.material_cost_collection_complete ? '依据正式收料金额与已结算开料净耗汇总；人工、外协及后到费用仍待制造结算。' : '仅汇总已发生的收料与已结算开料净耗，按计划数量折算每台；其余材料及制造费用仍待归集和结算。') : '按现存加权平均成本或物料标准成本、最近采购价估算；实际材料按正式用料归集，人工及其他费用待制造结算。' }}
+              </p>
+            </template>
+            <div v-else class="text-muted p-2">
+              当前账号无权查看成本金额数据。台件标准工时定额：每台 {{ wo.standard_minutes_per_unit || 0 }} 分钟。
+            </div>
+          </section>
+
+          <!-- 卡片 8：操作与流转日志 -->
+          <section class="detail-card">
+            <div class="card-header">
+              <div class="header-title">
+                <i class="el-icon-document-copy" />
+                <h2>工单操作流转日志</h2>
+              </div>
+              <span class="header-desc-hint">最近 {{ wo.logs ? wo.logs.slice(0, 8).length : 0 }} 条</span>
+            </div>
+
+            <div v-if="!wo.logs || !wo.logs.length" class="text-muted p-2">暂无操作日志记录</div>
+            <div v-else class="logs-timeline-list">
+              <div v-for="log in wo.logs.slice(0, 8)" :key="log.id" class="log-timeline-row">
+                <span class="log-date code-mono text-muted">{{ shortDate(log.created_at) }}</span>
+                <div class="log-body">
+                  <span class="log-operator font-medium">{{ log.operator_name || '系统自动' }}</span>
+                  <span class="log-content">{{ log.content }}</span>
+                </div>
               </div>
             </div>
           </section>
@@ -930,6 +1039,14 @@ export default {
       return this.wo && ['released', 'in_progress', 'paused'].includes(this.wo.status) &&
         (this.$can('production.material_return.request') || this.$can('production.material_return.approve'))
     },
+    materialKittingOps() {
+      if (!this.wo || !this.wo.kitting) return []
+      return this.wo.kitting.filter(k => (k.materials && k.materials.length > 0) || k.receive_pending || this.kitIssued(k))
+    },
+    noMaterialKittingOps() {
+      if (!this.wo || !this.wo.kitting) return []
+      return this.wo.kitting.filter(k => (!k.materials || !k.materials.length) && !k.receive_pending && !this.kitIssued(k))
+    },
     productName() {
       return this.wo ? (this.wo.product_name || this.wo.item_name) : ''
     },
@@ -982,6 +1099,12 @@ export default {
     money,
     shortDate,
     bomLabel,
+    isFullSpanKittingCard(idx, k) {
+      const total = this.materialKittingOps.length
+      if (total === 1) return true
+      if (total % 2 === 1 && idx === total - 1 && k.materials && k.materials.length > 2) return true
+      return false
+    },
     async load() {
       this.loading = true
       try {
@@ -1326,29 +1449,32 @@ export default {
   box-sizing: border-box;
 }
 
-/* 顶部标头卡片 (100% 对齐主数据中心 / SkuList.vue 风格) */
+/* 顶部标头卡片 */
 .page-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
   background: #ffffff;
-  padding: 16px 20px;
+  padding: 14px 20px;
   border-radius: 8px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
   border: 1px solid #e2e8f0;
   margin-bottom: 12px;
+  gap: 16px;
 }
 
 .head-left {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
 }
 
 .btn-back {
   background: #ffffff !important;
   border: 1px solid #dcdfe6 !important;
   color: #606266 !important;
+  flex-shrink: 0;
 }
 
 .btn-back:hover {
@@ -1358,33 +1484,34 @@ export default {
 }
 
 .head-icon {
-  width: 40px;
-  height: 40px;
+  width: 38px;
+  height: 38px;
   background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
   color: #008b4b;
   border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 22px;
+  font-size: 20px;
   flex-shrink: 0;
 }
 
 .head-title-wrap {
   display: flex;
   flex-direction: column;
+  min-width: 0;
 }
 
 .title-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
 .page-title {
   margin: 0;
-  font-size: 18px;
+  font-size: 17px;
   font-weight: 700;
   color: #0f172a;
   line-height: 1.2;
@@ -1394,7 +1521,7 @@ export default {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 3px 10px;
+  padding: 2px 10px;
   background: #f0fdf4;
   border: 1px solid #bbf7d0;
   border-radius: 4px;
@@ -1411,8 +1538,8 @@ export default {
 .source-crumb-tag {
   font-size: 12px;
   color: #475569;
-  background: #f1f5f9;
-  padding: 3px 8px;
+  background: #f8fafc;
+  padding: 2px 8px;
   border-radius: 4px;
   border: 1px solid #e2e8f0;
   display: inline-flex;
@@ -1425,6 +1552,7 @@ export default {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 .btn-refresh {
@@ -1456,34 +1584,85 @@ export default {
   font-weight: 500;
 }
 
-/* 全局统一提示条 */
-.erp-page-tip {
+/* 顶部工单主档与进度一体化卡片 */
+.overview-master-card {
+  margin-bottom: 16px;
+  padding: 16px 20px;
+}
+
+.master-meta-grid {
+  display: grid;
+  grid-template-columns: 1.6fr 1.1fr 1.2fr 1.2fr 0.9fr 1fr;
+  gap: 12px;
+  padding-bottom: 14px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.meta-cell {
+  background: #f8fafc;
+  border: 1px solid #eef2f6;
+  border-radius: 6px;
+  padding: 8px 12px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+}
+
+.meta-cell-primary {
+  background: linear-gradient(135deg, #f0fdf4 0%, #f8fafc 100%);
+  border-color: #bbf7d0;
+}
+
+.meta-label {
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.2;
+}
+
+.meta-val-main {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: #f0fdf4;
-  border: 1px solid #bbf7d0;
-  color: #00763f;
-  padding: 10px 14px;
-  border-radius: 6px;
-  font-size: 13px;
-  line-height: 1.5;
-  margin-bottom: 14px;
+  min-width: 0;
 }
 
-.erp-page-tip i {
-  font-size: 15px;
+.product-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qty-pill {
+  background: #008b4b;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 999px;
   flex-shrink: 0;
 }
 
-/* 进度与交期横幅卡片 */
-.schedule-stepper-card {
+.meta-val {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e293b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 进度与交期横幅行 */
+.schedule-stepper-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 24px;
-  margin-bottom: 16px;
-  padding: 16px 20px;
 }
 
 .stepper-wrap {
@@ -1562,7 +1741,7 @@ export default {
   background: #f8fafc;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
-  padding: 12px 16px;
+  padding: 10px 16px;
   min-width: 300px;
 }
 
@@ -1583,7 +1762,7 @@ export default {
 }
 
 .due-main-date {
-  font-size: 17px;
+  font-size: 16px;
   font-weight: 700;
   color: #0f172a;
   margin-bottom: 6px;
@@ -1614,7 +1793,7 @@ export default {
 /* 主内容双栏 */
 .content-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-columns: minmax(0, 1fr) 350px;
   gap: 16px;
   align-items: start;
 }
@@ -1638,7 +1817,7 @@ export default {
   background: #ffffff;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
-  padding: 18px 20px;
+  padding: 16px 20px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
   box-sizing: border-box;
 }
@@ -1652,6 +1831,13 @@ export default {
   border-bottom: 1px solid #f1f5f9;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.header-left-group {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .header-title {
@@ -1677,22 +1863,64 @@ export default {
   color: #94a3b8;
 }
 
+.card-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.card-header-actions ::v-deep .cutting-panel .el-button {
+  padding: 5px 10px;
+  border: 1px solid #bbf7d0;
+  background: #f0fdf4;
+  color: #008b4b;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.card-header-actions ::v-deep .cutting-panel .el-button:hover {
+  background: #dcfce7;
+  border-color: #86efac;
+}
+
 /* 序列号在制矩阵看板 */
 .unit-status-counters {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
 .counter-pill {
   font-size: 12px;
-  color: #64748b;
+  color: #475569;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  padding: 2px 8px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.counter-pill.pill-success {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.counter-pill.pill-primary {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+
+.counter-pill.pill-danger {
+  background: #fef2f2;
+  border-color: #fecaca;
 }
 
 .counter-pill b {
-  font-size: 14px;
-  margin-left: 2px;
+  font-size: 13px;
 }
 
 .unit-table-container {
@@ -1702,14 +1930,14 @@ export default {
 .unit-matrix-table {
   width: 100%;
   border-collapse: separate;
-  border-spacing: 4px;
+  border-spacing: 0 4px;
   min-width: 600px;
 }
 
 .unit-matrix-table th {
   font-size: 12px;
   color: #64748b;
-  padding: 6px;
+  padding: 6px 8px;
   font-weight: 600;
 }
 
@@ -1720,7 +1948,8 @@ export default {
   font-size: 11px;
 }
 
-.table-group-header .col-sn {
+.table-group-header .col-sn,
+.table-col-header .col-sn-sub {
   text-align: left;
 }
 
@@ -1737,10 +1966,25 @@ export default {
   text-align: center;
 }
 
+.unit-matrix-row td {
+  border-bottom: 1px solid #f1f5f9;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
 .unit-sn-cell {
-  vertical-align: top;
-  padding: 6px;
-  min-width: 150px;
+  vertical-align: middle;
+  padding: 6px 10px 6px 6px;
+  min-width: 180px;
+  max-width: 280px;
+}
+
+.sn-head-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .sn-text {
@@ -1759,22 +2003,45 @@ export default {
 
 .unit-sub-status {
   font-size: 11px;
-  margin-top: 2px;
+}
+
+.unit-comp-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.unit-comp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  color: #475569;
+}
+
+.comp-swap-btn {
+  padding: 0 2px !important;
+  font-size: 11px !important;
 }
 
 .matrix-cell-td {
-  vertical-align: top;
-  padding: 2px;
+  vertical-align: middle;
+  padding: 4px 3px;
 }
 
 .matrix-cell {
   border-radius: 4px;
   background: #f1f5f9;
   color: #94a3b8;
-  padding: 8px 6px;
+  padding: 6px;
   font-size: 11px;
   text-align: center;
-  min-height: 32px;
+  min-height: 30px;
   box-sizing: border-box;
   display: flex;
   align-items: center;
@@ -1819,6 +2086,41 @@ export default {
   padding-top: 10px;
 }
 
+.unbound-comp-panel {
+  margin-top: 10px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+
+.unbound-panel-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #b45309;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.unbound-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.unbound-chip-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #ffffff;
+  border: 1px solid #fcd34d;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
 /* 工序工时看板 */
 .op-status-tag {
   margin-left: 6px;
@@ -1827,8 +2129,12 @@ export default {
 /* 齐套网格看板 */
 .kitting-grid-wrap {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+
+.kitting-grid-wrap.kitting-grid-single {
+  grid-template-columns: 1fr;
 }
 
 .kitting-op-card {
@@ -1836,20 +2142,51 @@ export default {
   border-radius: 6px;
   padding: 10px 12px;
   background: #ffffff;
+  display: flex;
+  flex-direction: column;
+}
+
+.kitting-op-card.kitting-op-span-full {
+  grid-column: 1 / -1;
 }
 
 .kitting-op-card.kitting-shortage {
   border-color: #fca5a5;
-  background: #fff8f8;
+  background: #fffafa;
 }
 
 .kitting-op-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
   padding-bottom: 8px;
   border-bottom: 1px solid #f1f5f9;
   margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.kitting-op-title-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.op-mat-count {
+  font-size: 11px;
+  margin-left: 2px;
+}
+
+.kitting-op-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.kitting-op-actions .el-button {
+  padding: 2px 4px;
 }
 
 .op-title {
@@ -1861,37 +2198,197 @@ export default {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
-.material-row {
+.materials-list.materials-grid-2col {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  align-content: start;
+}
+
+.material-item {
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: #f8fafc;
+  border: 1px solid #f1f5f9;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.kitting-shortage .material-item {
+  background: #ffffff;
+  border-color: #fee2e2;
+}
+
+.material-main-line {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 12px;
   gap: 8px;
+  font-size: 12px;
 }
 
 .mat-name {
+  color: #334155;
+  font-weight: 500;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mat-qty {
+  flex-shrink: 0;
   color: #475569;
 }
 
 .mat-auxiliary {
   font-size: 11px;
+  flex-shrink: 0;
 }
 
-.no-material-row {
+.material-sub-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  padding-top: 2px;
+  border-top: 1px dashed #e2e8f0;
+}
+
+.material-sub-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.mat-sub-tag {
+  background: #eff6ff;
+  color: #2563eb;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.mat-queue-hint {
+  font-size: 11px;
+}
+
+.btn-make-semi {
+  padding: 0 !important;
+  font-size: 11px !important;
+  flex-shrink: 0;
+}
+
+/* 免领料工序紧凑汇总条 */
+.no-mat-ops-bar {
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
   font-size: 12px;
-  text-align: center;
-  padding: 6px 0;
 }
 
-/* 成本与日志并排卡片 */
-.two-subcard-grid {
+.no-mat-bar-label {
+  color: #475569;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.no-mat-bar-tags {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.no-mat-op-pill {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  padding: 2px 8px;
+  color: #334155;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 关联单据分组区 */
+.kitting-related-docs {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: 10px;
 }
 
+.related-doc-block {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+
+.related-doc-head {
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #eef2f6;
+}
+
+.related-doc-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.related-doc-title i {
+  color: #008b4b;
+}
+
+.related-doc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.related-doc-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.related-doc-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* 成本与日志卡片 */
 .cost-stat-box {
   background: #f8fafc;
   border: 1px solid #e2e8f0;
@@ -1927,6 +2424,9 @@ export default {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .log-timeline-row {
@@ -1967,7 +2467,7 @@ export default {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  padding: 9px 0;
+  padding: 8px 0;
   border-bottom: 1px solid #f1f5f9;
   gap: 12px;
   font-size: 13px;
@@ -2193,20 +2693,23 @@ export default {
 }
 
 /* 响应式断点 */
+@media (max-width: 1280px) {
+  .master-meta-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 1100px) {
   .content-grid {
     grid-template-columns: 1fr;
   }
-  .schedule-stepper-card {
+  .schedule-stepper-row {
     flex-direction: column;
     align-items: flex-start;
   }
   .due-summary-box {
     width: 100%;
     min-width: 0;
-  }
-  .kitting-grid-wrap {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -2223,13 +2726,11 @@ export default {
     width: 100%;
     justify-content: flex-start;
   }
-  .two-subcard-grid {
-    grid-template-columns: 1fr;
-  }
+  .master-meta-grid,
+  .kitting-grid-wrap,
+  .materials-list.materials-grid-2col,
+  .kitting-related-docs,
   .adj-form {
-    grid-template-columns: 1fr;
-  }
-  .kitting-grid-wrap {
     grid-template-columns: 1fr;
   }
 }
