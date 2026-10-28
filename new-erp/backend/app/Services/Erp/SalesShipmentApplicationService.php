@@ -41,7 +41,7 @@ class SalesShipmentApplicationService
         return DB::transaction(function () use ($orderId, $payload, $operator): SalesShipment {
             $order = SalesOrder::query()->with('lines')->lockForUpdate()->findOrFail($orderId);
             $this->fundingGates->assertCanShip($order);
-            if (!in_array($order->order_status, ['confirmed', 'in_progress'], true)) {
+            if (!in_array($order->order_status, ['confirmed'], true)) {
                 throw ValidationException::withMessages(['order' => '只有已确认的销售订单才可以创建发货单。']);
             }
             $shipment = SalesShipment::create([

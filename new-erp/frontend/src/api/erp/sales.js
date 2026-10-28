@@ -24,7 +24,6 @@ export const deleteSalesOrderDraft = id => api.delete(`/v1/erp/sales/orders/${id
 export const listSalesOrderLogs = (id, params) => api.get(`/v1/erp/sales/orders/${id}/logs`, { params })
 export const listSalesOrderVersions = (id, params) => api.get(`/v1/erp/sales/orders/${id}/versions`, { params })
 export const listSalesOrderChanges = (id, params) => api.get(`/v1/erp/sales/orders/${id}/changes`, { params })
-export const applySalesOrderChange = (id, data) => api.post(`/v1/erp/sales/orders/${id}/changes`, data)
 export const searchSalesOrderSkus = params => api.get('/v1/erp/sales/orders/skus/search', { params })
 export const previewSalesOrderEditImpact = (id, data) => api.post(`/v1/erp/sales/orders/${id}/edit-impact/preview`, data)
 export const submitSalesOrderEditImpact = (id, data) => api.post(`/v1/erp/sales/orders/${id}/edit-impact/submit`, data)
