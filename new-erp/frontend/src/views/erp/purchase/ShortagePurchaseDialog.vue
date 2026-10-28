@@ -74,8 +74,8 @@ export default {
       return Math.round(Number(l.qty || 0) * Number(this.unitOf(l).factor || 1) * 10000) / 10000
     },
     unitLabel(u, l) {
-      if (u.is_base) return `${u.unit_name}（工单单位）`
-      return `${u.unit_name}（1${u.unit_name}=${qty(u.factor)}${l.unit_name || ''}）${u.is_default ? '默认' : ''}`
+      if (u.is_base) return `${u.unit_name}（库存单位）`
+      return `${u.unit_name}（采购单位，1${u.unit_name}=${qty(u.factor)}${l.unit_name || ''}）`
     },
     onUnit(l) {
       l.qty = this.suggest(Number(l.shortage_qty), this.unitOf(l))
@@ -143,7 +143,7 @@ export default {
 .line-main .name { font-weight: 600; }
 .line-qty { display: grid; gap: 4px; justify-items: end; }
 .qty-row { display: flex; align-items: center; gap: 6px; }
-.unit-select { width: 190px; }
+.unit-select { width: 230px; }
 .warn { color: #d97706; max-width: 320px; text-align: right; }
 .remark { margin-top: 12px; }
 </style>
