@@ -14,7 +14,7 @@ function minutesText(m) {
 Page({
   data: {
     id: 0, task: null, loading: true, busy: false, error: '', selected: {}, selectedCount: 0, clockText: '00:00:00',
-    shareText: '', isImage: {}, panel: '', rejectCurrent: false,
+    shareText: '', isImage: {}, panel: '', rejectCurrent: false, cutQty: 1,
     reject: { mode: 'return', returnId: 0, tags: {}, reason: '', photos: [] }, uploading: false,
     peopleKeyword: '', peopleRows: [], picked: [], shareMode: 'labor', ownerPercent: '', showMaterials: false,
     returnForm: { types: [], type: 'surplus', rows: [], picked: {}, qty: {}, reason: '', hint: '' },
@@ -53,6 +53,7 @@ Page({
         selectableCount: (task.units || []).filter(u => u.selectable).length,
       }),
       selected, selectedCount: Object.keys(selected).length, shareText, isImage, loading: false,
+      cutQty: task.cutting ? Math.max(1, Math.min(this.data.cutQty || 1, task.cutting.reportable_units || 1)) : 1,
     });
     this.startClock();
   },
@@ -226,6 +227,22 @@ Page({
       success: res => { if (res.confirm) this.run({ action: 'pass', unit_ids: ids }); } });
   },
 
+  // 下料按套数报：不逐台勾选，按台号顺序自动取对应数量交下道。
+  changeCutQty(event) { this.setCutQty(this.data.cutQty + Number(event.currentTarget.dataset.delta || 0)); },
+  cutQtyInput(event) { this.setCutQty(parseInt(event.detail.value, 10) || 1); },
+  setCutQty(value) {
+    const max = (this.data.task.cutting || {}).reportable_units || 1;
+    this.setData({ cutQty: Math.max(1, Math.min(max, value)) });
+  },
+  passCut() {
+    const task = this.data.task;
+    const qty = this.data.cutQty;
+    const ids = (task.units || []).filter(u => u.selectable).slice(0, qty).map(u => u.id);
+    if (!ids.length || ids.length < qty) { wx.showToast({ title: '本道没有这么多套可报', icon: 'none' }); return; }
+    const next = task.progress.next_operation_name;
+    wx.showModal({ title: '下料完成', content: `${qty} 套下料完成，${next ? '交给' + next : '生产完成'}？`, confirmText: '确认',
+      success: res => { if (res.confirm) this.run({ action: 'pass', unit_ids: ids }, '已报完成'); } });
+  },
   openReject() {
     if (!this.selectedIds().length) { wx.showToast({ title: '先勾选不合格的设备', icon: 'none' }); return; }
     // 开料工序不能退回重做（后端已从可选里去掉），没有可退的道时只能报废。

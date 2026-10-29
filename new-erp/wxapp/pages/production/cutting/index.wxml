@@ -3,13 +3,13 @@
   <view wx:if="{{loading && !ready}}" class="mt-empty">正在读取开料资料</view>
   <block wx:if="{{ready}}">
     <view class="mt-card">
-      <view class="mt-card-title"><text>下料要求</text><text class="mt-muted">{{remaining > 0 ? '还有 ' + remaining + ' 台没开料' : '已全部开料'}}</text></view>
+      <view class="mt-card-title"><text>下料要求</text><text class="mt-muted">{{remaining > 0 ? '还有 ' + remaining + ' 套没开料' : '已全部开料'}}</text></view>
       <view wx:for="{{requirements}}" wx:key="part_key" class="ct-row">
         <view class="ct-line"><text class="k">{{item.part_name}}</text><text>本次 {{item.thisText}}</text></view>
         <view class="mt-muted">{{item.item_name}}{{item.specification ? ' · ' + item.specification : ''}} · {{item.sizeText}}</view>
       </view>
       <view wx:if="{{canIssue}}" class="mt-kv mt-gap">
-        <text class="k">本次开几台</text>
+        <text class="k">本次开几套</text>
         <view class="ct-step">
           <text class="ct-step-btn {{unitQty <= 1 ? 'off' : ''}}" data-delta="-1" bindtap="changeUnits">−</text>
           <input class="ct-step-input" type="number" value="{{unitQty}}" bindblur="unitsInput" />
@@ -58,7 +58,7 @@
           <text class="k mono">{{item.batch_no}}</text>
           <text class="mt-tag {{item.status === 'settled' ? 'green' : 'amber'}}">{{item.statusText}}</text>
         </view>
-        <view class="mt-muted">{{item.status === 'settled' ? '实际 ' + item.completed_unit_qty : '安排 ' + item.unit_qty}} 台 · {{item.sourceText}}</view>
+        <view class="mt-muted">{{item.status === 'settled' ? '实际 ' + item.completed_unit_qty : '安排 ' + item.unit_qty}} 套 · {{item.sourceText}}</view>
         <view class="tk-link {{item.status === 'settled' ? '' : 'green'}}">{{item.status === 'settled' ? '查看结果 ›' : '切完了，登记产出和余料 ›'}}</view>
       </view>
     </view>
@@ -116,15 +116,15 @@
     <view class="mt-row tk-sheet-head"><text class="mt-title">{{batch.status === 'settled' ? '开料结果' : '登记产出和余料'}}</text><text class="mt-muted mono">{{batch.batch_no}}</text></view>
     <scroll-view scroll-y class="tk-sheet-body">
       <view class="mt-kv">
-        <text class="k">实际切够几台</text>
+        <text class="k">实际切够几套</text>
         <view wx:if="{{batch.status === 'issued'}}" class="ct-step">
           <text class="ct-step-btn {{actualUnits <= 1 ? 'off' : ''}}" data-delta="-1" bindtap="changeActualUnits">−</text>
           <input class="ct-step-input" type="number" value="{{actualUnits}}" bindblur="changeActualUnits" />
           <text class="ct-step-btn {{actualUnits >= batch.unit_qty ? 'off' : ''}}" data-delta="1" bindtap="changeActualUnits">+</text>
         </view>
-        <text wx:else>{{actualUnits}} 台</text>
+        <text wx:else>{{actualUnits}} 套</text>
       </view>
-      <view wx:if="{{batch.status === 'issued' && actualUnits < batch.unit_qty}}" class="mt-muted">少切了设备数，请把下面各件数量改成实际切出的数。</view>
+      <view wx:if="{{batch.status === 'issued' && actualUnits < batch.unit_qty}}" class="mt-muted">少于安排套数时，请把下面各件数量改成实际切出的数。</view>
       <view class="mt-card-title mt-gap">实际切出</view>
       <view wx:for="{{actual}}" wx:key="rowKey" class="ct-row">
         <view class="mt-muted mono">{{item.sourceName}}</view>

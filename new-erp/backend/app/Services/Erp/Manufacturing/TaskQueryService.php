@@ -86,6 +86,8 @@ final class TaskQueryService
         $cuttingOps = MaterialIssueService::cuttingOperationIds((int) $wo->id);
         $hasCutting = in_array((int) $op->id, $cuttingOps, true);
         $cuttingBatches = $hasCutting ? MfgCuttingBatch::query()->where('work_order_operation_id', $op->id)->get(['status', 'unit_qty', 'completed_unit_qty']) : collect();
+        $cutUnits = $hasCutting ? (int) app(MaterialIssueService::class)->cutUnits($wo, $op) : 0;
+        $opDone = (int) round((float) $op->completed_qty);
         return [
             'id' => $op->id, 'operation_name' => $op->operation_name, 'stage_name' => $op->stage_name, 'status' => $op->status,
             'work_order' => [
@@ -118,9 +120,12 @@ final class TaskQueryService
                     'unit_qty' => (float) $m->unit_qty, 'required_qty' => (float) $m->required_qty, 'issued_qty' => (float) $m->issued_qty,
                     'cutting' => MaterialIssueService::isCutting($m)])->values()->all(),
             // 本道用板材／管材：在本道直接开料（领原料 → 登记切出的件和余料）。
+            // 下料按套数报完成，不逐台勾选：开料登记了几套，最多就能报几套。
             'cutting' => $hasCutting ? [
-                'planned_units' => (float) $wo->planned_qty,
-                'settled_units' => (int) $cuttingBatches->where('status', 'settled')->sum('completed_unit_qty'),
+                'planned_units' => (int) $wo->planned_qty,
+                'cut_units' => $cutUnits,
+                'completed_units' => $opDone,
+                'reportable_units' => max(0, min($here, $cutUnits - $opDone)),
                 'pending_batches' => $cuttingBatches->where('status', 'issued')->count(),
             ] : null,
             // 仓库送来等本道签收的料（拒收待处理的也列出来，看库管怎么处理）

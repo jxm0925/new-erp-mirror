@@ -40,3 +40,8 @@
 .tk-dlv { padding: 14rpx 0; border-bottom: 1rpx solid #f0f2f6; }
 .tk-dlv:last-of-type { border-bottom: 0; }
 .tk-dlv-ops { display: flex; gap: 40rpx; margin-top: 12rpx; }
+
+.ct-step { display: flex; align-items: center; gap: 12rpx; }
+.ct-step-btn { width: 60rpx; height: 60rpx; line-height: 56rpx; text-align: center; border: 2rpx solid #d5dbe5; border-radius: 12rpx; font-size: 34rpx; color: #14213d; background: #fff; }
+.ct-step-btn.off { color: #c9d2e0; }
+.ct-step-input { width: 110rpx; height: 60rpx; text-align: center; border: 2rpx solid #e3e8f0; border-radius: 12rpx; font-size: 28rpx; }

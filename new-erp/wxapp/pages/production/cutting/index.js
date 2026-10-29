@@ -19,7 +19,7 @@ function sizeText(row) {
 function requirementText(row) {
   return row.mode === 'sheet'
     ? [row.length_mm, row.width_mm, row.thickness_mm].filter(v => v !== null && v !== undefined).join(' × ') + ' mm'
-    : `${num(row.per_unit_measure)} m / 台`;
+    : `${num(row.per_unit_measure)} m / 套`;
 }
 const partUnit = part => (part && part.quantity_basis === 'total_length' ? 'm' : '件');
 const sourceName = row => (row ? row.physical_no || row.batch_no || row.source_key : '');
@@ -68,7 +68,7 @@ Page({
     })) });
   },
 
-  // 本次开几台
+  // 本次开几套
   changeUnits(event) {
     const delta = Number(event.currentTarget.dataset.delta || 0);
     this.setUnits(this.data.unitQty + delta);
@@ -195,7 +195,7 @@ Page({
     if (this.data.busy || !this.data.planChecked || !this.data.planConfirmed) return;
     const payload = Object.assign(this.planPayload(this.groupAssignments()), { expected_version: this.data.version });
     payload.idempotency_key = this.commandKey('issue', payload);
-    wx.showModal({ title: '确认领料', content: `按这个方案从库存领出 ${this.data.sources.length} 条原料开 ${this.data.unitQty} 台？领出后切完再登记产出和余料。`, confirmText: '确认领料',
+    wx.showModal({ title: '确认领料', content: `按这个方案从库存领出 ${this.data.sources.length} 条原料开 ${this.data.unitQty} 套？领出后切完再登记产出和余料。`, confirmText: '确认领料',
       success: res => {
         if (!res.confirm) return;
         this.setData({ busy: true });

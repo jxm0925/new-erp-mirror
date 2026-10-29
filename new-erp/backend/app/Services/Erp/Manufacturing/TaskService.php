@@ -151,7 +151,7 @@ final class TaskService
             $units = $this->selectableUnits($op);
             if ($units->isEmpty()) $this->fail('no_unit', '这道工序现在没有要做的设备，等前道交过来再开始。');
             // 本道的料（总装的半成品、外购件）收到才能开工；板材／管材在本道开工后开料，报合格时再查。
-            $this->materials->assertReceivedForStart($wo, $op, $units, false);
+            $this->materials->assertReceivedForStart($wo, $op, $units);
             if (! $wo->started_at) {
                 $before = $wo->status;
                 $wo->update(['status' => 'in_progress', 'started_at' => now(), 'business_version' => (int) $wo->business_version + 1]);
@@ -235,6 +235,9 @@ final class TaskService
             if ($sessions->isEmpty()) $this->fail('no_labor', '这道工序还没有计时记录，请先点“开始”。');
             $units = $this->pickUnits($op, $unitIds);
             $this->materials->assertReceivedForStart($wo, $op, $units);
+            // 下料按套数报：本次首次完成的套数加上已完成的，不能超过开料已登记的套数。
+            $firstTime = $units->filter(fn ($u) => ! MfgUnitReport::query()->where('unit_id', $u->id)->where('work_order_operation_id', $op->id)->where('result', 'passed')->exists())->count();
+            $this->materials->assertCutForPass($wo, $op, $firstTime);
             $ops = $this->productionOps($wo);
             $pos = $ops->pluck('id')->flip();
             $next = $ops->get($pos[$op->id] + 1);
@@ -305,6 +308,9 @@ final class TaskService
             [$wo, $op] = $this->lockTask($opId);
             $this->assertRunnable($wo, $op);
             $this->assertReporter($op, $actor);
+            // 下料切坏的在开料登记里按实际合格套数登记、废料计入损耗，不逐台报不合格。
+            if (in_array((int) $op->id, MaterialIssueService::cuttingOperationIds((int) $wo->id), true))
+                $this->fail('reject_invalid', $op->operation_name.'按套数报完成，切坏的请在「开料」登记里按实际合格套数登记，不用报不合格。');
             $tags = array_values(array_filter(array_map(fn ($t) => mb_substr(trim((string) $t), 0, 30), (array) ($data['reason_tags'] ?? []))));
             $reason = trim((string) ($data['reason'] ?? ''));
             if (! $tags && $reason === '') $this->fail('reason_required', '请选不合格原因或写一句说明。');

@@ -29,7 +29,21 @@
 
     <button wx:if="{{task.allowed.claim}}" class="mt-btn" disabled="{{busy}}" bindtap="claim">接单</button>
 
-    <view class="mt-card">
+    <view wx:if="{{task.cutting}}" class="mt-card">
+      <view class="mt-card-title"><text>本次下料完成几套</text><text class="mt-muted">开料已登记 {{task.cutting.cut_units}} 套</text></view>
+      <view wx:if="{{task.cutting.reportable_units > 0}}" class="mt-kv">
+        <text class="k">完成套数（最多 {{task.cutting.reportable_units}}）</text>
+        <view class="ct-step">
+          <text class="ct-step-btn {{cutQty <= 1 ? 'off' : ''}}" data-delta="-1" bindtap="changeCutQty">−</text>
+          <input class="ct-step-input" type="number" value="{{cutQty}}" bindblur="cutQtyInput" />
+          <text class="ct-step-btn {{cutQty >= task.cutting.reportable_units ? 'off' : ''}}" data-delta="1" bindtap="changeCutQty">+</text>
+        </view>
+      </view>
+      <view wx:else class="mt-muted">{{task.cutting.completed_units >= task.cutting.planned_units ? '下料已全部完成' : '先在下面「开料」里切料并登记产出，登记了几套就能报几套'}}</view>
+      <view class="mt-muted mt-gap">已完成 {{task.cutting.completed_units}} / {{task.cutting.planned_units}} 套<text wx:if="{{task.progress.next_operation_name}}"> · 完成后交{{task.progress.next_operation_name}}</text></view>
+    </view>
+
+    <view wx:if="{{!task.cutting}}" class="mt-card">
       <view class="mt-card-title">
         <text>选这次做完的设备</text>
         <view class="mt-tags"><text wx:if="{{task.selectableCount > 1}}" class="tk-link" bindtap="selectAll">{{selectedCount === task.selectableCount ? '全不选' : '全选'}}</text><text class="tk-link green" bindtap="scan">扫码</text></view>
@@ -60,7 +74,7 @@
 
     <view wx:if="{{task.cutting}}" class="mt-card">
       <view class="mt-card-title"><text>开料</text><text wx:if="{{task.allowed.cutting}}" class="tk-link green" bindtap="openCutting">去开料 ›</text></view>
-      <view class="mt-muted">本道用板材／管材，在这里直接领原料开料。已登记 {{task.cutting.settled_units}} / {{task.cutting.planned_units}} 台<text wx:if="{{task.cutting.pending_batches}}">，有 {{task.cutting.pending_batches}} 批切完还没登记产出和余料</text>。</view>
+      <view class="mt-muted">本道用板材／管材，在这里领原料开料，切完登记切出的件和余料。已登记 {{task.cutting.cut_units}} / {{task.cutting.planned_units}} 套<text wx:if="{{task.cutting.pending_batches}}">，有 {{task.cutting.pending_batches}} 批切完还没登记</text>。</view>
       <view wx:if="{{!task.allowed.cutting}}" class="mt-muted mt-gap">接单后就能开料。</view>
     </view>
 
@@ -91,7 +105,10 @@
   </block>
 </view>
 
-<view wx:if="{{task && task.allowed.report}}" class="mt-footer">
+<view wx:if="{{task && task.allowed.report && task.cutting}}" class="mt-footer">
+  <button class="mt-btn" disabled="{{busy || !task.cutting.reportable_units}}" bindtap="passCut">{{task.cutting.reportable_units ? '下料完成 ' + cutQty + ' 套' + (task.progress.next_operation_name ? '，交' + task.progress.next_operation_name : '') : '先开料登记'}}</button>
+</view>
+<view wx:if="{{task && task.allowed.report && !task.cutting}}" class="mt-footer">
   <button class="mt-btn danger-ghost side" disabled="{{busy || !selectedCount}}" bindtap="openReject">报不合格</button>
   <button class="mt-btn" disabled="{{busy || !selectedCount}}" bindtap="pass">{{selectedCount ? selectedCount + ' 台合格，' + (task.progress.next_operation_name ? '交下道' : '做完') : '先选设备'}}</button>
 </view>
@@ -101,7 +118,6 @@
     <view class="mt-row tk-sheet-head"><text class="mt-title">报不合格</text><text class="mt-muted">{{task.operation_name}} · {{selectedCount}} 台</text></view>
     <scroll-view scroll-y class="tk-sheet-body">
       <view class="mt-card-title">{{task.return_options.length ? '退回到哪道' : '处理方式'}}</view>
-      <view wx:if="{{task.cutting}}" class="mt-muted">本道要用板材／管材开料，切坏的不能直接重做，请申请报废。</view>
       <view wx:for="{{task.return_options}}" wx:key="id" class="tk-radio" data-id="{{item.id}}" bindtap="pickReturn">
         <view class="tk-dot {{reject.mode === 'return' && reject.returnId === item.id ? 'on' : ''}}"></view>
         <text>{{item.is_current ? '本道重做（' + item.operation_name + '）' : item.operation_name}}</text>
