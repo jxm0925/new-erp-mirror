@@ -77,7 +77,7 @@ CREATE TABLE `erp_mfg_work_orders` (
   `updated_at` timestamp NULL DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `mfg_wo_no_uq` (`work_order_no`),
-  UNIQUE KEY `mfg_wo_fulfillment_uq` (`sales_fulfillment_id`),
+  KEY `mfg_wo_fulfillment_idx` (`sales_fulfillment_id`),
   KEY `mfg_wo_status_idx` (`status`,`planned_finish_date`),
   KEY `mfg_wo_sales_order_idx` (`sales_order_id`,`sales_order_line_id`),
   KEY `mfg_wo_item_idx` (`item_id`)

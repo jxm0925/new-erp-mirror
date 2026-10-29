@@ -35,6 +35,7 @@ Page({
     const selected = {};
     const old = keepSelection ? this.data.selected : {};
     (task.units || []).forEach(u => { if (u.selectable && old[u.id]) selected[u.id] = true; });
+    const me = Number((wx.getStorageSync('erp_user') || {}).legacy_id || 0);
     const owner = (task.participants || []).find(p => p.role === 'owner');
     const others = (task.participants || []).filter(p => p.role !== 'owner');
     const shareText = (task.participants || []).length > 1
@@ -45,6 +46,7 @@ Page({
     wx.setNavigationBarTitle({ title: task.operation_name || '报工' });
     this.setData({
       task: Object.assign({}, task, {
+        participants: (task.participants || []).map(p => Object.assign({}, p, { is_me: Number(p.employee_legacy_id) === me })),
         plannedText: view.quantity(task.progress.planned), doneText: view.quantity(task.progress.done),
         ownerName: owner ? owner.employee_name : '', collaboratorNames: others.map(p => p.employee_name).join('、'),
         dueText: String(task.work_order.planned_finish_date || '').slice(5, 10),
@@ -86,8 +88,8 @@ Page({
       success: result => {
         const code = String(result.result || '').trim();
         const unit = (this.data.task.units || []).find(u => u.serial_no && (code === u.serial_no || code.endsWith(u.serial_no) || code.indexOf(u.serial_no) >= 0));
-        if (!unit) { wx.showToast({ title: '这台不在本道', icon: 'none' }); return; }
-        if (!unit.selectable) { wx.showToast({ title: '这台在等报废确认', icon: 'none' }); return; }
+        if (!unit) { wx.showToast({ title: '这台设备不在本道', icon: 'none' }); return; }
+        if (!unit.selectable) { wx.showToast({ title: '这台设备在等报废确认', icon: 'none' }); return; }
         const selected = Object.assign({}, this.data.selected, { [unit.id]: true });
         this.setData({ selected, selectedCount: Object.keys(selected).length });
         wx.showToast({ title: `已选 ${unit.serial_no}`, icon: 'none' });
@@ -168,7 +170,7 @@ Page({
   },
   refreshReturnRows() {
     const type = this.data.returnForm.type;
-    const hints = { surplus: '多领或领错的料，冲减已领数量。', defective: '装上后发现不良的料，冲减已领数量，退后要重新收料。', scrapped: '报废台上还能用的料拆回仓库，不冲减已领数量。' };
+    const hints = { surplus: '多领或领错的料，冲减已领数量。', defective: '装上后发现不良的料，冲减已领数量，退后要重新收料。', scrapped: '报废设备上还能用的料拆回仓库，不冲减已领数量。' };
     const rows = (this.returnOptions || []).map(m => {
       const serials = m.by_number ? (m.serials || []).filter(s => (s.kind === 'scrapped') === (type === 'scrapped')) : [];
       const limitQty = m.by_qty ? Number((m.limits || {})[type] || 0) : 0;
@@ -212,16 +214,20 @@ Page({
   claim() { this.run({ action: 'claim' }, '接单成功'); },
   start() { this.run({ action: 'start' }, '开始计时'); },
   pause() { this.run({ action: 'pause' }, '已暂停'); },
+  stopTiming(event) {
+    const { id, name } = event.currentTarget.dataset;
+    wx.showModal({ title: '停止计时', content: `${name} 还在计时，确定替他停止？他还要做可以重新点开始。`, success: res => { if (res.confirm) this.run({ action: 'stop', employee_legacy_id: Number(id) }, '已停止计时'); } });
+  },
   pass() {
     const ids = this.selectedIds();
-    if (!ids.length) { wx.showToast({ title: '先勾选或扫码选台', icon: 'none' }); return; }
+    if (!ids.length) { wx.showToast({ title: '先勾选或扫码选设备', icon: 'none' }); return; }
     const next = this.data.task.progress.next_operation_name;
     wx.showModal({ title: '报合格', content: `${ids.length} 台合格，${next ? '交给' + next : '生产完成，等入库'}？`, confirmText: '确认',
       success: res => { if (res.confirm) this.run({ action: 'pass', unit_ids: ids }); } });
   },
 
   openReject() {
-    if (!this.selectedIds().length) { wx.showToast({ title: '先勾选不合格的台', icon: 'none' }); return; }
+    if (!this.selectedIds().length) { wx.showToast({ title: '先勾选不合格的设备', icon: 'none' }); return; }
     // 开料工序不能退回重做（后端已从可选里去掉），没有可退的道时只能报废。
     const options = this.data.task.return_options || [];
     const current = options.find(o => o.is_current);

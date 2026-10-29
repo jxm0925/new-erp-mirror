@@ -28,18 +28,18 @@ use Illuminate\Support\Facades\DB;
 /**
  * 生产退料：车间把工序收料领出的料退回仓库，按原收料出库的批次和单价冲回库存、冲减工单材料成本。
  * 工人提申请、库管审核通过才入库；库管可直接退（申请 + 审核一步完成）。申请时和审核时各校验一次可退数量。
- * - surplus 余料/错料：冲减已领，按数量最多退到“已领 − 已到本道的台应用量”；
- * - defective 不良退回：冲减已领，按数量最多退到“已领 − 已入库台应用量”，退后要重新收料；
- * - scrapped 报废台拆回：不冲减已领（报废台的名额仍算已领），按数量最多退报废台的单台用量。
- * 必须按编号的料只能按编号退；可选编号的料有编号领出的按编号退、无编号领出的按数量退。编号须是本道收料领出、仍为生产已领状态，装在未入库的台上（报废台拆回则须在报废台上）或没登记到台。
- * 板料、管料走开料余料，不在这里退；已入库的台、已完工工单不能退。
+ * - surplus 余料/错料：冲减已领，按数量最多退到“已领 − 已到本道的设备应用量”；
+ * - defective 不良退回：冲减已领，按数量最多退到“已领 − 已入库设备应用量”，退后要重新收料；
+ * - scrapped 报废设备拆回：不冲减已领（报废设备的名额仍算已领），按数量最多退报废设备的单台用量。
+ * 必须按编号的料只能按编号退；可选编号的料有编号领出的按编号退、无编号领出的按数量退。编号须是本道收料领出、仍为生产已领状态，装在未入库的设备上（报废设备拆回则须在报废设备上）或没登记到设备。
+ * 板料、管料走开料余料，不在这里退；已入库的设备、已完工工单不能退。
  */
 final class MaterialReturnService
 {
     use ProductionActor;
 
     private const EPS = 0.00001;
-    public const TYPES = ['surplus' => '余料/错料退回', 'defective' => '不良退回', 'scrapped' => '报废台拆回'];
+    public const TYPES = ['surplus' => '余料/错料退回', 'defective' => '不良退回', 'scrapped' => '报废设备拆回'];
     public const STATUS_LABELS = ['pending' => '待审核', 'approved' => '已入库', 'rejected' => '已驳回', 'cancelled' => '已撤回'];
     public const DISPOSITIONS = ['release' => '判定可用', 'scrap' => '报废', 'supplier_return' => '退供应商'];
     private const OPEN_WO = ['released', 'in_progress', 'paused'];
@@ -106,7 +106,7 @@ final class MaterialReturnService
     }
 
     /**
-     * 收回整张领料单（仓库配送被拒收后收回入库）：按原领料单的批次、单价、库位冲回，冲减已领，编号从台上拆下。
+     * 收回整张领料单（仓库配送被拒收后收回入库）：按原领料单的批次、单价、库位冲回，冲减已领，编号从设备上拆下。
      * 调用方须在事务内并已锁定工单和工序。
      */
     public function recallIssue(MfgWorkOrder $wo, MfgWorkOrderOperation $op, MfgMaterialIssue $issue, string $reason, object $actor): MfgMaterialReturn
@@ -136,7 +136,7 @@ final class MaterialReturnService
         return $return->fresh(['lines']);
     }
 
-    /** 库管审核通过：再校验一次可退数量，入库冲回、冲减已领、从台上拆下编号。 */
+    /** 库管审核通过：再校验一次可退数量，入库冲回、冲减已领、从设备上拆下编号。 */
     public function approve(int $id, ?int $locationId, ?string $remark, object $actor): MfgMaterialReturn
     {
         return DB::transaction(function () use ($id, $locationId, $remark, $actor) {
@@ -309,7 +309,7 @@ final class MaterialReturnService
         // 审核时按当前状态重算：其他已审核/待审核的退料、新的收料和报工都可能改变可退数量。
         $fresh = collect($this->buildLines($wo, $op, $return->return_type, $this->payloadOf($lines), (int) $return->id, $onlyIssueId))
             ->whereNotNull('inventory_serial_id')->keyBy('inventory_serial_id');
-        // 申请后编号可能被互换到别的台，按审核时实际装的台拆下。
+        // 申请后编号可能被互换到别的设备，按审核时实际装的设备拆下。
         foreach ($lines->whereNotNull('inventory_serial_id') as $line) {
             $now = $fresh->get($line->inventory_serial_id);
             $line->update(['component_id' => $now['component_id'] ?? null, 'unit_id' => $now['unit_id'] ?? null, 'unit_serial_no' => $now['unit_serial_no'] ?? null]);
@@ -363,9 +363,9 @@ final class MaterialReturnService
                 foreach ($ids as $serialId) {
                     $c = $candidates[$serialId] ?? null;
                     if ($c && $onlyIssueId && (int) $c['source']->source_id !== $onlyIssueId) $c = null;
-                    if (! $c) $this->fail('return_serial_invalid', $m->component_item_name.' 的编号 #'.$serialId.' 不能退：不是本道领出的、已退过、已在其他退料申请里，或所在的台已入库。');
+                    if (! $c) $this->fail('return_serial_invalid', $m->component_item_name.' 的编号 #'.$serialId.' 不能退：不是本道领出的、已退过、已在其他退料申请里，或所在的设备已入库。');
                     if (($type === 'scrapped') !== ($c['kind'] === 'scrapped'))
-                        $this->fail('return_serial_type', '编号 '.$c['serial_no'].($c['kind'] === 'scrapped' ? ' 装在报废台上，请选“报废台拆回”。' : ' 不在报废台上，不能选“报废台拆回”。'));
+                        $this->fail('return_serial_type', '编号 '.$c['serial_no'].($c['kind'] === 'scrapped' ? ' 装在报废设备上，请选“报废设备拆回”。' : ' 不在报废设备上，不能选“报废设备拆回”。'));
                     $rows[] = $this->lineRow($m, $c['source'], 1.0) + ['inventory_serial_id' => $serialId, 'serial_no' => $c['serial_no'],
                         'unit_id' => $c['unit_id'], 'unit_serial_no' => $c['unit_serial_no'], 'component_id' => $c['component_id']];
                     $numbered++;
@@ -379,7 +379,7 @@ final class MaterialReturnService
             if ($ids && $want['qty'] <= self::EPS) continue;
             $qty = $want['qty'];
             if ($qty <= self::EPS) $this->fail('return_qty_invalid', $m->component_item_name.' 退料数量要大于 0。');
-            // 收回配送：整单按原领料单冲回，不受已开工台数限制（签收前不能开工）。
+            // 收回配送：整单按原领料单冲回，不受已开工设备数限制（签收前不能开工）。
             // 可退总量按本道整体口径算，本次已选的编号也占这个总量，编号 + 无编号合计不能超。
             // 业务上限（不封顶到无编号余量）含本次编号，扣掉编号后再受无编号实物余量约束。
             $total = $onlyIssueId ? $qty + $numbered : $this->quantityLimit($wo, $op, $m, $type, $exceptReturnId, false);
@@ -417,7 +417,7 @@ final class MaterialReturnService
     }
 
     /**
-     * 按数量的可退上限。占用 = 其他待审核申请；已审核的退料已体现在已领数量里（报废台拆回除外，单独累计）。
+     * 按数量的可退上限。占用 = 其他待审核申请；已审核的退料已体现在已领数量里（报废设备拆回除外，单独累计）。
      */
     private function quantityLimit(MfgWorkOrder $wo, MfgWorkOrderOperation $op, MfgWorkOrderMaterial $m, string $type, ?int $exceptReturnId = null, bool $capUnnumbered = true): float
     {
@@ -482,7 +482,7 @@ final class MaterialReturnService
 
     /**
      * 可退编号：本道收料领出、最近一次领用就是本工单、现在仍为生产已领、不在其他待审核申请里；
-     * 装在未入库的台上（active）、报废台上（scrapped）或没登记到台（unbound）；整单配送收回也接纳已取消台。键为库存序列号 ID。
+     * 装在未入库的设备上（active）、报废设备上（scrapped）或没登记到设备（unbound）；整单配送收回也接纳已取消台。键为库存序列号 ID。
      */
     private function serialCandidates(MfgWorkOrder $wo, MfgWorkOrderOperation $op, MfgWorkOrderMaterial $m, ?int $exceptReturnId = null, bool $lock = false, bool $allowCancelledUnits = false): array
     {

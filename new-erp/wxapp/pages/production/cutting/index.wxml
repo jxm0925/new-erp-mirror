@@ -124,7 +124,7 @@
         </view>
         <text wx:else>{{actualUnits}} 台</text>
       </view>
-      <view wx:if="{{batch.status === 'issued' && actualUnits < batch.unit_qty}}" class="mt-muted">少切了台数，请把下面各件数量改成实际切出的数。</view>
+      <view wx:if="{{batch.status === 'issued' && actualUnits < batch.unit_qty}}" class="mt-muted">少切了设备数，请把下面各件数量改成实际切出的数。</view>
       <view class="mt-card-title mt-gap">实际切出</view>
       <view wx:for="{{actual}}" wx:key="rowKey" class="ct-row">
         <view class="mt-muted mono">{{item.sourceName}}</view>

@@ -16,3 +16,7 @@ Artisan::command('inspire', function () {
 Schedule::call(fn () => app(DocumentNumberService::class)->expire())
     ->name('expire-unused-document-number-reservations')
     ->everyTenMinutes();
+
+// 车间计时超过 4 小时没停的自动停止（忘了停、人走了）。
+Schedule::call(fn () => app(\App\Services\Erp\Manufacturing\TaskService::class)->closeOverdueSessions())
+    ->name('mfg-labor-auto-stop')->everyFiveMinutes()->withoutOverlapping();

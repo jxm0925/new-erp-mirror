@@ -64,7 +64,7 @@
         </view>
         <view class="module-main">
           <text class="module-name">工单</text>
-          <text class="module-desc">领料 · 工序计时 · 按台报工</text>
+          <text class="module-desc">领料 · 工序计时 · 按设备报工</text>
         </view>
         <view class="module-stats">
           <view class="module-stat">
@@ -239,15 +239,15 @@
           <view class="stats-kpi-grid">
             <view class="stats-kpi-box kpi-box-red">
               <text class="stats-kpi-val">{{statsDetail.completedUnitsToday}}</text>
-              <text class="stats-kpi-lbl">今日合格台数</text>
+              <text class="stats-kpi-lbl">今日合格设备数</text>
             </view>
             <view class="stats-kpi-box">
               <text class="stats-kpi-val">{{statsDetail.inProgressUnits}}</text>
-              <text class="stats-kpi-lbl">进行中台数</text>
+              <text class="stats-kpi-lbl">进行中设备数</text>
             </view>
             <view class="stats-kpi-box">
               <text class="stats-kpi-val">{{statsDetail.pendingReceiptUnits}}</text>
-              <text class="stats-kpi-lbl">待入库台数</text>
+              <text class="stats-kpi-lbl">待入库设备数</text>
             </view>
             <view class="stats-kpi-box">
               <text class="stats-kpi-val">{{statsDetail.todayHours}}</text>
@@ -259,7 +259,7 @@
             </view>
             <view class="stats-kpi-box">
               <text class="stats-kpi-val">{{statsDetail.reworkUnits}}</text>
-              <text class="stats-kpi-lbl">返工/待修台数</text>
+              <text class="stats-kpi-lbl">返工/待修设备数</text>
             </view>
           </view>
         </view>

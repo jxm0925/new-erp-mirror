@@ -58,14 +58,14 @@ class MfgWorkOrderController extends Controller
             'release' => 'nullable|boolean']);
         if (! empty($data['release'])) $this->user($request, 'production.work_order.publish');
         $wo = $service->createStock($data, $user);
-        return response()->json(['message' => $wo->status === 'released' ? '备货工单已下达，已按台生成序列号。' : '备货工单已保存为计划。', 'data' => $query->detail($wo->id, $amounts)]);
+        return response()->json(['message' => $wo->status === 'released' ? '备货工单已下达，已按设备生成序列号。' : '备货工单已保存为计划。', 'data' => $query->detail($wo->id, $amounts)]);
     }
 
     public function release(Request $request, int $id, WorkOrderService $service, WorkOrderQueryService $query)
     {
         [$user, $amounts] = $this->user($request, 'production.work_order.publish');
         $wo = $service->release($id, $this->version($request), $user);
-        return response()->json(['message' => '工单已下达，已按台生成序列号。', 'data' => $query->detail($wo->id, $amounts)]);
+        return response()->json(['message' => '工单已下达，已按设备生成序列号。', 'data' => $query->detail($wo->id, $amounts)]);
     }
 
     public function update(Request $request, int $id, WorkOrderService $service, WorkOrderQueryService $query)
@@ -112,7 +112,7 @@ class MfgWorkOrderController extends Controller
         return response()->json(['message' => "半成品工单 {$child->work_order_no} 已开，{$text}。", 'data' => $query->detail($id, $amounts), 'child_id' => $child->id]);
     }
 
-    /** 工序收料：按台数收本道要用的料，收了才扣库存；不填台数就收齐整张工单。 */
+    /** 工序收料：按设备数收本道要用的料，收了才扣库存；不填设备数就收齐整张工单。 */
     public function receiveMaterials(Request $request, int $id, int $operationId, MaterialIssueService $issues, WorkOrderQueryService $query)
     {
         [$user, $amounts] = $this->user($request, ['production.task.execute', 'production.work_order.edit']);
@@ -143,22 +143,22 @@ class MfgWorkOrderController extends Controller
         return response()->json(['message' => '部件编号已互换。', 'data' => $query->detail($id, $amounts)]);
     }
 
-    /** 待登记编号（收料时没自动绑上台的部件编号）手动装到指定的一台。 */
+    /** 待登记编号（收料时没自动绑上设备的部件编号）手动装到指定的一台设备。 */
     public function assignComponent(Request $request, int $id, UnitComponentService $components, WorkOrderQueryService $query)
     {
         [$user, $amounts] = $this->user($request, 'production.serial.assign');
         $data = $request->validate(['serial_id' => 'required|integer|min:1', 'unit_id' => 'required|integer|min:1']);
         $components->assign($id, (int) $data['serial_id'], (int) $data['unit_id'], $user);
-        return response()->json(['message' => '部件编号已登记到该台。', 'data' => $query->detail($id, $amounts)]);
+        return response()->json(['message' => '部件编号已登记到该设备。', 'data' => $query->detail($id, $amounts)]);
     }
 
-    /** 报废台已处理（料已退回或确认无可回收），满足其他条件即结束工单。 */
+    /** 报废设备已处理（料已退回或确认无可回收），满足其他条件即结束工单。 */
     public function settleScrap(Request $request, int $id, WorkOrderService $service, WorkOrderQueryService $query)
     {
         [$user, $amounts] = $this->user($request, 'production.scrap.approve');
         $data = $request->validate(['remark' => 'nullable|string|max:500']);
         $wo = $service->settleScrap($id, $data['remark'] ?? null, $user);
-        $text = $wo->status === 'completed' ? '报废台已确认处理，工单已完工。' : '报废台已确认处理，工单还有其他事项未完成。';
+        $text = $wo->status === 'completed' ? '报废设备已确认处理，工单已完工。' : '报废设备已确认处理，工单还有其他事项未完成。';
         return response()->json(['message' => $text, 'data' => $query->detail($id, $amounts)]);
     }
 

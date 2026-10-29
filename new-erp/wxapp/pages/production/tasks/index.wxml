@@ -30,7 +30,7 @@
     <view class="mt-product">{{item.product_name}}<text wx:if="{{item.sku_name}}" class="mt-muted"> {{item.sku_name}}</text></view>
     <view class="mt-muted">{{item.work_order_no}}<text wx:if="{{item.assigned_by_name}}"> · {{item.assigned_by_name}}派给我</text><text wx:if="{{item.dueText}}"> · 交期 {{item.dueText}}</text></view>
     <view class="mt-row mt-gap">
-      <text class="mt-muted">我这道：做完 {{item.doneText}} / {{item.plannedText}} 台<text wx:if="{{item.here_qty}}"> · 待做 {{item.here_qty}} 台</text></text>
+      <text class="mt-muted">我这道：做完 {{item.doneText}} / {{item.plannedText}} 台<text wx:if="{{item.here_qty}}"> · 待做 {{item.here_qty}} 台设备</text><text wx:if="{{!item.here_qty && item.upstream_qty}}"> · 前面还有 {{item.upstream_qty}} 台设备在做，可以先接单</text></text>
       <text wx:if="{{item.rework_qty}}" class="mt-red">{{item.rework_qty}} 台返工</text>
     </view>
     <view class="mt-bar"><view class="mt-bar-in" style="width: {{item.percent}}%"></view></view>

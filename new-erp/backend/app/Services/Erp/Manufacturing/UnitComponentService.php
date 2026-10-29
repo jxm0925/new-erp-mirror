@@ -27,9 +27,9 @@ final class UnitComponentService
     public function __construct(private readonly WorkOrderService $workOrders) {}
 
     /**
-     * 工序收料后装上：收到的编号按台号顺序登记，每台按 BOM 单台用量装满再到下一台。
+     * 工序收料后装上：收到的编号按设备号顺序登记，每台按 BOM 单台用量装满再到下一台。
      * 同一种料拆在几道工序（几行用料）时，按用料行各自的单台用量计数，焊接装的和总装装的互不挤占；
-     * 同时整台合计不超过各行单台用量之和。装不下的编号留在“待登记编号”，主管可手动指定装到哪台。
+     * 同时整台合计不超过各行单台用量之和。装不下的编号留在“待登记编号”，主管可手动指定装到哪台设备。
      * @param array<int, array{material: \App\Models\Erp\MfgWorkOrderMaterial, picks: array}> $plan
      */
     public function bind(MfgWorkOrder $wo, MfgMaterialIssue $issue, array $plan, array $selections, object $actor): void
@@ -57,7 +57,7 @@ final class UnitComponentService
                 $rowCounts[$unit->id][$m->id] = ($rowCounts[$unit->id][$m->id] ?? 0) + 1;
                 $itemCounts[$unit->id] = ($itemCounts[$unit->id] ?? 0) + 1;
             }
-            if ($unbound) $this->workOrders->log($wo, 'component_unbound', null, null, "{$m->component_item_name} 编号 ".implode('、', $unbound).' 已收料但各台已按单台用量装满，未登记到台，可在工单详情“待登记编号”里手动指定', $actor, ['issue_id' => $issue->id]);
+            if ($unbound) $this->workOrders->log($wo, 'component_unbound', null, null, "{$m->component_item_name} 编号 ".implode('、', $unbound).' 已收料但各台设备已按单台用量装满，未登记到设备，可在工单详情“待登记编号”里手动指定', $actor, ['issue_id' => $issue->id]);
         }
     }
 
@@ -91,7 +91,7 @@ final class UnitComponentService
         return $out;
     }
 
-    /** 手动登记：把待登记编号装到本工单指定的一台上，整台合计不超过该物料各行单台用量之和。 */
+    /** 手动登记：把待登记编号装到本工单指定的一台设备上，整台合计不超过该物料各行单台用量之和。 */
     public function assign(int $workOrderId, int $serialId, int $unitId, object $actor): void
     {
         DB::transaction(function () use ($workOrderId, $serialId, $unitId, $actor) {
@@ -100,7 +100,7 @@ final class UnitComponentService
             $row = collect($this->unbound($wo))->firstWhere('serial_id', $serialId);
             if (! $row) $this->fail('component_invalid', '这个编号不是本工单待登记的编号（可能已登记或已退料），请刷新。');
             $unit = MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->lockForUpdate()->find($unitId);
-            if (! $unit || ! in_array($unit->status, self::ADJUSTABLE, true)) $this->fail('unit_locked', '请选择本工单还在生产中的一台（已入库或报废的台不能登记）。');
+            if (! $unit || ! in_array($unit->status, self::ADJUSTABLE, true)) $this->fail('unit_locked', '请选择本工单还在生产中的一台设备（已入库或报废的设备不能登记）。');
             [, $itemCap, , $itemCounts] = $this->capacity($wo, (int) $row['component_item_id']);
             if (($itemCounts[$unit->id] ?? 0) >= $itemCap) $this->fail('unit_full', "{$unit->serial_no} 的 {$row['component_item_name']} 已按单台用量装满，请先互换或退料拆下。");
             $serial = InventorySerial::query()->lockForUpdate()->findOrFail($serialId);
@@ -150,10 +150,10 @@ final class UnitComponentService
             if ($firstId === $secondId || $rows->count() !== 2) $this->fail('component_invalid', '请选择本工单两台设备上当前装着的部件，请刷新后重试。');
             [$a, $b] = [$rows->get($firstId), $rows->get($secondId)];
             if ((int) $a->component_item_id !== (int) $b->component_item_id) $this->fail('component_mismatch', '只能互换同一种部件的编号。');
-            if ((int) $a->unit_id === (int) $b->unit_id) $this->fail('component_same_unit', '两条记录在同一台上，不需要互换。');
+            if ((int) $a->unit_id === (int) $b->unit_id) $this->fail('component_same_unit', '两条记录在同一台设备上，不需要互换。');
             $units = MfgWorkOrderUnit::query()->whereIn('id', [$a->unit_id, $b->unit_id])->lockForUpdate()->get()->keyBy('id');
             if ($units->contains(fn ($u) => ! in_array($u->status, self::ADJUSTABLE, true)))
-                $this->fail('unit_locked', '已入库或报废的台不能再调整部件编号。');
+                $this->fail('unit_locked', '已入库或报废的设备不能再调整部件编号。');
             [$unitA, $unitB] = [$units->get($a->unit_id), $units->get($b->unit_id)];
             $remark = "互换 {$a->component_item_name}：{$unitA->serial_no} ↔ {$unitB->serial_no}";
             $this->remove($wo, $a, $unitA, 'swap', $actor, $remark);

@@ -26,7 +26,7 @@
       <div class="metric-card">
         <div class="metric-icon icon-primary"><i class="el-icon-cpu" /></div>
         <div class="metric-info">
-          <span class="metric-label">在制机台总量</span>
+          <span class="metric-label">在制设备总量</span>
           <b class="metric-val text-primary">{{ board.stats.in_progress_units }} <small>台</small></b>
         </div>
       </div>
@@ -47,14 +47,14 @@
       <div class="metric-card">
         <div class="metric-icon icon-danger"><i class="el-icon-refresh-left" /></div>
         <div class="metric-info">
-          <span class="metric-label">在制返修机台</span>
+          <span class="metric-label">在制返修设备</span>
           <b class="metric-val text-danger">{{ board.stats.rework_units }} <small>台</small></b>
         </div>
       </div>
       <div class="metric-card">
         <div class="metric-icon icon-info"><i class="el-icon-box" /></div>
         <div class="metric-info">
-          <span class="metric-label">待入库机台</span>
+          <span class="metric-label">待入库设备</span>
           <b class="metric-val text-info">{{ board.stats.waiting_receipt }} <small>台</small></b>
         </div>
       </div>
@@ -166,6 +166,12 @@
                     <a v-if="board.permissions.assign && !c.paused" class="action-link-theme" @click="openAssign(c)">
                       {{ c.state === 'unclaimed' ? '派工' : '转派' }}
                     </a>
+                    <a
+                      v-for="t in (board.permissions.assign ? c.timing : [])"
+                      :key="'stop' + t.employee_legacy_id"
+                      class="action-link-theme"
+                      @click="stopTiming(c, t)"
+                    >停止{{ t.name }}计时</a>
                     <a class="action-link-theme" @click="openWo(c.work_order_id)">详情</a>
                   </div>
                 </div>
@@ -226,7 +232,7 @@
                   <span class="text-secondary">{{ r.operator_name }} · {{ r.warehouse_name }} {{ r.location_code }}</span>
                 </div>
               </div>
-              <div v-if="!board.today_receipts.length" class="empty-lane">今日暂无入库机台</div>
+              <div v-if="!board.today_receipts.length" class="empty-lane">今日暂无入库设备</div>
             </div>
           </div>
         </div>
@@ -236,7 +242,7 @@
           <!-- 待确认报废卡片 -->
           <div class="side-card" v-if="board.pending_scraps.length">
             <div class="side-card-title">
-              <h2 class="section-title">待确认报废机台 <small class="text-danger">{{ board.pending_scraps.length }} 台</small></h2>
+              <h2 class="section-title">待确认报废设备 <small class="text-danger">{{ board.pending_scraps.length }} 台</small></h2>
             </div>
             <div v-for="s in board.pending_scraps" :key="s.id" class="scrap-item">
               <div class="scrap-head">
@@ -303,7 +309,7 @@
       <!-- 底部业务说明条 -->
       <div class="board-footnote-alert">
         <i class="el-icon-info" />
-        <span>看板说明：泳道依工艺阶段聚合呈现；点击“详情”可下钻查看工单单台流转进度；质检返工机台将回退至责任工序泳道并标识返工预警。</span>
+        <span>看板说明：泳道依工艺阶段聚合呈现；点击“详情”可下钻查看工单单台流转进度；质检返工设备将回退至责任工序泳道并标识返工预警。</span>
       </div>
     </div>
 
@@ -351,7 +357,7 @@
           <b>{{ receipt.row.product_name }}</b>
         </div>
         <el-form label-position="top" size="small">
-          <el-form-item label="入库产品序列号（台）" required>
+          <el-form-item label="入库设备序列号" required>
             <el-checkbox-group v-model="receipt.unit_ids" class="sn-checkbox-group">
               <el-checkbox v-for="u in receipt.row.units" :key="u.id" :label="u.id">{{ u.serial_no }}</el-checkbox>
             </el-checkbox-group>
@@ -515,11 +521,21 @@ export default {
         this.saving = false
       }
     },
+    async stopTiming(c, t) {
+      try {
+        await this.$confirm(`${t.name} 在${c.operation_name}还在计时，确定替他停止？他还要做可以重新点开始。`, '停止计时', { type: 'warning' })
+        const { data } = await taskAction(c.operation_id, { action: 'stop', employee_legacy_id: t.employee_legacy_id })
+        this.$message.success(data.message || '已停止计时')
+        this.load(true)
+      } catch (e) {
+        if (!isCancel(e)) this.$message.error(errorText(e, '停止计时失败'))
+      }
+    },
     async review(s, approve) {
       let remark = ''
       try {
         const r = await this.$prompt(
-          approve ? `确认将产品序列号「${s.serial_no}」判定报废？报废后该机台将终止生产。` : `驳回后序列号「${s.serial_no}」将退回「${s.operation_name}」继续返工。`,
+          approve ? `确认将产品序列号「${s.serial_no}」判定报废？报废后该设备将终止生产。` : `驳回后序列号「${s.serial_no}」将退回「${s.operation_name}」继续返工。`,
           approve ? '确认报废审核' : '驳回报废确认',
           { inputPlaceholder: '请录入审核处理意见（选填）', confirmButtonText: approve ? '确认报废' : '驳回' }
         )

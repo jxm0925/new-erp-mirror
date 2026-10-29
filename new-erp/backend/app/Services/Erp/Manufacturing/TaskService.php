@@ -18,7 +18,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 /**
- * 车间报工：接单、派工、协同人、开始/暂停计时、按台报合格/不合格、报废确认。
+ * 车间报工：接单、派工、协同人、开始/暂停计时、按设备报合格/不合格、报废确认。
  * 不合格由工人直接退回到本道或之前某道；只有报废要主管确认。
  */
 final class TaskService
@@ -27,6 +27,7 @@ final class TaskService
 
     public const REASON_TAGS = ['焊缝渗漏', '尺寸不对', '外观划伤', '零件装错', '其他'];
     public const SELECTABLE = ['waiting', 'in_progress', 'rework'];
+    public const AUTO_STOP_HOURS = 4;
 
     public function __construct(
         private readonly WorkOrderService $workOrders,
@@ -121,6 +122,7 @@ final class TaskService
 
     public function start(int $opId, object $actor): void
     {
+        $this->closeOverdueSessions();
         DB::transaction(function () use ($opId, $actor) {
             [$wo, $op] = $this->lockTask($opId);
             $this->assertRunnable($wo, $op);
@@ -147,7 +149,7 @@ final class TaskService
             if (ShipmentPackingLaborSession::query()->where('employee_legacy_id', $me)->where('status', 'ACTIVE')->lockForUpdate()->first(['id']))
                 $this->fail('already_timing', '你有打包作业正在计时，请先暂停。');
             $units = $this->selectableUnits($op);
-            if ($units->isEmpty()) $this->fail('no_unit', '这道工序现在没有要做的台，等前道交过来再开始。');
+            if ($units->isEmpty()) $this->fail('no_unit', '这道工序现在没有要做的设备，等前道交过来再开始。');
             // 本道的料（总装的半成品、外购件）收到才能开工；板材／管材在本道开工后开料，报合格时再查。
             $this->materials->assertReceivedForStart($wo, $op, $units, false);
             if (! $wo->started_at) {
@@ -174,7 +176,55 @@ final class TaskService
         }, 5);
     }
 
-    /** 选中的台本道合格：交下道；最后一道合格就“等入库”。 */
+    /** 主管替忘了停的人停止计时（人走了、手机没电等）。 */
+    public function stopTiming(int $opId, int $employeeId, object $actor): void
+    {
+        DB::transaction(function () use ($opId, $employeeId, $actor) {
+            [$wo, $op] = $this->lockTask($opId);
+            $session = MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('employee_legacy_id', $employeeId)
+                ->where('status', 'active')->lockForUpdate()->first();
+            if (! $session) $this->fail('not_timing', '这个人在这道工序没有正在计时，请刷新。');
+            self::closeSession($session, 'paused');
+            $this->workOrders->log($wo, 'timing_stopped', null, null, $this->actorName($actor).' 停止了 '.$session->employee_name.' 在'.$op->operation_name.'的计时', $actor);
+        }, 5);
+    }
+
+    /** 计时超过 4 小时没停的，按开始后 4 小时自动停止（忘了停、人走了），工时只算到 4 小时。 */
+    public function closeOverdueSessions(): int
+    {
+        $limit = now()->subHours(self::AUTO_STOP_HOURS);
+        if (! MfgLaborSession::query()->where('status', 'active')->where('started_at', '<=', $limit)->exists()) return 0;
+        $closed = 0;
+        $ids = MfgLaborSession::query()->where('status', 'active')->where('started_at', '<=', $limit)->orderBy('id')->limit(200)->pluck('id');
+        foreach ($ids as $id) {
+            DB::transaction(function () use ($id, $limit, &$closed) {
+                $session = MfgLaborSession::query()->where('status', 'active')->where('started_at', '<=', $limit)->lockForUpdate()->find($id);
+                if (! $session) return;
+                self::closeSession($session, 'paused', $session->started_at->copy()->addHours(self::AUTO_STOP_HOURS));
+                $wo = MfgWorkOrder::query()->find($session->work_order_id);
+                $opName = MfgWorkOrderOperation::query()->whereKey($session->work_order_operation_id)->value('operation_name') ?: '工序';
+                if ($wo) $this->workOrders->log($wo, 'timing_auto_stopped', null, null, $session->employee_name.' 在'.$opName.'计时超过 '.self::AUTO_STOP_HOURS
+                    .' 小时没停，系统已自动停止，工时按 '.self::AUTO_STOP_HOURS.' 小时算；还要做请重新点开始', null);
+                $closed++;
+            }, 5);
+        }
+        return $closed;
+    }
+
+    /** 本道已经没有可做的设备（都交下道、退回前道或在等报废确认），本道还在计时的人自动暂停。 */
+    private function pauseIfIdle(MfgWorkOrder $wo, MfgWorkOrderOperation $op, object $actor): bool
+    {
+        $op->refresh();
+        if ($op->status === 'done' || $this->selectableUnits($op)->isNotEmpty()) return false;
+        $sessions = MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('status', 'active')->lockForUpdate()->get();
+        if ($sessions->isEmpty()) return false;
+        foreach ($sessions as $session) self::closeSession($session, 'paused');
+        $this->workOrders->log($wo, 'timing_auto_paused', null, null, $op->operation_name.'暂时没有可做的设备，已自动暂停 '
+            .$sessions->pluck('employee_name')->implode('、').' 的计时；前道交过来后再点开始', $actor);
+        return true;
+    }
+
+    /** 选中的设备本道合格：交下道；最后一道合格就“等入库”。 */
     public function pass(int $opId, array $unitIds, object $actor): array
     {
         return DB::transaction(function () use ($opId, $unitIds, $actor) {
@@ -228,6 +278,7 @@ final class TaskService
             if ($firstPass) $op->update(['completed_qty' => (float) $op->completed_qty + $firstPass]);
             if ($finished) $wo->update(['completed_qty' => (float) $wo->completed_qty + $finished]);
             $this->refreshOperation($wo, $op, $reportedAt);
+            $timingPaused = $this->pauseIfIdle($wo, $op, $actor);
             // 总装做完、订单马上要发：自动记入成品待发区，直接去发货试水。
             $staged = null;
             if ($finished) {
@@ -240,12 +291,12 @@ final class TaskService
                 }
             }
             return ['passed' => $units->count(), 'finished' => $finished, 'repaired' => $repaired, 'next_operation_name' => $next?->operation_name,
-                'staged_qty' => $staged ? (int) $staged->qty : 0, 'staged_receipt_no' => $staged?->receipt_no];
+                'staged_qty' => $staged ? (int) $staged->qty : 0, 'staged_receipt_no' => $staged?->receipt_no, 'timing_paused' => $timingPaused];
         }, 5);
     }
 
     /**
-     * 不合格：退回本道或之前某道重做（直接生效，开料工序除外）；或申请报废（主管确认前台停在本道、不能再报）。
+     * 不合格：退回本道或之前某道重做（直接生效，开料工序除外）；或申请报废（主管确认前设备停在本道、不能再报）。
      * @param array{mode:string, return_operation_id:?int, reason_tags:array, reason:?string, photos:array} $data
      */
     public function reject(int $opId, array $unitIds, array $data, object $actor): array
@@ -269,7 +320,7 @@ final class TaskService
                     $unit->update(['status' => 'rework']);
                     $this->workOrders->log($wo, 'unit_scrap_requested', null, 'rework', "{$unit->serial_no} 在{$op->operation_name}申请报废：{$why}，等主管确认", $actor, [], $unit->id);
                 }
-                return ['mode' => 'scrap', 'count' => $units->count()];
+                return ['mode' => 'scrap', 'count' => $units->count(), 'timing_paused' => $this->pauseIfIdle($wo, $op, $actor)];
             }
             $ops = $this->productionOps($wo);
             $pos = $ops->pluck('id')->flip();
@@ -287,11 +338,12 @@ final class TaskService
             }
             if ($target->id !== $op->id && $target->status === 'done') $target->update(['status' => 'in_progress']);
             $this->refreshOperation($wo, $op);
-            return ['mode' => 'return', 'count' => $units->count(), 'return_operation_name' => $target->operation_name];
+            return ['mode' => 'return', 'count' => $units->count(), 'return_operation_name' => $target->operation_name,
+                'timing_paused' => $this->pauseIfIdle($wo, $op, $actor)];
         }, 5);
     }
 
-    /** 主管确认报废：通过 = 这台报废；驳回 = 继续在本道返工。 */
+    /** 主管确认报废：通过 = 这台设备报废；驳回 = 继续在本道返工。 */
     public function reviewScrap(int $reportId, bool $approve, ?string $remark, object $actor): void
     {
         DB::transaction(function () use ($reportId, $approve, $remark, $actor) {
@@ -311,12 +363,20 @@ final class TaskService
             $before = $unit->status;
             $unit->update(['status' => 'scrapped', 'current_operation_id' => null]);
             $this->workOrders->log($wo, 'unit_scrapped', $before, 'scrapped', "{$unit->serial_no} 确认报废（{$op->operation_name}）".($remark ? '：'.$remark : ''), $actor, [], $unit->id);
-            // 上游最后一台报废后，下游可能已无台可做，必须一并结束这些工序的计时。
+            // 上游最后一台报废后，下游可能已无设备可做，必须一并结束这些工序的计时。
             $ops = $this->productionOps($wo);
             foreach ($ops->slice($ops->pluck('id')->search($op->id)) as $affected) {
                 $this->refreshOperation($wo, $affected);
+                $this->pauseIfIdle($wo, $affected, $actor);
             }
             $this->workOrders->refreshCompletion($wo, $actor);
+            // 订单工单报废后订单就少了设备：自动补一张工单；补单失败不影响报废确认，留日志让主管手工处理。
+            try {
+                DB::transaction(fn () => $this->workOrders->createScrapReplacement($wo, $actor));
+            } catch (\App\Exceptions\Erp\WorkOrderDomainException|\Illuminate\Validation\ValidationException|\RuntimeException $e) {
+                $message = $e instanceof \Illuminate\Validation\ValidationException ? collect($e->errors())->flatten()->first() : $e->getMessage();
+                $this->workOrders->log($wo, 'scrap_replace_failed', $wo->status, $wo->status, '设备报废后自动补做工单没开成：'.$message.'，请生产主管手工补单', $actor);
+            }
         }, 5);
     }
 
@@ -346,7 +406,11 @@ final class TaskService
     public static function closeSession(MfgLaborSession $session, string $status, ?CarbonInterface $endedAt = null): void
     {
         $ended = $endedAt ?? now();
-        $session->update(['status' => $status, 'ended_at' => $ended,
+        // 这段计时里报的设备全是返工才算返工工时；有一台是正常做的就算正常工时。没报设备时沿用开始时的判断。
+        $flags = MfgUnitReport::query()->where('work_order_operation_id', $session->work_order_operation_id)
+            ->whereBetween('created_at', [$session->started_at, $ended])->pluck('is_rework');
+        $rework = $flags->isEmpty() ? (bool) $session->is_rework : $flags->every(fn ($v) => (bool) $v);
+        $session->update(['status' => $status, 'ended_at' => $ended, 'is_rework' => $rework,
             'labor_minutes' => round(max(0, $session->started_at->diffInSeconds($ended, false)) / 60, 2)]);
     }
 
@@ -359,7 +423,7 @@ final class TaskService
         return $workers->isEmpty() || $workers->contains($employeeId);
     }
 
-    /** 本道现在能报的台：停在本道、没在等报废确认。 */
+    /** 本道现在能报的设备：停在本道、没在等报废确认。 */
     public function selectableUnits(MfgWorkOrderOperation $op): Collection
     {
         $query = MfgWorkOrderUnit::query()->where('work_order_id', $op->work_order_id)->where('current_operation_id', $op->id)
@@ -405,11 +469,11 @@ final class TaskService
     private function pickUnits(MfgWorkOrderOperation $op, array $unitIds): Collection
     {
         $ids = array_values(array_unique(array_filter(array_map('intval', $unitIds))));
-        if (! $ids) $this->fail('unit_required', '请选择这次做完的台。');
+        if (! $ids) $this->fail('unit_required', '请选择这次做完的设备。');
         $units = MfgWorkOrderUnit::query()->where('work_order_id', $op->work_order_id)->whereIn('id', $ids)->orderBy('unit_no')->lockForUpdate()->get();
         $selectable = $this->selectableUnits($op)->pluck('id')->all();
         if ($units->count() !== count($ids) || $units->contains(fn ($u) => ! in_array($u->id, $selectable, true)))
-            $this->fail('unit_invalid', '选的台不在这道工序上或正在等报废确认，请刷新后重选。');
+            $this->fail('unit_invalid', '选的设备不在这道工序上或正在等报废确认，请刷新后重选。');
         return $units;
     }
 
@@ -419,7 +483,7 @@ final class TaskService
             ->orderBy('sequence')->orderBy('id')->lockForUpdate()->get()->values();
     }
 
-    /** 本道和之前各道都没有在做的台了，本道就算做完，同时结束本道所有计时。 */
+    /** 本道和之前各道都没有在做的设备了，本道就算做完，同时结束本道所有计时。 */
     private function refreshOperation(MfgWorkOrder $wo, MfgWorkOrderOperation $op, ?CarbonInterface $endedAt = null): void
     {
         $ops = $this->productionOps($wo);
