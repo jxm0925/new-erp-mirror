@@ -21,14 +21,15 @@ class DatabaseSeeder extends Seeder
     {
         $this->call([
             ErpAdministratorSeeder::class,
+            ErpRbacSeeder::class,
             ErpApprovalConfigurationSeeder::class,
+            // 基础资料及双滤物料依赖编号规则，双滤物料还依赖已批准分类。
+            ErpDocumentNumberRuleSeeder::class,
             ErpApprovedMasterDataSeeder::class,
             ErpApprovedSalesReferenceSeeder::class,
-            ErpDocumentNumberRuleSeeder::class,
             ErpDualFilterMaterialSeeder::class,
             ErpFinanceReferenceSeeder::class,
             ErpProductionCatalogSeeder::class,
-            ErpRbacSeeder::class,
             ErpSalesReferenceSeeder::class,
             ErpStandardUnitSeeder::class
         ]);
