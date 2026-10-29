@@ -92,25 +92,21 @@
             </el-form-item>
 
             <el-form-item :label="doc.party_type === 'customer' ? '客户名称' : '供应商名称'" prop="party_id">
-              <el-select
+              <paged-record-select
+                :key="doc.party_type"
                 v-model="doc.party_id"
-                filterable
-                remote
-                reserve-keyword
-                :remote-method="searchParties"
-                :loading="partyLoading"
+                :request="listParties"
+                :columns="[{ prop: 'code', label: '编码' }, { prop: 'name', label: '名称' }]"
+                :selected-rows.sync="parties"
+                :local-rows="(!isNew || Boolean(sourceContext) || Boolean(purchaseOrderContext)) ? parties : []"
+                :label="row => row.name"
+                :title="doc.party_type === 'customer' ? '选择客户' : '选择供应商'"
+                :placeholder="doc.party_type === 'customer' ? '客户编码 / 名称' : '供应商编码 / 名称'"
+                :clearable="false"
                 :disabled="!isNew || Boolean(sourceContext) || Boolean(purchaseOrderContext) || !canEdit"
-                placeholder="输入关键字检索..."
                 class="full-width"
                 @change="clearPending"
-              >
-                <el-option
-                  v-for="p in parties"
-                  :key="p.id"
-                  :label="p.name"
-                  :value="p.id"
-                />
-              </el-select>
+              />
             </el-form-item>
 
             <el-form-item label="资金账户" prop="finance_account_id">
@@ -497,7 +493,6 @@ export default {
   data: () => ({
     loading: false,
     saving: false,
-    partyLoading: false,
     pending: [],
     sourcePickerVisible: false,
     allocationVisible: false,
@@ -506,7 +501,6 @@ export default {
     purchaseOrderContext: null,
     purchaseLinkDialogVisible: false,
     initRevision: 0,
-    partyRevision: 0,
     savedNavigationId: null,
     doc: blank(),
     accounts: [],
@@ -624,7 +618,6 @@ export default {
   },
   beforeDestroy() {
     this.initRevision += 1
-    this.partyRevision += 1
     this.closePreview()
   },
   methods: {
@@ -722,7 +715,6 @@ export default {
           if ((query.source_type || query.source_id) && (query.purchase_order_id || query.payment_plan_id)) throw new Error('不能同时指定结算来源和采购付款期次，请重新选择付款入口')
           if (query.source_type || query.source_id) await this.loadInitialSource(query, revision)
           else if (query.purchase_order_id || query.payment_plan_id) await this.loadInitialPurchaseOrder(query, revision)
-          else await this.searchParties('')
         }
       } catch (error) {
         if (revision !== this.initRevision) return
@@ -817,7 +809,6 @@ export default {
       this.doc.party_id = null
       this.parties = []
       this.clearPending()
-      this.searchParties('')
     },
     accountChanged(accountId) {
       const account = this.accounts.find(row => Number(row.id) === Number(accountId))
@@ -826,20 +817,16 @@ export default {
         this.doc.currency = account.currency
       }
     },
-    async searchParties(keyword) {
-      const revision = ++this.partyRevision
-      const initRevision = this.initRevision
+    async listParties(params) {
       const partyType = this.doc.party_type
-      this.partyLoading = true
-      try {
-        const response = partyType === 'customer'
-          ? await listSalesCustomers({ keyword, page: 1, per_page: 10 })
-          : await listEntity('suppliers', { keyword, page: 1, per_page: 10 })
-        if (revision !== this.partyRevision || initRevision !== this.initRevision) return
-        this.parties = (response.data.data || []).map(row => ({ id: Number(row.id), name: partyType === 'customer' ? (row.customer_name || row.customer_short_name || row.contact_name || row.customer_code) : (row.supplier_name || row.name || row.supplier_code) }))
-      } catch (error) {
-        if (revision === this.partyRevision) this.$message.error(error.userMessage || '交易对手搜索失败')
-      } finally { if (revision === this.partyRevision) this.partyLoading = false }
+      const response = partyType === 'customer'
+        ? await listSalesCustomers(params)
+        : await listEntity('suppliers', params)
+      return { data: { ...response.data, data: (response.data.data || []).map(row => ({
+        id: Number(row.id),
+        name: partyType === 'customer' ? (row.customer_name || row.customer_short_name || row.contact_name || row.customer_code) : (row.supplier_name || row.name || row.supplier_code),
+        code: partyType === 'customer' ? row.customer_code : row.supplier_code,
+      })) } }
     },
     openSourcePicker() {
       if (!this.canEdit || !this.$can('finance.allocation.create') || this.sourceLoadError || this.saving) return
