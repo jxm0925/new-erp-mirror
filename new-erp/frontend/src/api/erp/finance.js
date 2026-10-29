@@ -58,3 +58,9 @@ export const listFundingPolicies = params => api.get('/v1/erp/finance/funding-po
 export const createFundingPolicy = data => api.post('/v1/erp/finance/funding-policies', data)
 export const updateFundingPolicy = (id, data) => api.put(`/v1/erp/finance/funding-policies/${id}`, data)
 export const setFundingPolicyStatus = (id, data) => api.post(`/v1/erp/finance/funding-policies/${id}/status`, data)
+
+// 开票申请：财务开票登记 / 驳回
+export const listSalesInvoiceRequests = params => api.get('/v1/erp/finance/invoice-requests', { params })
+export const issueSalesInvoiceRequest = (id, form) => api.post(`/v1/erp/finance/invoice-requests/${id}/issue`, form, { headers: { 'Content-Type': 'multipart/form-data' } })
+export const uploadSalesInvoiceRequestFile = (id, form) => api.post(`/v1/erp/finance/invoice-requests/${id}/files`, form, { headers: { 'Content-Type': 'multipart/form-data' } })
+export const rejectSalesInvoiceRequest = (id, reason) => api.post(`/v1/erp/finance/invoice-requests/${id}/reject`, { reason })

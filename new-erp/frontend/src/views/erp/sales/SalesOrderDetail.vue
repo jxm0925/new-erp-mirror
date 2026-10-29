@@ -33,6 +33,7 @@ Design status: 新增“订单阶段提示条”（基础档案风格），其�
         <el-button v-if="order.allowed_actions && order.allowed_actions.submit_confirmation" size="small" type="success" icon="el-icon-check" @click="doConfirm">确认订单</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.lock_inventory" class="inventory-lock-button" size="small" type="danger" icon="el-icon-lock" @click="openInventoryLock">锁库存</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.production_confirmation" size="small" type="primary" icon="el-icon-s-operation" @click="$router.push(`/sales/orders/${order.id}/production-confirmation`)">生产确认</el-button>
+        <el-button v-if="canRequestInvoice" size="small" icon="el-icon-tickets" @click="openInvoiceRequest">申请开票</el-button>
         <el-button v-if="canShortClose" size="small" type="warning" plain icon="el-icon-scissors" :loading="shortClose.loading" @click="openShortClose">短交关闭</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.cancel" size="small" type="danger" plain :loading="cancelling" @click="cancelOrder">取消订单</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.delete_draft" size="small" type="danger" plain icon="el-icon-delete" @click="deleteDraft">删除草稿</el-button>
@@ -374,6 +375,10 @@ Design status: 新增“订单阶段提示条”（基础档案风格），其�
             </el-table>
           </div>
         </el-tab-pane>
+        <el-tab-pane v-if="canViewInvoice" name="invoice">
+          <span slot="label"><i class="el-icon-tickets" /> 开票 <span v-if="invoicePendingCount" class="tab-badge-num">{{ invoicePendingCount }}</span></span>
+          <div class="tab-pane-content"><sales-order-invoice-panel v-if="order.id" ref="invoicePanel" :order-id="order.id" @loaded="onInvoiceLoaded" /></div>
+        </el-tab-pane>
         <el-tab-pane v-if="$can('sales_order.view') && $can('sales_order.amount.view') && $can('finance.view')" label="采购关联" name="finance">
           <div class="tab-pane-content"><sales-order-finance-panel v-if="activeTab === 'finance' && order.id" :order-id="order.id" /></div>
         </el-tab-pane>
@@ -589,14 +594,16 @@ import cachedPageRoute from '@/utils/cachedPageRoute'
 import { confirmSalesOrder, formalConfirmSalesOrder, cancelSalesOrder, previewShortCloseSalesOrder, shortCloseSalesOrder, deleteSalesOrderAttachment, deleteSalesOrderDraft, downloadSalesOrderAttachment, getSalesOrder, listSalesOrderChanges, lockSalesOrderInventory } from '@/api/erp/sales'
 import SalesOrderAttachmentPreviewDialog from '@/components/sales/SalesOrderAttachmentPreviewDialog.vue'
 import SalesOrderFinancePanel from '@/components/sales/SalesOrderFinancePanel.vue'
+import SalesOrderInvoicePanel from '@/components/sales/SalesOrderInvoicePanel.vue'
 import { promptAgreedDeposit } from '@/utils/salesAgreedDeposit'
 import { statusTag, statusText, shipmentStatusText, orderStatusText, orderStatusTag } from '@/utils/erpStatus'
 import { listSalesOrderWorkOrders } from '@/api/erp/production'
 
 export default {
   mixins: [cachedPageRoute],
-  components: { SalesOrderAttachmentPreviewDialog, SalesOrderFinancePanel },
+  components: { SalesOrderAttachmentPreviewDialog, SalesOrderFinancePanel, SalesOrderInvoicePanel },
   data: () => ({
+    invoicePendingCount: 0,
     activeTab: 'attachments',
     order: {},
     workOrders: [],
@@ -619,6 +626,8 @@ export default {
     loadSequence: 0
   }),
   computed: {
+    canViewInvoice() { return this.$can('sales_order.view') && this.$can('sales_order.amount.view') },
+    canRequestInvoice() { return this.canViewInvoice && this.$can('sales_order.invoice_request') && ['confirmed', 'closed'].includes(this.order.order_status) && !!this.order.customer_id },
     canShortClose() {
       if (this.order.order_status !== 'confirmed' || this.order.short_closed_at || !this.$can('sales_order.short_close')) return false
       return (this.order.lines || []).some(line => Number(line.shipped_qty || 0) > 0)
@@ -684,6 +693,15 @@ export default {
   activated() { if (this.order.id) this.load() },
   watch: { 'pageRoute.params.id'(next, previous) { if (next !== previous) this.load() } },
   methods: {
+    onInvoiceLoaded(info) { this.invoicePendingCount = ((info && info.requests) || []).filter(row => row.status === 'pending').length },
+    openInvoiceRequest() {
+      this.activeTab = 'invoice'
+      this.$nextTick(() => {
+        const panel = this.$refs.invoicePanel
+        if (panel) panel.openCreate()
+        if (this.$refs.tabSection && this.$refs.tabSection.scrollIntoView) this.$refs.tabSection.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      })
+    },
     processingStatusText(row) {
       const original = statusText(row.line_status)
       if (row.line_status !== 'fulfillment_blocked') return original

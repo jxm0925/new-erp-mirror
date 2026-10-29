@@ -5,7 +5,7 @@
       <div class="heading-actions">
         <el-button @click="$router.push('/finance/invoices')">返回发票列表</el-button>
         <el-button icon="el-icon-printer" @click="printPage">打印</el-button>
-        <el-button class="red-outline" :disabled="invoice.status!=='confirmed'||!!invoice.red_invoice_of_id" @click="$router.push(`/finance/invoices/${invoice.id}/red`)">红冲发票</el-button>
+        <el-button v-if="invoice.invoice_direction!=='sales'" class="red-outline" :disabled="invoice.status!=='confirmed'||!!invoice.red_invoice_of_id" @click="$router.push(`/finance/invoices/${invoice.id}/red`)">红冲发票</el-button>
       </div>
     </header>
 
@@ -21,7 +21,7 @@
           <label>发票类型<span>{{ invoiceType(invoice.invoice_type) }}</span></label>
           <label>开票日期<span>{{ invoice.invoice_date || '—' }}</span></label>
           <label>收票日期<span>{{ invoice.received_date || '—' }}</span></label>
-          <label>供应商<span>{{ invoice.party_name_snapshot || '—' }}</span></label>
+          <label>{{ invoice.invoice_direction==='sales' ? '客户' : '供应商' }}<span>{{ invoice.party_name_snapshot || '—' }}</span></label>
           <label>纳税人识别号<span>—</span></label>
           <label>地址、电话<span>—</span></label>
           <label>开户行及账号<span>—</span></label>

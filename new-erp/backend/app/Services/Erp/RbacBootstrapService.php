@@ -29,7 +29,7 @@ class RbacBootstrapService
             'master.sku_item_relation.view', 'finance.receipt.view', 'approval.todo', 'approval.task.view', 'approval.task.decide', 'approval.processed',
         ],
         'sales_user' => [
-            'sales.customer.view', 'sales.customer.create', 'sales.customer.edit', 'sales_order.view', 'sales_order.amount.view',
+            'sales.customer.view', 'sales.customer.create', 'sales.customer.edit', 'sales_order.view', 'sales_order.amount.view', 'sales_order.invoice_request',
             'sales_order.create', 'sales_order.edit_draft', 'sales_order.delete_draft', 'sales_order.submit_confirmation',
             'sales_order.inventory_lock', 'sales_order.change', 'sales_order.change.submit', 'sales_order.upload_attachment',
             'sales_order.view_attachment', 'sales_order.delete_attachment', 'sales_order.shipment.view', 'sales_order.shipment.packing.view',
@@ -456,6 +456,7 @@ class RbacBootstrapService
 
             ['sales_order.view', '销售订单查看', 'button', 'sales.order', null, null, 'el-icon-mouse', 1],
             ['sales_order.amount.view', '查看销售与回款金额', 'button', 'sales.order', null, null, 'el-icon-view', 11],
+            ['sales_order.invoice_request', '申请给客户开票', 'button', 'sales.order', null, null, 'el-icon-tickets', 13],
             ['sales_order.funding_policy.manage', '维护销售付款策略', 'button', 'sales.order', null, null, 'el-icon-setting', 12],
             ['sales_order.create', '销售订单新建', 'button', 'sales.order', null, null, 'el-icon-mouse', 2],
             ['sales_order.edit_draft', '销售订单编辑', 'button', 'sales.order', null, null, 'el-icon-mouse', 3],
@@ -500,6 +501,7 @@ class RbacBootstrapService
             ['finance.payable', '应付管理', 'menu', 'finance', '/finance/payables', 'FinancePayableList', 'el-icon-tickets', 603],
             ['finance.supplier-ledger', '供应商往来', 'menu', 'finance', '/finance/supplier-ledgers', 'FinanceSupplierLedgerList', 'el-icon-office-building', 604],
             ['finance.invoice', '发票管理', 'menu', 'finance', '/finance/invoices', 'FinanceInvoiceList', 'el-icon-document-copy', 605],
+            ['finance.invoice_request', '开票申请', 'menu', 'finance', '/finance/invoice-requests', 'FinanceInvoiceRequestList', 'el-icon-tickets', 605],
             ['finance.allocation', '往来核销', 'menu', 'finance', '/finance/allocations', 'FinanceAllocationList', 'el-icon-connection', 606],
             ['finance.account', '资金账户', 'menu', 'finance', '/finance/accounts', 'FinanceAccountList', 'el-icon-bank-card', 607],
             ['finance.transfer', '资金转账 / 换汇', 'menu', 'finance', '/finance/transfers', 'FinanceTransferList', 'el-icon-sort', 608],
@@ -527,6 +529,8 @@ class RbacBootstrapService
             ['finance.supplier-ledger.view', '查看供应商往来', 'button', 'finance.supplier-ledger', null, null, 'el-icon-mouse', 1],
             ['finance.supplier-ledger.export', '导出供应商往来台账', 'button', 'finance.supplier-ledger', null, null, 'el-icon-mouse', 2],
 
+            ['finance.invoice_request.view', '查看开票申请', 'button', 'finance.invoice_request', null, null, 'el-icon-view', 1],
+            ['finance.invoice_request.handle', '开票登记 / 驳回开票申请', 'button', 'finance.invoice_request', null, null, 'el-icon-edit', 2],
             ['finance.invoice.view', '查看发票详情', 'button', 'finance.invoice', null, null, 'el-icon-mouse', 1],
             ['finance.invoice.create', '登记进项发票', 'button', 'finance.invoice', null, null, 'el-icon-mouse', 2],
             ['finance.invoice.edit_draft', '编辑发票草稿', 'button', 'finance.invoice', null, null, 'el-icon-mouse', 3],

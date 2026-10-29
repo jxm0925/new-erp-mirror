@@ -194,6 +194,46 @@
             </el-row>
           </article>
         </section>
+
+        <!-- 开票资料：销售申请开票时自动带出 -->
+        <section class="form-section">
+          <div class="form-section-title">
+            <h3><i class="el-icon-tickets" /> 开票资料</h3>
+            <span class="section-sub-tip">选填，订单里申请开票时自动带出</span>
+          </div>
+          <el-form label-position="top" size="small">
+            <el-row :gutter="14">
+              <el-col :xs="24" :sm="12">
+                <el-form-item label="默认发票类型">
+                  <el-radio-group v-model="form.invoice_type"><el-radio label="vat_normal">普票</el-radio><el-radio label="vat_special">专票</el-radio></el-radio-group>
+                </el-form-item>
+              </el-col>
+              <el-col :xs="24" :sm="12">
+                <el-form-item label="收票邮箱">
+                  <el-input v-model.trim="form.invoice_email" maxlength="160" placeholder="电子发票发送邮箱" clearable />
+                </el-form-item>
+              </el-col>
+            </el-row>
+            <el-row :gutter="14">
+              <el-col :xs="24" :sm="12">
+                <el-form-item label="发票抬头">
+                  <el-input v-model.trim="form.invoice_title" maxlength="200" placeholder="不填默认用客户名称" clearable />
+                </el-form-item>
+              </el-col>
+              <el-col :xs="24" :sm="12">
+                <el-form-item label="纳税人识别号">
+                  <el-input v-model.trim="form.invoice_tax_no" maxlength="60" placeholder="统一社会信用代码" clearable />
+                </el-form-item>
+              </el-col>
+            </el-row>
+            <el-form-item label="地址、电话">
+              <el-input v-model.trim="form.invoice_address_phone" maxlength="300" placeholder="专票必填，如：上海市XX路1号 021-12345678" clearable />
+            </el-form-item>
+            <el-form-item label="开户行及账号">
+              <el-input v-model.trim="form.invoice_bank_account" maxlength="300" placeholder="专票必填，如：工商银行XX支行 6222 0000 0000" clearable />
+            </el-form-item>
+          </el-form>
+        </section>
       </div>
 
       <footer class="drawer-footer">
@@ -246,6 +286,12 @@ const blankForm = (kind = 'individual') => ({
   owner_legacy_id: undefined,
   status: 'enabled',
   remark: '',
+  invoice_type: 'vat_normal',
+  invoice_title: '',
+  invoice_tax_no: '',
+  invoice_address_phone: '',
+  invoice_bank_account: '',
+  invoice_email: '',
   contacts: [],
   addresses: []
 })
@@ -327,6 +373,7 @@ export default {
           ...data,
           customer_kind: data.customer_kind || 'individual',
           owner_legacy_id: data.owner_legacy_id ?? undefined,
+          invoice_type: data.invoice_type || 'vat_normal',
           contacts: (data.contacts || []).map(item => ({ ...item, localId: `contact-${item.id}` })),
           addresses: (data.addresses || []).map(item => ({ ...item, localId: `address-${item.id}` }))
         }

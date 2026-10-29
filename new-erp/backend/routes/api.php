@@ -240,6 +240,10 @@ Route::prefix('v1/erp/finance')->group(function () {
     Route::get('sources', [FinanceController::class, 'sources']);
     Route::get('payables', [FinanceController::class, 'payables']);
     Route::get('supplier-ledgers', [FinanceController::class, 'supplierLedgers']);
+    Route::get('invoice-requests', [\App\Http\Controllers\Api\V1\Erp\SalesInvoiceRequestController::class, 'index']);
+    Route::post('invoice-requests/{id}/issue', [\App\Http\Controllers\Api\V1\Erp\SalesInvoiceRequestController::class, 'issue'])->whereNumber('id');
+    Route::post('invoice-requests/{id}/files', [\App\Http\Controllers\Api\V1\Erp\SalesInvoiceRequestController::class, 'uploadFile'])->whereNumber('id');
+    Route::post('invoice-requests/{id}/reject', [\App\Http\Controllers\Api\V1\Erp\SalesInvoiceRequestController::class, 'reject'])->whereNumber('id');
     Route::get('invoices', [FinanceController::class, 'invoices']);
     Route::post('invoices', [FinanceController::class, 'storeInvoice']);
     Route::get('invoices/{id}/red-preview', [FinanceController::class, 'invoiceRedPreview'])->whereNumber('id');
@@ -359,6 +363,10 @@ Route::prefix('v1/erp/sales')->group(function () {
     Route::get('customers/{id}', [SalesCustomerController::class, 'show'])->whereNumber('id');
     Route::put('customers/{id}', [SalesCustomerController::class, 'update'])->whereNumber('id');
     Route::delete('customers/{id}', [SalesCustomerController::class, 'destroy'])->whereNumber('id');
+    Route::get('orders/{id}/invoice-requests', [\App\Http\Controllers\Api\V1\Erp\SalesInvoiceRequestController::class, 'orderIndex'])->whereNumber('id');
+    Route::post('orders/{id}/invoice-requests', [\App\Http\Controllers\Api\V1\Erp\SalesInvoiceRequestController::class, 'store'])->whereNumber('id');
+    Route::post('invoice-requests/{id}/withdraw', [\App\Http\Controllers\Api\V1\Erp\SalesInvoiceRequestController::class, 'withdraw'])->whereNumber('id');
+    Route::get('invoice-requests/{id}/attachments/{attachmentId}', [\App\Http\Controllers\Api\V1\Erp\SalesInvoiceRequestController::class, 'attachment'])->whereNumber(['id', 'attachmentId']);
     Route::get('orders', [SalesOrderController::class, 'orders']);
     Route::post('orders', [SalesOrderController::class, 'storeDraft']);
     Route::get('orders/skus/search', [SalesOrderController::class, 'searchOrderSkus']);

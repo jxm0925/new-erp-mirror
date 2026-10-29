@@ -61,6 +61,7 @@ class ErpDocumentNumberRuleSeeder extends Seeder
             ['finance_receipt', '收款单', 'FR', 'Ymd', 5, 'daily'],
             ['finance_payment', '付款单', 'FP', 'Ymd', 5, 'daily'],
             ['finance_invoice', '发票记录', 'FI', 'Ymd', 5, 'daily'],
+            ['sales_invoice_request', '开票申请', 'KP', 'Ymd', 5, 'daily'],
             ['finance_transfer', '资金转账/换汇单', 'FT', 'Ymd', 5, 'daily'],
 
             ['customer', '客户编码', 'CUST', '', 6, 'none'],

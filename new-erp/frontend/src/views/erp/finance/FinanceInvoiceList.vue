@@ -1,16 +1,16 @@
 <template>
   <main class="invoice-list-page">
     <header class="invoice-heading">
-      <div><h1>发票管理</h1><p>登记与管理企业的进项发票，跟踪匹配状态，支持与采购、付款等单据匹配对账</p></div>
-      <div class="heading-actions"><el-button type="success" class="green-button" @click="$router.push('/finance/invoices/create')">登记进项发票</el-button><el-button @click="toUnmatched">发票匹配</el-button><el-button @click="exportCurrent">导出</el-button></div>
+      <div><h1>发票管理</h1><p>进项发票登记与匹配对账；销项发票（开给客户的）由“开票申请”开票登记后自动生成并关联销售订单</p></div>
+      <div class="heading-actions"><el-button type="success" class="green-button" @click="$router.push('/finance/invoices/create')">登记进项发票</el-button><el-button v-if="$can('finance.invoice_request.view')" @click="$router.push('/finance/invoice-requests')">开票申请</el-button><el-button @click="toUnmatched">发票匹配</el-button><el-button @click="exportCurrent">导出</el-button></div>
     </header>
 
-    <section class="metrics"><div><span>进项发票总额</span><b>{{ money(summary.invoice_total_amount) }}</b><em>CNY</em></div><div><span>已确认</span><b class="green">{{ money(summary.confirmed_amount) }}</b><em>CNY</em></div><div><span>待匹配</span><b class="orange">{{ money(summary.unmatched_amount) }}</b><em>CNY</em></div><div><span>待红冲</span><b class="red">{{ money(summary.pending_red_amount) }}</b><em>CNY</em></div></section>
+    <section class="metrics"><div><span>{{ isSales ? '销项发票总额' : '进项发票总额' }}</span><b>{{ money(summary.invoice_total_amount) }}</b><em>CNY</em></div><div><span>已确认</span><b class="green">{{ money(summary.confirmed_amount) }}</b><em>CNY</em></div><div><span>待匹配</span><b class="orange">{{ money(summary.unmatched_amount) }}</b><em>CNY</em></div><div><span>待红冲</span><b class="red">{{ money(summary.pending_red_amount) }}</b><em>CNY</em></div></section>
 
     <section class="filter-card">
       <el-form :model="filters" class="filter-grid" label-position="top">
-        <el-form-item label="发票方向"><el-select v-model="filters.invoice_direction"><el-option label="进项" value="purchase"/></el-select></el-form-item>
-        <el-form-item label="供应商"><el-input v-model.trim="filters.supplier_keyword" placeholder="请输入供应商名称/编码" clearable suffix-icon="el-icon-search"/></el-form-item>
+        <el-form-item label="发票方向"><el-select v-model="filters.invoice_direction"><el-option label="进项（供应商开给我们）" value="purchase"/><el-option label="销项（我们开给客户）" value="sales"/></el-select></el-form-item>
+        <el-form-item :label="isSales ? '客户' : '供应商'"><el-input v-model.trim="filters.supplier_keyword" :placeholder="isSales ? '请输入客户名称' : '请输入供应商名称/编码'" clearable suffix-icon="el-icon-search"/></el-form-item>
         <el-form-item label="发票号码"><el-input v-model.trim="filters.invoice_no" placeholder="请输入发票号码" clearable/></el-form-item>
         <el-form-item label="发票代码"><el-input v-model.trim="filters.invoice_code" placeholder="请输入发票代码" clearable/></el-form-item>
         <el-form-item label="开票日期"><el-date-picker v-model="invoiceDateRange" type="daterange" value-format="yyyy-MM-dd" range-separator="~" start-placeholder="开始日期" end-placeholder="结束日期"/></el-form-item>
@@ -22,11 +22,11 @@
     </section>
 
     <section class="table-card">
-      <el-table v-loading="loading" :data="rows" border class="invoice-table" size="small" empty-text="暂无进项发票">
+      <el-table v-loading="loading" :data="rows" border class="invoice-table" size="small" :empty-text="isSales ? '暂无销项发票，销项发票由“开票申请”登记后自动生成' : '暂无进项发票'">
         <el-table-column prop="document_no" label="发票记录号" min-width="122"/>
         <el-table-column label="发票号码/代码" min-width="142"><template slot-scope="{row}">{{ row.invoice_no || '—' }}<span v-if="row.invoice_code">/{{ row.invoice_code }}</span></template></el-table-column>
         <el-table-column prop="invoice_type" label="发票类型" min-width="118"><template slot-scope="{row}">{{ invoiceType(row.invoice_type) }}</template></el-table-column>
-        <el-table-column prop="party_name_snapshot" label="供应商" min-width="160"/>
+        <el-table-column prop="party_name_snapshot" :label="isSales ? '客户' : '供应商'" min-width="160"/>
         <el-table-column prop="invoice_date" label="开票日期" min-width="102"/>
         <el-table-column prop="received_date" label="收票日期" min-width="102"/>
         <amount-column label="未税金额 (CNY)" prop="amount_excl_tax"/>
@@ -48,7 +48,8 @@ import { listFinanceInvoices } from '../../../api/erp/finance'
 export default {
   components:{AmountColumn:{props:['label','prop','strong','green'],methods:{f(v){return Number(v||0).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2})}},template:'<el-table-column :label="label" min-width="106" align="right"><template slot-scope="{row}"><b :class="{\'amount-strong\':strong,\'amount-green\':green}">{{f(row[prop])}}</b></template></el-table-column>'}},
   data:()=>({loading:false,rows:[],page:1,perPage:10,total:0,summary:{},invoiceDateRange:[],receivedDateRange:'',filters:{invoice_direction:'purchase',supplier_keyword:'',invoice_no:'',invoice_code:'',status:'',match_status:''}}),
-  created(){this.load()},
+  computed:{isSales(){return this.filters.invoice_direction==='sales'}},
+  created(){if(this.$route.query.invoice_direction==='sales')this.filters.invoice_direction='sales';this.load()},
   methods:{
     params(){return {...this.filters,invoice_date_start:this.invoiceDateRange?.[0]||'',invoice_date_end:this.invoiceDateRange?.[1]||'',received_date_start:this.receivedDateRange||'',page:this.page,per_page:this.perPage}},
     async load(){this.loading=true;try{const r=await listFinanceInvoices(this.params());this.rows=r.data.data||[];this.total=Number(r.data.total||0);this.summary=r.data.summary||{}}catch(e){this.$message.error(e.userMessage||'发票列表加载失败')}finally{this.loading=false}},

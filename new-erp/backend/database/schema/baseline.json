@@ -164,6 +164,7 @@
     "erp_sales_customer_contacts": "2026_10_12_000333_create_erp_sales_customer_contacts_table",
     "erp_sales_customers": "2026_10_12_000334_create_erp_sales_customers_table",
     "erp_sales_funding_policies": "2026_10_12_000335_create_erp_sales_funding_policies_table",
+    "erp_sales_invoice_requests": "2026_11_01_000001_create_erp_sales_invoice_requests_table",
     "erp_sales_order_attachments": "2026_10_12_000336_create_erp_sales_order_attachments_table",
     "erp_sales_order_change_candidate_approvals": "2026_10_12_000337_create_erp_sales_order_change_candidate_approvals_table",
     "erp_sales_order_change_candidates": "2026_10_12_000338_create_erp_sales_order_change_candidates_table",

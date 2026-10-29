@@ -145,10 +145,13 @@ class SalesCustomerController extends Controller
             'customer_name' => 'required|string|max:160', 'customer_short_name' => 'nullable|string|max:160', 'customer_type' => 'nullable|string|max:40',
             'customer_kind' => ['nullable', Rule::in(['enterprise', 'individual'])], 'source_platform' => 'nullable|string|max:160', 'platform_buyer_id' => 'nullable|string|max:160',
             'owner_legacy_id' => 'nullable|integer', 'owner_name' => 'nullable|string|max:80', 'status' => 'required|in:enabled,disabled,blacklisted,potential', 'remark' => 'nullable|string',
+            'invoice_type' => 'nullable|in:vat_normal,vat_special', 'invoice_title' => 'nullable|string|max:200', 'invoice_tax_no' => 'nullable|string|max:60',
+            'invoice_address_phone' => 'nullable|string|max:300', 'invoice_bank_account' => 'nullable|string|max:300', 'invoice_email' => 'nullable|email|max:160',
             'contacts' => 'nullable|array', 'contacts.*.id' => 'nullable|integer', 'contacts.*.contact_name' => 'required|string|max:80', 'contacts.*.mobile' => 'nullable|string|max:40', 'contacts.*.phone' => 'nullable|string|max:40', 'contacts.*.email' => 'nullable|email|max:160', 'contacts.*.position' => 'nullable|string|max:80', 'contacts.*.is_default' => 'boolean', 'contacts.*.status' => 'nullable|in:enabled,disabled', 'contacts.*.remark' => 'nullable|string',
             'addresses' => 'nullable|array', 'addresses.*.id' => 'nullable|integer', 'addresses.*.receiver_name' => 'required|string|max:80', 'addresses.*.receiver_phone' => 'nullable|string|max:40', 'addresses.*.province' => 'nullable|string|max:80', 'addresses.*.city' => 'nullable|string|max:80', 'addresses.*.district' => 'nullable|string|max:80', 'addresses.*.detail_address' => 'required|string|max:500', 'addresses.*.is_default' => 'boolean', 'addresses.*.status' => 'nullable|in:enabled,disabled', 'addresses.*.remark' => 'nullable|string',
         ], [], [
             'customer_code' => '客户编码', 'customer_name' => '客户名称', 'customer_short_name' => '客户简称', 'owner_name' => '负责人',
+            'invoice_title' => '发票抬头', 'invoice_tax_no' => '纳税人识别号', 'invoice_address_phone' => '开票地址电话', 'invoice_bank_account' => '开户行及账号', 'invoice_email' => '收票邮箱',
             'contacts.*.contact_name' => '联系人姓名', 'contacts.*.mobile' => '联系人手机', 'contacts.*.phone' => '联系人电话', 'contacts.*.email' => '联系人邮箱',
             'addresses.*.receiver_name' => '收货人', 'addresses.*.receiver_phone' => '收货电话', 'addresses.*.province' => '省份', 'addresses.*.city' => '城市',
             'addresses.*.district' => '区县', 'addresses.*.detail_address' => '详细地址',

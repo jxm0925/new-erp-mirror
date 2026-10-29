@@ -54,3 +54,9 @@ export const listSalesReturnReceiptSerials = (id, receiptId, params) => api.get(
 export const disposeSalesReturn = (id, data) => api.post(`/v1/erp/sales/returns/${id}/dispose`, data)
 export const cancelSalesReturn = id => api.post(`/v1/erp/sales/returns/${id}/cancel`)
 export const closeSalesReturn = id => api.post(`/v1/erp/sales/returns/${id}/close`)
+
+// 开票申请：销售在订单里申请给客户开发票
+export const getSalesOrderInvoiceRequests = id => api.get(`/v1/erp/sales/orders/${id}/invoice-requests`)
+export const createSalesOrderInvoiceRequest = (id, data) => api.post(`/v1/erp/sales/orders/${id}/invoice-requests`, data)
+export const withdrawSalesInvoiceRequest = id => api.post(`/v1/erp/sales/invoice-requests/${id}/withdraw`)
+export const downloadSalesInvoiceFile = (id, attachmentId) => api.get(`/v1/erp/sales/invoice-requests/${id}/attachments/${attachmentId}`, { responseType: 'blob' })

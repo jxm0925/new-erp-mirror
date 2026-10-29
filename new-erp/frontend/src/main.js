@@ -227,6 +227,7 @@ const router = new VueRouter({
     { path: '/finance/purchase-payment-statistics', redirect: '/finance/statistics' },
     { path: '/finance/supplier-statistics', redirect: '/finance/statistics' },
     { path: '/finance/sales-order-statistics', redirect: '/finance/statistics' },
+    { path: '/finance/invoice-requests', component: () => import('./views/erp/finance/FinanceInvoiceRequestList.vue'), meta: { permission: 'finance.invoice_request.view' } },
     { path: '/finance/invoices', component: FinanceInvoiceList, meta: { permission: 'finance.invoice.view' } },
     { path: '/finance/invoices/create', component: FinanceInvoiceForm, meta: { permission: 'finance.invoice.create' } },
     { path: '/finance/invoices/:id/edit', component: FinanceInvoiceForm, meta: { permission: 'finance.invoice.edit_draft' } },
