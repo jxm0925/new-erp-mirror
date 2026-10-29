@@ -12,3 +12,4 @@
 .ct-confirm { display: flex; align-items: center; gap: 14rpx; margin-top: 18rpx; font-size: 26rpx; }
 .ct-select { border: 2rpx solid #e3e8f0; border-radius: 12rpx; padding: 14rpx 18rpx; font-size: 26rpx; background: #fff; margin-bottom: 14rpx; }
 .ct-locator { color: #1f6feb; font-size: 26rpx; }
+.ct-measure { color: #c45a00; font-weight: 700; font-size: 28rpx; margin-top: 6rpx; }

@@ -500,6 +500,7 @@ final class CuttingService
             'batch_no' => $balance->batch_no, 'material_lot_id' => $balance->material_lot_id ? (int) $balance->material_lot_id : null,
             'mode' => $mode, 'unit_kind' => $kind, 'unit_id' => (int) $unit->id, 'available_qty' => $available, 'measure_qty' => $measure,
             'measure_unit' => $mode === 'sheet' ? 'm2' : 'm', 'dimensions' => $dimensions, 'shape' => $shape,
+            'material_form' => $balance->cutting_material_form ?: 'FULL_STOCK',
             'cost_amount' => $balance->cutting_physical_id ? (string) $balance->cutting_physical_cost : null];
     }
 

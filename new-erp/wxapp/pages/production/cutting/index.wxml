@@ -22,7 +22,7 @@
       <view class="mt-card-title"><text>实际用的原料</text><text class="tk-link green" bindtap="openSources">{{sources.length ? '重新选' : '选原料'}}</text></view>
       <view wx:if="{{!sources.length}}" class="mt-muted">选这次实际要切的整张板、整根管或余料</view>
       <view wx:for="{{sources}}" wx:key="source_key" class="ct-row">
-        <view class="ct-line"><text class="k mono">{{item.physical_no || item.batch_no}}</text><text>{{item.qtyText}}</text></view>
+        <view class="ct-line"><text class="k mono">{{item.physical_no || item.batch_no}}</text><text class="{{item.mode === 'length' ? 'ct-measure' : ''}}">{{item.qtyText}}</text></view>
         <view class="mt-muted">{{item.item_name}} · {{item.warehouse_name}} / {{item.location_name}}</view>
       </view>
       <view wx:if="{{sources.length}}" class="ct-actions">
@@ -91,11 +91,13 @@
           <text class="k mono">{{item.nameText}}</text>
           <text class="mt-muted">可用 {{item.availableText}} {{item.unitText}}</text>
         </view>
-        <view class="mt-muted">{{item.sizeText}} · {{item.placeText}}</view>
+        <view wx:if="{{item.mode === 'length'}}" class="ct-measure">{{item.sizeText}}<text wx:if="{{item.totalText}}"> · 共 {{item.totalText}}</text></view>
+        <view class="mt-muted">{{item.mode === 'length' ? '' : item.sizeText + ' · '}}{{item.placeText}}</view>
         <view wx:if="{{picked[item.source_key] && item.countable}}" class="ct-line mt-gap">
           <text class="k">这次用多少</text>
           <input class="ct-input" type="{{item.unit_kind === 'm' ? 'digit' : 'number'}}" value="{{picked[item.source_key].qty}}" data-key="{{item.source_key}}" bindinput="pickedQtyInput" />
           <text>{{item.unitText}}</text>
+          <text wx:if="{{picked[item.source_key].metersText}}" class="ct-measure">= {{picked[item.source_key].metersText}}</text>
         </view>
       </view>
       <view wx:if="{{lastPage > 1}}" class="mt-pager">

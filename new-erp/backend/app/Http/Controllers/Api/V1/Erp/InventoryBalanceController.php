@@ -11,6 +11,7 @@ use App\Models\Erp\InventoryTransactionItem;
 use App\Models\Erp\Item;
 use Illuminate\Http\Request;
 use App\Services\Erp\ItemManagementScopeService;
+use App\Services\Erp\Inventory\StockMeasureService;
 
 class InventoryBalanceController extends Controller
 {
@@ -129,8 +130,10 @@ class InventoryBalanceController extends Controller
                 ->withCount('serials')->get()->sum('serials_count');
             return $row;
         });
+        $this->attachBatchMeasures($request, $item, $paginator->getCollection());
+        $measure = app(StockMeasureService::class);
 
-        return response()->json([...$paginator->toArray(), 'item' => $item]);
+        return response()->json([...$paginator->toArray(), 'item' => $item, 'measure_profile' => $measure->profile($item)]);
     }
 
     public function batchContext(Request $request, int $itemId)
@@ -200,7 +203,57 @@ class InventoryBalanceController extends Controller
             $row->item = $items->get($row->item_id);
             return $row;
         });
+        $this->attachItemMeasures($request, $paginator->getCollection());
         return response()->json([...$paginator->toArray(), 'stats' => $stats, 'stocktake_freezes' => $this->stocktakeFreezes($request)]);
+    }
+
+    /** 管材按根、板材按张记账：补上每个物料的总米数／总面积，列表上直接看。 */
+    private function attachItemMeasures(Request $request, $rows): void
+    {
+        $service = app(StockMeasureService::class);
+        $profiles = $service->profiles($rows->pluck('item_id'));
+        if (! $profiles) return;
+        $balances = $this->activeBalanceQuery($request)->whereIn('item_id', array_keys($profiles))
+            ->get(['id', 'item_id', 'material_lot_id', 'batch_no', 'quantity_on_hand', 'quantity_available']);
+        $measures = $service->balanceMeasures($balances);
+        $rows->each(function ($row) use ($profiles, $balances, $measures) {
+            $profile = $profiles[(int) $row->item_id] ?? null;
+            if (! $profile) return;
+            $row->measure = $this->sumMeasures($profile, $balances->where('item_id', $row->item_id)->map(fn ($b) => $measures[(int) $b->id] ?? null)->filter());
+        });
+    }
+
+    private function attachBatchMeasures(Request $request, Item $item, $rows): void
+    {
+        $service = app(StockMeasureService::class);
+        $profile = $service->profile($item);
+        if (! $profile) return;
+        $balances = $this->activeBalanceQuery($request)->where('item_id', $item->id)->whereIn('batch_no', $rows->pluck('batch_no'))
+            ->get(['id', 'item_id', 'material_lot_id', 'batch_no', 'quantity_on_hand', 'quantity_available']);
+        $measures = $service->balanceMeasures($balances);
+        $rows->each(function ($row) use ($profile, $balances, $measures) {
+            $list = $balances->where('batch_no', $row->batch_no)->map(fn ($b) => $measures[(int) $b->id] ?? null)->filter();
+            $sum = $this->sumMeasures($profile, $list);
+            $first = $list->first();
+            $per = $list->pluck('per_unit_m')->filter()->unique()->values();
+            $row->measure = $sum + [
+                'per_unit_m' => $per->count() === 1 ? $per->first() : null,
+                'lot_id' => $first['lot_id'] ?? null, 'lot_length_mm' => $first['lot_length_mm'] ?? null,
+                'material_form' => $first['material_form'] ?? null,
+                'length_editable' => $profile['mode'] === 'length' && $profile['kind'] === 'root' && ! empty($first['lot_length_mm']),
+            ];
+        });
+    }
+
+    private function sumMeasures(array $profile, $list): array
+    {
+        $base = ['mode' => $profile['mode'], 'kind' => $profile['kind'], 'standard_length_mm' => $profile['standard_length_mm']];
+        if ($profile['mode'] === 'length') {
+            $missing = $list->contains(fn ($m) => $m['length_m'] === null);
+            return $base + ['length_m' => $missing ? null : round($list->sum('length_m'), 4),
+                'available_length_m' => $missing ? null : round($list->sum('available_length_m'), 4)];
+        }
+        return $base + ['area_m2' => round($list->sum('area_m2'), 4)];
     }
 
     private function stocktakeFreezes(Request $request): array

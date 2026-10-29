@@ -59,3 +59,7 @@ export const saveTransfer = data => data.id
 export const postTransfer = id => api.post(`/v1/erp/inventory/transfers/${id}/post`)
 export const cancelTransfer = id => api.post(`/v1/erp/inventory/transfers/${id}/cancel`)
 export const deleteTransfer = id => api.delete(`/v1/erp/inventory/transfers/${id}`)
+// 管材米数／板材尺寸：仓库里的板材实物，修正入库录错的长宽厚、余料每根长度。
+export const listInventoryItemPhysicals = (itemId, params) => api.get(`/v1/erp/inventory/balances/items/${itemId}/physicals`, { params })
+export const updatePhysicalDimensions = (id, data) => api.post(`/v1/erp/inventory/material-physicals/${id}/dimensions`, data)
+export const updateMaterialLotLength = (id, data) => api.post(`/v1/erp/inventory/material-lots/${id}/length`, data)

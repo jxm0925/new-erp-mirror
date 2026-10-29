@@ -19,6 +19,7 @@ use App\Http\Controllers\Api\V1\Erp\InventoryPostingController;
 use App\Http\Controllers\Api\V1\Erp\InventoryQualityController;
 use App\Http\Controllers\Api\V1\Erp\InventoryTransactionController;
 use App\Http\Controllers\Api\V1\Erp\PhysicalInventoryController;
+use App\Http\Controllers\Api\V1\Erp\InventoryMeasureController;
 use App\Http\Controllers\Api\V1\Erp\ItemCategoryController;
 use App\Http\Controllers\Api\V1\Erp\ItemPurchaseConversionController;
 use App\Http\Controllers\Api\V1\Erp\ItemMaterialPolicyController;
@@ -329,6 +330,9 @@ Route::prefix('v1/erp/inventory')->group(function () {
     Route::delete('transfers/{id}', [InventoryTransferController::class, 'destroy'])->whereNumber('id');
     Route::post('material-physicals/{id}/transfer', [PhysicalInventoryController::class, 'transfer'])->whereNumber('id');
     Route::post('material-physicals/{id}/dispose', [PhysicalInventoryController::class, 'dispose'])->whereNumber('id');
+    Route::get('balances/items/{itemId}/physicals', [InventoryMeasureController::class, 'physicals'])->whereNumber('itemId');
+    Route::post('material-physicals/{id}/dimensions', [InventoryMeasureController::class, 'updatePhysical'])->whereNumber('id');
+    Route::post('material-lots/{id}/length', [InventoryMeasureController::class, 'updateLotLength'])->whereNumber('id');
 });
 
 Route::prefix('v1/erp/bom')->group(function () {

@@ -193,6 +193,15 @@
                 <span class="text-green font-bold">{{ row.quantity_available }}</span>
               </template>
             </el-table-column>
+            <el-table-column label="长度 / 面积" min-width="118" align="right">
+              <template slot-scope="{ row }">
+                <template v-if="row.measure">
+                  <span class="measure-strong">{{ measureMain(row.measure) }}</span>
+                  <div v-if="measureSub(row.measure)" class="measure-sub">{{ measureSub(row.measure) }}</div>
+                </template>
+                <span v-else class="muted-text">--</span>
+              </template>
+            </el-table-column>
             <el-table-column prop="quantity_locked" label="锁定/预留" width="75" align="right" />
             <el-table-column prop="quantity_defective" label="不合格" width="65" align="right" />
             <el-table-column prop="quantity_pending" label="待处理" width="65" align="right" />
@@ -240,6 +249,7 @@
               <div class="kv-item"><span class="kv-lbl">物料名称</span><strong class="kv-val">{{ selectedBalance.item_name }}</strong></div>
               <div class="kv-item"><span class="kv-lbl">管理范围</span><strong class="kv-val">{{ scopeLabel(selectedBalance.management_scope) }}</strong></div>
               <div class="kv-item"><span class="kv-lbl">单位</span><strong class="kv-val">{{ selectedBalance.unit || '-' }}</strong></div>
+              <div v-if="selectedBalance.measure" class="kv-item span-two"><span class="kv-lbl">{{ selectedBalance.measure.mode === 'length' ? '可用总长度' : '可用总面积' }}</span><strong class="kv-val measure-strong">{{ measureMain(selectedBalance.measure) }}</strong><small v-if="measureSub(selectedBalance.measure)" class="measure-sub">{{ measureSub(selectedBalance.measure) }}</small></div>
               <div class="kv-item"><span class="kv-lbl">物料类别</span><strong class="kv-val">{{ selectedBalance.category || '-' }}</strong></div>
               <div class="kv-item"><span class="kv-lbl">批次数</span><strong class="kv-val">{{ quantityNumber(selectedBalance.batch_count) }}</strong></div>
               <div class="kv-item"><span class="kv-lbl">库位余额数</span><strong class="kv-val">{{ quantityNumber(selectedBalance.balance_count) }}</strong></div>
@@ -266,6 +276,7 @@
                     <th>批次号</th>
                     <th>账面库存</th>
                     <th>可用库存</th>
+                    <th v-if="selectedBalance.measure">长度 / 面积</th>
                     <th>锁定库存</th>
                     <th>不合格</th>
                     <th>待处理</th>
@@ -278,6 +289,7 @@
                     <td>{{ dist.batch_no || '-' }}</td>
                     <td>{{ quantityNumber(dist.quantity_on_hand) }}</td>
                     <td class="text-green font-bold">{{ quantityNumber(dist.quantity_available) }}</td>
+                    <td v-if="selectedBalance.measure"><span v-if="dist.measure" class="measure-strong">{{ measureMain(dist.measure) }}</span><div v-if="dist.measure && dist.measure.per_unit_m" class="measure-sub">每{{ selectedBalance.unit || '根' }} {{ meters(dist.measure.per_unit_m) }}</div></td>
                     <td>{{ quantityNumber(dist.quantity_locked) }}</td>
                     <td>{{ quantityNumber(dist.quantity_defective) }}</td>
                     <td>{{ quantityNumber(dist.quantity_pending) }}</td>
@@ -288,6 +300,7 @@
                     <td>-</td>
                     <td>{{ quantityNumber(balanceDistTotals.quantity_on_hand) }}</td>
                     <td class="text-green font-bold">{{ quantityNumber(balanceDistTotals.quantity_available) }}</td>
+                    <td v-if="selectedBalance.measure" class="measure-strong">{{ measureMain(selectedBalance.measure) }}</td>
                     <td>{{ quantityNumber(balanceDistTotals.quantity_locked) }}</td>
                     <td>{{ quantityNumber(balanceDistTotals.quantity_defective) }}</td>
                     <td>{{ quantityNumber(balanceDistTotals.quantity_pending) }}</td>
@@ -308,6 +321,7 @@
                     <span class="tx-name">{{ tx.transaction_type_text || (tx.change_qty >= 0 ? '采购入库' : '库存锁定') }}</span>
                     <strong class="tx-qty" :class="tx.change_qty >= 0 ? 'text-green' : 'text-blue'">
                       {{ tx.change_qty >= 0 ? '+' : '' }}{{ quantityNumber(tx.change_qty) }} {{ tx.unit || '-' }}
+                      <span v-if="tx.change_length_m !== null" class="measure-strong">（{{ signedMeters(tx.change_length_m) }}）</span>
                     </strong>
                     <span class="tx-time">{{ dateTime(tx.posted_at) }}</span>
                   </div>
@@ -445,6 +459,27 @@
       </span>
     </el-dialog>
 
+    <el-dialog :title="measureEdit.type === 'lot' ? '修改每根长度' : '修改板材尺寸'" :visible.sync="measureEditVisible" width="460px" append-to-body :close-on-click-modal="false">
+      <el-form label-width="96px" size="small">
+        <el-form-item :label="measureEdit.type === 'lot' ? '批次' : '实物编号'"><span>{{ measureEdit.label }}</span></el-form-item>
+        <template v-if="measureEdit.type === 'lot'">
+          <el-form-item label="每根长度"><el-input v-model="measureEdit.length_mm" inputmode="decimal"><template slot="append">mm</template></el-input></el-form-item>
+          <p class="measure-sub">这一批所有的根都按这个长度算米数；开料领料时也按这个长度。</p>
+        </template>
+        <template v-else>
+          <el-form-item label="长"><el-input v-model="measureEdit.length_mm" inputmode="decimal"><template slot="append">mm</template></el-input></el-form-item>
+          <el-form-item label="宽"><el-input v-model="measureEdit.width_mm" inputmode="decimal"><template slot="append">mm</template></el-input></el-form-item>
+          <el-form-item label="厚"><el-input v-model="measureEdit.thickness_mm" inputmode="decimal"><template slot="append">mm</template></el-input></el-form-item>
+        </template>
+        <el-form-item label="修改原因"><el-input v-model="measureEdit.reason" maxlength="200" placeholder="如：入库时量错了" /></el-form-item>
+      </el-form>
+      <p class="measure-sub">只改尺寸，数量和金额不变。修改会留记录。</p>
+      <span slot="footer">
+        <el-button size="small" @click="measureEditVisible = false">取消</el-button>
+        <el-button size="small" type="success" :loading="measureEditSaving" @click="saveMeasureEdit">保存</el-button>
+      </span>
+    </el-dialog>
+
     <el-dialog
       title=""
       :visible.sync="batchDialogVisible"
@@ -483,6 +518,15 @@
               <el-table-column prop="location_count" label="库位数" width="72" align="right" />
               <el-table-column prop="quantity_on_hand" label="账面" width="66" align="right" />
               <el-table-column prop="quantity_available" label="可用" width="66" align="right" />
+              <el-table-column v-if="batchProfile" :label="batchProfile.mode === 'length' ? '长度' : '面积'" min-width="120" align="right">
+                <template slot-scope="{row}">
+                  <template v-if="row.measure">
+                    <span class="measure-strong">{{ measureMain(row.measure) }}</span>
+                    <div v-if="row.measure.per_unit_m" class="measure-sub">{{ row.measure.material_form === 'REMNANT' ? '余料 · ' : '' }}每{{ selectedBalance.unit || '根' }} {{ meters(row.measure.per_unit_m) }}</div>
+                    <el-button v-if="row.measure.length_editable && $can('inventory.physical.manage')" size="mini" type="text" @click.stop="openLotLengthEdit(row)">改长度</el-button>
+                  </template>
+                </template>
+              </el-table-column>
               <el-table-column prop="quantity_locked" label="锁定" width="58" align="right" />
               <el-table-column prop="quantity_pending" label="待处理" width="64" align="right" />
               <el-table-column label="最近变动" width="112"><template slot-scope="{row}">{{ dateTime(row.last_transaction_at) }}</template></el-table-column>
@@ -524,6 +568,17 @@
                     <el-button size="mini" type="text" :disabled="Number(row.quantity_available || 0) <= 0" @click="openBatchBalanceQuality(row)">质量处理</el-button>
                   </template>
                 </el-table-column>
+              </el-table>
+            </div>
+
+            <div v-if="batchProfile && batchProfile.mode === 'sheet'" class="batch-context-section" v-loading="physicalLoading">
+              <h4>板材实物（当前批次，逐张）</h4>
+              <el-table :data="batchPhysicals" size="mini" border empty-text="当前批次没有在库的板材实物">
+                <el-table-column prop="physical_no" label="实物编号" min-width="130" />
+                <el-table-column label="长 × 宽 × 厚（mm）" min-width="150"><template slot-scope="{row}"><span class="measure-strong">{{ physicalSize(row) }}</span><div v-if="row.material_form === 'REMNANT'" class="measure-sub">余料</div></template></el-table-column>
+                <el-table-column label="面积" width="96" align="right"><template slot-scope="{row}">{{ quantityNumber(row.area_m2) }} m²</template></el-table-column>
+                <el-table-column label="位置" min-width="120"><template slot-scope="{row}">{{ row.warehouse_name }} / {{ row.location_name }}</template></el-table-column>
+                <el-table-column label="操作" width="80"><template slot-scope="{row}"><el-button v-if="row.editable && $can('inventory.physical.manage')" size="mini" type="text" @click="openPhysicalEdit(row)">改尺寸</el-button></template></el-table-column>
               </el-table>
             </div>
 
@@ -641,10 +696,12 @@
             <el-table-column prop="warehouse_name" label="仓库" width="92" show-overflow-tooltip />
             <el-table-column prop="location_name" label="库位" width="86" show-overflow-tooltip />
             <el-table-column prop="batch_no" label="批次号" min-width="108" show-overflow-tooltip />
-            <el-table-column prop="change_qty" label="变动" width="78" align="right">
-              <template slot-scope="{ row }"><span :class="row.change_qty >= 0 ? 'green-text' : 'red-text'">{{ row.change_qty > 0 ? '+' : '' }}{{ row.change_qty }}</span></template>
+            <el-table-column prop="change_qty" label="变动" width="108" align="right">
+              <template slot-scope="{ row }"><span :class="row.change_qty >= 0 ? 'green-text' : 'red-text'">{{ row.change_qty > 0 ? '+' : '' }}{{ row.change_qty }}</span><div v-if="row.change_length_m !== null" class="measure-strong">{{ signedMeters(row.change_length_m) }}</div></template>
             </el-table-column>
-            <el-table-column prop="balance_qty" label="库位结存" width="96" align="right" />
+            <el-table-column label="库位结存" width="108" align="right">
+              <template slot-scope="{ row }">{{ row.balance_qty }}<div v-if="row.balance_after_length_m !== null" class="measure-strong">{{ meters(row.balance_after_length_m) }}</div></template>
+            </el-table-column>
             <el-table-column prop="unit" label="单位" width="60" align="center" />
             <el-table-column label="金额" min-width="100" align="right"><template slot-scope="{ row }">¥{{ money(row.cost_amount) }}</template></el-table-column>
             <el-table-column prop="posted_by_name" label="经办人" width="96" show-overflow-tooltip />
@@ -1032,7 +1089,7 @@ import cachedPageRoute from '@/utils/cachedPageRoute'
 import PopupManager from 'element-ui/lib/utils/popup/popup-manager'
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import StocktakeFreezeAlert from '@/components/common/StocktakeFreezeAlert.vue'
-import { listPendingReceipts, repairPostingReceiptAllocations, postPostingReceipt, listInventoryBalances, listInventoryItemBatches, getInventoryBatchContext, listInventoryBalanceSerials, listInventoryTransactions, listInventoryAdjustments, listInventoryAdjustmentReasons, generateInventoryAdjustmentSerials, saveInventoryAdjustment, submitInventoryAdjustment, postInventoryAdjustment, cancelInventoryAdjustment, deleteInventoryAdjustment, getInventoryQualityContext, createInventoryQualityEvent, getInventoryAlertPolicy, activateInventoryAlertPolicy, disableInventoryAlertPolicy } from '@/api/erp/inventory'
+import { listPendingReceipts, repairPostingReceiptAllocations, postPostingReceipt, listInventoryBalances, listInventoryItemBatches, getInventoryBatchContext, listInventoryBalanceSerials, listInventoryTransactions, listInventoryAdjustments, listInventoryAdjustmentReasons, generateInventoryAdjustmentSerials, saveInventoryAdjustment, submitInventoryAdjustment, postInventoryAdjustment, cancelInventoryAdjustment, deleteInventoryAdjustment, getInventoryQualityContext, createInventoryQualityEvent, getInventoryAlertPolicy, activateInventoryAlertPolicy, disableInventoryAlertPolicy, listInventoryItemPhysicals, updatePhysicalDimensions, updateMaterialLotLength } from '@/api/erp/inventory'
 
 export default {
   mixins: [cachedPageRoute],
@@ -1072,6 +1129,12 @@ export default {
       batchPagination: { page: 1, per_page: 10, total: 0 },
       selectedBatch: null,
       batchContext: { balances: [], source: {}, quality_events: [] },
+      batchProfile: null,
+      batchPhysicals: [],
+      physicalLoading: false,
+      measureEditVisible: false,
+      measureEditSaving: false,
+      measureEdit: { type: 'physical', id: null, label: '', length_mm: '', width_mm: '', thickness_mm: '', reason: '', expected_version: null },
       serialDialogVisible: false,
       serialDialogBalance: null,
       serialKeyword: '',
@@ -1139,7 +1202,8 @@ export default {
           quantity_available: Number(b.quantity_available || 0),
           quantity_locked: Number(b.quantity_locked || 0),
           quantity_defective: Number(b.quantity_defective || 0),
-          quantity_pending: Number(b.quantity_pending || 0)
+          quantity_pending: Number(b.quantity_pending || 0),
+          measure: b.measure || null
         }))
       }
       return []
@@ -1331,6 +1395,7 @@ export default {
           warehouse_count: Number(row.warehouse_count || 0),
           location_count: Number(row.location_count || 0)
         }))
+        this.batchProfile = res.data.measure_profile || null
         this.applyPagination(this.batchPagination, res.data)
         const current = this.batchRows.find(row => this.selectedBatch && row.batch_no === this.selectedBatch.batch_no) || this.batchRows[0] || null
         await this.selectBatch(current)
@@ -1617,6 +1682,7 @@ export default {
         last_transaction_at: row.last_transaction_at || '',
         batch_count: Number(row.batch_count || 0),
         balance_count: Number(row.balance_count || 0),
+        measure: row.measure || null,
         product_code: rel.sku?.product?.product_code || '',
         sku_code: rel.sku?.sku_code || ''
       }
@@ -1758,7 +1824,65 @@ export default {
         return
       }
       this.selectedBatch = row
-      await this.loadBatchContext()
+      await Promise.all([this.loadBatchContext(), this.loadBatchPhysicals()])
+    },
+    async loadBatchPhysicals() {
+      this.batchPhysicals = []
+      if (!this.batchProfile || this.batchProfile.mode !== 'sheet' || !this.selectedBatch || !this.selectedBalance) return
+      this.physicalLoading = true
+      try {
+        const res = await listInventoryItemPhysicals(this.selectedBalance.item_id, { batch_no: this.selectedBatch.batch_no, management_scope: this.balanceQuery.management_scope || undefined })
+        this.batchPhysicals = res.data.data || []
+      } finally {
+        this.physicalLoading = false
+      }
+    },
+    meters(value) {
+      return `${Number(Number(value || 0).toFixed(3)).toLocaleString('zh-CN', { maximumFractionDigits: 3 })} 米`
+    },
+    signedMeters(value) {
+      return `${Number(value) > 0 ? '+' : ''}${this.meters(value)}`
+    },
+    measureMain(measure) {
+      if (!measure) return ''
+      if (measure.mode === 'length') return measure.available_length_m === null || measure.available_length_m === undefined ? '缺少长度' : this.meters(measure.available_length_m)
+      return `${this.quantityNumber(Number(Number(measure.area_m2 || 0).toFixed(3)))} m²`
+    },
+    measureSub(measure) {
+      if (!measure || measure.mode !== 'length' || measure.length_m === null || measure.length_m === undefined) return ''
+      return Number(measure.length_m) !== Number(measure.available_length_m) ? `账面 ${this.meters(measure.length_m)}` : ''
+    },
+    physicalSize(row) {
+      const d = row.dimensions || {}
+      if (String(row.shape).toUpperCase() === 'AREA_ONLY') return `面积 ${this.quantityNumber(d.area_m2)} m²${d.thickness_mm ? ' · 厚 ' + d.thickness_mm : ''}`
+      return [d.length_mm, d.width_mm, d.thickness_mm].filter(v => v !== null && v !== undefined).map(v => Number(v)).join(' × ')
+    },
+    openPhysicalEdit(row) {
+      const d = row.dimensions || {}
+      this.measureEdit = { type: 'physical', id: row.id, label: row.physical_no, length_mm: d.length_mm ? String(Number(d.length_mm)) : '', width_mm: d.width_mm ? String(Number(d.width_mm)) : '', thickness_mm: d.thickness_mm ? String(Number(d.thickness_mm)) : '', reason: '', expected_version: row.business_version }
+      this.measureEditVisible = true
+    },
+    openLotLengthEdit(row) {
+      this.measureEdit = { type: 'lot', id: row.measure.lot_id, label: row.batch_no, length_mm: String(Number(row.measure.lot_length_mm || 0)), width_mm: '', thickness_mm: '', reason: '', expected_version: null }
+      this.measureEditVisible = true
+    },
+    async saveMeasureEdit() {
+      const form = this.measureEdit
+      const fields = form.type === 'lot' ? ['length_mm'] : ['length_mm', 'width_mm', 'thickness_mm']
+      if (fields.some(key => !/^\d+(\.\d{1,2})?$/.test(String(form[key]).trim()) || Number(form[key]) <= 0)) return this.$message.warning('尺寸要大于 0，单位毫米，最多两位小数')
+      this.measureEditSaving = true
+      try {
+        if (form.type === 'lot') await updateMaterialLotLength(form.id, { length_mm: String(form.length_mm).trim(), reason: form.reason || undefined })
+        else await updatePhysicalDimensions(form.id, { expected_version: form.expected_version, length_mm: String(form.length_mm).trim(), width_mm: String(form.width_mm).trim(), thickness_mm: String(form.thickness_mm).trim(), reason: form.reason || undefined })
+        this.$message.success('尺寸已修改')
+        this.measureEditVisible = false
+        await this.loadBatchRows()
+        await this.loadBalances()
+      } catch (error) {
+        this.$message.error(error.userMessage || '修改失败')
+      } finally {
+        this.measureEditSaving = false
+      }
     },
     handleBatchSizeChange(size) {
       this.batchPagination.per_page = size
@@ -1769,6 +1893,8 @@ export default {
       this.batchRows = []
       this.selectedBatch = null
       this.batchContext = { balances: [], source: {}, quality_events: [] }
+      this.batchProfile = null
+      this.batchPhysicals = []
     },
     batchRowClass({ row }) {
       return this.selectedBatch && row.batch_no === this.selectedBatch.batch_no ? 'current-batch-row' : ''
@@ -1850,6 +1976,8 @@ export default {
         batch_no: line.batch_no,
         change_qty: Number(line.change_qty || 0),
         balance_qty: Number(line.balance_after_qty || 0),
+        change_length_m: line.change_length_m === undefined || line.change_length_m === null ? null : Number(line.change_length_m),
+        balance_after_length_m: line.balance_after_length_m === undefined || line.balance_after_length_m === null ? null : Number(line.balance_after_length_m),
         unit: line.item?.unit?.unit_name || '',
         posting_status_text: this.postingStatusText(row.posting_status),
         posted_by: row.posted_by || '系统',
@@ -1872,6 +2000,8 @@ export default {
         batch_no: line.batch_no,
         change_qty: Number(line.change_qty || 0),
         balance_qty: Number(line.balance_after_qty || 0),
+        change_length_m: line.change_length_m === undefined || line.change_length_m === null ? null : Number(line.change_length_m),
+        balance_after_length_m: line.balance_after_length_m === undefined || line.balance_after_length_m === null ? null : Number(line.balance_after_length_m),
         unit: line.item?.unit?.unit_name || '',
         posting_status_text: this.postingStatusText(row.posting_status),
         posted_by: row.posted_by || '系统',
@@ -2493,6 +2623,9 @@ export default {
 .trend-arrow { color: #008b4b; font-size: 12px; font-weight: bold; }
 .unit-text { font-size: 12px; color: #6b7280; font-weight: normal; margin-left: 2px; }
 .font-bold { font-weight: 700; }
+.measure-strong { color: #c45a00; font-weight: 700; }
+.measure-sub { display: block; color: #8a8f98; font-size: 12px; line-height: 1.4; }
+.muted-text { color: #b0b4bb; }
 .text-green { color: #008b4b !important; }
 .text-blue { color: #2563eb !important; }
 .balance-detail-side { background: #fff; border: 1px solid #e5e7eb; border-radius: 4px; padding: 14px 16px; max-height: calc(100vh - 170px); overflow-y: auto; }

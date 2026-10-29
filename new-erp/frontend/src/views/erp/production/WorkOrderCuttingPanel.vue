@@ -25,9 +25,9 @@
             <el-table :data="selectedSources" border size="small">
               <el-table-column label="实物 / 批次" min-width="180"><template slot-scope="{ row }">{{ row.physical_no || row.batch_no }}</template></el-table-column>
               <el-table-column prop="item_name" label="原材料" min-width="130" />
-              <el-table-column label="尺寸 / 面积 / 长度" min-width="170"><template slot-scope="{ row }">{{ sourceSize(row) }}</template></el-table-column>
+              <el-table-column label="尺寸 / 面积 / 长度" min-width="170"><template slot-scope="{ row }"><span :class="{ 'cutting-measure': row.mode === 'length' }">{{ sourceSize(row) }}</span></template></el-table-column>
               <el-table-column label="来源" min-width="140"><template slot-scope="{ row }">{{ row.warehouse_name }} / {{ row.location_name }}</template></el-table-column>
-              <el-table-column label="投入" width="90"><template slot-scope="{ row }">{{ row.qty }} {{ sourceUnit(row) }}</template></el-table-column>
+              <el-table-column label="投入" width="120"><template slot-scope="{ row }">{{ row.qty }} {{ sourceUnit(row) }}<div v-if="row.mode === 'length' && row.unit_kind === 'root'" class="cutting-measure">= {{ meters(Number(row.qty) * Number(row.measure_qty)) }}</div></template></el-table-column>
             </el-table>
             <div class="cutting-actions"><el-button size="small" :disabled="locked || !selectedSources.length" :loading="previewLoading" @click="calculate(false)">计算建议方案</el-button></div>
             <template v-if="preview">
@@ -73,8 +73,8 @@
             <el-table-column label="选择" width="55"><template slot-scope="{ row }"><el-checkbox :value="Boolean(sourceSelected[row.source_key])" @change="toggleSource(row, $event)" /></template></el-table-column>
             <el-table-column label="物料 / 规格" min-width="170"><template slot-scope="{ row }">{{ row.item_code }} / {{ row.item_name }}<div>{{ row.specification }}</div></template></el-table-column>
             <el-table-column label="实物 / 来源" min-width="180"><template slot-scope="{ row }">{{ row.physical_no || row.batch_no }}<div>{{ row.warehouse_name }} / {{ row.location_name }}</div></template></el-table-column>
-            <el-table-column label="尺寸 / 面积 / 长度" min-width="170"><template slot-scope="{ row }">{{ sourceSize(row) }}</template></el-table-column>
-            <el-table-column prop="available_qty" label="可用" width="90" />
+            <el-table-column label="尺寸 / 面积 / 长度" min-width="170"><template slot-scope="{ row }"><span :class="{ 'cutting-measure': row.mode === 'length' }">{{ sourceSize(row) }}</span></template></el-table-column>
+            <el-table-column label="可用" width="120"><template slot-scope="{ row }">{{ qty(row.available_qty) }} {{ sourceUnit(row) }}<div v-if="row.mode === 'length' && row.unit_kind === 'root'" class="cutting-measure">共 {{ meters(Number(row.available_qty) * Number(row.measure_qty)) }}</div></template></el-table-column>
             <el-table-column label="本次投入" width="170"><template slot-scope="{ row }"><div v-if="sourceSelected[row.source_key]" class="cutting-source-quantity"><el-input-number v-model="sourceSelected[row.source_key].qty" size="mini" :min="row.unit_kind === 'm' ? 0.00001 : 1" :max="row.physical_material_id ? 1 : Number(row.available_qty)" :step="row.unit_kind === 'm' ? 0.01 : 1" :precision="row.unit_kind === 'm' ? 5 : 0" :step-strictly="row.unit_kind !== 'm'" :controls="false" /><span>{{ sourceUnit(row) }}</span></div></template></el-table-column>
           </el-table>
           <div class="cutting-pager"><el-pagination background :current-page="sourceQuery.page" :page-size="10" :total="sourceTotal" layout="total, prev, pager, next" @current-change="sourcePage" /></div>
@@ -183,10 +183,11 @@ export default {
     requirementText(row) { return row.mode === 'sheet' ? [row.length_mm, row.width_mm, row.thickness_mm].filter(value => value !== null && value !== undefined).join(' × ') + ' mm' : this.qty(row.per_unit_measure) + ' m / 套' },
     sourceSize(row) {
       const d = row.dimensions || {}
-      if (row.mode === 'length') return this.qty(row.measure_qty) + ' m'
+      if (row.mode === 'length') return (row.material_form === 'REMNANT' ? '余料 · ' : '') + (row.unit_kind === 'root' ? '每根 ' + this.meters(row.measure_qty) : '按米计')
       if (String(row.shape).toUpperCase() === 'AREA_ONLY') return '面积 ' + this.qty(d.area_m2 || row.measure_qty) + ' m²' + (d.thickness_mm ? ' · 厚 ' + d.thickness_mm + ' mm' : '')
       return [d.length_mm, d.width_mm, d.thickness_mm].filter(value => value !== null && value !== undefined).join(' × ') + ' mm'
     },
+    meters(value) { return Number(Number(value || 0).toFixed(3)) + ' 米' },
     sourceName(key) { const row = (this.preview && this.preview.sources || this.selectedSources).find(row => row.source_key === key); return row ? row.physical_no || row.batch_no || key : key },
     batchSourceName(key) { const row = (this.batch.input_lines || []).find(row => row.source_key === key); return row ? row.physical_no || row.batch_no || key : key },
     partName(key) { const row = (this.context && this.context.requirements || []).find(row => row.part_key === key); return row ? row.part_name + ' · ' + this.requirementText(row) : key },
@@ -305,6 +306,7 @@ export default {
 </script>
 
 <style scoped>
+.cutting-measure { color: #c45a00; font-weight: 700; }
 .cutting-panel,
 .cutting-panel * {
   box-sizing: border-box;

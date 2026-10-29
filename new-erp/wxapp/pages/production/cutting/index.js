@@ -8,11 +8,14 @@ const num = value => {
 };
 const measureUnit = unit => (unit === 'm2' ? 'm²' : (unit || ''));
 const sourceUnit = row => (row.unit_kind === 'sheet' ? '张' : (row.unit_kind === 'root' ? '根' : 'm'));
+const meters = value => `${Math.round(Number(value || 0) * 1000) / 1000} 米`;
+// 管材按根领时，几根对应多少米，选料时要一眼看到。
+const totalMeters = (row, count) => (row.mode === 'length' && row.unit_kind === 'root' ? meters(Number(count || 0) * Number(row.measure_qty || 0)) : '');
 const clone = value => JSON.parse(JSON.stringify(value));
 const keyOf = () => `wxcut-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}${Math.random().toString(36).slice(2, 8)}`;
 function sizeText(row) {
   const d = row.dimensions || {};
-  if (row.mode === 'length') return `${num(row.measure_qty)} m`;
+  if (row.mode === 'length') return `${row.material_form === 'REMNANT' ? '余料 · ' : ''}${row.unit_kind === 'root' ? `每根 ${meters(row.measure_qty)}` : '按米计'}`;
   if (String(row.shape).toUpperCase() === 'AREA_ONLY') return `面积 ${num(d.area_m2 || row.measure_qty)} m²${d.thickness_mm ? ` · 厚 ${d.thickness_mm} mm` : ''}`;
   return [d.length_mm, d.width_mm, d.thickness_mm].filter(v => v !== null && v !== undefined).join(' × ') + ' mm';
 }
@@ -111,7 +114,8 @@ Page({
       const result = view.rows(response);
       this.setData({ sourceLoading: false, page: result.page, lastPage: result.lastPage, total: result.total,
         rows: result.rows.map(row => Object.assign({}, row, { nameText: sourceName(row), sizeText: sizeText(row), unitText: sourceUnit(row),
-          placeText: `${row.warehouse_name || ''} / ${row.location_name || ''}`, availableText: num(row.available_qty), countable: !row.physical_material_id })) });
+          placeText: `${row.warehouse_name || ''} / ${row.location_name || ''}`, availableText: num(row.available_qty), countable: !row.physical_material_id,
+          totalText: totalMeters(row, row.available_qty) })) });
     }).catch(error => { if (sequence === this.sourceSequence) this.setData({ sourceLoading: false, sourceError: view.errorText(error) }); });
   },
   toggleSource(event) {
@@ -119,10 +123,17 @@ Page({
     if (!row) return;
     const picked = Object.assign({}, this.data.picked);
     if (picked[row.source_key]) delete picked[row.source_key];
-    else picked[row.source_key] = Object.assign({}, row, { qty: row.unit_kind === 'm' ? String(Number(row.available_qty)) : '1' });
+    else {
+      const qty = row.unit_kind === 'm' ? String(Number(row.available_qty)) : '1';
+      picked[row.source_key] = Object.assign({}, row, { qty, metersText: totalMeters(row, qty) });
+    }
     this.setData({ picked, pickedCount: Object.keys(picked).length });
   },
-  pickedQtyInput(event) { this.setData({ [`picked.${event.currentTarget.dataset.key}.qty`]: event.detail.value }); },
+  pickedQtyInput(event) {
+    const key = event.currentTarget.dataset.key;
+    const row = this.data.picked[key] || {};
+    this.setData({ [`picked.${key}.qty`]: event.detail.value, [`picked.${key}.metersText`]: totalMeters(row, event.detail.value) });
+  },
   confirmSources() {
     const sources = [];
     for (const row of Object.values(this.data.picked)) {
@@ -137,7 +148,7 @@ Page({
         for (let i = 1; i <= count; i++) sources.push(Object.assign({}, row, { original_source_key: row.source_key, source_key: `${row.source_key}:${i}`, qty: '1' }));
       } else sources.push(Object.assign({}, row, { original_source_key: row.source_key, qty: String(count) }));
     }
-    this.setData({ panel: '', sources: sources.map(row => Object.assign({}, row, { qtyText: `${row.qty} ${sourceUnit(row)}` })), groups: [], planChecked: false, planConfirmed: false });
+    this.setData({ panel: '', sources: sources.map(row => Object.assign({}, row, { qtyText: `${row.qty} ${sourceUnit(row)}${totalMeters(row, row.qty) ? ` = ${totalMeters(row, row.qty)}` : ''}` })), groups: [], planChecked: false, planConfirmed: false });
   },
 
   // 算方案 / 校验改过的方案

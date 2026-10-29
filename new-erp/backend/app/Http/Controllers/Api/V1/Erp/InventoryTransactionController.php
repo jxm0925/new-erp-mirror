@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Controllers\Concerns\AuthorizesErpPermissions;
 use App\Models\Erp\{InventoryAdjustment, InventoryTransaction, InventoryTransactionItem};
 use Illuminate\Http\Request;
+use App\Services\Erp\Inventory\StockMeasureService;
 
 class InventoryTransactionController extends Controller
 {
@@ -82,6 +83,7 @@ class InventoryTransactionController extends Controller
         $names = $ids->isEmpty() ? collect() : \Illuminate\Support\Facades\DB::table('erp_legacy_admin_users')->whereIn('legacy_id', $ids)
             ->get(['legacy_id', 'nickname', 'username'])->mapWithKeys(fn ($user) => [(int) $user->legacy_id => $user->nickname ?: $user->username]);
         $paginator->getCollection()->each(fn ($line) => $line->setAttribute('posted_by_name', $line->transaction?->posted_by ? ($names[(int) $line->transaction->posted_by] ?? null) : null));
+        $this->attachLengths($paginator->getCollection());
         return response()->json([...$paginator->toArray(), 'stats' => $stats]);
     }
 
@@ -89,6 +91,24 @@ class InventoryTransactionController extends Controller
     {
         $this->erpAuthorize($request, 'inventory.transaction.view');
         return response()->json(InventoryTransaction::with(['items.item.unit', 'items.warehouse', 'items.location'])->findOrFail($id));
+    }
+
+    /** 管材按根记账时，补上这一行变动和结存对应的米数（按批次实际长度，没有就按标准长度）。 */
+    private function attachLengths($lines): void
+    {
+        $service = app(StockMeasureService::class);
+        $profiles = $service->profiles($lines->pluck('item_id'));
+        if (! $profiles) return;
+        $lots = $service->lots($lines->pluck('material_lot_id'));
+        $lines->each(function ($line) use ($service, $profiles, $lots) {
+            $profile = $profiles[(int) $line->item_id] ?? null;
+            if (! $profile || $profile['mode'] !== 'length' || $profile['kind'] !== 'root') return;
+            $per = $service->metersPerUnit($profile, $line->material_lot_id ? $lots->get((int) $line->material_lot_id) : null);
+            if ($per === null) return;
+            $line->setAttribute('per_unit_m', $per);
+            $line->setAttribute('change_length_m', round((float) $line->change_qty * $per, 4));
+            $line->setAttribute('balance_after_length_m', round((float) $line->balance_after_qty * $per, 4));
+        });
     }
 
     private function perPage(Request $request): int
