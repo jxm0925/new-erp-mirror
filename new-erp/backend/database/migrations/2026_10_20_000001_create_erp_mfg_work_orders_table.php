@@ -52,6 +52,7 @@ CREATE TABLE `erp_mfg_work_orders` (
   `status` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'planned',
   `block_reason` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `is_urgent` tinyint(1) NOT NULL DEFAULT '0',
+  `priority` tinyint(3) unsigned NOT NULL DEFAULT '3',
   `owner_legacy_id` bigint(20) unsigned DEFAULT NULL,
   `owner_name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `planned_start_date` date DEFAULT NULL,
@@ -79,6 +80,7 @@ CREATE TABLE `erp_mfg_work_orders` (
   UNIQUE KEY `mfg_wo_no_uq` (`work_order_no`),
   KEY `mfg_wo_fulfillment_idx` (`sales_fulfillment_id`),
   KEY `mfg_wo_status_idx` (`status`,`planned_finish_date`),
+  KEY `mfg_wo_priority_idx` (`status`,`priority`,`id`),
   KEY `mfg_wo_sales_order_idx` (`sales_order_id`,`sales_order_line_id`),
   KEY `mfg_wo_item_idx` (`item_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci

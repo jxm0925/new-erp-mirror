@@ -118,10 +118,11 @@ Design status: 按“基础档案”页面风格重做（页头卡片 / 提示�
           </el-table-column>
           <el-table-column label="标记" width="96">
             <template slot-scope="{row}">
-              <el-tag v-if="row.is_urgent" size="mini" type="danger">加急</el-tag>
+              <el-tag v-if="row.priority && row.priority !== 3" size="mini" :type="priorityTagType(row.priority)">{{ row.priority_label }}</el-tag>
+              <el-tag v-else-if="row.is_urgent" size="mini" type="danger">加急</el-tag>
               <el-tag v-if="row.is_delay" size="mini" type="warning">延期</el-tag>
               <el-tag v-if="row.is_customized" size="mini">定制</el-tag>
-              <span v-if="!row.is_urgent && !row.is_delay && !row.is_customized" class="muted">-</span>
+              <span v-if="(!row.priority || row.priority === 3) && !row.is_urgent && !row.is_delay && !row.is_customized" class="muted">-</span>
             </template>
           </el-table-column>
           <el-table-column label="操作" width="230" fixed="right">
@@ -225,6 +226,9 @@ export default {
     this.load()
   },
   methods: {
+    priorityTagType(p) {
+      return { 1: 'danger', 2: 'warning', 4: 'info' }[p] || ''
+    },
     async load() {
       this.loading = true
       try {

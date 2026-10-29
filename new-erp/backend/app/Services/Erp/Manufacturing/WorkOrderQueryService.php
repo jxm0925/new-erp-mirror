@@ -56,8 +56,9 @@ final class WorkOrderQueryService
         }
         $page = $query->with(['operations:id,work_order_id,operation_name,execution_context,sequence,completed_qty'])
             ->withCount(['units', 'units as stored_units_count' => fn ($q) => $q->where('status', 'stored')])
-            ->orderByRaw("FIELD(status, 'paused', 'planned', 'in_progress', 'released', 'completed', 'closed', 'cancelled')")
-            ->orderByDesc('is_urgent')->orderBy('planned_finish_date')->orderByDesc('id')
+            // 没做完的在前：按优先级（特急→可延后），同级先建的先做；做完的按新到旧。
+            ->orderByRaw("CASE WHEN status IN ('completed', 'closed', 'cancelled') THEN 1 ELSE 0 END")->orderBy('priority')
+            ->orderByRaw("CASE WHEN status IN ('completed', 'closed', 'cancelled') THEN -id ELSE id END")
             ->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 10))));
         $rows = $page->getCollection()->map(fn (MfgWorkOrder $wo) => $this->row($wo, $amounts))->all();
         $page->setCollection(collect($this->attachLinks($rows, $amounts, $tree)));
@@ -354,7 +355,7 @@ final class WorkOrderQueryService
             'item_id' => $wo->item_id, 'item_code' => $wo->item_code, 'item_name' => $wo->item_name, 'unit_name' => $wo->unit_name,
             'planned_qty' => $qty, 'completed_qty' => (float) $wo->completed_qty, 'stored_qty' => (float) $wo->stored_qty,
             'units_count' => (int) ($wo->units_count ?? $wo->units()->count()),
-            'status' => $wo->status, 'status_label' => self::STATUS_LABELS[$wo->status] ?? $wo->status, 'is_urgent' => (bool) $wo->is_urgent,
+            'status' => $wo->status, 'status_label' => self::STATUS_LABELS[$wo->status] ?? $wo->status, 'is_urgent' => (bool) $wo->is_urgent, 'priority' => (int) ($wo->priority ?: 3), 'priority_label' => \App\Services\Erp\SalesOrderPriorityService::label((int) ($wo->priority ?: 3)),
             'owner_legacy_id' => $wo->owner_legacy_id, 'owner_name' => $wo->owner_name,
             'planned_start_date' => $wo->planned_start_date?->toDateString(), 'planned_finish_date' => $wo->planned_finish_date?->toDateString(),
             'required_date' => $wo->required_date?->toDateString(), 'block_reason' => $wo->block_reason, 'pause_reason' => $wo->pause_reason,

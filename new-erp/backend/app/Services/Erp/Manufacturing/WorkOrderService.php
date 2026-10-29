@@ -56,7 +56,8 @@ final class WorkOrderService
                 'sku_code' => $line->sku?->sku_code, 'sku_name' => $line->sku_name,
                 'configuration_snapshot' => $line->configuration_snapshot,
                 'special_requirement' => $this->specialRequirement($line),
-                'is_urgent' => (bool) $order->is_urgent, 'required_date' => $order->required_delivery_date,
+                'is_urgent' => (int) $order->priority <= \App\Services\Erp\SalesOrderPriorityService::URGENT, 'priority' => \App\Services\Erp\SalesOrderPriorityService::normalize($order->priority ?: \App\Services\Erp\SalesOrderPriorityService::fromFlags((bool) $order->is_urgent, (bool) ($order->is_delay || $order->delay))),
+                'required_date' => $order->required_delivery_date,
                 'planned_start_date' => now()->toDateString(),
                 'planned_finish_date' => $order->required_delivery_date ?: now()->addDays(7)->toDateString(),
             ], $item, $qty, $actor);
@@ -84,7 +85,8 @@ final class WorkOrderService
                 'source_type' => 'stock', 'stock_reason' => $data['stock_reason'] ?? 'regular',
                 'product_id' => $data['product_id'] ?? null, 'sku_id' => $data['sku_id'] ?? null,
                 'product_name' => $data['product_name'] ?? null, 'sku_name' => $data['sku_name'] ?? null,
-                'is_urgent' => (bool) ($data['is_urgent'] ?? false),
+                'priority' => $priority = \App\Services\Erp\SalesOrderPriorityService::normalize($data['priority'] ?? (! empty($data['is_urgent']) ? \App\Services\Erp\SalesOrderPriorityService::URGENT : \App\Services\Erp\SalesOrderPriorityService::NORMAL)),
+                'is_urgent' => $priority <= \App\Services\Erp\SalesOrderPriorityService::URGENT,
                 'planned_start_date' => $data['planned_start_date'], 'planned_finish_date' => $data['planned_finish_date'],
                 'required_date' => $data['planned_finish_date'],
                 'owner_legacy_id' => $data['owner_legacy_id'] ?? null, 'owner_name' => $this->ownerName($data['owner_legacy_id'] ?? null, $data['owner_name'] ?? null),
@@ -138,7 +140,7 @@ final class WorkOrderService
             $finish = $parent->planned_finish_date && $parent->planned_finish_date->gte(now()->startOfDay()) ? $parent->planned_finish_date->toDateString() : now()->toDateString();
             $child = $this->newWorkOrder([
                 'source_type' => 'work_order', 'sales_order_no' => $parent->sales_order_no, 'customer_name' => $parent->customer_name,
-                'is_urgent' => (bool) $parent->is_urgent, 'planned_start_date' => now()->toDateString(), 'planned_finish_date' => $finish, 'required_date' => $finish,
+                'is_urgent' => (bool) $parent->is_urgent, 'priority' => (int) $parent->priority, 'planned_start_date' => now()->toDateString(), 'planned_finish_date' => $finish, 'required_date' => $finish,
                 'remark' => "总装工单 {$parent->work_order_no} 缺 {$item->item_name}，补做半成品",
                 'work_order_no' => $this->childNo($parent),
             ], $item, (float) $qty, $actor);
@@ -205,7 +207,19 @@ final class WorkOrderService
             if (array_key_exists('owner_legacy_id', $data) && trim((string) ($data['owner_name'] ?? '')) === '') {
                 $data['owner_name'] = $this->ownerName($data['owner_legacy_id'], null);
             }
-            foreach (['owner_legacy_id', 'owner_name', 'planned_start_date', 'planned_finish_date', 'is_urgent', 'remark', 'warehouse_id'] as $field) {
+            // 优先级：备货工单在这里调；订单工单跟着订单走，由销售负责人在订单上调。旧版只传“加急”的按加急/普通换算。
+            if (! array_key_exists('priority', $data) && array_key_exists('is_urgent', $data) && (bool) $data['is_urgent'] !== (bool) $wo->is_urgent)
+                $data['priority'] = $data['is_urgent'] ? \App\Services\Erp\SalesOrderPriorityService::URGENT : \App\Services\Erp\SalesOrderPriorityService::NORMAL;
+            unset($data['is_urgent']);
+            if (array_key_exists('priority', $data) && $data['priority'] !== null && (int) $data['priority'] !== (int) $wo->priority) {
+                if ($wo->sales_order_id || ($wo->source_type === 'work_order' && $wo->sales_order_no))
+                    $this->fail('priority_locked', '订单工单（含它的半成品工单）的优先级跟着订单走，请销售负责人在订单上调整。');
+                $new = \App\Services\Erp\SalesOrderPriorityService::normalize($data['priority']);
+                $changes['priority'] = [\App\Services\Erp\SalesOrderPriorityService::label((int) $wo->priority), \App\Services\Erp\SalesOrderPriorityService::label($new)];
+                $wo->priority = $new;
+                $wo->is_urgent = $new <= \App\Services\Erp\SalesOrderPriorityService::URGENT;
+            }
+            foreach (['owner_legacy_id', 'owner_name', 'planned_start_date', 'planned_finish_date', 'remark', 'warehouse_id'] as $field) {
                 if (! array_key_exists($field, $data)) continue;
                 $old = $field === 'is_urgent' ? (bool) $wo->is_urgent : ($wo->{$field} instanceof \DateTimeInterface ? $wo->{$field}->format('Y-m-d') : $wo->{$field});
                 $new = $field === 'is_urgent' ? (bool) $data[$field] : $data[$field];
@@ -356,7 +370,7 @@ final class WorkOrderService
             'customer_name' => $wo->customer_name, 'product_id' => $wo->product_id, 'product_name' => $wo->product_name,
             'sku_id' => $wo->sku_id, 'sku_code' => $wo->sku_code, 'sku_name' => $wo->sku_name,
             'configuration_snapshot' => $wo->configuration_snapshot, 'special_requirement' => $wo->special_requirement,
-            'is_urgent' => (bool) $wo->is_urgent, 'required_date' => $wo->required_date, 'warehouse_id' => $wo->warehouse_id,
+            'is_urgent' => (bool) $wo->is_urgent, 'priority' => (int) $wo->priority, 'required_date' => $wo->required_date, 'warehouse_id' => $wo->warehouse_id,
             'owner_legacy_id' => $wo->owner_legacy_id, 'owner_name' => $wo->owner_name,
             'planned_start_date' => now()->toDateString(),
             'planned_finish_date' => $wo->planned_finish_date && $wo->planned_finish_date->gte(now()->startOfDay()) ? $wo->planned_finish_date->toDateString() : now()->toDateString(),
@@ -679,7 +693,7 @@ final class WorkOrderService
     private function changeText(array $changes): string
     {
         $labels = ['owner_legacy_id' => null, 'owner_name' => '负责人', 'planned_start_date' => '计划开工', 'planned_finish_date' => '计划完工',
-            'is_urgent' => '加急', 'remark' => '备注', 'warehouse_id' => '入库仓库', 'bom_id' => '换 BOM', 'bom_snapshot' => '用料依据', 'routing_id' => '换工艺路线', 'planned_qty' => '数量'];
+            'is_urgent' => '加急', 'priority' => '优先级', 'remark' => '备注', 'warehouse_id' => '入库仓库', 'bom_id' => '换 BOM', 'bom_snapshot' => '用料依据', 'routing_id' => '换工艺路线', 'planned_qty' => '数量'];
         $parts = [];
         foreach ($changes as $field => [$old, $new]) {
             if (! ($labels[$field] ?? null)) continue;

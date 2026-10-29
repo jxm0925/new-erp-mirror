@@ -23,8 +23,8 @@
               <el-tag size="small" :type="unitStatusType(wo.status)" effect="plain">
                 {{ wo.status_label || wo.status }}
               </el-tag>
-              <el-tag v-if="wo.is_urgent" size="small" type="danger" effect="dark" class="urgent-tag">
-                加急制令
+              <el-tag v-if="wo.is_urgent || wo.priority === 4" size="small" :type="wo.priority === 4 ? 'info' : 'danger'" effect="dark" class="urgent-tag">
+                {{ wo.priority_label || '加急' }}
               </el-tag>
               <span class="source-crumb-tag">
                 <template v-if="wo.source_type === 'sales_order'">
@@ -867,8 +867,11 @@
         <el-form-item label="计划完工日期">
           <el-date-picker v-model="adjust.planned_finish_date" type="date" value-format="yyyy-MM-dd" placeholder="选择计划完工日期" />
         </el-form-item>
-        <el-form-item label="生产加急标记">
-          <el-switch v-model="adjust.is_urgent" active-text="加急制令" />
+        <el-form-item label="优先级">
+          <el-radio-group v-model="adjust.priority" size="small" :disabled="priorityLocked">
+            <el-radio-button :label="1">特急</el-radio-button><el-radio-button :label="2">加急</el-radio-button><el-radio-button :label="3">普通</el-radio-button><el-radio-button :label="4">可延后</el-radio-button>
+          </el-radio-group>
+          <div v-if="priorityLocked" class="field-hint">订单工单跟着订单走，请销售负责人在订单上调整。</div>
         </el-form-item>
         <el-form-item v-if="wo && wo.source_type === 'stock' && wo.status === 'planned'" label="生产计划数量">
           <el-input-number v-model="adjust.planned_qty" :min="0.0001" :max="100000" controls-position="right" />
@@ -1055,7 +1058,7 @@ export default {
       owner_legacy_id: null,
       planned_start_date: '',
       planned_finish_date: '',
-      is_urgent: false,
+      priority: 3,
       planned_qty: 1,
       bom_id: null,
       routing_id: null,
@@ -1065,6 +1068,10 @@ export default {
     }
   }),
   computed: {
+    priorityLocked() {
+      const wo = this.wo
+      return !!wo && (!!wo.sales_order_id || (wo.source_type === 'work_order' && !!wo.sales_order_no))
+    },
     canDispatch() {
       return !!this.wo && ['released', 'in_progress'].includes(this.wo.status) && this.$can('production.task.assign')
     },
@@ -1483,7 +1490,7 @@ export default {
         owner_legacy_id: wo.owner_legacy_id,
         planned_start_date: wo.planned_start_date,
         planned_finish_date: wo.planned_finish_date,
-        is_urgent: wo.is_urgent,
+        priority: wo.priority || 3,
         planned_qty: wo.planned_qty,
         bom_id: wo.bom_id,
         routing_id: wo.routing_id,
@@ -1514,7 +1521,7 @@ export default {
       ;['planned_start_date', 'planned_finish_date', 'remark'].forEach(f => {
         if ((a[f] || '') !== (wo[f] || '')) payload[f] = a[f] || null
       })
-      if (a.is_urgent !== wo.is_urgent) payload.is_urgent = a.is_urgent
+      if (!this.priorityLocked && a.priority !== (wo.priority || 3)) payload.priority = a.priority
       if (!wo.started) {
         if (a.bom_id !== wo.bom_id || (wo.status === 'planned' && (wo.block_reason || '').includes('虚拟件'))) payload.bom_id = a.bom_id
         if (a.routing_id !== wo.routing_id) payload.routing_id = a.routing_id
@@ -1535,6 +1542,7 @@ export default {
 </script>
 
 <style scoped>
+.field-hint { color: #909399; font-size: 12px; line-height: 1.6; }
 .work-order-detail-page {
   padding: 16px 20px 24px;
   background: #f8fafc;

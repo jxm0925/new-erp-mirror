@@ -457,6 +457,7 @@ class RbacBootstrapService
             ['sales_order.view', '销售订单查看', 'button', 'sales.order', null, null, 'el-icon-mouse', 1],
             ['sales_order.amount.view', '查看销售与回款金额', 'button', 'sales.order', null, null, 'el-icon-view', 11],
             ['sales_order.invoice_request', '申请给客户开票', 'button', 'sales.order', null, null, 'el-icon-tickets', 13],
+            ['sales_order.priority', '调整订单优先级', 'button', 'sales.order', null, null, 'el-icon-sort', 82],
             ['sales_order.funding_policy.manage', '维护销售付款策略', 'button', 'sales.order', null, null, 'el-icon-setting', 12],
             ['sales_order.create', '销售订单新建', 'button', 'sales.order', null, null, 'el-icon-mouse', 2],
             ['sales_order.edit_draft', '销售订单编辑', 'button', 'sales.order', null, null, 'el-icon-mouse', 3],

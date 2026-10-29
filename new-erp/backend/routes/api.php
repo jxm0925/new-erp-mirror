@@ -392,6 +392,7 @@ Route::prefix('v1/erp/sales')->group(function () {
     Route::get('orders/{id}/short-close-preview', [SalesOrderController::class, 'shortClosePreview'])->whereNumber('id');
     Route::post('orders/{id}/short-close', [SalesOrderController::class, 'shortClose'])->whereNumber('id');
     Route::put('orders/{id}/agreed-deposit', [SalesOrderController::class, 'updateAgreedDeposit'])->whereNumber('id');
+    Route::post('orders/{id}/priority', [SalesOrderController::class, 'adjustPriority'])->whereNumber('id');
     Route::get('shipments', [SalesShipmentController::class, 'index']);
     Route::post('shipments', [SalesShipmentController::class, 'store']);
     Route::get('shipments/sources', [SalesShipmentController::class, 'sources']);

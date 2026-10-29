@@ -8,7 +8,7 @@
         <view class="mt-sub">{{task.work_order.work_order_no}}<text wx:if="{{task.work_order.sku_name}}"> · {{task.work_order.sku_name}}</text><text wx:if="{{task.dueText}}"> · 交期 {{task.dueText}}</text></view>
       </view>
       <view class="mt-tags">
-        <text wx:if="{{task.work_order.is_urgent}}" class="mt-tag red">加急</text>
+        <text wx:if="{{task.work_order.priority === 1}}" class="mt-tag red">特急</text><text wx:elif="{{task.work_order.is_urgent}}" class="mt-tag red">加急</text><text wx:elif="{{task.work_order.priority === 4}}" class="mt-tag gray">可延后</text>
         <text wx:if="{{task.work_order.is_custom}}" class="mt-tag purple">定制</text>
       </view>
     </view>

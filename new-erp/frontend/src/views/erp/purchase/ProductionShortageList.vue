@@ -5,7 +5,7 @@
       <div class="mfg-hrow">
         <div>
           <div class="mfg-title">生产缺料</div>
-          <div class="mfg-hero-sub">未结束工单（含计划）还没领的外购件，按加急、开工日先后分配库存和采购在途后的缺口；勾选后合并生成一张采购需求</div>
+          <div class="mfg-hero-sub">未结束工单（含计划）还没领的外购件，按优先级（特急→可延后）、同级先建的工单先分配库存和采购在途后的缺口；勾选后合并生成一张采购需求</div>
         </div>
       </div>
     </div>
@@ -28,7 +28,7 @@
                   <div v-for="w in s.row.work_orders" :key="w.id" class="wo-row">
                     <span class="lk mono" @click="openWorkOrder(w)">{{ w.work_order_no }}</span>
                     <span :class="['chip', w.status === 'planned' ? 'c-n' : 'c-b']">{{ w.status_label }}</span>
-                    <span v-if="w.is_urgent" class="chip c-r">加急</span>
+                    <span v-if="w.priority === 1" class="chip c-r">特急</span><span v-else-if="w.is_urgent" class="chip c-r">加急</span><span v-else-if="w.priority === 4" class="chip">可延后</span>
                     <span class="sub">{{ w.item_name }} · 开工 {{ w.planned_start_date || '未排' }}</span>
                     <span>还要 {{ qty(w.need_qty) }} = 库存 {{ qty(w.stock_qty) }} + 在途 {{ qty(w.transit_qty) }} + <b :class="{ danger: w.shortage_qty > 0 }">缺 {{ qty(w.shortage_qty) }}</b></span>
                     <span v-if="w.shortage_qty > 0 && w.ahead && w.ahead.length" class="sub">库存先给 {{ w.ahead.map(a => a.work_order_no).join('、') }}</span>
@@ -40,7 +40,7 @@
             </el-table-column>
             <el-table-column label="物料" min-width="200">
               <template slot-scope="s">
-                <div>{{ s.row.item_name }} <span v-if="s.row.is_urgent" class="chip c-r">加急</span></div>
+                <div>{{ s.row.item_name }} <span v-if="s.row.priority === 1" class="chip c-r">特急</span><span v-else-if="s.row.is_urgent" class="chip c-r">加急</span><span v-else-if="s.row.priority === 4" class="chip">可延后</span></div>
                 <div class="sub mono">{{ s.row.item_code }}<span v-if="s.row.spec"> · {{ s.row.spec }}</span></div>
               </template>
             </el-table-column>

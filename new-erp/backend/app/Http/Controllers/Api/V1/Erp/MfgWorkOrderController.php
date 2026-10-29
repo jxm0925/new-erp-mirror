@@ -54,7 +54,7 @@ class MfgWorkOrderController extends Controller
             'planned_qty' => 'required|numeric|min:0.0001|max:100000', 'stock_reason' => 'required|in:alert,regular,other',
             'planned_start_date' => 'required|date', 'planned_finish_date' => 'required|date|after_or_equal:planned_start_date',
             'owner_legacy_id' => 'nullable|integer|min:1', 'owner_name' => 'nullable|string|max:120', 'warehouse_id' => 'nullable|integer|exists:erp_warehouses,id',
-            'bom_id' => 'nullable|integer', 'routing_id' => 'nullable|integer', 'is_urgent' => 'nullable|boolean', 'remark' => 'nullable|string|max:500',
+            'bom_id' => 'nullable|integer', 'routing_id' => 'nullable|integer', 'is_urgent' => 'nullable|boolean', 'priority' => 'nullable|integer|in:1,2,3,4', 'remark' => 'nullable|string|max:500',
             'release' => 'nullable|boolean']);
         if (! empty($data['release'])) $this->user($request, 'production.work_order.publish');
         $wo = $service->createStock($data, $user);
@@ -73,7 +73,7 @@ class MfgWorkOrderController extends Controller
         [$user, $amounts] = $this->user($request, 'production.work_order.edit');
         $data = $request->validate(['expected_version' => 'required|integer|min:1', 'owner_legacy_id' => 'sometimes|nullable|integer|min:1',
             'owner_name' => 'sometimes|nullable|string|max:120', 'planned_start_date' => 'sometimes|nullable|date', 'planned_finish_date' => 'sometimes|nullable|date',
-            'is_urgent' => 'sometimes|boolean', 'remark' => 'sometimes|nullable|string|max:500', 'warehouse_id' => 'sometimes|nullable|integer|exists:erp_warehouses,id',
+            'is_urgent' => 'sometimes|boolean', 'priority' => 'sometimes|nullable|integer|in:1,2,3,4', 'remark' => 'sometimes|nullable|string|max:500', 'warehouse_id' => 'sometimes|nullable|integer|exists:erp_warehouses,id',
             'bom_id' => 'sometimes|nullable|integer', 'routing_id' => 'sometimes|nullable|integer', 'planned_qty' => 'sometimes|numeric|min:0.0001|max:100000']);
         $wo = $service->adjust($id, $data, $user);
         return response()->json(['message' => '工单已调整。', 'data' => $query->detail($wo->id, $amounts)]);

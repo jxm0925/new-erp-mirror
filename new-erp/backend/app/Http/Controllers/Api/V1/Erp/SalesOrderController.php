@@ -32,6 +32,7 @@ use App\Services\Erp\LengthCutRequirementService;
 use App\Services\Erp\SalesOrderDraftService;
 use App\Services\Erp\SalesOrderAttachmentService;
 use App\Services\Erp\SalesOrderFundingGateService;
+use App\Services\Erp\SalesOrderPriorityService;
 use App\Services\Erp\SalesOrderStateCoordinator;
 use App\Services\Erp\SalesOrderEditImpactService;
 use App\Services\Erp\SalesOrderInventoryLockService;
@@ -91,6 +92,23 @@ class SalesOrderController extends Controller
      * 销售按与客户的实际约定修改开工定金。定金只影响开工资金门槛，不改合同金额、
      * 收款或发货条件，因此草稿和已确认订单都由销售直接修改、立即生效并留痕，不走订单变更审核。
      */
+    /** 销售负责人单独调整订单优先级，没做完的工单（含半成品、补做工单）跟着改。 */
+    public function adjustPriority(Request $request, int $id)
+    {
+        $this->abortUnlessPermission($request, 'sales_order.priority');
+        $data = $request->validate(['priority' => 'required|integer|in:1,2,3,4', 'reason' => 'nullable|string|max:500']);
+        $order = SalesOrder::query()->findOrFail($id);
+        $this->abortUnlessOrderVisible($request, $order);
+        $actor = app(AuthContextService::class)->currentUser($request) ?? (object) ['nickname' => $this->operatorName($request)];
+        $reason = trim((string) ($data['reason'] ?? ''));
+        $result = app(SalesOrderPriorityService::class)->adjust($id, (int) $data['priority'], $reason ?: null, $actor);
+        $content = (($actor->nickname ?? null) ?: ($actor->username ?? '')).' 把优先级由“'.SalesOrderPriorityService::label($result['before']).'”改为“'
+            .SalesOrderPriorityService::label($result['after']).'”'.($reason ? '（'.$reason.'）' : '')
+            .($result['work_orders'] ? '；工单 '.implode('、', array_slice($result['work_orders'], 0, 20)).(count($result['work_orders']) > 20 ? ' 等' : '').' 已跟着调整' : '');
+        $this->log($id, null, 'priority_changed', null, null, mb_substr($content, 0, 1000), $result);
+        return response()->json(['message' => '优先级已调整'.($result['work_orders'] ? '，'.count($result['work_orders']).' 张工单已跟着调整' : ''), 'data' => $result]);
+    }
+
     public function updateAgreedDeposit(Request $request, int $id)
     {
         $this->abortUnlessAnyPermission($request, ['sales_order.edit_draft', 'sales_order.change', 'sales_order.change.submit']);
@@ -466,7 +484,7 @@ class SalesOrderController extends Controller
                 ->where('demand_status', 'confirmed')
                 ->whereIn('fulfillment_type', SalesOrderFulfillmentPolicy::TYPES),
         ])
-            ->latest('updated_at');
+            ->latest('created_at')->orderByDesc('id');
         $this->applySalesOrderVisibility($query, $request);
 
         $keyword = trim((string) $request->input('keyword'));
@@ -497,6 +515,7 @@ class SalesOrderController extends Controller
         $canViewAmounts = $this->canViewAmounts($request);
         $page->getCollection()->transform(function (SalesOrder $order) use ($request, $canViewAmounts) {
             $order->setAttribute('allowed_actions', $this->orderAllowedActions($request, $order));
+            $order->setAttribute('priority_label', SalesOrderPriorityService::label((int) $order->priority));
             $this->decorateFulfillmentComposition($order);
             if (! $canViewAmounts) $this->hideOrderAmounts($order);
             return $order;
@@ -630,6 +649,7 @@ class SalesOrderController extends Controller
         $changeEligibility = app(SalesOrderEditImpactService::class)->eligibility($order);
         $allowedActions = $this->orderAllowedActions($request, $order, $changeEligibility);
         $order->setAttribute('allowed_actions', $allowedActions);
+        $order->setAttribute('priority_label', SalesOrderPriorityService::label((int) $order->priority));
         $order->setAttribute('change_eligibility', $changeEligibility);
         $order->setAttribute('pending_change_candidate', $order->changeCandidates->firstWhere('candidate_status', 'PENDING_APPROVAL'));
         $candidateIds = $order->changeCandidates->pluck('id');
@@ -1485,6 +1505,8 @@ class SalesOrderController extends Controller
             'view_attachment' => in_array('sales_order.view_attachment', $codes, true),
             'upload_attachment' => $draft && in_array('sales_order.upload_attachment', $codes, true),
             'delete_attachment' => $draft && in_array('sales_order.delete_attachment', $codes, true),
+            'adjust_priority' => ! in_array($order->order_status, ['cancelled', 'closed'], true)
+                && in_array('sales_order.priority', $codes, true),
         ];
     }
 

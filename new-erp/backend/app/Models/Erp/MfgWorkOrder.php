@@ -10,7 +10,7 @@ class MfgWorkOrder extends MasterModel
     protected $casts = [
         'planned_qty' => 'decimal:4', 'completed_qty' => 'decimal:4', 'stored_qty' => 'decimal:4',
         'bom_snapshot' => 'array', 'routing_snapshot' => 'array', 'configuration_snapshot' => 'array',
-        'is_urgent' => 'boolean', 'business_version' => 'integer',
+        'is_urgent' => 'boolean', 'priority' => 'integer', 'business_version' => 'integer',
         'planned_start_date' => 'date:Y-m-d', 'planned_finish_date' => 'date:Y-m-d', 'required_date' => 'date:Y-m-d',
         'released_at' => 'datetime', 'started_at' => 'datetime', 'completed_at' => 'datetime',
         'closed_at' => 'datetime', 'paused_at' => 'datetime', 'cancelled_at' => 'datetime',

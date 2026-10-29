@@ -26,7 +26,7 @@
             <div class="m-head">
               <span>
                 <span class="lk mono" @click="openWorkOrder(r.work_order_id)">{{ r.work_order_no }}</span>
-                <span v-if="r.is_urgent" class="chip c-r">加急</span>
+                <span v-if="r.priority === 1" class="chip c-r">特急</span><span v-else-if="r.is_urgent" class="chip c-r">加急</span><span v-else-if="r.priority === 4" class="chip">可延后</span>
                 <b>{{ r.operation_name }}</b> · {{ r.item_name }}
               </span>
               <span v-if="canManage" class="lk" @click="openPrepare(r)">配料</span>

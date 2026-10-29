@@ -15,7 +15,7 @@
               {{ tech.status === 'pending' ? '待工艺确认' : '已下发车间' }}
             </el-tag>
             <el-tag size="small" type="info" effect="plain">定制工单</el-tag>
-            <el-tag v-if="wo.is_urgent" size="small" type="danger" effect="dark" class="urgent-tag">加急制令</el-tag>
+            <el-tag v-if="wo.is_urgent || wo.priority === 4" size="small" :type="wo.priority === 4 ? 'info' : 'danger'" effect="dark" class="urgent-tag">{{ wo.priority_label || '加急' }}</el-tag>
           </div>
           <div class="sub-row">
             <span>工单编号：<b class="mono-code">{{ wo.work_order_no || '-' }}</b></span>

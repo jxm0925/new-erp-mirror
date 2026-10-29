@@ -42,7 +42,7 @@
                 <paged-record-select v-model="form.warehouse_id" entity="warehouses" :params="{ status: 'enabled' }" title="选择入库仓库" placeholder="默认用物料的默认仓库" size="medium" />
               </label>
               <label class="span4"><span>备注</span><el-input v-model="form.remark" maxlength="500" placeholder="例如：双十一前备货" /></label>
-              <label class="span4"><el-checkbox v-model="form.is_urgent">加急</el-checkbox></label>
+              <label class="span4"><span>优先级</span><el-radio-group v-model="form.priority" size="small"><el-radio-button :label="1">特急</el-radio-button><el-radio-button :label="2">加急</el-radio-button><el-radio-button :label="3">普通</el-radio-button><el-radio-button :label="4">可延后</el-radio-button></el-radio-group></label>
             </div>
           </div>
 
@@ -125,7 +125,7 @@ export default {
   name: 'WorkOrderForm',
   components: { PagedRecordSelect },
   data: () => ({
-    form: { item_id: null, planned_qty: 1, stock_reason: 'alert', planned_start_date: day(0), planned_finish_date: day(7), owner_legacy_id: null, warehouse_id: null, bom_id: null, routing_id: null, remark: '', is_urgent: false },
+    form: { item_id: null, planned_qty: 1, stock_reason: 'alert', planned_start_date: day(0), planned_finish_date: day(7), owner_legacy_id: null, warehouse_id: null, bom_id: null, routing_id: null, remark: '', priority: 3 },
     items: [], itemLoading: false, owners: [], preview: null, previewLoading: false, saving: '', timer: null, previewSeq: 0
   }),
   computed: {

@@ -41,8 +41,8 @@ final class TechService
         }
         $counts = MfgWorkOrderTech::query()->join('erp_mfg_work_orders as wo', 'wo.id', '=', 'erp_mfg_work_order_techs.work_order_id')
             ->where('wo.status', '!=', 'cancelled')->selectRaw('erp_mfg_work_order_techs.status AS s, COUNT(*) AS c')->groupBy('erp_mfg_work_order_techs.status')->pluck('c', 's');
-        $page = $query->orderByRaw("FIELD(erp_mfg_work_order_techs.status, 'pending', 'released')")->orderByDesc('wo.is_urgent')
-            ->orderBy('wo.required_date')->orderByDesc('erp_mfg_work_order_techs.id')
+        $page = $query->orderByRaw("FIELD(erp_mfg_work_order_techs.status, 'pending', 'released')")->orderBy('wo.priority')
+            ->orderBy('wo.id')->orderBy('erp_mfg_work_order_techs.id')
             ->paginate(min(100, max(1, (int) ($filters['per_page'] ?? 10))));
         $drawings = MfgDrawing::query()->whereIn('work_order_id', $page->getCollection()->pluck('work_order_id'))->where('status', 'active')
             ->selectRaw('work_order_id, COUNT(*) AS c')->groupBy('work_order_id')->pluck('c', 'work_order_id');
@@ -53,7 +53,7 @@ final class TechService
                 'work_order_status' => $wo->status, 'work_order_status_label' => WorkOrderQueryService::STATUS_LABELS[$wo->status] ?? $wo->status,
                 'sales_order_no' => $wo->sales_order_no, 'customer_name' => $wo->customer_name, 'product_name' => $wo->product_name ?: $wo->item_name,
                 'sku_code' => $wo->sku_code, 'sku_name' => $wo->sku_name, 'planned_qty' => (float) $wo->planned_qty, 'unit_name' => $wo->unit_name,
-                'required_date' => $wo->required_date?->toDateString(), 'is_urgent' => (bool) $wo->is_urgent,
+                'required_date' => $wo->required_date?->toDateString(), 'is_urgent' => (bool) $wo->is_urgent, 'priority' => (int) ($wo->priority ?: 3), 'priority_label' => \App\Services\Erp\SalesOrderPriorityService::label((int) ($wo->priority ?: 3)),
                 'custom_description' => $this->customDescription($wo), 'drawing_count' => (int) ($drawings[$wo->id] ?? 0),
                 'bom_confirmed' => $this->bomConfirmed($tech, $wo), 'tech_owner_name' => $tech->tech_owner_name,
                 'released_at' => $tech->released_at?->toDateTimeString(), 'drawings_updated_at' => $tech->drawings_updated_at?->toDateTimeString(),
@@ -111,7 +111,7 @@ final class TechService
             'work_order' => [
                 'id' => $wo->id, 'work_order_no' => $wo->work_order_no, 'status' => $wo->status, 'status_label' => WorkOrderQueryService::STATUS_LABELS[$wo->status] ?? $wo->status,
                 'item_name' => $wo->item_name, 'item_code' => $wo->item_code, 'product_name' => $wo->product_name ?: $wo->item_name, 'sku_code' => $wo->sku_code, 'sku_name' => $wo->sku_name,
-                'planned_qty' => (float) $wo->planned_qty, 'unit_name' => $wo->unit_name, 'required_date' => $wo->required_date?->toDateString(), 'is_urgent' => (bool) $wo->is_urgent,
+                'planned_qty' => (float) $wo->planned_qty, 'unit_name' => $wo->unit_name, 'required_date' => $wo->required_date?->toDateString(), 'is_urgent' => (bool) $wo->is_urgent, 'priority' => (int) ($wo->priority ?: 3), 'priority_label' => \App\Services\Erp\SalesOrderPriorityService::label((int) ($wo->priority ?: 3)),
                 'customer_name' => $wo->customer_name, 'sales_order_id' => $wo->sales_order_id, 'sales_order_no' => $wo->sales_order_no, 'sales_order_line_no' => $wo->sales_order_line_no,
                 'owner_name' => $wo->owner_name, 'block_reason' => $wo->block_reason, 'started' => (bool) $wo->started_at,
             ],

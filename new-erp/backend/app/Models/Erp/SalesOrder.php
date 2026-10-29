@@ -6,6 +6,17 @@ class SalesOrder extends MasterModel
 {
     protected $table = 'erp_sales_orders';
 
+    protected static function booted(): void
+    {
+        // 销售勾的加急 / 延期自动对应优先级（销售负责人单独调过的不再自动改）；优先级变了，没做完的工单跟着改。
+        static::saving(function (SalesOrder $order): void {
+            if (! $order->exists || $order->isDirty(['is_urgent', 'is_delay', 'delay'])) \App\Services\Erp\SalesOrderPriorityService::applyFlags($order);
+        });
+        static::updated(function (SalesOrder $order): void {
+            if ($order->wasChanged('priority')) app(\App\Services\Erp\SalesOrderPriorityService::class)->syncWorkOrders($order);
+        });
+    }
+
     protected $casts = [
         'order_flags' => 'array',
         'crm_snapshot' => 'array',
@@ -21,6 +32,8 @@ class SalesOrder extends MasterModel
         'required_delivery_date' => 'date:Y-m-d',
         'delay_date' => 'date:Y-m-d',
         'is_urgent' => 'boolean',
+        'priority' => 'integer',
+        'priority_adjusted_at' => 'datetime:Y-m-d H:i:s',
         'quickly' => 'boolean',
         'is_customized' => 'boolean',
         'is_special_customized' => 'boolean',

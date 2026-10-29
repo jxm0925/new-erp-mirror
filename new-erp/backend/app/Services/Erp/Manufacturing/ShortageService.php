@@ -46,7 +46,7 @@ final class ShortageService
                 $mine = array_values(array_filter($row['work_orders'], fn ($w) => $w['id'] === $woId));
                 if (! $mine) return null;
                 return ['work_orders' => $mine, 'need_qty' => $mine[0]['need_qty'], 'shortage_qty' => $mine[0]['shortage_qty'],
-                    'earliest_date' => $mine[0]['planned_start_date'], 'is_urgent' => $mine[0]['is_urgent']] + $row;
+                    'earliest_date' => $mine[0]['planned_start_date'], 'is_urgent' => $mine[0]['is_urgent'], 'priority' => $mine[0]['priority'] ?? 3] + $row;
             }, $rows)));
         }
         if (($filters['only_short'] ?? true) !== false) $rows = array_values(array_filter($rows, fn ($r) => $r['shortage_qty'] > 0.00001));
@@ -55,8 +55,8 @@ final class ShortageService
             $rows = array_values(array_filter($rows, fn ($r) => str_contains((string) $r['item_code'], $keyword) || str_contains((string) $r['item_name'], $keyword)
                 || collect($r['work_orders'])->contains(fn ($w) => str_contains((string) $w['work_order_no'], $keyword))));
         }
-        usort($rows, fn ($a, $b) => [$b['is_urgent'] ? 1 : 0, $a['earliest_date'] ?? '9999-12-31', (string) $a['item_code']]
-            <=> [$a['is_urgent'] ? 1 : 0, $b['earliest_date'] ?? '9999-12-31', (string) $b['item_code']]);
+        usort($rows, fn ($a, $b) => [$a['priority'] ?? 3, $a['earliest_date'] ?? '9999-12-31', (string) $a['item_code']]
+            <=> [$b['priority'] ?? 3, $b['earliest_date'] ?? '9999-12-31', (string) $b['item_code']]);
         $perPage = min(100, max(1, (int) ($filters['per_page'] ?? 10)));
         $page = max(1, (int) ($filters['page'] ?? 1));
         $short = array_filter($rows, fn ($r) => $r['shortage_qty'] > 0.00001);
@@ -89,7 +89,7 @@ final class ShortageService
         $query = DB::table('erp_mfg_work_order_materials as m')->join('erp_mfg_work_orders as w', 'w.id', '=', 'm.work_order_id')
             ->whereIn('w.status', self::WORK_ORDER_STATUSES)->where('m.participates_in_kitting', true)->whereColumn('m.required_qty', '>', 'm.issued_qty')
             ->select(['m.work_order_id', 'm.component_item_id', 'm.component_item_code', 'm.component_item_name', 'm.unit_name', 'm.required_qty', 'm.issued_qty',
-                'w.work_order_no', 'w.status', 'w.item_name', 'w.is_urgent', 'w.planned_start_date', 'w.warehouse_id']);
+                'w.work_order_no', 'w.status', 'w.item_name', 'w.is_urgent', 'w.priority', 'w.planned_start_date', 'w.warehouse_id']);
         if ($onlyItemIds !== null) $query->whereIn('m.component_item_id', $onlyItemIds ?: [0]);
         $lines = $query->get();
         if ($lines->isEmpty()) return [];
@@ -109,12 +109,12 @@ final class ShortageService
                 $f = $ls->first();
                 return ['id' => (int) $f->work_order_id, 'work_order_no' => $f->work_order_no, 'status' => $f->status,
                     'status_label' => WorkOrderQueryService::STATUS_LABELS[$f->status] ?? $f->status, 'item_name' => $f->item_name,
-                    'is_urgent' => (bool) $f->is_urgent, 'planned_start_date' => $f->planned_start_date ? substr((string) $f->planned_start_date, 0, 10) : null,
+                    'is_urgent' => (bool) $f->is_urgent, 'priority' => (int) ($f->priority ?: 3), 'planned_start_date' => $f->planned_start_date ? substr((string) $f->planned_start_date, 0, 10) : null,
                     'warehouse_id' => $f->warehouse_id ? (int) $f->warehouse_id : null,
                     'need_qty' => round($ls->sum(fn ($l) => (float) $l->required_qty - (float) $l->issued_qty), 4)];
             })->values()->all();
-            usort($demands, fn ($a, $b) => [$b['is_urgent'] ? 1 : 0, $a['planned_start_date'] ?? '9999-12-31', $a['id']]
-                <=> [$a['is_urgent'] ? 1 : 0, $b['planned_start_date'] ?? '9999-12-31', $b['id']]);
+            // 库存先分给优先级高的工单，同级先建的先分。
+            usort($demands, fn ($a, $b) => [$a['priority'], $a['id']] <=> [$b['priority'], $b['id']]);
             $stock = max(0, (float) ($available[$itemId] ?? 0));
             $coming = max(0, (float) ($transit[$itemId] ?? 0));
             $ahead = [];
@@ -139,7 +139,7 @@ final class ShortageService
                 'available_qty' => round((float) ($available[$itemId] ?? 0), 4), 'in_transit_qty' => round((float) ($transit[$itemId] ?? 0), 4),
                 'in_transit_detail' => $projection[(int) $itemId] ?? null,
                 'shortage_qty' => round(array_sum(array_column($demands, 'shortage_qty')), 4),
-                'earliest_date' => $dates ? min($dates) : null, 'is_urgent' => collect($short)->contains('is_urgent', true),
+                'earliest_date' => $dates ? min($dates) : null, 'is_urgent' => collect($short)->contains('is_urgent', true), 'priority' => $short ? (int) collect($short)->min('priority') : 3,
                 'default_warehouse_id' => $item->default_warehouse_id ? (int) $item->default_warehouse_id : null,
                 'work_orders' => $demands, 'requests' => array_values($linked[(int) $itemId] ?? []),
             ];

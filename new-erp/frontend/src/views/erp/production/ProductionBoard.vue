@@ -93,7 +93,7 @@
             <el-option v-for="u in (board ? board.owner_options : [])" :key="u.id" :label="u.name" :value="u.id" />
           </el-select>
           <el-checkbox v-model="filters.urgent_only" border size="small" class="theme-checkbox" @change="load(false)">
-            只看加急
+            只看特急/加急
           </el-checkbox>
           <el-checkbox v-model="filters.custom_only" border size="small" class="theme-checkbox" @change="load(false)">
             只看定制
@@ -128,7 +128,7 @@
                   <span class="mono-code">{{ c.work_order_no }}</span>
                   <div class="card-badges">
                     <span v-if="c.paused" class="chip chip-paused">暂停</span>
-                    <span v-if="c.is_urgent" class="chip chip-urgent">加急</span>
+                    <span v-if="c.priority === 1" class="chip chip-urgent">特急</span><span v-else-if="c.is_urgent" class="chip chip-urgent">加急</span><span v-else-if="c.priority === 4" class="chip">可延后</span>
                     <span v-if="c.is_custom" class="chip chip-custom">定制{{ c.has_drawing ? ' (附图纸)' : '' }}</span>
                   </div>
                 </div>

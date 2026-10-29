@@ -111,8 +111,8 @@
               <el-tag size="mini" :type="s.row.status === 'pending' ? 'warning' : 'success'" effect="plain">
                 {{ s.row.status === 'pending' ? '待工艺确认' : '已下发车间' }}
               </el-tag>
-              <el-tag v-if="s.row.is_urgent" size="mini" type="danger" effect="dark" class="urgent-tag">
-                加急
+              <el-tag v-if="s.row.is_urgent || s.row.priority === 4" size="mini" :type="s.row.priority === 4 ? 'info' : 'danger'" effect="dark" class="urgent-tag">
+                {{ s.row.priority_label || '加急' }}
               </el-tag>
               <div v-if="s.row.status === 'released'" class="sub-label">工单{{ s.row.work_order_status_label }}</div>
             </template>
@@ -150,7 +150,7 @@
               <el-tag size="mini" :type="row.status === 'pending' ? 'warning' : 'success'" effect="plain">
                 {{ row.status === 'pending' ? '待工艺确认' : '已下发车间' }}
               </el-tag>
-              <el-tag v-if="row.is_urgent" size="mini" type="danger" effect="dark">加急</el-tag>
+              <el-tag v-if="row.is_urgent || row.priority === 4" size="mini" :type="row.priority === 4 ? 'info' : 'danger'" effect="dark">{{ row.priority_label || '加急' }}</el-tag>
             </div>
           </div>
           <div class="prod-name">{{ productName(row) }} <b>× {{ qty(row.planned_qty) }} {{ row.unit_name || '台' }}</b></div>

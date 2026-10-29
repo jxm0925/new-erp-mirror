@@ -243,7 +243,7 @@
                 <span class="code-mono wo-no-link" @click.stop="open(row)">
                   <i class="el-icon-document" /> {{ row.work_order_no }}
                 </span>
-                <span v-if="row.is_urgent" class="urgent-badge">加急</span>
+                <span v-if="row.priority === 1" class="urgent-badge">特急</span><span v-else-if="row.is_urgent" class="urgent-badge">加急</span><span v-else-if="row.priority === 4" class="urgent-badge later-badge">可延后</span>
               </div>
               <div class="product-title-row">
                 <span class="product-name font-medium">{{ productName(row) }}</span>
@@ -353,7 +353,7 @@
             <span class="code-mono mobile-wo-no">{{ row.work_order_no }}</span>
             <div class="mobile-status-wrap">
               <el-tag size="mini" :type="unitStatusType(row.status)" effect="plain">{{ row.status_label }}</el-tag>
-              <span v-if="row.is_urgent" class="urgent-badge">加急</span>
+              <span v-if="row.priority === 1" class="urgent-badge">特急</span><span v-else-if="row.is_urgent" class="urgent-badge">加急</span><span v-else-if="row.priority === 4" class="urgent-badge later-badge">可延后</span>
             </div>
           </div>
           <div class="mobile-product-title font-medium">
@@ -921,6 +921,12 @@ export default {
   font-size: 11px;
   font-weight: 600;
   line-height: 1.2;
+}
+
+.urgent-badge.later-badge {
+  background: #f3f4f6;
+  color: #6b7280;
+  border-color: #d1d5db;
 }
 
 .product-title-row {

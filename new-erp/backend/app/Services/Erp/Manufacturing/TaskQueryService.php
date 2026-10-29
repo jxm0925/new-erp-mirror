@@ -94,7 +94,7 @@ final class TaskQueryService
                 'id' => $wo->id, 'work_order_no' => $wo->work_order_no, 'status' => $wo->status, 'status_label' => WorkOrderQueryService::STATUS_LABELS[$wo->status] ?? $wo->status,
                 'pause_reason' => $wo->pause_reason, 'product_name' => $wo->product_name ?: $wo->item_name, 'item_name' => $wo->item_name, 'sku_code' => $wo->sku_code, 'sku_name' => $wo->sku_name,
                 'customer_name' => $wo->customer_name, 'sales_order_no' => $wo->sales_order_no, 'planned_qty' => (float) $wo->planned_qty, 'unit_name' => $wo->unit_name,
-                'planned_finish_date' => $wo->planned_finish_date?->toDateString(), 'is_urgent' => (bool) $wo->is_urgent,
+                'planned_finish_date' => $wo->planned_finish_date?->toDateString(), 'is_urgent' => (bool) $wo->is_urgent, 'priority' => (int) ($wo->priority ?: 3), 'priority_label' => \App\Services\Erp\SalesOrderPriorityService::label((int) ($wo->priority ?: 3)),
                 'special_requirement' => $wo->special_requirement, 'custom_description' => $tech ? $this->tech->customDescription($wo) : null, 'is_custom' => (bool) $tech,
             ],
             'units' => $units->map(fn ($u) => [
@@ -185,11 +185,11 @@ final class TaskQueryService
                 ->orWhere('sku_code', 'like', $like)->orWhere('customer_name', 'like', $like)
                 ->orWhereExists(fn ($u) => $u->selectRaw('1')->from('erp_mfg_work_order_units as u')->whereColumn('u.work_order_id', 'erp_mfg_work_orders.id')->where('u.serial_no', 'like', $like)));
         }
-        if (! empty($filters['urgent_only'])) $woQuery->where('is_urgent', true);
+        if (! empty($filters['urgent_only'])) $woQuery->where('priority', '<=', \App\Services\Erp\SalesOrderPriorityService::URGENT);
         if (! empty($filters['custom_only'])) $woQuery->whereExists(fn ($q) => $q->selectRaw('1')->from('erp_mfg_work_order_techs as t')->whereColumn('t.work_order_id', 'erp_mfg_work_orders.id'));
         if ($owner = (int) ($filters['owner_legacy_id'] ?? 0)) $woQuery->whereExists(fn ($q) => $q->selectRaw('1')->from('erp_mfg_task_participants as p')
             ->whereColumn('p.work_order_id', 'erp_mfg_work_orders.id')->where('p.employee_legacy_id', $owner)->where('p.is_active', true));
-        $wos = $woQuery->with(['operations', 'item:id,item_type'])->orderByDesc('is_urgent')->orderBy('planned_finish_date')->limit(300)->get()->keyBy('id');
+        $wos = $woQuery->with(['operations', 'item:id,item_type'])->orderBy('priority')->orderBy('id')->limit(300)->get()->keyBy('id');
         $itemScopes = Item::query()->whereIn('id', $wos->pluck('item_id'))->pluck('management_scope', 'id');
         $woIds = $wos->keys()->all() ?: [0];
         $units = MfgWorkOrderUnit::query()->whereIn('work_order_id', $woIds)->whereIn('status', array_merge(TaskService::SELECTABLE, ['completed']))->orderBy('unit_no')->get();
@@ -218,7 +218,7 @@ final class TaskQueryService
             $columns[$key]['cards'][] = [
                 'operation_id' => $op->id, 'operation_name' => $op->operation_name, 'work_order_id' => $wo->id, 'work_order_no' => $wo->work_order_no,
                 'product_name' => $wo->product_name ?: $wo->item_name, 'sku_name' => $wo->sku_name, 'sku_code' => $wo->sku_code, 'customer_name' => $wo->customer_name,
-                'planned_qty' => (float) $wo->planned_qty, 'done_qty' => (float) $op->completed_qty, 'is_urgent' => (bool) $wo->is_urgent,
+                'planned_qty' => (float) $wo->planned_qty, 'done_qty' => (float) $op->completed_qty, 'is_urgent' => (bool) $wo->is_urgent, 'priority' => (int) ($wo->priority ?: 3), 'priority_label' => \App\Services\Erp\SalesOrderPriorityService::label((int) ($wo->priority ?: 3)),
                 'is_custom' => isset($techs[$wo->id]), 'has_drawing' => isset($drawingWos[$wo->id]), 'paused' => $wo->status === 'paused', 'pause_reason' => $wo->pause_reason,
                 'planned_finish_date' => $wo->planned_finish_date?->toDateString(),
                 'overdue' => $wo->planned_finish_date && $wo->planned_finish_date->lt(now()->startOfDay()),
@@ -333,11 +333,11 @@ final class TaskQueryService
                     ->orWhereExists(fn ($w) => $w->selectRaw('1')->from('erp_production_operation_workers as pw')->whereColumn('pw.operation_id', 'op.operation_id')->where('pw.employee_legacy_id', $me))
                     ->orWhereNotExists(fn ($w) => $w->selectRaw('1')->from('erp_production_operation_workers as pw2')->whereColumn('pw2.operation_id', 'op.operation_id')))
                 ->orderByRaw("EXISTS (SELECT 1 FROM erp_mfg_work_order_units AS hu WHERE hu.current_operation_id = op.id AND hu.status IN ('waiting', 'in_progress', 'rework')) DESC")
-                ->orderByDesc('wo.is_urgent')->orderBy('wo.planned_finish_date')->orderBy('op.sequence');
+                ->orderBy('wo.priority')->orderBy('wo.id')->orderBy('op.sequence');
         } else {
             $query->where(fn ($q) => $q->whereIn('wo.status', self::OPEN)
                 ->orWhere(fn ($repair) => $repair->where('wo.status', 'completed')->whereIn('wo.id', DB::table('erp_shipment_reworks')->where('status', 'in_progress')->whereNotNull('work_order_id')->select('work_order_id'))))->where('op.status', '!=', 'done')->whereExists(fn ($q) => $participant($q, true))
-                ->orderByDesc('wo.is_urgent')->orderBy('wo.planned_finish_date')->orderBy('op.sequence');
+                ->orderBy('wo.priority')->orderBy('wo.id')->orderBy('op.sequence');
         }
         if ($keyword = trim((string) ($filters['keyword'] ?? ''))) {
             $like = '%'.$keyword.'%';
@@ -363,7 +363,7 @@ final class TaskQueryService
         return [
             'id' => $op->id, 'operation_name' => $op->operation_name, 'stage_name' => $op->stage_name, 'status' => $op->status,
             'work_order_id' => $wo->id, 'work_order_no' => $wo->work_order_no, 'product_name' => $wo->product_name ?: $wo->item_name, 'sku_name' => $wo->sku_name,
-            'customer_name' => $wo->customer_name, 'is_urgent' => (bool) $wo->is_urgent, 'is_custom' => (bool) $tech,
+            'customer_name' => $wo->customer_name, 'is_urgent' => (bool) $wo->is_urgent, 'priority' => (int) ($wo->priority ?: 3), 'priority_label' => \App\Services\Erp\SalesOrderPriorityService::label((int) ($wo->priority ?: 3)), 'is_custom' => (bool) $tech,
             'has_drawing' => MfgDrawing::query()->where('work_order_id', $wo->id)->where('status', 'active')->exists(),
             'drawings_updated' => (bool) ($tech?->drawings_updated_at && $myFirst && $tech->drawings_updated_at->gt($myFirst)),
             'planned_finish_date' => $wo->planned_finish_date?->toDateString(), 'planned_qty' => (float) $wo->planned_qty, 'done_qty' => (float) $op->completed_qty,

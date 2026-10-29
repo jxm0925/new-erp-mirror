@@ -32,6 +32,7 @@ export const previewSalesOrderEditImpact = (id, data) => api.post(`/v1/erp/sales
 export const submitSalesOrderEditImpact = (id, data) => api.post(`/v1/erp/sales/orders/${id}/edit-impact/submit`, data)
 // 销售按客户约定修改开工定金；草稿和已确认订单均立即生效并留痕。
 export const updateSalesOrderAgreedDeposit = (id, data) => api.put(`/v1/erp/sales/orders/${id}/agreed-deposit`, data)
+export const adjustSalesOrderPriority = (id, data) => api.post(`/v1/erp/sales/orders/${id}/priority`, data)
 export const listSalesOrderChangeCandidates = (id, params) => api.get(`/v1/erp/sales/orders/${id}/change-candidates`, { params })
 export const decideSalesOrderChangeCandidate = (id, candidateId, data) => api.post(`/v1/erp/sales/orders/${id}/change-candidates/${candidateId}/decision`, data)
 // 销售订单详情后续接入退货记录时使用；服务端按订单数据权限分页返回。

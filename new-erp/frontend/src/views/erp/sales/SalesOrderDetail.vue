@@ -22,6 +22,7 @@ Design status: 新增“订单阶段提示条”（基础档案风格），其�
             <el-tag size="small" :type="statusTag(order.production_confirm_status)" effect="plain">
               生产确认: {{ statusText(order.production_confirm_status) }}
             </el-tag>
+            <el-tag v-if="order.priority && order.priority !== 3" size="small" :type="priorityTagType(order.priority)" effect="dark">{{ order.priority_label }}</el-tag>
             <span class="header-pill header-pill--version">V{{ currentVersion }}</span>
           </div>
         </div>
@@ -50,6 +51,25 @@ Design status: 新增“订单阶段提示条”（基础档案风格），其�
     <el-alert v-if="order.order_status === 'confirmed' && order.change_eligibility && !order.change_eligibility.allowed" class="change-block-alert" type="warning" :closable="false" show-icon :title="`当前订单不能原地变更：${order.change_eligibility.reason}`" />
     <el-alert v-if="$route.query.changed" class="change-success-alert" type="success" :closable="false" show-icon title="订单已变更，请重新安排备货或进行订单生产确认。" />
     <el-alert v-if="order.pending_change_candidate" class="change-success-alert" type="warning" :closable="false" show-icon :title="`存在待审核 Candidate V${order.pending_change_candidate.candidate_version}：正式订单、库存预留以及生产和交付安排尚未变化。`" />
+
+    <!-- 调整优先级 -->
+    <el-dialog title="调整订单优先级" :visible.sync="priority.visible" width="min(460px, calc(100vw - 32px))" :close-on-click-modal="false">
+      <el-alert type="info" :closable="false" show-icon title="没做完的工单（含半成品、补做工单）会一起改，车间按优先级排先后，同级先建的先做。" />
+      <el-form label-width="72px" class="priority-form">
+        <el-form-item label="优先级">
+          <el-radio-group v-model="priority.value">
+            <el-radio-button v-for="p in priorityOptions" :key="p.value" :label="p.value">{{ p.label }}</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="原因">
+          <el-input v-model="priority.reason" type="textarea" :rows="2" maxlength="500" show-word-limit placeholder="例如：客户催货，月底前要发" />
+        </el-form-item>
+      </el-form>
+      <span slot="footer">
+        <el-button @click="priority.visible = false">取消</el-button>
+        <el-button type="primary" :loading="priority.saving" @click="savePriority">保存</el-button>
+      </span>
+    </el-dialog>
 
     <!-- 锁定库存弹窗 -->
     <el-dialog title="确认锁定库存" :visible.sync="inventoryLockVisible" width="min(620px, calc(100vw - 32px))" :close-on-click-modal="false">
@@ -158,6 +178,14 @@ Design status: 新增“订单阶段提示条”（基础档案风格），其�
           <div class="kv-item">
             <span class="kv-label">原始单号</span>
             <span class="kv-value font-mono">{{ order.origin_order_no || '-' }}</span>
+          </div>
+          <div class="kv-item">
+            <span class="kv-label">优先级</span>
+            <span class="kv-value">
+              <el-tag size="mini" :type="priorityTagType(order.priority)">{{ order.priority_label || '普通' }}</el-tag>
+              <small v-if="order.priority_adjusted_by_name" class="text-muted">{{ order.priority_adjusted_by_name }} 调整{{ order.priority_reason ? `：${order.priority_reason}` : '' }}</small>
+              <el-button v-if="order.allowed_actions && order.allowed_actions.adjust_priority" type="text" size="mini" @click="openPriority">调整</el-button>
+            </span>
           </div>
           <div class="kv-item">
             <span class="kv-label">生产确认状态</span>
@@ -591,7 +619,7 @@ Design status: 新增“订单阶段提示条”（基础档案风格），其�
 <script>
 import { erpDateTime } from '../../../utils/dateTime'
 import cachedPageRoute from '@/utils/cachedPageRoute'
-import { confirmSalesOrder, formalConfirmSalesOrder, cancelSalesOrder, previewShortCloseSalesOrder, shortCloseSalesOrder, deleteSalesOrderAttachment, deleteSalesOrderDraft, downloadSalesOrderAttachment, getSalesOrder, listSalesOrderChanges, lockSalesOrderInventory } from '@/api/erp/sales'
+import { confirmSalesOrder, formalConfirmSalesOrder, cancelSalesOrder, previewShortCloseSalesOrder, shortCloseSalesOrder, deleteSalesOrderAttachment, deleteSalesOrderDraft, downloadSalesOrderAttachment, getSalesOrder, listSalesOrderChanges, lockSalesOrderInventory, adjustSalesOrderPriority } from '@/api/erp/sales'
 import SalesOrderAttachmentPreviewDialog from '@/components/sales/SalesOrderAttachmentPreviewDialog.vue'
 import SalesOrderFinancePanel from '@/components/sales/SalesOrderFinancePanel.vue'
 import SalesOrderInvoicePanel from '@/components/sales/SalesOrderInvoicePanel.vue'
@@ -621,6 +649,8 @@ export default {
     cancelling: false,
     shortClose: { visible: false, loading: false, saving: false, preview: null, reason: '' },
     depositSaving: false,
+    priority: { visible: false, saving: false, value: 3, reason: '' },
+    priorityOptions: [{ value: 1, label: '特急' }, { value: 2, label: '加急' }, { value: 3, label: '普通' }, { value: 4, label: '可延后' }],
     inventoryLockPending: null,
     inventoryLockStorageKey: '',
     loadSequence: 0
@@ -823,6 +853,25 @@ export default {
         }
         if (Number(this.pageRoute.params.id) === Number(orderId)) this.$message.error(error.userMessage || error.message || '库存锁定失败，请重试原操作')
       } finally { this.inventoryLockBusy = false }
+    },
+    priorityTagType(p) {
+      return { 1: 'danger', 2: 'warning', 4: 'info' }[p] || ''
+    },
+    openPriority() {
+      this.priority = { visible: true, saving: false, value: this.order.priority || 3, reason: '' }
+    },
+    async savePriority() {
+      if (this.priority.saving) return
+      const orderId = this.order.id
+      this.priority.saving = true
+      try {
+        const res = await adjustSalesOrderPriority(orderId, { priority: this.priority.value, reason: this.priority.reason.trim() })
+        this.$message.success((res.data && res.data.message) || '优先级已调整')
+        this.priority.visible = false
+        if (this.isPageRouteActive && String(this.pageRoute.params.id) === String(orderId)) await this.load()
+      } catch (error) {
+        this.$message.error(error.userMessage || '优先级调整失败')
+      } finally { this.priority.saving = false }
     },
     async editAgreedDeposit() {
       if (this.depositSaving) return

@@ -104,7 +104,7 @@ final class MaterialDeliveryService
             if (! $lines) continue;
             $waiting = MfgWorkOrderUnit::query()->where('current_operation_id', $op->id)->whereIn('status', TaskService::SELECTABLE)->count();
             $rows[] = ['work_order_id' => (int) $wo->id, 'work_order_no' => $wo->work_order_no, 'item_name' => $wo->product_name ?: $wo->item_name,
-                'status_label' => WorkOrderQueryService::STATUS_LABELS[$wo->status] ?? $wo->status, 'is_urgent' => (bool) $wo->is_urgent,
+                'status_label' => WorkOrderQueryService::STATUS_LABELS[$wo->status] ?? $wo->status, 'is_urgent' => (bool) $wo->is_urgent, 'priority' => (int) ($wo->priority ?: 3), 'priority_label' => \App\Services\Erp\SalesOrderPriorityService::label((int) ($wo->priority ?: 3)),
                 'planned_start_date' => $wo->planned_start_date?->toDateString(), 'planned_qty' => (float) $wo->planned_qty,
                 'operation_id' => (int) $op->id, 'operation_name' => $op->operation_name, 'sequence' => (int) $op->sequence,
                 'covered_units' => $covered, 'waiting_units' => $waiting, 'prepared' => (bool) $prepared, 'lines' => $lines,
@@ -113,8 +113,8 @@ final class MaterialDeliveryService
         $keyword = trim((string) ($filters['keyword'] ?? ''));
         if ($keyword !== '') $rows = array_values(array_filter($rows, fn ($r) => str_contains($r['work_order_no'], $keyword) || str_contains((string) $r['item_name'], $keyword)
             || str_contains($r['operation_name'], $keyword) || str_contains($r['summary'], $keyword)));
-        usort($rows, fn ($a, $b) => [$b['waiting_units'] > 0 ? 1 : 0, $b['is_urgent'] ? 1 : 0, $a['planned_start_date'] ?? '9999-12-31', $a['work_order_id'], $a['sequence']]
-            <=> [$a['waiting_units'] > 0 ? 1 : 0, $a['is_urgent'] ? 1 : 0, $b['planned_start_date'] ?? '9999-12-31', $b['work_order_id'], $b['sequence']]);
+        usort($rows, fn ($a, $b) => [$b['waiting_units'] > 0 ? 1 : 0, $a['priority'], $a['work_order_id'], $a['sequence']]
+            <=> [$a['waiting_units'] > 0 ? 1 : 0, $b['priority'], $b['work_order_id'], $b['sequence']]);
         $perPage = min(100, max(1, (int) ($filters['per_page'] ?? 10)));
         $page = max(1, (int) ($filters['page'] ?? 1));
         return ['data' => array_slice($rows, ($page - 1) * $perPage, $perPage), 'total' => count($rows), 'current_page' => $page, 'per_page' => $perPage];
