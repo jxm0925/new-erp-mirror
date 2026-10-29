@@ -16,7 +16,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 /**
- * 仓库配料配送：库管按工序配料（按先入先用给出拣货库位/批次/编号，不扣库存）→ 发出（扣库存、记已领、编号登记到台）
+ * 仓库配料配送：库管按工序配料（按先入先用给出拣货库位/批次/编号，不扣库存）→ 发出（扣库存、记已领、编号登记到设备）
  * → 车间核对实物签收；签收前这批料不能开工。车间拒收后库管重新送达或整单收回入库。
  * 只配“专单配送”的料（工位库存、无需逐单配送的不配；板材管材走集中开料）。车间自领（收料）仍可用，会扣掉仓库正在配的量。
  * 配好即在生产内部占住拣货来源（库存行数量和编号），其他收料、配料不再分到；发出严格按原拣货单过账，来源失效须“重新拣货”。
@@ -75,7 +75,7 @@ final class MaterialDeliveryService
         return $this->issues->receivable($op, $lock)->reject(fn ($m) => in_array($m->supply_mode, self::NOT_DELIVERED, true))->values();
     }
 
-    /** 待配料：已下达未结束工单的车间工序，还有专单配送的料没领、也没在配。车间已有台在等的排前面。 */
+    /** 待配料：已下达未结束工单的车间工序，还有专单配送的料没领、也没在配。车间已有设备在等的排前面。 */
     public function pending(array $filters): array
     {
         $opIds = DB::table('erp_mfg_work_order_materials as m')->join('erp_mfg_work_orders as w', 'w.id', '=', 'm.work_order_id')
@@ -94,8 +94,9 @@ final class MaterialDeliveryService
             $prepared = self::preparedQty((int) $op->id);
             $lines = [];
             $covered = (float) $wo->planned_qty;
+            $expected = $this->issues->expectedUnits($op, $wo);
             foreach ($this->deliverable($op) as $m) {
-                $left = round((float) $m->required_qty - (float) $m->issued_qty - (float) ($prepared[$m->id] ?? 0), 4);
+                $left = round($this->issues->neededFor($m, $wo, $expected) - (float) $m->issued_qty - (float) ($prepared[$m->id] ?? 0), 4);
                 if ($left <= self::EPS) continue;
                 $covered = min($covered, $this->issues->coveredUnits($m, $wo, (float) ($prepared[$m->id] ?? 0)));
                 $lines[] = ['material_id' => (int) $m->id, 'component_item_name' => $m->component_item_name, 'unit_name' => $m->unit_name, 'qty' => $left];
@@ -135,7 +136,7 @@ final class MaterialDeliveryService
             [$wo, $op] = $this->context($workOrderId, $operationId, true);
             [$lines, $short, $done, $target] = $this->buildPlan($wo, $op, $units, true);
             if ($short) $this->fail('stock_short', '库存不够，这次配不了：'.implode('、', $short).'。可以少配几台，或找采购。');
-            if (! $lines) $this->fail('nothing_to_deliver', $op->operation_name.'这些台的料已经收齐或正在配送。');
+            if (! $lines) $this->fail('nothing_to_deliver', $op->operation_name.'这些设备的料已经收齐或正在配送。');
             $delivery = MfgMaterialDelivery::create([
                 'delivery_no' => $this->numbers->next('material_delivery', 'MDL'), 'work_order_id' => $wo->id, 'work_order_operation_id' => $op->id,
                 'status' => 'prepared', 'unit_qty' => round($target - $done, 4), 'lines' => $lines, 'remark' => $remark ? mb_substr($remark, 0, 500) : null,
@@ -179,7 +180,7 @@ final class MaterialDeliveryService
         }, 5);
     }
 
-    /** 发出：严格按拣货单的库位、批次、编号扣库存、记已领、编号登记到台；来源失效时拒绝发出，提示重新拣货。 */
+    /** 发出：严格按拣货单的库位、批次、编号扣库存、记已领、编号登记到设备；来源失效时拒绝发出，提示重新拣货。 */
     public function dispatch(int $id, object $actor): MfgMaterialDelivery
     {
         return DB::transaction(function () use ($id, $actor) {
@@ -247,7 +248,7 @@ final class MaterialDeliveryService
         }, 5);
     }
 
-    /** 整单收回入库：按原领料单批次、单价、库位冲回，冲减已领，编号从台上拆下。 */
+    /** 整单收回入库：按原领料单批次、单价、库位冲回，冲减已领，编号从设备上拆下。 */
     public function recall(int $id, string $reason, object $actor): MfgMaterialDelivery
     {
         return DB::transaction(function () use ($id, $reason, $actor) {
@@ -323,12 +324,13 @@ final class MaterialDeliveryService
         ];
     }
 
-    /** @return array{0: array, 1: string[], 2: float, 3: float} 配料明细、缺货提示、已收够台数、配到第几台 */
+    /** @return array{0: array, 1: string[], 2: float, 3: float} 配料明细、缺货提示、已收够设备数、配到第几台 */
     private function buildPlan(MfgWorkOrder $wo, MfgWorkOrderOperation $op, ?int $units, bool $lock): array
     {
         $materials = $this->deliverable($op, $lock);
         if ($materials->isEmpty()) $this->fail('no_material', $op->operation_name.'没有要仓库配送的料（板材管材走集中开料，工位库存的料不逐单配送）。');
-        $planned = (float) $wo->planned_qty;
+        // 在本道之前就报废的设备不会再到本道，不再为它们配料。
+        $planned = $this->issues->expectedUnits($op, $wo);
         $prepared = self::preparedQty((int) $op->id);
         $done = $materials->map(fn ($m) => $this->issues->coveredUnits($m, $wo, (float) ($prepared[$m->id] ?? 0)))->min();
         $target = $units ? min($planned, $done + max(1, $units)) : $planned;

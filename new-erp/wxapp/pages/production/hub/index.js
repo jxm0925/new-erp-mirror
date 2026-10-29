@@ -196,7 +196,7 @@ Page({
     const claimableCount = toNum(taskCounts.available, 0);
     const timingCount = taskItems.filter(item => Boolean(item.timing)).length;
 
-    // 2. 仓库工作台数据（Warehouse summary）
+    // 2. 仓库工作设备数据（Warehouse summary）
     const whBody = warehouseRaw.data || warehouseRaw || {};
     const whTodosRaw = (whBody.todos && whBody.todos.data) || (Array.isArray(whBody.todos) ? whBody.todos : []);
     const whTodoCount = toNum(whBody.todos && whBody.todos.total, whTodosRaw.length);

@@ -18,7 +18,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 /**
- * 工序收料：车间按台数收本道要用的料（总装收半成品和外购件，下料组收原料），收料时才扣库存。
+ * 工序收料：车间按设备数收本道要用的料（总装收半成品和外购件，下料组收原料），收料时才扣库存。
  * 本道的料没收够就不能开工；仓库没货时总装可以给下料组开半成品工单。
  * 按实物管理的板料走开料领用，不在这里收。
  */
@@ -49,8 +49,8 @@ final class MaterialIssueService
     }
 
     /**
-     * 本道的料必须已经收够到这些台。
-     * 开工时不查板材／管材（本道开工后再开料）；报合格时查，开料结算的套数要够到报的台。
+     * 本道的料必须已经收够到这些设备。
+     * 开工时不查板材／管材（本道开工后再开料）；报合格时查，开料结算的套数要够到报的设备。
      */
     public function assertReceivedForStart(MfgWorkOrder $wo, MfgWorkOrderOperation $op, Collection $units, bool $includeCutting = true): void
     {
@@ -75,14 +75,14 @@ final class MaterialIssueService
         }
         if ($waiting && ! $missing) $this->fail('material_not_signed', '仓库送来的料还没签收：'.implode('、', $waiting).'。请先核对实物并签收，再开工。');
         if ($missing) $this->fail('material_not_received', $op->operation_name.'的料还没收齐：'.implode('、', $missing).'。请先收料；仓库没货的先开半成品工单或找采购。');
-        if ($uncut) $this->fail('cutting_not_settled', $op->operation_name.'的开料还没登记够这些台：'.implode('、', array_unique($uncut)).'。请在本道「开料」里领原料、登记切出的件和余料后再报合格。');
+        if ($uncut) $this->fail('cutting_not_settled', $op->operation_name.'的开料还没登记够这些设备：'.implode('、', array_unique($uncut)).'。请在本道「开料」里领原料、登记切出的件和余料后再报合格。');
     }
 
     /**
-     * 收料：按台数收本道的料，从可用库存扣减。$units 为空就收齐整张工单。
+     * 收料：按设备数收本道的料，从可用库存扣减。$units 为空就收齐整张工单。
      * 任何一种料库存不够就整单不收，提示缺多少。
      * 追溯件默认按先入先用自动挑编号；$selections（物料行 ID => 库存序列号 ID，按装配顺序）为人工指定的编号。
-     * 收到的编号按台号顺序登记到每台的装配记录。
+     * 收到的编号按设备号顺序登记到每台的装配记录。
      */
     public function receive(int $workOrderId, int $operationId, ?int $units, ?string $remark, object $actor, array $selections = []): MfgMaterialIssue
     {
@@ -93,7 +93,8 @@ final class MaterialIssueService
             if (! $op || $op->execution_context !== 'production') $this->fail('operation_invalid', '这道不是本工单的车间工序。');
             $materials = $this->receivable($op, true);
             if ($materials->isEmpty()) $this->fail('no_material', $op->operation_name.'没有需要收的料。');
-            $planned = (float) $wo->planned_qty;
+            // 在本道之前就报废的设备不会再到本道，不再为它们收料。
+            $planned = $this->expectedUnits($op, $wo);
             $prepared = MaterialDeliveryService::preparedQty((int) $op->id);
             $done = $materials->map(fn ($m) => $this->coveredUnits($m, $wo, (float) ($prepared[$m->id] ?? 0)))->min();
             $target = $units ? min($planned, $done + max(1, $units)) : $planned;
@@ -112,7 +113,7 @@ final class MaterialIssueService
                 $plan[] = ['material' => $m, 'qty' => $qty, 'picks' => $picks];
             }
             if ($short) $this->fail('stock_short', '库存不够，这次不能收料：'.implode('、', $short).'。半成品可以在缺料处点“开半成品工单”，外购件请找采购。');
-            if (! $plan) $this->fail('already_received', $prepared ? $op->operation_name.'剩下的料仓库正在配，送到后签收即可。' : $op->operation_name.'这些台的料已经收齐了。');
+            if (! $plan) $this->fail('already_received', $prepared ? $op->operation_name.'剩下的料仓库正在配，送到后签收即可。' : $op->operation_name.'这些设备的料已经收齐了。');
             if ($extra = array_diff(array_keys($selections), collect($plan)->map(fn ($p) => (int) $p['material']->id)->all()))
                 $this->fail('serial_selection_invalid', '指定编号的物料不在本次收料范围内（物料行 '.implode('、', $extra).'），请刷新后重选。');
             $issue = $this->post($wo, $op, $plan, round($target - $done, 4), $remark, $actor, $selections);
@@ -123,7 +124,7 @@ final class MaterialIssueService
     }
 
     /**
-     * 发料过账：写领料单、冲减库存、累加已领、把编号登记到台。调用方须在事务内并已锁定工单、工序和物料行。
+     * 发料过账：写领料单、冲减库存、累加已领、把编号登记到设备。调用方须在事务内并已锁定工单、工序和物料行。
      * @param array<int, array{material: MfgWorkOrderMaterial, qty: float, picks: array}> $plan
      */
     public function post(MfgWorkOrder $wo, MfgWorkOrderOperation $op, array $plan, float $unitQty, ?string $remark, object $actor, array $selections = []): MfgMaterialIssue
@@ -210,13 +211,26 @@ final class MaterialIssueService
         if ($ids) Item::query()->whereIn('id', $ids)->orderBy('id')->lockForUpdate()->pluck('id');
     }
 
-    /** 已经到过本道的台数：本道首次合格过的 + 现在停在本道还没合格过的。 */
+    /** 已经到过本道的设备数：本道首次合格过的 + 现在停在本道还没合格过的。 */
     public function reachedUnits(MfgWorkOrderOperation $op): float
     {
         $here = MfgWorkOrderUnit::query()->where('current_operation_id', $op->id)->whereIn('status', TaskService::SELECTABLE)->pluck('id');
         $passed = $here->isEmpty() ? 0 : MfgUnitReport::query()->where('work_order_operation_id', $op->id)->where('result', 'passed')
             ->whereIn('unit_id', $here)->distinct()->count('unit_id');
         return (float) $op->completed_qty + $here->count() - $passed;
+    }
+
+    /** 这道工序最终要做多少台设备：计划数减去在本道之前就确认报废的设备。 */
+    public function expectedUnits(MfgWorkOrderOperation $op, MfgWorkOrder $wo): float
+    {
+        $planned = (float) $wo->planned_qty;
+        $before = MfgWorkOrderOperation::query()->where('work_order_id', $wo->id)->where('execution_context', 'production')
+            ->where(fn ($q) => $q->where('sequence', '<', $op->sequence)->orWhere(fn ($w) => $w->where('sequence', $op->sequence)->where('id', '<', $op->id)))
+            ->pluck('id');
+        if ($before->isEmpty()) return $planned;
+        $scrapped = \App\Models\Erp\MfgUnitReport::query()->where('work_order_id', $wo->id)->where('result', 'scrap')->where('review_status', 'approved')
+            ->whereIn('work_order_operation_id', $before)->distinct()->count('unit_id');
+        return max(0, $planned - $scrapped);
     }
 
     /** 做到第 N 台时这种料应收多少：按整单用量平均到每台，收到最后一台时按整单用量收齐。 */

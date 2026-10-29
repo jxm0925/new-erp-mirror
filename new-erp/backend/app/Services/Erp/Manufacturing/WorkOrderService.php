@@ -23,7 +23,7 @@ use Illuminate\Support\Facades\DB;
 
 /**
  * 新生产工单：订单生产确认后按“一行一张”自动建单并下达；生产主管只能调整；
- * 也可手动建备货工单。下达时按台生成序列号（未启用追溯的用台号）。BOM/路线缺失时停在“计划”，补齐后再下达。
+ * 也可手动建备货工单。下达时按设备生成序列号（未启用追溯的用设备号）。BOM/路线缺失时停在“计划”，补齐后再下达。
  */
 final class WorkOrderService
 {
@@ -298,7 +298,8 @@ final class WorkOrderService
         $orders = MfgWorkOrder::query()->where('sales_order_id', $order->id)->whereNotIn('status', ['completed', 'closed', 'cancelled'])->lockForUpdate()->get();
         foreach ($orders as $wo) {
             if ($wo->started_at) {
-                $this->log($wo, 'sales_order_changed', $wo->status, $wo->status, $reason.'；工单已开工，请生产主管决定继续做成库存还是暂停。', $actor);
+                // 已开工的不能取消：转成备货工单继续做，做完的设备进公共库存，不再留给原订单。
+                $this->convertToStock($wo, $reason, $actor);
                 $result['kept'][] = $wo->work_order_no;
                 continue;
             }
@@ -306,6 +307,87 @@ final class WorkOrderService
             $result['cancelled'][] = $wo->work_order_no;
         }
         return $result;
+    }
+
+    /** 订单工单转备货：断开与订单、生产需求的关联，保留原订单号便于追溯。调用方须已锁工单。 */
+    public function convertToStock(MfgWorkOrder $wo, string $reason, ?object $actor): void
+    {
+        if ($wo->source_type !== 'sales_order') return;
+        $orderNo = $wo->sales_order_no;
+        $wo->update(['source_type' => 'stock', 'stock_reason' => 'order_released', 'sales_order_id' => null, 'sales_order_line_id' => null,
+            'sales_fulfillment_id' => null, 'business_version' => (int) $wo->business_version + 1, 'updated_by_legacy_id' => $actor ? $this->actorId($actor) : null]);
+        $this->log($wo, 'converted_to_stock', $wo->status, $wo->status, $reason.'；工单已开工，自动转为备货工单，做完的设备进公共库存（原订单 '.$orderNo.'）', $actor, ['sales_order_no' => $orderNo]);
+    }
+
+    /** 订单工单的生产需求已作废（订单取消、短交或变更）却还没转备货的，入库前补转；返回是否转了。调用方须已锁工单。 */
+    public function convertIfDemandGone(MfgWorkOrder $wo, ?object $actor): bool
+    {
+        if ($wo->source_type !== 'sales_order') return false;
+        $alive = $wo->sales_fulfillment_id && $wo->sales_order_id
+            && SalesOrderFulfillment::query()->whereKey($wo->sales_fulfillment_id)->where('demand_status', 'confirmed')->exists()
+            && SalesOrder::query()->whereKey($wo->sales_order_id)->where('order_status', 'confirmed')->whereNull('short_closed_at')->exists();
+        if ($alive) return false;
+        $this->convertToStock($wo, '原订单的生产需求已取消', $actor);
+        return true;
+    }
+
+    /**
+     * 订单工单确认报废后，订单还差的设备自动补一张工单（沿用原工单的 BOM、定制资料和图纸）。
+     * 差多少 = 订单这一行要生产的数量 − 各张工单还能交出来的设备（计划数 − 已报废 − 已取消）。调用方须已锁原工单。
+     */
+    public function createScrapReplacement(MfgWorkOrder $wo, object $actor): ?MfgWorkOrder
+    {
+        if ($wo->source_type !== 'sales_order' || ! $wo->sales_fulfillment_id || ! $wo->sales_order_id) return null;
+        $order = SalesOrder::query()->whereKey($wo->sales_order_id)->where('order_status', 'confirmed')->whereNull('short_closed_at')->lockForUpdate()->first();
+        $fulfillment = SalesOrderFulfillment::query()->whereKey($wo->sales_fulfillment_id)->where('demand_status', 'confirmed')
+            ->where('fulfillment_type', 'production')->lockForUpdate()->first();
+        if (! $order || ! $fulfillment) return null;
+        $siblings = MfgWorkOrder::query()->where('sales_fulfillment_id', $fulfillment->id)->where('status', '!=', 'cancelled')->lockForUpdate()->get();
+        $lost = MfgWorkOrderUnit::query()->whereIn('work_order_id', $siblings->pluck('id'))->whereIn('status', ['scrapped', 'cancelled'])->count();
+        $required = (float) ($fulfillment->item_base_qty ?: $fulfillment->fulfillment_qty);
+        $gap = round($required - ((float) $siblings->sum('planned_qty') - $lost), 4);
+        if ($gap <= 0.00001) return null;
+        $item = Item::query()->with('unit')->find($wo->item_id);
+        if (! $item) return null;
+        $qty = (float) ceil($gap);
+        $child = $this->newWorkOrder([
+            'source_type' => 'sales_order', 'sales_order_id' => $wo->sales_order_id, 'sales_order_no' => $wo->sales_order_no,
+            'sales_order_line_id' => $wo->sales_order_line_id, 'sales_order_line_no' => $wo->sales_order_line_no, 'sales_fulfillment_id' => $fulfillment->id,
+            'customer_name' => $wo->customer_name, 'product_id' => $wo->product_id, 'product_name' => $wo->product_name,
+            'sku_id' => $wo->sku_id, 'sku_code' => $wo->sku_code, 'sku_name' => $wo->sku_name,
+            'configuration_snapshot' => $wo->configuration_snapshot, 'special_requirement' => $wo->special_requirement,
+            'is_urgent' => (bool) $wo->is_urgent, 'required_date' => $wo->required_date, 'warehouse_id' => $wo->warehouse_id,
+            'owner_legacy_id' => $wo->owner_legacy_id, 'owner_name' => $wo->owner_name,
+            'planned_start_date' => now()->toDateString(),
+            'planned_finish_date' => $wo->planned_finish_date && $wo->planned_finish_date->gte(now()->startOfDay()) ? $wo->planned_finish_date->toDateString() : now()->toDateString(),
+            'remark' => "补做工单 {$wo->work_order_no} 报废的设备",
+        ], $item, $qty, $actor);
+        $child->update(['bom_id' => $wo->bom_id, 'bom_snapshot' => $wo->bom_snapshot]);
+        // 定制产品：技术资料和图纸跟着原工单走，不用技术重新处理。
+        $tech = MfgWorkOrderTech::query()->where('work_order_id', $wo->id)->first();
+        if ($tech) $tech->replicate()->fill(['work_order_id' => $child->id])->save();
+        foreach (\App\Models\Erp\MfgDrawing::query()->where('work_order_id', $wo->id)->where('status', 'active')->orderBy('id')->get() as $drawing) {
+            $drawing->replicate()->fill(['work_order_id' => $child->id, 'replaced_drawing_id' => null])->save();
+        }
+        $child = $child->fresh();
+        try {
+            $this->applyPlan($child, $item, $wo->bom_id, $wo->routing_id, true);
+        } catch (WorkOrderDomainException $e) {
+            $this->applyPlan($child, $item, null, null);
+        }
+        $num = rtrim(rtrim(number_format($qty, 4, '.', ''), '0'), '.');
+        $this->log($child, 'created', null, 'planned', "工单 {$wo->work_order_no} 有设备报废，订单 {$wo->sales_order_no} 还差 {$num} 台设备，自动补做", $actor, ['replaces_work_order_id' => $wo->id]);
+        $blocked = $child->block_reason;
+        if (! $blocked) {
+            try {
+                $this->doRelease($child, $actor, true);
+            } catch (WorkOrderDomainException $e) {
+                $blocked = $e->getMessage();
+            }
+        }
+        $this->log($wo, 'scrap_replaced', $wo->status, $wo->status, "订单还差 {$num} 台设备，已自动开补做工单 {$child->work_order_no}"
+            .($blocked ? '，停在计划等处理：'.$blocked : '，已下达车间'), $actor, ['replacement_work_order_id' => $child->id]);
+        return $child->fresh();
     }
 
     /** 订单有已开工工单时，订单修改要走审核。 */
@@ -316,7 +398,7 @@ final class WorkOrderService
 
     /**
      * 每台都已入库或报废，且没有未了结的物料事项，工单就完工：
-     * 有待审核的退料、已发出未签收或被拒收的配料单时先不完工；有报废台且领过料时，要主管确认报废台已处理（申请拆回或确认无可回收）。
+     * 有待审核的退料、已发出未签收或被拒收的配料单时先不完工；有报废设备且领过料时，要主管确认报废设备已处理（申请拆回或确认无可回收）。
      * 仓库已配好还没发出的配料单在完工时自动取消（没扣库存）。
      */
     public function refreshCompletion(MfgWorkOrder $wo, ?object $actor): void
@@ -331,7 +413,7 @@ final class WorkOrderService
             $delivery->update(['status' => 'cancelled', 'closed_by_name' => '系统', 'closed_at' => now(), 'close_remark' => '工单完工，未发出的配料单自动取消']);
             $this->log($wo, 'material_delivery_cancelled', $wo->status, $wo->status, "工单完工，配料单 {$delivery->delivery_no} 未发出，自动取消", $actor, ['delivery_id' => $delivery->id]);
         }
-        // 全单已无在制台，报废等路径遗留的计时也必须在完工事务中结束。
+        // 全单已无在制设备，报废等路径遗留的计时也必须在完工事务中结束。
         foreach (MfgLaborSession::query()->where('work_order_id', $wo->id)->where('status', 'active')->lockForUpdate()->get() as $session) {
             TaskService::closeSession($session, 'completed');
         }
@@ -340,7 +422,7 @@ final class WorkOrderService
     }
 
     /**
-     * 所有台都已入库/报废后仍挡住完工的物料事项（空 = 可以完工）。$units 为各状态台数，不传则现查。
+     * 所有设备都已入库/报废后仍挡住完工的物料事项（空 = 可以完工）。$units 为各状态设备数，不传则现查。
      * @return array<int, array{type:string, text:string}>
      */
     public function completionBlockers(MfgWorkOrder $wo, ?array $units = null): array
@@ -351,11 +433,11 @@ final class WorkOrderService
         if ($returns) $out[] = ['type' => 'material_return', 'text' => '退料单 '.implode('、', $returns).' 待库管审核'];
         $deliveries = \App\Models\Erp\MfgMaterialDelivery::query()->where('work_order_id', $wo->id)->whereIn('status', ['dispatched', 'rejected'])->pluck('delivery_no')->all();
         if ($deliveries) $out[] = ['type' => 'material_delivery', 'text' => '配料单 '.implode('、', $deliveries).' 已发出未签收或被拒收，请签收或由库管收回'];
-        if ($this->scrapSettlementPending($wo, $units)) $out[] = ['type' => 'scrap_settlement', 'text' => (int) ($units['scrapped'] ?? 0).' 台报废，报废台上的料还没处理：可退料“报废台拆回”，或确认无可回收后结束工单'];
+        if ($this->scrapSettlementPending($wo, $units)) $out[] = ['type' => 'scrap_settlement', 'text' => (int) ($units['scrapped'] ?? 0).' 台报废，报废设备上的料还没处理：可退料“报废设备拆回”，或确认无可回收后结束工单'];
         return $out;
     }
 
-    /** 报废台待处理：有报废台、工单领过料、还没确认报废台已处理。 */
+    /** 报废设备待处理：有报废设备、工单领过料、还没确认报废设备已处理。 */
     public function scrapSettlementPending(MfgWorkOrder $wo, array $units): bool
     {
         if ((int) ($units['scrapped'] ?? 0) <= 0) return false;
@@ -367,25 +449,25 @@ final class WorkOrderService
             ->whereIn('status', ['rejected', 'cancelled'])->where('reviewed_at', '>=', $settled->created_at)->exists();
     }
 
-    /** 能否点“确认报废台已处理”：有待处理的报废台，且没有待审核的拆回申请（审完才知道料回没回来）。 */
+    /** 能否点“确认报废设备已处理”：有待处理的报废设备，且没有待审核的拆回申请（审完才知道料回没回来）。 */
     public function canSettleScrap(MfgWorkOrder $wo, array $units): bool
     {
         return $this->scrapSettlementPending($wo, $units) && ! \App\Models\Erp\MfgMaterialReturn::query()->where('work_order_id', $wo->id)
             ->where('return_type', 'scrapped')->where('status', 'pending')->exists();
     }
 
-    /** 主管确认报废台已处理（已申请拆回，或确认无可回收），然后按规则完工。 */
+    /** 主管确认报废设备已处理（已申请拆回，或确认无可回收），然后按规则完工。 */
     public function settleScrap(int $id, ?string $remark, object $actor): MfgWorkOrder
     {
         return DB::transaction(function () use ($id, $remark, $actor) {
             $wo = MfgWorkOrder::query()->lockForUpdate()->findOrFail($id);
             if (! in_array($wo->status, ['released', 'in_progress', 'paused'], true)) $this->fail('status_invalid', '工单不在生产中。');
             $units = MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->lockForUpdate()->pluck('status')->countBy()->all();
-            if (array_diff(array_keys($units), ['stored', 'scrapped', 'cancelled'])) $this->fail('units_open', '还有台在生产中，等所有台入库或报废后再处理报废台。');
-            if (! $this->scrapSettlementPending($wo, $units)) $this->fail('nothing_to_settle', '没有待处理的报废台。');
-            if (! $this->canSettleScrap($wo, $units)) $this->fail('scrap_return_pending', '报废台拆回申请还在等库管审核，审核通过（或驳回后不再重提）再确认。');
+            if (array_diff(array_keys($units), ['stored', 'scrapped', 'cancelled'])) $this->fail('units_open', '还有设备在生产中，等所有设备入库或报废后再处理报废设备。');
+            if (! $this->scrapSettlementPending($wo, $units)) $this->fail('nothing_to_settle', '没有待处理的报废设备。');
+            if (! $this->canSettleScrap($wo, $units)) $this->fail('scrap_return_pending', '报废设备拆回申请还在等库管审核，审核通过（或驳回后不再重提）再确认。');
             $recovered = \App\Models\Erp\MfgMaterialReturn::query()->where('work_order_id', $wo->id)->where('return_type', 'scrapped')->where('status', 'approved')->pluck('return_no')->all();
-            $this->log($wo, 'scrap_settled', $wo->status, $wo->status, '确认报废台已处理'.($recovered ? '（拆回退料 '.implode('、', $recovered).'）' : '（无可回收）').($remark ? '：'.mb_substr(trim($remark), 0, 300) : ''), $actor);
+            $this->log($wo, 'scrap_settled', $wo->status, $wo->status, '确认报废设备已处理'.($recovered ? '（拆回退料 '.implode('、', $recovered).'）' : '（无可回收）').($remark ? '：'.mb_substr(trim($remark), 0, 300) : ''), $actor);
             $this->refreshCompletion($wo, $actor);
             return $wo->fresh();
         }, 5);
@@ -498,6 +580,12 @@ final class WorkOrderService
             $plan['block_reasons'][] = '定制产品：等技术上传图纸、确认定制 BOM 后下发车间';
         if ($item->serialTrackingMode() !== 'none' && ! preg_match(SerialNumberService::PREFIX_PATTERN, (string) $item->serial_number_prefix))
             $plan['block_reasons'][] = '产品启用了序列号追溯但未维护序列号前缀，请先在物料资料里填写';
+        // 车间按一台台设备报工：数量必须是整数，一张工单最多 1000 台设备，否则下达后没设备可做。
+        $qty = (float) $wo->planned_qty;
+        if (collect($plan['operations'])->contains(fn ($op) => ($op['execution_context'] ?? null) === 'production')) {
+            if (abs($qty - round($qty)) > 0.00001) $plan['block_reasons'][] = '车间按一台台设备报工，工单数量必须是整数，请调整数量';
+            elseif ($qty > self::UNIT_LIMIT) $plan['block_reasons'][] = '一张工单最多 '.self::UNIT_LIMIT.' 台设备，请拆成几张工单';
+        }
         $wo->update([
             'bom_id' => $bom['id'] ?? $bomId, 'bom_no' => $bom['bom_no'] ?? null, 'bom_version' => isset($bom['version']) ? (string) $bom['version'] : null,
             'bom_snapshot' => $bom, 'routing_id' => $routing['routing_id'] ?? $routingId, 'routing_no' => $routing['routing_no'] ?? null,
@@ -522,7 +610,7 @@ final class WorkOrderService
                 'work_order_id' => $wo->id, 'work_order_operation_id' => $opIds[$m['operation_key']] ?? null,
             ]);
         }
-        // 未开工前换了路线：已生成的台回到新的第一道车间工序。
+        // 未开工前换了路线：已生成的设备回到新的第一道车间工序。
         if ($replace && ! $wo->started_at) {
             MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->whereIn('status', ['waiting'])->update(['current_operation_id' => $this->firstProductionOperationId($wo)]);
         }
@@ -552,8 +640,8 @@ final class WorkOrderService
     }
 
     /**
-     * 下达时按台建立追溯：整数台数才逐台跟踪。启用序列号追溯的物料直接生成正式序列号，之后不再改号；
-     * 未启用追溯的只用台号（工单号-001）区分第几台。
+     * 下达时按设备建立追溯：整数设备数才逐台跟踪。启用序列号追溯的物料直接生成正式序列号，之后不再改号；
+     * 未启用追溯的只用设备号（工单号-001）区分第几台。
      * @return array{0: list<string>, 1: string} [本次正式序列号, 日志说明]
      */
     private function generateUnits(MfgWorkOrder $wo): array
@@ -574,7 +662,7 @@ final class WorkOrderService
                 'status' => 'waiting', 'current_operation_id' => $firstOp, 'warehouse_id' => $wo->warehouse_id]);
         }
         $range = count($codes) > 1 ? $codes[0].' ~ '.end($codes) : ($codes[0] ?? '');
-        return [$serials, $range === '' ? '' : ($tracked ? '，生成序列号 ' : '，生成台号 ').$range];
+        return [$serials, $range === '' ? '' : ($tracked ? '，生成序列号 ' : '，生成设备号 ').$range];
     }
 
     private function specialRequirement($line): ?string

@@ -19,7 +19,7 @@ use App\Services\Erp\CuttingDecimal;
 use Illuminate\Support\Facades\DB;
 
 /**
- * 生产入库：最后一道合格（等入库）的台入库。
+ * 生产入库：最后一道合格（等入库）的设备入库。
  * - 半成品工单（下料组）：仓库确认入半成品仓，总装收料时再出库。
  * - 订单工单总装完、订单马上要发：自动记入“成品待发区”库位，直接走发货试水，不用仓库手工入库。
  * - 备货工单、延期发货的订单：仓库确认入成品仓。
@@ -42,11 +42,13 @@ final class ReceiptService
             $wo = MfgWorkOrder::query()->lockForUpdate()->findOrFail($workOrderId);
             $wo->setRelation('materials', \App\Models\Erp\MfgWorkOrderMaterial::query()->where('work_order_id', $wo->id)->orderBy('id')->lockForUpdate()->get());
             if (! in_array($wo->status, ['released', 'in_progress', 'paused'], true)) $this->fail('status_invalid', '工单不在生产中，不能入库。');
+            // 原订单已取消或短交：先转备货，做完的设备进公共库存。
+            $this->workOrders->convertIfDemandGone($wo, $actor);
             $ids = array_values(array_unique(array_filter(array_map('intval', $unitIds))));
-            if (! $ids) $this->fail('unit_required', '请选择要入库的台。');
+            if (! $ids) $this->fail('unit_required', '请选择要入库的设备。');
             $units = MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->whereIn('id', $ids)->orderBy('unit_no')->lockForUpdate()->get();
             if ($units->count() !== count($ids) || $units->contains(fn ($u) => $u->status !== 'completed'))
-                $this->fail('unit_invalid', '只有生产完成、等入库的台可以入库，请刷新后重选。');
+                $this->fail('unit_invalid', '只有生产完成、等入库的设备可以入库，请刷新后重选。');
             $location = Location::query()->find($locationId);
             $warehouse = Warehouse::query()->find($warehouseId);
             if (! $warehouse || ! in_array($warehouse->status, ['enabled', 'active'], true) || ($warehouse->management_scope && $warehouse->management_scope !== 'factory'))
@@ -58,13 +60,13 @@ final class ReceiptService
             if (! in_array($location->location_purpose, $purposes, true))
                 $this->fail('location_purpose_invalid', $semi ? '半成品请入普通库存库位。' : '成品请入成品库位或待发库位，不能入返修等其他用途库位。');
             $qty = $units->count();
-            if (MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('status', 'issued')->lockForUpdate()->first(['id']))
-                $this->fail('cutting_not_settled', '仍有已领入的开料批次未结算，请先确认产出与余料。');
-            foreach ($wo->materials->where('participates_in_kitting', true) as $material) {
-                // 本轮尚无早批在库／已发货成本补差账本，必须先归集整单材料，不能把早批成本漏给后批。
-                if (bccomp((string) $material->issued_qty, (string) $material->required_qty, 4) < 0)
-                    $this->fail('material_cost_incomplete', '整单实际材料成本尚未归集完整，请先完成全部冻结用料的真实收料和开料结算；已完工设备保留待入库。');
-            }
+            // 做完几台设备就能入库几台：成本按目前已领的料暂估分摊，最后一批承接全部差额。
+            // 还会继续产出的设备 = 没入库、没报废、没取消的设备（含本批）。
+            $open = MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->whereNotIn('status', ['stored', 'scrapped', 'cancelled'])->lockForUpdate()->count();
+            $lastBatch = $qty >= $open;
+            // 最后一批要把整单成本收口：开料批次必须都已登记产出和余料，否则成本会漏掉。
+            if ($lastBatch && MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('status', 'issued')->lockForUpdate()->first(['id']))
+                $this->fail('cutting_not_settled', '这是本工单最后一批设备，仍有开料批次没登记产出和余料，请先在开料里登记完再入库。');
             $actualCost = '0.0000';
             foreach (MfgMaterialIssue::query()->where('work_order_id', $wo->id)->lockForUpdate()->get() as $issue) $actualCost = bcadd($actualCost, (string) $issue->cost_amount, 4);
             // 已审核的生产退料按原单价冲回，从实际材料成本里扣除。
@@ -74,8 +76,8 @@ final class ReceiptService
             foreach (MfgReceipt::query()->where('work_order_id', $wo->id)->lockForUpdate()->get() as $oldReceipt) $alreadyCost = bcadd($alreadyCost, (string) $oldReceipt->cost_amount, 4);
             $remainingCost = bcsub($actualCost, $alreadyCost, 4);
             if (bccomp($remainingCost, '0', 4) < 0) $this->fail('cost_reconciliation_required', '已入库暂估金额超过当前实际材料净耗，请先按正式成本调整核对，不能改写历史入库。');
-            // 尾批承接全部小数尾差；人工、外协和后到费用仍未结算，不能把实际材料成本称为最终制造成本。
-            $costAmount = CuttingDecimal::share($remainingCost, bcsub((string) $wo->planned_qty, (string) $wo->stored_qty, 4), (string) $qty);
+            // 早批按已领材料暂估，尾批承接全部差额；人工、外协和后到费用仍未结算，不能把实际材料成本称为最终制造成本。
+            $costAmount = CuttingDecimal::share($remainingCost, (string) max($qty, $open), (string) $qty);
             $unitCost = bcdiv($costAmount, (string) $qty, 4);
             $receipt = MfgReceipt::create([
                 'receipt_no' => $this->numbers->next('mfg_receipt', 'MR'), 'work_order_id' => $wo->id,
@@ -110,8 +112,8 @@ final class ReceiptService
      */
     public function autoStage(int $workOrderId, array $unitIds, object $actor): ?MfgReceipt
     {
-        $wo = MfgWorkOrder::query()->findOrFail($workOrderId);
-        if (! $unitIds || ! $this->shipsImmediately($wo)) return null;
+        $wo = MfgWorkOrder::query()->lockForUpdate()->findOrFail($workOrderId);
+        if (! $unitIds || $this->workOrders->convertIfDemandGone($wo, $actor) || ! $this->shipsImmediately($wo)) return null;
         $location = $this->stagingLocation($wo);
         if (! $location) {
             $this->workOrders->log($wo, 'staging_missing', $wo->status, $wo->status, '订单待发，但尚未维护启用的待发用途库位，请仓库维护库位用途后办理入库。', $actor);

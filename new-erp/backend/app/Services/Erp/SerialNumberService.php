@@ -14,7 +14,7 @@ use Illuminate\Validation\ValidationException;
  * 统一序列号规则：前缀 + 年月 + 4 位流水，如 DF2610-0001。
  * - 前缀取物料的序列号前缀（启用追溯时必填、1～10 位英文字母、各物料不重复，见 Item::booted）。
  * - 同一前缀每月一组流水，生产工单、采购到货、库存调整共用，号从生成到报废不变。
- * - 未启用追溯的自制品不占序列号，工单里用台号（工单号-001）区分第几台。
+ * - 未启用追溯的自制品不占序列号，工单里用设备号（工单号-001）区分第几台。
  */
 final class SerialNumberService
 {
@@ -49,7 +49,7 @@ final class SerialNumberService
         }, 5);
     }
 
-    /** 工单内的台号，仅用于未启用追溯的自制品。 */
+    /** 工单内的设备号，仅用于未启用追溯的自制品。 */
     public function unitNo(MfgWorkOrder $wo, int $unitNo): string
     {
         return $wo->work_order_no.'-'.str_pad((string) $unitNo, 3, '0', STR_PAD_LEFT);

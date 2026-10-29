@@ -31,10 +31,10 @@
 
     <view class="mt-card">
       <view class="mt-card-title">
-        <text>选这次做完的台</text>
+        <text>选这次做完的设备</text>
         <view class="mt-tags"><text wx:if="{{task.selectableCount > 1}}" class="tk-link" bindtap="selectAll">{{selectedCount === task.selectableCount ? '全不选' : '全选'}}</text><text class="tk-link green" bindtap="scan">扫码</text></view>
       </view>
-      <view wx:if="{{!task.units.length}}" class="mt-muted">本道现在没有待做的台</view>
+      <view wx:if="{{!task.units.length}}" class="mt-muted">本道现在没有待做的设备</view>
       <view wx:for="{{task.units}}" wx:key="id" class="tk-unit {{item.selectable ? '' : 'off'}}" data-id="{{item.id}}" bindtap="toggleUnit">
         <view class="tk-check {{selected[item.id] ? 'on' : ''}}">{{selected[item.id] ? '✓' : ''}}</view>
         <text class="mono tk-sn">{{item.serial_no || '第 ' + item.unit_no + ' 台'}}</text>
@@ -55,7 +55,7 @@
       <block wx:if="{{showMaterials}}">
         <view wx:for="{{task.materials}}" wx:key="component_item_code" class="mt-kv"><text class="k">{{item.component_item_name}}<text wx:if="{{item.cutting}}" class="mt-tag blue">开料</text></text><text class="v">每台 {{item.unit_qty}} {{item.unit_name || ''}}</text></view>
       </block>
-      <view wx:if="{{task.allowed.material_return}}" class="tk-link mt-gap" bindtap="openMaterialReturn">退料（领多、领错、不良、报废台拆回）</view>
+      <view wx:if="{{task.allowed.material_return}}" class="tk-link mt-gap" bindtap="openMaterialReturn">退料（领多、领错、不良、报废设备拆回）</view>
     </view>
 
     <view wx:if="{{task.cutting}}" class="mt-card">
@@ -82,7 +82,7 @@
       <view wx:if="{{!task.participants.length}}" class="mt-muted">还没人接单</view>
       <view wx:for="{{task.participants}}" wx:key="employee_legacy_id" class="mt-kv">
         <text class="k">{{item.employee_name}} <text class="mt-muted">{{item.role_label}}</text></text>
-        <text class="v">{{item.share_percent !== null ? item.share_percent + '% · ' : ''}}{{item.labor_minutes}} 分<text wx:if="{{item.timing}}" class="mt-tag amber"> 计时中</text></text>
+        <text class="v">{{item.share_percent !== null ? item.share_percent + '% · ' : ''}}{{item.labor_minutes}} 分<text wx:if="{{item.timing}}" class="mt-tag amber"> 计时中</text><text wx:if="{{task.allowed.stop && item.timing && !item.is_me}}" class="tk-link" data-id="{{item.employee_legacy_id}}" data-name="{{item.employee_name}}" bindtap="stopTiming"> 停止计时</text></text>
       </view>
       <view wx:if="{{task.allowed.assign}}" class="tk-link mt-gap" bindtap="openAssign">派给别人（主管）</view>
     </view>
@@ -93,7 +93,7 @@
 
 <view wx:if="{{task && task.allowed.report}}" class="mt-footer">
   <button class="mt-btn danger-ghost side" disabled="{{busy || !selectedCount}}" bindtap="openReject">报不合格</button>
-  <button class="mt-btn" disabled="{{busy || !selectedCount}}" bindtap="pass">{{selectedCount ? selectedCount + ' 台合格，' + (task.progress.next_operation_name ? '交下道' : '做完') : '先选台'}}</button>
+  <button class="mt-btn" disabled="{{busy || !selectedCount}}" bindtap="pass">{{selectedCount ? selectedCount + ' 台合格，' + (task.progress.next_operation_name ? '交下道' : '做完') : '先选设备'}}</button>
 </view>
 
 <view wx:if="{{panel === 'reject'}}" class="tk-mask" catchtouchmove="stop">
@@ -123,7 +123,7 @@
         </view>
         <view wx:if="{{reject.photos.length < 9}}" class="tk-photo add" bindtap="addPhoto">{{uploading ? '…' : '+'}}</view>
       </view>
-      <view class="mt-muted mt-gap">{{reject.mode === 'scrap' ? '报废要主管在电脑端确认；确认前这台停在本道。' : '提交后退回的那道会在“我的”里看到这台返工；返工工时单独统计。'}}</view>
+      <view class="mt-muted mt-gap">{{reject.mode === 'scrap' ? '报废要主管在电脑端确认；确认前这台设备停在本道。' : '提交后退回的那道会在“我的”里看到这台设备返工；只做返工设备的那段计时算返工工时。'}}</view>
     </scroll-view>
     <view class="tk-sheet-foot">
       <button class="mt-btn ghost side" disabled="{{busy}}" bindtap="closePanel">取消</button>

@@ -336,7 +336,7 @@
 
             <div v-else class="empty-components-notice">
               <i class="el-icon-box" />
-              <span>暂无关键部件装配追溯记录（总装工序收料时按台登记带编号的部件）</span>
+              <span>暂无关键部件装配追溯记录（总装工序收料时按设备登记带编号的部件）</span>
             </div>
             <div v-if="result.removed_components && result.removed_components.length">
               <p v-for="(r, i) in result.removed_components" :key="i" class="text-muted">

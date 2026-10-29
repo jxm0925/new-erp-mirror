@@ -18,7 +18,7 @@
       </view>
     </view>
     <view class="mt-card">
-      <view class="mt-card-title">每台在哪</view>
+      <view class="mt-card-title">每台设备在哪</view>
       <view wx:if="{{!units.length}}" class="mt-muted">这张工单不逐台跟踪</view>
       <view wx:for="{{units}}" wx:key="id" class="mt-kv">
         <text class="k mono">{{item.short}}</text><text class="mt-tag {{item.tag}}">{{item.text}}</text>

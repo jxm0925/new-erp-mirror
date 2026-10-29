@@ -68,7 +68,7 @@ class MfgTechController extends Controller
         [$user] = $this->user($request, ['production.tech.manage']);
         $remark = $request->validate(['remark' => 'nullable|string|max:500'])['remark'] ?? null;
         $tech->release($id, $remark, $user);
-        return response()->json(['message' => '已下发车间，工单已下达、已按台生成序列号。', 'data' => $tech->detail($id)]);
+        return response()->json(['message' => '已下发车间，工单已下达、已按设备生成序列号。', 'data' => $tech->detail($id)]);
     }
 
     /** @return array{0: object, 1: bool} 当前用户、能否编辑 */

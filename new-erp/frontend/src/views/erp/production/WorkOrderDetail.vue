@@ -42,7 +42,7 @@
                 </template>
                 <template v-else>
                   <i class="el-icon-box text-muted" />
-                  需求来源：常规备货 · {{ wo.stock_reason_label || '常规备货' }}
+                  需求来源：备货 · {{ wo.stock_reason_label || '常规备货' }}
                 </template>
               </span>
             </div>
@@ -220,7 +220,7 @@
 
             <div v-if="!wo.units.length" class="empty-state-notice">
               <i class="el-icon-info" />
-              <span>{{ wo.status === 'planned' ? '工单下达后将按台自动生成整机序列号并开启逐台过站追溯' : '本工单未开启按台追溯（计划数量非整数或超出逐台跟踪上限）' }}</span>
+              <span>{{ wo.status === 'planned' ? '工单下达后将按设备自动生成整机序列号并开启逐台过站追溯' : '本工单未开启按设备追溯（计划数量非整数或超出逐台跟踪上限）' }}</span>
             </div>
 
             <div v-else class="unit-table-container">
@@ -296,7 +296,7 @@
                   <div v-for="c in wo.unbound_components" :key="c.serial_id" class="unbound-chip-item">
                     <span class="text-danger font-medium">待登记编号</span>
                     <span class="text-muted">{{ c.component_item_name }} <b class="code-mono">{{ c.serial_no }}</b>（{{ c.issue_no }}）</span>
-                    <el-button v-if="canAssign" type="text" size="mini" @click="openAssign(c)">装到台</el-button>
+                    <el-button v-if="canAssign" type="text" size="mini" @click="openAssign(c)">装到设备</el-button>
                   </div>
                 </div>
               </div>
@@ -323,7 +323,7 @@
                     </el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column label="在制 / 滞留台数" width="130" align="center">
+                <el-table-column label="在制 / 滞留设备数" width="130" align="center">
                   <template slot-scope="{ row }">
                     <span class="code-mono font-medium">{{ row.here_qty || 0 }} 台</span>
                     <span v-if="row.rework_qty" class="text-danger ml-1">· 返工 {{ row.rework_qty }}</span>
@@ -351,6 +351,11 @@
                 <el-table-column label="累计投入工时" width="120" align="center">
                   <template slot-scope="{ row }">
                     <span class="code-mono font-medium">{{ row.labor_minutes ? hours(row.labor_minutes) : '—' }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column v-if="canDispatch" label="操作" width="90" align="center">
+                  <template slot-scope="{ row }">
+                    <a v-if="row.status !== 'done'" class="lk-text" @click="openDispatch(row)">{{ row.owner_name ? '改派' : '派工' }}</a>
                   </template>
                 </el-table-column>
               </el-table>
@@ -638,7 +643,7 @@
               </div>
             </div>
             <div v-if="wo.scrap_settle_allowed && $can('production.scrap.approve')" class="more-expand-bar">
-              <el-button size="mini" type="warning" plain :loading="saving" @click="settleScrap">确认报废台已处理，结束工单</el-button>
+              <el-button size="mini" type="warning" plain :loading="saving" @click="settleScrap">确认报废设备已处理，结束工单</el-button>
             </div>
           </section>
 
@@ -805,7 +810,7 @@
               </p>
             </template>
             <div v-else class="text-muted p-2">
-              当前账号无权查看成本金额数据。台件标准工时定额：每台 {{ wo.standard_minutes_per_unit || 0 }} 分钟。
+              当前账号无权查看成本金额数据。标准工时定额：每台设备 {{ wo.standard_minutes_per_unit || 0 }} 分钟。
             </div>
           </section>
 
@@ -911,7 +916,7 @@
       :close-on-click-modal="false"
     >
       <el-form label-position="top" size="small">
-        <el-form-item label="收料台数（不填收齐整单）">
+        <el-form-item label="收料设备数（不填收齐整单）">
           <el-input-number v-model="serialReceive.units" :min="1" :max="100000" controls-position="right" />
         </el-form-item>
         <el-form-item
@@ -930,7 +935,7 @@
         </el-form-item>
       </el-form>
       <p v-if="!serialReceive.rows.length" class="dialog-hint text-muted">本道没有需要指定编号的追溯物料，直接收料即可。</p>
-      <p class="dialog-hint text-muted">* 所选编号按顺序依次装到尚未配号的台，数量须与本次应收数量一致；未指定的物料由系统按先入先用分配。</p>
+      <p class="dialog-hint text-muted">* 所选编号按顺序依次装到尚未配号的设备，数量须与本次应收数量一致；未指定的物料由系统按先入先用分配。</p>
       <span slot="footer">
         <el-button size="small" @click="serialReceive.visible = false">取消</el-button>
         <el-button size="small" type="success" class="btn-theme-create" :loading="saving" @click="submitSerialReceive">确认收料</el-button>
@@ -945,9 +950,9 @@
       :close-on-click-modal="false"
     >
       <p v-if="swap.component" class="dialog-hint">
-        {{ swap.unitSerial }} 当前装 {{ swap.component.component_item_name }} {{ swap.component.component_serial_no }}，与哪台互换？
+        {{ swap.unitSerial }} 当前装 {{ swap.component.component_item_name }} {{ swap.component.component_serial_no }}，与哪台设备互换？
       </p>
-      <el-select v-model="swap.targetId" filterable size="small" placeholder="选择本工单另一台的同种部件">
+      <el-select v-model="swap.targetId" filterable size="small" placeholder="选择本工单另一台设备的同种部件">
         <el-option v-for="o in swapOptions" :key="o.id" :label="`${o.unit_serial} · ${o.component_serial_no}`" :value="o.id" />
       </el-select>
       <span slot="footer">
@@ -964,14 +969,40 @@
       :close-on-click-modal="false"
     >
       <p v-if="assign.component" class="dialog-hint">
-        把 {{ assign.component.component_item_name }} {{ assign.component.serial_no }} 装到哪一台？
+        把 {{ assign.component.component_item_name }} {{ assign.component.serial_no }} 装到哪一台设备？
       </p>
-      <el-select v-model="assign.unitId" filterable size="small" placeholder="选择本工单还在生产中的一台">
+      <el-select v-model="assign.unitId" filterable size="small" placeholder="选择本工单还在生产中的一台设备">
         <el-option v-for="u in assignUnits" :key="u.id" :label="`${u.serial_no || ('第 ' + u.unit_no + ' 台')} · ${u.status_label}`" :value="u.id" />
       </el-select>
       <span slot="footer">
         <el-button size="small" @click="assign.visible = false">取消</el-button>
         <el-button size="small" type="success" class="btn-theme-create" :loading="saving" :disabled="!assign.unitId" @click="submitAssign">确认登记</el-button>
+      </span>
+    </el-dialog>
+
+    <el-dialog
+      title="工序派工"
+      :visible.sync="dispatch.visible"
+      width="460px"
+      custom-class="master-style-dialog"
+      :close-on-click-modal="false"
+    >
+      <p class="dialog-hint">{{ dispatch.title }}。前道还没交过来也可以先派，设备到了接单人就能开始。</p>
+      <el-select
+        v-model="dispatch.employee"
+        filterable
+        remote
+        :remote-method="searchDispatchPeople"
+        size="small"
+        placeholder="输入姓名搜索能做这道工序的人"
+        style="width: 100%"
+        @focus="searchDispatchPeople('')"
+      >
+        <el-option v-for="p in dispatch.people" :key="p.id" :label="p.name" :value="p.id" />
+      </el-select>
+      <span slot="footer">
+        <el-button size="small" @click="dispatch.visible = false">取消</el-button>
+        <el-button size="small" type="success" class="btn-theme-create" :loading="saving" :disabled="!dispatch.employee" @click="saveDispatch">确认派工</el-button>
       </span>
     </el-dialog>
 
@@ -986,7 +1017,7 @@
 </template>
 
 <script>
-import { getWorkOrder, getWorkOrderOptions, updateWorkOrder, releaseWorkOrder, pauseWorkOrder, resumeWorkOrder, cancelWorkOrder, createSemiWorkOrder, receiveOperationMaterials, getOperationSerialOptions, swapUnitComponents, assignUnitComponent, settleWorkOrderScrap, cancelMaterialReturn, materialDeliveryAction } from '../../../api/erp/production'
+import { getWorkOrder, getWorkOrderOptions, updateWorkOrder, releaseWorkOrder, pauseWorkOrder, resumeWorkOrder, cancelWorkOrder, createSemiWorkOrder, receiveOperationMaterials, getOperationSerialOptions, swapUnitComponents, assignUnitComponent, settleWorkOrderScrap, cancelMaterialReturn, materialDeliveryAction, taskAction, listTaskPeople } from '../../../api/erp/production'
 import { HERO_PILL, qty, money, shortDate, bomLabel, errorText, isCancel, searchProductionUsers } from './mfg-helpers'
 import WorkOrderCuttingPanel from './WorkOrderCuttingPanel.vue'
 import MaterialReturnDialog from './MaterialReturnDialog.vue'
@@ -1015,6 +1046,7 @@ export default {
     swap: { visible: false, unitId: null, unitSerial: '', component: null, targetId: null },
     assign: { visible: false, component: null, unitId: null },
     returnDialog: { visible: false, opId: 0, opName: '' },
+    dispatch: { visible: false, op: null, title: '', employee: null, people: [] },
     shortageDialog: false,
     steps: STEPS,
     today: new Date().toISOString().slice(0, 10),
@@ -1033,6 +1065,9 @@ export default {
     }
   }),
   computed: {
+    canDispatch() {
+      return !!this.wo && ['released', 'in_progress'].includes(this.wo.status) && this.$can('production.task.assign')
+    },
     swapOptions() {
       const c = this.swap.component
       if (!c || !this.wo) return []
@@ -1134,6 +1169,31 @@ export default {
       if (total === 1) return true
       if (total % 2 === 1 && idx === total - 1 && k.materials && k.materials.length > 2) return true
       return false
+    },
+    openDispatch(row) {
+      this.dispatch = { visible: true, op: row.id, title: `${row.operation_name} · ${row.owner_name ? '现在是 ' + row.owner_name + ' 在做' : '还没人接'}`, employee: null, people: [] }
+    },
+    async searchDispatchPeople(keyword) {
+      if (!this.dispatch.op) return
+      try {
+        const { data } = await listTaskPeople(this.dispatch.op, { keyword: keyword || undefined })
+        this.dispatch.people = data.data || []
+      } catch (e) {
+        this.dispatch.people = []
+      }
+    },
+    async saveDispatch() {
+      this.saving = true
+      try {
+        const { data } = await taskAction(this.dispatch.op, { action: 'assign', employee_legacy_id: this.dispatch.employee })
+        this.$message.success(data.message || '已派工')
+        this.dispatch.visible = false
+        this.load()
+      } catch (e) {
+        this.$message.error(errorText(e, '派工失败'))
+      } finally {
+        this.saving = false
+      }
     },
     async load() {
       this.loading = true
@@ -1251,7 +1311,7 @@ export default {
       try {
         const res = await this.$prompt(`${k.operation_name}收料：收料后从库存扣减，收够才能开工。收几台的料？不填就收齐整单。`, '工序收料', {
           inputPlaceholder: '不填 = 收齐整单',
-          inputValidator: v => !v || (Number.isInteger(Number(v)) && Number(v) > 0) || '请填正整数台数'
+          inputValidator: v => !v || (Number.isInteger(Number(v)) && Number(v) > 0) || '请填正整数设备数'
         })
         value = res.value
       } catch (e) {
@@ -1333,7 +1393,7 @@ export default {
     async settleScrap() {
       let remark = ''
       try {
-        const r = await this.$prompt('报废台上的料已退料“报废台拆回”，或确认没有可回收的料。可填写说明：', '结束工单', { inputPlaceholder: '选填', confirmButtonText: '确认', cancelButtonText: '取消' })
+        const r = await this.$prompt('报废设备上的料已退料“报废设备拆回”，或确认没有可回收的料。可填写说明：', '结束工单', { inputPlaceholder: '选填', confirmButtonText: '确认', cancelButtonText: '取消' })
         remark = r.value || ''
       } catch (e) {
         return

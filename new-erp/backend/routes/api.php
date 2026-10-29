@@ -440,6 +440,7 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::get('{type}', [ProductionProcessCatalogController::class, 'index'])->whereIn('type', ['stages', 'packaging-schemes']);
     Route::post('{type}', [ProductionProcessCatalogController::class, 'store'])->whereIn('type', ['stages', 'packaging-schemes']);
     Route::put('{type}/{id}', [ProductionProcessCatalogController::class, 'update'])->whereIn('type', ['stages', 'packaging-schemes'])->whereNumber('id');
+    Route::delete('{type}/{id}', [ProductionProcessCatalogController::class, 'destroy'])->whereIn('type', ['stages', 'packaging-schemes'])->whereNumber('id');
     Route::get('performance/templates', [ProductionPerformanceTemplateController::class, 'index']);
     Route::get('performance/template-operations', [ProductionPerformanceTemplateController::class, 'operations']);
     Route::post('performance/templates', [ProductionPerformanceTemplateController::class, 'store']);

@@ -39,6 +39,7 @@ final class TaskQueryService
     public function tasks(object $actor, string $tab, array $filters, array $permissions): array
     {
         $this->workOrders->placeWaitingUnits();
+        $this->tasks->closeOverdueSessions();
         $me = (int) $this->actorId($actor);
         $canExecute = app(AuthContextService::class)->isSuperAdmin($actor) || in_array('production.task.execute', $permissions, true);
         $page = $this->taskQuery($me, $tab, $filters)->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 10))));
@@ -54,6 +55,7 @@ final class TaskQueryService
 
     public function task(int $opId, object $actor, array $permissions): array
     {
+        $this->tasks->closeOverdueSessions();
         $me = (int) $this->actorId($actor);
         $super = app(AuthContextService::class)->isSuperAdmin($actor);
         $canExecute = $super || in_array('production.task.execute', $permissions, true);
@@ -68,6 +70,8 @@ final class TaskQueryService
         $shipmentRepairReasons = DB::table('erp_shipment_reworks')->whereIn('unit_id', $units->pluck('id'))->where('status', 'in_progress')->pluck('reason', 'unit_id');
         $opNames = $wo->operations->pluck('operation_name', 'id');
         $participants = $this->participants($op);
+        $opTiming = collect($participants)->contains(fn ($p) => $p['timing']);
+        $canAssign = $super || in_array('production.task.assign', $permissions, true);
         $mine = collect($participants)->firstWhere('employee_legacy_id', $me);
         $owner = collect($participants)->firstWhere('role', 'owner');
         $myActive = MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('employee_legacy_id', $me)->where('status', 'active')->first();
@@ -93,7 +97,8 @@ final class TaskQueryService
             ],
             'units' => $units->map(fn ($u) => [
                 'id' => $u->id, 'unit_no' => $u->unit_no, 'serial_no' => $u->serial_no, 'status' => $u->status,
-                'status_label' => in_array($u->id, $selectable, true) ? ($u->status === 'rework' ? '返工' : '正在做') : '等报废确认',
+                // 刚从前道交过来、本道还没人开始计时的显示“待做”，有人在计时才算“正在做”。
+                'status_label' => ! in_array($u->id, $selectable, true) ? '等报废确认' : ($u->status === 'rework' ? '返工' : ($opTiming ? '正在做' : '待做')),
                 'selectable' => in_array($u->id, $selectable, true), 'rework_count' => (int) $u->rework_count,
                 'fail_reason' => ($f = $lastFail->get($u->id)) && $u->status === 'rework'
                     ? trim(implode('：', array_filter([($opNames[$f->work_order_operation_id] ?? '').'不合格', implode('/', $f->reason_tags ?: []) ?: $f->reason]))) : ($shipmentRepairReasons[$u->id] ?? null),
@@ -134,7 +139,9 @@ final class TaskQueryService
                 'cutting' => $hasCutting && $canExecute && $mine && in_array($wo->status, ['released', 'in_progress'], true),
                 'report' => $canExecute && $runnable && $mine && $here > 0,
                 'collaborators' => $canExecute && $runnable && $mine && $mine['role'] === 'owner',
-                'assign' => $runnable && ($super || in_array('production.task.assign', $permissions, true)),
+                'assign' => $runnable && $canAssign,
+                // 主管替忘了停的人停止计时
+                'stop' => $canAssign && $opTiming,
                 'delivery_sign' => $canExecute || in_array('production.work_order.edit', $permissions, true),
                 // 退料：工单在生产中、本道收过料，有申请或审核退料权限
                 'material_return' => in_array($wo->status, ['released', 'in_progress', 'paused'], true) && $op->execution_context === 'production'
@@ -159,10 +166,11 @@ final class TaskQueryService
             ->map(fn ($u) => ['id' => (int) $u->legacy_id, 'name' => $u->nickname ?: $u->username])->values()->all();
     }
 
-    /** 生产作业看板：按生产阶段分列，看每张工单每道工序的台在哪、谁在做。 */
+    /** 生产作业看板：按生产阶段分列，看每张工单每道工序的设备在哪、谁在做。 */
     public function board(array $filters): array
     {
         $this->workOrders->placeWaitingUnits();
+        $this->tasks->closeOverdueSessions();
         $today = now()->toDateString();
         $woQuery = MfgWorkOrder::query()->where(fn ($q) => $q->whereIn('status', self::OPEN)
             ->orWhere(fn ($repair) => $repair->where('status', 'completed')->whereIn('id', DB::table('erp_shipment_reworks')->where('status', 'in_progress')->whereNotNull('work_order_id')->select('work_order_id'))));
@@ -197,7 +205,7 @@ final class TaskQueryService
             $key = $op->production_stage_id ? 's'.$op->production_stage_id : 'n'.$op->operation_name;
             $columns[$key] ??= ['key' => $key, 'title' => $op->stage_name ?: $op->operation_name,
                 'sort' => $op->production_stage_id ? (int) ($stageSort[$op->production_stage_id] ?? 0) : 1000 + (int) $op->sequence, 'cards' => []];
-            $timing = ($active->get($op->id) ?? collect())->map(fn ($s) => ['name' => $s->employee_name, 'started_at' => $s->started_at?->toIso8601String()])->values();
+            $timing = ($active->get($op->id) ?? collect())->map(fn ($s) => ['name' => $s->employee_name, 'employee_legacy_id' => (int) $s->employee_legacy_id, 'started_at' => $s->started_at?->toIso8601String()])->values();
             $owner = $owners->get($op->id);
             $closed = (float) ($minutes[$op->id] ?? 0);
             $running = ($active->get($op->id) ?? collect())->sum(fn ($s) => max(0, $s->started_at->diffInSeconds(now(), false)) / 60);
@@ -309,11 +317,17 @@ final class TaskQueryService
                 ->orWhere(fn ($repair) => $repair->where('wo.status', 'completed')->whereIn('wo.id', DB::table('erp_shipment_reworks')->where('status', 'in_progress')->whereNotNull('work_order_id')->select('work_order_id'))))->where('op.status', '!=', 'done')
                 ->whereNotExists(fn ($q) => $q->selectRaw('1')->from('erp_mfg_task_participants as ow')->whereColumn('ow.work_order_operation_id', 'op.id')
                     ->where('ow.role', 'owner')->where('ow.is_active', true))
-                ->whereExists(fn ($q) => $q->selectRaw('1')->from('erp_mfg_work_order_units as u')->whereColumn('u.current_operation_id', 'op.id')
-                    ->whereIn('u.status', TaskService::SELECTABLE))
+                // 本道有设备，或前面工序还有设备在做（下道可以提前接单，等前道交过来）
+                ->whereExists(fn ($q) => $q->selectRaw('1')->from('erp_mfg_work_order_units as u')->whereColumn('u.work_order_id', 'op.work_order_id')
+                    ->whereIn('u.status', TaskService::SELECTABLE)
+                    ->whereIn('u.current_operation_id', fn ($o) => $o->select('o2.id')->from('erp_mfg_work_order_operations as o2')
+                        ->whereColumn('o2.work_order_id', 'op.work_order_id')->where('o2.execution_context', 'production')
+                        ->where(fn ($w) => $w->whereColumn('o2.sequence', '<', 'op.sequence')
+                            ->orWhere(fn ($same) => $same->whereColumn('o2.sequence', 'op.sequence')->whereColumn('o2.id', '<=', 'op.id')))))
                 ->where(fn ($q) => $q->whereNull('op.operation_id')
                     ->orWhereExists(fn ($w) => $w->selectRaw('1')->from('erp_production_operation_workers as pw')->whereColumn('pw.operation_id', 'op.operation_id')->where('pw.employee_legacy_id', $me))
                     ->orWhereNotExists(fn ($w) => $w->selectRaw('1')->from('erp_production_operation_workers as pw2')->whereColumn('pw2.operation_id', 'op.operation_id')))
+                ->orderByRaw("EXISTS (SELECT 1 FROM erp_mfg_work_order_units AS hu WHERE hu.current_operation_id = op.id AND hu.status IN ('waiting', 'in_progress', 'rework')) DESC")
                 ->orderByDesc('wo.is_urgent')->orderBy('wo.planned_finish_date')->orderBy('op.sequence');
         } else {
             $query->where(fn ($q) => $q->whereIn('wo.status', self::OPEN)
@@ -336,6 +350,11 @@ final class TaskQueryService
         $mine = MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('employee_legacy_id', $me)->where('is_active', true)->first();
         $tech = MfgWorkOrderTech::query()->where('work_order_id', $wo->id)->first();
         $myFirst = MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('employee_legacy_id', $me)->min('started_at');
+        // 前面工序还在做、还没交到本道的设备
+        $before = MfgWorkOrderOperation::query()->where('work_order_id', $wo->id)->where('execution_context', 'production')
+            ->where(fn ($q) => $q->where('sequence', '<', $op->sequence)->orWhere(fn ($w) => $w->where('sequence', $op->sequence)->where('id', '<', $op->id)))->pluck('id');
+        $upstream = $before->isEmpty() ? 0 : MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->whereIn('status', TaskService::SELECTABLE)
+            ->whereIn('current_operation_id', $before)->count();
         return [
             'id' => $op->id, 'operation_name' => $op->operation_name, 'stage_name' => $op->stage_name, 'status' => $op->status,
             'work_order_id' => $wo->id, 'work_order_no' => $wo->work_order_no, 'product_name' => $wo->product_name ?: $wo->item_name, 'sku_name' => $wo->sku_name,
@@ -343,7 +362,7 @@ final class TaskQueryService
             'has_drawing' => MfgDrawing::query()->where('work_order_id', $wo->id)->where('status', 'active')->exists(),
             'drawings_updated' => (bool) ($tech?->drawings_updated_at && $myFirst && $tech->drawings_updated_at->gt($myFirst)),
             'planned_finish_date' => $wo->planned_finish_date?->toDateString(), 'planned_qty' => (float) $wo->planned_qty, 'done_qty' => (float) $op->completed_qty,
-            'here_qty' => $units->count(), 'rework_qty' => $units->where('status', 'rework')->count(),
+            'here_qty' => $units->count(), 'upstream_qty' => $upstream, 'rework_qty' => $units->where('status', 'rework')->count(),
             'owner_name' => $owner?->employee_name, 'is_owner' => $owner && (int) $owner->employee_legacy_id === $me, 'my_role' => $mine?->role,
             'assigned_by_name' => $owner && (int) $owner->employee_legacy_id === $me && $owner->assigned_by_legacy_id && (int) $owner->assigned_by_legacy_id !== $me ? $owner->assigned_by_name : null,
             'timing' => MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('employee_legacy_id', $me)->where('status', 'active')->exists(),

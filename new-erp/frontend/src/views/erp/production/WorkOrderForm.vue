@@ -92,7 +92,7 @@
 
           <div class="card">
             <h2>序列号 <small>下达时生成，可打印标签贴在设备上</small></h2>
-            <span class="sub">保存并下达后按台生成 {{ form.planned_qty }} 个序列号（前缀按物料设置，没有设置用 SN）。</span>
+            <span class="sub">保存并下达后按设备生成 {{ form.planned_qty }} 个序列号（前缀按物料设置，没有设置用 SN）。</span>
           </div>
         </div>
 

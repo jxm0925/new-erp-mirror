@@ -8,7 +8,7 @@
     @update:visible="v => $emit('update:visible', v)"
   >
     <div v-loading="loading">
-      <p class="dialog-hint">{{ operationName }}：把领多、领错、不良或报废台拆下的料退回仓库，按原收料的批次和单价冲回库存和工单材料成本。</p>
+      <p class="dialog-hint">{{ operationName }}：把领多、领错、不良或报废设备拆下的料退回仓库，按原收料的批次和单价冲回库存和工单材料成本。</p>
       <el-form label-position="top" size="small">
         <el-form-item label="退料类型">
           <el-radio-group v-model="form.return_type">
@@ -27,7 +27,7 @@
         </el-form-item>
         <p v-if="!loading && !visibleMaterials.length" class="dialog-hint text-muted">本道按“{{ typeLabel }}”没有可退的料。</p>
         <el-form-item label="退料原因">
-          <el-input v-model="form.reason" type="textarea" :rows="2" maxlength="500" placeholder="例如：多领 2 个、型号领错、来料不良、报废台拆回" />
+          <el-input v-model="form.reason" type="textarea" :rows="2" maxlength="500" placeholder="例如：多领 2 个、型号领错、来料不良、报废设备拆回" />
         </el-form-item>
         <template v-if="canApprove">
           <el-checkbox v-model="form.direct">直接退料入库（库管确认实物已收到，不用再审核）</el-checkbox>
@@ -43,7 +43,7 @@
           </el-form-item>
         </template>
       </el-form>
-      <p class="dialog-hint text-muted">* 不良退回会冲减已领数量，退后要重新收料才能继续开工；报废台拆回不冲减已领。</p>
+      <p class="dialog-hint text-muted">* 不良退回会冲减已领数量，退后要重新收料才能继续开工；报废设备拆回不冲减已领。</p>
     </div>
     <span slot="footer">
       <el-button size="small" @click="$emit('update:visible', false)">取消</el-button>
@@ -59,9 +59,9 @@ import SystemRecordPicker from '../../../components/system/SystemRecordPicker.vu
 import { qty, errorText } from './mfg-helpers'
 
 const HINTS = {
-  surplus: '多领或领错的料，最多退到“已领 − 已到本道的台应用量”，冲减已领数量。',
+  surplus: '多领或领错的料，最多退到“已领 − 已到本道的设备应用量”，冲减已领数量。',
   defective: '装上后发现不良的料，冲减已领数量，退后重新收料补上。',
-  scrapped: '报废台上还能用的料拆回仓库，不冲减已领数量。'
+  scrapped: '报废设备上还能用的料拆回仓库，不冲减已领数量。'
 }
 
 export default {
@@ -127,7 +127,7 @@ export default {
       return `${m.component_item_name}（已领 ${qty(m.issued_qty)} / 应领 ${qty(m.required_qty)} ${m.unit_name || ''}${m.serial_mode === 'required' ? '，按编号退' : (m.by_number ? '，有编号的选编号' : '')}）`
     },
     serialLabel(s) {
-      const where = s.unit_serial_no ? `装在 ${s.unit_serial_no}${s.kind === 'scrapped' ? '（报废）' : ''}` : '未装到台'
+      const where = s.unit_serial_no ? `装在 ${s.unit_serial_no}${s.kind === 'scrapped' ? '（报废）' : ''}` : '未装到设备'
       return `${s.serial_no} · ${where}`
     },
     openPicker(type) { this.picker = { visible: true, type } },

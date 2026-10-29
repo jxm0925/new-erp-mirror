@@ -29,7 +29,7 @@ final class WorkOrderQueryService
 {
     public const STATUS_LABELS = ['planned' => '计划', 'released' => '已下达', 'in_progress' => '生产中', 'paused' => '暂停',
         'completed' => '已完工', 'closed' => '已关闭', 'cancelled' => '已取消'];
-    public const STOCK_REASONS = ['alert' => '库存预警', 'regular' => '常规备货', 'other' => '其他'];
+    public const STOCK_REASONS = ['alert' => '库存预警', 'regular' => '常规备货', 'other' => '其他', 'order_released' => '订单取消/短交转备货'];
     public const UNIT_LABELS = ['waiting' => '未开工', 'in_progress' => '在制', 'rework' => '返工', 'completed' => '等入库',
         'stored' => '已入库', 'scrapped' => '报废', 'cancelled' => '已取消'];
 
@@ -182,7 +182,7 @@ final class WorkOrderQueryService
         return $row;
     }
 
-    /** 每道工序：现在停在这道的台、已过的台、接单人、谁在计时。 */
+    /** 每道工序：现在停在这道的设备、已过的设备、接单人、谁在计时。 */
     private function operationProgress(MfgWorkOrder $wo, array $operations): array
     {
         $here = $wo->units->whereIn('status', ['waiting', 'in_progress', 'rework'])->groupBy('current_operation_id')->map->count();
@@ -237,7 +237,7 @@ final class WorkOrderQueryService
         $unit = MfgWorkOrderUnit::query()->with('components')->where('serial_no', $serialNo)->first();
         $matched = null;
         if (! $unit) {
-            // 输入的是部件号（外购件或半成品）：查到它当前装在哪台，返回那台整机的追溯。
+            // 输入的是部件号（外购件或半成品）：查到它当前装在哪台设备，返回那台整机的追溯。
             $matched = \App\Models\Erp\MfgUnitComponent::query()->installed()->where('component_serial_no', $serialNo)->orderByDesc('id')->first();
             $unit = $matched ? MfgWorkOrderUnit::query()->with('components')->find($matched->unit_id) : null;
         }
@@ -414,18 +414,15 @@ final class WorkOrderQueryService
             $items[] = ['type' => 'warning', 'title' => $op['operation_name'].'缺料', 'text' => $names.'。按当前可用库存算，'
                 .($advice !== '' ? $advice : '请采购跟进').'；料不齐不能开工。'];
         }
-        foreach ($row['completion_blockers'] ?? [] as $b) $items[] = ['type' => 'warning', 'title' => '所有台已结束，工单还不能完工', 'text' => $b['text'].'。'];
-        // 入库要求整单冻结用料已全部实收（不良退料、少收都会拉低实收）：有完工待入库的台时提前说明还差哪些料。
+        foreach ($row['completion_blockers'] ?? [] as $b) $items[] = ['type' => 'warning', 'title' => '所有设备已结束，工单还不能完工', 'text' => $b['text'].'。'];
+        // 做完的设备可以分批入库；只有最后一批要求开料批次都已登记，成本才能收口。
         if ($row['completed_qty'] > $row['stored_qty'] + 0.00001) {
-            $missing = collect($kitting)->flatMap(fn ($op) => collect($op['materials'])->map(fn ($m) => $m + ['operation_name' => $op['operation_name']]))
-                ->filter(fn ($m) => ($m['participates_in_kitting'] ?? true) && (float) $m['issued_qty'] + 0.00001 < (float) $m['required_qty'])
-                ->map(fn ($m) => $m['operation_name'].'·'.$m['component_item_name'].' 还差 '.rtrim(rtrim(number_format((float) $m['required_qty'] - (float) $m['issued_qty'], 4, '.', ''), '0'), '.').($m['unit_name'] ?: ''));
-            if ($missing->isNotEmpty()) $items[] = ['type' => 'warning', 'title' => '完工设备暂不能入库：整单用料未收齐',
-                'text' => $missing->implode('、').'。入库按整单实际材料归集成本，请让仓库补料配送并签收（或工位收料）后再入库。'];
-            if (MfgCuttingBatch::query()->where('work_order_id', $row['id'])->where('status', 'issued')->exists())
-                $items[] = ['type' => 'warning', 'title' => '完工设备暂不能入库：开料未结算', 'text' => '仍有已领入的开料批次未结算，请先在开料页确认产出与余料。'];
+            $open = MfgWorkOrderUnit::query()->where('work_order_id', $row['id'])->whereNotIn('status', ['stored', 'scrapped', 'cancelled'])->count();
+            $waiting = MfgWorkOrderUnit::query()->where('work_order_id', $row['id'])->where('status', 'completed')->count();
+            if ($waiting >= $open && MfgCuttingBatch::query()->where('work_order_id', $row['id'])->where('status', 'issued')->exists())
+                $items[] = ['type' => 'warning', 'title' => '最后一批设备暂不能入库：开料未登记', 'text' => '还有开料批次没登记产出和余料，请先在开料页登记完再入库。'];
         }
-        if (! empty($row['unbound_components'])) $items[] = ['type' => 'info', 'title' => '有部件编号待登记', 'text' => count($row['unbound_components']).' 个已收料的部件编号还没装到台上，请在“部件编号”处登记到具体的台。'];
+        if (! empty($row['unbound_components'])) $items[] = ['type' => 'info', 'title' => '有部件编号待登记', 'text' => count($row['unbound_components']).' 个已收料的部件编号还没装到设备上，请在“部件编号”处登记到具体的设备。'];
         if ($row['overdue']) $items[] = ['type' => 'danger', 'title' => '已过计划完工日', 'text' => '计划 '.$row['planned_finish_date'].' 完工，请调整计划或加急。'];
         return $items;
     }

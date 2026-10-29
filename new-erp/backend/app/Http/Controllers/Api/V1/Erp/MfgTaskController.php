@@ -31,12 +31,13 @@ class MfgTaskController extends Controller
 
     public function action(Request $request, int $id, TaskService $tasks, TaskQueryService $query)
     {
-        $action = $request->validate(['action' => 'required|in:claim,start,pause,pass,reject,collaborators,assign'])['action'];
-        [$user, $codes] = $this->user($request, [$action === 'assign' ? 'production.task.assign' : 'production.task.execute']);
+        $action = $request->validate(['action' => 'required|in:claim,start,pause,stop,pass,reject,collaborators,assign'])['action'];
+        [$user, $codes] = $this->user($request, [in_array($action, ['assign', 'stop'], true) ? 'production.task.assign' : 'production.task.execute']);
         $message = match ($action) {
             'claim' => $this->run(fn () => $tasks->claim($id, $user), '接单成功。'),
             'start' => $this->run(fn () => $tasks->start($id, $user), '开始计时。'),
             'pause' => $this->run(fn () => $tasks->pause($id, $user), '已暂停计时。'),
+            'stop' => $this->run(fn () => $tasks->stopTiming($id, (int) $request->validate(['employee_legacy_id' => 'required|integer|min:1'])['employee_legacy_id'], $user), '已停止这个人的计时。'),
             'assign' => $this->run(fn () => $tasks->assign($id, (int) $request->validate(['employee_legacy_id' => 'required|integer|min:1'])['employee_legacy_id'], $user), '已派工。'),
             'collaborators' => $this->collaborators($request, $id, $tasks, $user),
             'pass' => $this->pass($request, $id, $tasks, $user),
@@ -76,7 +77,7 @@ class MfgTaskController extends Controller
         [$user] = $this->user($request, ['production.scrap.approve']);
         $data = $request->validate(['approve' => 'required|boolean', 'remark' => 'nullable|string|max:500']);
         $tasks->reviewScrap($id, (bool) $data['approve'], $data['remark'] ?? null, $user);
-        return response()->json(['message' => $data['approve'] ? '已确认报废。' : '已驳回，这台继续返工。']);
+        return response()->json(['message' => $data['approve'] ? '已确认报废。' : '已驳回，这台设备继续返工。']);
     }
 
     public function receive(Request $request, int $id, ReceiptService $receipts)
@@ -85,7 +86,7 @@ class MfgTaskController extends Controller
         $data = $request->validate(['unit_ids' => 'required|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1',
             'warehouse_id' => 'required|integer|exists:erp_warehouses,id', 'location_id' => 'required|integer|exists:erp_locations,id', 'remark' => 'nullable|string|max:500']);
         $receipt = $receipts->receive($id, $data['unit_ids'], (int) $data['warehouse_id'], (int) $data['location_id'], $data['remark'] ?? null, $user);
-        return response()->json(['message' => '已入库 '.(int) $receipt->qty.' 台（'.$receipt->receipt_no.'）。', 'data' => ['id' => $receipt->id, 'receipt_no' => $receipt->receipt_no]]);
+        return response()->json(['message' => '已入库 '.(int) $receipt->qty.' 台设备（'.$receipt->receipt_no.'）。', 'data' => ['id' => $receipt->id, 'receipt_no' => $receipt->receipt_no]]);
     }
 
     public function workers(Request $request, int $id, TaskQueryService $query)
@@ -121,9 +122,10 @@ class MfgTaskController extends Controller
     {
         $data = $request->validate(['unit_ids' => 'required|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1']);
         $result = $tasks->pass($id, $data['unit_ids'], $user);
-        if ($result['next_operation_name']) return $result['passed'].' 台合格，已交'.$result['next_operation_name'].'。';
-        if (($result['repaired'] ?? 0) > 0 && $result['repaired'] === $result['passed']) return $result['passed'].' 台返修合格，请仓库在发货单上把设备返回成品位后重新试水。';
-        return $result['passed'].' 台合格，生产完成，'.($result['staged_qty'] ? '已自动记入成品待发区（'.$result['staged_receipt_no'].'），等发货试水。' : '等入库。');
+        $paused = ! empty($result['timing_paused']) ? '本道暂时没有可做的设备，计时已自动暂停。' : '';
+        if ($result['next_operation_name']) return $result['passed'].' 台设备合格，已交'.$result['next_operation_name'].'。'.$paused;
+        if (($result['repaired'] ?? 0) > 0 && $result['repaired'] === $result['passed']) return $result['passed'].' 台设备返修合格，请仓库在发货单上把设备返回成品位后重新试水。'.$paused;
+        return $result['passed'].' 台设备合格，生产完成，'.($result['staged_qty'] ? '已自动记入成品待发区（'.$result['staged_receipt_no'].'），等发货试水。' : '等入库。').$paused;
     }
 
     private function reject(Request $request, int $id, TaskService $tasks, object $user): string
@@ -132,7 +134,8 @@ class MfgTaskController extends Controller
             'return_operation_id' => 'required_if:mode,return|nullable|integer|min:1', 'reason_tags' => 'nullable|array|max:10', 'reason_tags.*' => 'string|max:30',
             'reason' => 'nullable|string|max:500', 'photos' => 'nullable|array|max:9', 'photos.*' => 'string|max:1000']);
         $result = $tasks->reject($id, $data['unit_ids'], $data, $user);
-        return $result['mode'] === 'scrap' ? $result['count'].' 台已申请报废，等主管确认。' : $result['count'].' 台已退回'.$result['return_operation_name'].'。';
+        $paused = ! empty($result['timing_paused']) ? '本道暂时没有可做的设备，计时已自动暂停。' : '';
+        return ($result['mode'] === 'scrap' ? $result['count'].' 台设备已申请报废，等主管确认。' : $result['count'].' 台设备已退回'.$result['return_operation_name'].'。').$paused;
     }
 
     private function run(\Closure $fn, string $message): string

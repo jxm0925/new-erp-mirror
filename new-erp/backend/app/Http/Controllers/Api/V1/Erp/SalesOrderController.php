@@ -864,7 +864,7 @@ class SalesOrderController extends Controller
             $workOrders = app(\App\Services\Erp\Manufacturing\WorkOrderService::class)->cancelForSalesOrder($order, '订单取消：'.$payload['reason'], $actor);
             $this->log($order->id, null, 'cancel', $beforeStatus, 'cancelled', '取消销售订单：'.$payload['reason']
                 .($workOrders['cancelled'] ? '；已取消工单 '.implode('、', $workOrders['cancelled']) : '')
-                .($workOrders['kept'] ? '；已开工工单 '.implode('、', $workOrders['kept']).' 请生产主管处理' : ''));
+                .($workOrders['kept'] ? '；已开工工单 '.implode('、', $workOrders['kept']).' 已转为备货工单，做完的设备进公共库存' : ''));
 
             return response()->json(['message' => '订单已取消', 'data' => $order->fresh(['lines', 'fulfillments'])]);
         });
@@ -900,7 +900,7 @@ class SalesOrderController extends Controller
             // 日志正文不写金额，金额放在 payload 中按字段脱敏。
             $this->log($order->id, null, 'short_close', $beforeStatus, $order->order_status, '订单短交关闭：'.$payload['reason'].'；'.$closed
                 .($workOrders['cancelled'] ? '；已取消工单 '.implode('、', $workOrders['cancelled']) : '')
-                .($workOrders['kept'] ? '；已开工工单 '.implode('、', $workOrders['kept']).' 请生产主管处理' : ''), [
+                .($workOrders['kept'] ? '；已开工工单 '.implode('、', $workOrders['kept']).' 已转为备货工单，做完的设备进公共库存' : ''), [
                 'receivable_before' => $result['receivable_before'], 'receivable_after' => $result['receivable_after'],
                 'short_closed_amount' => $result['short_closed_amount'], 'overpaid_amount' => $result['overpaid_amount'],
                 'lines' => collect($result['lines'])->map(fn ($line) => ['id' => $line['id'], 'close_qty' => $line['close_qty']])->values()->all(),
