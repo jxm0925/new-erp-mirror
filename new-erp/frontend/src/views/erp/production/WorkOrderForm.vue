@@ -99,7 +99,7 @@
         <div>
           <div class="card">
             <h2>预计</h2>
-            <div class="kv"><span>标准工时</span><b>{{ preview ? `每台 ${preview.standard_minutes_per_unit || 0} 分钟` : '-' }}</b></div>
+            <div class="kv"><span>标准工时</span><b>{{ preview ? `每台设备 ${Number(((preview.standard_minutes_per_unit || 0) / 60).toFixed(2))} 小时` : '-' }}</b></div>
             <div class="kv" v-if="preview && preview.estimated_material_cost_per_unit !== null && preview.estimated_material_cost_per_unit !== undefined"><span>预计材料成本</span><b>{{ money(preview.estimated_material_cost_per_unit) }} / 台</b></div>
             <div class="kv"><span>当前库存</span><b>{{ preview ? `${qty(preview.item.stock_qty)} ${preview.item.unit_name || ''}` : '-' }}</b></div>
           </div>
