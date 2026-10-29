@@ -37,10 +37,10 @@ class ProductionProcessCatalogService
                 $row = $id ? $model::query()->whereKey($id)->lockForUpdate()->firstOrFail() : new $model;
                 if ($id && (int) $row->business_version !== (int) ($data['expected_version'] ?? 0)) throw ValidationException::withMessages(['expected_version' => '档案已变化，请刷新后重试。']);
                 $before = $row->exists ? $row->toArray() : null;
-                if (($data['status'] ?? 'enabled') === 'disabled' && $id) {
-                    $field = $type === 'stages' ? 'production_stage_id' : 'packaging_scheme_id';
-                    if (DB::table('erp_production_routing_operations as node')->join('erp_production_routings as route', 'route.id', '=', 'node.routing_id')
-                        ->where('node.'.$field, $id)->where('route.status', 'active')->exists()) throw ValidationException::withMessages(['status' => '档案已被生效工艺路线引用，不能停用。']);
+                if (($data['status'] ?? 'enabled') === 'disabled' && $id && $row->status !== 'disabled') {
+                    $routes = $this->routingRefs($type, $id, true);
+                    if ($routes) throw ValidationException::withMessages(['status' => '生效中的工艺路线 '.implode('、', $routes).' 还在用这个'.$this->noun($type)
+                        .'，不能停用。请先在这些路线的新版本里换掉它，或让路线停用后再停用。名称、排序、说明可以直接改。']);
                 }
                 if ($model::where('code', trim($data['code']))->when($id, fn ($q) => $q->where('id', '<>', $id))->exists()) throw ValidationException::withMessages(['code' => '档案编码已存在。']);
                 $row->fill(['code' => trim($data['code']), 'name' => trim($data['name']), 'status' => $data['status'] ?? 'enabled',
@@ -65,6 +65,53 @@ class ProductionProcessCatalogService
             if (! $existing) throw $e;
             return $this->replay($existing, $hash);
         }
+    }
+
+    /** 删除：没有任何工艺路线和未完工的工单在用才能删；用过的请改为停用。 */
+    public function delete(string $type, int $id, object $actor, array $permissions, bool $super): void
+    {
+        $this->authorize($permissions, $super, true);
+        $model = $this->model($type);
+        $noun = $this->noun($type);
+        DB::transaction(function () use ($type, $id, $actor, $model, $noun): void {
+            $row = $model::query()->whereKey($id)->lockForUpdate()->first();
+            if (! $row) throw ValidationException::withMessages(['id' => $noun.'不存在或已删除，请刷新。']);
+            $routes = $this->routingRefs($type, $id, false);
+            if ($routes) throw ValidationException::withMessages(['id' => '工艺路线 '.implode('、', $routes).' 用过这个'.$noun
+                .'，删掉会让这些路线对不上，不能删除。不想再用请改为“停用”。']);
+            if ($type === 'stages' && DB::table('erp_mfg_work_order_operations as op')->join('erp_mfg_work_orders as wo', 'wo.id', '=', 'op.work_order_id')
+                ->where('op.production_stage_id', $id)->whereNotIn('wo.status', ['completed', 'closed', 'cancelled'])->exists())
+                throw ValidationException::withMessages(['id' => '还有没完工的工单在这个生产阶段里生产，不能删除，请改为“停用”。']);
+            if ($type === 'packaging-schemes' && DB::table('erp_shipment_packing_contents')->where('packaging_scheme_id', $id)->exists())
+                throw ValidationException::withMessages(['id' => '发货打包记录用过这个包装方案，不能删除，请改为“停用”。']);
+            $before = $row->toArray();
+            $row->delete();
+            $actorId = (int) ($actor->legacy_id ?? $actor->id);
+            DB::table('erp_production_execution_events')->insert(['aggregate_type' => 'process_'.$type, 'aggregate_id' => $id,
+                'action' => 'delete', 'before_status' => $before['status'] ?? null, 'after_status' => 'deleted',
+                'before_version' => $before['business_version'] ?? 0, 'after_version' => ($before['business_version'] ?? 0) + 1,
+                'fact_snapshot' => json_encode(['before' => $before, 'after' => null], JSON_UNESCAPED_UNICODE),
+                'operator_legacy_id' => $actorId, 'operator_name' => $actor->nickname ?? $actor->username ?? null,
+                'occurred_at' => now(), 'created_at' => now(), 'updated_at' => now()]);
+        }, 5);
+    }
+
+    /** 引用这个档案的工艺路线（编号+版本），$activeOnly 只看生效中的；最多列 5 条。 */
+    private function routingRefs(string $type, int $id, bool $activeOnly): array
+    {
+        $field = $type === 'stages' ? 'production_stage_id' : 'packaging_scheme_id';
+        $query = DB::table('erp_production_routing_operations as node')->join('erp_production_routings as route', 'route.id', '=', 'node.routing_id')
+            ->where('node.'.$field, $id)->when($activeOnly, fn ($q) => $q->where('route.status', 'active'));
+        $refs = (clone $query)->select('route.routing_no', 'route.version')->distinct()->orderBy('route.routing_no')->limit(5)->get()
+            ->map(fn ($r) => $r->routing_no.' V'.$r->version)->all();
+        $total = (clone $query)->distinct()->count('route.id');
+        if ($total > count($refs)) $refs[] = '等 '.$total.' 条';
+        return $refs;
+    }
+
+    private function noun(string $type): string
+    {
+        return $type === 'stages' ? '生产阶段' : '包装方案';
     }
 
     private function replay(object $command, string $hash): array

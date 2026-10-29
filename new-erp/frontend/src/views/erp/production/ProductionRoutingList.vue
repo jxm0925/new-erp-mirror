@@ -20,6 +20,10 @@
         <el-button size="small" icon="el-icon-refresh" class="btn-refresh" :loading="loading" @click="load">
           刷新
         </el-button>
+        <template v-if="$can('production.routing.create') || $can('production.routing.edit')">
+          <el-button size="small" type="success" plain icon="el-icon-collection-tag" @click="$refs.processCatalog.open('stages', { mode: 'manage' })">维护生产阶段</el-button>
+          <el-button size="small" type="success" plain icon="el-icon-box" @click="$refs.processCatalog.open('packaging-schemes', { mode: 'manage' })">维护包装方案</el-button>
+        </template>
         <el-button v-if="$can('production.routing.create')" size="small" type="success" icon="el-icon-plus" class="btn-theme-create" @click="$router.push('/production/routings/new')">
           新增工艺路线
         </el-button>
@@ -111,14 +115,17 @@
         <el-pagination background layout="sizes, prev, pager, next" :current-page="page" :page-size="perPage" :page-sizes="[10, 15, 20]" :total="total" @current-change="changePage" @size-change="changePageSize" />
       </div>
     </section>
+    <production-process-catalog-panel ref="processCatalog" :launchers="false" />
   </section>
 </template>
 
 <script>
+import ProductionProcessCatalogPanel from './ProductionProcessCatalogPanel.vue'
 import { listProductionRoutings, activateProductionRouting, setDefaultProductionRouting, copyProductionRouting, retireProductionRouting } from '../../../api/erp/production'
 
 export default {
   name: 'ProductionRoutingList',
+  components: { ProductionProcessCatalogPanel },
   data: () => ({
     loading: false,
     rows: [],

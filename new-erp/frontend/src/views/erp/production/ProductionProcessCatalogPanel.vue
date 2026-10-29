@@ -17,7 +17,7 @@
         <el-table-column prop="name" label="名称" min-width="140" />
         <el-table-column label="状态" width="80"><template slot-scope="scope"><el-tag size="mini" :type="scope.row.status==='enabled'?'success':'info'">{{ scope.row.status==='enabled'?'启用':'停用' }}</el-tag></template></el-table-column>
         <el-table-column prop="sort" label="排序" width="75" />
-        <el-table-column v-if="canManage" label="维护" width="85"><template slot-scope="scope"><el-button type="text" @click.stop="edit(scope.row)">编辑</el-button></template></el-table-column>
+        <el-table-column v-if="canManage" label="维护" width="110"><template slot-scope="scope"><el-button type="text" @click.stop="edit(scope.row)">编辑</el-button><el-button type="text" class="catalog-delete" @click.stop="remove(scope.row)">删除</el-button></template></el-table-column>
       </el-table>
       <div class="catalog-footer">
         <el-pagination layout="prev, pager, next, total" :current-page="page" :page-size="10" :pager-count="5" :total="total" @current-change="changePage" />
@@ -41,7 +41,7 @@
 </template>
 
 <script>
-import { listProcessCatalog, saveProcessCatalog } from '../../../api/erp/production-process'
+import { listProcessCatalog, saveProcessCatalog, deleteProcessCatalog } from '../../../api/erp/production-process'
 
 const freshForm = () => ({ id: null, code: '', name: '', status: 'enabled', sort: 0, description: '', business_version: 1 })
 const newCreationId = () => 'catalog-new-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10)
@@ -91,7 +91,7 @@ export default {
     confirm() { if (!this.selected || this.selected.status !== 'enabled') return; this.$emit('select', { type: this.catalogType, row: this.selected }); this.visible = false },
     edit(row) {
       if (!this.canManage) return
-      this.editForm = row ? { ...freshForm(), ...row } : freshForm()
+      this.editForm = row ? { ...freshForm(), ...row, code: row.code || '', name: row.name || '', description: row.description || '', sort: Number(row.sort || 0), status: row.status || 'enabled' } : freshForm()
       this.creationId = newCreationId(); this.editorVisible = true
       this.$nextTick(() => { if (this.$refs.catalogForm) this.$refs.catalogForm.clearValidate() })
     },
@@ -104,7 +104,7 @@ export default {
       if (this.saving || !this.canManage || !await this.$refs.catalogForm.validate().catch(() => false)) return
       const id = this.editForm.id; const type = this.catalogType
       const payload = { code: this.editForm.code.trim(), name: this.editForm.name.trim(), status: this.editForm.status, sort: this.editForm.sort,
-        description: this.editForm.description.trim() || null }
+        description: String(this.editForm.description || '').trim() || null }
       if (id) payload.expected_version = this.editForm.business_version
       this.saving = true
       try {
@@ -116,12 +116,26 @@ export default {
         await this.load()
       } catch (error) { this.$message.error(error.userMessage || '保存失败，请重试原操作') }
       finally { this.saving = false }
+    },
+    async remove(row) {
+      if (!this.canManage) return
+      try {
+        await this.$confirm(`确定删除${this.noun}「${row.name}」？工艺路线用过的不能删，可以改为停用。`, '删除' + this.noun, { type: 'warning' })
+      } catch (_) { return }
+      try {
+        await deleteProcessCatalog(this.catalogType, row.id)
+        this.$message.success(this.noun + '已删除')
+        if (this.selected && Number(this.selected.id) === Number(row.id)) this.selected = null
+        this.$emit('updated', { type: this.catalogType, row: null, deletedId: row.id })
+        if (this.rows.length === 1 && this.page > 1) this.page--
+        await this.load()
+      } catch (error) { this.$message.error(error.userMessage || '删除失败') }
     }
   }
 }
 </script>
 <style scoped>
-.catalog-launchers,.catalog-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.catalog-launchers .el-button{margin:0}.catalog-toolbar{margin-bottom:14px}.catalog-toolbar .el-input{flex:1;min-width:160px}.catalog-toolbar .el-select{width:120px}.catalog-footer{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:14px;flex-wrap:wrap;font-size:12px;color:#66758a}.catalog-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}.catalog-form-grid .el-input-number,.catalog-form-grid .el-select{width:100%}.process-catalog-panel .el-button--success{background:#008b4b;border-color:#008b4b}.process-catalog-panel .el-button--success.is-plain{background:#fff;color:#008b4b}
+.catalog-launchers,.catalog-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.catalog-launchers .el-button{margin:0}.catalog-toolbar{margin-bottom:14px}.catalog-toolbar .el-input{flex:1;min-width:160px}.catalog-toolbar .el-select{width:120px}.catalog-delete{color:#ef4444}.catalog-footer{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:14px;flex-wrap:wrap;font-size:12px;color:#66758a}.catalog-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}.catalog-form-grid .el-input-number,.catalog-form-grid .el-select{width:100%}.process-catalog-panel .el-button--success{background:#008b4b;border-color:#008b4b}.process-catalog-panel .el-button--success.is-plain{background:#fff;color:#008b4b}
 @media(max-width:500px){.catalog-form-grid{grid-template-columns:minmax(0,1fr)}.catalog-toolbar .el-input{flex-basis:100%}.catalog-toolbar .el-button{margin:0}.catalog-footer .el-pagination{max-width:100%;white-space:normal;padding:0}}
 </style>
 <style>

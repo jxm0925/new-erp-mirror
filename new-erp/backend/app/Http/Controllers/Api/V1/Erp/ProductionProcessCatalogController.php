@@ -27,6 +27,13 @@ class ProductionProcessCatalogController extends Controller
         return $this->save($request, $type, $id, $service);
     }
 
+    public function destroy(Request $request, string $type, int $id, ProductionProcessCatalogService $service)
+    {
+        [$actor, $permissions, $super] = $this->context($request);
+        $service->delete($type, $id, $actor, $permissions, $super);
+        return response()->json(['message' => '已删除。']);
+    }
+
     private function save(Request $request, string $type, ?int $id, ProductionProcessCatalogService $service)
     {
         $data = $request->validate(['client_command_id' => 'required|string|max:120', 'expected_version' => $id ? 'required|integer|min:1' : 'prohibited',
