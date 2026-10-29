@@ -94,6 +94,7 @@ class PurchaseInventoryPosting
                 $qty = $this->qualifiedBaseQuantity($line);
                 if ($qty <= 0) continue;
                 $unitCost = $qty > 0 ? (float) $line->inventory_cost_amount / $qty : 0;
+                $pipeLotId = $this->pipeLotId($line);
                 $remainingCost = (string) $line->inventory_cost_amount;
                 $remainingQty = number_format($qty, 8, '.', '');
                 foreach ($line->allocations as $allocation) {
@@ -128,7 +129,7 @@ class PurchaseInventoryPosting
                         'physical_operation' => $line->item?->materialManagementMode() === 'physical' ? 'purchase_receipt' : null,
                         'physical_entry_count' => $allocation->physicalEntries()->count(),
                         'remark' => '采购到货合格数量按库位分配入库',
-                    ]);
+                    ] + ($pipeLotId ? ['material_lot_id' => $pipeLotId] : []));
                     if ($line->item?->materialManagementMode() === 'physical') {
                         $this->physicalMaterials->createPurchaseReceiptPhysicals($line, $allocation, $transactionItem);
                     }
@@ -164,6 +165,27 @@ class PurchaseInventoryPosting
      * 到货单已按合格部分过账后，不合格品经让步接收或返修合格转为可入库数量，
      * 按“应入库数量 - 已过账数量”补一笔采购入库流水，入到该行第一条库位分配上。
      */
+    /**
+     * 管材按根入库：这一行的管按到货时量的每根长度（没填按物料标准长度）记一个材料批次，
+     * 之后余额、流水、开料都按这个长度算米数。同一行补入库沿用同一批次。
+     */
+    private function pipeLotId(\App\Models\Erp\PurchaseReceiptItem $line): ?int
+    {
+        $item = $line->item;
+        if (! $item || $item->cuttingMode() !== 'length' || $item->materialManagementMode() === 'physical') return null;
+        $profile = app(StockMeasureService::class)->profile($item->loadMissing('unit'));
+        if (($profile['kind'] ?? null) !== 'root') return null;
+        $existing = DB::table('erp_material_lots')->where('source_type', 'purchase_receipt_item')->where('source_id', $line->id)->value('id');
+        if ($existing) return (int) $existing;
+        $length = (float) $line->stock_length_mm > 0 ? (float) $line->stock_length_mm : (float) $item->standard_stock_length_mm;
+        if ($length <= 0) throw ValidationException::withMessages(['stock_length_mm' => "管材 {$item->item_code} 没有填每根长度，物料档案也没有标准原料长度，请在到货单里填上每根长度再入库。"]);
+        return (int) DB::table('erp_material_lots')->insertGetId([
+            'lot_no' => app(\App\Services\Erp\DocumentNumberService::class)->next('material_lot', 'ML'),
+            'item_id' => $item->id, 'material_form' => 'FULL_STOCK', 'cut_length_mm' => round($length, 2),
+            'source_type' => 'purchase_receipt_item', 'source_id' => $line->id, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+    }
+
     public function postPurchaseReceiptQualityRelease(int $receiptItemId, ?int $operatorId = null, ?object $handling = null): ?InventoryTransaction
     {
         return DB::transaction(function () use ($receiptItemId, $operatorId, $handling): ?InventoryTransaction {
@@ -228,7 +250,7 @@ class PurchaseInventoryPosting
                 'physical_operation' => null,
                 'physical_entry_count' => 0,
                 'remark' => '不合格品让步接收/返修合格补入库',
-            ]);
+            ] + (($pipeLotId = $this->pipeLotId($line)) ? ['material_lot_id' => $pipeLotId] : []));
             InventoryPostingLog::create([
                 'source_type' => $transaction->source_type,
                 'source_id' => $transaction->source_id,

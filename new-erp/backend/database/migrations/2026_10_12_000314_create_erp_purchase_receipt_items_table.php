@@ -73,6 +73,7 @@ CREATE TABLE `erp_purchase_receipt_items` (
   `finance_fact_status` varchar(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'pending',
   `facts_frozen_at` timestamp NULL DEFAULT NULL,
   `batch_no` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `stock_length_mm` decimal(18,2) DEFAULT NULL,
   `expected_arrival_date` date DEFAULT NULL,
   `serial_text` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
   `serial_entries` json DEFAULT NULL,

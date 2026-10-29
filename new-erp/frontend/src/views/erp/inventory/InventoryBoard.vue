@@ -810,7 +810,7 @@
         </div>
         <section v-for="line in postingRepairCandidate.items" :key="line.id" class="posting-repair-line">
           <header>
-            <div><strong>{{ line.item_code }} / {{ line.item_name }}</strong><span>实际入库 {{ line.stockable_display }}　批次 {{ line.batch_no || '-' }}</span></div>
+            <div><strong>{{ line.item_code }} / {{ line.item_name }}</strong><span>实际入库 {{ line.stockable_display }}　批次 {{ line.batch_no || '-' }}<b v-if="line.stock_length_mm" class="measure-strong">　每根 {{ Number(line.stock_length_mm) }} mm</b></span></div>
             <el-button size="mini" type="success" plain @click="addPostingRepairAllocation(line)">添加库位</el-button>
           </header>
           <div v-for="(allocation,index) in line.allocations" :key="index" class="posting-repair-allocation">
@@ -1614,6 +1614,7 @@ export default {
           location_id: line.location_id,
           location_name: line.location?.location_name || '',
           batch_no: line.batch_no || '',
+          stock_length_mm: line.stock_length_mm ? Number(line.stock_length_mm) : null,
           base_unit: baseUnit,
           qualified_qty: qualifiedBase,
           defective_qty: defectiveBase,

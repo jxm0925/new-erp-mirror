@@ -1098,6 +1098,7 @@ class PurchaseController extends Controller
             'items.*.unit_price' => 'nullable|numeric|min:0',
             'items.*.tax_rate' => 'nullable|numeric|min:0|max:100',
             'items.*.batch_no' => 'nullable|string|max:80',
+            'items.*.stock_length_mm' => 'nullable|numeric|min:1|max:100000',
             'items.*.expected_arrival_date' => 'nullable|date',
             'items.*.serial_text' => 'nullable|string',
             'items.*.serial_entries' => 'nullable|array',
@@ -1395,6 +1396,9 @@ class PurchaseController extends Controller
                 'receipt_cost' => $qty * $price,
                 ...$conversion,
                 'batch_no' => $batchNo,
+                // 管材按根入库：这一行每根的实际长度（不填按物料标准长度），过账时记到材料批次上。
+                'stock_length_mm' => $stockManaged && $item->cuttingMode() === 'length' && isset($line['stock_length_mm']) && $line['stock_length_mm'] !== ''
+                    ? round((float) $line['stock_length_mm'], 2) : null,
                 'expected_arrival_date' => $line['expected_arrival_date'] ?? null,
                 // 只做了逐台结构化录入时同步出编号文本，确认/过账按同一份编号校验。
                 'serial_text' => $stockManaged ? (trim((string) ($line['serial_text'] ?? '')) !== '' ? $line['serial_text']
