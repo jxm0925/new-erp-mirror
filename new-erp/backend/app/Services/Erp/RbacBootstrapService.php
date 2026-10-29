@@ -501,7 +501,6 @@ class RbacBootstrapService
             ['finance.payable', '应付管理', 'menu', 'finance', '/finance/payables', 'FinancePayableList', 'el-icon-tickets', 603],
             ['finance.supplier-ledger', '供应商往来', 'menu', 'finance', '/finance/supplier-ledgers', 'FinanceSupplierLedgerList', 'el-icon-office-building', 604],
             ['finance.invoice', '发票管理', 'menu', 'finance', '/finance/invoices', 'FinanceInvoiceList', 'el-icon-document-copy', 605],
-            ['finance.invoice_request', '开票申请', 'menu', 'finance', '/finance/invoice-requests', 'FinanceInvoiceRequestList', 'el-icon-tickets', 605],
             ['finance.allocation', '往来核销', 'menu', 'finance', '/finance/allocations', 'FinanceAllocationList', 'el-icon-connection', 606],
             ['finance.account', '资金账户', 'menu', 'finance', '/finance/accounts', 'FinanceAccountList', 'el-icon-bank-card', 607],
             ['finance.transfer', '资金转账 / 换汇', 'menu', 'finance', '/finance/transfers', 'FinanceTransferList', 'el-icon-sort', 608],
@@ -529,6 +528,7 @@ class RbacBootstrapService
             ['finance.supplier-ledger.view', '查看供应商往来', 'button', 'finance.supplier-ledger', null, null, 'el-icon-mouse', 1],
             ['finance.supplier-ledger.export', '导出供应商往来台账', 'button', 'finance.supplier-ledger', null, null, 'el-icon-mouse', 2],
 
+            ['finance.invoice_request', '开票申请（给客户开销项发票）', 'button', 'finance.invoice', null, null, 'el-icon-tickets', 9],
             ['finance.invoice_request.view', '查看开票申请', 'button', 'finance.invoice_request', null, null, 'el-icon-view', 1],
             ['finance.invoice_request.handle', '开票登记 / 驳回开票申请', 'button', 'finance.invoice_request', null, null, 'el-icon-edit', 2],
             ['finance.invoice.view', '查看发票详情', 'button', 'finance.invoice', null, null, 'el-icon-mouse', 1],

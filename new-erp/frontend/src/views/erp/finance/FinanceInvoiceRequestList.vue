@@ -1,11 +1,11 @@
 <template>
-  <section class="invoice-request-page">
-    <div class="page-heading">
+  <section :class="['invoice-request-page', { embedded }]">
+    <div v-if="!embedded" class="page-heading">
       <div>
         <h1>开票申请</h1>
         <p>销售在订单里提交的给客户开票申请。开好票后点“开票登记”填发票号，系统自动生成销项发票并记到订单上。</p>
       </div>
-      <el-button v-if="$can('finance.invoice.view')" size="small" @click="$router.push({ path: '/finance/invoices', query: { invoice_direction: 'sales' } })">查看销项发票</el-button>
+      <el-button v-if="$can('finance.invoice.view')" size="small" @click="$router.push({ path: '/finance/invoices', query: { tab: 'sales' } })">查看销项发票</el-button>
     </div>
 
     <div class="metrics">
@@ -96,6 +96,7 @@ const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(
 
 export default {
   name: 'FinanceInvoiceRequestList',
+  props: { embedded: { type: Boolean, default: false } },
   data: () => ({
     loading: false, rows: [], total: 0, page: 1, perPage: 20, summary: {},
     filters: { status: 'pending', keyword: '' }, dateRange: [],
@@ -130,6 +131,7 @@ export default {
         this.rows = data.data || []
         this.total = data.total || 0
         this.summary = data.summary || {}
+        this.$emit('summary', this.summary)
       } catch (e) {
         this.$message.error(e.userMessage || '开票申请加载失败')
       } finally { this.loading = false }
@@ -242,4 +244,5 @@ export default {
 .issue-info span { display: block; color: #8a94a6; font-size: 12px; }
 .issue-info b { word-break: break-all; }
 @media (max-width: 760px) { .metrics { grid-template-columns: 1fr; } .metrics > div { border-right: 0; border-bottom: 1px solid #e3e9ef; } .page-heading { flex-direction: column; } .issue-info { grid-template-columns: 1fr; } }
+.invoice-request-page.embedded { min-height: 0; padding: 0; }
 </style>

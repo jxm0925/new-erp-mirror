@@ -26,9 +26,26 @@ class FinanceInvoiceQueryService
 
         return [
             ...$page->toArray(),
-            'data' => $page->getCollection()->map(fn (FinanceInvoice $invoice) => $this->payload($invoice, $matched[(int) $invoice->id] ?? '0.0000'))->values(),
+            'data' => $this->withSalesLinks($page->getCollection()->map(fn (FinanceInvoice $invoice) => $this->payload($invoice, $matched[(int) $invoice->id] ?? '0.0000'))->values()->all()),
             'summary' => $summary,
         ];
+    }
+
+    /** 销项发票带出关联的销售订单和开票申请单号，便于在发票管理里直接追溯。 */
+    private function withSalesLinks(array $rows): array
+    {
+        $ids = array_values(array_map(fn ($row) => (int) $row['id'], array_filter($rows, fn ($row) => ($row['invoice_direction'] ?? null) === FinanceConstants::INVOICE_SALES)));
+        if ($ids === []) return $rows;
+        $orders = FinanceInvoiceAllocation::query()->whereIn('invoice_id', $ids)
+            ->where('source_business_type', FinanceConstants::SOURCE_SALES_ORDER)->where('status', FinanceConstants::ALLOCATION_ACTIVE)
+            ->get(['invoice_id', 'source_document_id', 'source_document_no'])->groupBy('invoice_id');
+        $requests = \App\Models\Erp\SalesInvoiceRequest::query()->whereIn('finance_invoice_id', $ids)->pluck('request_no', 'finance_invoice_id');
+        foreach ($rows as &$row) {
+            if (($row['invoice_direction'] ?? null) !== FinanceConstants::INVOICE_SALES) continue;
+            $row['sales_orders'] = ($orders[(int) $row['id']] ?? collect())->map(fn ($a) => ['id' => (int) $a->source_document_id, 'no' => $a->source_document_no])->values()->all();
+            $row['invoice_request_no'] = $requests[(int) $row['id']] ?? null;
+        }
+        return $rows;
     }
 
     /**

@@ -225,8 +225,7 @@ export default {
       { name: '付款管理', path: '/finance/payments', icon: 'el-icon-wallet', permission: ['finance.payment', 'finance.view'], allPermissions: ['finance.view'] },
       { name: '应付管理', path: '/finance/payables', icon: 'el-icon-tickets', permission: ['finance.payable', 'finance.supplier-ledger', 'finance.payable.view', 'finance.supplier-ledger.view'] },
       { name: '财务统计', path: '/finance/statistics', icon: 'el-icon-data-analysis', permission: 'finance.view' },
-      { name: '发票管理', path: '/finance/invoices', icon: 'el-icon-document-copy', permission: 'finance.invoice' },
-      { name: '开票申请', path: '/finance/invoice-requests', icon: 'el-icon-tickets', permission: 'finance.invoice_request' },
+      { name: '发票管理', path: '/finance/invoices', icon: 'el-icon-document-copy', permission: ['finance.invoice', 'finance.invoice_request'] },
       { name: '资金账户', path: '/finance/accounts', icon: 'el-icon-bank-card', permission: 'finance.account' },
       { name: '资金转账 / 换汇', path: '/finance/transfers', icon: 'el-icon-sort', permission: 'finance.transfer' },
       { name: '资金账户估值', path: '/finance/account-valuations', icon: 'el-icon-pie-chart', permission: 'finance.account_valuation' },
@@ -696,7 +695,6 @@ export default {
       if (path === '/finance/payables') return '应付管理'
       if (path === '/finance/supplier-ledgers') return '应付管理'
       if (['/finance/purchase-payment-statistics', '/finance/supplier-statistics', '/finance/sales-order-statistics'].includes(path)) return '财务统计'
-      if (path === '/finance/invoice-requests') return '开票申请'
       if (path === '/finance/invoices') return '发票管理'
       if (path === '/finance/invoices/create') return '发票管理 / 登记进项发票'
       if (path.startsWith('/finance/invoices/') && path.endsWith('/edit')) return '发票管理 / 登记进项发票'

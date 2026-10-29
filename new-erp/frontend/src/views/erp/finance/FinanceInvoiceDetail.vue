@@ -3,7 +3,7 @@
     <header class="page-heading">
       <div class="heading-title"><h1>进项发票详情</h1><el-tag size="mini" :type="invoice.status==='confirmed'?'success':'info'">{{ statusText(invoice.status) }}</el-tag></div>
       <div class="heading-actions">
-        <el-button @click="$router.push('/finance/invoices')">返回发票列表</el-button>
+        <el-button @click="$router.push({ path: '/finance/invoices', query: { tab: invoice.invoice_direction === 'sales' ? 'sales' : 'purchase' } })">返回发票列表</el-button>
         <el-button icon="el-icon-printer" @click="printPage">打印</el-button>
         <el-button v-if="invoice.invoice_direction!=='sales'" class="red-outline" :disabled="invoice.status!=='confirmed'||!!invoice.red_invoice_of_id" @click="$router.push(`/finance/invoices/${invoice.id}/red`)">红冲发票</el-button>
       </div>
