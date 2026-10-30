@@ -35,24 +35,41 @@ final class MaterialIssueService
         private readonly DocumentNumberService $numbers,
     ) {}
 
-    /** 板材／管材按开料满足，不走收料。 */
+    /**
+     * 开料批次料：按实物逐张／逐根管理（含余料实物）的板材／管材，必须在「开料」里领入、登记产出和余料。
+     * 按数量管理的板材／管材是普通下料料：按 BOM 定额收料（随单下料），或在集中下料后点「已备料」确认。
+     */
     public static function isCutting(MfgWorkOrderMaterial $m): bool
     {
-        return in_array($m->cutting_mode, ['sheet', 'length'], true);
+        return in_array($m->cutting_mode, ['sheet', 'length'], true)
+            && Item::query()->whereKey($m->component_item_id)->value('material_management_mode') === 'physical';
     }
 
-    /** 工单里用板材／管材的车间工序：这些工序在本道直接开料。 */
+    /** 工单里用开料批次料（按实物管理的板材／管材）的车间工序：这些工序在本道开料、按开料套数报完成。 */
     public static function cuttingOperationIds(int $workOrderId): array
     {
-        return MfgWorkOrderMaterial::query()->where('work_order_id', $workOrderId)->whereIn('cutting_mode', ['sheet', 'length'])
-            ->where('required_qty', '>', 0)->whereNotNull('work_order_operation_id')->distinct()->pluck('work_order_operation_id')->map(fn ($id) => (int) $id)->all();
+        return self::cutRows($workOrderId, true)->distinct()->pluck('m.work_order_operation_id')->map(fn ($id) => (int) $id)->all();
+    }
+
+    /** 工单里用按数量管理的板材／管材的车间工序（下料）：可以计时报工，也可以「已备料」不计时直接交下道。 */
+    public static function prepOperationIds(int $workOrderId): array
+    {
+        return self::cutRows($workOrderId, false)->distinct()->pluck('m.work_order_operation_id')->map(fn ($id) => (int) $id)->all();
+    }
+
+    private static function cutRows(int $workOrderId, bool $physical)
+    {
+        return DB::table('erp_mfg_work_order_materials as m')->join('erp_items as i', 'i.id', '=', 'm.component_item_id')
+            ->where('m.work_order_id', $workOrderId)->whereIn('m.cutting_mode', ['sheet', 'length'])->where('m.required_qty', '>', 0)
+            ->whereNotNull('m.work_order_operation_id')
+            ->when($physical, fn ($q) => $q->where('i.material_management_mode', 'physical'), fn ($q) => $q->where(fn ($w) => $w->whereNull('i.material_management_mode')->orWhere('i.material_management_mode', '!=', 'physical')));
     }
 
     /** 开料登记够做到第几套（各种板材／管材取最少）；本道不开料时返回 null。 */
     public function cutUnits(MfgWorkOrder $wo, MfgWorkOrderOperation $op, bool $lock = false): ?int
     {
         $rows = MfgWorkOrderMaterial::query()->where('work_order_operation_id', $op->id)->whereIn('cutting_mode', ['sheet', 'length'])
-            ->where('required_qty', '>', 0)->orderBy('id')->when($lock, fn ($q) => $q->lockForUpdate())->get();
+            ->where('required_qty', '>', 0)->orderBy('id')->when($lock, fn ($q) => $q->lockForUpdate())->get()->filter(fn ($m) => self::isCutting($m));
         if ($rows->isEmpty()) return null;
         return (int) $rows->map(fn ($m) => $this->coveredUnits($m, $wo))->min();
     }
@@ -67,14 +84,15 @@ final class MaterialIssueService
     }
 
     /**
-     * 本道的料必须已经收够到这些台。板材／管材不在这里查：下料工序开工后在本道开料，报完成时按开料登记的套数校验。
+     * 本道的料必须已经收够到这些台。按实物管理的板材／管材不在这里查：在本道开料，报完成时按开料登记的套数校验；按数量管理的板材／管材和普通料一样按定额收料。
      */
-    public function assertReceivedForStart(MfgWorkOrder $wo, MfgWorkOrderOperation $op, Collection $units): void
+    public function assertReceivedForStart(MfgWorkOrder $wo, MfgWorkOrderOperation $op, Collection $units, ?float $upTo = null): void
     {
         $materials = MfgWorkOrderMaterial::query()->where('work_order_operation_id', $op->id)->where('participates_in_kitting', true)
             ->where('required_qty', '>', 0)->orderBy('id')->lockForUpdate()->get()->reject(fn ($m) => self::isCutting($m))->values();
         if ($materials->isEmpty()) return;
-        $reached = $this->reachedUnits($op);
+        // 开工按已经到本道的设备数查；「已备料」按本道做到第几台查（$upTo）。
+        $reached = $upTo ?? $this->reachedUnits($op);
         $unsigned = MaterialDeliveryService::unsignedQty((int) $op->id);
         $missing = [];
         $waiting = [];
@@ -131,6 +149,20 @@ final class MaterialIssueService
             $this->workOrders->log($wo, 'material_received', $wo->status, $wo->status, "{$op->operation_name}收料（{$issue->issue_no}）：{$text}，已扣库存", $actor, ['issue_id' => $issue->id, 'operation_id' => $op->id]);
             return $issue->fresh();
         }, 5);
+    }
+
+    /**
+     * 「已备料」交下道前补收本道的料：本道要做到第 $upTo 台，还没收的按 BOM 定额从库存扣（集中下料切好的料也按定额计入本工单）。
+     * 都收够了返回 null。
+     */
+    public function receiveUpTo(MfgWorkOrder $wo, MfgWorkOrderOperation $op, float $upTo, ?string $remark, object $actor): ?MfgMaterialIssue
+    {
+        $materials = $this->receivable($op);
+        if ($materials->isEmpty()) return null;
+        $prepared = MaterialDeliveryService::preparedQty((int) $op->id);
+        $done = $materials->map(fn ($m) => $this->coveredUnits($m, $wo, (float) ($prepared[$m->id] ?? 0)))->min();
+        $need = (int) ceil($upTo - $done - self::EPS);
+        return $need > 0 ? $this->receive((int) $wo->id, (int) $op->id, $need, $remark, $actor) : null;
     }
 
     /**
@@ -201,7 +233,7 @@ final class MaterialIssueService
         return $rows;
     }
 
-    /** 本道要收的料：参与齐套、按数量管理（板料按实物走开料，不在这里收）。 */
+    /** 本道要收的料：参与齐套、按数量管理（含按数量管理的板材／管材；按实物管理的走开料，不在这里收）。 */
     public function receivable(MfgWorkOrderOperation $op, bool $lock = false): Collection
     {
         $query = MfgWorkOrderMaterial::query()->where('work_order_operation_id', $op->id)->where('participates_in_kitting', true)->orderBy('id');
@@ -210,8 +242,7 @@ final class MaterialIssueService
         // 加锁时同时锁物料行：收料、配料、重新拣货、发出、退料都在物料锁下读库存和配料占用，与库存过账的物料锁一致。
         $physical = Item::query()->whereIn('id', $rows->pluck('component_item_id')->unique()->sort()->values())->orderBy('id')->when($lock, fn ($q) => $q->lockForUpdate())->get()
             ->filter(fn (Item $item) => $item->materialManagementMode() === 'physical')->pluck('id')->map(fn ($id) => (int) $id)->all();
-        return $rows->reject(fn ($m) => in_array($m->cutting_mode, ['sheet', 'length'], true)
-            || in_array((int) $m->component_item_id, $physical, true) || (float) $m->required_qty <= 0)->values();
+        return $rows->reject(fn ($m) => in_array((int) $m->component_item_id, $physical, true) || (float) $m->required_qty <= 0)->values();
     }
 
     /** 按物料 ID 顺序锁物料行，作为分配库存和配料占用的互斥边界（须在本事务任何普通读取之前调用）。 */

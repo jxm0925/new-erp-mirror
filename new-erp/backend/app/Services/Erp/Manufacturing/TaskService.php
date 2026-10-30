@@ -139,11 +139,7 @@ final class TaskService
             }
             if (! $this->participant($op, $me)) $this->fail('not_participant', '你不是这道工序的接单人或协同人。');
             if ((int) $owner->employee_legacy_id !== $me && $op->status !== 'in_progress') $this->fail('owner_first', '接单人还没开始，协同人不能先计时。');
-            if (! $wo->started_at && $wo->source_type === 'sales_order' && $wo->sales_order_id) {
-                $order = SalesOrder::query()->find($wo->sales_order_id);
-                $status = $order ? $this->funding->status($order) : ['production_funds_satisfied' => true];
-                if (! ($status['production_funds_satisfied'] ?? false)) $this->fail('funds_unsatisfied', $status['production_block_message'] ?? '定金未到，不能开工。');
-            }
+            $this->assertFunds($wo);
             if (MfgLaborSession::query()->where('employee_legacy_id', $me)->where('status', 'active')->lockForUpdate()->first())
                 $this->fail('already_timing', '你还有别的工序在计时，请先暂停那一道。');
             if (ShipmentPackingLaborSession::query()->where('employee_legacy_id', $me)->where('status', 'ACTIVE')->lockForUpdate()->first(['id']))
@@ -152,11 +148,7 @@ final class TaskService
             if ($units->isEmpty()) $this->fail('no_unit', '这道工序现在没有要做的设备，等前道交过来再开始。');
             // 本道的料（总装的半成品、外购件）收到才能开工；板材／管材在本道开工后开料，报合格时再查。
             $this->materials->assertReceivedForStart($wo, $op, $units);
-            if (! $wo->started_at) {
-                $before = $wo->status;
-                $wo->update(['status' => 'in_progress', 'started_at' => now(), 'business_version' => (int) $wo->business_version + 1]);
-                $this->workOrders->log($wo, 'started', $before, 'in_progress', $this->actorName($actor).' 开始'.$op->operation_name.'，工单开工', $actor);
-            }
+            $this->markStarted($wo, $op, $actor);
             if ($op->status !== 'in_progress') $op->update(['status' => 'in_progress']);
             MfgWorkOrderUnit::query()->whereIn('id', $units->pluck('id'))->where('status', 'waiting')->update(['status' => 'in_progress', 'started_at' => now()]);
             MfgLaborSession::create([
@@ -238,63 +230,45 @@ final class TaskService
             // 下料按套数报：本次首次完成的套数加上已完成的，不能超过开料已登记的套数。
             $firstTime = $units->filter(fn ($u) => ! MfgUnitReport::query()->where('unit_id', $u->id)->where('work_order_operation_id', $op->id)->where('result', 'passed')->exists())->count();
             $this->materials->assertCutForPass($wo, $op, $firstTime);
-            $ops = $this->productionOps($wo);
-            $pos = $ops->pluck('id')->flip();
-            $next = $ops->get($pos[$op->id] + 1);
             $reportedAt = now();
-            $snapshot = $this->participantsSnapshot($op, $sessions, $reportedAt);
-            $firstPass = 0;
-            $finished = 0;
-            $receiptUnitIds = [];
-            $repaired = 0;
-            foreach ($units as $unit) {
-                $shipmentRepair = \App\Models\Erp\ShipmentRework::query()->where('unit_id', $unit->id)->where('status', 'in_progress')->lockForUpdate()->first();
-                $wasRework = $unit->status === 'rework';
-                if (! MfgUnitReport::query()->where('unit_id', $unit->id)->where('work_order_operation_id', $op->id)->where('result', 'passed')->lockForUpdate()->first(['id'])) $firstPass++;
-                $this->report($wo, $op, $unit, 'passed', $actor, ['is_rework' => $wasRework, 'participants_snapshot' => $snapshot, 'created_at' => $reportedAt]);
-                $stillRework = false;
-                if ($wasRework) {
-                    $failedAt = MfgUnitReport::query()->where('unit_id', $unit->id)->where('result', 'failed')->orderByDesc('id')->lockForUpdate()->value('work_order_operation_id');
-                    $stillRework = $failedAt && isset($pos[$failedAt]) && $pos[$failedAt] > $pos[$op->id];
-                }
-                if ($next) {
-                    $unit->update(['status' => $stillRework || $shipmentRepair ? 'rework' : 'in_progress', 'current_operation_id' => $next->id]);
-                    if ($next->status === 'done') $next->update(['status' => 'in_progress']);
-                    $text = "{$op->operation_name}合格，交{$next->operation_name}";
-                } else {
-                    if ($shipmentRepair) {
-                        // 已在库原机返工只完成本轮维修，不增加首次制造成果，也不再入库一台。
-                        $unit->update(['status' => 'stored', 'current_operation_id' => null]);
-                        $shipmentRepair->update(['status' => 'completed', 'completed_at' => $reportedAt]);
-                        $repaired++;
-                        $text = "{$op->operation_name}返修合格，等待返回成品位重新试水";
-                    } else {
-                    $unit->update(['status' => 'completed', 'current_operation_id' => null, 'completed_at' => $reportedAt]);
-                    $finished++;
-                    $receiptUnitIds[] = (int) $unit->id;
-                    $text = "{$op->operation_name}合格，生产完成，等入库";
-                    }
-                }
-                $this->workOrders->log($wo, 'unit_passed', $wasRework ? 'rework' : 'in_progress', $next ? null : ($shipmentRepair ? 'stored' : 'completed'),
-                    $unit->serial_no.' '.$text.($wasRework ? '（返工）' : ''), $actor, ['operation_id' => $op->id], $unit->id);
+            return $this->advance($wo, $op, $units, $this->participantsSnapshot($op, $sessions, $reportedAt), $reportedAt, [], $actor);
+        }, 5);
+    }
+
+    /**
+     * 已备料：集中下料提前切好的料，下料工序不计时，确认备好几台后直接交下道。
+     * 只用于用按数量管理的板材／管材的工序；本道的料按 BOM 定额从库存扣（还没收的当场收），计入本工单材料成本。
+     */
+    public function prepare(int $opId, array $unitIds, ?string $remark, object $actor): array
+    {
+        $this->closeOverdueSessions();
+        return DB::transaction(function () use ($opId, $unitIds, $remark, $actor) {
+            [$wo, $op] = $this->lockTask($opId);
+            $this->assertRunnable($wo, $op);
+            if (! in_array((int) $op->id, MaterialIssueService::prepOperationIds((int) $wo->id), true))
+                $this->fail('prepare_invalid', $op->operation_name.'不用板材／管材，不能按“已备料”交下道，请开始计时后报合格。');
+            $me = (int) $this->actorId($actor);
+            DB::table('erp_legacy_admin_users')->where('legacy_id', $me)->lockForUpdate()->first();
+            if (! $this->participant($op, $me)) {
+                if ($this->owner($op)) $this->fail('not_participant', '这道已有人接单，只有接单人和协同人可以确认备料。');
+                if (! $this->canDo($op, $me)) $this->fail('not_worker', '你不在这道工序“能做的人”里，请找主管派工。');
+                $this->setParticipant($op, $me, $this->actorName($actor), 'owner', $actor);
             }
-            if ($firstPass) $op->update(['completed_qty' => (float) $op->completed_qty + $firstPass]);
-            if ($finished) $wo->update(['completed_qty' => (float) $wo->completed_qty + $finished]);
-            $this->refreshOperation($wo, $op, $reportedAt);
-            $timingPaused = $this->pauseIfIdle($wo, $op, $actor);
-            // 总装做完、订单马上要发：自动记入成品待发区，直接去发货试水。
-            $staged = null;
-            if ($finished) {
-                try {
-                    $staged = $this->receipts->autoStage($wo->id, $receiptUnitIds, $actor);
-                } catch (\App\Exceptions\Erp\WorkOrderDomainException|\Illuminate\Validation\ValidationException $e) {
-                    // 自动入待发区失败不影响报工，留给仓库手工入库。
-                    $message = $e instanceof \Illuminate\Validation\ValidationException ? collect($e->errors())->flatten()->first() : $e->getMessage();
-                    $this->workOrders->log($wo, 'staging_failed', $wo->status, $wo->status, '自动记入成品待发区没成功：'.$message.'，请仓库手工入库', $actor);
-                }
-            }
-            return ['passed' => $units->count(), 'finished' => $finished, 'repaired' => $repaired, 'next_operation_name' => $next?->operation_name,
-                'staged_qty' => $staged ? (int) $staged->qty : 0, 'staged_receipt_no' => $staged?->receipt_no, 'timing_paused' => $timingPaused];
+            $this->assertFunds($wo);
+            $units = $this->pickUnits($op, $unitIds);
+            $remark = trim((string) $remark) ?: null;
+            // 只为这次第一次过本道的设备收料；返工回来的设备料已经收过。
+            $firstTime = $units->filter(fn ($u) => ! MfgUnitReport::query()->where('unit_id', $u->id)->where('work_order_operation_id', $op->id)->where('result', 'passed')->exists())->count();
+            $upTo = (float) $op->completed_qty + $firstTime;
+            $this->materials->receiveUpTo($wo, $op, $upTo, $remark ? '已备料：'.$remark : '已备料', $actor);
+            $this->materials->assertReceivedForStart($wo, $op, $units, $upTo);
+            $this->materials->assertCutForPass($wo, $op, $firstTime);
+            $this->markStarted($wo, $op, $actor);
+            if ($op->status !== 'in_progress') $op->update(['status' => 'in_progress']);
+            $reportedAt = now();
+            $sessions = MfgLaborSession::query()->where('work_order_operation_id', $op->id)->lockForUpdate()->get();
+            return $this->advance($wo, $op, $units, $this->participantsSnapshot($op, $sessions, $reportedAt), $reportedAt,
+                ['pass_mode' => 'prepared', 'reason' => $remark ? mb_substr($remark, 0, 500) : null], $actor);
         }, 5);
     }
 
@@ -441,6 +415,86 @@ final class TaskService
         }
         return $query->whereNotExists(fn ($q) => $q->selectRaw('1')->from('erp_mfg_unit_reports as r')
             ->whereColumn('r.unit_id', 'erp_mfg_work_order_units.id')->where('r.review_status', 'pending'))->get();
+    }
+
+    /** 订单工单第一次开工（含已备料交下道）前，定金须满足生产要求。 */
+    private function assertFunds(MfgWorkOrder $wo): void
+    {
+        if ($wo->started_at || $wo->source_type !== 'sales_order' || ! $wo->sales_order_id) return;
+        $order = SalesOrder::query()->find($wo->sales_order_id);
+        $status = $order ? $this->funding->status($order) : ['production_funds_satisfied' => true];
+        if (! ($status['production_funds_satisfied'] ?? false)) $this->fail('funds_unsatisfied', $status['production_block_message'] ?? '定金未到，不能开工。');
+    }
+
+    private function markStarted(MfgWorkOrder $wo, MfgWorkOrderOperation $op, object $actor): void
+    {
+        if ($wo->started_at) return;
+        $before = $wo->status;
+        $wo->update(['status' => 'in_progress', 'started_at' => now(), 'business_version' => (int) $wo->business_version + 1]);
+        $this->workOrders->log($wo, 'started', $before, 'in_progress', $this->actorName($actor).' 开始'.$op->operation_name.'，工单开工', $actor);
+    }
+
+    /**
+     * 合格／已备料的设备交下道；最后一道则生产完成，订单马上要发的自动记入成品待发区。调用方须已锁定工单、工序和设备。
+     */
+    private function advance(MfgWorkOrder $wo, MfgWorkOrderOperation $op, Collection $units, array $snapshot, CarbonInterface $reportedAt, array $extra, object $actor): array
+    {
+        $prepared = ($extra['pass_mode'] ?? null) === 'prepared';
+        $ops = $this->productionOps($wo);
+        $pos = $ops->pluck('id')->flip();
+        $next = $ops->get($pos[$op->id] + 1);
+        $firstPass = 0;
+        $finished = 0;
+        $receiptUnitIds = [];
+        $repaired = 0;
+        foreach ($units as $unit) {
+            $shipmentRepair = \App\Models\Erp\ShipmentRework::query()->where('unit_id', $unit->id)->where('status', 'in_progress')->lockForUpdate()->first();
+            $wasRework = $unit->status === 'rework';
+            if (! MfgUnitReport::query()->where('unit_id', $unit->id)->where('work_order_operation_id', $op->id)->where('result', 'passed')->lockForUpdate()->first(['id'])) $firstPass++;
+            $this->report($wo, $op, $unit, 'passed', $actor, $extra + ['is_rework' => $wasRework, 'participants_snapshot' => $snapshot, 'created_at' => $reportedAt]);
+            $stillRework = false;
+            if ($wasRework) {
+                $failedAt = MfgUnitReport::query()->where('unit_id', $unit->id)->where('result', 'failed')->orderByDesc('id')->lockForUpdate()->value('work_order_operation_id');
+                $stillRework = $failedAt && isset($pos[$failedAt]) && $pos[$failedAt] > $pos[$op->id];
+            }
+            if ($next) {
+                $unit->update(['status' => $stillRework || $shipmentRepair ? 'rework' : 'in_progress', 'current_operation_id' => $next->id]);
+                if ($next->status === 'done') $next->update(['status' => 'in_progress']);
+                $text = ($prepared ? "{$op->operation_name}已备料" : "{$op->operation_name}合格")."，交{$next->operation_name}";
+            } else {
+                if ($shipmentRepair) {
+                    // 已在库原机返工只完成本轮维修，不增加首次制造成果，也不再入库一台。
+                    $unit->update(['status' => 'stored', 'current_operation_id' => null]);
+                    $shipmentRepair->update(['status' => 'completed', 'completed_at' => $reportedAt]);
+                    $repaired++;
+                    $text = "{$op->operation_name}返修合格，等待返回成品位重新试水";
+                } else {
+                    $unit->update(['status' => 'completed', 'current_operation_id' => null, 'completed_at' => $reportedAt]);
+                    $finished++;
+                    $receiptUnitIds[] = (int) $unit->id;
+                    $text = ($prepared ? "{$op->operation_name}已备料" : "{$op->operation_name}合格").'，生产完成，等入库';
+                }
+            }
+            $this->workOrders->log($wo, 'unit_passed', $wasRework ? 'rework' : 'in_progress', $next ? null : ($shipmentRepair ? 'stored' : 'completed'),
+                $unit->serial_no.' '.$text.($wasRework ? '（返工）' : ''), $actor, ['operation_id' => $op->id], $unit->id);
+        }
+        if ($firstPass) $op->update(['completed_qty' => (float) $op->completed_qty + $firstPass]);
+        if ($finished) $wo->update(['completed_qty' => (float) $wo->completed_qty + $finished]);
+        $this->refreshOperation($wo, $op, $reportedAt);
+        $timingPaused = $this->pauseIfIdle($wo, $op, $actor);
+        // 总装做完、订单马上要发：自动记入成品待发区，直接去发货试水。
+        $staged = null;
+        if ($finished) {
+            try {
+                $staged = $this->receipts->autoStage($wo->id, $receiptUnitIds, $actor);
+            } catch (\App\Exceptions\Erp\WorkOrderDomainException|\Illuminate\Validation\ValidationException $e) {
+                // 自动入待发区失败不影响报工，留给仓库手工入库。
+                $message = $e instanceof \Illuminate\Validation\ValidationException ? collect($e->errors())->flatten()->first() : $e->getMessage();
+                $this->workOrders->log($wo, 'staging_failed', $wo->status, $wo->status, '自动记入成品待发区没成功：'.$message.'，请仓库手工入库', $actor);
+            }
+        }
+        return ['passed' => $units->count(), 'finished' => $finished, 'repaired' => $repaired, 'next_operation_name' => $next?->operation_name,
+            'staged_qty' => $staged ? (int) $staged->qty : 0, 'staged_receipt_no' => $staged?->receipt_no, 'timing_paused' => $timingPaused];
     }
 
     private function lockTask(int $opId): array

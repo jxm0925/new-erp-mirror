@@ -83,7 +83,8 @@ final class MaterialDeliveryService
             ->whereIn('w.status', self::OPEN_WO)->where('o.execution_context', 'production')->where('m.participates_in_kitting', true)
             ->whereColumn('m.required_qty', '>', 'm.issued_qty')
             ->where(fn ($q) => $q->whereNull('m.supply_mode')->orWhereNotIn('m.supply_mode', self::NOT_DELIVERED))
-            ->where(fn ($q) => $q->whereNull('m.cutting_mode')->orWhereNotIn('m.cutting_mode', ['sheet', 'length']))
+            // 按实物管理的板材／管材走开料，不逐单配送；按数量管理的板材／管材和普通料一样可以配送。
+            ->whereNotExists(fn ($q) => $q->selectRaw('1')->from('erp_items as i')->whereColumn('i.id', 'm.component_item_id')->where('i.material_management_mode', 'physical'))
             ->distinct()->pluck('m.work_order_operation_id');
         $ops = MfgWorkOrderOperation::query()->whereIn('id', $opIds->all() ?: [0])->get();
         $wos = MfgWorkOrder::query()->whereIn('id', $ops->pluck('work_order_id')->unique()->all() ?: [0])->get()->keyBy('id');

@@ -136,7 +136,8 @@ export default {
     locator: { visible: false, type: 'warehouses', row: null }
   }),
   computed: {
-    hasCutting() { return (this.workOrder.kitting || []).some(op => (op.materials || []).some(row => row.cutting_mode && row.cutting_mode !== 'none')) },
+    // 只有按实物管理的板材（issue_mode=cutting）走开料批次；按数量管理的管材按定额收料或在小程序点「已备料」
+    hasCutting() { return (this.workOrder.kitting || []).some(op => (op.materials || []).some(row => row.issue_mode === 'cutting' && row.cutting_mode && row.cutting_mode !== 'none')) },
     canExecute() { return this.$can('production.work_order.edit') || this.$can('production.task.execute') },
     locked() { return this.busy || this.pendingIssue || !this.canExecute },
     batchLocked() { return this.busy || this.pendingSettle || !this.canExecute || this.batch.status !== 'issued' },

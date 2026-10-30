@@ -87,6 +87,8 @@ final class TaskQueryService
         $hasCutting = in_array((int) $op->id, $cuttingOps, true);
         $cuttingBatches = $hasCutting ? MfgCuttingBatch::query()->where('work_order_operation_id', $op->id)->get(['status', 'unit_qty', 'completed_unit_qty']) : collect();
         $cutUnits = $hasCutting ? (int) app(MaterialIssueService::class)->cutUnits($wo, $op) : 0;
+        // 用按数量管理的板材／管材的下料工序：可以计时报工，也可以集中下料后点「已备料」不计时交下道。
+        $isPrep = in_array((int) $op->id, MaterialIssueService::prepOperationIds((int) $wo->id), true);
         $opDone = (int) round((float) $op->completed_qty);
         return [
             'id' => $op->id, 'operation_name' => $op->operation_name, 'stage_name' => $op->stage_name, 'status' => $op->status,
@@ -121,6 +123,7 @@ final class TaskQueryService
                     'cutting' => MaterialIssueService::isCutting($m)])->values()->all(),
             // 本道用板材／管材：在本道直接开料（领原料 → 登记切出的件和余料）。
             // 下料按套数报完成，不逐台勾选：开料登记了几套，最多就能报几套。
+            'prep' => $isPrep,
             'cutting' => $hasCutting ? [
                 'planned_units' => (int) $wo->planned_qty,
                 'cut_units' => $cutUnits,
@@ -143,6 +146,7 @@ final class TaskQueryService
                 'pause' => $canExecute && (bool) $myActive,
                 'cutting' => $hasCutting && $canExecute && $mine && in_array($wo->status, ['released', 'in_progress'], true),
                 'report' => $canExecute && $runnable && $mine && $here > 0,
+                'prepare' => $isPrep && $canExecute && $runnable && $here > 0 && ($mine || (! $owner && $canDo)),
                 'collaborators' => $canExecute && $runnable && $mine && $mine['role'] === 'owner',
                 'assign' => $runnable && $canAssign,
                 // 主管替忘了停的人停止计时

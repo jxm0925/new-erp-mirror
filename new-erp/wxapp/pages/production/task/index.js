@@ -51,6 +51,8 @@ Page({
         ownerName: owner ? owner.employee_name : '', collaboratorNames: others.map(p => p.employee_name).join('、'),
         dueText: String(task.work_order.planned_finish_date || '').slice(5, 10),
         selectableCount: (task.units || []).filter(u => u.selectable).length,
+        // 下料工序自己没计过时：底部按「已备料」交下道；开始计时后按正常报合格。
+        prepMode: Boolean(task.prep && task.allowed && task.allowed.prepare && !task.my.timing && !(Number(task.my.closed_minutes || 0) > 0)),
       }),
       selected, selectedCount: Object.keys(selected).length, shareText, isImage, loading: false,
       cutQty: task.cutting ? Math.max(1, Math.min(this.data.cutQty || 1, task.cutting.reportable_units || 1)) : 1,
@@ -225,6 +227,15 @@ Page({
     const next = this.data.task.progress.next_operation_name;
     wx.showModal({ title: '报合格', content: `${ids.length} 台合格，${next ? '交给' + next : '生产完成，等入库'}？`, confirmText: '确认',
       success: res => { if (res.confirm) this.run({ action: 'pass', unit_ids: ids }); } });
+  },
+
+  // 已备料：集中下料提前切好的料，不计时直接交下道（料按 BOM 定额从库存扣）。
+  prepare() {
+    const ids = this.selectedIds();
+    if (!ids.length) { wx.showToast({ title: '先勾选或扫码选设备', icon: 'none' }); return; }
+    const next = this.data.task.progress.next_operation_name;
+    wx.showModal({ title: `${ids.length} 台已备料，${next ? '交给' + next : '生产完成'}？`, editable: true, placeholderText: '备注（可不填，如缺什么、用的哪批料）',
+      confirmText: '确认', success: res => { if (res.confirm) this.run({ action: 'prepare', unit_ids: ids, remark: String(res.content || '').trim() || null }, '已备料'); } });
   },
 
   // 下料按套数报：不逐台勾选，按台号顺序自动取对应数量交下道。

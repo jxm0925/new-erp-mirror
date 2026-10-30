@@ -22,6 +22,7 @@ CREATE TABLE `erp_mfg_unit_reports` (
   `unit_id` bigint(20) unsigned NOT NULL,
   `serial_no` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `result` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `pass_mode` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `is_rework` tinyint(1) NOT NULL DEFAULT '0',
   `return_operation_id` bigint(20) unsigned DEFAULT NULL,
   `return_operation_name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
