@@ -23,11 +23,10 @@ class DatabaseSeeder extends Seeder
             ErpAdministratorSeeder::class,
             ErpRbacSeeder::class,
             ErpApprovalConfigurationSeeder::class,
-            // 基础资料及双滤物料依赖编号规则，双滤物料还依赖已批准分类。
+            // 已批准的分类及供应商基础资料依赖编号规则。
             ErpDocumentNumberRuleSeeder::class,
             ErpApprovedMasterDataSeeder::class,
             ErpApprovedSalesReferenceSeeder::class,
-            ErpDualFilterMaterialSeeder::class,
             ErpFinanceReferenceSeeder::class,
             ErpProductionCatalogSeeder::class,
             ErpSalesReferenceSeeder::class,

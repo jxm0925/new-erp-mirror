@@ -17,7 +17,7 @@ class ErpDualFilterMaterialSeeder extends Seeder
     private function seed(): void
     {
         $rows = json_decode(file_get_contents(__DIR__.'/data/dual_filter_materials.json'), true, 512, JSON_THROW_ON_ERROR);
-        $maximum = max(array_map(fn (array $row) => (int) substr($row['item_code'], 4), $rows));
+        $maximum = max(array_map(fn (array $row) => (int) substr((string) $row['item_code'], 4), $rows));
         $this->prepareCounter('item', 'erp_items', 'item_code', 'ITEM', 8, $maximum);
         $this->prepareCounter('item_category', 'erp_item_categories', 'category_code', 'IC', 6);
         $units = $this->units();
@@ -30,18 +30,39 @@ class ErpDualFilterMaterialSeeder extends Seeder
             $row['unit_id'] = $units[$row['unit_code']];
             unset($row['category_code'], $row['category_name'], $row['unit_code']);
 
-            $item = DB::table('erp_items')->where('item_code', $row['item_code'])->lockForUpdate()->first();
+            $query = DB::table('erp_items');
+            if ($row['item_code'] === null) {
+                // 新型号动态取号，不为固定新编码覆盖既有编号计数。
+                $query->where('item_name', $row['item_name'])->where('spec', $row['spec']);
+            } else {
+                $query->where('item_code', $row['item_code']);
+            }
+            $matches = $query->lockForUpdate()->get();
+            if ($matches->count() > 1) {
+                throw new RuntimeException('物料名称和规格存在歧义：'.$row['item_name'].' '.$row['spec'].'，物料补缺已回滚。');
+            }
+            $item = $matches->first();
+            if ($row['item_code'] === null) unset($row['item_code']);
+            if (($row['serial_tracking_mode'] ?? 'none') !== 'none'
+                && DB::table('erp_items')->where('serial_number_prefix', $row['serial_number_prefix'])
+                    ->where('serial_tracking_mode', '!=', 'none')
+                    ->when($item, fn ($query) => $query->where('id', '!=', $item->id))->lockForUpdate()->exists()) {
+                throw new RuntimeException('序列号前缀已被其他物料使用：'.$row['serial_number_prefix'].'，物料补缺已回滚。');
+            }
             if ($item) {
                 // 编码相同但规格或管理口径不同不能当作缺失；备注、品牌及人工价格不覆盖。
-                $this->assertCompatible($item, array_diff_key($row, ['brand' => true, 'remark' => true]), $row['item_code']);
+                $this->assertCompatible($item, array_diff_key($row, ['brand' => true, 'remark' => true]), $item->item_code);
                 $itemId = (int) $item->id;
             } else {
+                $row['item_code'] ??= app(DocumentNumberService::class)->next('item');
                 $itemId = DB::table('erp_items')->insertGetId($row + ['created_at' => now(), 'updated_at' => now()]);
             }
 
-            $this->policy($itemId, $row['production_execution_mode']);
+            $this->policy($itemId, $row['production_execution_mode'], $row['serial_tracking_mode']);
             if ($row['cutting_mode'] === 'length') {
-                $this->conversion($itemId, $units['M'], $units['ROOT']);
+                $this->conversion($itemId, $units['M'], $units['ROOT'], '0.20000000', '方管每根5米，1米对应0.2根');
+            } elseif (($row['item_code'] ?? null) === 'ITEM00000057') {
+                $this->conversion($itemId, $units['BATCH'], $units['M'], '25.00000000', '电线每批25米');
             }
         }
     }
@@ -55,6 +76,7 @@ class ErpDualFilterMaterialSeeder extends Seeder
             'BATCH' => ['批', 'quantity', 0, 0, 0, 90],
             'SET' => ['套', 'quantity', 0, 0, 0, 100],
             'SHEET' => ['张', 'quantity', 0, 0, 0, 110],
+            'TAI' => ['台', 'quantity', 0, 0, 0, 120],
         ];
         $ids = [];
         foreach ($definitions as $code => [$name, $type, $decimal, $places, $base, $sort]) {
@@ -96,13 +118,13 @@ class ErpDualFilterMaterialSeeder extends Seeder
         ]);
     }
 
-    private function policy(int $itemId, string $executionMode): void
+    private function policy(int $itemId, string $executionMode, string $serialTrackingMode): void
     {
         $parameters = [
             'template_code' => 'inventory_material', 'is_stock_managed' => true,
             'inventory_management_mode' => 'standard', 'requires_custodian' => false,
             'is_returnable' => false, 'requires_capitalization' => false,
-            'serial_tracking_mode' => 'none', 'production_execution_mode' => $executionMode,
+            'serial_tracking_mode' => $serialTrackingMode, 'production_execution_mode' => $executionMode,
             'serial_generation_stage' => 'before_finished_goods_posting',
             'serial_generation_routing_operation_id' => null,
             'post_purchase_action' => 'inventory_receipt', 'consumption_confirmation_mode' => 'none',
@@ -123,25 +145,25 @@ class ErpDualFilterMaterialSeeder extends Seeder
         ]);
     }
 
-    private function conversion(int $itemId, int $metreId, int $rootId): void
+    private function conversion(int $itemId, int $purchaseUnitId, int $baseUnitId, string $factor, string $reason): void
     {
         $expected = [
-            'purchase_unit_id' => $metreId, 'base_unit_id' => $rootId,
-            'factor' => '0.20000000', 'is_default' => 1, 'allow_actual_conversion' => 0,
+            'purchase_unit_id' => $purchaseUnitId, 'base_unit_id' => $baseUnitId,
+            'factor' => $factor, 'is_default' => 1, 'allow_actual_conversion' => 0,
             'status' => 'active', 'effective_to' => null,
         ];
         $existing = DB::table('erp_item_purchase_conversions')->where('item_id', $itemId)->lockForUpdate()->get();
         if ($existing->isNotEmpty()) {
             $active = $existing->where('status', 'active');
             if ($active->count() !== 1) {
-                throw new RuntimeException('方管 '.$itemId.' 的既有换算需人工核对，补缺已回滚。');
+                throw new RuntimeException('物料 '.$itemId.' 的既有换算需人工核对，补缺已回滚。');
             }
-            $this->assertCompatible($active->first(), $expected, '方管采购换算 '.$itemId);
+            $this->assertCompatible($active->first(), $expected, '物料采购换算 '.$itemId);
             return;
         }
         DB::table('erp_item_purchase_conversions')->insert(['item_id' => $itemId] + $expected + [
-            'effective_from' => now(), 'change_reason' => '方管每根5米，1米对应0.2根',
-            'remark' => '每根5米，按整根接收。', 'created_at' => now(), 'updated_at' => now(),
+            'effective_from' => now(), 'change_reason' => $reason,
+            'remark' => $reason, 'created_at' => now(), 'updated_at' => now(),
         ]);
     }
 

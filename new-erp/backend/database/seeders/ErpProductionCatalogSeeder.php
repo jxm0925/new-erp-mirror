@@ -16,13 +16,9 @@ class ErpProductionCatalogSeeder extends Seeder
     {
         $catalogs = [
             'erp_production_stages' => [
-                ['code' => 'CUTTING', 'name' => '下料', 'sort' => 5],
-                ['code' => 'WELDING', 'name' => '焊接', 'sort' => 10],
-                ['code' => 'GRINDING', 'name' => '打磨', 'sort' => 15],
-                ['code' => 'ASSEMBLY', 'name' => '总装', 'sort' => 20],
-                ['code' => 'WATER_TEST', 'name' => '试水', 'sort' => 25],
-                ['code' => 'PACKING', 'name' => '打包', 'sort' => 28],
-                ['code' => 'SHIPPING', 'name' => '发货', 'sort' => 30],
+                ['code' => 'CUTTING', 'name' => '焊接阶段', 'sort' => 5],
+                ['code' => 'ASSEMBLY', 'name' => '总装阶段', 'sort' => 20],
+                ['code' => 'SHIPPING', 'name' => '发货阶段', 'sort' => 30],
             ],
             'erp_production_packaging_schemes' => [
                 ['code' => 'WOODEN_CASE', 'name' => '木箱', 'sort' => 10],
