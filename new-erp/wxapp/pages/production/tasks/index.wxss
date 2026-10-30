@@ -1,1 +1,2 @@
 @import "../shared.wxss";
+.mt-head .tk-link { color: #11804a; font-weight: 600; font-size: 26rpx; margin-right: 16rpx; }

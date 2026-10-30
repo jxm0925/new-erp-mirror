@@ -148,10 +148,12 @@ final class WorkOrderQueryService
                 ->selectRaw('COUNT(*) AS fact_count, COALESCE(SUM(cost_amount), 0) AS total_cost')->first();
             $cut = MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('status', 'settled')
                 ->selectRaw('COUNT(*) AS fact_count, COALESCE(SUM(net_cost_amount), 0) AS total_cost')->first();
+            $pooled = \App\Models\Erp\MfgCuttingAllocation::query()->where('work_order_id', $wo->id)
+                ->selectRaw('COUNT(*) AS fact_count, COALESCE(SUM(cost_amount), 0) AS total_cost')->first();
             $returned = (string) MfgMaterialReturn::query()->where('work_order_id', $wo->id)->where('status', 'approved')->sum('cost_amount');
-            if ((int) $issued->fact_count + (int) $cut->fact_count > 0) {
+            if ((int) $issued->fact_count + (int) $cut->fact_count + (int) $pooled->fact_count > 0) {
                 // 已发生金额来自正式单据；库存被领空后不能再以当前余额预算替代真实归集。
-                $row['actual_material_cost_amount'] = bcsub(bcadd((string) $issued->total_cost, (string) $cut->total_cost, 4), $returned, 4);
+                $row['actual_material_cost_amount'] = bcsub(bcadd(bcadd((string) $issued->total_cost, (string) $cut->total_cost, 4), (string) $pooled->total_cost, 4), $returned, 4);
                 $row['actual_material_cost_per_unit'] = (float) $wo->planned_qty > 0
                     ? bcdiv($row['actual_material_cost_amount'], (string) $wo->planned_qty, 4) : null;
                 $row['material_cost_collection_complete'] = ! $wo->materials->contains(fn ($m) => $m->participates_in_kitting

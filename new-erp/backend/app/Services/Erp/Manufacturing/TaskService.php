@@ -245,7 +245,8 @@ final class TaskService
         return DB::transaction(function () use ($opId, $unitIds, $remark, $actor) {
             [$wo, $op] = $this->lockTask($opId);
             $this->assertRunnable($wo, $op);
-            if (! in_array((int) $op->id, MaterialIssueService::prepOperationIds((int) $wo->id), true))
+            $sheet = in_array((int) $op->id, MaterialIssueService::cuttingOperationIds((int) $wo->id), true);
+            if (! $sheet && ! in_array((int) $op->id, MaterialIssueService::prepOperationIds((int) $wo->id), true))
                 $this->fail('prepare_invalid', $op->operation_name.'不用板材／管材，不能按“已备料”交下道，请开始计时后报合格。');
             $me = (int) $this->actorId($actor);
             DB::table('erp_legacy_admin_users')->where('legacy_id', $me)->lockForUpdate()->first();
@@ -262,6 +263,8 @@ final class TaskService
             $upTo = (float) $op->completed_qty + $firstTime;
             $this->materials->receiveUpTo($wo, $op, $upTo, $remark ? '已备料：'.$remark : '已备料', $actor);
             $this->materials->assertReceivedForStart($wo, $op, $units, $upTo);
+            // 逐张板材：集中开料切好的件，按定额从开料池扣量计成本。
+            if ($sheet) app(SharedCuttingService::class)->allocate($wo, $op, $upTo, $firstTime, $actor);
             $this->materials->assertCutForPass($wo, $op, $firstTime);
             $this->markStarted($wo, $op, $actor);
             if ($op->status !== 'in_progress') $op->update(['status' => 'in_progress']);

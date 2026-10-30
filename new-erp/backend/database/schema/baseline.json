@@ -90,6 +90,7 @@
     "erp_material_physical_disposals": "2026_10_12_000151_create_erp_material_physical_disposals_table",
     "erp_material_physical_transfers": "2026_10_12_000153_create_erp_material_physical_transfers_table",
     "erp_material_physicals": "2026_10_12_000154_create_erp_material_physicals_table",
+    "erp_mfg_cutting_allocations": "2026_11_02_000001_create_erp_mfg_cutting_allocations_table",
     "erp_mfg_cutting_batches": "2026_10_22_000003_create_erp_mfg_cutting_batches_table",
     "erp_mfg_drawings": "2026_10_21_000007_create_erp_mfg_drawings_table",
     "erp_mfg_labor_sessions": "2026_10_21_000003_create_erp_mfg_labor_sessions_table",

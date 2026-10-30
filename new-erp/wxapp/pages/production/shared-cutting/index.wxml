@@ -1,0 +1,113 @@
+<view class="mt-page">
+  <view class="mt-tabs">
+    <view class="mt-tab {{tab === 'demand' ? 'on' : ''}}" data-tab="demand" bindtap="pickTab">待切清单 {{items.length}}</view>
+    <view class="mt-tab {{tab === 'batches' ? 'on' : ''}}" data-tab="batches" bindtap="pickTab">开料批次<text wx:if="{{openCount}}"> · {{openCount}} 待登记</text></view>
+  </view>
+  <view wx:if="{{error}}" class="mt-error">{{error}}</view>
+  <view wx:if="{{loading}}" class="mt-empty">正在读取</view>
+
+  <block wx:if="{{tab === 'demand' && !loading}}">
+    <view class="mt-muted mt-gap">未完工工单里还没备料的板材，按 BOM 板件尺寸汇总。挑一种板领几张切，切完回「开料批次」登记余料；切好的件在各工单下料点「已备料」按定额扣。</view>
+    <view wx:if="{{!items.length}}" class="mt-empty">没有待切的板材</view>
+    <view wx:for="{{items}}" wx:key="item_id" class="mt-card">
+      <view class="mt-card-title"><text>{{item.item_name}} <text class="mt-muted">{{item.specification || item.item_code}}</text></text><text class="tk-link green" data-index="{{index}}" bindtap="openSources">领板开切 ›</text></view>
+      <view class="sc-need">
+        <text>待切 {{item.piece_count}} 件 · 约 {{item.needText}} m²</text>
+        <text>已切未备料 {{item.poolText}} m²</text>
+        <text class="{{item.short ? 'short' : 'ok'}}">{{item.short ? '还差约 ' + item.shortText + ' m²' : '已切够'}}</text>
+        <text wx:if="{{item.open_batches}}" class="mt-tag amber">{{item.open_batches}} 批待登记</text>
+      </view>
+      <view class="tk-link mt-gap" data-index="{{index}}" bindtap="toggleItem">{{item.open ? '收起' : '看板件明细（' + item.lines.length + ' 条）'}}</view>
+      <block wx:if="{{item.open}}">
+        <view wx:for="{{item.lines}}" wx:for-item="line" wx:key="material_id" class="sc-line">
+          <view><text wx:if="{{line.is_urgent}}" class="mt-tag red">加急</text> <text class="mono">{{line.work_order_no}}</text> · {{line.product_name}} · {{line.operation_name}}</view>
+          <view>{{line.part_name}}：{{line.sizeText}} × {{line.left_pieces}} 件（剩 {{line.left_units}} 台，每台 {{line.pieces_per_unit}} 件）<text wx:if="{{line.planned_start_date}}"> · 开工 {{line.startText}}</text></view>
+        </view>
+      </block>
+    </view>
+  </block>
+
+  <block wx:if="{{tab === 'batches' && !loading}}">
+    <view wx:if="{{!batches.length}}" class="mt-empty">还没有集中开料批次</view>
+    <view wx:for="{{batches}}" wx:key="id" class="mt-card" data-id="{{item.id}}" bindtap="openBatch">
+      <view class="mt-row"><text class="mono">{{item.batch_no}}</text><text class="mt-tag {{item.status === 'issued' ? 'amber' : 'gray'}}">{{item.status === 'issued' ? '切割中，待登记余料' : '已登记'}}</text></view>
+      <view class="mt-product">{{item.item_name}} <text class="mt-muted">{{item.specification || ''}}</text></view>
+      <view class="mt-muted">{{item.sheet_count}} 张 · 投入 {{item.inputText}} m²<text wx:if="{{item.status === 'settled'}}"> · 净耗 {{item.poolText}} m² · 已备料 {{item.allocatedText}} m² · 剩 {{item.leftText}} m²</text></view>
+      <view class="mt-muted">{{item.issued_by_name}} {{item.issuedText}}</view>
+    </view>
+    <view wx:if="{{lastPage > 1}}" class="mt-row mt-gap">
+      <text class="tk-link {{page <= 1 ? 'off' : ''}}" data-delta="-1" bindtap="turnPage">上一页</text><text class="mt-muted">{{page}} / {{lastPage}}</text><text class="tk-link {{page >= lastPage ? 'off' : ''}}" data-delta="1" bindtap="turnPage">下一页</text>
+    </view>
+  </block>
+</view>
+
+<view wx:if="{{panel === 'sources'}}" class="tk-mask" catchtouchmove="stop">
+  <view class="tk-sheet">
+    <view class="mt-row tk-sheet-head"><text class="mt-title">领板 · {{current.item_name}}</text><text class="mt-muted">还差约 {{current.shortText}} m²</text></view>
+    <view class="mt-search">
+      <input class="mt-input" value="{{keyword}}" bindinput="keywordInput" placeholder="搜板号 / 库位" confirm-type="search" bindconfirm="searchSources" />
+      <button class="mt-btn mt-btn-mini" bindtap="searchSources">查询</button>
+    </view>
+    <scroll-view scroll-y class="tk-sheet-body" bindscrolltolower="moreSources">
+      <view wx:if="{{sourceError}}" class="mt-error">{{sourceError}}</view>
+      <view wx:if="{{!rows.length && !sourceLoading}}" class="mt-empty">没有可领的这种板</view>
+      <view wx:for="{{rows}}" wx:key="source_key" class="sc-src" data-index="{{index}}" bindtap="toggleSource">
+        <view class="tk-check {{picked[item.source_key] ? 'on' : ''}}">{{picked[item.source_key] ? '✓' : ''}}</view>
+        <view class="k">
+          <view><text class="mono">{{item.physical_no}}</text> <text wx:if="{{item.material_form === 'REMNANT'}}" class="mt-tag blue">余板</text></view>
+          <view class="mt-muted">{{item.sizeText}} · {{item.warehouse_name}} / {{item.location_name}}</view>
+        </view>
+        <text>{{item.areaText}} m²</text>
+      </view>
+      <view wx:if="{{sourceLoading}}" class="mt-empty">正在读取</view>
+    </scroll-view>
+    <view class="sc-sum">已选 {{pickedCount}} 张，共 {{pickedAreaText}} m²</view>
+    <view class="tk-sheet-foot">
+      <button class="mt-btn ghost side" disabled="{{busy}}" bindtap="closePanel">关闭</button>
+      <button class="mt-btn" disabled="{{busy || !pickedCount}}" bindtap="issue">领出 {{pickedCount}} 张开切</button>
+    </view>
+  </view>
+</view>
+
+<view wx:if="{{panel === 'batch'}}" class="tk-mask" catchtouchmove="stop">
+  <view class="tk-sheet">
+    <view class="mt-row tk-sheet-head"><text class="mt-title mono">{{batch.batch_no}}</text><text class="mt-muted">{{batch.item_name}}</text></view>
+    <scroll-view scroll-y class="tk-sheet-body">
+      <block wx:if="{{batch.status === 'issued'}}">
+        <view class="mt-muted">每张板切完剩下能再用的余料填面积（m²，量长×宽÷1000000），切完没余料填 0，有余料选放回的库位。</view>
+        <view wx:for="{{remnants}}" wx:key="source_key" class="ct-row">
+          <view class="ct-line">
+            <text class="k"><text class="mono">{{item.physical_no}}</text> <text class="mt-muted">{{item.sizeText}}</text></text>
+            <input class="ct-input" type="digit" value="{{item.measure_qty}}" data-index="{{index}}" bindinput="remnantInput" />
+            <text>m²</text>
+          </view>
+          <view wx:if="{{item.measure_qty > 0}}" class="ct-line mt-gap">
+            <text class="k mt-muted">余料放回</text>
+            <text class="ct-locator" data-index="{{index}}" bindtap="openLocator">{{item.location_id ? item.warehouse_name + ' / ' + item.location_name : '选仓库和库位'}} ›</text>
+          </view>
+        </view>
+        <textarea class="tk-textarea mt-gap" value="{{remark}}" maxlength="500" placeholder="说明（可不填，如切了哪些工单的件）" bindinput="remarkInput" />
+        <view class="ct-confirm" bindtap="toggleConfirmed">
+          <view class="tk-check {{confirmed ? 'on' : ''}}">{{confirmed ? '✓' : ''}}</view><text>已核对每张板的余料</text>
+        </view>
+      </block>
+      <block wx:else>
+        <view class="mt-kv"><text class="k">投入</text><text class="v">{{batch.sheet_count}} 张 · {{batch.inputText}} m²</text></view>
+        <view class="mt-kv"><text class="k">净耗（投入 − 余料）</text><text class="v">{{batch.poolText}} m²</text></view>
+        <view class="mt-kv"><text class="k">已备料（按定额）</text><text class="v">{{batch.allocatedText}} m²</text></view>
+        <view class="mt-kv"><text class="k">剩（切缝废料／未认领的件）</text><text class="v">{{batch.leftText}} m²</text></view>
+        <view class="mt-card-title mt-gap">余料</view>
+        <view wx:for="{{batch.remnants}}" wx:key="source_key" class="mt-muted">{{item.source_key}}：{{item.measure_qty > 0 ? item.measure_qty + ' m² → ' + item.warehouse_name + ' / ' + item.location_name : '无'}}</view>
+        <view class="mt-card-title mt-gap">备料去向</view>
+        <view wx:if="{{!batch.allocations.length}}" class="mt-muted">还没有工单从这批备料</view>
+        <view wx:for="{{batch.allocations}}" wx:key="id" class="mt-muted"><text class="mono">{{item.work_order_no}}</text> {{item.operation_name}} · {{item.unit_qty}} 台 · {{item.measure}} m²</view>
+      </block>
+    </scroll-view>
+    <view class="tk-sheet-foot">
+      <button class="mt-btn ghost side" disabled="{{busy}}" bindtap="closePanel">关闭</button>
+      <button wx:if="{{batch.status === 'issued'}}" class="mt-btn" disabled="{{busy || !confirmed}}" bindtap="settle">确认登记</button>
+    </view>
+  </view>
+</view>
+
+<warehouse-locator open="{{locatorOpen}}" value="{{locatorValue}}" location-purpose="general" bind:confirm="chooseLocator" bind:cancel="closeLocator"/>

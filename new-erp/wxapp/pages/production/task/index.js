@@ -14,7 +14,7 @@ function minutesText(m) {
 Page({
   data: {
     id: 0, task: null, loading: true, busy: false, error: '', selected: {}, selectedCount: 0, clockText: '00:00:00',
-    shareText: '', isImage: {}, panel: '', rejectCurrent: false, cutQty: 1,
+    shareText: '', isImage: {}, panel: '', rejectCurrent: false, cutQty: 1, prepQty: 1,
     reject: { mode: 'return', returnId: 0, tags: {}, reason: '', photos: [] }, uploading: false,
     peopleKeyword: '', peopleRows: [], picked: [], shareMode: 'labor', ownerPercent: '', showMaterials: false,
     returnForm: { types: [], type: 'surplus', rows: [], picked: {}, qty: {}, reason: '', hint: '' },
@@ -56,6 +56,7 @@ Page({
       }),
       selected, selectedCount: Object.keys(selected).length, shareText, isImage, loading: false,
       cutQty: task.cutting ? Math.max(1, Math.min(this.data.cutQty || 1, task.cutting.reportable_units || 1)) : 1,
+      prepQty: Math.max(1, Math.min(this.data.prepQty || 1, (task.units || []).filter(u => u.selectable).length || 1)),
     });
     this.startClock();
   },
@@ -245,6 +246,20 @@ Page({
     const max = (this.data.task.cutting || {}).reportable_units || 1;
     this.setData({ cutQty: Math.max(1, Math.min(max, value)) });
   },
+  // 板材下料：集中开料切好的按套数「已备料」，按台号顺序取对应数量交下道，板材按定额从开料池扣。
+  changePrepQty(event) { this.setPrepQty(this.data.prepQty + Number(event.currentTarget.dataset.delta || 0)); },
+  prepQtyInput(event) { this.setPrepQty(parseInt(event.detail.value, 10) || 1); },
+  setPrepQty(value) { this.setData({ prepQty: Math.max(1, Math.min(this.data.task.selectableCount || 1, value)) }); },
+  prepareCut() {
+    const task = this.data.task;
+    const qty = this.data.prepQty;
+    const ids = (task.units || []).filter(u => u.selectable).slice(0, qty).map(u => u.id);
+    if (!ids.length || ids.length < qty) { wx.showToast({ title: '本道没有这么多套', icon: 'none' }); return; }
+    const next = task.progress.next_operation_name;
+    wx.showModal({ title: `${qty} 套已备料，${next ? '交给' + next : '生产完成'}？`, editable: true, placeholderText: '备注（可不填，如用的哪批板）',
+      confirmText: '确认', success: res => { if (res.confirm) this.run({ action: 'prepare', unit_ids: ids, remark: String(res.content || '').trim() || null }, '已备料'); } });
+  },
+  openSharedCutting() { wx.navigateTo({ url: '/pages/production/shared-cutting/index' }); },
   passCut() {
     const task = this.data.task;
     const qty = this.data.cutQty;

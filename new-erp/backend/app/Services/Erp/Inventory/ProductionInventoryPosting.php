@@ -327,11 +327,11 @@ class ProductionInventoryPosting
     }
 
     /** 开料整根／整张领入：只接受已锁定批次保存的真实来源，不开放普通数量接口扣板。 */
-    public function postManufacturingCuttingIssue(\App\Models\Erp\MfgCuttingBatch $batch, \App\Models\Erp\MfgWorkOrder $workOrder, ?int $operatorId = null): array
+    public function postManufacturingCuttingIssue(\App\Models\Erp\MfgCuttingBatch $batch, ?\App\Models\Erp\MfgWorkOrder $workOrder, ?int $operatorId = null): array
     {
         return DB::transaction(function () use ($batch, $workOrder, $operatorId) {
             $batch = \App\Models\Erp\MfgCuttingBatch::query()->lockForUpdate()->findOrFail($batch->id);
-            if ((int) $batch->work_order_id !== (int) $workOrder->id || $batch->status !== 'issued' || $batch->inventory_issue_transaction_id) {
+            if ((int) $batch->work_order_id !== (int) $workOrder?->id || $batch->status !== 'issued' || $batch->inventory_issue_transaction_id) {
                 throw ValidationException::withMessages(['cutting' => '开料批次已领入或不属于当前工单。']);
             }
             $transaction = $this->kernel->begin([
@@ -339,7 +339,7 @@ class ProductionInventoryPosting
                 'source_type' => 'mfg_cutting_batch', 'source_id' => $batch->id, 'source_no' => $batch->batch_no,
                 'posting_status' => 'posted', 'transaction_date' => now()->toDateString(),
                 'posted_by' => $operatorId, 'posted_at' => now(), 'created_by' => $operatorId,
-                'remark' => '工单 '.$workOrder->work_order_no.' 开料领入',
+                'remark' => ($workOrder ? '工单 '.$workOrder->work_order_no : '集中开料 '.$batch->batch_no).' 开料领入',
             ]);
             $lines = [];
             foreach ($batch->input_lines as $input) {
@@ -391,11 +391,11 @@ class ProductionInventoryPosting
     }
 
     /** 只退回人工确认的真实余料；净耗留在制造成本，禁止把整张／整根成本再记一次。 */
-    public function postManufacturingCuttingSettlement(\App\Models\Erp\MfgCuttingBatch $batch, \App\Models\Erp\MfgWorkOrder $workOrder, ?int $operatorId = null): array
+    public function postManufacturingCuttingSettlement(\App\Models\Erp\MfgCuttingBatch $batch, ?\App\Models\Erp\MfgWorkOrder $workOrder, ?int $operatorId = null): array
     {
         return DB::transaction(function () use ($batch, $workOrder, $operatorId) {
             $batch = \App\Models\Erp\MfgCuttingBatch::query()->lockForUpdate()->findOrFail($batch->id);
-            if ((int) $batch->work_order_id !== (int) $workOrder->id || $batch->status !== 'issued'
+            if ((int) $batch->work_order_id !== (int) $workOrder?->id || $batch->status !== 'issued'
                 || ! $batch->inventory_issue_transaction_id || $batch->inventory_return_transaction_id) {
                 throw ValidationException::withMessages(['cutting' => '这张开料批次不能再次结算。']);
             }
@@ -406,7 +406,7 @@ class ProductionInventoryPosting
                 'source_type' => 'mfg_cutting_batch', 'source_id' => $batch->id, 'source_no' => $batch->batch_no,
                 'posting_status' => 'posted', 'transaction_date' => now()->toDateString(),
                 'posted_by' => $operatorId, 'posted_at' => now(), 'created_by' => $operatorId,
-                'remark' => '工单 '.$workOrder->work_order_no.' 开料余料入库',
+                'remark' => ($workOrder ? '工单 '.$workOrder->work_order_no : '集中开料 '.$batch->batch_no).' 开料余料入库',
             ]);
             $inputs = collect($batch->input_lines)->keyBy('source_key');
             $lines = [];

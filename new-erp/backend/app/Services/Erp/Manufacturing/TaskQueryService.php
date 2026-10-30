@@ -88,7 +88,11 @@ final class TaskQueryService
         $cuttingBatches = $hasCutting ? MfgCuttingBatch::query()->where('work_order_operation_id', $op->id)->get(['status', 'unit_qty', 'completed_unit_qty']) : collect();
         $cutUnits = $hasCutting ? (int) app(MaterialIssueService::class)->cutUnits($wo, $op) : 0;
         // 用按数量管理的板材／管材的下料工序：可以计时报工，也可以集中下料后点「已备料」不计时交下道。
-        $isPrep = in_array((int) $op->id, MaterialIssueService::prepOperationIds((int) $wo->id), true);
+        // 逐张板材的下料工序也可以：集中开料切好的件点「已备料」，按定额从开料池扣。
+        $isPrep = $hasCutting || in_array((int) $op->id, MaterialIssueService::prepOperationIds((int) $wo->id), true);
+        $sheetRows = $hasCutting ? MfgWorkOrderMaterial::query()->where('work_order_operation_id', $op->id)->where('cutting_mode', 'sheet')->where('required_qty', '>', 0)->get()
+            ->filter(fn ($m) => MaterialIssueService::isCutting($m)) : collect();
+        $pool = app(SharedCuttingService::class)->poolAvailable($sheetRows->pluck('component_item_id')->unique()->values()->all());
         $opDone = (int) round((float) $op->completed_qty);
         return [
             'id' => $op->id, 'operation_name' => $op->operation_name, 'stage_name' => $op->stage_name, 'status' => $op->status,
@@ -130,6 +134,9 @@ final class TaskQueryService
                 'completed_units' => $opDone,
                 'reportable_units' => max(0, min($here, $cutUnits - $opDone)),
                 'pending_batches' => $cuttingBatches->where('status', 'issued')->count(),
+                // 集中开料池里这几种板还剩多少平方米可以备料
+                'pool' => $sheetRows->unique('component_item_id')->map(fn ($m) => ['item_id' => (int) $m->component_item_id, 'item_name' => $m->component_item_name,
+                    'left_measure' => round((float) ($pool[$m->component_item_id] ?? 0), 4)])->values()->all(),
             ] : null,
             // 仓库送来等本道签收的料（拒收待处理的也列出来，看库管怎么处理）
             'deliveries' => app(MaterialDeliveryService::class)->forOperation((int) $op->id),

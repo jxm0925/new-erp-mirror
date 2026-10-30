@@ -438,7 +438,8 @@ final class CuttingService
         return $item;
     }
 
-    private function sourceQuery(Item $item)
+    /** 可领入开料的真实来源（集中开料也用）。 */
+    public function sourceQuery(Item $item)
     {
         $query = $this->availability->outboundBalanceQuery([(int) $item->id])
             ->leftJoin('erp_material_lots as cut_lot', 'cut_lot.id', '=', 'erp_inventory_balances.material_lot_id')
@@ -464,7 +465,7 @@ final class CuttingService
         return $query;
     }
 
-    private function source(InventoryBalance $balance, Item $item): array
+    public function source(InventoryBalance $balance, Item $item): array
     {
         $unit = $this->units->canonicalUnit($item->unit);
         if (! $unit) $this->fail('unit_missing', '原料必须维护真实的库存基本单位。');
@@ -558,7 +559,7 @@ final class CuttingService
             ->where('is_active', true)->lockForUpdate()->first(['id'])) $this->fail('permission_denied', '只能办理本人当前参与工序的开料。', 403);
     }
 
-    private function publicData(array $data, bool $amounts): array
+    public function publicData(array $data, bool $amounts): array
     {
         foreach ($data as $key => &$value) {
             if (! $amounts && (str_contains((string) $key, 'cost') || in_array($key, ['request_hash', 'settlement_hash'], true))) $value = null;

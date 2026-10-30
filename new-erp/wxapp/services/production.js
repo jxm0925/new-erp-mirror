@@ -39,6 +39,13 @@ module.exports = {
   cuttingPreview: (workOrderId, payload) => request.request({ path: `${base}/work-orders/${Number(workOrderId)}/cutting/preview`, method: 'POST', data: payload, loading: true, loadingTitle: '计算中...' }),
   cuttingIssue: (workOrderId, payload) => request.write(`${base}/work-orders/${Number(workOrderId)}/cutting/issue`, payload, { loading: true, commandPrefix: 'cut' }),
   cuttingSettle: (batchId, payload) => request.write(`${base}/cutting-batches/${Number(batchId)}/settle`, payload, { loading: true, commandPrefix: 'cut' }),
+  // 集中开料（不属于工单）：待切清单、领板、登记余料
+  sharedCuttingDemand: query => get('cutting-sessions/demand', query),
+  sharedCuttings: query => get('cutting-sessions', query),
+  sharedCutting: id => get(`cutting-sessions/${Number(id)}`),
+  sharedCuttingSources: query => get('cutting-sessions/sources', query),
+  sharedCuttingIssue: payload => request.write(`${base}/cutting-sessions`, payload, { loading: true, commandPrefix: 'cut' }),
+  sharedCuttingSettle: (id, payload) => request.write(`${base}/cutting-sessions/${Number(id)}/settle`, payload, { loading: true, commandPrefix: 'cut' }),
   deliveryAction: (id, action, payload) => request.write(`${base}/material-deliveries/${Number(id)}/${action}`, payload || {}, { loading: true, commandPrefix: 'delivery' }),
   uploadPhoto,
 };

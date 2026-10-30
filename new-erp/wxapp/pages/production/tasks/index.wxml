@@ -1,7 +1,7 @@
 <view class="mt-page">
   <view class="mt-head">
     <text class="mt-title">生产任务</text>
-    <text class="mt-muted">{{userName}}</text>
+    <view class="mt-tags"><text class="tk-link green" bindtap="openSharedCutting">集中开料 ›</text><text class="mt-muted">{{userName}}</text></view>
   </view>
   <view class="mt-tabs">
     <view wx:for="{{tabs}}" wx:key="key" class="mt-tab {{tab === item.key ? 'on' : ''}}" data-tab="{{item.key}}" bindtap="pickTab">

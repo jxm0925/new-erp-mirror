@@ -1,0 +1,8 @@
+@import "../cutting/index.wxss";
+.sc-need { display: flex; gap: 24rpx; flex-wrap: wrap; font-size: 25rpx; margin-top: 8rpx; }
+.sc-need .short { color: #c0392b; font-weight: 600; }
+.sc-need .ok { color: #1a7f37; }
+.sc-line { font-size: 24rpx; line-height: 1.7; color: #555; padding: 8rpx 0; border-top: 1rpx dashed #eceff4; }
+.sc-src { display: flex; align-items: center; gap: 16rpx; padding: 16rpx 0; border-bottom: 1rpx solid #f0f2f6; }
+.sc-src .k { flex: 1; min-width: 0; }
+.sc-sum { font-size: 26rpx; margin: 12rpx 0; }
