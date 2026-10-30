@@ -172,14 +172,12 @@
                     <el-input v-model="s.row.unit_hours" type="number" :disabled="viewOnly" min="0" step="0.5" placeholder="例如总装一台 2 小时">
                       <template slot="append">小时</template>
                     </el-input>
-                    <small class="field-hint">正常熟练工做好一台设备要多久，做几台就乘几</small>
                   </label>
                   <label>
                     <span>准备工时（每张工单一次）</span>
                     <el-input v-model="s.row.setup_hours" type="number" :disabled="viewOnly" min="0" step="0.5" placeholder="没有可填 0">
                       <template slot="append">小时</template>
                     </el-input>
-                    <small class="field-hint">开工前看图、调机、换夹具等，一张工单只算一次，和台数无关</small>
                   </label>
                   <label v-if="canManagePerformance">
                     <span>提成比例（按模板）</span>
@@ -672,7 +670,6 @@ export default {
 </script>
 <style scoped src="./production-master.css"></style>
 <style scoped>
-.field-hint{display:block;margin-top:4px;font-size:12px;line-height:1.4;color:#8a94a6;font-weight:normal}
 .routing-editor {
   padding: 16px 20px 30px;
   background: #f8fafc;
