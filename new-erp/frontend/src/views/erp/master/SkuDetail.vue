@@ -379,7 +379,7 @@ export default {
       this.$router.push(this.$route.query.from === 'product' ? '/master/products' : '/master/skus')
     },
     typeText (value) {
-      return ({ physical: '实物', service: '服务', no_delivery: '无需发货' })[value] || value || '—'
+      return ({ physical: '实物', service: '服务', no_delivery: '无需发货', deduction: '扣减项' })[value] || value || '—'
     },
     modeText (value) {
       return value === 'required' ? '必填' : '可选'

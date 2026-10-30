@@ -119,7 +119,7 @@ final class ProductionPerformanceCalculator
         $goods = [];
         $complete = true;
         foreach ($lines as $line) {
-            if (in_array($line['line_type'] ?? '', ['service', 'no_delivery', 'fee', 'auxiliary'], true)
+            if (in_array($line['line_type'] ?? '', ['service', 'no_delivery', 'fee', 'auxiliary', 'deduction'], true)
                 || ($line['line_status'] ?? '') === 'cancelled') continue;
             $required = bcsub(bcsub((string) ($line['order_qty'] ?? '0'), (string) ($line['no_delivery_qty'] ?? '0'), 8),
                 (string) ($line['service_fulfilled_qty'] ?? '0'), 8);

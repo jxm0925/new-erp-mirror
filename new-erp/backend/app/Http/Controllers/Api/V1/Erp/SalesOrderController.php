@@ -299,7 +299,7 @@ class SalesOrderController extends Controller
             $sku->setAttribute('default_price', $sku->sale_price === null ? null : (float) $sku->sale_price);
             $sku->setAttribute('default_tax_rate', (float) ($sku->default_tax_rate ?? 0));
             $sku->setAttribute('default_price_tax_mode', $sku->default_price_tax_mode ?: 'tax_inclusive');
-            $sku->setAttribute('default_fulfillment_method', in_array($lineType, ['service', 'no_delivery'], true) ? $lineType : 'auto');
+            $sku->setAttribute('default_fulfillment_method', $lineType === 'deduction' ? 'no_delivery' : (in_array($lineType, ['service', 'no_delivery'], true) ? $lineType : 'auto'));
             // 销售行继承服务商品类型；数组投影避免被 SKU 的全局 line_type accessor 改回旧值。
             return [...$sku->toArray(), 'line_type' => $lineType];
         });
@@ -750,15 +750,10 @@ class SalesOrderController extends Controller
         abort_if($order->lines->isEmpty(), 422, '销售订单至少需要一行明细');
         if (!$isReplay) {
             SalesOrderFulfillmentPolicy::assertConfirmationRequirements($order);
+            abort_if(round((float) $order->lines->sum(fn ($l) => (float) ($l->amount_incl_tax ?? $l->amount)) + (float) $order->freight_amount, 2) < 0, 422, '扣减项（红包、优惠）合计不能超过商品金额，订单金额不能小于 0');
             foreach ($order->lines as $line) {
-                $price = (float) $line->unit_price;
-                abort_if(
-                    $line->commercial_role === 'gift' ? abs($price) >= 0.00000001 : $price <= 0,
-                    422,
-                    $line->commercial_role === 'gift'
-                        ? '提交确认前，赠品行销售单价必须为 0'
-                        : '提交确认前，正常销售行销售单价必须大于 0'
-                );
+                $priceProblem = SalesOrderFulfillmentPolicy::priceMessage($line->line_type, $line->unit_price, $line->line_no);
+                abort_if($priceProblem !== null, 422, '提交确认前，'.$priceProblem);
                 $this->assertLineOrderAttributes($line);
             }
         }
@@ -1199,11 +1194,11 @@ class SalesOrderController extends Controller
             'lines.*.sku_name' => 'nullable|string|max:160',
             'lines.*.item_name' => 'nullable|string|max:160',
             'lines.*.legacy_goods_type' => 'nullable|string|max:30',
-            'lines.*.line_type' => ['nullable', Rule::in(['physical', 'service', 'no_delivery', 'fee', 'auxiliary'])],
+            'lines.*.line_type' => ['nullable', Rule::in(['physical', 'service', 'no_delivery', 'fee', 'auxiliary', 'deduction'])],
             'lines.*.commercial_role' => ['nullable', Rule::in(['sale', 'gift'])],
             'lines.*.order_qty' => 'required|numeric|min:0.0001',
             'lines.*.unit_id' => 'nullable|exists:erp_units,id',
-            'lines.*.unit_price' => 'nullable|numeric|min:0',
+            'lines.*.unit_price' => 'nullable|numeric',
             'lines.*.fulfillment_method' => ['nullable', Rule::in(['auto', 'inventory', 'production', 'service', 'no_delivery'])],
             'lines.*.price_tax_mode' => ['nullable', Rule::in(['tax_inclusive', 'tax_exclusive'])],
             'lines.*.discount_rate' => 'nullable|numeric|min:0|max:1',
@@ -1567,7 +1562,7 @@ class SalesOrderController extends Controller
             ?: data_get($line->sku_snapshot, 'fulfillment_type')
             ?: 'physical';
 
-        if (in_array($lineType, ['service', 'no_delivery', 'fee', 'auxiliary'], true)) {
+        if (in_array($lineType, ['service', 'no_delivery', 'fee', 'auxiliary', 'deduction'], true)) {
             return [
                 'status' => 'not_required',
                 'item_code' => null,
@@ -1976,7 +1971,7 @@ class SalesOrderController extends Controller
         $skuLineType = $sku ? ($sku->order_line_type ?: $sku->fulfillment_type) : null;
         if ($skuLineType === 'virtual') $skuLineType = 'no_delivery';
         if ($skuLineType === 'service') return 'service';
-        if (in_array($skuLineType, ['no_delivery', 'fee', 'auxiliary'], true)) return $skuLineType;
+        if (in_array($skuLineType, ['no_delivery', 'fee', 'auxiliary', 'deduction'], true)) return $skuLineType;
         if ($product && $product->product_type === 'service') return 'service';
         return 'physical';
     }
@@ -2026,7 +2021,7 @@ class SalesOrderController extends Controller
     private function refreshOrderTotals(int $orderId): void
     {
         $totals = SalesOrderLine::where('sales_order_id', $orderId)
-            ->selectRaw('COALESCE(SUM(order_qty),0) qty, COALESCE(SUM(amount),0) amount')
+            ->selectRaw("COALESCE(SUM(CASE WHEN line_type = 'deduction' THEN 0 ELSE order_qty END),0) qty, COALESCE(SUM(amount),0) amount")
             ->first();
         $order = SalesOrder::findOrFail($orderId);
         $order->update([

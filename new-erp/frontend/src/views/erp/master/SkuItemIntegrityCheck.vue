@@ -20,7 +20,7 @@ export default {
     },
     go (v) { this.page = v; this.load() },
     resize (v) { this.perPage = v; this.page = 1; this.load() },
-    type (v) { return ({ physical: '实物', service: '服务', no_delivery: '无需发货' })[v] || '—' },
+    type (v) { return ({ physical: '实物', service: '服务', no_delivery: '无需发货', deduction: '扣减项' })[v] || '—' },
     label (v) { return ({ normal: '正常', missing: '待修复', duplicate: '待修复', item_disabled: '待修复', wrong_binding: '待修复', not_required: '无需物料' })[v] || '—' },
     status (v) { return ['normal', 'not_required'].includes(v) ? 'good' : 'bad' },
     set (r) { this.$router.push(`/master/sku-item-relations/${r.sku.id}/set-primary`) },

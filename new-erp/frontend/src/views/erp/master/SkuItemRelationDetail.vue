@@ -123,7 +123,7 @@ export default {
     physical () { return this.sku && this.sku.line_type === 'physical' },
     actionLabel () { return this.current ? '更换默认物料' : '设置默认物料' },
     product () { return this.sku && this.sku.product ? `${this.sku.product.product_code || '-'}｜${this.sku.product.product_name}` : '—' },
-    lineType () { return ({ physical: '实物', service: '服务', no_delivery: '无需发货' })[this.sku && this.sku.line_type] || '—' }
+    lineType () { return ({ physical: '实物', service: '服务', no_delivery: '无需发货', deduction: '扣减项' })[this.sku && this.sku.line_type] || '—' }
   },
   created () { this.load() },
   methods: {

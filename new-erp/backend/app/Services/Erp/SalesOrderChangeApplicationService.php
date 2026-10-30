@@ -156,14 +156,10 @@ class SalesOrderChangeApplicationService
         $mode = $row['price_tax_mode'] ?? $line->price_tax_mode ?? 'tax_inclusive';
 
         if (! is_finite($qty) || $qty <= 0) throw ValidationException::withMessages(['lines.'.$line->id.'.order_qty' => '变更后的订单数量必须大于 0；删除订单行需走独立变更审批。']);
-        $gift = $line->commercial_role === 'gift';
-        if (! is_finite($price) || ($gift && abs($price) >= 0.00000001) || (! $gift && $price <= 0)) {
-            throw ValidationException::withMessages([
-                'lines.'.$line->id.'.unit_price' => $gift
-                    ? '赠品行变更后的销售单价必须为 0。'
-                    : '正常销售行变更后的销售单价必须大于 0。',
-            ]);
-        }
+        if ($line->line_type === SalesOrderFulfillmentPolicy::DEDUCTION) $price = -abs($price);
+        $priceProblem = is_finite($price) ? SalesOrderFulfillmentPolicy::priceMessage($line->line_type, $price, $line->line_no) : '单价不合法';
+        if ($priceProblem) throw ValidationException::withMessages(['lines.'.$line->id.'.unit_price' => $priceProblem.'。']);
+        $role = SalesOrderFulfillmentPolicy::commercialRole($line->line_type, $price);
         if (! is_finite($discount) || $discount < 0 || $discount > 1) throw ValidationException::withMessages(['lines.'.$line->id.'.discount_rate' => '折扣率必须在 0 到 1 之间。']);
         if (! is_finite($tax) || $tax < 0 || $tax > 1) throw ValidationException::withMessages(['lines.'.$line->id.'.tax_rate' => '税率不合法。']);
         if (!in_array($mode, ['tax_inclusive', 'tax_exclusive'], true)) throw ValidationException::withMessages(['lines.'.$line->id.'.price_tax_mode' => '含税方式不合法。']);
@@ -185,12 +181,13 @@ class SalesOrderChangeApplicationService
         $incl = $mode === 'tax_exclusive' ? round($commercial + $taxAmount, 4) : $commercial;
         $commercialSnapshot = (array) $line->commercial_snapshot;
         $commercialSnapshot = array_merge($commercialSnapshot, [
-            'unit_price' => $price, 'price_tax_mode' => $mode, 'discount_rate' => $discount,
+            'commercial_role' => $role, 'unit_price' => $price, 'price_tax_mode' => $mode, 'discount_rate' => $discount,
             'tax_rate' => $tax, 'amount_excl_tax' => $excl, 'tax_amount' => $taxAmount, 'amount_incl_tax' => $incl,
         ]);
 
         return [
             'order_qty' => $qty,
+            'commercial_role' => $role,
             'unit_price' => $price,
             'discount_rate' => $discount,
             'tax_rate' => $tax,

@@ -19,7 +19,7 @@ class SkuItemMatcher
 
         // 服务、虚拟/免发货 SKU 不进入 Item 匹配链路。这里的“无需”是
         // 业务结论，不是“没有匹配到”，避免后续生产误把服务行当成待维护 Item。
-        if (in_array($this->orderLineType($sku), ['service', 'no_delivery'], true)) {
+        if (in_array($this->orderLineType($sku), ['service', 'no_delivery', 'deduction'], true)) {
             return $this->result('not_required', null, 'not_required', [], null);
         }
 

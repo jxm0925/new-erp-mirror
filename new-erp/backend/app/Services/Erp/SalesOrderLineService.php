@@ -94,8 +94,6 @@ class SalesOrderLineService
         abort_if((int) $sku->product_id !== (int) $product->id, 422, 'SKU 不属于当前 Product');
 
         $lineType = $this->lineType($sku, $product, $line['legacy_goods_type'] ?? null);
-        $commercialRole = $line['commercial_role'] ?? $existing?->commercial_role ?? 'sale';
-        abort_if(! in_array($commercialRole, ['sale', 'gift'], true), 422, '订单行商业角色不合法');
         $qty = round((float) $line['order_qty'], 4);
         $match = $this->matcher->match(['product_id' => $product->id, 'sku_id' => $sku->id]);
         if ($lineType === 'physical') {
@@ -118,6 +116,10 @@ class SalesOrderLineService
         $needPump = $configuration['need_pump'];
 
         $price = round((float) ($line['unit_price'] ?? 0), 4);
+        // 扣减项录入填正数，系统按负数存，订单应收自动减掉。
+        if ($lineType === SalesOrderFulfillmentPolicy::DEDUCTION) $price = -abs($price);
+        abort_if($price < 0 && $lineType !== SalesOrderFulfillmentPolicy::DEDUCTION, 422, '单价不能小于 0；要减钱请用扣减项（如红包、优惠）');
+        $commercialRole = SalesOrderFulfillmentPolicy::commercialRole($lineType, $price);
         $discountRate = round((float) ($line['discount_rate'] ?? 1), 6);
         abort_if($discountRate < 0 || $discountRate > 1, 422, '订单行折扣率必须在 0 到 1 之间');
         $taxRate = round((float) ($line['tax_rate'] ?? 0), 6);
@@ -257,7 +259,7 @@ class SalesOrderLineService
         if ($legacyGoodsType === '5') return 'auxiliary';
         $type = $sku->order_line_type ?: $sku->fulfillment_type;
         if ($type === 'virtual') $type = 'no_delivery';
-        if (in_array($type, ['service', 'no_delivery', 'fee', 'auxiliary'], true)) return $type;
+        if (in_array($type, ['service', 'no_delivery', 'fee', 'auxiliary', 'deduction'], true)) return $type;
         return $product->product_type === 'service' ? 'service' : 'physical';
     }
 }

@@ -61,7 +61,7 @@ class SalesReturnApplicationService
             foreach ($payload['items'] as $row) {
                 /** @var SalesOrderLine $line */
                 $line = $lines->get((int) $row['sales_order_line_id']);
-                if (!$line->item_id || in_array($line->line_type, ['service', 'no_delivery', 'fee', 'auxiliary'], true)) {
+                if (!$line->item_id || in_array($line->line_type, ['service', 'no_delivery', 'fee', 'auxiliary', 'deduction'], true)) {
                     throw ValidationException::withMessages(['items' => '只有已实际发货且具有履约物料快照的实物订单行可以退货。']);
                 }
 

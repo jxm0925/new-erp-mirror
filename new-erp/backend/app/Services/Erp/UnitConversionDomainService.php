@@ -173,7 +173,7 @@ class UnitConversionDomainService
     {
         $quantity = $this->positive($salesQty, '销售数量必须大于 0。');
         $lineType = $sku->order_line_type ?: $sku->line_type;
-        if (in_array($lineType, ['service', 'no_delivery', 'fee', 'auxiliary'], true)) {
+        if (in_array($lineType, ['service', 'no_delivery', 'fee', 'auxiliary', 'deduction'], true)) {
             return ['relation' => null, 'item' => null, 'factor' => null, 'base_qty' => 0.0];
         }
         $relation = $this->defaultFulfillmentRelation($sku->id, $lock);
@@ -210,7 +210,7 @@ class UnitConversionDomainService
         $lineType = $line->order_line_type ?: $line->line_type;
         $type = $line->fulfillment_type ?: $lineType;
         if ($lineType === 'service') $type = 'service';
-        if (in_array($lineType, ['no_delivery', 'fee', 'auxiliary'], true)) $type = 'no_delivery';
+        if (in_array($lineType, ['no_delivery', 'fee', 'auxiliary', 'deduction'], true)) $type = 'no_delivery';
         return match ($type) {
             'inventory' => ['type' => 'inventory', 'quantity' => (float) $line->item_base_required_qty],
             'service' => ['type' => 'service', 'quantity' => (float) $line->order_qty],

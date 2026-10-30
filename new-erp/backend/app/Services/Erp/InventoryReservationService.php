@@ -91,7 +91,7 @@ class InventoryReservationService
             $required = SalesOrderFulfillmentPolicy::effectiveQuantity((float) $line->order_qty, (float) $line->cancelled_qty);
             if ($required <= 0.00000001) continue;
             $done = SalesOrderFulfillmentPolicy::isPhysical((string) $line->line_type) ? (float) $line->shipped_qty
-                : (in_array($line->line_type, ['no_delivery', 'fee', 'auxiliary'], true) ? $required : (float) $line->service_fulfilled_qty);
+                : (in_array($line->line_type, ['no_delivery', 'fee', 'auxiliary', 'deduction'], true) ? $required : (float) $line->service_fulfilled_qty);
             $any = $any || $done > 0.00000001;
             $complete = $complete && $done + 0.00000001 >= $required;
         }
