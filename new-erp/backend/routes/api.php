@@ -37,6 +37,7 @@ use App\Http\Controllers\Api\V1\Erp\MfgMaterialReturnController;
 use App\Http\Controllers\Api\V1\Erp\MfgShortageController;
 use App\Http\Controllers\Api\V1\Erp\MfgWorkOrderController;
 use App\Http\Controllers\Api\V1\Erp\MfgCuttingController;
+use App\Http\Controllers\Api\V1\Erp\MfgSharedCuttingController;
 use App\Http\Controllers\Api\V1\Erp\MfgTaskController;
 use App\Http\Controllers\Api\V1\Erp\MfgTechController;
 use App\Http\Controllers\Api\V1\Erp\ShipmentPackingController;
@@ -503,6 +504,13 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::post('work-orders/{id}/cutting/preview', [MfgCuttingController::class, 'preview'])->whereNumber('id');
     Route::post('work-orders/{id}/cutting/issue', [MfgCuttingController::class, 'issue'])->whereNumber('id');
     Route::post('cutting-batches/{id}/settle', [MfgCuttingController::class, 'settle'])->whereNumber('id');
+    // 集中开料：不属于工单，按待切清单领板切割、登记余料；工单下料「已备料」按定额从开料池扣
+    Route::get('cutting-sessions/demand', [MfgSharedCuttingController::class, 'demand']);
+    Route::get('cutting-sessions/sources', [MfgSharedCuttingController::class, 'sources']);
+    Route::get('cutting-sessions', [MfgSharedCuttingController::class, 'index']);
+    Route::post('cutting-sessions', [MfgSharedCuttingController::class, 'store']);
+    Route::get('cutting-sessions/{id}', [MfgSharedCuttingController::class, 'show'])->whereNumber('id');
+    Route::post('cutting-sessions/{id}/settle', [MfgSharedCuttingController::class, 'settle'])->whereNumber('id');
     Route::get('serials/lookup', [MfgWorkOrderController::class, 'serial']);
     Route::get('sales-orders/{orderId}/work-orders', [MfgWorkOrderController::class, 'salesOrder'])->whereNumber('orderId');
     // 车间报工、作业看板、成品入库、定制技术（第 2 阶段）

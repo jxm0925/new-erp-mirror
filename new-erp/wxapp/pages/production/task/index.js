@@ -14,7 +14,7 @@ function minutesText(m) {
 Page({
   data: {
     id: 0, task: null, loading: true, busy: false, error: '', selected: {}, selectedCount: 0, clockText: '00:00:00',
-    shareText: '', isImage: {}, panel: '', rejectCurrent: false, cutQty: 1,
+    shareText: '', isImage: {}, panel: '', rejectCurrent: false, cutQty: 1, prepQty: 1,
     reject: { mode: 'return', returnId: 0, tags: {}, reason: '', photos: [] }, uploading: false,
     peopleKeyword: '', peopleRows: [], picked: [], shareMode: 'labor', ownerPercent: '', showMaterials: false,
     returnForm: { types: [], type: 'surplus', rows: [], picked: {}, qty: {}, reason: '', hint: '' },
@@ -51,9 +51,12 @@ Page({
         ownerName: owner ? owner.employee_name : '', collaboratorNames: others.map(p => p.employee_name).join('、'),
         dueText: String(task.work_order.planned_finish_date || '').slice(5, 10),
         selectableCount: (task.units || []).filter(u => u.selectable).length,
+        // 下料工序自己没计过时：底部按「已备料」交下道；开始计时后按正常报合格。
+        prepMode: Boolean(task.prep && task.allowed && task.allowed.prepare && !task.my.timing && !(Number(task.my.closed_minutes || 0) > 0)),
       }),
       selected, selectedCount: Object.keys(selected).length, shareText, isImage, loading: false,
       cutQty: task.cutting ? Math.max(1, Math.min(this.data.cutQty || 1, task.cutting.reportable_units || 1)) : 1,
+      prepQty: Math.max(1, Math.min(this.data.prepQty || 1, (task.units || []).filter(u => u.selectable).length || 1)),
     });
     this.startClock();
   },
@@ -227,6 +230,15 @@ Page({
       success: res => { if (res.confirm) this.run({ action: 'pass', unit_ids: ids }); } });
   },
 
+  // 已备料：集中下料提前切好的料，不计时直接交下道（料按 BOM 定额从库存扣）。
+  prepare() {
+    const ids = this.selectedIds();
+    if (!ids.length) { wx.showToast({ title: '先勾选或扫码选设备', icon: 'none' }); return; }
+    const next = this.data.task.progress.next_operation_name;
+    wx.showModal({ title: `${ids.length} 台已备料，${next ? '交给' + next : '生产完成'}？`, editable: true, placeholderText: '备注（可不填，如缺什么、用的哪批料）',
+      confirmText: '确认', success: res => { if (res.confirm) this.run({ action: 'prepare', unit_ids: ids, remark: String(res.content || '').trim() || null }, '已备料'); } });
+  },
+
   // 下料按套数报：不逐台勾选，按台号顺序自动取对应数量交下道。
   changeCutQty(event) { this.setCutQty(this.data.cutQty + Number(event.currentTarget.dataset.delta || 0)); },
   cutQtyInput(event) { this.setCutQty(parseInt(event.detail.value, 10) || 1); },
@@ -234,6 +246,20 @@ Page({
     const max = (this.data.task.cutting || {}).reportable_units || 1;
     this.setData({ cutQty: Math.max(1, Math.min(max, value)) });
   },
+  // 板材下料：集中开料切好的按套数「已备料」，按台号顺序取对应数量交下道，板材按定额从开料池扣。
+  changePrepQty(event) { this.setPrepQty(this.data.prepQty + Number(event.currentTarget.dataset.delta || 0)); },
+  prepQtyInput(event) { this.setPrepQty(parseInt(event.detail.value, 10) || 1); },
+  setPrepQty(value) { this.setData({ prepQty: Math.max(1, Math.min(this.data.task.selectableCount || 1, value)) }); },
+  prepareCut() {
+    const task = this.data.task;
+    const qty = this.data.prepQty;
+    const ids = (task.units || []).filter(u => u.selectable).slice(0, qty).map(u => u.id);
+    if (!ids.length || ids.length < qty) { wx.showToast({ title: '本道没有这么多套', icon: 'none' }); return; }
+    const next = task.progress.next_operation_name;
+    wx.showModal({ title: `${qty} 套已备料，${next ? '交给' + next : '生产完成'}？`, editable: true, placeholderText: '备注（可不填，如用的哪批板）',
+      confirmText: '确认', success: res => { if (res.confirm) this.run({ action: 'prepare', unit_ids: ids, remark: String(res.content || '').trim() || null }, '已备料'); } });
+  },
+  openSharedCutting() { wx.navigateTo({ url: '/pages/production/shared-cutting/index' }); },
   passCut() {
     const task = this.data.task;
     const qty = this.data.cutQty;

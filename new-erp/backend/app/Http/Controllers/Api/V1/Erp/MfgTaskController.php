@@ -31,7 +31,7 @@ class MfgTaskController extends Controller
 
     public function action(Request $request, int $id, TaskService $tasks, TaskQueryService $query)
     {
-        $action = $request->validate(['action' => 'required|in:claim,start,pause,stop,pass,reject,collaborators,assign'])['action'];
+        $action = $request->validate(['action' => 'required|in:claim,start,pause,stop,pass,prepare,reject,collaborators,assign'])['action'];
         [$user, $codes] = $this->user($request, [in_array($action, ['assign', 'stop'], true) ? 'production.task.assign' : 'production.task.execute']);
         $message = match ($action) {
             'claim' => $this->run(fn () => $tasks->claim($id, $user), '接单成功。'),
@@ -41,6 +41,7 @@ class MfgTaskController extends Controller
             'assign' => $this->run(fn () => $tasks->assign($id, (int) $request->validate(['employee_legacy_id' => 'required|integer|min:1'])['employee_legacy_id'], $user), '已派工。'),
             'collaborators' => $this->collaborators($request, $id, $tasks, $user),
             'pass' => $this->pass($request, $id, $tasks, $user),
+            'prepare' => $this->prepare($request, $id, $tasks, $user),
             'reject' => $this->reject($request, $id, $tasks, $user),
         };
         return response()->json(['message' => $message, 'data' => $query->task($id, $user, $codes)]);
@@ -126,6 +127,15 @@ class MfgTaskController extends Controller
         if ($result['next_operation_name']) return $result['passed'].' 台设备合格，已交'.$result['next_operation_name'].'。'.$paused;
         if (($result['repaired'] ?? 0) > 0 && $result['repaired'] === $result['passed']) return $result['passed'].' 台设备返修合格，请仓库在发货单上把设备返回成品位后重新试水。'.$paused;
         return $result['passed'].' 台设备合格，生产完成，'.($result['staged_qty'] ? '已自动记入成品待发区（'.$result['staged_receipt_no'].'），等发货试水。' : '等入库。').$paused;
+    }
+
+    /** 已备料：集中下料提前切好的料，不计时直接交下道。 */
+    private function prepare(Request $request, int $id, TaskService $tasks, object $user): string
+    {
+        $data = $request->validate(['unit_ids' => 'required|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1', 'remark' => 'nullable|string|max:500']);
+        $result = $tasks->prepare($id, $data['unit_ids'], $data['remark'] ?? null, $user);
+        if ($result['next_operation_name']) return $result['passed'].' 台已备料，交'.$result['next_operation_name'].'。';
+        return $result['passed'].' 台已备料，生产完成，'.($result['staged_qty'] ? '已自动记入成品待发区（'.$result['staged_receipt_no'].'）。' : '等入库。');
     }
 
     private function reject(Request $request, int $id, TaskService $tasks, object $user): string

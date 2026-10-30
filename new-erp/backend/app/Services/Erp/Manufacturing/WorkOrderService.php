@@ -247,6 +247,7 @@ final class WorkOrderService
             }
             if (! $changes) $this->fail('no_change', '没有需要保存的修改。');
             if ($replan && (MfgCuttingBatch::query()->where('work_order_id', $wo->id)->lockForUpdate()->first(['id'])
+                || \App\Models\Erp\MfgCuttingAllocation::query()->where('work_order_id', $wo->id)->lockForUpdate()->first(['id'])
                 || MfgMaterialIssue::query()->where('work_order_id', $wo->id)->lockForUpdate()->first(['id'])))
                 $this->fail('material_already_issued', '工单已有真实领料或开料事实，不能覆盖原 BOM、路线和数量，请先核实已发生的用料。');
             $wo->business_version = (int) $wo->business_version + 1;
@@ -507,7 +508,8 @@ final class WorkOrderService
             $pending = array_values(array_diff($children, $cuttingOrders));
             $cuttingOrders = array_values(array_unique(array_merge($cuttingOrders, $pending)));
         }
-        if (MfgCuttingBatch::query()->whereIn('work_order_id', $cuttingOrders)->lockForUpdate()->first(['id']))
+        if (MfgCuttingBatch::query()->whereIn('work_order_id', $cuttingOrders)->lockForUpdate()->first(['id'])
+            || \App\Models\Erp\MfgCuttingAllocation::query()->whereIn('work_order_id', $cuttingOrders)->lockForUpdate()->first(['id']))
             $this->fail('cutting_already_issued', '本工单或关联半成品已有开料投入，不能直接取消。请保留原料、余料和半成品去向后再办理业务调整。');
         $delivery = \App\Models\Erp\MfgMaterialDelivery::query()->whereIn('work_order_id', $cuttingOrders)->whereIn('status', ['dispatched', 'rejected'])->lockForUpdate()->first();
         if ($delivery) $this->fail('material_delivery_open', "配料单 {$delivery->delivery_no} 已发出未签收或被拒收，请库管先收回入库，再取消工单；已签收的料请走退料并审核入库。");

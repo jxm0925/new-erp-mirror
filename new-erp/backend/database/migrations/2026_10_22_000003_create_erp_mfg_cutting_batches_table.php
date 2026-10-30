@@ -6,7 +6,11 @@ use Database\Schema\InitialTableMigration;
 
 require_once __DIR__.'/../schema/InitialTableMigration.php';
 
-/** 一张表保存同一工单集中开料批次，不恢复已删除的旧下料单据层级。 */
+/**
+ * 开料批次。batch_scope=work_order：随单开料（属于某工单某道工序）；
+ * batch_scope=shared：集中开料（不属于任何工单，work_order_id 为空，只开一种板材 item_id），
+ * 结算后净耗进开料池（pool_measure），工单下料点「已备料」时按定额从池里先进先出扣（allocated_*，明细见 erp_mfg_cutting_allocations）。
+ */
 return new class extends InitialTableMigration
 {
     public const TABLE = 'erp_mfg_cutting_batches';
@@ -18,8 +22,10 @@ return new class extends InitialTableMigration
 CREATE TABLE `erp_mfg_cutting_batches` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `batch_no` varchar(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-  `work_order_id` bigint(20) unsigned NOT NULL,
-  `work_order_operation_id` bigint(20) unsigned NOT NULL,
+  `batch_scope` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'work_order',
+  `item_id` bigint(20) unsigned DEFAULT NULL,
+  `work_order_id` bigint(20) unsigned DEFAULT NULL,
+  `work_order_operation_id` bigint(20) unsigned DEFAULT NULL,
   `status` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'issued',
   `business_version` int(10) unsigned NOT NULL DEFAULT '1',
   `unit_qty` int(10) unsigned NOT NULL,
@@ -36,6 +42,9 @@ CREATE TABLE `erp_mfg_cutting_batches` (
   `input_cost_amount` decimal(18,4) NOT NULL DEFAULT '0.0000',
   `remnant_cost_amount` decimal(18,4) NOT NULL DEFAULT '0.0000',
   `net_cost_amount` decimal(18,4) NOT NULL DEFAULT '0.0000',
+  `pool_measure` decimal(18,8) NOT NULL DEFAULT '0.00000000',
+  `allocated_measure` decimal(18,8) NOT NULL DEFAULT '0.00000000',
+  `allocated_cost_amount` decimal(18,4) NOT NULL DEFAULT '0.0000',
   `inventory_issue_transaction_id` bigint(20) unsigned DEFAULT NULL,
   `inventory_return_transaction_id` bigint(20) unsigned DEFAULT NULL,
   `issued_by_legacy_id` bigint(20) unsigned DEFAULT NULL,
@@ -53,6 +62,7 @@ CREATE TABLE `erp_mfg_cutting_batches` (
   UNIQUE KEY `mfg_cut_settlement_uq` (`settlement_key`),
   KEY `mfg_cut_wo_op_idx` (`work_order_id`,`work_order_operation_id`,`status`),
   KEY `mfg_cut_op_fk` (`work_order_operation_id`),
+  KEY `mfg_cut_scope_item_idx` (`batch_scope`,`item_id`,`status`),
   KEY `mfg_cut_issue_tx_fk` (`inventory_issue_transaction_id`),
   KEY `mfg_cut_return_tx_fk` (`inventory_return_transaction_id`),
   CONSTRAINT `mfg_cut_wo_fk` FOREIGN KEY (`work_order_id`) REFERENCES `erp_mfg_work_orders` (`id`),

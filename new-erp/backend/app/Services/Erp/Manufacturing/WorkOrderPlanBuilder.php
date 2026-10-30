@@ -82,7 +82,7 @@ final class WorkOrderPlanBuilder
                 $use = min($need, $have);
                 if ($m['participates_in_kitting']) $remaining[$m['component_item_id']] = $have - $use;
                 $rows[] = $m + [
-                    'issue_mode' => in_array($m['cutting_mode'] ?? null, ['sheet', 'length'], true) || in_array((int) $m['component_item_id'], $physical, true) ? 'cutting' : 'receive',
+                    'issue_mode' => in_array((int) $m['component_item_id'], $physical, true) ? 'cutting' : 'receive',
                     'available_qty' => round((float) ($available[$m['component_item_id']] ?? 0), 4),
                     'covered_qty' => round($use + (float) ($m['issued_qty'] ?? 0), 4),
                     'shortage_qty' => $m['participates_in_kitting'] ? round(max(0, $need - $use), 4) : 0,

@@ -198,7 +198,7 @@ final class CuttingService
             }
             // issued_qty 表达已满足的冻结理论需求，绝不能把实际整张／整根数量当成零件需求。
             foreach ($wo->materials->where('work_order_operation_id', $op->id) as $material) {
-                if (! in_array($material->cutting_mode, ['sheet', 'length'], true)) continue;
+                if (! MaterialIssueService::isCutting($material)) continue;
                 $increase = bcdiv(bcmul((string) $material->required_qty, (string) $actualUnits, 12), (string) $wo->planned_qty, 4);
                 $doneUnits = (int) MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('work_order_operation_id', $op->id)->where('status', 'settled')->lockForUpdate()->get()->sum('completed_unit_qty') + $actualUnits;
                 $newQty = $doneUnits >= (int) $wo->planned_qty ? (string) $material->required_qty : bcadd((string) $material->issued_qty, $increase, 4);
@@ -288,7 +288,8 @@ final class CuttingService
             ->get(['id', 'spec', 'model'])->keyBy('id');
         $out = [];
         foreach ($wo->materials->where('work_order_operation_id', $operationId) as $material) {
-            if (! in_array($material->cutting_mode, ['sheet', 'length'], true)) continue;
+            // 只有按实物管理的板材／管材走开料批次；按数量管理的按定额收料或「已备料」确认。
+            if (! MaterialIssueService::isCutting($material)) continue;
             $line = $lines->get($material->bom_item_id);
             $snapshot = $line['cutting_quantity_snapshot'] ?? null;
             if (! is_array($snapshot) || ($snapshot['mode'] ?? null) !== $material->cutting_mode) $this->fail('cutting_snapshot_missing', '开料需求缺少冻结尺寸与单位，请先通过正式工单资料补齐。');
@@ -421,7 +422,7 @@ final class CuttingService
 
     private function sourceItem(MfgWorkOrder $wo, int $itemId, bool $lock = false): Item
     {
-        if (! $wo->materials->contains(fn ($row) => (int) $row->component_item_id === $itemId && in_array($row->cutting_mode, ['sheet', 'length'], true))) $this->fail('item_invalid', '所选物料不在本工单冻结的开料需求中。');
+        if (! $wo->materials->contains(fn ($row) => (int) $row->component_item_id === $itemId && MaterialIssueService::isCutting($row))) $this->fail('item_invalid', '所选物料不在本工单冻结的开料需求中（按数量管理的板材／管材请直接收料或点「已备料」）。');
         $item = Item::query()->with('unit.standardUnit')->where('status', 'enabled')->when($lock, fn ($q) => $q->lockForUpdate())->find($itemId);
         if (! $item || ($item->management_scope && $item->management_scope !== 'factory')) $this->fail('item_invalid', '开料必须选择启用的工厂物料。');
         if ($wo->materials->where('component_item_id', $itemId)->contains(fn ($material) => $material->cutting_mode !== $item->cuttingMode()))
@@ -437,7 +438,8 @@ final class CuttingService
         return $item;
     }
 
-    private function sourceQuery(Item $item)
+    /** 可领入开料的真实来源（集中开料也用）。 */
+    public function sourceQuery(Item $item)
     {
         $query = $this->availability->outboundBalanceQuery([(int) $item->id])
             ->leftJoin('erp_material_lots as cut_lot', 'cut_lot.id', '=', 'erp_inventory_balances.material_lot_id')
@@ -463,7 +465,7 @@ final class CuttingService
         return $query;
     }
 
-    private function source(InventoryBalance $balance, Item $item): array
+    public function source(InventoryBalance $balance, Item $item): array
     {
         $unit = $this->units->canonicalUnit($item->unit);
         if (! $unit) $this->fail('unit_missing', '原料必须维护真实的库存基本单位。');
@@ -508,7 +510,7 @@ final class CuttingService
     {
         $batches = MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('work_order_operation_id', $operationId)->when($lock, fn ($q) => $q->lockForUpdate())->get();
         $arranged = (int) $batches->sum(fn ($batch) => $batch->status === 'settled' ? $batch->completed_unit_qty : $batch->unit_qty);
-        $materials = $wo->materials->where('work_order_operation_id', $operationId)->filter(fn ($material) => in_array($material->cutting_mode, ['sheet', 'length'], true) && (float) $material->required_qty > 0);
+        $materials = $wo->materials->where('work_order_operation_id', $operationId)->filter(fn ($material) => MaterialIssueService::isCutting($material) && (float) $material->required_qty > 0);
         $covered = $materials->isEmpty() ? 0 : $materials->map(fn ($material) => (int) bcdiv(bcmul((string) $material->issued_qty, (string) $wo->planned_qty, 12), (string) $material->required_qty, 0))->min();
         return max(0, (int) $wo->planned_qty - max($arranged, $covered));
     }
@@ -557,7 +559,7 @@ final class CuttingService
             ->where('is_active', true)->lockForUpdate()->first(['id'])) $this->fail('permission_denied', '只能办理本人当前参与工序的开料。', 403);
     }
 
-    private function publicData(array $data, bool $amounts): array
+    public function publicData(array $data, bool $amounts): array
     {
         foreach ($data as $key => &$value) {
             if (! $amounts && (str_contains((string) $key, 'cost') || in_array($key, ['request_hash', 'settlement_hash'], true))) $value = null;

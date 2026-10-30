@@ -39,7 +39,16 @@
           <text class="ct-step-btn {{cutQty >= task.cutting.reportable_units ? 'off' : ''}}" data-delta="1" bindtap="changeCutQty">+</text>
         </view>
       </view>
+      <view wx:elif="{{task.prepMode && task.selectableCount > 0}}" class="mt-kv">
+        <text class="k">已备料几套（最多 {{task.selectableCount}}）</text>
+        <view class="ct-step">
+          <text class="ct-step-btn {{prepQty <= 1 ? 'off' : ''}}" data-delta="-1" bindtap="changePrepQty">−</text>
+          <input class="ct-step-input" type="number" value="{{prepQty}}" bindblur="prepQtyInput" />
+          <text class="ct-step-btn {{prepQty >= task.selectableCount ? 'off' : ''}}" data-delta="1" bindtap="changePrepQty">+</text>
+        </view>
+      </view>
       <view wx:else class="mt-muted">{{task.cutting.completed_units >= task.cutting.planned_units ? '下料已全部完成' : '先在下面「开料」里切料并登记产出，登记了几套就能报几套'}}</view>
+      <view wx:if="{{task.prepMode && !task.cutting.reportable_units && task.selectableCount > 0}}" class="mt-muted mt-gap">板件已在「集中开料」切好：点下面「已备料」直接交下道，板材按 BOM 定额从集中开料登记的净耗里扣。<text wx:for="{{task.cutting.pool}}" wx:key="item_id">{{item.item_name}} 已切未备料 {{item.left_measure}} m²；</text></view>
       <view class="mt-muted mt-gap">已完成 {{task.cutting.completed_units}} / {{task.cutting.planned_units}} 套<text wx:if="{{task.progress.next_operation_name}}"> · 完成后交{{task.progress.next_operation_name}}</text></view>
     </view>
 
@@ -55,6 +64,7 @@
         <text wx:if="{{item.status === 'rework'}}" class="mt-tag red">返工{{item.fail_reason ? '：' + item.fail_reason : ''}}</text>
         <text wx:else class="mt-tag {{item.selectable ? 'gray' : 'amber'}}">{{item.status_label}}</text>
       </view>
+      <view wx:if="{{task.prep && task.allowed.prepare}}" class="mt-muted mt-gap">现切：点上面「开始」计时，切完报合格。料已集中切好：选好设备点「已备料」，不计时直接交下道，料按 BOM 定额扣。</view>
       <view class="mt-muted mt-gap">做完 {{task.doneText}} / {{task.plannedText}} 台<text wx:if="{{task.progress.upstream}}"> · 还有 {{task.progress.upstream}} 台在前面工序</text><text wx:if="{{task.progress.next_operation_name}}"> · 合格交{{task.progress.next_operation_name}}</text></view>
     </view>
 
@@ -73,7 +83,7 @@
     </view>
 
     <view wx:if="{{task.cutting}}" class="mt-card">
-      <view class="mt-card-title"><text>开料</text><text wx:if="{{task.allowed.cutting}}" class="tk-link green" bindtap="openCutting">去开料 ›</text></view>
+      <view class="mt-card-title"><text>开料</text><view class="mt-tags"><text class="tk-link" bindtap="openSharedCutting">集中开料 ›</text><text wx:if="{{task.allowed.cutting}}" class="tk-link green" bindtap="openCutting">随单开料 ›</text></view></view>
       <view class="mt-muted">本道用板材／管材，在这里领原料开料，切完登记切出的件和余料。已登记 {{task.cutting.cut_units}} / {{task.cutting.planned_units}} 套<text wx:if="{{task.cutting.pending_batches}}">，有 {{task.cutting.pending_batches}} 批切完还没登记</text>。</view>
       <view wx:if="{{!task.allowed.cutting}}" class="mt-muted mt-gap">接单后就能开料。</view>
     </view>
@@ -105,10 +115,17 @@
   </block>
 </view>
 
-<view wx:if="{{task && task.allowed.report && task.cutting}}" class="mt-footer">
+<view wx:if="{{task && task.cutting && task.prepMode && !task.cutting.reportable_units}}" class="mt-footer">
+  <button class="mt-btn" disabled="{{busy || !task.selectableCount}}" bindtap="prepareCut">{{task.selectableCount ? prepQty + ' 套已备料，' + (task.progress.next_operation_name ? '交' + task.progress.next_operation_name : '做完') : '本道没有待做的设备'}}</button>
+</view>
+<view wx:elif="{{task && task.allowed.report && task.cutting}}" class="mt-footer">
   <button class="mt-btn" disabled="{{busy || !task.cutting.reportable_units}}" bindtap="passCut">{{task.cutting.reportable_units ? '下料完成 ' + cutQty + ' 套' + (task.progress.next_operation_name ? '，交' + task.progress.next_operation_name : '') : '先开料登记'}}</button>
 </view>
-<view wx:if="{{task && task.allowed.report && !task.cutting}}" class="mt-footer">
+<view wx:if="{{task && !task.cutting && task.prepMode}}" class="mt-footer">
+  <button wx:if="{{task.allowed.report}}" class="mt-btn danger-ghost side" disabled="{{busy || !selectedCount}}" bindtap="openReject">报不合格</button>
+  <button class="mt-btn" disabled="{{busy || !selectedCount}}" bindtap="prepare">{{selectedCount ? selectedCount + ' 台已备料，' + (task.progress.next_operation_name ? '交下道' : '做完') : '先选设备'}}</button>
+</view>
+<view wx:if="{{task && task.allowed.report && !task.cutting && !task.prepMode}}" class="mt-footer">
   <button class="mt-btn danger-ghost side" disabled="{{busy || !selectedCount}}" bindtap="openReject">报不合格</button>
   <button class="mt-btn" disabled="{{busy || !selectedCount}}" bindtap="pass">{{selectedCount ? selectedCount + ' 台合格，' + (task.progress.next_operation_name ? '交下道' : '做完') : '先选设备'}}</button>
 </view>

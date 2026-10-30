@@ -72,6 +72,8 @@ final class ReceiptService
             // 已审核的生产退料按原单价冲回，从实际材料成本里扣除。
             foreach (MfgMaterialReturn::query()->where('work_order_id', $wo->id)->where('status', 'approved')->lockForUpdate()->get() as $return) $actualCost = bcsub($actualCost, (string) $return->cost_amount, 4);
             foreach (MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('status', 'settled')->lockForUpdate()->get() as $batch) $actualCost = bcadd($actualCost, (string) $batch->net_cost_amount, 4);
+            // 集中开料按定额分给本单的板材成本
+            $actualCost = bcadd($actualCost, (string) \App\Models\Erp\MfgCuttingAllocation::query()->where('work_order_id', $wo->id)->lockForUpdate()->sum('cost_amount'), 4);
             $alreadyCost = '0.0000';
             foreach (MfgReceipt::query()->where('work_order_id', $wo->id)->lockForUpdate()->get() as $oldReceipt) $alreadyCost = bcadd($alreadyCost, (string) $oldReceipt->cost_amount, 4);
             $remainingCost = bcsub($actualCost, $alreadyCost, 4);
