@@ -85,13 +85,8 @@ class SalesOrderFulfillmentApplicationService
             $order->load(['lines.sku.salesUnit.standardUnit', 'lines.item.unit.standardUnit']);
 
             foreach ($order->lines as $line) {
-                $price = (float) $line->unit_price;
-                if ($line->commercial_role === 'gift' ? abs($price) >= 0.00000001 : $price <= 0) {
-                    if ($line->commercial_role === 'gift') {
-                        throw ValidationException::withMessages(['unit_price' => '赠品行销售单价必须为 0。']);
-                    }
-                    throw ValidationException::withMessages(['unit_price' => "第 {$line->line_no} 行销售单价必须大于 0。"]);
-                }
+                $priceProblem = SalesOrderFulfillmentPolicy::priceMessage($line->line_type, $line->unit_price, $line->line_no);
+                if ($priceProblem !== null) throw ValidationException::withMessages(['unit_price' => $priceProblem.'。']);
                 // Service and no-delivery identities do not require a physical
                 // SKU-Item relation, even if a historical SKU defaults to physical.
                 $requirement = $this->isPhysicalLine($line)
@@ -615,7 +610,7 @@ class SalesOrderFulfillmentApplicationService
         $result = ['inventory_qty' => 0.0, 'production_qty' => 0.0, 'purchase_qty' => 0.0, 'service_qty' => 0.0, 'no_delivery_qty' => 0.0, 'undetermined_qty' => 0.0];
         if ($line->line_type === 'service') {
             $result['service_qty'] = $confirmQty;
-        } elseif (in_array($line->line_type, ['no_delivery', 'fee', 'auxiliary'], true)) {
+        } elseif (in_array($line->line_type, ['no_delivery', 'fee', 'auxiliary', 'deduction'], true)) {
             $result['no_delivery_qty'] = $confirmQty;
         } else {
             $analysis = $this->inventoryAvailability->analyzeSalesOrderLine($line, $confirmQty);
@@ -648,11 +643,11 @@ class SalesOrderFulfillmentApplicationService
         if ($line->line_type === 'service' && ($quantities['inventory_qty'] > 0 || $quantities['production_qty'] > 0 || $quantities['purchase_qty'] > 0 || $quantities['no_delivery_qty'] > 0)) {
             throw ValidationException::withMessages(['lines' => "第 {$line->line_no} 行为服务行，只能填写服务项目或尚未确定数量。"]);
         }
-        if (in_array($line->line_type, ['no_delivery', 'fee', 'auxiliary'], true)
+        if (in_array($line->line_type, ['no_delivery', 'fee', 'auxiliary', 'deduction'], true)
             && ($quantities['inventory_qty'] > 0 || $quantities['production_qty'] > 0 || $quantities['purchase_qty'] > 0 || $quantities['service_qty'] > 0)) {
             throw ValidationException::withMessages(['lines' => "第 {$line->line_no} 行为无需发货行，不能进入库存备货、生产安排或服务项目。"]);
         }
-        if (!in_array($line->line_type, ['service', 'no_delivery', 'fee', 'auxiliary'], true)
+        if (!in_array($line->line_type, ['service', 'no_delivery', 'fee', 'auxiliary', 'deduction'], true)
             && ($quantities['service_qty'] > 0 || $quantities['no_delivery_qty'] > 0)) {
             throw ValidationException::withMessages(['lines' => "第 {$line->line_no} 行为实物行，只能拆分库存、生产或尚未确定数量。"]);
         }

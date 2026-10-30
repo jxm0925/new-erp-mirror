@@ -210,9 +210,12 @@ class SalesOrderDraftService
         $platformProblem = app(SalesTradePlatformService::class)->problem($order->trade_type ?: 'domestic', $order->platform, $order->platform2);
         $add('TRADE_PLATFORM', $platformProblem === null, '成交平台已选择', (string) $platformProblem, 'platform');
         $add('ORDER_LINES_REQUIRED', $order->lines->isNotEmpty(), '订单明细已填写', '订单至少需要一行明细', 'lines');
+        $add('ORDER_AMOUNT_NOT_NEGATIVE', round((float) $order->lines->sum(fn ($line) => (float) ($line->amount_incl_tax ?? $line->amount)) + (float) $order->freight_amount, 2) >= 0,
+            '订单金额正确', '扣减项（红包、优惠）合计不能超过商品金额，订单金额不能小于 0', 'lines');
         foreach ($order->lines as $line) {
             $prefix = "LINE_{$line->line_no}_";
-            $add($prefix.'UNIT_PRICE', $this->priceIsValid($line), "第 {$line->line_no} 行销售单价符合商业角色要求", $this->priceValidationMessage($line), "lines.{$line->line_no}.unit_price");
+            $priceProblem = SalesOrderFulfillmentPolicy::priceMessage($line->line_type, $line->unit_price, $line->line_no);
+            $add($prefix.'UNIT_PRICE', $priceProblem === null, "第 {$line->line_no} 行单价正确", (string) $priceProblem, "lines.{$line->line_no}.unit_price");
             $sku = $line->sku;
             $add($prefix.'SKU_EXISTS', (bool) $sku, "第 {$line->line_no} 行 SKU 有效", "第 {$line->line_no} 行 SKU 无效或已停用", "lines.{$line->line_no}.sku_id");
             if (!$sku) continue;
@@ -259,20 +262,6 @@ class SalesOrderDraftService
         }
     }
 
-    private function priceIsValid($line): bool
-    {
-        $price = (float) $line->unit_price;
-        return $line->commercial_role === 'gift'
-            ? abs($price) < 0.00000001
-            : $price > 0;
-    }
-
-    private function priceValidationMessage($line): string
-    {
-        return $line->commercial_role === 'gift'
-            ? "订单行 {$line->line_no} 为赠品，销售单价必须为 0"
-            : "订单行 {$line->line_no} 为正常销售，销售单价必须大于 0";
-    }
 
     private function split(array $payload): array
     {

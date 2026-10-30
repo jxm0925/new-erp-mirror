@@ -578,7 +578,7 @@ export default {
       return '校验通过'
     },
     isService (row) { return row.line_type === 'service' },
-    isNoDelivery (row) { return ['no_delivery', 'fee', 'auxiliary'].includes(row.line_type) },
+    isNoDelivery (row) { return ['no_delivery', 'fee', 'auxiliary', 'deduction'].includes(row.line_type) },
     isPhysical (row) { return !this.isService(row) && !this.isNoDelivery(row) },
     number (value) { return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 6 }) },
     date (value) { return value ? erpDateTime(value, 10) : '-' }

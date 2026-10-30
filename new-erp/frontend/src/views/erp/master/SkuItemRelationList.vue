@@ -968,7 +968,7 @@ export default {
       return r.product ? `${r.product.product_code || '-'}｜${r.product.product_name}` : '—'
     },
     lineType (v) {
-      return ({ physical: '实物', service: '服务', no_delivery: '无需发货' })[v] || '—'
+      return ({ physical: '实物', service: '服务', no_delivery: '无需发货', deduction: '扣减项' })[v] || '—'
     },
     relationLabel (v) {
       return ({ normal: '正常', missing: '缺失', duplicate: '异常', item_disabled: '异常', wrong_binding: '异常', abnormal: '异常', not_required: '无需物料' })[v] || '—'

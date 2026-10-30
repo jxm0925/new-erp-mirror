@@ -84,6 +84,7 @@
             <el-option label="实物 (需备货/发货)" value="physical" />
             <el-option label="服务 (虚拟服务)" value="service" />
             <el-option label="无需发货 (随单交付)" value="no_delivery" />
+            <el-option label="扣减项 (红包/优惠)" value="deduction" />
           </el-select>
 
           <el-select v-model="query.status" size="small" clearable placeholder="销售状态" class="filter-select">
@@ -400,7 +401,7 @@ export default {
       return (row.sales_unit && row.sales_unit.unit_name) || row.sales_unit_snapshot || '—'
     },
     typeText(value) {
-      return { physical: '实物', service: '服务', no_delivery: '无需发货' }[value] || value || '实物'
+      return { physical: '实物', service: '服务', no_delivery: '无需发货', deduction: '扣减项' }[value] || value || '实物'
     },
     lineTypeClass(value) {
       return { physical: 'type-physical', service: 'type-service', no_delivery: 'type-no-delivery' }[value] || 'type-physical'

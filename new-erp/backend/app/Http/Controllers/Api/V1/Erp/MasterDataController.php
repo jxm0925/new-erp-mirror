@@ -91,7 +91,7 @@ class MasterDataController extends Controller
             });
         }
         if ($request->route('entity') === 'skus' && $request->filled('order_line_type')) {
-            $request->validate(['order_line_type' => 'in:physical,service,no_delivery']);
+            $request->validate(['order_line_type' => 'in:physical,service,no_delivery,deduction']);
             $query->where('order_line_type', $request->input('order_line_type'));
         }
         if ($request->route('entity') === 'locations' && $request->filled('area')) {
@@ -174,7 +174,7 @@ class MasterDataController extends Controller
                 ->whereNotNull('sale_price')
                 ->whereHas('product', fn (Builder $product) => $product->where('status', 'enabled'))
                 ->where(function (Builder $sku) {
-                    $sku->whereIn('order_line_type', ['service', 'no_delivery'])
+                    $sku->whereIn('order_line_type', ['service', 'no_delivery', 'deduction'])
                         ->orWhereHas('itemRelations', function (Builder $relation) {
                             $relation->where('status', 'active')->where('is_primary', true)
                                 ->whereHas('item', fn (Builder $item) => $item->where('status', 'enabled'));
@@ -187,7 +187,7 @@ class MasterDataController extends Controller
                     ->where('is_sale_item', true)
                     ->whereNotNull('sales_unit_id')
                     ->where(function (Builder $available) {
-                        $available->whereIn('order_line_type', ['service', 'no_delivery'])
+                        $available->whereIn('order_line_type', ['service', 'no_delivery', 'deduction'])
                             ->orWhereHas('itemRelations', function (Builder $relation) {
                                 $relation->where('status', 'active')->where('is_primary', true)
                                     ->whereHas('item', fn (Builder $item) => $item->where('status', 'enabled'));
@@ -647,7 +647,7 @@ class MasterDataController extends Controller
         abort_unless(!empty($data['sku_code']) && !empty($data['sku_name']) && !empty($data['product_id']) && !blank($data['spec_text'] ?? null), 422, 'SKU 编码、名称、所属 Product 与规格型号必须完整后才能启用。');
         abort_unless(!empty($data['sales_unit_id']), 422, '请先维护销售单位后再启用 SKU。');
         abort_unless(array_key_exists('sale_price', $data) && $data['sale_price'] !== null && $data['sale_price'] !== '', 422, '请先维护默认销售价格后再启用 SKU。');
-        abort_unless(in_array($data['order_line_type'] ?? '', ['physical', 'service', 'no_delivery'], true), 422, '订单行类型无效，不能启用 SKU。');
+        abort_unless(in_array($data['order_line_type'] ?? '', ['physical', 'service', 'no_delivery', 'deduction'], true), 422, '订单行类型无效，不能启用 SKU。');
         abort_unless(in_array($data['electric_mode'] ?? 'hidden', ['hidden', 'optional', 'required'], true), 422, '电压属性模式无效。');
         abort_unless(in_array($data['need_pump_mode'] ?? 'hidden', ['hidden', 'optional', 'required'], true), 422, '原水泵控制属性模式无效。');
         abort_unless(DB::table('erp_products')->where('id', $data['product_id'])->where('status', 'enabled')->exists(), 422, '所属 Product 必须处于启用状态。');
@@ -694,7 +694,7 @@ class MasterDataController extends Controller
                 'default_tax_rate' => 'nullable|numeric|min:0|max:1',
                 'default_price_tax_mode' => 'nullable|in:tax_inclusive,tax_exclusive',
                 'product_structure_type' => 'nullable|string|max:40', 'production_policy' => 'nullable|string|max:40',
-                'order_line_type' => 'required|in:physical,service,no_delivery',
+                'order_line_type' => 'required|in:physical,service,no_delivery,deduction',
                 'fulfillment_type' => 'nullable|in:physical,service,virtual',
                 'sales_unit_id' => ['nullable', $salesUnitExists], 'sales_unit_snapshot' => 'nullable|string|max:80',
                 'is_customizable' => 'boolean', 'is_need_production' => 'boolean', 'is_need_bom' => 'boolean',

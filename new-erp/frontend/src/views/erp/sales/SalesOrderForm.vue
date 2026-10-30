@@ -208,7 +208,7 @@ Do not change layout without approval.
                 <div class="line-detail-head">
                   <span class="row-badge">行 {{ $index + 1 }}</span>
                   <strong class="line-detail-title">{{ row.product_name || '未选产品' }} · {{ row.sku_name || '未选规格' }}</strong>
-                  <span class="line-detail-amount">小计 ¥{{ money(lineAmount(row)) }}</span>
+                  <span class="line-detail-amount">小计 {{ lineAmountText(row) }}</span>
                   <el-button type="text" size="mini" icon="el-icon-arrow-up" @click="expandedLineKeys = []">收起</el-button>
                 </div>
 
@@ -243,7 +243,7 @@ Do not change layout without approval.
                         </div>
                       </div>
                       <div class="field">
-                        <label class="required">销售单价</label>
+                        <label class="required">{{ row.line_type === 'deduction' ? '扣减金额（填正数，自动减钱）' : '销售单价（填 0 即赠送）' }}</label>
                         <div class="input-addon">
                           <span class="addon">¥</span>
                           <el-input-number v-model="row.unit_price" size="small" :min="0" :precision="2" :controls="false" @change="recalc" />
@@ -412,7 +412,7 @@ Do not change layout without approval.
 
           <el-table-column label="小计" width="96" align="right">
             <template slot-scope="{row}">
-              <span class="amount-cell">¥{{ money(lineAmount(row)) }}</span>
+              <span class="amount-cell" :class="{ 'amount-deduction': row.line_type === 'deduction' }">{{ lineAmountText(row) }}</span>
             </template>
           </el-table-column>
 
@@ -834,7 +834,7 @@ export default {
         this.form.platform &&
         this.form.payment_method_id &&
         this.form.lines.length &&
-        this.form.lines.every(line => line.product_id && line.sku_id && Number(line.unit_price || 0) > 0)
+        this.form.lines.every(line => line.product_id && line.sku_id && !this.linePriceMessage(line))
       )
       const lineOk = !this.form.lines.some(line => this.lineAttributeMessage(line) || this.lineCustomizationMessage(line))
       return { requiredOk, lineOk }
@@ -983,7 +983,7 @@ export default {
           ...emptyLine(),
           ...line,
           order_qty: Number(line.order_qty),
-          unit_price: Number(line.unit_price),
+          unit_price: line.line_type === 'deduction' ? Math.abs(Number(line.unit_price)) : Number(line.unit_price),
           item_name: line.item_name || '待系统匹配',
           product_code_snapshot: line.product_snapshot && line.product_snapshot.product_code,
           sku_code_snapshot: line.sku_snapshot && line.sku_snapshot.sku_code,
@@ -1244,7 +1244,7 @@ export default {
       return (snapshot && (snapshot.sales_unit_symbol || snapshot.sales_unit_name)) || line.unit_name_snapshot || '件'
     },
     lineNeedsItem(line) {
-      return line && !['service', 'no_delivery', 'fee', 'auxiliary'].includes(line.line_type)
+      return line && !['service', 'no_delivery', 'fee', 'auxiliary', 'deduction'].includes(line.line_type)
     },
     itemBaseUnitName(line) {
       return line.item_base_unit_name_preview || line.item_base_unit_name_snapshot || '-'
@@ -1656,7 +1656,9 @@ export default {
       if (this.form.lines.some(line => !line.sku_id)) return this.$message.error('订单行必须通过全局搜索选择SKU')
       if (this.form.lines.some(line => !line.product_id)) return this.$message.error('所选SKU缺少所属Product，请维护SKU主数据后重试')
       if (andConfirm && this.form.lines.some(line => this.lineNeedsItem(line)) && !this.form.carrier_id) return this.$message.error('实物订单提交确认前必须先选择快递')
-      if (andConfirm && this.form.lines.some(line => Number(line.unit_price || 0) <= 0)) return this.$message.error('提交确认前，订单行销售单价必须大于 0')
+      const badPrice = this.form.lines.find(line => this.linePriceMessage(line))
+      if (badPrice) return this.$message.error(this.linePriceMessage(badPrice))
+      if (andConfirm && this.totalAmount + Number(this.form.freight_amount || 0) < 0) return this.$message.error('扣减项（红包、优惠）合计不能超过商品金额，订单金额不能小于 0')
       const invalidAttribute = this.form.lines.find(line => this.lineAttributeMessage(line))
       if (andConfirm && invalidAttribute) return this.showLineError(invalidAttribute, this.lineAttributeMessage(invalidAttribute))
       const invalidCustomization = this.form.lines.find(line => this.lineCustomizationMessage(line))
@@ -1778,23 +1780,35 @@ export default {
       this.agreedDeposit = null
     },
     lineAmount(line) {
-      return Number(line.order_qty || 0) * Number(line.unit_price || 0)
+      const amount = Number(line.order_qty || 0) * Math.abs(Number(line.unit_price || 0))
+      return line.line_type === 'deduction' ? -amount : Number(line.order_qty || 0) * Number(line.unit_price || 0)
+    },
+    lineAmountText(line) {
+      const amount = this.lineAmount(line)
+      if (line.line_type !== 'deduction' && line.product_id && !Number(line.unit_price || 0)) return '¥0.00 赠送'
+      return `${amount < 0 ? '-' : ''}¥${this.money(Math.abs(amount))}`
+    },
+    linePriceMessage(line) {
+      const price = Number(line.unit_price || 0)
+      if (line.line_type === 'deduction') return price > 0 ? '' : `${line.sku_name || '扣减项'}：请填写扣减金额`
+      return price >= 0 ? '' : `${line.sku_name || '订单行'}：单价不能小于 0，要减钱请用扣减项（如红包、优惠）`
     },
     money(value) {
       return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     },
     lineTypeText(line) {
       if (line.is_purchase_fulfilled) return '外购备货'
-      return ({ physical: '实物备货', service: '服务项目', no_delivery: '无需发货', auxiliary: '辅助录入', fee: '费用' })[line.line_type] || line.line_type
+      return ({ physical: '实物备货', service: '服务项目', no_delivery: '无需发货', auxiliary: '辅助录入', fee: '费用', deduction: '扣减项' })[line.line_type] || line.line_type
     },
     lineTypeTag(v) {
-      return ({ physical: 'warning', service: 'info', no_delivery: 'success', auxiliary: '' })[v] || ''
+      return ({ physical: 'warning', service: 'info', no_delivery: 'success', auxiliary: '', deduction: 'danger' })[v] || ''
     }
   }
 }
 </script>
 
 <style scoped>
+.amount-cell.amount-deduction { color: #dc2626; }
 /* ==========================================================================
    销售订单新增 / 编辑：紧凑、自适应、结构清晰
    ========================================================================== */

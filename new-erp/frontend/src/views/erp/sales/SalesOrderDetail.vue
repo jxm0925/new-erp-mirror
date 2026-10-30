@@ -318,12 +318,12 @@ Design status: 新增“订单阶段提示条”（基础档案风格），其�
         </el-table-column>
         <el-table-column label="销售单价" width="100" align="left">
           <template slot-scope="{row}">
-            <span class="font-mono price-cell">¥{{ money(row.unit_price) }}</span>
+            <span class="font-mono price-cell">{{ Number(row.unit_price) < 0 ? '-' : '' }}¥{{ money(Math.abs(Number(row.unit_price || 0))) }}<small v-if="row.commercial_role === 'gift'" class="text-muted"> 赠送</small></span>
           </template>
         </el-table-column>
         <el-table-column label="小计金额" width="115" align="left">
           <template slot-scope="{row}">
-            <b class="font-mono amount-cell">¥{{ money(Number(row.order_qty || 0) * Number(row.unit_price || 0)) }}</b>
+            <b class="font-mono amount-cell" :style="Number(row.unit_price) < 0 ? 'color:#dc2626' : ''">{{ Number(row.unit_price) < 0 ? '-' : '' }}¥{{ money(Math.abs(Number(row.order_qty || 0) * Number(row.unit_price || 0))) }}</b>
           </template>
         </el-table-column>
         <el-table-column label="配置摘要" min-width="180">
@@ -1021,7 +1021,7 @@ export default {
     lineItem(line) {
       if (line.system_item) return line.system_item
       const lineType = line.line_type || (line.sku_snapshot && (line.sku_snapshot.order_line_type || line.sku_snapshot.fulfillment_type)) || 'physical'
-      if (['service', 'no_delivery', 'fee', 'auxiliary'].includes(lineType)) {
+      if (['service', 'no_delivery', 'fee', 'auxiliary', 'deduction'].includes(lineType)) {
         return { status: 'not_required', item_code: null, item_name: null, message: '无需 Item' }
       }
       const snapshot = line.item_snapshot || {}

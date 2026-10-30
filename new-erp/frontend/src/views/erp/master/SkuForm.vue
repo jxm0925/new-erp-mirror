@@ -118,7 +118,9 @@
                   <el-radio-button label="physical">实物 (需发货)</el-radio-button>
                   <el-radio-button label="service">服务 (虚拟)</el-radio-button>
                   <el-radio-button label="no_delivery">无需发货</el-radio-button>
+                  <el-radio-button label="deduction">扣减项 (红包/优惠)</el-radio-button>
                 </el-radio-group>
+                <div v-if="form.line_type === 'deduction'" class="field-tip">加到订单里会减钱：销售填正数金额，订单应收自动减掉；不发货、不生产、不占库存。</div>
               </div>
               <div class="form-row vertical">
                 <label><i>*</i> 是否允许销售</label>
@@ -617,6 +619,7 @@ export default {
 </script>
 
 <style scoped>
+.field-tip { color: #909399; font-size: 12px; line-height: 1.6; margin-top: 4px; }
 .sku-editor-page {
   padding: 16px 20px 30px;
   background: #f8fafc;

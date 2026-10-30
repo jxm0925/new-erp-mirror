@@ -16,7 +16,25 @@ final class SalesOrderFulfillmentPolicy
 
     public static function isPhysical(string $lineType): bool
     {
-        return ! in_array($lineType, ['service', 'no_delivery', 'fee', 'auxiliary'], true);
+        return ! in_array($lineType, ['service', 'no_delivery', 'fee', 'auxiliary', 'deduction'], true);
+    }
+
+    /** 扣减项（红包、优惠券、抹零）：订单里按负数减钱，不发货、不生产、不占库存、不算数量。 */
+    public const DEDUCTION = 'deduction';
+
+    /** 单价规则：扣减项必须是负数（录入时填正数，系统自动按减钱存）；其余行可以填 0（赠送、免费服务），不能为负。 */
+    public static function priceMessage(?string $lineType, $price, int|string|null $lineNo = null): ?string
+    {
+        $price = (float) $price;
+        $row = $lineNo !== null && $lineNo !== '' ? "第 {$lineNo} 行" : '订单行';
+        if ($lineType === self::DEDUCTION) return $price < -0.00000001 ? null : "{$row}是扣减项，扣减金额要大于 0";
+        return $price >= 0 ? null : "{$row}单价不能小于 0；要减钱请用扣减项（如红包、优惠）";
+    }
+
+    /** 单价为 0 的自动算赠送（成本计入销售费用），其余按正常销售。 */
+    public static function commercialRole(?string $lineType, $price): string
+    {
+        return $lineType !== self::DEDUCTION && abs((float) $price) < 0.00000001 ? 'gift' : 'sale';
     }
 
     public static function effectiveQuantity(float $ordered, float $cancelled): float

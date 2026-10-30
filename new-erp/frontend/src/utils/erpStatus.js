@@ -20,6 +20,7 @@ export const STATUS_LABELS = {
   no_delivery: '无需发货',
   auxiliary: '辅助录入',
   fee: '费用',
+  deduction: '扣减项',
   manual: '手工录入',
   legacy_sync: '历史迁移',
   legacy_reference: '历史系统导入',

@@ -10,7 +10,7 @@ class SkuItemRelationAuditService
     {
         $type = $sku->line_type;
         $relations = $sku->itemRelations->where('status', 'active')->where('is_primary', true)->values();
-        if (in_array($type, ['service', 'no_delivery'], true)) {
+        if (in_array($type, ['service', 'no_delivery', 'deduction'], true)) {
             return $this->result($relations->isEmpty() ? 'not_required' : 'wrong_binding', $relations, $relations->isEmpty() ? null : '服务或无需发货 SKU 不应绑定默认物料');
         }
         if ($relations->isEmpty()) return $this->result('missing', $relations, '实物 SKU 缺少默认物料');
