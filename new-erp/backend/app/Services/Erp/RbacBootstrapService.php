@@ -130,6 +130,8 @@ class RbacBootstrapService
         'system.business_staff.save' => 'system.department.save',
         'system.business_staff.delete' => 'system.department.delete',
         'purchase.production_shortage' => 'purchase.request.create',
+        // 提成与工时统计从提成模板派生：能看提成模板的角色同步看到统计菜单。
+        'production.performance_stats' => 'production.performance',
         // 盘点、调拨从手工调整派生：能做调整的角色同步获得对应能力。
         'inventory.stocktake' => 'inventory.adjustment',
         'inventory.stocktake.view' => 'inventory.adjustment.view',
