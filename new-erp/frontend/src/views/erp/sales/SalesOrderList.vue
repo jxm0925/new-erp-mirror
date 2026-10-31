@@ -274,7 +274,7 @@ export default {
     editLabel(row) {
       const actions = row.allowed_actions || {}
       if (row.order_status !== 'confirmed') return '编辑'
-      return actions.production_released ? '申请修改' : '编辑'
+      return (actions.edit_requires_approval || actions.production_released) ? '申请修改' : '编辑'
     },
     // 订单所处阶段：用于让销售一眼看出“现在能不能随便改”。
     stageOf(row) {
@@ -284,20 +284,19 @@ export default {
       if (row.order_status === 'closed') return { label: '已完成', type: 'success', hint: '已收齐款并全部发出' }
       if (row.order_status !== 'confirmed') return { label: statusText(row.order_status), type: 'info', hint: '' }
       if (row.short_closed_at) return { label: '已短交', type: 'warning', hint: '剩余未发已关闭，待收款/退款后完成' }
-      if (actions.production_released) return { label: '工单已发布', type: 'warning', hint: '修改需审核' }
-      if (['pending', 'blocked'].includes(row.production_confirm_status)) return { label: '核实期', type: 'success', hint: '待生产确认，可直接修改' }
-      if (row.production_confirm_status === 'not_required') return { label: '已确认', type: 'success', hint: '无需生产确认' }
-      return { label: '待发布工单', type: 'success', hint: '发布前可直接修改' }
+      if (actions.production_released) return { label: '已开工', type: 'warning', hint: '修改需审核' }
+      if (['pending', 'blocked'].includes(row.production_confirm_status)) return { label: '待生产确认', type: 'success', hint: '修改需审核' }
+      if (row.production_confirm_status === 'not_required') return { label: '已确认', type: 'success', hint: '修改需审核' }
+      return { label: '已生产确认', type: 'success', hint: '修改需审核' }
     },
     nextStep(row) {
       const actions = row.allowed_actions || {}
       if (row.order_status === 'draft') return '请核对订单信息，无误后点击“确认订单”。草稿可随意修改。'
       if (row.order_status !== 'confirmed') return '该订单已结束，无需处理。'
       if (row.short_closed_at) return '订单已短交关闭，剩余未发不再发货；应收已按实发金额调整，收齐款或办完退款后自动完成。'
-      if (actions.production_released) return '工单已发布，订单修改须提交并经相关负责人审核后才会生效。'
-      if (['pending', 'blocked'].includes(row.production_confirm_status)) return '订单已确认，尚未生成工单。请核实订单（此阶段可直接修改），无误后执行“生产确认”。'
-      if (row.production_confirm_status === 'not_required') return '该订单无需生产确认。'
-      return '已生成待发布工单。工单发布前仍可直接修改订单（会撤销待发布工单并需重新生产确认）。'
+      if (['pending', 'blocked'].includes(row.production_confirm_status) && !actions.production_released) return '订单已确认，尚未生成工单。请核实订单，无误后执行“生产确认”；要改订单请点“申请修改”，审核通过后生效。'
+      if (row.production_confirm_status === 'not_required') return '该订单无需生产确认。要改订单请点“申请修改”，审核通过后生效。'
+      return '订单修改须提交并经相关负责人审核后才会生效。'
     },
     async confirmOrder(row) {
       // 一步确认：服务端先检查、通过后立即确认；未通过不改状态。确认订单不会生成工单。

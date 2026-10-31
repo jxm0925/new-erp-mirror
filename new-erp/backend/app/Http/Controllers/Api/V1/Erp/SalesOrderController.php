@@ -1487,11 +1487,12 @@ class SalesOrderController extends Controller
             'cancel' => $order->order_status !== 'cancelled'
                 && in_array($order->shipment_status, ['not_shipped', 'not_required'], true)
                 && in_array('sales_order.cancel', $codes, true),
-            // 工单发布前是销售核实期，有订单编辑权限即可直接改；发布后必须有订单变更权限并走审核。
+            // 草稿可直接改；确认后改金额、商品、数量、客户和收货信息都要提交审核，需有订单变更权限。
             'edit' => ($draft && in_array('sales_order.edit_draft', $codes, true))
                 || (($changeEligibility['allowed'] ?? ($order->order_status === 'confirmed' && in_array($order->shipment_status, ['not_shipped', 'not_required'], true)))
-                    && ($released ? $canChange : ($canChange || in_array('sales_order.edit_draft', $codes, true)))),
+                    && $canChange),
             'production_released' => $released,
+            'edit_requires_approval' => $order->order_status === 'confirmed',
             // 约定定金由销售按客户约定直接维护；确认后也可改，立即生效并留痕。
             'edit_agreed_deposit' => in_array($order->order_status, ['draft', 'confirmed'], true)
                 && SalesOrderFundingGateService::supportsAgreedDeposit(data_get($order->funding_policy_snapshot, 'policy_type'))

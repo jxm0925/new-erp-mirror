@@ -279,16 +279,12 @@ class SalesOrderEditImpactService
             }
         }
         $types = collect($diffs)->pluck('impact_types')->flatten()->unique()->values()->all();
-        // 工单发布前是销售核实期：任何修改都立即生效，无需审核；发布后才按影响类型走候选版本审核。
+        // 订单确认后：改金额、商品、数量、客户和收货信息等都要按影响类型走审核，通过后才生效；只改备注这类不影响业务的内容直接保存。
         $released = $this->productionReleased($order);
         $required = [];
-        if ($released) {
-            if (in_array('COMMERCIAL', $types, true) || in_array('PRODUCTION', $types, true)) $required[] = 'business';
-            if (in_array('FINANCIAL', $types, true)) $required[] = 'finance';
-            if (in_array('FULFILLMENT', $types, true)) $required[] = 'fulfillment';
-        } else {
-            $diffs = array_map(fn (array $diff): array => array_replace($diff, ['approval_requirements' => []]), $diffs);
-        }
+        if (in_array('COMMERCIAL', $types, true) || in_array('PRODUCTION', $types, true)) $required[] = 'business';
+        if (in_array('FINANCIAL', $types, true)) $required[] = 'finance';
+        if (in_array('FULFILLMENT', $types, true)) $required[] = 'fulfillment';
         $approvalReasons = $this->approvalReasons($diffs, $required);
         $production = [
             'affects_production' => in_array('PRODUCTION', $types, true),
@@ -310,12 +306,12 @@ class SalesOrderEditImpactService
             'requires_approval' => !empty($required), 'required_approval_types' => $required,
             'approval_reasons' => $approvalReasons,
             'production_released' => $released,
-            'edit_stage' => $released ? 'review_required' : 'free',
-            'candidate_effect_summary' => $released
-                ? (empty($required) ? '本次修改保存后立即生效，并记录修改历史。' : '审核通过前，正式订单、库存预留、生产和交付安排及应收保持不变。')
-                : ($facts['has_operational_facts'] && collect($diffs)->contains(fn ($d) => collect($d['impact_types'])->intersect(['FULFILLMENT', 'PRODUCTION'])->isNotEmpty())
-                    ? '工单尚未发布，本次修改保存后立即生效；已生成的待发布工单和库存预留会撤销，需要重新执行“生产确认”。'
-                    : '工单尚未发布，本次修改保存后立即生效，并记录修改历史。'),
+            'edit_stage' => empty($required) ? 'free' : 'review_required',
+            'candidate_effect_summary' => empty($required)
+                ? '本次只改了备注等不影响业务的内容，保存后立即生效，并记录修改历史。'
+                : (! $released && $facts['has_operational_facts'] && collect($diffs)->contains(fn ($d) => collect($d['impact_types'])->intersect(['FULFILLMENT', 'PRODUCTION'])->isNotEmpty())
+                    ? '审核通过前，正式订单、库存预留、工单和应收都保持不变；通过后才生效，还没开工的工单和库存预留会撤销，需要重新“生产确认”。'
+                    : '审核通过前，正式订单、库存预留、生产和交付安排及应收保持不变；通过后才生效。'),
             'production_impact' => $production,
             'business_facts' => $facts,
         ];
@@ -452,6 +448,10 @@ class SalesOrderEditImpactService
                 ? ['FULFILLMENT'] : ['INFO'],
             'trade_type' => ['COMMERCIAL', 'FULFILLMENT'],
             'customer_id', 'customer_name', 'platform', 'sales_channel_id' => ['COMMERCIAL'],
+            // 客户联系方式、收货地址改动要业务审核；已有备货/发货安排的还要交付复核。
+            'customer_contact_id', 'customer_address_id', 'customer_kind', 'customer_phone', 'contact_name', 'contact_phone',
+            'country_id', 'province_id', 'city_id', 'area_id', 'address', 'full_address' => $facts['has_fulfillment_facts']
+                ? ['COMMERCIAL', 'FULFILLMENT'] : ['COMMERCIAL'],
             default => ['INFO'],
         };
     }
