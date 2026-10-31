@@ -1,5 +1,4 @@
 // index.js
-import Notify from '@vant/weapp/notify/notify';
 var util = require('../../utils/util.js');
 var api = require('../../config/api.js');
 
@@ -12,11 +11,11 @@ Page({
     banner: [],
     list: [
       {
-        key: 'orders',
-        url: '/pages/orders/index/index',
-        icon: '/static/images/order.png',
-        vanIcon: 'description',
-        name: '订单'
+        key: 'legacy_work',
+        url: '/pages/work/index/index',
+        icon: '/static/images/work_order.png',
+        vanIcon: '/static/images/work_order.png',
+        name: '旧工单'
       },
       {
         key: 'suggests',
@@ -109,10 +108,6 @@ Page({
     }
     if (!userInfo.user_id) {
       util.BadgePopup();
-      return;
-    }
-    if ((item.key === 'orders' || index === 0) && !(this.data.userInfo && this.data.userInfo.scope)) {
-      Notify({ type: 'danger', message: '暂无权限，请联系管理员' });
       return;
     }
     if (item.url) {

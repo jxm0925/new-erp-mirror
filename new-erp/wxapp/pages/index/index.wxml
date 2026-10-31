@@ -1,28 +1,13 @@
 <view class="container">
-  <!-- 顶部轮播或品牌横幅 -->
+  <!-- 顶部轮播图 -->
   <view class="banner-wrap">
-    <swiper wx:if="{{banner && banner.length}}" class="banner" indicator-dots="true" indicator-color="rgba(255,255,255,0.45)" indicator-active-color="#ffffff" autoplay="true" interval="3000" duration="1000">
+    <swiper class="banner" indicator-dots="true" indicator-color="rgba(255,255,255,0.45)" indicator-active-color="#ffffff" autoplay="true" interval="3000" duration="1000">
       <swiper-item wx:for="{{banner}}" wx:key="id">
         <navigator url="{{item.path}}">
           <image src="{{item.img}}" mode="aspectFill"></image>
         </navigator>
       </swiper-item>
     </swiper>
-    <view wx:else class="banner-fallback">
-      <view class="banner-brand">
-        <text class="banner-logo-badge">简谈制造 · ERP</text>
-        <text class="banner-tag">2026 精益生产管理</text>
-      </view>
-      <view class="banner-main">
-        <view class="banner-slogan-top">聚光灯照亮奋斗者 · 龙马劲奔赴新征程</view>
-        <view class="banner-slogan-title">品质交付 · 生产仓储全链路协同</view>
-      </view>
-      <view class="banner-dots">
-        <view class="banner-dot active"></view>
-        <view class="banner-dot"></view>
-        <view class="banner-dot"></view>
-      </view>
-    </view>
   </view>
 
   <!-- 公告栏 -->

@@ -5,24 +5,23 @@
         <span class="head-icon"><i class="el-icon-sort" /></span>
         <div class="head-title-wrap">
           <div class="title-row">
-            <h1 class="page-title">库存调拨工作台</h1>
-            <el-tag size="small" type="success" effect="plain" class="total-tag">共 {{ stats.total || total }} 张调拨单</el-tag>
+            <h1 class="page-title">库存调拨</h1>
+            <el-tag size="small" type="success" effect="plain" class="head-tag total-tag">共 {{ stats.total || total }} 张调拨单</el-tag>
             <el-tag v-if="stats.draft > 0" size="small" type="warning" effect="plain" class="sub-total-tag">
               {{ stats.draft }} 张草稿待过账
             </el-tag>
           </div>
-          <p class="page-desc">支持同管理范围的库位间或跨仓库调拨；过账即时成对生成调出/调入流水，按来源批次平均成本结转，序列号随行迁移。</p>
         </div>
       </div>
       <div class="head-actions">
-        <el-button size="small" icon="el-icon-refresh" :loading="loading" @click="load">刷新</el-button>
+        <el-button size="small" icon="el-icon-refresh" class="btn-refresh" :loading="loading" @click="load">刷新</el-button>
         <el-button v-if="$can('inventory.transfer.create')" size="small" type="success" class="btn-theme-create" icon="el-icon-plus" @click="openForm()">新建调拨单</el-button>
       </div>
     </header>
 
     <div class="erp-page-tip">
       <i class="el-icon-info" />
-      <span>仅允许调拨「可用库存」（不含已锁定、不合格、待处理及盘点冻结数量）；工厂物料仓与办公用品仓之间实行管理范围隔离，不可跨范围混调。</span>
+      <span>支持同管理范围的库位间或跨仓库调拨；过账即时成对生成调出/调入流水并按来源批次平均成本结转，仅允许调拨「可用库存」（不含已锁定、不合格、待处理及盘点冻结数量）。</span>
     </div>
 
     <div class="metric-overview-grid">
@@ -579,11 +578,12 @@ export default {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 14px 18px;
-  margin-bottom: 12px;
-  background: #fff;
-  border: 1px solid #e4e7ed;
-  border-radius: 6px;
+  padding: 16px 20px;
+  margin-bottom: 14px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
 }
 
 .head-left {
@@ -596,13 +596,19 @@ export default {
   width: 38px;
   height: 38px;
   border-radius: 8px;
-  background: #eaf7f0;
+  background: #f0fdf4;
   color: #008b4b;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 20px;
   flex-shrink: 0;
+}
+
+.head-title-wrap {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 
 .title-row {
@@ -616,20 +622,31 @@ export default {
   margin: 0;
   font-size: 18px;
   font-weight: 700;
-  color: #17233b;
+  color: #0f172a;
 }
 
-.page-desc {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: #728096;
+.head-tag,
+.total-tag,
+.sub-total-tag {
+  border-radius: 4px;
+  font-weight: 500;
 }
 
 .head-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
+}
+
+.btn-refresh {
+  border-color: #cbd5e1 !important;
+  color: #475569 !important;
+}
+
+.btn-refresh:hover {
+  border-color: #008b4b !important;
+  color: #008b4b !important;
 }
 
 .btn-theme-create {

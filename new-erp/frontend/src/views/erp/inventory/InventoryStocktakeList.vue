@@ -5,24 +5,23 @@
         <span class="head-icon"><i class="el-icon-s-claim" /></span>
         <div class="head-title-wrap">
           <div class="title-row">
-            <h1 class="page-title">库存盘点工作台</h1>
-            <el-tag size="small" type="success" effect="plain" class="total-tag">共 {{ stats.total || total }} 张盘点单</el-tag>
+            <h1 class="page-title">库存盘点</h1>
+            <el-tag size="small" type="success" effect="plain" class="head-tag total-tag">共 {{ stats.total || total }} 张盘点单</el-tag>
             <el-tag v-if="stats.counting > 0" size="small" type="warning" effect="plain" class="sub-total-tag">
               {{ stats.counting }} 张盘点进行中（库位冻结）
             </el-tag>
           </div>
-          <p class="page-desc">开盘即冻结所选仓库或库位的出入库；录入实盘数后一键完成盘点，系统自动生成“盘点差异”调整单并过账。</p>
         </div>
       </div>
       <div class="head-actions">
-        <el-button size="small" icon="el-icon-refresh" :loading="loading" @click="load">刷新</el-button>
+        <el-button size="small" icon="el-icon-refresh" class="btn-refresh" :loading="loading" @click="load">刷新</el-button>
         <el-button v-if="$can('inventory.stocktake.create')" size="small" type="success" class="btn-theme-create" icon="el-icon-plus" @click="openCreate">新建盘点</el-button>
       </div>
     </header>
 
     <div class="erp-page-tip">
       <i class="el-icon-info" />
-      <span>建议优先采用「按库位」分批盘点，仅冻结当前盘点库位，不影响其他库位正常领料、发货与入库作业；盘点完成或取消后自动解除冻结。</span>
+      <span>开盘即冻结所选仓库或库位的出入库，录入实盘数后一键完成盘点并自动生成“盘点差异”调整单过账；建议优先采用「按库位」分批盘点，避免整仓冻结影响正常领料与发货。</span>
     </div>
 
     <div class="metric-overview-grid">
@@ -722,11 +721,12 @@ export default {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 14px 18px;
-  margin-bottom: 12px;
-  background: #fff;
-  border: 1px solid #e4e7ed;
-  border-radius: 6px;
+  padding: 16px 20px;
+  margin-bottom: 14px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
 }
 
 .head-left {
@@ -739,13 +739,19 @@ export default {
   width: 38px;
   height: 38px;
   border-radius: 8px;
-  background: #eaf7f0;
+  background: #f0fdf4;
   color: #008b4b;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 20px;
   flex-shrink: 0;
+}
+
+.head-title-wrap {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 
 .title-row {
@@ -759,20 +765,31 @@ export default {
   margin: 0;
   font-size: 18px;
   font-weight: 700;
-  color: #17233b;
+  color: #0f172a;
 }
 
-.page-desc {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: #728096;
+.head-tag,
+.total-tag,
+.sub-total-tag {
+  border-radius: 4px;
+  font-weight: 500;
 }
 
 .head-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
+}
+
+.btn-refresh {
+  border-color: #cbd5e1 !important;
+  color: #475569 !important;
+}
+
+.btn-refresh:hover {
+  border-color: #008b4b !important;
+  color: #008b4b !important;
 }
 
 .btn-theme-create {

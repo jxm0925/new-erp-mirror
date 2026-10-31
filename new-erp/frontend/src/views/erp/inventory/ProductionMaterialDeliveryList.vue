@@ -1,15 +1,22 @@
 <template>
   <section class="delivery-page" v-loading="loading">
-    <div class="page-head">
-      <div class="title-block">
-        <span class="crumb">库存管理 / 生产配料</span>
-        <h1>生产配料工作台</h1>
-        <p>按工序为车间配“专单配送”物料：照拣货单拣料、发出扣库存，车间核对签收后开工；拒收可重新送达或整单收回入库</p>
+    <header class="page-head">
+      <div class="head-left">
+        <span class="head-icon"><i class="el-icon-receiving" /></span>
+        <div class="head-title-wrap">
+          <div class="title-row">
+            <h1 class="page-title">生产配料</h1>
+            <el-tag size="small" type="success" effect="plain" class="head-tag total-tag">共 {{ total }} 条{{ status === 'pending' ? '待配工序' : '配料单' }}</el-tag>
+            <el-tag v-if="summary.prepared > 0" size="small" type="warning" effect="plain" class="sub-total-tag">
+              {{ summary.prepared }} 张待发出
+            </el-tag>
+          </div>
+        </div>
       </div>
       <div class="head-actions">
-        <el-button size="small" icon="el-icon-refresh" @click="load">刷新数据</el-button>
+        <el-button size="small" icon="el-icon-refresh" class="btn-refresh" :loading="loading" @click="load">刷新</el-button>
       </div>
-    </div>
+    </header>
 
     <div class="erp-page-tip">
       <i class="el-icon-info" />
@@ -351,11 +358,16 @@ export default {
 <style scoped src="../production/mfg-v2.css"></style>
 <style scoped>
 .delivery-page { min-height: calc(100vh - 52px); padding: 16px 20px 28px; background: #f6f8fa; color: #1f2937; box-sizing: border-box; font-size: 13px; }
-.page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 12px; }
-.title-block .crumb { display: block; color: #6b7280; font-size: 12px; margin-bottom: 4px; }
-.title-block h1 { margin: 0; font-size: 22px; line-height: 1.3; color: #111827; font-weight: 700; }
-.title-block p { margin: 4px 0 0; color: #6b7280; font-size: 13px; }
-.head-actions { display: flex; gap: 8px; align-items: center; }
+.page-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px 20px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 14px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03); }
+.head-left { display: flex; align-items: center; gap: 12px; }
+.head-icon { width: 38px; height: 38px; border-radius: 8px; background: #f0fdf4; color: #008b4b; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
+.head-title-wrap { display: flex; flex-direction: column; min-width: 0; }
+.title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.page-title { margin: 0; font-size: 18px; font-weight: 700; color: #0f172a; }
+.head-tag, .total-tag, .sub-total-tag { border-radius: 4px; font-weight: 500; }
+.head-actions { display: flex; gap: 10px; align-items: center; }
+.btn-refresh { border-color: #cbd5e1 !important; color: #475569 !important; }
+.btn-refresh:hover { border-color: #008b4b !important; color: #008b4b !important; }
 .btn-theme-create { background: #008b4b !important; border-color: #008b4b !important; color: #fff !important; }
 .btn-theme-create:hover, .btn-theme-create:focus { background: #00753f !important; border-color: #00753f !important; color: #fff !important; }
 .erp-page-tip { display: flex; align-items: center; gap: 8px; padding: 10px 14px; margin-bottom: 12px; background: #f0f9f4; border: 1px solid #cce8d8; border-radius: 8px; color: #1f4d36; font-size: 13px; }

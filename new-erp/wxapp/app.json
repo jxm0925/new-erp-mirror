@@ -1,6 +1,13 @@
 {
   "pages": [
     "pages/index/index",
+    "pages/work/index/index",
+    "pages/work/detail/index",
+    "pages/work/my/index",
+    "pages/work/send/index",
+    "pages/work/products/index",
+    "pages/work/products/detail",
+    "pages/work/products/send",
     "pages/production/hub/index",
     "pages/warehouse/workbench/index",
     "pages/warehouse/list/index",

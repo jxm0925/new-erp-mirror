@@ -17,38 +17,64 @@ const formatNumber = n => {
 /**
  * 微信的的request
  */
-function request(url, data = {}, method = "POST", header = "application/x-www-form-urlencoded",origin=0) {
+function request(url, data = {}, method = "POST", header = "application/x-www-form-urlencoded",origin=0, options = {}) {
   if(!origin){
     var token = wx.getStorageSync('token');
   }else{
     token='';
   }
-  wx.showLoading({
+  if (options.loading !== false) wx.showLoading({
       title: '加载中...',
   });
   return new Promise(function (resolve, reject) {
-      wx.request({
-          url: url,
-          data: data,
-          method: method,
-          header: {
-              'Content-Type': header,
-              'token': token,
-              'cookie': 'XDEBUG_SESSION=XIAONIU'
-          },
-          success: function (res) {
-              wx.hideLoading();
-              if (res.statusCode == 200) {
-                  resolve(res.data);
-              } else {
-                  reject(res.msg);
-              }
+      const timeout = options.timeout || 60000;
+      let requestTask;
+      let settled = false;
+      const finish = function (error, result) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          if (options.loading !== false) wx.hideLoading();
+          if (error) reject(error);
+          else resolve(result);
+      };
+      // 客户端回调异常时仍结束等待；超时后的响应不能继续统一登录。
+      const timer = setTimeout(function () {
+          finish(new Error('请求超时，请重试'));
+          if (requestTask) requestTask.abort();
+      }, timeout);
+      try {
+          requestTask = wx.request({
+              url: url,
+              data: data,
+              method: method,
+              timeout: timeout,
+              header: {
+                  'Content-Type': header,
+                  'token': token,
+                  'cookie': 'XDEBUG_SESSION=XIAONIU'
+              },
+              success: function (res) {
+                  if (res.statusCode == 200) {
+                      finish(null, res.data);
+                  } else {
+                      const body = res.data || {};
+                      const error = new Error(body.msg || body.message || `请求失败（HTTP ${res.statusCode}）`);
+                      error.statusCode = res.statusCode;
+                      finish(error);
+                  }
 
-          },
-          fail: function (err) {
-              reject(err)
-          }
-      })
+              },
+              fail: function (err) {
+                  const message = err && err.errMsg;
+                  const error = new Error(message && /timeout/i.test(message) ? '请求超时，请重试' : (message || '网络连接失败，请检查网络后重试'));
+                  error.originalError = err;
+                  finish(error);
+              }
+          });
+      } catch (error) {
+          finish(error);
+      }
   });
 }
 const SplitArray= function (list, sp) {

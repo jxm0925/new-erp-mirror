@@ -38,35 +38,52 @@ function request(options) {
   }
 
   return new Promise((resolve, reject) => {
-    wx.request({
-      url: buildUrl(opts.path, opts.query),
-      data: opts.data || {},
-      method: opts.method || 'GET',
-      header: headers,
-      timeout: opts.timeout || 15000,
-      success(response) {
-        if (response.statusCode >= 200 && response.statusCode < 300) {
-          resolve(response.data);
-          return;
-        }
+    const timeout = opts.timeout || 15000;
+    let requestTask;
+    let settled = false;
+    const finish = (error, result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (opts.loading !== false) wx.hideLoading();
+      if (error) reject(error);
+      else resolve(result);
+    };
+    // 防止客户端不回调时一直等待，并忽略超时后到达的认证响应。
+    const timer = setTimeout(() => {
+      finish(new Error('请求超时，请重试'));
+      if (requestTask) requestTask.abort();
+    }, timeout);
+    try {
+      requestTask = wx.request({
+        url: buildUrl(opts.path, opts.query),
+        data: opts.data || {},
+        method: opts.method || 'GET',
+        header: headers,
+        timeout,
+        success(response) {
+          if (settled) return;
+          if (response.statusCode >= 200 && response.statusCode < 300) {
+            finish(null, response.data);
+            return;
+          }
 
-        if (response.statusCode === 401 && token && wx.getStorageSync(ERP_TOKEN_KEY) === token) {
-          wx.removeStorageSync(ERP_TOKEN_KEY);
-        }
-        reject(normalizeError(response));
-      },
-      fail(error) {
-        const requestError = new Error(error.errMsg || '网络连接失败，请检查网络后重试。');
-        requestError.errorCode = 'network_error';
-        requestError.originalError = error;
-        reject(requestError);
-      },
-      complete() {
-        if (opts.loading !== false) {
-          wx.hideLoading();
-        }
-      },
-    });
+          if (response.statusCode === 401 && token && wx.getStorageSync(ERP_TOKEN_KEY) === token) {
+            wx.removeStorageSync(ERP_TOKEN_KEY);
+          }
+          finish(normalizeError(response));
+        },
+        fail(error) {
+          const message = error && error.errMsg;
+          const requestError = new Error(message && /timeout/i.test(message) ? '请求超时，请重试' : (message || '网络连接失败，请检查网络后重试。'));
+          requestError.errorCode = 'network_error';
+          requestError.originalError = error;
+          finish(requestError);
+        },
+      });
+    } catch (error) {
+      finish(error);
+    }
   });
 }
 

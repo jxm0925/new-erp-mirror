@@ -5,13 +5,31 @@
     <section v-if="activeView === 'posting'" class="inventory-view posting-view">
       <div class="page-head">
         <div>
-          <span class="crumb">库存管理 / 库存过账</span>
-          <h1>库存过账工作台</h1>
-          <p>承接采购到货的待库存过账，按到货确认的库存管理要求写入正常库存。</p>
+          <div class="head-left">
+            <span class="head-icon"><i class="el-icon-document-checked" /></span>
+            <div class="head-title-wrap">
+              <div class="title-row">
+                <h1 class="page-title">库存过账</h1>
+                <el-tag size="small" type="success" effect="plain" class="head-tag total-tag">共 {{ postingPagination.total }} 张待过账到货单</el-tag>
+              </div>
+            </div>
+          </div>
+
+
         </div>
-        <el-button size="small" type="success" icon="el-icon-refresh" @click="resetPostingRows">刷新待过账</el-button>
+        <div class="head-actions">
+          <el-button size="small" icon="el-icon-refresh" class="btn-refresh" @click="resetPostingRows">刷新</el-button>
+        </div>
       </div>
 
+      <div v-if="activeView === 'posting'" class="erp-page-tip">
+        <i class="el-icon-info" />
+        <span>承接采购到货的待库存过账，按到货确认的库存管理要求核对库位、批次及设备编号后写入正常库存；未完成库位分配的单据可直接点击“补充分配”在当前页弹窗补齐。</span>
+      </div>
+      <div v-if="activeView === 'balances'" class="erp-page-tip">
+        <i class="el-icon-info" />
+        <span>库存余额按物料汇总展示，不合格与待处理数量不计入可用库存；点击下方统计卡片可快速筛选对应状态，点击物料行可查看批次、库位分布、设备编号与质量处理。</span>
+      </div>
       <div class="metric-grid four">
         <article><i class="el-icon-document-checked green" /><span>待过账到货单</span><strong>{{ pendingPostingCount }}</strong></article>
         <article><i class="el-icon-circle-check blue" /><span>今日已过账</span><strong>{{ postedTodayCount }}</strong></article>
@@ -124,15 +142,33 @@
     <section v-if="activeView === 'balances'" class="inventory-view">
       <div class="page-head">
         <div>
-          <span class="crumb">库存管理 / 库存余额</span>
-          <h1>库存余额 <small><i class="el-icon-info" /> 按物料汇总，点击物料可查看批次、库位和编号。</small></h1>
+          <div class="head-left">
+            <span class="head-icon"><i class="el-icon-box" /></span>
+            <div class="head-title-wrap">
+              <div class="title-row">
+                <h1 class="page-title">库存余额</h1>
+                <el-tag size="small" type="success" effect="plain" class="head-tag total-tag">共 {{ quantityNumber(balanceStats.item_count || balancePagination.total) }} 种物料</el-tag>
+                <el-tag size="small" type="info" effect="plain" class="sub-total-tag">{{ quantityNumber(balanceStats.batch_count) }} 个在库批次</el-tag>
+              </div>
+            </div>
+          </div>
+
         </div>
-        <div class="balance-head-actions">
-          <el-button size="small" icon="el-icon-plus" @click="openAdjustmentDrawer()">新建手工调整</el-button>
-          <el-button size="small" type="success" class="btn-green-search" icon="el-icon-download" @click="exportBalances">导出余额</el-button>
+        <div class="head-actions">
+          <el-button size="small" icon="el-icon-refresh" class="btn-refresh" @click="loadBalances()">刷新</el-button>
+          <el-button size="small" icon="el-icon-download" @click="exportBalances">导出余额</el-button>
+          <el-button size="small" type="success" class="btn-theme-create" icon="el-icon-plus" @click="openAdjustmentDrawer()">新建手工调整</el-button>
         </div>
       </div>
 
+      <div v-if="activeView === 'posting'" class="erp-page-tip">
+        <i class="el-icon-info" />
+        <span>承接采购到货的待库存过账，按到货确认的库存管理要求核对库位、批次及设备编号后写入正常库存；未完成库位分配的单据可直接点击“补充分配”在当前页弹窗补齐。</span>
+      </div>
+      <div v-if="activeView === 'balances'" class="erp-page-tip">
+        <i class="el-icon-info" />
+        <span>库存余额按物料汇总展示，不合格与待处理数量不计入可用库存；点击下方统计卡片可快速筛选对应状态，点击物料行可查看批次、库位分布、设备编号与质量处理。</span>
+      </div>
       <div class="metric-grid four">
         <article class="clickable-card" :class="{ 'active-metric': !balanceQuery.status }" @click="filterBalanceByStatus('')"><i class="el-icon-box green" /><span>物料总数 <i class="el-icon-info" /></span><strong>{{ quantityNumber(balanceStats.item_count) }} <small class="unit-text">个</small></strong></article>
         <article class="clickable-card" :class="{ 'active-metric': balanceQuery.status === 'has_stock' }" @click="filterBalanceByStatus('has_stock')"><i class="el-icon-coin green" /><span>有库存物料 <i class="el-icon-info" /></span><strong>{{ quantityNumber(balanceStats.stock_item_count) }} <small class="unit-text">个</small></strong></article>
@@ -152,7 +188,7 @@
         <el-button size="small" type="text" class="btn-expand-text">展开 <i class="el-icon-arrow-down" /></el-button>
       </section>
 
-      <div class="balance-instruction-banner">
+      <div v-if="false" class="balance-instruction-banner">
         <i class="el-icon-info info-icon-blue" />
         <span>说明：库存余额按物料汇总；不合格和待处理数量不计入可用库存。点击物料可查看批次、库位、编号与质量处理。</span>
       </div>
@@ -650,15 +686,38 @@
     <section v-if="activeView === 'transactions' || activeView === 'adjustments'" class="inventory-view">
       <div class="page-head">
         <div>
-          <span class="crumb">库存管理 / {{ activeView === 'adjustments' ? '手工调整' : '库存流水' }}</span>
-          <h1>{{ activeView === 'adjustments' ? '手工调整' : '库存流水' }}</h1>
-          <p>库存流水为库存变化唯一依据。手工调整必须生成库存事务，不能直接修改库存余额。</p>
+          <div class="head-left">
+            <span class="head-icon"><i :class="activeView === 'adjustments' ? 'el-icon-edit-outline' : 'el-icon-tickets'" /></span>
+            <div class="head-title-wrap">
+              <div class="title-row">
+                <h1 class="page-title">{{ activeView === 'adjustments' ? '手工调整' : '库存流水' }}</h1>
+                <el-tag size="small" type="success" effect="plain" class="head-tag total-tag">共 {{ activeView === 'adjustments' ? adjustmentPagination.total : txPagination.total }} 条{{ activeView === 'adjustments' ? '调整单' : '流水记录' }}</el-tag>
+                <el-tag v-if="activeView === 'adjustments' && adjustmentStats.submitted_count > 0" size="small" type="warning" effect="plain" class="sub-total-tag">{{ adjustmentStats.submitted_count }} 张待确认过账</el-tag>
+              </div>
+            </div>
+          </div>
+
+
         </div>
-        <el-button size="small" type="success" icon="el-icon-plus" @click="openAdjustmentDrawer()">手工调整</el-button>
+        <div class="head-actions">
+          <el-button size="small" icon="el-icon-refresh" class="btn-refresh" @click="activeView === 'adjustments' ? loadAdjustments() : loadTransactions()">刷新</el-button>
+          <el-button size="small" type="success" class="btn-theme-create" icon="el-icon-plus" @click="openAdjustmentDrawer()">手工调整</el-button>
+        </div>
       </div>
 
-      <el-alert class="balance-rule" title="库存流水生成后只读：不能编辑、不能删除、不能直接改数量；后续反过账只能通过反向事务处理。" type="info" :closable="false" show-icon />
+      <div class="erp-page-tip">
+        <i class="el-icon-info" />
+        <span>库存流水为库存变化唯一依据，生成后只读不可编辑或删除；手工调整必须通过正式调整单提交并确认过账后生成库存流水，后续反过账只能通过反向事务处理。</span>
+      </div>
 
+      <div v-if="activeView === 'posting'" class="erp-page-tip">
+        <i class="el-icon-info" />
+        <span>承接采购到货的待库存过账，按到货确认的库存管理要求核对库位、批次及设备编号后写入正常库存；未完成库位分配的单据可直接点击“补充分配”在当前页弹窗补齐。</span>
+      </div>
+      <div v-if="activeView === 'balances'" class="erp-page-tip">
+        <i class="el-icon-info" />
+        <span>库存余额按物料汇总展示，不合格与待处理数量不计入可用库存；点击下方统计卡片可快速筛选对应状态，点击物料行可查看批次、库位分布、设备编号与质量处理。</span>
+      </div>
       <div class="metric-grid four">
         <article :class="{ 'clickable-card': activeView === 'adjustments', 'active-metric': activeView === 'adjustments' && !adjustmentQuery.status }" @click="activeView === 'adjustments' && filterAdjustmentByStatus('')"><i class="el-icon-download green" /><span>{{ activeView === 'adjustments' ? '调整单数' : '今日入库流水' }}</span><strong>{{ activeView === 'adjustments' ? adjustmentPagination.total : transactionStats.today_in_count }}</strong></article>
         <article :class="{ 'clickable-card': activeView === 'adjustments', 'active-metric': activeView === 'adjustments' && adjustmentQuery.status === 'posted' }" @click="activeView === 'adjustments' && filterAdjustmentByStatus('posted')"><i class="el-icon-refresh orange" /><span>{{ activeView === 'adjustments' ? '已过账调整' : '今日调整流水' }}</span><strong>{{ activeView === 'adjustments' ? adjustmentStats.posted_count : transactionStats.today_adjust_count }}</strong></article>
@@ -2600,7 +2659,18 @@ export default {
 .inventory-tabs { display: flex; gap: 0; border: 1px solid #e5e7eb; background: #fff; margin-bottom: 14px; }
 .inventory-tabs a { padding: 12px 24px; color: #374151; text-decoration: none; border-right: 1px solid #e5e7eb; font-weight: 600; }
 .inventory-tabs a.router-link-active { color: #059669; border-bottom: 2px solid #059669; background: #f8fffb; }
-.page-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; }
+.page-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px 20px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 14px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03); }
+.head-left { display: flex; align-items: center; gap: 12px; }
+.head-icon { width: 38px; height: 38px; border-radius: 8px; background: #f0fdf4; color: #008b4b; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
+.head-title-wrap { display: flex; flex-direction: column; min-width: 0; }
+.title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.page-title { margin: 0; font-size: 18px !important; line-height: 1.3 !important; font-weight: 700; color: #0f172a !important; }
+.head-tag, .total-tag, .sub-total-tag { border-radius: 4px; font-weight: 500; }
+.head-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.btn-refresh { border-color: #cbd5e1 !important; color: #475569 !important; }
+.btn-refresh:hover { border-color: #008b4b !important; color: #008b4b !important; }
+.btn-theme-create { background: #008b4b !important; border-color: #008b4b !important; color: #ffffff !important; }
+.btn-theme-create:hover { background: #00763f !important; border-color: #00763f !important; }
 .page-head .crumb { display: block; color: #6b7280; font-size: 12px; margin-bottom: 4px; }
 .balance-head-actions { display: flex; gap: 8px; align-items: center; }
 .metric-grid article.clickable-card { cursor: pointer; transition: all .18s ease; }

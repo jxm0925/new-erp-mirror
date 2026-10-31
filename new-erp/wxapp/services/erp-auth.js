@@ -15,6 +15,8 @@ function sso(ticket) {
     path: 'auth/sso',
     method: 'POST',
     data: { ticket },
+    authToken: '',
+    loading: false,
   });
 }
 

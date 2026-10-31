@@ -271,7 +271,7 @@ final class PerformanceLedgerService
         }
         usort($rows, fn ($a, $b) => $b['unsettled_minutes'] <=> $a['unsettled_minutes'] ?: ($b['work_order_id'] ?? 0) <=> ($a['work_order_id'] ?? 0));
         $page = max(1, (int) ($filters['page'] ?? 1));
-        $per = min(50, max(1, (int) ($filters['per_page'] ?? 20)));
+        $per = min(50, max(1, (int) ($filters['per_page'] ?? 10)));
         $sum = fn ($k) => round(array_sum(array_column($rows, $k)), 1);
         return ['data' => array_slice($rows, ($page - 1) * $per, $per), 'total' => count($rows), 'current_page' => $page, 'per_page' => $per,
             'summary' => ['labor_minutes' => $sum('labor_minutes'), 'settled_minutes' => $sum('settled_minutes'), 'scrap_minutes' => $sum('scrap_minutes'), 'unsettled_minutes' => $sum('unsettled_minutes')]];

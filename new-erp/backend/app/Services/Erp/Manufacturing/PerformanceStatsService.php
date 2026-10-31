@@ -40,7 +40,7 @@ final class PerformanceStatsService
             ->when($keyword !== '', fn ($q) => $q->where(fn ($w) => $w->where('o.sales_order_no', 'like', "%{$keyword}%")
                 ->orWhere('o.customer_name', 'like', "%{$keyword}%")))
             ->orderByDesc('o.id')
-            ->paginate(min(30, max(1, (int) ($filters['per_page'] ?? 15))), ['o.id'], 'page', max(1, (int) ($filters['page'] ?? 1)));
+            ->paginate(min(30, max(1, (int) ($filters['per_page'] ?? 10))), ['o.id'], 'page', max(1, (int) ($filters['page'] ?? 1)));
         $rows = [];
         foreach ($page->items() as $row) {
             $d = $this->order((int) $row->id, $amounts);

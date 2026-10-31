@@ -1,52 +1,243 @@
-/* 授权弹窗 */
-.login-header{
-    display: flex;
-    align-items: center;
-    padding: 20rpx 32rpx 0;
+/* 登录底部弹窗容器 */
+.login-sheet {
+  padding: 16rpx 36rpx 36rpx;
+  background: #ffffff;
+  box-sizing: border-box;
 }
-.top{
-    flex: 1;
-    min-width: 0;
-    height: 70rpx;
-    line-height: 70rpx;
-    font-weight: bold;
-    font-size: 35rpx;
+
+.login-grabber {
+  width: 72rpx;
+  height: 8rpx;
+  border-radius: 999rpx;
+  background: #e5e7eb;
+  margin: 0 auto 20rpx;
 }
-.login-mode-switch{
-    width: auto;
-    margin: 0 0 0 16rpx;
-    padding: 0;
-    background: transparent;
-    color: #d81e06;
-    font-size: 24rpx;
-    line-height: 50rpx;
+
+/* 顶部标题栏 */
+.login-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 24rpx;
 }
-.login-mode-switch::after{border: none;}
-.tips{
-    text-align: center;
-    font-size: 29rpx;
-    font-weight: lighter;
-    padding-top: 20rpx;
+
+.login-title-group {
+  flex: 1;
+  min-width: 0;
 }
-.input-class{
-    padding-top: 40rpx;
+
+.login-brand-row {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
 }
-.input-class::after {
-    display: none;
+
+.login-brand-dot {
+  width: 10rpx;
+  height: 34rpx;
+  border-radius: 6rpx;
+  background: linear-gradient(180deg, #ff4d4f 0%, #d81e06 100%);
+  flex-shrink: 0;
 }
-.input-button-forget{
-    width: 140rpx;
-    background-color: #ffffff;
-    color: #a1a1a1;
-    border: none;
+
+.top {
+  font-size: 36rpx;
+  font-weight: 700;
+  color: #1f2937;
+  line-height: 48rpx;
 }
-.input-button-login{
-    width: 140rpx;
+
+.login-subtitle {
+  display: block;
+  margin-top: 6rpx;
+  font-size: 24rpx;
+  color: #6b7280;
+  line-height: 34rpx;
 }
-.button-quick-login{
-    background-color: inherit;
-    position: static;
-    color:#f7862a;
-    width: 160rpx;
-    font-size: 27rpx;
+
+.login-close-btn {
+  width: 60rpx;
+  height: 60rpx;
+  border-radius: 30rpx;
+  background: #f3f4f6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 20rpx;
+  flex-shrink: 0;
+}
+
+/* 登录模式切换胶囊 */
+.login-mode-tabs {
+  display: flex;
+  padding: 6rpx;
+  background: #f3f4f6;
+  border-radius: 18rpx;
+  margin-bottom: 24rpx;
+}
+
+.mode-tab-item {
+  flex: 1;
+  height: 68rpx;
+  border-radius: 14rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8rpx;
+  font-size: 26rpx;
+  font-weight: 500;
+  color: #6b7280;
+  transition: all 0.2s ease;
+}
+
+.mode-tab-item.active {
+  background: #ffffff;
+  color: #d81e06;
+  font-weight: 700;
+  box-shadow: 0 2rpx 8rpx rgba(15, 23, 42, 0.08);
+}
+
+/* 弹窗内联错误横幅 */
+.login-error-banner {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  padding: 16rpx 22rpx;
+  margin-bottom: 20rpx;
+  background: #fff1f0;
+  border: 1rpx solid #ffccc7;
+  border-radius: 14rpx;
+}
+
+.login-error-text {
+  flex: 1;
+  font-size: 24rpx;
+  color: #cf1322;
+  line-height: 34rpx;
+  word-break: break-all;
+}
+
+/* 表单输入框 */
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20rpx;
+}
+
+.login-field-box {
+  display: flex;
+  align-items: center;
+  height: 96rpx;
+  padding: 0 24rpx;
+  background: #f8fafc;
+  border: 2rpx solid #e2e8f0;
+  border-radius: 18rpx;
+  box-sizing: border-box;
+  transition: all 0.18s ease;
+}
+
+.login-field-box.is-focus {
+  background: #ffffff;
+  border-color: #d81e06;
+  box-shadow: 0 0 0 4rpx rgba(216, 30, 6, 0.08);
+}
+
+.login-field-box.is-error {
+  background: #fff2f0;
+  border-color: #ff4d4f;
+}
+
+.field-prefix {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  width: 132rpx;
+  flex-shrink: 0;
+  border-right: 1rpx solid #e5e7eb;
+  margin-right: 20rpx;
+}
+
+.field-label {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #374151;
+}
+
+.login-native-input {
+  flex: 1;
+  min-width: 0;
+  height: 88rpx;
+  line-height: 88rpx;
+  font-size: 29rpx;
+  color: #111827;
+}
+
+.login-placeholder {
+  color: #9ca3af;
+  font-size: 27rpx;
+}
+
+.field-icon-btn {
+  width: 56rpx;
+  height: 72rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 4rpx;
+  flex-shrink: 0;
+}
+
+/* 上次登录账号回填 */
+.last-account-row {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  margin-top: 16rpx;
+  padding: 6rpx 8rpx;
+  font-size: 24rpx;
+  color: #6b7280;
+}
+
+.last-account-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.last-account-fill {
+  color: #d81e06;
+  font-weight: 600;
+}
+
+/* 底部主提交按钮 */
+.login-action-area {
+  margin-top: 32rpx;
+}
+
+.login-submit-btn {
+  width: 100% !important;
+  height: 92rpx;
+  line-height: 92rpx;
+  padding: 0;
+  border-radius: 46rpx;
+  background: linear-gradient(135deg, #f5222d 0%, #d81e06 100%);
+  color: #ffffff;
+  font-size: 31rpx;
+  font-weight: 700;
+  letter-spacing: 2rpx;
+  box-shadow: 0 10rpx 24rpx rgba(216, 30, 6, 0.25);
+  border: none;
+}
+
+.login-submit-btn::after {
+  border: none;
+}
+
+.login-submit-btn.is-loading,
+.login-submit-btn[disabled] {
+  background: #fca5a5 !important;
+  color: #ffffff !important;
+  box-shadow: none;
 }

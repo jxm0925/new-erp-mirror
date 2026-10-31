@@ -8,6 +8,7 @@ module.exports = {
     WechatLogin:API_BASE_URL+'index/loginWechat',
     IndexUrlHome:API_BASE_URL + 'index/home',
     AllAdmin:API_BASE_URL + 'index/adminCheckOptions',
+    DeliveryList:API_BASE_URL + 'index/deliveryList',
 
     //个人中心
     ChangeUserProfile:API_BASE_URL+'user/changeInfo',
@@ -36,6 +37,30 @@ module.exports = {
     OrderList:ORIGIN_URL + 'v1/order/get_user_order_list',
     OrderInfo:ORIGIN_URL + 'v1/order/get_order',
     OrderSend:ORIGIN_URL + 'v1/order/send',
+
+    //旧工单沿用旧系统接口，与生产仓储入口分开。
+    NewOrderInfo:API_BASE_URL +'orders/info',
+    NewOrderSend:API_BASE_URL +'orders/send',
+    getWorksType:API_BASE_URL +'index/getWorksOrderType',
+    getSales:API_BASE_URL +'index/getSales',
+    GetWorkList:API_BASE_URL +'work/index/index',
+    WorkAccept:API_BASE_URL +'work/order/accept',
+    WorksOrderInfo:API_BASE_URL + 'work/order/info',
+    WorkAcceptSteps:API_BASE_URL + 'work/order/acceptStep',
+    WorkSkip:API_BASE_URL + 'work/order/skip',
+    WorkSubStep:API_BASE_URL + 'work/order/subStep',
+    GetMyWorkList:API_BASE_URL + 'work/order/my',
+    WorkOrderPrint:API_BASE_URL + 'work/order/print',
+    WorkInStock:API_BASE_URL + 'work/order/inStock',
+    PausedWorkTime:API_BASE_URL + 'work/order/pausedTime',
+    ContinueWorkTime:API_BASE_URL + 'work/order/continueTime',
+    InStockWorksRecord:API_BASE_URL + 'work/order/instockRecord',
+    ProductsPre:API_BASE_URL + 'work/products/pre',
+    ProductsIndex:API_BASE_URL + 'work/products/index',
+    ProductsInfo:API_BASE_URL + 'work/products/info',
+    ProductsOrderAccept:API_BASE_URL + 'work/products/accept',
+    ProductsSubStep:API_BASE_URL + 'work/products/subStep',
+    NewOrderInfo2:API_BASE_URL +'orders/info2',
 
     //积分商城
     GetGoodsList:API_BASE_URL+'points/goodsList',

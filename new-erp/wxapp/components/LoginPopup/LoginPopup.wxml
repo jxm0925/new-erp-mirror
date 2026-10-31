@@ -1,49 +1,138 @@
-
-<!-- 用户名密码登录-->
-<!-- <page-meta page-style="{{ show ? 'overflow: hidden;' : '' }}" /> -->
+<!-- 统一账号 / 生产账号登录弹窗 -->
 <van-popup
   show="{{ show }}"
   round
   z-index="10000"
   position="bottom"
-  custom-style="height: 35%;"
+  safe-area-inset-bottom="{{true}}"
+  custom-style="height: auto; overflow: visible;"
   bind:close="closeTank"
-  root-portal="true"
 >
+  <view class="login-sheet">
+    <!-- 顶部拖拽指示条 -->
+    <view class="login-grabber"></view>
+
+    <!-- 弹窗头部 -->
     <view class="login-header">
-      <text class="top">{{loginMode === 'production' ? '生产账号登录' : '统一账号登录'}}</text>
-      <button class="login-mode-switch" disabled="{{loading}}" bindtap="switchMode">{{loginMode === 'production' ? '切换统一账号登录' : '切换生产账号登录'}}</button>
+      <view class="login-title-group">
+        <view class="login-brand-row">
+          <view class="login-brand-dot"></view>
+          <text class="top">{{loginMode === 'production' ? '生产账号登录' : '统一账号登录'}}</text>
+        </view>
+        <text class="login-subtitle">
+          {{loginMode === 'production' ? '使用新 ERP 生产仓储账号独立登录作业' : '一次登录同步开启工单、生产仓储、提案与积分'}}
+        </text>
+      </view>
+      <view class="login-close-btn" bindtap="closeTank">
+        <van-icon name="cross" size="36rpx" color="#8c8c8c" />
+      </view>
     </view>
-    <van-cell-group inset>
-        <van-field
-            model:value="{{account}}"
-            label="用户名"
-            placeholder="{{loginMode === 'production' ? '请输入生产账号' : '请输入用户名'}}"
-            disabled="{{loading}}"
-            custom-class="input-class"
-            error="{{account_error}}"
-            use-button-slot
-        >
-            <!-- <van-button custom-class="input-button-forget" slot="button" size="small" type="primary">
-                忘记密码
-            </van-button> -->
-        </van-field>
-        <van-field
-            model:value="{{ password }}"
-            label="密码"
-            type="password"
-            placeholder="请输入密码"
-            disabled="{{loading}}"
-            custom-class="input-class"
-            error="{{password_error}}"
-            use-button-slot
-        >
-        <van-button loading="{{loading}}" round custom-class="input-button-login" slot="button" size="small" type="primary" color="#d81e06" bind:click="submit">
-            登录
-        </van-button>
-        </van-field>
-    </van-cell-group>
-    <!-- <van-row>
-        <van-col span="24" custom-class="tips"><button class="button-quick-login">快捷登录</button></van-col>
-    </van-row> -->
+
+    <!-- 登录模式分段切换器 -->
+    <view class="login-mode-tabs">
+      <view
+        class="mode-tab-item {{loginMode !== 'production' ? 'active' : ''}}"
+        data-mode="unified"
+        bindtap="onSelectMode"
+      >
+        <van-icon name="shield-o" size="30rpx" />
+        <text>统一账号登录</text>
+      </view>
+      <view
+        class="mode-tab-item {{loginMode === 'production' ? 'active' : ''}}"
+        data-mode="production"
+        bindtap="onSelectMode"
+      >
+        <van-icon name="apps-o" size="30rpx" />
+        <text>生产账号登录</text>
+      </view>
+    </view>
+
+    <!-- 弹窗内联错误提示条（兼容未挂载 van-notify 或键盘遮挡场景） -->
+    <view wx:if="{{errorMessage}}" class="login-error-banner">
+      <van-icon name="warning-o" size="32rpx" color="#d81e06" />
+      <text class="login-error-text">{{errorMessage}}</text>
+    </view>
+
+    <!-- 账号密码表单区（原生 always-embed 输入框，避免 iOS 同层聚焦与双绑延迟问题） -->
+    <view class="login-form">
+      <view class="login-field-box {{activeField === 'account' ? 'is-focus' : ''}} {{account_error ? 'is-error' : ''}}">
+        <view class="field-prefix">
+          <van-icon
+            name="manager-o"
+            size="36rpx"
+            color="{{account_error ? '#d81e06' : (activeField === 'account' ? '#d81e06' : '#8c8c8c')}}"
+          />
+          <text class="field-label">账号</text>
+        </view>
+        <input
+          class="login-native-input"
+          value="{{account}}"
+          always-embed="{{true}}"
+          cursor-spacing="140"
+          placeholder="{{loginMode === 'production' ? '请输入生产账号' : '请输入用户名 / 手机号'}}"
+          placeholder-class="login-placeholder"
+          disabled="{{loading}}"
+          confirm-type="next"
+          bindfocus="onAccountFocus"
+          bindblur="onAccountBlur"
+          bindinput="onAccountInput"
+        />
+        <view wx:if="{{account && !loading}}" class="field-icon-btn" catchtap="clearAccount">
+          <van-icon name="clear" size="34rpx" color="#bfbfbf" />
+        </view>
+      </view>
+
+      <view class="login-field-box {{activeField === 'password' ? 'is-focus' : ''}} {{password_error ? 'is-error' : ''}}">
+        <view class="field-prefix">
+          <van-icon
+            name="lock"
+            size="36rpx"
+            color="{{password_error ? '#d81e06' : (activeField === 'password' ? '#d81e06' : '#8c8c8c')}}"
+          />
+          <text class="field-label">密码</text>
+        </view>
+        <input
+          class="login-native-input"
+          value="{{password}}"
+          password="{{!showPassword}}"
+          always-embed="{{true}}"
+          cursor-spacing="90"
+          placeholder="请输入登录密码"
+          placeholder-class="login-placeholder"
+          disabled="{{loading}}"
+          confirm-type="done"
+          bindfocus="onPasswordFocus"
+          bindblur="onPasswordBlur"
+          bindinput="onPasswordInput"
+          bindconfirm="submit"
+        />
+        <view wx:if="{{password && !loading}}" class="field-icon-btn" catchtap="clearPassword">
+          <van-icon name="clear" size="34rpx" color="#bfbfbf" />
+        </view>
+        <view class="field-icon-btn" catchtap="togglePassword">
+          <van-icon name="{{showPassword ? 'eye-o' : 'closed-eye'}}" size="36rpx" color="#8c8c8c" />
+        </view>
+      </view>
+    </view>
+
+    <!-- 历史账号快捷回填 -->
+    <view wx:if="{{lastAccount && account !== lastAccount && !loading}}" class="last-account-row" bindtap="fillLastAccount">
+      <van-icon name="clock-o" size="26rpx" color="#8c8c8c" />
+      <text class="last-account-text">上次登录账号：{{lastAccount}}</text>
+      <text class="last-account-fill">点击填入</text>
+    </view>
+
+    <!-- 独立全宽主登录按钮（与密码框分离，避免 iOS 失焦吞点击） -->
+    <view class="login-action-area">
+      <button
+        class="login-submit-btn {{loading ? 'is-loading' : ''}}"
+        loading="{{loading}}"
+        disabled="{{loading}}"
+        bindtap="submit"
+      >
+        {{loading ? '正在登录验证...' : (loginMode === 'production' ? '登录生产账号' : '立即登录')}}
+      </button>
+    </view>
+  </view>
 </van-popup>

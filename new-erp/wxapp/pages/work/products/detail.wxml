@@ -1,0 +1,369 @@
+<wxs module="m1">
+  function fn(arr, arg) {
+    var result = {
+      indexOf: false,
+      toString: ''
+    }
+    result.indexOf = arr.indexOf(arg) > -1;
+    result.toString = arr.join(",");
+    return result;
+  }
+  module.exports.fn = fn;
+</wxs>
+
+<view class="container">
+    <van-tabs nav-class="tab" title-active-color="#ee0a24">
+        <van-tab title="工单描述">
+            <view>
+                <scroll-view class="scrollLine" scroll-y="true"> 
+                    <van-cell-group inset>
+                        <van-cell>
+                            <van-row>
+                                <van-col span="5" class="col-class">状态</van-col>
+                                <van-col span="5" class="col-class">{{info.status_text}}</van-col>
+                                <view wx:if="{{time_count_down}}">
+                                    <van-col span="9" class="col-class">
+                                        <van-count-down auto-start="{{false}}" class="control-count-down" use-slot millisecond time="{{ time_count_down }}" format="HH:mm:ss" bind:change="onChangeCountDown">
+                                            <span class="item">{{ timeData.hours }}</span>
+                                            <span class="color">:</span>
+                                            <span class="item">{{ timeData.minutes }}</span>
+                                            <span class="color">:</span>
+                                            <span class="item">{{ timeData.seconds }}</span>
+                                        </van-count-down>
+                                    </van-col>
+                                    <van-col span="2" class="col-class" >
+                                        <van-button type="danger" wx:if="{{count_down_status==2 || count_down_status==3}}" size="mini" data-id="{{info.id}}" data-type="paused" bind:tap="switchTimeButton">暂停</van-button>
+                                        <van-button type="primary" wx:if="{{count_down_status==1}}" size="mini" data-id="{{info.id}}" data-type="continue" bind:tap="switchTimeButton">继续</van-button>
+                                    </van-col>
+                                </view>
+                            </van-row>
+                        </van-cell>
+                        <van-cell>
+                            <van-row>
+                                <van-col span="5" class="col-class">设备号</van-col>
+                                <van-col span="19" class="col-class">
+                                    <a bind:tap="copyNo" data-no="{{info.device_sn}}">{{info.device_sn}}<view style="float: right;font-size: 25rpx;">点击复制</view></a>
+                                </van-col>
+                            </van-row>
+                        </van-cell>
+                        <van-cell>
+                            <van-row>
+                                <van-col span="5" class="col-class">设备名</van-col>
+                                <van-col span="19" style="text-align: left;">{{info.name}}</van-col>
+                            </van-row>
+                        </van-cell>
+                        <van-cell>
+                            <van-row>
+                                <van-col span="5" class="col-class">工序</van-col>
+                                <van-col span="7" class="col-class">{{info.work_status_text}}</van-col>
+                            </van-row>
+                        </van-cell>
+                        <van-cell wx:if="{{info.status!='complete'}}">
+                            <van-row>
+                                <van-col span="5" class="col-class">负责人</van-col>
+                                <van-col span="16" class="col-class">{{info.step_admin?info.step_admin_name:'等待接受'}}</van-col>
+                            </van-row>
+                        </van-cell>
+                        
+                        <van-cell>
+                            <van-row>
+                                <van-col span="5" style="text-align: left;color: #ff4d4d;">备注：</van-col>
+                                <van-col span="19" style="text-align: left;color: #ff4d4d;">{{item.remark?item.remark:'无备注'}}</van-col>
+                            </van-row>
+                        </van-cell>
+                        <van-cell>
+                        
+                            <van-row>
+                            <van-col span="4" style="text-align: left;">图纸：</van-col>
+                            <van-col span="20" style="text-align: left;" wx:if="{{info.design}}">
+                                <van-grid column-num="3">
+                                    <van-grid-item use-slot wx:for="{{ info.design_arr }}" wx:for-item="items2" wx:key="id">
+                                        <image
+                                        wx:if="{{items2.type=='image'}}"
+                                        style="width: 100%; height: 90px;"
+                                        data-url="{{items2.url}}"
+                                        data-images_arr="{{item.images}}"
+                                        data-type="{{items2.type}}"
+                                        bindtap="previewFiles"
+                                        src="{{items2.url}}"
+                                        ></image>
+                                        <image
+                                        wx:else
+                                        style="width: 100%; height: 90px;"
+                                        data-url="{{items2.url}}"
+                                        bindtap="previewFiles"
+                                        data-type="{{items2.type}}"
+                                        src="/static/images/{{items2.type}}.png"
+                                        ></image>
+                                    </van-grid-item>
+                                </van-grid>
+                            </van-col>
+                        </van-row>
+                        </van-cell>
+                    </van-cell-group>
+                </scroll-view>
+            </view>
+        </van-tab>
+        <van-tab title="工单日志">
+            <view style="margin-top: 20rpx;">
+                <scroll-view style="width: 100%;height: {{scrollHeight}}px;"  scroll-y="true">
+                <van-cell-group inset>
+                    <view class="outerBox">
+                        <!-- 头部物流信息 -->
+                        <!-- <view class="navBox">
+                            <view class="navLeftBox">
+                                <view>
+                                    <image src="https://b.bdstatic.com/searchbox/icms/searchbox/img/zhongtonglogo.png"></image>
+                                </view>
+                                <view>中通快递</view>
+                                <view>78465464135654565</view>
+                            </view>
+                            <view class="navRightBox">
+                                <text>复制</text>
+                                <text>|</text>
+                                <text>电话</text>
+                            </view>
+                        </view> -->
+                        <!-- 主体内容 -->
+                        <view class="contantBox">
+                            <!-- 通过数组长度判断显示内容 >0显示物流信息-->
+                            <view wx:if="{{logs.length > 0}}">
+                                <view class="itemBox" wx:for="{{logs}}" wx:key="index">
+                                    <!-- 左边线条 -->
+                                    <view class="itemLeftBox">
+                                        <view class="lineBox">
+                                            <view class="topLineBox {{index == 0 ? '' : 'longLineBox'}}"></view>
+                                            <view class="bomLineBox {{index + 1 == dataList.length ? '' : 'longLineBox'}}"></view>
+                                        </view>
+                                        <image class="newestIconBox" src="/static/images/qySZi4.png" wx:if="{{index == 0}}"></image>
+                                        <view class="dotBox" wx:else="{{index > 0}}"></view>
+                                    </view>
+                                    <!-- 右边内容 -->
+                                    <view class="rightBigBox {{index == 0 ? '' : 'oldTxtBox'}} {{index + 1 == logs.length ? '' : 'borderBomBox'}}">
+                                        <view>{{item.content}}</view>
+                                        <view wx:if="{{item.message}}" class="timeBox">工序备注：{{item.message}}</view>
+                                        <view class="timeBox">{{item.create_date}}</view>
+                                        <van-grid wx:if="{{item.images.length}}" column-num="3" border="{{ false }}">
+                                            <van-grid-item use-slot wx:for="{{ item.images_arr }}" wx:for-item="items2" wx:key="id">
+                                            
+                                                <video
+                                                wx:if="{{items2.type=='video'}}"
+                                                style="width: 100%; height: 90px;"
+                                                src="{{items2.url}}"
+                                                ></video>
+                                                <image
+                                                wx:if="{{items2.type=='image'}}"
+                                                style="width: 100%; height: 90px;"
+                                                data-url="{{items2.url}}"
+                                                data-type="{{items2.type}}"
+                                                data-images_arr="{{item.images}}"
+                                                bindtap="previewFiles"
+                                                src="{{items2.url}}"
+                                                ></image>
+                                            </van-grid-item>
+                                        </van-grid>
+                                    </view>
+                                </view>
+                            </view>
+                            <!-- 通过数组长度判断显示内容 除了大于0之外显示暂无物流信息-->
+                            <van-empty wx:else description="暂无工单日志信息" />
+                        </view>
+                    </view>
+                </van-cell-group> 
+                </scroll-view>
+            </view>
+        </van-tab>
+    </van-tabs>
+
+    <van-goods-action>
+        <van-goods-action-button wx:if="{{info.step_status=='wait'}}" custom-class="goods-button" size="normal" color="#e64340" text="接单" data-id="{{id}}" bind:click="accept"/>
+        <!-- <van-goods-action-button wx:if="{{info.step_status=='primary'}}" custom-class="goods-button" size="normal" color="#e64340" text="取消工单" data-id="{{id}}" bind:click="sub"/> -->
+        <van-goods-action-button wx:if="{{info.step_status=='primary' && info.work_step!='sending'}}" custom-class="goods-button" size="normal" color="#2c8ffb" text="提交工单" data-id="{{id}}" data-type="stage" bind:tap="showPop"/>
+        <!-- <van-goods-action-button wx:if="{{info.step_status=='primary' && info.work_step=='assemble'}}" custom-class="goods-button" size="normal" color="#0ea800" text="入库" data-type="inStock" bind:click="showPop"/> -->
+        <van-goods-action-button wx:if="{{info.work_step=='sending'}}" custom-class="goods-button" size="normal" color="#e64340" text="去发货" data-id="{{info.works_order_id}}" data-type="sendProduct" bind:click="showPop"/>
+         <!-- <van-goods-action-button custom-class="goods-button" size="normal" color="#009dd6" text="入库记录" data-type="inStockRecord" bind:click="showPop"/>
+        <van-goods-action-button custom-class="goods-button" size="normal" color="#e81101" text="重打产品明细" data-id="{{info.id}}" data-type="1" bind:click="printOrder"/>
+        <van-goods-action-button custom-class="goods-button" size="normal" color="#e64340" text="重打客户标签" data-id="{{info.id}}" data-type="2" bind:click="printOrder"/> -->
+
+    </van-goods-action>
+</view>
+<!--工时提交的表单-->
+<van-popup
+  show="{{ show_stage }}"
+  round
+  custom-style="width:85%;"
+  bind:close="onCancel"
+  data-type="stage"
+>
+    <van-cell border="{{false}}">
+        <van-row>
+            <van-col span="24" style="color:#000;text-align: center;">结果确认</van-col>
+        </van-row>
+    </van-cell>
+    <view>
+        <van-cell title="负责人" required value="{{choose_staff}}" is-link data-type="staff" bind:tap="showPop"/>
+        <van-cell wx:if="{{info.work_step=='testing'}}" title="检视人" required value="{{choose_check_staff}}" is-link data-type="check_staff" bind:tap="showPop"/>
+        <van-field
+            label="工时"
+            required
+            model:value="{{ use_time }}"
+            placeholder="请输入工时"
+            input-align="right"
+            type="digit"
+        />
+        <van-field
+            model:value="{{ message }}"
+            autosize="{{ autosize }}"
+            label="描述"
+            type="textarea"
+            input-align="right"
+            placeholder="请输入工序中遇到的问题"
+            autosize
+            border="{{ false }}"
+        />
+    </view>
+    <van-cell title="反馈图片/视频" />
+    <van-grid column-num="3">
+        <van-uploader
+            accept="media"
+            multiple
+            upload-text="媒体文件"
+            image-fit="aspectFill"
+            file-list="{{ picsList }}"
+            bind:after-read="afterPicRead"
+            bind:delete="afterPicDel"
+            border="{{false}}"
+        />
+    
+    </van-grid>
+    <van-cell  border="{{ false }}">
+        <van-button custom-class="btn-class" type="danger" disabled="{{button_stage}}" bind:click="subStage">确认</van-button>
+    </van-cell>
+</van-popup>
+<!--完成工序的提交表单-->
+<van-popup
+  show="{{ show_staff }}"
+  round
+  position="bottom"
+  bind:close="onCancel"
+  data-type="staff"
+  custom-style="height:50%"
+>
+    <!-- <van-row>
+        <van-col span="12" style="margin: 0 auto;"><van-button type="default">默认按钮</van-button></van-col>
+        <van-col span="12"><van-button type="default">默认按钮</van-button></van-col>
+    </van-row> -->
+    <van-checkbox-group>
+        <van-cell-group>
+        <van-cell wx:for="{{workers}}"  wx:for-item="item" clickable wx:key="index" title="{{item.nickname}}" data-item = "{{item}}" data-index='{{index}}' data-type="excute" bind:tap="toggle" center>
+            <van-checkbox  slot="right-icon"value="{{ item.checked }}" name="{{index}}" />
+        </van-cell>
+        </van-cell-group>
+    </van-checkbox-group>
+    <!-- <van-picker
+        show-toolbar
+        title="请选择"
+        columns="{{ workers }}"
+        defaultIndex="{{default_worker}}"
+        value-key="nickname"
+        data-type="staff"
+        bind:cancel="onCancel"
+        bind:confirm="selectStageUser"
+    /> -->
+</van-popup>
+
+<van-popup
+  show="{{ show_check_staff }}"
+  round
+  position="bottom"
+  bind:close="onCancel"
+  data-type="check_staff"
+  custom-style="height:50%"
+>
+    <van-picker
+    show-toolbar
+    title="标题"
+    value-key="nickname"
+    columns="{{ check_workers }}"
+    data-type="check_staff"
+    bind:cancel="onCancel"
+    bind:confirm="confirmCheckWorks"
+    />
+</van-popup>
+<!--入库和发货的表单-->
+<van-popup
+  show="{{ show_goods }}"
+  round
+  custom-style="height:50%"
+  bind:close="onCancel"
+  position="bottom"
+  data-type="goods"
+>
+    <van-cell border="{{false}}">
+        <van-row>
+            <van-col span="24" style="color:#000;text-align: center;">{{is_inStock?'入库确认':'发货确认'}}</van-col>
+        </van-row>
+    </van-cell>
+    <van-cell border="{{false}}">
+        <!-- 表头 -->
+        <van-row class="table-header">
+            <van-col span="12" style="text-align: center;" class="col-class">名称</van-col>
+            <van-col span="3" style="text-align: center;" class="col-class">数量</van-col>
+            <van-col span="7" style="text-align: center;" class="col-class">操作</van-col>
+        </van-row>
+
+    </van-cell>
+    <van-cell  wx:if="{{instock_arr.length}}" wx:for="{{instock_arr}}" wx:key="item">
+        <!-- 表格内容 -->
+        <van-row class="">
+            <van-col span="12" style="text-align: left;">{{item.name}}</van-col>
+            <van-col span="3" style="text-align: center;">{{item.amount-item.instock_nums}}</van-col>
+            <van-col span="7" style="text-align: center;">
+                <van-stepper value="{{item.nums}}" min="1" max="{{item.amount-item.instock_nums}}" async-change data-idx="{{index}}" bind:change="cartStepChange"/>
+            </van-col>
+            <van-col span="2" style="text-align: center;">
+                <text bind:tap="deleteCart" data-idx="{{index}}">x</text>
+            </van-col>
+        </van-row>
+    </van-cell>
+    <van-cell  border="{{ false }}">
+        <van-button custom-class="btn-class" type="danger" disabled="{{button_stage}}" bind:click="subInStock">确认</van-button>
+    </van-cell>
+</van-popup>
+
+<!--入库记录表单-->
+<van-popup
+  show="{{ is_inStock_secord }}"
+  round
+  custom-style="height:50%"
+  bind:close="onCancel"
+  position="bottom"
+  data-type="inStockRecord"
+>
+    <van-cell border="{{false}}">
+        <van-row>
+            <van-col span="24" style="color:#000;text-align: center;">入库记录</van-col>
+        </van-row>
+    </van-cell>
+    <van-cell border="{{false}}">
+        <!-- 表头 -->
+        <van-row class="table-header">
+            <van-col span="6" style="text-align: center;" class="col-class">名称</van-col>
+            <van-col span="10" style="text-align: center;" class="col-class">入库时间</van-col>
+            <van-col span="7" style="text-align: center;" class="col-class">编号</van-col>
+        </van-row>
+
+    </van-cell>
+    <van-cell  wx:if="{{record_data.length}}" wx:for="{{record_data}}" wx:key="item">
+        <!-- 表格内容 -->
+        <van-row class="">
+            <van-col span="6" style="text-align: left;" class="col-class-name">{{item.device_name}}</van-col>
+            <van-col span="10" style="text-align: center;">
+                {{item.create_date}}
+            </van-col>
+            <van-col span="8" style="text-align: center;"><a bind:tap="copyNo" data-no="{{item.device_no}}">{{item.device_no}}<image style="width: 30rpx;height: 30rpx;" src="/static/images/copy.png"></image></a></van-col>
+        </van-row>
+    </van-cell>
+</van-popup>
+<van-dialog id="van-dialog" />
+<van-notify id="van-notify" />

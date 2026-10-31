@@ -1,0 +1,61 @@
+<!-- <van-sticky>
+    <van-cell-group inset border="{{false}}" custom-class="top-class">
+        <van-cell border="{{false}}"custom-class="top-container-class">
+            <van-grid column-num="3">
+                <van-grid-item use-slot>
+                    <view>111</view>
+                    <view>111</view>
+                </van-grid-item>
+                <van-grid-item icon="photo-o" text="文字" />
+                <van-grid-item icon="photo-o" text="文字" />
+            </van-grid>
+        </van-cell>
+    </van-cell-group>
+</van-sticky> -->
+<view class="container">
+    <!-- <van-empty wx:if="{{!orderList.length}}" description="描述文字" /> -->
+    <view class="order-container">
+        <scroll-view  style="width: 100%;"  scroll-y="true" scroll-top="{{scrolltop}}">
+            <!-- <van-empty wx:if="{{!goods || goods.length == 0}}" description="暂无商品" /> -->
+            <view>
+                <van-empty wx:if="{{!list.length}}" description="暂无工单" />
+
+                <van-cell-group inset custom-class="order-card" wx:for="{{list}}" wx:key="id">
+                    <van-cell bind:tap="goDetail" data-id="{{item.id}}" title-class="card-title" value-class="{{item.status=='accept'?'card-value-processing':'card-value-wait'}}" title="生产工单" value="{{item.status=='accept'?item.work_status_text:item.status_text}}"/>
+                    <van-cell border="{{ false }}">
+                        <view data-id="{{item.id}}" bind:tap="goDetail">
+                            <van-row>
+                                <van-col span="24" style="text-align: left;"><van-icon name="orders-o" size="30rpx"/>单号：{{item.order_no}}</van-col>
+                            </van-row>
+                            <van-row>
+                                <van-col span="24" style="text-align: left;"><van-icon name="contact-o" size="30rpx"/>客户：{{item.o_accerpt}}</van-col>
+                            </van-row>
+                            <van-row>
+                                <van-col span="24" style="text-align: left;"><van-icon name="guide-o" size="30rpx"/>地址：{{item.address}}</van-col>
+                            </van-row>
+                            <van-divider dashed />
+                            <van-row>
+                                <van-col span="24" style="text-align: left;"><van-icon name="cart-o" size="30rpx"/>产品：{{item.product}}</van-col>
+                            </van-row>
+                            <van-divider dashed />
+                            <van-row>
+                                <van-col span="24" style="text-align: left;"><van-icon name="description-o" size="30rpx"/>备注：{{item.line_note}}</van-col>
+                            </van-row>
+                        </view>
+                        
+                        <van-row custom-class="van-card-button">
+                            <van-col span="8" style="text-align: left;" bind:tap="more">更多</van-col>
+                            <van-col span="8" style="text-align: right;">{{item.status=='wait'?'':'接单人：'+item.user}}</van-col>
+                            <van-col span="8" offset="{{item.status=='wait'?8:0}}">
+                                <van-button wx:if="{{item.status=='wait'}}" round type="primary" bind:click="accept" data-id="{{item.id}}" size="small" color="linear-gradient(to right, #d81e06, #d81e06)">
+                                接单
+                                </van-button>
+                            </van-col>
+                        </van-row>
+                    </van-cell>
+                </van-cell-group>
+            </view>
+        </scroll-view>
+    </view>
+</view>
+<van-notify id="van-notify" />

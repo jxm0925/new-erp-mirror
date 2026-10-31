@@ -1,18 +1,26 @@
 <template>
   <section class="alert-workbench" v-loading="loading">
-    <div class="page-head">
-      <div class="title-block">
-        <span class="crumb">库存管理 / 库存预警</span>
-        <h1>库存预警工作台</h1>
-        <p>按真实可用库存识别缺货、低库存和超储；支持在当前页弹窗查看水位分析与配置预警规则，无需跳转离开列表</p>
+    <header class="page-head">
+      <div class="head-left">
+        <span class="head-icon"><i class="el-icon-bell" /></span>
+        <div class="head-title-wrap">
+          <div class="title-row">
+            <h1 class="page-title">库存预警</h1>
+            <el-tag size="small" type="success" effect="plain" class="head-tag total-tag">共 {{ total }} 条预警记录</el-tag>
+            <el-tag v-if="stats.active > 0" size="small" type="warning" effect="plain" class="sub-total-tag">
+              {{ stats.active }} 条活跃预警
+            </el-tag>
+          </div>
+        </div>
       </div>
       <div class="head-actions">
+        <el-button size="small" icon="el-icon-refresh" class="btn-refresh" :loading="loading" @click="load">刷新</el-button>
         <el-button size="small" icon="el-icon-setting" @click="openConfiguration()">预警规则配置</el-button>
         <el-button size="small" type="success" class="btn-theme-create" icon="el-icon-shopping-cart-2" :disabled="!selected.length" @click="createRequest">
           批量生成采购需求<span v-if="selected.length">（{{ selected.length }}）</span>
         </el-button>
       </div>
-    </div>
+    </header>
 
     <div class="erp-page-tip">
       <i class="el-icon-info" />
@@ -797,11 +805,16 @@ export default {
 
 <style scoped>
 .alert-workbench { min-height: calc(100vh - 52px); padding: 16px 20px 28px; background: #f6f8fa; color: #1f2937; box-sizing: border-box; font-size: 13px; }
-.page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 12px; }
-.title-block .crumb { display: block; color: #6b7280; font-size: 12px; margin-bottom: 4px; }
-.title-block h1 { margin: 0; font-size: 22px; line-height: 1.3; color: #111827; font-weight: 700; }
-.title-block p { margin: 4px 0 0; color: #6b7280; font-size: 13px; }
-.head-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.page-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 16px 20px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 14px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03); }
+.head-left { display: flex; align-items: center; gap: 12px; }
+.head-icon { width: 38px; height: 38px; border-radius: 8px; background: #f0fdf4; color: #008b4b; display: flex; align-items: center; justify-content: center; font-size: 20px; flex-shrink: 0; }
+.head-title-wrap { display: flex; flex-direction: column; min-width: 0; }
+.title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.page-title { margin: 0; font-size: 18px; font-weight: 700; color: #0f172a; }
+.head-tag, .total-tag, .sub-total-tag { border-radius: 4px; font-weight: 500; }
+.head-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.btn-refresh { border-color: #cbd5e1 !important; color: #475569 !important; }
+.btn-refresh:hover { border-color: #008b4b !important; color: #008b4b !important; }
 .btn-theme-create { background: #008b4b !important; border-color: #008b4b !important; color: #fff !important; }
 .btn-theme-create:hover, .btn-theme-create:focus { background: #00753f !important; border-color: #00753f !important; color: #fff !important; }
 .erp-page-tip { display: flex; align-items: center; gap: 8px; padding: 10px 14px; margin-bottom: 12px; background: #f0f9f4; border: 1px solid #cce8d8; border-radius: 8px; color: #1f4d36; font-size: 13px; }
