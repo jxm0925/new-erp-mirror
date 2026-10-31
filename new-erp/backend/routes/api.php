@@ -461,6 +461,7 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::get('performance/orders/{id}', [ProductionPerformanceStatsController::class, 'show'])->whereNumber('id');
     Route::get('performance/batches', [ProductionPerformanceStatsController::class, 'batch']);
     Route::get('performance/months', [ProductionPerformanceStatsController::class, 'month']);
+    Route::get('performance/production', [ProductionPerformanceStatsController::class, 'production']);
     Route::get('performance/work-orders', [ProductionPerformanceStatsController::class, 'workOrders']);
     Route::get('performance/templates', [ProductionPerformanceTemplateController::class, 'index']);
     Route::get('performance/template-operations', [ProductionPerformanceTemplateController::class, 'operations']);

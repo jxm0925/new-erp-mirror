@@ -104,6 +104,53 @@
         </template>
       </el-tab-pane>
 
+      <el-tab-pane label="本月生产明细" name="production">
+        <div class="toolbar">
+          <el-date-picker v-model="month" type="month" value-format="yyyy-MM" size="small" :clearable="false" placeholder="选择月份" @change="loadProduction" />
+          <el-select v-model="prodKind" size="small" style="width:130px" @change="loadProduction">
+            <el-option label="全部" value="" />
+            <el-option label="只看成品" value="finished" />
+            <el-option label="只看半成品" value="semi" />
+            <el-option label="只看发货包装" value="packing" />
+          </el-select>
+          <el-input v-model="prodKeyword" size="small" clearable placeholder="按人员筛选" style="width:160px" />
+          <el-button size="small" type="primary" icon="el-icon-search" :loading="prodLoading" @click="loadProduction">查询</el-button>
+        </div>
+        <template v-if="prodData">
+          <p class="rule">{{ prodData.rule }}</p>
+          <el-table v-loading="prodLoading" :data="prodPeople" size="small" border row-key="employee_legacy_id" empty-text="这个月没有生产记录">
+            <el-table-column type="expand">
+              <template slot-scope="{ row }">
+                <el-table :data="row.rows" size="mini" border class="inner">
+                  <el-table-column label="类型" width="90"><template slot-scope="{ row: r }"><el-tag size="mini" :type="r.class === 'finished' ? 'success' : (r.class === 'packing' ? 'info' : '')" effect="plain">{{ r.class_label }}</el-tag></template></el-table-column>
+                  <el-table-column label="工单" min-width="200">
+                    <template slot-scope="{ row: r }">
+                      <router-link v-if="r.work_order_id" :to="`/production/work-orders/${r.work_order_id}`" class="wo-link">{{ r.work_order_no }}</router-link>
+                      <span v-else>{{ r.work_order_no }}</span>
+                      <span v-if="r.sales_order_no" class="muted"> · {{ r.sales_order_no }}</span>
+                      <div class="muted">{{ r.item_name }} · {{ r.operations.join('、') }}</div>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="本月完工 / 工单数量" width="130" align="right"><template slot-scope="{ row: r }"><b>{{ qty(r.completed_in_month) }}</b> / {{ qty(r.base_qty) }} {{ r.unit_name }}</template></el-table-column>
+                  <el-table-column label="本人本月工时" width="110" align="right"><template slot-scope="{ row: r }">{{ hours(r.my_month_minutes) }}</template></el-table-column>
+                  <el-table-column label="本人累计工时" width="110" align="right"><template slot-scope="{ row: r }">{{ hours(r.my_total_minutes) }}</template></el-table-column>
+                  <el-table-column label="本人每台工时" width="110" align="right"><template slot-scope="{ row: r }"><b>{{ hours(r.my_minutes_per_unit) }}</b></template></el-table-column>
+                  <el-table-column label="工单每台工时（全部人）" width="150" align="right"><template slot-scope="{ row: r }">{{ hours(r.wo_minutes_per_unit) }}</template></el-table-column>
+                  <el-table-column label="进度" width="140"><template slot-scope="{ row: r }"><span v-if="r.finished" class="qty-ok">已做完</span><span v-else class="warn">完工 {{ qty(r.completed_total) }}，每台工时还会变</span></template></el-table-column>
+                </el-table>
+              </template>
+            </el-table-column>
+            <el-table-column prop="employee_name" label="人员" min-width="120" />
+            <el-table-column label="本月完工成品（台）" width="140" align="right"><template slot-scope="{ row }"><b>{{ qty(row.finished_units) }}</b></template></el-table-column>
+            <el-table-column label="半成品（件）" width="110" align="right"><template slot-scope="{ row }">{{ qty(row.semi_units) || '-' }}</template></el-table-column>
+            <el-table-column label="集中开料（件）" width="120" align="right"><template slot-scope="{ row }">{{ qty(row.cut_pieces) || '-' }}</template></el-table-column>
+            <el-table-column label="发货包装（单）" width="120" align="right"><template slot-scope="{ row }">{{ row.packing_count || '-' }}</template></el-table-column>
+            <el-table-column label="本月工时（小时）" width="130" align="right"><template slot-scope="{ row }">{{ hours(row.month_minutes) }}</template></el-table-column>
+            <el-table-column prop="work_order_count" label="参与工单数" width="100" align="right" />
+          </el-table>
+        </template>
+      </el-tab-pane>
+
       <el-tab-pane label="工时去向（按工单）" name="wos">
         <div class="toolbar">
           <el-input v-model="woKeyword" size="small" clearable placeholder="工单号 / 产品 / 订单号" style="width: 240px" @keyup.enter.native="searchWos" @clear="searchWos" />
@@ -287,14 +334,14 @@
 </template>
 
 <script>
-import { listPerformanceOrders, getPerformanceOrder, getPerformanceBatch, getPerformanceMonth, listPerformanceWorkOrders } from '../../../api/erp/production'
+import { listPerformanceOrders, getPerformanceOrder, getPerformanceBatch, getPerformanceMonth, getPerformanceProduction, listPerformanceWorkOrders } from '../../../api/erp/production'
 
 export default {
   name: 'ProductionPerformanceStats',
   data() {
     const d = new Date()
     const month = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-    return { tab: 'month', month, monthData: null, monthLoading: false, wos: [], woTotal: 0, woPage: 1, woKeyword: '', onlyUnsettled: true, woLoading: false, woSummary: null, woLoaded: false,
+    return { tab: 'month', month, monthData: null, monthLoading: false, prodData: null, prodLoading: false, prodKind: '', prodKeyword: '', wos: [], woTotal: 0, woPage: 1, woKeyword: '', onlyUnsettled: true, woLoading: false, woSummary: null, woLoaded: false,
        keyword: '', orders: [], total: 0, page: 1, loading: false,
       drawer: false, detail: null, detailLoading: false, batchNo: '', batch: null, batchLoading: false }
   },
@@ -304,13 +351,24 @@ export default {
     this.loadMonth()
     this.loadOrders()
   },
+  computed: {
+    prodPeople() {
+      const k = (this.prodKeyword || '').trim()
+      const list = (this.prodData && this.prodData.employees) || []
+      return k ? list.filter(e => (e.employee_name || '').includes(k)) : list
+    }
+  },
   watch: {
-    tab(v) { if (v === 'wos' && !this.woLoaded) this.loadWos() }
+    tab(v) {
+      if (v === 'wos' && !this.woLoaded) this.loadWos()
+      if (v === 'production' && (!this.prodData || this.prodData.month !== this.month)) this.loadProduction()
+    }
   },
   methods: {
     reload() {
       if (this.tab === 'month') return this.loadMonth()
       if (this.tab === 'wos') return this.loadWos()
+      if (this.tab === 'production') return this.loadProduction()
       if (this.tab === 'batch' && this.batchNo) return this.loadBatch()
       this.loadOrders()
     },
@@ -319,6 +377,12 @@ export default {
       this.monthLoading = true
       try { const r = await getPerformanceMonth({ month: this.month }); this.monthData = r.data.data } catch (e) { this.$message.error(e.userMessage || '月度结算加载失败') } finally { this.monthLoading = false }
     },
+    async loadProduction() {
+      if (!this.month) return
+      this.prodLoading = true
+      try { const r = await getPerformanceProduction({ month: this.month, kind: this.prodKind || undefined }); this.prodData = r.data.data } catch (e) { this.$message.error(e.userMessage || '生产明细加载失败') } finally { this.prodLoading = false }
+    },
+    qty(v) { const n = Number(v || 0); return Number.isInteger(n) ? n : Number(n.toFixed(2)) },
     searchWos() { this.woPage = 1; this.loadWos() },
     async loadWos() {
       this.woLoading = true; this.woLoaded = true

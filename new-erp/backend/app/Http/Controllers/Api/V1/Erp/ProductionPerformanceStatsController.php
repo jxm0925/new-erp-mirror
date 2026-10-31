@@ -39,6 +39,14 @@ class ProductionPerformanceStatsController extends Controller
         return response()->json(['data' => $ledger->month($data['month'], $amounts, isset($data['employee_legacy_id']) ? (int) $data['employee_legacy_id'] : null)]);
     }
 
+    /** 本月生产明细：按人看本月参与完工几台、每台用了多少工时（按干活时间，不看出库）。 */
+    public function production(Request $request, PerformanceLedgerService $ledger)
+    {
+        $this->user($request);
+        $data = $request->validate(['month' => ['required', 'regex:/^\d{4}-\d{2}$/'], 'kind' => 'nullable|in:finished,semi,packing', 'employee_legacy_id' => 'nullable|integer|min:1']);
+        return response()->json(['data' => $ledger->production($data['month'], $data['kind'] ?? null, isset($data['employee_legacy_id']) ? (int) $data['employee_legacy_id'] : null)]);
+    }
+
     /** 按工单看工时对应的产品出库情况。 */
     public function workOrders(Request $request, PerformanceLedgerService $ledger)
     {

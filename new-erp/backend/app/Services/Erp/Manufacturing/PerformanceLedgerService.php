@@ -123,6 +123,98 @@ final class PerformanceLedgerService
             'rule' => '月初未结（上月结转）+ 本月新做 − 本月出库结算 − 本月报废 = 结转下月。报废的工时单独列出，不摊给合格品。工时挂在做出来的产品上，产品出库（或被装进的整机出库）那个月才结算，没出库的往后结转，不会重复累加。集中开料按实际计时，工单领几件带走几件的工时（这批总工时 ÷ 总件数 × 件数），没领的留在开料记录里往后结转。'];
     }
 
+    /**
+     * 本月生产明细（按人、按干活时间，不看出库）：谁这个月在哪些工单上干了活、这些工单本月完工几台、每台用了多少工时。
+     * - 只要在工单上做过工序，就算参与了这张工单本月完工的台数（多人一起做，每人都算这几台，再各自列工时）。
+     * - 本人每台工时 = 本人在这张工单上累计工时 ÷ 工单投入台数；工单每台工时 = 工单全部人累计工时 ÷ 投入台数。
+     *   工单还没做完时累计工时会继续增加，每台工时以完工后为准。
+     * - 成品工单只算它自己的工时；架子、电箱等半成品和集中开料在各自的行里单独列。
+     * $kind：finished 只看成品，semi 只看半成品（含集中开料），packing 只看发货包装，空为全部。
+     */
+    public function production(string $month, ?string $kind = null, ?int $employeeId = null): array
+    {
+        if (! preg_match('/^\d{4}-\d{2}$/', $month)) throw new WorkOrderDomainException('month_invalid', '月份格式应为 2026-11。', 422);
+        $this->load();
+        $start = Carbon::parse($month.'-01')->toDateString();
+        $end = Carbon::parse($month.'-01')->endOfMonth()->toDateString();
+        $done = ['month' => [], 'total' => []];
+        foreach (DB::table('erp_mfg_work_order_units')->whereNotNull('completed_at')->where('status', '!=', 'scrapped')->whereDate('completed_at', '<=', $end)
+            ->groupBy('work_order_id')->selectRaw('work_order_id, COUNT(*) AS n, SUM(DATE(completed_at) >= ?) AS m', [$start])->get() as $r) {
+            $done['total']['W'.$r->work_order_id] = (int) $r->n;
+            $done['month']['W'.$r->work_order_id] = (int) $r->m;
+        }
+        foreach ($this->runs as $r) {
+            $d = $r->finished_at ? substr((string) $r->finished_at, 0, 10) : null;
+            if (! $d || $d > $end) continue;
+            $done['total']['C'.$r->id] = (float) $r->total_pieces;
+            $done['month']['C'.$r->id] = $d >= $start ? (float) $r->total_pieces : 0;
+        }
+        $itemIds = array_values(array_unique(array_map(fn ($wo) => (int) $wo->item_id, $this->wos)));
+        $itemTypes = DB::table('erp_items')->whereIn('id', $itemIds ?: [0])->pluck('item_type', 'id')->all();
+        $people = [];
+        foreach ($this->units() as $unit) {
+            $key = $unit['key'];
+            $class = match ($unit['kind']) {
+                'packing' => 'packing',
+                'cut' => 'semi',
+                default => $unit['wo']->source_type === 'work_order' || ($itemTypes[(int) $unit['wo']->item_id] ?? null) === 'semi_finished' ? 'semi' : 'finished',
+            };
+            if ($kind && $kind !== $class) continue;
+            $unitTotal = 0.0;
+            $mine = [];
+            foreach ($unit['ops'] as $opId => $op) {
+                foreach ($this->labor[$key][$opId] ?? [] as $emp => $rows) {
+                    $total = $this->sumLabor($rows, $end, true);
+                    $unitTotal += $total;
+                    if ($employeeId && $emp !== $employeeId) continue;
+                    $inMonth = $total - $this->sumLabor($rows, $start, false);
+                    $mine[$emp] ??= ['month' => 0.0, 'total' => 0.0, 'ops' => [], 'name' => $this->name($key, $opId, $emp)];
+                    $mine[$emp]['month'] += $inMonth;
+                    $mine[$emp]['total'] += $total;
+                    if ($inMonth > 0.0001 && ! in_array($op['name'], $mine[$emp]['ops'], true)) $mine[$emp]['ops'][] = $op['name'];
+                }
+            }
+            $doneMonth = $class === 'packing' ? (($unit['events'][0]['date'] ?? '9999') >= $start && ($unit['events'][0]['date'] ?? '9999') <= $end ? 1 : 0) : ($done['month'][$key] ?? 0);
+            $doneTotal = $class === 'packing' ? (($unit['events'][0]['date'] ?? '9999') <= $end ? 1 : 0) : ($done['total'][$key] ?? 0);
+            $base = $unit['kind'] === 'work_order' ? (float) $unit['base'] : (float) $unit['output'];
+            foreach ($mine as $emp => $m) {
+                if ($m['month'] < 0.05 && ! ($doneMonth > 0 && $m['total'] > 0.05)) continue;
+                if (! $m['ops']) foreach ($unit['ops'] as $opId => $op) if (isset($this->labor[$key][$opId][$emp])) $m['ops'][] = $op['name'];
+                $info = $this->unitInfo($unit, $end);
+                $people[$emp] ??= ['employee_legacy_id' => $emp, 'employee_name' => $m['name'], 'finished_units' => 0.0, 'semi_units' => 0.0, 'cut_pieces' => 0.0, 'packing_count' => 0,
+                    'month_minutes' => 0.0, 'work_order_count' => 0, 'rows' => []];
+                $p = &$people[$emp];
+                $p['month_minutes'] += $m['month'];
+                $p['work_order_count']++;
+                if ($class === 'finished') $p['finished_units'] += $doneMonth;
+                elseif ($unit['kind'] === 'cut') $p['cut_pieces'] += $doneMonth;
+                elseif ($class === 'semi') $p['semi_units'] += $doneMonth;
+                else $p['packing_count'] += $doneMonth;
+                $p['rows'][] = [
+                    'key' => $key, 'class' => $class, 'class_label' => $unit['kind'] === 'cut' ? '集中开料' : ['finished' => '成品', 'semi' => '半成品', 'packing' => '发货包装'][$class],
+                    'work_order_id' => $info['work_order_id'] ?? null, 'cutting_run_id' => $info['cutting_run_id'] ?? null,
+                    'work_order_no' => $info['work_order_no'], 'source_label' => $info['source_label'], 'item_name' => $info['item_name'],
+                    'sales_order_no' => $info['sales_order_no'], 'unit_name' => $info['unit_name'] ?: ($class === 'packing' ? '单' : '台'),
+                    'operations' => $m['ops'], 'base_qty' => round($base, 4), 'completed_in_month' => round($doneMonth, 4), 'completed_total' => round($doneTotal, 4),
+                    'finished' => $base > 0 && $doneTotal + ($info['scrapped_qty'] ?? 0) >= $base - 0.0001,
+                    'my_month_minutes' => round($m['month'], 1), 'my_total_minutes' => round($m['total'], 1),
+                    'my_minutes_per_unit' => $base > 0 ? round($m['total'] / $base, 1) : null,
+                    'wo_total_minutes' => round($unitTotal, 1), 'wo_minutes_per_unit' => $base > 0 ? round($unitTotal / $base, 1) : null,
+                ];
+                unset($p);
+            }
+        }
+        $out = array_values($people);
+        foreach ($out as &$p) {
+            usort($p['rows'], fn ($a, $b) => [$b['completed_in_month'], $b['my_month_minutes']] <=> [$a['completed_in_month'], $a['my_month_minutes']]);
+            foreach (['finished_units', 'semi_units', 'cut_pieces', 'month_minutes'] as $k) $p[$k] = round($p[$k], $k === 'month_minutes' ? 1 : 4);
+        }
+        unset($p);
+        usort($out, fn ($a, $b) => [$b['finished_units'], $b['month_minutes']] <=> [$a['finished_units'], $a['month_minutes']]);
+        return ['month' => $month, 'start' => $start, 'end' => $end, 'kind' => $kind, 'employees' => $out,
+            'rule' => '按干活时间统计，不看出库。只要在工单上做过工序就算参与了这张工单本月完工的台数（多人一起做每人都算）；本人每台工时 = 本人在这张工单上累计工时 ÷ 工单投入台数，工单每台工时 = 全部人累计工时 ÷ 投入台数，工单没做完时还会增加。成品只算整机工单自己的工时，架子、电箱等半成品和集中开料单独列。'];
+    }
+
     /** 按工单看工时对应的产品去向：已出库多少、已领用待出库多少、在库多少；已结算 / 未结算工时。 */
     public function workOrders(array $filters): array
     {
