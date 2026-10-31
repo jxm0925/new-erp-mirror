@@ -111,7 +111,7 @@
             <el-option label="全部" value="" />
             <el-option label="只看成品" value="finished" />
             <el-option label="只看半成品" value="semi" />
-            <el-option label="只看发货包装" value="packing" />
+            <el-option label="只看发货试水/包装" value="packing" />
           </el-select>
           <el-input v-model="prodKeyword" size="small" clearable placeholder="按人员筛选" style="width:160px" />
           <el-button size="small" type="primary" icon="el-icon-search" :loading="prodLoading" @click="loadProduction">查询</el-button>
@@ -144,7 +144,7 @@
             <el-table-column label="本月完工成品（台）" width="140" align="right"><template slot-scope="{ row }"><b>{{ qty(row.finished_units) }}</b></template></el-table-column>
             <el-table-column label="半成品（件）" width="110" align="right"><template slot-scope="{ row }">{{ qty(row.semi_units) || '-' }}</template></el-table-column>
             <el-table-column label="集中开料（件）" width="120" align="right"><template slot-scope="{ row }">{{ qty(row.cut_pieces) || '-' }}</template></el-table-column>
-            <el-table-column label="发货包装（单）" width="120" align="right"><template slot-scope="{ row }">{{ row.packing_count || '-' }}</template></el-table-column>
+            <el-table-column label="试水/包装（道）" width="120" align="right"><template slot-scope="{ row }">{{ row.packing_count || '-' }}</template></el-table-column>
             <el-table-column label="本月工时（小时）" width="130" align="right"><template slot-scope="{ row }">{{ hours(row.month_minutes) }}</template></el-table-column>
             <el-table-column prop="work_order_count" label="参与工单数" width="100" align="right" />
           </el-table>

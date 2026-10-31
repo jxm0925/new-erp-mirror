@@ -141,7 +141,8 @@ class SalesOrderDraftService
         SalesOrderFulfillmentPolicy::assertConfirmationRequirements($order);
 
         foreach ($order->lines as $line) {
-            abort_if(! $this->priceIsValid($line), 422, $this->priceValidationMessage($line));
+            $priceProblem = SalesOrderFulfillmentPolicy::priceMessage($line->line_type, $line->unit_price, $line->line_no);
+            abort_if($priceProblem !== null, 422, (string) $priceProblem);
             $sku = $line->sku;
             abort_if(!$sku, 422, "订单行 {$line->line_no} 的 SKU 已不存在");
             abort_if(
@@ -250,7 +251,8 @@ class SalesOrderDraftService
         SalesOrderFulfillmentPolicy::assertConfirmationRequirements($order);
 
         foreach ($order->lines as $line) {
-            abort_if(! $this->priceIsValid($line), 422, $this->priceValidationMessage($line));
+            $priceProblem = SalesOrderFulfillmentPolicy::priceMessage($line->line_type, $line->unit_price, $line->line_no);
+            abort_if($priceProblem !== null, 422, (string) $priceProblem);
             $sku = $line->sku;
             abort_if(!$sku, 422, "Order line {$line->line_no} SKU no longer exists.");
             abort_if($sku->electric_mode === 'required' && blank($line->electric), 422, "Order line {$line->line_no} requires electric voltage.");
