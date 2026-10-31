@@ -30,7 +30,7 @@ Design status: 新增“订单阶段提示条”（基础档案风格），其�
       <div class="header-actions">
         <el-button size="small" icon="el-icon-back" @click="$router.push('/sales/orders')">返回列表</el-button>
         <el-button v-if="$can('sales_order.shipment.view')" size="small" icon="el-icon-truck" @click="$router.push({ path: '/sales/shipments', query: { sales_order_id: order.id } })">发货单</el-button>
-        <el-button v-if="order.allowed_actions && order.allowed_actions.edit" size="small" icon="el-icon-edit" @click="$router.push(`/sales/orders/${order.id}/edit`)">{{ (order.allowed_actions.edit_requires_approval || order.allowed_actions.production_released) ? '申请修改（需审核）' : '编辑订单' }}</el-button>
+        <el-button v-if="order.allowed_actions && order.allowed_actions.edit" size="small" icon="el-icon-edit" @click="$router.push(`/sales/orders/${order.id}/edit`)">{{ order.allowed_actions.production_released ? '申请修改（需审核）' : '编辑订单' }}</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.submit_confirmation" size="small" type="success" icon="el-icon-check" @click="doConfirm">确认订单</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.lock_inventory" class="inventory-lock-button" size="small" type="danger" icon="el-icon-lock" @click="openInventoryLock">锁库存</el-button>
         <el-button v-if="order.allowed_actions && order.allowed_actions.production_confirmation" size="small" type="primary" icon="el-icon-s-operation" @click="$router.push(`/sales/orders/${order.id}/production-confirmation`)">生产确认</el-button>
@@ -704,8 +704,10 @@ export default {
       const actions = this.order.allowed_actions || {}
       if (this.order.order_status === 'draft') return { type: 'info', icon: 'el-icon-edit-outline', text: '草稿阶段：订单可随意修改。核对无误后点击“确认订单”，确认不会生成工单。' }
       if (this.order.order_status !== 'confirmed') return null
-      if (['pending', 'blocked'].includes(this.order.production_confirm_status) && !actions.production_released) return { type: 'warning', icon: 'el-icon-s-flag', text: '订单已确认，请核实后点击“生产确认”。如需改金额、商品、数量或客户信息，请点“申请修改”，审核通过后才生效。' }
-      return { type: 'warning', icon: 'el-icon-lock', text: '订单已确认：改金额、商品、数量、客户和收货信息要点“申请修改”，说明原因提交，审核通过后才生效。' }
+      if (actions.production_released) return { type: 'warning', icon: 'el-icon-lock', text: '工单已发布：订单不能随意修改。如需修改，请点击“申请修改”，说明原因并提交，经相关负责人审核通过后才会生效。' }
+      if (['pending', 'blocked'].includes(this.order.production_confirm_status)) return { type: 'success', icon: 'el-icon-s-flag', text: '核实期：订单已确认，尚未生成工单，此阶段可直接修改订单。核实无误后，请点击“生产确认”生成待发布工单。' }
+      if (this.order.production_confirm_status === 'confirmed') return { type: 'success', icon: 'el-icon-s-flag', text: '生产确认完成：已记录需生产数量，订单仍可直接修改（修改后需重新生产确认）。' }
+      return null
     },
     currentVersion() { return Math.max(1, ...(this.order.versions || []).map(item => Number(item.version_no || 0))) },
     orderApprovalSteps() { const task=this.order.approval_task||{}; const steps=[{key:'submit',name:'发起提交',state:'done'},...(task.nodes||[]).map(n=>({key:n.node_key,name:n.node_name,state:n.node_status==='APPROVED'?'done':n.node_status==='PENDING'?'active':n.node_status==='REJECTED'?'failed':'wait'})),{key:'finish',name:'审核完成',state:task.task_status==='APPROVED'?'done':task.task_status==='REJECTED'?'failed':'wait'}]; return steps },

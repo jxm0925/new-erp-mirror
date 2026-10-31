@@ -752,10 +752,10 @@ export default {
     editStageTip() {
       if (!this.isConfirmedEdit) return null
       const actions = (this.editOrderMeta && this.editOrderMeta.allowed_actions) || {}
-      if (actions.edit_requires_approval || actions.production_released) {
-        return { type: 'warning', icon: 'el-icon-lock', text: '订单已确认：改金额、商品、数量、客户和收货信息不会直接生效。点击“保存修改”后会列出改了什么，填写变更原因提交，审核通过后才生效；只改备注这类内容会直接保存。' }
+      if (actions.production_released) {
+        return { type: 'warning', icon: 'el-icon-lock', text: '工单已发布：本次修改不会直接生效。点击“保存修改”后将列出变更内容，填写变更原因并提交，由相关负责人审核通过后才会生效。' }
       }
-      return null
+      return { type: 'success', icon: 'el-icon-s-flag', text: '核实期：工单尚未发布，可直接修改，保存后立即生效并留痕。若改动了数量、SKU、备货方式等影响生产的内容，已生成的待发布工单会被撤销，需要重新执行“生产确认”。' }
     },
     currentIndex() {
       const index = this.form.lines.indexOf(this.selectedLine)
