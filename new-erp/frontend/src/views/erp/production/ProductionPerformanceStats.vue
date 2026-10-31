@@ -29,12 +29,32 @@
             <div class="roll-op">+</div>
             <div class="roll-item"><div class="roll-label">本月新做</div><div class="roll-value">{{ hours(monthData.totals.new) }}<small> 小时</small></div></div>
             <div class="roll-op">−</div>
-            <div class="roll-item ok"><div class="roll-label">本月出库结算（含退货扣回）</div><div class="roll-value">{{ hours(monthData.totals.settled) }}<small> 小时</small></div></div>
+            <div class="roll-item ok"><div class="roll-label">本月出库结算</div><div class="roll-value">{{ hours(monthData.totals.settled) }}<small> 小时</small></div></div>
             <div class="roll-op">=</div>
             <div class="roll-item warn-box"><div class="roll-label">结转下月（未出库）</div><div class="roll-value">{{ hours(monthData.totals.closing) }}<small> 小时</small></div></div>
             <div class="roll-item money-box"><div class="roll-label">本月结算提成</div><div class="roll-value">{{ money(monthData.totals.commission) }}</div></div>
           </div>
           <p class="rule">{{ monthData.rule }}</p>
+          <div v-if="monthData.returns && monthData.returns.length" class="return-box">
+            <div class="block-title">本月客户退货（只记录，不扣工时和提成；售后按责任手动处理）</div>
+            <el-table :data="monthData.returns" size="mini" border>
+              <el-table-column prop="date" label="到货日期" width="110" />
+              <el-table-column prop="no" label="退货单" min-width="150" />
+              <el-table-column prop="order_no" label="订单" min-width="140" />
+              <el-table-column prop="item_name" label="商品" min-width="160" show-overflow-tooltip />
+              <el-table-column prop="qty" label="数量" width="80" align="right" />
+              <el-table-column label="发货时对应工单" min-width="160">
+                <template slot-scope="{ row }">
+                  <span v-for="w in row.work_orders" :key="w.work_order_id" class="emp">
+                    <router-link :to="`/production/work-orders/${w.work_order_id}`" class="wo-link">{{ w.work_order_no }}</router-link>
+                  </span>
+                </template>
+              </el-table-column>
+              <el-table-column label="工时 / 提成影响" min-width="170">
+                <template slot-scope="{ row }"><span class="muted">{{ row.adjustment_status }}</span></template>
+              </el-table-column>
+            </el-table>
+          </div>
           <el-table v-loading="monthLoading" :data="monthData.employees" size="small" border row-key="employee_legacy_id" empty-text="这个月没有工时">
             <el-table-column type="expand">
               <template slot-scope="{ row }">
@@ -211,7 +231,7 @@
             <div class="block-title">
               {{ line.product_name || line.item_name }}<span v-if="line.sku_name" class="muted"> · {{ line.sku_name }}</span>
               <span class="muted">　数量 {{ line.qty }}　金额 {{ money(line.amount) }}</span>
-              <span class="qty-ok">　已出库 {{ line.shipped_qty }}</span><span v-if="line.pending_qty > 0" class="qty-wait">　未出库 {{ line.pending_qty }}（预估）</span><span v-if="line.returned_qty > 0" class="warn">　退货 {{ line.returned_qty }}（退货当月扣回）</span>
+              <span class="qty-ok">　已出库 {{ line.shipped_qty }}</span><span v-if="line.pending_qty > 0" class="qty-wait">　未出库 {{ line.pending_qty }}（预估）</span><span v-if="line.returned_qty > 0" class="warn">　退货 {{ line.returned_qty }}（仅记录）</span>
             </div>
             <el-table :data="flatten(line)" size="mini" border :row-class-name="rowClass">
               <el-table-column label="来源工单" min-width="230">
@@ -358,6 +378,7 @@ export default {
 .emp { display: inline-block; margin-right: 12px; }
 .note { color: #e6a23c; }
 .neg { color: #f56c6c; }
+.return-box { margin: 4px 0 14px; }
 .qty-ok { color: #2e9d5b; margin-left: 6px; }
 .qty-wait { color: #e6a23c; font-size: 12px; }
 .inner { margin: 4px 0 4px 24px; width: calc(100% - 24px); }
