@@ -8,7 +8,7 @@ require_once __DIR__.'/../schema/InitialTableMigration.php';
 
 /**
  * 开料批次。batch_scope=work_order：随单开料（属于某工单某道工序）；
- * batch_scope=shared：集中开料（不属于任何工单，work_order_id 为空，只开一种板材 item_id），
+ * batch_scope=shared：集中开料（不属于任何工单，work_order_id 为空，只开一种板材 item_id；cutting_run_id 为所属的开料记录，一次只开一个 BOM），
  * 结算后净耗进开料池（pool_measure），工单下料点「已备料」时按定额从池里先进先出扣（allocated_*，明细见 erp_mfg_cutting_allocations）。
  */
 return new class extends InitialTableMigration
@@ -24,6 +24,7 @@ CREATE TABLE `erp_mfg_cutting_batches` (
   `batch_no` varchar(60) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `batch_scope` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'work_order',
   `item_id` bigint(20) unsigned DEFAULT NULL,
+  `cutting_run_id` bigint(20) unsigned DEFAULT NULL,
   `work_order_id` bigint(20) unsigned DEFAULT NULL,
   `work_order_operation_id` bigint(20) unsigned DEFAULT NULL,
   `status` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'issued',
@@ -63,6 +64,7 @@ CREATE TABLE `erp_mfg_cutting_batches` (
   KEY `mfg_cut_wo_op_idx` (`work_order_id`,`work_order_operation_id`,`status`),
   KEY `mfg_cut_op_fk` (`work_order_operation_id`),
   KEY `mfg_cut_scope_item_idx` (`batch_scope`,`item_id`,`status`),
+  KEY `mfg_cut_run_idx` (`cutting_run_id`),
   KEY `mfg_cut_issue_tx_fk` (`inventory_issue_transaction_id`),
   KEY `mfg_cut_return_tx_fk` (`inventory_return_transaction_id`),
   CONSTRAINT `mfg_cut_wo_fk` FOREIGN KEY (`work_order_id`) REFERENCES `erp_mfg_work_orders` (`id`),

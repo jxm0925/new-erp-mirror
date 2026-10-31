@@ -46,6 +46,12 @@ module.exports = {
   sharedCuttingSources: query => get('cutting-sessions/sources', query),
   sharedCuttingIssue: payload => request.write(`${base}/cutting-sessions`, payload, { loading: true, commandPrefix: 'cut' }),
   sharedCuttingSettle: (id, payload) => request.write(`${base}/cutting-sessions/${Number(id)}/settle`, payload, { loading: true, commandPrefix: 'cut' }),
+  // 集中开料记录：选 BOM 开一批、按实际计时、切完登记件数
+  cuttingRunBoms: query => get('cutting-runs/boms', query),
+  cuttingRuns: query => get('cutting-runs', query),
+  cuttingRun: id => get(`cutting-runs/${Number(id)}`),
+  cuttingRunStart: payload => request.write(`${base}/cutting-runs`, payload, { loading: true, commandPrefix: 'run' }),
+  cuttingRunAction: (id, payload) => request.write(`${base}/cutting-runs/${Number(id)}/actions`, payload, { loading: true, commandPrefix: 'run' }),
   deliveryAction: (id, action, payload) => request.write(`${base}/material-deliveries/${Number(id)}/${action}`, payload || {}, { loading: true, commandPrefix: 'delivery' }),
   uploadPhoto,
 };

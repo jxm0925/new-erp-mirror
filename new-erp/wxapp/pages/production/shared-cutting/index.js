@@ -1,4 +1,4 @@
-// 集中开料：不属于工单。按待切清单挑一种板、领几张切，切完登记每张板的余料；
+// 板材领板／登记余料：领板必须挂在「集中开料」里一批还在开的开料记录上（一次只开一个 BOM），切完登记每张板的余料；
 // 切好的件在各工单下料点「已备料」，按 BOM 定额从这里登记的净耗里扣。
 const production = require('../../../services/production');
 const view = require('../../../utils/warehouse-page');
@@ -30,14 +30,26 @@ Page({
     picked: {}, pickedCount: 0, pickedAreaText: '0',
     batch: null, remnants: [], remark: '', confirmed: false, locatorOpen: false, locatorIndex: -1, locatorValue: {},
   },
-  onLoad(options) { if (options.tab === 'batches') this.setData({ tab: 'batches' }); },
-  onShow() { this.load(); },
+  onLoad(options) {
+    this.runId = Number(options.run_id || 0) || null;
+    this.autoItem = Number(options.item_id || 0) || null;
+    if (options.tab === 'batches') this.setData({ tab: 'batches' });
+  },
+  onShow() {
+    this.load().then(() => {
+      if (!this.autoItem) return;
+      const index = this.data.items.findIndex(i => Number(i.item_id) === this.autoItem);
+      const item = index >= 0 ? this.data.items[index] : { item_id: this.autoItem, item_name: '这种板', shortText: '0' };
+      this.autoItem = null;
+      this.openSourcesFor(item);
+    });
+  },
   onPullDownRefresh() { this.load().finally(() => wx.stopPullDownRefresh()); },
   stop() {},
 
   load() {
     this.setData({ loading: true, error: '' });
-    return Promise.all([production.sharedCuttingDemand({}), production.sharedCuttings({ page: this.data.page, per_page: 20 })]).then(([demand, list]) => {
+    return Promise.all([production.sharedCuttingDemand({}), production.sharedCuttings(Object.assign({ page: this.data.page, per_page: 20 }, this.runId ? { cutting_run_id: this.runId } : {}))]).then(([demand, list]) => {
       const opened = this.data.items.filter(i => i.open).map(i => i.item_id);
       const items = ((demand.data || demand).items || []).map(item => Object.assign({}, item, {
         needText: num(item.need_measure), poolText: num(item.pool_measure), shortText: num(item.short_measure), short: Number(item.short_measure) > 0.0005,
@@ -61,8 +73,13 @@ Page({
   },
 
   // 领板
-  openSources(event) {
-    const current = this.data.items[Number(event.currentTarget.dataset.index)];
+  openSources(event) { this.openSourcesFor(this.data.items[Number(event.currentTarget.dataset.index)]); },
+  openSourcesFor(current) {
+    if (!this.runId) {
+      wx.showModal({ title: '先选 BOM 开一批', content: '一次只开一个 BOM 的料：请先在「集中开料」里选 BOM、开始计时，再从那一批里领板。', confirmText: '去开料',
+        success: res => { if (res.confirm) wx.redirectTo({ url: '/pages/production/cutting-run/index' }); } });
+      return;
+    }
     this.picks = {};
     this.setData({ panel: 'sources', current, keyword: '', rows: [], sourcePage: 1, picked: {}, pickedCount: 0, pickedAreaText: '0' });
     this.loadSources(1);
@@ -94,7 +111,7 @@ Page({
   issue() {
     const list = Object.values(this.picks || {});
     if (this.data.busy || !list.length) return;
-    const payload = { item_id: this.data.current.item_id,
+    const payload = { item_id: this.data.current.item_id, cutting_run_id: this.runId,
       sources: list.map(r => ({ inventory_balance_id: r.inventory_balance_id, physical_material_id: r.physical_material_id, source_version: r.source_version })) };
     payload.idempotency_key = this.commandKey('issue', payload);
     wx.showModal({ title: '确认领板', content: `从库存领出 ${list.length} 张 ${this.data.current.item_name}（${this.data.pickedAreaText} m²）去切？切完回「开料批次」登记余料。`, confirmText: '确认领出',

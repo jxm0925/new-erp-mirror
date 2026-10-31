@@ -21,7 +21,7 @@ class MfgSharedCuttingController extends Controller
     public function index(Request $request, SharedCuttingService $cutting)
     {
         [, $amounts] = $this->user($request, false);
-        $data = $request->validate(['status' => 'nullable|in:issued,settled', 'item_id' => 'nullable|integer|min:1',
+        $data = $request->validate(['status' => 'nullable|in:issued,settled', 'item_id' => 'nullable|integer|min:1', 'cutting_run_id' => 'nullable|integer|min:1',
             'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50']);
         return response()->json($cutting->index($data, $amounts));
     }
@@ -43,7 +43,7 @@ class MfgSharedCuttingController extends Controller
     public function store(Request $request, SharedCuttingService $cutting)
     {
         [$user, $amounts] = $this->user($request, true);
-        $data = $request->validate(['item_id' => 'required|integer|min:1', 'idempotency_key' => 'required|string|min:16|max:80',
+        $data = $request->validate(['item_id' => 'required|integer|min:1', 'cutting_run_id' => 'required|integer|min:1', 'idempotency_key' => 'required|string|min:16|max:80',
             'remark' => 'nullable|string|max:500', 'sources' => 'required|array|min:1|max:200',
             'sources.*.inventory_balance_id' => 'required|integer|min:1', 'sources.*.physical_material_id' => 'required|integer|min:1',
             'sources.*.source_version' => 'required|string|size:64']);

@@ -7,7 +7,7 @@
   <view wx:if="{{loading}}" class="mt-empty">正在读取</view>
 
   <block wx:if="{{tab === 'demand' && !loading}}">
-    <view class="mt-muted mt-gap">未完工工单里还没备料的板材，按 BOM 板件尺寸汇总。挑一种板领几张切，切完回「开料批次」登记余料；切好的件在各工单下料点「已备料」按定额扣。</view>
+    <view class="mt-muted mt-gap">未完工工单里还没备料的板材，按 BOM 板件尺寸汇总（只作参考）。领板要先在「集中开料」里选 BOM 开一批，一次只开一个 BOM 的料；切完回「开料批次」登记余料。</view>
     <view wx:if="{{!items.length}}" class="mt-empty">没有待切的板材</view>
     <view wx:for="{{items}}" wx:key="item_id" class="mt-card">
       <view class="mt-card-title"><text>{{item.item_name}} <text class="mt-muted">{{item.specification || item.item_code}}</text></text><text class="tk-link green" data-index="{{index}}" bindtap="openSources">领板开切 ›</text></view>

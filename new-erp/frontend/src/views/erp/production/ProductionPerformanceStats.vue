@@ -74,7 +74,7 @@
                       <el-tag size="mini" :type="statusType(r.status_label)" effect="plain">{{ r.status_label }}</el-tag>
                       <span class="qty-ok">已出库 {{ r.shipped_qty }}</span> / 产出 {{ r.output_qty }}
                       <div v-if="r.pending_qty > 0" class="qty-wait">
-                        未出库 {{ r.pending_qty }}<template v-if="r.consumed_pending_qty">（已装进整机待出库 {{ r.consumed_pending_qty }}）</template><template v-if="r.in_stock_qty">（在库 {{ r.in_stock_qty }}）</template><template v-if="r.other_qty">（未完工/其他 {{ r.other_qty }}）</template><template v-if="r.scrapped_qty">（报废 {{ r.scrapped_qty }}）</template>
+                        未出库 {{ r.pending_qty }}<template v-if="r.consumed_pending_qty">（{{ r.kind === 'cut' ? '已被工单领用待出库' : '已装进整机待出库' }} {{ r.consumed_pending_qty }}）</template><template v-if="r.in_stock_qty">（在库 {{ r.in_stock_qty }}）</template><template v-if="r.other_qty">（{{ r.kind === 'cut' ? '开了还没领' : '未完工/其他' }} {{ r.other_qty }}）</template><template v-if="r.scrapped_qty">（报废 {{ r.scrapped_qty }}）</template>
                       </div>
                     </template>
                   </el-table-column>
@@ -114,7 +114,8 @@
         <el-table v-loading="woLoading" :data="wos" size="small" border stripe>
           <el-table-column label="工单" min-width="170">
             <template slot-scope="{ row }">
-              <router-link :to="`/production/work-orders/${row.work_order_id}`" class="wo-link">{{ row.work_order_no }}</router-link>
+              <router-link v-if="row.work_order_id" :to="`/production/work-orders/${row.work_order_id}`" class="wo-link">{{ row.work_order_no }}</router-link>
+              <span v-else>{{ row.work_order_no }}</span>
               <el-tag size="mini" effect="plain" class="tag">{{ row.source_label }}</el-tag>
             </template>
           </el-table-column>
@@ -123,9 +124,9 @@
           <el-table-column label="出库情况" width="110"><template slot-scope="{ row }"><el-tag size="mini" :type="statusType(row.status_label)" effect="plain">{{ row.status_label }}</el-tag></template></el-table-column>
           <el-table-column prop="output_qty" label="产出" width="70" align="right" />
           <el-table-column label="已出库" width="80" align="right"><template slot-scope="{ row }"><span class="qty-ok">{{ row.shipped_qty }}</span></template></el-table-column>
-          <el-table-column label="装进整机待出库" width="120" align="right"><template slot-scope="{ row }">{{ row.consumed_pending_qty || '-' }}</template></el-table-column>
+          <el-table-column label="装进整机/被领用待出库" width="120" align="right"><template slot-scope="{ row }">{{ row.consumed_pending_qty || '-' }}</template></el-table-column>
           <el-table-column label="在库" width="70" align="right"><template slot-scope="{ row }">{{ row.in_stock_qty || '-' }}</template></el-table-column>
-          <el-table-column label="未完工/其他" width="100" align="right"><template slot-scope="{ row }">{{ row.other_qty || '-' }}</template></el-table-column>
+          <el-table-column label="未完工/其他（开料：还没领）" width="110" align="right"><template slot-scope="{ row }">{{ row.other_qty || '-' }}</template></el-table-column>
           <el-table-column label="报废" width="70" align="right"><template slot-scope="{ row }"><span :class="{ neg: row.scrapped_qty }">{{ row.scrapped_qty || '-' }}</span></template></el-table-column>
           <el-table-column label="总工时（小时）" width="115" align="right"><template slot-scope="{ row }">{{ hours(row.labor_minutes) }}</template></el-table-column>
           <el-table-column label="已结算" width="90" align="right"><template slot-scope="{ row }">{{ hours(row.settled_minutes) }}</template></el-table-column>
@@ -168,9 +169,9 @@
         <el-pagination class="pager" layout="total, prev, pager, next" :total="total" :page-size="15" :current-page.sync="page" @current-change="loadOrders" />
       </el-tab-pane>
 
-      <el-tab-pane label="备货批次去向" name="batch">
+      <el-tab-pane label="备货/开料批次去向" name="batch">
         <div class="toolbar">
-          <el-input v-model="batchNo" size="small" clearable placeholder="输入工单号（= 库存批次号）" style="width: 260px" @keyup.enter.native="loadBatch" />
+          <el-input v-model="batchNo" size="small" clearable placeholder="输入工单号（= 库存批次号）或开料记录号 MCR…" style="width: 260px" @keyup.enter.native="loadBatch" />
           <el-button size="small" type="primary" icon="el-icon-search" :loading="batchLoading" @click="loadBatch">查询</el-button>
         </div>
         <template v-if="batch">
@@ -178,7 +179,7 @@
             <span><b>{{ batch.work_order.work_order_no }}</b> {{ batch.work_order.source_label }} · {{ batch.work_order.item_name }}</span>
             <el-tag size="mini" :type="statusType(batch.work_order.status_label)" effect="plain">{{ batch.work_order.status_label }}</el-tag>
             <span>产出 {{ batch.work_order.output_qty }} {{ batch.work_order.unit_name }}，<span class="qty-ok">已出库 {{ batch.work_order.shipped_qty }}</span>，<span class="qty-wait">未出库 {{ batch.work_order.pending_qty }}</span></span>
-            <span>总工时 {{ hours(batch.work_order.labor_minutes) }} 小时<template v-if="batch.work_order.labor_minutes_per_unit !== null">（每件 {{ hours(batch.work_order.labor_minutes_per_unit) }}）</template></span>
+            <span>总工时 {{ hours(batch.work_order.labor_minutes) }} 小时<template v-if="batch.work_order.labor_minutes_per_unit !== null">（每件 {{ batch.work_order.kind === 'cut' ? batch.work_order.labor_minutes_per_unit + ' 分钟' : hours(batch.work_order.labor_minutes_per_unit) }}）</template></span>
             <span v-if="batch.work_order.scrapped_qty" class="neg">报废 {{ batch.work_order.scrapped_qty }} 件，报废工时 {{ hours(batch.work_order.scrap_minutes) }} 小时（单独列，不摊给合格品）</span>
             <span>已结算 {{ hours(batch.work_order.settled_minutes) }}，未结算 <span class="warn">{{ hours(batch.work_order.unsettled_minutes) }}</span></span>
           </div>

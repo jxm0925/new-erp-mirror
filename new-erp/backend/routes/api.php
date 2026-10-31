@@ -38,6 +38,7 @@ use App\Http\Controllers\Api\V1\Erp\MfgShortageController;
 use App\Http\Controllers\Api\V1\Erp\MfgWorkOrderController;
 use App\Http\Controllers\Api\V1\Erp\MfgCuttingController;
 use App\Http\Controllers\Api\V1\Erp\MfgSharedCuttingController;
+use App\Http\Controllers\Api\V1\Erp\MfgCuttingRunController;
 use App\Http\Controllers\Api\V1\Erp\ProductionPerformanceStatsController;
 use App\Http\Controllers\Api\V1\Erp\MfgTaskController;
 use App\Http\Controllers\Api\V1\Erp\MfgTechController;
@@ -517,6 +518,12 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::post('cutting-sessions', [MfgSharedCuttingController::class, 'store']);
     Route::get('cutting-sessions/{id}', [MfgSharedCuttingController::class, 'show'])->whereNumber('id');
     Route::post('cutting-sessions/{id}/settle', [MfgSharedCuttingController::class, 'settle'])->whereNumber('id');
+    // 集中开料记录：一次只开一个 BOM，按实际计时，切完登记件数；工单「已备料」按件数领走工时
+    Route::get('cutting-runs/boms', [MfgCuttingRunController::class, 'boms']);
+    Route::get('cutting-runs', [MfgCuttingRunController::class, 'index']);
+    Route::post('cutting-runs', [MfgCuttingRunController::class, 'store']);
+    Route::get('cutting-runs/{id}', [MfgCuttingRunController::class, 'show'])->whereNumber('id');
+    Route::post('cutting-runs/{id}/actions', [MfgCuttingRunController::class, 'action'])->whereNumber('id');
     Route::get('serials/lookup', [MfgWorkOrderController::class, 'serial']);
     Route::get('sales-orders/{orderId}/work-orders', [MfgWorkOrderController::class, 'salesOrder'])->whereNumber('orderId');
     // 车间报工、作业看板、成品入库、定制技术（第 2 阶段）

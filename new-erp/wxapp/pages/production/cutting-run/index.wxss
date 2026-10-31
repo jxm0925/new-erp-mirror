@@ -1,0 +1,10 @@
+@import "../cutting/index.wxss";
+.cr-need { display: flex; gap: 24rpx; flex-wrap: wrap; font-size: 25rpx; margin-top: 8rpx; }
+.cr-need .short { color: #c0392b; font-weight: 600; }
+.cr-line { display: flex; align-items: center; gap: 16rpx; font-size: 25rpx; padding: 14rpx 0; border-top: 1rpx dashed #eceff4; }
+.cr-line .k { flex: 1; min-width: 0; }
+.cr-timer { font-size: 44rpx; font-weight: 700; color: #1a7f37; margin: 8rpx 0; }
+.cr-person { display: flex; justify-content: space-between; font-size: 25rpx; padding: 8rpx 0; }
+.cr-person .on { color: #1a7f37; font-weight: 600; }
+.cr-bom { padding: 18rpx 0; border-bottom: 1rpx solid #f0f2f6; }
+.cr-bom.on { background: #f3faf5; }

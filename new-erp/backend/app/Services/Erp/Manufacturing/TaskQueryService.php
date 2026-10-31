@@ -128,6 +128,8 @@ final class TaskQueryService
             // 本道用板材／管材：在本道直接开料（领原料 → 登记切出的件和余料）。
             // 下料按套数报完成，不逐台勾选：开料登记了几套，最多就能报几套。
             'prep' => $isPrep,
+            // 集中开料记录（同一产品、已结束、还有剩的批次）：点「已备料」时按件数领走开料工时。
+            'cutting_runs' => $isPrep ? app(CuttingRunService::class)->availableFor($wo, $op) : null,
             'cutting' => $hasCutting ? [
                 'planned_units' => (int) $wo->planned_qty,
                 'cut_units' => $cutUnits,

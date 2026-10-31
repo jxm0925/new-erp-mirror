@@ -132,8 +132,9 @@ class MfgTaskController extends Controller
     /** 已备料：集中下料提前切好的料，不计时直接交下道。 */
     private function prepare(Request $request, int $id, TaskService $tasks, object $user): string
     {
-        $data = $request->validate(['unit_ids' => 'required|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1', 'remark' => 'nullable|string|max:500']);
-        $result = $tasks->prepare($id, $data['unit_ids'], $data['remark'] ?? null, $user);
+        $data = $request->validate(['unit_ids' => 'required|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1', 'remark' => 'nullable|string|max:500',
+            'cutting_run_id' => 'nullable|integer|min:1']);
+        $result = $tasks->prepare($id, $data['unit_ids'], $data['remark'] ?? null, $user, isset($data['cutting_run_id']) ? (int) $data['cutting_run_id'] : null);
         if ($result['next_operation_name']) return $result['passed'].' 台已备料，交'.$result['next_operation_name'].'。';
         return $result['passed'].' 台已备料，生产完成，'.($result['staged_qty'] ? '已自动记入成品待发区（'.$result['staged_receipt_no'].'）。' : '等入库。');
     }

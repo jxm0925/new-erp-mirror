@@ -63,6 +63,6 @@ Page({
       this.load();
     }).finally(() => this.setData({ busy: false }));
   },
-  openSharedCutting() { wx.navigateTo({ url: '/pages/production/shared-cutting/index' }); },
+  openSharedCutting() { wx.navigateTo({ url: '/pages/production/cutting-run/index' }); },
   back() { view.back(); },
 });

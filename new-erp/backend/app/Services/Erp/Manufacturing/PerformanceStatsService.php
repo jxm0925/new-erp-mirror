@@ -166,6 +166,11 @@ final class PerformanceStatsService
             ->groupBy('work_order_operation_id', 'employee_legacy_id', 'employee_name')
             ->selectRaw('work_order_operation_id, employee_legacy_id, employee_name, SUM(labor_minutes) AS m')->get()->groupBy('work_order_operation_id');
         $participants = DB::table('erp_mfg_task_participants')->where('work_order_id', $wo->id)->where('is_active', true)->get()->groupBy('work_order_operation_id');
+        $runAllocs = DB::table('erp_mfg_cutting_run_allocations as a')->join('erp_mfg_cutting_runs as r', 'r.id', '=', 'a.cutting_run_id')
+            ->where('a.work_order_id', $wo->id)->where('r.status', 'finished')
+            ->groupBy('a.work_order_operation_id', 'a.cutting_run_id', 'r.run_no')
+            ->selectRaw('a.work_order_operation_id, a.cutting_run_id, r.run_no, SUM(a.pieces) AS n, SUM(a.labor_minutes) AS m')->get()->groupBy('work_order_operation_id');
+        $notes = [];
         foreach ($ops as $op) {
             $people = [];
             foreach ($participants->get($op->id, collect()) as $p) $people[(int) $p->employee_legacy_id] = ['name' => $p->employee_name, 'minutes' => 0.0, 'fixed' => $p->share_percent];
@@ -173,10 +178,22 @@ final class PerformanceStatsService
                 $people[(int) $s->employee_legacy_id] ??= ['name' => $s->employee_name, 'minutes' => 0.0, 'fixed' => null];
                 $people[(int) $s->employee_legacy_id]['minutes'] += (float) $s->m;
             }
+            // 集中开料：这道下料用了开料记录的件，带过来的工时按开料的人各自实际计时占比分到人，提成和本道计时的人一起按工时分。
+            foreach ($runAllocs->get($op->id, collect()) as $a) {
+                $runPeople = DB::table('erp_mfg_cutting_run_sessions')->where('cutting_run_id', $a->cutting_run_id)->whereNotNull('ended_at')
+                    ->groupBy('employee_legacy_id', 'employee_name')->selectRaw('employee_legacy_id, employee_name, SUM(labor_minutes) AS m')->get();
+                $runTotal = (float) $runPeople->sum('m');
+                foreach ($people as &$p) $p['fixed'] = null;
+                unset($p);
+                foreach ($runPeople as $rp) {
+                    $people[(int) $rp->employee_legacy_id] ??= ['name' => $rp->employee_name, 'minutes' => 0.0, 'fixed' => null];
+                    $people[(int) $rp->employee_legacy_id]['minutes'] += $runTotal > 0 ? (float) $a->m * (float) $rp->m / $runTotal : 0;
+                }
+                $notes[] = "{$op->operation_name}用了集中开料 {$a->run_no} 的 ".(int) $a->n.' 件，按件数带过来 '.round((float) $a->m, 1).' 分钟开料工时。';
+            }
             $operations[] = $this->operationRow($op->operation_name, $op->status, $op->performance_rate, $people, $fraction, $laborRatio, $ctx);
         }
         $children = [];
-        $notes = [];
         if ((float) $scrapped > 0) $notes[] = "这批报废 {$scrapped} 件，报废那部分工时单独列出（见“工时去向”），不摊到订单。";
         if ($depth < self::MAX_DEPTH) {
             foreach ($this->consumed($wo) as $itemId => $batches) {

@@ -15,6 +15,8 @@ use Illuminate\Support\Facades\DB;
  * - 月度滚动：上月结转（月初未结）+ 本月新做 − 本月出库结算 − 本月报废 = 结转下月。没结算的不会重复累加，只是往后结转，等出库那个月再结。
  * - 提成只在出库时产生：订单折后金额 × 出库占比 × 工序提成比例，按工序参与人份额分。
  * - 发货包装作业：随发货单发运结算。
+ * - 集中开料记录：一批只开一个 BOM，按实际计时；工单下料「已备料」按件数领走，这批的工时按 领走件数 ÷ 总件数 跟着那张工单的产品出库结算，
+ *   没领完的件留在这批里（结余）一直往后结转。提成：那张工单下料工序的提成池按工时占比分给这批开料的人（和在工单上计时的人一起按工时分）。
  * - 客户退货：只记录（哪个月、哪张订单、退了几件、对应哪些工单），不扣工时和提成——退货一般伴随售后，
  *   要按责任人扣，先手动处理。退回的货以后再发出去也不重复结算（每张工单最多按产出件数结算一次）。
  */
@@ -39,6 +41,11 @@ final class PerformanceLedgerService
     private array $returnsByWo = [];
     private array $scraps = [];
     private array $scrapMemo = [];
+    private array $runs = [];
+    private array $runAlloc = [];
+    private array $runShare = [];
+    private array $opRate = [];
+    private array $runMinutes = [];
 
     public function __construct(private readonly ProductionPerformanceCalculator $calc) {}
 
@@ -72,8 +79,10 @@ final class PerformanceLedgerService
                     if ($op['rate'] !== null) {
                         foreach ($events as $e) {
                             $amount = $this->lines[$e['line_id']]['amount'] ?? null;
-                            if ($amount === null) continue;
-                            $commission = bcadd($commission, bcmul(bcmul(bcmul($amount, $e['lf'], 12), $op['rate'], 12), $share, 12), 12);
+                            // 集中开料：每个事件带自己的比例（领用工单下料工序的提成比例 × 这批工时在那道工序里的占比）。
+                            $factor = $op['rate'] === 'event' ? ($e['rf'] ?? '0') : $op['rate'];
+                            if ($amount === null || bccomp($factor, '0', 12) <= 0) continue;
+                            $commission = bcadd($commission, bcmul(bcmul(bcmul($amount, $e['lf'], 12), $factor, 12), $share, 12), 12);
                         }
                     }
                     if (abs($opening) < 0.05 && abs($new) < 0.05 && abs($settled) < 0.05 && abs($scrap) < 0.05 && bccomp($commission, '0', 4) === 0) continue;
@@ -111,7 +120,7 @@ final class PerformanceLedgerService
             'labor_adjustment' => null, 'commission_adjustment' => null, 'adjustment_status' => '待定（售后按责任手动处理）'];
         usort($returns, fn ($a, $b) => $a['date'] <=> $b['date']);
         return ['month' => $month, 'start' => $start, 'end' => $end, 'employees' => $out, 'returns' => $returns, 'totals' => $this->roundRow($totals, $amounts), 'amount_visible' => $amounts,
-            'rule' => '月初未结（上月结转）+ 本月新做 − 本月出库结算 − 本月报废 = 结转下月。报废的工时单独列出，不摊给合格品。工时挂在做出来的产品上，产品出库（或被装进的整机出库）那个月才结算，没出库的往后结转，不会重复累加。'];
+            'rule' => '月初未结（上月结转）+ 本月新做 − 本月出库结算 − 本月报废 = 结转下月。报废的工时单独列出，不摊给合格品。工时挂在做出来的产品上，产品出库（或被装进的整机出库）那个月才结算，没出库的往后结转，不会重复累加。集中开料按实际计时，工单领几件带走几件的工时（这批总工时 ÷ 总件数 × 件数），没领的留在开料记录里往后结转。'];
     }
 
     /** 按工单看工时对应的产品去向：已出库多少、已领用待出库多少、在库多少；已结算 / 未结算工时。 */
@@ -122,7 +131,7 @@ final class PerformanceLedgerService
         $keyword = trim((string) ($filters['keyword'] ?? ''));
         $rows = [];
         foreach ($this->units() as $unit) {
-            if ($unit['kind'] !== 'work_order') continue;
+            if (! in_array($unit['kind'], ['work_order', 'cut'], true)) continue;
             $total = 0.0;
             foreach ($this->labor[$unit['key']] ?? [] as $emps) foreach ($emps as $r) $total += $this->sumLabor($r, $today, true);
             if ($total <= 0) continue;
@@ -135,7 +144,7 @@ final class PerformanceLedgerService
             if (! empty($filters['only_unsettled']) && $row['unsettled_minutes'] < 0.05) continue;
             $rows[] = $row;
         }
-        usort($rows, fn ($a, $b) => $b['unsettled_minutes'] <=> $a['unsettled_minutes'] ?: $b['work_order_id'] <=> $a['work_order_id']);
+        usort($rows, fn ($a, $b) => $b['unsettled_minutes'] <=> $a['unsettled_minutes'] ?: ($b['work_order_id'] ?? 0) <=> ($a['work_order_id'] ?? 0));
         $page = max(1, (int) ($filters['page'] ?? 1));
         $per = min(50, max(1, (int) ($filters['per_page'] ?? 20)));
         $sum = fn ($k) => round(array_sum(array_column($rows, $k)), 1);
@@ -148,7 +157,8 @@ final class PerformanceLedgerService
     {
         $this->load();
         $wo = $id ? ($this->wos[$id] ?? null) : collect($this->wos)->first(fn ($w) => $w->work_order_no === trim((string) $no));
-        if (! $wo) throw new WorkOrderDomainException('work_order_not_found', '工单不存在。', 404);
+        if (! $wo && ! $id && ($run = collect($this->runs)->first(fn ($r) => $r->run_no === trim((string) $no)))) return $this->runBatch($run);
+        if (! $wo) throw new WorkOrderDomainException('work_order_not_found', '工单或开料记录不存在。', 404);
         $unit = $this->woUnit($wo);
         $today = now()->toDateString();
         $output = $unit['output'];
@@ -198,7 +208,45 @@ final class PerformanceLedgerService
         $units = [];
         foreach ($this->wos as $wo) if (isset($this->labor['W'.$wo->id])) $units[] = $this->woUnit($wo);
         foreach ($this->packing as $p) $units[] = $p;
+        foreach ($this->runs as $r) if (isset($this->labor['C'.$r->id])) $units[] = $this->runUnit($r);
         return $units;
+    }
+
+    private function runUnit(object $r): array
+    {
+        $n = (float) $r->total_pieces;
+        return ['key' => 'C'.$r->id, 'kind' => 'cut', 'run' => $r, 'output' => $n, 'base' => $n, 'ops' => [0 => ['name' => '集中开料', 'rate' => 'event']]];
+    }
+
+    /** 集中开料记录的产出去向：被哪些工单领走了多少件、出库没有；没领完的结余。 */
+    private function runBatch(object $r): array
+    {
+        $unit = $this->runUnit($r);
+        $today = now()->toDateString();
+        $total = 0.0;
+        foreach ($this->labor[$unit['key']] ?? [] as $emps) foreach ($emps as $rows) $total += $this->sumLabor($rows, $today, true);
+        $per = $unit['base'] > 0 ? $total / $unit['base'] : 0.0;
+        $usage = [];
+        foreach ($this->runAlloc[(int) $r->id] ?? [] as $c) {
+            if (! isset($this->wos[$c['consumer']])) continue;
+            $cu = $this->woUnit($this->wos[$c['consumer']]);
+            $shipped = $cu['base'] > 0 ? max(0, min($c['n'], $c['n'] * $this->shippedQty($cu, $today) / $cu['base'])) : 0.0;
+            $lost = 0.0;
+            foreach ($this->scrapList($c['consumer']) as [$d, $q]) $lost += $cu['base'] > 0 ? $c['n'] * $q / $cu['base'] : 0;
+            $pending = max(0, $c['n'] - $shipped - $lost);
+            $cw = $this->wos[$c['consumer']];
+            $usage[] = ['type' => 'consumed', 'type_label' => '领去做 '.$cw->item_name, 'status_label' => ($pending < 0.0001 ? '已出库' : ($shipped > 0.0001 ? '部分出库' : '已领用，未出库')).($lost > 0.0001 ? '（其中随产品报废 '.round($lost, 2).'）' : ''),
+                'shipped' => $pending < 0.0001, 'target' => $cw->work_order_no, 'target_work_order_id' => (int) $cw->id, 'sales_order_no' => $cw->sales_order_no,
+                'qty' => round($c['n'], 4), 'shipped_qty' => round($shipped, 4), 'pending_qty' => round($pending, 4), 'scrapped_qty' => round($lost, 4), 'date' => $c['date'],
+                'labor_minutes' => round($per * $c['n'], 1)];
+        }
+        $info = $this->unitInfo($unit, $today);
+        if ($info['other_qty'] > 0) $usage[] = ['type' => 'left', 'type_label' => '开了还没领（结余）', 'status_label' => '未领用，工时往后结转', 'shipped' => false, 'target' => '-',
+            'sales_order_no' => null, 'qty' => $info['other_qty'], 'shipped_qty' => 0, 'pending_qty' => $info['other_qty'], 'date' => null, 'labor_minutes' => round($per * $info['other_qty'], 1)];
+        $f = $this->fraction($unit, $today, true);
+        $sf = $this->scrapFraction($unit, $today, true);
+        return ['work_order' => $info + ['labor_minutes' => round($total, 1), 'labor_minutes_per_unit' => $unit['base'] > 0 ? round($per, 2) : null,
+            'settled_minutes' => round($total * $f, 1), 'scrap_minutes' => round($total * $sf, 1), 'unsettled_minutes' => round(max(0, $total * (1 - $f - $sf)), 1)], 'usage' => $usage];
     }
 
     private function woUnit(object $wo): array
@@ -214,6 +262,7 @@ final class PerformanceLedgerService
     private function events(array $unit): array
     {
         if ($unit['kind'] === 'packing') return $unit['events'];
+        if ($unit['kind'] === 'cut') return $this->runEvents($unit['run']);
         $id = (int) $unit['wo']->id;
         if (isset($this->memo[$id])) return $this->memo[$id];
         $this->memo[$id] = [];
@@ -228,6 +277,23 @@ final class PerformanceLedgerService
             }
         }
         return $this->memo[$id] = $events;
+    }
+
+    /** 集中开料：领用工单的产品出库时，按领走件数 ÷ 那张工单投入件数 结算这批的件数；提成比例随事件带上。 */
+    private function runEvents(object $r): array
+    {
+        $key = 'C'.$r->id;
+        if (isset($this->memo[$key])) return $this->memo[$key];
+        $events = [];
+        foreach ($this->runAlloc[(int) $r->id] ?? [] as $c) {
+            if (! isset($this->wos[$c['consumer']])) continue;
+            $cu = $this->woUnit($this->wos[$c['consumer']]);
+            if ($cu['base'] <= 0) continue;
+            $rate = $this->opRate[$c['op']] ?? null;
+            $rf = $rate === null ? '0' : bcmul($rate, $this->runShare[(int) $r->id][$c['consumer']][$c['op']] ?? '0', 12);
+            foreach ($this->events($cu) as $e) $events[] = ['qty' => $c['n'] * $e['qty'] / $cu['base'], 'rf' => $rf] + $e;
+        }
+        return $this->memo[$key] = $events;
     }
 
     /** 同一批产品最多按产出件数结算一次：退回后再发出去的，超出部分不再计工时和提成。 */
@@ -264,9 +330,9 @@ final class PerformanceLedgerService
     /** 报废比例：截至某天审批通过的报废件数 ÷ 投入件数。 */
     private function scrapFraction(array $unit, string $date, bool $inclusive): float
     {
-        if ($unit['kind'] !== 'work_order' || ($unit['base'] ?? 0) <= 0) return 0.0;
+        if (! in_array($unit['kind'], ['work_order', 'cut'], true) || ($unit['base'] ?? 0) <= 0) return 0.0;
         $q = 0.0;
-        foreach ($this->scrapList((int) $unit['wo']->id) as [$d, $n]) if ($inclusive ? $d <= $date : $d < $date) $q += $n;
+        foreach ($unit['kind'] === 'cut' ? $this->runScrapList((int) $unit['run']->id) : $this->scrapList((int) $unit['wo']->id) as [$d, $n]) if ($inclusive ? $d <= $date : $d < $date) $q += $n;
         return min(1.0, $q / $unit['base']);
     }
 
@@ -284,6 +350,19 @@ final class PerformanceLedgerService
         return $this->scrapMemo[$id] = $list;
     }
 
+    /** 集中开料的件随领用工单的产品报废的件数。 */
+    private function runScrapList(int $runId): array
+    {
+        $list = [];
+        foreach ($this->runAlloc[$runId] ?? [] as $c) {
+            if (! isset($this->wos[$c['consumer']])) continue;
+            $cu = $this->woUnit($this->wos[$c['consumer']]);
+            if ($cu['base'] <= 0) continue;
+            foreach ($this->scrapList($c['consumer']) as [$d, $n]) $list[] = [$d, $c['n'] * $n / $cu['base']];
+        }
+        return $list;
+    }
+
     private function sumLabor(array $rows, string $date, bool $inclusive): float
     {
         $sum = 0.0;
@@ -299,6 +378,20 @@ final class PerformanceLedgerService
                 'item_name' => $unit['name'], 'sales_order_no' => $unit['order_no'], 'unit_name' => '', 'output_qty' => 1,
                 'shipped_qty' => $shipped ? 1 : 0, 'consumed_pending_qty' => 0, 'in_stock_qty' => 0, 'other_qty' => 0, 'pending_qty' => $shipped ? 0 : 1, 'scrapped_qty' => 0,
                 'status_label' => $shipped ? '已发运' : '未发运'];
+        }
+        if ($unit['kind'] === 'cut') {
+            $r = $unit['run'];
+            $taken = 0.0;
+            foreach ($this->runAlloc[(int) $r->id] ?? [] as $c) foreach ($c['dated'] as [$d, $q]) if ($d <= $date) $taken += $q;
+            $shipped = max(0, min($unit['output'], $this->shippedQty($unit, $date)));
+            $lost = 0.0;
+            foreach ($this->runScrapList((int) $r->id) as [$d, $n]) if ($d <= $date) $lost += $n;
+            $left = max(0, $unit['output'] - $taken);
+            return ['key' => $unit['key'], 'kind' => 'cut', 'work_order_id' => null, 'cutting_run_id' => (int) $r->id, 'work_order_no' => $r->run_no, 'source_label' => '集中开料',
+                'item_name' => $r->output_item_name.'（开料）', 'sales_order_no' => null, 'unit_name' => '件', 'output_qty' => round($unit['output'], 4),
+                'shipped_qty' => round($shipped, 4), 'consumed_pending_qty' => round(max(0, $taken - $shipped - $lost), 4), 'scrapped_inside_qty' => round($lost, 4),
+                'in_stock_qty' => 0, 'other_qty' => round($left, 4), 'left_qty' => round($left, 4), 'pending_qty' => round(max(0, $unit['output'] - $shipped), 4),
+                'returned_qty' => 0, 'scrapped_qty' => 0, 'status_label' => $unit['output'] - $shipped < 0.0001 ? '已全部出库' : ($shipped > 0.0001 ? '部分出库' : '未出库')];
         }
         $wo = $unit['wo'];
         $direct = array_sum(array_map(fn ($e) => $e['date'] <= $date && ($e['type'] ?? 'ship') === 'ship' ? $e['qty'] : 0, $this->direct[$wo->id] ?? []));
@@ -426,19 +519,59 @@ final class PerformanceLedgerService
             $this->labor['W'.$s->work_order_id][(int) $s->work_order_operation_id][(int) $s->employee_legacy_id][] = [$s->d, (float) $s->m];
             $this->shares['W'.$s->work_order_id.'#names'][(int) $s->employee_legacy_id] = $s->employee_name;
         }
-        $woIds = array_map(fn ($k) => (int) substr($k, 1), array_keys($this->labor));
+        $this->loadRuns();
+        $woIds = array_map(fn ($k) => (int) substr($k, 1), array_filter(array_keys($this->labor), fn ($k) => $k[0] === 'W'));
         foreach (DB::table('erp_mfg_work_order_operations')->whereIn('work_order_id', $woIds ?: [0])->get() as $op)
             $this->ops['W'.$op->work_order_id][(int) $op->id] = ['name' => $op->operation_name, 'rate' => $op->performance_rate !== null && (float) $op->performance_rate > 0 ? (string) $op->performance_rate : null];
         $fixed = DB::table('erp_mfg_task_participants')->whereIn('work_order_id', $woIds ?: [0])->where('is_active', true)->get()->groupBy('work_order_operation_id');
         foreach ($this->labor as $key => $opsLabor) {
             if ($key[0] !== 'W') continue;
-            foreach ($opsLabor as $opId => $emps) $this->shares[$key][$opId] = $this->opShares($emps, $fixed->get($opId, collect())->all());
+            foreach ($opsLabor as $opId => $emps) $this->shares[$key][$opId] = $this->opShares($emps, $fixed->get($opId, collect())->all(), $this->runMinutes[(int) substr($key, 1)][$opId] ?? []);
         }
+        // 集中开料在领用工序里的工时占比（这道工序自己计时的人 + 各批开料按领走工时，一起按工时分提成）。
+        foreach ($this->runMinutes as $woId => $opsRuns) foreach ($opsRuns as $opId => $runs) {
+            $own = 0.0;
+            foreach ($this->labor['W'.$woId][$opId] ?? [] as $list) $own += array_sum(array_column($list, 1));
+            $all = $own + array_sum($runs);
+            foreach ($runs as $runId => $m) $this->runShare[$runId][$woId][$opId] = $all > 0 ? bcdiv(number_format($m, 6, '.', ''), number_format($all, 6, '.', ''), 12) : '0';
+        }
+        foreach ($this->runs as $r) if (isset($this->labor['C'.$r->id])) $this->shares['C'.$r->id][0] = $this->opShares($this->labor['C'.$r->id][0], []);
         $this->loadPacking($shipDates);
         foreach (DB::table('erp_inventory_balances')->where('quantity_on_hand', '>', 0)->groupBy('item_id', 'batch_no')->selectRaw('item_id, batch_no, SUM(quantity_on_hand) AS q')->get() as $b) {
             $woId = $this->woByKey[$b->item_id.'|'.$b->batch_no] ?? null;
             if ($woId) $this->stock[$woId] = (float) $b->q;
         }
+    }
+
+    /** 集中开料记录：已结束的批次、各人计时、被哪些工单领走多少件和多少工时。 */
+    private function loadRuns(): void
+    {
+        foreach (DB::table('erp_mfg_cutting_runs')->where('status', 'finished')->where('total_pieces', '>', 0)->get() as $r) $this->runs[(int) $r->id] = $r;
+        if (! $this->runs) return;
+        $ids = array_keys($this->runs);
+        foreach (DB::table('erp_mfg_cutting_run_sessions')->whereIn('cutting_run_id', $ids)->where('status', '!=', 'active')->whereNotNull('ended_at')
+            ->groupBy('cutting_run_id', 'employee_legacy_id', 'employee_name', DB::raw('DATE(ended_at)'))
+            ->selectRaw('cutting_run_id, employee_legacy_id, employee_name, DATE(ended_at) AS d, SUM(labor_minutes) AS m')->get() as $s) {
+            $this->labor['C'.$s->cutting_run_id][0][(int) $s->employee_legacy_id][] = [$s->d, (float) $s->m];
+            $this->shares['C'.$s->cutting_run_id.'#names'][(int) $s->employee_legacy_id] = $s->employee_name;
+        }
+        $rows = DB::table('erp_mfg_cutting_run_allocations')->whereIn('cutting_run_id', $ids)
+            ->groupBy('cutting_run_id', 'work_order_id', 'work_order_operation_id', DB::raw('DATE(created_at)'))
+            ->selectRaw('cutting_run_id, work_order_id, work_order_operation_id, DATE(created_at) AS d, SUM(pieces) AS n, SUM(labor_minutes) AS m')->orderBy('d')->get();
+        $group = [];
+        foreach ($rows as $a) {
+            $k = $a->cutting_run_id.'|'.$a->work_order_id.'|'.$a->work_order_operation_id;
+            $group[$k] ??= ['run' => (int) $a->cutting_run_id, 'consumer' => (int) $a->work_order_id, 'op' => (int) $a->work_order_operation_id, 'n' => 0.0, 'm' => 0.0, 'date' => $a->d, 'dated' => []];
+            $group[$k]['n'] += (float) $a->n;
+            $group[$k]['m'] += (float) $a->m;
+            $group[$k]['dated'][] = [$a->d, (float) $a->n];
+        }
+        foreach ($group as $g) {
+            $this->runAlloc[$g['run']][] = $g;
+            $this->runMinutes[$g['consumer']][$g['op']][$g['run']] = ($this->runMinutes[$g['consumer']][$g['op']][$g['run']] ?? 0) + $g['m'];
+        }
+        foreach (DB::table('erp_mfg_work_order_operations')->whereIn('id', array_unique(array_column($group, 'op')) ?: [0])->get(['id', 'performance_rate']) as $op)
+            $this->opRate[(int) $op->id] = $op->performance_rate !== null && (float) $op->performance_rate > 0 ? (string) $op->performance_rate : null;
     }
 
     /**
@@ -514,9 +647,18 @@ final class PerformanceLedgerService
         }
     }
 
-    /** 份额：每人都填了固定份额且合计 100% 按固定份额，否则按实际工时占比。 */
-    private function opShares(array $emps, array $participants): array
+    /**
+     * 份额：每人都填了固定份额且合计 100% 按固定份额，否则按实际工时占比。
+     * 这道工序还用了集中开料（$runs：批次 => 领走工时）时一律按工时分，开料那部分算给开料的人（runShare），这里只返回本道计时的人的份额。
+     */
+    private function opShares(array $emps, array $participants, array $runs = []): array
     {
+        if ($runs) {
+            $own = [];
+            foreach ($emps as $id => $list) $own[$id] = array_sum(array_column($list, 1));
+            $all = array_sum($own) + array_sum($runs);
+            return array_map(fn ($m) => $all > 0 ? bcdiv(number_format($m, 6, '.', ''), number_format($all, 6, '.', ''), 12) : '0', $own);
+        }
         $fixed = $participants !== [] && collect($participants)->every(fn ($p) => $p->share_percent !== null) && abs(collect($participants)->sum(fn ($p) => (float) $p->share_percent) - 100) < 0.01;
         if ($fixed) return collect($participants)->mapWithKeys(fn ($p) => [(int) $p->employee_legacy_id => bcdiv((string) $p->share_percent, '100', 8)])->all();
         $rows = [];

@@ -92,6 +92,7 @@ final class SharedCuttingService
         $page = MfgCuttingBatch::query()->where('batch_scope', 'shared')
             ->when(! empty($filters['status']), fn ($q) => $q->where('status', $filters['status']))
             ->when(! empty($filters['item_id']), fn ($q) => $q->where('item_id', (int) $filters['item_id']))
+            ->when(! empty($filters['cutting_run_id']), fn ($q) => $q->where('cutting_run_id', (int) $filters['cutting_run_id']))
             ->orderByRaw("status = 'issued' DESC")->orderByDesc('id')
             ->paginate($filters['per_page'] ?? 20, ['*'], 'page', $filters['page'] ?? 1);
         $names = Item::query()->whereIn('id', $page->getCollection()->pluck('item_id')->unique())->get(['id', 'item_code', 'item_name', 'spec', 'model'])->keyBy('id');
@@ -131,6 +132,11 @@ final class SharedCuttingService
                 return $this->detail($old, $amounts);
             }
             $item = $this->sharedItem((int) $data['item_id'], true);
+            // 一次只开一个 BOM：领板必须挂在一条还在开的开料记录上，且这种板在那个 BOM 里。
+            $run = \App\Models\Erp\MfgCuttingRun::query()->lockForUpdate()->find((int) ($data['cutting_run_id'] ?? 0));
+            if (! $run || $run->status !== 'running') $this->fail('cutting_run_required', '请先在「集中开料」里选 BOM 开始一批，再从那一批里领板。');
+            if (! collect($run->lines)->contains(fn ($l) => (int) $l['component_item_id'] === (int) $item->id))
+                $this->fail('cutting_run_item_invalid', $run->output_item_name.' 的 BOM 里不用这种板，不能在这一批里领。');
             $requested = $data['sources'];
             usort($requested, fn ($a, $b) => [(int) $a['inventory_balance_id'], (int) $a['physical_material_id']] <=> [(int) $b['inventory_balance_id'], (int) $b['physical_material_id']]);
             $sources = []; $seen = []; $total = '0.0000';
@@ -149,7 +155,7 @@ final class SharedCuttingService
             }
             if (! $sources) $this->fail('source_required', '请选择要切的板材。');
             $batch = MfgCuttingBatch::create([
-                'batch_no' => $this->numbers->next('mfg_cutting_batch', 'MCB'), 'batch_scope' => 'shared', 'item_id' => $item->id,
+                'batch_no' => $this->numbers->next('mfg_cutting_batch', 'MCB'), 'batch_scope' => 'shared', 'item_id' => $item->id, 'cutting_run_id' => $run->id,
                 'work_order_id' => null, 'work_order_operation_id' => null, 'status' => 'issued', 'business_version' => 1,
                 'unit_qty' => 0, 'completed_unit_qty' => 0, 'idempotency_key' => $data['idempotency_key'], 'request_hash' => $hash,
                 'bom_snapshot' => [], 'input_lines' => $sources, 'planned_outputs' => [], 'input_cost_amount' => $total,
@@ -315,7 +321,7 @@ final class SharedCuttingService
         $inputs = collect($batch->input_lines);
         $input = '0.00000000';
         foreach ($inputs as $row) $input = bcadd($input, (string) $row['input_measure'], 8);
-        $row = $batch->only(['id', 'batch_no', 'item_id', 'status', 'business_version', 'input_cost_amount', 'remnant_cost_amount', 'net_cost_amount',
+        $row = $batch->only(['id', 'batch_no', 'item_id', 'cutting_run_id', 'status', 'business_version', 'input_cost_amount', 'remnant_cost_amount', 'net_cost_amount',
             'issued_by_name', 'settled_by_name', 'issued_at', 'settled_at', 'remark']) + [
             'item_code' => $item?->item_code, 'item_name' => $item?->item_name, 'specification' => $item?->spec ?: $item?->model,
             'sheet_count' => $inputs->count(), 'input_measure' => $input, 'pool_measure' => (string) $batch->pool_measure,

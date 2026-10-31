@@ -144,6 +144,7 @@ final class TaskService
                 $this->fail('already_timing', '你还有别的工序在计时，请先暂停那一道。');
             if (ShipmentPackingLaborSession::query()->where('employee_legacy_id', $me)->where('status', 'ACTIVE')->lockForUpdate()->first(['id']))
                 $this->fail('already_timing', '你有打包作业正在计时，请先暂停。');
+            if ($no = CuttingRunService::activeFor($me)) $this->fail('already_timing', "你在集中开料 {$no} 还在计时，请先暂停那一批。");
             $units = $this->selectableUnits($op);
             if ($units->isEmpty()) $this->fail('no_unit', '这道工序现在没有要做的设备，等前道交过来再开始。');
             // 本道的料（总装的半成品、外购件）收到才能开工；板材／管材在本道开工后开料，报合格时再查。
@@ -239,10 +240,10 @@ final class TaskService
      * 已备料：集中下料提前切好的料，下料工序不计时，确认备好几台后直接交下道。
      * 只用于用按数量管理的板材／管材的工序；本道的料按 BOM 定额从库存扣（还没收的当场收），计入本工单材料成本。
      */
-    public function prepare(int $opId, array $unitIds, ?string $remark, object $actor): array
+    public function prepare(int $opId, array $unitIds, ?string $remark, object $actor, ?int $cuttingRunId = null): array
     {
         $this->closeOverdueSessions();
-        return DB::transaction(function () use ($opId, $unitIds, $remark, $actor) {
+        return DB::transaction(function () use ($opId, $unitIds, $remark, $actor, $cuttingRunId) {
             [$wo, $op] = $this->lockTask($opId);
             $this->assertRunnable($wo, $op);
             $sheet = in_array((int) $op->id, MaterialIssueService::cuttingOperationIds((int) $wo->id), true);
@@ -266,6 +267,8 @@ final class TaskService
             // 逐张板材：集中开料切好的件，按定额从开料池扣量计成本。
             if ($sheet) app(SharedCuttingService::class)->allocate($wo, $op, $upTo, $firstTime, $actor);
             $this->materials->assertCutForPass($wo, $op, $firstTime);
+            // 集中开料记录：按件数领走这批的实际开料工时（这批总工时 × 领走件数 ÷ 这批总件数）。
+            app(CuttingRunService::class)->allocate($wo, $op, $firstTime, $actor, $cuttingRunId);
             $this->markStarted($wo, $op, $actor);
             if ($op->status !== 'in_progress') $op->update(['status' => 'in_progress']);
             $reportedAt = now();

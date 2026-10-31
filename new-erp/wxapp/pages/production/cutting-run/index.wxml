@@ -1,0 +1,100 @@
+<view class="mt-page">
+  <view class="mt-tabs">
+    <view class="mt-tab {{tab === 'runs' ? 'on' : ''}}" data-tab="runs" bindtap="pickTab">开料记录</view>
+    <view class="mt-tab {{tab === 'new' ? 'on' : ''}}" data-tab="new" bindtap="pickTab">新开一批</view>
+  </view>
+  <view wx:if="{{error}}" class="mt-error">{{error}}</view>
+
+  <block wx:if="{{tab === 'runs'}}">
+    <view class="mt-muted mt-gap">一次只开一个 BOM 的料，按实际时间计时。工单下料点「已备料」时按件数领走工时：这批总工时 ÷ 总件数 × 领走件数。</view>
+    <view wx:if="{{loading}}" class="mt-empty">正在读取</view>
+    <view wx:if="{{!loading && !runs.length}}" class="mt-empty">还没有开料记录，点上面「新开一批」</view>
+    <view wx:for="{{runs}}" wx:key="id" class="mt-card" data-id="{{item.id}}" bindtap="openRunTap">
+      <view class="mt-row"><text class="mono">{{item.run_no}}</text><text class="mt-tag {{item.status === 'running' ? 'amber' : 'gray'}}">{{item.status_label}}</text></view>
+      <view class="mt-product">{{item.output_item_name}} <text class="mt-muted">{{item.bom_no}}</text></view>
+      <view class="mt-muted" wx:if="{{item.status === 'running'}}">开 {{item.set_qty}} 套 · 已用 {{item.laborText}}<text wx:if="{{item.timing_names.length}}"> · {{item.timing_names.length}} 人计时中</text></view>
+      <view class="mt-muted" wx:else>{{item.total_pieces}} 件 · {{item.laborText}} · 已领 {{item.allocated_pieces}} 件 · 剩 {{item.left_pieces}} 件</view>
+      <view class="mt-muted">{{item.started_by_name}} {{item.startedText}}</view>
+    </view>
+    <view wx:if="{{lastPage > 1}}" class="mt-row mt-gap">
+      <text class="tk-link {{page <= 1 ? 'off' : ''}}" data-delta="-1" bindtap="turnPage">上一页</text><text class="mt-muted">{{page}} / {{lastPage}}</text><text class="tk-link {{page >= lastPage ? 'off' : ''}}" data-delta="1" bindtap="turnPage">下一页</text>
+    </view>
+  </block>
+
+  <block wx:if="{{tab === 'new'}}">
+    <view class="mt-search">
+      <input class="mt-input" value="{{keyword}}" bindinput="keywordInput" placeholder="搜产品 / BOM 号" confirm-type="search" bindconfirm="loadBoms" />
+      <button class="mt-btn mt-btn-mini" bindtap="loadBoms">查询</button>
+    </view>
+    <view wx:if="{{bomLoading}}" class="mt-empty">正在读取</view>
+    <view wx:if="{{!bomLoading && !boms.length}}" class="mt-empty">没有带下料尺寸的 BOM</view>
+    <view class="mt-card" wx:if="{{boms.length}}">
+      <view wx:for="{{boms}}" wx:key="bom_id" class="cr-bom {{picked && picked.bom_id === item.bom_id ? 'on' : ''}}" data-index="{{index}}" bindtap="pickBom">
+        <view class="mt-row"><text class="mt-product">{{item.item_name}}</text><text class="mt-muted">{{item.bom_no}}</text></view>
+        <view class="cr-need">
+          <text>每套 {{item.pieces_per_set}} 件</text>
+          <text class="{{item.need_sets > item.stock_sets ? 'short' : ''}}">工单还要 {{item.need_sets}} 套</text>
+          <text>已开未领 {{item.stock_sets}} 套</text>
+          <text wx:if="{{item.running}}" class="mt-tag amber">{{item.running}} 批开料中</text>
+        </view>
+        <view class="mt-muted">{{item.linesText}}</view>
+      </view>
+    </view>
+  </block>
+</view>
+
+<view wx:if="{{tab === 'new' && picked}}" class="mt-footer">
+  <view class="mt-kv">
+    <text class="k">{{picked.item_name}} 开几套</text>
+    <view class="ct-step">
+      <text class="ct-step-btn {{setQty <= 1 ? 'off' : ''}}" data-delta="-1" bindtap="changeSet">−</text>
+      <input class="ct-step-input" type="number" value="{{setQty}}" bindblur="setInput" />
+      <text class="ct-step-btn" data-delta="1" bindtap="changeSet">+</text>
+    </view>
+  </view>
+  <button class="mt-btn" disabled="{{busy}}" bindtap="startRun">开始开料并计时</button>
+</view>
+
+<view wx:if="{{panel === 'run'}}" class="tk-mask" catchtouchmove="stop">
+  <view class="tk-sheet">
+    <view class="mt-row tk-sheet-head"><text class="mt-title mono">{{run.run_no}}</text><text class="mt-tag {{run.status === 'running' ? 'amber' : 'gray'}}">{{run.status_label}}</text></view>
+    <scroll-view scroll-y class="tk-sheet-body">
+      <view class="mt-product">{{run.output_item_name}} <text class="mt-muted">{{run.bom_no}} · 开 {{run.set_qty}} 套</text></view>
+      <view class="cr-timer">{{run.status === 'running' ? liveText : run.laborText}}</view>
+      <view class="mt-muted" wx:if="{{run.status !== 'running'}}">{{run.total_pieces}} 件，每件 {{run.minutes_per_piece}} 分钟；已领 {{run.allocated_pieces}} 件（{{run.allocatedText}}），剩 {{run.left_pieces}} 件</view>
+      <view class="mt-card-title mt-gap">开料的人（按各自实际计时）</view>
+      <view wx:for="{{run.people}}" wx:key="employee_legacy_id" class="cr-person"><text>{{item.employee_name}}</text><text class="{{item.timing ? 'on' : ''}}">{{item.timing ? '计时中 · ' : ''}}{{item.minutesText}}</text></view>
+
+      <block wx:if="{{run.sheet_items.length && run.status === 'running'}}">
+        <view class="mt-card-title mt-gap">板材（逐张管理，要领板、切完登记余料）</view>
+        <view wx:for="{{run.sheet_items}}" wx:key="item_id" class="mt-row"><text>{{item.item_name}}</text><text class="tk-link green" data-index="{{index}}" bindtap="openSheet">领板 ›</text></view>
+      </block>
+      <view wx:if="{{run.sheet_batches.length}}" class="mt-row mt-gap"><text class="mt-muted">领板 {{run.sheet_batches.length}} 批</text><text class="tk-link" bindtap="openSheetBatches">登记余料 / 查看 ›</text></view>
+
+      <view class="mt-card-title mt-gap">{{run.status === 'running' ? '切了多少件（切完按实际改）' : '每种料的件数'}}</view>
+      <view wx:for="{{run.lines}}" wx:key="line_key" class="cr-line">
+        <text class="k">{{item.component_item_name}} {{item.sizeText}}<text class="mt-muted">（每套 {{item.per_set}}）</text></text>
+        <block wx:if="{{run.status === 'running'}}">
+          <input class="ct-input" type="number" value="{{item.input}}" data-index="{{index}}" bindinput="piecesInput" /><text>件</text>
+        </block>
+        <text wx:else>{{item.actual_pieces}} 件 · 已领 {{item.allocated_pieces}} · 剩 {{item.left_pieces}}</text>
+      </view>
+      <textarea wx:if="{{run.status === 'running'}}" class="tk-textarea mt-gap" value="{{finishRemark}}" maxlength="500" placeholder="说明（可不填）" bindinput="finishRemarkInput" />
+
+      <block wx:if="{{run.status !== 'running'}}">
+        <view class="mt-card-title mt-gap">被哪些工单领走</view>
+        <view wx:if="{{!run.allocations.length}}" class="mt-muted">还没有工单领用，工单下料点「已备料」时按件数领</view>
+        <view wx:for="{{run.allocations}}" wx:key="index" class="mt-muted"><text class="mono">{{item.work_order_no}}</text> {{item.item_name}} · {{item.unit_qty}} 套 · {{item.pieces}} 件 · {{item.labor_minutes}} 分钟 · {{item.date}}</view>
+      </block>
+    </scroll-view>
+    <view class="tk-sheet-foot">
+      <button class="mt-btn ghost side" disabled="{{busy}}" bindtap="closePanel">关闭</button>
+      <block wx:if="{{run.status === 'running'}}">
+        <button wx:if="{{!run.my.timing}}" class="mt-btn ghost side" disabled="{{busy}}" data-action="start" bindtap="timing">{{run.my.joined ? '继续计时' : '我也参与，开始计时'}}</button>
+        <button wx:else class="mt-btn ghost side" disabled="{{busy}}" data-action="pause" bindtap="timing">暂停我的计时</button>
+        <button class="mt-btn" disabled="{{busy}}" bindtap="finish">切完结束</button>
+      </block>
+    </view>
+    <view wx:if="{{run.status === 'running' && !run.sheet_batches.length}}" class="tk-link mt-gap" style="text-align:center;color:#c0392b" bindtap="cancelRun">开错了，作废这批</view>
+  </view>
+</view>
