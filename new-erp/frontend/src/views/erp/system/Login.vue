@@ -158,6 +158,7 @@ export default {
           is_department_principal: !!data.is_department_principal
         }))
         localStorage.setItem('erp_permissions', JSON.stringify(data.permissions || []))
+        localStorage.setItem('erp_menus', JSON.stringify(data.menus || []))
         this.$router.replace(this.$route.query.redirect || '/console')
       } catch (error) {
         this.$message.error(error.userMessage || '登录失败')

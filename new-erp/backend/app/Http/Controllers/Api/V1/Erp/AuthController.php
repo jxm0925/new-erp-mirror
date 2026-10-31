@@ -57,6 +57,7 @@ class AuthController extends Controller
             'user' => $user,
             'data_scope' => $auth->dataScope($user),
             'permissions' => $auth->permissionCodes($user),
+            'menus' => $auth->menuTree($user),
             'is_super_admin' => $auth->isSuperAdmin($user),
             'is_department_principal' => $auth->isDepartmentPrincipal($user),
         ]);
@@ -129,6 +130,7 @@ class AuthController extends Controller
             'user' => $user,
             'data_scope' => $authContext->dataScope($user),
             'permissions' => $authContext->permissionCodes($user),
+            'menus' => $authContext->menuTree($user),
             'is_super_admin' => $authContext->isSuperAdmin($user),
             'is_department_principal' => $authContext->isDepartmentPrincipal($user),
         ]);

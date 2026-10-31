@@ -6,7 +6,7 @@ import axios from 'axios'
 // 所有 ERP 接口客户端都必须由这里创建：此前各模块各自 axios.create，只有主数据客户端
 // 处理 401，生产/下料页面在令牌过期后停在原页反复报错而不回登录页。
 // 统一后各客户端只保留超时和兜底提示的差异，令牌、401 清理和错误文案提取只有一处实现。
-const SESSION_KEYS = ['erp_token', 'erp_user', 'erp_me', 'erp_permissions']
+const SESSION_KEYS = ['erp_token', 'erp_user', 'erp_me', 'erp_permissions', 'erp_menus']
 
 function firstValidationMessage(errors) {
   if (!errors) return ''

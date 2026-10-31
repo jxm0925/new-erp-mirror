@@ -130,8 +130,6 @@ class RbacBootstrapService
         'system.business_staff.save' => 'system.department.save',
         'system.business_staff.delete' => 'system.department.delete',
         'purchase.production_shortage' => 'purchase.request.create',
-        // 提成与工时统计从提成模板派生：能看提成模板的角色同步看到统计菜单。
-        'production.performance_stats' => 'production.performance',
         // 盘点、调拨从手工调整派生：能做调整的角色同步获得对应能力。
         'inventory.stocktake' => 'inventory.adjustment',
         'inventory.stocktake.view' => 'inventory.adjustment.view',
@@ -230,7 +228,7 @@ class RbacBootstrapService
         return [
             // 一级模块 (7 大模块)
             ['master', '主数据中心', 'menu', null, null, null, 'el-icon-s-grid', 100],
-            ['production', '生产管理', 'menu', null, null, null, 'el-icon-s-operation', 800],
+            ['production', '生产管理', 'menu', null, null, null, 'el-icon-s-operation', 50],
             ['purchase', '采购管理', 'menu', null, null, null, 'el-icon-shopping-cart-2', 200],
             ['inventory', '库存管理', 'menu', null, null, null, 'el-icon-house', 300],
             ['bom', 'BOM管理', 'menu', null, null, null, 'el-icon-connection', 400],
@@ -241,7 +239,7 @@ class RbacBootstrapService
 
             ['production.work_order', '工单管理', 'menu', 'production', '/production/work-orders', 'WorkOrderList', 'el-icon-s-order', 802],
             ['production.board', '生产作业看板', 'menu', 'production', '/production/board', 'ProductionBoard', 'el-icon-data-board', 802],
-            ['production.tech', '定制技术', 'menu', 'production', '/production/tech', 'ProductionTechList', 'el-icon-edit-outline', 802],
+            ['production.tech', '定制工艺管理', 'menu', 'production', '/production/tech', 'ProductionTechList', 'el-icon-edit-outline', 802],
             ['production.serial', '序列号查询', 'menu', 'production', '/production/serials', 'ProductionSerialTrace', 'el-icon-search', 802],
             ['production.performance_stats', '提成与工时统计', 'menu', 'production', '/production/performance/orders', 'ProductionPerformanceStats', 'el-icon-money', 802],
             ['production.base', '生产基础', 'menu', 'production', null, null, 'el-icon-setting', 803],
@@ -250,7 +248,7 @@ class RbacBootstrapService
             ['production.performance', '提成模板', 'menu', 'production.base', '/production/performance/templates', 'ProductionPerformanceTemplates', 'el-icon-coin', 806],
 
             // 1. 主数据中心 二级菜单
-            ['master.product', '产品管理', 'menu', 'master', '/master/products', 'ProductList', 'el-icon-goods', 101],
+            ['master.product', '商品管理', 'menu', 'master', '/master/products', 'ProductList', 'el-icon-goods', 101],
             ['master.sku', 'SKU管理', 'menu', 'master', '/master/skus', 'SkuList', 'el-icon-box', 102],
             ['master.item', '物料管理', 'menu', 'master', '/master/items', 'ItemList', 'el-icon-coin', 103],
             ['item_category.view', '物料类目', 'menu', 'master', '/master/categories', 'ItemCategoryList', 'el-icon-folder-opened', 104],
@@ -419,7 +417,7 @@ class RbacBootstrapService
             // 5. 销售管理 二级菜单
             ['sales.customer', '客户管理', 'menu', 'sales', '/sales/customers', 'SalesCustomerList', 'el-icon-user', 501],
             ['sales.order', '销售订单', 'menu', 'sales', '/sales/orders', 'SalesOrderList', 'el-icon-s-order', 502],
-            ['sales.shipment', '销售发货', 'menu', 'sales', '/sales/shipments', 'SalesShipmentBoard', 'el-icon-truck', 503],
+            ['sales.shipment', '销售发货单', 'menu', 'sales', '/sales/shipments', 'SalesShipmentBoard', 'el-icon-truck', 503],
             ['sales.return', '销售退货', 'menu', 'sales', '/sales/returns', 'ReturnList', 'el-icon-refresh-left', 503],
 
             // 销售管理 按钮
@@ -503,6 +501,7 @@ class RbacBootstrapService
             ['finance.receipt', '收款管理', 'menu', 'finance', '/finance/receipts', 'FinanceCashList', 'el-icon-money', 601],
             ['finance.payment', '付款管理', 'menu', 'finance', '/finance/payments', 'FinanceCashList', 'el-icon-wallet', 602],
             ['finance.payable', '应付管理', 'menu', 'finance', '/finance/payables', 'FinancePayableList', 'el-icon-tickets', 603],
+            ['finance.statistics', '财务统计', 'menu', 'finance', '/finance/statistics', 'FinanceDashboard', 'el-icon-data-analysis', 603],
             ['finance.supplier-ledger', '供应商往来', 'menu', 'finance', '/finance/supplier-ledgers', 'FinanceSupplierLedgerList', 'el-icon-office-building', 604],
             ['finance.invoice', '发票管理', 'menu', 'finance', '/finance/invoices', 'FinanceInvoiceList', 'el-icon-document-copy', 605],
             ['finance.allocation', '往来核销', 'menu', 'finance', '/finance/allocations', 'FinanceAllocationList', 'el-icon-connection', 606],

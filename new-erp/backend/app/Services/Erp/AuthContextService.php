@@ -143,4 +143,62 @@ class AuthContextService
             ->values()
             ->all();
     }
+
+    /**
+     * 左侧导航：完全来自菜单管理（名称、图标、排序、停用、层级都以库里为准）。
+     * 菜单本身或其下任一权限被授予即可见；停用的菜单连同下级一起隐藏；没有路径也没有可见下级的分组不显示。
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function menuTree(object $user): array
+    {
+        $rows = DB::table('erp_rbac_permissions')->where('enabled', true)
+            ->orderBy('sort')->orderBy('id')
+            ->get(['id', 'parent_id', 'code', 'name', 'type', 'path', 'icon']);
+        $granted = array_flip($this->permissionCodes($user));
+        $super = $this->isSuperAdmin($user);
+        $children = [];
+        foreach ($rows as $row) $children[(int) $row->parent_id][] = $row;
+
+        $build = function (int $parentId) use (&$build, $children, $granted, $super): array {
+            $nodes = [];
+            foreach ($children[$parentId] ?? [] as $row) {
+                $sub = $build((int) $row->id);
+                if ($row->type !== 'menu') continue;
+                $subMenus = array_values(array_filter($sub, fn ($node) => $node['is_menu']));
+                $visible = $super || isset($granted[$row->code]) || array_filter($sub, fn ($node) => $node['granted']);
+                $nodes[] = [
+                    'is_menu' => true,
+                    'granted' => (bool) $visible,
+                    'code' => $row->code,
+                    'name' => $row->name,
+                    'path' => $row->path ?: null,
+                    'icon' => $row->icon ?: null,
+                    'children' => $subMenus,
+                ];
+            }
+            // 按钮只用来判断上级菜单是否可见。
+            foreach ($children[$parentId] ?? [] as $row) {
+                if ($row->type === 'menu') continue;
+                $sub = $build((int) $row->id);
+                $nodes[] = ['is_menu' => false, 'granted' => isset($granted[$row->code]) || (bool) array_filter($sub, fn ($node) => $node['granted'])];
+            }
+
+            return $nodes;
+        };
+
+        $prune = function (array $nodes) use (&$prune): array {
+            $out = [];
+            foreach ($nodes as $node) {
+                if (! $node['is_menu'] || ! $node['granted']) continue;
+                $kids = $prune($node['children']);
+                if (! $node['path'] && ! $kids) continue;
+                $out[] = ['code' => $node['code'], 'name' => $node['name'], 'path' => $node['path'], 'icon' => $node['icon'], 'children' => $kids];
+            }
+
+            return $out;
+        };
+
+        return $prune($build(0));
+    }
 }

@@ -165,81 +165,8 @@ import { connectApprovalTasks, connectInventoryAlerts, disconnectRealtime } from
 
 export default {
   data: () => ({
-    masterMenus: [
-      { name: '商品管理', path: '/master/products', icon: 'el-icon-goods', permission: 'master.product' },
-      { name: 'SKU管理', path: '/master/skus', icon: 'el-icon-box', permission: 'master.sku' },
-      { name: '物料管理', path: '/master/items', icon: 'el-icon-coin', permission: ['master.item', 'master.item.view', 'item_category.view'] },
-      { name: 'SKU-物料默认关系', path: '/master/sku-item-relations', icon: 'el-icon-connection', permission: 'master.sku_item_relation' },
-      { name: '基础档案', path: '/master/base-archives', icon: 'el-icon-files', permission: 'master.base_archive' },
-      { name: '供应商管理', path: '/master/suppliers', icon: 'el-icon-truck', permission: 'master.supplier' },
-      { name: '仓库与库位', path: '/master/warehouse-locations', icon: 'el-icon-office-building', permission: 'master.warehouse_location' },
-      { name: '数据导入', path: '/master/imports', icon: 'el-icon-upload2', permission: 'master.import' }
-    ],
-    purchaseMenus: [
-      { name: '采购需求', path: '/purchase/requests', icon: 'el-icon-shopping-cart-2', permission: 'purchase.request' },
-      { name: '采购计划', path: '/purchase/plans', icon: 'el-icon-document', permission: 'purchase.plan' },
-      { name: '采购订单', path: '/purchase/orders', icon: 'el-icon-s-order', permission: 'purchase.order' },
-      { name: '采购到货', path: '/purchase/receipts', icon: 'el-icon-box', permission: 'purchase.receipt' },
-      { name: '采购退货', path: '/purchase/returns', icon: 'el-icon-refresh-left', permission: 'purchase.return' },
-      { name: '生产缺料', path: '/purchase/production-shortages', icon: 'el-icon-warning-outline', permission: 'purchase.production_shortage' }
-    ],
-    inventoryMenus: [
-      { name: '库存过账工作台', path: '/inventory/posting', icon: 'el-icon-finished', permission: 'inventory.posting' },
-      { name: '库存余额', path: '/inventory/balances', icon: 'el-icon-coin', permission: 'inventory.balance' },
-      { name: '库存流水', path: '/inventory/transactions', icon: 'el-icon-tickets', permission: 'inventory.transaction' },
-      { name: '手工调整', path: '/inventory/adjustments', icon: 'el-icon-edit-outline', permission: 'inventory.adjustment' },
-      { name: '库存预警', path: '/inventory/alerts', icon: 'el-icon-warning-outline', permission: 'inventory.alert' },
-      { name: '生产退料审核', path: '/inventory/material-returns', icon: 'el-icon-refresh-left', permission: 'inventory.material_return' },
-      { name: '生产配料', path: '/inventory/material-deliveries', icon: 'el-icon-truck', permission: 'inventory.material_delivery' },
-      { name: '库存盘点', path: '/inventory/stocktakes', icon: 'el-icon-s-check', permission: 'inventory.stocktake' },
-      { name: '库存调拨', path: '/inventory/transfers', icon: 'el-icon-sort', permission: 'inventory.transfer' }
-    ],
-    bomMenus: [
-      { name: 'BOM管理', path: '/bom/boms', icon: 'el-icon-connection', permission: 'bom.manage' },
-      { name: 'BOM展开', path: '/bom/expand', icon: 'el-icon-share', permission: 'bom.expand' }
-    ],
-    salesMenus: [
-      { name: '客户管理', path: '/sales/customers', icon: 'el-icon-user', permission: 'sales.customer' },
-      { name: '销售订单', path: '/sales/orders', icon: 'el-icon-s-order', permission: 'sales.order' },
-      { name: '销售发货单', path: '/sales/shipments', icon: 'el-icon-truck', permission: ['sales_order.shipment.view', 'sales_order.shipment.packing.execute', 'sales_order.shipment.packing.quality'] },
-      { name: '销售退货', path: '/sales/returns', icon: 'el-icon-refresh-left', permission: 'sales.return' }
-    ],
-    productionMenus: [
-      { name: '工单管理', path: '/production/work-orders', icon: 'el-icon-s-order', permission: 'production.work_order' },
-      { name: '生产作业看板', path: '/production/board', icon: 'el-icon-data-board', permission: 'production.board' },
-      { name: '定制工艺管理', path: '/production/tech', icon: 'el-icon-set-up', permission: 'production.tech' },
-      { name: '序列号查询', path: '/production/serials', icon: 'el-icon-search', permission: 'production.serial' },
-      { name: '提成与工时统计', path: '/production/performance/orders', icon: 'el-icon-money', permission: 'production.performance_stats' },
-      { name: '生产基础', children: [
-        { name: '工序管理', path: '/production/operations', icon: 'el-icon-set-up', permission: 'production.operation' },
-        { name: '工艺路线', path: '/production/routings', icon: 'el-icon-guide', permission: 'production.routing' },
-        { name: '提成模板', path: '/production/performance/templates', icon: 'el-icon-coin', permission: 'production.performance.manage' }
-      ] }
-    ],
-    approvalMenus: [
-      { name: '审核工作台', path: '/approvals/tasks', icon: 'el-icon-circle-check', permission: 'approval.task.view' },
-      { name: '流程配置', path: '/approvals/flows', icon: 'el-icon-connection', permission: 'approval.flow.view' },
-      { name: '表单管理', path: '/approvals/forms', icon: 'el-icon-document', permission: 'approval.form.view' }
-    ],
-    financeMenus: [
-      { name: '收款管理', path: '/finance/receipts', icon: 'el-icon-money', permission: ['finance.receipt', 'finance.view'], allPermissions: ['finance.view'] },
-      { name: '付款管理', path: '/finance/payments', icon: 'el-icon-wallet', permission: ['finance.payment', 'finance.view'], allPermissions: ['finance.view'] },
-      { name: '应付管理', path: '/finance/payables', icon: 'el-icon-tickets', permission: ['finance.payable', 'finance.supplier-ledger', 'finance.payable.view', 'finance.supplier-ledger.view'] },
-      { name: '财务统计', path: '/finance/statistics', icon: 'el-icon-data-analysis', permission: 'finance.view' },
-      { name: '发票管理', path: '/finance/invoices', icon: 'el-icon-document-copy', permission: ['finance.invoice', 'finance.invoice_request'] },
-      { name: '资金账户', path: '/finance/accounts', icon: 'el-icon-bank-card', permission: 'finance.account' },
-      { name: '资金转账 / 换汇', path: '/finance/transfers', icon: 'el-icon-sort', permission: 'finance.transfer' },
-      { name: '资金账户估值', path: '/finance/account-valuations', icon: 'el-icon-pie-chart', permission: 'finance.account_valuation' },
-      { name: '付款条件', path: '/finance/funding-policies', icon: 'el-icon-document-checked', permission: ['finance.funding_policy', 'sales_order.funding_policy.manage'] }
-    ],
-    systemMenus: [
-      { name: '编号规则', path: '/system/document-number-rules', icon: 'el-icon-postcard', permission: 'system.document_number_rule' },
-      { name: '管理员管理', path: '/system/admins', icon: 'el-icon-user', permission: 'system.admin' },
-      { name: '角色权限', path: '/system/roles', icon: 'el-icon-user-solid', permission: 'system.role' },
-      { name: '菜单管理', path: '/system/menus', icon: 'el-icon-menu', permission: 'system.menu' },
-      { name: '部门管理', path: '/system/departments', icon: 'el-icon-office-building', permission: 'system.department' },
-      { name: '业务员档案', path: '/system/business-staff', icon: 'el-icon-s-custom', permission: 'system.business_staff' }
-    ],
+    // 左侧导航完全来自后台菜单管理（登录/刷新会话时下发，已按当前账号权限过滤）。
+    menus: JSON.parse(localStorage.getItem('erp_menus') || '[]'),
     openedMenus: [],
     sidebarCollapsed: false,
     currentUser: JSON.parse(localStorage.getItem('erp_user') || '{}'),
@@ -263,17 +190,15 @@ export default {
       return this.$route.path.startsWith('/finance/')
     },
     menuSections() {
-      return [
-        { key: 'production', title: '生产管理', icon: 'el-icon-s-operation', items: this.productionMenus, match: '/production' },
-        { key: 'master', title: '主数据中心', icon: 'el-icon-s-grid', items: this.masterMenus, match: '/master' },
-        { key: 'purchase', title: '采购管理', icon: 'el-icon-shopping-cart-2', items: this.purchaseMenus, match: '/purchase' },
-        { key: 'inventory', title: '库存管理', icon: 'el-icon-house', items: this.inventoryMenus, match: '/inventory' },
-        { key: 'bom', title: 'BOM管理', icon: 'el-icon-connection', items: this.bomMenus, match: '/bom' },
-        { key: 'sales', title: '销售管理', icon: 'el-icon-s-order', items: this.salesMenus, match: '/sales' },
-        { key: 'approval', title: '审核中心', icon: 'el-icon-circle-check', items: this.approvalMenus, match: '/approvals' },
-        { key: 'finance', title: '财务管理', icon: 'el-icon-coin', items: this.financeMenus, match: '/finance' },
-        { key: 'system', title: '系统管理', icon: 'el-icon-setting', items: this.systemMenus, match: '/system' }
-      ].filter(section => this.visibleItems(section.items).length)
+      return this.menus.map(node => {
+        const items = node.children && node.children.length
+          ? node.children.map(child => child.children && child.children.length
+            ? { name: child.name, children: this.menuLeaves(child.children) }
+            : { name: child.name, path: child.path, icon: child.icon })
+          : [{ name: node.name, path: node.path, icon: node.icon }]
+        const firstPath = this.menuLeaves([node]).map(item => item.path).find(Boolean) || ''
+        return { key: node.code, title: node.name, icon: node.icon || 'el-icon-menu', items, match: firstPath ? `/${firstPath.split('/')[1]}` : `/${node.code}` }
+      }).filter(section => this.visibleItems(section.items).length)
     },
     userInitial() {
       return (this.currentUser.nickname || this.currentUser.username || '用').slice(0, 1)
@@ -282,6 +207,8 @@ export default {
       return ({ all: '全部数据', department: '部门数据', self: '本人数据' })[this.profile.data_scope] || '权限用户'
     },
     currentModule() {
+      const section = this.menuSections.find(item => this.$route.path.startsWith(item.match))
+      if (section) return section.title
       if (this.$route.path.startsWith('/production')) return '生产管理'
       if (this.$route.path.startsWith('/console')) return 'ERP'
       if (this.$route.path.startsWith('/purchase')) return '采购管理'
@@ -343,6 +270,7 @@ export default {
         document.title = to && to.path === '/login' ? '登录 - 简谈ERP' : `${this.titleForPath(to && to.path)} - 简谈ERP`
         this.currentUser = JSON.parse(localStorage.getItem('erp_user') || '{}')
         this.permissions = JSON.parse(localStorage.getItem('erp_permissions') || '[]')
+        this.menus = JSON.parse(localStorage.getItem('erp_menus') || '[]')
         this.profile = JSON.parse(localStorage.getItem('erp_me') || '{}')
         this.ensureRealtimeSubscriptions()
         if (to && to.path !== '/login') {
@@ -414,6 +342,8 @@ export default {
         const { data } = await getCurrentSession()
         this.currentUser = data.user || this.currentUser
         this.permissions = data.permissions || []
+        this.menus = data.menus || []
+        localStorage.setItem('erp_menus', JSON.stringify(this.menus))
         localStorage.setItem('erp_user', JSON.stringify(this.currentUser))
         localStorage.setItem('erp_permissions', JSON.stringify(this.permissions))
         this.profile = {
@@ -569,26 +499,17 @@ export default {
       return title || '业务管理'
     },
     getMenuNameForPath(path) {
-      const allMenus = [
-        ...this.masterMenus,
-        ...this.purchaseMenus,
-        ...this.inventoryMenus,
-        ...this.bomMenus,
-        ...this.salesMenus,
-        ...this.productionMenus,
-        ...this.approvalMenus,
-        ...this.financeMenus,
-        ...this.systemMenus
-      ]
-      for (const item of allMenus) {
-        if (item.path === path) return item.name
-        if (item.children && Array.isArray(item.children)) {
-          for (const child of item.children) {
-            if (child.path === path) return child.name
-          }
-        }
-      }
-      return null
+      const item = this.menuLeaves(this.menus).find(node => node.path === path)
+      return item ? item.name : null
+    },
+    menuLeaves(nodes) {
+      return (nodes || []).reduce((list, node) => list.concat(node.children && node.children.length ? this.menuLeaves(node.children) : (node.path ? [{ name: node.name, path: node.path, icon: node.icon }] : [])), [])
+    },
+    // 菜单路径必须对应真实页面：已合并进其他页面的旧入口（路由只剩跳转）和前端没有的页面不显示。
+    isRoutableMenu(path) {
+      if (!path) return false
+      const route = this.$router.resolve(path).route
+      return route.matched.length > 0 && route.path === path
     },
     titleForPath(path) {
       if (!path) return '运营控制台'
@@ -774,14 +695,8 @@ export default {
     isSectionActive(section) {
       return this.$route.path.startsWith(section.match)
     },
-    canMenu(permission) {
-      if (!permission) return true
-      if (this.profile.is_super_admin) return true
-      if (Array.isArray(permission)) return permission.some(code => this.permissions.includes(code))
-      return this.permissions.includes(permission)
-    },
     visibleItems(items) {
-      return items.filter(item => item.children ? this.visibleItems(item.children).length : this.canMenu(item.permission) && (!item.allPermissions || item.allPermissions.every(permission => this.canMenu(permission))))
+      return items.filter(item => item.children ? this.visibleItems(item.children).length : this.isRoutableMenu(item.path))
     },
     async logout() {
       try {
@@ -797,6 +712,7 @@ export default {
         localStorage.removeItem('erp_user')
         localStorage.removeItem('erp_me')
         localStorage.removeItem('erp_permissions')
+        localStorage.removeItem('erp_menus')
         // 页面标签属于当前账号，换账号登录后不能残留上一个人打开过的单据页面。
         try { sessionStorage.removeItem('erp_visited_views') } catch (e) {}
         this.visitedViews = [{ title: '运营控制台', path: '/console', fullPath: '/console', affix: true }]
