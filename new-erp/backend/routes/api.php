@@ -38,6 +38,7 @@ use App\Http\Controllers\Api\V1\Erp\MfgShortageController;
 use App\Http\Controllers\Api\V1\Erp\MfgWorkOrderController;
 use App\Http\Controllers\Api\V1\Erp\MfgCuttingController;
 use App\Http\Controllers\Api\V1\Erp\MfgSharedCuttingController;
+use App\Http\Controllers\Api\V1\Erp\ProductionPerformanceStatsController;
 use App\Http\Controllers\Api\V1\Erp\MfgTaskController;
 use App\Http\Controllers\Api\V1\Erp\MfgTechController;
 use App\Http\Controllers\Api\V1\Erp\ShipmentPackingController;
@@ -455,6 +456,9 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::post('{type}', [ProductionProcessCatalogController::class, 'store'])->whereIn('type', ['stages', 'packaging-schemes']);
     Route::put('{type}/{id}', [ProductionProcessCatalogController::class, 'update'])->whereIn('type', ['stages', 'packaging-schemes'])->whereNumber('id');
     Route::delete('{type}/{id}', [ProductionProcessCatalogController::class, 'destroy'])->whereIn('type', ['stages', 'packaging-schemes'])->whereNumber('id');
+    Route::get('performance/orders', [ProductionPerformanceStatsController::class, 'index']);
+    Route::get('performance/orders/{id}', [ProductionPerformanceStatsController::class, 'show'])->whereNumber('id');
+    Route::get('performance/batches', [ProductionPerformanceStatsController::class, 'batch']);
     Route::get('performance/templates', [ProductionPerformanceTemplateController::class, 'index']);
     Route::get('performance/template-operations', [ProductionPerformanceTemplateController::class, 'operations']);
     Route::post('performance/templates', [ProductionPerformanceTemplateController::class, 'store']);

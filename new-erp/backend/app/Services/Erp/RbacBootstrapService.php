@@ -241,6 +241,7 @@ class RbacBootstrapService
             ['production.board', '生产作业看板', 'menu', 'production', '/production/board', 'ProductionBoard', 'el-icon-data-board', 802],
             ['production.tech', '定制技术', 'menu', 'production', '/production/tech', 'ProductionTechList', 'el-icon-edit-outline', 802],
             ['production.serial', '序列号查询', 'menu', 'production', '/production/serials', 'ProductionSerialTrace', 'el-icon-search', 802],
+            ['production.performance_stats', '提成与工时统计', 'menu', 'production', '/production/performance/orders', 'ProductionPerformanceStats', 'el-icon-money', 802],
             ['production.base', '生产基础', 'menu', 'production', null, null, 'el-icon-setting', 803],
             ['production.operation', '工序管理', 'menu', 'production.base', '/production/operations', 'ProductionOperationList', 'el-icon-set-up', 804],
             ['production.routing', '工艺路线', 'menu', 'production.base', '/production/routings', 'ProductionRoutingList', 'el-icon-guide', 805],
@@ -777,7 +778,7 @@ class RbacBootstrapService
     {
         $manager = [
             'production.work_order', 'production.base', 'production.operation', 'production.routing', 'production.performance',
-            'production.serial', 'production.serial.view',
+            'production.performance_stats', 'production.serial', 'production.serial.view',
             'production.work_order.view', 'production.work_order.create', 'production.work_order.edit',
             'production.work_order.publish', 'production.work_order.cancel',
             'production.task.view', 'production.task.collaborate', 'production.performance.manage',

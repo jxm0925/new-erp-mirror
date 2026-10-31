@@ -85,3 +85,6 @@ export const listMaterialDeliveries = params => api.get('/v1/erp/production/mate
 export const previewMaterialDelivery = (id, operationId, params) => api.get(`/v1/erp/production/work-orders/${id}/operations/${operationId}/delivery-preview`, { params })
 export const createMaterialDelivery = (id, operationId, data) => api.post(`/v1/erp/production/work-orders/${id}/operations/${operationId}/material-deliveries`, data)
 export const materialDeliveryAction = (id, action, data) => api.post(`/v1/erp/production/material-deliveries/${id}/${action}`, data || {})
+export const listPerformanceOrders = params => api.get('/v1/erp/production/performance/orders', { params })
+export const getPerformanceOrder = id => api.get(`/v1/erp/production/performance/orders/${id}`)
+export const getPerformanceBatch = params => api.get('/v1/erp/production/performance/batches', { params })

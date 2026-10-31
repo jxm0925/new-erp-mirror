@@ -60,6 +60,15 @@
             刷新
           </el-button>
           <el-button
+            v-if="wo.work_order_no && ($can('production.performance_stats') || $can('production.performance.manage'))"
+            size="small"
+            icon="el-icon-money"
+            class="btn-refresh"
+            @click="$router.push({ path: '/production/performance/orders', query: { wo: wo.work_order_no } })"
+          >
+            产出去向与工时
+          </el-button>
+          <el-button
             v-if="wo.status === 'planned' && $can('production.work_order.publish')"
             size="small"
             type="success"

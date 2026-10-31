@@ -62,6 +62,7 @@ import WorkOrderList from './views/erp/production/WorkOrderList.vue'
 import WorkOrderDetail from './views/erp/production/WorkOrderDetail.vue'
 import WorkOrderForm from './views/erp/production/WorkOrderForm.vue'
 import ProductionSerialTrace from './views/erp/production/ProductionSerialTrace.vue'
+import ProductionPerformanceStats from './views/erp/production/ProductionPerformanceStats.vue'
 import ProductionMaterialReturnList from './views/erp/inventory/ProductionMaterialReturnList.vue'
 import ProductionMaterialDeliveryList from './views/erp/inventory/ProductionMaterialDeliveryList.vue'
 import ProductionBoard from './views/erp/production/ProductionBoard.vue'
@@ -200,6 +201,7 @@ const router = new VueRouter({
     { path: '/production/work-orders/new', component: WorkOrderForm, meta: { permission: 'production.work_order.create' } },
     { path: '/production/work-orders/:id(\\d+)', component: WorkOrderDetail, meta: { permission: 'production.work_order.view' } },
     { path: '/production/serials', component: ProductionSerialTrace, meta: { permission: 'production.serial.view' } },
+    { path: '/production/performance/orders', component: ProductionPerformanceStats, meta: { permission: 'production.performance_stats' } },
     { path: '/production/board', component: ProductionBoard, meta: { permission: 'production.board' } },
     { path: '/production/tech', component: ProductionTechList, meta: { permission: ['production.tech', 'production.tech.manage'] } },
     { path: '/production/tech/:id(\\d+)', component: ProductionTechDetail, meta: { permission: ['production.tech', 'production.tech.manage'] } },
