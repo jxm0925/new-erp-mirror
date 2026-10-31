@@ -17,9 +17,22 @@ class InventoryTransferController extends Controller
     public function index(Request $request)
     {
         $this->authorizePermission($request, 'inventory.transfer.view');
-        $query = InventoryTransfer::query()->with(['sourceWarehouse:id,warehouse_code,warehouse_name', 'targetWarehouse:id,warehouse_code,warehouse_name'])
-            ->withCount('lines')->latest('id');
-        if ($request->filled('keyword')) $query->where('transfer_no', 'like', '%'.$request->input('keyword').'%');
+        $query = InventoryTransfer::query()->with([
+            'sourceWarehouse:id,warehouse_code,warehouse_name',
+            'targetWarehouse:id,warehouse_code,warehouse_name',
+            'lines:id,transfer_id,item_id,source_location_id,target_location_id,unit_id,batch_no,quantity',
+            'lines.item:id,item_code,item_name,spec',
+            'lines.unit:id,unit_name',
+            'lines.sourceLocation:id,location_code,location_name',
+            'lines.targetLocation:id,location_code,location_name',
+        ])->withCount('lines')->latest('id');
+        if ($request->filled('keyword')) {
+            $kw = trim((string) $request->input('keyword'));
+            $query->where(fn ($q) => $q->where('transfer_no', 'like', "%{$kw}%")
+                ->orWhere('remark', 'like', "%{$kw}%")
+                ->orWhereHas('lines', fn ($lq) => $lq->where('batch_no', 'like', "%{$kw}%")
+                    ->orWhereHas('item', fn ($iq) => $iq->where('item_code', 'like', "%{$kw}%")->orWhere('item_name', 'like', "%{$kw}%"))));
+        }
         if ($request->filled('status')) $query->where('transfer_status', $request->input('status'));
         if ($request->filled('warehouse_id')) {
             $warehouseId = (int) $request->input('warehouse_id');
@@ -27,7 +40,15 @@ class InventoryTransferController extends Controller
         }
         $paginator = $query->paginate(min(100, max(10, (int) $request->input('per_page', 10))));
         $this->attachNames($paginator->getCollection());
-        return response()->json($paginator);
+        $statsRow = (array) DB::table('erp_inventory_transfers')->selectRaw("
+            COUNT(*) AS total,
+            SUM(transfer_status = 'draft') AS draft,
+            SUM(transfer_status = 'posted') AS posted,
+            SUM(transfer_status = 'cancelled') AS cancelled
+        ")->first();
+        $payload = $paginator->toArray();
+        $payload['stats'] = array_map(fn ($v) => (int) ($v ?? 0), $statsRow);
+        return response()->json($payload);
     }
 
     public function options(Request $request)
@@ -145,6 +166,17 @@ class InventoryTransferController extends Controller
         foreach ($rows as $row) {
             foreach (['created_by', 'posted_by', 'cancelled_by'] as $field) $row->setAttribute($field.'_name', $names[(int) $row->{$field}] ?? null);
             $row->setAttribute('status_label', InventoryTransferService::STATUSES[$row->transfer_status] ?? $row->transfer_status);
+            if ($row->relationLoaded('lines')) {
+                $previews = $row->lines->take(2)->map(function ($line) {
+                    $name = $line->item?->item_name ?: $line->item?->item_code ?: '物料';
+                    $qty = rtrim(rtrim(number_format((float) $line->quantity, 4, '.', ''), '0'), '.');
+                    $unit = $line->unit?->unit_name ?: '';
+                    return "{$name} × {$qty}{$unit}";
+                })->all();
+                $more = $row->lines->count() > 2 ? ' 等 '.$row->lines->count().' 项' : '';
+                $row->setAttribute('items_summary', $previews ? implode('；', $previews).$more : '—');
+                $row->setAttribute('total_quantity', (float) $row->lines->sum('quantity'));
+            }
         }
     }
 

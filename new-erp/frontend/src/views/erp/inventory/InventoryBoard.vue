@@ -5,6 +5,7 @@
     <section v-if="activeView === 'posting'" class="inventory-view posting-view">
       <div class="page-head">
         <div>
+          <span class="crumb">库存管理 / 库存过账</span>
           <h1>库存过账工作台</h1>
           <p>承接采购到货的待库存过账，按到货确认的库存管理要求写入正常库存。</p>
         </div>
@@ -20,7 +21,7 @@
 
       <section class="filter-panel posting-filter">
         <label>到货日期：<el-date-picker v-model="postingQuery.dateRange" size="small" type="daterange" start-placeholder="开始日期" end-placeholder="结束日期" /></label>
-        <label>供应商：<el-select v-model="postingQuery.supplier" size="small" clearable placeholder="请选择"><el-option label="苏州华成电子有限公司" value="苏州华成电子有限公司" /><el-option label="东莞市怡达塑胶有限公司" value="东莞市怡达塑胶有限公司" /></el-select></label>
+        <label>供应商：<paged-record-select v-model="postingQuery.supplier_id" entity="suppliers" title="选择供应商" placeholder="全部供应商" /></label>
         <label>仓库：<paged-record-select v-model="postingQuery.warehouse" entity="warehouses" title="选择仓库" placeholder="请选择" /></label>
         <label>单据号：<el-input v-model="postingQuery.keyword" size="small" placeholder="请输入到货单号" /></label>
         <el-button size="small" type="success" @click="searchPostingRows">查询</el-button>
@@ -123,15 +124,20 @@
     <section v-if="activeView === 'balances'" class="inventory-view">
       <div class="page-head">
         <div>
+          <span class="crumb">库存管理 / 库存余额</span>
           <h1>库存余额 <small><i class="el-icon-info" /> 按物料汇总，点击物料可查看批次、库位和编号。</small></h1>
+        </div>
+        <div class="balance-head-actions">
+          <el-button size="small" icon="el-icon-plus" @click="openAdjustmentDrawer()">新建手工调整</el-button>
+          <el-button size="small" type="success" class="btn-green-search" icon="el-icon-download" @click="exportBalances">导出余额</el-button>
         </div>
       </div>
 
       <div class="metric-grid four">
-        <article><i class="el-icon-box green" /><span>物料总数 <i class="el-icon-info" /></span><strong>{{ quantityNumber(balanceStats.item_count) }} <small class="unit-text">个</small></strong></article>
-        <article><i class="el-icon-coin green" /><span>有库存物料 <i class="el-icon-info" /></span><strong>{{ quantityNumber(balanceStats.stock_item_count) }} <small class="unit-text">个</small></strong></article>
-        <article><i class="el-icon-location-outline green" /><span>批次余额 <i class="el-icon-info" /></span><strong>{{ quantityNumber(balanceStats.batch_count) }} <small class="unit-text">个批次</small></strong></article>
-        <article><i class="el-icon-warning orange" /><span>不合格/待处理物料 <i class="el-icon-info" /></span><strong>{{ quantityNumber(balanceStats.quality_item_count) }} <small class="unit-text">个</small></strong></article>
+        <article class="clickable-card" :class="{ 'active-metric': !balanceQuery.status }" @click="filterBalanceByStatus('')"><i class="el-icon-box green" /><span>物料总数 <i class="el-icon-info" /></span><strong>{{ quantityNumber(balanceStats.item_count) }} <small class="unit-text">个</small></strong></article>
+        <article class="clickable-card" :class="{ 'active-metric': balanceQuery.status === 'has_stock' }" @click="filterBalanceByStatus('has_stock')"><i class="el-icon-coin green" /><span>有库存物料 <i class="el-icon-info" /></span><strong>{{ quantityNumber(balanceStats.stock_item_count) }} <small class="unit-text">个</small></strong></article>
+        <article class="clickable-card" @click="filterBalanceByStatus('')"><i class="el-icon-location-outline green" /><span>批次 / 库存总价值</span><strong>{{ quantityNumber(balanceStats.batch_count) }} <small class="unit-text">批 · ¥{{ money(balanceStats.inventory_value) }}</small></strong></article>
+        <article class="clickable-card" :class="{ 'active-metric': balanceQuery.status === 'has_quality' }" @click="filterBalanceByStatus('has_quality')"><i class="el-icon-warning orange" /><span>不合格/待处理物料 <i class="el-icon-info" /></span><strong>{{ quantityNumber(balanceStats.quality_item_count) }} <small class="unit-text">个</small></strong></article>
       </div>
 
       <section class="filter-panel balance-filter">
@@ -209,12 +215,13 @@
             <el-table-column label="最近变动时间" min-width="135">
               <template slot-scope="{ row }">{{ dateTime(row.last_transaction_at) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="180" fixed="right">
+            <el-table-column label="操作" width="225" fixed="right">
               <template slot-scope="{ row }">
                 <div class="row-actions">
                   <el-button size="mini" type="text" class="link-btn-green" @click.stop="openBatchDialog(row)">查看批次</el-button>
                   <el-button size="mini" type="text" class="link-btn-green" @click.stop="viewItemTransactions(row)">查看流水</el-button>
                   <el-button size="mini" type="text" class="link-btn-green" @click.stop="openAdjustmentForBalance(row)">调整库存</el-button>
+                  <el-button size="mini" type="text" class="link-btn-green" @click.stop="openAlertConfigForRow(row)">预警配置</el-button>
                 </div>
               </template>
             </el-table-column>
@@ -643,6 +650,7 @@
     <section v-if="activeView === 'transactions' || activeView === 'adjustments'" class="inventory-view">
       <div class="page-head">
         <div>
+          <span class="crumb">库存管理 / {{ activeView === 'adjustments' ? '手工调整' : '库存流水' }}</span>
           <h1>{{ activeView === 'adjustments' ? '手工调整' : '库存流水' }}</h1>
           <p>库存流水为库存变化唯一依据。手工调整必须生成库存事务，不能直接修改库存余额。</p>
         </div>
@@ -652,10 +660,10 @@
       <el-alert class="balance-rule" title="库存流水生成后只读：不能编辑、不能删除、不能直接改数量；后续反过账只能通过反向事务处理。" type="info" :closable="false" show-icon />
 
       <div class="metric-grid four">
-        <article><i class="el-icon-download green" /><span>{{ activeView === 'adjustments' ? '调整单数' : '今日入库流水' }}</span><strong>{{ activeView === 'adjustments' ? adjustmentPagination.total : transactionStats.today_in_count }}</strong></article>
-        <article><i class="el-icon-refresh orange" /><span>{{ activeView === 'adjustments' ? '已过账调整' : '今日调整流水' }}</span><strong>{{ activeView === 'adjustments' ? adjustmentStats.posted_count : transactionStats.today_adjust_count }}</strong></article>
-        <article><i class="el-icon-time blue" /><span>{{ activeView === 'adjustments' ? '待确认过账' : '待过账调整' }}</span><strong>{{ activeView === 'adjustments' ? adjustmentStats.submitted_count : transactionStats.pending_adjustment_count }}</strong></article>
-        <article><i class="el-icon-refresh-left purple" /><span>{{ activeView === 'adjustments' ? '草稿调整' : '今日出库流水' }}</span><strong>{{ activeView === 'adjustments' ? adjustmentStats.draft_count : (transactionStats.today_out_count || 0) }}</strong></article>
+        <article :class="{ 'clickable-card': activeView === 'adjustments', 'active-metric': activeView === 'adjustments' && !adjustmentQuery.status }" @click="activeView === 'adjustments' && filterAdjustmentByStatus('')"><i class="el-icon-download green" /><span>{{ activeView === 'adjustments' ? '调整单数' : '今日入库流水' }}</span><strong>{{ activeView === 'adjustments' ? adjustmentPagination.total : transactionStats.today_in_count }}</strong></article>
+        <article :class="{ 'clickable-card': activeView === 'adjustments', 'active-metric': activeView === 'adjustments' && adjustmentQuery.status === 'posted' }" @click="activeView === 'adjustments' && filterAdjustmentByStatus('posted')"><i class="el-icon-refresh orange" /><span>{{ activeView === 'adjustments' ? '已过账调整' : '今日调整流水' }}</span><strong>{{ activeView === 'adjustments' ? adjustmentStats.posted_count : transactionStats.today_adjust_count }}</strong></article>
+        <article :class="{ 'clickable-card': activeView === 'adjustments', 'active-metric': activeView === 'adjustments' && adjustmentQuery.status === 'submitted' }" @click="activeView === 'adjustments' && filterAdjustmentByStatus('submitted')"><i class="el-icon-time blue" /><span>{{ activeView === 'adjustments' ? '待确认过账' : '待过账调整' }}</span><strong>{{ activeView === 'adjustments' ? adjustmentStats.submitted_count : transactionStats.pending_adjustment_count }}</strong></article>
+        <article :class="{ 'clickable-card': activeView === 'adjustments', 'active-metric': activeView === 'adjustments' && adjustmentQuery.status === 'draft' }" @click="activeView === 'adjustments' && filterAdjustmentByStatus('draft')"><i class="el-icon-refresh-left purple" /><span>{{ activeView === 'adjustments' ? '草稿调整' : '今日出库流水' }}</span><strong>{{ activeView === 'adjustments' ? adjustmentStats.draft_count : (transactionStats.today_out_count || 0) }}</strong></article>
       </div>
 
       <section v-if="activeView === 'transactions'" class="filter-panel tx-filter">
@@ -668,6 +676,7 @@
         <label>过账日期<el-date-picker v-model="txQuery.dateRange" type="daterange" size="small" range-separator="至" start-placeholder="开始日期" end-placeholder="结束日期" value-format="yyyy-MM-dd" /></label>
         <el-button size="small" type="success" @click="searchTransactions">查询</el-button>
         <el-button size="small" @click="resetTxQuery">重置</el-button>
+        <el-tag v-if="txQuery.itemId" size="small" type="success" closable @close="clearTxItemFilter">当前仅看指定物料流水（{{ txQuery.keyword || `物料ID #${txQuery.itemId}` }}）</el-tag>
       </section>
       <section v-else class="filter-panel tx-filter">
         <label>调整单号<el-input v-model="adjustmentQuery.no" size="small" placeholder="请输入调整单号" /></label>
@@ -708,7 +717,7 @@
             <el-table-column label="状态" width="86" fixed="right"><template slot-scope="{ row }"><el-tag size="mini" type="success">{{ row.posting_status_text }}</el-tag></template></el-table-column>
             <el-table-column prop="posted_at" label="过账时间" min-width="132" show-overflow-tooltip />
           </el-table>
-          <el-table v-else :data="filteredAdjustmentRows" size="mini" border @row-dblclick="viewAdjustment">
+          <el-table v-else :data="filteredAdjustmentRows" size="mini" border @row-click="viewAdjustment" @row-dblclick="viewAdjustment">
             <el-table-column prop="adjustment_no" label="调整单号" min-width="142" fixed show-overflow-tooltip />
             <el-table-column label="调整原因" min-width="112" show-overflow-tooltip>
               <template slot-scope="{ row }">{{ adjustmentReasonLabel(row.reason) }}</template>
@@ -1101,7 +1110,7 @@ export default {
       activeView: 'posting',
       postingRows: [],
       postingStats: { posted_today: 0 },
-      postingQuery: { dateRange: [], supplier: '', warehouse: '', keyword: '' },
+      postingQuery: { dateRange: [], supplier_id: '', warehouse: '', keyword: '' },
       postingPagination: { page: 1, per_page: 10, total: 0 },
       selectedReceipt: null,
       postingDialogVisible: false,
@@ -1350,6 +1359,7 @@ export default {
         per_page: this.postingPagination.per_page,
         keyword: this.postingQuery.keyword,
         warehouse_id: this.postingQuery.warehouse,
+        supplier_id: this.postingQuery.supplier_id || undefined,
         date_from: this.postingQuery.dateRange?.[0] || '',
         date_to: this.postingQuery.dateRange?.[1] || ''
       })
@@ -1522,6 +1532,22 @@ export default {
       this.loadBalances()
     },
     scopeLabel(scope) { return scope === 'office' ? '办公用品' : '工厂物料' },
+    filterBalanceByStatus(status) {
+      this.balanceQuery.status = this.balanceQuery.status === status ? '' : status
+      this.searchBalances()
+    },
+    filterAdjustmentByStatus(status) {
+      this.adjustmentQuery.status = this.adjustmentQuery.status === status ? '' : status
+      this.searchAdjustments()
+    },
+    clearTxItemFilter() {
+      this.txQuery.itemId = null
+      this.txQuery.keyword = ''
+      if (this.$route.query && (this.$route.query.item_id || this.$route.query.item_code)) {
+        this.$router.replace({ path: '/inventory/transactions', query: {} })
+      }
+      this.searchTransactions()
+    },
     changeBalanceScope() {
       this.balanceQuery.warehouse = ''
       this.balanceQuery.location = ''
@@ -1751,6 +1777,11 @@ export default {
     },
     defaultAlertConfig() {
       return { enabled: true, min_stock: null, safety_stock: null, max_stock: null, suggested_replenishment_qty: null }
+    },
+    openAlertConfigForRow(row) {
+      if (!row || !row.item_id) return
+      this.selectedBalance = row
+      this.openAlertConfig()
     },
     async openAlertConfig() {
       if (!this.selectedBalance || !this.selectedBalance.item_id) return this.$message.warning('请先在库存余额列表选择一个物料。')
@@ -2570,6 +2601,11 @@ export default {
 .inventory-tabs a { padding: 12px 24px; color: #374151; text-decoration: none; border-right: 1px solid #e5e7eb; font-weight: 600; }
 .inventory-tabs a.router-link-active { color: #059669; border-bottom: 2px solid #059669; background: #f8fffb; }
 .page-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; }
+.page-head .crumb { display: block; color: #6b7280; font-size: 12px; margin-bottom: 4px; }
+.balance-head-actions { display: flex; gap: 8px; align-items: center; }
+.metric-grid article.clickable-card { cursor: pointer; transition: all .18s ease; }
+.metric-grid article.clickable-card:hover { border-color: #86efac; box-shadow: 0 4px 12px rgba(15, 23, 42, .05); }
+.metric-grid article.active-metric { border-color: #059669; background: #f3fbf6; box-shadow: 0 0 0 1px #059669 inset; }
 .page-head h1 { margin: 0; font-size: 22px; line-height: 32px; color: #111827; }
 .page-head h1 small { margin-left: 8px; font-size: 13px; color: #6b7280; font-weight: 500; }
 .page-head p { margin: 4px 0 0; color: #6b7280; }

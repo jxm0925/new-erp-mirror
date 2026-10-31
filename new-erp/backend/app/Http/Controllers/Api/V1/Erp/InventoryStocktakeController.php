@@ -15,13 +15,31 @@ class InventoryStocktakeController extends Controller
     public function index(Request $request)
     {
         $this->authorizePermission($request, 'inventory.stocktake.view');
-        $query = InventoryStocktake::query()->with(['warehouse:id,warehouse_code,warehouse_name', 'location:id,location_code,location_name'])->latest('id');
-        if ($request->filled('keyword')) $query->where('stocktake_no', 'like', '%'.$request->input('keyword').'%');
+        $query = InventoryStocktake::query()
+            ->with(['warehouse:id,warehouse_code,warehouse_name', 'location:id,location_code,location_name'])
+            ->withCount(['lines as counted_lines_count' => fn ($q) => $q->whereNotNull('counted_qty')])
+            ->latest('id');
+        if ($request->filled('keyword')) {
+            $kw = trim((string) $request->input('keyword'));
+            $query->where(fn ($q) => $q->where('stocktake_no', 'like', "%{$kw}%")
+                ->orWhere('remark', 'like', "%{$kw}%")
+                ->orWhereHas('warehouse', fn ($w) => $w->where('warehouse_name', 'like', "%{$kw}%")->orWhere('warehouse_code', 'like', "%{$kw}%")));
+        }
         if ($request->filled('warehouse_id')) $query->where('warehouse_id', (int) $request->input('warehouse_id'));
         if ($request->filled('status')) $query->where('stocktake_status', $request->input('status'));
+        if ($request->boolean('has_diff')) $query->where('difference_count', '>', 0);
         $paginator = $query->paginate(min(100, max(10, (int) $request->input('per_page', 10))));
         $this->attachNames($paginator->getCollection());
-        return response()->json($paginator);
+        $statsRow = (array) DB::table('erp_inventory_stocktakes')->selectRaw("
+            COUNT(*) AS total,
+            SUM(stocktake_status = 'counting') AS counting,
+            SUM(stocktake_status = 'completed') AS completed,
+            SUM(stocktake_status = 'cancelled') AS cancelled,
+            SUM(difference_count > 0) AS diff_orders
+        ")->first();
+        $payload = $paginator->toArray();
+        $payload['stats'] = array_map(fn ($v) => (int) ($v ?? 0), $statsRow);
+        return response()->json($payload);
     }
 
     public function options(Request $request)
