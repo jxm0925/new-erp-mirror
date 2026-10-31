@@ -88,3 +88,5 @@ export const materialDeliveryAction = (id, action, data) => api.post(`/v1/erp/pr
 export const listPerformanceOrders = params => api.get('/v1/erp/production/performance/orders', { params })
 export const getPerformanceOrder = id => api.get(`/v1/erp/production/performance/orders/${id}`)
 export const getPerformanceBatch = params => api.get('/v1/erp/production/performance/batches', { params })
+export const getPerformanceMonth = params => api.get('/v1/erp/production/performance/months', { params })
+export const listPerformanceWorkOrders = params => api.get('/v1/erp/production/performance/work-orders', { params })

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Erp;
 use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Http\Controllers\Controller;
 use App\Services\Erp\AuthContextService;
+use App\Services\Erp\Manufacturing\PerformanceLedgerService;
 use App\Services\Erp\Manufacturing\PerformanceStatsService;
 use Illuminate\Http\Request;
 
@@ -23,11 +24,28 @@ class ProductionPerformanceStatsController extends Controller
         return response()->json(['data' => $stats->order($id, $this->user($request))]);
     }
 
-    public function batch(Request $request, PerformanceStatsService $stats)
+    public function batch(Request $request, PerformanceLedgerService $ledger)
     {
         $this->user($request);
         $data = $request->validate(['work_order_id' => 'nullable|integer|min:1', 'work_order_no' => 'nullable|string|max:60|required_without:work_order_id']);
-        return response()->json(['data' => $stats->batch(isset($data['work_order_id']) ? (int) $data['work_order_id'] : null, $data['work_order_no'] ?? null)]);
+        return response()->json(['data' => $ledger->batch(isset($data['work_order_id']) ? (int) $data['work_order_id'] : null, $data['work_order_no'] ?? null)]);
+    }
+
+    /** 月度结算：上月结转 + 本月新做 − 本月出库结算 = 结转下月。 */
+    public function month(Request $request, PerformanceLedgerService $ledger)
+    {
+        $amounts = $this->user($request);
+        $data = $request->validate(['month' => ['required', 'regex:/^\d{4}-\d{2}$/'], 'employee_legacy_id' => 'nullable|integer|min:1']);
+        return response()->json(['data' => $ledger->month($data['month'], $amounts, isset($data['employee_legacy_id']) ? (int) $data['employee_legacy_id'] : null)]);
+    }
+
+    /** 按工单看工时对应的产品出库情况。 */
+    public function workOrders(Request $request, PerformanceLedgerService $ledger)
+    {
+        $this->user($request);
+        $data = $request->validate(['keyword' => 'nullable|string|max:120', 'only_unsettled' => 'nullable|boolean',
+            'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:50']);
+        return response()->json($ledger->workOrders($data));
     }
 
     /** 能看提成统计：提成统计菜单或维护提成模板；金额另需看金额权限。 */

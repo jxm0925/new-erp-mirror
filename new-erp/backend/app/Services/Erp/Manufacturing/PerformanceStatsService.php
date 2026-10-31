@@ -90,6 +90,8 @@ final class PerformanceStatsService
             if (bccomp($covered, $qty, 8) < 0) $issues[] = "{$line->item_name}：还有 ".$this->num(bcsub($qty, $covered, 8)).' 没有生产或发货来源（还没开工单或还没发货），这部分暂不统计。';
             $out[] = ['sales_order_line_id' => (int) $line->id, 'line_no' => $line->line_no, 'product_name' => $line->product_name, 'sku_name' => $line->sku_name,
                 'item_name' => $line->item_name, 'qty' => $this->num($qty), 'amount' => $amounts ? $amount : null,
+                'shipped_qty' => $this->num($shippedQty = (string) array_sum(array_map(fn ($s) => $s['kind'] === 'shipped' ? $s['used_qty'] : 0, $sources))),
+                'pending_qty' => $this->num(bccomp($qty, $shippedQty, 8) > 0 ? bcsub($qty, $shippedQty, 8) : '0'),
                 'sources' => $sources, 'packing' => $packing];
         }
         $employeeRows = array_values($employees);
@@ -115,47 +117,6 @@ final class PerformanceStatsService
                 'performance_amount' => $amounts ? $this->calc->round($perfTotal) : null, 'labor_minutes' => round($laborTotal, 1)],
             'issues' => array_values(array_unique($issues)), 'amount_visible' => $amounts,
         ];
-    }
-
-    /** 一批工单的产出去了哪里：被哪些工单领用、发给了哪些订单、还剩多少在库，每部分摊到的工时。 */
-    public function batch(?int $workOrderId, ?string $workOrderNo = null): array
-    {
-        $wo = DB::table('erp_mfg_work_orders')->when($workOrderId, fn ($q) => $q->where('id', $workOrderId), fn ($q) => $q->where('work_order_no', trim((string) $workOrderNo)))->first();
-        if (! $wo) throw new WorkOrderDomainException('work_order_not_found', '工单不存在。', 404);
-        $output = $this->output($wo);
-        $labor = DB::table('erp_mfg_labor_sessions')->where('work_order_id', $wo->id)->where('status', '!=', 'active')->sum('labor_minutes');
-        $ratio = fn ($q) => bccomp($output, '0', 8) > 0 ? (float) bcdiv((string) $q, $output, 8) : 0.0;
-        $usage = [];
-        $issued = DB::table('erp_inventory_transaction_items as ti')->join('erp_mfg_material_issues as i', 'i.id', '=', 'ti.source_id')
-            ->join('erp_mfg_work_orders as c', 'c.id', '=', 'i.work_order_id')
-            ->where('ti.source_type', 'mfg_material_issue')->where('ti.item_id', $wo->item_id)->where('ti.batch_no', $wo->work_order_no)
-            ->groupBy('c.id', 'c.work_order_no', 'c.sales_order_no', 'c.source_type', 'c.item_name')
-            ->selectRaw('c.id, c.work_order_no, c.sales_order_no, c.source_type, c.item_name, SUM(-ti.change_qty) AS qty')->get();
-        $returned = DB::table('erp_mfg_material_return_lines as l')->join('erp_mfg_material_returns as r', 'r.id', '=', 'l.return_id')
-            ->where('r.status', 'approved')->where('l.component_item_id', $wo->item_id)->where('l.batch_no', $wo->work_order_no)
-            ->groupBy('l.work_order_id')->selectRaw('l.work_order_id, SUM(l.qty) AS qty')->pluck('qty', 'work_order_id');
-        foreach ($issued as $r) {
-            $qty = (float) $r->qty - (float) ($returned[$r->id] ?? 0);
-            if ($qty <= 0.00000001) continue;
-            $usage[] = ['type' => 'consumed', 'type_label' => '被工单领用', 'work_order_id' => (int) $r->id, 'work_order_no' => $r->work_order_no,
-                'sales_order_no' => $r->sales_order_no, 'target_name' => $r->item_name, 'qty' => round($qty, 4),
-                'ratio' => round($ratio($qty), 6), 'labor_minutes' => round((float) $labor * $ratio($qty), 1)];
-        }
-        $shipped = DB::table('erp_sales_shipment_lines as l')->join('erp_sales_shipments as s', 's.id', '=', 'l.shipment_id')
-            ->leftJoin('erp_sales_orders as o', 'o.id', '=', 's.sales_order_id')
-            ->where('l.item_id', $wo->item_id)->where('l.batch_no', $wo->work_order_no)->where('s.shipment_status', '!=', 'cancelled')
-            ->groupBy('o.id', 'o.sales_order_no', 's.shipment_no')->selectRaw('o.id AS order_id, o.sales_order_no, s.shipment_no, SUM(l.base_qty) AS qty')->get();
-        foreach ($shipped as $r) {
-            $usage[] = ['type' => 'shipped', 'type_label' => '发货给订单', 'sales_order_id' => (int) $r->order_id, 'sales_order_no' => $r->sales_order_no,
-                'target_name' => $r->shipment_no, 'qty' => round((float) $r->qty, 4), 'ratio' => round($ratio($r->qty), 6),
-                'labor_minutes' => round((float) $labor * $ratio($r->qty), 1)];
-        }
-        $stock = (float) DB::table('erp_inventory_balances')->where('item_id', $wo->item_id)->where('batch_no', $wo->work_order_no)->sum('quantity_on_hand');
-        return ['work_order' => ['id' => (int) $wo->id, 'work_order_no' => $wo->work_order_no, 'source_type' => $wo->source_type,
-                'source_label' => self::SOURCE_LABELS[$wo->source_type] ?? $wo->source_type, 'item_name' => $wo->item_name, 'unit_name' => $wo->unit_name,
-                'status' => $wo->status, 'output_qty' => $this->num($output), 'labor_minutes' => round((float) $labor, 1),
-                'labor_minutes_per_unit' => bccomp($output, '0', 8) > 0 ? round((float) $labor / (float) $output, 1) : null],
-            'usage' => $usage, 'in_stock_qty' => round($stock, 4)];
     }
 
     /** 这一行商品由哪些工单产出：已发货的按发货批次号找工单；还没发货的按订单工单预估。 */
