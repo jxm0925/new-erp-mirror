@@ -95,6 +95,7 @@ import FinanceInvoiceForm from './views/erp/finance/FinanceInvoiceForm.vue'
 import FinanceInvoiceMatch from './views/erp/finance/FinanceInvoiceMatch.vue'
 import FinanceInvoiceDetail from './views/erp/finance/FinanceInvoiceDetail.vue'
 
+import { canAccessRoute, sessionAccess } from './utils/routeAccess'
 Vue.use(ElementUI)
 Vue.use(VueRouter)
 Vue.config.productionTip = false
@@ -272,18 +273,7 @@ const router = new VueRouter({
 router.beforeEach((to, from, next) => {
   if (to.path === '/login') return next()
   if (!localStorage.getItem('erp_token')) return next(`/login?redirect=${encodeURIComponent(to.fullPath)}`)
-  const requiredPermission = to.matched.map(record => record.meta.permission).find(Boolean)
-  const profile = JSON.parse(localStorage.getItem('erp_me') || '{}')
-  const permissions = JSON.parse(localStorage.getItem('erp_permissions') || '[]')
-  const allowed = Array.isArray(requiredPermission)
-    ? requiredPermission.some(permission => permissions.includes(permission))
-    : permissions.includes(requiredPermission)
-  const allPermissions = to.matched.flatMap(record => record.meta.allPermissions || [])
-  if (!profile.is_super_admin && !allPermissions.every(permission => permissions.includes(permission))) {
-    ElementUI.Message.error('无权访问该页面')
-    return next('/console')
-  }
-  if (requiredPermission && !profile.is_super_admin && !allowed) {
+  if (!canAccessRoute(to, sessionAccess())) {
     ElementUI.Message.error('无权访问该页面')
     return next('/console')
   }

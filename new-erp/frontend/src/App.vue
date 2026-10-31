@@ -36,8 +36,8 @@
                   <span>{{ item.name }}</span>
                   <router-link
                     v-for="child in visibleItems(item.children)"
-                    :key="child.path"
-                    :to="child.path"
+                    :key="child.to"
+                    :to="child.to"
                     :class="{ 'router-link-active': isItemActive(child) }"
                   >
                     <i :class="child.icon || 'el-icon-menu'" class="sub-menu-icon" />
@@ -46,8 +46,8 @@
                 </div>
                 <router-link
                   v-else
-                  :key="item.path"
-                  :to="item.path"
+                  :key="item.to"
+                  :to="item.to"
                   :class="{ 'router-link-active': isItemActive(item) }"
                 >
                   <i :class="item.icon || 'el-icon-menu'" class="sub-menu-icon" />
@@ -158,6 +158,7 @@
 </template>
 
 <script>
+import { buildMenuSections } from './utils/menuNav'
 import { logout as apiLogout, me as getCurrentSession } from './api/erp/auth'
 import { listInventoryAlerts, listUnreadInventoryAlerts } from './api/erp/inventory'
 import { listApprovalNotifications, readApprovalNotification } from './api/erp/approval'
@@ -190,15 +191,7 @@ export default {
       return this.$route.path.startsWith('/finance/')
     },
     menuSections() {
-      return this.menus.map(node => {
-        const items = node.children && node.children.length
-          ? node.children.map(child => child.children && child.children.length
-            ? { name: child.name, children: this.menuLeaves(child.children) }
-            : { name: child.name, path: child.path, icon: child.icon })
-          : [{ name: node.name, path: node.path, icon: node.icon }]
-        const firstPath = this.menuLeaves([node]).map(item => item.path).find(Boolean) || ''
-        return { key: node.code, title: node.name, icon: node.icon || 'el-icon-menu', items, match: firstPath ? `/${firstPath.split('/')[1]}` : `/${node.code}` }
-      }).filter(section => this.visibleItems(section.items).length)
+      return buildMenuSections(this.menus, this.$router, { profile: this.profile, permissions: this.permissions })
     },
     userInitial() {
       return (this.currentUser.nickname || this.currentUser.username || '用').slice(0, 1)
@@ -499,17 +492,9 @@ export default {
       return title || '业务管理'
     },
     getMenuNameForPath(path) {
-      const item = this.menuLeaves(this.menus).find(node => node.path === path)
+      const items = this.menuSections.flatMap(section => section.items.flatMap(item => item.children || [item]))
+      const item = items.find(entry => entry.path === path && entry.direct) || items.find(entry => entry.path === path)
       return item ? item.name : null
-    },
-    menuLeaves(nodes) {
-      return (nodes || []).reduce((list, node) => list.concat(node.children && node.children.length ? this.menuLeaves(node.children) : (node.path ? [{ name: node.name, path: node.path, icon: node.icon }] : [])), [])
-    },
-    // 菜单路径必须对应真实页面：已合并进其他页面的旧入口（路由只剩跳转）和前端没有的页面不显示。
-    isRoutableMenu(path) {
-      if (!path) return false
-      const route = this.$router.resolve(path).route
-      return route.matched.length > 0 && route.path === path
     },
     titleForPath(path) {
       if (!path) return '运营控制台'
@@ -696,7 +681,7 @@ export default {
       return this.$route.path.startsWith(section.match)
     },
     visibleItems(items) {
-      return items.filter(item => item.children ? this.visibleItems(item.children).length : this.isRoutableMenu(item.path))
+      return items.filter(item => item.children ? this.visibleItems(item.children).length : !!item.path)
     },
     async logout() {
       try {

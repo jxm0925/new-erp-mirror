@@ -131,12 +131,12 @@
                       <div class="muted">{{ r.item_name }} · {{ r.operations.join('、') }}</div>
                     </template>
                   </el-table-column>
-                  <el-table-column label="本月完工 / 工单数量" width="130" align="right"><template slot-scope="{ row: r }"><b>{{ qty(r.completed_in_month) }}</b> / {{ qty(r.base_qty) }} {{ r.unit_name }}</template></el-table-column>
+                  <el-table-column label="本月完工 / 工单数量" width="130" align="right"><template slot-scope="{ row: r }"><template v-if="r.running">开料进行中</template><template v-else><b>{{ qty(r.completed_in_month) }}</b> / {{ qty(r.base_qty) }} {{ r.unit_name }}</template></template></el-table-column>
                   <el-table-column label="本人本月工时" width="110" align="right"><template slot-scope="{ row: r }">{{ hours(r.my_month_minutes) }}</template></el-table-column>
                   <el-table-column label="本人累计工时" width="110" align="right"><template slot-scope="{ row: r }">{{ hours(r.my_total_minutes) }}</template></el-table-column>
                   <el-table-column label="本人每台工时" width="110" align="right"><template slot-scope="{ row: r }"><b>{{ hours(r.my_minutes_per_unit) }}</b></template></el-table-column>
                   <el-table-column label="工单每台工时（全部人）" width="150" align="right"><template slot-scope="{ row: r }">{{ hours(r.wo_minutes_per_unit) }}</template></el-table-column>
-                  <el-table-column label="进度" width="140"><template slot-scope="{ row: r }"><span v-if="r.finished" class="qty-ok">已做完</span><span v-else class="warn">完工 {{ qty(r.completed_total) }}，每台工时还会变</span></template></el-table-column>
+                  <el-table-column label="进度" width="140"><template slot-scope="{ row: r }"><span v-if="r.running" class="warn">开料还没结束，件数结束后计入</span><span v-else-if="r.finished" class="qty-ok">已做完</span><span v-else class="warn">完工 {{ qty(r.completed_total) }}，每台工时还会变</span></template></el-table-column>
                 </el-table>
               </template>
             </el-table-column>
@@ -362,6 +362,8 @@ export default {
     tab(v) {
       if (v === 'wos' && !this.woLoaded) this.loadWos()
       if (v === 'production' && (!this.prodData || this.prodData.month !== this.month)) this.loadProduction()
+      // 两个页签共用月份：回到月度结算时数据还是别的月份就重新加载，避免选择框和金额对不上。
+      if (v === 'month' && (!this.monthData || this.monthData.month !== this.month)) this.loadMonth()
     }
   },
   methods: {
