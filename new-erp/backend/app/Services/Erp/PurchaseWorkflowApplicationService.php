@@ -110,27 +110,31 @@ class PurchaseWorkflowApplicationService
         return DB::transaction(function () use ($id, $operator, $initiator): PurchaseOrder {
             $order = PurchaseOrder::query()->with('items')->lockForUpdate()->findOrFail($id);
             if ($order->purchase_status !== 'draft') {
-                throw ValidationException::withMessages(['purchase_status' => '只有草稿采购订单可以提交审批。']);
+                throw ValidationException::withMessages(['purchase_status' => '只有草稿采购订单可以提交。']);
             }
             if ($order->items->isEmpty()) {
-                throw ValidationException::withMessages(['items' => '采购订单没有明细，不能提交审批。']);
+                throw ValidationException::withMessages(['items' => '采购订单没有明细，不能提交。']);
             }
             if ($order->items->contains(fn ($item) => (float) $item->unit_price <= 0)) {
                 throw ValidationException::withMessages(['items' => '采购订单存在未确认采购单价的明细，请补全单价后再提交。']);
             }
-            // 交期跟踪：提交审核前必须有预计到货日期；订单头未填时取明细中最早的日期。
+            // 交期跟踪：提交订单前必须有预计到货日期；订单头未填时取明细中最早的日期。
             if (!$order->expected_arrival_date) {
                 $lineDates = $order->items->pluck('expected_arrival_date')->filter();
                 if ($lineDates->count() !== $order->items->count()) {
-                    throw ValidationException::withMessages(['expected_arrival_date' => '提交审核前请填写预计到货日期，便于跟踪交期和逾期提醒。']);
+                    throw ValidationException::withMessages(['expected_arrival_date' => '提交订单前请填写预计到货日期，便于跟踪交期和逾期提醒。']);
                 }
                 $order->update(['expected_arrival_date' => $lineDates->map(fn ($date) => (string) \Illuminate\Support\Carbon::parse($date)->toDateString())->min()]);
             }
 
             app(PurchaseManagementScopeService::class)->assertDocumentScope($order);
 
-            $order = $this->updateOrder($order, ['purchase_status' => 'submitted', 'audit_status' => 'pending'], 'submit', '采购订单已提交审批', $operator);
-            if ($initiator) $order->setAttribute('approval_task', $this->approvalIntegration->submitted($order, $initiator));
+            $order = $this->updateOrder($order, ['purchase_status' => 'submitted', 'audit_status' => 'pending'], 'submit', '采购订单已提交', $operator);
+            if ($initiator) {
+                $task = $this->approvalIntegration->submitted($order, $initiator);
+                if (!$task) return $this->confirmOrder($order, $operator, 'confirm', '采购订单无需审核，直接确认，商业金额与单位换算快照已冻结');
+                $order->setAttribute('approval_task', $task);
+            }
             return $order;
         }, 5);
     }
@@ -142,30 +146,9 @@ class PurchaseWorkflowApplicationService
             if ($order->purchase_status !== 'submitted' || $order->audit_status !== 'pending') {
                 throw ValidationException::withMessages(['purchase_status' => '只有已提交且待审核的采购订单可以审核。']);
             }
-            if ($order->receipt_status !== 'not_received') {
-                throw ValidationException::withMessages(['receipt_status' => '该订单已经发生到货，不能重复审核。']);
-            }
-
             app(PurchaseManagementScopeService::class)->assertDocumentScope($order);
 
-            foreach ($order->items as $line) {
-                $facts = $this->finance->amountFacts((float) $line->amount, (float) $line->tax_rate, (string) $order->tax_mode);
-                $line->update([
-                    'currency_snapshot' => $order->currency ?: 'CNY',
-                    'tax_mode_snapshot' => $order->tax_mode ?: 'tax_included',
-                    ...$facts,
-                    'contract_amount_snapshot' => $facts['amount_incl_tax'],
-                    'commercial_snapshot_at' => now(),
-                ]);
-            }
-
-            return $this->updateOrder($order, [
-                'purchase_status' => 'processing',
-                'audit_status' => 'approved',
-                'amount_excl_tax' => round((float) $order->items()->sum('amount_excl_tax'), 4),
-                'amount_incl_tax' => round((float) $order->items()->sum('amount_incl_tax') + (float) $order->freight_amount, 4),
-                'finance_fact_status' => 'frozen',
-            ], 'approve', '采购订单审核通过，商业金额与单位换算快照已冻结', $operator);
+            return $this->confirmOrder($order, $operator, 'approve', '采购订单审核通过，商业金额与单位换算快照已冻结');
         }, 5);
     }
 
@@ -218,6 +201,32 @@ class PurchaseWorkflowApplicationService
 
             return $this->updateOrder($order, ['purchase_status' => 'closed'], 'close', '采购订单剩余未履约数量已关闭', $operator);
         }, 5);
+    }
+
+    private function confirmOrder(PurchaseOrder $order, ?string $operator, string $action, string $message): PurchaseOrder
+    {
+        if ($order->receipt_status !== 'not_received') {
+            throw ValidationException::withMessages(['receipt_status' => '该订单已经发生到货，不能重复确认。']);
+        }
+
+        foreach ($order->items as $line) {
+            $facts = $this->finance->amountFacts((float) $line->amount, (float) $line->tax_rate, (string) $order->tax_mode);
+            $line->update([
+                'currency_snapshot' => $order->currency ?: 'CNY',
+                'tax_mode_snapshot' => $order->tax_mode ?: 'tax_included',
+                ...$facts,
+                'contract_amount_snapshot' => $facts['amount_incl_tax'],
+                'commercial_snapshot_at' => now(),
+            ]);
+        }
+
+        return $this->updateOrder($order, [
+            'purchase_status' => 'processing',
+            'audit_status' => 'approved',
+            'amount_excl_tax' => round((float) $order->items()->sum('amount_excl_tax'), 4),
+            'amount_incl_tax' => round((float) $order->items()->sum('amount_incl_tax') + (float) $order->freight_amount, 4),
+            'finance_fact_status' => 'frozen',
+        ], $action, $message, $operator);
     }
 
     private function releasePlanAllocation(PurchaseOrder $order): void

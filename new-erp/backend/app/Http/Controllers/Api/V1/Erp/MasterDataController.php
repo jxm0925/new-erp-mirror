@@ -695,7 +695,7 @@ class MasterDataController extends Controller
                 'default_price_tax_mode' => 'nullable|in:tax_inclusive,tax_exclusive',
                 'product_structure_type' => 'nullable|string|max:40', 'production_policy' => 'nullable|string|max:40',
                 'order_line_type' => 'required|in:physical,service,no_delivery,deduction',
-                'fulfillment_type' => 'nullable|in:physical,service,virtual',
+                'fulfillment_type' => 'nullable|in:physical,service,virtual,deduction',
                 'sales_unit_id' => ['nullable', $salesUnitExists], 'sales_unit_snapshot' => 'nullable|string|max:80',
                 'is_customizable' => 'boolean', 'is_need_production' => 'boolean', 'is_need_bom' => 'boolean',
                 'is_sale_item' => 'boolean', 'is_custom_sku' => 'boolean',

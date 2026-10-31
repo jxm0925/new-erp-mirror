@@ -15,7 +15,7 @@
       <div class="head-actions">
         <el-button size="small" @click="$router.back()">取消返回</el-button>
         <el-button size="small" :disabled="!!scopeIssue || scopeChanging || saving" @click="save(false)">保存草稿</el-button>
-        <el-button size="small" type="success" icon="el-icon-check" :disabled="!!scopeIssue || scopeChanging || saving" @click="save(true)">{{ type==='request' ? '确认需求' : type==='receipt' ? '保存' : '提交审核' }}</el-button>
+        <el-button size="small" type="success" icon="el-icon-check" :disabled="!!scopeIssue || scopeChanging || saving" @click="save(true)">{{ type==='request' ? '确认需求' : type==='receipt' ? '保存' : type==='order' ? '提交订单' : '提交审核' }}</el-button>
       </div>
     </div>
 
@@ -99,7 +99,7 @@
             <el-form-item label="采购订单号"><el-input v-model="form.purchase_order_no" disabled class="erp-system-number" placeholder="系统预占生成"><template slot="append">系统预占</template></el-input></el-form-item>
             <el-form-item label="供应商" prop="supplier_id"><paged-record-select v-model="form.supplier_id" :disabled="type==='order' && Boolean(form.plan_id)" placeholder="请选择供应商" style="width: 100%" entity="suppliers" :params="{ purchase_available: 1 }" :selected-rows.sync="suppliers" title="选择供应商" /></el-form-item>
             <el-form-item label="订单日期" prop="order_date"><el-date-picker v-model="form.order_date" value-format="yyyy-MM-dd" style="width: 100%" /></el-form-item>
-            <el-form-item label="预计到货" prop="expected_arrival_date"><el-date-picker v-model="form.expected_arrival_date" value-format="yyyy-MM-dd" placeholder="提交审核前必填" style="width: 100%" /></el-form-item>
+            <el-form-item label="预计到货" prop="expected_arrival_date"><el-date-picker v-model="form.expected_arrival_date" value-format="yyyy-MM-dd" placeholder="提交订单前必填" style="width: 100%" /></el-form-item>
             <el-form-item label="币种"><el-input v-model="form.currency" /></el-form-item>
             <el-form-item label="税率口径"><el-select v-model="form.tax_mode" style="width: 100%"><el-option label="含税" value="tax_included" /><el-option label="未税" value="tax_excluded" /></el-select></el-form-item>
             <el-form-item label="结算方式"><el-input v-model="form.settlement_method" /></el-form-item>
@@ -761,7 +761,7 @@
     <footer class="bottom-actions">
       <el-button size="small" @click="$router.back()">取消返回</el-button>
       <el-button size="small" :disabled="!!scopeIssue || scopeChanging || saving" @click="save(false)">保存草稿</el-button>
-      <el-button size="small" type="success" icon="el-icon-check" :disabled="!!scopeIssue || scopeChanging || saving" @click="save(true)">{{ type==='request' ? '确认需求' : type==='receipt' ? '保存' : '提交审核' }}</el-button>
+      <el-button size="small" type="success" icon="el-icon-check" :disabled="!!scopeIssue || scopeChanging || saving" @click="save(true)">{{ type==='request' ? '确认需求' : type==='receipt' ? '保存' : type==='order' ? '提交订单' : '提交审核' }}</el-button>
     </footer>
   </section>
 </template>
@@ -816,7 +816,7 @@ export default {
     activeLine() { return this.form.items[this.activeIndex] },
     headerRules() {
       const required = message => [{ required: true, message, trigger: ['change', 'blur'] }]
-      if (this.type === 'order') return { supplier_id: required('请选择供应商'), order_date: required('请选择订单日期'), expected_arrival_date: required('提交审核前请填写预计到货日期') }
+      if (this.type === 'order') return { supplier_id: required('请选择供应商'), order_date: required('请选择订单日期'), expected_arrival_date: required('提交订单前请填写预计到货日期') }
       if (this.type === 'receipt') return { supplier_id: required('请选择供应商'), receipt_date: required('请选择到货日期') }
       return {}
     },
@@ -1260,7 +1260,7 @@ export default {
       const data = res.data
       // 新建提交会先跳转编辑地址，其并行详情请求可能读到本次提交后的状态。
       if (this.type === 'order' && data.purchase_status !== 'draft' && !saving) {
-        this.$message.error('只有草稿采购订单可以编辑或提交审核')
+        this.$message.error('只有草稿采购订单可以编辑或提交')
         return this.$router.replace('/purchase/orders')
       }
       if (data.supplier) this.suppliers = [data.supplier]
@@ -1942,16 +1942,16 @@ export default {
     newDraftToken() { return window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : `purchase-${Date.now()}-${Math.random().toString(16).slice(2)}` },
     async save(submit) {
       if (this.scopeChanging || this.saving) return
-      if (this.type === 'order' && this.$route.params.id && this.form.purchase_status !== 'draft') return this.$message.error('只有草稿采购订单可以编辑或提交审核')
+      if (this.type === 'order' && this.$route.params.id && this.form.purchase_status !== 'draft') return this.$message.error('只有草稿采购订单可以编辑或提交')
       if (this.scopeIssue) return this.$message.error(this.scopeIssue)
       if (this.form.items.some(line => line.warehouse_id && !this.scopedWarehouses.some(row => Number(row.id) === Number(line.warehouse_id)))) return this.$message.error('目标仓库与单据管理类型不一致或不可用，请重新选择')
       if (!this.form.items.length) return this.$message.error('请至少添加一行采购物料')
       if (this.type === 'plan' && this.form.items.some(line => (line.splits || []).some(split => !split.supplier_id))) return this.$message.error('请为每条供应商分配选择供应商，或删除空白分配行')
       if (!['plan', 'request'].includes(this.type) && !this.form.supplier_id) { this.$refs.headerForm && this.$refs.headerForm.validateField('supplier_id'); return this.$message.error('供应商不能为空') }
-      // 交期跟踪：提交审核前必须填写预计到货（订单头未填时，明细都填了也可以）。
+      // 交期跟踪：提交订单前必须填写预计到货（订单头未填时，明细都填了也可以）。
       if (submit && this.type === 'order' && !this.form.expected_arrival_date && !this.form.items.every(line => line.expected_arrival_date)) {
         this.$refs.headerForm && this.$refs.headerForm.validateField('expected_arrival_date')
-        return this.$message.error('提交审核前请填写预计到货日期')
+        return this.$message.error('提交订单前请填写预计到货日期')
       }
       if (this.type === 'plan' && this.form.items.some(i => this.allocated(i) > Number(i._planningPreview?.planned_base_qty || 0) + 0.00000001 || (submit && this.remaining(i) > 0.00000001))) return this.$message.error('供应商采购数量不正确，请核对计划采购数量与已分配数量')
       if (this.form.items.some(line => !line.item_id)) return this.$message.error('每一行都必须选择采购物料')
@@ -1963,14 +1963,15 @@ export default {
         if (rows.some(row => row._planningError || !row._planningPreview)) return this.$message.error('请先完成采购单位及数量换算')
       }
       if (submit && this.type !== 'receipt') {
-        // 提交后单据锁定，确认框写清对象和金额，避免误提交（与列表“提交审核”保持一致）。
-        const label = { request: '确认采购需求', plan: '提交采购计划审核', order: '提交采购订单审核' }[this.type]
+        // 提交后单据锁定，确认框写清对象和金额，避免误提交。
+        const label = { request: '确认采购需求', plan: '提交采购计划审核', order: '提交采购订单' }[this.type]
         const supplier = this.type === 'order' ? ((this.suppliers.find(row => Number(row.id) === Number(this.form.supplier_id)) || {}).supplier_name || '') : ''
         const amount = this.type === 'order' ? `，含税金额 ¥${this.money(this.totalAmount)}` : ''
         // 采购价格预警：单价比历史采购价高出预警比例时，在确认框里逐项列出。
         const warnings = this.type === 'order' ? await this.priceWarningsForSubmit() : []
         const escape = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]))
-        const summary = `${supplier ? '供应商：' + supplier + '；' : ''}明细 ${this.form.items.length} 行${amount}。提交后不能直接修改，是否继续？`
+        const approvalTip = this.type === 'order' ? '匹配已发布审核流程时进入审核，否则直接确认待到货。' : ''
+        const summary = `${supplier ? '供应商：' + supplier + '；' : ''}明细 ${this.form.items.length} 行${amount}。${approvalTip}提交后不能直接修改，是否继续？`
         const warningHtml = warnings.length ? `<div style="margin-top:8px;padding:8px 10px;border-radius:4px;background:#fff1f2;color:#c0392b;font-size:12px;line-height:1.6"><b>价格预警：</b><br>${warnings.map(line => escape(priceCheckText(line))).join('<br>')}</div>` : ''
         try {
           await this.$confirm(`<p>${escape(summary)}</p>${warningHtml}`, warnings.length ? `${label}（有价格预警）` : label, { type: 'warning', dangerouslyUseHTMLString: true, confirmButtonText: warnings.length ? '确认价格无误并提交' : label, cancelButtonText: '再检查一下' })
@@ -2003,12 +2004,12 @@ export default {
         try {
           if (submit && this.type === 'request') await submitRequest(savedId)
           if (submit && this.type === 'plan') await submitPlan(savedId)
-          if (submit && this.type === 'order') await submitOrder(savedId)
+          if (submit && this.type === 'order') res = await submitOrder(savedId)
         } catch (e) {
           this.$message.error(e.userMessage || '提交失败，请检查当前状态和必填信息')
           return
         }
-        this.$message.success(submit && this.type === 'request' ? '需求已确认，已锁定需求，可转采购计划' : submit && this.type !== 'receipt' ? '已保存并提交审核' : '保存成功')
+        this.$message.success(submit && this.type === 'request' ? '需求已确认，已锁定需求，可转采购计划' : submit && this.type === 'order' ? res.data.message || '订单已提交' : submit && this.type !== 'receipt' ? '已保存并提交审核' : '保存成功')
         this.$router.push(this.type === 'request' ? '/purchase/requests' : this.type === 'plan' ? '/purchase/plans' : this.type === 'order' ? '/purchase/orders' : '/purchase/receipts')
       } finally { this.saving = false }
     },

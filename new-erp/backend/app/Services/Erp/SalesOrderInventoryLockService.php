@@ -71,6 +71,7 @@ class SalesOrderInventoryLockService
                 ])->save();
             }
 
+            $result = $this->projection($order->fresh(['lines', 'fulfillments']));
             DB::table('erp_sales_order_logs')->insert([
                 'sales_order_id' => $order->id,
                 'action' => 'inventory_lock',
@@ -79,14 +80,13 @@ class SalesOrderInventoryLockService
                 'payload' => json_encode([
                     'client_command_id' => $payload['client_command_id'],
                     'created_fulfillment_count' => $created,
-                    'totals' => $projection['totals'],
+                    'totals' => $result['totals'],
                 ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
                 'operator' => $user->nickname ?? $user->username ?? 'system',
                 'content' => $created > 0 ? '销售订单已按当前可用库存完成正式锁定。' : '当前没有新增可锁定库存，未重复占用。',
                 'created_at' => now(), 'updated_at' => now(),
             ]);
 
-            $result = $this->projection($order->fresh(['lines', 'fulfillments']));
             $result['created_fulfillment_count'] = $created;
             return $result;
         });

@@ -610,7 +610,7 @@ const metaMap = {
     title: '采购订单',
     short: '订单',
     subtitle: '一张采购订单只能对应一个供应商。',
-    tip: '采购订单审核通过后才能生成到货单；已到货、已关闭、已取消订单只读。',
+    tip: '采购订单提交时，匹配已发布审核流程才进入审核，否则直接确认待到货；已到货、已关闭、已取消订单只读。',
     statuses: [{ label: '草稿', value: 'draft' }, { label: '已提交', value: 'submitted' }, { label: '处理中', value: 'processing' }, { label: '部分到货', value: 'partially_received' }, { label: '已到货', value: 'received' }, { label: '逾期未到货', value: 'overdue' }]
   },
   receipts: {
@@ -1065,7 +1065,7 @@ export default {
       }
       if (this.mode === 'orders') {
         if (['closed', 'cancelled', 'received'].includes(row.purchase_status) || row.receipt_status === 'received') return []
-        if (row.purchase_status === 'draft') return [{ command: 'submitOrder', label: '提交审核' }, { command: 'cancelOrder', label: '取消订单' }]
+        if (row.purchase_status === 'draft') return [{ command: 'submitOrder', label: '提交订单' }, { command: 'cancelOrder', label: '取消订单' }]
         if (row.purchase_status === 'submitted' && row.audit_status === 'pending') return [{ command: 'viewApproval', label: '查看审核进度' }]
         if (row.audit_status === 'approved' && ['not_received', 'partial'].includes(row.receipt_status) && !['closed', 'cancelled'].includes(row.purchase_status)) {
           const actions = []
@@ -1194,6 +1194,7 @@ export default {
       if (v === 'not_submitted') return '未提交'
       if (prop === 'management_scope') return this.scopeLabel(v)
       if (prop === 'audit_status' && v === 'pending') return '待审核'
+      if (this.mode === 'orders' && prop === 'audit_status' && v === 'approved') return '已确认'
       return statusLabelMap[v] || v || '--'
     },
     tagType(v) {
@@ -1217,7 +1218,7 @@ export default {
         if (row.purchase_status === 'cancelled') return { text: '已取消', type: 'info' }
         if (row.purchase_status === 'closed') return { text: '已关闭', type: 'info', sub: row.receipt_status === 'partial' ? '部分到货后关闭' : '' }
         if (row.audit_status === 'rejected') return { text: '已驳回', type: 'danger', sub: '修改后可重新提交' }
-        if (row.purchase_status === 'draft') return { text: '草稿', type: 'info', sub: '未提交审核' }
+        if (row.purchase_status === 'draft') return { text: '草稿', type: 'info', sub: '未提交订单' }
         if (row.audit_status === 'pending') return { text: '待审核', type: 'warning' }
         if (row.receipt_status === 'received' || row.purchase_status === 'received') return { text: '已到货', type: 'success' }
         const overdue = this.overdueDays(row)
@@ -1253,7 +1254,7 @@ export default {
       return (canonical && (canonical.unit_name || canonical.symbol || canonical.unit_code)) || '-'
     },
     confirmButtonText(command) {
-      return ({ submitRequest: '确认需求', requestToPlan: '转采购计划', approvePlan: '审核通过', submitOrder: '提交审核', approveOrder: '审核通过', confirmReceipt: '确认到货' })[command] || '确认执行'
+      return ({ submitRequest: '确认需求', requestToPlan: '转采购计划', approvePlan: '审核通过', submitOrder: '提交订单', approveOrder: '审核通过', confirmReceipt: '确认到货' })[command] || '确认执行'
     },
     confirmSummary(command, row) {
       const no = this.detailNo(row)
@@ -1264,13 +1265,13 @@ export default {
         submitRequest: `<p>确认需求：${no}</p><p>明细 ${lineCount} 行，采购数量 ${this.quantityByUnit(lines, 'purchase_quantity')}。确认后需求会被锁定，可转采购计划。</p>`,
         requestToPlan: `<p>转采购计划：${no}</p><p>明细 ${lineCount} 行，采购数量 ${this.quantityByUnit(lines, 'purchase_quantity')}，本次转化库存数量 ${this.quantityByUnit(lines, line => line.remaining_qty ?? Math.max(0, Number(line.request_qty || 0) - Number(line.converted_qty ?? line.planned_qty ?? 0)))}。</p>`,
         approvePlan: `<p>审核采购计划：${no}</p><p>物料 ${lineCount} 行，供应商 ${this.planSupplierCount(row)} 个，预计金额 ¥${amount}。审核通过后可生成采购订单。</p>`,
-        submitOrder: `<p>提交采购订单审核：${no}</p><p>供应商：${row.supplier ? row.supplier.supplier_name : '--'}；明细 ${lineCount} 行，采购数量 ${this.quantityByUnit(lines, line => line.purchase_qty ?? line.order_qty ?? line.qty ?? 0)}，金额 ¥${amount}。</p>`,
+        submitOrder: `<p>提交采购订单：${no}</p><p>供应商：${row.supplier ? row.supplier.supplier_name : '--'}；明细 ${lineCount} 行，采购数量 ${this.quantityByUnit(lines, line => line.purchase_qty ?? line.order_qty ?? line.qty ?? 0)}，金额 ¥${amount}。匹配已发布审核流程时进入审核，否则直接确认待到货。</p>`,
         approveOrder: `<p>审核采购订单：${no}</p><p>供应商：${row.supplier ? row.supplier.supplier_name : '--'}；审核通过后才可生成到货单。</p>`,
         confirmReceipt: `<p>确认到货：${no}</p><p>到货 ${this.quantityByUnit(lines, 'receipt_qty')}，合格 ${this.quantityByUnit(lines, 'qualified_qty')}，不合格 ${this.quantityByUnit(lines, 'unqualified_qty')}，质量待处理 ${this.quantityByUnit(lines, line => this.receiptUnresolvedQty(line))}。本次不更新正式库存。</p>`
       }
       if (command === 'generatePlanOrders') {
         const suppliers = this.planSupplierCount(row)
-        return `<p>按采购计划 ${no} 生成采购订单</p><p>将按供应商拆成 ${suppliers} 张采购订单（每个供应商一张），合计预计金额 ¥${amount}。生成后订单为草稿，需要再提交审核。</p>`
+        return `<p>按采购计划 ${no} 生成采购订单</p><p>将按供应商拆成 ${suppliers} 张采购订单（每个供应商一张），合计预计金额 ¥${amount}。生成后订单为草稿，需要再提交订单。</p>`
       }
       if (command === 'orderToReceipt') {
         return `<p>为采购订单 ${no} 生成到货单</p><p>供应商：${row.supplier ? row.supplier.supplier_name : '--'}。生成后进入到货单草稿，请填写实际到货数量、仓库和库位后再确认到货。</p>`

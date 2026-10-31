@@ -604,7 +604,7 @@ class PurchaseController extends Controller
             $user = app(AuthContextService::class)->currentUser($request);
             $order = $workflow->submitOrder($id, $this->operatorName($request), $user);
             $task = $order->getAttribute('approval_task');
-            return response()->json(['message' => $task ? '采购订单已提交审核中心' : '采购订单已提交', 'data' => $order]);
+            return response()->json(['message' => $order->purchase_status === 'processing' ? '采购订单已确认，待到货' : ($task ? '采购订单已提交审核中心' : '采购订单已提交'), 'data' => $order]);
         });
     }
     public function approveOrder(Request $request, int $id, PurchaseWorkflowApplicationService $workflow)

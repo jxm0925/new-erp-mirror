@@ -314,9 +314,9 @@ export default {
           links: requests.map(row => ({ text: row.request_no, to: `/purchase/requests/${row.id}/detail` })) },
         { title: '采购计划', status: plans.length ? 'finish' : 'skip', desc: plans.length ? '已审核' : '未经计划',
           links: plans.map(row => ({ text: row.plan_no, to: `/purchase/plans/${row.id}/detail` })) },
-        { title: '采购订单', status: approved ? 'finish' : 'process', desc: approved ? '审核通过' : (doc.audit_status === 'rejected' ? '已驳回' : doc.purchase_status === 'draft' ? '草稿' : '待审核'), links: [] },
+        { title: '采购订单', status: approved ? 'finish' : 'process', desc: approved ? '已确认' : (doc.audit_status === 'rejected' ? '已驳回' : doc.purchase_status === 'draft' ? '草稿' : '待审核'), links: [] },
         { title: '到货验收', status: received ? 'finish' : confirmed.length ? 'process' : approved ? 'process' : 'wait',
-          desc: received ? '已全部到货' : confirmed.length ? '部分到货' : approved ? (doc.expected_arrival_date ? `预计 ${String(doc.expected_arrival_date).slice(0, 10)}` : '等待到货') : '订单审核后到货',
+          desc: received ? '已全部到货' : confirmed.length ? '部分到货' : approved ? (doc.expected_arrival_date ? `预计 ${String(doc.expected_arrival_date).slice(0, 10)}` : '等待到货') : '订单确认后到货',
           links: receipts.map(row => ({ text: row.receipt_no, to: { path: '/purchase/receipts', query: { keyword: row.receipt_no } } })) },
         { title: '入库过账', status: confirmed.length && posted.length === confirmed.length && received ? 'finish' : posted.length ? 'process' : 'wait',
           desc: confirmed.length ? `${posted.length}/${confirmed.length} 张到货单已入库` : '到货确认后入库', links: [] },
@@ -444,7 +444,7 @@ export default {
       return `${this.requestTrace(row)} -> ${this.planTrace(row)} -> ${this.splitTrace(row)} -> 采购订单明细 -> 到货 ${row.received_qty || 0} / 剩余 ${this.remainingQty(row)}`
     },
     statusText(v) { return statusMap[v] || v || '-' },
-    auditStatusText(v) { return ({ pending: '待审核', approved: '已审核', rejected: '已驳回' })[v] || this.statusText(v) },
+    auditStatusText(v) { return ({ pending: '待审核', approved: this.type === 'orders' ? '已确认' : '已审核', rejected: '已驳回' })[v] || this.statusText(v) },
     approvalNodeText(node) { return ({ WAITING: '等待中', PENDING: '当前节点', APPROVED: '已通过', REJECTED: '已驳回', SKIPPED: '已跳过' })[node.node_status] || node.node_status || '-' },
     tagType(v) {
       return ['confirmed', 'approved', 'received', 'posted', 'planned'].includes(v) ? 'success' : ['cancelled', 'rejected'].includes(v) ? 'danger' : ['pending', 'partially_received', 'partial', 'submitted'].includes(v) ? 'warning' : 'info'
