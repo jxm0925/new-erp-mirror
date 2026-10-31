@@ -87,7 +87,7 @@ class MfgTaskController extends Controller
         $data = $request->validate(['unit_ids' => 'required|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1',
             'warehouse_id' => 'required|integer|exists:erp_warehouses,id', 'location_id' => 'required|integer|exists:erp_locations,id', 'remark' => 'nullable|string|max:500']);
         $receipt = $receipts->receive($id, $data['unit_ids'], (int) $data['warehouse_id'], (int) $data['location_id'], $data['remark'] ?? null, $user);
-        return response()->json(['message' => '已入库 '.(int) $receipt->qty.' 台设备（'.$receipt->receipt_no.'）。', 'data' => ['id' => $receipt->id, 'receipt_no' => $receipt->receipt_no]]);
+        return response()->json(['message' => '已入库 '.(int) $receipt->qty.' '.$this->unitWord(null, $id).'（'.$receipt->receipt_no.'）。', 'data' => ['id' => $receipt->id, 'receipt_no' => $receipt->receipt_no]]);
     }
 
     public function workers(Request $request, int $id, TaskQueryService $query)
@@ -124,9 +124,9 @@ class MfgTaskController extends Controller
         $data = $request->validate(['unit_ids' => 'required|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1']);
         $result = $tasks->pass($id, $data['unit_ids'], $user);
         $paused = ! empty($result['timing_paused']) ? '本道暂时没有可做的设备，计时已自动暂停。' : '';
-        if ($result['next_operation_name']) return $result['passed'].' 台设备合格，已交'.$result['next_operation_name'].'。'.$paused;
+        if ($result['next_operation_name']) return $result['passed'].' '.$this->unitWord($id).'合格，已交'.$result['next_operation_name'].'。'.$paused;
         if (($result['repaired'] ?? 0) > 0 && $result['repaired'] === $result['passed']) return $result['passed'].' 台设备返修合格，请仓库在发货单上把设备返回成品位后重新试水。'.$paused;
-        return $result['passed'].' 台设备合格，生产完成，'.($result['staged_qty'] ? '已自动记入成品待发区（'.$result['staged_receipt_no'].'），等发货试水。' : '等入库。').$paused;
+        return $result['passed'].' '.$this->unitWord($id).'合格，生产完成，'.($result['staged_qty'] ? '已自动记入成品待发区（'.$result['staged_receipt_no'].'），等发货试水。' : '等入库。').$paused;
     }
 
     /** 已备料：集中下料提前切好的料，不计时直接交下道。 */
@@ -135,8 +135,8 @@ class MfgTaskController extends Controller
         $data = $request->validate(['unit_ids' => 'required|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1', 'remark' => 'nullable|string|max:500',
             'cutting_run_id' => 'nullable|integer|min:1']);
         $result = $tasks->prepare($id, $data['unit_ids'], $data['remark'] ?? null, $user, isset($data['cutting_run_id']) ? (int) $data['cutting_run_id'] : null);
-        if ($result['next_operation_name']) return $result['passed'].' 台已备料，交'.$result['next_operation_name'].'。';
-        return $result['passed'].' 台已备料，生产完成，'.($result['staged_qty'] ? '已自动记入成品待发区（'.$result['staged_receipt_no'].'）。' : '等入库。');
+        if ($result['next_operation_name']) return $result['passed'].' '.$this->unitWord($id).'已备料，交'.$result['next_operation_name'].'。';
+        return $result['passed'].' '.$this->unitWord($id).'已备料，生产完成，'.($result['staged_qty'] ? '已自动记入成品待发区（'.$result['staged_receipt_no'].'）。' : '等入库。');
     }
 
     private function reject(Request $request, int $id, TaskService $tasks, object $user): string
@@ -146,7 +146,17 @@ class MfgTaskController extends Controller
             'reason' => 'nullable|string|max:500', 'photos' => 'nullable|array|max:9', 'photos.*' => 'string|max:1000']);
         $result = $tasks->reject($id, $data['unit_ids'], $data, $user);
         $paused = ! empty($result['timing_paused']) ? '本道暂时没有可做的设备，计时已自动暂停。' : '';
-        return ($result['mode'] === 'scrap' ? $result['count'].' 台设备已申请报废，等主管确认。' : $result['count'].' 台设备已退回'.$result['return_operation_name'].'。').$paused;
+        return ($result['mode'] === 'scrap' ? $result['count'].' '.$this->unitWord($id).'已申请报废，等主管确认。' : $result['count'].' '.$this->unitWord($id).'已退回'.$result['return_operation_name'].'。').$paused;
+    }
+
+    /** 提示语里的量词：整机说“台设备”，电箱、架子等半成品按工单单位说（如“个”）。 */
+    private function unitWord(?int $taskId, ?int $workOrderId = null): string
+    {
+        $wo = \Illuminate\Support\Facades\DB::table('erp_mfg_work_orders as w')->leftJoin('erp_items as i', 'i.id', '=', 'w.item_id')
+            ->when($taskId, fn ($q) => $q->join('erp_mfg_work_order_operations as o', 'o.work_order_id', '=', 'w.id')->where('o.id', $taskId), fn ($q) => $q->where('w.id', $workOrderId))
+            ->first(['i.item_type', 'w.unit_name']);
+        if (! $wo || $wo->item_type === 'finished_product') return '台设备';
+        return trim((string) $wo->unit_name) ?: '件';
     }
 
     private function run(\Closure $fn, string $message): string
