@@ -29,7 +29,7 @@
             <div class="roll-op">+</div>
             <div class="roll-item"><div class="roll-label">本月新做</div><div class="roll-value">{{ hours(monthData.totals.new) }}<small> 小时</small></div></div>
             <div class="roll-op">−</div>
-            <div class="roll-item ok"><div class="roll-label">本月出库结算</div><div class="roll-value">{{ hours(monthData.totals.settled) }}<small> 小时</small></div></div>
+            <div class="roll-item ok"><div class="roll-label">本月出库结算（含退货扣回）</div><div class="roll-value">{{ hours(monthData.totals.settled) }}<small> 小时</small></div></div>
             <div class="roll-op">=</div>
             <div class="roll-item warn-box"><div class="roll-label">结转下月（未出库）</div><div class="roll-value">{{ hours(monthData.totals.closing) }}<small> 小时</small></div></div>
             <div class="roll-item money-box"><div class="roll-label">本月结算提成</div><div class="roll-value">{{ money(monthData.totals.commission) }}</div></div>
@@ -58,24 +58,24 @@
                   </el-table-column>
                   <el-table-column label="本月出库去向" min-width="160">
                     <template slot-scope="{ row: r }">
-                      <div v-for="(x, i) in r.shipped_in_month" :key="i">{{ x.date }} {{ x.sales_order_no }} × {{ x.qty }}</div>
+                      <div v-for="(x, i) in r.shipped_in_month" :key="i" :class="{ warn: x.type === 'return' }">{{ x.date }} {{ x.type_label }} {{ x.sales_order_no }} × {{ x.qty }}</div>
                       <span v-if="!r.shipped_in_month.length" class="muted">本月没有出库</span>
                     </template>
                   </el-table-column>
                   <el-table-column label="月初未结" width="90" align="right"><template slot-scope="{ row: r }">{{ hours(r.opening) }}</template></el-table-column>
                   <el-table-column label="本月新做" width="90" align="right"><template slot-scope="{ row: r }">{{ hours(r.new) }}</template></el-table-column>
-                  <el-table-column label="本月结算" width="90" align="right"><template slot-scope="{ row: r }"><b>{{ hours(r.settled) }}</b></template></el-table-column>
+                  <el-table-column label="本月结算" width="90" align="right"><template slot-scope="{ row: r }"><b :class="{ neg: r.settled < 0 }">{{ hours(r.settled) }}</b></template></el-table-column>
                   <el-table-column label="结转下月" width="90" align="right"><template slot-scope="{ row: r }"><span :class="{ warn: r.closing > 0 }">{{ hours(r.closing) }}</span></template></el-table-column>
-                  <el-table-column label="提成" width="100" align="right"><template slot-scope="{ row: r }">{{ money(r.commission) }}</template></el-table-column>
+                  <el-table-column label="提成" width="100" align="right"><template slot-scope="{ row: r }"><span :class="{ neg: Number(r.commission) < 0 }">{{ money(r.commission) }}</span></template></el-table-column>
                 </el-table>
               </template>
             </el-table-column>
             <el-table-column prop="employee_name" label="人员" min-width="120" />
             <el-table-column label="上月结转（小时）" width="130" align="right"><template slot-scope="{ row }">{{ hours(row.opening) }}</template></el-table-column>
             <el-table-column label="本月新做" width="110" align="right"><template slot-scope="{ row }">{{ hours(row.new) }}</template></el-table-column>
-            <el-table-column label="本月出库结算" width="120" align="right"><template slot-scope="{ row }"><b>{{ hours(row.settled) }}</b></template></el-table-column>
+            <el-table-column label="本月出库结算" width="120" align="right"><template slot-scope="{ row }"><b :class="{ neg: row.settled < 0 }">{{ hours(row.settled) }}</b></template></el-table-column>
             <el-table-column label="结转下月" width="110" align="right"><template slot-scope="{ row }"><span :class="{ warn: row.closing > 0 }">{{ hours(row.closing) }}</span></template></el-table-column>
-            <el-table-column label="本月结算提成" width="130" align="right"><template slot-scope="{ row }">{{ money(row.commission) }}</template></el-table-column>
+            <el-table-column label="本月结算提成" width="130" align="right"><template slot-scope="{ row }"><span :class="{ neg: Number(row.commission) < 0 }">{{ money(row.commission) }}</span></template></el-table-column>
           </el-table>
         </template>
       </el-tab-pane>
@@ -211,7 +211,7 @@
             <div class="block-title">
               {{ line.product_name || line.item_name }}<span v-if="line.sku_name" class="muted"> · {{ line.sku_name }}</span>
               <span class="muted">　数量 {{ line.qty }}　金额 {{ money(line.amount) }}</span>
-              <span class="qty-ok">　已出库 {{ line.shipped_qty }}</span><span v-if="line.pending_qty > 0" class="qty-wait">　未出库 {{ line.pending_qty }}（预估）</span>
+              <span class="qty-ok">　已出库 {{ line.shipped_qty }}</span><span v-if="line.pending_qty > 0" class="qty-wait">　未出库 {{ line.pending_qty }}（预估）</span><span v-if="line.returned_qty > 0" class="warn">　退货 {{ line.returned_qty }}（退货当月扣回）</span>
             </div>
             <el-table :data="flatten(line)" size="mini" border :row-class-name="rowClass">
               <el-table-column label="来源工单" min-width="230">
@@ -357,6 +357,7 @@ export default {
 .wo-link { margin-left: 4px; font-weight: 600; }
 .emp { display: inline-block; margin-right: 12px; }
 .note { color: #e6a23c; }
+.neg { color: #f56c6c; }
 .qty-ok { color: #2e9d5b; margin-left: 6px; }
 .qty-wait { color: #e6a23c; font-size: 12px; }
 .inner { margin: 4px 0 4px 24px; width: calc(100% - 24px); }

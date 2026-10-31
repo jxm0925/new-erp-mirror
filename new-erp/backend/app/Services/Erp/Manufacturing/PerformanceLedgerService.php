@@ -14,6 +14,8 @@ use Illuminate\Support\Facades\DB;
  * - 月度滚动：上月结转（月初未结）+ 本月新做 − 本月出库结算 = 结转下月。没结算的不会重复累加，只是往后结转，等出库那个月再结。
  * - 提成只在出库时产生：订单折后金额 × 出库占比 × 工序提成比例，按工序参与人份额分。
  * - 发货包装作业：随发货单发运结算。
+ * - 客户退货：只记在退货到货的那个月（负数，扣回工时和提成），出库那个月的数字不动；退回客户（拒收）的在处置当月加回。
+ *   退回的货重新入库、以后再发出去，在再发出的月份重新结算。
  */
 final class PerformanceLedgerService
 {
@@ -31,6 +33,8 @@ final class PerformanceLedgerService
     private array $stock = [];
     private array $packing = [];
     private array $memo = [];
+    private array $lineShipped = [];
+    private array $lineReturns = [];
 
     public function __construct(private readonly ProductionPerformanceCalculator $calc) {}
 
@@ -137,13 +141,19 @@ final class PerformanceLedgerService
         $per = $output > 0 ? $total / $output : 0.0;
         $usage = [];
         foreach ($this->direct[$wo->id] ?? [] as $e) {
+            if (($e['type'] ?? 'ship') === 'return') {
+                $usage[] = ['type' => 'return', 'type_label' => $e['qty'] < 0 ? '客户退货' : '退回客户（加回）', 'status_label' => $e['qty'] < 0 ? '退货（当月扣回）' : '已出库', 'shipped' => $e['qty'] > 0,
+                    'target' => $e['shipment_no'], 'sales_order_no' => $e['order_no'], 'qty' => round($e['qty'], 4), 'shipped_qty' => round($e['qty'], 4), 'pending_qty' => 0,
+                    'date' => $e['date'], 'labor_minutes' => round($per * $e['qty'], 1)];
+                continue;
+            }
             $usage[] = ['type' => 'shipped', 'type_label' => '直接发货', 'status_label' => '已出库', 'shipped' => true, 'target' => $e['shipment_no'],
                 'sales_order_no' => $e['order_no'], 'qty' => round($e['qty'], 4), 'shipped_qty' => round($e['qty'], 4), 'pending_qty' => 0, 'date' => $e['date'],
                 'labor_minutes' => round($per * $e['qty'], 1)];
         }
         foreach ($this->consumers[$wo->id] ?? [] as $c) {
             $cu = $this->woUnit($this->wos[$c['consumer']]);
-            $shipped = $cu['output'] > 0 ? min($c['n'], $c['n'] * $this->shippedQty($cu, $today) / $cu['output']) : 0.0;
+            $shipped = $cu['output'] > 0 ? max(0, min($c['n'], $c['n'] * $this->shippedQty($cu, $today) / $cu['output'])) : 0.0;
             $pending = max(0, $c['n'] - $shipped);
             $cw = $this->wos[$c['consumer']];
             $usage[] = ['type' => 'consumed', 'type_label' => '装进 '.$cw->item_name, 'status_label' => $pending < 0.0001 ? '已出库' : ($shipped > 0.0001 ? '部分出库' : '已领用，未出库'),
@@ -206,7 +216,7 @@ final class PerformanceLedgerService
     {
         if ($unit['output'] <= 0) return 0.0;
         $q = array_sum(array_map(fn ($e) => ($inclusive ? $e['date'] <= $date : $e['date'] < $date) ? $e['qty'] : 0, $this->events($unit)));
-        return min(1.0, $q / $unit['output']);
+        return max(0.0, min(1.0, $q / $unit['output']));
     }
 
     private function sumLabor(array $rows, string $date, bool $inclusive): float
@@ -226,21 +236,22 @@ final class PerformanceLedgerService
                 'status_label' => $shipped ? '已发运' : '未发运'];
         }
         $wo = $unit['wo'];
-        $direct = array_sum(array_map(fn ($e) => $e['date'] <= $date ? $e['qty'] : 0, $this->direct[$wo->id] ?? []));
+        $direct = array_sum(array_map(fn ($e) => $e['date'] <= $date && ($e['type'] ?? 'ship') === 'ship' ? $e['qty'] : 0, $this->direct[$wo->id] ?? []));
         $consumed = 0.0; $consumedShipped = 0.0;
         foreach ($this->consumers[$wo->id] ?? [] as $c) {
-            $consumed += $c['n'];
+            $consumed += max(0, $this->sumLabor($c['dated'], $date, true));
             $cu = $this->woUnit($this->wos[$c['consumer']]);
-            if ($cu['output'] > 0) $consumedShipped += min($c['n'], $c['n'] * $this->shippedQty($cu, $date) / $cu['output']);
+            if ($cu['output'] > 0) $consumedShipped += max(0, min($c['n'], $c['n'] * $this->shippedQty($cu, $date) / $cu['output']));
         }
+        $returned = -array_sum(array_map(fn ($e) => ($e['type'] ?? '') === 'return' && $e['date'] <= $date ? $e['qty'] : 0, $this->events($unit)));
         $stock = $this->stock[$wo->id] ?? 0.0;
-        $shipped = min($unit['output'], $direct + $consumedShipped);
+        $shipped = max(0, min($unit['output'], $this->shippedQty($unit, $date)));
         $other = max(0, $unit['output'] - $direct - $consumed - $stock);
         return ['key' => $unit['key'], 'kind' => 'work_order', 'work_order_id' => (int) $wo->id, 'work_order_no' => $wo->work_order_no,
             'source_label' => self::SOURCE_LABELS[$wo->source_type] ?? $wo->source_type, 'item_name' => $wo->item_name, 'sales_order_no' => $wo->sales_order_no,
             'unit_name' => $wo->unit_name, 'output_qty' => round($unit['output'], 4), 'shipped_qty' => round($shipped, 4),
             'consumed_pending_qty' => round(max(0, $consumed - $consumedShipped), 4), 'in_stock_qty' => round($stock, 4), 'other_qty' => round($other, 4),
-            'pending_qty' => round(max(0, $unit['output'] - $shipped), 4),
+            'pending_qty' => round(max(0, $unit['output'] - $shipped), 4), 'returned_qty' => round(max(0, $returned), 4),
             'status_label' => $unit['output'] - $shipped < 0.0001 ? '已全部出库' : ($shipped > 0.0001 ? '部分出库' : '未出库')];
     }
 
@@ -248,8 +259,10 @@ final class PerformanceLedgerService
     {
         $out = [];
         foreach ($events as $e) {
-            $k = $e['order_no'].'|'.$e['date'];
-            $out[$k] ??= ['sales_order_no' => $e['order_no'], 'date' => $e['date'], 'qty' => 0.0];
+            $type = $e['type'] ?? 'ship';
+            $k = $type.'|'.$e['order_no'].'|'.$e['date'];
+            $out[$k] ??= ['type' => $type, 'type_label' => $type === 'return' ? ($e['qty'] > 0 || bccomp($e['lf'], '0', 12) > 0 ? '退回客户（加回）' : '客户退货（扣回）') : '出库',
+                'sales_order_no' => $e['order_no'], 'date' => $e['date'], 'qty' => 0.0];
             $out[$k]['qty'] += $e['qty'];
         }
         return array_values(array_map(fn ($r) => ['qty' => round($r['qty'], 4)] + $r, $out));
@@ -257,9 +270,16 @@ final class PerformanceLedgerService
 
     private function roundRow(array $r, bool $amounts): array
     {
-        foreach (['opening', 'new', 'settled', 'closing'] as $k) $r[$k] = round(max(0, $r[$k]), 1);
-        $r['commission'] = $amounts ? $this->calc->round($r['commission']) : null;
+        foreach (['opening', 'new', 'closing'] as $k) $r[$k] = round(max(0, $r[$k]), 1);
+        $r['settled'] = round($r['settled'], 1); // 退货当月可能为负（扣回）
+        $r['commission'] = $amounts ? $this->money($r['commission']) : null;
         return $r;
+    }
+
+    /** 四舍五入到 4 位，负数（退货扣回）按绝对值舍入。 */
+    private function money(string $v): string
+    {
+        return bccomp($v, '0', 12) < 0 ? '-'.$this->calc->round(ltrim($v, '-')) : $this->calc->round($v);
     }
 
     private function name(string $key, int $opId, int $emp): string
@@ -295,24 +315,34 @@ final class PerformanceLedgerService
             $woId = $this->woByKey[$s->item_id.'|'.$s->batch_no] ?? null;
             $line = $this->lines[(int) $s->sales_order_line_id] ?? null;
             if (! $woId || ! $line || bccomp($line['qty'], '0', 8) <= 0) continue;
-            $this->direct[$woId][] = ['date' => $s->d, 'line_id' => (int) $s->sales_order_line_id, 'order_no' => $line['order_no'], 'shipment_no' => $s->shipment_no,
+            $this->direct[$woId][] = ['type' => 'ship', 'date' => $s->d, 'line_id' => (int) $s->sales_order_line_id, 'order_no' => $line['order_no'], 'shipment_no' => $s->shipment_no,
                 'qty' => (float) $s->base_qty, 'lf' => bcdiv((string) $s->base_qty, $line['qty'], 12)];
+            $this->lineShipped[(int) $s->sales_order_line_id][$woId] = ($this->lineShipped[(int) $s->sales_order_line_id][$woId] ?? 0) + (float) $s->base_qty;
         }
+        $this->loadReturns();
         // 领用（扣退料）：谁领了哪批
         $net = [];
+        $dated = [];
         foreach (DB::table('erp_inventory_transaction_items as ti')->join('erp_mfg_material_issues as i', 'i.id', '=', 'ti.source_id')->where('ti.source_type', 'mfg_material_issue')
-            ->groupBy('i.work_order_id', 'ti.item_id', 'ti.batch_no')->selectRaw('i.work_order_id, ti.item_id, ti.batch_no, SUM(-ti.change_qty) AS q')->get() as $r)
-            $net[$r->work_order_id][$r->item_id][(string) $r->batch_no] = (float) $r->q;
+            ->groupBy('i.work_order_id', 'ti.item_id', 'ti.batch_no', DB::raw('DATE(ti.created_at)'))->selectRaw('i.work_order_id, ti.item_id, ti.batch_no, DATE(ti.created_at) AS d, SUM(-ti.change_qty) AS q')->get() as $r) {
+            $net[$r->work_order_id][$r->item_id][(string) $r->batch_no] = ($net[$r->work_order_id][$r->item_id][(string) $r->batch_no] ?? 0) + (float) $r->q;
+            $dated[$r->work_order_id][$r->item_id][(string) $r->batch_no][] = [$r->d, (float) $r->q];
+        }
         foreach (DB::table('erp_mfg_material_return_lines as l')->join('erp_mfg_material_returns as r', 'r.id', '=', 'l.return_id')->where('r.status', 'approved')
-            ->groupBy('l.work_order_id', 'l.component_item_id', 'l.batch_no')->selectRaw('l.work_order_id, l.component_item_id, l.batch_no, SUM(l.qty) AS q')->get() as $r)
-            if (isset($net[$r->work_order_id][$r->component_item_id][(string) $r->batch_no])) $net[$r->work_order_id][$r->component_item_id][(string) $r->batch_no] -= (float) $r->q;
+            ->groupBy('l.work_order_id', 'l.component_item_id', 'l.batch_no', DB::raw('DATE(COALESCE(r.reviewed_at, r.updated_at))'))
+            ->selectRaw('l.work_order_id, l.component_item_id, l.batch_no, DATE(COALESCE(r.reviewed_at, r.updated_at)) AS d, SUM(l.qty) AS q')->get() as $r)
+            if (isset($net[$r->work_order_id][$r->component_item_id][(string) $r->batch_no])) {
+                $net[$r->work_order_id][$r->component_item_id][(string) $r->batch_no] -= (float) $r->q;
+                $dated[$r->work_order_id][$r->component_item_id][(string) $r->batch_no][] = [$r->d, -(float) $r->q];
+            }
         foreach ($net as $consumer => $items) {
             if (! isset($this->wos[$consumer])) continue;
             foreach ($items as $itemId => $batches) {
                 $total = array_sum(array_map(fn ($q) => max(0, $q), $batches));
                 foreach ($batches as $batch => $q) {
                     $producer = $this->woByKey[$itemId.'|'.$batch] ?? null;
-                    if ($producer && $producer !== $consumer && $q > 0.00000001) $this->consumers[$producer][] = ['consumer' => $consumer, 'n' => $q, 'N' => $total];
+                    if ($producer && $producer !== $consumer && $q > 0.00000001)
+                        $this->consumers[$producer][] = ['consumer' => $consumer, 'n' => $q, 'N' => $total, 'dated' => $dated[$consumer][$itemId][$batch] ?? []];
                 }
             }
         }
@@ -336,6 +366,47 @@ final class PerformanceLedgerService
             $woId = $this->woByKey[$b->item_id.'|'.$b->batch_no] ?? null;
             if ($woId) $this->stock[$woId] = (float) $b->q;
         }
+    }
+
+    /**
+     * 客户退货：按退货到货日记负数事件，摊到这行商品发货时用的各批工单（按发货数量比例）。
+     * 到货时就退回客户（拒收）的不算；待处理的后来退回客户，在处置那天加回。数量按到货当时的口径还原，后来的处置不改到货那天的数字。
+     */
+    private function loadReturns(): void
+    {
+        $disp = DB::table('erp_sales_return_dispositions')->get();
+        $targets = $disp->filter(fn ($d) => $d->target_receipt_item_id && $d->target_receipt_item_id !== $d->source_receipt_item_id)->pluck('target_receipt_item_id')->map(fn ($v) => (int) $v)->all();
+        $bySource = $disp->groupBy('source_receipt_item_id');
+        $rows = DB::table('erp_sales_return_receipt_items as ri')->join('erp_sales_return_receipts as r', 'r.id', '=', 'ri.receipt_id')
+            ->join('erp_sales_return_items as i', 'i.id', '=', 'ri.sales_return_item_id')->join('erp_sales_returns as sr', 'sr.id', '=', 'i.sales_return_id')
+            ->where('r.receipt_status', '!=', 'cancelled')->where('sr.return_status', '!=', 'cancelled')
+            ->get(['ri.id', 'ri.item_id', 'ri.batch_no', 'ri.received_base_qty', 'ri.rejected_base_qty', 'i.sales_order_line_id', 'r.receipt_date', 'r.receipt_no', 'sr.return_no']);
+        foreach ($rows as $r) {
+            if (in_array((int) $r->id, $targets, true)) continue;
+            $mine = $bySource->get($r->id, collect());
+            $movedOut = (float) $mine->filter(fn ($d) => $d->disposition === 'restock' && $d->target_receipt_item_id && $d->target_receipt_item_id !== $d->source_receipt_item_id)->sum('base_qty');
+            $laterRejected = $mine->where('disposition', 'rejected');
+            $qty = (float) $r->received_base_qty + $movedOut - (float) $r->rejected_base_qty + (float) $laterRejected->sum('base_qty');
+            $this->addReturn((int) $r->sales_order_line_id, -$qty, (string) $r->receipt_date, (string) $r->return_no, (int) $r->item_id, (string) $r->batch_no);
+            foreach ($laterRejected as $d) $this->addReturn((int) $r->sales_order_line_id, (float) $d->base_qty, substr((string) $d->created_at, 0, 10), (string) $r->return_no.'（退回客户）', 0, '');
+        }
+    }
+
+    private function addReturn(int $lineId, float $qty, string $date, string $no, int $itemId, string $batch): void
+    {
+        $line = $this->lines[$lineId] ?? null;
+        $shipped = $this->lineShipped[$lineId] ?? [];
+        $total = array_sum($shipped);
+        if (abs($qty) < 0.00000001 || ! $line || $total <= 0 || bccomp($line['qty'], '0', 8) <= 0) return;
+        arsort($shipped);
+        foreach ($shipped as $woId => $q) {
+            $part = $qty * $q / $total;
+            $this->direct[$woId][] = ['type' => 'return', 'date' => $date, 'line_id' => $lineId, 'order_no' => $line['order_no'], 'shipment_no' => $no,
+                'qty' => $part, 'lf' => bcdiv(number_format($part, 8, '.', ''), $line['qty'], 12)];
+        }
+        // 退回入库用了新批次号的，归到这行的主要工单，以后再发出去还能接着结算。
+        if ($batch !== '' && $itemId && ! isset($this->woByKey[$itemId.'|'.$batch])) $this->woByKey[$itemId.'|'.$batch] = array_key_first($shipped);
+        $this->lineReturns[$lineId][] = ['date' => $date, 'qty' => $qty, 'no' => $no];
     }
 
     /** 发货包装作业：一道包装作业是一个结算单元，随发货单发运结算，提成按包裹里各订单行数量占比。 */
@@ -365,6 +436,15 @@ final class PerformanceLedgerService
                         'qty' => 0.0, 'lf' => bcdiv((string) $c->base_qty, $line['qty'], 12)];
                 }
                 if ($events) $events[0]['qty'] = 1.0;
+                foreach ($events as $e) {
+                    $shippedLine = array_sum($this->lineShipped[$e['line_id']] ?? []);
+                    $packedQty = (float) bcmul($e['lf'], $this->lines[$e['line_id']]['qty'], 8);
+                    if ($shippedLine <= 0) continue;
+                    foreach ($this->lineReturns[$e['line_id']] ?? [] as $ret) {
+                        $events[] = ['type' => 'return', 'date' => $ret['date'], 'line_id' => $e['line_id'], 'order_no' => $e['order_no'], 'shipment_no' => $ret['no'], 'qty' => 0.0,
+                            'lf' => bcdiv(number_format($ret['qty'] * $packedQty / $shippedLine, 8, '.', ''), $this->lines[$e['line_id']]['qty'], 12)];
+                    }
+                }
             }
             $rate = $op->performance_rate_snapshot !== null && (float) $op->performance_rate_snapshot > 0 ? (string) $op->performance_rate_snapshot : null;
             $this->packing[] = ['key' => $key, 'kind' => 'packing', 'output' => 1.0, 'events' => $events, 'shipment_no' => $op->shipment_no, 'order_no' => $op->sales_order_no,

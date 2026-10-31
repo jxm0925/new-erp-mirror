@@ -87,11 +87,16 @@ final class PerformanceStatsService
                 $sources[] = ['kind' => $src['kind'], 'kind_label' => $src['label']] + $this->node($src['wo'], $src['qty'], $fraction, $ctx, 0, []);
             }
             $packing = $this->packing($line, $ctx);
+            $returned = (float) DB::table('erp_sales_return_receipt_items as ri')->join('erp_sales_return_items as i', 'i.id', '=', 'ri.sales_return_item_id')
+                ->join('erp_sales_returns as sr', 'sr.id', '=', 'i.sales_return_id')->where('i.sales_order_line_id', $line->id)->where('sr.return_status', '!=', 'cancelled')
+                ->whereNotIn('ri.id', DB::table('erp_sales_return_dispositions')->whereColumn('target_receipt_item_id', '!=', 'source_receipt_item_id')->whereNotNull('target_receipt_item_id')->select('target_receipt_item_id'))
+                ->sum(DB::raw('ri.received_base_qty - ri.rejected_base_qty'));
+            if ($returned > 0.0001) $issues[] = "{$line->item_name}：客户退货 ".$this->num((string) $returned).'，在退货到货当月的“月度结算”里扣回工时和提成，这里按原出库统计，不扣。';
             if (bccomp($covered, $qty, 8) < 0) $issues[] = "{$line->item_name}：还有 ".$this->num(bcsub($qty, $covered, 8)).' 没有生产或发货来源（还没开工单或还没发货），这部分暂不统计。';
             $out[] = ['sales_order_line_id' => (int) $line->id, 'line_no' => $line->line_no, 'product_name' => $line->product_name, 'sku_name' => $line->sku_name,
                 'item_name' => $line->item_name, 'qty' => $this->num($qty), 'amount' => $amounts ? $amount : null,
                 'shipped_qty' => $this->num($shippedQty = (string) array_sum(array_map(fn ($s) => $s['kind'] === 'shipped' ? $s['used_qty'] : 0, $sources))),
-                'pending_qty' => $this->num(bccomp($qty, $shippedQty, 8) > 0 ? bcsub($qty, $shippedQty, 8) : '0'),
+                'pending_qty' => $this->num(bccomp($qty, $shippedQty, 8) > 0 ? bcsub($qty, $shippedQty, 8) : '0'), 'returned_qty' => round($returned, 4),
                 'sources' => $sources, 'packing' => $packing];
         }
         $employeeRows = array_values($employees);
