@@ -209,6 +209,7 @@ export default {
       { name: '生产作业看板', path: '/production/board', icon: 'el-icon-data-board', permission: 'production.board' },
       { name: '定制工艺管理', path: '/production/tech', icon: 'el-icon-set-up', permission: 'production.tech' },
       { name: '序列号查询', path: '/production/serials', icon: 'el-icon-search', permission: 'production.serial' },
+      { name: '提成与工时统计', path: '/production/performance/orders', icon: 'el-icon-money', permission: 'production.performance_stats' },
       { name: '生产基础', children: [
         { name: '工序管理', path: '/production/operations', icon: 'el-icon-set-up', permission: 'production.operation' },
         { name: '工艺路线', path: '/production/routings', icon: 'el-icon-guide', permission: 'production.routing' },

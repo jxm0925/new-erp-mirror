@@ -125,7 +125,7 @@ class ResetProductionV2 extends Command
     /** v2 仍保留的生产权限；其余 production.* 旧权限及其角色授权一并删除。 */
     private const KEEP_PERMISSIONS = [
         'production', 'production.work_order', 'production.base', 'production.operation', 'production.routing', 'production.performance',
-        'production.work_order.view', 'production.work_order.create', 'production.work_order.edit', 'production.work_order.publish',
+        'production.performance_stats', 'production.work_order.view', 'production.work_order.create', 'production.work_order.edit', 'production.work_order.publish',
         'production.work_order.cancel', 'production.task.view', 'production.task.collaborate', 'production.performance.manage',
         'production.operation.view', 'production.operation.create', 'production.operation.edit', 'production.operation.toggle', 'production.operation.delete',
         'production.routing.view', 'production.routing.create', 'production.routing.edit', 'production.routing.activate',
