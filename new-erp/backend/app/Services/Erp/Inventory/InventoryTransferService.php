@@ -50,6 +50,7 @@ class InventoryTransferService
             foreach ($data['lines'] as $index => $line) {
                 $rows[] = $this->validatedLine((int) $data['source_warehouse_id'], (int) $data['target_warehouse_id'], $line, $index + 1, false);
             }
+            $this->assertCombinedQuantity($rows);
             $header = [
                 'source_warehouse_id' => (int) $data['source_warehouse_id'],
                 'target_warehouse_id' => (int) $data['target_warehouse_id'],
@@ -162,7 +163,7 @@ class InventoryTransferService
     {
         $fail = fn (string $message) => throw ValidationException::withMessages(['lines' => "第 {$rowNo} 行：{$message}"]);
         $balance = $this->transferableBalances()->whereKey((int) ($line['inventory_balance_id'] ?? 0))->when($lock, fn ($q) => $q->lockForUpdate())->first();
-        if (! $balance || (int) $balance->warehouse_id !== $sourceWarehouseId) $fail('来源库存不可调拨，请检查仓库、库位、批次有效期、管理范围及可用数量。');
+        if (! $balance || (int) $balance->warehouse_id !== $sourceWarehouseId) $fail($this->untransferableReason((int) ($line['inventory_balance_id'] ?? 0), $sourceWarehouseId));
         $item = Item::query()->find($balance->item_id);
         if (! $item) $fail('物料不存在。');
         if ($item->materialManagementMode() !== 'quantity') $fail("{$item->item_code} 为实物逐张管理物料，请在库存余额中使用“实物材料调拨”。");
@@ -214,6 +215,56 @@ class InventoryTransferService
             'target_location_id' => $target->id, 'batch_no' => $balance->batch_no, 'unit_id' => $balance->unit_id,
             'quantity' => $qty, 'serial_ids' => $serialIds ?: null, 'remark' => $remark,
         ];
+    }
+
+    /** 同一来源库存拆成多行时，合计不能超过可用量；否则过账到后面的行才失败。 */
+    private function assertCombinedQuantity(array $rows): void
+    {
+        $groups = [];
+        foreach ($rows as $index => $row) $groups[(int) $row['inventory_balance_id']][] = $index + 1;
+        foreach ($groups as $balanceId => $rowNos) {
+            if (count($rowNos) < 2) continue;
+            $total = array_sum(array_map(fn ($no) => (float) $rows[$no - 1]['quantity'], $rowNos));
+            $balance = InventoryBalance::query()->with('item')->find($balanceId);
+            $available = $balance ? $this->availability->availableForOutbound($balance) : 0.0;
+            if ($total > $available + 0.00000001) {
+                throw ValidationException::withMessages(['lines' => '第 '.implode('、', $rowNos).' 行是同一条来源库存（'
+                    .($balance?->item?->item_code ?? '').' 批次 '.($balance?->batch_no ?? '').'），合计调拨 '.$this->qtyText($total)
+                    .'，超过可用 '.$this->qtyText($available).'。']);
+            }
+        }
+    }
+
+    /** 来源库存不满足调拨资格时，说清楚具体是哪一条原因。 */
+    private function untransferableReason(int $balanceId, int $sourceWarehouseId): string
+    {
+        $balance = InventoryBalance::query()->find($balanceId);
+        if (! $balance) return '来源库存不存在，请重新选择。';
+        $item = Item::query()->find($balance->item_id);
+        $name = $item ? "{$item->item_code} {$item->item_name}" : '该物料';
+        if ((int) $balance->warehouse_id !== $sourceWarehouseId) return "{$name} 不在所选调出仓库，请重新选择来源库存。";
+        $warehouse = DB::table('erp_warehouses')->where('id', $balance->warehouse_id)->first();
+        if (! $warehouse || ! in_array($warehouse->status, ['enabled', 'active'], true)) return '调出仓库已停用。';
+        $location = DB::table('erp_locations')->where('id', $balance->location_id)->first();
+        if (! $location || ! in_array($location->status, ['enabled', 'active'], true)) return '来源库位'.($location ? "「{$location->location_name}」" : '').'已停用。';
+        $batch = DB::table('erp_inventory_batches')->where('item_id', $balance->item_id)->where('batch_no', $balance->batch_no)->first();
+        if (! $batch) return "{$name} 的批次 {$balance->batch_no} 缺少批次档案。";
+        if (! in_array($batch->status, ['enabled', 'active'], true)) return "{$name} 的批次 {$balance->batch_no} 已停用。";
+        if ($batch->expire_date && $batch->expire_date < now()->toDateString()) return "{$name} 的批次 {$balance->batch_no} 已过有效期（{$batch->expire_date}）。";
+        if ($item && $item->materialManagementMode() === 'physical') return "{$item->item_code} 为实物逐张管理物料，请在库存余额中使用“实物材料调拨”。";
+        if ($item && ! $item->is_stock_item) return "{$name} 不是库存物料。";
+        if ($item && $item->management_scope !== $warehouse->management_scope) return "{$name} 的管理范围与调出仓库不一致。";
+        if ($balance->material_lot_id) {
+            $lot = DB::table('erp_material_lots')->where('id', $balance->material_lot_id)->first();
+            if ($lot && ($lot->configuration_id || $lot->stage_id)) return "{$name} 这批是订单配置/阶段专用材料，不能普通调拨。";
+            if ($lot && $lot->material_form === 'REMNANT') return "{$name} 这条是开料余料".((float) $lot->cut_length_mm > 0 ? '（余长 '.rtrim(rtrim((string) $lot->cut_length_mm, '0'), '.').'mm）' : '').'，余料留在原库位供下次下料使用，不能普通调拨。';
+        }
+        $free = (float) $balance->quantity_on_hand - (float) $balance->quantity_locked - (float) $balance->quantity_defective - (float) $balance->quantity_pending;
+        if ($free <= 0.00000001 || (float) $balance->quantity_available <= 0) {
+            return "{$name} 当前没有可调拨数量（在库 ".$this->qtyText((float) $balance->quantity_on_hand).'，已预占 '.$this->qtyText((float) $balance->quantity_locked)
+                .'，不良 '.$this->qtyText((float) $balance->quantity_defective).'，待处理 '.$this->qtyText((float) $balance->quantity_pending).'）。若被工单或订单预占，需先释放预占；若本单前面的行已调走这条库存，请合并为一行。';
+        }
+        return '来源库存不可调拨，请检查仓库、库位、批次有效期、管理范围及可用数量。';
     }
 
     /** 候选、保存和过账共用资格；必须在分页前剔除不可用的配置/阶段材料批次。 */
