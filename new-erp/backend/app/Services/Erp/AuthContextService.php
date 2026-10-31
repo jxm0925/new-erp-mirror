@@ -145,8 +145,9 @@ class AuthContextService
     }
 
     /**
-     * 左侧导航：完全来自菜单管理（名称、图标、排序、停用、层级都以库里为准）。
-     * 菜单本身或其下任一权限被授予即可见；停用的菜单连同下级一起隐藏；没有路径也没有可见下级的分组不显示。
+     * 左侧导航：完全来自菜单管理（名称、图标、排序、停用、层级都以库里为准），停用的菜单连同下级一起不下发。
+     * granted：菜单本身或其下任一权限已授予。前端按页面路由的访问权限决定显示（与路由守卫同一规则，菜单能看到就一定能打开），
+     * 路由没有声明权限的页面才看 granted，所以这里不按授权裁剪。
      *
      * @return array<int, array<string, mixed>>
      */
@@ -190,10 +191,10 @@ class AuthContextService
         $prune = function (array $nodes) use (&$prune): array {
             $out = [];
             foreach ($nodes as $node) {
-                if (! $node['is_menu'] || ! $node['granted']) continue;
+                if (! $node['is_menu']) continue;
                 $kids = $prune($node['children']);
                 if (! $node['path'] && ! $kids) continue;
-                $out[] = ['code' => $node['code'], 'name' => $node['name'], 'path' => $node['path'], 'icon' => $node['icon'], 'children' => $kids];
+                $out[] = ['code' => $node['code'], 'name' => $node['name'], 'path' => $node['path'], 'icon' => $node['icon'], 'granted' => $node['granted'], 'children' => $kids];
             }
 
             return $out;
