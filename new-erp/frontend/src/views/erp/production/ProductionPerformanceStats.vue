@@ -30,6 +30,8 @@
             <div class="roll-item"><div class="roll-label">本月新做</div><div class="roll-value">{{ hours(monthData.totals.new) }}<small> 小时</small></div></div>
             <div class="roll-op">−</div>
             <div class="roll-item ok"><div class="roll-label">本月出库结算</div><div class="roll-value">{{ hours(monthData.totals.settled) }}<small> 小时</small></div></div>
+            <div class="roll-op">−</div>
+            <div class="roll-item scrap-box"><div class="roll-label">本月报废（单独列）</div><div class="roll-value">{{ hours(monthData.totals.scrap) }}<small> 小时</small></div></div>
             <div class="roll-op">=</div>
             <div class="roll-item warn-box"><div class="roll-label">结转下月（未出库）</div><div class="roll-value">{{ hours(monthData.totals.closing) }}<small> 小时</small></div></div>
             <div class="roll-item money-box"><div class="roll-label">本月结算提成</div><div class="roll-value">{{ money(monthData.totals.commission) }}</div></div>
@@ -72,7 +74,7 @@
                       <el-tag size="mini" :type="statusType(r.status_label)" effect="plain">{{ r.status_label }}</el-tag>
                       <span class="qty-ok">已出库 {{ r.shipped_qty }}</span> / 产出 {{ r.output_qty }}
                       <div v-if="r.pending_qty > 0" class="qty-wait">
-                        未出库 {{ r.pending_qty }}<template v-if="r.consumed_pending_qty">（已装进整机待出库 {{ r.consumed_pending_qty }}）</template><template v-if="r.in_stock_qty">（在库 {{ r.in_stock_qty }}）</template><template v-if="r.other_qty">（未完工/其他 {{ r.other_qty }}）</template>
+                        未出库 {{ r.pending_qty }}<template v-if="r.consumed_pending_qty">（已装进整机待出库 {{ r.consumed_pending_qty }}）</template><template v-if="r.in_stock_qty">（在库 {{ r.in_stock_qty }}）</template><template v-if="r.other_qty">（未完工/其他 {{ r.other_qty }}）</template><template v-if="r.scrapped_qty">（报废 {{ r.scrapped_qty }}）</template>
                       </div>
                     </template>
                   </el-table-column>
@@ -85,6 +87,7 @@
                   <el-table-column label="月初未结" width="90" align="right"><template slot-scope="{ row: r }">{{ hours(r.opening) }}</template></el-table-column>
                   <el-table-column label="本月新做" width="90" align="right"><template slot-scope="{ row: r }">{{ hours(r.new) }}</template></el-table-column>
                   <el-table-column label="本月结算" width="90" align="right"><template slot-scope="{ row: r }"><b :class="{ neg: r.settled < 0 }">{{ hours(r.settled) }}</b></template></el-table-column>
+                  <el-table-column label="本月报废" width="90" align="right"><template slot-scope="{ row: r }"><span :class="{ neg: r.scrap > 0 }">{{ hours(r.scrap) }}</span></template></el-table-column>
                   <el-table-column label="结转下月" width="90" align="right"><template slot-scope="{ row: r }"><span :class="{ warn: r.closing > 0 }">{{ hours(r.closing) }}</span></template></el-table-column>
                   <el-table-column label="提成" width="100" align="right"><template slot-scope="{ row: r }"><span :class="{ neg: Number(r.commission) < 0 }">{{ money(r.commission) }}</span></template></el-table-column>
                 </el-table>
@@ -94,6 +97,7 @@
             <el-table-column label="上月结转（小时）" width="130" align="right"><template slot-scope="{ row }">{{ hours(row.opening) }}</template></el-table-column>
             <el-table-column label="本月新做" width="110" align="right"><template slot-scope="{ row }">{{ hours(row.new) }}</template></el-table-column>
             <el-table-column label="本月出库结算" width="120" align="right"><template slot-scope="{ row }"><b :class="{ neg: row.settled < 0 }">{{ hours(row.settled) }}</b></template></el-table-column>
+            <el-table-column label="本月报废" width="100" align="right"><template slot-scope="{ row }"><span :class="{ neg: row.scrap > 0 }">{{ hours(row.scrap) }}</span></template></el-table-column>
             <el-table-column label="结转下月" width="110" align="right"><template slot-scope="{ row }"><span :class="{ warn: row.closing > 0 }">{{ hours(row.closing) }}</span></template></el-table-column>
             <el-table-column label="本月结算提成" width="130" align="right"><template slot-scope="{ row }"><span :class="{ neg: Number(row.commission) < 0 }">{{ money(row.commission) }}</span></template></el-table-column>
           </el-table>
@@ -105,7 +109,7 @@
           <el-input v-model="woKeyword" size="small" clearable placeholder="工单号 / 产品 / 订单号" style="width: 240px" @keyup.enter.native="searchWos" @clear="searchWos" />
           <el-checkbox v-model="onlyUnsettled" @change="searchWos">只看还有未结算的</el-checkbox>
           <el-button size="small" type="primary" icon="el-icon-search" @click="searchWos">查询</el-button>
-          <span v-if="woSummary" class="muted">合计工时 {{ hours(woSummary.labor_minutes) }} 小时，已结算 {{ hours(woSummary.settled_minutes) }}，未结算 <span class="warn">{{ hours(woSummary.unsettled_minutes) }}</span></span>
+          <span v-if="woSummary" class="muted">合计工时 {{ hours(woSummary.labor_minutes) }} 小时，已结算 {{ hours(woSummary.settled_minutes) }}，报废 {{ hours(woSummary.scrap_minutes) }}，未结算 <span class="warn">{{ hours(woSummary.unsettled_minutes) }}</span></span>
         </div>
         <el-table v-loading="woLoading" :data="wos" size="small" border stripe>
           <el-table-column label="工单" min-width="170">
@@ -122,8 +126,10 @@
           <el-table-column label="装进整机待出库" width="120" align="right"><template slot-scope="{ row }">{{ row.consumed_pending_qty || '-' }}</template></el-table-column>
           <el-table-column label="在库" width="70" align="right"><template slot-scope="{ row }">{{ row.in_stock_qty || '-' }}</template></el-table-column>
           <el-table-column label="未完工/其他" width="100" align="right"><template slot-scope="{ row }">{{ row.other_qty || '-' }}</template></el-table-column>
+          <el-table-column label="报废" width="70" align="right"><template slot-scope="{ row }"><span :class="{ neg: row.scrapped_qty }">{{ row.scrapped_qty || '-' }}</span></template></el-table-column>
           <el-table-column label="总工时（小时）" width="115" align="right"><template slot-scope="{ row }">{{ hours(row.labor_minutes) }}</template></el-table-column>
           <el-table-column label="已结算" width="90" align="right"><template slot-scope="{ row }">{{ hours(row.settled_minutes) }}</template></el-table-column>
+          <el-table-column label="报废工时" width="90" align="right"><template slot-scope="{ row }"><span :class="{ neg: row.scrap_minutes > 0 }">{{ row.scrap_minutes ? hours(row.scrap_minutes) : '-' }}</span></template></el-table-column>
           <el-table-column label="未结算" width="90" align="right"><template slot-scope="{ row }"><span :class="{ warn: row.unsettled_minutes > 0 }">{{ hours(row.unsettled_minutes) }}</span></template></el-table-column>
           <el-table-column label="" width="80">
             <template slot-scope="{ row }"><el-button type="text" size="mini" @click="showBatch(row.work_order_no)">去向</el-button></template>
@@ -173,6 +179,7 @@
             <el-tag size="mini" :type="statusType(batch.work_order.status_label)" effect="plain">{{ batch.work_order.status_label }}</el-tag>
             <span>产出 {{ batch.work_order.output_qty }} {{ batch.work_order.unit_name }}，<span class="qty-ok">已出库 {{ batch.work_order.shipped_qty }}</span>，<span class="qty-wait">未出库 {{ batch.work_order.pending_qty }}</span></span>
             <span>总工时 {{ hours(batch.work_order.labor_minutes) }} 小时<template v-if="batch.work_order.labor_minutes_per_unit !== null">（每件 {{ hours(batch.work_order.labor_minutes_per_unit) }}）</template></span>
+            <span v-if="batch.work_order.scrapped_qty" class="neg">报废 {{ batch.work_order.scrapped_qty }} 件，报废工时 {{ hours(batch.work_order.scrap_minutes) }} 小时（单独列，不摊给合格品）</span>
             <span>已结算 {{ hours(batch.work_order.settled_minutes) }}，未结算 <span class="warn">{{ hours(batch.work_order.unsettled_minutes) }}</span></span>
           </div>
           <el-table :data="batch.usage" size="small" border empty-text="这批还没有被领用或发货">
@@ -378,6 +385,7 @@ export default {
 .emp { display: inline-block; margin-right: 12px; }
 .note { color: #e6a23c; }
 .neg { color: #f56c6c; }
+.roll-item.scrap-box { background: #fef0f0; }
 .return-box { margin: 4px 0 14px; }
 .qty-ok { color: #2e9d5b; margin-left: 6px; }
 .qty-wait { color: #e6a23c; font-size: 12px; }

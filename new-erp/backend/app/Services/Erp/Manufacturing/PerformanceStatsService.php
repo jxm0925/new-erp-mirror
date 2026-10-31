@@ -155,8 +155,11 @@ final class PerformanceStatsService
     /** 一张工单的工序工时/提成，以及它用到的半成品来源（递归）。 */
     private function node(object $wo, string $used, string $fraction, array &$ctx, int $depth, array $path): array
     {
+        $scrapped = (string) DB::table('erp_mfg_unit_reports')->where('work_order_id', $wo->id)->where('result', 'scrap')->where('review_status', 'approved')->distinct()->count('unit_id');
         $output = $this->output($wo);
-        $laborRatio = bccomp($output, '0', 8) > 0 ? min(1.0, (float) bcdiv($used, $output, 10)) : 0.0;
+        // 工时按“合格 + 报废”平摊，报废那部分单独列出，不摊给订单。
+        $base = in_array($wo->status, ['completed', 'closed'], true) ? bcadd($output, $scrapped, 8) : (bccomp($output, $scrapped, 8) > 0 ? $output : $scrapped);
+        $laborRatio = bccomp($base, '0', 8) > 0 ? min(1.0, (float) bcdiv($used, $base, 10)) : 0.0;
         $operations = [];
         $ops = DB::table('erp_mfg_work_order_operations')->where('work_order_id', $wo->id)->where('execution_context', 'production')->orderBy('sequence')->get();
         $sessions = DB::table('erp_mfg_labor_sessions')->where('work_order_id', $wo->id)->where('status', '!=', 'active')
@@ -174,6 +177,7 @@ final class PerformanceStatsService
         }
         $children = [];
         $notes = [];
+        if ((float) $scrapped > 0) $notes[] = "这批报废 {$scrapped} 件，报废那部分工时单独列出（见“工时去向”），不摊到订单。";
         if ($depth < self::MAX_DEPTH) {
             foreach ($this->consumed($wo) as $itemId => $batches) {
                 $total = array_reduce($batches, fn ($s, $b) => bcadd($s, $b['qty'], 8), '0');
@@ -193,7 +197,7 @@ final class PerformanceStatsService
         return ['work_order_id' => (int) $wo->id, 'work_order_no' => $wo->work_order_no, 'source_type' => $wo->source_type,
             'source_label' => self::SOURCE_LABELS[$wo->source_type] ?? $wo->source_type, 'sales_order_no' => $wo->sales_order_no,
             'item_name' => $wo->item_name, 'unit_name' => $wo->unit_name, 'status' => $wo->status,
-            'output_qty' => $this->num($output), 'used_qty' => $this->num($used), 'labor_ratio' => round($laborRatio, 6),
+            'output_qty' => $this->num($output), 'used_qty' => $this->num($used), 'labor_ratio' => round($laborRatio, 6), 'scrapped_qty' => (float) $scrapped,
             'coverage' => round((float) $fraction, 6), 'operations' => $operations, 'children' => $children, 'notes' => $notes];
     }
 
