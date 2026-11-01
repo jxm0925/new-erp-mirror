@@ -535,6 +535,8 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::get('tasks/{id}/people', [MfgTaskController::class, 'people'])->whereNumber('id');
     Route::get('board', [MfgTaskController::class, 'board']);
     Route::post('scrap-reports/{id}/review', [MfgTaskController::class, 'reviewScrap'])->whereNumber('id');
+    Route::get('reviews', [MfgTaskController::class, 'reviews']);
+    Route::post('material-returns/{id}/plan-review', [MfgTaskController::class, 'reviewPlan'])->whereNumber('id');
     Route::post('work-orders/{id}/receipts', [MfgTaskController::class, 'receive'])->whereNumber('id');
     Route::get('operations/{id}/workers', [MfgTaskController::class, 'workers'])->whereNumber('id');
     Route::put('operations/{id}/workers', [MfgTaskController::class, 'saveWorkers'])->whereNumber('id');

@@ -19,6 +19,7 @@ use Illuminate\Support\Facades\DB;
  *   没领完的件留在这批里（结余）一直往后结转。提成：那张工单下料工序的提成池按工时占比分给这批开料的人（和在工单上计时的人一起按工时分）。
  * - 客户退货：只记录（哪个月、哪张订单、退了几件、对应哪些工单），不扣工时和提成——退货一般伴随售后，
  *   要按责任人扣，先手动处理。退回的货以后再发出去也不重复结算（每张工单最多按产出件数结算一次）。
+ * - 返工工时（返工计时、返工工单）单独记：按干活的月份列出，不进结转 / 结算，也不分提成。
  */
 final class PerformanceLedgerService
 {
@@ -46,6 +47,8 @@ final class PerformanceLedgerService
     private array $runShare = [];
     private array $opRate = [];
     private array $runMinutes = [];
+    /** 返工工时：员工 => [[日期, 分钟, 工单ID, 工序名]] */
+    private array $rework = [];
 
     public function __construct(private readonly ProductionPerformanceCalculator $calc) {}
 
@@ -102,16 +105,26 @@ final class PerformanceLedgerService
                 }
             }
         }
-        $totals = ['opening' => 0.0, 'new' => 0.0, 'settled' => 0.0, 'scrap' => 0.0, 'closing' => 0.0, 'commission' => '0'];
+        // 返工工时：按本月干活的时间单列，不进结转、结算和提成。
+        foreach ($this->rework as $emp => $list) {
+            if ($employeeId && $emp !== $employeeId) continue;
+            $m = array_sum(array_map(fn ($r) => $r[0] >= $start && $r[0] <= $end ? $r[1] : 0, $list));
+            if ($m < 0.05) continue;
+            $people[$emp] ??= ['employee_legacy_id' => $emp, 'employee_name' => $list[0][4],
+                'opening' => 0.0, 'new' => 0.0, 'settled' => 0.0, 'scrap' => 0.0, 'closing' => 0.0, 'commission' => '0', 'rows' => []];
+            $people[$emp]['rework'] = $m;
+        }
+        $totals = ['opening' => 0.0, 'new' => 0.0, 'settled' => 0.0, 'scrap' => 0.0, 'closing' => 0.0, 'rework' => 0.0, 'commission' => '0'];
         $out = [];
         foreach ($people as $p) {
-            foreach (['opening', 'new', 'settled', 'scrap', 'closing'] as $k) $totals[$k] += $p[$k];
+            $p['rework'] ??= 0.0;
+            foreach (['opening', 'new', 'settled', 'scrap', 'closing', 'rework'] as $k) $totals[$k] += $p[$k];
             $totals['commission'] = bcadd($totals['commission'], $p['commission'], 12);
             $rows = array_values(array_map(fn ($r) => $this->roundRow($r, $amounts), $p['rows']));
             usort($rows, fn ($a, $b) => [$b['settled'], $b['closing']] <=> [$a['settled'], $a['closing']]);
             $out[] = ['rows' => $rows] + $this->roundRow($p, $amounts);
         }
-        usort($out, fn ($a, $b) => $b['settled'] + $b['closing'] <=> $a['settled'] + $a['closing']);
+        usort($out, fn ($a, $b) => $b['settled'] + $b['closing'] + $b['rework'] <=> $a['settled'] + $a['closing'] + $a['rework']);
         $returns = [];
         foreach ($this->lineReturns as $list) foreach ($list as $r) if ($r['date'] >= $start && $r['date'] <= $end) $returns[] = $r + ['item_name' => $this->lines[$r['line_id']]['item_name'] ?? '',
             'work_orders' => array_map(fn ($id, $q) => ['work_order_id' => $id, 'work_order_no' => $this->wos[$id]->work_order_no ?? '', 'qty' => round($q, 4)],
@@ -120,7 +133,7 @@ final class PerformanceLedgerService
             'labor_adjustment' => null, 'commission_adjustment' => null, 'adjustment_status' => '待定（售后按责任手动处理）'];
         usort($returns, fn ($a, $b) => $a['date'] <=> $b['date']);
         return ['month' => $month, 'start' => $start, 'end' => $end, 'employees' => $out, 'returns' => $returns, 'totals' => $this->roundRow($totals, $amounts), 'amount_visible' => $amounts,
-            'rule' => '月初未结（上月结转）+ 本月新做 − 本月出库结算 − 本月报废 = 结转下月。报废的工时单独列出，不摊给合格品。工时挂在做出来的产品上，产品出库（或被装进的整机出库）那个月才结算，没出库的往后结转，不会重复累加。集中开料按实际计时，工单领几件带走几件的工时（这批总工时 ÷ 总件数 × 件数），没领的留在开料记录里往后结转。'];
+            'rule' => '月初未结（上月结转）+ 本月新做 − 本月出库结算 − 本月报废 = 结转下月。报废的工时单独列出，不摊给合格品。工时挂在做出来的产品上，产品出库（或被装进的整机出库）那个月才结算，没出库的往后结转，不会重复累加。集中开料按实际计时，工单领几件带走几件的工时（这批总工时 ÷ 总件数 × 件数），没领的留在开料记录里往后结转。返工工时按本月实际干活单独列，不进结转和结算，不算提成。'];
     }
 
     /**
@@ -237,15 +250,39 @@ final class PerformanceLedgerService
                 unset($p);
             }
         }
+        // 返工：每人每张工单一行（标“返工”），工时单列，不算完工台数、不进本月工时合计。
+        foreach ($this->rework as $emp => $list) {
+            if ($employeeId && $emp !== $employeeId) continue;
+            foreach (collect($list)->groupBy(fn ($r) => $r[2]) as $woId => $rows) {
+                $wo = $this->wos[(int) $woId] ?? null;
+                if (! $wo) continue;
+                $semi = $wo->source_type === 'work_order' || ($itemTypes[(int) $wo->item_id] ?? null) === 'semi_finished';
+                if ($kind && $kind !== ($semi ? 'semi' : 'finished')) continue;
+                $monthReworkMinutes = $rows->filter(fn ($r) => $r[0] >= $start && $r[0] <= $end)->sum(fn ($r) => $r[1]);
+                if ($monthReworkMinutes < 0.05) continue;
+                $total = $rows->filter(fn ($r) => $r[0] <= $end)->sum(fn ($r) => $r[1]);
+                $people[$emp] ??= ['employee_legacy_id' => $emp, 'employee_name' => $rows->first()[4], 'finished_units' => 0.0, 'semi_units' => 0.0, 'cut_pieces' => 0.0, 'packing_count' => 0,
+                    'month_minutes' => 0.0, 'work_order_count' => 0, 'rows' => []];
+                $people[$emp]['month_rework_minutes'] = ($people[$emp]['month_rework_minutes'] ?? 0) + $monthReworkMinutes;
+                $people[$emp]['rows'][] = ['key' => 'R'.$woId, 'class' => $semi ? 'semi' : 'finished', 'class_label' => $semi ? '半成品' : '成品', 'is_rework' => true,
+                    'work_order_id' => (int) $woId, 'cutting_run_id' => null, 'work_order_no' => $wo->work_order_no,
+                    'source_label' => $wo->rework_of_work_order_id ? '返工工单' : (self::SOURCE_LABELS[$wo->source_type] ?? $wo->source_type),
+                    'item_name' => $wo->item_name, 'sales_order_no' => $wo->sales_order_no, 'unit_name' => $wo->unit_name ?: '台',
+                    'operations' => $rows->pluck(3)->unique()->values()->all(), 'base_qty' => null, 'completed_in_month' => 0, 'completed_total' => 0,
+                    'running' => false, 'finished' => false, 'my_month_minutes' => round($monthReworkMinutes, 1), 'my_total_minutes' => round($total, 1),
+                    'my_minutes_per_unit' => null, 'wo_total_minutes' => null, 'wo_minutes_per_unit' => null];
+            }
+        }
         $out = array_values($people);
         foreach ($out as &$p) {
-            usort($p['rows'], fn ($a, $b) => [$b['completed_in_month'], $b['my_month_minutes']] <=> [$a['completed_in_month'], $a['my_month_minutes']]);
+            usort($p['rows'], fn ($a, $b) => [empty($b['is_rework']), $b['completed_in_month'], $b['my_month_minutes']] <=> [empty($a['is_rework']), $a['completed_in_month'], $a['my_month_minutes']]);
+            $p['month_rework_minutes'] = round($p['month_rework_minutes'] ?? 0, 1);
             foreach (['finished_units', 'semi_units', 'cut_pieces', 'month_minutes'] as $k) $p[$k] = round($p[$k], $k === 'month_minutes' ? 1 : 4);
         }
         unset($p);
         usort($out, fn ($a, $b) => [$b['finished_units'], $b['month_minutes']] <=> [$a['finished_units'], $a['month_minutes']]);
         return ['month' => $month, 'start' => $start, 'end' => $end, 'kind' => $kind, 'employees' => $out,
-            'rule' => '按干活时间统计，不看出库。只要在工单上做过工序就算参与了这张工单本月完工的台数（多人一起做每人都算）；本人每台工时 = 本人在这张工单上累计工时 ÷ 工单投入台数，工单每台工时 = 全部人累计工时 ÷ 投入台数，工单没做完时还会增加。成品只算整机工单自己的工时，架子、电箱等半成品和集中开料单独列；集中开料还没结束的批次照算已计时的工时，件数在结束那天计入；发货包装按包装完成的日期计入。'];
+            'rule' => '按干活时间统计，不看出库。只要在工单上做过工序就算参与了这张工单本月完工的台数（多人一起做每人都算）；本人每台工时 = 本人在这张工单上累计工时 ÷ 工单投入台数，工单每台工时 = 全部人累计工时 ÷ 投入台数，工单没做完时还会增加。成品只算整机工单自己的工时，架子、电箱等半成品和集中开料单独列；集中开料还没结束的批次照算已计时的工时，件数在结束那天计入；发货包装按包装完成的日期计入。返工（返工计时、返工工单）单独标「返工」、单列返工工时，不算完工台数，也不进本月工时。'];
     }
 
     /** 按工单看工时对应的产品去向：已出库多少、已领用待出库多少、在库多少；已结算 / 未结算工时。 */
@@ -558,7 +595,7 @@ final class PerformanceLedgerService
 
     private function roundRow(array $r, bool $amounts): array
     {
-        foreach (['opening', 'new', 'closing', 'scrap'] as $k) $r[$k] = round(max(0, $r[$k] ?? 0), 1);
+        foreach (['opening', 'new', 'closing', 'scrap', 'rework'] as $k) $r[$k] = round(max(0, $r[$k] ?? 0), 1);
         $r['settled'] = round(max(0, $r['settled']), 1);
         $r['commission'] = $amounts ? $this->money($r['commission']) : null;
         return $r;
@@ -637,8 +674,14 @@ final class PerformanceLedgerService
                 }
             }
         }
-        // 工时、工序、份额
-        foreach (DB::table('erp_mfg_labor_sessions')->where('status', '!=', 'active')->whereNotNull('ended_at')
+        // 工时、工序、份额（返工计时、返工工单单独记，不进结算和提成）
+        $reworkWos = DB::table('erp_mfg_work_orders')->whereNotNull('rework_of_work_order_id')->pluck('id')->all();
+        foreach (DB::table('erp_mfg_labor_sessions as s')->join('erp_mfg_work_order_operations as o', 'o.id', '=', 's.work_order_operation_id')
+            ->where('s.status', '!=', 'active')->whereNotNull('s.ended_at')->where(fn ($w) => $w->where('s.is_rework', true)->orWhereIn('s.work_order_id', $reworkWos ?: [0]))
+            ->groupBy('s.work_order_id', 'o.operation_name', 's.employee_legacy_id', 's.employee_name', DB::raw('DATE(s.ended_at)'))
+            ->selectRaw('s.work_order_id, o.operation_name, s.employee_legacy_id, s.employee_name, DATE(s.ended_at) AS d, SUM(s.labor_minutes) AS m')->get() as $s)
+            $this->rework[(int) $s->employee_legacy_id][] = [(string) $s->d, (float) $s->m, (int) $s->work_order_id, $s->operation_name.'（返工）', $s->employee_name];
+        foreach (DB::table('erp_mfg_labor_sessions')->where('status', '!=', 'active')->whereNotNull('ended_at')->where('is_rework', false)->whereNotIn('work_order_id', $reworkWos ?: [0])
             ->groupBy('work_order_id', 'work_order_operation_id', 'employee_legacy_id', 'employee_name', DB::raw('DATE(ended_at)'))
             ->selectRaw('work_order_id, work_order_operation_id, employee_legacy_id, employee_name, DATE(ended_at) AS d, SUM(labor_minutes) AS m')->get() as $s) {
             $this->labor['W'.$s->work_order_id][(int) $s->work_order_operation_id][(int) $s->employee_legacy_id][] = [$s->d, (float) $s->m];
@@ -648,7 +691,7 @@ final class PerformanceLedgerService
         $woIds = array_map(fn ($k) => (int) substr($k, 1), array_filter(array_keys($this->labor), fn ($k) => $k[0] === 'W'));
         foreach (DB::table('erp_mfg_work_order_operations')->whereIn('work_order_id', $woIds ?: [0])->get() as $op)
             $this->ops['W'.$op->work_order_id][(int) $op->id] = ['name' => $op->operation_name, 'rate' => $op->performance_rate !== null && (float) $op->performance_rate > 0 ? (string) $op->performance_rate : null];
-        $fixed = DB::table('erp_mfg_task_participants')->whereIn('work_order_id', $woIds ?: [0])->where('is_active', true)->get()->groupBy('work_order_operation_id');
+        $fixed = DB::table('erp_mfg_task_participants')->whereIn('work_order_id', $woIds ?: [0])->where('lane', 'normal')->where('is_active', true)->get()->groupBy('work_order_operation_id');
         foreach ($this->labor as $key => $opsLabor) {
             if ($key[0] !== 'W') continue;
             foreach ($opsLabor as $opId => $emps) $this->shares[$key][$opId] = $this->opShares($emps, $fixed->get($opId, collect())->all(), $this->runMinutes[(int) substr($key, 1)][$opId] ?? []);

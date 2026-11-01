@@ -19,6 +19,7 @@ CREATE TABLE `erp_mfg_work_orders` (
   `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT,
   `work_order_no` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `source_type` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'sales_order',
+  `rework_of_work_order_id` bigint(20) unsigned DEFAULT NULL,
   `sales_order_id` bigint(20) unsigned DEFAULT NULL,
   `sales_order_no` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `sales_order_line_id` bigint(20) unsigned DEFAULT NULL,

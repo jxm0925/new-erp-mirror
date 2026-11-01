@@ -8,6 +8,7 @@ view, text, input, textarea, button, scroll-view { box-sizing: border-box; }
 .mt-sub { font-size: 24rpx; color: #8a95a8; margin-top: 6rpx; }
 .mt-muted { color: #8a95a8; font-size: 24rpx; }
 .mt-red { color: #d92d20; font-size: 24rpx; font-weight: 600; }
+.mt-rework { color: #c0261b; }
 .mt-green { color: #11804a; font-weight: 600; }
 .mt-tabs { display: flex; background: #fff; border-radius: 16rpx; margin-bottom: 16rpx; overflow: hidden; }
 .mt-tab { flex: 1; text-align: center; padding: 22rpx 0; color: #5b6780; border-bottom: 4rpx solid transparent; }

@@ -35,7 +35,10 @@
                 </template>
                 <template v-else-if="wo.source_type === 'work_order'">
                   <i class="el-icon-box text-muted" />
-                  需求来源：半成品补做
+                  需求来源：{{ wo.rework_of_work_order_id ? '返工（总装退回的不良件）' : '半成品补做' }}
+                  <template v-if="wo.rework_of_work_order_id">
+                    · 原半成品工单 <b class="code-mono lk-text" @click="openWorkOrder(wo.rework_of_work_order_id)">{{ wo.rework_of_work_order_no }}</b>
+                  </template>
                   <template v-if="wo.parent_work_order">
                     · 给总装工单 <b class="code-mono lk-text" @click="openWorkOrder(wo.parent_work_order.id)">{{ wo.parent_work_order.work_order_no }}</b>
                   </template>
@@ -327,14 +330,14 @@
                 <el-table-column label="工序名称" min-width="140">
                   <template slot-scope="{ row }">
                     <span class="font-medium">{{ row.operation_name }}</span>
-                    <el-tag size="mini" :type="row.status === 'done' ? 'success' : (row.status === 'in_progress' ? 'warning' : 'info')" effect="plain" class="op-status-tag">
-                      {{ opStatus(row.status) }}
+                    <el-tag size="mini" :type="opTagType(row)" effect="plain" class="op-status-tag">
+                      {{ row.work_status_label || opStatus(row.status) }}
                     </el-tag>
                   </template>
                 </el-table-column>
                 <el-table-column label="在制 / 滞留设备数" width="130" align="center">
                   <template slot-scope="{ row }">
-                    <span class="code-mono font-medium">{{ row.here_qty || 0 }} 台</span>
+                    <span class="code-mono font-medium">{{ row.here_qty || 0 }} {{ wo.unit_name || '台' }}</span>
                     <span v-if="row.rework_qty" class="text-danger ml-1">· 返工 {{ row.rework_qty }}</span>
                   </template>
                 </el-table-column>
@@ -347,6 +350,7 @@
                 <el-table-column prop="owner_name" label="工序负责人" width="110" align="center">
                   <template slot-scope="{ row }">
                     <span>{{ row.owner_name || '待指派' }}</span>
+                    <div v-if="row.rework_owner_name" class="text-danger op-rework-owner">返工：{{ row.rework_owner_name }}</div>
                   </template>
                 </el-table-column>
                 <el-table-column label="实时作业人员" min-width="140" show-overflow-tooltip>
@@ -357,9 +361,10 @@
                     <span v-else class="text-muted">—</span>
                   </template>
                 </el-table-column>
-                <el-table-column label="累计投入工时" width="120" align="center">
+                <el-table-column label="累计投入工时" width="130" align="center">
                   <template slot-scope="{ row }">
-                    <span class="code-mono font-medium">{{ row.labor_minutes ? hours(row.labor_minutes) : '—' }}</span>
+                    <span class="code-mono font-medium">{{ (row.normal_minutes != null ? row.normal_minutes : row.labor_minutes) ? hours(row.normal_minutes != null ? row.normal_minutes : row.labor_minutes) : '—' }}</span>
+                    <div v-if="row.rework_minutes" class="text-danger op-rework-owner" title="返工工时单独记，不算提成">返工 {{ hours(row.rework_minutes) }}</div>
                   </template>
                 </el-table-column>
                 <el-table-column v-if="canDispatch" label="操作" width="90" align="center">
@@ -489,6 +494,7 @@
                           <td class="col-mat-state">
                             <div class="material-sub-badges">
                               <span v-if="m.in_production_qty > 0" class="mat-sub-tag">在做 {{ qty(m.in_production_qty) }}</span>
+                              <span v-if="m.held_qty > 0" class="mat-sub-tag" title="总装退回的不良件，入库冻结待处置或正在返工，不算缺口">退回待处置/返工 {{ qty(m.held_qty) }}</span>
                               <span v-if="queueHint(m)" class="text-danger mat-queue-hint">{{ queueHint(m) }}</span>
                               <span v-if="!(m.in_production_qty > 0) && !queueHint(m)" class="text-muted">
                                 {{ !m.participates_in_kitting ? '—' : (m.shortage_qty > 0 ? `缺 ${qty(m.shortage_qty)} ${m.unit_name || ''}` : '已齐套') }}
@@ -543,9 +549,10 @@
                   <div v-for="c in wo.child_work_orders" :key="c.id" class="related-doc-row">
                     <div class="related-doc-main">
                       <span class="mat-name">
-                        半成品工单 <b class="code-mono lk-text" @click="openWorkOrder(c.id)">{{ c.work_order_no }}</b> · {{ c.item_name }}
+                        {{ c.is_rework ? '返工工单' : '半成品工单' }} <b class="code-mono lk-text" @click="openWorkOrder(c.id)">{{ c.work_order_no }}</b> · {{ c.item_name }}
                       </span>
-                      <span class="mat-qty-inline code-mono">入库 {{ qty(c.stored_qty) }} / {{ qty(c.planned_qty) }} {{ c.unit_name || '' }}</span>
+                      <span v-if="c.is_rework" class="mat-qty-inline code-mono">返工完 {{ qty(c.completed_qty) }} / {{ qty(c.planned_qty) }} {{ c.unit_name || '' }}</span>
+                      <span v-else class="mat-qty-inline code-mono">入库 {{ qty(c.stored_qty) }} / {{ qty(c.planned_qty) }} {{ c.unit_name || '' }}</span>
                     </div>
                     <el-tag size="mini" type="info" effect="plain">{{ c.status_label }}</el-tag>
                   </div>
@@ -1236,6 +1243,10 @@ export default {
     },
     unitCount(status) {
       return (this.wo.units || []).filter(u => u.status === status).length
+    },
+    opTagType(row) {
+      const s = row.work_status || row.status
+      return ({ done: 'success', in_progress: 'warning', ready: 'primary' })[s] || 'info'
     },
     opStatus(status) {
       return ({ pending: '未开工', in_progress: '在制加工', done: '已完工' })[status] || status
@@ -2421,6 +2432,10 @@ export default {
   font-size: 11px;
 }
 
+.op-rework-owner {
+  font-size: 12px;
+  line-height: 18px;
+}
 .btn-make-semi {
   padding: 0 !important;
   font-size: 11px !important;

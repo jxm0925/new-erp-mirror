@@ -132,11 +132,12 @@ final class WorkOrderService
             if ($item->isPurchaseFulfilledItem() || ! in_array($item->item_type, ['semi_finished', 'finished_product'], true))
                 $this->fail('purchase_item', $item->item_name.' 不是自制半成品（外购件、原料请找采购），不能开生产工单。');
             $gap = $this->semiGap($parent, $componentItemId);
-            if ($qty === null) {
-                if ($gap <= 0.00001) $this->fail('no_gap', $item->item_name.' 仓库可用库存加已开的半成品工单已经够用，不用再开。');
-                $qty = ceil(round($gap, 4));
-            }
+            if ($gap <= 0.00001) $this->fail('no_gap', $item->item_name.' 仓库可用库存加已开的半成品工单（含返工、待处置的不良件）已经够用，不用再开。');
+            $max = ceil(round($gap, 4));
+            if ($qty === null) $qty = $max;
             if ($qty <= 0) $this->fail('qty_invalid', '半成品工单数量必须大于 0。');
+            if ($qty > $max + 0.00001) $this->fail('qty_exceeds_gap', $item->item_name.' 现在缺 '.rtrim(rtrim(number_format($gap, 4, '.', ''), '0'), '.').($item->unit?->unit_name ?: '')
+                .'，最多开 '.$max.($item->unit?->unit_name ?: '').'。');
             $finish = $parent->planned_finish_date && $parent->planned_finish_date->gte(now()->startOfDay()) ? $parent->planned_finish_date->toDateString() : now()->toDateString();
             $child = $this->newWorkOrder([
                 'source_type' => 'work_order', 'sales_order_no' => $parent->sales_order_no, 'customer_name' => $parent->customer_name,
@@ -167,6 +168,39 @@ final class WorkOrderService
         return $no;
     }
 
+    /**
+     * 领子件那道工序的 BOM 子件（自制半成品）：需要、已收、仓库可用、已开半成品工单还没入库的、退回冻结／返工中的、缺口。
+     * 缺口只算报废生效的；冻结待处置、返工中的不算，防止重复补单。
+     */
+    public function semiRows(MfgWorkOrder $parent, int $operationId): array
+    {
+        $parent->loadMissing(['operations', 'materials']);
+        $mats = $parent->materials->where('work_order_operation_id', $operationId)->filter(fn ($m) => (float) $m->required_qty > 0);
+        if ($mats->isEmpty()) return [];
+        $items = Item::query()->with('unit')->whereIn('id', $mats->pluck('component_item_id')->unique())->get()->keyBy('id');
+        $made = $mats->filter(fn ($m) => ($i = $items->get($m->component_item_id)) && in_array($i->item_type, ['semi_finished', 'finished_product'], true)
+            && ! $i->isPurchaseFulfilledItem() && ! $i->isPhantom());
+        if ($made->isEmpty()) return [];
+        $operations = $parent->operations->map(fn ($op) => ['key' => 'o'.$op->id, 'operation_name' => $op->operation_name, 'sequence' => (int) $op->sequence,
+            'execution_context' => $op->execution_context ?: 'production'])->values()->all();
+        $materials = $parent->materials->map(fn ($m) => ['operation_key' => 'o'.$m->work_order_operation_id, 'component_item_id' => (int) $m->component_item_id,
+            'required_qty' => (float) $m->required_qty, 'issued_qty' => (float) $m->issued_qty, 'participates_in_kitting' => true])->values()->all();
+        $kit = collect($this->plans->kitting($materials, $operations))->flatMap(fn ($op) => $op['materials']);
+        $open = MaterialIssueService::openChildQty((int) $parent->id);
+        $held = MaterialReturnService::heldDefectiveQty((int) $parent->id);
+        $running = in_array($parent->status, ['planned', 'released', 'in_progress', 'paused'], true);
+        return $made->groupBy('component_item_id')->map(function ($rows, $itemId) use ($items, $kit, $open, $held, $running) {
+            $item = $items->get($itemId);
+            $k = $kit->where('component_item_id', (int) $itemId);
+            $gap = round(max(0, (float) $k->sum('shortage_qty') - (float) ($open[$itemId] ?? 0) - (float) ($held[$itemId] ?? 0)), 4);
+            return ['component_item_id' => (int) $itemId, 'component_item_name' => $item->item_name, 'component_item_code' => $item->item_code,
+                'unit_name' => $rows->first()->unit_name ?: $item->unit?->unit_name, 'required_qty' => round($rows->sum(fn ($m) => (float) $m->required_qty), 4),
+                'issued_qty' => round($rows->sum(fn ($m) => (float) $m->issued_qty), 4), 'available_qty' => round((float) ($k->first()['available_qty'] ?? 0), 4),
+                'open_qty' => (float) ($open[$itemId] ?? 0), 'held_qty' => (float) ($held[$itemId] ?? 0), 'gap_qty' => $gap,
+                'max_order_qty' => $running && $gap > 0.00001 ? (int) ceil(round($gap, 4)) : 0];
+        })->values()->all();
+    }
+
     public function semiGap(MfgWorkOrder $parent, int $componentItemId): float
     {
         $operations = $parent->operations->map(fn ($op) => ['key' => 'o'.$op->id, 'operation_name' => $op->operation_name, 'sequence' => (int) $op->sequence,
@@ -176,7 +210,63 @@ final class WorkOrderService
         $short = collect($this->plans->kitting($materials, $operations))->flatMap(fn ($op) => $op['materials'])
             ->where('component_item_id', $componentItemId)->sum('shortage_qty');
         $open = MaterialIssueService::openChildQty((int) $parent->id)[$componentItemId] ?? 0;
-        return round(max(0, (float) $short - (float) $open), 4);
+        // 退回来还冻结着（等处置、返工中）的不良件不算缺口；报废生效后才出缺口。
+        $held = MaterialReturnService::heldDefectiveQty((int) $parent->id)[$componentItemId] ?? 0;
+        return round(max(0, (float) $short - (float) $open - (float) $held), 4);
+    }
+
+    /**
+     * 总装退回的不良半成品开返工工单：跟着原半成品工单的 BOM / 工艺路线，从选定的工序开始往后做，不领料（用退回来的那件）；
+     * 每件都是返工（单独计时、不算提成），最后一道合格就解冻回库存，报废就报废出库。关联总装工单（缺口计算排除返工工单，冻结量单独算）。
+     * @return array{0: MfgWorkOrder, 1: array<string, int>} [返工工单, 设备 ID => 退料行 ID]
+     */
+    public function createRework(MfgWorkOrder $parent, \App\Models\Erp\MfgMaterialReturn $return, array $plan, \Illuminate\Support\Collection $lines, object $actor): array
+    {
+        $source = MfgWorkOrder::query()->findOrFail((int) $plan['source_work_order_id']);
+        $item = Item::query()->with('unit')->findOrFail($source->item_id);
+        $qty = (float) round($lines->sum(fn ($l) => (float) $l->qty));
+        $finish = $parent->planned_finish_date && $parent->planned_finish_date->gte(now()->startOfDay()) ? $parent->planned_finish_date->toDateString() : now()->toDateString();
+        $serials = $lines->pluck('serial_no')->filter()->implode('、');
+        $child = $this->newWorkOrder([
+            'source_type' => 'work_order', 'rework_of_work_order_id' => $source->id, 'sales_order_no' => $parent->sales_order_no, 'customer_name' => $parent->customer_name,
+            'is_urgent' => (bool) $parent->is_urgent, 'priority' => (int) $parent->priority, 'planned_start_date' => now()->toDateString(), 'planned_finish_date' => $finish,
+            'required_date' => $finish, 'warehouse_id' => $source->warehouse_id, 'owner_legacy_id' => $parent->owner_legacy_id, 'owner_name' => $parent->owner_name,
+            'remark' => mb_substr("返工：总装工单 {$parent->work_order_no} 退回不良 {$item->item_name}".($serials ? "（{$serials}）" : '')."，退料单 {$return->return_no}，原半成品工单 {$source->work_order_no}，从{$plan['start_operation_name']}开始返工；原因：{$return->reason}", 0, 1000),
+            'work_order_no' => $this->childNo($parent),
+        ], $item, $qty, $actor);
+        MfgWorkOrderLink::create(['parent_work_order_id' => $parent->id, 'child_work_order_id' => $child->id, 'component_item_id' => $item->id,
+            'qty' => $qty, 'created_by_legacy_id' => $this->actorId($actor), 'created_by_name' => $this->actorName($actor)]);
+        $child->update(['bom_id' => $source->bom_id, 'bom_snapshot' => $source->bom_snapshot]);
+        try {
+            $this->applyPlan($child->fresh(), $item, $source->bom_id, $source->routing_id, true);
+        } catch (WorkOrderDomainException $e) {
+            $this->applyPlan($child->fresh(), $item, null, null, true);
+        }
+        $child = $child->fresh();
+        // 返工从选定的工序开始：之前的工序不做；用退回来的那件，不领料。
+        MfgWorkOrderMaterial::query()->where('work_order_id', $child->id)->delete();
+        MfgWorkOrderOperation::query()->where('work_order_id', $child->id)->where('sequence', '<', (int) $plan['start_sequence'])->delete();
+        $first = $this->firstProductionOperationId($child);
+        if (! $first) $this->fail('rework_route_invalid', $item->item_name.' 的工艺路线里找不到「'.$plan['start_operation_name'].'」及之后的车间工序，不能返工。');
+        $numbers = app(SerialNumberService::class);
+        $map = [];
+        $n = 0;
+        foreach ($lines as $line) {
+            for ($i = 0; $i < (int) round((float) $line->qty); $i++) {
+                $unit = MfgWorkOrderUnit::create(['work_order_id' => $child->id, 'unit_no' => ++$n, 'serial_no' => $numbers->unitNo($child, $n),
+                    'status' => 'rework', 'rework_count' => 1, 'current_operation_id' => $first, 'warehouse_id' => $child->warehouse_id]);
+                $map[(string) $unit->id] = (int) $line->id;
+            }
+        }
+        $child->update(['status' => 'released', 'released_at' => now(), 'released_by_legacy_id' => $this->actorId($actor), 'block_reason' => null,
+            'business_version' => (int) $child->business_version + 1]);
+        $num = rtrim(rtrim(number_format($qty, 4, '.', ''), '0'), '.').($item->unit?->unit_name ?: '');
+        $this->log($child, 'created', null, 'released', "总装工单 {$parent->work_order_no} 退回不良 {$item->item_name} {$num}".($serials ? "（{$serials}）" : '')
+            ."，从{$plan['start_operation_name']}开始返工，不领料；返工合格解冻回库存，报废就报废出库", $actor, ['parent_work_order_id' => $parent->id, 'return_id' => $return->id]);
+        $this->log($parent, 'rework_ordered', $parent->status, $parent->status, "不良退料 {$return->return_no}：{$item->item_name} {$num} 开返工工单 {$child->work_order_no}（从{$plan['start_operation_name']}开始），返工期间不算缺口", $actor, ['child_work_order_id' => $child->id]);
+        app(TaskService::class)->defaultReworkOwners($child, $source, $actor);
+        TaskService::syncWorkStatus([(int) $child->id]);
+        return [$child->fresh(), $map];
     }
 
     public function release(int $id, int $expectedVersion, object $actor): MfgWorkOrder
@@ -537,6 +627,7 @@ final class WorkOrderService
         $wo->update(['status' => 'released', 'released_at' => now(), 'released_by_legacy_id' => $this->actorId($actor),
             'block_reason' => null, 'business_version' => (int) $wo->business_version + 1]);
         $this->log($wo, 'released', 'planned', 'released', ($automatic ? '自动下达' : '下达工单').$range, $actor, ['serials' => $serials]);
+        TaskService::syncWorkStatus([(int) $wo->id]);
     }
 
     private function newWorkOrder(array $attributes, Item $item, float $qty, object $actor): MfgWorkOrder
@@ -647,6 +738,7 @@ final class WorkOrderService
             $first = $this->firstProductionOperationId($wo);
             if ($first) MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->where('status', 'waiting')->whereNull('current_operation_id')->update(['current_operation_id' => $first]);
         }
+        if ($woIds->isNotEmpty()) TaskService::syncWorkStatus($woIds->map(fn ($id) => (int) $id)->all());
     }
 
     private function firstProductionOperationId(MfgWorkOrder $wo): ?int

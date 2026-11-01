@@ -24,7 +24,11 @@ function uploadPhoto(filePath) {
 
 module.exports = {
   tasks: query => get('tasks', query),
-  task: id => get(`tasks/${Number(id)}`),
+  task: (id, lane) => get(`tasks/${Number(id)}`, lane ? { lane } : undefined),
+  // 待我审核：报废申请、不良处置（工单生产负责人）
+  reviews: () => get('reviews'),
+  reviewScrap: (id, payload) => request.write(`${base}/scrap-reports/${Number(id)}/review`, payload, { loading: true, commandPrefix: 'review' }),
+  reviewPlan: (id, payload) => request.write(`${base}/material-returns/${Number(id)}/plan-review`, payload, { loading: true, commandPrefix: 'review' }),
   board: query => get('board', query),
   serialLookup: query => get('serials/lookup', query),
   action: (id, payload) => request.write(`${base}/tasks/${Number(id)}/actions`, payload, { loading: false, commandPrefix: 'task' }),
