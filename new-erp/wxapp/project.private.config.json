@@ -4,21 +4,41 @@
   "setting": {
     "compileHotReLoad": true,
     "urlCheck": false,
-    "ignoreDevUnusedFiles": false,
-    "coverView": true,
-    "lazyloadPlaceholderEnable": false,
-    "skylineRenderEnable": false,
-    "preloadBackgroundData": false,
-    "autoAudits": false,
-    "useApiHook": true,
-    "showShadowRootInWxmlPanel": true,
-    "useStaticServer": false,
-    "useLanDebug": false,
-    "showES6CompileOption": false,
-    "useGlassEaselForWxml": false,
-    "checkInvalidKey": true,
-    "bigPackageSizeSupport": false
+    "ignoreDevUnusedFiles": false
   },
-  "condition": {},
+  "condition": {
+    "miniprogram": {
+      "list": [
+        {
+          "name": "pages/my/report/report",
+          "pathName": "pages/my/report/index/index",
+          "query": "",
+          "launchMode": "default",
+          "scene": null
+        },
+        {
+          "name": "pages/war/index/index",
+          "pathName": "pages/war/index/index",
+          "query": "",
+          "launchMode": "default",
+          "scene": null
+        },
+        {
+          "name": "pages/suggests/sub/index",
+          "pathName": "pages/suggests/sub/index",
+          "query": "",
+          "launchMode": "default",
+          "scene": null
+        },
+        {
+          "name": "pages/suggests/sub/story",
+          "pathName": "pages/suggests/sub/story",
+          "query": "",
+          "launchMode": "default",
+          "scene": null
+        }
+      ]
+    }
+  },
   "libVersion": "3.6.6"
 }
