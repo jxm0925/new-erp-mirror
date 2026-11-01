@@ -633,7 +633,7 @@ final class WorkOrderService
     private function newWorkOrder(array $attributes, Item $item, float $qty, object $actor): MfgWorkOrder
     {
         if ($qty <= 0) $this->fail('qty_invalid', '工单数量必须大于 0。');
-        return MfgWorkOrder::create($attributes + [
+        $wo = MfgWorkOrder::create($attributes + [
             'work_order_no' => $attributes['work_order_no'] ?? $this->numbers->next('work_order', 'WO'),
             'item_id' => $item->id, 'item_code' => $item->item_code, 'item_name' => $item->item_name,
             'unit_name' => $item->unit?->unit_name, 'planned_qty' => $qty,
@@ -642,6 +642,9 @@ final class WorkOrderService
             'created_by_legacy_id' => $this->actorId($actor), 'created_by_name' => $this->actorName($actor),
             'updated_by_legacy_id' => $this->actorId($actor),
         ]);
+        // 开单时记下订单备注、地址等，之后销售改了车间能看出来。
+        app(OrderBrief::class)->forWorkOrder($wo);
+        return $wo->fresh();
     }
 
     /** 写入 BOM/路线快照、工序、用料；已下达工单换版本时只重建工序和用料，序列号不变。 */

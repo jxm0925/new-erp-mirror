@@ -1,4 +1,19 @@
 const production = require('../../../services/production');
+const packing = require('../../../services/packing');
+const PACK_STATUS = { READY: '待做', WAITING: '等待前序', IN_PROGRESS: '进行中', WAIT_QUALITY: '待质检', COMPLETED: '已完成', CANCELLED: '已取消' };
+function packMinutes(m) { const v = Number(m || 0); return v >= 60 ? `${Math.floor(v / 60)}时${Math.round(v % 60)}分` : `${Math.round(v)}分`; }
+// 发货作业（试水 / 打包 / 装车）和生产工序放在同一个「我的」「可接」里
+function decoratePack(row) {
+  const contents = row.contents || [];
+  const owner = (row.participants || []).find(p => p.role === 'OWNER');
+  const my = row.my || {};
+  return { id: row.id, title: row.operation_name, statusLabel: PACK_STATUS[row.status] || row.status, timing: Boolean(my.timing),
+    product: contents.map(c => c.product_name || c.item_name).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join('、'),
+    line: [row.shipment_no, row.package_no, row.order_info && row.order_info.customer_name].filter(Boolean).join(' · '),
+    ownerName: owner ? owner.name : '', myText: packMinutes(my.closed_minutes),
+    repair: (row.serial_results || []).filter(s => s.repair && s.repair.state !== 'returned').length,
+    changed: Boolean(row.order_info && row.order_info.changed && row.order_info.changed.length) };
+}
 const view = require('../../../utils/warehouse-page');
 
 const TABS = [{ key: 'mine', label: '我的' }, { key: 'available', label: '可接' }, { key: 'done', label: '做完的' }];
@@ -36,7 +51,7 @@ function decorateReview(row, kind) {
 }
 
 Page({
-  data: { tabs: TABS, tab: 'mine', counts: { mine: 0, available: 0 }, rows: [], reviews: [], page: 1, lastPage: 1, total: 0,
+  data: { tabs: TABS, tab: 'mine', counts: { mine: 0, available: 0 }, rows: [], reviews: [], packs: [], packCounts: { mine: 0, available: 0 }, page: 1, lastPage: 1, total: 0,
     loading: true, busy: false, error: '', keyword: '', userName: '', canExecute: false },
   onLoad(options) {
     const user = wx.getStorageSync('erp_user') || {};
@@ -48,6 +63,7 @@ Page({
     const sequence = this.sequence = (this.sequence || 0) + 1;
     this.setData({ loading: true, error: '' });
     if (this.data.tab === 'review') return this.loadReviews(sequence);
+    this.loadPacks(sequence);
     return production.tasks({ tab: this.data.tab, page: this.data.page, per_page: 10, keyword: this.data.keyword }).then(response => {
       if (sequence !== this.sequence) return;
       const paged = view.rows(response);
@@ -57,6 +73,20 @@ Page({
         counts, tabs: tabsFor(counts, this.data.tab), loading: false });
     }).catch(error => { if (sequence === this.sequence) this.setData({ loading: false, error: view.errorText(error) }); });
   },
+  loadPacks(sequence) {
+    const can = view.permissions();
+    const tab = this.data.tab;
+    if (!['mine', 'available'].includes(tab) || this.data.page > 1 || this.data.keyword || !(can('sales_order.shipment.packing.view') || can('sales_order.shipment.packing.execute'))) {
+      this.setData({ packs: [] });
+      return;
+    }
+    packing.operations({ scope: tab, per_page: 20, include_counts: 1 }).then(response => {
+      if (sequence !== this.sequence) return;
+      const paged = view.rows(response);
+      this.setData({ packs: paged.rows.map(decoratePack), packCounts: response.counts || this.data.packCounts });
+    }).catch(() => { if (sequence === this.sequence) this.setData({ packs: [] }); });
+  },
+  openPack(event) { wx.navigateTo({ url: `/pages/production/shipment-packing/index?operation_id=${Number(event.currentTarget.dataset.id)}` }); },
   loadReviews(sequence) {
     return production.reviews().then(response => {
       if (sequence !== this.sequence) return;

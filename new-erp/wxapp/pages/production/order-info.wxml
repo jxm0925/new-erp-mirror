@@ -1,0 +1,22 @@
+<!-- 订单信息卡：生产任务、整张工单、发货作业共用。info = 接口里的 order_info -->
+<template name="orderInfo">
+  <view wx:if="{{info}}" class="mt-card oi-anchor">
+    <view class="mt-card-title"><text>订单信息</text><text class="mt-muted mono">{{info.sales_order_no}}{{info.line_no ? ' 第' + info.line_no + '行' : ''}}</text></view>
+    <view wx:if="{{info.changed && info.changed.length}}" class="mt-error">
+      <view>销售开单后改过，按新的做：</view>
+      <view wx:for="{{info.changed}}" wx:for-item="c" wx:key="field">{{c.label}}：{{c.before}} → {{c.after}}</view>
+    </view>
+    <view class="mt-kv"><text class="k">客户</text><text class="v">{{info.customer_name || '-'}}</text></view>
+    <view class="mt-kv"><text class="k">销售员</text><text class="v">{{info.salesperson_name || '-'}}</text></view>
+    <view class="mt-kv"><text class="k">联系人</text><text class="v">{{info.contact_name || '-'}} <text wx:if="{{info.contact_phone}}" class="oi-phone mono" data-phone="{{info.contact_phone}}" bindtap="callPhone">{{info.contact_phone}}</text></text></view>
+    <view wx:if="{{info.address}}" class="mt-kv"><text class="k">收货地址</text><text class="v">{{info.address}}</text></view>
+    <view wx:if="{{info.required_delivery_date}}" class="mt-kv"><text class="k">要求交期</text><text class="v mono">{{info.required_delivery_date}}</text></view>
+    <view wx:if="{{info.shipment_no}}" class="mt-kv"><text class="k">发货单</text><text class="v mono">{{info.shipment_no}}{{info.carrier_name ? ' · ' + info.carrier_name : ''}}</text></view>
+    <view wx:if="{{info.receiver_text}}" class="mt-kv"><text class="k">收货人</text><text class="v">{{info.receiver_text}}</text></view>
+    <view wx:if="{{info.order_remark}}" class="mt-note">订单备注：{{info.order_remark}}</view>
+    <view wx:if="{{info.line_remark}}" class="mt-note">本行备注：{{info.line_remark}}</view>
+    <view wx:if="{{info.customer_remark}}" class="mt-note">客户备注：{{info.customer_remark}}</view>
+    <view wx:if="{{info.logistics_requirement}}" class="mt-note">物流要求：{{info.logistics_requirement}}</view>
+    <view wx:if="{{info.shipment_remark}}" class="mt-note">发货备注：{{info.shipment_remark}}</view>
+  </view>
+</template>

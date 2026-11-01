@@ -50,3 +50,5 @@ view, text, input, textarea, button, scroll-view { box-sizing: border-box; }
 .mt-kv .k { color: #5b6780; flex-shrink: 0; }
 .mt-kv .v { text-align: right; word-break: break-all; }
 .mono { font-family: Menlo, Consolas, monospace; }
+/* 订单信息卡（order-info.wxml） */
+.oi-phone { color: #1f5bd6; margin-left: 8rpx; }

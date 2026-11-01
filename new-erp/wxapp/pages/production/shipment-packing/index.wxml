@@ -1,59 +1,147 @@
-<view class="packing-page">
-  <view class="packing-page-head"><button class="packing-back" bindtap="back">返回</button><text class="packing-page-title">发货作业</text></view>
-  <view class="packing-search"><input class="packing-input" value="{{keyword}}" bindinput="keywordInput" placeholder="搜索工序名称" confirm-type="search" bindconfirm="search"/><button class="packing-primary" bindtap="search" disabled="{{busy}}">查询</button></view>
-  <view wx:if="{{error}}" class="packing-error">{{error}}</view>
-  <view wx:if="{{loading}}" class="packing-empty">正在读取包装作业</view>
-  <view wx:elif="{{!rows.length}}" class="packing-empty">暂无可查看的包装作业</view>
-  <view wx:for="{{rows}}" wx:for-item="operation" wx:key="id" class="packing-card">
-    <view class="packing-card-head"><text class="packing-title">{{operation.operation_name}}</text><text wx:if="{{operation.is_public_snapshot}}" class="packing-tag">公共工序</text><text class="packing-tag">{{operation.statusLabel}}</text></view>
-    <view class="packing-field"><text>包裹编号</text><text>{{operation.package_no}}</text></view>
-    <view class="packing-field"><text>接单人</text><text>{{operation.ownerName}}</text></view>
-    <view wx:for="{{operation.contents}}" wx:for-item="content" wx:key="id" class="packing-content"><view>{{content.product_name || content.item_name}}</view><view>{{content.packaging_scheme_name}} · {{content.qtyText}}</view><view wx:if="{{content.serialText}}">{{content.serialText}}</view></view>
-    <button class="packing-primary" data-id="{{operation.id}}" bindtap="openOperation" disabled="{{busy}}">查看作业</button>
+<import src="../order-info.wxml" />
+<!-- 发货作业（试水 / 打包 / 装车）：列表和详情都按生产任务页的样子；选人、用料、质检等弹层沿用 -->
+<view wx:if="{{!detailOpen}}" class="mt-page">
+  <view class="mt-head"><text class="mt-title">发货作业</text><text class="mt-muted">{{userName}}</text></view>
+  <view class="mt-tabs">
+    <view wx:for="{{tabs}}" wx:key="key" class="mt-tab {{scope === item.key ? 'on' : ''}}" data-scope="{{item.key}}" bindtap="pickScope">{{item.label}}<text wx:if="{{item.key !== 'all'}}"> {{counts[item.key] || 0}}</text></view>
   </view>
-  <view wx:if="{{lastPage > 1}}" class="packing-pager"><button disabled="{{page <= 1 || busy}}" data-delta="-1" bindtap="turnPage">上一页</button><text>{{page}} / {{lastPage}}</text><button disabled="{{page >= lastPage || busy}}" data-delta="1" bindtap="turnPage">下一页</button></view>
+  <view class="mt-search">
+    <input class="mt-input" value="{{keyword}}" bindinput="keywordInput" placeholder="搜索工序名称" confirm-type="search" bindconfirm="search" />
+    <button class="mt-btn mt-btn-mini" bindtap="search">查询</button>
+  </view>
+  <view wx:if="{{error}}" class="mt-error">{{error}}</view>
+  <view wx:if="{{loading && !rows.length}}" class="mt-empty">正在读取发货作业</view>
+  <view wx:elif="{{!rows.length}}" class="mt-empty">{{scope === 'mine' ? '没有正在做的发货作业，去“可接”看看' : (scope === 'available' ? '暂时没有可接的发货作业' : '暂无发货作业')}}</view>
+  <view wx:for="{{rows}}" wx:for-item="operation" wx:key="id" class="mt-card" data-id="{{operation.id}}" bindtap="openOperation">
+    <view class="mt-row">
+      <text class="mt-op">{{operation.operation_name}}</text>
+      <view class="mt-tags">
+        <text wx:if="{{operation.repairCount}}" class="mt-tag red">{{operation.repairCount}} 台返修</text>
+        <text wx:if="{{operation.my.timing}}" class="mt-tag amber">计时中</text>
+        <text class="mt-tag {{operation.statusTag}}">{{operation.statusLabel}}</text>
+      </view>
+    </view>
+    <view class="mt-product">{{operation.productText}}<text class="mt-muted"> × {{operation.qtyText}}</text></view>
+    <view class="mt-muted">{{operation.shipment_no}} · {{operation.package_no}}<text wx:if="{{operation.order_info}}"> · {{operation.order_info.customer_name}}</text></view>
+    <view class="mt-row mt-gap">
+      <text class="mt-muted">接单：{{operation.ownerName}}</text>
+      <text class="mt-muted">我 {{operation.myMinutesText}} · 本道 {{operation.totalMinutesText}}</text>
+    </view>
+    <view wx:if="{{operation.order_info && operation.order_info.changed.length}}" class="mt-note">销售改过订单：{{operation.changedText}}</view>
+    <button class="mt-btn {{operation.allowed_actions.claim ? '' : 'ghost'}}" data-id="{{operation.id}}" catchtap="openOperation" disabled="{{busy}}">{{operation.allowed_actions.claim ? '接单' : (operation.my.timing ? '继续作业' : '查看作业')}}</button>
+  </view>
+  <view wx:if="{{lastPage > 1}}" class="mt-pager">
+    <button class="mt-btn ghost mt-btn-mini" disabled="{{page <= 1 || busy}}" data-delta="-1" bindtap="turnPage">上一页</button>
+    <text>{{page}} / {{lastPage}}</text>
+    <button class="mt-btn ghost mt-btn-mini" disabled="{{page >= lastPage || busy}}" data-delta="1" bindtap="turnPage">下一页</button>
+  </view>
 </view>
 
-<view wx:if="{{detailOpen}}" class="packing-overlay" catchtouchmove="stop">
-  <view class="packing-dialog">
-    <view class="packing-dialog-head"><text>{{operation.operation_name || '包装作业'}}</text><button disabled="{{busy}}" bindtap="closeDetail">关闭</button></view>
-    <scroll-view scroll-y class="packing-dialog-body">
-      <text wx:if="{{operation.is_public_snapshot}}" class="packing-tag">公共工序</text>
-      <view class="packing-field"><text>包裹编号</text><text>{{operation.package_no}}</text></view>
-      <view class="packing-field"><text>状态</text><text>{{operation.statusLabel}}</text></view>
-      <view class="packing-field"><text>接单人</text><text>{{operation.ownerName}}</text></view>
-      <view wx:for="{{operation.contents}}" wx:for-item="content" wx:key="id" class="packing-content"><view>{{content.product_name || content.item_name}}</view><view>{{content.packaging_scheme_name}} · {{content.qtyText}}</view><view wx:if="{{content.serialText}}">{{content.serialText}}</view></view>
-      <block wx:if="{{operation.serialResults.length}}">
-        <view class="packing-section-title">本次作业设备</view>
-        <checkbox-group bindchange="chooseOperationSerials">
-          <label wx:for="{{operation.serialResults}}" wx:for-item="serial" wx:key="inventory_serial_id" class="packing-option">
-            <checkbox value="{{serial.inventory_serial_id}}" checked="{{serial.selected}}" disabled="{{busy || pending || !serial.canSelect}}" color="#008b4b" />
-            <view><view>{{serial.serial_no}} · {{serial.statusLabel}}</view><view class="packing-muted">{{serial.location_name}} · {{serial.quality_result === 'passed' ? '检验合格' : serial.quality_result === 'failed' ? '检验不合格' : '未检验'}}</view></view>
-          </label>
-        </checkbox-group>
-      </block>
-      <view class="packing-section-title">参与人员及实际工时</view>
-      <view wx:for="{{operation.participants}}" wx:for-item="person" wx:key="employee_legacy_id" class="packing-participant"><view><text>{{person.name}}</text><text class="packing-muted">{{person.role === 'OWNER' ? '接单人' : '协同人'}}{{person.is_active ? '' : '（已移除）'}}</text></view><view><text>{{person.actual_labor_minutes}} 分钟</text><text class="packing-tag">{{person.is_timing ? '计时中' : '已暂停'}}</text></view></view>
-      <view class="packing-section-title">实际用料</view>
-      <view wx:if="{{!operation.materials.length}}" class="packing-muted">尚未登记实际用料</view>
-      <view wx:for="{{operation.materials}}" wx:for-item="material" wx:key="id" class="packing-content"><view class="packing-field"><text>{{material.item_name}}</text><text>{{material.base_qty}}</text></view><view wx:if="{{material.usageText}}" class="packing-muted">{{material.usageText}}</view><view wx:if="{{material.usageRemark}}" class="packing-muted">{{material.usageRemark}}</view></view>
-      <view wx:if="{{operationError}}" class="packing-error">{{operationError}}</view>
-      <view wx:if="{{pending}}" class="packing-error">原操作结果待确认，请先查询原操作结果。</view>
-    </scroll-view>
-    <view class="packing-dialog-footer">
-      <button wx:if="{{pending}}" class="packing-primary" loading="{{busy}}" bindtap="recover">查询原操作结果</button>
-      <block wx:else>
-        <button wx:if="{{operation.allowed_actions.claim}}" class="packing-primary" disabled="{{busy}}" loading="{{busy}}" data-action="claim" bindtap="runAction">接单</button>
-        <button wx:if="{{operation.allowed_actions.collaborators}}" class="packing-secondary" disabled="{{busy}}" bindtap="openPeople">选择协同人</button>
-        <button wx:if="{{operation.allowed_actions.start}}" class="packing-primary" disabled="{{busy}}" loading="{{busy}}" data-action="start" bindtap="runAction">开始我的作业</button>
-        <button wx:if="{{operation.allowed_actions.pause}}" class="packing-secondary" disabled="{{busy}}" loading="{{busy}}" data-action="pause" bindtap="runAction">暂停我的作业</button>
-        <button wx:if="{{operation.allowed_actions.materials}}" class="packing-secondary" disabled="{{busy}}" bindtap="openMaterials">登记实际用料</button>
-        <button wx:if="{{operation.allowed_actions.complete}}" class="packing-primary" disabled="{{busy}}" loading="{{busy}}" data-action="complete" bindtap="runAction">完成工序</button>
-        <button wx:if="{{operation.allowed_actions.inspect}}" class="packing-primary" disabled="{{busy}}" bindtap="openInspection">{{operation.shipment_operation_type === 'water_test' ? '试水检验' : '作业质检'}}</button>
-      </block>
+<view wx:if="{{detailOpen}}" class="mt-page has-footer">
+  <view class="mt-head">
+    <view>
+      <view class="mt-title">{{operation.operation_name || '发货作业'}}<text wx:if="{{operation.productText}}"> · {{operation.productText}}</text></view>
+      <view class="mt-sub">{{operation.shipment_no}} · {{operation.package_no}}<text wx:if="{{operation.order_info && operation.order_info.work_order_no}}"> · {{operation.order_info.work_order_no}}</text></view>
+    </view>
+    <view class="mt-tags">
+      <text wx:if="{{operation.is_public_snapshot}}" class="mt-tag gray">公共工序</text>
+      <text class="mt-tag {{operation.statusTag}}">{{operation.statusLabel}}</text>
+    </view>
+  </view>
+  <view class="mt-row" style="margin-bottom: 16rpx"><text class="tk-link" bindtap="closeDetail">‹ 返回发货作业</text><text class="tk-link" bindtap="refreshDetail">刷新</text></view>
+  <view wx:if="{{operationError}}" class="mt-error">{{operationError}}</view>
+  <view wx:if="{{pending}}" class="mt-error">原操作结果待确认，请先点下面「查询原操作结果」。</view>
+  <view wx:for="{{operation.repairRows}}" wx:for-item="serial" wx:key="inventory_serial_id" class="mt-error">
+    {{serial.serial_no}} 试水不合格：{{serial.repair.label}}<text wx:if="{{serial.repair.reason}}">。原因：{{serial.repair.reason}}</text><text wx:if="{{serial.repair.work_order_no}}">（工单 {{serial.repair.work_order_no}}）</text>
+    <view wx:if="{{serial.can_repair_return}}" class="mt-gap"><text class="tk-link green" data-id="{{serial.shipment_line_id}}" bindtap="openRepairReturn">返修合格返回 ›</text></view>
+  </view>
+  <view wx:if="{{operation.order_info && operation.order_info.changed.length}}" class="mt-error">销售开单后改过订单（{{operation.changedText}}），看下面「订单信息」。</view>
+
+  <view class="tk-clock {{operation.my.timing ? 'on' : ''}}">
+    <view class="mt-row"><text class="tk-clock-label">我在这道的工时</text><text wx:if="{{operation.my.timing}}" class="mt-tag amber">计时中</text></view>
+    <view class="tk-clock-num mono">{{clockText}}</view>
+    <view class="mt-row">
+      <view class="tk-clock-sub"><view>{{operation.ownerName === '未接单' ? '还没人接单' : '接单：' + operation.ownerName}}</view><view>本道合计 {{operation.totalMinutesText}}<text wx:if="{{operation.labor.active_count}}"> · {{operation.labor.active_count}} 人在计时</text></view></view>
+      <view class="tk-clock-ops">
+        <text wx:if="{{operation.allowed_actions.pause}}" class="tk-link amber" data-action="pause" bindtap="runAction">暂停</text>
+        <text wx:if="{{operation.allowed_actions.start}}" class="tk-link green" data-action="start" bindtap="runAction">{{operation.my.closed_minutes > 0 ? '继续计时' : '开始'}}</text>
+      </view>
+    </view>
+  </view>
+  <button wx:if="{{operation.allowed_actions.claim}}" class="mt-btn" disabled="{{busy}}" data-action="claim" bindtap="runAction">接单</button>
+
+  <view wx:if="{{operation.serialResults.length}}" class="mt-card">
+    <view class="mt-card-title"><text>本次作业设备</text><text class="mt-muted">选好再点下面的按钮</text></view>
+    <view wx:for="{{operation.serialResults}}" wx:for-item="serial" wx:key="inventory_serial_id" class="tk-unit {{serial.canSelect ? '' : 'off'}}" data-id="{{serial.inventory_serial_id}}" bindtap="toggleSerial">
+      <view class="tk-check {{serial.selected ? 'on' : ''}}">{{serial.selected ? '✓' : ''}}</view>
+      <text class="mono tk-sn">{{serial.serial_no}}</text>
+      <text class="mt-tag {{serial.tag}}">{{serial.statusLabel}}</text>
+      <text class="mt-muted">{{serial.location_name}}</text>
+    </view>
+  </view>
+
+  <view class="mt-card">
+    <view class="mt-card-title"><text>包裹内容</text><text class="mt-muted">{{operation.package_no}}</text></view>
+    <view wx:for="{{operation.contents}}" wx:for-item="content" wx:key="id" class="mt-kv">
+      <text class="k">{{content.product_name || content.item_name}}</text>
+      <view class="v"><view>{{content.packaging_scheme_name || ''}} × {{content.qtyText}}</view><view wx:if="{{content.serialText}}" class="mt-muted mono">{{content.serialText}}</view></view>
+    </view>
+  </view>
+
+  <template is="orderInfo" data="{{info: operation.order_info}}" />
+
+  <view class="mt-card">
+    <view class="mt-card-title"><text>参与人员及工时</text><text wx:if="{{operation.allowed_actions.collaborators}}" class="tk-link" bindtap="openPeople">选择协同人 ›</text></view>
+    <view wx:if="{{!operation.participants.length}}" class="mt-muted">还没人接单</view>
+    <view wx:for="{{operation.participants}}" wx:for-item="person" wx:key="employee_legacy_id" class="mt-kv">
+      <text class="k">{{person.name}} <text class="mt-muted">{{person.role === 'OWNER' ? '接单人' : '协同人'}}{{person.is_active ? '' : '（已移除）'}}</text></text>
+      <text class="v">{{person.minutesText}}<text wx:if="{{person.is_timing}}" class="mt-tag amber"> 计时中</text></text>
+    </view>
+  </view>
+
+  <view wx:if="{{operation.sessionRows.length}}" class="mt-card">
+    <view class="mt-card-title"><text>计时记录</text><text class="mt-muted">最近 {{operation.sessionRows.length}} 段</text></view>
+    <view wx:for="{{operation.sessionRows}}" wx:for-item="s" wx:key="id" class="mt-kv">
+      <text class="k">{{s.employee_name}}</text><text class="v mono">{{s.timeText}} · {{s.minutesText}}</text>
+    </view>
+  </view>
+
+  <view wx:if="{{operation.material_requirements.length || operation.materials.length}}" class="mt-card">
+    <view class="mt-card-title"><text>用料</text><text wx:if="{{operation.allowed_actions.materials}}" class="tk-link" bindtap="openMaterials">登记实际用料 ›</text></view>
+    <view wx:for="{{operation.material_requirements}}" wx:for-item="requirement" wx:key="item_id" class="mt-kv"><text class="k">{{requirement.item_name}}</text><text class="v">工艺用量 {{requirement.qtyText}}</text></view>
+    <view wx:if="{{!operation.materials.length}}" class="mt-muted mt-gap">尚未登记实际用料</view>
+    <view wx:for="{{operation.materials}}" wx:for-item="material" wx:key="id" class="mt-kv">
+      <view class="k"><view>{{material.item_name}}</view><view wx:if="{{material.usageText}}" class="mt-muted">{{material.usageText}}</view><view wx:if="{{material.usageRemark}}" class="mt-muted">{{material.usageRemark}}</view></view>
+      <text class="v">实际 {{material.base_qty}}</text>
     </view>
   </view>
 </view>
+
+<view wx:if="{{detailOpen}}" class="mt-footer">
+  <button wx:if="{{pending}}" class="mt-btn" loading="{{busy}}" bindtap="recover">查询原操作结果</button>
+  <block wx:else>
+    <button wx:if="{{operation.allowed_actions.inspect && operation.shipment_operation_type === 'water_test'}}" class="mt-btn danger-ghost side" disabled="{{busy}}" data-result="failed" bindtap="openInspection">试水不合格</button>
+    <button wx:if="{{operation.allowed_actions.inspect}}" class="mt-btn" disabled="{{busy}}" data-result="passed" bindtap="openInspection">{{operation.shipment_operation_type === 'water_test' ? '试水检验' : '作业质检'}}</button>
+    <button wx:elif="{{operation.allowed_actions.complete}}" class="mt-btn" disabled="{{busy}}" data-action="complete" bindtap="runAction">{{operation.serialResults.length ? (operationSerialIds.length ? operationSerialIds.length + ' 台做完' : '先选设备') : '完成工序'}}</button>
+    <button wx:elif="{{operation.allowed_actions.claim}}" class="mt-btn" disabled="{{busy}}" data-action="claim" bindtap="runAction">接单</button>
+    <button wx:elif="{{operation.allowed_actions.start}}" class="mt-btn" disabled="{{busy}}" data-action="start" bindtap="runAction">开始计时</button>
+    <button wx:else class="mt-btn ghost" bindtap="closeDetail">返回</button>
+  </block>
+</view>
+
+<view wx:if="{{repairReturnOpen}}" class="packing-overlay packing-selector-overlay" catchtouchmove="stop">
+  <view class="packing-dialog">
+    <view class="packing-dialog-head"><text>返修合格返回</text><button disabled="{{busy}}" bindtap="closeRepairReturn">关闭</button></view>
+    <scroll-view scroll-y class="packing-dialog-body">
+      <view class="packing-content">{{repairReturnSerial.serial_no}} 已在车间返修合格。返回后先回成品库位，再自动移到这张发货单的待发区，重新试水。</view>
+      <button class="packing-secondary" disabled="{{busy}}" bindtap="openFinishedLocator">{{finishedLocator.location_id ? finishedLocator.warehouse_name + ' / ' + finishedLocator.location_name : '选择成品仓库和库位'}}</button>
+      <textarea class="packing-input packing-inspection-reason" value="{{repairReturnReason}}" bindinput="repairReturnInput" maxlength="500" placeholder="说明（如：更换密封圈后试压合格）"/>
+      <view wx:if="{{repairReturnError}}" class="packing-error">{{repairReturnError}}</view>
+    </scroll-view>
+    <view class="packing-dialog-footer"><button class="packing-secondary" disabled="{{busy}}" bindtap="closeRepairReturn">取消</button><button class="packing-primary" disabled="{{busy}}" loading="{{busy}}" bindtap="saveRepairReturn">确认返回</button></view>
+  </view>
+</view>
+<warehouse-locator open="{{finishedLocatorOpen}}" value="{{finishedLocator}}" location-purpose="finished" bind:confirm="chooseFinishedLocator" bind:cancel="closeFinishedLocator"/>
 
 <view wx:if="{{peopleOpen}}" class="packing-overlay packing-selector-overlay" catchtouchmove="stop">
   <view class="packing-dialog"><view class="packing-dialog-head"><text>选择协同人</text><button disabled="{{busy}}" bindtap="closePeople">关闭</button></view><scroll-view scroll-y class="packing-dialog-body">

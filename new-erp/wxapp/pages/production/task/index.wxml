@@ -1,3 +1,4 @@
+<import src="../order-info.wxml" />
 <view class="mt-page has-footer">
   <view wx:if="{{error}}" class="mt-error">{{error}}</view>
   <view wx:if="{{loading && !task}}" class="mt-empty">正在读取任务</view>
@@ -15,6 +16,8 @@
     </view>
     <view wx:if="{{task.other_lane && task.other_lane.count}}" class="mt-note" bindtap="switchLane">本道还有「{{task.other_lane.title}}」{{task.other_lane.count}} {{task.unitShort}}，点这里切过去 ›</view>
     <view wx:if="{{task.isRework}}" class="mt-note">返工单独计时、单独统计，不算提成。<text wx:if="{{task.rework_note}}">{{task.rework_note}}</text></view>
+    <view wx:if="{{task.shipment_repair}}" class="mt-error">发货试水不合格退回返修：{{task.shipment_repair.serial_no}} · {{task.shipment_repair.reason}}（{{task.shipment_repair.shipment_no}}）。这道修好报合格，做完最后一道后仓库点「返修合格返回」再重新试水。</view>
+    <view wx:if="{{task.order_info && task.order_info.changed.length}}" class="mt-error" bindtap="scrollOrder">销售开单后改过订单（{{task.orderChangedText}}），看下面「订单信息」。</view>
     <view wx:if="{{task.work_order.status === 'paused'}}" class="mt-error">工单已暂停{{task.work_order.pause_reason ? '：' + task.work_order.pause_reason : ''}}，暂时不能报工。</view>
     <view wx:if="{{task.drawings_updated_at}}" class="mt-error">图纸已更新（{{task.drawings_updated_at}}），请先看最新图纸再做。</view>
 
@@ -90,6 +93,8 @@
         <view wx:if="{{item.can_order}}" class="tk-dlv-ops"><text class="tk-link green" data-id="{{item.component_item_id}}" bindtap="semiOrder">下半成品工单（最多 {{item.max_order_qty}}）</text></view>
       </view>
     </view>
+
+    <template is="orderInfo" data="{{info: task.order_info}}" />
 
     <view class="mt-card">
       <view class="mt-card-title"><text>图纸 / 定制说明</text><text wx:if="{{!task.drawings.length && !task.work_order.custom_description && !task.work_order.special_requirement}}" class="mt-muted">无</text></view>

@@ -1,5 +1,6 @@
+@import "../shared.wxss";
 page {
-  background: #f8fafc;
+  background: #f1f4f8;
   color: #1e293b;
   font-size: 28rpx;
 }
@@ -302,3 +303,19 @@ view, text, input, textarea, button, scroll-view, picker {
 .packing-area { margin: 12rpx 0; padding: 12rpx; border: 1rpx dashed #d0d7e2; border-radius: 10rpx; }
 .packing-area-text { width: auto; height: 140rpx; margin-top: 12rpx; }
 .packing-chosen { border-color: #07883f !important; color: #07883f !important; }
+.tk-clock { background: #14213d; color: #fff; border-radius: 20rpx; padding: 26rpx; margin-bottom: 18rpx; }
+.tk-clock-label { color: #b9c5dc; font-size: 25rpx; }
+.tk-clock-num { font-size: 60rpx; font-weight: 700; margin: 8rpx 0 10rpx; letter-spacing: 2rpx; }
+.tk-clock-sub { color: #b9c5dc; font-size: 23rpx; line-height: 1.6; flex: 1; min-width: 0; white-space: pre-wrap; }
+.tk-clock-ops { display: flex; gap: 28rpx; flex-shrink: 0; }
+.tk-link { color: #1f6feb; font-weight: 600; font-size: 26rpx; }
+.tk-link.green { color: #11804a; }
+.tk-clock .tk-link.green { color: #4ade80; font-size: 30rpx; }
+.tk-link.amber { color: #b25c00; }
+.tk-clock .tk-link.amber { color: #ffb020; font-size: 30rpx; }
+.tk-unit { display: flex; align-items: center; gap: 16rpx; padding: 20rpx 0; border-bottom: 1rpx solid #f0f2f6; flex-wrap: wrap; }
+.tk-unit:last-of-type { border-bottom: 0; }
+.tk-unit.off { opacity: .55; }
+.tk-check { width: 40rpx; height: 40rpx; border-radius: 8rpx; border: 3rpx solid #c9d2e0; color: #fff; text-align: center; line-height: 34rpx; font-size: 26rpx; font-weight: 700; flex-shrink: 0; }
+.tk-check.on { background: #11804a; border-color: #11804a; }
+.tk-sn { font-size: 27rpx; }

@@ -15,6 +15,7 @@ use App\Models\Erp\MfgTaskParticipant;
 use App\Models\Erp\MfgUnitReport;
 use App\Models\Erp\MfgWorkOrderLink;
 use App\Models\Erp\MfgWorkOrderLog;
+use App\Models\Erp\MfgWorkOrderOperation;
 use App\Models\Erp\MfgWorkOrderTech;
 use App\Models\Erp\MfgWorkOrderUnit;
 use App\Models\Erp\ProductionRouting;
@@ -22,6 +23,7 @@ use App\Models\Erp\SalesOrder;
 use App\Models\Erp\SalesOrderLine;
 use App\Models\Erp\Warehouse;
 use App\Services\Erp\BomMatcher;
+use Illuminate\Support\Facades\DB;
 use App\Services\Erp\SalesOrderFundingGateService;
 
 /** 工单列表、详情、序列号查询、备货预览：只读。 */
@@ -127,6 +129,9 @@ final class WorkOrderQueryService
         ])->values()->all();
         $row['operations'] = $this->operationProgress($wo, $row['operations']);
         $row['tech'] = $this->techSummary($wo);
+        // 订单信息（销售员、客户、电话、地址、各种备注），取订单现在的内容，销售改过的标出来
+        $row['order_info'] = app(OrderBrief::class)->forWorkOrder($wo);
+        $row['shipment_repairs'] = self::shipmentRepairs($wo);
         $row['logs'] = MfgWorkOrderLog::query()->where('work_order_id', $wo->id)->orderByDesc('id')->limit(30)->get()
             ->map(fn ($log) => ['id' => $log->id, 'action' => $log->action, 'content' => $log->content, 'operator_name' => $log->operator_name,
                 'created_at' => $log->created_at?->toDateTimeString()])->values()->all();
@@ -476,6 +481,34 @@ final class WorkOrderQueryService
     }
 
     /** 半成品工单显示是给哪张总装工单做的；总装工单列出给下料组开的半成品工单。 */
+    /**
+     * 发货试水不合格转回车间返修的记录：返修中（在哪道）、返修合格等仓库「返修合格返回」、已返回重新试水。
+     * 工单已完工时靠这里看到这台还在返修，不会“单子没了”。
+     */
+    public static function shipmentRepairs(MfgWorkOrder $wo): array
+    {
+        $rows = \App\Models\Erp\ShipmentRework::query()->where('work_order_id', $wo->id)->orderByDesc('id')->limit(20)->get();
+        if ($rows->isEmpty()) return [];
+        $units = MfgWorkOrderUnit::query()->whereIn('id', $rows->pluck('unit_id')->filter())->get()->keyBy('id');
+        $ops = MfgWorkOrderOperation::query()->where('work_order_id', $wo->id)->pluck('operation_name', 'id');
+        $shipments = DB::table('erp_sales_shipments')->whereIn('id', $rows->pluck('shipment_id'))->pluck('shipment_no', 'id');
+        return $rows->map(function ($r) use ($units, $ops, $shipments) {
+            $unit = $r->unit_id ? $units->get($r->unit_id) : null;
+            $state = $r->status === 'in_progress' ? 'repairing' : ($r->returned_at ? 'returned' : 'wait_return');
+            $at = $unit && $unit->status === 'rework' && $unit->current_operation_id ? ($ops[$unit->current_operation_id] ?? null) : null;
+            return ['id' => (int) $r->id, 'rework_no' => $r->rework_no, 'shipment_id' => (int) $r->shipment_id, 'shipment_no' => $shipments[$r->shipment_id] ?? null,
+                'serial_no' => $unit?->serial_no, 'reason' => $r->reason, 'state' => $state,
+                'state_label' => match ($state) {
+                    'repairing' => '返修中'.($at ? '（在'.$at.'）' : ''),
+                    'wait_return' => '返修已合格，等仓库点「返修合格返回」后重新试水',
+                    default => '已返回发货，重新试水',
+                },
+                'return_operation_name' => $r->return_operation_id ? ($ops[$r->return_operation_id] ?? null) : null,
+                'current_operation_id' => $state === 'repairing' && $unit ? $unit->current_operation_id : null,
+                'created_at' => $r->created_at?->toDateTimeString(), 'completed_at' => $r->completed_at?->toDateTimeString()];
+        })->values()->all();
+    }
+
     private function links(MfgWorkOrder $wo): array
     {
         $brief = fn (?MfgWorkOrder $w) => $w ? ['id' => $w->id, 'work_order_no' => $w->work_order_no, 'item_name' => $w->item_name, 'product_name' => $w->product_name,

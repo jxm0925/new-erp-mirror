@@ -417,6 +417,7 @@ class ShipmentPackingApplicationService
             'end_reason' => $row->ended_at ? $row->status : null, 'actual_labor_minutes' => $row->actual_labor_minutes]));
         $me = collect($participants)->firstWhere('employee_legacy_id', $actorId);
         $active = ! in_array($op->status, ['COMPLETED', 'CANCELLED'], true);
+        $myOpen = (clone $labor)->where('employee_legacy_id', $actorId)->where('status', 'ACTIVE')->orderByDesc('id')->first();
         $sharePlan = null;
         return ['id' => (int) $op->id, 'shipment_id' => (int) $op->shipment_id, 'package_id' => (int) $op->package_id, 'share_plan' => $sharePlan,
             'package_no' => $op->package?->package_no, 'operation_name' => $op->operation_name_snapshot,
@@ -428,6 +429,12 @@ class ShipmentPackingApplicationService
             'owner_legacy_id' => $op->owner_legacy_id ? (int) $op->owner_legacy_id : null,
             'planned_base_qty' => $op->planned_base_qty, 'completed_base_qty' => $op->completed_base_qty,
             'business_version' => (int) $op->business_version, 'participants' => $participants,
+            'shipment_no' => $op->shipment?->shipment_no, 'shipment_version' => (int) ($op->shipment?->business_version ?? 0),
+            'order_info' => $this->orderInfo($op),
+            // 和生产任务页一样：我这道累计用了多久、是否在计时（开始时间给小程序走秒）
+            'my' => ['is_participant' => (bool) $me, 'role' => $me['role'] ?? null, 'timing' => (bool) $myOpen,
+                'started_at' => $myOpen?->started_at?->toIso8601String(),
+                'closed_minutes' => (float) bcadd((string) (clone $labor)->where('employee_legacy_id', $actorId)->whereNotNull('ended_at')->sum('actual_labor_minutes'), '0', 2)],
             'labor' => ['schema_ready' => true, 'closed_minutes' => bcadd((string) (clone $labor)->whereNotNull('ended_at')->sum('actual_labor_minutes'), '0', 2),
                 'active_count' => (clone $labor)->where('status', 'ACTIVE')->count(),
                 'my_active_session_id' => (clone $labor)->where('employee_legacy_id', $actorId)->where('status', 'ACTIVE')->value('id'),
@@ -562,12 +569,19 @@ class ShipmentPackingApplicationService
     {
         $user = DB::table('erp_legacy_admin_users')->where('legacy_id', $actorId)->first();
         $auth = app(AuthContextService::class);
-        $quality = $user && ($auth->isSuperAdmin($user) || in_array('sales_order.shipment.packing.quality', $auth->permissionCodes($user), true));
-        return $this->serialLines($op)->flatMap(function ($line) use ($op, $actorId, $quality) {
+        $codes = $user ? $auth->permissionCodes($user) : [];
+        $super = $user && $auth->isSuperAdmin($user);
+        $quality = $user && ($super || in_array('sales_order.shipment.packing.quality', $codes, true));
+        $canReturn = $user && ($super || in_array('sales_order.shipment.post', $codes, true));
+        return $this->serialLines($op)->flatMap(function ($line) use ($op, $actorId, $quality, $canReturn) {
             $row = ShipmentSerialResult::query()->where('operation_id', $op->id)->where('shipment_line_id', $line->id)->where('round', $line->quality_round)->first();
-            return \App\Models\Erp\InventorySerial::query()->with(['warehouse', 'location'])->whereIn('id', $line->serial_snapshot['inventory_serial_ids'] ?? [])->get()->map(function ($serial) use ($line, $row, $op, $actorId, $quality) {
+            $repair = $line->line_status === 'repair' ? $this->repairState($line) : null;
+            return \App\Models\Erp\InventorySerial::query()->with(['warehouse', 'location'])->whereIn('id', $line->serial_snapshot['inventory_serial_ids'] ?? [])->get()->map(function ($serial) use ($line, $row, $op, $actorId, $quality, $repair, $canReturn) {
                 $ready = $line->line_status === 'prepared' && $this->precedingCompleted($op, $line);
                 return ['shipment_line_id' => (int) $line->id, 'inventory_serial_id' => (int) $serial->id, 'serial_no' => $serial->serial_no,
+                    'line_status' => $line->line_status, 'repair' => $repair,
+                    // 返修合格：有发货过账权限的人在这里点「返修合格返回」，设备回待发区重新试水
+                    'can_repair_return' => $repair && $repair['state'] === 'wait_return' && $canReturn,
                     'round' => (int) $line->quality_round, 'status' => $row?->status === 'waiting' && $ready ? 'ready' : ($row?->status ?? 'waiting'),
                     'quality_result' => $row?->quality_result,
                     'requires_return_operation' => \App\Models\Erp\MfgWorkOrderUnit::query()->where('inventory_serial_id', $serial->id)->exists(),
@@ -575,6 +589,46 @@ class ShipmentPackingApplicationService
                         'inspect' => $ready && $row?->status === 'wait_quality' && $quality]] + app(ShipmentSerialApplicationService::class)->stockLocationProjection($serial);
             });
         })->values()->all();
+    }
+
+    /** 试水不合格转返修的那台：返修中（在哪道）／返修合格等返回。 */
+    private function repairState(SalesShipmentLine $line): ?array
+    {
+        $r = \App\Models\Erp\ShipmentRework::query()->where('shipment_line_id', $line->id)->orderByDesc('id')->first();
+        if (! $r) return ['state' => 'repairing', 'label' => '已转返修', 'rework_no' => null, 'reason' => null, 'work_order_id' => null, 'work_order_no' => null];
+        $unit = $r->unit_id ? \App\Models\Erp\MfgWorkOrderUnit::query()->find($r->unit_id) : null;
+        $at = $unit && $unit->status === 'rework' && $unit->current_operation_id
+            ? \App\Models\Erp\MfgWorkOrderOperation::query()->whereKey($unit->current_operation_id)->value('operation_name') : null;
+        $state = $r->status === 'in_progress' ? 'repairing' : ($r->returned_at ? 'returned' : 'wait_return');
+        return ['state' => $state, 'rework_no' => $r->rework_no, 'reason' => $r->reason,
+            'work_order_id' => $r->work_order_id ? (int) $r->work_order_id : null,
+            'work_order_no' => $r->work_order_id ? \App\Models\Erp\MfgWorkOrder::query()->whereKey($r->work_order_id)->value('work_order_no') : null,
+            'label' => match ($state) { 'repairing' => '返修中'.($at ? '，在「'.$at.'」' : ''), 'wait_return' => '返修已合格，点「返修合格返回」后重新试水', default => '已返回' }];
+    }
+
+    /** 发货作业顶部的订单信息：有工单的设备沿用工单的比对快照（销售改过的标出来），再补上发货单自己的承运、备注。 */
+    private function orderInfo(ShipmentPackingOperation $op): ?array
+    {
+        $shipment = $op->shipment;
+        if (! $shipment) return null;
+        $contents = $op->contents()->get();
+        $serialIds = $contents->flatMap(fn ($c) => $c->serial_snapshot['inventory_serial_ids'] ?? [])->all();
+        $woId = $serialIds ? \App\Models\Erp\MfgWorkOrderUnit::query()->whereIn('inventory_serial_id', $serialIds)->value('work_order_id') : null;
+        $wo = $woId ? \App\Models\Erp\MfgWorkOrder::query()->find($woId) : null;
+        $brief = app(\App\Services\Erp\Manufacturing\OrderBrief::class);
+        // 以发货单的订单为准；设备的工单就是给这张订单做的，才用工单的快照比「销售已修改」。备货工单做的设备直接按发货单的订单取。
+        $info = $wo ? $brief->forWorkOrder($wo) : null;
+        if ($shipment->sales_order_id && (! $info || (int) $info['sales_order_id'] !== (int) $shipment->sales_order_id)) {
+            $lineId = $contents->pluck('sales_order_line_id')->filter()->first();
+            $info = $brief->forSalesOrder((int) $shipment->sales_order_id, $lineId ? (int) $lineId : null);
+        }
+        if (! $info) return null;
+        $receiver = (array) ($shipment->receiver_snapshot ?? []);
+        return $info + ['shipment_no' => $shipment->shipment_no, 'carrier_name' => $shipment->carrier_name_snapshot,
+            'shipment_remark' => trim((string) $shipment->remark) ?: null,
+            'receiver_text' => trim(implode(' ', array_filter([$receiver['name'] ?? $receiver['contact_name'] ?? null, $receiver['phone'] ?? $receiver['contact_phone'] ?? null,
+                $receiver['full_address'] ?? $receiver['address'] ?? null], fn ($v) => is_string($v) && trim($v) !== ''))) ?: null,
+            'work_order_id' => $wo?->id, 'work_order_no' => $wo?->work_order_no];
     }
 
     private function originRoute(SalesShipmentLine $line): ?array

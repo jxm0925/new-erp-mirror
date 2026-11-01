@@ -3,9 +3,27 @@ const view = require('../../../utils/warehouse-page');
 const personalShares = require('../../../utils/personal-shares');
 const materialUsage = require('../../../utils/packing-material-usage');
 const statusLabels = { READY: '待加工', WAITING: '等待前序', IN_PROGRESS: '加工中', WAIT_QUALITY: '待质检', COMPLETED: '已完成', CANCELLED: '已取消' };
+const statusTags = { READY: 'blue', WAITING: 'gray', IN_PROGRESS: 'amber', WAIT_QUALITY: 'purple', COMPLETED: 'green', CANCELLED: 'gray' };
+const TABS = [{ key: 'mine', label: '我的' }, { key: 'available', label: '可接' }, { key: 'all', label: '全部' }];
 const clone = value => JSON.parse(JSON.stringify(value));
+const pad = n => (n < 10 ? '0' : '') + n;
+function clock(seconds) {
+  const s = Math.max(0, Math.floor(seconds));
+  return `${pad(Math.floor(s / 3600))}:${pad(Math.floor(s % 3600 / 60))}:${pad(s % 60)}`;
+}
+function minutesText(m) {
+  const v = Number(m || 0);
+  return v >= 60 ? `${Math.floor(v / 60)}时${Math.round(v % 60)}分` : `${Math.round(v)}分`;
+}
+function hm(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? '' : `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
 Page({
   data: { shipmentId: 0, page: 1, lastPage: 1, total: 0, rows: [], loading: true, busy: false, error: '', keyword: '',
+    tabs: TABS, scope: 'mine', counts: { mine: 0, available: 0 }, userName: '', clockText: '00:00:00',
+    repairReturnOpen: false, repairReturnSerial: {}, repairReturnReason: '', repairReturnError: '', finishedLocatorOpen: false, finishedLocator: {},
     detailOpen: false, operation: {}, pending: false, operationError: '', peopleOpen: false, peopleRows: [], selectedPeople: [], peopleKeyword: '',
     peoplePage: 1, peopleLast: 1, departments: [{ id: 0, name: '全部部门' }], departmentIndex: 0, shareRows: [], peopleError: '',
     materialsOpen: false, materialRows: [], materialDrafts: [], materialKeyword: '', materialPage: 1, materialLast: 1, materialError: '',
@@ -13,8 +31,13 @@ Page({
     identityOpen: false, identityRows: [], selectedIdentities: [], identityMaterial: {}, identityPage: 1, identityLast: 1, identityKeyword: '',
     operationSerialIds: [], inspectionOpen: false, inspectionResult: 'passed', inspectionReason: '', inspectionError: '', inspectionNeedsReturn: false,
     repairLocatorOpen: false, repairLocator: {}, reworkOpen: false, reworkRows: [], reworkPage: 1, reworkLast: 1, reworkKeyword: '', reworkError: '', returnOperation: null },
-  onLoad(options = {}) { this.peopleSelected = {}; this.materialSelected = {}; this.identitySelected = {}; this.setData({ shipmentId: Number(options.shipment_id || 0) }); this.load(); if (options.operation_id) { this.showOperation(Number(options.operation_id)); } },
-  onUnload() { this.sequence = (this.sequence || 0) + 1; this.detailSequence = (this.detailSequence || 0) + 1; this.invalidateSelectors(); },
+  onLoad(options = {}) { this.peopleSelected = {}; this.materialSelected = {}; this.identitySelected = {}; const user = wx.getStorageSync('erp_user') || {};
+    this.fromOutside = Boolean(options.operation_id);
+    this.setData({ shipmentId: Number(options.shipment_id || 0), userName: user.nickname || user.display_name || user.username || '',
+      scope: TABS.some(t => t.key === options.scope) ? options.scope : (options.shipment_id ? 'all' : 'mine') }); this.load(); if (options.operation_id) { this.showOperation(Number(options.operation_id)); } },
+  onHide() { this.stopClock(); },
+  onShow() { if (this.data.detailOpen && this.data.operation.id) this.startClock(); },
+  onUnload() { this.stopClock(); this.sequence = (this.sequence || 0) + 1; this.detailSequence = (this.detailSequence || 0) + 1; this.invalidateSelectors(); },
   invalidateSelectors() { ['peopleSequence', 'materialSequence', 'identitySequence'].forEach(key => { this[key] = (this[key] || 0) + 1; }); },
   onPullDownRefresh() { this.load().finally(() => wx.stopPullDownRefresh()); },
   decorate(row) {
@@ -22,13 +45,27 @@ Page({
     const actions = Object.assign({}, row.allowed_actions || {});
     Object.keys(actions).forEach(action => { actions[action] = actions[action] && can(action === 'inspect' ? 'sales_order.shipment.packing.quality' : 'sales_order.shipment.packing.execute'); });
     const owner = (row.participants || []).find(person => person.role === 'OWNER');
-    return Object.assign({}, row, { statusLabel: statusLabels[row.status] || row.status, ownerName: owner ? owner.name : '未接单',
+    const info = row.order_info || null;
+    const contents = row.contents || [];
+    const my = row.my || { closed_minutes: 0, timing: false };
+    const repairRows = (row.serial_results || []).filter(serial => serial.repair && serial.repair.state !== 'returned');
+    return Object.assign({}, row, { statusLabel: statusLabels[row.status] || row.status, statusTag: statusTags[row.status] || 'gray', ownerName: owner ? owner.name : '未接单',
+      my, productText: contents.map(c => c.product_name || c.item_name).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join('、'),
+      myMinutesText: minutesText(my.closed_minutes) + (my.timing ? '+' : ''), totalMinutesText: minutesText(row.labor && row.labor.closed_minutes),
+      changedText: ((info && info.changed) || []).map(c => c.label).join('、'),
+      repairRows, repairCount: repairRows.length,
+      participants: (row.participants || []).map(person => Object.assign({}, person, { minutesText: minutesText(person.actual_labor_minutes) })),
+      sessionRows: (((row.labor || {}).sessions || {}).data || []).map(session => Object.assign({}, session, {
+        timeText: hm(session.started_at) + (session.ended_at ? ' ~ ' + hm(session.ended_at).slice(6) : ' 起'),
+        minutesText: session.ended_at ? minutesText(session.actual_labor_minutes) : '计时中' })),
+      material_requirements: (row.material_requirements || []).map(req => Object.assign({}, req, { qtyText: view.quantity(req.required_base_qty) })),
       is_public_snapshot: row.is_public_snapshot === true || row.is_public_snapshot === 1 || row.is_public_snapshot === '1',
       qtyText: view.quantity(row.planned_base_qty), allowed_actions: actions,
       serialResults: (row.serial_results || []).map(serial => Object.assign({}, serial, {
         selected: this.data.operationSerialIds.includes(serial.inventory_serial_id),
         canSelect: Boolean(serial.allowed_actions && (serial.allowed_actions.complete || serial.allowed_actions.inspect)),
-        statusLabel: ({ waiting: '等待前序', ready: '可开始', completed: '已完成', wait_quality: '待检验', failed: '不合格' })[serial.status] || serial.status,
+        statusLabel: serial.line_status === 'repair' ? '返修中' : (({ waiting: '等待前序', ready: '可开始', completed: '已完成', wait_quality: '待检验', failed: '不合格' })[serial.status] || serial.status),
+        tag: serial.line_status === 'repair' ? 'red' : (({ ready: 'blue', completed: 'green', wait_quality: 'purple', failed: 'red' })[serial.status] || 'gray'),
       })),
       materials: (row.materials || []).map(material => {
         const usage = material.usage_snapshot || {}; const labels = { length_mm: '长', width_mm: '宽', thickness_mm: '厚' };
@@ -40,22 +77,79 @@ Page({
   load() {
     const sequence = this.sequence = (this.sequence || 0) + 1;
     this.setData({ loading: true, error: '' });
-    return packing.operations({ shipment_id: this.data.shipmentId || undefined, page: this.data.page, per_page: 10, keyword: this.data.keyword }).then(response => {
+    return packing.operations({ shipment_id: this.data.shipmentId || undefined, page: this.data.page, per_page: 10, keyword: this.data.keyword,
+      scope: this.data.scope === 'all' ? undefined : this.data.scope, include_counts: 1 }).then(response => {
       if (sequence !== this.sequence) return;
-      const paged = view.rows(response); this.setData({ rows: paged.rows.map(row => this.decorate(row)), page: paged.page, lastPage: paged.lastPage, total: paged.total, loading: false });
+      const paged = view.rows(response); this.setData({ rows: paged.rows.map(row => this.decorate(row)), page: paged.page, lastPage: paged.lastPage, total: paged.total, loading: false,
+        counts: response.counts || this.data.counts });
     }).catch(error => { if (sequence === this.sequence) this.setData({ loading: false, error: view.errorText(error) }); });
   },
   keywordInput(event) { this.setData({ keyword: event.detail.value }); },
+  pickScope(event) { const scope = event.currentTarget.dataset.scope; if (scope === this.data.scope) return; this.setData({ scope, page: 1, rows: [] }); this.load(); },
+  callPhone(event) { const phone = event.currentTarget.dataset.phone; if (phone) wx.makePhoneCall({ phoneNumber: String(phone) }); },
+  // 和生产任务页一样走秒：已结束的累计 + 正在计时的这段
+  startClock() {
+    this.stopClock();
+    const my = this.data.operation && this.data.operation.my;
+    if (!my) return;
+    const base = Number(my.closed_minutes || 0) * 60;
+    const started = my.timing && my.started_at ? new Date(my.started_at).getTime() : 0;
+    const tick = () => this.setData({ clockText: clock(base + (started ? (Date.now() - started) / 1000 : 0)) });
+    tick();
+    if (started) this.timer = setInterval(tick, 1000);
+  },
+  stopClock() { if (this.timer) { clearInterval(this.timer); this.timer = null; } },
+  refreshDetail() { if (this.data.operation.id) this.showOperation(this.data.operation.id); },
+  toggleSerial(event) {
+    const id = Number(event.currentTarget.dataset.id);
+    const serial = (this.data.operation.serialResults || []).find(row => row.inventory_serial_id === id);
+    if (!serial || !serial.canSelect || this.data.busy) return;
+    const ids = this.data.operationSerialIds.includes(id) ? this.data.operationSerialIds.filter(x => x !== id) : this.data.operationSerialIds.concat([id]);
+    this.setData({ operationSerialIds: ids, 'operation.serialResults': this.data.operation.serialResults.map(row => Object.assign({}, row, { selected: ids.includes(row.inventory_serial_id) })) });
+  },
+  // 试水不合格转返修、车间返修合格后：有发货过账权限的人在这里点返回，设备回待发区重新试水
+  openRepairReturn(event) {
+    const lineId = Number(event.currentTarget.dataset.id);
+    const serial = (this.data.operation.serial_results || []).find(row => row.shipment_line_id === lineId);
+    if (!serial || this.data.busy) return;
+    this.setData({ repairReturnOpen: true, repairReturnSerial: serial, repairReturnReason: '', repairReturnError: '', finishedLocator: {} });
+  },
+  closeRepairReturn() { if (!this.data.busy) this.setData({ repairReturnOpen: false }); },
+  repairReturnInput(event) { this.setData({ repairReturnReason: event.detail.value }); },
+  openFinishedLocator() { if (!this.data.busy) this.setData({ finishedLocatorOpen: true }); },
+  chooseFinishedLocator(event) { this.setData({ finishedLocator: event.detail, finishedLocatorOpen: false }); },
+  closeFinishedLocator() { this.setData({ finishedLocatorOpen: false }); },
+  saveRepairReturn() {
+    const op = this.data.operation; const serial = this.data.repairReturnSerial;
+    if (this.data.busy || !serial.shipment_line_id) return;
+    if (!this.data.finishedLocator.location_id) return this.setData({ repairReturnError: '请选择成品仓库和库位' });
+    if (!String(this.data.repairReturnReason || '').trim()) return this.setData({ repairReturnError: '请写一句返修说明' });
+    this.setData({ busy: true, repairReturnError: '' });
+    return packing.repairReturn(op.shipment_id, serial.shipment_line_id, { expected_version: op.shipment_version,
+      finished_location_id: this.data.finishedLocator.location_id, reason: String(this.data.repairReturnReason).trim() }).then(response => {
+      wx.showToast({ title: response.message || '已返回，重新试水', icon: 'none' });
+      this.setData({ repairReturnOpen: false });
+      return Promise.all([this.load(), this.showOperation(op.id)]);
+    }).catch(error => this.setData({ repairReturnError: view.errorText(error) })).finally(() => this.setData({ busy: false }));
+  },
   search() { this.setData({ page: 1 }); this.load(); },
   turnPage(event) { const page = this.data.page + Number(event.currentTarget.dataset.delta); if (page > 0 && page <= this.data.lastPage && !this.data.busy) { this.setData({ page }); this.load(); } },
   openOperation(event) { this.setData({ operationSerialIds: [] }); return this.showOperation(Number(event.currentTarget.dataset.id)); },
   showOperation(id) {
     const sequence = this.detailSequence = (this.detailSequence || 0) + 1;
     this.setData({ detailOpen: true, operation: Number(this.data.operation.id) === Number(id) ? this.data.operation : {}, operationError: '', pending: Boolean(packing.pending(id)) });
-    return packing.operation(id).then(response => { if (sequence === this.detailSequence) this.setData({ operation: this.decorate(response.data || response) }); })
+    return packing.operation(id).then(response => { if (sequence === this.detailSequence) { this.setData({ operation: this.decorate(response.data || response) }); this.startClock(); } })
       .catch(error => { if (sequence === this.detailSequence) this.setData({ operationError: view.errorText(error) }); });
   },
-  closeDetail() { if (!this.data.busy) { this.detailSequence++; this.invalidateSelectors(); this.setData({ detailOpen: false, peopleOpen: false, materialsOpen: false, identityOpen: false, inspectionOpen: false }); } },
+  closeDetail() {
+    if (this.data.busy) return;
+    this.stopClock();
+    if (this.fromOutside && getCurrentPages().length > 1) { wx.navigateBack(); return; }
+    this.fromOutside = false;
+    this.detailSequence = (this.detailSequence || 0) + 1; this.invalidateSelectors();
+    this.setData({ detailOpen: false, peopleOpen: false, materialsOpen: false, identityOpen: false, inspectionOpen: false, repairReturnOpen: false });
+    this.load();
+  },
   runAction(event) { const action = event.currentTarget.dataset.action; if (action === 'complete') return this.complete(); return this.execute(action); },
   execute(action, payload) {
     if (this.data.busy || !this.data.operation.id) return Promise.resolve(false);
@@ -150,7 +244,7 @@ Page({
     return ids.slice();
   },
   needsReturnOperation() { return (this.data.operation.serial_results || []).some(row => this.data.operationSerialIds.includes(row.inventory_serial_id) && row.requires_return_operation); },
-  openInspection() { if (this.actionSerials('inspect') === false) return; this.setData({ inspectionOpen: true, inspectionResult: 'passed', inspectionReason: '', inspectionError: '', repairLocator: {}, returnOperation: null, inspectionNeedsReturn: this.needsReturnOperation() }); },
+  openInspection(event) { if (this.actionSerials('inspect') === false) return; const result = event && event.currentTarget && event.currentTarget.dataset.result === 'failed' ? 'failed' : 'passed'; this.setData({ inspectionOpen: true, inspectionResult: result, inspectionReason: '', inspectionError: '', repairLocator: {}, returnOperation: null, inspectionNeedsReturn: this.needsReturnOperation() }); },
   inspectionChange(event) { this.setData({ inspectionResult: event.detail.value }); },
   inspectionInput(event) { this.setData({ inspectionReason: event.detail.value }); },
   openRepairLocator() { if (!this.data.busy) this.setData({ repairLocatorOpen: true }); },

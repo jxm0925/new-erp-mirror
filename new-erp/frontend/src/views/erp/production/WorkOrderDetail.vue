@@ -736,6 +736,54 @@
                 </div>
               </template>
 
+              <template v-if="wo.order_info">
+                <div v-if="wo.order_info.changed && wo.order_info.changed.length" class="spec-kv-row">
+                  <span class="kv-label text-danger">销售已修改</span>
+                  <span class="kv-val text-danger">
+                    <div v-for="c in wo.order_info.changed" :key="c.field">{{ c.label }}：{{ c.before }} → <b>{{ c.after }}</b></div>
+                  </span>
+                </div>
+                <div v-if="!wo.sales_order" class="spec-kv-row">
+                  <span class="kv-label">所属订单</span>
+                  <span class="kv-val code-mono">{{ wo.order_info.sales_order_no }} · {{ wo.order_info.customer_name || '—' }}</span>
+                </div>
+                <div class="spec-kv-row">
+                  <span class="kv-label">销售员</span>
+                  <span class="kv-val font-medium">{{ wo.order_info.salesperson_name || '—' }}</span>
+                </div>
+                <div class="spec-kv-row">
+                  <span class="kv-label">联系人 / 电话</span>
+                  <span class="kv-val">{{ wo.order_info.contact_name || '—' }} <span class="code-mono">{{ wo.order_info.contact_phone || '' }}</span></span>
+                </div>
+                <div v-if="wo.order_info.address" class="spec-kv-row">
+                  <span class="kv-label">收货地址</span>
+                  <span class="kv-val">{{ wo.order_info.address }}</span>
+                </div>
+                <div v-if="wo.order_info.order_remark" class="spec-kv-row">
+                  <span class="kv-label">订单备注</span>
+                  <span class="kv-val font-medium">{{ wo.order_info.order_remark }}</span>
+                </div>
+                <div v-if="wo.order_info.line_remark" class="spec-kv-row">
+                  <span class="kv-label">本行备注</span>
+                  <span class="kv-val font-medium">{{ wo.order_info.line_remark }}</span>
+                </div>
+                <div v-if="wo.order_info.customer_remark" class="spec-kv-row">
+                  <span class="kv-label">客户备注</span>
+                  <span class="kv-val">{{ wo.order_info.customer_remark }}</span>
+                </div>
+                <div v-if="wo.order_info.logistics_requirement" class="spec-kv-row">
+                  <span class="kv-label">物流要求</span>
+                  <span class="kv-val">{{ wo.order_info.logistics_requirement }}</span>
+                </div>
+              </template>
+              <div v-for="r in (wo.shipment_repairs || [])" :key="'sr' + r.id" class="spec-kv-row">
+                <span class="kv-label" :class="{ 'text-danger': r.state !== 'returned' }">试水返修</span>
+                <span class="kv-val">
+                  <span class="code-mono">{{ r.serial_no }}</span> · {{ r.state_label }}
+                  <div class="text-muted" style="font-size: 12px;">{{ r.shipment_no }} · {{ r.created_at }} · {{ r.reason }}</div>
+                </span>
+              </div>
+
               <div v-if="wo.remark" class="spec-kv-row">
                 <span class="kv-label">制令备注</span>
                 <span class="kv-val">{{ wo.remark }}</span>

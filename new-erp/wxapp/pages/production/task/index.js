@@ -51,6 +51,7 @@ Page({
       lane: task.lane || 'normal',
       task: Object.assign({}, task, {
         unitShort, noun, isRework: task.lane === 'rework',
+        orderChangedText: ((task.order_info && task.order_info.changed) || []).map(c => c.label).join('、'),
         semiRows: (task.semi_components || []).map(r => Object.assign({}, r, { requiredText: view.quantity(r.required_qty), issuedText: view.quantity(r.issued_qty),
           availableText: view.quantity(r.available_qty), openText: view.quantity(r.open_qty), heldText: view.quantity(r.held_qty), gapText: view.quantity(r.gap_qty) })),
         participants: (task.participants || []).map(p => Object.assign({}, p, { is_me: Number(p.employee_legacy_id) === me })),
@@ -288,6 +289,8 @@ Page({
         this.run({ action: 'semi_order', component_item_id: id, qty }, '半成品工单已开');
       } });
   },
+  callPhone(event) { const phone = event.currentTarget.dataset.phone; if (phone) wx.makePhoneCall({ phoneNumber: String(phone) }); },
+  scrollOrder() { wx.pageScrollTo({ selector: '.oi-anchor', duration: 200 }); },
   start() { this.run({ action: 'start' }, '开始计时'); },
   pause() { this.run({ action: 'pause' }, '已暂停'); },
   stopTiming(event) {

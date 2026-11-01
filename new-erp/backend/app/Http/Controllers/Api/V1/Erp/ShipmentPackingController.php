@@ -95,19 +95,35 @@ class ShipmentPackingController extends Controller
     public function operations(Request $request, ShipmentPackingApplicationService $service)
     {
         $actor = $this->authorizeExecutionRead($request);
-        $request->validate(['unfinished' => 'nullable|boolean', 'include_summary' => 'nullable|boolean']);
+        $request->validate(['unfinished' => 'nullable|boolean', 'include_summary' => 'nullable|boolean', 'scope' => 'nullable|in:mine,available,done', 'include_counts' => 'nullable|boolean']);
+        $me = (int) $actor->legacy_id;
+        $auth = app(AuthContextService::class);
+        $quality = $auth->isSuperAdmin($actor) || in_array('sales_order.shipment.packing.quality', $auth->permissionCodes($actor), true);
+        // 和生产任务一样分「我的」（我接的或协同、没做完；有质检权限的含待质检）「可接」（轮到了还没人接）「做完的」
+        $scoped = function ($q, ?string $scope) use ($me, $quality) {
+            $mine = fn ($w) => $w->where(fn ($x) => $x->whereHas('participants', fn ($p) => $p->where('employee_legacy_id', $me)->where('is_active', true))
+                ->when($quality, fn ($y) => $y->orWhere('status', 'WAIT_QUALITY')));
+            return match ($scope) {
+                'mine' => $mine($q)->whereNotIn('status', ['COMPLETED', 'CANCELLED']),
+                'available' => $q->where('status', 'READY')->whereNull('owner_legacy_id'),
+                'done' => $q->whereHas('participants', fn ($p) => $p->where('employee_legacy_id', $me))->where('status', 'COMPLETED'),
+                default => $q,
+            };
+        };
         $query = ShipmentPackingOperation::query()->whereHas('shipment', fn ($q) => $q->whereIn('shipment_status', ['draft', 'pending_outbound', 'prepared', 'partially_shipped', 'outbound_posted']))
             ->when($request->filled('shipment_id'), fn ($q) => $q->where('shipment_id', $request->integer('shipment_id')))
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->input('status')))
             ->when($request->boolean('unfinished'), fn ($q) => $q->whereNotIn('status', ['COMPLETED', 'CANCELLED']))
             ->when($request->filled('keyword'), fn ($q) => $q->where('operation_name_snapshot', 'like', '%'.trim((string) $request->input('keyword')).'%'));
         $this->applyExecutionScope($query, $actor);
+        $counts = $request->boolean('include_counts') ? ['mine' => $scoped(clone $query, 'mine')->count(), 'available' => $scoped(clone $query, 'available')->count()] : null;
+        $scoped($query, $request->input('scope'));
         $summary = $request->boolean('include_summary') ? (clone $query)
             ->selectRaw('shipment_operation_type_snapshot, COUNT(*) AS operation_count')
             ->groupBy('shipment_operation_type_snapshot')->pluck('operation_count', 'shipment_operation_type_snapshot') : null;
         $page = $query->orderBy('shipment_id')->orderBy('package_id')->orderBy('sequence')->paginate($this->pageSize($request));
         $page->setCollection($page->getCollection()->map(fn ($op) => $service->projection($op, (int) $actor->legacy_id)));
-        return response()->json(['data' => $page] + ($summary === null ? [] : ['summary' => [
+        return response()->json(['data' => $page] + ($counts === null ? [] : ['counts' => $counts]) + ($summary === null ? [] : ['summary' => [
             'total' => (int) $summary->sum(), 'water_test' => (int) ($summary['water_test'] ?? 0),
             'packing' => (int) ($summary['packing'] ?? 0), 'loading' => (int) ($summary['loading'] ?? 0),
         ]]));

@@ -55,6 +55,10 @@ final class ShipmentSerialApplicationService
             if ($unit->status !== 'stored') $this->fail('原设备已在其他制造作业中，不能重复创建发货返工。');
             $unit->update(['status' => 'rework', 'current_operation_id' => $target->id, 'rework_count' => (int) $unit->rework_count + 1]);
             $target->update(['status' => 'in_progress']);
+            // 退回的那道要重新“轮到”：同步工序状态，返修任务才会出现在可接／我的里。
+            \App\Services\Erp\Manufacturing\TaskService::syncWorkStatus([(int) $wo->id]);
+            app(\App\Services\Erp\Manufacturing\WorkOrderService::class)->log($wo, 'shipment_repair', $wo->status, $wo->status,
+                $unit->serial_no.' 发货试水不合格，退回'.$target->operation_name.'返修：'.$reason, $actor, ['operation_id' => $target->id], $unit->id);
         }
         $this->inventory->moveSalesShipmentLine($line, (int) $payload['repair_location_id'], 'repair', $actor);
         $line->update(['line_status' => 'repair']);
@@ -86,6 +90,9 @@ final class ShipmentSerialApplicationService
             }
             $repair->update(['returned_at' => now()]);
             MfgWorkOrderUnit::query()->whereKey($repair->unit_id)->update(['status' => 'stored', 'warehouse_id' => $line->warehouse_id, 'location_id' => $line->location_id]);
+            if ($repairWo = MfgWorkOrder::query()->find($repair->work_order_id))
+                app(\App\Services\Erp\Manufacturing\WorkOrderService::class)->log($repairWo, 'shipment_repair_return', $repairWo->status, $repairWo->status,
+                    (MfgWorkOrderUnit::query()->whereKey($repair->unit_id)->value('serial_no') ?: '').' 返修合格，已返回发货'.($active ? '，重新试水' : ''), $actor, [], (int) $repair->unit_id);
             $this->event($line, 'shipment_repair_return', $actor, ['rework_id' => $repair->id, 'reason' => $payload['reason']]);
             return ['shipment_id' => (int) $locked->id, 'shipment_line_id' => (int) $line->id];
         });

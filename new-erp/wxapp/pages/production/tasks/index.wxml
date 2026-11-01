@@ -5,7 +5,7 @@
   </view>
   <view class="mt-tabs">
     <view wx:for="{{tabs}}" wx:key="key" class="mt-tab {{tab === item.key ? 'on' : ''}}" data-tab="{{item.key}}" bindtap="pickTab">
-      {{item.label}}<text wx:if="{{item.key !== 'done'}}" class="{{item.key === 'review' ? 'mt-red' : ''}}"> {{counts[item.key] || 0}}</text>
+      {{item.label}}<text wx:if="{{item.key !== 'done'}}" class="{{item.key === 'review' ? 'mt-red' : ''}}"> {{(counts[item.key] || 0) + (packCounts[item.key] || 0)}}</text>
     </view>
   </view>
   <view wx:if="{{tab !== 'review'}}" class="mt-search">
@@ -15,7 +15,7 @@
   <view wx:if="{{error}}" class="mt-error">{{error}}</view>
   <view wx:if="{{loading && !rows.length && !reviews.length}}" class="mt-empty">正在读取任务</view>
   <view wx:elif="{{tab === 'review' && !reviews.length}}" class="mt-empty">没有要你审核的报废和不良处置</view>
-  <view wx:elif="{{tab !== 'review' && !rows.length}}" class="mt-empty">{{tab === 'mine' ? '没有正在做的任务，去“可接”看看' : (tab === 'available' ? '暂时没有可接的任务' : '还没有做完的任务')}}</view>
+  <view wx:elif="{{tab !== 'review' && !rows.length && !packs.length}}" class="mt-empty">{{tab === 'mine' ? '没有正在做的任务，去“可接”看看' : (tab === 'available' ? '暂时没有可接的任务' : '还没有做完的任务')}}</view>
 
   <view wx:for="{{reviews}}" wx:key="key" class="mt-card">
     <view class="mt-row">
@@ -32,6 +32,22 @@
       <button class="mt-btn ghost mt-btn-mini" data-key="{{item.key}}" data-approve="no" bindtap="review" disabled="{{busy}}">驳回</button>
       <button class="mt-btn mt-btn-mini" data-key="{{item.key}}" data-approve="yes" bindtap="review" disabled="{{busy}}">{{item.kind === 'scrap' ? '确认报废' : '通过'}}</button>
     </view>
+  </view>
+
+  <view wx:for="{{packs}}" wx:key="id" class="mt-card" data-id="{{item.id}}" bindtap="openPack">
+    <view class="mt-row">
+      <text class="mt-op">{{item.title}}<text class="mt-muted"> 发货</text></text>
+      <view class="mt-tags">
+        <text wx:if="{{item.repair}}" class="mt-tag red">{{item.repair}} 台返修</text>
+        <text wx:if="{{item.changed}}" class="mt-tag red">订单改过</text>
+        <text wx:if="{{item.timing}}" class="mt-tag amber">计时中</text>
+        <text class="mt-tag blue">{{item.statusLabel}}</text>
+      </view>
+    </view>
+    <view class="mt-product">{{item.product}}</view>
+    <view class="mt-muted">{{item.line}}</view>
+    <view class="mt-muted mt-gap">{{item.ownerName ? '接单：' + item.ownerName + ' · ' : ''}}我 {{item.myText}}</view>
+    <button class="mt-btn {{tab === 'available' ? '' : 'ghost'}}" data-id="{{item.id}}" catchtap="openPack">{{tab === 'available' ? '去接单' : (item.timing ? '继续作业' : '查看作业')}}</button>
   </view>
 
   <view wx:for="{{rows}}" wx:key="key" class="mt-card" data-id="{{item.id}}" data-lane="{{item.lane}}" bindtap="open">

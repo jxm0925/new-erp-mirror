@@ -1,3 +1,4 @@
+<import src="../order-info.wxml" />
 <view class="mt-page">
   <view wx:if="{{error}}" class="mt-error">{{error}}</view>
   <view wx:if="{{loading && !wo}}" class="mt-empty">正在读取工单</view>
@@ -9,6 +10,8 @@
       <view wx:if="{{wo.sku_name}}" class="mt-muted">规格：{{wo.sku_name}}</view>
       <view wx:if="{{wo.special_requirement}}" class="mt-note">{{wo.special_requirement}}</view>
     </view>
+    <view wx:for="{{wo.shipment_repairs}}" wx:key="id" wx:if="{{item.state !== 'returned'}}" class="mt-error">试水返修 {{item.serial_no}}：{{item.state_label}}<text wx:if="{{item.reason}}">。原因：{{item.reason}}</text>（{{item.shipment_no}}）</view>
+    <template is="orderInfo" data="{{info: wo.order_info}}" />
     <view class="mt-card">
       <view class="mt-card-title">工序进度</view>
       <view wx:if="{{!ops.length}}" class="mt-muted">没有车间工序</view>

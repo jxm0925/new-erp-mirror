@@ -111,7 +111,9 @@ final class TaskQueryService
         // 没指定看哪条线：返工工单只有返工；本道只剩返工的件（或我只在返工里）就看返工。
         if ($lane === null) {
             $inNormal = MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('lane', 'normal')->where('employee_legacy_id', $me)->where('is_active', true)->exists();
-            $lane = $wo->rework_of_work_order_id || (! $laneCount('normal') && ! $inNormal && $laneCount('rework')) ? 'rework' : 'normal';
+            // 正常线整张工单都没有在做的件了（比如试水返修退回来的成品），我接过正常单也直接看返工。
+            $normalIdle = ! $inNormal || ! MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->whereIn('status', TaskService::laneStatuses('normal'))->exists();
+            $lane = $wo->rework_of_work_order_id || (! $laneCount('normal') && $normalIdle && $laneCount('rework')) ? 'rework' : 'normal';
         }
         $lane = TaskService::lane($lane);
         $selectable = $this->tasks->selectableUnits($op, $lane)->pluck('id')->all();
@@ -157,6 +159,9 @@ final class TaskQueryService
             'other_lane' => ['lane' => $otherLane, 'count' => $laneCount($otherLane), 'title' => TaskService::laneTitle($op->operation_name, $otherLane)],
             'rework_of_work_order_no' => $wo->rework_of_work_order_id ? MfgWorkOrder::query()->whereKey($wo->rework_of_work_order_id)->value('work_order_no') : null,
             'rework_note' => $wo->rework_of_work_order_id ? $wo->remark : null,
+            // 订单信息：销售员、客户、电话、地址、各种备注（销售改过的标出来）；试水返修的说明
+            'order_info' => app(OrderBrief::class)->forWorkOrder($wo),
+            'shipment_repair' => collect(WorkOrderQueryService::shipmentRepairs($wo))->first(fn ($r) => $r['state'] === 'repairing' && (int) $r['current_operation_id'] === (int) $op->id),
             'work_order' => [
                 'id' => $wo->id, 'work_order_no' => $wo->work_order_no, 'status' => $wo->status, 'status_label' => WorkOrderQueryService::STATUS_LABELS[$wo->status] ?? $wo->status,
                 'pause_reason' => $wo->pause_reason, 'product_name' => $wo->product_name ?: $wo->item_name, 'item_name' => $wo->item_name, 'sku_code' => $wo->sku_code, 'sku_name' => $wo->sku_name,

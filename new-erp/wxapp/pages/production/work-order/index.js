@@ -7,6 +7,7 @@ Page({
   data: { id: 0, wo: null, loading: true, error: '' },
   onLoad(options) { this.setData({ id: Number(options.id || 0) }); this.load(); },
   onPullDownRefresh() { this.load().finally(() => wx.stopPullDownRefresh()); },
+  callPhone(event) { const phone = event.currentTarget.dataset.phone; if (phone) wx.makePhoneCall({ phoneNumber: String(phone) }); },
   load() {
     this.setData({ loading: true, error: '' });
     return production.workOrder(this.data.id).then(response => {

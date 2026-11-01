@@ -50,4 +50,6 @@ module.exports = {
   materials: (id, query) => get(`${base}/operations/${Number(id)}/material-sources`, query),
   identities: (id, query) => get(`${base}/operations/${Number(id)}/material-identities`, query),
   reworkOperations: (id, lineId, query) => get(`sales/shipments/${Number(id)}/serials/${Number(lineId)}/rework-operations`, query),
+  // 试水不合格返修合格后返回发货（回成品位再到待发区，重新试水）
+  repairReturn: (id, lineId, payload) => request.write(`sales/shipments/${Number(id)}/serials/${Number(lineId)}/repair-return`, payload, { loading: false, commandPrefix: 'repair' }),
 };

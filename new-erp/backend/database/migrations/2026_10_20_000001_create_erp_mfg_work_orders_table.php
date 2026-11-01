@@ -50,6 +50,7 @@ CREATE TABLE `erp_mfg_work_orders` (
   `routing_snapshot` json DEFAULT NULL,
   `configuration_snapshot` json DEFAULT NULL,
   `special_requirement` text CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+  `order_info_snapshot` json DEFAULT NULL,
   `status` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'planned',
   `block_reason` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `is_urgent` tinyint(1) NOT NULL DEFAULT '0',
