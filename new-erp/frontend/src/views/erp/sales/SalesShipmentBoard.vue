@@ -13,7 +13,7 @@
         <el-table-column label="客户" min-width="145"><template slot-scope="{ row }">{{ row.order && row.order.customer_name }}</template></el-table-column>
         <el-table-column label="发货明细" min-width="220"><template slot-scope="{ row }"><div v-for="line in currentShipmentLines(row.lines)" :key="line.id">{{ line.order_line && (line.order_line.product_name || line.order_line.item_name) }} · {{ qty(line.base_qty) }}</div></template></el-table-column>
         <el-table-column label="状态" width="100"><template slot-scope="{ row }"><el-tag size="mini" :type="row.shipment_status === 'shipped' ? 'success' : 'warning'">{{ statusText(row.shipment_status) }}</el-tag></template></el-table-column>
-        <el-table-column prop="tracking_no" label="运单号" min-width="150" />
+        <el-table-column label="运单号" min-width="150"><template slot-scope="{ row }">{{ trackingText(row) }}</template></el-table-column>
         <el-table-column label="操作" width="95"><template slot-scope="{ row }"><el-button type="text" icon="el-icon-view" @click="openDetail(row.id)">详情</el-button></template></el-table-column>
       </el-table>
       <div class="shipment-pager"><el-pagination background :current-page="query.page" :page-size="query.per_page" :total="total" layout="total, sizes, prev, pager, next, jumper" @current-change="changePage" @size-change="changeSize" /></div>
@@ -22,8 +22,17 @@
     <el-dialog title="发货单详情" :visible.sync="detailOpen" append-to-body width="min(1180px, calc(100vw - 32px))" top="5vh" custom-class="sales-shipment-dialog" :close-on-click-modal="false">
       <div v-loading="detailLoading">
         <div class="shipment-detail-head"><div><h2>{{ detail.shipment_no }}</h2><div>{{ detail.order && detail.order.sales_order_no }} / {{ detail.order && detail.order.customer_name }}</div></div><el-tag>{{ statusText(detail.shipment_status) }}</el-tag></div>
-        <div class="shipment-kv"><div>承运商：{{ detail.carrier_name_snapshot || '—' }}</div><div>运单号：{{ detail.tracking_no || '—' }}</div><div>确认时间：{{ time(detail.confirmed_at) }}</div><div>移入待发：{{ time(detail.staged_at) }}</div><div>正式出库：{{ time(detail.outbound_posted_at) }}</div><div>发运时间：{{ time(detail.shipped_at) }}</div></div>
-        <el-table :data="currentShipmentLines(detail.lines)" border size="small"><el-table-column label="产品" min-width="160"><template slot-scope="{ row }">{{ row.order_line && (row.order_line.product_name || row.order_line.item_name) }}</template></el-table-column><el-table-column prop="batch_no" label="来源批次" min-width="160" /><el-table-column prop="base_qty" label="本次发货基础数量" min-width="135" /><el-table-column prop="sales_qty" label="销售数量" min-width="100" /></el-table>
+        <div class="shipment-kv"><div>承运商：{{ detail.carrier_name_snapshot || '—' }}</div><div>运单号：{{ trackingText(detail) }}</div><div>确认时间：{{ time(detail.confirmed_at) }}</div><div>移入待发：{{ time(detail.staged_at) }}</div><div>正式出库：{{ time(detail.outbound_posted_at) }}</div><div>发运时间：{{ time(detail.shipped_at) }}</div></div>
+        <el-table :data="currentShipmentLines(detail.lines)" border size="small"><el-table-column label="产品" min-width="160"><template slot-scope="{ row }">{{ row.order_line && (row.order_line.product_name || row.order_line.item_name) }}</template></el-table-column><el-table-column prop="batch_no" label="来源批次" min-width="160" /><el-table-column prop="base_qty" label="本次发货基础数量" min-width="135" /><el-table-column prop="sales_qty" label="销售数量" min-width="100" /><el-table-column label="状态" min-width="100"><template slot-scope="{ row }">{{ lineStatusText(row.line_status) }}</template></el-table-column></el-table>
+        <h4 v-if="(detail.dispatches || []).length">发运记录</h4>
+        <el-table v-if="(detail.dispatches || []).length" :data="detail.dispatches" border size="small">
+          <el-table-column label="次序" width="70"><template slot-scope="{ $index }">第 {{ $index + 1 }} 次</template></el-table-column>
+          <el-table-column label="方式" width="95"><template slot-scope="{ row }">{{ row.delivery_mode === 'pickup' ? '客户提货' : '公司发运' }}</template></el-table-column>
+          <el-table-column label="快递公司" min-width="120"><template slot-scope="{ row }">{{ row.carrier_name || '—' }}</template></el-table-column>
+          <el-table-column label="运单号" min-width="150"><template slot-scope="{ row }">{{ row.tracking_no || '—' }}</template></el-table-column>
+          <el-table-column label="包裹" min-width="160"><template slot-scope="{ row }">{{ packageNos(row.package_ids) }}</template></el-table-column>
+          <el-table-column label="发出时间" min-width="150"><template slot-scope="{ row }">{{ time(row.dispatched_at) }} {{ row.operator_name || '' }}</template></el-table-column>
+        </el-table>
         <h4 v-if="(detail.serial_results || []).length">设备去向与作业结果</h4>
         <el-table v-if="(detail.serial_results || []).length" :data="detail.serial_results" border size="small">
           <el-table-column prop="serial_no" label="设备序列号" min-width="165" />
@@ -41,7 +50,7 @@
         <el-button v-if="pendingAction" type="success" size="small" :loading="busy" @click="shipmentAction(pendingAction, {}, true)">重试原发货操作</el-button>
         <template v-else>
           <el-button v-if="detail.shipment_status === 'draft' && $can('sales_order.shipment.confirm')" size="small" type="success" :loading="busy" @click="shipmentAction('confirm')">确认发货单</el-button>
-          <el-button v-if="detail.shipment_status === 'pending_outbound' && $can('sales_order.shipment.post')" size="small" type="success" :loading="busy" @click="openPrepare">移至待发区</el-button>
+          <el-button v-if="canPrepare && $can('sales_order.shipment.post')" size="small" type="success" :loading="busy" @click="openPrepare">移至待发区</el-button>
           <el-button v-if="['prepared', 'partially_shipped', 'outbound_posted'].includes(detail.shipment_status) && $can('sales_order.shipment.dispatch')" size="small" type="success" :loading="busy" @click="openDispatch">确认发运 / 提货</el-button>
           <el-button v-if="['draft', 'pending_outbound', 'prepared'].includes(detail.shipment_status) && $can('sales_order.shipment.cancel')" size="small" :loading="busy" @click="cancelShipment">取消发货单</el-button>
           <el-button v-if="detail.shipment_status === 'partially_shipped' && $can('sales_order.shipment.cancel')" size="small" :loading="busy" @click="cancelRemaining">取消剩余未发</el-button>
@@ -60,14 +69,16 @@
 
     <el-dialog title="确认发运 / 提货" :visible.sync="dispatchForm.visible" append-to-body top="8vh" width="min(780px, calc(100vw - 32px))" custom-class="sales-shipment-dialog" :close-on-click-modal="false">
       <el-radio-group v-model="dispatchForm.delivery_mode" size="small" :disabled="busy"><el-radio label="dispatch">公司发运</el-radio><el-radio label="pickup">客户提货</el-radio></el-radio-group>
-      <h4>本次发出的包裹</h4>
-      <el-table :data="detail.dispatchable_packages || []" border size="small">
+      <div v-if="dispatchForm.delivery_mode === 'dispatch'" class="shipment-form-grid"><label>快递公司<el-input v-model.trim="dispatchForm.carrier_name" size="small" maxlength="120" placeholder="如：顺丰速运" :disabled="busy" /></label><label>运单号<el-input v-model.trim="dispatchForm.tracking_no" size="small" maxlength="120" placeholder="选中的包裹共用这个单号" :disabled="busy" /></label></div>
+      <h4>本次发出的包裹（已选 {{ dispatchForm.package_ids.length }} 件）<el-button type="text" :disabled="busy" @click="selectAllReady">全选就绪</el-button></h4>
+      <el-table :data="openPackages" border size="small">
         <el-table-column width="55"><template slot-scope="{ row }"><el-checkbox :value="dispatchForm.package_ids.includes(row.id)" :disabled="busy || !row.ready" @change="togglePackage(row, $event)" /></template></el-table-column>
-        <el-table-column prop="package_no" label="包裹编号" min-width="160" />
-        <el-table-column label="发运条件" min-width="230"><template slot-scope="{ row }">{{ row.ready ? '已就绪' : (row.blockers || []).join('；') }}</template></el-table-column>
+        <el-table-column prop="package_no" label="包裹编号" min-width="120" />
+        <el-table-column label="包裹内容" min-width="220"><template slot-scope="{ row }">{{ row.contents_text || '—' }}</template></el-table-column>
+        <el-table-column label="发运条件" min-width="200"><template slot-scope="{ row }">{{ row.ready ? '已就绪' : (row.blockers || []).join('；') }}</template></el-table-column>
       </el-table>
       <el-alert v-if="detailError" :title="detailError" type="error" :closable="false" />
-      <span slot="footer"><el-button size="small" :disabled="busy" @click="dispatchForm.visible = false">取消</el-button><el-button type="success" size="small" :loading="busy" :disabled="!dispatchForm.package_ids.length" @click="shipmentAction('dispatch', { package_ids: dispatchForm.package_ids, delivery_mode: dispatchForm.delivery_mode })">{{ dispatchForm.delivery_mode === 'pickup' ? '确认提货并出库' : '确认发运并出库' }}</el-button></span>
+      <span slot="footer"><el-button size="small" :disabled="busy" @click="dispatchForm.visible = false">取消</el-button><el-button type="success" size="small" :loading="busy" :disabled="!dispatchForm.package_ids.length" @click="shipmentAction('dispatch', dispatchPayload())">{{ dispatchForm.delivery_mode === 'pickup' ? '确认提货并出库' : '确认发运并出库' }}</el-button></span>
     </el-dialog>
 
     <el-dialog :title="serialAction.type === 'replace' ? '更换发货设备' : '返修合格返回'" :visible.sync="serialAction.visible" append-to-body top="8vh" width="min(850px, calc(100vw - 32px))" custom-class="sales-shipment-dialog" :close-on-click-modal="false">
@@ -142,11 +153,14 @@ export default {
     orderPickerOpen: false, orderRows: [], orderTotal: 0, orderQuery: { keyword: '', page: 1, per_page: 10 },
     serialOpen: false, serialRows: [], serialSelected: {}, serialSource: {}, serialPage: 1, serialTotal: 0, serialKeyword: '', loadSequence: 0,
     pendingAction: '', prepare: { visible: false, warehouse_id: null, warehouse_name: '', location_id: null, location_name: '' },
-    dispatchForm: { visible: false, package_ids: [], delivery_mode: 'dispatch' },
+    dispatchForm: { visible: false, package_ids: [], delivery_mode: 'dispatch', carrier_name: '', tracking_no: '' },
     serialAction: { visible: false, type: '', row: {}, replacement: null, reason: '', warehouse_id: null, warehouse_name: '', location_id: null, location_name: '' },
     locator: { visible: false, type: 'warehouses', purpose: '', row: null },
     replacementRows: [], replacementTotal: 0, replacementLoading: false, replacementSequence: 0, replacementQuery: { keyword: '', page: 1 } }),
   computed: {
+    // 一个订单一张发货单：后来追加的明细是“待移待发区”，先移位再发
+    canPrepare () { return this.detail.shipment_status === 'pending_outbound' || (['prepared', 'partially_shipped'].includes(this.detail.shipment_status) && (this.detail.lines || []).some(line => line.line_status === 'pending_outbound')) },
+    openPackages () { return (this.detail.dispatchable_packages || []).filter(row => row.package_status !== 'shipped') },
     executionOnly () { return !this.$can('sales_order.shipment.view') && this.$can(['sales_order.shipment.packing.execute', 'sales_order.shipment.packing.quality']) },
     locatorValue () {
       const row = this.locator.row
@@ -179,7 +193,12 @@ export default {
       this.pendingAction = actions.find(action => pendingProductionDecision('shipment_' + this.detail.id + '_' + action)) || ''
     },
     openPrepare () { this.detailError = ''; this.prepare = { visible: true, warehouse_id: null, warehouse_name: '', location_id: null, location_name: '' } },
-    openDispatch () { this.detailError = ''; this.dispatchForm = { visible: true, package_ids: [], delivery_mode: 'dispatch' } },
+    openDispatch () { this.detailError = ''; this.dispatchForm = { visible: true, package_ids: [], delivery_mode: 'dispatch', carrier_name: this.detail.carrier_name_snapshot || '', tracking_no: '' } },
+    selectAllReady () { const ready = this.openPackages.filter(row => row.ready).map(row => row.id); this.dispatchForm.package_ids = ready.every(id => this.dispatchForm.package_ids.includes(id)) ? [] : ready },
+    dispatchPayload () { const form = this.dispatchForm; return { package_ids: form.package_ids, delivery_mode: form.delivery_mode, ...(form.delivery_mode === 'dispatch' ? { carrier_name: form.carrier_name, tracking_no: form.tracking_no } : {}) } },
+    trackingText (row) { const list = [row.tracking_no, ...(row.dispatches || []).map(d => d.tracking_no)].filter(Boolean); return [...new Set(list)].join('、') || '—' },
+    packageNos (ids) { const map = Object.fromEntries((this.detail.dispatchable_packages || []).map(row => [row.id, row.package_no])); return (ids || []).map(id => map[id] || ('#' + id)).join('、') },
+    lineStatusText (value) { return ({ draft: '草稿', pending_outbound: '待移待发区', prepared: '待发区', shipped: '已发运' })[value] || value || '—' },
     togglePackage (row, selected) { if (selected) this.dispatchForm.package_ids.push(row.id); else this.dispatchForm.package_ids = this.dispatchForm.package_ids.filter(id => id !== row.id) },
     openLocator (row, type, purpose) { this.locator = { visible: true, row, type, purpose } },
     selectLocator (rows) {
@@ -237,7 +256,7 @@ export default {
     changeSerialPage (page) { this.serialPage = page; this.loadSerials() },
     toggleSerial (row, selected) { if (selected) this.$set(this.serialSelected, row.id, row); else this.$delete(this.serialSelected, row.id) },
     confirmSerials () { const row = this.sourceSelected[this.serialSource.id]; row.serials = Object.values(this.serialSelected); if (row.serial_tracking_mode === 'required') row.base_qty = row.serials.length; this.serialOpen = false },
-    async saveCreate () { if (this.busy) return; const selected = Object.values(this.sourceSelected); if (!this.selectedOrder.id || !this.pendingCreate && (!selected.length || selected.some(row => Number(row.base_qty) <= 0))) { this.createError = '请选择销售订单、预留库存和大于0的本次发货数量。'; return } this.busy = true; this.createError = ''; try { const { data } = await createShipment({ sales_order_id: this.selectedOrder.id, ...this.createForm, lines: selected.map(row => ({ sales_order_fulfillment_id: row.id, base_qty: row.base_qty, inventory_serial_ids: row.serials.map(serial => serial.id) })) }); this.pendingCreate = false; this.createOpen = false; await this.load(); await this.openDetail(data.data.id) } catch (e) { this.pendingCreate = Boolean(e.pendingCommand); this.createError = e.userMessage || '发货草稿保存失败' } finally { this.busy = false } }
+    async saveCreate () { if (this.busy) return; const selected = Object.values(this.sourceSelected); if (!this.selectedOrder.id || !this.pendingCreate && (!selected.length || selected.some(row => Number(row.base_qty) <= 0))) { this.createError = '请选择销售订单、预留库存和大于0的本次发货数量。'; return } this.busy = true; this.createError = ''; try { const { data } = await createShipment({ sales_order_id: this.selectedOrder.id, ...this.createForm, lines: selected.map(row => ({ sales_order_fulfillment_id: row.id, base_qty: row.base_qty, inventory_serial_ids: row.serials.map(serial => serial.id) })) }); this.pendingCreate = false; this.createOpen = false; if (data.message) this.$message.success(data.message); await this.load(); await this.openDetail(data.data.id) } catch (e) { this.pendingCreate = Boolean(e.pendingCommand); this.createError = e.userMessage || '发货草稿保存失败' } finally { this.busy = false } }
   }
 }
 </script>

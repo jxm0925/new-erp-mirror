@@ -26,7 +26,7 @@
       <div v-if="pendingPlan" class="packing-notice">上次保存结果待确认，当前内容已锁定。</div>
       <section v-if="!executionOnly && $can('sales_order.shipment.packing.configure')" class="packing-route-settings">
         <h4>本次发货工艺版本</h4>
-        <div v-for="line in requirements.filter(row => row.packing_required)" :key="'route-' + line.shipment_line_id" class="packing-route-entry">
+        <div v-for="line in openRequirements.filter(row => row.packing_required)" :key="'route-' + line.shipment_line_id" class="packing-route-entry">
           <strong>{{ line.product_name || line.item_name }} / {{ line.batch_no }}</strong>
           <p>来源版本：{{ routeLabel(line.packing_route) }}</p>
           <template v-if="routeSelections[line.shipment_line_id]">
@@ -39,8 +39,13 @@
           <el-button size="small" :disabled="busy || pendingPlan" @click="openRoutePicker(line)">选择本次发货版本</el-button><el-button v-if="routeSelections[line.shipment_line_id]" type="text" :disabled="busy || pendingPlan" @click="$delete(routeSelections, line.shipment_line_id)">沿用来源版本</el-button>
         </div>
       </section>
+      <div v-for="parcel in lockedPackages" :key="'locked-' + parcel.id" class="packing-parcel packing-parcel-locked">
+        <div class="packing-parcel-head"><b>{{ parcel.package_no }}</b><span class="packing-balance">{{ parcel.package_status === 'shipped' ? '已发出' : '已开工' }}，保持不变</span></div>
+        <div v-for="(content, contentIndex) in parcel.contents" :key="contentIndex" class="packing-balance">{{ lineName(content.shipment_line_id) }} × {{ qty(content.base_qty) }}<template v-if="(content.inventory_serial_ids || []).length">（{{ serialNames(content) }}）</template></div>
+      </div>
+      <div v-if="planReady && !openRequirements.length" class="packing-notice">这张发货单的明细都已在开工或已发出的包裹里，不需要再设置。</div>
       <div v-for="(parcel, parcelIndex) in planPackages" :key="parcel.uid" class="packing-parcel">
-        <div class="packing-parcel-head"><b>包裹 {{ parcelIndex + 1 }}</b><el-button type="text" class="packing-danger" :disabled="busy || pendingPlan" @click="planPackages.splice(parcelIndex, 1)">移除包裹</el-button></div>
+        <div class="packing-parcel-head"><b>{{ lockedPackages.length ? '新包裹' : '包裹' }} {{ parcelIndex + 1 }}</b><el-button type="text" class="packing-danger" :disabled="busy || pendingPlan" @click="planPackages.splice(parcelIndex, 1)">移除包裹</el-button></div>
         <div class="packing-grid">
           <label>包裹编号<el-input v-model.trim="parcel.package_no" size="small" :disabled="busy || pendingPlan" /></label>
           <label>承运商<el-input v-model.trim="parcel.carrier_name" size="small" :disabled="busy || pendingPlan" /></label>
@@ -48,7 +53,7 @@
         </div>
         <div class="packing-table-scroll">
           <el-table :data="parcel.contents" border size="mini">
-            <el-table-column label="本次发货产品 / 来源批次" min-width="235"><template slot-scope="{ row }"><el-select v-model="row.shipment_line_id" size="small" :disabled="busy || pendingPlan" @change="resetContent(row)"><el-option v-for="line in requirements" :key="line.shipment_line_id" :value="line.shipment_line_id" :label="`${line.product_name || line.item_name} / ${line.batch_no} / ${qty(line.base_qty)}`" /></el-select></template></el-table-column>
+            <el-table-column label="本次发货产品 / 来源批次" min-width="235"><template slot-scope="{ row }"><el-select v-model="row.shipment_line_id" size="small" :disabled="busy || pendingPlan" @change="resetContent(row)"><el-option v-for="line in openRequirements" :key="line.shipment_line_id" :value="line.shipment_line_id" :label="`${line.product_name || line.item_name} / ${line.batch_no} / ${qty(line.base_qty)}`" /></el-select></template></el-table-column>
             <el-table-column label="包装方案" min-width="150"><template slot-scope="{ row }"><el-select v-if="requirement(row).schemes.length" v-model="row.packaging_scheme_id" size="small" :disabled="busy || pendingPlan" placeholder="请选择"><el-option v-for="scheme in requirement(row).schemes" :key="scheme.id" :value="scheme.id" :label="scheme.name" /></el-select><span v-else>{{ requirement(row).requires_route_selection && !routeSelections[row.shipment_line_id] ? '请先选择本次发货工艺' : '无需包装方案' }}</span></template></el-table-column>
             <el-table-column label="数量" width="125"><template slot-scope="{ row }"><el-input-number v-model="row.base_qty" size="mini" :min="0" :max="Number(requirement(row).base_qty || 0)" :precision="8" :controls="false" :disabled="busy || pendingPlan || requirement(row).serial_tracking_mode === 'required'" /></template></el-table-column>
             <el-table-column label="设备编号 / 序列号" min-width="210"><template slot-scope="{ row }"><el-select v-if="(requirement(row).serial_ids || []).length" v-model="row.inventory_serial_ids" multiple size="small" :disabled="busy || pendingPlan" @change="changeContentSerials(row)"><el-option v-for="serial in requirement(row).serials" :key="serial.id" :value="Number(serial.id)" :label="serial.serial_no" /></el-select><span v-else>—</span></template></el-table-column>
@@ -58,9 +63,9 @@
         <el-button size="mini" icon="el-icon-plus" :disabled="busy || pendingPlan" @click="parcel.contents.push(newContent())">添加产品</el-button>
       </div>
       <el-button size="small" icon="el-icon-plus" :disabled="busy || pendingPlan" @click="addParcel">添加包裹</el-button>
-      <div v-for="line in requirements" :key="line.shipment_line_id" class="packing-balance">{{ line.product_name || line.item_name }} / {{ line.batch_no }}：已分配 {{ allocated(line.shipment_line_id) }} / 本次发货 {{ qty(line.base_qty) }}</div>
+      <div v-for="line in openRequirements" :key="line.shipment_line_id" class="packing-balance">{{ line.product_name || line.item_name }} / {{ line.batch_no }}：已分配 {{ allocated(line.shipment_line_id) }} / {{ line.locked_base_qty ? '待装 ' + qty(line.base_qty) + '（本次发货 ' + qty(line.total_base_qty) + '）' : '本次发货 ' + qty(line.base_qty) }}</div>
       <el-alert v-if="planError" :title="planError" type="error" :closable="false" />
-      <span slot="footer"><el-button size="small" :disabled="busy" @click="planOpen = false">关闭</el-button><el-button type="success" size="small" :disabled="!planReady && !pendingPlan" :loading="busy" @click="savePlan">{{ pendingPlan ? '查询原操作结果' : '保存发货作业安排' }}</el-button></span>
+      <span slot="footer"><el-button size="small" :disabled="busy" @click="planOpen = false">关闭</el-button><el-button type="success" size="small" :disabled="(!planReady || !openRequirements.length) && !pendingPlan" :loading="busy" @click="savePlan">{{ pendingPlan ? '查询原操作结果' : '保存发货作业安排' }}</el-button></span>
     </el-dialog>
 
     <el-dialog title="选择本次发货工艺版本" :visible.sync="routePicker.visible" append-to-body width="min(1000px, calc(100vw - 32px))" top="8vh" custom-class="shipment-packing-dialog" :close-on-click-modal="false">
@@ -203,7 +208,7 @@ export default {
   components: { PackingLaborPanel, SystemRecordPicker },
   props: { shipmentId: { type: Number, default: 0 }, shipmentStatus: String, executionOnly: { type: Boolean, default: false } },
   data: () => ({ loading: false, busy: false, error: '', page: 1, total: 0, operations: [], requirements: [], packingVersion: 1, loadSequence: 0,
-    planOpen: false, planReady: false, planPackages: [], planError: '', pendingPlan: false, routeSelections: {}, routeSequence: 0, routePicker: { visible: false, line: null, keyword: '', page: 1, rows: [], total: 0, current: null, loading: false, error: '' }, operationOpen: false, activeOperation: {}, operationError: '', pendingOperation: false, laborLoading: false, laborSequence: 0,
+    planOpen: false, planReady: false, planPackages: [], lockedPackages: [], planError: '', pendingPlan: false, routeSelections: {}, routeSequence: 0, routePicker: { visible: false, line: null, keyword: '', page: 1, rows: [], total: 0, current: null, loading: false, error: '' }, operationOpen: false, activeOperation: {}, operationError: '', pendingOperation: false, laborLoading: false, laborSequence: 0,
     peopleOpen: false, peopleRows: [], peopleSelected: {}, peopleShares: {}, peopleShareError: '', peopleTree: [], peopleTotal: 0, peopleQuery: { keyword: '', department_id: 0, page: 1 },
     materialsOpen: false, materialRows: [], materialTree: [], materialTotal: 0, materialDrafts: {}, materialError: '', materialQuery: { keyword: '', category_id: 0, page: 1 },
     identityOpen: false, identityRows: [], identitySelected: {}, identityMaterial: {}, identityPage: 1, identityTotal: 0, identityKeyword: '',
@@ -212,6 +217,17 @@ export default {
   computed: {
     packingContext () { return `${this.executionOnly ? 'execution' : 'shipment'}:${this.shipmentId}` },
     usageFields () { return [{ key: 'length_mm', label: '裁切长' }, { key: 'width_mm', label: '裁切宽' }, { key: 'thickness_mm', label: '厚度' }] },
+    // 已开工或已发出的包裹重设时原样保留；只给剩下没装的明细排包裹
+    openRequirements () {
+      const lockedQty = {}; const lockedSerials = new Set()
+      for (const parcel of this.lockedPackages) for (const content of parcel.contents) { lockedQty[content.shipment_line_id] = (lockedQty[content.shipment_line_id] || 0) + Number(content.base_qty || 0); (content.inventory_serial_ids || []).forEach(id => lockedSerials.add(Number(id))) }
+      return this.requirements.map(line => {
+        const locked = lockedQty[line.shipment_line_id] || 0
+        if (!locked) return line
+        return { ...line, total_base_qty: line.base_qty, locked_base_qty: locked, base_qty: Math.round((Number(line.base_qty) - locked) * 1e8) / 1e8,
+          serial_ids: (line.serial_ids || []).filter(id => !lockedSerials.has(Number(id))), serials: (line.serials || []).filter(serial => !lockedSerials.has(Number(serial.id))) }
+      }).filter(line => Number(line.base_qty) > 0)
+    },
     blockedProductionLines () { return this.requirements.filter(line => line.production_ready === false) },
     editable () { return !this.executionOnly && ['draft', 'pending_outbound', 'prepared', 'partially_shipped', 'outbound_posted'].includes(this.shipmentStatus) },
     inspectionNeedsReturn () { return (this.activeOperation.serial_results || []).some(row => this.operationSerialIds.includes(row.inventory_serial_id) && row.requires_return_operation) },
@@ -264,8 +280,10 @@ export default {
       } catch (e) { if (sequence === this.loadSequence) this.error = e.userMessage || '包装作业读取失败' } finally { if (sequence === this.loadSequence) this.loading = false }
     },
     changePage (page) { this.page = page; this.load() },
-    newContent (line = this.requirements[0]) { const current = line && this.requirement(line); return { uid: uid(), shipment_line_id: current && current.shipment_line_id, base_qty: current ? Number(current.base_qty) : 0, packaging_scheme_id: current && current.schemes.length === 1 ? current.schemes[0].id : null, inventory_serial_ids: current ? [...current.serial_ids] : [] } },
-    requirement (content) { const row = this.requirements.find(row => row.shipment_line_id === content.shipment_line_id) || { schemes: [], serial_ids: [], serials: [] }; const selected = this.routeSelections[content.shipment_line_id]; return selected && !selected.pending_snapshot ? { ...row, packing_required: true, schemes: selected.schemes || row.schemes } : row },
+    newContent (line = this.openRequirements[0]) { const current = line && this.requirement(line); return { uid: uid(), shipment_line_id: current && current.shipment_line_id, base_qty: current ? Number(current.base_qty) : 0, packaging_scheme_id: current && current.schemes.length === 1 ? current.schemes[0].id : null, inventory_serial_ids: current ? [...current.serial_ids] : [] } },
+    lineName (id) { const line = this.requirements.find(row => row.shipment_line_id === id); return line ? line.product_name || line.item_name : '' },
+    serialNames (content) { const line = this.requirements.find(row => row.shipment_line_id === content.shipment_line_id) || {}; return content.inventory_serial_ids.map(id => ((line.serials || []).find(serial => Number(serial.id) === Number(id)) || {}).serial_no || ('#' + id)).join('、') },
+    requirement (content) { const row = this.openRequirements.find(row => row.shipment_line_id === content.shipment_line_id) || { schemes: [], serial_ids: [], serials: [] }; const selected = this.routeSelections[content.shipment_line_id]; return selected && !selected.pending_snapshot ? { ...row, packing_required: true, schemes: selected.schemes || row.schemes } : row },
     resetContent (content) { const replacement = this.newContent(this.requirement(content)); Object.assign(content, replacement) },
     changeContentSerials (content) { if (this.requirement(content).serial_tracking_mode === 'required') content.base_qty = content.inventory_serial_ids.length },
     allocated (id) { return this.qty(this.planPackages.reduce((sum, parcel) => sum + parcel.contents.filter(row => row.shipment_line_id === id).reduce((total, row) => total + Number(row.base_qty || 0), 0), 0)) },
@@ -301,7 +319,7 @@ export default {
     async openPlan () {
       if (this.busy || this.executionOnly || !this.shipmentId || !this.$can('sales_order.shipment.packing.configure')) return
       const context = this.packingContext; const sequence = this.operationSequence
-      this.busy = true; this.planError = ''; this.planReady = false; this.planOpen = true; this.routeSelections = {}; this.planPackages = []
+      this.busy = true; this.planError = ''; this.planReady = false; this.planOpen = true; this.routeSelections = {}; this.planPackages = []; this.lockedPackages = []
       this.pendingPlan = Boolean(pendingPackingCommand('configure', this.shipmentId))
       try {
         const { data } = await getShipmentPacking(this.shipmentId, { plan: 1, per_page: 1 })
@@ -313,8 +331,9 @@ export default {
         const savedRoutes = result.packing_route_selections || []
         const selections = pending ? (pending.payload.packing_route_selections || []).map(row => ({ ...(savedRoutes.find(saved => Number(saved.shipment_line_id) === Number(row.shipment_line_id) && Number(saved.production_routing_id) === Number(row.production_routing_id) && Number(saved.expected_routing_version) === Number(row.expected_routing_version)) || { pending_snapshot: true }), ...row })) : savedRoutes
         this.routeSelections = Object.fromEntries(selections.map(row => [row.shipment_line_id, { ...row }]))
-        const parcels = pending ? pending.payload.packages : result.plan_packages
-        this.planPackages = parcels && parcels.some(row => row.contents.length) ? parcels.map(row => ({ ...row, uid: uid(), contents: row.contents.map(content => ({ ...content, uid: uid() })) })) : [{ uid: uid(), package_no: '', carrier_name: '', tracking_no: '', contents: this.requirements.map(line => this.newContent(line)) }]
+        this.lockedPackages = (result.plan_packages || []).filter(row => row.locked)
+        const parcels = pending ? pending.payload.packages : (result.plan_packages || []).filter(row => !row.locked)
+        this.planPackages = parcels && parcels.some(row => row.contents.length) ? parcels.map(row => ({ ...row, uid: uid(), contents: row.contents.map(content => ({ ...content, uid: uid() })) })) : this.openRequirements.length ? [{ uid: uid(), package_no: '', carrier_name: '', tracking_no: '', contents: this.openRequirements.map(line => this.newContent(line)) }] : []
         this.planReady = true
       } catch (e) { if (context === this.packingContext && sequence === this.operationSequence) this.planError = e.userMessage || '包装方案读取失败' }
       finally { this.busy = false }
@@ -488,6 +507,7 @@ export default {
 .packing-grid > * { min-width: 0; }
 .packing-grid label { display: flex; flex-direction: column; gap: 7px; }
 .packing-parcel { background: #fff; border-bottom: 1px solid #e2e8f0; padding: 12px 0 16px; }
+.packing-parcel-locked { background: #f8fafc; }
 .packing-table-scroll { min-width: 0; overflow-x: auto; margin-bottom: 12px; }
 .packing-table-scroll .el-select { width: 100%; }
 .packing-table-scroll .el-input-number { width: 100%; }

@@ -527,16 +527,38 @@ Page({
       repairText: count < payload.unit_ids.length ? `；其余 ${payload.unit_ids.length - count} ${task.unitShort}按返修完成处理` : '' };
     if (!completion.next_operation_name) return this.setData({ completionLocatorOpen: true });
     const wo = task.work_order || {};
+    const target = `${completion.target_work_order_no || wo.work_order_no || ''} · ${completion.next_operation_name}`;
+    // 随单半成品最多交到主工单还缺的数量，多出的只能入库
+    const remaining = completion.remaining_qty === null || completion.remaining_qty === undefined ? null : Number(completion.remaining_qty);
+    const over = remaining !== null && count > remaining + 0.00001;
+    const canHandoff = Boolean(completion.handoff_available) && !over;
+    const overText = over ? `${target} 还需 ${view.quantity(remaining)} ${task.unitShort}，本次选了 ${count} ${task.unitShort}，超出的不能交接。请返回只选 ${view.quantity(remaining)} ${task.unitShort}交接，或全部入库。` : '';
+    // 路线设为「直接交接」：有接收方就直接交，不用选；交不了（没有接收方、超出缺口）才入库
+    if (completion.output_mode === 'flow_only') {
+      wx.showModal({
+        title: canHandoff ? '交接给下一道' : '本次入库',
+        content: canHandoff ? `本次完工 ${count} ${task.unitShort}${job.repairText}，直接交接至 ${target}（系统自动记账）。` : (overText || completion.blocked_reason || '没有可交接的下一道，请入库。'),
+        cancelText: '返回',
+        confirmText: canHandoff ? '确认交接' : '选择库位',
+        success: res => {
+          if (!this.completionIsCurrent(job)) return;
+          if (!res.confirm) return this.closeCompletionLocator();
+          if (!canHandoff) return this.setData({ completionLocatorOpen: true });
+          this.run(Object.assign({}, payload, { completion_action: 'handoff', handoff_operation_id: completion.next_operation_id }), okText);
+        },
+      });
+      return;
+    }
     view.modal(this, {
       mode: 'completion',
       title: '选择完工流转去向',
       infoMain: `本次完工：${count} ${task.unitShort}${job.repairText}`,
       infoSub: `工单：${wo.work_order_no || ''} · ${wo.product_name || wo.item_name || ''}`,
-      handoffAvailable: Boolean(completion.handoff_available),
+      handoffAvailable: canHandoff,
       handoffTitle: `直接交接至${completion.next_operation_name}`,
-      handoffDesc: completion.handoff_available
-        ? `目标：${completion.target_work_order_no || wo.work_order_no || ''} · ${completion.next_operation_name}（人员直接交接，系统自动记账）`
-        : (completion.blocked_reason || '请先执行完工入库'),
+      handoffDesc: canHandoff
+        ? `目标：${target}（人员直接交接，系统自动记账）${remaining !== null ? '，还需 ' + view.quantity(remaining) + ' ' + task.unitShort : ''}`
+        : (overText || completion.blocked_reason || '请先执行完工入库'),
       storeTitle: '完工入库（入成品/半成品库）',
       storeDesc: '下一步选择目标仓库与库位后正式办理完工入库',
       handoffConfirmText: `确认交接 (${count}${task.unitShort})`,

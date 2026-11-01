@@ -42,7 +42,10 @@ class ShipmentPackingController extends Controller
                 'base_qty' => $content->base_qty, 'packaging_scheme_id' => $content->packaging_scheme_id,
                 'inventory_serial_ids' => $content->serial_snapshot['inventory_serial_ids'] ?? []])->all(),
         ]));
+        // 已开工或已发出的包裹重设时原样保留，前端只读显示、不再提交
+        $locked = $request->boolean('plan') ? $service->keptPackageIds($shipment) : [];
         $plan = $request->boolean('plan') ? $shipment->packages()->where('package_status', '!=', 'cancelled')->orderBy('id')->get()->map(fn ($row) => [
+            'id' => (int) $row->id, 'locked' => in_array((int) $row->id, $locked, true), 'package_status' => $row->package_status,
             'package_no' => $row->package_no, 'carrier_name' => $row->carrier_name, 'tracking_no' => $row->tracking_no,
             'weight' => $row->weight, 'volume' => $row->volume,
             'contents' => $row->packingContents()->current()->get()->map(fn ($content) => ['shipment_line_id' => (int) $content->shipment_line_id,

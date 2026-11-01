@@ -92,6 +92,10 @@ class ShipmentPackingApplicationService
             $content->routing_snapshot['packing_route_selection'] ?? null)->filter()->unique('shipment_line_id')->values()->all();
     }
 
+    /**
+     * 设置发货作业及包裹。一个订单一张发货单，后来追加的明细要能接着配包裹：
+     * 已开工（有人接单、计时、用料、试水结果）或已发出的包裹原样保留，只重建其余包裹。
+     */
     public function configure(int $shipmentId, array $payload, object $actor): array
     {
         return $this->command('configure', $shipmentId, $payload, $actor, function (SalesShipment $shipment) use ($payload, $actor): array {
@@ -100,17 +104,24 @@ class ShipmentPackingApplicationService
             if ($shipment->packingContents()->whereHas('shipmentLine', fn ($line) => $line->where('line_status', 'cancelled'))->exists()) {
                 $this->fail('该发货单已有撤销商品的包裹记录，请保留原包裹和作业记录，新增商品另行安排发货。');
             }
-            if ($shipment->packingOperations()->whereNotNull('claimed_at')->exists()) $this->fail('已有人员接单，不能重建包装方案。');
-            $operationIds = $shipment->packingOperations()->select('id');
-            if (ShipmentPackingLaborSession::whereIn('operation_id', clone $operationIds)->exists()
-                || ShipmentPackingMaterial::whereIn('operation_id', clone $operationIds)->exists()) $this->fail('已有实际工时或用料，不能重建包装方案。');
+            $lockedIds = $this->lockedPackageIds($shipment);
             $this->freezeRequirements($shipment);
             $this->assertProductionReady($shipment);
             $lines = $shipment->lines()->current()->get()->keyBy('id');
+            $coverage = []; $seenSerials = [];
+            foreach (ShipmentPackingContent::query()->where('shipment_id', $shipment->id)->whereIn('package_id', $lockedIds)->current()->get() as $kept) {
+                $coverage[$kept->shipment_line_id] = bcadd($coverage[$kept->shipment_line_id] ?? '0', (string) $kept->base_qty, 8);
+                $seenSerials = array_merge($seenSerials, array_map('intval', $kept->serial_snapshot['inventory_serial_ids'] ?? []));
+            }
+            // 只有还没装进保留包裹的明细才需要（也才允许）重新配包裹
+            $openLines = $lines->filter(fn ($line) => bccomp($coverage[$line->id] ?? '0', (string) $line->base_qty, 8) < 0);
+            if ($openLines->isEmpty()) $this->fail('这张发货单的明细都已在开工或已发出的包裹里，不需要再设置。');
+            $selections = array_values(array_filter((array) ($payload['packing_route_selections'] ?? []), fn ($row) => $openLines->has((int) ($row['shipment_line_id'] ?? 0))));
             // Candidate versions are locked and checked before replacing any packing contents or operations.
-            $routes = $this->selectedRoutes($lines, (array) ($payload['packing_route_selections'] ?? []), $actor, $shipment);
-            $coverage = []; $seenSerials = []; $packages = (array) ($payload['packages'] ?? []);
+            $routes = $this->selectedRoutes($openLines, $selections, $actor, $shipment);
+            $packages = (array) ($payload['packages'] ?? []);
             if ($packages === []) $this->fail('请添加包裹及其产品明细。');
+            $lines = $openLines;
 
             // Validate the complete plan before replacing any selection. Partial requests must
             // not silently drop products, duplicate serials or mix another shipment's source.
@@ -118,7 +129,7 @@ class ShipmentPackingApplicationService
                 if (empty($package['contents'])) $this->fail('每个包裹至少需要一项产品。');
                 foreach ($package['contents'] as $row) {
                     $line = $lines->get((int) ($row['shipment_line_id'] ?? 0));
-                    if (! $line) $this->fail('包裹产品必须属于当前发货单。');
+                    if (! $line) $this->fail('包裹产品必须属于当前发货单，已开工或已发出包裹里的产品不能再装。');
                     $quantity = CuttingDecimal::value($row['base_qty'] ?? '', 8, true);
                     $coverage[$line->id] = bcadd($coverage[$line->id] ?? '0', $quantity, 8);
                     $nodes = $this->shipmentNodes($routes[$line->id]);
@@ -143,13 +154,95 @@ class ShipmentPackingApplicationService
                 if (bccomp($coverage[$line->id] ?? '0', (string) $line->base_qty, 8) !== 0) $this->fail('所有包裹中该产品的数量合计必须等于本次发货数量。');
                 if (array_diff((array) ($line->serial_snapshot['inventory_serial_ids'] ?? []), $seenSerials)) $this->fail('本次发货的每个序列号都必须分配到包裹。');
             }
-            ShipmentSerialResult::query()->where('shipment_id', $shipment->id)->delete();
-            $shipment->packingOperations()->delete();
-            $shipment->packingContents()->delete();
-            $shipment->packages()->delete();
-            foreach (array_values($packages) as $packageIndex => $package) {
+            $dropIds = $shipment->packages()->whereNotIn('id', $lockedIds)->pluck('id')->all();
+            $dropOps = ShipmentPackingOperation::query()->where('shipment_id', $shipment->id)->whereIn('package_id', $dropIds)->pluck('id')->all();
+            ShipmentSerialResult::query()->where('shipment_id', $shipment->id)->whereIn('operation_id', $dropOps)->delete();
+            ShipmentPackingOperation::query()->whereIn('id', $dropOps)->delete();
+            ShipmentPackingContent::query()->where('shipment_id', $shipment->id)->whereIn('package_id', $dropIds)->delete();
+            SalesShipmentPackage::query()->whereIn('id', $dropIds)->delete();
+            $nextNo = $this->packageNumbers($shipment);
+            foreach (array_values($packages) as $package) {
+                $this->buildPackage($shipment, $package, $nextNo(trim((string) ($package['package_no'] ?? ''))), $lines, $routes);
+            }
+            $shipment->update(['packing_version' => (int) $shipment->packing_version + 1, 'packing_configured_at' => now(), 'business_version' => (int) $shipment->business_version + 1]);
+            foreach ($shipment->lines()->current()->get() as $line) $this->resetSerialRound($line);
+            $this->log($shipment->id, null, 'configure', $actor, ['package_count' => count($packages), 'kept_package_ids' => $lockedIds, 'packing_version' => $shipment->packing_version,
+                'packing_route_selections' => array_values(array_filter(array_map(fn ($route) => $route['packing_route_selection'] ?? null, $routes)))]);
+            return ['shipment_id' => $shipment->id, 'packing_version' => $shipment->packing_version];
+        });
+    }
+
+    /**
+     * 车间完工直接交接过来、追加到发货单上的设备：一台一个包裹，按冻结路线生成试水／打包作业。
+     * 不动已有包裹；调用方已在事务内锁定发货单。
+     * @param list<int> $lineIds
+     * @return list<int> 新包裹 id
+     */
+    public function appendLinePackages(SalesShipment $shipment, array $lineIds, object $actor): array
+    {
+        $this->assertEditable($shipment);
+        $this->freezeRequirements($shipment);
+        $lines = $shipment->lines()->current()->whereIn('id', $lineIds)->get()->keyBy('id');
+        if ($lines->count() !== count(array_unique($lineIds))) $this->fail('追加的发货明细不存在或已撤销。');
+        if (ShipmentPackingContent::query()->where('shipment_id', $shipment->id)->whereIn('shipment_line_id', $lines->keys())->exists()) $this->fail('追加的发货明细已经在包裹里。');
+        $routes = [];
+        foreach ($lines as $line) {
+            if ($this->requiresRouteSelection($line)) $this->fail('该产品需要先选择本次发货工艺版本，请先入库，再从发货单设置包裹。');
+            $routes[$line->id] = $line->packing_routing_snapshot;
+        }
+        $nextNo = $this->packageNumbers($shipment);
+        $ids = [];
+        foreach ($lines as $line) {
+            $schemes = $this->shipmentNodes($routes[$line->id])->filter(fn ($node) => ($node['shipment_operation_type'] ?? 'packing') === 'packing')
+                ->pluck('packaging_scheme_id')->filter()->unique()->values();
+            if ($schemes->count() > 1) $this->fail('该路线有多个包装方案，请先入库，再从发货单选择实际包装方案。');
+            $ids[] = $this->buildPackage($shipment, ['contents' => [['shipment_line_id' => (int) $line->id, 'base_qty' => (string) $line->base_qty,
+                'inventory_serial_ids' => $line->serial_snapshot['inventory_serial_ids'] ?? [], 'packaging_scheme_id' => $schemes->first() ?: null]]],
+                $nextNo(''), $lines, $routes)->id;
+        }
+        $shipment->update(['packing_version' => (int) $shipment->packing_version + 1, 'packing_configured_at' => $shipment->packing_configured_at ?: now(),
+            'business_version' => (int) $shipment->business_version + 1]);
+        foreach ($lines as $line) $this->resetSerialRound($line->fresh());
+        $this->log($shipment->id, null, 'append_packages', $actor, ['shipment_line_ids' => $lines->keys()->all(), 'package_ids' => $ids, 'packing_version' => $shipment->packing_version]);
+        return $ids;
+    }
+
+    public function keptPackageIds(SalesShipment $shipment): array { return $this->lockedPackageIds($shipment); }
+
+    /** 已开工（有人接单、计时、用料、有试水结果）或已发出的包裹：重设包裹时原样保留 */
+    private function lockedPackageIds(SalesShipment $shipment): array
+    {
+        $ops = ShipmentPackingOperation::query()->where('shipment_id', $shipment->id);
+        $opIds = (clone $ops)->pluck('id');
+        $started = (clone $ops)->where(fn ($q) => $q->whereNotNull('claimed_at')->orWhereIn('status', ['IN_PROGRESS', 'WAIT_QUALITY', 'COMPLETED'])
+            ->orWhereIn('id', ShipmentPackingLaborSession::query()->whereIn('operation_id', $opIds)->select('operation_id'))
+            ->orWhereIn('id', ShipmentPackingMaterial::query()->whereIn('operation_id', $opIds)->select('operation_id'))
+            ->orWhereIn('id', ShipmentSerialResult::query()->whereIn('operation_id', $opIds)->where('status', '!=', 'waiting')->select('operation_id')))
+            ->pluck('package_id');
+        return $shipment->packages()->where(fn ($q) => $q->where('package_status', 'shipped')->orWhereIn('id', $started))
+            ->pluck('id')->map(fn ($id) => (int) $id)->values()->all();
+    }
+
+    /** 包裹编号：发货单号-01、-02……接着已有的编号往下排，手填的不能和已有的重复 */
+    private function packageNumbers(SalesShipment $shipment): \Closure
+    {
+        $used = $shipment->packages()->pluck('package_no')->all();
+        $n = 0;
+        return function (string $wanted) use (&$used, &$n, $shipment): string {
+            if ($wanted !== '') {
+                if (in_array($wanted, $used, true)) $this->fail('包裹编号 '.$wanted.' 已经存在。');
+            } else {
+                do { $n++; $wanted = $shipment->shipment_no.'-'.str_pad((string) $n, 2, '0', STR_PAD_LEFT); } while (in_array($wanted, $used, true));
+            }
+            $used[] = $wanted;
+            return $wanted;
+        };
+    }
+
+    private function buildPackage(SalesShipment $shipment, array $package, string $packageNo, $lines, array $routes): SalesShipmentPackage
+    {
                 $parcel = SalesShipmentPackage::create(['shipment_id' => $shipment->id,
-                    'package_no' => trim((string) ($package['package_no'] ?? '')) ?: $shipment->shipment_no.'-'.str_pad((string) ($packageIndex + 1), 2, '0', STR_PAD_LEFT),
+                    'package_no' => $packageNo,
                     'carrier_name' => $package['carrier_name'] ?? $shipment->carrier_name_snapshot,
                     'tracking_no' => $package['tracking_no'] ?? $shipment->tracking_no,
                     'weight' => $package['weight'] ?? null, 'volume' => $package['volume'] ?? null,
@@ -201,13 +294,7 @@ class ShipmentPackingApplicationService
                     }
                 }
                 if (! $parcel->packingOperations()->exists()) $parcel->update(['package_status' => 'packed']);
-            }
-            $shipment->update(['packing_version' => (int) $shipment->packing_version + 1, 'packing_configured_at' => now(), 'business_version' => (int) $shipment->business_version + 1]);
-            foreach ($shipment->lines()->current()->get() as $line) $this->resetSerialRound($line);
-            $this->log($shipment->id, null, 'configure', $actor, ['package_count' => count($packages), 'packing_version' => $shipment->packing_version,
-                'packing_route_selections' => array_values(array_filter(array_map(fn ($route) => $route['packing_route_selection'] ?? null, $routes)))]);
-            return ['shipment_id' => $shipment->id, 'packing_version' => $shipment->packing_version];
-        });
+                return $parcel;
     }
 
     public function action(int $operationId, string $action, array $payload, object $actor): array
@@ -384,12 +471,29 @@ class ShipmentPackingApplicationService
 
     public function dispatchablePackages(SalesShipment $shipment): array
     {
-        return $shipment->packages()->where('package_status', '!=', 'cancelled')->orderBy('id')->get()->map(function ($package) use ($shipment): array {
+        // 每次发出记一条：这次的包裹共用一个快递公司和运单号；以发出时填的为准，没填才看包裹原来的
+        $dispatchOf = [];
+        foreach ($shipment->dispatches()->orderBy('id')->get() as $dispatch) {
+            foreach ((array) $dispatch->package_ids as $packageId) $dispatchOf[(int) $packageId] = $dispatch;
+        }
+        $serialNos = \App\Models\Erp\InventorySerial::query()->whereIn('id', ShipmentPackingContent::query()->where('shipment_id', $shipment->id)->get()
+            ->flatMap(fn ($c) => $c->serial_snapshot['inventory_serial_ids'] ?? [])->unique()->values()->all())->pluck('serial_no', 'id');
+        return $shipment->packages()->where('package_status', '!=', 'cancelled')->orderBy('id')->get()->map(function ($package) use ($shipment, $dispatchOf, $serialNos): array {
             $blockers = [];
             if ($package->package_status === 'shipped') $blockers[] = '该包裹已经发出。';
             else try { $this->assertReady($shipment, [(int) $package->id]); }
             catch (ValidationException $exception) { $blockers = array_values(array_unique(collect($exception->errors())->flatten()->all())); }
-            return ['id' => (int) $package->id, 'package_no' => $package->package_no, 'ready' => $blockers === [], 'blockers' => $blockers];
+            $contents = $package->packingContents()->current()->with('shipmentLine.orderLine')->get()->map(function ($c) use ($serialNos): string {
+                $order = $c->shipmentLine?->orderLine;
+                $name = $order?->product_name ?: ($order?->item_name ?: '');
+                $serials = collect($c->serial_snapshot['inventory_serial_ids'] ?? [])->map(fn ($id) => $serialNos[$id] ?? null)->filter()->implode('、');
+                return trim($name.' × '.rtrim(rtrim(number_format((float) $c->base_qty, 4, '.', ''), '0'), '.').($serials !== '' ? '（'.$serials.'）' : ''));
+            })->implode('；');
+            $dispatch = $dispatchOf[(int) $package->id] ?? null;
+            return ['id' => (int) $package->id, 'package_no' => $package->package_no, 'package_status' => $package->package_status,
+                'ready' => $blockers === [], 'blockers' => $blockers, 'contents_text' => $contents,
+                'dispatch_no' => $dispatch?->dispatch_no, 'dispatched_at' => $dispatch?->dispatched_at?->toDateTimeString(),
+                'carrier_name' => $dispatch?->carrier_name ?: $package->carrier_name, 'tracking_no' => $dispatch?->tracking_no ?: $package->tracking_no];
         })->all();
     }
 

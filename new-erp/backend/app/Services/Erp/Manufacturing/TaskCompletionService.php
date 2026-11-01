@@ -13,6 +13,8 @@ use App\Models\Erp\MfgWorkOrderOperation;
 use App\Models\Erp\MfgWorkOrderUnit;
 use App\Models\Erp\SalesOrder;
 use App\Models\Erp\SalesOrderFulfillment;
+use App\Models\Erp\SalesShipment;
+use App\Models\Erp\SalesShipmentLine;
 use App\Services\Erp\SalesShipmentApplicationService;
 use App\Services\Erp\ShipmentPackingApplicationService;
 
@@ -24,15 +26,25 @@ final class TaskCompletionService
     public function options(MfgWorkOrder $wo, MfgWorkOrderOperation $op): ?array
     {
         if ($wo->rework_of_work_order_id || $this->nextProduction($op)) return null;
-        $target = $this->target($wo, $op);
+        // 按路线冻结的「完成去向」：可选入库让人选；合格后入库只能入库；直接交接有接收方就交，没有才入库。
+        $mode = self::outputMode($op);
+        $target = $mode === 'warehouse_required' ? null : $this->target($wo, $op);
         return [
+            'output_mode' => $mode,
             'location_purpose' => ReceiptService::allowedLocationPurposes($wo) === ['general'] ? 'general' : 'finished',
             'next_operation_id' => $target['operation_id'] ?? null,
             'next_operation_name' => $target['operation_name'] ?? null,
             'target_work_order_no' => $target['work_order_no'] ?? null,
+            // 随单半成品最多交到主工单还缺的数量，多出的只能入库
+            'remaining_qty' => isset($target['remaining_qty']) ? round((float) $target['remaining_qty'], 4) : null,
             'handoff_available' => $target !== null && empty($target['blocked_reason']),
             'blocked_reason' => $target['blocked_reason'] ?? null,
         ];
+    }
+
+    private static function outputMode(MfgWorkOrderOperation $op): string
+    {
+        return in_array($op->output_mode, ['warehouse_optional', 'warehouse_required'], true) ? $op->output_mode : 'flow_only';
     }
 
     private function nextProduction(MfgWorkOrderOperation $op): bool
@@ -99,6 +111,14 @@ final class TaskCompletionService
     {
         $action = $data['completion_action'] ?? null;
         if (! in_array($action, ['store', 'handoff'], true)) $this->fail('completion_required', '请选择本次完工后入库，或交接给下一道工序。');
+        $mode = self::outputMode($op);
+        if ($action === 'handoff' && $mode === 'warehouse_required')
+            $this->fail('handoff_not_allowed', $op->operation_name.'设为合格后入库，不能直接交接，请选择入库。');
+        if ($action === 'store' && $mode === 'flow_only') {
+            $next = $this->target($wo, $op, true);
+            if ($next && empty($next['blocked_reason']) && ($next['kind'] !== 'material' || count($unitIds) <= $next['remaining_qty'] + 0.00001))
+                $this->fail('store_not_allowed', $op->operation_name.'设为直接交接，请交接给'.$next['operation_name'].'。', 409);
+        }
         $target = $action === 'handoff' ? $this->target($wo, $op, true) : null;
         if ($action === 'handoff') {
             if (! $target || (int) ($data['handoff_operation_id'] ?? 0) !== $target['operation_id'])
@@ -176,31 +196,26 @@ final class TaskCompletionService
             ->where('reservation_status', 'active')->lockForUpdate()->first();
         if (! $reservation || (float) $reservation->reserved_qty + 0.00001 < count($unitIds))
             $this->fail('handoff_reservation_changed', '本次完工数量已超过原订单待发需求，请减少交接数量或选择入库。');
+        // 一个订单一张发货单：订单已有没发完的发货单就追加上去，一台一行、一台一个包裹，各自试水打包
+        $before = SalesShipmentLine::query()->whereHas('shipment', fn ($q) => $q->where('sales_order_id', $wo->sales_order_id))->pluck('id')->all();
         $shipment = $service->create((int) $wo->sales_order_id, ['client_command_id' => $command.'-create',
             'remark' => '工单 '.$wo->work_order_no.' 完工直接交接发货工序',
             'lines' => [['sales_order_fulfillment_id' => (int) $wo->sales_fulfillment_id, 'inventory_reservation_id' => (int) $reservation->id,
                 'base_qty' => count($unitIds), 'inventory_serial_ids' => $serialIds]],
         ], $this->actorName($actor), $actor);
-        $packages = [];
-        foreach ($shipment->lines as $line) {
-            $schemes = collect($line->packing_routing_snapshot['operations'] ?? [])
-                ->filter(fn ($node) => ($node['execution_context'] ?? null) === 'shipment' && ($node['shipment_operation_type'] ?? 'packing') === 'packing')
-                ->pluck('packaging_scheme_id')->filter()->unique()->values();
-            if ($schemes->count() > 1) $this->fail('packing_choice_required', '该路线有多个包装方案，请先入库，再从发货单选择实际包装方案。');
-            $packages[] = ['contents' => [['shipment_line_id' => (int) $line->id, 'base_qty' => $line->base_qty,
-                'inventory_serial_ids' => $line->serial_snapshot['inventory_serial_ids'] ?? [], 'packaging_scheme_id' => $schemes->first() ?: null]]];
-        }
-        $shipment = $service->confirm($shipment, $this->actorName($actor), ['client_command_id' => $command.'-confirm', 'expected_version' => (int) $shipment->business_version], $actor);
+        $lineIds = $shipment->lines()->whereNotIn('id', $before)->pluck('id')->map(fn ($id) => (int) $id)->all();
+        if ($shipment->shipment_status === 'draft')
+            $shipment = $service->confirm($shipment, $this->actorName($actor), ['client_command_id' => $command.'-confirm', 'expected_version' => (int) $shipment->fresh()->business_version], $actor);
         $shipment = $service->postOutbound($shipment, $this->actorName($actor), ['client_command_id' => $command.'-stage',
-            'expected_version' => (int) $shipment->business_version, 'staging_location_id' => (int) $receipt->location_id], $actor);
-        app(ShipmentPackingApplicationService::class)->configure((int) $shipment->id, ['client_command_id' => $command.'-tasks',
-            'expected_version' => (int) $shipment->packing_version, 'packages' => $packages], $actor);
+            'expected_version' => (int) $shipment->fresh()->business_version, 'staging_location_id' => (int) $receipt->location_id, 'line_ids' => $lineIds], $actor);
+        $packageIds = app(ShipmentPackingApplicationService::class)->appendLinePackages(SalesShipment::query()->lockForUpdate()->findOrFail($shipment->id), $lineIds, $actor);
+        $shipment = SalesShipment::query()->findOrFail($shipment->id);
         // 交接成功必须已经生成同一冻结节点的可接任务，不能只移待发位却没有实际接收工序。
-        $ready = $shipment->packingOperations()->where('status', 'READY')->get();
+        $ready = $shipment->packingOperations()->whereIn('package_id', $packageIds)->where('status', 'READY')->get();
         if ($ready->isEmpty() || $ready->contains(fn ($next) => (int) $next->routing_operation_id !== $target['routing_operation_id']))
             $this->fail('handoff_task_changed', '实际接收工序与所选去向不一致，请先入库并核对冻结发货路线。');
         app(WorkOrderService::class)->log($wo, 'handoff_shipment', $wo->status, $wo->fresh()->status,
-            '完工直接交接发货作业（'.$shipment->shipment_no.'），未确认发运', $actor, ['receipt_id' => $receipt->id, 'shipment_id' => $shipment->id]);
+            '完工直接交接发货作业（'.$shipment->shipment_no.'，'.count($lineIds).' 个包裹），未确认发运', $actor, ['receipt_id' => $receipt->id, 'shipment_id' => $shipment->id]);
         return $shipment->shipment_no;
     }
 }

@@ -41,6 +41,11 @@ final class WarehouseDocumentService
                 $extra['packages'] = $document->packages()->orderBy('id')->paginate($size, ['*'], 'packages_page', max(1, (int) ($filters['packages_page'] ?? 1)))->toArray();
                 if ($document->shipment_status === 'pending_outbound') $actions = ['sales_shipment.post'];
                 if (in_array($document->shipment_status, ['prepared', 'partially_shipped', 'outbound_posted'], true)) $actions = ['sales_shipment.dispatch'];
+                // 一个订单一张发货单：后来追加的明细还没移至待发区，先移位（已就绪的包裹照样能发）
+                if (in_array($document->shipment_status, ['prepared', 'partially_shipped'], true) && $document->lines()->where('line_status', 'pending_outbound')->exists())
+                    $actions = ['sales_shipment.post', 'sales_shipment.dispatch'];
+                $extra['dispatches'] = $document->dispatches()->orderBy('id')->get(['id', 'dispatch_no', 'delivery_mode', 'carrier_name', 'tracking_no', 'package_ids', 'dispatched_at', 'operator_name'])
+                    ->map(fn ($row) => array_merge($row->toArray(), ['dispatched_at' => $row->dispatched_at?->toDateTimeString()]))->all();
                 $extra['dispatchable_packages'] = app(ShipmentPackingApplicationService::class)->dispatchablePackages($document);
                 $extra['serial_results'] = app(ShipmentSerialApplicationService::class)->projection($document);
                 $receipt = $this->transaction('sales_shipment', $id);

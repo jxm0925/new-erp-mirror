@@ -16,6 +16,8 @@ CREATE TABLE `erp_shipment_dispatches` (
   `dispatch_no` varchar(80) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
   `shipment_id` bigint unsigned NOT NULL,
   `delivery_mode` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+  `carrier_name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '本次发出的快递/物流公司',
+  `tracking_no` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT '本次发出的运单号（海运填柜号），本次选中的包裹共用',
   `package_ids` json NOT NULL,
   `shipment_line_ids` json NOT NULL,
   `inventory_transaction_id` bigint unsigned DEFAULT NULL,
@@ -27,6 +29,7 @@ CREATE TABLE `erp_shipment_dispatches` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `shipment_dispatch_no_uq` (`dispatch_no`),
   KEY `shipment_dispatch_shipment_idx` (`shipment_id`,`dispatched_at`),
+  KEY `shipment_dispatch_tracking_idx` (`tracking_no`),
   KEY `shipment_dispatch_transaction_fk` (`inventory_transaction_id`),
   CONSTRAINT `shipment_dispatch_shipment_fk` FOREIGN KEY (`shipment_id`) REFERENCES `erp_sales_shipments` (`id`),
   CONSTRAINT `shipment_dispatch_transaction_fk` FOREIGN KEY (`inventory_transaction_id`) REFERENCES `erp_inventory_transactions` (`id`)

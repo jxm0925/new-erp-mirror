@@ -40,7 +40,8 @@ final class WarehouseActionService
             'purchase.post', 'sales_return.post', 'purchase_return.post' => [],
             'sales_shipment.post' => ['expected_version' => 'required|integer|min:1', 'staging_location_id' => 'required|integer|min:1'],
             'sales_shipment.dispatch' => ['expected_version' => 'required|integer|min:1', 'package_ids' => 'required|array|min:1|max:100',
-                'package_ids.*' => 'required|integer|min:1|distinct', 'delivery_mode' => 'required|in:dispatch,pickup'],
+                'package_ids.*' => 'required|integer|min:1|distinct', 'delivery_mode' => 'required|in:dispatch,pickup',
+                'carrier_name' => 'nullable|string|max:120', 'tracking_no' => 'nullable|string|max:120'],
             'purchase.allocate' => [
                 'items' => 'required|array|min:1|max:100', 'items.*.receipt_item_id' => 'required|integer|min:1|distinct',
                 'items.*.expected_revision' => 'required|string|size:64',

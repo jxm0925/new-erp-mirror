@@ -63,13 +63,16 @@ class SalesShipmentController extends Controller
     {
         $this->authorizePermission($request, 'sales_order.shipment.view');
         $query = SalesShipment::query()
-            ->with(['order:id,sales_order_no,customer_name', 'lines.orderLine:id,sales_order_id,line_no,product_name,sku_name,item_name', 'packages'])
+            ->with(['order:id,sales_order_no,customer_name', 'lines.orderLine:id,sales_order_id,line_no,product_name,sku_name,item_name', 'packages', 'dispatches'])
             ->when($request->filled('sales_order_id'), fn ($q) => $q->where('sales_order_id', $request->integer('sales_order_id')))
             ->when($request->filled('shipment_status'), fn ($q) => $q->where('shipment_status', $request->input('shipment_status')))
             ->when($request->filled('keyword'), function ($q) use ($request) {
                 $keyword = trim((string) $request->input('keyword'));
                 $q->where(fn ($where) => $where->where('shipment_no', 'like', "%{$keyword}%")
-                    ->orWhere('tracking_no', 'like', "%{$keyword}%"));
+                    ->orWhere('tracking_no', 'like', "%{$keyword}%")
+                    // 分几次发的，每次的运单号都能搜到
+                    ->orWhereHas('dispatches', fn ($d) => $d->where('tracking_no', 'like', "%{$keyword}%"))
+                    ->orWhereHas('packages', fn ($p) => $p->where('tracking_no', 'like', "%{$keyword}%")));
             })
             ->orderByDesc('id');
         $this->applySalesOrderVisibility($query, $request);
@@ -81,7 +84,7 @@ class SalesShipmentController extends Controller
     {
         $this->authorizePermission($request, 'sales_order.shipment.view');
         $query = SalesShipment::query()->with([
-            'order.lines', 'lines.orderLine.item', 'lines.reservation', 'packages', 'logs',
+            'order.lines', 'lines.orderLine.item', 'lines.reservation', 'packages', 'logs', 'dispatches',
         ])->whereKey($id);
         $this->applySalesOrderVisibility($query, $request);
         $shipment = $query->firstOrFail();
@@ -96,7 +99,7 @@ class SalesShipmentController extends Controller
         $payload = $this->validateShipment($request);
         $this->assertSalesOrderVisible($request, (int) $payload['sales_order_id']);
         $shipment = $service->create((int) $payload['sales_order_id'], $payload, $this->operator($request), $actor);
-        return $this->costSafeJson(['message' => '销售发货单已创建', 'data' => $shipment], 201);
+        return $this->costSafeJson(['message' => $shipment->getAttribute('appended') ? '这个订单已有发货单 '.$shipment->shipment_no.'，已追加到这张单上' : '销售发货单已创建', 'data' => $shipment], 201);
     }
 
     public function confirm(Request $request, int $id, SalesShipmentApplicationService $service)
@@ -118,7 +121,8 @@ class SalesShipmentController extends Controller
     {
         $actor = $this->authorizePermission($request, 'sales_order.shipment.dispatch');
         $data = $this->command($request) + $request->validate(['package_ids' => 'required|array|min:1|max:100',
-            'package_ids.*' => 'required|integer|min:1|distinct', 'delivery_mode' => 'required|in:dispatch,pickup']);
+            'package_ids.*' => 'required|integer|min:1|distinct', 'delivery_mode' => 'required|in:dispatch,pickup',
+            'carrier_name' => 'nullable|string|max:120', 'tracking_no' => 'nullable|string|max:120']);
         $shipment = $service->dispatch($this->visibleShipment($request, $id), $this->operator($request), $data, $actor);
         return $this->costSafeJson(['message' => '本次包裹已正式发出', 'data' => $shipment]);
     }

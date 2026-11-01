@@ -9,7 +9,7 @@ Page({
     page: 1, lastPage: 1, total: 0, actions: [], mainAction: '', mainLabel: '', locator: {}, locatorOpen: false, locatorTarget: '', quantity: '',
     fieldErrors: {}, allocationOpen: false, allocations: [], allocationLine: null, allocationError: '', pendingAction: '', conflictOpen: false,
     packages: [], packagesPage: 1, packagesLast: 1, receipt: null, readonly: false, relatedOpen: false,
-    dispatchPackages: [], selectedPackageIds: [], deliveryMode: 'dispatch', locatorPurpose: '',
+    dispatchPackages: [], shippedPackages: [], dispatches: [], selectedPackageIds: [], deliveryMode: 'dispatch', carrierName: '', trackingNo: '', chosenAction: '', locatorPurpose: '',
     returnSerialOpen: false, returnSerialLine: {}, returnSerialValue: {}, returnSerialExcluded: [], returnSerialConflict: false, canPacking: false },
   onLoad(options) {
     this.drafts = {}; this.returnLineCache = {}; this.returnSerialQueue = [];
@@ -24,7 +24,8 @@ Page({
     return warehouse.document(this.data.kind, this.data.id, { stage: this.data.stage, receipt_id: this.data.receiptId || undefined, page: this.data.page, packages_page: this.data.packagesPage, per_page: 10 }).then(response => {
       if (sequence !== this.sequence) return;
       const result = response.data || response; const header = result.header; const paged = page.rows(result.lines);
-      const actions = result.actions || []; const mainAction = actions.find(a => a !== 'purchase.allocate') || '';
+      const actions = result.actions || []; const choices = actions.filter(a => a !== 'purchase.allocate');
+      const mainAction = choices.includes(this.data.chosenAction) ? this.data.chosenAction : choices[0] || '';
       const lines = paged.rows.map(raw => {
         const row = view.line(raw);
         if (this.data.kind === 'sales_return' && this.data.stage === 'receive') {
@@ -46,8 +47,11 @@ Page({
 actions, mainAction, mainLabel: view.actionLabels[mainAction] || '', canAllocate: actions.includes('purchase.allocate'),
         loading: false, pendingAction, receipt: result.receipt, readonly: !actions.length, item: header.item || {},
         quantity: this.data.quantity || page.quantity(header.remaining_qty), postingEligibility: result.posting_eligibility || null,
-        dispatchPackages: (result.dispatchable_packages || []).map(row => Object.assign({}, row, { selected: this.data.selectedPackageIds.includes(Number(row.id)), blockerText: (row.blockers || []).join('；') })),
-        packages: (result.packages && result.packages.data) || [], packagesTotal: (result.packages && result.packages.total) || 0, packagesLast: (result.packages && result.packages.last_page) || 1 });
+        actionChoices: choices.length > 1 ? choices.map(value => ({ value, label: value === 'sales_shipment.post' ? '移至待发区' : value === 'sales_shipment.dispatch' ? '发运 / 提货' : view.actionLabels[value] || value })) : [],
+        dispatchPackages: (result.dispatchable_packages || []).filter(row => row.package_status !== 'shipped').map(row => Object.assign({}, row, { selected: this.data.selectedPackageIds.includes(Number(row.id)), blockerText: (row.blockers || []).join('；') })),
+        shippedPackages: (result.dispatchable_packages || []).filter(row => row.package_status === 'shipped'),
+        dispatches: (result.dispatches || []).map(row => Object.assign({}, row, { modeText: row.delivery_mode === 'pickup' ? '客户提货' : '公司发运', packageCount: (row.package_ids || []).length })),
+        packages: ((result.packages && result.packages.data) || []).map(row => { const sent = (result.dispatchable_packages || []).find(p => Number(p.id) === Number(row.id)) || {}; return Object.assign({}, row, { carrier_name: row.carrier_name || sent.carrier_name, tracking_no: row.tracking_no || sent.tracking_no, contents_text: sent.contents_text }); }), packagesTotal: (result.packages && result.packages.total) || 0, packagesLast: (result.packages && result.packages.last_page) || 1 });
       wx.setNavigationBarTitle({ title: this.data.kind === 'sales_return' && this.data.stage === 'receive' ? '销售退货收货' : mainAction === 'sales_shipment.dispatch' ? '销售发运' : view.titles[this.data.kind] || '仓库单据' });
     }).catch(error => { if (sequence === this.sequence) this.setData({ loading: false, error: page.errorText(error) }); });
   },
@@ -150,15 +154,29 @@ actions, mainAction, mainLabel: view.actionLabels[mainAction] || '', canAllocate
     if (action === 'sales_shipment.dispatch') {
       if (!this.data.selectedPackageIds.length) return this.setData({ error: '请选择本次发出的就绪包裹' });
       payload = { expected_version: this.data.header.business_version, package_ids: this.data.selectedPackageIds, delivery_mode: this.data.deliveryMode };
+      if (this.data.deliveryMode === 'dispatch') Object.assign(payload, { carrier_name: this.data.carrierName.trim(), tracking_no: this.data.trackingNo.trim() });
     }
     return this.execute(action, payload);
   },
   chooseDispatchPackages(event) { this.setData({ selectedPackageIds: event.detail.value.map(Number) }); },
   chooseDeliveryMode(event) { this.setData({ deliveryMode: event.detail.value }); },
+  selectAllReady() {
+    if (this.data.busy || this.data.pendingAction) return;
+    const ready = this.data.dispatchPackages.filter(row => row.ready).map(row => Number(row.id));
+    const ids = ready.every(id => this.data.selectedPackageIds.includes(id)) ? [] : ready;
+    this.setData({ selectedPackageIds: ids, dispatchPackages: this.data.dispatchPackages.map(row => Object.assign({}, row, { selected: ids.includes(Number(row.id)) })) });
+  },
+  dispatchInput(event) { this.setData({ [event.currentTarget.dataset.field]: event.detail.value }); },
+  chooseAction(event) {
+    if (this.data.busy || this.data.pendingAction) return;
+    const action = event.currentTarget.dataset.action;
+    this.setData({ chosenAction: action, mainAction: action, mainLabel: view.actionLabels[action] || '', error: '' });
+    wx.setNavigationBarTitle({ title: action === 'sales_shipment.dispatch' ? '销售发运' : view.titles[this.data.kind] || '仓库单据' });
+  },
   execute(action, payload) {
     this.setData({ busy: true, error: '', allocationError: '', conflictOpen: false });
     return warehouse.submit(action, this.data.id, payload).then(result => {
-      this.setData({ pendingAction: '', allocationOpen: false, allocations: [], allocationLine: null, fieldErrors: {}, locatorOpen: false, quantity: '', locator: {}, selectedPackageIds: [] });
+      this.setData({ pendingAction: '', allocationOpen: false, allocations: [], allocationLine: null, fieldErrors: {}, locatorOpen: false, quantity: '', locator: {}, selectedPackageIds: [], carrierName: '', trackingNo: '', chosenAction: '' });
       if (action === 'sales_return.receive') { this.drafts = {}; this.returnLineCache = {}; this.returnSerialQueue = []; this.setData({ id: result.id, stage: 'post', page: 1, returnSerialOpen: false, returnSerialLine: {}, returnSerialValue: {}, returnSerialConflict: false }); }
       return this.load();
     }).catch(error => {
