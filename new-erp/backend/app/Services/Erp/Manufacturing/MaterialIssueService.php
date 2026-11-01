@@ -152,7 +152,7 @@ final class MaterialIssueService
     }
 
     /**
-     * 「已备料」交下道前补收本道的料：本道要做到第 $upTo 台，还没收的按 BOM 定额从库存扣（集中下料切好的料也按定额计入本工单）。
+     * 「已备料」交下道前补收本道的料：本道要做到第 $upTo 台，还没收的按 BOM 定额从库存扣（集中开料领到的件已先记为已收，这里只补不够的）。
      * 都收够了返回 null。
      */
     public function receiveUpTo(MfgWorkOrder $wo, MfgWorkOrderOperation $op, float $upTo, ?string $remark, object $actor): ?MfgMaterialIssue
@@ -334,6 +334,36 @@ final class MaterialIssueService
             $left = round($left - $take, 4);
         }
         return [$picks, max(0, $left)];
+    }
+
+    /**
+     * 不属于工单的扣料（集中开料切完结束）：从工厂可出库库存行按先后挑，扣掉配料单占用；只用于按数量管理、不追溯编号的料。
+     * 返回 [挑中的库存行, 还差多少]。调用方须先 lockItems()。
+     */
+    public function freeStockPicks(Item $item, float $qty): array
+    {
+        $holds = MaterialDeliveryService::holds();
+        $left = $qty;
+        $picks = [];
+        $balances = $this->availability->outboundBalanceQuery([(int) $item->id])
+            ->where(fn ($q) => $q->whereNull('erp_warehouses.management_scope')->orWhere('erp_warehouses.management_scope', '!=', 'office'))
+            ->orderBy('erp_inventory_balances.id')->get();
+        foreach ($balances as $balance) {
+            if ($left <= self::EPS) break;
+            $available = round($this->availability->availableForOutbound($balance) - (float) ($holds['balances'][(int) $balance->id] ?? 0), 4);
+            if ($available <= self::EPS) continue;
+            $take = round(min($available, $left), 4);
+            $picks[] = ['balance_id' => (int) $balance->id, 'qty' => $take];
+            $left = round($left - $take, 4);
+        }
+        return [$picks, max(0, $left)];
+    }
+
+    /** 工厂仓库里这种料现在能扣多少（扣掉配料单占用），集中开料结束前核对用。 */
+    public function freeStockQty(Item $item): float
+    {
+        [, $left] = $this->freeStockPicks($item, 1000000000);
+        return round(1000000000 - $left, 4);
     }
 
     /** 人工指定编号：编号必须是本物料、在库可用、所在库存行可出库且未被订单占用；数量须与本次应收一致。 */

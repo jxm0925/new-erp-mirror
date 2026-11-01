@@ -15,7 +15,7 @@
   <view wx:if="{{error}}" class="mt-error">{{error}}</view>
 
   <block wx:if="{{tab === 'runs'}}">
-    <view class="mt-note" style="margin-bottom: 18rpx;">单次集中开料对应单一 BOM 并记录实际工时。各工单下料工序执行「已备料」时按件数自动分摊工时（批次总工时 ÷ 总件数 × 领用件数）。</view>
+    <view class="mt-note" style="margin-bottom: 18rpx;">单次集中开料对应单一 BOM 并记录实际工时。「切完结束」时按件数从仓库扣料，库存不够不能结束；逐张管理的板材须先领用板材并登记余料。各工单下料工序执行「已备料」时按件数带走料和工时（批次总工时 ÷ 总件数 × 领用件数）。</view>
     <view wx:if="{{loading}}" class="mt-empty">正在读取开料批次…</view>
     <view wx:if="{{!loading && !runs.length}}" class="mt-empty">暂无集中开料批次记录，请切换至「新建开料批次」启动作业</view>
     <view wx:for="{{runs}}" wx:key="id" class="mt-card" data-id="{{item.id}}" bindtap="openRunTap">
@@ -87,13 +87,16 @@
       <view wx:if="{{run.sheet_batches.length}}" class="mt-row mt-gap"><text class="mt-muted">已关联领板 {{run.sheet_batches.length}} 批</text><text class="tk-link red" bindtap="openSheetBatches">登记余料 / 查看明细 ›</text></view>
 
       <view class="mt-card-title mt-gap">{{run.status === 'running' ? '实际开料产出件数（按实核改）' : '物料产出与分摊明细'}}</view>
-      <view wx:for="{{run.lines}}" wx:key="line_key" class="cr-line">
-        <text class="k">{{item.component_item_name}} {{item.sizeText}}<text class="mt-muted">（每套 {{item.per_set}}）</text></text>
-        <block wx:if="{{run.status === 'running'}}">
-          <input class="ct-input" type="number" value="{{item.input}}" data-index="{{index}}" bindinput="piecesInput" /><text>件</text>
-        </block>
-        <text wx:else>{{item.actual_pieces}} 件 · 已领 {{item.allocated_pieces}} · 剩 {{item.left_pieces}}</text>
-      </view>
+      <block wx:for="{{run.lines}}" wx:key="line_key">
+        <view class="cr-line">
+          <text class="k">{{item.component_item_name}} {{item.sizeText}}<text class="mt-muted">（每套 {{item.per_set}}）</text></text>
+          <block wx:if="{{run.status === 'running'}}">
+            <input class="ct-input" type="number" value="{{item.input}}" data-index="{{index}}" bindinput="piecesInput" /><text>件</text>
+          </block>
+          <text wx:else>{{item.actual_pieces}} 件 · 已领 {{item.allocated_pieces}} · 剩 {{item.left_pieces}}</text>
+        </view>
+        <view wx:if="{{item.materialText}}" class="cr-stock {{item.materialShort ? 'short' : ''}}">{{item.materialText}}</view>
+      </block>
       <textarea wx:if="{{run.status === 'running'}}" class="tk-textarea mt-gap" value="{{finishRemark}}" maxlength="500" placeholder="填写开料备注说明（选填）" bindinput="finishRemarkInput" />
 
       <block wx:if="{{run.status !== 'running'}}">

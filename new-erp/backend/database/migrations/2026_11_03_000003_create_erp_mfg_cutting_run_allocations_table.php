@@ -6,7 +6,8 @@ use Database\Schema\InitialTableMigration;
 
 require_once __DIR__.'/../schema/InitialTableMigration.php';
 
-// 集中开料领用：工单下料点「已备料」时按件数从开料记录领走，labor_minutes = 这批总工时 × pieces ÷ 这批总件数。
+// 集中开料领用：工单下料点「已备料」时按件数从开料记录领走，labor_minutes = 这批总工时 × pieces ÷ 这批总件数；
+// material_qty / cost_amount = 按件数带走的这批已扣料数量和成本（按数量管理的料，计入工单实际材料成本；逐张板材为 0，成本走开料池）。
 return new class extends InitialTableMigration
 {
     public const TABLE = 'erp_mfg_cutting_run_allocations';
@@ -25,6 +26,8 @@ CREATE TABLE `erp_mfg_cutting_run_allocations` (
   `unit_qty` int(10) unsigned NOT NULL DEFAULT '0',
   `pieces` int(10) unsigned NOT NULL,
   `labor_minutes` decimal(14,4) NOT NULL DEFAULT '0.0000',
+  `material_qty` decimal(18,4) NOT NULL DEFAULT '0.0000',
+  `cost_amount` decimal(18,4) NOT NULL DEFAULT '0.0000',
   `allocated_by_legacy_id` bigint(20) unsigned DEFAULT NULL,
   `allocated_by_name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT NULL,

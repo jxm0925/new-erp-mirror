@@ -181,6 +181,54 @@ class ProductionInventoryPosting
     }
 
     /**
+     * 集中开料切完结束：按件数折算的定额用量从仓库扣（按库存平均成本），不属于任何工单；扣出的成本挂在开料记录上，工单领件时按件数带走。
+     * @param array<int, array{balance_id:int, item_id:int, line_key:string, qty:float}> $allocations
+     * @return array{transaction: InventoryTransaction, costs: array<string, string>}
+     */
+    public function postCuttingRunMaterialIssue(\App\Models\Erp\MfgCuttingRun $run, array $allocations, ?int $operatorId = null): array
+    {
+        return DB::transaction(function () use ($run, $allocations, $operatorId): array {
+            if (InventoryTransaction::query()->where('source_type', 'mfg_cutting_run')->where('source_id', $run->id)
+                ->where('transaction_type', 'mfg_cutting_run_issue_outbound')->exists()) {
+                throw ValidationException::withMessages(['cutting_run' => '这批开料已经扣过库存，不能重复扣。']);
+            }
+            if (! $allocations) throw ValidationException::withMessages(['cutting_run' => '这批开料没有要扣的库存。']);
+            $transaction = $this->kernel->begin([
+                'transaction_type' => 'mfg_cutting_run_issue_outbound',
+                'source_type' => 'mfg_cutting_run', 'source_id' => $run->id, 'source_no' => $run->run_no,
+                'posting_status' => 'posted', 'transaction_date' => now()->toDateString(),
+                'posted_by' => $operatorId, 'posted_at' => now(), 'created_by' => $operatorId,
+                'remark' => '集中开料 '.$run->run_no.'（'.$run->output_item_name.'）切完扣料',
+            ]);
+            $costs = [];
+            foreach ($allocations as $row) {
+                $balance = InventoryBalance::query()->whereKey($row['balance_id'])->lockForUpdate()->firstOrFail();
+                $item = Item::query()->findOrFail($row['item_id']);
+                $quantity = number_format((float) $row['qty'], 8, '.', '');
+                if ((int) $balance->item_id !== (int) $item->id || $item->materialManagementMode() === 'physical' || $item->serialTrackingMode() !== 'none'
+                    || bccomp($quantity, '0', 8) <= 0 || $this->availability->availableForOutbound($balance) + 0.00000001 < (float) $quantity) {
+                    throw ValidationException::withMessages(['stock' => $item->item_name.' 可用库存不足或不能按数量领用，请刷新后重试。']);
+                }
+                $cost = CuttingDecimal::share((string) $balance->inventory_value, (string) $balance->quantity_on_hand, $quantity);
+                $fact = $this->kernel->apply($transaction, [
+                    'item_id' => $item->id, 'warehouse_id' => $balance->warehouse_id, 'location_id' => $balance->location_id,
+                    'batch_no' => $balance->batch_no, 'unit_id' => $balance->unit_id,
+                    'change_qty' => bcsub('0', $quantity, 8), 'unit_cost' => (float) $balance->average_unit_cost, 'cost_amount' => bcsub('0', $cost, 4),
+                    'cost_source_type' => 'production_issue_average', 'source_type' => 'mfg_cutting_run', 'source_id' => $run->id,
+                    'remark' => '集中开料 '.$run->run_no.' 切完扣料',
+                ]);
+                $costs[$row['line_key']] = bcadd($costs[$row['line_key']] ?? '0', bcsub('0', (string) $fact->cost_amount, 4), 4);
+            }
+            InventoryPostingLog::create([
+                'source_type' => 'mfg_cutting_run', 'source_id' => $run->id, 'source_no' => $run->run_no,
+                'transaction_type' => 'mfg_cutting_run_issue_outbound', 'transaction_id' => $transaction->id,
+                'posting_status' => 'posted', 'message' => '集中开料扣料出库成功', 'posted_by' => $operatorId, 'posted_at' => now(),
+            ]);
+            return ['transaction' => $transaction, 'costs' => $costs];
+        }, 5);
+    }
+
+    /**
      * 生产退料入库：按原收料出库流水的批次和单价冲回（同一条流水分次退时最后一次承接尾差），退回原库位或库管选定的库位。
      * 按编号退的序列号恢复在库可用，挂到退入的库存行。
      * 不良退回（defective）的料入库即冻结：计入不良数量、不算可用，编号置为质量冻结，等库管处置后才能再领用。

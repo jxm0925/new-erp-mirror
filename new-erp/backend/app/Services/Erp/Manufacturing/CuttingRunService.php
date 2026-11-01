@@ -11,15 +11,21 @@ use App\Models\Erp\MfgWorkOrder;
 use App\Models\Erp\MfgWorkOrderMaterial;
 use App\Models\Erp\MfgWorkOrderOperation;
 use App\Models\Erp\ShipmentPackingLaborSession;
+use App\Models\Erp\Item;
+use App\Services\Erp\CuttingDecimal;
 use App\Services\Erp\DocumentNumberService;
+use App\Services\Erp\Inventory\ProductionInventoryPosting;
 use Illuminate\Support\Facades\DB;
 
 /**
  * 集中开料记录（按实际工时）：
  * - 一次只开一个 BOM（一种设备／半成品）的料，不能把两个设备的料混在一起开；
  * - 开料的人各自点开始／暂停，按实际时间记工时，不参考标准工时；
- * - 结束时登记每种料实际切了多少件（默认 = 每套件数 × 开的套数，可以改）；
- * - 工单下料点「已备料」时按件数领走：带走的工时 = 这批总工时 × 领走件数 ÷ 这批总件数（例如 4 小时切 160 根，领 1 根 = 4 ÷ 160 × 1）。
+ * - 结束时登记每种料实际切了多少件（默认 = 每套件数 × 开的套数，可以改），同时扣料：
+ *   按数量管理的板材／管材按 件数 × BOM 每套用量 ÷ 每套件数 从仓库扣（库存不够不能结束），成本挂在这批上；
+ *   逐张管理的板材必须在这批里领过板、登记完余料（净耗进开料池，工单备料时按定额从池里扣成本）；
+ * - 工单下料点「已备料」时按件数领走：带走的工时 = 这批总工时 × 领走件数 ÷ 这批总件数（例如 4 小时切 160 根，领 1 根 = 4 ÷ 160 × 1），
+ *   按数量管理的料同时按件数带走这批扣料的数量和成本，不再从仓库扣。
  *   没领完的件留在这批里（结余），以后谁领谁带走；工时跟着做出来的产品出库时结算。
  */
 final class CuttingRunService
@@ -153,7 +159,9 @@ final class CuttingRunService
             foreach (MfgCuttingRunSession::query()->where('cutting_run_id', $run->id)->where('status', 'active')->lockForUpdate()->get() as $s) $this->close($s, 'closed');
             $minutes = round((float) MfgCuttingRunSession::query()->where('cutting_run_id', $run->id)->sum('labor_minutes'), 2);
             if ($minutes <= 0) $this->fail('labor_required', '这批开料没有计时记录，请先点开始计时。');
+            [$lines, $materialCost, $transactionId] = $this->issueMaterials($run, $lines, $actor);
             $run->update(['status' => 'finished', 'lines' => $lines, 'total_pieces' => $total, 'labor_minutes' => $minutes,
+                'material_cost_amount' => $materialCost, 'inventory_issue_transaction_id' => $transactionId,
                 'business_version' => (int) $run->business_version + 1, 'finished_by_legacy_id' => $this->actorId($actor), 'finished_by_name' => $this->actorName($actor),
                 'finished_at' => now(), 'remark' => array_key_exists('remark', $data) ? (mb_substr(trim((string) $data['remark']), 0, 500) ?: null) : $run->remark]);
             return $this->detail($run->fresh(), $actor);
@@ -175,16 +183,42 @@ final class CuttingRunService
     }
 
     /**
-     * 工单下料「已备料」：这次第一次过本道的 $units 套，按本道每种料的每套件数从同一产品的开料记录里领（指定的那批优先，其余先开的先领），
-     * 每领一件带走 这批总工时 ÷ 这批总件数。开料记录还在开（没结束）又不够领时不让备料，避免工时漏掉。
-     * 调用方须在事务内并已锁定工单和工序。返回领到的明细。
+     * 工单下料「已备料」：从同一产品已结束的开料记录里按件数领（指定的那批优先，其余先结束的先领），每领一件带走 这批总工时 ÷ 这批总件数。
+     * - 按数量管理的板材／管材：只为本道还没收的料领件（$upTo = 本道做到第几台），同时按件数带走这批切完时扣的料和成本，记为本工单已收；
+     *   开料记录不够的部分由调用方随后按定额从仓库收。
+     * - 逐张管理的板材：按这次第一次过本道的 $units 套领件（只带工时），板材成本由开料池按定额扣。
+     * 开料记录还在开（没结束）又不够领时不让备料，避免工时和料漏掉。调用方须在事务内并已锁定工单和工序。返回领到的明细。
      */
-    public function allocate(MfgWorkOrder $wo, MfgWorkOrderOperation $op, int $units, object $actor, ?int $preferRunId = null): array
+    public function allocate(MfgWorkOrder $wo, MfgWorkOrderOperation $op, int $units, float $upTo, object $actor, ?int $preferRunId = null): array
     {
         if ($units <= 0) return [];
+        $materials = MfgWorkOrderMaterial::query()->where('work_order_operation_id', $op->id)->whereIn('cutting_mode', ['sheet', 'length'])
+            ->where('required_qty', '>', 0)->orderBy('id')->lockForUpdate()->get();
+        if ($materials->isEmpty()) return [];
+        $issues = app(MaterialIssueService::class);
+        $physical = Item::query()->whereIn('id', $materials->pluck('component_item_id')->unique()->all())->where('material_management_mode', 'physical')
+            ->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $prepared = MaterialDeliveryService::preparedQty((int) $op->id);
+        $snap = collect(data_get($wo->bom_snapshot, 'items', []))->keyBy('id');
+        $planned = (float) $wo->planned_qty;
         $needs = [];
-        foreach ($this->woLines($wo, $op) as $key => $line) $needs[$key] = ['pieces' => (int) round($line['per_set'] * $units), 'material_id' => $line['material_id'], 'name' => $line['name']];
-        $needs = array_filter($needs, fn ($n) => $n['pieces'] > 0);
+        foreach ($materials as $m) {
+            $snapshot = $snap->get($m->bom_item_id)['cutting_quantity_snapshot'] ?? null;
+            if (! is_array($snapshot)) continue;
+            $per = self::perSet($snapshot) * (float) ($m->qty_ratio ?: 1);
+            if ($per <= 0) continue;
+            $qty = null;
+            if (in_array((int) $m->component_item_id, $physical, true)) $pieces = (int) round($per * $units);
+            else {
+                // 已经从仓库收过的料不再领件，免得同一份料算两次。
+                $qty = round($issues->neededFor($m, $wo, $upTo) - (float) $m->issued_qty - (float) ($prepared[$m->id] ?? 0), 4);
+                if ($qty <= 0.00001 || $planned <= 0) continue;
+                $pieces = (int) round($per * $qty * $planned / (float) $m->required_qty);
+            }
+            if ($pieces <= 0) continue;
+            $needs[] = ['m' => $m, 'key' => self::lineKey((int) $m->component_item_id, $snapshot), 'name' => $m->component_item_name.' '.self::sizeText($snapshot),
+                'pieces' => $pieces, 'left' => $pieces, 'qty' => $qty, 'covered' => 0];
+        }
         if (! $needs) return [];
         $runs = MfgCuttingRun::query()->where('output_item_id', $wo->item_id)->where('status', 'finished')->whereColumn('allocated_pieces', '<', 'total_pieces')
             ->orderByRaw('id = ? DESC', [(int) $preferRunId])->orderBy('finished_at')->orderBy('id')->lockForUpdate()->get();
@@ -192,17 +226,29 @@ final class CuttingRunService
         $out = [];
         foreach ($runs as $run) {
             $lines = $run->lines;
-            $taken = 0; $minutes = '0';
+            $taken = 0; $rows = [];
             foreach ($lines as &$line) {
-                $key = $line['line_key'];
-                if (empty($needs[$key]['pieces'])) continue;
-                $left = (int) $line['actual_pieces'] - (int) $line['allocated_pieces'];
-                $take = min($left, $needs[$key]['pieces']);
-                if ($take <= 0) continue;
-                $line['allocated_pieces'] = (int) $line['allocated_pieces'] + $take;
-                $needs[$key]['pieces'] -= $take;
-                $taken += $take;
-                $out[] = ['run_id' => (int) $run->id, 'run_no' => $run->run_no, 'line_key' => $key, 'material_id' => $needs[$key]['material_id'], 'name' => $line['name'], 'pieces' => $take];
+                foreach ($needs as &$n) {
+                    if ($n['left'] <= 0 || $n['key'] !== $line['line_key']) continue;
+                    $left = (int) $line['actual_pieces'] - (int) $line['allocated_pieces'];
+                    $take = min($left, $n['left']);
+                    if ($take <= 0) continue;
+                    $qty = '0.0000'; $cost = '0.0000';
+                    // 这批切完时扣过料（按数量管理的料）：按件数带走料和成本，领完最后一件时带走全部尾差。
+                    if ($n['qty'] !== null && isset($line['material_qty'])) {
+                        $qty = CuttingDecimal::share(bcsub((string) $line['material_qty'], (string) ($line['allocated_material_qty'] ?? '0'), 4), (string) $left, (string) $take);
+                        $cost = CuttingDecimal::share(bcsub((string) ($line['material_cost'] ?? '0'), (string) ($line['allocated_material_cost'] ?? '0'), 4), (string) $left, (string) $take);
+                        $line['allocated_material_qty'] = bcadd((string) ($line['allocated_material_qty'] ?? '0'), $qty, 4);
+                        $line['allocated_material_cost'] = bcadd((string) ($line['allocated_material_cost'] ?? '0'), $cost, 4);
+                        $n['covered'] += $take;
+                    }
+                    $line['allocated_pieces'] = (int) $line['allocated_pieces'] + $take;
+                    $n['left'] -= $take;
+                    $taken += $take;
+                    $rows[] = ['run_id' => (int) $run->id, 'run_no' => $run->run_no, 'line_key' => $line['line_key'], 'material_id' => (int) $n['m']->id,
+                        'name' => $line['name'], 'pieces' => $take, 'material_qty' => $qty, 'cost_amount' => $cost];
+                }
+                unset($n);
             }
             unset($line);
             if ($taken <= 0) continue;
@@ -210,23 +256,28 @@ final class CuttingRunService
             // 一批领完时把剩下的工时全部带走，避免四舍五入留尾差。
             $runMinutes = $after >= (int) $run->total_pieces ? bcsub((string) $run->labor_minutes, (string) $run->allocated_minutes, 4)
                 : bcdiv(bcmul((string) $run->labor_minutes, (string) $taken, 8), (string) $run->total_pieces, 4);
-            foreach ($out as &$row) {
-                if ($row['run_id'] !== (int) $run->id || isset($row['done'])) continue;
-                $m = bcdiv(bcmul($runMinutes, (string) $row['pieces'], 8), (string) $taken, 4);
+            foreach ($rows as &$row) {
+                $minutes = bcdiv(bcmul($runMinutes, (string) $row['pieces'], 8), (string) $taken, 4);
                 MfgCuttingRunAllocation::create(['cutting_run_id' => $run->id, 'work_order_id' => $wo->id, 'work_order_operation_id' => $op->id,
                     'work_order_material_id' => $row['material_id'], 'line_key' => $row['line_key'], 'unit_qty' => $units, 'pieces' => $row['pieces'],
-                    'labor_minutes' => $m, 'allocated_by_legacy_id' => $this->actorId($actor), 'allocated_by_name' => $this->actorName($actor)]);
-                $row['labor_minutes'] = (float) $m;
-                $row['done'] = true;
+                    'labor_minutes' => $minutes, 'material_qty' => $row['material_qty'], 'cost_amount' => $row['cost_amount'],
+                    'allocated_by_legacy_id' => $this->actorId($actor), 'allocated_by_name' => $this->actorName($actor)]);
+                $row['labor_minutes'] = (float) $minutes;
             }
             unset($row);
             $run->update(['lines' => $lines, 'allocated_pieces' => $after, 'allocated_minutes' => bcadd((string) $run->allocated_minutes, $runMinutes, 4)]);
+            $out = array_merge($out, $rows);
         }
-        $short = array_filter($needs, fn ($n) => $n['pieces'] > 0);
+        foreach ($needs as $n) {
+            if ($n['covered'] <= 0) continue;
+            $inc = $n['covered'] >= $n['pieces'] ? $n['qty'] : round($n['qty'] * $n['covered'] / $n['pieces'], 4);
+            $n['m']->update(['issued_qty' => round((float) $n['m']->issued_qty + $inc, 4)]);
+        }
+        $short = array_filter($needs, fn ($n) => $n['left'] > 0);
         if ($short && MfgCuttingRun::query()->where('output_item_id', $wo->item_id)->where('status', 'running')->exists())
-            $this->fail('cutting_run_open', '「集中开料」里这个产品还有没结束的开料记录，'.implode('、', array_map(fn ($n) => $n['name'].' 还差 '.$n['pieces'].' 件', $short))
-                .'。请开料的人先点「切完结束」登记件数，再来备料，这样开料工时才能带过来。');
-        return array_map(fn ($r) => array_diff_key($r, ['done' => 1]), $out);
+            $this->fail('cutting_run_open', '「集中开料」里这个产品还有没结束的开料记录，'.implode('、', array_map(fn ($n) => $n['name'].' 还差 '.$n['left'].' 件', $short))
+                .'。请开料的人先点「切完结束」登记件数，再来备料，这样开料的料和工时才能带过来。');
+        return $out;
     }
 
     /** 这道下料工序能从哪些开料记录领（同一产品、已结束、还有剩），以及还在开的批次数。 */
@@ -316,7 +367,9 @@ final class CuttingRunService
     {
         $rows = DB::table('erp_bom_items as bi')->join('erp_items as i', 'i.id', '=', 'bi.component_item_id')->where('bi.bom_id', $bomId)->whereNull('bi.deleted_at')
             ->whereNotNull('bi.cutting_quantity_snapshot')->orderBy('bi.line_no')->orderBy('bi.id')
-            ->get(['bi.id', 'bi.line_no', 'bi.component_item_id', 'bi.component_item_name', 'bi.remark', 'bi.cutting_quantity_snapshot', 'i.material_management_mode', 'i.spec', 'i.model']);
+            ->leftJoin('erp_units as u', 'u.id', '=', 'i.unit_id')
+            ->get(['bi.id', 'bi.line_no', 'bi.component_item_id', 'bi.component_item_name', 'bi.remark', 'bi.cutting_quantity_snapshot', 'bi.qty', 'bi.loss_rate',
+                'i.material_management_mode', 'i.spec', 'i.model', 'u.unit_name']);
         $out = [];
         foreach ($rows as $r) {
             $snapshot = json_decode((string) $r->cutting_quantity_snapshot, true);
@@ -329,8 +382,11 @@ final class CuttingRunService
                 'component_item_name' => $r->component_item_name, 'specification' => $r->spec ?: $r->model, 'mode' => $snapshot['mode'],
                 'physical' => $r->material_management_mode === 'physical', 'part_name' => $r->remark ?: null,
                 'length_mm' => $d['length_mm'] ?? null, 'width_mm' => $d['width_mm'] ?? null, 'thickness_mm' => $d['thickness_mm'] ?? null,
-                'total_length_mm' => $snapshot['total_length_mm'] ?? null, 'name' => $r->component_item_name.' '.self::sizeText($snapshot), 'per_set' => 0];
+                'total_length_mm' => $snapshot['total_length_mm'] ?? null, 'name' => $r->component_item_name.' '.self::sizeText($snapshot), 'per_set' => 0,
+                'unit_name' => $r->unit_name, 'qty_per_set' => 0.0];
             $out[$key]['per_set'] += $per;
+            // 每套用量和工单定额同一口径：理论用量（没有就用 BOM 用量）× (1 + 损耗率)，固定用量按工单加，不算进开料。
+            $out[$key]['qty_per_set'] = round($out[$key]['qty_per_set'] + (float) ($snapshot['theoretical_qty'] ?? $r->qty) * (1 + (float) $r->loss_rate / 100), 6);
         }
         return $out;
     }
@@ -359,6 +415,60 @@ final class CuttingRunService
         }
         return $sets;
     }
+
+    /**
+     * 切完结束扣料：按数量管理的料按 件数 × BOM 每套用量 ÷ 每套件数 从仓库扣，库存不够不让结束；逐张管理的板必须在这批里领过板并登记完余料。
+     * 返回 [带扣料数量和成本的 lines, 扣料总成本, 库存流水 ID]。
+     */
+    private function issueMaterials(MfgCuttingRun $run, array $lines, object $actor): array
+    {
+        $issues = app(MaterialIssueService::class);
+        $issues->lockItems(array_column($lines, 'component_item_id'));
+        $items = Item::query()->whereIn('id', array_column($lines, 'component_item_id'))->get()->keyBy('id');
+        $bom = null;
+        $picks = []; $short = [];
+        foreach ($lines as &$line) {
+            $item = $items->get($line['component_item_id']);
+            $line['physical'] = $item?->materialManagementMode() === 'physical';
+            if ((int) $line['actual_pieces'] <= 0) continue;
+            if ($line['physical']) {
+                if (! MfgCuttingBatch::query()->where('cutting_run_id', $run->id)->where('item_id', $line['component_item_id'])->where('status', 'settled')->exists())
+                    $short[$line['component_item_id']] = $line['component_item_name'].' 是逐张管理的板材，这批还没领板';
+                continue;
+            }
+            if (! isset($line['qty_per_set'])) {
+                $bom ??= $this->bomLines((int) $run->bom_id);
+                $line['qty_per_set'] = $bom[$line['line_key']]['qty_per_set'] ?? 0;
+                $line['unit_name'] = $bom[$line['line_key']]['unit_name'] ?? null;
+            }
+            $qty = round((float) $line['qty_per_set'] * (int) $line['actual_pieces'] / max(1, (int) $line['per_set']), 4);
+            if (! $item || $qty <= 0) $this->fail('bom_qty_missing', $line['name'].' 在 BOM 里没有用量，不能按件数扣料，请先核对 BOM。');
+            if ($item->serialTrackingMode() !== 'none') $this->fail('serial_not_supported', $line['name'].' 按编号追溯，集中开料不能按数量扣料，请在工单里收料。');
+            [$found, $left] = $issues->freeStockPicks($item, $qty);
+            if ($left > 0.00001) {
+                $short[] = $line['name'].' 要扣 '.self::num($qty).($line['unit_name'] ?? '').'，仓库可用只有 '.self::num($qty - $left).($line['unit_name'] ?? '');
+                continue;
+            }
+            foreach ($found as $pick) $picks[] = $pick + ['item_id' => (int) $item->id, 'line_key' => $line['line_key']];
+            $line['material_qty'] = sprintf('%.4F', $qty);
+            $line['allocated_material_qty'] = '0.0000';
+            $line['allocated_material_cost'] = '0.0000';
+        }
+        unset($line);
+        if ($short) $this->fail('material_short', '还不能结束：'.implode('；', $short).'。按数量管理的料请先办好入库，逐张管理的板请先「领用板材」并登记余料，再点「切完结束」。');
+        if (! $picks) return [$lines, '0.0000', null];
+        $posted = app(ProductionInventoryPosting::class)->postCuttingRunMaterialIssue($run, $picks, $this->actorId($actor));
+        $total = '0.0000';
+        foreach ($lines as &$line) {
+            if (! isset($line['material_qty'])) continue;
+            $line['material_cost'] = $posted['costs'][$line['line_key']] ?? '0.0000';
+            $total = bcadd($total, $line['material_cost'], 4);
+        }
+        unset($line);
+        return [$lines, $total, (int) $posted['transaction']->id];
+    }
+
+    private static function num(float $v): string { return rtrim(rtrim(number_format($v, 4, '.', ''), '0'), '.') ?: '0'; }
 
     private function assertFree(int $me): void
     {
@@ -399,7 +509,19 @@ final class CuttingRunService
     {
         $me = $actor ? (int) $this->actorId($actor) : 0;
         $row = $this->summary($run);
-        $row['lines'] = array_map(fn ($l) => $l + ['left_pieces' => max(0, (int) $l['actual_pieces'] - (int) $l['allocated_pieces'])], $run->lines ?? []);
+        $stock = [];
+        if ($run->status === 'running') {
+            $issues = app(MaterialIssueService::class);
+            foreach (Item::query()->whereIn('id', array_column($run->lines ?? [], 'component_item_id'))->get() as $item)
+                if ($item->materialManagementMode() !== 'physical') $stock[(int) $item->id] = $issues->freeStockQty($item);
+        }
+        $row['lines'] = array_map(fn ($l) => array_diff_key($l, ['material_cost' => 1, 'allocated_material_cost' => 1]) + [
+            'left_pieces' => max(0, (int) $l['actual_pieces'] - (int) $l['allocated_pieces']),
+            // 切完结束时按 件数 × 每套用量 ÷ 每套件数 扣库存；开料中给出每件折多少料和现在仓库可用多少，方便核对。
+            'material_per_piece' => empty($l['physical']) && isset($l['qty_per_set']) && (int) $l['per_set'] > 0 ? round((float) $l['qty_per_set'] / (int) $l['per_set'], 6) : null,
+            'stock_available' => $stock[(int) $l['component_item_id']] ?? null,
+            'left_material_qty' => isset($l['material_qty']) ? (float) bcsub((string) $l['material_qty'], (string) ($l['allocated_material_qty'] ?? '0'), 4) : null,
+        ], $run->lines ?? []);
         $people = [];
         foreach (MfgCuttingRunSession::query()->where('cutting_run_id', $run->id)->orderBy('id')->get() as $s) {
             $p = &$people[(int) $s->employee_legacy_id];
