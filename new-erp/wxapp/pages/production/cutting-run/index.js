@@ -1,5 +1,6 @@
 // 集中开料（按实际工时统计）：单次按单一 BOM 启动开料批次并记录作业人员实际工时，完工登记各子件实际产出件数。
-// 各工单下料工序执行「已备料」时按件数分摊开料工时（批次总工时 ÷ 总件数 × 领用件数）。
+// 切完结束时按数量管理的板材／管材按 件数 × 每件用量 从仓库扣料（库存不够不能结束），逐张管理的板材须先领板并登记余料。
+// 各工单下料工序执行「已备料」时按件数分摊开料工时（批次总工时 ÷ 总件数 × 领用件数），同时按件数带走已扣的料，不再从仓库扣。
 const production = require('../../../services/production');
 const view = require('../../../utils/warehouse-page');
 
@@ -7,13 +8,24 @@ const hm = minutes => {
   const m = Math.max(0, Math.round(Number(minutes || 0)));
   return m >= 60 ? `${Math.floor(m / 60)} 小时 ${m % 60} 分` : `${m} 分钟`;
 };
+const num = v => String(Math.round(Number(v || 0) * 10000) / 10000);
+// 开料中：按填的件数估算切完要扣多少库存；已结束：已扣多少、还剩多少没被工单领走。
+const materialText = (l, input) => {
+  const unit = l.unit_name || '';
+  if (l.material_qty !== undefined && l.material_qty !== null) return { text: `已扣库存 ${num(l.material_qty)}${unit} · 未领 ${num(l.left_material_qty)}${unit}`, short: false };
+  if (l.material_per_piece === null || l.material_per_piece === undefined) return { text: l.physical ? '逐张板材：须先领用板材并登记余料' : '', short: false };
+  const need = Number(l.material_per_piece) * Number(input || 0);
+  const stock = Number(l.stock_available || 0);
+  return { text: `切完扣库存约 ${num(need)}${unit}（仓库可用 ${num(stock)}${unit}）`, short: need > stock + 0.00001 };
+};
+const lineView = (l, input) => { const m = materialText(l, input); return Object.assign({}, l, { input: String(input), materialText: m.text, materialShort: m.short }); };
 const sizeText = l => l.total_length_mm ? `总长 ${Number(l.total_length_mm)}mm` : [l.length_mm, l.width_mm, l.thickness_mm].filter(v => v !== null && v !== undefined).map(Number).join('×') + 'mm';
 
 function runView(run) {
   return Object.assign({}, run, {
     laborText: hm(run.labor_minutes), allocatedText: hm(run.allocated_minutes),
     startedText: String(run.started_at || '').slice(5, 16), finishedText: String(run.finished_at || '').slice(5, 16),
-    lines: (run.lines || []).map(l => Object.assign({}, l, { sizeText: sizeText(l), input: String(l.actual_pieces) })),
+    lines: (run.lines || []).map(l => lineView(Object.assign({}, l, { sizeText: sizeText(l) }), l.actual_pieces)),
     people: (run.people || []).map(p => Object.assign({}, p, { minutesText: hm(p.labor_minutes) })),
   });
 }
@@ -123,7 +135,10 @@ Page({
     }).catch(error => view.modal(this, { theme: 'warn', title: '操作失败', content: view.errorText(error), showCancel: false }))
       .finally(() => this.setData({ busy: false }));
   },
-  piecesInput(event) { this.setData({ [`run.lines[${Number(event.currentTarget.dataset.index)}].input`]: event.detail.value }); },
+  piecesInput(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    this.setData({ [`run.lines[${index}]`]: lineView(this.data.run.lines[index], event.detail.value) });
+  },
   finishRemarkInput(event) { this.setData({ finishRemark: event.detail.value }); },
   finish() {
     const run = this.data.run;
@@ -136,9 +151,11 @@ Page({
     }
     const total = lines.reduce((s, l) => s + l.actual_pieces, 0);
     if (!total) { wx.showToast({ title: '请填写实际开料产出件数', icon: 'none' }); return; }
+    const short = run.lines.filter(l => l.materialShort);
+    if (short.length) { view.modal(this, { theme: 'warn', title: '库存不够', content: short.map(l => `${l.component_item_name} ${l.sizeText}：${l.materialText}`).join('\n') + '\n请先办好入库再结束。', showCancel: false }); return; }
     view.modal(this, {
       title: '确认开料完工结算',
-      subtitle: '确认结束后将停止本批次全部人员计时并锁定产出件数',
+      subtitle: '确认结束后将停止本批次全部人员计时、锁定产出件数，并按件数从仓库扣料',
       kvRows: [
         { k: '合计产出件数', v: `${total} 件`, red: true },
         { k: '累计作业工时', v: `约 ${this.data.liveText}` },

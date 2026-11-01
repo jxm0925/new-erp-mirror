@@ -73,6 +73,8 @@ final class ReceiptService
             foreach (MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('status', 'settled')->lockForUpdate()->get() as $batch) $actualCost = bcadd($actualCost, (string) $batch->net_cost_amount, 4);
             // 集中开料按定额分给本单的板材成本
             $actualCost = bcadd($actualCost, (string) \App\Models\Erp\MfgCuttingAllocation::query()->where('work_order_id', $wo->id)->lockForUpdate()->sum('cost_amount'), 4);
+            // 集中开料记录按件数带过来的板材／管材成本（切完结束时已从仓库扣）
+            $actualCost = bcadd($actualCost, (string) \App\Models\Erp\MfgCuttingRunAllocation::query()->where('work_order_id', $wo->id)->lockForUpdate()->sum('cost_amount'), 4);
             $alreadyCost = '0.0000';
             foreach (MfgReceipt::query()->where('work_order_id', $wo->id)->lockForUpdate()->get() as $oldReceipt) $alreadyCost = bcadd($alreadyCost, (string) $oldReceipt->cost_amount, 4);
             $remainingCost = bcsub($actualCost, $alreadyCost, 4);

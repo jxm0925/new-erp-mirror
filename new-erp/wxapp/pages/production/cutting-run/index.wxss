@@ -8,3 +8,5 @@
 .cr-person .on { color: #d81e06; font-weight: 700; }
 .cr-bom { padding: 18rpx 16rpx; border-bottom: 1rpx solid #f1f5f9; border-radius: 14rpx; }
 .cr-bom.on { background: #fff5f5; border: 1rpx solid #fca5a5; }
+.cr-stock { font-size: 23rpx; color: #64748b; padding: 0 0 12rpx; }
+.cr-stock.short { color: #d81e06; font-weight: 700; }

@@ -290,13 +290,14 @@ final class TaskService
             // 只为这次第一次过本道的设备收料；返工回来的设备料已经收过。
             $firstTime = $units->filter(fn ($u) => ! MfgUnitReport::query()->where('unit_id', $u->id)->where('work_order_operation_id', $op->id)->where('result', 'passed')->exists())->count();
             $upTo = (float) $op->completed_qty + $firstTime;
+            // 集中开料记录：按件数领走这批的实际开料工时（这批总工时 × 领走件数 ÷ 这批总件数）；
+            // 按数量管理的板材／管材同时带走这批切完时已扣的料和成本，记为本道已收，剩下不够的再按定额从仓库收。
+            app(CuttingRunService::class)->allocate($wo, $op, $firstTime, $upTo, $actor, $cuttingRunId);
             $this->materials->receiveUpTo($wo, $op, $upTo, $remark ? '已备料：'.$remark : '已备料', $actor);
             $this->materials->assertReceivedForStart($wo, $op, $units, $upTo);
             // 逐张板材：集中开料切好的件，按定额从开料池扣量计成本。
             if ($sheet) app(SharedCuttingService::class)->allocate($wo, $op, $upTo, $firstTime, $actor);
             $this->materials->assertCutForPass($wo, $op, $firstTime);
-            // 集中开料记录：按件数领走这批的实际开料工时（这批总工时 × 领走件数 ÷ 这批总件数）。
-            app(CuttingRunService::class)->allocate($wo, $op, $firstTime, $actor, $cuttingRunId);
             $this->markStarted($wo, $op, $actor);
             if ($op->status !== 'in_progress') $op->update(['status' => 'in_progress']);
             $reportedAt = now();

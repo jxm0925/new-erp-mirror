@@ -97,7 +97,7 @@
     <!-- 集中开料批次选择 -->
     <view wx:if="{{task.prepMode && task.cutting_runs && (task.cutting_runs.runs.length || task.cutting_runs.running)}}" class="mt-card">
       <view class="mt-card-title"><text>集中开料批次关联</text><text class="tk-link red" bindtap="openSharedCutting">前往集中开料 ›</text></view>
-      <view class="mt-muted">提交「已备料」时将按件数从所选集中开料批次分摊开料工时（批次总工时 ÷ 总件数 × 本次领用件数）；未指定时默认按先进先出匹配。</view>
+      <view class="mt-muted">提交「已备料」时将按件数从所选集中开料批次领走切好的料（切完结束时已扣库存，不再从仓库扣）并分摊开料工时（批次总工时 ÷ 总件数 × 本次领用件数）；未指定时默认按先进先出匹配，批次不够的部分按 BOM 定额从仓库收料。</view>
       <view wx:if="{{task.cutting_runs.running}}" class="mt-muted mt-gap" style="color:#b7791f">当前有 {{task.cutting_runs.running}} 批正在集中开料，请待其「切完结束」登记件数后再执行备料。</view>
       <view wx:for="{{task.cutting_runs.runs}}" wx:key="id" class="tk-unit" data-id="{{item.id}}" bindtap="pickRun">
         <view class="tk-check {{runPick === item.id ? 'on' : ''}}">{{runPick === item.id ? '✓' : ''}}</view>
@@ -122,7 +122,7 @@
         <text wx:if="{{item.status === 'rework'}}" class="mt-tag red">返工{{item.fail_reason ? '：' + item.fail_reason : ''}}</text>
         <text wx:else class="mt-tag {{item.selectable ? 'blue' : 'gray'}}">{{item.status_label}}</text>
       </view>
-      <view wx:if="{{task.prep && task.allowed.prepare}}" class="mt-muted mt-gap">随单现切：点击上方「开始计时」作业，完成后报合格；集中开料已切好：勾选{{task.noun}}后点击底部「已备料」直接交接下道工序，用料按 BOM 定额扣减并自动分摊集中开料工时。</view>
+      <view wx:if="{{task.prep && task.allowed.prepare}}" class="mt-muted mt-gap">随单现切：点击上方「开始计时」作业，完成后报合格；集中开料已切好：勾选{{task.noun}}后点击底部「已备料」直接交接下道工序，先从集中开料批次领切好的件（带走料和工时），不够的部分按 BOM 定额从仓库扣。</view>
       <view class="mt-muted mt-gap">本道待做 {{task.progress.here || 0}} {{task.unitShort}}<text wx:if="{{task.progress.upstream}}"> · 前道在制 {{task.progress.upstream}} {{task.unitShort}}</text> · 已完成 {{task.doneText}} / {{task.plannedText}}<text wx:if="{{task.progress.next_operation_name && !task.completion}}"> · 合格交接至{{task.progress.next_operation_name}}</text></view>
     </view>
 

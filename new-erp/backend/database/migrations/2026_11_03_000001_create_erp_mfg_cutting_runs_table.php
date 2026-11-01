@@ -8,8 +8,10 @@ require_once __DIR__.'/../schema/InitialTableMigration.php';
 
 /**
  * 集中开料记录：一次只开一个 BOM（一种设备／半成品）的料，按实际计时（erp_mfg_cutting_run_sessions），结束时登记每种料实际切了多少件。
- * lines：BOM 里每种要切的料（line_key 按物料 + 尺寸匹配工单物料行），per_set 每套件数、actual_pieces 实际切的件数、allocated_pieces 已被工单领走的件数。
- * 工单下料点「已备料」时按件数从这里领，带走的工时 = 这批总工时 × 领走件数 ÷ 这批总件数（明细见 erp_mfg_cutting_run_allocations）。
+ * lines：BOM 里每种要切的料（line_key 按物料 + 尺寸匹配工单物料行），per_set 每套件数、qty_per_set 每套用量（物料单位）、actual_pieces 实际切的件数、allocated_pieces 已被工单领走的件数；
+ * 按数量管理的料切完结束时按 件数 × qty_per_set ÷ per_set 从仓库扣（库存流水 inventory_issue_transaction_id），扣的数量和成本记在 material_qty / material_cost，
+ * 已被工单带走的记在 allocated_material_qty / allocated_material_cost；逐张管理的板材走这批里的领板批次（erp_mfg_cutting_batches.cutting_run_id）。
+ * 工单下料点「已备料」时按件数从这里领，带走的工时 = 这批总工时 × 领走件数 ÷ 这批总件数，料和成本同样按件数带走（明细见 erp_mfg_cutting_run_allocations）。
  */
 return new class extends InitialTableMigration
 {
@@ -35,6 +37,8 @@ CREATE TABLE `erp_mfg_cutting_runs` (
   `allocated_pieces` int(10) unsigned NOT NULL DEFAULT '0',
   `labor_minutes` decimal(12,2) NOT NULL DEFAULT '0.00',
   `allocated_minutes` decimal(14,4) NOT NULL DEFAULT '0.0000',
+  `material_cost_amount` decimal(18,4) NOT NULL DEFAULT '0.0000',
+  `inventory_issue_transaction_id` bigint(20) unsigned DEFAULT NULL,
   `started_by_legacy_id` bigint(20) unsigned DEFAULT NULL,
   `started_by_name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `started_at` timestamp NULL DEFAULT NULL,
