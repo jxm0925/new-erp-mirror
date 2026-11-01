@@ -295,7 +295,7 @@ class ErpApprovalConfigurationSeeder extends Seeder
                     'type' => 'role',
                     'value' => 'finance_manager',
                 ], 'finance'),
-                $this->flowNode('fulfillment', '履约复核', 'fulfillment', 'sales_order.change.approve_fulfillment', 12, [
+                $this->flowNode('fulfillment', '库存交付审核', 'fulfillment', 'sales_order.change.approve_fulfillment', 12, [
                     'type' => 'department_principal',
                     'value' => 'task_department',
                     'label' => '业务发起人所属部门负责人',

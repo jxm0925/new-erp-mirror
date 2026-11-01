@@ -1,7 +1,14 @@
 {
-  "navigationBarTitleText": "开料",
-  "navigationBarBackgroundColor": "#ffffff",
-  "navigationBarTextStyle": "black",
+  "navigationBarTitleText": "随单开料",
+  "navigationBarBackgroundColor": "#d81e06",
+  "navigationBarTextStyle": "white",
   "enablePullDownRefresh": true,
-  "usingComponents": { "warehouse-locator": "/components/warehouse-locator/index" }
+  "usingComponents": {
+    "van-icon": "@vant/weapp/icon/index",
+    "van-tag": "@vant/weapp/tag/index",
+    "van-empty": "@vant/weapp/empty/index",
+    "warehouse-locator": "/components/warehouse-locator/index",
+    "production-dialog": "/components/production-dialog/index",
+    "production-select": "/components/production-select/index"
+  }
 }

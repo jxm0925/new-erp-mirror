@@ -160,7 +160,7 @@ export default {
   beforeDestroy () { this.loadSequence++ },
   methods: {
     qty (value) { return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 8 }) },
-    currentShipmentLines (lines) { return (lines || []).filter(line => line.line_status !== 'replaced') },
+    currentShipmentLines (lines) { return (lines || []).filter(line => !['replaced', 'cancelled'].includes(line.line_status)) },
     time (value) { return value ? erpDateTime(value, 19) : '—' },
     statusText (value) { const status = this.states.find(row => row.value === value); return status ? status.label : value || '—' },
     serialStatus (value) { return ({ allocated: '已选设备', prepared: '待发区', repair: '返修中', shipped: '已发运', replaced: '已换机', cancelled: '已取消' })[value] || value || '—' },

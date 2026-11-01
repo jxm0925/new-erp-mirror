@@ -1,7 +1,10 @@
 {
-  "navigationBarTitleText": "板材领板／余料",
-  "navigationBarBackgroundColor": "#ffffff",
-  "navigationBarTextStyle": "black",
+  "navigationBarTitleText": "板材领板与余料",
+  "navigationBarBackgroundColor": "#d81e06",
+  "navigationBarTextStyle": "white",
   "enablePullDownRefresh": true,
-  "usingComponents": { "warehouse-locator": "/components/warehouse-locator/index" }
+  "usingComponents": {
+    "warehouse-locator": "/components/warehouse-locator/index",
+    "production-dialog": "/components/production-dialog/index"
+  }
 }

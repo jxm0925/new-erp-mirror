@@ -14,6 +14,7 @@ class SalesOrderAmountService
         if ($order->short_closed_at) return $order->fresh();
         $totals = SalesOrderLine::query()
             ->where('sales_order_id', $order->id)
+            ->where('line_status', '!=', 'removed')
             ->selectRaw("COALESCE(SUM(CASE WHEN line_type = 'deduction' THEN 0 ELSE order_qty END), 0) AS qty, COALESCE(SUM(COALESCE(amount_incl_tax, amount)), 0) AS amount")
             ->first();
 

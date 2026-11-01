@@ -151,15 +151,15 @@
               <!-- 备货数量分配 -->
               <div class="line-qty-col">
                 <div v-if="isService(row)" class="svc-status-box">
-                  <el-checkbox v-model="row.service_completed" :disabled="!editable">服务已完成</el-checkbox>
+                  <el-checkbox v-model="row.service_completed" :disabled="!editable || row.plan_locked">服务已完成</el-checkbox>
                   <span class="text-muted small">（默认勾选已履约）</span>
                 </div>
                 <template v-else>
                   <div class="qty-grid">
                     <label v-if="row.remaining_confirm_qty !== row.order_qty || !editable" class="qty-cell">
-                      <span class="qty-cell-title">本次确认</span>
+                      <span class="qty-cell-title">{{ confirmed ? '已确认' : '本次确认' }}</span>
                       <el-input-number
-                        v-if="editable"
+                        v-if="editable && !row.plan_locked"
                         v-model="row.confirm_qty"
                         size="mini"
                         :min="0"
@@ -174,7 +174,7 @@
                       <label class="qty-cell">
                         <span class="qty-cell-title">库存调拨</span>
                         <el-input-number
-                          v-if="editable"
+                          v-if="editable && !row.plan_locked"
                           v-model="row.inventory_qty"
                           size="mini"
                           :min="0"
@@ -187,7 +187,7 @@
                       <label class="qty-cell">
                         <span class="qty-cell-title">工单生产</span>
                         <el-input-number
-                          v-if="editable && !row.is_purchase_fulfilled"
+                          v-if="editable && !row.plan_locked && !row.is_purchase_fulfilled"
                           v-model="row.production_qty"
                           size="mini"
                           :min="0"
@@ -200,7 +200,7 @@
                       <label class="qty-cell">
                         <span class="qty-cell-title">采购外购</span>
                         <el-input-number
-                          v-if="editable && row.is_purchase_fulfilled"
+                          v-if="editable && !row.plan_locked && row.is_purchase_fulfilled"
                           v-model="row.purchase_qty"
                           size="mini"
                           :min="0"
@@ -214,7 +214,7 @@
                     <label v-else class="qty-cell">
                       <span class="qty-cell-title">无需交付</span>
                       <el-input-number
-                        v-if="editable"
+                        v-if="editable && !row.plan_locked"
                         v-model="row.no_delivery_qty"
                         size="mini"
                         :min="0"
@@ -264,8 +264,8 @@
               <h2 class="section-title">{{ confirmed ? '生产备货确认结果' : '备货决策联动汇总' }}</h2>
             </div>
             <div class="summary-item">
-              <span class="text-secondary">生成工单并自动下达</span>
-              <b class="sum-number text-primary">{{ confirmed ? workOrders.length : summary.production }}</b>
+              <span class="text-secondary">{{ confirmed ? '有效生产工单' : '本次生成生产工单' }}</span>
+              <b class="sum-number text-primary">{{ confirmed ? workOrders.filter(wo => wo.status !== 'cancelled').length : summary.production }}</b>
             </div>
             <div class="summary-item">
               <span class="text-secondary">锁定在库可用库存</span>
@@ -492,6 +492,8 @@ export default {
       return tags
     },
     lineResult (row) {
+      if (!this.confirmed && row.plan_locked) return '→ 已确认备货，保留原生产和交付安排，本次不重复生成'
+      if (this.confirmed && this.isPhysical(row)) return '→ 已确认备货，沿用既有生产和交付安排'
       if (this.isService(row)) return row.service_completed !== false ? '→ 确认服务已履约完成' : '→ 服务待完成'
       if (this.isNoDelivery(row)) return '→ 无需物理发运交付'
       const parts = []

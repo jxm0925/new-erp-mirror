@@ -77,7 +77,9 @@ final class ShipmentSerialApplicationService
             $this->locator((int) $payload['finished_location_id'], 'finished');
             $this->inventory->moveSalesShipmentLine($line, (int) $payload['finished_location_id'], 'repair_return', $actor);
             $ids = $line->serial_snapshot['inventory_serial_ids'] ?? [];
-            $active = ! in_array($locked->shipment_status, ['cancelled', 'shipped', 'completed'], true) && $line->line_status !== 'replaced';
+            $active = ! in_array($locked->shipment_status, ['cancelled', 'shipped', 'completed'], true)
+                && ! in_array($line->line_status, ['cancelled', 'replaced'], true)
+                && $line->reservation()->where('reservation_status', 'converted_to_shipment')->exists();
             if ($active) {
                 $stagingId = (int) data_get($line->preparation_snapshot, 'staging_location_id');
                 $this->locator($stagingId, 'shipping_staging');
@@ -86,7 +88,7 @@ final class ShipmentSerialApplicationService
                 app(ShipmentPackingApplicationService::class)->resetSerialRound($line);
             } else {
                 InventorySerial::query()->whereIn('id', $ids)->update(['serial_status' => 'available', 'reserved_at' => null]);
-                if ($locked->shipment_status === 'cancelled') $this->reservations->restoreRepairedShipmentToOrder($line);
+                if ($locked->shipment_status === 'cancelled' && $line->line_status !== 'cancelled') $this->reservations->restoreRepairedShipmentToOrder($line);
             }
             $repair->update(['returned_at' => now()]);
             MfgWorkOrderUnit::query()->whereKey($repair->unit_id)->update(['status' => 'stored', 'warehouse_id' => $line->warehouse_id, 'location_id' => $line->location_id]);

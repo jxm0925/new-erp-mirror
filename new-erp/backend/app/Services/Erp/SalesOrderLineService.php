@@ -26,16 +26,20 @@ class SalesOrderLineService
         array $lines,
         array $deletedLineIds = [],
         ?string $draftToken = null,
-        string $operator = 'system'
+        string $operator = 'system',
+        array $preservedLineIds = []
     ): void {
         $this->deleteExplicitLines($order, $deletedLineIds, $operator);
 
         foreach (array_values($lines) as $index => $line) {
             $line = app(SalesCostVisibilityService::class)->redact($line);
             $existing = !empty($line['id'])
-                ? SalesOrderLine::query()->where('sales_order_id', $order->id)->lockForUpdate()->find($line['id'])
+                ? $order->lines()->lockForUpdate()->findOrFail($line['id'])
                 : null;
-            $data = $this->payload($order, $line, $index, $existing);
+            // 新增其他商品或只改价/增量时，原商品的物料、单位和生产快照必须继续有效。
+            $data = $existing && in_array((int) $existing->id, $preservedLineIds, true)
+                ? app(SalesOrderChangeApplicationService::class)->normalizeLine($existing, $line) + ['line_no' => $index + 1, 'sort_order' => (int) ($line['sort_order'] ?? $index)]
+                : $this->payload($order, $line, $index, $existing);
 
             if ($existing) {
                 $data = app(SalesCostVisibilityService::class)->preserveStoredCosts($data, $existing->attributesToArray());
@@ -58,11 +62,18 @@ class SalesOrderLineService
     {
         if (!$ids) return;
 
-        $lines = SalesOrderLine::query()
-            ->where('sales_order_id', $order->id)
+        $lines = $order->lines()
             ->whereIn('id', $ids)
             ->lockForUpdate()
             ->get();
+        if ($order->order_status === 'confirmed') {
+            if ($lines->count() !== count(array_unique($ids)) || SalesOrderFulfillmentPolicy::hasShipmentFacts($order)) {
+                throw ValidationException::withMessages(['deleted_line_ids' => '订单行已变化或已有实际发货，请刷新后重新处理。']);
+            }
+            // 正式行保留原金额、配置和外键，旧发货、工单及附件仍可追溯；当前订单不再计入该行。
+            foreach ($lines as $line) $line->update(['line_status' => 'removed']);
+            return;
+        }
         if ($lines->count() !== count(array_unique($ids)) || $lines->contains(fn ($line) => $line->line_status !== 'open')) {
             // Confirmed rows retain demand and fulfillment history. The draft
             // deletion path cannot pretend that an accepted line was removed.

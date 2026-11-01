@@ -328,6 +328,7 @@ export default {
       );
     },
     readonlyResultSubtitle() {
+      if (this.task.task_status === "CONFLICTED") return (this.task.result_snapshot || {}).conflict_reason || "订单状态已变化，请重新提交修改。";
       return this.task.task_status === "PENDING"
         ? "当前账号不可处理本节点，请由具备对应审核权限且非发起人的审核人处理。"
         : "该任务已完成决策，仅保留审核结果、进度与操作记录供追溯。";
@@ -415,13 +416,13 @@ export default {
         state:
           this.task.task_status === "APPROVED"
             ? "done"
-            : this.task.task_status === "REJECTED"
+            : ["REJECTED", "CONFLICTED", "CANCELLED"].includes(this.task.task_status)
             ? "failed"
             : "wait",
         caption:
           this.task.task_status === "APPROVED"
             ? "已完成"
-            : this.task.task_status === "REJECTED"
+            : ["REJECTED", "CONFLICTED", "CANCELLED"].includes(this.task.task_status)
             ? "已终止"
             : "等待中",
       });
@@ -469,11 +470,13 @@ export default {
           decision,
           comment: this.comment,
         });
-        this.$message.success(
-          decision === "approve" ? "当前节点已通过" : "审核任务已驳回"
-        );
         this.comment = "";
         await this.load();
+        if (this.task.task_status === "CONFLICTED") {
+          this.$message.warning((this.task.result_snapshot || {}).conflict_reason || "订单状态或审核要求已变化，请重新提交修改");
+        } else {
+          this.$message.success(decision === "approve" ? "当前节点已通过" : "审核任务已驳回");
+        }
       } catch (e) {
         if (e !== "cancel" && e !== "close" && e.userMessage)
           this.$message.error(e.userMessage);
@@ -554,9 +557,8 @@ export default {
     },
     requirementText(row) {
       const req = row.approval_requirements || [];
-      if (req.includes("finance")) return "高风险，重点审核";
-      if (req.includes("fulfillment")) return "履约复核";
-      return "业务确认";
+      const labels = { business: "业务审核", finance: "财务审核", fulfillment: "库存交付审核" };
+      return req.map(type => labels[type] || type).join(" + ") || "无需审核";
     },
     requirementTag(row) {
       return (row.approval_requirements || []).includes("finance")
@@ -570,7 +572,7 @@ export default {
         {
           "sales_order.change.approve_business": "销售负责人 / 管理员",
           "sales_order.change.approve_finance": "财务负责人",
-          "sales_order.change.approve_fulfillment": "履约负责人",
+          "sales_order.change.approve_fulfillment": "库存交付负责人",
         }[v] ||
         v ||
         "-"

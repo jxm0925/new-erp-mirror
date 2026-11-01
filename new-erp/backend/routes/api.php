@@ -60,6 +60,7 @@ require __DIR__.'/erp_sales_finance.php';
 require __DIR__.'/erp_purchase_payments.php';
 require __DIR__.'/erp_supplier_finance.php';
 require __DIR__.'/erp_finance_dashboard.php';
+require __DIR__.'/erp_assembly_display.php';
 
 Route::get('v1/erp/console/dashboard', [\App\Http\Controllers\Api\V1\Erp\ConsoleDashboardController::class, 'show']);
 

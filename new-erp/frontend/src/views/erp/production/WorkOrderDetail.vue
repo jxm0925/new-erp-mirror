@@ -140,8 +140,11 @@
             </div>
           </div>
           <div class="meta-cell">
-            <span class="meta-label">SKU 规格编码</span>
-            <div class="meta-val code-mono" :title="wo.sku_code || '—'">{{ wo.sku_code || '—' }}</div>
+            <span class="meta-label">规格型号 / SKU</span>
+            <div class="meta-val" :title="workOrderSpecText">
+              <span>{{ workOrderSpecText }}</span>
+              <span v-if="wo.sku_code" class="code-mono text-muted ml-1">({{ wo.sku_code }})</span>
+            </div>
           </div>
           <div class="meta-cell">
             <span class="meta-label">工艺路线</span>
@@ -469,7 +472,7 @@
                     <table class="kitting-mat-table">
                       <thead>
                         <tr>
-                          <th class="col-mat-name">物料名称</th>
+                          <th class="col-mat-name">物料名称 / 规格型号</th>
                           <th class="col-mat-qty">齐套 / 需用数量</th>
                           <th class="col-mat-state">状态与提示</th>
                           <th class="col-mat-act">操作</th>
@@ -477,12 +480,19 @@
                       </thead>
                       <tbody>
                         <tr
-                          v-for="m in k.materials"
-                          :key="m.id || m.component_item_id"
+                          v-for="(m, mIdx) in k.materials"
+                          :key="m.id || `${m.component_item_id}-${mIdx}`"
                           :class="{ 'row-shortage': m.participates_in_kitting && m.shortage_qty > 0 }"
                         >
-                          <td class="col-mat-name" :title="m.component_item_name">
-                            <span class="mat-name-text">{{ m.component_item_name }}</span>
+                          <td class="col-mat-name" :title="`${m.component_item_name} ${materialSpecText(m)}`">
+                            <div class="mat-name-wrap">
+                              <span class="mat-name-text">{{ m.component_item_name }}</span>
+                              <span v-if="m.component_item_code" class="mat-code-sub code-mono">{{ m.component_item_code }}</span>
+                            </div>
+                            <div v-if="materialSpecText(m)" class="mat-spec-sub">
+                              <span class="mat-spec-tag">规格型号</span>
+                              <span>{{ materialSpecText(m) }}</span>
+                            </div>
                           </td>
                           <td class="col-mat-qty">
                             <span v-if="!m.participates_in_kitting" class="text-muted mat-auxiliary">辅料（免齐套）</span>
@@ -550,6 +560,7 @@
                     <div class="related-doc-main">
                       <span class="mat-name">
                         {{ c.is_rework ? '返工工单' : '半成品工单' }} <b class="code-mono lk-text" @click="openWorkOrder(c.id)">{{ c.work_order_no }}</b> · {{ c.item_name }}
+                        <span v-if="c.specification || c.item_spec" class="text-muted">（{{ c.specification || c.item_spec }}）</span>
                       </span>
                       <span v-if="c.is_rework" class="mat-qty-inline code-mono">返工完 {{ qty(c.completed_qty) }} / {{ qty(c.planned_qty) }} {{ c.unit_name || '' }}</span>
                       <span v-else class="mat-qty-inline code-mono">入库 {{ qty(c.stored_qty) }} / {{ qty(c.planned_qty) }} {{ c.unit_name || '' }}</span>
@@ -989,7 +1000,7 @@
         <el-form-item
           v-for="row in serialReceive.rows"
           :key="row.material_id"
-          :label="`${row.component_item_name}（每台 ${qty(row.per_unit_qty)}，未收 ${qty(row.remaining_qty)} ${row.unit_name || ''}）`"
+          :label="`${row.component_item_name}${row.specification ? ' [' + row.specification + ']' : ''}（每台 ${qty(row.per_unit_qty)}，未收 ${qty(row.remaining_qty)} ${row.unit_name || ''}）`"
         >
           <el-select v-model="serialReceive.picked[row.material_id]" multiple filterable placeholder="按装配顺序选择编号，不选由系统分配">
             <el-option
@@ -1183,6 +1194,10 @@ export default {
     productName() {
       return this.wo ? (this.wo.product_name || this.wo.item_name) : ''
     },
+    workOrderSpecText() {
+      if (!this.wo) return '—'
+      return this.wo.specification || this.wo.item_spec || this.wo.sku_name || '—'
+    },
     heroPill() {
       return HERO_PILL[this.wo.status] || 'p-n'
     },
@@ -1235,6 +1250,10 @@ export default {
     money,
     shortDate,
     bomLabel,
+    materialSpecText(m) {
+      if (!m) return ''
+      return m.specification || [m.component_item_spec, m.material_grade, m.cut_spec].filter(Boolean).join(' · ')
+    },
     isFullSpanKittingCard(idx, k) {
       const total = this.materialKittingOps.length
       if (total === 1) return true
@@ -2411,19 +2430,51 @@ export default {
 }
 
 .kitting-mat-table .col-mat-name {
-  width: 36%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  width: 40%;
+}
+
+.mat-name-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.mat-code-sub {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.mat-spec-sub {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 3px;
+  font-size: 11px;
+  color: #334155;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 3px;
+  padding: 1px 6px;
+  word-break: break-all;
+}
+
+.mat-spec-tag {
+  font-size: 10px;
+  color: #64748b;
+  background: #e2e8f0;
+  padding: 0 4px;
+  border-radius: 2px;
+  flex-shrink: 0;
 }
 
 .kitting-mat-table .col-mat-qty {
-  width: 24%;
+  width: 22%;
   white-space: nowrap;
 }
 
 .kitting-mat-table .col-mat-state {
-  width: 26%;
+  width: 24%;
 }
 
 .kitting-mat-table .col-mat-act {

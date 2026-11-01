@@ -63,9 +63,11 @@ final class MaterialReturnService
             if ((float) $m->issued_qty <= self::EPS && ! $this->sources($wo, $m)->count()) continue;
             $item = Item::query()->find($m->component_item_id);
             $mode = $item ? $item->serialTrackingMode() : 'none';
+            $ms = WorkOrderQueryService::materialSpecInfo($item);
             // 可选编号的料：有编号领出的按编号退，无编号领出的按数量退，两部分分开算。
             $row = ['material_id' => (int) $m->id, 'component_item_id' => (int) $m->component_item_id, 'component_item_name' => $m->component_item_name,
-                'component_item_code' => $m->component_item_code, 'unit_name' => $m->unit_name, 'required_qty' => (float) $m->required_qty,
+                'component_item_code' => $m->component_item_code, 'component_item_spec' => $ms['component_item_spec'], 'material_grade' => $ms['material_grade'],
+                'specification' => $ms['specification'], 'unit_name' => $m->unit_name, 'required_qty' => (float) $m->required_qty,
                 'issued_qty' => (float) $m->issued_qty, 'serial_mode' => $mode, 'by_number' => $mode !== 'none', 'by_qty' => $mode !== 'required', 'limits' => [], 'serials' => [],
                 'made' => $item && $this->isMade($item), 'rework_operations' => $item && $this->isMade($item) ? $this->reworkStarts($wo, $m)['operations'] : []];
             if ($mode !== 'none') {

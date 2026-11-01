@@ -1,6 +1,9 @@
 {
   "navigationBarTitleText": "集中开料",
-  "navigationBarBackgroundColor": "#ffffff",
-  "navigationBarTextStyle": "black",
-  "enablePullDownRefresh": true
+  "navigationBarBackgroundColor": "#d81e06",
+  "navigationBarTextStyle": "white",
+  "enablePullDownRefresh": true,
+  "usingComponents": {
+    "production-dialog": "/components/production-dialog/index"
+  }
 }

@@ -123,7 +123,7 @@ final class WarehouseWorkspaceService
         if ($lines) {
             [$table, $foreign, $item, $quantity] = $lines;
             $parent = 'd.id';
-            $active = $kind === 'sales_shipment' ? " AND l.line_status <> 'replaced'" : '';
+            $active = $kind === 'sales_shipment' ? " AND l.line_status NOT IN ('replaced','cancelled')" : '';
             $columns['item_id'] = "(SELECT MIN(l.$item) FROM $table l WHERE l.$foreign=$parent$active)";
             $columns['item_count'] = "(SELECT COUNT(DISTINCT l.$item) FROM $table l WHERE l.$foreign=$parent$active)";
             $columns['quantity'] = "(SELECT SUM(l.$quantity) FROM $table l WHERE l.$foreign=$parent$active)";
@@ -131,11 +131,12 @@ final class WarehouseWorkspaceService
         if ($done) $columns['sort_at'] = $columns['completed_at'];
         if ($keyword = trim((string) ($filters['keyword'] ?? ''))) {
             $like = '%'.$keyword.'%';
-            $query->where(function ($q) use ($columns, $lines, $like) {
+            $query->where(function ($q) use ($columns, $lines, $like, $kind) {
                 foreach (['number', 'related_number', 'work_order_no', 'party'] as $field) $q->orWhereRaw($columns[$field].' LIKE ?', [$like]);
                 if ($lines) {
                     [$table, $foreign, $item] = $lines;
                     $q->orWhereExists(fn ($i) => $i->selectRaw('1')->from($table.' as search_line')->join('erp_items as search_item', 'search_item.id', '=', 'search_line.'.$item)
+                        ->when($kind === 'sales_shipment', fn ($line) => $line->whereNotIn('search_line.line_status', ['replaced', 'cancelled']))
                         ->whereColumn('search_line.'.$foreign, 'd.id')->where(fn ($w) => $w->where('search_item.item_code', 'like', $like)->orWhere('search_item.item_name', 'like', $like)->orWhere('search_item.spec', 'like', $like)));
                 } else $q->orWhereExists(fn ($i) => $i->selectRaw('1')->from('erp_items as search_item')->whereRaw('search_item.id = '.$columns['item_id'])
                     ->where(fn ($w) => $w->where('search_item.item_code', 'like', $like)->orWhere('search_item.item_name', 'like', $like)->orWhere('search_item.spec', 'like', $like)));

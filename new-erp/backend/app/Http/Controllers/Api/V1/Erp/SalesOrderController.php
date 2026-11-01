@@ -179,7 +179,8 @@ class SalesOrderController extends Controller
         $order = SalesOrder::with(['lines', 'shipments', 'salesReturns'])->findOrFail($id);
         $this->abortUnlessOrderVisible($request, $order);
         $this->authorizeConfirmedEdit($request, $order, $service);
-        $payload = $this->attachCurrentOperator($this->validateOrder($request, true), $request);
+        $payload = $this->attachCurrentOperator($this->validateOrder($request, true), $request)
+            + $request->validate(['expected_version' => 'required|integer|min:1']);
         $this->assertTradePlatform($payload, $order, true);
         return response()->json(['data' => $service->preview($order, $payload)]);
     }
@@ -190,14 +191,15 @@ class SalesOrderController extends Controller
         $order = SalesOrder::findOrFail($id);
         $this->abortUnlessOrderVisible($request, $order);
         $this->authorizeConfirmedEdit($request, $order, $service);
-        $payload = $this->attachCurrentOperator($this->validateOrder($request, true), $request);
+        $payload = $this->attachCurrentOperator($this->validateOrder($request, true), $request)
+            + $request->validate(['expected_version' => 'required|integer|min:1']);
         $this->assertTradePlatform($payload, $order, true);
         $payload['change_reason'] = $request->validate(['change_reason' => 'nullable|string|max:500'])['change_reason'] ?? null;
         $result = $service->submit($id, $payload, $this->operatorName($request), app(AuthContextService::class)->currentUser($request));
-        return response()->json(['message' => $result['mode'] === 'candidate' ? '工单已发布，订单修改已提交审核，正式订单暂未变更。' : '订单修改已立即生效并完整留痕。', 'data' => $result]);
+        return response()->json(['message' => $result['mode'] === 'candidate' ? '订单修改已提交审核，正式订单暂未变更。' : '订单修改已立即生效并完整留痕。', 'data' => $result]);
     }
 
-    /** 工单发布前用订单编辑权限即可修改；发布后必须具备订单变更权限（并走审核）。 */
+    /** 未开工且未安排待发时允许订单编辑权限；进入执行后需要订单变更权限。 */
     private function authorizeConfirmedEdit(Request $request, SalesOrder $order, SalesOrderEditImpactService $service): void
     {
         $this->abortUnlessAnyPermission($request, $service->productionReleased($order)
@@ -339,7 +341,7 @@ class SalesOrderController extends Controller
         $confirmed = $this->performFormalConfirm($request, $id);
         $result['order'] = $confirmed;
         $result['confirmed'] = true;
-        $result['message'] = '订单已确认。请核实订单后执行“生产确认”，工单发布前订单可以直接修改。';
+        $result['message'] = '订单已确认。请核实订单后执行“生产确认”，生产尚未开工且未安排发货时可以直接修改。';
 
         return response()->json([
             'message' => $result['message'],
@@ -1487,7 +1489,7 @@ class SalesOrderController extends Controller
             'cancel' => $order->order_status !== 'cancelled'
                 && in_array($order->shipment_status, ['not_shipped', 'not_required'], true)
                 && in_array('sales_order.cancel', $codes, true),
-            // 工单发布前是销售核实期，有订单编辑权限即可直接改；发布后必须有订单变更权限并走审核。
+            // 未开工且未安排发货时可用编辑权限；进入执行后需要变更权限并核对修改影响。
             'edit' => ($draft && in_array('sales_order.edit_draft', $codes, true))
                 || (($changeEligibility['allowed'] ?? ($order->order_status === 'confirmed' && in_array($order->shipment_status, ['not_shipped', 'not_required'], true)))
                     && ($released ? $canChange : ($canChange || in_array('sales_order.edit_draft', $codes, true)))),
@@ -2021,6 +2023,7 @@ class SalesOrderController extends Controller
     private function refreshOrderTotals(int $orderId): void
     {
         $totals = SalesOrderLine::where('sales_order_id', $orderId)
+            ->where('line_status', '!=', 'removed')
             ->selectRaw("COALESCE(SUM(CASE WHEN line_type = 'deduction' THEN 0 ELSE order_qty END),0) qty, COALESCE(SUM(amount),0) amount")
             ->first();
         $order = SalesOrder::findOrFail($orderId);

@@ -179,11 +179,12 @@ class InventoryReservationService
         });
     }
 
-    public function releaseForSalesOrder(SalesOrder $order, string $reason): int
+    public function releaseForSalesOrder(SalesOrder $order, string $reason, ?array $lineIds = null): int
     {
-        return DB::transaction(function () use ($order, $reason) {
+        return DB::transaction(function () use ($order, $reason, $lineIds) {
             $reservations = InventoryReservation::where('source_type', InventoryReservation::SOURCE_SALES_ORDER)
                 ->where('source_order_id', $order->id)
+                ->when($lineIds !== null, fn ($query) => $query->whereIn('source_order_line_id', $lineIds))
                 ->whereIn('reservation_status', ['active', 'partially_released'])
                 ->lockForUpdate()
                 ->get();
@@ -192,6 +193,7 @@ class InventoryReservationService
                 $reservation->update(['reservation_status' => 'released', 'released_at' => now(), 'release_reason' => $reason]);
             }
             SalesOrderFulfillment::where('sales_order_id', $order->id)
+                ->when($lineIds !== null, fn ($query) => $query->whereIn('sales_order_line_id', $lineIds))
                 ->where('reservation_status', 'reserved')
                 ->update(['reservation_status' => 'released']);
             return $reservations->count();

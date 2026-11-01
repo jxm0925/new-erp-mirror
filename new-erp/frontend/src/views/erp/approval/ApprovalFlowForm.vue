@@ -230,6 +230,7 @@
               ><el-input v-model.trim="selected.name" :disabled="readonly"
             /></el-form-item>
             <el-form-item label="节点类型"><el-select v-model="selected.node_type" :disabled="readonly"><el-option v-for="item in options.node_types" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item>
+            <el-form-item v-if="definition.business_object_code === 'SALES_ORDER_CHANGE' && selected.node_type === 'APPROVAL'" label="审核类别"><el-select v-model="selected.approval_type" :disabled="readonly"><el-option v-for="item in options.approval_types" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item>
             <h3>节点进入条件</h3>
             <p class="section-help">
               条件不满足时该节点记为 SKIPPED，不影响流程启动。
@@ -761,6 +762,7 @@ export default {
       trigger_modes: [],
       execution_modes: [],
       node_types: [],
+      approval_types: [],
     },
     scope: { type: "all", department_ids: [] },
     form: {

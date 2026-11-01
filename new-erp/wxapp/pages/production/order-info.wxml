@@ -3,7 +3,7 @@
   <view wx:if="{{info}}" class="mt-card oi-anchor">
     <view class="mt-card-title"><text>订单信息</text><text class="mt-muted mono">{{info.sales_order_no}}{{info.line_no ? ' 第' + info.line_no + '行' : ''}}</text></view>
     <view wx:if="{{info.changed && info.changed.length}}" class="mt-error">
-      <view>销售开单后改过，按新的做：</view>
+      <view>销售订单已变更，请按最新要求执行：</view>
       <view wx:for="{{info.changed}}" wx:for-item="c" wx:key="field">{{c.label}}：{{c.before}} → {{c.after}}</view>
     </view>
     <view class="mt-kv"><text class="k">客户</text><text class="v">{{info.customer_name || '-'}}</text></view>

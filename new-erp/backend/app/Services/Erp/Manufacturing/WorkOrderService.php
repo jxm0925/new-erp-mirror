@@ -193,7 +193,9 @@ final class WorkOrderService
             $item = $items->get($itemId);
             $k = $kit->where('component_item_id', (int) $itemId);
             $gap = round(max(0, (float) $k->sum('shortage_qty') - (float) ($open[$itemId] ?? 0) - (float) ($held[$itemId] ?? 0)), 4);
+            $ms = WorkOrderQueryService::materialSpecInfo($item);
             return ['component_item_id' => (int) $itemId, 'component_item_name' => $item->item_name, 'component_item_code' => $item->item_code,
+                'component_item_spec' => $ms['component_item_spec'], 'material_grade' => $ms['material_grade'], 'specification' => $ms['specification'],
                 'unit_name' => $rows->first()->unit_name ?: $item->unit?->unit_name, 'required_qty' => round($rows->sum(fn ($m) => (float) $m->required_qty), 4),
                 'issued_qty' => round($rows->sum(fn ($m) => (float) $m->issued_qty), 4), 'available_qty' => round((float) ($k->first()['available_qty'] ?? 0), 4),
                 'open_qty' => (float) ($open[$itemId] ?? 0), 'held_qty' => (float) ($held[$itemId] ?? 0), 'gap_qty' => $gap,
@@ -397,10 +399,12 @@ final class WorkOrderService
     }
 
     /** 订单取消或变更时：未开工的工单一起取消；已开工的留给生产主管处理并记一笔。 */
-    public function cancelForSalesOrder(SalesOrder $order, string $reason, ?object $actor): array
+    public function cancelForSalesOrder(SalesOrder $order, string $reason, ?object $actor, ?array $lineIds = null): array
     {
         $result = ['cancelled' => [], 'kept' => []];
-        $orders = MfgWorkOrder::query()->where('sales_order_id', $order->id)->whereNotIn('status', ['completed', 'closed', 'cancelled'])->lockForUpdate()->get();
+        $orders = MfgWorkOrder::query()->where('sales_order_id', $order->id)
+            ->when($lineIds !== null, fn ($query) => $query->whereIn('sales_order_line_id', $lineIds))
+            ->whereNotIn('status', ['completed', 'closed', 'cancelled'])->lockForUpdate()->get();
         foreach ($orders as $wo) {
             if ($wo->started_at) {
                 // 已开工的不能取消：转成备货工单继续做，做完的设备进公共库存，不再留给原订单。

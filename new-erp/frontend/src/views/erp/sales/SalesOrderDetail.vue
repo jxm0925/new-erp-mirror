@@ -704,9 +704,9 @@ export default {
       const actions = this.order.allowed_actions || {}
       if (this.order.order_status === 'draft') return { type: 'info', icon: 'el-icon-edit-outline', text: '草稿阶段：订单可随意修改。核对无误后点击“确认订单”，确认不会生成工单。' }
       if (this.order.order_status !== 'confirmed') return null
-      if (actions.production_released) return { type: 'warning', icon: 'el-icon-lock', text: '工单已发布：订单不能随意修改。如需修改，请点击“申请修改”，说明原因并提交，经相关负责人审核通过后才会生效。' }
-      if (['pending', 'blocked'].includes(this.order.production_confirm_status)) return { type: 'success', icon: 'el-icon-s-flag', text: '核实期：订单已确认，尚未生成工单，此阶段可直接修改订单。核实无误后，请点击“生产确认”生成待发布工单。' }
-      if (this.order.production_confirm_status === 'confirmed') return { type: 'success', icon: 'el-icon-s-flag', text: '生产确认完成：已记录需生产数量，订单仍可直接修改（修改后需重新生产确认）。' }
+      if (actions.production_released) return { type: 'warning', icon: 'el-icon-lock', text: '生产已开工或已安排发货：可申请修改，需要审核的内容经相关负责人审核通过后生效。已实际发运或提货的订单请走售后流程。' }
+      if (['pending', 'blocked'].includes(this.order.production_confirm_status)) return { type: 'success', icon: 'el-icon-s-flag', text: '核实期：订单已确认，尚未生成工单，金额及结算条件修改需财务审核，其他修改可直接保存。核实无误后，请点击“生产确认”生成待发布工单。' }
+      if (this.order.production_confirm_status === 'confirmed') return { type: 'success', icon: 'el-icon-s-flag', text: '生产确认完成：已记录需生产数量，金额及结算条件修改需财务审核；影响生产的修改生效后需重新生产确认。' }
       return null
     },
     currentVersion() { return Math.max(1, ...(this.order.versions || []).map(item => Number(item.version_no || 0))) },
@@ -785,7 +785,7 @@ export default {
     async doConfirm() {
       // 一步确认：服务端先做确认前检查，通过后立即正式确认；未通过不改变订单状态。
       try {
-        await this.$confirm('确认后将锁定本次销售单位、默认库存物料、物料基本单位和单位换算比例，订单进入核实期：此时不会生成工单，工单发布前仍可直接修改订单。系统会先自动检查，是否继续？', '确认订单', { type: 'warning' })
+        await this.$confirm('确认后将锁定本次销售单位、默认库存物料、物料基本单位和单位换算比例，订单进入核实期：此时不会生成工单，金额及结算条件修改需财务审核，其他修改按实际影响处理。系统会先自动检查，是否继续？', '确认订单', { type: 'warning' })
       } catch (error) {
         return
       }
@@ -974,7 +974,7 @@ export default {
     changeSnapshotTotal(snapshot) { return ((snapshot && snapshot.lines) || []).reduce((sum, line) => sum + Number(line.amount_incl_tax || line.amount || 0), 0) },
     openChange(row) { this.selectedChange = row; this.changeDetailVisible = true },
     changeDiffRows(row) { return row && Array.isArray(row.structured_diffs) ? row.structured_diffs : [] },
-    approvalTypeText(value) { return ({business:'业务审核',finance:'财务审核',fulfillment:'库存与交付复核'})[value] || value },
+    approvalTypeText(value) { return ({business:'业务审核',finance:'财务审核',fulfillment:'库存交付审核'})[value] || value },
     candidateApprovalProgress(row) { const task=row.approval_task||{}; const nodes=task.nodes||[]; if (!nodes.length) return (row.approvals||[]).map(item=>`${this.approvalTypeText(item.approval_type)}：${this.approvalStatusText(item.approval_status)}`).join('；') || '-'; return nodes.map(item=>`${item.node_name}：${this.approvalStatusText(item.node_status)}`).join('；') },
     openCandidate(row) { this.selectedCandidate = row; this.candidateDetailVisible = true },
     changeEffectText(row) {

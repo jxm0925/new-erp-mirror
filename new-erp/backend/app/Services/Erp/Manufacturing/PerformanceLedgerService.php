@@ -625,7 +625,7 @@ final class PerformanceLedgerService
             $this->scraps[(int) $r->work_order_id][] = [(string) $r->d, (float) $r->n];
         // 订单行金额（折人民币）和数量
         $orders = DB::table('erp_sales_orders')->whereIn('id', DB::table('erp_sales_shipments')->select('sales_order_id'))->get()->keyBy('id');
-        foreach (DB::table('erp_sales_order_lines')->whereIn('sales_order_id', $orders->keys()->all() ?: [0])->get() as $l) {
+        foreach (DB::table('erp_sales_order_lines')->whereIn('sales_order_id', $orders->keys()->all() ?: [0])->where('line_status', '!=', 'removed')->get() as $l) {
             $o = $orders[$l->sales_order_id];
             $foreign = strtoupper((string) ($o->currency ?: 'CNY')) !== strtoupper((string) ($o->base_currency ?: 'CNY'));
             $rate = ! $foreign ? '1' : (bccomp((string) ($o->business_exchange_rate ?? 0), '0', 10) > 0 ? (string) $o->business_exchange_rate : null);
@@ -636,6 +636,7 @@ final class PerformanceLedgerService
         // 出库（发运）事实
         $shipDates = [];
         $ships = DB::table('erp_sales_shipment_lines as l')->join('erp_sales_shipments as s', 's.id', '=', 'l.shipment_id')
+            ->whereNotIn('l.line_status', ['cancelled', 'replaced'])
             ->where('s.shipment_status', '!=', 'cancelled')->where(fn ($w) => $w->whereNotNull('l.dispatched_at')->orWhereIn('s.shipment_status', ['shipped', 'completed']))
             ->get(['l.shipment_id', 's.shipment_no', 'l.sales_order_line_id', 'l.item_id', 'l.batch_no', 'l.base_qty', DB::raw('DATE(COALESCE(l.dispatched_at, s.shipped_at, s.updated_at)) AS d')]);
         foreach ($ships as $s) {
@@ -801,10 +802,16 @@ final class PerformanceLedgerService
             $date = $shipDates[(int) $op->shipment_id] ?? null;
             if ($date) {
                 $ids = array_map('intval', json_decode((string) $op->packing_content_ids, true) ?: []);
-                foreach (DB::table('erp_shipment_packing_contents')->whereIn('id', $ids ?: [0])->get() as $c) {
+                // 历史成员不改写；提成事件只接本行实际发运，不能借同包裹其他商品发运生效。
+                $contents = DB::table('erp_shipment_packing_contents as c')->join('erp_sales_shipment_lines as sl', 'sl.id', '=', 'c.shipment_line_id')
+                    ->join('erp_sales_shipments as s', 's.id', '=', 'c.shipment_id')->whereIn('c.id', $ids ?: [0])
+                    ->whereNotIn('sl.line_status', ['cancelled', 'replaced'])
+                    ->where(fn ($query) => $query->whereNotNull('sl.dispatched_at')->orWhereIn('s.shipment_status', ['shipped', 'completed']))
+                    ->get(['c.*', 'sl.dispatched_at']);
+                foreach ($contents as $c) {
                     $line = $this->lines[(int) $c->sales_order_line_id] ?? null;
                     if (! $line || bccomp($line['qty'], '0', 8) <= 0) continue;
-                    $events[] = ['date' => $date, 'line_id' => (int) $c->sales_order_line_id, 'order_no' => $line['order_no'], 'shipment_no' => $op->shipment_no,
+                    $events[] = ['date' => $c->dispatched_at ? substr((string) $c->dispatched_at, 0, 10) : $date, 'line_id' => (int) $c->sales_order_line_id, 'order_no' => $line['order_no'], 'shipment_no' => $op->shipment_no,
                         'qty' => 0.0, 'lf' => bcdiv((string) $c->base_qty, $line['qty'], 12)];
                 }
                 if ($events) $events[0]['qty'] = 1.0;

@@ -74,7 +74,7 @@ class SalesOrderEditImpactService
     private const APPROVAL_NEUTRAL_DESCRIPTIONS = [
         'business' => '本次修改未触发业务审核条件。',
         'finance' => '本次修改未触发财务审核条件。',
-        'fulfillment' => '本次修改未触发库存与交付复核条件。',
+        'fulfillment' => '本次修改未触发库存交付审核条件。',
     ];
 
     public function __construct(
@@ -132,10 +132,11 @@ class SalesOrderEditImpactService
         }
     }
 
-    /** 订单关联工单是否已开工：开工前自由修改（未开工工单随订单重新生成），开工后修改必须审核。 */
+    /** 已开工或已安排待发时进入变更复核阶段；保留现有 production_released 接口标识。 */
     public function productionReleased(SalesOrder $order): bool
     {
-        return app(\App\Services\Erp\Manufacturing\WorkOrderService::class)->salesOrderHasStartedWork((int) $order->id);
+        return app(\App\Services\Erp\Manufacturing\WorkOrderService::class)->salesOrderHasStartedWork((int) $order->id)
+            || $order->shipments()->whereIn('shipment_status', ['draft', 'pending_outbound', 'prepared'])->exists();
     }
 
     public function submit(int $orderId, array $payload, string $operator, ?object $actor = null): array
@@ -149,15 +150,15 @@ class SalesOrderEditImpactService
                 throw ValidationException::withMessages(['order' => '未检测到需要保存的订单修改。']);
             }
 
+            if (SalesOrderChangeCandidate::query()->where('sales_order_id', $order->id)->where('candidate_status', 'PENDING_APPROVAL')->exists()) {
+                throw ValidationException::withMessages(['order' => '当前订单已有待审核的修改版本，请先完成或拒绝该版本。']);
+            }
+
             if (!$impact['requires_approval']) {
                 $this->applyOfficial($order, $candidatePayload, $impact, $operator, null, trim((string) ($payload['change_reason'] ?? '')), $actor);
                 return ['mode' => 'immediate', 'impact' => $impact, 'order' => $order->fresh(['lines.product', 'lines.sku'])];
             }
 
-            if (SalesOrderChangeCandidate::query()->where('sales_order_id', $order->id)
-                ->where('candidate_status', 'PENDING_APPROVAL')->exists()) {
-                throw ValidationException::withMessages(['order' => '当前订单已有待审核的修改版本，请先完成或拒绝该版本。']);
-            }
             $reason = trim((string) ($payload['change_reason'] ?? ''));
             if ($reason === '') throw ValidationException::withMessages(['change_reason' => '提交审核必须填写变更原因。']);
             $submittedAt = now();
@@ -203,6 +204,14 @@ class SalesOrderEditImpactService
             if ($approval->approval_status !== 'PENDING') throw ValidationException::withMessages(['approval' => '该审核节点已处理。']);
             if (!$approved && trim((string) $comment) === '') {
                 throw ValidationException::withMessages(['comment' => '拒绝候选版本必须填写拒绝原因。']);
+            }
+            if ($approved) {
+                // 旧候选不能沿用缺失财务等审核的旧规则直接生效，必须保留原记录并重新提交。
+                $currentImpact = $this->analyse($this->lockedOrder($candidate->sales_order_id), (array) $candidate->candidate_order_snapshot);
+                if (array_diff($currentImpact['required_approval_types'], $candidate->approvals->pluck('approval_type')->all())) {
+                    $candidate->update(['candidate_status' => 'CONFLICTED', 'conflict_reason' => '该修改版本缺少当前必需的审核类别，请基于最新订单重新编辑并提交。']);
+                    return $candidate->fresh('approvals');
+                }
             }
             $approval->update([
                 'approval_status' => $approved ? 'APPROVED' : 'REJECTED', 'approver' => $operator,
@@ -252,12 +261,12 @@ class SalesOrderEditImpactService
         }
         $current = $order->lines->keyBy('id');
         $sentIds = [];
-        foreach ($candidate['lines'] as $line) {
+        foreach ($candidate['lines'] as $index => $line) {
             $id = (int) ($line['id'] ?? 0);
             if ($id > 0) $sentIds[] = $id;
             $old = $id ? $current->get($id) : null;
             if (!$old) {
-                $diffs[] = $this->diff('line', null, 'line_added', '—', $line['sku_name'] ?? $line['sku_id'] ?? '新增 SKU', ['COMMERCIAL', 'FULFILLMENT', 'PRODUCTION']);
+                $diffs[] = $this->diff('line', null, 'line_added', '—', $line['sku_name'] ?? $line['sku_id'] ?? '新增 SKU', ['COMMERCIAL', 'FINANCIAL', 'FULFILLMENT', 'PRODUCTION'], $this->lineLabel($line, $index + 1));
                 continue;
             }
             foreach (self::LINE_FIELDS as $field) {
@@ -269,26 +278,29 @@ class SalesOrderEditImpactService
                 }
                 $before = $this->lineValue($field, $beforeValue, $old);
                 $after = $this->lineValue($field, $afterValue, $line);
-                if ($before === $after) continue;
-                $diffs[] = $this->diff('line', $old->id, $field, $before, $after, $this->lineImpacts($field, $old, $before, $after, $facts));
+                // 同名商品或SKU仍可能是不同身份，不能仅凭页面名称把替换判断成未修改。
+                if (in_array($field, ['product_id', 'sku_id'], true)
+                    ? (int) $beforeValue === (int) $afterValue
+                    : $before === $after) continue;
+                $diffs[] = $this->diff('line', $old->id, $field, $before, $after, $this->lineImpacts($field, $old, $before, $after, $facts), $this->lineLabel($old, $index + 1));
             }
         }
-        foreach ($current as $id => $line) {
+        foreach ($current->values() as $index => $line) {
+            $id = (int) $line->id;
             if (in_array((int) $id, $candidate['deleted_line_ids'], true) || !in_array((int) $id, $sentIds, true)) {
-                $diffs[] = $this->diff('line', $id, 'line_removed', $line->sku_name ?: $line->product_name, '—', ['FULFILLMENT', 'PRODUCTION']);
+                $diffs[] = $this->diff('line', $id, 'line_removed', $line->sku_name ?: $line->product_name, '—', ['FINANCIAL', 'FULFILLMENT', 'PRODUCTION'], $this->lineLabel($line, $index + 1));
             }
         }
         $types = collect($diffs)->pluck('impact_types')->flatten()->unique()->values()->all();
-        // 工单发布前是销售核实期：任何修改都立即生效，无需审核；发布后才按影响类型走候选版本审核。
+        // 金额与结算变化在正式确认后始终需财务审核，开工或待发后再按影响增加业务和履约审核。
         $released = $this->productionReleased($order);
         $required = [];
-        if ($released) {
-            if (in_array('COMMERCIAL', $types, true) || in_array('PRODUCTION', $types, true)) $required[] = 'business';
-            if (in_array('FINANCIAL', $types, true)) $required[] = 'finance';
-            if (in_array('FULFILLMENT', $types, true)) $required[] = 'fulfillment';
-        } else {
-            $diffs = array_map(fn (array $diff): array => array_replace($diff, ['approval_requirements' => []]), $diffs);
-        }
+        if ($released && (in_array('COMMERCIAL', $types, true) || in_array('PRODUCTION', $types, true))) $required[] = 'business';
+        if (in_array('FINANCIAL', $types, true)) $required[] = 'finance';
+        if ($released && in_array('FULFILLMENT', $types, true)) $required[] = 'fulfillment';
+        $diffs = array_map(fn (array $diff): array => array_replace($diff, [
+            'approval_requirements' => array_values(array_intersect($diff['approval_requirements'], $required)),
+        ]), $diffs);
         $approvalReasons = $this->approvalReasons($diffs, $required);
         $production = [
             'affects_production' => in_array('PRODUCTION', $types, true),
@@ -310,12 +322,15 @@ class SalesOrderEditImpactService
             'requires_approval' => !empty($required), 'required_approval_types' => $required,
             'approval_reasons' => $approvalReasons,
             'production_released' => $released,
-            'edit_stage' => $released ? 'review_required' : 'free',
-            'candidate_effect_summary' => $released
-                ? (empty($required) ? '本次修改保存后立即生效，并记录修改历史。' : '审核通过前，正式订单、库存预留、生产和交付安排及应收保持不变。')
+            'edit_stage' => $required ? 'review_required' : 'free',
+            'candidate_effect_summary' => $required
+                ? ('审核通过前，正式订单、库存预留、生产和交付安排及应收保持不变。'
+                    .($facts['has_pending_shipments'] && $this->resetLineIds($diffs)
+                        ? '仅撤销涉及变更商品的待发安排；正常设备退回原库位，返修设备保留返修。未变更商品的生产备货记录保留。正在计时的人员须先暂停。'
+                        : (array_intersect($types, ['FULFILLMENT', 'PRODUCTION']) ? '仅调整发生变化的商品备货，未变更商品的生产和发货进度保留；新增商品或增加的数量单独确认备货。' : '')))
                 : ($facts['has_operational_facts'] && collect($diffs)->contains(fn ($d) => collect($d['impact_types'])->intersect(['FULFILLMENT', 'PRODUCTION'])->isNotEmpty())
-                    ? '工单尚未发布，本次修改保存后立即生效；已生成的待发布工单和库存预留会撤销，需要重新执行“生产确认”。'
-                    : '工单尚未发布，本次修改保存后立即生效，并记录修改历史。'),
+                    ? '本次修改保存后立即生效；仅调整发生变化的商品备货，其他商品的生产与库存记录保留。'
+                    : '本次修改保存后立即生效，并记录修改历史。'),
             'production_impact' => $production,
             'business_facts' => $facts,
         ];
@@ -326,21 +341,63 @@ class SalesOrderEditImpactService
         $order->load(['lines', 'shipments', 'salesReturns']);
         $this->assertChangeable($order);
         $candidate['header'] = $this->preserveAgreedDeposit($candidate['header'], $order);
+        if (array_key_exists('remark', $candidate['header'])) $candidate['header']['order_remark'] = $candidate['header']['remark'];
+        if (array_key_exists('is_urgent', $candidate['header'])) $candidate['header']['quickly'] = $candidate['header']['is_urgent'];
+        if (array_key_exists('is_delay', $candidate['header'])) $candidate['header']['delay'] = $candidate['header']['is_delay'];
         $before = $order->fresh(['lines', 'fulfillments'])->toArray();
         $hasOperationalImpact = collect($impact['diffs'] ?? [])->contains(fn ($diff) => collect($diff['impact_types'] ?? [])->intersect(['FULFILLMENT', 'PRODUCTION'])->isNotEmpty());
+        $resetLineIds = $this->resetLineIds((array) ($impact['diffs'] ?? []));
+        $hasLineOperationalImpact = collect($impact['diffs'] ?? [])->contains(fn ($diff) => ($diff['scope'] ?? null) === 'line'
+            && collect($diff['impact_types'] ?? [])->intersect(['FULFILLMENT', 'PRODUCTION'])->isNotEmpty());
+        if ($resetLineIds) app(SalesShipmentApplicationService::class)->cancelForOrderChange($order, $operator, $actor, $resetLineIds);
         // Approval can happen after internal costs change. Restore current
         // locked facts instead of replaying cost values from an old candidate.
         $order->update(app(SalesCostVisibilityService::class)->preserveStoredCosts($candidate['header'], $order->attributesToArray()));
-        if ($hasOperationalImpact) $this->lines->sync($order, $candidate['lines'], $candidate['deleted_line_ids'], null, $operator);
+        $changedHeaders = collect($impact['diffs'] ?? [])->where('scope', 'header')->pluck('semantic_key')->all();
+        if (array_intersect($changedHeaders, ['customer_id', 'customer_name', 'customer_contact_id', 'customer_address_id', 'contact_name', 'contact_phone', 'full_address', 'address'])) {
+            $addressText = array_key_exists('full_address', $candidate['header']) ? $order->full_address
+                : (array_key_exists('address', $candidate['header']) ? $order->address : $order->full_address);
+            $address = array_replace((array) $order->shipping_address_snapshot, [
+                'address_id' => $order->customer_address_id, 'receiver_name' => $order->contact_name,
+                'receiver_phone' => $order->contact_phone, 'detail_address' => $addressText, 'full_address' => $addressText,
+            ]);
+            if (array_intersect($changedHeaders, ['full_address', 'address', 'customer_address_id'])) {
+                // 手工地址不能沿用旧快照中的省市区，避免发货仍读取旧地区。
+                $address = array_replace($address, ['province' => null, 'city' => null, 'district' => null]);
+            }
+            $order->update([
+                'address' => $addressText, 'full_address' => $addressText,
+                'customer_name_snapshot' => $order->customer_name,
+                'contact_name_snapshot' => $order->contact_name, 'contact_phone_snapshot' => $order->contact_phone, 'customer_phone' => $order->contact_phone,
+                'shipping_address_snapshot' => $address,
+                'customer_snapshot' => array_replace((array) $order->customer_snapshot, [
+                    'id' => $order->customer_id, 'name' => $order->customer_name,
+                    'contact' => ['id' => $order->customer_contact_id, 'name' => $order->contact_name, 'phone' => $order->contact_phone],
+                    'address' => $address,
+                ]),
+            ]);
+            app(SalesShipmentApplicationService::class)->syncReceiverForOrderChange($order, $operator);
+        }
+        if (array_intersect($changedHeaders, ['carrier_id', 'default_carrier_id'])) {
+            $order->update(['default_carrier_name_snapshot' => DB::table('erp_sales_order_deliveries')
+                ->where('legacy_id', $order->default_carrier_id ?: $order->carrier_id)->value('name')]);
+        }
+        if ($hasLineOperationalImpact) $this->lines->sync($order, $candidate['lines'], $candidate['deleted_line_ids'], null, $operator,
+            $order->lines->pluck('id')->map(fn ($id) => (int) $id)->diff($resetLineIds)->values()->all());
         else $this->saveCommercialLinesLocked($order, $candidate['lines']);
         $this->amounts->refresh($order);
-        if ($hasOperationalImpact) {
-            $this->reservations->releaseForSalesOrder($order, '订单候选版本生效，释放旧库存预留。');
-            SalesOrderFulfillment::where('sales_order_id', $order->id)->whereIn('demand_status', ['pending', 'confirmed'])->update(['demand_status' => 'superseded', 'reservation_status' => 'superseded', 'production_requirement_status' => 'superseded']);
-            // 数量随订单变：未开工的工单先取消，重新做生产确认时按新数量再生成。
-            app(\App\Services\Erp\Manufacturing\WorkOrderService::class)->cancelForSalesOrder($order, '订单变更后需重新做生产确认', $actor);
-            $order->update(['change_status' => 'applied', 'fulfillment_status' => 'pending', 'production_confirm_status' => 'pending',
-                'inventory_lock_status' => 'pending', 'inventory_locked_at' => null, 'inventory_locked_by_legacy_id' => null]);
+        if ($resetLineIds) {
+            $this->reservations->releaseForSalesOrder($order, '订单商品变更，释放该行旧库存预留。', $resetLineIds);
+            SalesOrderFulfillment::where('sales_order_id', $order->id)->whereIn('sales_order_line_id', $resetLineIds)
+                ->whereIn('demand_status', ['pending', 'confirmed'])->update(['demand_status' => 'superseded', 'reservation_status' => 'superseded', 'production_requirement_status' => 'superseded']);
+            app(\App\Services\Erp\Manufacturing\WorkOrderService::class)->cancelForSalesOrder($order, '订单商品变更后需重新确认该行备货', $actor, $resetLineIds);
+        }
+        if ($hasLineOperationalImpact) {
+            $requiresConfirmation = collect($candidate['lines'])->contains(fn ($line) => empty($line['id']) || in_array((int) $line['id'], $resetLineIds, true))
+                || collect($impact['diffs'] ?? [])->contains(fn ($diff) => ($diff['semantic_key'] ?? null) === 'order_qty' && (float) $diff['after'] > (float) $diff['before']);
+            $order->update(['change_status' => 'applied',
+                'production_confirm_status' => $requiresConfirmation ? 'pending' : $order->production_confirm_status,
+                'inventory_lock_status' => app(SalesOrderInventoryLockService::class)->lockStatus($order->fresh(['lines', 'fulfillments']))]);
         }
         $order->update(['business_version' => (int) $order->business_version + 1,
             'shipment_status' => SalesOrderFulfillmentPolicy::shipmentStatus($order->fresh('lines')->lines->map(fn ($line) => $line->getAttributes())->all())]);
@@ -390,6 +447,8 @@ class SalesOrderEditImpactService
             'structured_diff_count' => count($structuredDiffs),
             'operational_effects' => $hasOperationalImpact,
         ], '正式订单变更已生效。');
+        \App\Events\AssemblyDisplayChanged::afterCommit('order-change:'.$change->id, 'order.changed',
+            \App\Models\Erp\MfgWorkOrder::query()->where('sales_order_id', $order->id)->pluck('id')->all(), (int) $order->id, (int) $change->id);
     }
 
     private function saveCommercialLinesLocked(SalesOrder $order, array $rows): void
@@ -410,14 +469,42 @@ class SalesOrderEditImpactService
         }
     }
 
+    private function resetLineIds(array $diffs): array
+    {
+        // 加商品和加数量只增加需求，不能作废其他商品或原数量已完成的生产备货。
+        return collect($diffs)->filter(fn ($diff) => ($diff['scope'] ?? null) === 'line' && !empty($diff['line_id'])
+            && collect($diff['impact_types'] ?? [])->intersect(['FULFILLMENT', 'PRODUCTION'])->isNotEmpty()
+            && !(($diff['semantic_key'] ?? null) === 'order_qty' && (float) $diff['after'] > (float) $diff['before']))
+            ->pluck('line_id')->map(fn ($id) => (int) $id)->unique()->values()->all();
+    }
+
     private function candidatePayload(array $payload, SalesOrder $order): array
     {
+        if (isset($payload['expected_version']) && (int) $payload['expected_version'] !== (int) $order->business_version) {
+            throw ValidationException::withMessages(['expected_version' => '订单已被修改，请刷新后按最新内容重新编辑。']);
+        }
         $payload = app(SalesCostVisibilityService::class)->redact($payload);
         $lines = array_values($payload['lines'] ?? []);
         $sentIds = collect($lines)->pluck('id')->map(fn ($id) => (int) $id)->filter()->all();
+        $currentIds = $order->lines->pluck('id')->map(fn ($id) => (int) $id)->all();
+        if (count($sentIds) !== count(array_unique($sentIds)) || array_diff($sentIds, $currentIds)) {
+            throw ValidationException::withMessages(['lines' => '订单行重复或不属于当前有效订单，请刷新后重新编辑。']);
+        }
+        $currentLines = $order->lines->keyBy('id');
+        foreach ($lines as $index => $line) {
+            $existing = $currentLines->get((int) ($line['id'] ?? 0));
+            if ($existing && (int) ($line['sku_id'] ?? $existing->sku_id) === (int) $existing->sku_id && array_key_exists('unit_price', $line)) {
+                // 扣减项页面填正数；候选使用正式保存的负价，避免未修改的红包产生伪差异。
+                $normalized = app(SalesOrderChangeApplicationService::class)->normalizeLine($existing, ['unit_price' => $line['unit_price']]);
+                $lines[$index]['unit_price'] = $normalized['unit_price'];
+            }
+        }
         $omittedIds = $order->lines->pluck('id')->map(fn ($id) => (int) $id)->diff($sentIds)->all();
         $deletedIds = collect($payload['deleted_line_ids'] ?? [])->map(fn ($id) => (int) $id)
             ->merge($omittedIds)->filter()->unique()->values()->all();
+        if (array_diff($deletedIds, $currentIds) || array_intersect($deletedIds, $sentIds)) {
+            throw ValidationException::withMessages(['deleted_line_ids' => '删除行与保留行冲突或不属于当前订单，请刷新后重新编辑。']);
+        }
         return [
             'header' => $this->preserveAgreedDeposit(Arr::only($payload, self::HEADER_FIELDS), $order),
             'lines' => $lines,
@@ -459,7 +546,7 @@ class SalesOrderEditImpactService
     private function lineImpacts(string $field, $line, mixed $before, mixed $after, array $facts): array
     {
         return match ($field) {
-            'unit_price', 'discount_rate' => ['COMMERCIAL'],
+            'unit_price', 'discount_rate' => ['COMMERCIAL', 'FINANCIAL'],
             'tax_rate', 'price_tax_mode' => ['FINANCIAL'],
             'sku_id', 'product_id', 'electric', 'need_pump', 'is_customized',
             'is_special_customized', 'configuration_snapshot' => ['FULFILLMENT', 'PRODUCTION'],
@@ -472,18 +559,28 @@ class SalesOrderEditImpactService
 
     private function quantityImpacts($line, array $facts): array
     {
-        if (!$facts['has_operational_facts']) return ['COMMERCIAL'];
-        $types = ['FULFILLMENT'];
+        if (!$facts['has_operational_facts']) return ['COMMERCIAL', 'FINANCIAL'];
+        $types = ['FINANCIAL', 'FULFILLMENT'];
         if ($line->line_type === 'physical' && $facts['has_production_facts']) $types[] = 'PRODUCTION';
         return $types;
     }
-    private function diff(string $scope, ?int $lineId, string $key, mixed $before, mixed $after, array $types): array {
+    private function lineLabel(mixed $line, int $fallbackNumber): string
+    {
+        $number = (int) data_get($line, 'line_no') ?: $fallbackNumber;
+        $product = trim((string) data_get($line, 'product_name')) ?: '商品#'.data_get($line, 'product_id');
+        $sku = trim((string) data_get($line, 'sku_name')) ?: 'SKU#'.data_get($line, 'sku_id');
+        $code = data_get($line, 'sku_snapshot.sku_code') ?: data_get($line, 'sku_code') ?: 'SKU#'.data_get($line, 'sku_id');
+        return '第'.$number.'行：'.$product.' / '.$sku.($code !== $sku ? '（'.$code.'）' : '');
+    }
+
+    private function diff(string $scope, ?int $lineId, string $key, mixed $before, mixed $after, array $types, ?string $lineLabel = null): array {
         $requirements = array_values(array_unique(array_filter([
             in_array('COMMERCIAL', $types, true) || in_array('PRODUCTION', $types, true) ? 'business' : null,
             in_array('FINANCIAL', $types, true) ? 'finance' : null,
             in_array('FULFILLMENT', $types, true) ? 'fulfillment' : null,
         ])));
-        return ['scope' => $scope, 'line_id' => $lineId, 'semantic_key' => $key, 'label' => self::LABELS[$key] ?? $key, 'before' => $before, 'after' => $after, 'impact_types' => $types, 'business_impact_text' => $this->impactText($types), 'approval_requirements' => $requirements];
+        $label = self::LABELS[$key] ?? $key;
+        return ['scope' => $scope, 'line_id' => $lineId, 'semantic_key' => $key, 'label' => $lineLabel ? $lineLabel.' · '.$label : $label, 'before' => $before, 'after' => $after, 'impact_types' => $types, 'business_impact_text' => $this->impactText($types), 'approval_requirements' => $requirements];
     }
     private function impactText(array $types): string { return implode('、', array_map(fn ($t) => ['INFO'=>'无业务影响','COMMERCIAL'=>'商业信息影响','FINANCIAL'=>'财务结算影响','FULFILLMENT'=>'库存与交付影响','PRODUCTION'=>'生产需求影响'][$t], $types)); }
     private function approvalReasons(array $diffs, array $requiredTypes): array
@@ -547,6 +644,8 @@ class SalesOrderEditImpactService
                 default => $label.'发生变化，触发商业或生产定义审核条件。',
             },
             'finance' => match ($key) {
+                'unit_price', 'discount_rate' => '销售单价或折扣发生调整，影响订单应收和结算金额，需要财务审核。',
+                'order_qty', 'line_added', 'line_removed' => '订单商品数量或明细范围发生调整，影响订单应收和结算金额，需要财务审核。',
                 'payment_terms_snapshot' => '付款规则发生变化，影响资金门禁和应收口径，需要财务审核。',
                 'funding_policy_id' => '资金策略发生变化，影响资金门禁和应收口径，需要财务审核。',
                 'freight_amount', 'carrier_fee' => '订单费用发生变化，影响应收和结算金额，需要财务审核。',
@@ -556,19 +655,19 @@ class SalesOrderEditImpactService
                 default => $label.'发生变化，触发财务审核条件。',
             },
             'fulfillment' => match ($key) {
-                'payment_terms_snapshot' => '付款规则发生变化，影响生产或发货资金门槛，需要库存与交付复核。',
-                'funding_policy_id' => '资金策略发生变化，影响生产或发货资金门槛，需要库存与交付复核。',
-                'required_delivery_date', 'is_delay', 'delay_date' => '要求交期发生调整，影响现有库存、生产或交付计划，需要库存与交付复核。',
-                'carrier_id', 'default_carrier_id' => '承运方式发生变化，影响现有交付安排，需要库存与交付复核。',
+                'payment_terms_snapshot' => '付款规则发生变化，影响生产或发货资金门槛，需要库存交付审核。',
+                'funding_policy_id' => '资金策略发生变化，影响生产或发货资金门槛，需要库存交付审核。',
+                'required_delivery_date', 'is_delay', 'delay_date' => '要求交期发生调整，影响现有库存、生产或交付计划，需要库存交付审核。',
+                'carrier_id', 'default_carrier_id' => '承运方式发生变化，影响现有交付安排，需要库存交付审核。',
                 'sku_id' => 'SKU 身份发生变化，需要重新核对库存、生产和交付安排。',
                 'product_id' => 'Product 身份发生变化，需要重新核对库存、生产和交付安排。',
-                'line_added' => '新增订单行改变了库存、生产和交付范围，需要库存与交付复核。',
-                'line_removed' => '删除订单行改变了库存、生产和交付范围，需要库存与交付复核。',
-                'order_qty' => '订单行数量发生调整，影响既有库存预留或交付数量，需要库存与交付复核。',
+                'line_added' => '新增订单行改变了库存、生产和交付范围，需要库存交付审核。',
+                'line_removed' => '删除订单行改变了库存、生产和交付范围，需要库存交付审核。',
+                'order_qty' => '订单行数量发生调整，影响既有库存预留或交付数量，需要库存交付审核。',
                 'fulfillment_method' => '订单行备货方式发生变化，需要重新核对库存、生产和交付安排。',
                 'electric', 'need_pump', 'is_customized', 'is_special_customized', 'configuration_snapshot' => '生产关键配置发生变化，需要重新核对生产和交付配置。',
-                'trade_type' => '贸易类型发生变化，影响交付规则，需要库存与交付复核。',
-                default => $label.'发生变化，触发库存与交付复核条件。',
+                'trade_type' => '贸易类型发生变化，影响交付规则，需要库存交付审核。',
+                default => $label.'发生变化，触发库存交付审核条件。',
             },
             default => null,
         };
@@ -635,10 +734,11 @@ class SalesOrderEditImpactService
 
     private function operationalFacts(SalesOrder $order): array
     {
+        $hasShipments = $order->shipments()->whereIn('shipment_status', ['draft', 'pending_outbound', 'prepared'])->exists();
         $hasReservations = InventoryReservation::query()
             ->where('source_type', InventoryReservation::SOURCE_SALES_ORDER)
             ->where('source_order_id', $order->id)
-            ->whereIn('reservation_status', ['active', 'partially_released'])
+            ->whereIn('reservation_status', ['active', 'partially_released', 'converted_to_shipment'])
             ->exists();
         $hasFulfillment = SalesOrderFulfillment::query()
             ->where('sales_order_id', $order->id)
@@ -650,10 +750,11 @@ class SalesOrderEditImpactService
             ->whereNotIn('demand_status', ['superseded', 'cancelled'])
             ->exists();
         return [
+            'has_pending_shipments' => $hasShipments,
             'has_inventory_reservations' => $hasReservations,
-            'has_fulfillment_facts' => $hasReservations || $hasFulfillment || $hasProduction,
+            'has_fulfillment_facts' => $hasReservations || $hasFulfillment || $hasProduction || $hasShipments,
             'has_production_facts' => $hasProduction,
-            'has_operational_facts' => $hasReservations || $hasFulfillment || $hasProduction,
+            'has_operational_facts' => $hasReservations || $hasFulfillment || $hasProduction || $hasShipments,
         ];
     }
 
@@ -679,7 +780,7 @@ class SalesOrderEditImpactService
     private function lockedOrder(int $id): SalesOrder { return SalesOrder::query()->with(['lines', 'shipments', 'salesReturns'])->lockForUpdate()->findOrFail($id); }
     private function assertChangeable(SalesOrder $order): void {
         if ($order->order_status !== 'confirmed' || $order->confirm_status !== 'confirmed') throw ValidationException::withMessages(['order_status' => '只有已正式确认的订单可编辑；草稿订单请直接保存。']);
-        if (! in_array($order->shipment_status, ['not_shipped', 'not_required'], true) || $order->lines->sum('shipped_qty') > 0 || $order->shipments->isNotEmpty()) throw ValidationException::withMessages(['shipment_status' => '已有发货事实的订单不能直接编辑，请走售后流程。']);
+        if (SalesOrderFulfillmentPolicy::hasShipmentFacts($order)) throw ValidationException::withMessages(['shipment_status' => '订单已实际发运、提货或正式销售出库，不能原地修改，请走售后流程。']);
         if ($order->salesReturns->whereNotIn('return_status', ['cancelled'])->isNotEmpty()) throw ValidationException::withMessages(['sales_return' => '订单已进入销售退货流程，不能直接编辑。']);
     }
     private function log(SalesOrder $order, string $action, string $before, string $after, string $operator, array $payload, string $content): void { SalesOrderLog::create(['sales_order_id'=>$order->id,'action'=>$action,'before_status'=>$before,'after_status'=>$after,'payload'=>$payload,'operator'=>$operator,'content'=>$content]); }

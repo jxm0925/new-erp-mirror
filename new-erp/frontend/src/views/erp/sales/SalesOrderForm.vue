@@ -18,6 +18,7 @@ Do not change layout without approval.
       :level="impactPreview.level"
       :candidate-version="impactPreview.candidateVersion"
       :effective-version="impactPreview.effectiveVersion"
+      :effect-summary="impactPreview.effectSummary"
       :reason.sync="impactReason"
       :submitting="impactSubmitting"
       :submit-error="impactSubmitError"
@@ -37,7 +38,7 @@ Do not change layout without approval.
       </div>
       <div class="toolbar-actions">
         <el-button size="small" @click="$router.push('/sales/orders')">返回列表</el-button>
-        <el-button v-if="isEdit ? ($can('sales_order.edit_draft') || $can('sales_order.change')) : $can('sales_order.create')" size="small" @click="save(false)">{{ isConfirmedEdit ? '保存修改' : '保存草稿' }}</el-button>
+        <el-button v-if="isEdit ? ($can('sales_order.edit_draft') || $can('sales_order.change') || $can('sales_order.change.submit')) : $can('sales_order.create')" size="small" @click="save(false)">{{ isConfirmedEdit ? '保存修改' : '保存草稿' }}</el-button>
         <el-button v-if="!isConfirmedEdit && ($can('sales_order.submit_confirmation') || $can('sales_order.formal_confirm'))" size="small" type="primary" class="btn-emerald-primary" @click="save(true)">保存并确认</el-button>
       </div>
     </header>
@@ -753,9 +754,9 @@ export default {
       if (!this.isConfirmedEdit) return null
       const actions = (this.editOrderMeta && this.editOrderMeta.allowed_actions) || {}
       if (actions.production_released) {
-        return { type: 'warning', icon: 'el-icon-lock', text: '工单已发布：本次修改不会直接生效。点击“保存修改”后将列出变更内容，填写变更原因并提交，由相关负责人审核通过后才会生效。' }
+        return { type: 'warning', icon: 'el-icon-lock', text: '生产已开工或已安排发货：保存时会列出修改影响，需要审核的内容经相关负责人审核通过后生效。' }
       }
-      return { type: 'success', icon: 'el-icon-s-flag', text: '核实期：工单尚未发布，可直接修改，保存后立即生效并留痕。若改动了数量、SKU、备货方式等影响生产的内容，已生成的待发布工单会被撤销，需要重新执行“生产确认”。' }
+      return { type: 'success', icon: 'el-icon-s-flag', text: '核实期：生产尚未开工且未安排发货，金额及结算条件修改需财务审核。新增商品或增加数量只补充相应备货，未变更商品的工单和库存安排保留；其他修改以变更预览为准。' }
     },
     currentIndex() {
       const index = this.form.lines.indexOf(this.selectedLine)
@@ -1607,11 +1608,12 @@ export default {
     },
     applyImpactPreview(impact) {
       const summary = impact.approval_summary || {}
-      const approvalLabels = { business: '业务审核', finance: '财务审核', fulfillment: '库存与交付复核' }
+      const approvalLabels = { business: '业务审核', finance: '财务审核', fulfillment: '库存交付审核' }
       this.impactPreview = {
         level: impact.overall_risk_level || 'low',
         candidateVersion: `V${impact.candidate_version || 1}`,
         effectiveVersion: `V${impact.base_version || 0}`,
+        effectSummary: impact.candidate_effect_summary || '',
         requiresApproval: Boolean(impact.requires_approval),
         approvals: {
           business: (impact.required_approval_types || []).includes('business'),
@@ -1703,6 +1705,7 @@ export default {
         }))
       }
       if (this.isConfirmedEdit) {
+        payload.expected_version = this.editOrderMeta.business_version
         // 约定定金不走订单变更审核：销售修改后立即生效并留痕，再继续处理其他订单修改。
         const cents = value => (value === null || value === undefined || value === '' ? null : Math.round(Number(value) * 100))
         const depositChanged = this.depositSupported && cents(this.agreedDepositPayload) !== cents(this.loadedAgreedDeposit)

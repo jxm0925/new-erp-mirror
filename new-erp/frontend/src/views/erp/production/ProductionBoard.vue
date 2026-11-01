@@ -133,7 +133,7 @@
                   </div>
                 </div>
                 <div class="card-prod-title">
-                  {{ c.product_name }}<template v-if="c.sku_name"> {{ c.sku_name }}</template>
+                  {{ c.product_name }}<template v-if="c.specification || c.sku_name"> · {{ c.specification || c.sku_name }}</template>
                   <b class="card-qty">×{{ qtyText(c.planned_qty) }}</b>
                 </div>
                 <div class="card-op-sub" v-if="c.operation_name !== col.title">

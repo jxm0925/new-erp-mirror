@@ -5,6 +5,7 @@ namespace App\Services\Erp;
 use App\Models\Erp\Item;
 use App\Models\Erp\ProductionRouting;
 use App\Models\Erp\SalesShipmentLine;
+use App\Models\Erp\ShipmentPackingContent;
 use Illuminate\Support\Facades\DB;
 
 /** 发货打包用的库存来源与包装工艺解析（不依赖生产执行数据）。 */
@@ -77,6 +78,9 @@ class ShipmentSourceResolver
                 $rows[] = $this->row($line, null, $remaining, bcmul($remaining, $factor, 8), null, 'unresolved');
             }
             return $rows;
+        }
+        if ($evidence = $this->manufacturingEvidence($line, 0)) {
+            return [$this->row($line, null, (string) $line->base_qty, (string) $line->sales_qty, null, 'mfg_production', $evidence)];
         }
         $reservation = DB::table('erp_inventory_reservations')->where('id', $line->inventory_reservation_id)->first();
         $balance = $reservation ? DB::table('erp_inventory_balances')->where('id', $reservation->inventory_balance_id)->first() : null;
@@ -200,7 +204,13 @@ class ShipmentSourceResolver
         $contents = DB::table('erp_shipment_packing_contents')->where('shipment_id', $line->shipment_id)->where('shipment_line_id', $line->id)->get()
             ->map(fn ($content) => (array) $content)->all();
         $operations = DB::table('erp_shipment_packing_operations')->where('shipment_id', $line->shipment_id)->get()->map(fn ($op) => (array) $op)->all();
+        $currentContents = ShipmentPackingContent::query()->current()->where('shipment_id', $line->shipment_id)->get();
         foreach ($operations as &$operation) {
+            // 冻结计划保留原分摊口径；发运证明只核对仍在本次包裹中的有效商品。
+            $ids = json_decode((string) $operation['packing_content_ids'], true) ?: [];
+            $currentQuantity = $currentContents->whereIn('id', $ids)->reduce(fn ($quantity, $content) => bcadd($quantity, (string) $content->base_qty, 8), '0');
+            $operation['planned_base_qty'] = $currentQuantity;
+            if (bccomp((string) $operation['completed_base_qty'], $currentQuantity, 8) > 0) $operation['completed_base_qty'] = $currentQuantity;
             $result = DB::table('erp_shipment_serial_results')->where('operation_id', $operation['id'])->where('shipment_line_id', $line->id)->where('round', $line->quality_round)->first();
             if ($result) {
                 $operation['planned_base_qty'] = '1'; $operation['completed_base_qty'] = $result->status === 'completed' ? '1' : '0';
@@ -239,6 +249,37 @@ class ShipmentSourceResolver
 
     private function manufacturingEvidence(SalesShipmentLine $line, int $serialId): ?array
     {
+        if (! $serialId) {
+            // 无 SN 的直交仍须追溯本批正式入库预留；移待发后用原来源快照核对，不能借当前库位猜来源。
+            $reservation = DB::table('erp_inventory_reservations')->where('id', $line->inventory_reservation_id)
+                ->where('source_type', \App\Models\Erp\InventoryReservation::SOURCE_SALES_ORDER)
+                ->where('source_order_id', $line->shipment->sales_order_id)->where('source_order_line_id', $line->sales_order_line_id)
+                ->where('sales_order_fulfillment_id', $line->sales_order_fulfillment_id)->where('item_id', $line->item_id)->first();
+            $snapshot = $reservation ? json_decode($reservation->reservation_snapshot ?: 'null', true) : null;
+            $receipt = ! empty($snapshot['mfg_receipt_id']) ? DB::table('erp_mfg_receipts')->where('id', $snapshot['mfg_receipt_id'])->first() : null;
+            $wo = $receipt ? DB::table('erp_mfg_work_orders')->where('id', $receipt->work_order_id)->where('item_id', $line->item_id)
+                ->where('sales_order_id', $line->shipment->sales_order_id)->where('sales_order_line_id', $line->sales_order_line_id)
+                ->where('sales_fulfillment_id', $line->sales_order_fulfillment_id)->first() : null;
+            if (! $receipt || ! $wo || (int) ($snapshot['mfg_work_order_id'] ?? 0) !== (int) $wo->id
+                || (string) $line->batch_no !== (string) $wo->work_order_no
+                || (int) $receipt->warehouse_id !== (int) data_get($line->preparation_snapshot, 'warehouse_id', $line->warehouse_id)
+                || (int) $receipt->location_id !== (int) data_get($line->preparation_snapshot, 'location_id', $line->location_id)
+                || bccomp((string) $line->base_qty, '0', 8) <= 0 || bccomp((string) $line->base_qty, (string) $receipt->qty, 8) > 0
+                || bccomp((string) $line->base_qty, (string) $reservation->reserved_qty, 8) !== 0
+                || bccomp((string) ($snapshot['receipt_qty'] ?? '0'), (string) $receipt->qty, 8) !== 0) return null;
+            $posted = DB::table('erp_inventory_transaction_items as inbound')->join('erp_inventory_transactions as tx', 'tx.id', '=', 'inbound.transaction_id')
+                ->where('tx.id', $receipt->inventory_transaction_id)->where('tx.source_type', 'mfg_receipt')->where('tx.source_id', $receipt->id)
+                ->where('tx.transaction_type', 'production_receipt_inbound')->where('tx.posting_status', 'posted')
+                ->where('inbound.source_type', 'mfg_receipt')->where('inbound.source_id', $receipt->id)->where('inbound.item_id', $line->item_id)
+                ->where('inbound.warehouse_id', $receipt->warehouse_id)->where('inbound.location_id', $receipt->location_id)
+                ->where('inbound.batch_no', $wo->work_order_no)->where('inbound.unit_id', $line->unit_id)->where('inbound.change_qty', $receipt->qty)->first(['inbound.id']);
+            if (! $posted) return null;
+            return ['version' => 2, 'source_origin' => 'mfg_production', 'mfg_receipt_id' => (int) $receipt->id,
+                'work_order_id' => (int) $wo->id, 'inventory_reservation_id' => (int) $reservation->id,
+                'item_id' => (int) $line->item_id, 'base_qty' => (string) $line->base_qty,
+                'inventory_transaction_id' => (int) $receipt->inventory_transaction_id, 'inventory_transaction_item_id' => (int) $posted->id,
+                'routing_snapshot' => json_decode($wo->routing_snapshot ?: 'null', true)];
+        }
         $serial = $serialId ? DB::table('erp_inventory_serials')->where('id', $serialId)->where('item_id', $line->item_id)->where('source_document_type', 'mfg_receipt')->first() : null;
         if (! $serial) return null;
         $receipt = DB::table('erp_mfg_receipts')->where('id', $serial->source_document_id)->first();

@@ -53,7 +53,7 @@ class SalesOrder extends MasterModel
         'inventory_locked_at' => 'datetime',
     ];
 
-    public function lines() { return $this->hasMany(SalesOrderLine::class); }
+    public function lines() { return $this->hasMany(SalesOrderLine::class)->where('line_status', '!=', 'removed'); }
     public function fulfillments() { return $this->hasMany(SalesOrderFulfillment::class); }
     public function versions() { return $this->hasMany(SalesOrderVersion::class); }
     public function logs() { return $this->hasMany(SalesOrderLog::class); }

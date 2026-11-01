@@ -11,6 +11,7 @@ use App\Models\Erp\MfgReceipt;
 use App\Models\Erp\MfgTaskParticipant;
 use App\Models\Erp\MfgUnitReport;
 use App\Models\Erp\MfgWorkOrder;
+use App\Models\Erp\MfgWorkOrderLink;
 use App\Models\Erp\MfgWorkOrderMaterial;
 use App\Models\Erp\MfgWorkOrderOperation;
 use App\Models\Erp\MfgWorkOrderTech;
@@ -52,7 +53,9 @@ final class TaskQueryService
             $page = $this->taskQuery($me, 'done', $filters, 'normal')->paginate($perPage);
             $page->getCollection()->transform(fn ($op) => $this->taskRow($op, 'normal', $me, $canExecute));
         } else {
-            $page = DB::query()->fromSub($this->laneUnion($me, $tab, $filters), 't')->orderBy('p')->orderBy('w')->orderBy('s')->orderBy('lane')->paginate($perPage);
+            $page = DB::query()->fromSub($this->laneUnion($me, $tab, $filters), 't')
+                ->orderBy('rp')->orderBy('rw')->orderBy('is_child')->orderBy('w')->orderBy('s')->orderBy('lane')
+                ->paginate($perPage);
             $ops = MfgWorkOrderOperation::query()->whereIn('id', collect($page->items())->pluck('id')->all() ?: [0])->get()->keyBy('id');
             $page->setCollection($page->getCollection()->map(fn ($r) => $this->taskRow($ops[$r->id], $r->lane, $me, $canExecute))->values());
         }
@@ -86,11 +89,22 @@ final class TaskQueryService
             'plans' => $plans];
     }
 
-    /** 正常、返工两条线的任务合在一起分页：id、lane、工单、优先级、工序顺序。 */
+    /** 正常、返工两条线的任务合在一起分页：id、lane、工单、主工单、优先级、工序顺序。 */
     private function laneUnion(int $me, string $tab, array $filters)
     {
         $part = fn (string $lane) => $this->taskQuery($me, $tab, $filters, $lane)->reorder()
-            ->select(['op.id', DB::raw("'{$lane}' AS lane"), 'op.work_order_id AS w', 'wo.priority AS p', 'op.sequence AS s'])->toBase();
+            ->leftJoin('erp_mfg_work_order_links as wl', 'wl.child_work_order_id', '=', 'op.work_order_id')
+            ->leftJoin('erp_mfg_work_orders as pwo', 'pwo.id', '=', 'wl.parent_work_order_id')
+            ->select([
+                'op.id',
+                DB::raw("'{$lane}' AS lane"),
+                'op.work_order_id AS w',
+                DB::raw('COALESCE(wl.parent_work_order_id, op.work_order_id) AS rw'),
+                DB::raw('COALESCE(pwo.priority, wo.priority) AS rp'),
+                DB::raw('CASE WHEN wl.parent_work_order_id IS NULL THEN 0 ELSE 1 END AS is_child'),
+                'wo.priority AS p',
+                'op.sequence AS s',
+            ])->toBase();
         return $part('normal')->unionAll($part('rework'));
     }
 
@@ -103,7 +117,7 @@ final class TaskQueryService
         $op = MfgWorkOrderOperation::query()->findOrFail($opId);
         TaskService::syncWorkStatus([(int) $op->work_order_id]);
         $op->refresh();
-        $wo = MfgWorkOrder::query()->with('operations')->findOrFail($op->work_order_id);
+        $wo = MfgWorkOrder::query()->with(['operations', 'item:id,item_type,spec,model,material_grade'])->findOrFail($op->work_order_id);
         $ops = $wo->operations->where('execution_context', 'production')->values();
         $pos = $ops->pluck('id')->flip();
         $myPos = $pos[$op->id] ?? 0;
@@ -150,6 +164,18 @@ final class TaskQueryService
             ->filter(fn ($m) => MaterialIssueService::isCutting($m)) : collect();
         $pool = app(SharedCuttingService::class)->poolAvailable($sheetRows->pluck('component_item_id')->unique()->values()->all());
         $opDone = (int) round((float) $op->completed_qty);
+        $completion = $units->isNotEmpty() && $units->every(fn ($u) => $shipmentRepairReasons->has($u->id))
+            ? null : app(TaskCompletionService::class)->options($wo, $op);
+        $specInfo = WorkOrderQueryService::itemSpecInfo($wo->item, $wo);
+        $parentLink = MfgWorkOrderLink::query()->where('child_work_order_id', $wo->id)->first();
+        $parentWo = $parentLink ? MfgWorkOrder::query()->with('item:id,item_type,spec,model,material_grade')->find($parentLink->parent_work_order_id) : null;
+        $parentBrief = $parentWo ? $this->workOrderBrief($parentWo) : null;
+        $childIds = MfgWorkOrderLink::query()->where('parent_work_order_id', $wo->id)->orderBy('id')->pluck('child_work_order_id');
+        $childBriefs = $childIds->isEmpty() ? [] : MfgWorkOrder::query()->with('item:id,item_type,spec,model,material_grade')->whereIn('id', $childIds)->orderBy('id')->get()
+            ->map(fn ($c) => $this->workOrderBrief($c))->values()->all();
+        $opMaterials = MfgWorkOrderMaterial::query()->where('work_order_operation_id', $op->id)->orderBy('id')->get();
+        $compItems = Item::query()->whereIn('id', $opMaterials->pluck('component_item_id')->unique()->all() ?: [0])->get(['id', 'spec', 'model', 'material_grade'])->keyBy('id');
+        $bomLines = collect(data_get($wo->bom_snapshot, 'items', []))->keyBy('id');
         return [
             'id' => $op->id, 'operation_name' => $op->operation_name, 'title' => TaskService::laneTitle($op->operation_name, $lane), 'lane' => $lane,
             'stage_name' => $op->stage_name, 'status' => $op->status,
@@ -163,22 +189,31 @@ final class TaskQueryService
             'order_info' => app(OrderBrief::class)->forWorkOrder($wo),
             'shipment_repair' => collect(WorkOrderQueryService::shipmentRepairs($wo))->first(fn ($r) => $r['state'] === 'repairing' && (int) $r['current_operation_id'] === (int) $op->id),
             'work_order' => [
-                'id' => $wo->id, 'work_order_no' => $wo->work_order_no, 'status' => $wo->status, 'status_label' => WorkOrderQueryService::STATUS_LABELS[$wo->status] ?? $wo->status,
-                'pause_reason' => $wo->pause_reason, 'product_name' => $wo->product_name ?: $wo->item_name, 'item_name' => $wo->item_name, 'sku_code' => $wo->sku_code, 'sku_name' => $wo->sku_name,
-                'customer_name' => $wo->customer_name, 'sales_order_no' => $wo->sales_order_no, 'planned_qty' => (float) $wo->planned_qty, 'unit_name' => $wo->unit_name,
+                'id' => $wo->id, 'work_order_no' => $wo->work_order_no, 'source_type' => $wo->source_type,
+                'source_label' => $wo->rework_of_work_order_id ? '返工工单' : match ($wo->source_type) { 'stock' => '备货', 'work_order' => '半成品子工单', default => '销售订单' },
+                'is_sub_work_order' => $parentBrief !== null || $wo->source_type === 'work_order' || (bool) $wo->rework_of_work_order_id,
+                'status' => $wo->status, 'status_label' => WorkOrderQueryService::STATUS_LABELS[$wo->status] ?? $wo->status,
+                'pause_reason' => $wo->pause_reason, 'product_name' => $wo->product_name ?: $wo->item_name, 'item_code' => $wo->item_code, 'item_name' => $wo->item_name,
+                'sku_code' => $wo->sku_code, 'sku_name' => $wo->sku_name,
+                'item_spec' => $specInfo['item_spec'], 'material_grade' => $specInfo['material_grade'], 'specification' => $specInfo['specification'],
+                'customer_name' => $wo->customer_name ?: $parentWo?->customer_name, 'sales_order_no' => $wo->sales_order_no ?: $parentWo?->sales_order_no,
+                'planned_qty' => (float) $wo->planned_qty, 'unit_name' => $wo->unit_name,
                 'planned_finish_date' => $wo->planned_finish_date?->toDateString(), 'is_urgent' => (bool) $wo->is_urgent, 'priority' => (int) ($wo->priority ?: 3), 'priority_label' => \App\Services\Erp\SalesOrderPriorityService::label((int) ($wo->priority ?: 3)),
                 'special_requirement' => $wo->special_requirement, 'custom_description' => $tech ? $this->tech->customDescription($wo) : null, 'is_custom' => (bool) $tech,
+                'parent_work_order' => $parentBrief, 'child_work_orders' => $childBriefs,
             ],
             'units' => $units->map(fn ($u) => [
                 'id' => $u->id, 'unit_no' => $u->unit_no, 'serial_no' => $u->serial_no, 'status' => $u->status,
                 // 刚从前道交过来、本道还没人开始计时的显示“待做”，有人在计时才算“正在做”。
                 'status_label' => ! in_array($u->id, $selectable, true) ? '等报废审核' : ($u->status === 'rework' ? '返工' : ($opTiming ? '正在做' : '待做')),
                 'selectable' => in_array($u->id, $selectable, true), 'rework_count' => (int) $u->rework_count,
+                'needs_completion' => $completion !== null && ! $shipmentRepairReasons->has($u->id),
                 'fail_reason' => ($f = $lastFail->get($u->id)) && $u->status === 'rework'
                     ? trim(implode('：', array_filter([($opNames[$f->work_order_operation_id] ?? '').'不合格', implode('/', $f->reason_tags ?: []) ?: $f->reason]))) : ($shipmentRepairReasons[$u->id] ?? null),
             ])->values()->all(),
             'progress' => ['planned' => (float) $wo->planned_qty, 'done' => (float) $op->completed_qty, 'here' => $here, 'upstream' => $upstream,
-                'next_operation_name' => $ops->get($myPos + 1)?->operation_name],
+                'next_operation_name' => $ops->get($myPos + 1)?->operation_name ?? ($completion['next_operation_name'] ?? null)],
+            'completion' => $completion,
             'participants' => $participants,
             'my' => ['is_participant' => (bool) $mine, 'role' => $mine['role'] ?? null, 'timing' => (bool) $myActive,
                 // 别的工序（或本道另一条线）在计时：开始前要先暂停那边
@@ -189,10 +224,25 @@ final class TaskQueryService
             'drawings' => $drawings->map(fn ($d) => ['id' => $d->id, 'drawing_name' => $d->drawing_name, 'version_no' => $d->version_no, 'url' => $d->url,
                 'mime_type' => $d->mime_type, 'uploaded_at' => $d->uploaded_at?->toDateTimeString()])->values()->all(),
             'drawings_updated_at' => $tech?->drawings_updated_at && $myLast && $tech->drawings_updated_at->gt($myLast) ? $tech->drawings_updated_at->toDateTimeString() : null,
-            'materials' => MfgWorkOrderMaterial::query()->where('work_order_operation_id', $op->id)->orderBy('id')->get()
-                ->map(fn ($m) => ['component_item_name' => $m->component_item_name, 'component_item_code' => $m->component_item_code, 'unit_name' => $m->unit_name,
-                    'unit_qty' => (float) $m->unit_qty, 'required_qty' => (float) $m->required_qty, 'issued_qty' => (float) $m->issued_qty,
-                    'cutting' => MaterialIssueService::isCutting($m)])->values()->all(),
+            'materials' => $opMaterials->map(function ($m) use ($compItems, $bomLines) {
+                $ms = WorkOrderQueryService::materialSpecInfo($compItems->get($m->component_item_id), $bomLines->get($m->bom_item_id));
+                return [
+                    'id' => $m->id,
+                    'component_item_id' => (int) $m->component_item_id,
+                    'component_item_name' => $m->component_item_name,
+                    'component_item_code' => $m->component_item_code,
+                    'component_item_spec' => $ms['component_item_spec'],
+                    'material_grade' => $ms['material_grade'],
+                    'cut_spec' => $ms['cut_spec'],
+                    'specification' => $ms['specification'],
+                    'unit_name' => $m->unit_name,
+                    'unit_qty' => (float) $m->unit_qty,
+                    'required_qty' => (float) $m->required_qty,
+                    'issued_qty' => (float) $m->issued_qty,
+                    'remark' => $m->remark,
+                    'cutting' => MaterialIssueService::isCutting($m),
+                ];
+            })->values()->all(),
             // 本道用板材／管材：在本道直接开料（领原料 → 登记切出的件和余料）。
             // 下料按套数报完成，不逐台勾选：开料登记了几套，最多就能报几套。
             'prep' => $isPrep,
@@ -277,7 +327,7 @@ final class TaskQueryService
         if (! empty($filters['custom_only'])) $woQuery->whereExists(fn ($q) => $q->selectRaw('1')->from('erp_mfg_work_order_techs as t')->whereColumn('t.work_order_id', 'erp_mfg_work_orders.id'));
         if ($owner = (int) ($filters['owner_legacy_id'] ?? 0)) $woQuery->whereExists(fn ($q) => $q->selectRaw('1')->from('erp_mfg_task_participants as p')
             ->whereColumn('p.work_order_id', 'erp_mfg_work_orders.id')->where('p.employee_legacy_id', $owner)->where('p.is_active', true));
-        $wos = $woQuery->with(['operations', 'item:id,item_type'])->orderBy('priority')->orderBy('id')->limit(300)->get()->keyBy('id');
+        $wos = $woQuery->with(['operations', 'item:id,item_type,spec,model,material_grade'])->orderBy('priority')->orderBy('id')->limit(300)->get()->keyBy('id');
         $itemScopes = Item::query()->whereIn('id', $wos->pluck('item_id'))->pluck('management_scope', 'id');
         $woIds = $wos->keys()->all() ?: [0];
         $units = MfgWorkOrderUnit::query()->whereIn('work_order_id', $woIds)->whereIn('status', array_merge(TaskService::SELECTABLE, ['completed']))->orderBy('unit_no')->get();
@@ -303,9 +353,12 @@ final class TaskQueryService
             $closed = (float) ($minutes[$op->id] ?? 0);
             $running = ($active->get($op->id) ?? collect())->sum(fn ($s) => max(0, $s->started_at->diffInSeconds(now(), false)) / 60);
             $reworkCount = $group->where('status', 'rework')->count();
+            $specInfo = WorkOrderQueryService::itemSpecInfo($wo->item, $wo);
             $columns[$key]['cards'][] = [
                 'operation_id' => $op->id, 'operation_name' => $op->operation_name, 'work_order_id' => $wo->id, 'work_order_no' => $wo->work_order_no,
-                'product_name' => $wo->product_name ?: $wo->item_name, 'sku_name' => $wo->sku_name, 'sku_code' => $wo->sku_code, 'customer_name' => $wo->customer_name,
+                'product_name' => $wo->product_name ?: $wo->item_name, 'item_name' => $wo->item_name, 'sku_name' => $wo->sku_name, 'sku_code' => $wo->sku_code,
+                'item_spec' => $specInfo['item_spec'], 'material_grade' => $specInfo['material_grade'], 'specification' => $specInfo['specification'],
+                'customer_name' => $wo->customer_name,
                 'planned_qty' => (float) $wo->planned_qty, 'done_qty' => (float) $op->completed_qty, 'is_urgent' => (bool) $wo->is_urgent, 'priority' => (int) ($wo->priority ?: 3), 'priority_label' => \App\Services\Erp\SalesOrderPriorityService::label((int) ($wo->priority ?: 3)),
                 'is_custom' => isset($techs[$wo->id]), 'has_drawing' => isset($drawingWos[$wo->id]), 'paused' => $wo->status === 'paused', 'pause_reason' => $wo->pause_reason,
                 'planned_finish_date' => $wo->planned_finish_date?->toDateString(),
@@ -444,6 +497,11 @@ final class TaskQueryService
         if ($keyword = trim((string) ($filters['keyword'] ?? ''))) {
             $like = '%'.$keyword.'%';
             $query->where(fn ($q) => $q->where('wo.work_order_no', 'like', $like)->orWhere('wo.product_name', 'like', $like)->orWhere('wo.item_name', 'like', $like)
+                ->orWhere('wo.item_code', 'like', $like)->orWhere('wo.sku_name', 'like', $like)->orWhere('wo.customer_name', 'like', $like)
+                ->orWhereExists(fn ($it) => $it->selectRaw('1')->from('erp_items as it')->whereColumn('it.id', 'wo.item_id')->where(fn ($w) => $w->where('it.spec', 'like', $like)->orWhere('it.model', 'like', $like)))
+                ->orWhereExists(fn ($pl) => $pl->selectRaw('1')->from('erp_mfg_work_order_links as wl2')->join('erp_mfg_work_orders as pwo2', 'pwo2.id', '=', 'wl2.parent_work_order_id')
+                    ->whereColumn('wl2.child_work_order_id', 'wo.id')
+                    ->where(fn ($w) => $w->where('pwo2.work_order_no', 'like', $like)->orWhere('pwo2.product_name', 'like', $like)->orWhere('pwo2.item_name', 'like', $like)->orWhere('pwo2.customer_name', 'like', $like)))
                 ->orWhereExists(fn ($u) => $u->selectRaw('1')->from('erp_mfg_work_order_units as su')->whereColumn('su.work_order_id', 'wo.id')->where('su.serial_no', 'like', $like)));
         }
         return $query;
@@ -451,7 +509,27 @@ final class TaskQueryService
 
     private function taskRow(MfgWorkOrderOperation $op, string $lane, int $me, bool $canExecute): array
     {
-        $wo = MfgWorkOrder::query()->findOrFail($op->work_order_id);
+        $wo = MfgWorkOrder::query()->with('item:id,item_type,spec,model,material_grade')->findOrFail($op->work_order_id);
+        $specInfo = WorkOrderQueryService::itemSpecInfo($wo->item, $wo);
+        $parentLink = MfgWorkOrderLink::query()->where('child_work_order_id', $wo->id)->first();
+        $parentWo = $parentLink ? MfgWorkOrder::query()->with('item:id,item_type,spec,model,material_grade')->find($parentLink->parent_work_order_id) : null;
+        if (! $parentWo && $wo->rework_of_work_order_id) {
+            $parentWo = MfgWorkOrder::query()->with('item:id,item_type,spec,model,material_grade')->find($wo->rework_of_work_order_id);
+        }
+        $parentBrief = $parentWo ? $this->workOrderBrief($parentWo) : null;
+        $isSubWorkOrder = $parentBrief !== null || $wo->source_type === 'work_order' || (bool) $wo->rework_of_work_order_id;
+        $childIds = MfgWorkOrderLink::query()->where('parent_work_order_id', $wo->id)->orderBy('id')->pluck('child_work_order_id');
+        $semiSummary = $childIds->isEmpty() ? [] : MfgWorkOrder::query()->with('item:id,item_type,spec,model,material_grade')
+            ->whereIn('id', $childIds)->where('status', '!=', 'cancelled')->orderBy('id')->get()
+            ->map(function ($c) {
+                $cs = WorkOrderQueryService::itemSpecInfo($c->item, $c);
+                return [
+                    'id' => $c->id, 'work_order_no' => $c->work_order_no, 'item_id' => $c->item_id, 'item_name' => $c->item_name,
+                    'item_spec' => $cs['item_spec'], 'material_grade' => $cs['material_grade'], 'specification' => $cs['specification'],
+                    'planned_qty' => (float) $c->planned_qty, 'stored_qty' => (float) $c->stored_qty, 'completed_qty' => (float) $c->completed_qty,
+                    'unit_name' => $c->unit_name, 'status' => $c->status, 'status_label' => WorkOrderQueryService::STATUS_LABELS[$c->status] ?? $c->status,
+                ];
+            })->values()->all();
         $units = $this->tasks->selectableUnits($op, $lane);
         $owner = MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('lane', $lane)->where('role', 'owner')->where('is_active', true)->first();
         $mine = MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('lane', $lane)->where('employee_legacy_id', $me)->where('is_active', true)->first();
@@ -476,8 +554,19 @@ final class TaskQueryService
             'stage_name' => $op->stage_name, 'status' => $op->status,
             'work_status' => $op->work_status, 'work_status_label' => TaskService::WORK_STATUS_LABELS[$op->work_status] ?? $op->work_status,
             'unit_word' => $unitWord, 'unit_short' => $unitWord === '台设备' ? '台' : $unitWord, 'rework_reason' => $why, 'is_rework_order' => (bool) $wo->rework_of_work_order_id,
-            'work_order_id' => $wo->id, 'work_order_no' => $wo->work_order_no, 'product_name' => $wo->product_name ?: $wo->item_name, 'sku_name' => $wo->sku_name,
-            'customer_name' => $wo->customer_name, 'is_urgent' => (bool) $wo->is_urgent, 'priority' => (int) ($wo->priority ?: 3), 'priority_label' => \App\Services\Erp\SalesOrderPriorityService::label((int) ($wo->priority ?: 3)), 'is_custom' => (bool) $tech,
+            'work_order_id' => $wo->id, 'work_order_no' => $wo->work_order_no, 'source_type' => $wo->source_type,
+            'source_label' => $wo->rework_of_work_order_id ? '返工工单' : match ($wo->source_type) { 'stock' => '备货', 'work_order' => '半成品子工单', default => '销售订单' },
+            'is_sub_work_order' => $isSubWorkOrder,
+            'parent_work_order_id' => $parentBrief['id'] ?? null,
+            'parent_work_order_no' => $parentBrief['work_order_no'] ?? null,
+            'parent_work_order' => $parentBrief,
+            'semi_summary' => $semiSummary,
+            'product_name' => $wo->product_name ?: $wo->item_name, 'item_code' => $wo->item_code, 'item_name' => $wo->item_name,
+            'sku_code' => $wo->sku_code, 'sku_name' => $wo->sku_name,
+            'item_spec' => $specInfo['item_spec'], 'material_grade' => $specInfo['material_grade'], 'specification' => $specInfo['specification'],
+            'unit_name' => $wo->unit_name, 'work_order_status' => $wo->status, 'work_order_status_label' => WorkOrderQueryService::STATUS_LABELS[$wo->status] ?? $wo->status,
+            'customer_name' => $wo->customer_name ?: ($parentBrief['customer_name'] ?? null), 'sales_order_no' => $wo->sales_order_no ?: ($parentBrief['sales_order_no'] ?? null),
+            'is_urgent' => (bool) $wo->is_urgent, 'priority' => (int) ($wo->priority ?: 3), 'priority_label' => \App\Services\Erp\SalesOrderPriorityService::label((int) ($wo->priority ?: 3)), 'is_custom' => (bool) $tech,
             'has_drawing' => MfgDrawing::query()->where('work_order_id', $wo->id)->where('status', 'active')->exists(),
             'drawings_updated' => (bool) ($tech?->drawings_updated_at && $myFirst && $tech->drawings_updated_at->gt($myFirst)),
             'planned_finish_date' => $wo->planned_finish_date?->toDateString(), 'planned_qty' => (float) $wo->planned_qty, 'done_qty' => (float) $op->completed_qty,
@@ -488,6 +577,40 @@ final class TaskQueryService
             'paused' => $wo->status === 'paused', 'pause_reason' => $wo->pause_reason,
             'allowed' => ['claim' => $canExecute && $this->tasks->isRunnable($wo) && $op->status !== 'done'
                 && ! $owner && $units->isNotEmpty() && $this->tasks->canDo($op, $me)],
+        ];
+    }
+
+    private function workOrderBrief(MfgWorkOrder $w): array
+    {
+        $specInfo = WorkOrderQueryService::itemSpecInfo($w->relationLoaded('item') ? $w->item : null, $w);
+        return [
+            'id' => $w->id,
+            'work_order_no' => $w->work_order_no,
+            'source_type' => $w->source_type,
+            'source_label' => $w->rework_of_work_order_id ? '返工工单' : match ($w->source_type) { 'stock' => '备货', 'work_order' => '半成品子工单', default => '销售订单' },
+            'product_name' => $w->product_name ?: $w->item_name,
+            'item_code' => $w->item_code,
+            'item_name' => $w->item_name,
+            'sku_code' => $w->sku_code,
+            'sku_name' => $w->sku_name,
+            'item_spec' => $specInfo['item_spec'],
+            'material_grade' => $specInfo['material_grade'],
+            'specification' => $specInfo['specification'],
+            'customer_name' => $w->customer_name,
+            'sales_order_no' => $w->sales_order_no,
+            'status' => $w->status,
+            'status_label' => WorkOrderQueryService::STATUS_LABELS[$w->status] ?? $w->status,
+            'planned_qty' => (float) $w->planned_qty,
+            'completed_qty' => (float) $w->completed_qty,
+            'stored_qty' => (float) $w->stored_qty,
+            'unit_name' => $w->unit_name,
+            'planned_finish_date' => $w->planned_finish_date?->toDateString(),
+            'is_urgent' => (bool) $w->is_urgent,
+            'priority' => (int) ($w->priority ?: 3),
+            'priority_label' => \App\Services\Erp\SalesOrderPriorityService::label((int) ($w->priority ?: 3)),
+            'is_rework' => (bool) $w->rework_of_work_order_id,
+            'paused' => $w->status === 'paused',
+            'pause_reason' => $w->pause_reason,
         ];
     }
 

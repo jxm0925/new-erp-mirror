@@ -1,5 +1,4 @@
-// 板材领板／登记余料：领板必须挂在「集中开料」里一批还在开的开料记录上（一次只开一个 BOM），切完登记每张板的余料；
-// 切好的件在各工单下料点「已备料」，按 BOM 定额从这里登记的净耗里扣。
+// 板材领板／登记余料：领板须关联「集中开料」进行中的批次，切割完成后登记每张板材余料面积与回库库位。
 const production = require('../../../services/production');
 const view = require('../../../utils/warehouse-page');
 
@@ -10,10 +9,10 @@ const num = (value, digits = 3) => {
 const keyOf = () => `wxscut-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}${Math.random().toString(36).slice(2, 8)}`;
 function sizeText(row) {
   const d = row.dimensions || {};
-  if (String(row.shape).toUpperCase() === 'AREA_ONLY') return `余板 ${num(d.area_m2 || row.measure_qty || row.input_measure)} m²${d.thickness_mm ? ` · 厚 ${Number(d.thickness_mm)}` : ''}`;
+  if (String(row.shape).toUpperCase() === 'AREA_ONLY') return `异形余板 ${num(d.area_m2 || row.measure_qty || row.input_measure)} m²${d.thickness_mm ? ` · 厚 ${Number(d.thickness_mm)} mm` : ''}`;
   return [d.length_mm, d.width_mm, d.thickness_mm].filter(v => v !== null && v !== undefined).map(Number).join(' × ') + ' mm';
 }
-const partSize = line => [line.length_mm, line.width_mm, line.thickness_mm].filter(v => v !== null && v !== undefined).map(Number).join('×') + (line.allow_rotation ? '（可转）' : '');
+const partSize = line => [line.length_mm, line.width_mm, line.thickness_mm].filter(v => v !== null && v !== undefined).map(Number).join('×') + (line.allow_rotation ? '（允许旋转）' : '');
 function batchView(batch) {
   return Object.assign({}, batch, {
     inputText: num(batch.input_measure), poolText: num(batch.pool_measure), allocatedText: num(batch.allocated_measure), leftText: num(batch.left_measure),
@@ -39,7 +38,7 @@ Page({
     this.load().then(() => {
       if (!this.autoItem) return;
       const index = this.data.items.findIndex(i => Number(i.item_id) === this.autoItem);
-      const item = index >= 0 ? this.data.items[index] : { item_id: this.autoItem, item_name: '这种板', shortText: '0' };
+      const item = index >= 0 ? this.data.items[index] : { item_id: this.autoItem, item_name: '目标板材', shortText: '0' };
       this.autoItem = null;
       this.openSourcesFor(item);
     });
@@ -72,11 +71,15 @@ Page({
     this.load();
   },
 
-  // 领板
   openSources(event) { this.openSourcesFor(this.data.items[Number(event.currentTarget.dataset.index)]); },
   openSourcesFor(current) {
     if (!this.runId) {
-      wx.showModal({ title: '先选 BOM 开一批', content: '一次只开一个 BOM 的料：请先在「集中开料」里选 BOM、开始计时，再从那一批里领板。', confirmText: '去开料',
+      view.modal(this, {
+        theme: 'warn',
+        title: '请先启动集中开料批次',
+        infoMain: '每次集中开料仅针对单一 BOM',
+        infoSub: '请先在「集中开料」中选择 BOM 并开始计时，再从对应批次领用板材。',
+        confirmText: '前往开料',
         success: res => { if (res.confirm) wx.redirectTo({ url: '/pages/production/cutting-run/index' }); } });
       return;
     }
@@ -114,22 +117,29 @@ Page({
     const payload = { item_id: this.data.current.item_id, cutting_run_id: this.runId,
       sources: list.map(r => ({ inventory_balance_id: r.inventory_balance_id, physical_material_id: r.physical_material_id, source_version: r.source_version })) };
     payload.idempotency_key = this.commandKey('issue', payload);
-    wx.showModal({ title: '确认领板', content: `从库存领出 ${list.length} 张 ${this.data.current.item_name}（${this.data.pickedAreaText} m²）去切？切完回「开料批次」登记余料。`, confirmText: '确认领出',
+    view.modal(this, {
+      title: '确认领用板材',
+      subtitle: '切割完成后请在「开料批次」中登记余料',
+      kvRows: [
+        { k: '领用板材', v: this.data.current.item_name },
+        { k: '领用张数', v: `${list.length} 张`, red: true },
+        { k: '合计面积', v: `${this.data.pickedAreaText} m²`, red: true },
+      ],
+      confirmText: '确认领出',
       success: res => {
         if (!res.confirm) return;
         this.setData({ busy: true });
         production.sharedCuttingIssue(payload).then(response => {
           this.commands.issue = null;
-          wx.showToast({ title: '已领板，切完登记余料', icon: 'none', duration: 2500 });
+          wx.showToast({ title: '板材已领出，完成后请登记余料', icon: 'none', duration: 2500 });
           this.setData({ panel: '', tab: 'batches' });
           const batch = response.data;
           return this.load().then(() => { if (batch && batch.id) this.openBatchById(batch.id); });
-        }).catch(error => wx.showModal({ title: '领板没成功', content: view.errorText(error), showCancel: false }))
+        }).catch(error => view.modal(this, { theme: 'warn', title: '领板失败', content: view.errorText(error), showCancel: false }))
           .finally(() => this.setData({ busy: false }));
       } });
   },
 
-  // 登记余料 / 看去向
   openBatch(event) { this.openBatchById(Number(event.currentTarget.dataset.id)); },
   openBatchById(id) {
     return production.sharedCutting(id).then(response => {
@@ -137,7 +147,7 @@ Page({
       const remnants = (batch.inputs || []).map(input => ({ source_key: input.source_key, physical_no: input.physical_no, sizeText: sizeText(input),
         input_measure: Number(input.input_measure), measure_qty: '', warehouse_id: 0, warehouse_name: '', location_id: 0, location_name: '' }));
       this.setData({ panel: 'batch', batch, remnants, remark: batch.remark || '', confirmed: false });
-    }).catch(error => wx.showModal({ title: '读取失败', content: view.errorText(error), showCancel: false }));
+    }).catch(error => view.modal(this, { theme: 'warn', title: '读取失败', content: view.errorText(error), showCancel: false }));
   },
   remnantInput(event) {
     this.setData({ [`remnants[${Number(event.currentTarget.dataset.index)}].measure_qty`]: event.detail.value, confirmed: false });
@@ -163,9 +173,9 @@ Page({
     const rows = this.data.remnants;
     for (const row of rows) {
       const qty = String(row.measure_qty).trim();
-      if (qty === '' || !/^\d+(\.\d{1,8})?$/.test(qty)) { wx.showToast({ title: `${row.physical_no} 的余料请填数字，没有填 0`, icon: 'none' }); return; }
-      if (Number(qty) > row.input_measure + 1e-8) { wx.showToast({ title: `${row.physical_no} 的余料超过了整张面积`, icon: 'none' }); return; }
-      if (Number(qty) > 0 && !row.location_id) { wx.showToast({ title: `${row.physical_no} 有余料，请选放回的库位`, icon: 'none' }); return; }
+      if (qty === '' || !/^\d+(\.\d{1,8})?$/.test(qty)) { wx.showToast({ title: `${row.physical_no} 余料面积请填写有效数值（无余料填 0）`, icon: 'none' }); return; }
+      if (Number(qty) > row.input_measure + 1e-8) { wx.showToast({ title: `${row.physical_no} 余料面积不可超过投入面积`, icon: 'none' }); return; }
+      if (Number(qty) > 0 && !row.location_id) { wx.showToast({ title: `${row.physical_no} 存在余料，请选择回库库位`, icon: 'none' }); return; }
     }
     const payload = { expected_version: batch.business_version, confirmed: true, remark: String(this.data.remark || '').trim() || null,
       remnants: rows.map(r => Object.assign({ source_key: r.source_key, measure_qty: String(r.measure_qty).trim() },
@@ -174,10 +184,10 @@ Page({
     this.setData({ busy: true });
     production.sharedCuttingSettle(batch.id, payload).then(() => {
       this.commands.settle = null;
-      wx.showToast({ title: '已登记，各工单下料可点已备料', icon: 'none', duration: 2500 });
+      wx.showToast({ title: '余料已登记，各工单可执行备料交接', icon: 'none', duration: 2500 });
       this.setData({ panel: '' });
       return this.load();
-    }).catch(error => wx.showModal({ title: '登记没成功', content: view.errorText(error), showCancel: false }))
+    }).catch(error => view.modal(this, { theme: 'warn', title: '登记失败', content: view.errorText(error), showCancel: false }))
       .finally(() => this.setData({ busy: false }));
   },
   closePanel() { this.setData({ panel: '' }); },

@@ -1,2 +1,265 @@
 @import "../shared.wxss";
-.mt-head .tk-link { color: #11804a; font-weight: 600; font-size: 26rpx; margin-right: 16rpx; }
+
+.wo-group-card {
+  background: #ffffff;
+  border-radius: 26rpx;
+  margin-bottom: 20rpx;
+  overflow: hidden;
+  box-shadow: 0 8rpx 24rpx rgba(15, 23, 42, 0.05);
+  border: 1rpx solid rgba(15, 23, 42, 0.05);
+}
+
+.wo-main-summary {
+  padding: 26rpx 26rpx 22rpx;
+}
+
+.wo-head-left {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.wo-no {
+  font-size: 25rpx;
+  font-weight: 700;
+  color: #64748b;
+}
+
+.wo-detail-link {
+  font-size: 24rpx;
+  color: #64748b;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.wo-main-title {
+  display: flex;
+  align-items: baseline;
+  gap: 12rpx;
+  margin-top: 14rpx;
+  flex-wrap: wrap;
+}
+
+.wo-main-product {
+  font-size: 34rpx;
+  font-weight: 800;
+  color: #1f2329;
+}
+
+.wo-main-qty {
+  font-size: 32rpx;
+  font-weight: 800;
+  color: #d81e06;
+}
+
+.wo-line-spec {
+  margin-top: 10rpx;
+  font-size: 25rpx;
+  color: #64748b;
+  line-height: 1.45;
+  word-break: break-all;
+}
+
+/* 底部唯一一条工序+子工单展开栏 */
+.wo-expand-bar {
+  margin-top: 18rpx;
+  padding: 18rpx 22rpx;
+  border-radius: 16rpx;
+  background: #f8fafc;
+  border: 1rpx solid #e2e8f0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.wo-expand-bar.has-sub {
+  background: #fff8ee;
+  border-color: #fdd7aa;
+}
+
+.wo-expand-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #475569;
+  line-height: 1.45;
+}
+
+.wo-expand-bar.has-sub .wo-expand-text {
+  color: #b45309;
+}
+
+.wo-expand-btn {
+  font-size: 24rpx;
+  font-weight: 800;
+  color: #d81e06;
+  flex-shrink: 0;
+}
+
+/* 展开后内容区 */
+.wo-expanded-body {
+  padding: 6rpx 26rpx 26rpx;
+  border-top: 1rpx solid #f1f5f9;
+}
+
+.wo-sec-head {
+  position: relative;
+  padding-left: 16rpx;
+  margin: 20rpx 0 14rpx;
+  font-size: 25rpx;
+  font-weight: 800;
+  color: #1f2329;
+}
+
+.wo-sec-head::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 6rpx;
+  height: 22rpx;
+  border-radius: 3rpx;
+  background: #d81e06;
+}
+
+.wo-task-box {
+  background: #f8fafc;
+  border-radius: 18rpx;
+  padding: 20rpx 22rpx;
+  margin-bottom: 14rpx;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.wo-task-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.wo-task-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.wo-task-title-line {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  flex-wrap: wrap;
+}
+
+.wo-task-op {
+  font-size: 29rpx;
+  font-weight: 800;
+  color: #1f2329;
+}
+
+.wo-task-sub {
+  margin-top: 6rpx;
+  font-size: 23rpx;
+  color: #64748b;
+}
+
+.wo-action-btn {
+  margin: 0;
+  padding: 0 28rpx;
+  height: 62rpx;
+  line-height: 62rpx;
+  border-radius: 999rpx;
+  background: linear-gradient(135deg, #d81e06 0%, #ef1008 100%);
+  color: #ffffff;
+  font-size: 24rpx;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.wo-action-btn::after {
+  border: 0;
+}
+
+.wo-action-btn.outline {
+  background: #fff5f5;
+  color: #d81e06;
+  border: 2rpx solid #d81e06;
+  line-height: 58rpx;
+}
+
+/* 下挂子工单卡片 */
+.wo-sub-card {
+  background: #fff8ee;
+  border: 1rpx solid #fdd7aa;
+  border-radius: 20rpx;
+  padding: 20rpx 22rpx;
+  margin-bottom: 16rpx;
+}
+
+.wo-sub-card:last-child {
+  margin-bottom: 0;
+}
+
+.wo-sub-head {
+  padding-bottom: 12rpx;
+}
+
+.wo-sub-title {
+  font-size: 28rpx;
+  font-weight: 800;
+  color: #1f2329;
+  flex: 1;
+  min-width: 0;
+}
+
+.wo-sub-link {
+  font-size: 23rpx;
+  font-weight: 700;
+  color: #d97706;
+  flex-shrink: 0;
+}
+
+.wo-sub-meta {
+  margin-top: 6rpx;
+  padding-left: 26rpx;
+  font-size: 23rpx;
+  color: #64748b;
+}
+
+.wo-sub-spec {
+  margin-top: 4rpx;
+  padding-left: 26rpx;
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #1f2329;
+  word-break: break-all;
+}
+
+.wo-sub-task {
+  margin-top: 12rpx;
+  background: #ffffff;
+  border-radius: 14rpx;
+  padding: 18rpx 20rpx;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.wo-sub-empty {
+  margin-top: 10rpx;
+  padding: 14rpx 20rpx;
+  background: #ffffff;
+  border-radius: 14rpx;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 23rpx;
+  color: #64748b;
+}

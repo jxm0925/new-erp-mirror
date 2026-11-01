@@ -61,7 +61,7 @@ final class PerformanceStatsService
         $foreign = strtoupper((string) ($order->currency ?: 'CNY')) !== strtoupper((string) ($order->base_currency ?: 'CNY'));
         $rate = ! $foreign ? '1' : (bccomp((string) ($order->business_exchange_rate ?? 0), '0', 10) > 0 ? (string) $order->business_exchange_rate : null);
         if ($rate === null) $issues[] = '外币订单还没有业务汇率，提成金额暂不能折算人民币。';
-        $lines = DB::table('erp_sales_order_lines')->where('sales_order_id', $id)->orderBy('sort_order')->orderBy('id')->get();
+        $lines = DB::table('erp_sales_order_lines')->where('sales_order_id', $id)->where('line_status', '!=', 'removed')->orderBy('sort_order')->orderBy('id')->get();
         $shippedByLine = $this->shippedLines($id)->groupBy('sales_order_line_id')
             ->map(fn ($rows) => ['sales_qty' => (string) $rows->sum(fn ($r) => (float) $r->sales_qty)])->all();
         $readiness = $this->calc->shipmentReadiness($lines->map(fn ($l) => (array) $l)->all(), $shippedByLine);
@@ -258,6 +258,7 @@ final class PerformanceStatsService
     private function packing(object $line, array &$ctx): array
     {
         $contents = DB::table('erp_shipment_packing_contents as c')->join('erp_sales_shipments as s', 's.id', '=', 'c.shipment_id')
+            ->join('erp_sales_shipment_lines as sl', 'sl.id', '=', 'c.shipment_line_id')->whereNotIn('sl.line_status', ['cancelled', 'replaced'])
             ->where('c.sales_order_line_id', $line->id)->where('s.shipment_status', '!=', 'cancelled')->get(['c.id', 'c.shipment_id', 'c.base_qty', 's.shipment_no']);
         if ($contents->isEmpty()) return [];
         $rows = [];
@@ -353,6 +354,7 @@ final class PerformanceStatsService
     {
         return $this->shipped[$orderId] ??= DB::table('erp_sales_shipment_lines as l')->join('erp_sales_shipments as s', 's.id', '=', 'l.shipment_id')
             ->where('s.sales_order_id', $orderId)->where('s.shipment_status', '!=', 'cancelled')
+            ->whereNotIn('l.line_status', ['cancelled', 'replaced'])
             ->where(fn ($w) => $w->whereNotNull('l.dispatched_at')->orWhereIn('s.shipment_status', ['shipped', 'completed']))
             ->get(['l.sales_order_line_id', 'l.item_id', 'l.batch_no', 'l.sales_qty', 'l.base_qty']);
     }

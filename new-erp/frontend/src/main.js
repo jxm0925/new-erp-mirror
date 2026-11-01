@@ -111,6 +111,7 @@ const router = new VueRouter({
   mode: 'hash',
   routes: [
     { path: '/login', component: Login },
+    { path: '/display/assembly', component: () => import('./views/erp/display/AssemblyDisplay.vue'), meta: { public: true, fullscreen: true } },
     { path: '/', redirect: '/console' },
     { path: '/console', component: ConsoleDashboard },
     { path: '/master/products', component: ProductList, meta: { permission: 'master.product' } },
@@ -271,6 +272,7 @@ const router = new VueRouter({
 })
 
 router.beforeEach((to, from, next) => {
+  if (to.path === '/display/assembly' && to.meta.public === true) return next()
   if (to.path === '/login') return next()
   if (!localStorage.getItem('erp_token')) return next(`/login?redirect=${encodeURIComponent(to.fullPath)}`)
   if (!canAccessRoute(to, sessionAccess())) {

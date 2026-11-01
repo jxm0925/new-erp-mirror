@@ -230,8 +230,10 @@ final class MaterialIssueService
                 ->whereIn('inventory_balance_id', $balanceIds ?: [0])->where('item_id', $item->id)->where('serial_status', 'available')
                 ->whereNotIn('id', array_keys(MaterialDeliveryService::holds()['serials']) ?: [0])
                 ->orderBy('id')->limit(200)->get();
+            $ms = WorkOrderQueryService::materialSpecInfo($item);
             $rows[] = ['material_id' => (int) $m->id, 'component_item_id' => (int) $item->id, 'component_item_name' => $m->component_item_name,
-                'unit_name' => $m->unit_name, 'remaining_qty' => $remaining, 'per_unit_qty' => $planned > 0 ? round((float) $m->required_qty / $planned, 4) : 0,
+                'component_item_code' => $m->component_item_code, 'component_item_spec' => $ms['component_item_spec'], 'material_grade' => $ms['material_grade'],
+                'specification' => $ms['specification'], 'unit_name' => $m->unit_name, 'remaining_qty' => $remaining, 'per_unit_qty' => $planned > 0 ? round((float) $m->required_qty / $planned, 4) : 0,
                 'serials' => $serials->map(fn (InventorySerial $s) => ['id' => (int) $s->id, 'serial_no' => $s->serial_no, 'batch_no' => $s->batch_no,
                     'warehouse_name' => $s->warehouse?->warehouse_name, 'location_code' => $s->location?->location_code,
                     'received_at' => $s->received_at?->toDateString()])->values()->all()];
@@ -268,15 +270,16 @@ final class MaterialIssueService
     }
 
     /** 这道工序最终要做多少台设备：计划数减去在本道之前就确认报废的设备。 */
-    public function expectedUnits(MfgWorkOrderOperation $op, MfgWorkOrder $wo): float
+    public function expectedUnits(MfgWorkOrderOperation $op, MfgWorkOrder $wo, bool $lock = false): float
     {
         $planned = (float) $wo->planned_qty;
         $before = MfgWorkOrderOperation::query()->where('work_order_id', $wo->id)->where('execution_context', 'production')
             ->where(fn ($q) => $q->where('sequence', '<', $op->sequence)->orWhere(fn ($w) => $w->where('sequence', $op->sequence)->where('id', '<', $op->id)))
-            ->pluck('id');
+            ->when($lock, fn ($q) => $q->lockForUpdate())->pluck('id');
         if ($before->isEmpty()) return $planned;
-        $scrapped = \App\Models\Erp\MfgUnitReport::query()->where('work_order_id', $wo->id)->where('result', 'scrap')->where('review_status', 'approved')
-            ->whereIn('work_order_operation_id', $before)->distinct()->count('unit_id');
+        $reports = MfgUnitReport::query()->where('work_order_id', $wo->id)->where('result', 'scrap')->where('review_status', 'approved')
+            ->whereIn('work_order_operation_id', $before);
+        $scrapped = $lock ? $reports->lockForUpdate()->get(['unit_id'])->unique('unit_id')->count() : $reports->distinct()->count('unit_id');
         return max(0, $planned - $scrapped);
     }
 

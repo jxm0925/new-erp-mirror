@@ -25,7 +25,8 @@ export function createErpApi({ timeout = 20000, fallbackMessage = '请求失败�
     if (error.response?.status === 401) {
       SESSION_KEYS.forEach(key => localStorage.removeItem(key))
       try { sessionStorage.removeItem('erp_visited_views') } catch (e) { /* 存储不可用时忽略 */ }
-      if (window.location.hash !== '#/login') window.location.hash = '#/login'
+      const currentPath = window.location.hash.slice(1).split('?')[0]
+      if (currentPath !== '/login' && currentPath !== '/display/assembly') window.location.hash = '#/login'
     }
     // 生产/销售接口的校验失败统一返回“请求参数校验失败。”，具体字段原因在 errors 中，优先展示。
     const message = firstValidationMessage(body?.errors) || body?.message || fallbackMessage

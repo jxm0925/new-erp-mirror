@@ -109,7 +109,7 @@ final class WorkOrderQueryService
 
     public function detail(int $id, bool $amounts): array
     {
-        $wo = MfgWorkOrder::query()->with(['operations', 'units.components', 'materials', 'item:id,item_type'])->findOrFail($id);
+        $wo = MfgWorkOrder::query()->with(['operations', 'units.components', 'materials', 'item:id,item_type,spec,model,material_grade'])->findOrFail($id);
         $row = $this->row($wo, $amounts);
         $operations = $wo->operations->map(fn ($op) => $this->operationArray($op))->values()->all();
         $materials = $wo->materials->map(fn ($m) => $this->materialArray($m))->values()->all();
@@ -117,6 +117,7 @@ final class WorkOrderQueryService
         $row['kitting'] = $kitting;
         $row['operations'] = $operations;
         [$row['parent_work_order'], $row['child_work_orders']] = $this->links($wo);
+        $row['is_sub_work_order'] = $row['parent_work_order'] !== null || $wo->source_type === 'work_order' || (bool) $wo->rework_of_work_order_id;
         $opNames = $wo->operations->pluck('operation_name', 'id');
         $pendingScrap = MfgUnitReport::query()->where('work_order_id', $wo->id)->where('review_status', 'pending')->pluck('unit_id')->flip();
         $row['units'] = $wo->units->map(fn ($u) => [
@@ -236,11 +237,21 @@ final class WorkOrderQueryService
         $plan = $this->plans->build($item, $data['product_id'] ?? null, $data['sku_id'] ?? null, null, max($qty, 0.0001), $data['bom_id'] ?? null, $data['routing_id'] ?? null);
         $operations = array_map(fn ($op) => $this->operationArray((object) $op), $plan['operations']);
         $kitting = $this->plans->kitting($plan['materials'], $operations);
+        $compIds = collect($kitting)->flatMap(fn ($op) => collect($op['materials'])->pluck('component_item_id'))->unique()->values();
+        $compItems = Item::query()->whereIn('id', $compIds)->get(['id', 'spec', 'model', 'material_grade'])->keyBy('id');
+        $bomLines = collect(data_get($plan, 'bom.items', []))->keyBy('id');
+        foreach ($kitting as &$op) {
+            foreach ($op['materials'] as &$m) {
+                $m = array_merge($m, self::materialSpecInfo($compItems->get($m['component_item_id']), $bomLines->get($m['bom_item_id'] ?? null)));
+            }
+            unset($m);
+        }
+        unset($op);
         $stock = InventoryBalance::query()->where('item_id', $item->id)->sum('quantity_on_hand');
         return [
             'item' => ['id' => $item->id, 'item_code' => $item->item_code, 'item_name' => $item->item_name, 'unit_name' => $item->unit?->unit_name,
                 'is_purchase_item' => $item->isPurchaseFulfilledItem(), 'default_warehouse_id' => $item->default_warehouse_id,
-                'stock_qty' => round((float) $stock, 4)],
+                'stock_qty' => round((float) $stock, 4)] + self::itemSpecInfo($item),
             'bom' => $plan['bom'] ? collect($plan['bom'])->except('items')->all() : null,
             'routing' => $plan['routing'] ? ['id' => $plan['routing']['routing_id'], 'routing_no' => $plan['routing']['routing_no'],
                 'routing_name' => $plan['routing']['routing_name'], 'version' => $plan['routing']['version'], 'is_default' => $plan['routing']['is_default'] ?? false] : null,
@@ -264,16 +275,18 @@ final class WorkOrderQueryService
         $installedIn = \App\Models\Erp\MfgUnitComponent::query()->installed()->where('component_serial_no', $unit->serial_no)->orderByDesc('id')->first();
         $parentSerial = $installedIn ? MfgWorkOrderUnit::query()->whereKey($installedIn->unit_id)->value('serial_no') : null;
         $history = \App\Models\Erp\MfgUnitComponent::query()->with('removal')->where('unit_id', $unit->id)->whereHas('removal')->orderBy('id')->get();
-        $wo = MfgWorkOrder::query()->with('operations')->findOrFail($unit->work_order_id);
+        $wo = MfgWorkOrder::query()->with(['operations', 'item:id,spec,model,material_grade'])->findOrFail($unit->work_order_id);
         $logs = MfgWorkOrderLog::query()->where('work_order_id', $wo->id)
             ->where(fn ($q) => $q->where('unit_id', $unit->id)->orWhere(fn ($w) => $w->whereNull('unit_id')->whereIn('action', ['released', 'paused', 'resumed', 'cancelled'])))
             ->orderBy('id')->get()->map(fn ($log) => ['action' => $log->action, 'content' => $log->content, 'operator_name' => $log->operator_name, 'created_at' => $log->created_at?->toDateTimeString()]);
         $current = $unit->current_operation_id ? $wo->operations->firstWhere('id', $unit->current_operation_id) : null;
+        $specInfo = self::itemSpecInfo($wo->item, $wo);
         return [
             'serial_no' => $unit->serial_no, 'status' => $unit->status, 'status_label' => self::UNIT_LABELS[$unit->status] ?? $unit->status,
             'current_operation_id' => $current?->id, 'current_operation_name' => $current?->operation_name, 'rework_count' => $unit->rework_count,
             'work_order' => ['id' => $wo->id, 'work_order_no' => $wo->work_order_no, 'status' => $wo->status, 'status_label' => self::STATUS_LABELS[$wo->status] ?? $wo->status,
                 'item_name' => $wo->item_name, 'item_code' => $wo->item_code, 'product_name' => $wo->product_name, 'sku_code' => $wo->sku_code, 'sku_name' => $wo->sku_name,
+                'item_spec' => $specInfo['item_spec'], 'material_grade' => $specInfo['material_grade'], 'specification' => $specInfo['specification'],
                 'bom_no' => $wo->bom_no, 'bom_name' => data_get($wo->bom_snapshot, 'bom_name'), 'bom_version' => $wo->bom_version,
                 'routing_name' => $wo->routing_name, 'routing_version' => $wo->routing_version,
                 'special_requirement' => $wo->special_requirement],
@@ -314,7 +327,7 @@ final class WorkOrderQueryService
     /** 订单详情里的“生产进度”页签。 */
     public function forSalesOrder(int $orderId, bool $amounts): array
     {
-        return MfgWorkOrder::query()->with(['operations:id,work_order_id,operation_name,execution_context,sequence,completed_qty'])
+        return MfgWorkOrder::query()->with(['operations:id,work_order_id,operation_name,execution_context,sequence,completed_qty', 'item:id,item_type,spec,model,material_grade'])
             ->withCount(['units', 'units as stored_units_count' => fn ($q) => $q->where('status', 'stored')])
             ->where('sales_order_id', $orderId)->orderBy('sales_order_line_no')->orderBy('id')->get()
             ->map(fn ($wo) => $this->row($wo, $amounts))->values()->all();
@@ -333,7 +346,8 @@ final class WorkOrderQueryService
         if ($keyword = trim((string) ($filters['keyword'] ?? ''))) {
             $like = '%'.$keyword.'%';
             $query->where(fn ($q) => $q->where('work_order_no', 'like', $like)->orWhere('item_name', 'like', $like)->orWhere('item_code', 'like', $like)
-                ->orWhere('product_name', 'like', $like)->orWhere('sku_code', 'like', $like)->orWhere('sales_order_no', 'like', $like)->orWhere('customer_name', 'like', $like)
+                ->orWhere('product_name', 'like', $like)->orWhere('sku_code', 'like', $like)->orWhere('sku_name', 'like', $like)->orWhere('sales_order_no', 'like', $like)->orWhere('customer_name', 'like', $like)
+                ->orWhereExists(fn ($it) => $it->selectRaw('1')->from('erp_items as it')->whereColumn('it.id', 'erp_mfg_work_orders.item_id')->where(fn ($w) => $w->where('it.spec', 'like', $like)->orWhere('it.model', 'like', $like)))
                 ->orWhereExists(fn ($u) => $u->selectRaw('1')->from('erp_mfg_work_order_units as u')->whereColumn('u.work_order_id', 'erp_mfg_work_orders.id')->where('u.serial_no', 'like', $like)));
         }
         return $query;
@@ -364,6 +378,7 @@ final class WorkOrderQueryService
         $stuck = $wo->status === 'paused' ? '暂停：'.($wo->pause_reason ?: '未写原因')
             : ($wo->block_reason ?: ($funding && ! ($funding['production_funds_satisfied'] ?? true) ? '定金未到，不能开工' : null));
         $production = $wo->operations->where('execution_context', 'production')->values();
+        $specInfo = self::itemSpecInfo($wo->relationLoaded('item') ? $wo->item : null, $wo);
         return [
             'id' => $wo->id, 'work_order_no' => $wo->work_order_no, 'source_type' => $wo->source_type,
             'source_label' => $wo->rework_of_work_order_id ? '返工工单' : match ($wo->source_type) { 'stock' => '备货', 'work_order' => '半成品补做', default => '销售订单' },
@@ -373,6 +388,7 @@ final class WorkOrderQueryService
             'sales_order_id' => $wo->sales_order_id, 'sales_order_no' => $wo->sales_order_no, 'sales_order_line_no' => $wo->sales_order_line_no,
             'customer_name' => $wo->customer_name, 'product_name' => $wo->product_name, 'sku_code' => $wo->sku_code, 'sku_name' => $wo->sku_name,
             'item_id' => $wo->item_id, 'item_code' => $wo->item_code, 'item_name' => $wo->item_name, 'unit_name' => $wo->unit_name,
+            'item_spec' => $specInfo['item_spec'], 'material_grade' => $specInfo['material_grade'], 'specification' => $specInfo['specification'],
             'planned_qty' => $qty, 'completed_qty' => (float) $wo->completed_qty, 'stored_qty' => (float) $wo->stored_qty,
             'units_count' => (int) ($wo->units_count ?? $wo->units()->count()),
             'status' => $wo->status, 'status_label' => self::STATUS_LABELS[$wo->status] ?? $wo->status, 'is_urgent' => (bool) $wo->is_urgent, 'priority' => (int) ($wo->priority ?: 3), 'priority_label' => \App\Services\Erp\SalesOrderPriorityService::label((int) ($wo->priority ?: 3)),
@@ -456,6 +472,7 @@ final class WorkOrderQueryService
     {
         $ids = collect($kitting)->flatMap(fn ($op) => collect($op['materials'])->pluck('component_item_id'))->unique()->values();
         $items = Item::query()->whereIn('id', $ids)->get()->keyBy('id');
+        $bomLines = collect(data_get($wo->bom_snapshot, 'items', []))->keyBy('id');
         $open = $wo->id ? MaterialIssueService::openChildQty((int) $wo->id) : [];
         $held = $wo->id ? MaterialReturnService::heldDefectiveQty((int) $wo->id) : [];
         $shortByItem = collect($kitting)->flatMap(fn ($op) => $op['materials'])->groupBy('component_item_id')->map(fn ($rows) => $rows->sum('shortage_qty'));
@@ -465,6 +482,7 @@ final class WorkOrderQueryService
             $prepared = str_starts_with((string) $op['operation_key'], 'o') ? MaterialDeliveryService::preparedQty((int) substr($op['operation_key'], 1)) : [];
             foreach ($op['materials'] as &$m) {
                 $item = $items->get($m['component_item_id']);
+                $m = array_merge($m, self::materialSpecInfo($item, $bomLines->get($m['bom_item_id'] ?? null)));
                 $m['can_make'] = $openWo && $item && in_array($item->item_type, ['semi_finished', 'finished_product'], true) && ! $item->isPurchaseFulfilledItem();
                 $m['in_production_qty'] = (float) ($open[$m['component_item_id']] ?? 0);
                 // 退回冻结、返工中的不良件：不算缺口，防止重复补单。
@@ -511,14 +529,20 @@ final class WorkOrderQueryService
 
     private function links(MfgWorkOrder $wo): array
     {
-        $brief = fn (?MfgWorkOrder $w) => $w ? ['id' => $w->id, 'work_order_no' => $w->work_order_no, 'item_name' => $w->item_name, 'product_name' => $w->product_name,
-            'status' => $w->status, 'status_label' => self::STATUS_LABELS[$w->status] ?? $w->status, 'planned_qty' => (float) $w->planned_qty,
-            'stored_qty' => (float) $w->stored_qty, 'completed_qty' => (float) $w->completed_qty, 'unit_name' => $w->unit_name,
-            'planned_finish_date' => $w->planned_finish_date?->toDateString(), 'is_rework' => (bool) $w->rework_of_work_order_id] : null;
+        $brief = function (?MfgWorkOrder $w): ?array {
+            if (! $w) return null;
+            $specInfo = self::itemSpecInfo($w->relationLoaded('item') ? $w->item : null, $w);
+            return ['id' => $w->id, 'work_order_no' => $w->work_order_no, 'item_code' => $w->item_code, 'item_name' => $w->item_name, 'product_name' => $w->product_name,
+                'sku_code' => $w->sku_code, 'sku_name' => $w->sku_name, 'item_spec' => $specInfo['item_spec'], 'material_grade' => $specInfo['material_grade'],
+                'specification' => $specInfo['specification'],
+                'status' => $w->status, 'status_label' => self::STATUS_LABELS[$w->status] ?? $w->status, 'planned_qty' => (float) $w->planned_qty,
+                'stored_qty' => (float) $w->stored_qty, 'completed_qty' => (float) $w->completed_qty, 'unit_name' => $w->unit_name,
+                'planned_finish_date' => $w->planned_finish_date?->toDateString(), 'is_rework' => (bool) $w->rework_of_work_order_id];
+        };
         $up = MfgWorkOrderLink::query()->where('child_work_order_id', $wo->id)->first();
-        $parent = $up ? $brief(MfgWorkOrder::query()->find($up->parent_work_order_id)) : null;
+        $parent = $up ? $brief(MfgWorkOrder::query()->with('item:id,item_type,spec,model,material_grade')->find($up->parent_work_order_id)) : null;
         $childIds = MfgWorkOrderLink::query()->where('parent_work_order_id', $wo->id)->orderBy('id')->pluck('child_work_order_id');
-        $children = $childIds->isEmpty() ? [] : MfgWorkOrder::query()->whereIn('id', $childIds)->orderBy('id')->get()->map($brief)->values()->all();
+        $children = $childIds->isEmpty() ? [] : MfgWorkOrder::query()->with('item:id,item_type,spec,model,material_grade')->whereIn('id', $childIds)->orderBy('id')->get()->map($brief)->values()->all();
         return [$parent, $children];
     }
 
@@ -537,10 +561,65 @@ final class WorkOrderQueryService
     private function materialArray($m): array
     {
         return [
-            'id' => $m->id, 'operation_key' => $m->work_order_operation_id ? 'o'.$m->work_order_operation_id : null,
+            'id' => $m->id, 'bom_item_id' => $m->bom_item_id ? (int) $m->bom_item_id : null,
+            'operation_key' => $m->work_order_operation_id ? 'o'.$m->work_order_operation_id : null,
             'component_item_id' => (int) $m->component_item_id, 'component_item_code' => $m->component_item_code, 'component_item_name' => $m->component_item_name,
             'unit_name' => $m->unit_name, 'unit_qty' => (float) $m->unit_qty, 'required_qty' => (float) $m->required_qty, 'issued_qty' => (float) $m->issued_qty,
             'participates_in_kitting' => (bool) $m->participates_in_kitting, 'cutting_mode' => $m->cutting_mode, 'supply_mode' => $m->supply_mode,
+            'remark' => $m->remark,
+        ];
+    }
+
+    /** 统一提取工单物料/产品的规格型号与材质。 */
+    public static function itemSpecInfo(?Item $item, ?MfgWorkOrder $wo = null): array
+    {
+        $spec = trim((string) ($item?->spec ?: $item?->model ?: ''));
+        $grade = trim((string) ($item?->material_grade ?: ''));
+        $skuName = trim((string) ($wo?->sku_name ?: ''));
+        $parts = array_values(array_filter([$spec ?: null, $grade ?: null]));
+        $combined = $parts ? implode(' · ', $parts) : ($skuName !== '' && $skuName !== trim((string) ($wo?->item_name ?: '')) ? $skuName : ($skuName ?: null));
+        return [
+            'item_spec' => $spec !== '' ? $spec : ($skuName !== '' ? $skuName : null),
+            'material_grade' => $grade !== '' ? $grade : null,
+            'specification' => $combined,
+        ];
+    }
+
+    /** 从 BOM 行快照提取下料尺寸描述（板材长宽厚/件数、管材单台总米数）。 */
+    public static function cutSpecFromLine(?array $line): ?string
+    {
+        if (! $line) return null;
+        $snap = is_array($line['cutting_quantity_snapshot'] ?? null) ? $line['cutting_quantity_snapshot'] : [];
+        if (($snap['mode'] ?? null) === 'sheet_dimensions') {
+            $l = $snap['length_mm'] ?? null;
+            $w = $snap['width_mm'] ?? null;
+            $t = $snap['thickness_mm'] ?? null;
+            $c = $snap['piece_count'] ?? null;
+            if ($l && $w) {
+                $dim = $l.'×'.$w.($t ? '×'.$t : '').'mm';
+                return '下料 '.$dim.($c ? ' × '.$c.'件' : '');
+            }
+        }
+        if (($snap['mode'] ?? null) === 'pipe_length' && ! empty($snap['total_length_mm'])) {
+            $mm = (float) $snap['total_length_mm'];
+            $m = rtrim(rtrim(number_format($mm / 1000, 3, '.', ''), '0'), '.');
+            return '下料 '.$mm.'mm（'.$m.'m/台）';
+        }
+        return null;
+    }
+
+    /** 统一提取工序用料的规格型号、材质、下料尺寸。 */
+    public static function materialSpecInfo(?Item $item, ?array $bomLine = null): array
+    {
+        $spec = trim((string) ($item?->spec ?: $item?->model ?: ($bomLine['component_spec'] ?? '')));
+        $grade = trim((string) ($item?->material_grade ?: ''));
+        $cutSpec = self::cutSpecFromLine($bomLine);
+        $parts = array_values(array_filter([$spec ?: null, $grade ?: null, $cutSpec]));
+        return [
+            'component_item_spec' => $spec !== '' ? $spec : null,
+            'material_grade' => $grade !== '' ? $grade : null,
+            'cut_spec' => $cutSpec,
+            'specification' => $parts ? implode(' · ', $parts) : null,
         ];
     }
 }

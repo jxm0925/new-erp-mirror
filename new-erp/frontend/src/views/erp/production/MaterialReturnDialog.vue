@@ -124,7 +124,8 @@ export default {
       return (m.serials || []).filter(s => (s.kind === 'scrapped') === scrapped)
     },
     materialLabel(m) {
-      return `${m.component_item_name}（已领 ${qty(m.issued_qty)} / 应领 ${qty(m.required_qty)} ${m.unit_name || ''}${m.serial_mode === 'required' ? '，按编号退' : (m.by_number ? '，有编号的选编号' : '')}）`
+      const spec = m.specification || m.component_item_spec ? ` [${m.specification || m.component_item_spec}]` : ''
+      return `${m.component_item_name}${spec}（已领 ${qty(m.issued_qty)} / 应领 ${qty(m.required_qty)} ${m.unit_name || ''}${m.serial_mode === 'required' ? '，按编号退' : (m.by_number ? '，有编号的选编号' : '')}）`
     },
     serialLabel(s) {
       const where = s.unit_serial_no ? `装在 ${s.unit_serial_no}${s.kind === 'scrapped' ? '（报废）' : ''}` : '未装到设备'

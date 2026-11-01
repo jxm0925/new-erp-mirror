@@ -21,4 +21,9 @@ function openDocument(row) {
 }
 function errorText(error) { return error && error.message ? error.message : '加载失败，请稍后重试'; }
 function back() { if (getCurrentPages().length > 1) wx.navigateBack(); else wx.redirectTo({ url: '/pages/production/hub/index' }); }
-module.exports = { permissions, quantity, rows, decorate, openDocument, errorText, back };
+function modal(page, options) {
+  const dlg = page && typeof page.selectComponent === 'function' ? page.selectComponent('#prodDialog') : null;
+  if (dlg && typeof dlg.show === 'function') return dlg.show(options);
+  return wx.showModal(options);
+}
+module.exports = { permissions, quantity, rows, decorate, openDocument, errorText, back, modal };

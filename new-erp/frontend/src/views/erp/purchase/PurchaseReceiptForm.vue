@@ -54,17 +54,74 @@
       </div>
 
       <div class="line-table-shell">
-        <el-table :data="form.items" size="mini" :row-class-name="lineRowClass" @row-click="selectLine">
-          <el-table-column width="42" align="center">
-            <template slot-scope="{$index}"><el-checkbox :value="$index===activeIndex" @change="activeIndex=$index" /></template>
+        <el-table :data="form.items" size="mini" :row-key="row => form.items.indexOf(row)" :expand-row-keys="activeLine ? [activeIndex] : []" :row-class-name="lineRowClass" @row-click="selectLine" @expand-change="onExpandChange">
+          <el-table-column type="expand" width="42">
+            <template slot-scope="{row,$index}">
+              <section ref="lineEditor" class="line-editor">
+                <header>验收与入库信息 <span>（行号 {{ $index + 1 }}：{{ itemById(row.item_id).item_name || '请选择物料' }}）</span></header>
+                <div class="editor-columns">
+                  <section class="editor-group">
+                    <h3>数量与换算</h3>
+                    <label class="compact-field required"><span>到货采购数量</span><el-input v-model.number="row.qty" type="number" size="small" min="0.0001" :disabled="isReplacement" @input="syncReceiptActualQty(row)"><template slot="append">{{ purchaseUnitName(row) }}</template></el-input></label>
+                    <label class="compact-field required"><span>采购单位</span><paged-record-select v-model="row.purchase_unit_id" size="small" :disabled="isReplacement" placeholder="请选择采购单位" @change="applyConversion(row)" :key="'purchase-unit-' + row.item_id" :params="{ item_id: row.item_id }" :request="params => purchaseConversions(row, params)" value-key="purchase_unit_id" :selected-rows.sync="row._conversionOptions" :local-rows="localConversionOptions(row)" :label="purchaseOptionLabel" :columns="[{ prop: 'purchase_unit.unit_name', label: '采购单位' }, { prop: 'factor', label: '换算比例' }, { prop: 'base_unit.unit_name', label: '基本单位' }]" title="选择采购单位" /></label>
+                    <label class="compact-field required"><span>换算因子</span><el-input :value="conversionFactor(row)" size="small" disabled /></label>
+                    <label class="compact-field"><span>标准基本数量</span><el-input :value="standardBaseQty(row)" size="small" disabled /></label>
+                    <label class="compact-field"><span>实际基本数量</span><el-input v-model.number="row.actual_base_qty" type="number" size="small" min="0" :disabled="!actualConversionAllowed(row)" /></label>
+                    <label class="compact-field"><span>差异数量</span><el-input :value="differenceQty(row)" size="small" disabled /></label>
+                    <label class="compact-field"><span>差异原因</span><el-select v-model="row.difference_reason" size="small" :disabled="!hasDifference(row)" placeholder="无差异"><el-option label="包装重量偏差" value="包装重量偏差" /><el-option label="计量差异" value="计量差异" /><el-option label="验收修正" value="验收修正" /><el-option label="其他" value="其他" /></el-select></label>
+                    <label class="compact-field required"><span>{{ isReplacement ? '库存成本单价' : taxMode === 'tax_included' ? '单价（含税）' : '单价（未税）' }}</span><el-input v-model.number="row.unit_price" type="number" size="small" min="0" :disabled="isReplacement"><template slot="append">CNY</template></el-input></label>
+                  </section>
+
+                  <section class="editor-group">
+                    <h3>{{ isStockManaged(row) ? '质量与入库' : '验收与履约' }}</h3>
+                    <label class="compact-field required"><span>合格数量</span><el-input v-model.number="row.qualified_qty" type="number" size="small" min="0" @change="syncQualityQty(row, 'qualified_qty')" /></label>
+                    <label class="compact-field required"><span>不合格数量</span><el-input v-model.number="row.unqualified_qty" type="number" size="small" min="0" @change="syncQualityQty(row, 'unqualified_qty')" /></label>
+                    <template v-if="isStockManaged(row)">
+                      <label class="compact-field required"><span>批次号</span><el-input :value="row.batch_no || '保存时系统自动生成'" size="small" disabled class="erp-system-number" /></label>
+                      <template v-if="isPipeLine(row)">
+                        <label class="compact-field required"><span>每根长度</span><el-input v-model="row.stock_length_mm" size="small" inputmode="decimal" :placeholder="pipeStandardLength(row) ? '不填按标准 ' + pipeStandardLength(row) + ' mm' : '请填写实际每根长度'"><template slot="append">mm</template></el-input></label>
+                        <p class="pipe-length-tip">这一行的管都按这个长度入库，共 <strong>{{ pipeTotalMeters(row) }}</strong>；长度不一样的请分成几行录。</p>
+                      </template>
+                      <label class="compact-field" :class="{ required: qualifiedBaseQty(row) > 0 }"><span>默认仓库</span><paged-record-select v-model="row.warehouse_id" size="small" :placeholder="qualifiedBaseQty(row) > 0 ? '请选择仓库' : '无需入库'" :disabled="qualifiedBaseQty(row) <= 0" @change="onDefaultWarehouseChange(row)" entity="warehouses" :params="{ management_scope: form.management_scope, statuses: ['enabled', 'active'] }" :selected-rows.sync="warehouses" title="选择仓库" /></label>
+                      <label class="compact-field" :class="{ required: qualifiedBaseQty(row) > 0 }"><span>默认库位</span><paged-record-select v-model="row.location_id" size="small" :placeholder="qualifiedBaseQty(row) > 0 ? '请选择库位' : '无需入库'" :disabled="qualifiedBaseQty(row) <= 0 || !row.warehouse_id" @change="onDefaultLocationChange(row)" entity="locations" :params="{ management_scope: form.management_scope, warehouse_id: row.warehouse_id, statuses: ['enabled', 'active'] }" :selected-rows.sync="locations" title="选择库位" /></label>
+                      <div class="allocation-entry"><span>入库库位分配</span><div><el-button size="mini" type="success" plain icon="el-icon-s-grid" :disabled="qualifiedBaseQty(row) <= 0" @click="openAllocationDialog(row)">多库位分配</el-button><small>{{ allocationProgressText(row) }}</small></div></div>
+                    </template>
+                    <el-alert v-else title="该物料按非库存方式采购：验收完成后直接形成履约与结算事实，不要求仓库、库位、批次或库存过账。" type="info" :closable="false" />
+                    <label class="compact-field"><span>预计到货</span><el-date-picker v-model="row.expected_arrival_date" size="small" type="date" value-format="yyyy-MM-dd" /></label>
+                    <label class="compact-field remark-compact"><span>备注</span><el-input v-model="row.remark" type="textarea" :rows="2" resize="none" maxlength="200" show-word-limit placeholder="请输入备注信息（选填）" /></label>
+                  </section>
+
+                  <section class="editor-group serial-group">
+                    <template v-if="isPhysicalManaged(row)">
+                      <div v-for="(group,groupIndex) in physicalGroups(row)" :key="`${row.item_id}-${groupIndex}`" class="physical-group">
+                        <h3>{{ warehouseName(group.warehouse_id) }} / {{ locationName(group.location_id) }}</h3>
+                        <receipt-physical-entries :entries="group.physical_entries || []" :quantity="Number(group.base_qty)" @change="setPhysicalEntries(row,groupIndex,$event)" />
+                      </div>
+                    </template>
+                    <template v-else>
+                    <div class="serial-title"><h3>设备编号 / 序列号</h3><el-tag v-if="isSerialManaged(row)" size="mini" type="danger" effect="plain">{{ serialTrackingMode(row)==='required' ? '必须逐件编号' : '按需逐件编号' }}</el-tag></div>
+                    <template v-if="isStockManaged(row) && isSerialManaged(row)">
+                      <div class="generate-row"><label><span>合格数量</span><el-input :value="serialRequiredCount(row)" size="small" disabled /></label><el-button size="small" type="success" @click="generateLineSerials(row)">一次生成 {{ serialRequiredCount(row) }} 个</el-button></div>
+                      <p v-if="allocations(row).length>1" class="serial-allocation-tip">编号将按库位数量配额自动分配：{{ allocationProgressText(row) }}</p>
+                      <label class="scan-label"><span>扫码枪扫描 / 手工输入</span><el-input v-model.trim="row._scanInput" size="small" placeholder="扫描设备编号，回车后自动加入" @keyup.enter.native="addScannedSerial(row)"><i slot="prefix" class="el-icon-full-screen" /><el-button slot="append" @click="addScannedSerial(row)">添加</el-button></el-input></label>
+                      <p v-if="row._serialError" class="serial-error">{{ row._serialError }}</p>
+                      <p v-else class="serial-helper">支持扫码枪回车录入；重复编号自动拦截</p>
+                      <div class="serial-list-heading"><span>已录入 {{ serialNumberList(row).length }} / {{ serialRequiredCount(row) }}</span><el-button type="text" size="mini" @click="printSerialLabels(row)">全部打印</el-button></div>
+                      <div class="serial-records">
+                        <div v-for="(entry,index) in serialNumberList(row)" :key="entry.serial_no" class="serial-record"><span class="serial-index">{{ index+1 }}</span><strong :title="entry.serial_no">{{ entry.serial_no }}</strong><em>{{ entry.source==='system_generated' ? '系统生成' : '扫码' }}</em><el-button type="text" size="mini" icon="el-icon-printer" @click="printSerialLabels(row,entry.serial_no)">打印</el-button><button type="button" class="serial-delete" @click="removeSerial(row,index)">×</button></div>
+                      </div>
+                    </template>
+                    <el-alert v-else :title="isStockManaged(row) ? '该物料仅按批次追溯，无需录入单件编号。' : '非库存物料不建立库存序列号档案。'" type="info" :closable="false" />
+                    </template>
+                  </section>
+                </div>
+              </section>
+            </template>
           </el-table-column>
           <el-table-column label="行号" type="index" width="48" align="center" />
           <el-table-column label="物料" min-width="260">
             <template slot-scope="{row}">
-              <div :class="['item-picker-cell',{locked:isReplacement}]" @click.stop="openItemPicker(row)">
-                <div class="item-cell"><strong>{{ itemById(row.item_id).item_name || '请选择物料' }}</strong><span>{{ itemById(row.item_id).item_code || '点击打开分页物料库' }}</span></div>
-                <el-button type="text" size="mini" :icon="isReplacement ? 'el-icon-lock' : 'el-icon-search'">{{ isReplacement ? '来源锁定' : (row.item_id ? '更换' : '选择') }}</el-button>
-              </div>
+              <div class="item-cell"><strong>{{ itemById(row.item_id).item_name || '请选择物料' }}</strong><span>{{ itemById(row.item_id).item_code || '请选择物料' }}</span></div>
             </template>
           </el-table-column>
           <el-table-column label="到货数量 / 采购单位" min-width="135"><template slot-scope="{row}">{{ number(row.qty) }} / {{ purchaseUnitName(row) }}</template></el-table-column>
@@ -75,86 +132,29 @@
             <template slot-scope="{row}"><span v-if="isPhysicalManaged(row)">{{ physicalEntryCount(row) }} / {{ number(qualifiedBaseQty(row)) }} 张</span><span v-else-if="isPipeLine(row)" class="pipe-length-cell">每根 {{ pipeLength(row) ? pipeLength(row) + ' mm' : '未填' }}</span><div v-else-if="isStockManaged(row)" class="serial-progress"><span>{{ serialNumberList(row).length }} / {{ serialRequiredCount(row) }}</span><i><b :style="{width:serialProgress(row)+'%'}" /></i></div><span v-else>无需编号</span></template>
           </el-table-column>
           <el-table-column :label="isReplacement ? '库存成本金额' : taxMode === 'tax_included' ? '金额（含税）' : '金额（未税）'" width="116" align="right"><template slot-scope="{row}">¥{{ money(lineAmount(row)) }}</template></el-table-column>
-          <el-table-column label="操作" width="94" fixed="right">
-            <template slot-scope="{row,$index}"><el-button type="text" size="mini" @click.stop="selectLine(row)">查看</el-button><el-button v-if="!isReplacement" class="danger-link" type="text" size="mini" @click.stop="removeLine($index)">删除</el-button></template>
+          <el-table-column label="操作" width="150">
+            <template slot-scope="{row,$index}"><el-button class="expand-line-button" type="text" size="mini" @click.stop="selectLine(row)">{{ row === activeLine ? '收起' : '展开' }}</el-button><el-button type="text" size="mini" :disabled="isReplacement" @click.stop="openItemPicker(row)">{{ isReplacement ? '来源锁定' : (row.item_id ? '更换' : '选择') }}</el-button><el-button v-if="!isReplacement" class="danger-link" type="text" size="mini" @click.stop="removeLine($index)">删除</el-button></template>
           </el-table-column>
         </el-table>
       </div>
     </section>
 
-    <div v-if="activeLine" class="detail-layout">
-      <section class="line-editor">
-        <header>当前行验收与入库信息 <span>（行号 {{ activeIndex + 1 }}：{{ activeItem.item_name || '请选择物料' }}）</span></header>
-        <div class="editor-columns">
-          <section class="editor-group">
-            <h3>数量与换算</h3>
-            <label class="compact-field required"><span>到货采购数量</span><el-input v-model.number="activeLine.qty" type="number" size="small" min="0.0001" :disabled="isReplacement" @input="syncReceiptActualQty(activeLine)"><template slot="append">{{ purchaseUnitName(activeLine) }}</template></el-input></label>
-            <label class="compact-field required"><span>采购单位</span><paged-record-select v-model="activeLine.purchase_unit_id" size="small" :disabled="isReplacement" placeholder="请选择采购单位" @change="applyConversion(activeLine)" :key="'purchase-unit-' + activeLine.item_id" :params="{ item_id: activeLine.item_id }" :request="params => purchaseConversions(activeLine, params)" value-key="purchase_unit_id" :selected-rows.sync="activeLine._conversionOptions" :local-rows="localConversionOptions(activeLine)" :label="purchaseOptionLabel" :columns="[{ prop: 'purchase_unit.unit_name', label: '采购单位' }, { prop: 'factor', label: '换算比例' }, { prop: 'base_unit.unit_name', label: '基本单位' }]" title="选择采购单位" /></label>
-            <label class="compact-field required"><span>换算因子</span><el-input :value="conversionFactor(activeLine)" size="small" disabled /></label>
-            <label class="compact-field"><span>标准基本数量</span><el-input :value="standardBaseQty(activeLine)" size="small" disabled /></label>
-            <label class="compact-field"><span>实际基本数量</span><el-input v-model.number="activeLine.actual_base_qty" type="number" size="small" min="0" :disabled="!actualConversionAllowed(activeLine)" /></label>
-            <label class="compact-field"><span>差异数量</span><el-input :value="differenceQty(activeLine)" size="small" disabled /></label>
-            <label class="compact-field"><span>差异原因</span><el-select v-model="activeLine.difference_reason" size="small" :disabled="!hasDifference(activeLine)" placeholder="无差异"><el-option label="包装重量偏差" value="包装重量偏差" /><el-option label="计量差异" value="计量差异" /><el-option label="验收修正" value="验收修正" /><el-option label="其他" value="其他" /></el-select></label>
-            <label class="compact-field required"><span>{{ isReplacement ? '库存成本单价' : taxMode === 'tax_included' ? '单价（含税）' : '单价（未税）' }}</span><el-input v-model.number="activeLine.unit_price" type="number" size="small" min="0" :disabled="isReplacement"><template slot="append">CNY</template></el-input></label>
-          </section>
-
-          <section class="editor-group">
-            <h3>{{ isStockManaged(activeLine) ? '质量与入库' : '验收与履约' }}</h3>
-            <label class="compact-field required"><span>合格数量</span><el-input v-model.number="activeLine.qualified_qty" type="number" size="small" min="0" @change="syncQualityQty(activeLine, 'qualified_qty')" /></label>
-            <label class="compact-field required"><span>不合格数量</span><el-input v-model.number="activeLine.unqualified_qty" type="number" size="small" min="0" @change="syncQualityQty(activeLine, 'unqualified_qty')" /></label>
-            <template v-if="isStockManaged(activeLine)">
-              <label class="compact-field required"><span>批次号</span><el-input :value="activeLine.batch_no || '保存时系统自动生成'" size="small" disabled class="erp-system-number" /></label>
-              <template v-if="isPipeLine(activeLine)">
-                <label class="compact-field required"><span>每根长度</span><el-input v-model="activeLine.stock_length_mm" size="small" inputmode="decimal" :placeholder="pipeStandardLength(activeLine) ? '不填按标准 ' + pipeStandardLength(activeLine) + ' mm' : '请填写实际每根长度'"><template slot="append">mm</template></el-input></label>
-                <p class="pipe-length-tip">这一行的管都按这个长度入库，共 <strong>{{ pipeTotalMeters(activeLine) }}</strong>；长度不一样的请分成几行录。</p>
-              </template>
-              <label class="compact-field" :class="{ required: qualifiedBaseQty(activeLine) > 0 }"><span>默认仓库</span><paged-record-select v-model="activeLine.warehouse_id" size="small" :placeholder="qualifiedBaseQty(activeLine) > 0 ? '请选择仓库' : '无需入库'" :disabled="qualifiedBaseQty(activeLine) <= 0" @change="onDefaultWarehouseChange(activeLine)" entity="warehouses" :params="{ management_scope: form.management_scope, statuses: ['enabled', 'active'] }" :selected-rows.sync="warehouses" title="选择仓库" /></label>
-              <label class="compact-field" :class="{ required: qualifiedBaseQty(activeLine) > 0 }"><span>默认库位</span><paged-record-select v-model="activeLine.location_id" size="small" :placeholder="qualifiedBaseQty(activeLine) > 0 ? '请选择库位' : '无需入库'" :disabled="qualifiedBaseQty(activeLine) <= 0 || !activeLine.warehouse_id" @change="onDefaultLocationChange(activeLine)" entity="locations" :params="{ management_scope: form.management_scope, warehouse_id: activeLine.warehouse_id, statuses: ['enabled', 'active'] }" :selected-rows.sync="locations" title="选择库位" /></label>
-              <div class="allocation-entry"><span>入库库位分配</span><div><el-button size="mini" type="success" plain icon="el-icon-s-grid" :disabled="qualifiedBaseQty(activeLine) <= 0" @click="openAllocationDialog(activeLine)">多库位分配</el-button><small>{{ allocationProgressText(activeLine) }}</small></div></div>
-            </template>
-            <el-alert v-else title="该物料按非库存方式采购：验收完成后直接形成履约与结算事实，不要求仓库、库位、批次或库存过账。" type="info" :closable="false" />
-            <label class="compact-field"><span>预计到货</span><el-date-picker v-model="activeLine.expected_arrival_date" size="small" type="date" value-format="yyyy-MM-dd" /></label>
-            <label class="compact-field remark-compact"><span>备注</span><el-input v-model="activeLine.remark" type="textarea" :rows="2" resize="none" maxlength="200" show-word-limit placeholder="请输入备注信息（选填）" /></label>
-          </section>
-
-          <section class="editor-group serial-group">
-            <template v-if="isPhysicalManaged(activeLine)">
-              <div v-for="(group,groupIndex) in physicalGroups(activeLine)" :key="`${activeLine.item_id}-${groupIndex}`" class="physical-group">
-                <h3>{{ warehouseName(group.warehouse_id) }} / {{ locationName(group.location_id) }}</h3>
-                <receipt-physical-entries :entries="group.physical_entries || []" :quantity="Number(group.base_qty)" @change="setPhysicalEntries(activeLine,groupIndex,$event)" />
-              </div>
-            </template>
-            <template v-else>
-            <div class="serial-title"><h3>设备编号 / 序列号</h3><el-tag v-if="isSerialManaged(activeLine)" size="mini" type="danger" effect="plain">{{ serialTrackingMode(activeLine)==='required' ? '必须逐件编号' : '按需逐件编号' }}</el-tag></div>
-            <template v-if="isStockManaged(activeLine) && isSerialManaged(activeLine)">
-              <div class="generate-row"><label><span>合格数量</span><el-input :value="serialRequiredCount(activeLine)" size="small" disabled /></label><el-button size="small" type="success" @click="generateLineSerials(activeLine)">一次生成 {{ serialRequiredCount(activeLine) }} 个</el-button></div>
-              <p v-if="allocations(activeLine).length>1" class="serial-allocation-tip">编号将按库位数量配额自动分配：{{ allocationProgressText(activeLine) }}</p>
-              <label class="scan-label"><span>扫码枪扫描 / 手工输入</span><el-input v-model.trim="activeLine._scanInput" size="small" placeholder="扫描设备编号，回车后自动加入" @keyup.enter.native="addScannedSerial(activeLine)"><i slot="prefix" class="el-icon-full-screen" /><el-button slot="append" @click="addScannedSerial(activeLine)">添加</el-button></el-input></label>
-              <p v-if="activeLine._serialError" class="serial-error">{{ activeLine._serialError }}</p>
-              <p v-else class="serial-helper">支持扫码枪回车录入；重复编号自动拦截</p>
-              <div class="serial-list-heading"><span>已录入 {{ serialNumberList(activeLine).length }} / {{ serialRequiredCount(activeLine) }}</span><el-button type="text" size="mini" @click="printSerialLabels(activeLine)">全部打印</el-button></div>
-              <div class="serial-records">
-                <div v-for="(entry,index) in serialNumberList(activeLine)" :key="entry.serial_no" class="serial-record"><span class="serial-index">{{ index+1 }}</span><strong :title="entry.serial_no">{{ entry.serial_no }}</strong><em>{{ entry.source==='system_generated' ? '系统生成' : '扫码' }}</em><el-button type="text" size="mini" icon="el-icon-printer" @click="printSerialLabels(activeLine,entry.serial_no)">打印</el-button><button type="button" class="serial-delete" @click="removeSerial(activeLine,index)">×</button></div>
-              </div>
-            </template>
-            <el-alert v-else :title="isStockManaged(activeLine) ? '该物料仅按批次追溯，无需录入单件编号。' : '非库存物料不建立库存序列号档案。'" type="info" :closable="false" />
-            </template>
-          </section>
-        </div>
-      </section>
+    <div v-if="form.items.length" class="detail-layout">
 
       <aside class="document-summary">
+        <div>
         <h3>{{ isReplacement ? '换货结算与库存成本' : '单据金额汇总' }}</h3>
         <dl v-if="isReplacement"><dt>数量汇总</dt><dd>{{ quantitySummary }}</dd><dt>入库成本金额</dt><dd>¥{{ money(untaxedAmount) }}</dd><dt>本次新增应付</dt><dd class="no-payable">¥0.00</dd><dt>原采购合同金额</dt><dd>不变</dd></dl>
         <dl v-else><dt>数量汇总</dt><dd>{{ quantitySummary }}</dd><dt>未税金额</dt><dd>¥{{ money(untaxedAmount) }}</dd><dt>税额</dt><dd>¥{{ money(taxAmount) }}</dd><dt>含税金额</dt><dd>¥{{ money(totalAmount) }}</dd></dl>
-        <template v-if="isEdit">
-          <hr>
+        </div>
+        <div v-if="isEdit">
           <h3>验收结算口径</h3>
           <dl><dt>合格暂估应付</dt><dd>¥{{ money(form.qualified_payable_amount) }}</dd><dt>质量冻结</dt><dd>¥{{ money(form.quality_hold_amount) }}</dd><dt>拒付 / 索赔</dt><dd>¥{{ money(form.rejected_claim_amount) }}</dd></dl>
-        </template>
-        <hr>
+        </div>
+        <div v-if="activeLine">
         <h3>校验状态</h3>
         <p :class="['validation-state',{invalid:!activeLineValid}]"><i :class="activeLineValid?'el-icon-circle-check':'el-icon-warning-outline'" /> {{ activeLineValid ? '当前行信息完整，可保存。' : '当前行仍有必填项未完成。' }}</p>
+        </div>
       </aside>
     </div>
 
@@ -215,7 +215,6 @@ export default {
     isEdit() { return Boolean(this.$route.params.id) },
     isReplacement() { return this.form.settlement_mode === 'replacement_no_charge' },
     activeLine() { return this.form.items[this.activeIndex] || null },
-    activeItem() { return this.activeLine ? this.itemById(this.activeLine.item_id) : {} },
     activeAllocationItemName() { return this.allocationDialog.line ? `${this.itemById(this.allocationDialog.line.item_id).item_code || ''} ${this.itemById(this.allocationDialog.line.item_id).item_name || ''}`.trim() : '' },
     allocationUsesSerials() { return Boolean(this.allocationDialog.line && this.isSerialManaged(this.allocationDialog.line) && this.serialNumberList(this.allocationDialog.line).length) },
     allocationSerialOptions() { return this.allocationDialog.line ? this.serialNumberList(this.allocationDialog.line) : [] },
@@ -250,7 +249,12 @@ export default {
       return !this.isSerialManaged(line) || this.serialTrackingMode(line) === 'optional' || this.serialNumberList(line).length === this.serialRequiredCount(line)
     }
   },
-  watch: { '$route.fullPath'(next, previous) { if (next !== previous) this.initializeDocument() } },
+  watch: {
+    '$route.fullPath'(next, previous) { if (next !== previous) this.initializeDocument() },
+    activeIndex(index) {
+      if (index >= 0) this.$nextTick(() => this.$refs.lineEditor?.scrollIntoView({ block: 'nearest' }))
+    }
+  },
   async mounted() { await this.initializeDocument() },
   methods: {
     purchaseConversions(line, params) { return listItemPurchaseConversionOptions(line.item_id, params) },
@@ -340,12 +344,14 @@ export default {
     },
     addLine() { this.form.items.push(this.blankLine()); this.activeIndex = this.form.items.length - 1 },
     removeActiveLine() { if (this.activeLine) this.removeLine(this.activeIndex) },
-    removeLine(index) { if (this.form.items.length === 1) return this.$message.warning('到货单至少保留一行明细'); this.form.items.splice(index, 1); this.activeIndex = Math.min(this.activeIndex, this.form.items.length - 1) },
-    selectLine(row) { this.activeIndex = this.form.items.indexOf(row) },
+    removeLine(index) { if (this.form.items.length === 1) return this.$message.warning('到货单至少保留一行明细'); this.form.items.splice(index, 1); this.activeIndex = index < this.activeIndex ? this.activeIndex - 1 : Math.min(this.activeIndex, this.form.items.length - 1) },
+    selectLine(row) { this.activeIndex = row === this.activeLine ? -1 : this.form.items.indexOf(row) },
+    onExpandChange(row, expandedRows) { this.activeIndex = expandedRows.includes(row) ? this.form.items.indexOf(row) : -1 },
     lineRowClass({ rowIndex }) { return rowIndex === this.activeIndex ? 'selected-receipt-row' : '' },
     openItemPicker(line) {
       if (!validPurchaseScope(this.form.management_scope)) return this.$message.warning('请先明确单据管理类型')
       if (this.isReplacement) return this.$message.info('换货补发到货单的来源物料已锁定')
+      this.activeIndex = this.form.items.indexOf(line)
       this.pickerTarget = line
       this.$refs.itemPicker.open({ currentId: line && line.item_id, params: { status: 'enabled', is_purchase_item: 1, management_scope: this.form.management_scope } })
     },
@@ -593,14 +599,19 @@ export default {
 </script>
 
 <style scoped>
+.line-table-shell ::v-deep .el-table td.el-table__expanded-cell { padding: 0; }
+.line-table-shell .line-editor { border: 0; border-radius: 0; scroll-margin: 64px 0; }
+.expand-line-button { color: #008b4b; }
+.line-table-shell ::v-deep .el-table__expand-icon:focus-visible { outline: 2px solid #008b4b; }
+.line-table-shell .editor-columns { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 900px) { .line-table-shell .editor-columns { grid-template-columns: minmax(0, 1fr); } }
 .pipe-length-tip { margin: -4px 0 8px; color: #8a8f98; font-size: 12px; }
 .pipe-length-tip strong, .pipe-length-cell { color: #c45a00; font-weight: 700; }
-.receipt-form-page{min-height:calc(100vh - 52px);padding:14px 16px 68px;background:#f7f8fa;color:#26313b;overflow-x:hidden}.page-heading{height:48px;display:flex;align-items:flex-start;justify-content:space-between}.page-heading h1{margin:3px 0 0;font-size:18px;color:#17212b}.heading-actions{display:flex;gap:9px}.posting-alert{margin-bottom:10px}.basic-panel,.lines-section,.line-editor,.document-summary{background:#fff;border:1px solid #e4e9ed;border-radius:5px}.basic-panel{padding:14px 16px;margin-bottom:12px}.basic-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr) minmax(0,1.15fr) minmax(0,1.15fr) minmax(0,.65fr) minmax(0,.8fr);gap:26px;align-items:end}.field-block,.compact-field,.scan-label{display:grid;gap:6px;color:#3d4852;font-size:11px}.field-block.required>span:after,.compact-field.required>span:after{content:' *';color:#e14d50}.field-block .el-select,.field-block .el-date-editor,.compact-field .el-select,.compact-field .el-date-editor{width:100%}.status-field{display:grid;align-content:center;justify-items:start;gap:9px;min-height:55px;color:#3d4852;font-size:11px}.remark-field{display:grid;grid-template-columns:72px minmax(0,1fr);align-items:start;margin-top:12px;color:#3d4852}.remark-field>span{padding-top:8px}.lines-section{margin-bottom:12px;overflow:hidden}.section-heading{height:54px;padding:0 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #edf0f2}.section-heading h2{margin:0;font-size:14px}.section-heading h2 small{color:#77818a;font-weight:400}.line-table-shell{width:100%;overflow:hidden}.line-table-shell ::v-deep .el-table th.el-table__cell{height:36px;background:#fafbfc;color:#303b45}.line-table-shell ::v-deep .el-table td.el-table__cell{height:48px;padding:5px 0}.line-table-shell ::v-deep .selected-receipt-row td{background:#edf9f2!important}.item-cell{display:grid}.item-cell strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}.item-cell span{color:#79838d;font-size:10px}.serial-progress{display:grid;gap:3px}.serial-progress i{width:70px;height:4px;border-radius:3px;background:#e6e9ec;overflow:hidden}.serial-progress b{display:block;height:100%;background:#07883f}.danger-link{color:#e34b4f!important}.detail-layout{display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:12px}.line-editor{min-width:0;overflow:hidden}.line-editor>header{height:40px;padding:0 14px;display:flex;align-items:center;border-bottom:1px solid #edf0f2;font-size:13px;font-weight:600}.line-editor>header span{margin-left:7px;color:#66727c;font-weight:400}.editor-columns{display:grid;grid-template-columns:1fr 1fr 1.18fr;min-height:350px}.editor-group{min-width:0;padding:13px 14px;border-right:1px solid #edf0f2}.editor-group:last-child{border-right:0}.editor-group h3{margin:0 0 12px;font-size:12px}.compact-field{grid-template-columns:96px minmax(0,1fr);align-items:center;margin-bottom:9px}.compact-field>span{white-space:nowrap}.remark-compact{align-items:start}.remark-compact>span{padding-top:7px}.serial-title{display:flex;align-items:center;justify-content:space-between}.serial-title h3{margin-bottom:9px}.generate-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:end}.generate-row label{display:grid;grid-template-columns:68px 70px;align-items:center;gap:6px;font-size:11px}.scan-label{margin-top:10px}.serial-helper,.serial-error{height:17px;margin:4px 0 0;font-size:10px}.serial-helper{color:#8a949c}.serial-error{color:#e34b4f;font-weight:600}.serial-list-heading{height:28px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #e8ecef;color:#53606a;font-size:11px}.serial-records{max-height:126px;overflow-y:auto}.serial-record{height:31px;display:grid;grid-template-columns:24px minmax(0,1fr) 54px 48px 18px;align-items:center;border-bottom:1px solid #edf0f2;font-size:10px}.serial-index{text-align:center}.serial-record strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:Consolas,monospace}.serial-record em{color:#6f7a83;font-style:normal}.serial-record .el-button{padding:0}.serial-delete{border:0;background:transparent;color:#ef4b4f;font-size:16px;cursor:pointer}.document-summary{padding:16px}.document-summary h3{margin:0 0 15px;font-size:13px}.document-summary dl{display:grid;grid-template-columns:1fr auto;gap:13px;margin:0}.document-summary dt{color:#6e7983}.document-summary dd{margin:0;font-weight:600}.document-summary hr{margin:16px 0;border:0;border-top:1px solid #e9edf0}.validation-state{color:#07883f;line-height:1.7}.validation-state.invalid{color:#dd8b1d}.validation-state i{margin-right:5px}.bottom-actions{position:fixed;left:192px;right:0;bottom:0;z-index:20;height:56px;padding:9px 16px;display:flex;justify-content:flex-end;gap:9px;background:#fff;border-top:1px solid #e2e7eb}
-.item-picker-cell{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;min-height:34px;padding:2px 6px;border:1px solid #d9e6dd;border-radius:4px;background:#fbfefc;cursor:pointer}.item-picker-cell:hover{border-color:#07883f;background:#f2faf5}.item-picker-cell .item-cell{min-width:0}.item-picker-cell .item-cell strong,.item-picker-cell .item-cell span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.item-picker-cell .el-button{padding:4px 0;color:#07883f}
-.item-picker-cell.locked{border-color:#e2e6ea;background:#f7f8f9;cursor:default}.item-picker-cell.locked:hover{border-color:#e2e6ea;background:#f7f8f9}.item-picker-cell.locked .el-button{color:#7c8790}.document-summary .no-payable{color:#07883f}
+.receipt-form-page{min-height:calc(100vh - 52px);padding:14px 16px 68px;background:#f7f8fa;color:#26313b;overflow-x:hidden}.page-heading{height:48px;display:flex;align-items:flex-start;justify-content:space-between}.page-heading h1{margin:3px 0 0;font-size:18px;color:#17212b}.heading-actions{display:flex;gap:9px}.posting-alert{margin-bottom:10px}.basic-panel,.lines-section,.line-editor,.document-summary{background:#fff;border:1px solid #e4e9ed;border-radius:5px}.basic-panel{padding:14px 16px;margin-bottom:12px}.basic-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr) minmax(0,1.15fr) minmax(0,1.15fr) minmax(0,.65fr) minmax(0,.8fr);gap:26px;align-items:end}.field-block,.compact-field,.scan-label{display:grid;gap:6px;color:#3d4852;font-size:11px}.field-block.required>span:after,.compact-field.required>span:after{content:' *';color:#e14d50}.field-block .el-select,.field-block .el-date-editor,.compact-field .el-select,.compact-field .el-date-editor{width:100%}.status-field{display:grid;align-content:center;justify-items:start;gap:9px;min-height:55px;color:#3d4852;font-size:11px}.remark-field{display:grid;grid-template-columns:72px minmax(0,1fr);align-items:start;margin-top:12px;color:#3d4852}.remark-field>span{padding-top:8px}.lines-section{margin-bottom:12px;overflow:hidden}.section-heading{height:54px;padding:0 14px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #edf0f2}.section-heading h2{margin:0;font-size:14px}.section-heading h2 small{color:#77818a;font-weight:400}.line-table-shell{width:100%;overflow:hidden}.line-table-shell ::v-deep .el-table th.el-table__cell{height:36px;background:#fafbfc;color:#303b45}.line-table-shell ::v-deep .el-table td.el-table__cell{height:48px;padding:5px 0}.line-table-shell ::v-deep .selected-receipt-row td{background:#edf9f2!important}.item-cell{display:grid}.item-cell strong{white-space:normal;overflow-wrap:anywhere;font-size:11px}.item-cell span{color:#79838d;font-size:10px}.serial-progress{display:grid;gap:3px}.serial-progress i{width:70px;height:4px;border-radius:3px;background:#e6e9ec;overflow:hidden}.serial-progress b{display:block;height:100%;background:#07883f}.danger-link{color:#e34b4f!important}.detail-layout{margin-bottom:12px}.line-editor{min-width:0;overflow:hidden}.line-editor>header{height:40px;padding:0 14px;display:flex;align-items:center;border-bottom:1px solid #edf0f2;font-size:13px;font-weight:600}.line-editor>header span{margin-left:7px;color:#66727c;font-weight:400}.editor-columns{display:grid;grid-template-columns:1fr 1fr 1.18fr;min-height:350px}.editor-group{min-width:0;padding:13px 14px;border-right:1px solid #edf0f2}.editor-group:last-child{border-right:0}.editor-group h3{margin:0 0 12px;font-size:12px}.compact-field{grid-template-columns:96px minmax(0,1fr);align-items:center;margin-bottom:9px}.compact-field>span{white-space:nowrap}.remark-compact{align-items:start}.remark-compact>span{padding-top:7px}.serial-title{display:flex;align-items:center;justify-content:space-between}.serial-title h3{margin-bottom:9px}.generate-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:end}.generate-row label{display:grid;grid-template-columns:68px 70px;align-items:center;gap:6px;font-size:11px}.scan-label{margin-top:10px}.serial-helper,.serial-error{height:17px;margin:4px 0 0;font-size:10px}.serial-helper{color:#8a949c}.serial-error{color:#e34b4f;font-weight:600}.serial-list-heading{height:28px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #e8ecef;color:#53606a;font-size:11px}.serial-records{max-height:126px;overflow-y:auto}.serial-record{height:31px;display:grid;grid-template-columns:24px minmax(0,1fr) 54px 48px 18px;align-items:center;border-bottom:1px solid #edf0f2;font-size:10px}.serial-index{text-align:center}.serial-record strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:Consolas,monospace}.serial-record em{color:#6f7a83;font-style:normal}.serial-record .el-button{padding:0}.serial-delete{border:0;background:transparent;color:#ef4b4f;font-size:16px;cursor:pointer}.document-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px;padding:16px}.document-summary>div{min-width:0}.document-summary h3{margin:0 0 15px;font-size:13px}.document-summary dl{display:grid;grid-template-columns:1fr auto;gap:13px;margin:0}.document-summary dt{color:#6e7983}.document-summary dd{margin:0;font-weight:600}.document-summary hr{margin:16px 0;border:0;border-top:1px solid #e9edf0}.validation-state{color:#07883f;line-height:1.7}.validation-state.invalid{color:#dd8b1d}.validation-state i{margin-right:5px}.bottom-actions{position:fixed;left:192px;right:0;bottom:0;z-index:20;height:56px;padding:9px 16px;display:flex;justify-content:flex-end;gap:9px;background:#fff;border-top:1px solid #e2e7eb}
+.document-summary .no-payable{color:#07883f}
 .allocation-entry{display:grid;grid-template-columns:96px minmax(0,1fr);align-items:center;margin:-1px 0 9px;color:#3d4852;font-size:11px}.allocation-entry>div{display:flex;align-items:center;gap:8px;min-width:0}.allocation-entry small{overflow:hidden;color:#6f7a83;text-overflow:ellipsis;white-space:nowrap}.serial-allocation-tip{margin:7px 0 0;padding:5px 7px;border-radius:3px;background:#eef8f2;color:#087b3d;font-size:10px}.allocation-dialog-body{display:grid;gap:12px}.allocation-toolbar{display:flex;align-items:center;justify-content:space-between}.allocation-dialog-body ::v-deep .el-select,.allocation-dialog-body ::v-deep .el-input-number{width:100%}.allocation-total{display:flex;align-items:center;justify-content:flex-end;gap:18px;padding:10px 12px;border:1px solid #cce8d7;border-radius:4px;background:#f1faf5;color:#087b3d}.allocation-total.invalid{border-color:#f0cf9a;background:#fff8ed;color:#c4770e}.allocation-total strong{min-width:70px;text-align:right}
-@media(max-width:1180px){.basic-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.detail-layout{grid-template-columns:minmax(0,1fr)}.document-summary{display:grid;grid-template-columns:150px 1fr 1px 130px 1fr;align-items:center;gap:12px}.document-summary h3,.document-summary dl,.document-summary hr,.document-summary p{margin:0}.document-summary dl{grid-template-columns:repeat(4,auto);gap:8px 16px}.document-summary hr{height:50px;border-left:1px solid #e9edf0}}
-@media(max-width:900px){.editor-columns{grid-template-columns:minmax(0,1fr)}.editor-group{border-right:0;border-bottom:1px solid #edf0f2}.basic-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.document-summary{display:block}.document-summary dl{grid-template-columns:1fr auto}.document-summary hr{height:auto;border-left:0;border-top:1px solid #e9edf0}.bottom-actions{left:0}}
+@media(max-width:1180px){.basic-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.document-summary{width:100%}}
+@media(max-width:900px){.editor-columns{grid-template-columns:minmax(0,1fr)}.editor-group{border-right:0;border-bottom:1px solid #edf0f2}.basic-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.document-summary{grid-template-columns:minmax(0,1fr)}.document-summary dl{grid-template-columns:1fr auto}.document-summary hr{height:auto;border-left:0;border-top:1px solid #e9edf0}.bottom-actions{left:0}}
 .page-heading > div:first-child {
   display: flex;
   align-items: center;

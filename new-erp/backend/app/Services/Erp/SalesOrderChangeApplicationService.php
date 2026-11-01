@@ -51,6 +51,7 @@ class SalesOrderChangeApplicationService
             $hasOperationalImpact = collect($changes)->contains(fn (array $change): bool =>
                 abs((float) $change[0]->order_qty - (float) $change[1]['order_qty']) > 0.00000001);
             if ($hasOperationalImpact) {
+                app(SalesShipmentApplicationService::class)->cancelForOrderChange($order, $operator, $actor);
                 $this->reservations->releaseForSalesOrder($order, '订单变更，释放旧库存预留');
                 SalesOrderFulfillment::where('sales_order_id', $order->id)
                     ->whereIn('demand_status', ['pending', 'confirmed'])
@@ -108,6 +109,8 @@ class SalesOrderChangeApplicationService
                     : '；商业金额已更新，原库存预留、生产和交付安排保留。').'原因：'.$change->reason,
             ]);
 
+            \App\Events\AssemblyDisplayChanged::afterCommit('order-change:'.$change->id, 'order.changed',
+                \App\Models\Erp\MfgWorkOrder::query()->where('sales_order_id', $order->id)->pluck('id')->all(), (int) $order->id, (int) $change->id);
             return $change->fresh('order.lines');
         });
     }
@@ -137,8 +140,8 @@ class SalesOrderChangeApplicationService
         if ($order->order_status !== 'confirmed' || $order->confirm_status !== 'confirmed') {
             throw ValidationException::withMessages(['order_status' => '只有已正式确认的销售订单可走订单变更；草稿请直接编辑。']);
         }
-        if (! in_array($order->shipment_status, ['not_shipped', 'not_required'], true) || $order->lines->sum('shipped_qty') > 0 || $order->shipments->isNotEmpty()) {
-            throw ValidationException::withMessages(['shipment_status' => '已有发货事实或发货单，禁止直接订单变更，请走售后/退货流程。']);
+        if (SalesOrderFulfillmentPolicy::hasShipmentFacts($order)) {
+            throw ValidationException::withMessages(['shipment_status' => '订单已实际发运、提货或正式销售出库，不能原地修改，请走售后流程。']);
         }
         if ($order->salesReturns->whereNotIn('return_status', ['cancelled'])->isNotEmpty()) {
             throw ValidationException::withMessages(['sales_return' => '订单已进入销售退货流程，禁止直接订单变更。']);

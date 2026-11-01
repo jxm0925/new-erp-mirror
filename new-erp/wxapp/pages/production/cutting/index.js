@@ -1,4 +1,4 @@
-// 工序内开料：本道用板材／管材时，接单后在这里领原料、算加工方案，切完登记产出和余料。
+// 工序内随单开料：本工序使用板材／管材时，接单后在此领用原料、计算排料方案，切割完成后登记实际产出与余料。
 const production = require('../../../services/production');
 const view = require('../../../utils/warehouse-page');
 
@@ -9,7 +9,6 @@ const num = value => {
 const measureUnit = unit => (unit === 'm2' ? 'm²' : (unit || ''));
 const sourceUnit = row => (row.unit_kind === 'sheet' ? '张' : (row.unit_kind === 'root' ? '根' : 'm'));
 const meters = value => `${Math.round(Number(value || 0) * 1000) / 1000} 米`;
-// 管材按根领时，几根对应多少米，选料时要一眼看到。
 const totalMeters = (row, count) => (row.mode === 'length' && row.unit_kind === 'root' ? meters(Number(count || 0) * Number(row.measure_qty || 0)) : '');
 const clone = value => JSON.parse(JSON.stringify(value));
 const keyOf = () => `wxcut-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}${Math.random().toString(36).slice(2, 8)}`;
@@ -38,7 +37,7 @@ Page({
   onLoad(options) {
     const opName = decodeURIComponent(options.name || '');
     this.setData({ woId: Number(options.wo || 0), opId: Number(options.op || 0), opName });
-    wx.setNavigationBarTitle({ title: opName ? `开料 · ${opName}` : '开料' });
+    wx.setNavigationBarTitle({ title: opName ? `随单开料 · ${opName}` : '随单开料' });
     this.load();
   },
   onPullDownRefresh() { this.load().finally(() => wx.stopPullDownRefresh()); },
@@ -54,7 +53,7 @@ Page({
       const items = [];
       requirements.forEach(row => { if (!items.some(item => item.item_id === row.item_id)) items.push({ item_id: row.item_id, label: [row.item_code, row.item_name, row.specification].filter(Boolean).join(' / ') }); });
       const batches = ((ctx.batches || {}).data || []).map(batch => Object.assign({}, batch, {
-        statusText: batch.status === 'settled' ? '已登记' : '待登记产出和余料',
+        statusText: batch.status === 'settled' ? '已登记' : '待登记产出与余料',
         sourceText: (batch.input_lines || []).map(sourceName).join('、'),
       }));
       const unitQty = remaining > 0 ? Math.min(Math.max(1, this.data.unitQty), remaining) : 1;
@@ -71,7 +70,6 @@ Page({
     })) });
   },
 
-  // 本次开几套
   changeUnits(event) {
     const delta = Number(event.currentTarget.dataset.delta || 0);
     this.setUnits(this.data.unitQty + delta);
@@ -84,7 +82,6 @@ Page({
     this.decorateRequirements();
   },
 
-  // 选原料
   openSources() {
     if (this.data.busy) return;
     const picked = {};
@@ -140,10 +137,9 @@ Page({
       const count = Number(row.qty);
       const max = row.physical_material_id ? 1 : Number(row.available_qty);
       if (!Number.isFinite(count) || count <= 0 || (row.unit_kind !== 'm' && !Number.isInteger(count)) || count > max + 0.000001) {
-        wx.showToast({ title: `${sourceName(row)} 投入数量不对（最多 ${num(max)} ${sourceUnit(row)}）`, icon: 'none' });
+        wx.showToast({ title: `${sourceName(row)} 投入数量有误（上限 ${num(max)} ${sourceUnit(row)}）`, icon: 'none' });
         return;
       }
-      // 管材逐根登记：每根是一条独立来源，方便分别记余料。
       if (row.unit_kind === 'root') {
         for (let i = 1; i <= count; i++) sources.push(Object.assign({}, row, { original_source_key: row.source_key, source_key: `${row.source_key}:${i}`, qty: '1' }));
       } else sources.push(Object.assign({}, row, { original_source_key: row.source_key, qty: String(count) }));
@@ -151,7 +147,6 @@ Page({
     this.setData({ panel: '', sources: sources.map(row => Object.assign({}, row, { qtyText: `${row.qty} ${sourceUnit(row)}${totalMeters(row, row.qty) ? ` = ${totalMeters(row, row.qty)}` : ''}` })), groups: [], planChecked: false, planConfirmed: false });
   },
 
-  // 算方案 / 校验改过的方案
   planPayload(assignments) {
     const payload = {
       operation_id: this.data.opId, unit_qty: this.data.unitQty,
@@ -183,7 +178,7 @@ Page({
           rows: rows.map(row => Object.assign(row, this.partInfo(row.part_key))) };
       });
       this.setData({ groups, planChecked: true });
-    }).catch(error => wx.showModal({ title: '方案没通过', content: view.errorText(error), showCancel: false }))
+    }).catch(error => view.modal(this, { theme: 'warn', title: '排料校验未通过', content: view.errorText(error), showCancel: false }))
       .finally(() => this.setData({ busy: false }));
   },
   partInfo(key) {
@@ -195,7 +190,6 @@ Page({
     this.setData({ [`groups[${g}].rows[${r}].qty`]: event.detail.value, planChecked: false, planConfirmed: false });
   },
   togglePlanConfirmed() { if (this.data.planChecked) this.setData({ planConfirmed: !this.data.planConfirmed }); },
-  // 同一内容重试沿用原请求编号，网络断了重提不会领两次料。
   commandKey(name, payload) {
     const signature = JSON.stringify(payload);
     this.commands = this.commands || {};
@@ -206,22 +200,28 @@ Page({
     if (this.data.busy || !this.data.planChecked || !this.data.planConfirmed) return;
     const payload = Object.assign(this.planPayload(this.groupAssignments()), { expected_version: this.data.version });
     payload.idempotency_key = this.commandKey('issue', payload);
-    wx.showModal({ title: '确认领料', content: `按这个方案从库存领出 ${this.data.sources.length} 条原料开 ${this.data.unitQty} 套？领出后切完再登记产出和余料。`, confirmText: '确认领料',
+    view.modal(this, {
+      title: '确认领料开料',
+      subtitle: '切割完成后请及时登记实际产出与余料',
+      kvRows: [
+        { k: '本次开料套数', v: `${this.data.unitQty} 套`, red: true },
+        { k: '领用原料条数', v: `${this.data.sources.length} 条` },
+      ],
+      confirmText: '确认领料',
       success: res => {
         if (!res.confirm) return;
         this.setData({ busy: true });
         production.cuttingIssue(this.data.woId, payload).then(response => {
           this.commands.issue = null;
-          wx.showToast({ title: '原料已领出，切完登记产出', icon: 'none', duration: 2500 });
+          wx.showToast({ title: '原料已领出，完成后请登记产出', icon: 'none', duration: 2500 });
           this.setData({ sources: [], groups: [], planChecked: false, planConfirmed: false });
           const batch = response.data;
           return this.load().then(() => { if (batch && batch.id) this.openBatchById(batch.id); });
-        }).catch(error => wx.showModal({ title: '领料没成功', content: view.errorText(error), showCancel: false }))
+        }).catch(error => view.modal(this, { theme: 'warn', title: '领料失败', content: view.errorText(error), showCancel: false }))
           .finally(() => this.setData({ busy: false }));
       } });
   },
 
-  // 登记产出与余料
   openBatch(event) { this.openBatchById(Number(event.currentTarget.dataset.id)); },
   openBatchById(id) {
     const batch = this.data.batches.find(row => Number(row.id) === Number(id));
@@ -249,7 +249,6 @@ Page({
     this.setData({ [`actual[${Number(event.currentTarget.dataset.index)}].qty`]: event.detail.value, confirmed: false });
     this.suggestRemnants();
   },
-  // 产出改了，余料建议跟着算：投入 − 实际产出。
   suggestRemnants() {
     const remnants = this.data.remnants.map(row => {
       const source = this.batchSource[row.source_key] || {};
@@ -278,9 +277,9 @@ Page({
   settle() {
     const batch = this.data.batch;
     if (this.data.busy || !batch || batch.status !== 'issued') return;
-    if (!this.data.confirmed) { wx.showToast({ title: '先勾选已核对产出和余料', icon: 'none' }); return; }
+    if (!this.data.confirmed) { wx.showToast({ title: '请先勾选确认已核对产出与余料', icon: 'none' }); return; }
     const bad = this.data.remnants.find(row => !/^\d+(?:\.\d+)?$/.test(String(row.measure_qty)) || (Number(row.measure_qty) > 0 && (!row.warehouse_id || !row.location_id)));
-    if (bad) { wx.showToast({ title: `${bad.sourceName}：填余料数量并选回库库位`, icon: 'none' }); return; }
+    if (bad) { wx.showToast({ title: `${bad.sourceName}：请填写余料数量并选择回库库位`, icon: 'none' }); return; }
     const payload = {
       expected_version: batch.business_version, unit_qty: this.data.actualUnits, confirmed: true, remark: this.data.remark.trim() || undefined,
       assignments: this.data.actual.map(row => ({ source_key: row.source_key, part_key: row.part_key, qty: String(row.qty === '' ? 0 : row.qty) })),
@@ -290,10 +289,10 @@ Page({
     this.setData({ busy: true });
     production.cuttingSettle(batch.id, payload).then(() => {
       this.commands[`settle${batch.id}`] = null;
-      wx.showToast({ title: '产出和余料已登记', icon: 'none', duration: 2500 });
+      wx.showToast({ title: '产出与余料已登记', icon: 'none', duration: 2500 });
       this.setData({ panel: '' });
       return this.load();
-    }).catch(error => wx.showModal({ title: '登记没成功', content: view.errorText(error), showCancel: false }))
+    }).catch(error => view.modal(this, { theme: 'warn', title: '登记失败', content: view.errorText(error), showCancel: false }))
       .finally(() => this.setData({ busy: false }));
   },
   closePanel() { if (!this.data.busy) this.setData({ panel: '' }); },

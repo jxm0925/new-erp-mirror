@@ -1,6 +1,6 @@
 <template>
   <div id="app" class="erp-layout" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
-    <router-view v-if="$route.path === '/login'" />
+    <router-view v-if="$route.path === '/login' || isPublicDisplay" />
     <template v-else>
       <aside class="erp-sidebar" @click.capture="markShellNavigation">
         <div class="erp-brand">
@@ -186,6 +186,9 @@ export default {
     isRouterAlive: true
   }),
   computed: {
+    isPublicDisplay() {
+      return this.$route.path === '/display/assembly' && this.$route.meta.public === true
+    },
     totalNotificationCount() { return this.inventoryAlertCount + this.approvalNotificationCount },
     isFinanceDesign() {
       return this.$route.path.startsWith('/finance/')
@@ -241,10 +244,12 @@ export default {
     }
   },
   created() {
-    this.refreshSession()
-    this.refreshInventoryAlerts()
-    this.refreshApprovalNotifications()
-    this.ensureRealtimeSubscriptions()
+    if (!this.isPublicDisplay) {
+      this.refreshSession()
+      this.refreshInventoryAlerts()
+      this.refreshApprovalNotifications()
+      this.ensureRealtimeSubscriptions()
+    }
     this.loadVisitedViews()
     this.addVisitedView(this.$route)
     window.addEventListener('erp:inventory-alert-read', this.refreshInventoryAlerts)
@@ -258,6 +263,11 @@ export default {
     '$route': {
       immediate: true,
       handler(to, from) {
+        if (to.path === '/display/assembly' && to.meta.public === true) {
+          document.title = '总装通知屏 - 简谈ERP'
+          this.stopShellRealtime()
+          return
+        }
         this.closeFinishedFormTag(to, from)
         // 浏览器标签页标题跟随当前页面，便于多开标签时区分。
         document.title = to && to.path === '/login' ? '登录 - 简谈ERP' : `${this.titleForPath(to && to.path)} - 简谈ERP`
@@ -266,6 +276,11 @@ export default {
         this.menus = JSON.parse(localStorage.getItem('erp_menus') || '[]')
         this.profile = JSON.parse(localStorage.getItem('erp_me') || '{}')
         this.ensureRealtimeSubscriptions()
+        if (from && from.path === '/display/assembly' && to.path !== '/login') {
+          this.refreshSession()
+          this.refreshInventoryAlerts()
+          this.refreshApprovalNotifications()
+        }
         if (to && to.path !== '/login') {
           this.addVisitedView(to)
           if (!to.path.startsWith('/console')) {
@@ -284,7 +299,16 @@ export default {
     }
   },
   methods: {
+    stopShellRealtime() {
+      if (this.stopRealtime) this.stopRealtime()
+      if (this.stopApprovalRealtime) this.stopApprovalRealtime()
+      this.stopRealtime = null
+      this.stopApprovalRealtime = null
+      this.realtimeToken = null
+      disconnectRealtime()
+    },
     ensureRealtimeSubscriptions() {
+      if (this.isPublicDisplay) return
       const token = localStorage.getItem('erp_token')
       const userId = this.currentUser && (this.currentUser.id || this.currentUser.legacy_id)
       const subscriptionIdentity = `${token || ''}:${userId || ''}`
@@ -296,6 +320,7 @@ export default {
       this.realtimeToken = subscriptionIdentity
     },
     onApprovalTaskChanged(payload) {
+      if (this.isPublicDisplay) return
       this.refreshApprovalNotifications()
       const task = payload && (payload.task || payload.data || payload)
       const id = task && (task.id || task.task_id)
@@ -303,11 +328,11 @@ export default {
       this.$notify({ title: '审核任务更新', message: `${task.task_no || ''} ${task.subject || '审核状态已更新'}`, type: task.task_status === 'REJECTED' ? 'warning' : 'success', duration: 6000, onClick: () => this.$router.push(`/approvals/tasks/${id}`) })
     },
     async refreshInventoryAlerts() {
-      if (!localStorage.getItem('erp_token')) return
+      if (this.isPublicDisplay || !localStorage.getItem('erp_token')) return
       try { const [unread, recent] = await Promise.all([listUnreadInventoryAlerts({ per_page: 10 }), listInventoryAlerts({ per_page: 10 })]); this.inventoryAlertCount = unread.data.total || (unread.data.data || []).length; this.inventoryAlerts = recent.data.data || [] } catch (e) {}
     },
     async refreshApprovalNotifications() {
-      if (!localStorage.getItem('erp_token')) return
+      if (this.isPublicDisplay || !localStorage.getItem('erp_token')) return
       try {
         const { data } = await listApprovalNotifications({ status: 'UNREAD', per_page: 10 })
         this.approvalNotifications = data.data || []
@@ -321,6 +346,7 @@ export default {
       if (taskId) this.$router.push(`/approvals/tasks/${taskId}`)
     },
     onInventoryAlert(payload) {
+      if (this.isPublicDisplay) return
       this.refreshInventoryAlerts()
       const text = payload.alert_status === 'normal'
         ? `物料 ${payload.item_code} 库存已恢复正常`
@@ -330,7 +356,7 @@ export default {
     openInventoryAlert(alert) { this.$router.push(`/inventory/alerts/${alert.id}`) },
     inventoryAlertLabel(alert) { if (alert.alert_status === 'out_of_stock') return '缺货（严重）'; if (alert.alert_status === 'low_stock') return alert.severity === 'critical' ? '低库存（严重）' : '低库存（一般）'; if (alert.alert_status === 'over_stock') return '超储'; return '正常' },
     async refreshSession() {
-      if (!localStorage.getItem('erp_token')) return
+      if (this.isPublicDisplay || !localStorage.getItem('erp_token')) return
       try {
         const { data } = await getCurrentSession()
         this.currentUser = data.user || this.currentUser
@@ -365,7 +391,7 @@ export default {
       return false
     },
     addVisitedView(route) {
-      if (!route || !route.path || route.path === '/login') return
+      if (!route || !route.path || route.path === '/login' || (route.path === '/display/assembly' && route.meta && route.meta.public === true)) return
       const path = route.path
       const fullPath = route.fullPath || route.path
       const title = this.computePageTitle(route)

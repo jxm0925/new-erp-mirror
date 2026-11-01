@@ -7,12 +7,25 @@ use App\Models\Erp\SalesOrder;
 use App\Models\Erp\SalesOrderFulfillment;
 use App\Exceptions\Erp\WorkOrderDomainException;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /** Quantity decisions shared by confirmation, purchasing backlog and shipment projection. */
 final class SalesOrderFulfillmentPolicy
 {
     public const TYPES = ['inventory', 'production', 'purchase', 'service', 'no_delivery'];
+
+    /** 待发移位和包装作业不是销售出库；历史已过账和实际发运都不能被订单变更覆盖。 */
+    public static function hasShipmentFacts(SalesOrder $order): bool
+    {
+        if (! in_array($order->shipment_status, ['not_shipped', 'not_required'], true) || $order->lines->sum('shipped_qty') > 0) return true;
+        return $order->shipments()->where(fn ($q) => $q
+            ->whereIn('shipment_status', ['outbound_posted', 'partially_shipped', 'shipped', 'completed'])
+            ->orWhereNotNull('shipped_at')->orWhereNotNull('outbound_posted_at')
+            ->orWhereHas('dispatches')
+            ->orWhereIn('id', DB::table('erp_inventory_transactions')->where('source_type', 'sales_shipment')
+                ->where('transaction_type', 'sales_shipment_outbound')->where('posting_status', 'posted')->select('source_id')))->exists();
+    }
 
     public static function isPhysical(string $lineType): bool
     {

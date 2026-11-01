@@ -1,5 +1,5 @@
-// 集中开料（按实际工时）：一次只开一个 BOM 的料。选 BOM、开几套 → 开始计时（几个人一起开各自点开始）→ 切完结束，登记每种料实际切了多少件。
-// 工单下料点「已备料」时按件数领走：带走的工时 = 这批总工时 ÷ 总件数 × 领走件数；没领完的留在这批里，以后谁领谁带走。
+// 集中开料（按实际工时统计）：单次按单一 BOM 启动开料批次并记录作业人员实际工时，完工登记各子件实际产出件数。
+// 各工单下料工序执行「已备料」时按件数分摊开料工时（批次总工时 ÷ 总件数 × 领用件数）。
 const production = require('../../../services/production');
 const view = require('../../../utils/warehouse-page');
 
@@ -50,7 +50,6 @@ Page({
     this.load();
   },
 
-  // 新开一批：选 BOM
   keywordInput(event) { this.setData({ keyword: event.detail.value }); },
   loadBoms() {
     this.setData({ bomLoading: true, error: '' });
@@ -72,25 +71,31 @@ Page({
   startRun() {
     const bom = this.data.picked;
     if (this.data.busy || !bom) return;
-    wx.showModal({ title: '开始开料', content: `开 ${bom.item_name}（${bom.bom_no}）${this.data.setQty} 套的料，现在开始计时？一次只开这一个 BOM 的料。`, confirmText: '开始计时',
+    view.modal(this, {
+      title: '启动集中开料批次',
+      subtitle: '单一开料批次仅限加工同一 BOM',
+      kvRows: [
+        { k: '目标半成品', v: `${bom.item_name}（${bom.bom_no}）` },
+        { k: '计划开料套数', v: `${this.data.setQty} 套`, red: true },
+      ],
+      confirmText: '开始计时',
       success: res => {
         if (!res.confirm) return;
         this.setData({ busy: true });
         production.cuttingRunStart({ bom_id: bom.bom_id, set_qty: this.data.setQty, remark: String(this.data.remark || '').trim() || null }).then(response => {
-          wx.showToast({ title: '已开始计时', icon: 'none' });
+          wx.showToast({ title: '已启动开料并开始计时', icon: 'none' });
           this.setData({ tab: 'runs', picked: null, remark: '' });
           this.load();
           this.showRun(response.data);
-        }).catch(error => wx.showModal({ title: '没能开始', content: view.errorText(error), showCancel: false }))
+        }).catch(error => view.modal(this, { theme: 'warn', title: '启动失败', content: view.errorText(error), showCancel: false }))
           .finally(() => this.setData({ busy: false }));
       } });
   },
 
-  // 详情：计时、结束
   openRunTap(event) { this.openRun(Number(event.currentTarget.dataset.id)); },
   openRun(id) {
     return production.cuttingRun(id).then(response => this.showRun(response.data || response))
-      .catch(error => wx.showModal({ title: '读取失败', content: view.errorText(error), showCancel: false }));
+      .catch(error => view.modal(this, { theme: 'warn', title: '读取失败', content: view.errorText(error), showCancel: false }));
   },
   showRun(raw) {
     const run = runView(raw);
@@ -115,7 +120,7 @@ Page({
     production.cuttingRunAction(this.data.run.id, { action }).then(response => {
       wx.showToast({ title: action === 'start' ? '开始计时' : '已暂停', icon: 'none' });
       this.showRun(response.data);
-    }).catch(error => wx.showModal({ title: '没成功', content: view.errorText(error), showCancel: false }))
+    }).catch(error => view.modal(this, { theme: 'warn', title: '操作失败', content: view.errorText(error), showCancel: false }))
       .finally(() => this.setData({ busy: false }));
   },
   piecesInput(event) { this.setData({ [`run.lines[${Number(event.currentTarget.dataset.index)}].input`]: event.detail.value }); },
@@ -126,31 +131,43 @@ Page({
     const lines = [];
     for (const l of run.lines) {
       const v = String(l.input).trim();
-      if (!/^\d+$/.test(v)) { wx.showToast({ title: `${l.component_item_name} 的件数请填整数`, icon: 'none' }); return; }
+      if (!/^\d+$/.test(v)) { wx.showToast({ title: `${l.component_item_name} 的产出件数须为整数`, icon: 'none' }); return; }
       lines.push({ line_key: l.line_key, actual_pieces: Number(v) });
     }
     const total = lines.reduce((s, l) => s + l.actual_pieces, 0);
-    if (!total) { wx.showToast({ title: '请填实际切了多少件', icon: 'none' }); return; }
-    wx.showModal({ title: '切完结束', content: `一共 ${total} 件，用时约 ${this.data.liveText}。结束后所有人的计时都会停，件数不能再改。`, confirmText: '确认结束',
+    if (!total) { wx.showToast({ title: '请填写实际开料产出件数', icon: 'none' }); return; }
+    view.modal(this, {
+      title: '确认开料完工结算',
+      subtitle: '确认结束后将停止本批次全部人员计时并锁定产出件数',
+      kvRows: [
+        { k: '合计产出件数', v: `${total} 件`, red: true },
+        { k: '累计作业工时', v: `约 ${this.data.liveText}` },
+      ],
+      confirmText: '确认完工',
       success: res => {
         if (!res.confirm) return;
         this.setData({ busy: true });
         production.cuttingRunAction(run.id, { action: 'finish', expected_version: run.business_version, lines, remark: String(this.data.finishRemark || '').trim() || null }).then(response => {
-          wx.showToast({ title: '已结束，各工单下料可点已备料', icon: 'none', duration: 2500 });
+          wx.showToast({ title: '开料已完工，各工单可执行备料交接', icon: 'none', duration: 2500 });
           this.showRun(response.data);
           this.load();
-        }).catch(error => wx.showModal({ title: '没能结束', content: view.errorText(error), showCancel: false }))
+        }).catch(error => view.modal(this, { theme: 'warn', title: '结算失败', content: view.errorText(error), showCancel: false }))
           .finally(() => this.setData({ busy: false }));
       } });
   },
   cancelRun() {
     const run = this.data.run;
-    wx.showModal({ title: '作废这批', content: '开错了 BOM 才作废，作废后这批的计时不算工时。确定作废？', confirmText: '作废', confirmColor: '#c0392b',
+    view.modal(this, {
+      theme: 'danger',
+      title: '作废当前开料批次',
+      infoMain: `开料批次：${run.run_no || ''}`,
+      infoSub: '仅在选错 BOM 且尚未领用板材时可作废；作废后本批次计时将不计入工时统计。确认作废？',
+      confirmText: '确认作废',
       success: res => {
         if (!res.confirm) return;
         this.setData({ busy: true });
         production.cuttingRunAction(run.id, { action: 'cancel' }).then(() => { this.setData({ panel: '', run: null }); this.stopTick(); this.load(); })
-          .catch(error => wx.showModal({ title: '没能作废', content: view.errorText(error), showCancel: false }))
+          .catch(error => view.modal(this, { theme: 'warn', title: '作废失败', content: view.errorText(error), showCancel: false }))
           .finally(() => this.setData({ busy: false }));
       } });
   },

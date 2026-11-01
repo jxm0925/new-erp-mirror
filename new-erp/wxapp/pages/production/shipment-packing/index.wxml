@@ -1,17 +1,29 @@
 <import src="../order-info.wxml" />
-<!-- 发货作业（试水 / 打包 / 装车）：列表和详情都按生产任务页的样子；选人、用料、质检等弹层沿用 -->
+<!-- 发货作业（试水 / 打包 / 装车）：列表和详情均对齐红底工作台极简清爽规范 -->
 <view wx:if="{{!detailOpen}}" class="mt-page">
-  <view class="mt-head"><text class="mt-title">发货作业</text><text class="mt-muted">{{userName}}</text></view>
+  <view class="wo-hero">
+    <view class="wo-hero-top">
+      <text class="wo-hero-title">发货作业（试水 / 打包 / 装车）</text>
+      <text wx:if="{{userName}}" class="wo-hero-pill">{{userName}}</text>
+    </view>
+    <view class="wo-hero-search">
+      <input class="wo-hero-input" value="{{keyword}}" bindinput="keywordInput" placeholder="搜索工序名称 / 发货单号 / 产品" confirm-type="search" bindconfirm="search" />
+      <text wx:if="{{keyword}}" class="wo-hero-clear" bindtap="clearKeyword">×</text>
+      <button class="wo-hero-search-btn" bindtap="search">查询</button>
+    </view>
+  </view>
+
   <view class="mt-tabs">
-    <view wx:for="{{tabs}}" wx:key="key" class="mt-tab {{scope === item.key ? 'on' : ''}}" data-scope="{{item.key}}" bindtap="pickScope">{{item.label}}<text wx:if="{{item.key !== 'all'}}"> {{counts[item.key] || 0}}</text></view>
+    <view wx:for="{{tabs}}" wx:key="key" class="mt-tab {{scope === item.key ? 'on' : ''}}" data-scope="{{item.key}}" bindtap="pickScope">
+      <text>{{item.label}}</text>
+      <text wx:if="{{item.key !== 'all'}}">({{counts[item.key] || 0}})</text>
+    </view>
   </view>
-  <view class="mt-search">
-    <input class="mt-input" value="{{keyword}}" bindinput="keywordInput" placeholder="搜索工序名称" confirm-type="search" bindconfirm="search" />
-    <button class="mt-btn mt-btn-mini" bindtap="search">查询</button>
-  </view>
+
   <view wx:if="{{error}}" class="mt-error">{{error}}</view>
-  <view wx:if="{{loading && !rows.length}}" class="mt-empty">正在读取发货作业</view>
-  <view wx:elif="{{!rows.length}}" class="mt-empty">{{scope === 'mine' ? '没有正在做的发货作业，去“可接”看看' : (scope === 'available' ? '暂时没有可接的发货作业' : '暂无发货作业')}}</view>
+  <view wx:if="{{loading && !rows.length}}" class="mt-empty">正在读取发货作业…</view>
+  <view wx:elif="{{!rows.length}}" class="mt-empty">{{scope === 'mine' ? '当前暂无进行中的发货作业，可切换至「可接作业」查看' : (scope === 'available' ? '当前暂无可接的发货作业' : '暂无发货作业记录')}}</view>
+
   <view wx:for="{{rows}}" wx:for-item="operation" wx:key="id" class="mt-card" data-id="{{operation.id}}" bindtap="openOperation">
     <view class="mt-row">
       <text class="mt-op">{{operation.operation_name}}</text>
@@ -22,14 +34,16 @@
       </view>
     </view>
     <view class="mt-product">{{operation.productText}}<text class="mt-muted"> × {{operation.qtyText}}</text></view>
-    <view class="mt-muted">{{operation.shipment_no}} · {{operation.package_no}}<text wx:if="{{operation.order_info}}"> · {{operation.order_info.customer_name}}</text></view>
+    <view wx:if="{{operation.specText}}" class="clean-item-spec">规格型号：{{operation.specText}}</view>
+    <view class="mt-muted mt-gap">{{operation.shipment_no}} · {{operation.package_no}}<text wx:if="{{operation.order_info}}"> · {{operation.order_info.customer_name}}</text></view>
     <view class="mt-row mt-gap">
-      <text class="mt-muted">接单：{{operation.ownerName}}</text>
-      <text class="mt-muted">我 {{operation.myMinutesText}} · 本道 {{operation.totalMinutesText}}</text>
+      <text class="mt-muted">主责接单：{{operation.ownerName}}</text>
+      <text class="mt-muted">我的工时 {{operation.myMinutesText}} · 本道合计 {{operation.totalMinutesText}}</text>
     </view>
-    <view wx:if="{{operation.order_info && operation.order_info.changed.length}}" class="mt-note">销售改过订单：{{operation.changedText}}</view>
-    <button class="mt-btn {{operation.allowed_actions.claim ? '' : 'ghost'}}" data-id="{{operation.id}}" catchtap="openOperation" disabled="{{busy}}">{{operation.allowed_actions.claim ? '接单' : (operation.my.timing ? '继续作业' : '查看作业')}}</button>
+    <view wx:if="{{operation.order_info && operation.order_info.changed.length}}" class="mt-note">销售订单已变更：{{operation.changedText}}</view>
+    <button class="mt-btn {{operation.allowed_actions.claim ? '' : 'ghost'}}" data-id="{{operation.id}}" catchtap="openOperation" disabled="{{busy}}">{{operation.allowed_actions.claim ? '立即接单' : (operation.my.timing ? '继续作业' : '查看作业')}}</button>
   </view>
+
   <view wx:if="{{lastPage > 1}}" class="mt-pager">
     <button class="mt-btn ghost mt-btn-mini" disabled="{{page <= 1 || busy}}" data-delta="-1" bindtap="turnPage">上一页</button>
     <text>{{page}} / {{lastPage}}</text>
@@ -38,40 +52,58 @@
 </view>
 
 <view wx:if="{{detailOpen}}" class="mt-page has-footer">
-  <view class="mt-head">
-    <view>
-      <view class="mt-title">{{operation.operation_name || '发货作业'}}<text wx:if="{{operation.productText}}"> · {{operation.productText}}</text></view>
-      <view class="mt-sub">{{operation.shipment_no}} · {{operation.package_no}}<text wx:if="{{operation.order_info && operation.order_info.work_order_no}}"> · {{operation.order_info.work_order_no}}</text></view>
+  <!-- 顶部极简三行红底 Hero 头 -->
+  <view class="wo-hero">
+    <view class="wo-hero-top">
+      <text class="wo-hero-title">{{operation.operation_name || '发货作业'}}<text wx:if="{{operation.productText}}"> · {{operation.productText}}</text><text wx:if="{{operation.qtyText}}"> × {{operation.qtyText}}</text></text>
+      <text class="wo-hero-pill">{{operation.is_public_snapshot ? '公共工序 · ' : ''}}{{operation.statusLabel}}</text>
     </view>
-    <view class="mt-tags">
-      <text wx:if="{{operation.is_public_snapshot}}" class="mt-tag gray">公共工序</text>
-      <text class="mt-tag {{operation.statusTag}}">{{operation.statusLabel}}</text>
+    <view wx:if="{{operation.specText}}" class="wo-hero-spec">规格型号：{{operation.specText}}</view>
+    <view class="wo-hero-meta">
+      <text class="mono">{{operation.shipment_no}} · {{operation.package_no}}<text wx:if="{{operation.order_info && operation.order_info.work_order_no}}"> · {{operation.order_info.work_order_no}}</text></text>
+      <view style="display:flex; gap:12rpx;">
+        <text class="wo-hero-link" bindtap="closeDetail">‹ 返回列表</text>
+        <text class="wo-hero-link" bindtap="refreshDetail">刷新</text>
+      </view>
     </view>
   </view>
-  <view class="mt-row" style="margin-bottom: 16rpx"><text class="tk-link" bindtap="closeDetail">‹ 返回发货作业</text><text class="tk-link" bindtap="refreshDetail">刷新</text></view>
+
   <view wx:if="{{operationError}}" class="mt-error">{{operationError}}</view>
-  <view wx:if="{{pending}}" class="mt-error">原操作结果待确认，请先点下面「查询原操作结果」。</view>
+  <view wx:if="{{pending}}" class="mt-error">原操作结果待确认，请先点击下方「查询原操作结果」。</view>
   <view wx:for="{{operation.repairRows}}" wx:for-item="serial" wx:key="inventory_serial_id" class="mt-error">
     {{serial.serial_no}} 试水不合格：{{serial.repair.label}}<text wx:if="{{serial.repair.reason}}">。原因：{{serial.repair.reason}}</text><text wx:if="{{serial.repair.work_order_no}}">（工单 {{serial.repair.work_order_no}}）</text>
     <view wx:if="{{serial.can_repair_return}}" class="mt-gap"><text class="tk-link green" data-id="{{serial.shipment_line_id}}" bindtap="openRepairReturn">返修合格返回 ›</text></view>
   </view>
-  <view wx:if="{{operation.order_info && operation.order_info.changed.length}}" class="mt-error">销售开单后改过订单（{{operation.changedText}}），看下面「订单信息」。</view>
+  <view wx:if="{{operation.order_info && operation.order_info.changed.length}}" class="mt-error">销售订单已变更（{{operation.changedText}}），请核对下方「订单信息」。</view>
 
-  <view class="tk-clock {{operation.my.timing ? 'on' : ''}}">
-    <view class="mt-row"><text class="tk-clock-label">我在这道的工时</text><text wx:if="{{operation.my.timing}}" class="mt-tag amber">计时中</text></view>
-    <view class="tk-clock-num mono">{{clockText}}</view>
-    <view class="mt-row">
-      <view class="tk-clock-sub"><view>{{operation.ownerName === '未接单' ? '还没人接单' : '接单：' + operation.ownerName}}</view><view>本道合计 {{operation.totalMinutesText}}<text wx:if="{{operation.labor.active_count}}"> · {{operation.labor.active_count}} 人在计时</text></view></view>
-      <view class="tk-clock-ops">
-        <text wx:if="{{operation.allowed_actions.pause}}" class="tk-link amber" data-action="pause" bindtap="runAction">暂停</text>
-        <text wx:if="{{operation.allowed_actions.start}}" class="tk-link green" data-action="start" bindtap="runAction">{{operation.my.closed_minutes > 0 ? '继续计时' : '开始'}}</text>
+  <!-- 极简清爽单行计时卡片 -->
+  <view class="tk-timer-card {{operation.my.timing ? 'on' : ''}}">
+    <view class="tk-timer-left">
+      <view class="tk-timer-head">
+        <text class="tk-timer-label">我的作业工时</text>
+        <text wx:if="{{operation.my.timing}}" class="mt-tag red">计时中</text>
+      </view>
+      <view class="tk-timer-num mono">{{clockText}}</view>
+      <view class="tk-timer-sub">
+        <text>主责接单：{{operation.ownerName}}</text>
+        <text> · 本道合计 {{operation.totalMinutesText}}</text>
+        <text wx:if="{{operation.labor.active_count}}"> · {{operation.labor.active_count}} 人计时中</text>
       </view>
     </view>
+    <view class="tk-timer-ops">
+      <button wx:if="{{operation.allowed_actions.pause}}" class="tk-timer-btn ghost" data-action="pause" bindtap="runAction">暂停</button>
+      <button wx:if="{{operation.allowed_actions.start}}" class="tk-timer-btn primary" data-action="start" bindtap="runAction">{{operation.my.closed_minutes > 0 ? '继续计时' : '开始计时'}}</button>
+      <button wx:if="{{operation.allowed_actions.collaborators}}" class="tk-timer-btn ghost" bindtap="openPeople">协同人员</button>
+    </view>
   </view>
-  <button wx:if="{{operation.allowed_actions.claim}}" class="mt-btn" disabled="{{busy}}" data-action="claim" bindtap="runAction">接单</button>
+
+  <button wx:if="{{operation.allowed_actions.claim}}" class="mt-btn" style="margin-bottom: 18rpx;" disabled="{{busy}}" data-action="claim" bindtap="runAction">立即接单</button>
+
+  <!-- 订单与客户信息（放在我的作业工时下面） -->
+  <template is="orderInfo" data="{{info: operation.order_info}}" />
 
   <view wx:if="{{operation.serialResults.length}}" class="mt-card">
-    <view class="mt-card-title"><text>本次作业设备</text><text class="mt-muted">选好再点下面的按钮</text></view>
+    <view class="mt-card-title"><text>本次作业设备序列号 ({{operation.serialResults.length}})</text><text class="mt-muted">勾选后执行下方操作</text></view>
     <view wx:for="{{operation.serialResults}}" wx:for-item="serial" wx:key="inventory_serial_id" class="tk-unit {{serial.canSelect ? '' : 'off'}}" data-id="{{serial.inventory_serial_id}}" bindtap="toggleSerial">
       <view class="tk-check {{serial.selected ? 'on' : ''}}">{{serial.selected ? '✓' : ''}}</view>
       <text class="mono tk-sn">{{serial.serial_no}}</text>
@@ -81,38 +113,69 @@
   </view>
 
   <view class="mt-card">
-    <view class="mt-card-title"><text>包裹内容</text><text class="mt-muted">{{operation.package_no}}</text></view>
-    <view wx:for="{{operation.contents}}" wx:for-item="content" wx:key="id" class="mt-kv">
-      <text class="k">{{content.product_name || content.item_name}}</text>
-      <view class="v"><view>{{content.packaging_scheme_name || ''}} × {{content.qtyText}}</view><view wx:if="{{content.serialText}}" class="mt-muted mono">{{content.serialText}}</view></view>
+    <view class="mt-card-title"><text>包裹明细与规格型号</text><text class="mt-muted mono">{{operation.package_no}}</text></view>
+    <view wx:for="{{operation.contents}}" wx:for-item="content" wx:key="id" class="clean-item-row">
+      <view class="clean-item-left">
+        <view class="clean-item-name">{{content.product_name || content.item_name}}</view>
+        <view wx:if="{{content.specText}}" class="clean-item-spec">规格型号：{{content.specText}}</view>
+        <view wx:if="{{content.serialText}}" class="clean-item-spec mono">序列号：{{content.serialText}}</view>
+      </view>
+      <view class="clean-item-right">
+        <view class="clean-item-req">{{content.packaging_scheme_name ? content.packaging_scheme_name + ' · ' : ''}}× {{content.qtyText}}</view>
+      </view>
     </view>
   </view>
 
-  <template is="orderInfo" data="{{info: operation.order_info}}" />
+  <!-- 包装用料与规格型号（默认收起，可点击展开） -->
+  <view wx:if="{{operation.material_requirements.length || operation.materials.length}}" class="mt-card">
+    <view class="mt-card-title" bindtap="toggleMaterialsSection">
+      <text>包装用料与规格型号</text>
+      <text wx:if="{{operation.allowed_actions.materials}}" class="tk-link red" catchtap="openMaterials">登记实际用料 ›</text>
+    </view>
+    <view class="tk-mat-summary-bar" bindtap="toggleMaterialsSection">
+      <view class="tk-mat-summary-text">
+        定额 <text class="tk-num-bold">{{operation.material_requirements.length}}</text> 项 · 已登记实际耗用 <text class="{{operation.materials.length ? 'tk-num-green' : 'tk-num-red'}}">{{operation.materials.length}}</text> 项
+      </view>
+      <text class="tk-mat-summary-toggle">{{showMaterials ? '收起 ▴' : '点击展开 ▾'}}</text>
+    </view>
+    <block wx:if="{{showMaterials}}">
+      <view wx:for="{{operation.material_requirements}}" wx:for-item="requirement" wx:key="item_id" class="clean-item-row">
+        <view class="clean-item-left">
+          <view class="clean-item-name">{{requirement.item_name}}</view>
+          <view wx:if="{{requirement.specText}}" class="clean-item-spec">规格型号：{{requirement.specText}}</view>
+        </view>
+        <view class="clean-item-right">
+          <view class="clean-item-req">工艺定额 {{requirement.qtyText}}</view>
+        </view>
+      </view>
+      <view wx:if="{{!operation.materials.length}}" class="mt-muted mt-gap">尚未登记实际耗用包装材料</view>
+      <view wx:for="{{operation.materials}}" wx:for-item="material" wx:key="id" class="clean-item-row">
+        <view class="clean-item-left">
+          <view class="clean-item-name">{{material.item_name}}</view>
+          <view wx:if="{{material.specText}}" class="clean-item-spec">规格型号：{{material.specText}}</view>
+          <view wx:if="{{material.usageText}}" class="clean-item-spec">{{material.usageText}}</view>
+          <view wx:if="{{material.usageRemark}}" class="clean-item-spec">备注：{{material.usageRemark}}</view>
+        </view>
+        <view class="clean-item-right">
+          <view class="clean-item-req">实际耗用 {{material.base_qty}}</view>
+        </view>
+      </view>
+    </block>
+  </view>
 
   <view class="mt-card">
-    <view class="mt-card-title"><text>参与人员及工时</text><text wx:if="{{operation.allowed_actions.collaborators}}" class="tk-link" bindtap="openPeople">选择协同人 ›</text></view>
-    <view wx:if="{{!operation.participants.length}}" class="mt-muted">还没人接单</view>
+    <view class="mt-card-title"><text>作业人员与工时</text><text wx:if="{{operation.allowed_actions.collaborators}}" class="tk-link red" bindtap="openPeople">配置协同人员 ›</text></view>
+    <view wx:if="{{!operation.participants.length}}" class="mt-muted">暂无接单人员</view>
     <view wx:for="{{operation.participants}}" wx:for-item="person" wx:key="employee_legacy_id" class="mt-kv">
-      <text class="k">{{person.name}} <text class="mt-muted">{{person.role === 'OWNER' ? '接单人' : '协同人'}}{{person.is_active ? '' : '（已移除）'}}</text></text>
+      <text class="k">{{person.name}} <text class="mt-muted">{{person.role === 'OWNER' ? '主责接单人' : '协同人员'}}{{person.is_active ? '' : '（已移除）'}}</text></text>
       <text class="v">{{person.minutesText}}<text wx:if="{{person.is_timing}}" class="mt-tag amber"> 计时中</text></text>
     </view>
   </view>
 
   <view wx:if="{{operation.sessionRows.length}}" class="mt-card">
-    <view class="mt-card-title"><text>计时记录</text><text class="mt-muted">最近 {{operation.sessionRows.length}} 段</text></view>
+    <view class="mt-card-title"><text>工时计时明细</text><text class="mt-muted">最近 {{operation.sessionRows.length}} 段</text></view>
     <view wx:for="{{operation.sessionRows}}" wx:for-item="s" wx:key="id" class="mt-kv">
       <text class="k">{{s.employee_name}}</text><text class="v mono">{{s.timeText}} · {{s.minutesText}}</text>
-    </view>
-  </view>
-
-  <view wx:if="{{operation.material_requirements.length || operation.materials.length}}" class="mt-card">
-    <view class="mt-card-title"><text>用料</text><text wx:if="{{operation.allowed_actions.materials}}" class="tk-link" bindtap="openMaterials">登记实际用料 ›</text></view>
-    <view wx:for="{{operation.material_requirements}}" wx:for-item="requirement" wx:key="item_id" class="mt-kv"><text class="k">{{requirement.item_name}}</text><text class="v">工艺用量 {{requirement.qtyText}}</text></view>
-    <view wx:if="{{!operation.materials.length}}" class="mt-muted mt-gap">尚未登记实际用料</view>
-    <view wx:for="{{operation.materials}}" wx:for-item="material" wx:key="id" class="mt-kv">
-      <view class="k"><view>{{material.item_name}}</view><view wx:if="{{material.usageText}}" class="mt-muted">{{material.usageText}}</view><view wx:if="{{material.usageRemark}}" class="mt-muted">{{material.usageRemark}}</view></view>
-      <text class="v">实际 {{material.base_qty}}</text>
     </view>
   </view>
 </view>
@@ -122,85 +185,428 @@
   <block wx:else>
     <button wx:if="{{operation.allowed_actions.inspect && operation.shipment_operation_type === 'water_test'}}" class="mt-btn danger-ghost side" disabled="{{busy}}" data-result="failed" bindtap="openInspection">试水不合格</button>
     <button wx:if="{{operation.allowed_actions.inspect}}" class="mt-btn" disabled="{{busy}}" data-result="passed" bindtap="openInspection">{{operation.shipment_operation_type === 'water_test' ? '试水检验' : '作业质检'}}</button>
-    <button wx:elif="{{operation.allowed_actions.complete}}" class="mt-btn" disabled="{{busy}}" data-action="complete" bindtap="runAction">{{operation.serialResults.length ? (operationSerialIds.length ? operationSerialIds.length + ' 台做完' : '先选设备') : '完成工序'}}</button>
-    <button wx:elif="{{operation.allowed_actions.claim}}" class="mt-btn" disabled="{{busy}}" data-action="claim" bindtap="runAction">接单</button>
+    <button wx:if="{{operation.allowed_actions.complete}}" class="mt-btn" disabled="{{busy}}" data-action="complete" bindtap="runAction">{{operation.serialResults.length ? (operationSerialIds.length ? '确认完工 (' + operationSerialIds.length + '台)' : '请先选择设备') : '确认完成工序'}}</button>
+    <button wx:elif="{{operation.allowed_actions.claim}}" class="mt-btn" disabled="{{busy}}" data-action="claim" bindtap="runAction">立即接单</button>
     <button wx:elif="{{operation.allowed_actions.start}}" class="mt-btn" disabled="{{busy}}" data-action="start" bindtap="runAction">开始计时</button>
-    <button wx:else class="mt-btn ghost" bindtap="closeDetail">返回</button>
+    <button wx:elif="{{!operation.allowed_actions.inspect}}" class="mt-btn ghost" bindtap="closeDetail">返回</button>
   </block>
 </view>
 
 <view wx:if="{{repairReturnOpen}}" class="packing-overlay packing-selector-overlay" catchtouchmove="stop">
   <view class="packing-dialog">
-    <view class="packing-dialog-head"><text>返修合格返回</text><button disabled="{{busy}}" bindtap="closeRepairReturn">关闭</button></view>
+    <view class="packing-dialog-accent"></view>
+    <view class="packing-dialog-head">
+      <view class="packing-dialog-head-left">
+        <view class="packing-dialog-title">返修合格返回</view>
+        <view class="packing-dialog-sub">选择成品入库库位并自动转回当前发货单待发区</view>
+      </view>
+      <view class="packing-close-btn" bindtap="closeRepairReturn"><van-icon name="cross" size="30rpx" color="#64748b" /></view>
+    </view>
     <scroll-view scroll-y class="packing-dialog-body">
-      <view class="packing-content">{{repairReturnSerial.serial_no}} 已在车间返修合格。返回后先回成品库位，再自动移到这张发货单的待发区，重新试水。</view>
-      <button class="packing-secondary" disabled="{{busy}}" bindtap="openFinishedLocator">{{finishedLocator.location_id ? finishedLocator.warehouse_name + ' / ' + finishedLocator.location_name : '选择成品仓库和库位'}}</button>
-      <textarea class="packing-input packing-inspection-reason" value="{{repairReturnReason}}" bindinput="repairReturnInput" maxlength="500" placeholder="说明（如：更换密封圈后试压合格）"/>
+      <view class="packing-info-banner">
+        <text class="mono" style="font-weight:700;color:#1f2329;">{{repairReturnSerial.serial_no}}</text> 已在车间完成返修。确认返回后将先入成品库位，再自动移转至当前发货单待发区重新试水。
+      </view>
+      <view class="packing-select-card" bindtap="openFinishedLocator">
+        <view class="packing-select-left">
+          <van-icon name="location-o" size="34rpx" color="#d81e06" />
+          <text class="{{finishedLocator.location_id ? 'packing-select-val' : 'packing-select-placeholder'}}">{{finishedLocator.location_id ? finishedLocator.warehouse_name + ' / ' + finishedLocator.location_name : '点击选择成品仓库和库位'}}</text>
+        </view>
+        <van-icon name="arrow" size="28rpx" color="#94a3b8" />
+      </view>
+      <textarea class="packing-textarea" value="{{repairReturnReason}}" bindinput="repairReturnInput" maxlength="500" placeholder="填写返修合格说明（如：更换密封圈后试压合格）"/>
       <view wx:if="{{repairReturnError}}" class="packing-error">{{repairReturnError}}</view>
     </scroll-view>
-    <view class="packing-dialog-footer"><button class="packing-secondary" disabled="{{busy}}" bindtap="closeRepairReturn">取消</button><button class="packing-primary" disabled="{{busy}}" loading="{{busy}}" bindtap="saveRepairReturn">确认返回</button></view>
+    <view class="packing-dialog-footer">
+      <view class="packing-btn-cancel" bindtap="closeRepairReturn">取消</view>
+      <view class="packing-btn-confirm {{busy ? 'disabled' : ''}}" bindtap="saveRepairReturn">确认返回</view>
+    </view>
   </view>
 </view>
 <warehouse-locator open="{{finishedLocatorOpen}}" value="{{finishedLocator}}" location-purpose="finished" bind:confirm="chooseFinishedLocator" bind:cancel="closeFinishedLocator"/>
 
+<!-- 配置协同人员弹窗（组件化重构） -->
 <view wx:if="{{peopleOpen}}" class="packing-overlay packing-selector-overlay" catchtouchmove="stop">
-  <view class="packing-dialog"><view class="packing-dialog-head"><text>选择协同人</text><button disabled="{{busy}}" bindtap="closePeople">关闭</button></view><scroll-view scroll-y class="packing-dialog-body">
-    <picker range="{{departments}}" range-key="name" value="{{departmentIndex}}" bindchange="chooseDepartment"><view class="packing-category">{{departments[departmentIndex].name}}　⌄</view></picker>
-    <view class="packing-search"><input class="packing-input" value="{{peopleKeyword}}" bindinput="peopleInput" placeholder="姓名 / 账号" confirm-type="search" bindconfirm="searchPeople"/><button class="packing-primary" bindtap="searchPeople">查询</button></view>
-    <view wx:for="{{peopleRows}}" wx:for-item="person" wx:key="legacy_id" class="packing-option" data-id="{{person.legacy_id}}" bindtap="togglePerson"><text class="packing-check">{{person.selected ? '☑' : '□'}}</text><view><text>{{person.nickname || person.username}}</text><view class="packing-muted">{{person.username}}</view></view></view>
-    <view class="packing-pager"><button disabled="{{peoplePage <= 1}}" data-delta="-1" bindtap="turnPeople">上一页</button><text>{{peoplePage}} / {{peopleLast}}</text><button disabled="{{peoplePage >= peopleLast}}" data-delta="1" bindtap="turnPeople">下一页</button></view>
-    <view class="packing-section-title">已选择 {{selectedPeople.length}} 人</view><view class="packing-selected"><view wx:for="{{selectedPeople}}" wx:for-item="person" wx:key="legacy_id" data-id="{{person.legacy_id}}" bindtap="togglePerson">{{person.nickname || person.username}} ×</view></view>
-    <view class="packing-share-heading"><text class="packing-section-title">个人份额</text><button class="packing-secondary" disabled="{{busy || pending}}" bindtap="equalPeopleShares">平均分配</button></view>
-    <view wx:for="{{shareRows}}" wx:for-item="person" wx:key="employee_legacy_id" class="packing-share-row"><text>{{person.employee_name}}{{person.employee_legacy_id === operation.owner_legacy_id ? '（接单人）' : person.has_labor && !person.is_active ? '（已参与）' : '（协同人）'}}</text><view><input class="packing-input" type="digit" value="{{person.percent}}" data-id="{{person.employee_legacy_id}}" bindinput="peopleShareInput" disabled="{{busy || pending}}"/><text>%</text></view></view>
-    <view wx:if="{{peopleError}}" class="packing-error">{{peopleError}}</view>
-  </scroll-view><view class="packing-dialog-footer"><button class="packing-secondary" disabled="{{busy}}" bindtap="closePeople">取消</button><button class="packing-primary" loading="{{busy}}" disabled="{{busy || (!pending && !shareRows.length)}}" bindtap="savePeople">{{pending ? '重试原操作' : '确认协同与份额'}}</button></view></view>
+  <view class="packing-dialog">
+    <view class="packing-dialog-accent"></view>
+    <view class="packing-dialog-head">
+      <view class="packing-dialog-head-left">
+        <view class="packing-dialog-title">配置协同人员</view>
+        <view class="packing-dialog-sub">选择参与本工序的协同人员并配置计件分摊比例</view>
+      </view>
+      <view class="packing-close-btn" bindtap="closePeople"><van-icon name="cross" size="30rpx" color="#64748b" /></view>
+    </view>
+    <scroll-view scroll-y class="packing-dialog-body">
+      <!-- 自定义部门下拉组件（替代微信原生 picker） -->
+      <production-select
+        options="{{departments}}"
+        label-key="name"
+        value="{{departmentIndex}}"
+        icon="cluster-o"
+        prefix="所属部门："
+        placeholder="全部部门"
+        bind:change="chooseDepartment"
+      />
+
+      <!-- 搜索栏 -->
+      <view class="packing-search-box">
+        <van-icon name="search" size="32rpx" color="#94a3b8" />
+        <input class="packing-search-input" value="{{peopleKeyword}}" bindinput="peopleInput" placeholder="搜索员工姓名 / 账号" confirm-type="search" bindconfirm="searchPeople"/>
+        <view wx:if="{{peopleKeyword}}" class="packing-search-clear" bindtap="clearPeopleKeyword">
+          <van-icon name="clear" size="30rpx" color="#cbd5e1" />
+        </view>
+        <view class="packing-search-btn" bindtap="searchPeople">查询</view>
+      </view>
+
+      <!-- 员工列表 -->
+      <view wx:if="{{!peopleRows.length}}" class="packing-empty-box">
+        <van-empty image="search" description="未找到符合条件的人员" />
+      </view>
+      <view class="collab-list">
+        <view
+          wx:for="{{peopleRows}}"
+          wx:for-item="person"
+          wx:key="legacy_id"
+          class="collab-person-item {{person.selected ? 'active' : ''}} {{person.legacy_id === operation.owner_legacy_id ? 'is-owner' : ''}}"
+          data-id="{{person.legacy_id}}"
+          bindtap="togglePerson"
+        >
+          <view class="collab-checkbox {{person.selected ? 'checked' : ''}}">
+            <van-icon wx:if="{{person.selected}}" name="success" size="26rpx" color="#ffffff" />
+          </view>
+          <view class="collab-avatar {{person.selected ? 'active' : ''}}">{{person.avatarText || '工'}}</view>
+          <view class="collab-person-info">
+            <view class="collab-person-top">
+              <text class="collab-person-name">{{person.nickname || person.username}}</text>
+              <van-tag wx:if="{{person.legacy_id === operation.owner_legacy_id}}" color="#fff7ed" text-color="#d97706" round>主责接单人</van-tag>
+              <van-tag wx:elif="{{person.selected}}" color="#fff1f0" text-color="#d81e06" round>已选协同</van-tag>
+            </view>
+            <view class="collab-person-meta">账号：{{person.username}}<text wx:if="{{person.department_name}}"> · {{person.department_name}}</text></view>
+          </view>
+        </view>
+      </view>
+
+      <!-- 分页器 -->
+      <view class="packing-pager">
+        <view class="packing-page-btn {{peoplePage <= 1 ? 'disabled' : ''}}" data-delta="-1" bindtap="turnPeople">
+          <van-icon name="arrow-left" size="24rpx" color="{{peoplePage <= 1 ? '#cbd5e1' : '#d81e06'}}" />
+          <text>上一页</text>
+        </view>
+        <text class="packing-page-num">{{peoplePage}} / {{peopleLast}}</text>
+        <view class="packing-page-btn {{peoplePage >= peopleLast ? 'disabled' : ''}}" data-delta="1" bindtap="turnPeople">
+          <text>下一页</text>
+          <van-icon name="arrow" size="24rpx" color="{{peoplePage >= peopleLast ? '#cbd5e1' : '#d81e06'}}" />
+        </view>
+      </view>
+
+      <!-- 已选协同与计件分摊卡片 -->
+      <view class="collab-card">
+        <view class="collab-card-head">
+          <view class="collab-card-title-wrap">
+            <text class="collab-card-title">已选协同人员</text>
+            <van-tag color="#fff1f0" text-color="#d81e06" round>{{selectedPeople.length}} 人</van-tag>
+          </view>
+          <text wx:if="{{selectedPeople.length}}" class="collab-card-hint">点击标签可移除</text>
+        </view>
+        <view wx:if="{{selectedPeople.length}}" class="collab-selected-list">
+          <view wx:for="{{selectedPeople}}" wx:for-item="person" wx:key="legacy_id" class="collab-selected-pill" data-id="{{person.legacy_id}}" bindtap="togglePerson">
+            <text>{{person.nickname || person.username}}</text>
+            <van-icon name="cross" size="22rpx" color="#d81e06" />
+          </view>
+        </view>
+        <view wx:else class="collab-empty-hint">暂未勾选协同人员，由主责接单人独立完成（100%）</view>
+
+        <view class="collab-divider"></view>
+
+        <view class="collab-card-head">
+          <text class="collab-card-title">计件分摊比例</text>
+          <view class="collab-equal-btn {{busy || pending ? 'disabled' : ''}}" bindtap="equalPeopleShares">
+            <van-icon name="balance-list-o" size="28rpx" color="#d81e06" />
+            <text>平均分配</text>
+          </view>
+        </view>
+        <view wx:for="{{shareRows}}" wx:for-item="person" wx:key="employee_legacy_id" class="collab-share-row">
+          <view class="collab-share-left">
+            <text class="collab-share-name">{{person.employee_name}}</text>
+            <van-tag
+              color="{{person.employee_legacy_id === operation.owner_legacy_id ? '#fff1f0' : '#f1f5f9'}}"
+              text-color="{{person.employee_legacy_id === operation.owner_legacy_id ? '#d81e06' : '#475569'}}"
+              round
+            >{{person.employee_legacy_id === operation.owner_legacy_id ? '主责接单人' : (person.has_labor && !person.is_active ? '已参与' : '协同人员')}}</van-tag>
+          </view>
+          <view class="collab-pct-box">
+            <input class="collab-pct-input" type="digit" value="{{person.percent}}" data-id="{{person.employee_legacy_id}}" bindinput="peopleShareInput" disabled="{{busy || pending}}"/>
+            <text class="collab-pct-unit">%</text>
+          </view>
+        </view>
+      </view>
+      <view wx:if="{{peopleError}}" class="packing-error">{{peopleError}}</view>
+    </scroll-view>
+    <view class="packing-dialog-footer">
+      <view class="packing-btn-cancel" bindtap="closePeople">取消</view>
+      <view class="packing-btn-confirm {{busy || (!pending && !shareRows.length) ? 'disabled' : ''}}" bindtap="savePeople">{{pending ? '重试原操作' : '确认协同与分摊'}}</view>
+    </view>
+  </view>
 </view>
 
+<!-- 登记实际包装用料弹窗 -->
 <view wx:if="{{materialsOpen}}" class="packing-overlay packing-selector-overlay" catchtouchmove="stop">
-  <view class="packing-dialog"><view class="packing-dialog-head"><text>登记实际用料</text><button disabled="{{busy}}" bindtap="closeMaterials">关闭</button></view><scroll-view scroll-y class="packing-dialog-body">
-    <view wx:for="{{operation.material_requirements}}" wx:for-item="requirement" wx:key="item_id" class="packing-content">{{requirement.item_name}} · 工艺用料数量 {{requirement.required_base_qty}}</view>
-    <picker range="{{categories}}" range-key="category_name" value="{{categoryIndex}}" bindchange="chooseCategory"><view class="packing-category">{{categories[categoryIndex].category_name}}　⌄</view></picker>
-    <view class="packing-search"><input class="packing-input" value="{{materialKeyword}}" bindinput="materialInput" placeholder="物料编码 / 名称 / 规格" confirm-type="search" bindconfirm="searchMaterials"/><button class="packing-primary" bindtap="searchMaterials">查询</button></view>
-    <view wx:for="{{materialRows}}" wx:for-item="material" wx:key="id" class="packing-source"><view><view>{{material.item_code}} / {{material.item_name}}</view><view class="packing-muted">{{material.spec}}</view><view class="packing-muted">{{material.warehouse_name}} / {{material.location_name}} / {{material.batch_no}}</view><view>可用 {{material.quantity_available}} {{material.unit_name}}</view></view><button class="packing-secondary" disabled="{{material.selected}}" data-id="{{material.id}}" bindtap="chooseMaterial">{{material.selected ? '已添加' : '添加'}}</button></view>
-    <view class="packing-pager"><button disabled="{{materialPage <= 1}}" data-delta="-1" bindtap="turnMaterials">上一页</button><text>{{materialPage}} / {{materialLast}}</text><button disabled="{{materialPage >= materialLast}}" data-delta="1" bindtap="turnMaterials">下一页</button></view>
-    <view class="packing-section-title">已选库存来源</view>
-    <view wx:for="{{materialDrafts}}" wx:for-item="material" wx:key="id" class="packing-content"><view>{{material.item_name}} / {{material.batch_no}}</view><view class="packing-field"><text>实际耗用数量</text><input class="packing-input packing-quantity" type="digit" value="{{material.base_qty}}" disabled="{{material.physical || material.serial_tracking_mode === 'required' || busy}}" data-id="{{material.id}}" bindinput="quantityInput"/><text>{{material.unit_name}}</text></view><view class="packing-usage-dimensions"><input class="packing-input" type="digit" placeholder="实际长 mm（可留空）" value="{{material.usage_dimensions.length_mm}}" data-id="{{material.id}}" data-axis="length_mm" bindinput="usageDimensionInput" disabled="{{busy || pending}}"/><input class="packing-input" type="digit" placeholder="实际宽 mm（可留空）" value="{{material.usage_dimensions.width_mm}}" data-id="{{material.id}}" data-axis="width_mm" bindinput="usageDimensionInput" disabled="{{busy || pending}}"/><input class="packing-input" type="digit" placeholder="实际厚 mm（可留空）" value="{{material.usage_dimensions.thickness_mm}}" data-id="{{material.id}}" data-axis="thickness_mm" bindinput="usageDimensionInput" disabled="{{busy || pending}}"/></view><view wx:if="{{!material.physical}}" class="packing-area"><button class="packing-secondary" data-id="{{material.id}}" bindtap="areaToggle" disabled="{{busy || pending}}">{{material.area.enabled ? '✓ 木板按面积扣库存' : '木板按面积扣库存'}}</button><block wx:if="{{material.area.enabled}}"><view class="packing-usage-dimensions"><input class="packing-input" type="digit" placeholder="整板长 mm" value="{{material.area.board_length_mm}}" data-id="{{material.id}}" data-field="board_length_mm" bindinput="areaInput" disabled="{{busy || pending}}"/><input class="packing-input" type="digit" placeholder="整板宽 mm" value="{{material.area.board_width_mm}}" data-id="{{material.id}}" data-field="board_width_mm" bindinput="areaInput" disabled="{{busy || pending}}"/></view><textarea class="packing-input packing-area-text" placeholder="裁切块，每行：长*宽*块数，例如 1200*600*2" value="{{material.area.pieces_text}}" data-id="{{material.id}}" data-field="pieces_text" bindinput="areaInput" disabled="{{busy || pending}}"/><view class="packing-field"><button class="packing-secondary {{material.area.remnant === 'return' ? 'packing-chosen' : ''}}" data-id="{{material.id}}" data-value="return" bindtap="areaRemnant">余板回库</button><button class="packing-secondary {{material.area.remnant === 'loss' ? 'packing-chosen' : ''}}" data-id="{{material.id}}" data-value="loss" bindtap="areaRemnant">余板算损耗</button></view><view class="packing-muted">{{material.area.text}}</view></block></view><input class="packing-input" placeholder="实际用料备注（可留空）" value="{{material.usage_remark}}" data-id="{{material.id}}" bindinput="usageRemarkInput" maxlength="500" disabled="{{busy || pending}}"/><button wx:if="{{material.physical || material.serial_tracking_mode !== 'none'}}" class="packing-secondary" data-id="{{material.id}}" bindtap="openIdentities" disabled="{{busy}}">{{material.physical ? '选择实物板料' : '选择序列号'}}（{{material.identities.length}}）</button><button class="packing-remove" data-id="{{material.id}}" bindtap="removeMaterial" disabled="{{busy}}">移除此来源</button></view>
-    <view wx:if="{{materialError}}" class="packing-error">{{materialError}}</view>
-  </scroll-view><view class="packing-dialog-footer"><button class="packing-secondary" disabled="{{busy}}" bindtap="closeMaterials">取消</button><button class="packing-primary" disabled="{{busy || pending}}" loading="{{busy}}" bindtap="saveMaterials">确认实际耗用</button></view></view>
+  <view class="packing-dialog">
+    <view class="packing-dialog-accent"></view>
+    <view class="packing-dialog-head">
+      <view class="packing-dialog-head-left">
+        <view class="packing-dialog-title">登记实际包装用料</view>
+        <view class="packing-dialog-sub">选择包装材料库存来源并填写本次实际耗用数量</view>
+      </view>
+      <view class="packing-close-btn" bindtap="closeMaterials"><van-icon name="cross" size="30rpx" color="#64748b" /></view>
+    </view>
+    <scroll-view scroll-y class="packing-dialog-body">
+      <view wx:if="{{operation.material_requirements.length}}" class="packing-info-banner">
+        <view wx:for="{{operation.material_requirements}}" wx:for-item="requirement" wx:key="item_id">
+          工艺定额：{{requirement.item_name}} × <text style="font-weight:700;color:#d81e06;">{{requirement.required_base_qty}}</text>
+        </view>
+      </view>
+
+      <!-- 自定义分类下拉组件（替代微信原生 picker） -->
+      <production-select
+        options="{{categories}}"
+        label-key="category_name"
+        value="{{categoryIndex}}"
+        icon="apps-o"
+        prefix="物料分类："
+        placeholder="全部分类"
+        bind:change="chooseCategory"
+      />
+
+      <view class="packing-search-box">
+        <van-icon name="search" size="32rpx" color="#94a3b8" />
+        <input class="packing-search-input" value="{{materialKeyword}}" bindinput="materialInput" placeholder="物料编码 / 名称 / 规格型号" confirm-type="search" bindconfirm="searchMaterials"/>
+        <view class="packing-search-btn" bindtap="searchMaterials">查询</view>
+      </view>
+
+      <view wx:for="{{materialRows}}" wx:for-item="material" wx:key="id" class="packing-source">
+        <view class="packing-source-info">
+          <view class="packing-source-title">{{material.item_name}} <text class="packing-muted mono">{{material.item_code}}</text></view>
+          <view wx:if="{{material.spec}}" class="packing-muted">规格型号：{{material.spec}}</view>
+          <view class="packing-muted">{{material.warehouse_name}} / {{material.location_name}} · 批次 {{material.batch_no}}</view>
+          <view class="packing-source-avail">可用 <text style="color:#059669;font-weight:700;">{{material.quantity_available}}</text> {{material.unit_name}}</view>
+        </view>
+        <view class="packing-add-btn {{material.selected ? 'disabled' : ''}}" data-id="{{material.id}}" bindtap="chooseMaterial">{{material.selected ? '已添加' : '+ 添加'}}</view>
+      </view>
+
+      <view class="packing-pager">
+        <view class="packing-page-btn {{materialPage <= 1 ? 'disabled' : ''}}" data-delta="-1" bindtap="turnMaterials">
+          <van-icon name="arrow-left" size="24rpx" color="{{materialPage <= 1 ? '#cbd5e1' : '#d81e06'}}" />
+          <text>上一页</text>
+        </view>
+        <text class="packing-page-num">{{materialPage}} / {{materialLast}}</text>
+        <view class="packing-page-btn {{materialPage >= materialLast ? 'disabled' : ''}}" data-delta="1" bindtap="turnMaterials">
+          <text>下一页</text>
+          <van-icon name="arrow" size="24rpx" color="{{materialPage >= materialLast ? '#cbd5e1' : '#d81e06'}}" />
+        </view>
+      </view>
+
+      <view class="packing-section-title">已选库存来源 ({{materialDrafts.length}})</view>
+      <view wx:for="{{materialDrafts}}" wx:for-item="material" wx:key="id" class="collab-card" style="margin-bottom:16rpx;">
+        <view class="collab-card-head">
+          <text class="collab-card-title">{{material.item_name}} · {{material.batch_no}}</text>
+          <text class="tk-link red" data-id="{{material.id}}" bindtap="removeMaterial">移除</text>
+        </view>
+        <view class="packing-field">
+          <text class="packing-field-label">实际耗用数量</text>
+          <view class="collab-pct-box">
+            <input class="collab-pct-input" type="digit" value="{{material.base_qty}}" disabled="{{material.physical || material.serial_tracking_mode === 'required' || busy}}" data-id="{{material.id}}" bindinput="quantityInput" placeholder="0"/>
+            <text class="collab-pct-unit">{{material.unit_name}}</text>
+          </view>
+        </view>
+        <view class="packing-usage-dimensions">
+          <input class="packing-box-input" type="digit" placeholder="实际长 mm（选填）" value="{{material.usage_dimensions.length_mm}}" data-id="{{material.id}}" data-axis="length_mm" bindinput="usageDimensionInput" disabled="{{busy || pending}}"/>
+          <input class="packing-box-input" type="digit" placeholder="实际宽 mm（选填）" value="{{material.usage_dimensions.width_mm}}" data-id="{{material.id}}" data-axis="width_mm" bindinput="usageDimensionInput" disabled="{{busy || pending}}"/>
+          <input class="packing-box-input" type="digit" placeholder="实际厚 mm（选填）" value="{{material.usage_dimensions.thickness_mm}}" data-id="{{material.id}}" data-axis="thickness_mm" bindinput="usageDimensionInput" disabled="{{busy || pending}}"/>
+        </view>
+        <view wx:if="{{!material.physical}}" class="packing-area">
+          <view class="packing-chip-btn {{material.area.enabled ? 'active' : ''}}" data-id="{{material.id}}" bindtap="areaToggle">{{material.area.enabled ? '✓ 木板按面积扣库存' : '木板按面积扣库存'}}</view>
+          <block wx:if="{{material.area.enabled}}">
+            <view class="packing-usage-dimensions">
+              <input class="packing-box-input" type="digit" placeholder="整板长 mm" value="{{material.area.board_length_mm}}" data-id="{{material.id}}" data-field="board_length_mm" bindinput="areaInput" disabled="{{busy || pending}}"/>
+              <input class="packing-box-input" type="digit" placeholder="整板宽 mm" value="{{material.area.board_width_mm}}" data-id="{{material.id}}" data-field="board_width_mm" bindinput="areaInput" disabled="{{busy || pending}}"/>
+            </view>
+            <textarea class="packing-textarea packing-area-text" placeholder="裁切块，每行：长*宽*块数，例如 1200*600*2" value="{{material.area.pieces_text}}" data-id="{{material.id}}" data-field="pieces_text" bindinput="areaInput" disabled="{{busy || pending}}"/>
+            <view class="packing-field">
+              <view class="packing-chip-btn {{material.area.remnant === 'return' ? 'active' : ''}}" data-id="{{material.id}}" data-value="return" bindtap="areaRemnant">余板回库</view>
+              <view class="packing-chip-btn {{material.area.remnant === 'loss' ? 'active' : ''}}" data-id="{{material.id}}" data-value="loss" bindtap="areaRemnant">余板算损耗</view>
+            </view>
+            <view class="packing-muted">{{material.area.text}}</view>
+          </block>
+        </view>
+        <input class="packing-box-input" style="margin-top:12rpx;" placeholder="实际用料备注（选填）" value="{{material.usage_remark}}" data-id="{{material.id}}" bindinput="usageRemarkInput" maxlength="500" disabled="{{busy || pending}}"/>
+        <view wx:if="{{material.physical || material.serial_tracking_mode !== 'none'}}" class="packing-select-card" style="margin-top:12rpx;" data-id="{{material.id}}" bindtap="openIdentities">
+          <view class="packing-select-left">
+            <van-icon name="qr" size="32rpx" color="#d81e06" />
+            <text class="packing-select-val">{{material.physical ? '选择实物板料' : '选择序列号'}}（已选 {{material.identities.length}} 件）</text>
+          </view>
+          <van-icon name="arrow" size="28rpx" color="#94a3b8" />
+        </view>
+      </view>
+      <view wx:if="{{materialError}}" class="packing-error">{{materialError}}</view>
+    </scroll-view>
+    <view class="packing-dialog-footer">
+      <view class="packing-btn-cancel" bindtap="closeMaterials">取消</view>
+      <view class="packing-btn-confirm {{busy || pending ? 'disabled' : ''}}" bindtap="saveMaterials">确认实际耗用</view>
+    </view>
+  </view>
 </view>
 
-<view wx:if="{{identityOpen}}" class="packing-overlay packing-identity-overlay" catchtouchmove="stop"><view class="packing-dialog"><view class="packing-dialog-head"><text>{{identityMaterial.physical ? '选择实物板料' : '选择序列号'}}</text><button bindtap="closeIdentities">关闭</button></view><scroll-view scroll-y class="packing-dialog-body">
-  <view class="packing-search"><input class="packing-input" value="{{identityKeyword}}" bindinput="identityInput" placeholder="搜索实物编号 / 序列号" confirm-type="search" bindconfirm="searchIdentities"/><button class="packing-primary" bindtap="searchIdentities">查询</button></view>
-  <view wx:for="{{identityRows}}" wx:for-item="identity" wx:key="id" class="packing-option" data-id="{{identity.id}}" bindtap="toggleIdentity"><text class="packing-check">{{identity.selected ? '☑' : '□'}}</text><view><view>{{identity.physical_no || identity.serial_no}}</view><view wx:if="{{identityMaterial.physical}}" class="packing-muted">{{identity.length_mm}} × {{identity.width_mm}} × {{identity.thickness_mm}} mm</view></view></view>
-  <view class="packing-pager"><button disabled="{{identityPage <= 1}}" data-delta="-1" bindtap="turnIdentities">上一页</button><text>{{identityPage}} / {{identityLast}}</text><button disabled="{{identityPage >= identityLast}}" data-delta="1" bindtap="turnIdentities">下一页</button></view>
-  <view class="packing-section-title">已选择 {{selectedIdentities.length}} 件</view><view class="packing-selected"><view wx:for="{{selectedIdentities}}" wx:for-item="identity" wx:key="id" data-id="{{identity.id}}" bindtap="toggleIdentity">{{identity.physical_no || identity.serial_no}} ×</view></view>
-</scroll-view><view class="packing-dialog-footer"><button class="packing-secondary" bindtap="closeIdentities">取消</button><button class="packing-primary" bindtap="confirmIdentities">确认选择</button></view></view></view>
+<!-- 选择实物板料 / 序列号弹窗 -->
+<view wx:if="{{identityOpen}}" class="packing-overlay packing-identity-overlay" catchtouchmove="stop">
+  <view class="packing-dialog">
+    <view class="packing-dialog-accent"></view>
+    <view class="packing-dialog-head">
+      <view class="packing-dialog-head-left">
+        <view class="packing-dialog-title">{{identityMaterial.physical ? '选择实物板料' : '选择序列号'}}</view>
+        <view class="packing-dialog-sub">勾选本次实际领用的实物或序列号</view>
+      </view>
+      <view class="packing-close-btn" bindtap="closeIdentities"><van-icon name="cross" size="30rpx" color="#64748b" /></view>
+    </view>
+    <scroll-view scroll-y class="packing-dialog-body">
+      <view class="packing-search-box">
+        <van-icon name="search" size="32rpx" color="#94a3b8" />
+        <input class="packing-search-input" value="{{identityKeyword}}" bindinput="identityInput" placeholder="搜索实物编号 / 序列号" confirm-type="search" bindconfirm="searchIdentities"/>
+        <view class="packing-search-btn" bindtap="searchIdentities">查询</view>
+      </view>
+      <view class="collab-list">
+        <view wx:for="{{identityRows}}" wx:for-item="identity" wx:key="id" class="collab-person-item {{identity.selected ? 'active' : ''}}" data-id="{{identity.id}}" bindtap="toggleIdentity">
+          <view class="collab-checkbox {{identity.selected ? 'checked' : ''}}">
+            <van-icon wx:if="{{identity.selected}}" name="success" size="26rpx" color="#ffffff" />
+          </view>
+          <view class="collab-person-info">
+            <view class="collab-person-name mono">{{identity.physical_no || identity.serial_no}}</view>
+            <view wx:if="{{identityMaterial.physical}}" class="collab-person-meta">{{identity.length_mm}} × {{identity.width_mm}} × {{identity.thickness_mm}} mm</view>
+          </view>
+        </view>
+      </view>
+      <view class="packing-pager">
+        <view class="packing-page-btn {{identityPage <= 1 ? 'disabled' : ''}}" data-delta="-1" bindtap="turnIdentities">
+          <van-icon name="arrow-left" size="24rpx" color="{{identityPage <= 1 ? '#cbd5e1' : '#d81e06'}}" />
+          <text>上一页</text>
+        </view>
+        <text class="packing-page-num">{{identityPage}} / {{identityLast}}</text>
+        <view class="packing-page-btn {{identityPage >= identityLast ? 'disabled' : ''}}" data-delta="1" bindtap="turnIdentities">
+          <text>下一页</text>
+          <van-icon name="arrow" size="24rpx" color="{{identityPage >= identityLast ? '#cbd5e1' : '#d81e06'}}" />
+        </view>
+      </view>
+      <view class="collab-card">
+        <view class="collab-card-head">
+          <text class="collab-card-title">已选择 {{selectedIdentities.length}} 件</text>
+        </view>
+        <view wx:if="{{selectedIdentities.length}}" class="collab-selected-list">
+          <view wx:for="{{selectedIdentities}}" wx:for-item="identity" wx:key="id" class="collab-selected-pill" data-id="{{identity.id}}" bindtap="toggleIdentity">
+            <text class="mono">{{identity.physical_no || identity.serial_no}}</text>
+            <van-icon name="cross" size="22rpx" color="#d81e06" />
+          </view>
+        </view>
+      </view>
+    </scroll-view>
+    <view class="packing-dialog-footer">
+      <view class="packing-btn-cancel" bindtap="closeIdentities">取消</view>
+      <view class="packing-btn-confirm" bindtap="confirmIdentities">确认选择</view>
+    </view>
+  </view>
+</view>
 
+<!-- 试水检验 / 作业质检弹窗 -->
 <view wx:if="{{inspectionOpen}}" class="packing-overlay packing-selector-overlay" catchtouchmove="stop">
   <view class="packing-dialog">
-    <view class="packing-dialog-head"><text>{{operation.shipment_operation_type === 'water_test' ? '试水检验' : '作业质检'}}</text><button disabled="{{busy}}" bindtap="closeInspection">关闭</button></view>
+    <view class="packing-dialog-accent"></view>
+    <view class="packing-dialog-head">
+      <view class="packing-dialog-head-left">
+        <view class="packing-dialog-title">{{operation.shipment_operation_type === 'water_test' ? '试水检验' : '作业质检'}}</view>
+        <view class="packing-dialog-sub">{{operationSerialIds.length ? '本次检验设备：' + operationSerialIds.length + ' 台' : '请确认本次质检结论'}}</view>
+      </view>
+      <view class="packing-close-btn" bindtap="closeInspection"><van-icon name="cross" size="30rpx" color="#64748b" /></view>
+    </view>
     <scroll-view scroll-y class="packing-dialog-body">
-      <view wx:if="{{operationSerialIds.length}}" class="packing-content">本次检验 {{operationSerialIds.length}} 台</view>
-      <radio-group bindchange="inspectionChange"><label class="packing-option"><radio value="passed" checked="{{inspectionResult === 'passed'}}" color="#008b4b"/>合格</label><label class="packing-option"><radio value="failed" checked="{{inspectionResult === 'failed'}}" color="#008b4b"/>不合格，转返修</label></radio-group>
+      <radio-group bindchange="inspectionChange" class="packing-radio-group">
+        <label class="packing-radio-card {{inspectionResult === 'passed' ? 'active-pass' : ''}}">
+          <radio value="passed" checked="{{inspectionResult === 'passed'}}" color="#059669"/>
+          <view class="packing-radio-info">
+            <text class="packing-radio-title">检验合格</text>
+            <text class="packing-radio-desc">设备流转至下一道发货/打包工序</text>
+          </view>
+        </label>
+        <label class="packing-radio-card {{inspectionResult === 'failed' ? 'active-fail' : ''}}">
+          <radio value="failed" checked="{{inspectionResult === 'failed'}}" color="#d81e06"/>
+          <view class="packing-radio-info">
+            <text class="packing-radio-title">不合格，转返修</text>
+            <text class="packing-radio-desc">移入返修库位并退回对应生产工序返修</text>
+          </view>
+        </label>
+      </radio-group>
       <block wx:if="{{inspectionResult === 'failed' && operation.serialResults.length}}">
-        <button class="packing-secondary" disabled="{{busy}}" bindtap="openRepairLocator">{{repairLocator.location_id ? repairLocator.warehouse_name + ' / ' + repairLocator.location_name : '选择返修仓库和库位'}}</button>
-        <button wx:if="{{inspectionNeedsReturn}}" class="packing-secondary" disabled="{{busy}}" bindtap="openReworkOperations">{{returnOperation ? returnOperation.operation_name : '选择返工工序'}}</button>
+        <view class="packing-select-card" bindtap="openRepairLocator">
+          <view class="packing-select-left">
+            <van-icon name="location-o" size="34rpx" color="#d81e06" />
+            <text class="{{repairLocator.location_id ? 'packing-select-val' : 'packing-select-placeholder'}}">{{repairLocator.location_id ? repairLocator.warehouse_name + ' / ' + repairLocator.location_name : '选择返修仓库和库位'}}</text>
+          </view>
+          <van-icon name="arrow" size="28rpx" color="#94a3b8" />
+        </view>
+        <view wx:if="{{inspectionNeedsReturn}}" class="packing-select-card" bindtap="openReworkOperations">
+          <view class="packing-select-left">
+            <van-icon name="replay" size="34rpx" color="#d81e06" />
+            <text class="{{returnOperation ? 'packing-select-val' : 'packing-select-placeholder'}}">{{returnOperation ? returnOperation.operation_name : '选择退回返工工序'}}</text>
+          </view>
+          <van-icon name="arrow" size="28rpx" color="#94a3b8" />
+        </view>
       </block>
-      <textarea class="packing-input packing-inspection-reason" value="{{inspectionReason}}" bindinput="inspectionInput" maxlength="500" placeholder="检验说明"/>
+      <textarea class="packing-textarea" value="{{inspectionReason}}" bindinput="inspectionInput" maxlength="500" placeholder="填写检验说明（不合格时必填原因）"/>
       <view wx:if="{{inspectionError}}" class="packing-error">{{inspectionError}}</view>
     </scroll-view>
-    <view class="packing-dialog-footer"><button class="packing-secondary" disabled="{{busy}}" bindtap="closeInspection">取消</button><button class="packing-primary" disabled="{{busy || pending}}" loading="{{busy}}" bindtap="saveInspection">确认检验结果</button></view>
+    <view class="packing-dialog-footer">
+      <view class="packing-btn-cancel" bindtap="closeInspection">取消</view>
+      <view class="packing-btn-confirm {{busy || pending ? 'disabled' : ''}}" bindtap="saveInspection">确认检验结果</view>
+    </view>
   </view>
 </view>
 <warehouse-locator open="{{repairLocatorOpen}}" value="{{repairLocator}}" location-purpose="repair" bind:confirm="chooseRepairLocator" bind:cancel="closeRepairLocator"/>
+
+<!-- 选择返工工序弹窗 -->
 <view wx:if="{{reworkOpen}}" class="packing-overlay packing-identity-overlay" catchtouchmove="stop">
   <view class="packing-dialog">
-    <view class="packing-dialog-head"><text>选择返工工序</text><button bindtap="closeReworkOperations">关闭</button></view>
+    <view class="packing-dialog-accent"></view>
+    <view class="packing-dialog-head">
+      <view class="packing-dialog-head-left">
+        <view class="packing-dialog-title">选择返工工序</view>
+        <view class="packing-dialog-sub">选择设备退回重做的起始生产工序</view>
+      </view>
+      <view class="packing-close-btn" bindtap="closeReworkOperations"><van-icon name="cross" size="30rpx" color="#64748b" /></view>
+    </view>
     <scroll-view scroll-y class="packing-dialog-body">
-      <view class="packing-search"><input class="packing-input" value="{{reworkKeyword}}" bindinput="reworkInput" placeholder="工序名称" confirm-type="search" bindconfirm="searchReworkOperations"/><button class="packing-primary" bindtap="searchReworkOperations">查询</button></view>
-      <view wx:for="{{reworkRows}}" wx:key="id" class="packing-option" data-id="{{item.id}}" bindtap="chooseReworkOperation"><text>{{item.sequence}} · {{item.operation_name}}</text></view>
-      <view class="packing-pager"><button disabled="{{reworkPage <= 1}}" data-delta="-1" bindtap="turnReworkOperations">上一页</button><text>{{reworkPage}} / {{reworkLast}}</text><button disabled="{{reworkPage >= reworkLast}}" data-delta="1" bindtap="turnReworkOperations">下一页</button></view>
+      <view class="packing-search-box">
+        <van-icon name="search" size="32rpx" color="#94a3b8" />
+        <input class="packing-search-input" value="{{reworkKeyword}}" bindinput="reworkInput" placeholder="搜索工序名称" confirm-type="search" bindconfirm="searchReworkOperations"/>
+        <view class="packing-search-btn" bindtap="searchReworkOperations">查询</view>
+      </view>
+      <view class="collab-list">
+        <view wx:for="{{reworkRows}}" wx:key="id" class="collab-person-item {{returnOperation && returnOperation.id === item.id ? 'active' : ''}}" data-id="{{item.id}}" bindtap="chooseReworkOperation">
+          <view class="collab-person-info">
+            <view class="collab-person-name">工序 {{item.sequence}} · {{item.operation_name}}</view>
+          </view>
+          <van-icon name="arrow" size="28rpx" color="#94a3b8" />
+        </view>
+      </view>
+      <view class="packing-pager">
+        <view class="packing-page-btn {{reworkPage <= 1 ? 'disabled' : ''}}" data-delta="-1" bindtap="turnReworkOperations">
+          <van-icon name="arrow-left" size="24rpx" color="{{reworkPage <= 1 ? '#cbd5e1' : '#d81e06'}}" />
+          <text>上一页</text>
+        </view>
+        <text class="packing-page-num">{{reworkPage}} / {{reworkLast}}</text>
+        <view class="packing-page-btn {{reworkPage >= reworkLast ? 'disabled' : ''}}" data-delta="1" bindtap="turnReworkOperations">
+          <text>下一页</text>
+          <van-icon name="arrow" size="24rpx" color="{{reworkPage >= reworkLast ? '#cbd5e1' : '#d81e06'}}" />
+        </view>
+      </view>
       <view wx:if="{{reworkError}}" class="packing-error">{{reworkError}}</view>
     </scroll-view>
   </view>
 </view>
+<production-dialog id="prodDialog" />

@@ -1,0 +1,28 @@
+<view class="ps-wrap">
+  <view class="ps-trigger {{open ? 'is-open' : ''}}" bindtap="toggle">
+    <view class="ps-trigger-left">
+      <van-icon wx:if="{{icon}}" name="{{icon}}" size="32rpx" color="#d81e06" />
+      <text wx:if="{{prefix}}" class="ps-prefix">{{prefix}}</text>
+      <text class="ps-current">{{currentLabel || placeholder}}</text>
+    </view>
+    <view class="ps-trigger-right">
+      <text class="ps-switch-hint">{{open ? '收起' : '切换'}}</text>
+      <van-icon name="{{open ? 'arrow-up' : 'arrow-down'}}" size="26rpx" color="{{open ? '#d81e06' : '#64748b'}}" />
+    </view>
+  </view>
+
+  <view wx:if="{{open}}" class="ps-dropdown">
+    <scroll-view scroll-y class="ps-options-scroll">
+      <view
+        wx:for="{{normalizedOptions}}"
+        wx:key="idx"
+        class="ps-option {{index === value ? 'is-active' : ''}}"
+        data-index="{{index}}"
+        bindtap="selectOption"
+      >
+        <text class="ps-option-text">{{item.label}}</text>
+        <van-icon wx:if="{{index === value}}" name="success" size="30rpx" color="#d81e06" />
+      </view>
+    </scroll-view>
+  </view>
+</view>

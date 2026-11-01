@@ -38,14 +38,14 @@ class ShipmentPackingController extends Controller
             'id' => (int) $row->id, 'package_no' => $row->package_no, 'package_status' => $row->package_status,
             'carrier_name' => $row->carrier_name, 'tracking_no' => $row->tracking_no,
             'weight' => $row->weight, 'volume' => $row->volume,
-            'contents' => $row->packingContents()->get()->map(fn ($content) => ['shipment_line_id' => $content->shipment_line_id,
+            'contents' => $row->packingContents()->current()->get()->map(fn ($content) => ['shipment_line_id' => $content->shipment_line_id,
                 'base_qty' => $content->base_qty, 'packaging_scheme_id' => $content->packaging_scheme_id,
                 'inventory_serial_ids' => $content->serial_snapshot['inventory_serial_ids'] ?? []])->all(),
         ]));
-        $plan = $request->boolean('plan') ? $shipment->packages()->orderBy('id')->get()->map(fn ($row) => [
+        $plan = $request->boolean('plan') ? $shipment->packages()->where('package_status', '!=', 'cancelled')->orderBy('id')->get()->map(fn ($row) => [
             'package_no' => $row->package_no, 'carrier_name' => $row->carrier_name, 'tracking_no' => $row->tracking_no,
             'weight' => $row->weight, 'volume' => $row->volume,
-            'contents' => $row->packingContents()->get()->map(fn ($content) => ['shipment_line_id' => (int) $content->shipment_line_id,
+            'contents' => $row->packingContents()->current()->get()->map(fn ($content) => ['shipment_line_id' => (int) $content->shipment_line_id,
                 'base_qty' => (float) $content->base_qty, 'packaging_scheme_id' => $content->packaging_scheme_id,
                 'inventory_serial_ids' => $content->serial_snapshot['inventory_serial_ids'] ?? []])->all(),
         ])->all() : null;
@@ -102,7 +102,7 @@ class ShipmentPackingController extends Controller
         // 和生产任务一样分「我的」（我接的或协同、没做完；有质检权限的含待质检）「可接」（轮到了还没人接）「做完的」
         $scoped = function ($q, ?string $scope) use ($me, $quality) {
             $mine = fn ($w) => $w->where(fn ($x) => $x->whereHas('participants', fn ($p) => $p->where('employee_legacy_id', $me)->where('is_active', true))
-                ->when($quality, fn ($y) => $y->orWhere('status', 'WAIT_QUALITY')));
+                ->when($quality, fn ($y) => $this->includePendingQuality($y)));
             return match ($scope) {
                 'mine' => $mine($q)->whereNotIn('status', ['COMPLETED', 'CANCELLED']),
                 'available' => $q->where('status', 'READY')->whereNull('owner_legacy_id'),
@@ -276,11 +276,17 @@ class ShipmentPackingController extends Controller
             // 按台试水的判定人记在逐台结果上；工序完成后质检员仍可回看自己判定过的工序。
             ->orWhereExists(fn ($inspected) => $inspected->selectRaw('1')->from('erp_shipment_serial_results as inspected')
                 ->whereColumn('inspected.operation_id', 'erp_shipment_packing_operations.id')->where('inspected.inspected_by_legacy_id', $actor->legacy_id))
-            ->when(in_array('sales_order.shipment.packing.quality', $auth->permissionCodes($actor), true), fn ($quality) => $quality->orWhere('status', 'WAIT_QUALITY')
-                ->orWhereExists(fn ($pending) => $pending->selectRaw('1')->from('erp_shipment_serial_results as result')
-                    ->join('erp_sales_shipment_lines as line', 'line.id', '=', 'result.shipment_line_id')
-                    ->whereColumn('result.operation_id', 'erp_shipment_packing_operations.id')->whereColumn('result.round', 'line.quality_round')
-                    ->where('line.line_status', 'prepared')->where('result.status', 'wait_quality'))));
+            ->when(in_array('sales_order.shipment.packing.quality', $auth->permissionCodes($actor), true), fn ($quality) => $this->includePendingQuality($quality)));
+    }
+
+    private function includePendingQuality($query): void
+    {
+        // 同包裹部分设备待检时，总状态仍可为进行中；权限范围和“我的”必须使用同一逐台口径。
+        $query->orWhere('status', 'WAIT_QUALITY')
+            ->orWhereExists(fn ($pending) => $pending->selectRaw('1')->from('erp_shipment_serial_results as result')
+                ->join('erp_sales_shipment_lines as line', 'line.id', '=', 'result.shipment_line_id')
+                ->whereColumn('result.operation_id', 'erp_shipment_packing_operations.id')->whereColumn('result.round', 'line.quality_round')
+                ->where('line.line_status', 'prepared')->where('result.status', 'wait_quality'));
     }
 
     private function authorizeExecutionRead(Request $request): object

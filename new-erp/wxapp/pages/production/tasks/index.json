@@ -1,7 +1,9 @@
 {
-  "navigationBarTitleText": "生产任务",
-  "navigationBarBackgroundColor": "#ffffff",
-  "navigationBarTextStyle": "black",
+  "navigationBarTitleText": "工单任务",
+  "navigationBarBackgroundColor": "#d81e06",
+  "navigationBarTextStyle": "white",
   "enablePullDownRefresh": true,
-  "usingComponents": {}
+  "usingComponents": {
+    "production-dialog": "/components/production-dialog/index"
+  }
 }

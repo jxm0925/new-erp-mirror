@@ -6,6 +6,7 @@ use App\Models\Erp\MfgLaborSession;
 use App\Models\Erp\MfgTaskParticipant;
 use App\Models\Erp\MfgUnitReport;
 use App\Models\Erp\MfgWorkOrder;
+use App\Models\Erp\MfgWorkOrderLink;
 use App\Models\Erp\MfgWorkOrderOperation;
 use App\Models\Erp\MfgWorkOrderUnit;
 use App\Models\Erp\ProductionOperationWorker;
@@ -37,7 +38,6 @@ final class TaskService
         private readonly WorkOrderService $workOrders,
         private readonly SalesOrderFundingGateService $funding,
         private readonly MaterialIssueService $materials,
-        private readonly ReceiptService $receipts,
     ) {}
 
     public static function laneStatuses(?string $lane): array
@@ -241,10 +241,10 @@ final class TaskService
         return $paused;
     }
 
-    /** 选中的设备本道合格：交下道；最后一道合格就“等入库”。 */
-    public function pass(int $opId, array $unitIds, object $actor, string $lane = 'normal'): array
+    /** 选中的设备本道合格：交下道；本工单末道按所选去向入库或直交。 */
+    public function pass(int $opId, array $unitIds, object $actor, string $lane = 'normal', array $completion = []): array
     {
-        return DB::transaction(function () use ($opId, $unitIds, $actor, $lane) {
+        return DB::transaction(function () use ($opId, $unitIds, $actor, $lane, $completion) {
             [$wo, $op] = $this->lockTask($opId);
             $this->assertRunnable($wo, $op);
             $this->assertReporter($op, $actor, $lane);
@@ -258,7 +258,7 @@ final class TaskService
                 $this->materials->assertCutForPass($wo, $op, $firstTime);
             }
             $reportedAt = now();
-            $result = $this->advance($wo, $op, $units, $this->participantsSnapshot($op, $sessions, $reportedAt, $lane), $reportedAt, [], $actor);
+            $result = $this->advance($wo, $op, $units, $this->participantsSnapshot($op, $sessions, $reportedAt, $lane), $reportedAt, [], $actor, $completion);
             self::syncWorkStatus([(int) $wo->id]);
             return $result;
         }, 5);
@@ -268,10 +268,10 @@ final class TaskService
      * 已备料：集中下料提前切好的料，下料工序不计时，确认备好几台后直接交下道。
      * 只用于用按数量管理的板材／管材的工序；本道的料按 BOM 定额从库存扣（还没收的当场收），计入本工单材料成本。
      */
-    public function prepare(int $opId, array $unitIds, ?string $remark, object $actor, ?int $cuttingRunId = null): array
+    public function prepare(int $opId, array $unitIds, ?string $remark, object $actor, ?int $cuttingRunId = null, array $completion = []): array
     {
         $this->closeOverdueSessions();
-        return DB::transaction(function () use ($opId, $unitIds, $remark, $actor, $cuttingRunId) {
+        return DB::transaction(function () use ($opId, $unitIds, $remark, $actor, $cuttingRunId, $completion) {
             [$wo, $op] = $this->lockTask($opId);
             $this->assertRunnable($wo, $op);
             $sheet = in_array((int) $op->id, MaterialIssueService::cuttingOperationIds((int) $wo->id), true);
@@ -302,7 +302,7 @@ final class TaskService
             $reportedAt = now();
             $sessions = MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('lane', 'normal')->lockForUpdate()->get();
             $result = $this->advance($wo, $op, $units, $this->participantsSnapshot($op, $sessions, $reportedAt, 'normal'), $reportedAt,
-                ['pass_mode' => 'prepared', 'reason' => $remark ? mb_substr($remark, 0, 500) : null], $actor);
+                ['pass_mode' => 'prepared', 'reason' => $remark ? mb_substr($remark, 0, 500) : null], $actor, $completion);
             self::syncWorkStatus([(int) $wo->id]);
             return $result;
         }, 5);
@@ -516,9 +516,9 @@ final class TaskService
     }
 
     /**
-     * 合格／已备料的设备交下道；最后一道则生产完成，订单马上要发的自动记入成品待发区。调用方须已锁定工单、工序和设备。
+     * 合格／已备料的设备交下道；最后一道按用户所选入库或直交，和报工在同一事务内生效。
      */
-    private function advance(MfgWorkOrder $wo, MfgWorkOrderOperation $op, Collection $units, array $snapshot, CarbonInterface $reportedAt, array $extra, object $actor): array
+    private function advance(MfgWorkOrder $wo, MfgWorkOrderOperation $op, Collection $units, array $snapshot, CarbonInterface $reportedAt, array $extra, object $actor, array $completion = []): array
     {
         $prepared = ($extra['pass_mode'] ?? null) === 'prepared';
         // 返工工单（总装退回的不良半成品）：每道都是返工，最后一道合格就回到原来的库存（解冻），不再生产入库。
@@ -528,6 +528,7 @@ final class TaskService
         $ops = $this->productionOps($wo);
         $pos = $ops->pluck('id')->flip();
         $next = $ops->get($pos[$op->id] + 1);
+        if ($next && ! empty($completion['completion_action'])) $this->fail('completion_not_ready', '本工单还有未完成的加工工序，请先交接给'.$next->operation_name.'。');
         $firstPass = 0;
         $finished = 0;
         $receiptUnitIds = [];
@@ -576,19 +577,9 @@ final class TaskService
         $this->refreshOperation($wo, $op, $reportedAt);
         $timingPaused = $this->pauseIfIdle($wo, $op, $actor);
         if ($returned) $this->workOrders->refreshCompletion($wo, $actor);
-        // 总装做完、订单马上要发：自动记入成品待发区，直接去发货试水。
-        $staged = null;
-        if ($finished) {
-            try {
-                $staged = $this->receipts->autoStage($wo->id, $receiptUnitIds, $actor);
-            } catch (\App\Exceptions\Erp\WorkOrderDomainException|\Illuminate\Validation\ValidationException $e) {
-                // 自动入待发区失败不影响报工，留给仓库手工入库。
-                $message = $e instanceof \Illuminate\Validation\ValidationException ? collect($e->errors())->flatten()->first() : $e->getMessage();
-                $this->workOrders->log($wo, 'staging_failed', $wo->status, $wo->status, '自动记入成品待发区没成功：'.$message.'，请仓库手工入库', $actor);
-            }
-        }
+        $completed = $finished ? app(TaskCompletionService::class)->complete($wo, $op, $receiptUnitIds, $completion, $actor) : [];
         return ['passed' => $units->count(), 'finished' => $finished, 'repaired' => $repaired, 'returned' => $returned, 'next_operation_name' => $next?->operation_name,
-            'staged_qty' => $staged ? (int) $staged->qty : 0, 'staged_receipt_no' => $staged?->receipt_no, 'timing_paused' => $timingPaused];
+            'timing_paused' => $timingPaused] + $completed;
     }
 
     private function lockTask(int $opId): array
@@ -596,6 +587,11 @@ final class TaskService
         $woId = MfgWorkOrderOperation::query()->whereKey($opId)->value('work_order_id');
         if (! $woId) $this->fail('not_found', '生产任务不存在。', 404);
         $orderId = MfgWorkOrder::query()->whereKey($woId)->value('sales_order_id');
+        // 随单半成品直交会同时改主工单，先锁主单所属订单，沿用销售变更的订单优先锁序。
+        if (! $orderId) {
+            $parentId = MfgWorkOrderLink::query()->where('child_work_order_id', $woId)->value('parent_work_order_id');
+            if ($parentId) $orderId = MfgWorkOrder::query()->whereKey($parentId)->value('sales_order_id');
+        }
         if ($orderId) SalesOrder::query()->whereKey($orderId)->lockForUpdate()->firstOrFail();
         $wo = MfgWorkOrder::query()->lockForUpdate()->findOrFail($woId);
         $op = MfgWorkOrderOperation::query()->where('work_order_id', $wo->id)->lockForUpdate()->findOrFail($opId);

@@ -89,6 +89,21 @@ class ApprovalTaskApplicationService
             if ($nodes->isEmpty()) throw ValidationException::withMessages(['approval_flow' => '流程没有可执行节点。']);
             $eligible = $nodes->filter(fn ($node) => $this->expressions->matches((array) ($node['entry_conditions'] ?? $node['conditions'] ?? $node['condition'] ?? []), $context, $fieldTypes));
             if ($eligible->isEmpty()) throw ValidationException::withMessages(['approval_flow' => '流程启动成功，但所有审核节点均被进入条件跳过。']);
+            if ($objectCode === 'SALES_ORDER_CHANGE') {
+                // 候选审核行与可进入节点必须一一对应，不能在最后一个节点才发现缺审或重复回调。
+                $requiredTypes = json_decode((string) $sourceRow->approval_requirements, true) ?: [];
+                $nodeTypes = $eligible->filter(fn ($node) => strtoupper((string) ($node['node_type'] ?? 'APPROVAL')) === 'APPROVAL')
+                    ->map(fn ($node) => (string) ($node['approval_type'] ?? 'business'))->values()->all();
+                $typeLabels = ['business' => '业务审核', 'finance' => '财务审核', 'fulfillment' => '库存交付审核'];
+                $missing = array_diff($requiredTypes, $nodeTypes);
+                $extra = array_diff($nodeTypes, $requiredTypes);
+                $duplicates = array_keys(array_filter(array_count_values($nodeTypes), fn ($count) => $count > 1));
+                $errors = [];
+                foreach (['缺少可进入的审核节点' => $missing, '包含本次修改不需要的审核节点' => $extra, '重复配置审核节点' => $duplicates] as $message => $types) {
+                    if ($types) $errors[] = $message.'：'.implode('、', array_map(fn ($type) => $typeLabels[$type] ?? $type, $types)).'。';
+                }
+                if ($errors) throw ValidationException::withMessages(['approval_flow' => $errors]);
+            }
 
             $operator = (string) ($user->nickname ?: $user->username ?: '系统');
             $task = ApprovalTask::create([

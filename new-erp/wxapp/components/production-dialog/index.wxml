@@ -1,0 +1,123 @@
+<view wx:if="{{open}}" class="pd-mask" catchtouchmove="stop" bindtap="onMaskTap">
+  <view class="pd-dialog {{tableRows && tableRows.length ? 'wide' : ''}}" catchtap="stop">
+    <view class="pd-top-bar {{theme}}"></view>
+
+    <!-- Mode: completion / stepper / input / table (with header bar & close button) -->
+    <view wx:if="{{mode === 'completion' || mode === 'stepper' || mode === 'input' || (tableRows && tableRows.length)}}" class="pd-head">
+      <view class="pd-title-row">
+        <view class="pd-title-bar {{theme}}"></view>
+        <text class="pd-title">{{title}}</text>
+      </view>
+      <view class="pd-close" bindtap="cancel">×</view>
+    </view>
+
+    <!-- Mode: confirm / warn / danger / alert (centered hero badge + title) -->
+    <view wx:else class="pd-hero-head">
+      <view class="pd-hero-icon {{theme}}">
+        <text wx:if="{{theme === 'warn' || theme === 'danger'}}">!</text>
+        <text wx:else>✓</text>
+      </view>
+      <view class="pd-hero-title">{{title}}</view>
+      <view wx:if="{{subtitle}}" class="pd-hero-sub">{{subtitle}}</view>
+    </view>
+
+    <view class="pd-body">
+      <!-- Info Box -->
+      <view wx:if="{{infoMain || infoSub}}" class="pd-info-box {{theme === 'warn' ? 'warn' : ''}}">
+        <view wx:if="{{infoMain}}" class="pd-info-main">{{infoMain}}</view>
+        <view wx:if="{{infoSub}}" class="pd-info-sub">{{infoSub}}</view>
+      </view>
+
+      <!-- Material / Item Table (物料名称 | 规格型号 | 数量) -->
+      <view wx:if="{{tableRows && tableRows.length}}" class="pd-table-wrap">
+        <view class="pd-table-tr pd-table-th">
+          <view class="pd-table-td col-name">物料名称</view>
+          <view class="pd-table-td col-spec">规格型号</view>
+          <view class="pd-table-td col-qty">数量</view>
+        </view>
+        <scroll-view scroll-y class="pd-table-scroll">
+          <view wx:for="{{tableRows}}" wx:key="index" class="pd-table-tr">
+            <view class="pd-table-td col-name">
+              <text class="pd-td-main">{{item.name}}</text>
+              <text wx:if="{{item.code}}" class="pd-td-code">{{item.code}}</text>
+            </view>
+            <view class="pd-table-td col-spec">{{item.spec || '标准规格'}}</view>
+            <view class="pd-table-td col-qty">{{item.qty}}</view>
+          </view>
+        </scroll-view>
+      </view>
+
+      <!-- Plain text content -->
+      <view wx:if="{{content}}" class="pd-content">{{content}}</view>
+
+      <!-- Structured KV Rows -->
+      <view wx:if="{{kvRows && kvRows.length}}" class="pd-kv-list">
+        <view wx:for="{{kvRows}}" wx:key="index" class="pd-kv-row">
+          <text class="pd-kv-k">{{item.k}}</text>
+          <text class="pd-kv-v {{item.red ? 'red' : ''}}">{{item.v}}</text>
+        </view>
+      </view>
+
+      <!-- Mode 1: Completion destination selector -->
+      <block wx:if="{{mode === 'completion'}}">
+        <view class="pd-opt-card {{choice === 'handoff' ? 'active' : ''}} {{!handoffAvailable ? 'disabled' : ''}}" data-choice="handoff" bindtap="pickChoice">
+          <view class="pd-radio"></view>
+          <view class="pd-opt-main">
+            <view class="pd-opt-title">
+              <text>{{handoffTitle || '直接交接至下一工序'}}</text>
+              <text wx:if="{{handoffAvailable}}" class="pd-opt-tag">推荐</text>
+              <text wx:else class="pd-opt-tag disabled">不可选</text>
+            </view>
+            <view class="pd-opt-desc">{{handoffDesc}}</view>
+          </view>
+        </view>
+        <view class="pd-opt-card {{choice === 'store' ? 'active' : ''}}" data-choice="store" bindtap="pickChoice">
+          <view class="pd-radio"></view>
+          <view class="pd-opt-main">
+            <view class="pd-opt-title"><text>{{storeTitle || '完工入库（入成品/半成品库）'}}</text></view>
+            <view class="pd-opt-desc">{{storeDesc || '下一步选择目标仓库与库位后正式办理完工入库'}}</view>
+          </view>
+        </view>
+      </block>
+
+      <!-- Mode 2: Stepper (semi-finished sub-work-order quantity) -->
+      <block wx:if="{{mode === 'stepper'}}">
+        <view wx:if="{{stats && stats.length}}" class="pd-stats-grid">
+          <view wx:for="{{stats}}" wx:key="index" class="pd-stat-cell {{item.highlight ? 'highlight' : ''}}">
+            <text class="pd-stat-num">{{item.num}}</text>
+            <text class="pd-stat-lbl">{{item.label}}</text>
+          </view>
+        </view>
+        <view class="pd-stepper-row">
+          <text class="pd-stepper-lbl">{{stepperLabel || '本次数量'}}</text>
+          <view class="pd-stepper">
+            <view class="pd-step-btn" data-delta="-1" bindtap="stepQty">−</view>
+            <input class="pd-step-input" type="number" value="{{qty}}" bindinput="qtyInput" />
+            <view class="pd-step-btn" data-delta="1" bindtap="stepQty">+</view>
+          </view>
+        </view>
+      </block>
+
+      <!-- Mode 3: Input / Textarea with quick tags -->
+      <block wx:if="{{mode === 'input'}}">
+        <view wx:if="{{quickTags && quickTags.length}}" class="pd-tags-sec">
+          <view class="pd-tags-label">{{quickTagsLabel || '快捷标签：'}}</view>
+          <view class="pd-quick-tags">
+            <text wx:for="{{quickTags}}" wx:key="*this" class="pd-q-tag {{selectedTag === item ? 'active' : ''}}" data-tag="{{item}}" bindtap="pickQuickTag">{{item}}</text>
+          </view>
+        </view>
+        <view wx:if="{{inputLabel}}" class="pd-tags-label">{{inputLabel}}</view>
+        <textarea class="pd-textarea" value="{{inputValue}}" placeholder="{{placeholderText || '请输入内容'}}" maxlength="300" fixed="{{true}}" disable-default-padding="{{true}}" cursor-spacing="80" bindinput="onTextInput" />
+      </block>
+    </view>
+
+    <view class="pd-foot">
+      <view wx:if="{{showCancel}}" class="pd-btn-cancel" hover-class="pd-btn-hover" bindtap="cancel">
+        <text>{{cancelText || '取消'}}</text>
+      </view>
+      <view class="pd-btn-confirm {{theme}}" hover-class="pd-btn-hover" bindtap="confirm">
+        <text>{{mode === 'completion' ? (choice === 'handoff' ? handoffConfirmText : storeConfirmText) : (confirmText || '确认')}}</text>
+      </view>
+    </view>
+  </view>
+</view>

@@ -4,6 +4,7 @@ namespace App\Services\Erp\Manufacturing;
 
 use App\Models\Erp\InventoryBalance;
 use App\Models\Erp\InventorySerial;
+use App\Models\Erp\Item;
 use App\Models\Erp\MfgMaterialDelivery;
 use App\Models\Erp\MfgMaterialIssue;
 use App\Models\Erp\MfgMaterialReturn;
@@ -18,7 +19,7 @@ use Illuminate\Support\Facades\DB;
 /**
  * 仓库配料配送：库管按工序配料（按先入先用给出拣货库位/批次/编号，不扣库存）→ 发出（扣库存、记已领、编号登记到设备）
  * → 车间核对实物签收；签收前这批料不能开工。车间拒收后库管重新送达或整单收回入库。
- * 只配“专单配送”的料（工位库存、无需逐单配送的不配；板材管材走集中开料）。车间自领（收料）仍可用，会扣掉仓库正在配的量。
+ * 只配“专单配送”的料（半成品由车间自领，工位库存、无需逐单配送的不配；板材管材走集中开料）。车间自领（收料）仍可用，会扣掉仓库正在配的量。
  * 配好即在生产内部占住拣货来源（库存行数量和编号），其他收料、配料不再分到；发出严格按原拣货单过账，来源失效须“重新拣货”。
  */
 final class MaterialDeliveryService
@@ -63,7 +64,9 @@ final class MaterialDeliveryService
     private static function sumLines(int $operationId, array $statuses): array
     {
         $out = [];
-        foreach (MfgMaterialDelivery::query()->where('work_order_operation_id', $operationId)->whereIn('status', $statuses)->get(['lines']) as $d) {
+        // 事务内等过工单/用料锁后必须读最新配送状态，避免旧快照漏掉并发配料而重复收料。
+        foreach (MfgMaterialDelivery::query()->where('work_order_operation_id', $operationId)->whereIn('status', $statuses)
+            ->when(DB::transactionLevel() > 0, fn ($q) => $q->lockForUpdate())->get(['lines']) as $d) {
             foreach ((array) $d->lines as $l) $out[(int) $l['material_id']] = round(($out[(int) $l['material_id']] ?? 0) + (float) $l['qty'], 4);
         }
         return $out;
@@ -72,7 +75,12 @@ final class MaterialDeliveryService
     /** 本道要仓库配送的料。 */
     public function deliverable(MfgWorkOrderOperation $op, bool $lock = false): Collection
     {
-        return $this->issues->receivable($op, $lock)->reject(fn ($m) => in_array($m->supply_mode, self::NOT_DELIVERED, true))->values();
+        $materials = $this->issues->receivable($op, $lock);
+        // 半成品由车间自领，不能因它尚未做好而挡住仓库配送其余物料。
+        $semis = Item::query()->whereIn('id', $materials->pluck('component_item_id')->unique())->where('item_type', 'semi_finished')
+            ->when($lock, fn ($q) => $q->lockForUpdate())->pluck('id')->map(fn ($id) => (int) $id)->all();
+        return $materials->reject(fn ($m) => in_array($m->supply_mode, self::NOT_DELIVERED, true)
+            || in_array((int) $m->component_item_id, $semis, true))->values();
     }
 
     /** 待配料：已下达未结束工单的车间工序，还有专单配送的料没领、也没在配。车间已有设备在等的排前面。 */
@@ -83,8 +91,9 @@ final class MaterialDeliveryService
             ->whereIn('w.status', self::OPEN_WO)->where('o.execution_context', 'production')->where('m.participates_in_kitting', true)
             ->whereColumn('m.required_qty', '>', 'm.issued_qty')
             ->where(fn ($q) => $q->whereNull('m.supply_mode')->orWhereNotIn('m.supply_mode', self::NOT_DELIVERED))
-            // 按实物管理的板材／管材走开料，不逐单配送；按数量管理的板材／管材和普通料一样可以配送。
-            ->whereNotExists(fn ($q) => $q->selectRaw('1')->from('erp_items as i')->whereColumn('i.id', 'm.component_item_id')->where('i.material_management_mode', 'physical'))
+            // 半成品由车间自领，按实物管理的板材／管材走开料；其余数量料可以配送。
+            ->whereNotExists(fn ($q) => $q->selectRaw('1')->from('erp_items as i')->whereColumn('i.id', 'm.component_item_id')
+                ->where(fn ($i) => $i->where('i.material_management_mode', 'physical')->orWhere('i.item_type', 'semi_finished')))
             ->distinct()->pluck('m.work_order_operation_id');
         $ops = MfgWorkOrderOperation::query()->whereIn('id', $opIds->all() ?: [0])->get();
         $wos = MfgWorkOrder::query()->whereIn('id', $ops->pluck('work_order_id')->unique()->all() ?: [0])->get()->keyBy('id');
@@ -329,7 +338,7 @@ final class MaterialDeliveryService
     private function buildPlan(MfgWorkOrder $wo, MfgWorkOrderOperation $op, ?int $units, bool $lock): array
     {
         $materials = $this->deliverable($op, $lock);
-        if ($materials->isEmpty()) $this->fail('no_material', $op->operation_name.'没有要仓库配送的料（板材管材走集中开料，工位库存的料不逐单配送）。');
+        if ($materials->isEmpty()) $this->fail('no_material', $op->operation_name.'没有要仓库配送的料（半成品由车间自领，板材管材走集中开料，工位库存的料不逐单配送）。');
         // 在本道之前就报废的设备不会再到本道，不再为它们配料。
         $planned = $this->issues->expectedUnits($op, $wo);
         $prepared = self::preparedQty((int) $op->id);

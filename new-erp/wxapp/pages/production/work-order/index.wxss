@@ -1,2 +1,101 @@
 @import "../shared.wxss";
-.wo-op { padding: 10rpx 0 14rpx; }
+
+.wo-op {
+  padding: 12rpx 0 14rpx;
+}
+
+.wo-op-left {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+}
+
+.wo-op-name {
+  font-size: 28rpx;
+  font-weight: 700;
+  color: #1f2329;
+}
+
+.wo-link-card {
+  border-left: 6rpx solid #d97706;
+}
+
+.wo-link-head {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+}
+
+.wo-link-go {
+  font-size: 24rpx;
+  color: #d81e06;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.wo-link-name {
+  font-size: 29rpx;
+  font-weight: 800;
+  color: #1f2329;
+}
+
+.wo-sub-summary-bar {
+  padding: 18rpx 22rpx;
+  border-radius: 16rpx;
+  background: #fff8ee;
+  border: 1rpx solid #fdd7aa;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16rpx;
+  font-size: 25rpx;
+  font-weight: 700;
+  color: #b45309;
+}
+
+.wo-child-box {
+  margin-top: 14rpx;
+  background: #fff8ee;
+  border: 1rpx solid #fdd7aa;
+  border-radius: 18rpx;
+  padding: 18rpx 20rpx;
+}
+
+.wo-child-title {
+  font-size: 27rpx;
+  font-weight: 800;
+  color: #1f2329;
+  flex: 1;
+  min-width: 0;
+}
+
+.wo-child-sub {
+  margin-top: 8rpx;
+  padding-left: 24rpx;
+  font-size: 24rpx;
+  color: #64748b;
+  line-height: 1.45;
+  word-break: break-all;
+}
+
+.wo-kop-group {
+  padding-top: 16rpx;
+  border-top: 1rpx solid #f1f5f9;
+  margin-top: 16rpx;
+}
+
+.wo-kop-group:first-of-type {
+  border-top: 0;
+  margin-top: 0;
+  padding-top: 0;
+}
+
+.wo-kop-head {
+  margin-bottom: 6rpx;
+}
+
+.wo-kop-name {
+  font-size: 27rpx;
+  font-weight: 800;
+  color: #1f2329;
+}

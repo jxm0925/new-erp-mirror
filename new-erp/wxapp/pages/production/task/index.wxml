@@ -1,44 +1,80 @@
 <import src="../order-info.wxml" />
 <view class="mt-page has-footer">
   <view wx:if="{{error}}" class="mt-error">{{error}}</view>
-  <view wx:if="{{loading && !task}}" class="mt-empty">正在读取任务</view>
-  <block wx:if="{{task}}">
-    <view class="mt-head">
-      <view>
-        <view class="mt-title {{task.isRework ? 'mt-rework' : ''}}">{{task.title || task.operation_name}} · {{task.work_order.product_name}}</view>
-        <view class="mt-sub">{{task.work_order.work_order_no}}<text wx:if="{{task.work_order.sku_name}}"> · {{task.work_order.sku_name}}</text><text wx:if="{{task.dueText}}"> · 交期 {{task.dueText}}</text></view>
-      </view>
-      <view class="mt-tags">
-        <text wx:if="{{task.work_order.priority === 1}}" class="mt-tag red">特急</text><text wx:elif="{{task.work_order.is_urgent}}" class="mt-tag red">加急</text><text wx:elif="{{task.work_order.priority === 4}}" class="mt-tag gray">可延后</text>
-        <text wx:if="{{task.work_order.is_custom}}" class="mt-tag purple">定制</text>
-        <text wx:if="{{task.rework_of_work_order_no}}" class="mt-tag red">返工工单</text>
-      </view>
-    </view>
-    <view wx:if="{{task.other_lane && task.other_lane.count}}" class="mt-note" bindtap="switchLane">本道还有「{{task.other_lane.title}}」{{task.other_lane.count}} {{task.unitShort}}，点这里切过去 ›</view>
-    <view wx:if="{{task.isRework}}" class="mt-note">返工单独计时、单独统计，不算提成。<text wx:if="{{task.rework_note}}">{{task.rework_note}}</text></view>
-    <view wx:if="{{task.shipment_repair}}" class="mt-error">发货试水不合格退回返修：{{task.shipment_repair.serial_no}} · {{task.shipment_repair.reason}}（{{task.shipment_repair.shipment_no}}）。这道修好报合格，做完最后一道后仓库点「返修合格返回」再重新试水。</view>
-    <view wx:if="{{task.order_info && task.order_info.changed.length}}" class="mt-error" bindtap="scrollOrder">销售开单后改过订单（{{task.orderChangedText}}），看下面「订单信息」。</view>
-    <view wx:if="{{task.work_order.status === 'paused'}}" class="mt-error">工单已暂停{{task.work_order.pause_reason ? '：' + task.work_order.pause_reason : ''}}，暂时不能报工。</view>
-    <view wx:if="{{task.drawings_updated_at}}" class="mt-error">图纸已更新（{{task.drawings_updated_at}}），请先看最新图纸再做。</view>
+  <view wx:if="{{loading && !task}}" class="mt-empty">正在读取工序任务…</view>
 
-    <view class="tk-clock {{task.my.timing ? 'on' : ''}}">
-      <view class="mt-row"><text class="tk-clock-label">我在这道的{{task.isRework ? '返工' : ''}}工时</text><text wx:if="{{task.my.timing}}" class="mt-tag amber">计时中</text><text wx:elif="{{task.my.timing_elsewhere}}" class="mt-tag gray">在别的工序计时</text></view>
-      <view class="tk-clock-num mono">{{clockText}}</view>
-      <view class="mt-row">
-        <view class="tk-clock-sub"><view>{{task.ownerName ? '接单：' + task.ownerName : '还没人接单'}}</view><view wx:if="{{shareText}}">{{task.share_mode === 'fixed' ? '固定份额' : '按工时分'}}：{{shareText}}</view></view>
-        <view class="tk-clock-ops">
-          <text wx:if="{{task.allowed.pause}}" class="tk-link amber" bindtap="pause">暂停</text>
-          <text wx:if="{{task.allowed.start}}" class="tk-link green" bindtap="start">{{task.my.closed_minutes > 0 ? '继续计时' : '开始'}}</text>
+  <block wx:if="{{task}}">
+    <!-- 顶部极简三行红底 Hero 头 -->
+    <view class="wo-hero">
+      <view class="wo-hero-top">
+        <text class="wo-hero-title">{{task.title || task.operation_name}} · {{task.work_order.product_name}} × {{task.plannedText}} {{task.unitShort}}</text>
+        <view class="wo-hero-badges">
+          <text wx:if="{{task.work_order.is_sub_work_order}}" class="wo-hero-pill">子工单</text>
+          <text wx:if="{{task.work_order.priority === 1}}" class="wo-hero-pill">特急</text>
+          <text wx:elif="{{task.work_order.is_urgent}}" class="wo-hero-pill">加急</text>
+          <text wx:elif="{{task.work_order.priority === 4}}" class="wo-hero-pill">低优先级</text>
+          <text wx:if="{{task.work_order.is_custom}}" class="wo-hero-pill">定制</text>
+          <text wx:if="{{task.rework_of_work_order_no}}" class="wo-hero-pill">返工工单</text>
         </view>
       </view>
+      <view class="wo-hero-spec">规格型号：{{task.work_order.specText || '标准规格'}}</view>
+      <view class="wo-hero-meta">
+        <text class="mono">{{task.work_order.work_order_no}}<text wx:if="{{task.work_order.item_code}}"> · {{task.work_order.item_code}}</text><text wx:if="{{task.dueText}}"> · 交期 {{task.dueText}}</text></text>
+        <text class="wo-hero-link" data-id="{{task.work_order.id}}" bindtap="openWorkOrder">工单详情 ›</text>
+      </view>
     </view>
 
-    <button wx:if="{{task.allowed.claim}}" class="mt-btn" disabled="{{busy}}" bindtap="claim">{{task.isRework ? '接返工' : '接单'}}</button>
+    <!-- 所属主工单关联条（子工单时展示主工单产品与规格型号） -->
+    <view wx:if="{{task.work_order.parent_work_order}}" class="tk-parent-banner" data-id="{{task.work_order.parent_work_order.id}}" bindtap="openWorkOrder">
+      <view class="tk-parent-left">
+        <text class="mt-tag amber">所属主工单</text>
+        <text class="mono tk-parent-no">{{task.work_order.parent_work_order.work_order_no}}</text>
+        <text class="tk-parent-name">{{task.work_order.parent_work_order.product_name}}</text>
+        <text wx:if="{{task.work_order.parent_work_order.specText}}" class="tk-parent-spec">（{{task.work_order.parent_work_order.specText}}）</text>
+      </view>
+      <text class="tk-link red">查看主工单 ›</text>
+    </view>
 
+    <!-- 业务提醒与状态横幅 -->
+    <view wx:if="{{task.other_lane && task.other_lane.count}}" class="mt-note" bindtap="switchLane">本工序另有「{{task.other_lane.title}}」{{task.other_lane.count}} {{task.unitShort}}，点击切换 ›</view>
+    <view wx:if="{{task.isRework}}" class="mt-note">返工任务独立计时统计，不计入计件提成。<text wx:if="{{task.rework_note}}">{{task.rework_note}}</text></view>
+    <view wx:if="{{task.shipment_repair}}" class="mt-error">发货试水不合格返修：{{task.shipment_repair.serial_no}} · {{task.shipment_repair.reason}}（{{task.shipment_repair.shipment_no}}）。本工序返修合格并完成末道工序后，由仓管执行「返修合格返回」重新试水。</view>
+    <view wx:if="{{task.order_info && task.order_info.changed.length}}" class="mt-error" bindtap="scrollOrder">销售订单已变更（{{task.orderChangedText}}），请核对下方「订单信息」。</view>
+    <view wx:if="{{task.work_order.status === 'paused'}}" class="mt-error">工单已暂停{{task.work_order.pause_reason ? '：' + task.work_order.pause_reason : ''}}，暂停期间不可执行报工。</view>
+    <view wx:if="{{task.drawings_updated_at}}" class="mt-error">工艺图纸已更新（{{task.drawings_updated_at}}），请核对最新图纸后作业。</view>
+    <view wx:if="{{task.completion}}" class="mt-note">完工流转去向：入库<text wx:if="{{task.completion.next_operation_name}}">，或交接给{{task.completion.next_operation_name}}（{{task.completion.target_work_order_no}}）</text><text wx:if="{{task.completion.blocked_reason}}">。{{task.completion.blocked_reason}}</text></view>
+
+    <!-- 极简清爽单行计时卡片 -->
+    <view class="tk-timer-card {{task.my.timing ? 'on' : ''}}">
+      <view class="tk-timer-left">
+        <view class="tk-timer-head">
+          <text class="tk-timer-label">我的{{task.isRework ? '返工' : '作业'}}工时</text>
+          <text wx:if="{{task.my.timing}}" class="mt-tag red">计时中</text>
+          <text wx:elif="{{task.my.timing_elsewhere}}" class="mt-tag gray">其他工序计时中</text>
+        </view>
+        <view class="tk-timer-num mono">{{clockText}}</view>
+        <view class="tk-timer-sub">
+          <text>{{task.ownerName ? '主责接单：' + task.ownerName : '待接单'}}</text>
+          <text wx:if="{{shareText}}"> · {{task.share_mode === 'fixed' ? '固定比例' : '按工时分摊'}}：{{shareText}}</text>
+        </view>
+      </view>
+      <view class="tk-timer-ops">
+        <button wx:if="{{task.allowed.pause}}" class="tk-timer-btn ghost" bindtap="pause">暂停</button>
+        <button wx:if="{{task.allowed.start}}" class="tk-timer-btn primary" bindtap="start">{{task.my.closed_minutes > 0 ? '继续计时' : '开始计时'}}</button>
+        <button wx:if="{{task.allowed.collaborators}}" class="tk-timer-btn ghost" bindtap="openPeople">协同人员</button>
+      </view>
+    </view>
+
+    <button wx:if="{{task.allowed.claim}}" class="mt-btn" style="margin-bottom: 18rpx;" disabled="{{busy}}" bindtap="claim">{{task.isRework ? '接返工任务' : '立即接单'}}</button>
+
+    <!-- 订单与客户信息（放在我的作业工时下面） -->
+    <template is="orderInfo" data="{{info: task.order_info}}" />
+
+    <!-- 下料工序：按套数报工/备料 -->
     <view wx:if="{{task.cutting}}" class="mt-card">
-      <view class="mt-card-title"><text>本次下料完成几套</text><text class="mt-muted">开料已登记 {{task.cutting.cut_units}} 套</text></view>
+      <view class="mt-card-title"><text>本次下料完工套数</text><text class="mt-muted">开料已登记 {{task.cutting.cut_units}} 套</text></view>
       <view wx:if="{{task.cutting.reportable_units > 0}}" class="mt-kv">
-        <text class="k">完成套数（最多 {{task.cutting.reportable_units}}）</text>
+        <text class="k">完工套数（上限 {{task.cutting.reportable_units}}）</text>
         <view class="ct-step">
           <text class="ct-step-btn {{cutQty <= 1 ? 'off' : ''}}" data-delta="-1" bindtap="changeCutQty">−</text>
           <input class="ct-step-input" type="number" value="{{cutQty}}" bindblur="cutQtyInput" />
@@ -46,137 +82,225 @@
         </view>
       </view>
       <view wx:elif="{{task.prepMode && task.selectableCount > 0}}" class="mt-kv">
-        <text class="k">已备料几套（最多 {{task.selectableCount}}）</text>
+        <text class="k">本次备料套数（上限 {{task.selectableCount}}）</text>
         <view class="ct-step">
           <text class="ct-step-btn {{prepQty <= 1 ? 'off' : ''}}" data-delta="-1" bindtap="changePrepQty">−</text>
           <input class="ct-step-input" type="number" value="{{prepQty}}" bindblur="prepQtyInput" />
           <text class="ct-step-btn {{prepQty >= task.selectableCount ? 'off' : ''}}" data-delta="1" bindtap="changePrepQty">+</text>
         </view>
       </view>
-      <view wx:else class="mt-muted">{{task.cutting.completed_units >= task.cutting.planned_units ? '下料已全部完成' : '先在下面「开料」里切料并登记产出，登记了几套就能报几套'}}</view>
-      <view wx:if="{{task.prepMode && !task.cutting.reportable_units && task.selectableCount > 0}}" class="mt-muted mt-gap">板件已在「集中开料」切好：点下面「已备料」直接交下道，板材按 BOM 定额从集中开料登记的净耗里扣。<text wx:for="{{task.cutting.pool}}" wx:key="item_id">{{item.item_name}} 已切未备料 {{item.left_measure}} m²；</text></view>
-      <view class="mt-muted mt-gap">已完成 {{task.cutting.completed_units}} / {{task.cutting.planned_units}} 套<text wx:if="{{task.progress.next_operation_name}}"> · 完成后交{{task.progress.next_operation_name}}</text></view>
+      <view wx:else class="mt-muted">{{task.cutting.completed_units >= task.cutting.planned_units ? '本工序下料已全部完成' : '请先在下方「开料作业」中领料切割并登记产出套数'}}</view>
+      <view wx:if="{{task.prepMode && !task.cutting.reportable_units && task.selectableCount > 0}}" class="mt-muted mt-gap">板件已在「集中开料」完成切割：点击底部「已备料」可直接交接下道工序，板材按 BOM 定额从集中开料净耗池扣减。<text wx:for="{{task.cutting.pool}}" wx:key="item_id">{{item.item_name}} 已切未备料 {{item.left_measure}} m²；</text></view>
+      <view class="mt-muted mt-gap">已完成 {{task.cutting.completed_units}} / {{task.cutting.planned_units}} 套<text wx:if="{{task.progress.next_operation_name && !task.completion}}"> · 完工后交接至{{task.progress.next_operation_name}}</text></view>
     </view>
 
+    <!-- 集中开料批次选择 -->
     <view wx:if="{{task.prepMode && task.cutting_runs && (task.cutting_runs.runs.length || task.cutting_runs.running)}}" class="mt-card">
-      <view class="mt-card-title"><text>集中开料记录</text><text class="tk-link" bindtap="openSharedCutting">去开料 ›</text></view>
-      <view class="mt-muted">点「已备料」时按件数从开料记录领走开料工时（这批总工时 ÷ 总件数 × 领走件数）。不选就从先开的那批领。</view>
-      <view wx:if="{{task.cutting_runs.running}}" class="mt-muted mt-gap" style="color:#b7791f">有 {{task.cutting_runs.running}} 批还在开料，切完先点「切完结束」登记件数再来备料。</view>
+      <view class="mt-card-title"><text>集中开料批次关联</text><text class="tk-link red" bindtap="openSharedCutting">前往集中开料 ›</text></view>
+      <view class="mt-muted">提交「已备料」时将按件数从所选集中开料批次分摊开料工时（批次总工时 ÷ 总件数 × 本次领用件数）；未指定时默认按先进先出匹配。</view>
+      <view wx:if="{{task.cutting_runs.running}}" class="mt-muted mt-gap" style="color:#b7791f">当前有 {{task.cutting_runs.running}} 批正在集中开料，请待其「切完结束」登记件数后再执行备料。</view>
       <view wx:for="{{task.cutting_runs.runs}}" wx:key="id" class="tk-unit" data-id="{{item.id}}" bindtap="pickRun">
         <view class="tk-check {{runPick === item.id ? 'on' : ''}}">{{runPick === item.id ? '✓' : ''}}</view>
         <text class="mono tk-sn">{{item.run_no}}</text>
-        <text class="mt-muted">剩 {{item.left_sets}} 套（{{item.left_pieces}} 件）<text wx:if="{{item.minutes_per_set !== null}}"> · 每套约 {{item.minutes_per_set}} 分钟</text></text>
+        <text class="mt-muted">剩余 {{item.left_sets}} 套（{{item.left_pieces}} 件）<text wx:if="{{item.minutes_per_set !== null}}"> · 约 {{item.minutes_per_set}} 分钟/套</text></text>
       </view>
     </view>
 
+    <!-- 非下料工序：本次报工单件选择 -->
     <view wx:if="{{!task.cutting}}" class="mt-card">
       <view class="mt-card-title">
-        <text>选这次做完的{{task.noun}}</text>
-        <view class="mt-tags"><text wx:if="{{task.selectableCount > 1}}" class="tk-link" bindtap="selectAll">{{selectedCount === task.selectableCount ? '全不选' : '全选'}}</text><text class="tk-link green" bindtap="scan">扫码</text></view>
+        <text>本次报工{{task.noun}}选择</text>
+        <view class="mt-tags">
+          <text wx:if="{{task.selectableCount > 1}}" class="tk-link" bindtap="selectAll">{{selectedCount === task.selectableCount ? '取消全选' : '全选'}}</text>
+          <text class="tk-link red" bindtap="scan">扫码选择</text>
+        </view>
       </view>
-      <view wx:if="{{!task.units.length}}" class="mt-muted">本道现在没有待{{task.isRework ? '返工' : '做'}}的{{task.noun}}</view>
+      <view wx:if="{{!task.units.length}}" class="mt-muted">当前工序暂无待{{task.isRework ? '返工' : '作业'}}的{{task.noun}}</view>
       <view wx:for="{{task.units}}" wx:key="id" class="tk-unit {{item.selectable ? '' : 'off'}}" data-id="{{item.id}}" bindtap="toggleUnit">
         <view class="tk-check {{selected[item.id] ? 'on' : ''}}">{{selected[item.id] ? '✓' : ''}}</view>
         <text class="mono tk-sn">{{item.serial_no || '第 ' + item.unit_no + ' ' + task.unitShort}}</text>
         <text wx:if="{{item.status === 'rework'}}" class="mt-tag red">返工{{item.fail_reason ? '：' + item.fail_reason : ''}}</text>
-        <text wx:else class="mt-tag {{item.selectable ? 'gray' : 'amber'}}">{{item.status_label}}</text>
+        <text wx:else class="mt-tag {{item.selectable ? 'blue' : 'gray'}}">{{item.status_label}}</text>
       </view>
-      <view wx:if="{{task.prep && task.allowed.prepare}}" class="mt-muted mt-gap">现切：点上面「开始」计时，切完报合格。料已集中开好：选好{{task.noun}}点「已备料」，本道不计时直接交下道，料按 BOM 定额扣，开料工时按件数从集中开料记录带过来。</view>
-      <view class="mt-muted mt-gap">本道 {{task.progress.here || 0}} {{task.unitShort}}<text wx:if="{{task.progress.upstream}}"> / 未交过来 {{task.progress.upstream}} {{task.unitShort}}</text> · 做完 {{task.doneText}} / {{task.plannedText}}<text wx:if="{{task.progress.next_operation_name}}"> · 合格交{{task.progress.next_operation_name}}</text></view>
+      <view wx:if="{{task.prep && task.allowed.prepare}}" class="mt-muted mt-gap">随单现切：点击上方「开始计时」作业，完成后报合格；集中开料已切好：勾选{{task.noun}}后点击底部「已备料」直接交接下道工序，用料按 BOM 定额扣减并自动分摊集中开料工时。</view>
+      <view class="mt-muted mt-gap">本道待做 {{task.progress.here || 0}} {{task.unitShort}}<text wx:if="{{task.progress.upstream}}"> · 前道在制 {{task.progress.upstream}} {{task.unitShort}}</text> · 已完成 {{task.doneText}} / {{task.plannedText}}<text wx:if="{{task.progress.next_operation_name && !task.completion}}"> · 合格交接至{{task.progress.next_operation_name}}</text></view>
     </view>
 
+    <!-- BOM 子件（自制半成品）：默认折叠，显示需几项、齐几项、缺几项 -->
     <view wx:if="{{task.semiRows.length}}" class="mt-card">
-      <view class="mt-card-title"><text>BOM 子件（自制半成品）</text><text class="mt-muted">缺多少开多少</text></view>
-      <view wx:for="{{task.semiRows}}" wx:key="component_item_id" class="tk-dlv">
-        <view class="mt-kv"><text class="k">{{item.component_item_name}}</text><text class="v {{item.gap_qty > 0 ? 'mt-red' : ''}}">{{item.gap_qty > 0 ? '缺 ' + item.gapText + ' ' + (item.unit_name || '') : '够用'}}</text></view>
-        <view class="mt-muted">要 {{item.requiredText}} · 已收 {{item.issuedText}} · 仓库可用 {{item.availableText}} · 已开工单未入库 {{item.openText}}<text wx:if="{{item.held_qty > 0}}"> · 退回待处置/返工 {{item.heldText}}</text></view>
-        <view wx:if="{{item.can_order}}" class="tk-dlv-ops"><text class="tk-link green" data-id="{{item.component_item_id}}" bindtap="semiOrder">下半成品工单（最多 {{item.max_order_qty}}）</text></view>
+      <view class="mt-card-title" bindtap="toggleSemiMaterials">
+        <text>BOM 子件（自制半成品）</text>
       </view>
+      <view class="tk-mat-summary-bar" bindtap="toggleSemiMaterials">
+        <view class="tk-mat-summary-text">
+          <text>需用 <text class="tk-num-bold">{{task.semiSummary.total}}</text> 项</text>
+          <text> · 已齐 <text class="tk-num-green">{{task.semiSummary.ready}}</text> 项</text>
+          <text> · 缺 <text class="{{task.semiSummary.short > 0 ? 'tk-num-red' : 'tk-num-bold'}}">{{task.semiSummary.short}}</text> 项</text>
+        </view>
+        <text class="tk-mat-summary-toggle">{{showSemiMaterials ? '收起 ▴' : '点击展开 ▾'}}</text>
+      </view>
+      <block wx:if="{{showSemiMaterials}}">
+        <view wx:for="{{task.semiRows}}" wx:key="component_item_id" class="clean-item-row">
+          <view class="clean-item-left">
+            <view class="clean-item-name">{{item.component_item_name}}<text wx:if="{{item.component_item_code}}" class="mt-muted mono"> · {{item.component_item_code}}</text></view>
+            <view class="clean-item-spec">规格型号：{{item.specText || '标准规格'}}</view>
+            <view class="clean-item-spec">库存可用 {{item.availableText}} · 在制未入库 {{item.openText}}<text wx:if="{{item.held_qty > 0}}"> · 待处置/返工 {{item.heldText}}</text></view>
+            <view wx:if="{{item.can_order}}" class="mt-gap">
+              <text class="tk-link red" data-id="{{item.component_item_id}}" bindtap="semiOrder">+ 下达半成品子工单（上限 {{item.max_order_qty}}）</text>
+            </view>
+          </view>
+          <view class="clean-item-right">
+            <view class="clean-item-req">需 {{item.requiredText}} {{item.unit_name || ''}}</view>
+            <view class="clean-item-sub {{item.gap_qty > 0 ? 'short' : ''}}">已领 {{item.issuedText}} · {{item.gap_qty > 0 ? '缺 ' + item.gapText : '已齐套'}}</view>
+          </view>
+        </view>
+      </block>
     </view>
 
-    <template is="orderInfo" data="{{info: task.order_info}}" />
-
+    <!-- 本道用料与规格型号：默认折叠，显示需几项、齐几项、缺几项 -->
     <view class="mt-card">
-      <view class="mt-card-title"><text>图纸 / 定制说明</text><text wx:if="{{!task.drawings.length && !task.work_order.custom_description && !task.work_order.special_requirement}}" class="mt-muted">无</text></view>
+      <view class="mt-card-title" bindtap="toggleMaterials">
+        <text>本道用料与规格型号</text>
+        <view class="mt-tags">
+          <text wx:if="{{task.allowed.material_return}}" class="tk-link red" catchtap="openMaterialReturn">申请退料 ›</text>
+          <text wx:if="{{!task.materials.length}}" class="mt-muted">无领料项</text>
+        </view>
+      </view>
+      <view wx:if="{{task.materials.length}}" class="tk-mat-summary-bar" bindtap="toggleMaterials">
+        <view class="tk-mat-summary-text">
+          <text>需用 <text class="tk-num-bold">{{task.materialSummary.total}}</text> 项物料</text>
+          <text> · 已齐 <text class="tk-num-green">{{task.materialSummary.ready}}</text> 项</text>
+          <text> · 缺 <text class="{{task.materialSummary.short > 0 ? 'tk-num-red' : 'tk-num-bold'}}">{{task.materialSummary.short}}</text> 项</text>
+        </view>
+        <text class="tk-mat-summary-toggle">{{showMaterials ? '收起 ▴' : '点击展开 ▾'}}</text>
+      </view>
+      <block wx:if="{{showMaterials && task.materials.length}}">
+        <view wx:for="{{task.materials}}" wx:key="rowKey" class="clean-item-row">
+          <view class="clean-item-left">
+            <view class="clean-item-name">
+              <text>{{item.component_item_name}}</text>
+              <text wx:if="{{item.component_item_code}}" class="mt-muted mono"> · {{item.component_item_code}}</text>
+              <text wx:if="{{item.cutting}}" class="mt-tag blue" style="margin-left: 8rpx;">开料</text>
+            </view>
+            <view class="clean-item-spec">规格型号：{{item.specText || '标准规格'}}</view>
+            <view wx:if="{{item.remark}}" class="clean-item-spec">备注：{{item.remark}}</view>
+          </view>
+          <view class="clean-item-right">
+            <view class="clean-item-req">需 {{item.requiredText}} {{item.unit_name || ''}}</view>
+            <view class="clean-item-sub {{item.isShort ? 'short' : ''}}">已领 {{item.issuedText}} · {{item.isShort ? '缺 ' + item.shortText : '已齐套'}}</view>
+          </view>
+        </view>
+      </block>
+    </view>
+
+    <!-- 图纸与定制要求 -->
+    <view wx:if="{{task.drawings.length || task.work_order.custom_description || task.work_order.special_requirement}}" class="mt-card">
+      <view class="mt-card-title"><text>工艺图纸与定制说明</text></view>
       <view wx:if="{{task.work_order.custom_description}}" class="tk-desc">{{task.work_order.custom_description}}</view>
       <view wx:elif="{{task.work_order.special_requirement}}" class="tk-desc">{{task.work_order.special_requirement}}</view>
       <view wx:for="{{task.drawings}}" wx:key="id" class="mt-kv" data-id="{{item.id}}" bindtap="openDrawing">
-        <text class="k">{{item.drawing_name}} V{{item.version_no}}</text><text class="v tk-link green">看图纸 ›</text>
+        <text class="k">{{item.drawing_name}} V{{item.version_no}}</text>
+        <text class="v tk-link red">查看图纸 ›</text>
       </view>
-      <view class="mt-kv" bindtap="toggleMaterials"><text class="k">本道用料</text><text class="v mt-muted">{{task.materials.length ? task.materials.length + ' 项 ' + (showMaterials ? '收起' : '展开') : '不领料'}}</text></view>
-      <block wx:if="{{showMaterials}}">
-        <view wx:for="{{task.materials}}" wx:key="component_item_code" class="mt-kv"><text class="k">{{item.component_item_name}}<text wx:if="{{item.cutting}}" class="mt-tag blue">开料</text></text><text class="v">每{{task.unitShort}} {{item.unit_qty}} {{item.unit_name || ''}}</text></view>
-      </block>
-      <view wx:if="{{task.allowed.material_return}}" class="tk-link mt-gap" bindtap="openMaterialReturn">退料（领多、领错、不良、报废设备拆回）</view>
     </view>
 
+    <!-- 开料入口卡 -->
     <view wx:if="{{task.cutting}}" class="mt-card">
-      <view class="mt-card-title"><text>开料</text><view class="mt-tags"><text class="tk-link" bindtap="openSharedCutting">集中开料 ›</text><text wx:if="{{task.allowed.cutting}}" class="tk-link green" bindtap="openCutting">随单开料 ›</text></view></view>
-      <view class="mt-muted">本道用板材／管材，在这里领原料开料，切完登记切出的件和余料。已登记 {{task.cutting.cut_units}} / {{task.cutting.planned_units}} 套<text wx:if="{{task.cutting.pending_batches}}">，有 {{task.cutting.pending_batches}} 批切完还没登记</text>。</view>
-      <view wx:if="{{!task.allowed.cutting}}" class="mt-muted mt-gap">接单后就能开料。</view>
+      <view class="mt-card-title">
+        <text>开料作业</text>
+        <view class="mt-tags">
+          <text class="tk-link" bindtap="openSharedCutting">集中开料 ›</text>
+          <text wx:if="{{task.allowed.cutting}}" class="tk-link red" bindtap="openCutting">随单开料 ›</text>
+        </view>
+      </view>
+      <view class="mt-muted">本工序涉及板材／管材开料，请在此领用原材并登记实际切出件数与余料。已登记 {{task.cutting.cut_units}} / {{task.cutting.planned_units}} 套<text wx:if="{{task.cutting.pending_batches}}">，另有 {{task.cutting.pending_batches}} 批待登记产出与余料</text>。</view>
+      <view wx:if="{{!task.allowed.cutting}}" class="mt-muted mt-gap">接单后可执行随单开料。</view>
     </view>
 
+    <!-- 车间物料配送签收 -->
     <view wx:if="{{task.deliveries && task.deliveries.length}}" class="mt-card">
-      <view class="mt-card-title"><text>仓库送料</text></view>
+      <view class="mt-card-title"><text>车间物料配送签收</text></view>
       <view wx:for="{{task.deliveries}}" wx:key="id" class="tk-dlv">
-        <view class="mt-kv"><text class="k mono">{{item.delivery_no}}</text><text class="mt-tag {{item.status === 'dispatched' ? 'amber' : (item.status === 'rejected' ? 'red' : 'gray')}}">{{item.status_label}}</text></view>
-        <view class="mt-muted">{{item.summary}}</view>
-        <view wx:if="{{item.status === 'rejected' && item.reject_reason}}" class="mt-muted">拒收原因：{{item.reject_reason}}</view>
+        <view class="mt-kv"><text class="k mono" style="color:#1f2329;font-weight:700;">{{item.delivery_no}}（共 {{item.lineCount || 0}} 项）</text><text class="mt-tag {{item.status === 'dispatched' ? 'amber' : (item.status === 'rejected' ? 'red' : 'gray')}}">{{item.status_label}}</text></view>
+        <view wx:if="{{item.tableRows && item.tableRows.length}}" class="tk-dlv-table">
+          <view class="tk-dlv-tr tk-dlv-th">
+            <text class="tk-dlv-td col-name">物料名称</text>
+            <text class="tk-dlv-td col-spec">规格型号</text>
+            <text class="tk-dlv-td col-qty">数量</text>
+          </view>
+          <view wx:for="{{item.tableRows}}" wx:for-item="line" wx:key="index" class="tk-dlv-tr">
+            <text class="tk-dlv-td col-name">{{line.name}}</text>
+            <text class="tk-dlv-td col-spec">{{line.spec}}</text>
+            <text class="tk-dlv-td col-qty">{{line.qty}}</text>
+          </view>
+        </view>
+        <view wx:else class="mt-muted">{{item.summary}}</view>
+        <view wx:if="{{item.status === 'rejected' && item.reject_reason}}" class="mt-muted mt-gap">拒收原因：{{item.reject_reason}}</view>
         <view wx:if="{{task.allowed.delivery_sign && item.status === 'dispatched'}}" class="tk-dlv-ops">
-          <text class="tk-link green" data-id="{{item.id}}" bindtap="signDelivery">核对无误，签收</text>
-          <text class="tk-link amber" data-id="{{item.id}}" bindtap="rejectDelivery">拒收</text>
+          <text class="tk-link green" data-id="{{item.id}}" bindtap="signDelivery">核对无误，确认签收</text>
+          <text class="tk-link red" data-id="{{item.id}}" bindtap="rejectDelivery">拒收退回</text>
         </view>
       </view>
     </view>
 
+    <!-- 作业人员与工时 -->
     <view class="mt-card">
-      <view class="mt-card-title"><text>一起做的人</text><text wx:if="{{task.allowed.collaborators}}" class="tk-link green" bindtap="openPeople">选协同人</text></view>
-      <view wx:if="{{!task.participants.length}}" class="mt-muted">还没人接单</view>
+      <view class="mt-card-title">
+        <text>作业人员与工时</text>
+        <view class="mt-tags">
+          <text wx:if="{{task.allowed.collaborators}}" class="tk-link red" bindtap="openPeople">配置协同人员</text>
+          <text wx:if="{{task.allowed.assign}}" class="tk-link" bindtap="openAssign">主管派工</text>
+        </view>
+      </view>
+      <view wx:if="{{!task.participants.length}}" class="mt-muted">暂无接单人员</view>
       <view wx:for="{{task.participants}}" wx:key="employee_legacy_id" class="mt-kv">
         <text class="k">{{item.employee_name}} <text class="mt-muted">{{item.role_label}}</text></text>
-        <text class="v">{{item.share_percent !== null ? item.share_percent + '% · ' : ''}}{{item.labor_minutes}} 分<text wx:if="{{item.timing}}" class="mt-tag amber"> 计时中</text><text wx:if="{{task.allowed.stop && item.timing && !item.is_me}}" class="tk-link" data-id="{{item.employee_legacy_id}}" data-name="{{item.employee_name}}" bindtap="stopTiming"> 停止计时</text></text>
+        <text class="v">{{item.share_percent !== null ? item.share_percent + '% · ' : ''}}{{item.labor_minutes}} 分钟<text wx:if="{{item.timing}}" class="mt-tag amber"> 计时中</text><text wx:if="{{task.allowed.stop && item.timing && !item.is_me}}" class="tk-link red" data-id="{{item.employee_legacy_id}}" data-name="{{item.employee_name}}" bindtap="stopTiming"> 停止计时</text></text>
       </view>
-      <view wx:if="{{task.allowed.assign}}" class="tk-link mt-gap" bindtap="openAssign">派给别人（主管）</view>
     </view>
 
-    <view class="mt-foot" bindtap="openWorkOrder">看整张工单 ›</view>
+    <view class="mt-foot" data-id="{{task.work_order.id}}" bindtap="openWorkOrder">查看完整工单详情 ›</view>
   </block>
 </view>
 
+<!-- 底部固定操作栏（完整保留 4 种作业模式） -->
 <view wx:if="{{task && task.cutting && task.prepMode && !task.cutting.reportable_units}}" class="mt-footer">
-  <button class="mt-btn" disabled="{{busy || !task.selectableCount}}" bindtap="prepareCut">{{task.selectableCount ? prepQty + ' 套已备料，' + (task.progress.next_operation_name ? '交' + task.progress.next_operation_name : '做完') : '本道没有待做的'}}</button>
+  <button class="mt-btn" disabled="{{busy || !task.selectableCount}}" bindtap="prepareCut">{{task.selectableCount ? prepQty + ' 套已备料，' + (task.completion ? (task.completion.next_operation_name ? '选择去向' : '完工入库') : (task.progress.next_operation_name ? '交接至' + task.progress.next_operation_name : '确认完工')) : '当前暂无待做任务'}}</button>
 </view>
 <view wx:elif="{{task && task.allowed.report && task.cutting}}" class="mt-footer">
-  <button class="mt-btn" disabled="{{busy || !task.cutting.reportable_units}}" bindtap="passCut">{{task.cutting.reportable_units ? '下料完成 ' + cutQty + ' 套' + (task.progress.next_operation_name ? '，交' + task.progress.next_operation_name : '') : '先开料登记'}}</button>
+  <button class="mt-btn" disabled="{{busy || !task.cutting.reportable_units}}" bindtap="passCut">{{task.cutting.reportable_units ? '下料完工 ' + cutQty + ' 套' + (task.completion ? (task.completion.next_operation_name ? '，选择去向' : '，完工入库') : (task.progress.next_operation_name ? '，交接至' + task.progress.next_operation_name : '')) : '请先登记开料产出'}}</button>
 </view>
 <view wx:if="{{task && !task.cutting && task.prepMode}}" class="mt-footer">
-  <button wx:if="{{task.allowed.report}}" class="mt-btn danger-ghost side" disabled="{{busy || !selectedCount}}" bindtap="openReject">报不合格</button>
-  <button class="mt-btn" disabled="{{busy || !selectedCount}}" bindtap="prepare">{{selectedCount ? selectedCount + ' ' + task.unitShort + '已备料，' + (task.progress.next_operation_name ? '交下道' : '做完') : '先选' + task.noun}}</button>
+  <button wx:if="{{task.allowed.report}}" class="mt-btn danger-ghost side" disabled="{{busy || !selectedCount}}" bindtap="openReject">登记不合格</button>
+  <button class="mt-btn" disabled="{{busy || !selectedCount}}" bindtap="prepare">{{selectedCount ? selectedCount + ' ' + task.unitShort + '已备料，' + (task.completion && selectedCompletionCount ? (task.completion.next_operation_name ? '选择去向' : '完工入库') : (task.progress.next_operation_name ? '交接至' + task.progress.next_operation_name : '确认完工')) : '请先选择' + task.noun}}</button>
 </view>
 <view wx:if="{{task && task.allowed.report && !task.cutting && !task.prepMode}}" class="mt-footer">
-  <button class="mt-btn danger-ghost side" disabled="{{busy || !selectedCount}}" bindtap="openReject">报不合格</button>
-  <button class="mt-btn" disabled="{{busy || !selectedCount}}" bindtap="pass">{{selectedCount ? selectedCount + ' ' + task.unitShort + (task.isRework ? '返工' : '') + '合格，' + (task.progress.next_operation_name ? '交下道' : '做完') : '先选' + task.noun}}</button>
+  <button class="mt-btn danger-ghost side" disabled="{{busy || !selectedCount}}" bindtap="openReject">登记不合格</button>
+  <button class="mt-btn" disabled="{{busy || !selectedCount}}" bindtap="pass">{{selectedCount ? '确认合格并交接 (' + selectedCount + task.unitShort + ')' : '请先选择' + task.noun}}</button>
 </view>
 
+<warehouse-locator open="{{completionLocatorOpen}}" location-purpose="{{task.completion.location_purpose}}" bind:confirm="completionLocationChosen" bind:cancel="closeCompletionLocator" />
+
+<!-- 1. 不合格/报废登记弹窗 -->
 <view wx:if="{{panel === 'reject'}}" class="tk-mask" catchtouchmove="stop">
   <view class="tk-sheet">
-    <view class="mt-row tk-sheet-head"><text class="mt-title">报不合格</text><text class="mt-muted">{{task.title || task.operation_name}} · {{selectedCount}} {{task.unitShort}}</text></view>
+    <view class="mt-row tk-sheet-head"><text class="mt-title">不合格与报废登记</text><text class="mt-muted">{{task.title || task.operation_name}} · {{selectedCount}} {{task.unitShort}}</text></view>
     <scroll-view scroll-y class="tk-sheet-body">
-      <view class="mt-card-title">{{task.return_options.length ? '退回到哪道' : '处理方式'}}</view>
+      <view class="mt-card-title">{{task.return_options.length ? '选择退回返工工序' : '处置方式'}}</view>
       <view wx:for="{{task.return_options}}" wx:key="id" class="tk-radio" data-id="{{item.id}}" bindtap="pickReturn">
         <view class="tk-dot {{reject.mode === 'return' && reject.returnId === item.id ? 'on' : ''}}"></view>
-        <text>{{item.is_current ? '本道重做（' + item.operation_name + '）' : item.operation_name}}</text>
+        <text>{{item.is_current ? '本工序返工重做（' + item.operation_name + '）' : item.operation_name}}</text>
         <text wx:if="{{!item.is_current}}" class="mt-muted">（{{item.hint}}）</text>
       </view>
       <view class="tk-radio" data-id="0" bindtap="pickReturn">
-        <view class="tk-dot {{reject.mode === 'scrap' ? 'on' : ''}}"></view><text>报废</text><text class="mt-muted">{{task.scrap_review.needs_review ? '（等 ' + task.scrap_review.reviewers + ' 审核）' : '（直接生效，要拍照）'}}</text>
+        <view class="tk-dot {{reject.mode === 'scrap' ? 'on' : ''}}"></view><text>申请报废</text><text class="mt-muted">{{task.scrap_review.needs_review ? '（需 ' + task.scrap_review.reviewers + ' 审核）' : '（直接生效，需上传照片）'}}</text>
       </view>
-      <view class="mt-card-title mt-gap">原因</view>
+      <view class="mt-card-title mt-gap">不良原因</view>
       <view class="tk-chips">
         <text wx:for="{{task.reason_tags}}" wx:key="*this" class="tk-chip {{reject.tags[item] ? 'on' : ''}}" data-tag="{{item}}" bindtap="toggleTag">{{item}}</text>
       </view>
-      <textarea class="tk-textarea" value="{{reject.reason}}" maxlength="500" placeholder="补充说明（可不填）" bindinput="reasonInput" />
-      <view class="mt-card-title mt-gap"><text>拍照 <text class="mt-muted">{{reject.mode === 'scrap' && !task.scrap_review.needs_review ? '（报废直接生效，至少拍 1 张）' : '（可不拍）'}}</text></text></view>
+      <textarea class="tk-textarea" value="{{reject.reason}}" maxlength="500" placeholder="填写不良情况说明（选填）" bindinput="reasonInput" />
+      <view class="mt-card-title mt-gap"><text>现场照片 <text class="mt-muted">{{reject.mode === 'scrap' && !task.scrap_review.needs_review ? '（报废直接生效，至少上传 1 张）' : '（选填）'}}</text></text></view>
       <view class="tk-photos">
         <view wx:for="{{reject.photos}}" wx:key="url" class="tk-photo">
           <image src="{{item.path}}" mode="aspectFill" data-index="{{index}}" bindtap="previewPhoto" />
@@ -184,76 +308,166 @@
         </view>
         <view wx:if="{{reject.photos.length < 9}}" class="tk-photo add" bindtap="addPhoto">{{uploading ? '…' : '+'}}</view>
       </view>
-      <view class="mt-muted mt-gap">{{reject.mode === 'scrap' ? (task.scrap_review.needs_review ? '报废等 ' + task.scrap_review.reviewers + ' 在小程序「待审核」里确认；确认前停在本道。' : '没有要审核的人（或你就是生产负责人），提交就报废。') : '退回的那道会多一张「返工」卡，默认交给那道的接单人；返工单独计时，不算提成。'}}</view>
+      <view class="mt-muted mt-gap">{{reject.mode === 'scrap' ? (task.scrap_review.needs_review ? '提交后由 ' + task.scrap_review.reviewers + ' 在「待审核」中审批；审批通过前单件保留在本工序。' : '当前无需审批（或您具备审批权限），提交后直接生效报废。') : '退回目标工序后将生成返工任务并默认指派给原工序接单人；返工独立统计工时，不计入计件提成。'}}</view>
     </scroll-view>
     <view class="tk-sheet-foot">
       <button class="mt-btn ghost side" disabled="{{busy}}" bindtap="closePanel">取消</button>
-      <button class="mt-btn danger" disabled="{{busy || uploading}}" bindtap="submitReject">{{reject.mode === 'scrap' ? (task.scrap_review.needs_review ? '申请报废' : '确认报废') : (rejectCurrent ? '确认重做' : '确认退回')}}</button>
+      <button class="mt-btn danger" disabled="{{busy || uploading}}" bindtap="submitReject">{{reject.mode === 'scrap' ? (task.scrap_review.needs_review ? '提交报废申请' : '确认报废') : (rejectCurrent ? '确认本道重做' : '确认退回返工')}}</button>
     </view>
   </view>
 </view>
 
+<!-- 2. 协同人员配置 / 主管派工弹窗（组件化重构） -->
 <view wx:if="{{panel === 'people' || panel === 'assign'}}" class="tk-mask" catchtouchmove="stop">
   <view class="tk-sheet">
-    <view class="mt-row tk-sheet-head"><text class="mt-title">{{panel === 'assign' ? '派给谁' : '选协同人'}}</text><text class="mt-muted">只列有报工权限的人</text></view>
-    <view class="mt-search">
-      <input class="mt-input" value="{{peopleKeyword}}" bindinput="peopleInput" placeholder="搜姓名" confirm-type="search" bindconfirm="searchPeople" />
-      <button class="mt-btn mt-btn-mini" bindtap="searchPeople">搜</button>
+    <view class="tk-sheet-head-bar">
+      <view>
+        <view class="tk-sheet-title">{{panel === 'assign' ? '选择派工人员' : '配置协同人员'}}</view>
+        <view class="tk-sheet-sub">{{panel === 'assign' ? '指派具备本工序作业权限的主责人员' : '勾选参与本道工序的协同人员并设置计件分摊方式'}}</view>
+      </view>
+      <view class="tk-sheet-close" bindtap="closePanel"><van-icon name="cross" size="30rpx" color="#64748b" /></view>
     </view>
+
+    <!-- 搜索栏 -->
+    <view class="tk-search-bar">
+      <van-icon name="search" size="32rpx" color="#94a3b8" />
+      <input class="tk-search-input" value="{{peopleKeyword}}" bindinput="peopleInput" placeholder="搜索员工姓名 / 账号" confirm-type="search" bindconfirm="searchPeople" />
+      <view wx:if="{{peopleKeyword}}" class="tk-search-clear" bindtap="clearPeopleKeyword">
+        <van-icon name="clear" size="30rpx" color="#cbd5e1" />
+      </view>
+      <view class="tk-search-btn" bindtap="searchPeople">查询</view>
+    </view>
+
     <scroll-view scroll-y class="tk-sheet-body">
       <block wx:if="{{panel === 'people'}}">
-        <view class="tk-chips">
-          <text class="tk-chip {{shareMode === 'labor' ? 'on' : ''}}" data-mode="labor" bindtap="pickShareMode">按工时分（默认）</text>
-          <text class="tk-chip {{shareMode === 'fixed' ? 'on' : ''}}" data-mode="fixed" bindtap="pickShareMode">固定份额</text>
+        <!-- 已选协同与计件分摊设置卡 -->
+        <view class="tk-collab-card">
+          <view class="tk-collab-head">
+            <text class="tk-collab-title">计件分摊模式</text>
+            <view wx:if="{{shareMode === 'fixed' && picked.length}}" class="tk-equal-btn" bindtap="equalTaskShares">
+              <van-icon name="balance-list-o" size="26rpx" color="#d81e06" />
+              <text>平均分配</text>
+            </view>
+          </view>
+          <view class="tk-mode-switch">
+            <view class="tk-mode-pill {{shareMode === 'labor' ? 'on' : ''}}" data-mode="labor" bindtap="pickShareMode">
+              <van-icon name="{{shareMode === 'labor' ? 'checked' : 'circle'}}" size="28rpx" color="{{shareMode === 'labor' ? '#d81e06' : '#94a3b8'}}" />
+              <text>按实际工时分摊（默认）</text>
+            </view>
+            <view class="tk-mode-pill {{shareMode === 'fixed' ? 'on' : ''}}" data-mode="fixed" bindtap="pickShareMode">
+              <van-icon name="{{shareMode === 'fixed' ? 'checked' : 'circle'}}" size="28rpx" color="{{shareMode === 'fixed' ? '#d81e06' : '#94a3b8'}}" />
+              <text>按固定比例分摊</text>
+            </view>
+          </view>
+
+          <view class="tk-collab-divider"></view>
+
+          <view class="tk-collab-head">
+            <view style="display:flex;align-items:center;gap:10rpx;">
+              <text class="tk-collab-title">已选协同人员</text>
+              <van-tag color="#fff1f0" text-color="#d81e06" round>{{picked.length}} 人</van-tag>
+            </view>
+            <text wx:if="{{picked.length}}" class="mt-muted" style="font-size:22rpx;">点击右侧可移除</text>
+          </view>
+
+          <view wx:if="{{shareMode === 'fixed'}}" class="tk-share-row">
+            <view class="tk-share-left">
+              <text class="tk-share-name">{{task.ownerName || '本人'}}</text>
+              <van-tag color="#fff1f0" text-color="#d81e06" round>主责接单人</van-tag>
+            </view>
+            <view class="tk-pct-box">
+              <input class="tk-pct-input" type="digit" value="{{ownerPercent}}" bindinput="ownerPercentInput" />
+              <text class="tk-pct-unit">%</text>
+            </view>
+          </view>
+
+          <view wx:if="{{!picked.length && shareMode !== 'fixed'}}" class="mt-muted" style="font-size:24rpx;padding:4rpx 0;">暂未选择协同人员，请点击下方员工卡片勾选添加</view>
+
+          <view wx:for="{{picked}}" wx:key="id" class="tk-share-row">
+            <view class="tk-share-left">
+              <text class="tk-share-name">{{item.name}}</text>
+              <van-tag color="#f1f5f9" text-color="#475569" round>协同人员</van-tag>
+            </view>
+            <view class="tk-share-right">
+              <view wx:if="{{shareMode === 'fixed'}}" class="tk-pct-box">
+                <input class="tk-pct-input" type="digit" value="{{item.percent}}" data-index="{{index}}" bindinput="percentInput" />
+                <text class="tk-pct-unit">%</text>
+              </view>
+              <view class="tk-remove-pill" data-id="{{item.id}}" data-name="{{item.name}}" bindtap="togglePerson">
+                <van-icon name="cross" size="22rpx" color="#d81e06" />
+                <text>移除</text>
+              </view>
+            </view>
+          </view>
         </view>
-        <view wx:if="{{shareMode === 'fixed'}}" class="mt-kv"><text class="k">我（接单人）</text><input class="tk-pct" type="digit" value="{{ownerPercent}}" bindinput="ownerPercentInput" /><text>%</text></view>
-        <view wx:for="{{picked}}" wx:key="id" class="mt-kv">
-          <text class="k">{{item.name}}</text>
-          <view class="mt-row"><block wx:if="{{shareMode === 'fixed'}}"><input class="tk-pct" type="digit" value="{{item.percent}}" data-index="{{index}}" bindinput="percentInput" /><text>%</text></block><text class="tk-link amber" data-id="{{item.id}}" data-name="{{item.name}}" bindtap="togglePerson">移出</text></view>
-        </view>
-        <view class="mt-muted mt-gap">点下面的人加入：</view>
+
+        <view class="tk-sec-label">可选作业人员 ({{peopleRows.length}})</view>
       </block>
-      <view wx:for="{{peopleRows}}" wx:key="id" class="mt-kv" data-id="{{item.id}}" data-name="{{item.name}}" bindtap="personTap">
-        <text class="k">{{item.name}}</text><text class="v tk-link green">{{panel === 'assign' ? '派给他' : '加入'}}</text>
+
+      <view wx:if="{{!peopleRows.length}}" style="padding:16rpx 0;">
+        <van-empty image="search" description="未匹配到符合条件的人员" />
       </view>
-      <view wx:if="{{!peopleRows.length}}" class="mt-muted">没找到人</view>
+      <view class="tk-people-list">
+        <view
+          wx:for="{{peopleRows}}"
+          wx:key="id"
+          class="tk-person-card {{item.selected ? 'active' : ''}}"
+          data-id="{{item.id}}"
+          data-name="{{item.name}}"
+          bindtap="personTap"
+        >
+          <view wx:if="{{panel === 'people'}}" class="tk-person-check {{item.selected ? 'checked' : ''}}">
+            <van-icon wx:if="{{item.selected}}" name="success" size="26rpx" color="#ffffff" />
+          </view>
+          <view class="tk-person-avatar {{item.selected ? 'active' : ''}}">{{item.avatarText || '工'}}</view>
+          <view class="tk-person-info">
+            <view class="tk-person-name">{{item.name}}</view>
+            <view wx:if="{{item.username || item.department_name}}" class="tk-person-sub">{{item.username ? '账号：' + item.username : ''}}{{item.department_name ? ' · ' + item.department_name : ''}}</view>
+          </view>
+          <van-tag wx:if="{{panel === 'assign'}}" color="#fff1f0" text-color="#d81e06" round size="medium">点击指派 ›</van-tag>
+          <van-tag wx:elif="{{item.selected}}" color="#fff1f0" text-color="#d81e06" round size="medium">已选协同</van-tag>
+          <van-tag wx:else plain color="#94a3b8" round size="medium">+ 添加</van-tag>
+        </view>
+      </view>
     </scroll-view>
+
     <view class="tk-sheet-foot">
-      <button class="mt-btn ghost side" disabled="{{busy}}" bindtap="closePanel">{{panel === 'assign' ? '关闭' : '取消'}}</button>
-      <button wx:if="{{panel === 'people'}}" class="mt-btn" disabled="{{busy}}" bindtap="savePeople">保存</button>
+      <view class="tk-foot-btn cancel {{panel === 'assign' ? 'full' : ''}}" bindtap="closePanel">{{panel === 'assign' ? '关闭' : '取消'}}</view>
+      <view wx:if="{{panel === 'people'}}" class="tk-foot-btn confirm {{busy ? 'disabled' : ''}}" bindtap="savePeople">保存协同配置</view>
     </view>
   </view>
 </view>
 
+<!-- 3. 生产退料申请弹窗 -->
 <view wx:if="{{panel === 'return'}}" class="tk-mask" catchtouchmove="stop">
   <view class="tk-sheet">
-    <view class="mt-row tk-sheet-head"><text class="mt-title">退料</text><text class="mt-muted">{{task.operation_name}} · {{returnForm.planAction ? (returnForm.planNeedsReview ? '等 ' + returnForm.planReviewers + ' 审核' : '提交即生效') : '库管审核后入库'}}</text></view>
+    <view class="mt-row tk-sheet-head"><text class="mt-title">生产退料申请</text><text class="mt-muted">{{task.operation_name}} · {{returnForm.planAction ? (returnForm.planNeedsReview ? '需 ' + returnForm.planReviewers + ' 审核' : '提交即生效') : '仓管审核后入库'}}</text></view>
     <scroll-view scroll-y class="tk-sheet-body">
       <view class="mt-card-title">退料类型</view>
       <view wx:for="{{returnForm.types}}" wx:key="value" class="tk-radio" data-type="{{item.value}}" bindtap="pickReturnType">
         <view class="tk-dot {{returnForm.type === item.value ? 'on' : ''}}"></view><text>{{item.label}}</text>
       </view>
-      <view wx:if="{{!returnForm.rows.length}}" class="mt-muted mt-gap">按这个类型本道没有可退的料。</view>
+      <view wx:if="{{!returnForm.rows.length}}" class="mt-muted mt-gap">当前退料类型下暂无可退物料。</view>
       <block wx:for="{{returnForm.rows}}" wx:key="material_id" wx:for-item="row">
-        <view class="mt-card-title mt-gap"><text>{{row.component_item_name}}</text><text class="mt-muted">已领 {{row.issued_qty}} {{row.unit_name || ''}}</text></view>
+        <view class="mt-card-title mt-gap"><text>{{row.component_item_name}}<text wx:if="{{row.specText}}" class="mt-muted">（{{row.specText}}）</text></text><text class="mt-muted">已领 {{row.issued_qty}} {{row.unit_name || ''}}</text></view>
         <view wx:if="{{row.showSerials}}" class="tk-chips">
           <text wx:for="{{row.serials}}" wx:key="id" class="tk-chip {{returnForm.picked[item.id] ? 'on' : ''}}" data-id="{{item.id}}" bindtap="toggleReturnSerial">{{item.serial_no}}{{item.unit_serial_no ? ' · ' + item.unit_serial_no : ''}}</text>
         </view>
         <view wx:if="{{row.showQty}}" class="mt-kv">
-          <text class="k">{{row.by_number ? '无编号部分' : ''}}退多少（最多 {{row.limit}}）</text>
+          <text class="k">{{row.by_number ? '无序列号部分' : ''}}退回数量（上限 {{row.limit}}）</text>
           <input class="v tk-qty" type="digit" value="{{returnForm.qty[row.material_id]}}" data-id="{{row.material_id}}" bindinput="returnQtyInput" placeholder="0" />
         </view>
       </block>
       <block wx:if="{{returnForm.hasMade}}">
-        <view class="mt-card-title mt-gap"><text>自制半成品怎么处置</text><text class="mt-muted">不选就交库管处置</text></view>
+        <view class="mt-card-title mt-gap"><text>自制半成品处置方案</text><text class="mt-muted">未选择时由仓管判定处置</text></view>
         <view wx:for="{{returnForm.planActions}}" wx:key="value" class="tk-radio" data-action="{{item.value}}" bindtap="pickPlanAction">
           <view class="tk-dot {{returnForm.planAction === item.value ? 'on' : ''}}"></view><text>{{item.label}}</text>
-          <text class="mt-muted">{{item.value === 'rework' ? '（开返工工单，原来做的人返工，返工完解冻回库存）' : (item.value === 'scrap' ? '（报废出库，缺口可以再下半成品工单）' : '（没问题，回到仓库可用库存）')}}</text>
+          <text class="mt-muted">{{item.value === 'rework' ? '（下达返工子工单，返工完成后解冻回库存）' : (item.value === 'scrap' ? '（报废核销，缺口可重新下达半成品子工单）' : '（判定合格，直接退回仓库可用库存）')}}</text>
         </view>
         <block wx:if="{{returnForm.planAction === 'rework'}}">
           <block wx:for="{{returnForm.rows}}" wx:key="material_id" wx:for-item="row">
             <block wx:if="{{row.made && row.rework_operations.length}}">
-              <view class="mt-muted mt-gap">{{row.component_item_name}} 从哪道开始返工：</view>
+              <view class="mt-muted mt-gap">{{row.component_item_name}} 返工起始工序：</view>
               <view class="tk-chips">
                 <text wx:for="{{row.rework_operations}}" wx:key="sequence" class="tk-chip {{returnForm.planMaterial === row.material_id && returnForm.planStart === item.sequence ? 'on' : ''}}" data-material="{{row.material_id}}" data-seq="{{item.sequence}}" bindtap="pickPlanStart">{{item.operation_name}}</text>
               </view>
@@ -261,7 +475,7 @@
           </block>
         </block>
         <block wx:if="{{returnForm.planAction === 'scrap'}}">
-          <view class="mt-card-title mt-gap"><text>拍照 <text class="mt-muted">{{returnForm.planNeedsReview ? '（可不拍）' : '（直接生效，至少拍 1 张）'}}</text></text></view>
+          <view class="mt-card-title mt-gap"><text>现场照片 <text class="mt-muted">{{returnForm.planNeedsReview ? '（选填）' : '（直接生效，至少上传 1 张）'}}</text></text></view>
           <view class="tk-photos">
             <view wx:for="{{returnForm.planPhotos}}" wx:key="url" class="tk-photo">
               <image src="{{item.path}}" mode="aspectFill" />
@@ -270,15 +484,16 @@
             <view wx:if="{{returnForm.planPhotos.length < 9}}" class="tk-photo add" bindtap="addPlanPhoto">{{uploading ? '…' : '+'}}</view>
           </view>
         </block>
-        <view wx:if="{{returnForm.planAction}}" class="mt-muted mt-gap">{{returnForm.planNeedsReview ? '提交后等 ' + returnForm.planReviewers + ' 在小程序「待审核」里确认。' : '你提交就直接生效（没有要审核的人，或你就是生产负责人）。'}}</view>
+        <view wx:if="{{returnForm.planAction}}" class="mt-muted mt-gap">{{returnForm.planNeedsReview ? '提交后由 ' + returnForm.planReviewers + ' 在小程序「待审核」中审批。' : '当前无需审批（或您具备审批权限），提交后直接生效。'}}</view>
       </block>
-      <view class="mt-card-title mt-gap">原因</view>
-      <textarea class="tk-textarea" value="{{returnForm.reason}}" maxlength="500" placeholder="例如：多领 2 个、型号领错、来料不良" bindinput="returnReasonInput" />
+      <view class="mt-card-title mt-gap">退料原因</view>
+      <textarea class="tk-textarea" value="{{returnForm.reason}}" maxlength="500" placeholder="请填写退料原因（如：余料退回、规格领错、来料不良）" bindinput="returnReasonInput" />
       <view class="mt-muted mt-gap">{{returnForm.hint}}</view>
     </scroll-view>
     <view class="tk-sheet-foot">
       <button class="mt-btn ghost side" disabled="{{busy}}" bindtap="closePanel">取消</button>
-      <button class="mt-btn" disabled="{{busy || uploading}}" bindtap="submitMaterialReturn">{{returnForm.planAction ? '提交不良处置' : '提交退料申请'}}</button>
+      <button class="mt-btn" disabled="{{busy || uploading}}" bindtap="submitMaterialReturn">{{returnForm.planAction ? '提交不良处置申请' : '提交退料申请'}}</button>
     </view>
   </view>
 </view>
+<production-dialog id="prodDialog" />

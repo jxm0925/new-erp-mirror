@@ -249,6 +249,10 @@
                 <span class="product-name font-medium">{{ productName(row) }}</span>
                 <span class="qty-badge font-mono">× {{ qty(row.planned_qty) }} {{ row.unit_name || '台' }}</span>
               </div>
+              <div v-if="specText(row)" class="product-spec-row">
+                <span class="spec-badge">规格型号</span>
+                <span class="spec-text">{{ specText(row) }}</span>
+              </div>
               <div v-if="row.semi_summary && row.semi_summary.length" :class="['semi-line', row.semi_ready ? 'semi-ready' : 'semi-wait']">
                 <i :class="row.semi_ready ? 'el-icon-circle-check' : 'el-icon-time'" />
                 半成品：{{ semiText(row) }}{{ row.semi_ready ? ' · 已齐' : '' }}
@@ -360,11 +364,15 @@
             {{ productName(row) }}
             <b class="qty-badge font-mono">× {{ qty(row.planned_qty) }} {{ row.unit_name || '台' }}</b>
           </div>
+          <div v-if="specText(row)" class="product-spec-row">
+            <span class="spec-badge">规格型号</span>
+            <span class="spec-text">{{ specText(row) }}</span>
+          </div>
           <div v-if="row.semi_summary && row.semi_summary.length" :class="['semi-line', row.semi_ready ? 'semi-ready' : 'semi-wait']">
             半成品：{{ semiText(row) }}{{ row.semi_ready ? ' · 已齐' : '' }}
           </div>
           <div v-for="c in (row.children || [])" :key="'c' + c.id" class="semi-line semi-child" @click.stop="open(c)">
-            └ <span class="code-mono">{{ c.work_order_no }}</span> {{ c.item_name }} · {{ c.status_label }} · 入库 {{ qty(c.stored_qty) }}/{{ qty(c.planned_qty) }}
+            └ <span class="code-mono">{{ c.work_order_no }}</span> {{ c.item_name }}<template v-if="specText(c)">（{{ specText(c) }}）</template> · {{ c.status_label }} · 入库 {{ qty(c.stored_qty) }}/{{ qty(c.planned_qty) }}
           </div>
           <div v-if="row.parent_work_order" class="semi-line semi-parent">给总装工单 {{ row.parent_work_order.work_order_no }}</div>
           <div class="mobile-source-sub">
@@ -459,7 +467,11 @@ export default {
       }
     },
     semiText(row) {
-      return row.semi_summary.map(x => `${x.item_name} ${qty(x.stored_qty)}/${qty(x.planned_qty)}`).join(' · ')
+      return row.semi_summary.map(x => `${x.item_name}${x.specification ? '（' + x.specification + '）' : ''} ${qty(x.stored_qty)}/${qty(x.planned_qty)}`).join(' · ')
+    },
+    specText(row) {
+      if (!row) return ''
+      return row.specification || row.item_spec || row.sku_name || ''
     },
     isNested(row) {
       return !this.rows.some(r => r.id === row.id)
@@ -948,6 +960,33 @@ export default {
   border-radius: 4px;
   color: #334155;
   font-size: 12px;
+}
+
+.product-spec-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  color: #334155;
+}
+
+.spec-badge {
+  font-size: 11px;
+  color: #64748b;
+  background: #e2e8f0;
+  padding: 0 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.spec-text {
+  font-weight: 500;
+  color: #1e293b;
 }
 
 .source-order-no {

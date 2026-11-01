@@ -152,7 +152,8 @@ class SalesOrderFulfillmentApplicationService
             // not report a production requirement as an actually fulfilled quantity.
             $confirmedAllocatedQty = $confirmed->sum(fn (SalesOrderFulfillment $row) => $this->fulfillmentSalesQuantity($row, $line));
             $remainingSalesQty = max(0, $this->requiredQuantity($line) - $confirmedAllocatedQty);
-            $display = $pending->isNotEmpty() ? $pending : ($remainingSalesQty <= 0 ? $confirmed : collect());
+            // 部分行已确认时，编辑页只提交剩余需求；历史分配不能作为本次数量再次提交。
+            $display = $pending->isNotEmpty() ? $pending : ($order->production_confirm_status === 'confirmed' && $remainingSalesQty <= 0 ? $confirmed : collect());
             $analysis = null;
             if ($display->isNotEmpty()) {
                 $quantities = $this->fulfillmentSalesQuantities($display, $line);
@@ -231,7 +232,7 @@ class SalesOrderFulfillmentApplicationService
                 'system_suggested_purchase_qty' => (float) ($analysis['suggested_purchase_qty'] ?? 0),
                 'system_suggestion_reason' => $analysis['suggestion_reason'] ?? ($line->line_type === 'service' ? '服务类订单行直接登记为服务项目' : '无需发货订单行不进入库存或生产'),
                 'inventory_calculated_at' => $analysis['calculated_at'] ?? now()->toDateTimeString(),
-                'plan_locked' => $order->production_confirm_status === 'confirmed',
+                'plan_locked' => $order->production_confirm_status === 'confirmed' || $remainingSalesQty <= 0.00000001,
                 'confirmed_allocated_qty' => $confirmedAllocatedQty,
                 // Backward compatibility for older clients. New clients must use
                 // confirmed_allocated_qty because this is a planning quantity.
@@ -549,6 +550,7 @@ class SalesOrderFulfillmentApplicationService
                 ]]);
                 $result = $order->fresh(['lines', 'fulfillments']);
                 $result->setAttribute('confirmation_command_result', $ledger->response_snapshot);
+                \App\Events\AssemblyDisplayChanged::afterCommit('production-confirmation:'.$ledger->id, 'work_order.created', $workOrderIds, $orderId);
                 return $result;
             }, 5);
         } catch (QueryException $exception) {

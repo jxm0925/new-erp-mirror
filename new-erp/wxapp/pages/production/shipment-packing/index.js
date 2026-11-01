@@ -2,9 +2,9 @@ const packing = require('../../../services/packing');
 const view = require('../../../utils/warehouse-page');
 const personalShares = require('../../../utils/personal-shares');
 const materialUsage = require('../../../utils/packing-material-usage');
-const statusLabels = { READY: '待加工', WAITING: '等待前序', IN_PROGRESS: '加工中', WAIT_QUALITY: '待质检', COMPLETED: '已完成', CANCELLED: '已取消' };
+const statusLabels = { READY: '待作业', WAITING: '等待前序', IN_PROGRESS: '作业中', WAIT_QUALITY: '待质检', COMPLETED: '已完成', CANCELLED: '已取消' };
 const statusTags = { READY: 'blue', WAITING: 'gray', IN_PROGRESS: 'amber', WAIT_QUALITY: 'purple', COMPLETED: 'green', CANCELLED: 'gray' };
-const TABS = [{ key: 'mine', label: '我的' }, { key: 'available', label: '可接' }, { key: 'all', label: '全部' }];
+const TABS = [{ key: 'mine', label: '我的待做' }, { key: 'available', label: '可接作业' }, { key: 'all', label: '全部作业' }];
 const clone = value => JSON.parse(JSON.stringify(value));
 const pad = n => (n < 10 ? '0' : '') + n;
 function clock(seconds) {
@@ -20,11 +20,19 @@ function hm(iso) {
   const d = new Date(iso);
   return isNaN(d.getTime()) ? '' : `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+function buildSpecText(obj) {
+  if (!obj) return '';
+  if (obj.specification) return obj.specification;
+  const parts = [obj.item_spec || obj.component_item_spec || obj.spec, obj.material_grade].filter(Boolean);
+  if (parts.length) return parts.join(' · ');
+  if (obj.sku_name && obj.sku_name !== obj.product_name && obj.sku_name !== obj.item_name) return obj.sku_name;
+  return obj.sku_name || '';
+}
 Page({
   data: { shipmentId: 0, page: 1, lastPage: 1, total: 0, rows: [], loading: true, busy: false, error: '', keyword: '',
     tabs: TABS, scope: 'mine', counts: { mine: 0, available: 0 }, userName: '', clockText: '00:00:00',
     repairReturnOpen: false, repairReturnSerial: {}, repairReturnReason: '', repairReturnError: '', finishedLocatorOpen: false, finishedLocator: {},
-    detailOpen: false, operation: {}, pending: false, operationError: '', peopleOpen: false, peopleRows: [], selectedPeople: [], peopleKeyword: '',
+    detailOpen: false, showMaterials: false, operation: {}, pending: false, operationError: '', peopleOpen: false, peopleRows: [], selectedPeople: [], peopleKeyword: '',
     peoplePage: 1, peopleLast: 1, departments: [{ id: 0, name: '全部部门' }], departmentIndex: 0, shareRows: [], peopleError: '',
     materialsOpen: false, materialRows: [], materialDrafts: [], materialKeyword: '', materialPage: 1, materialLast: 1, materialError: '',
     categories: [{ id: 0, category_name: '全部分类' }], categoryIndex: 0,
@@ -49,8 +57,10 @@ Page({
     const contents = row.contents || [];
     const my = row.my || { closed_minutes: 0, timing: false };
     const repairRows = (row.serial_results || []).filter(serial => serial.repair && serial.repair.state !== 'returned');
-    return Object.assign({}, row, { statusLabel: statusLabels[row.status] || row.status, statusTag: statusTags[row.status] || 'gray', ownerName: owner ? owner.name : '未接单',
+    const specText = contents.map(c => buildSpecText(c)).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join('、');
+    return Object.assign({}, row, { statusLabel: statusLabels[row.status] || row.status, statusTag: statusTags[row.status] || 'gray', ownerName: owner ? owner.name : '待接单',
       my, productText: contents.map(c => c.product_name || c.item_name).filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join('、'),
+      specText,
       myMinutesText: minutesText(my.closed_minutes) + (my.timing ? '+' : ''), totalMinutesText: minutesText(row.labor && row.labor.closed_minutes),
       changedText: ((info && info.changed) || []).map(c => c.label).join('、'),
       repairRows, repairCount: repairRows.length,
@@ -58,21 +68,32 @@ Page({
       sessionRows: (((row.labor || {}).sessions || {}).data || []).map(session => Object.assign({}, session, {
         timeText: hm(session.started_at) + (session.ended_at ? ' ~ ' + hm(session.ended_at).slice(6) : ' 起'),
         minutesText: session.ended_at ? minutesText(session.actual_labor_minutes) : '计时中' })),
-      material_requirements: (row.material_requirements || []).map(req => Object.assign({}, req, { qtyText: view.quantity(req.required_base_qty) })),
+      material_requirements: (row.material_requirements || []).map(req => Object.assign({}, req, {
+        specText: buildSpecText(req),
+        qtyText: view.quantity(req.required_base_qty),
+      })),
       is_public_snapshot: row.is_public_snapshot === true || row.is_public_snapshot === 1 || row.is_public_snapshot === '1',
       qtyText: view.quantity(row.planned_base_qty), allowed_actions: actions,
       serialResults: (row.serial_results || []).map(serial => Object.assign({}, serial, {
         selected: this.data.operationSerialIds.includes(serial.inventory_serial_id),
         canSelect: Boolean(serial.allowed_actions && (serial.allowed_actions.complete || serial.allowed_actions.inspect)),
-        statusLabel: serial.line_status === 'repair' ? '返修中' : (({ waiting: '等待前序', ready: '可开始', completed: '已完成', wait_quality: '待检验', failed: '不合格' })[serial.status] || serial.status),
+        statusLabel: serial.line_status === 'repair' ? '返修中' : (({ waiting: '等待前序', ready: '待作业', completed: '已完成', wait_quality: '待检验', failed: '不合格' })[serial.status] || serial.status),
         tag: serial.line_status === 'repair' ? 'red' : (({ ready: 'blue', completed: 'green', wait_quality: 'purple', failed: 'red' })[serial.status] || 'gray'),
       })),
       materials: (row.materials || []).map(material => {
         const usage = material.usage_snapshot || {}; const labels = { length_mm: '长', width_mm: '宽', thickness_mm: '厚' };
-        return Object.assign({}, material, { usageText: Object.keys(labels).filter(axis => usage.dimensions && usage.dimensions[axis] !== undefined && usage.dimensions[axis] !== null)
-          .map(axis => labels[axis] + ' ' + usage.dimensions[axis] + ' mm').join(' / ') || (usage.area_usage ? '木板 ' + usage.area_usage.board_length_mm + '×' + usage.area_usage.board_width_mm + ' mm：用料 ' + usage.area_usage.used_area_m2 + ' m²，' + (usage.area_usage.remnant === 'loss' ? '损耗 ' + usage.area_usage.loss_area_m2 + ' m²' : '余板回库') : ''), usageRemark: usage.remark || '' });
+        return Object.assign({}, material, {
+          specText: buildSpecText(material),
+          usageText: Object.keys(labels).filter(axis => usage.dimensions && usage.dimensions[axis] !== undefined && usage.dimensions[axis] !== null)
+            .map(axis => labels[axis] + ' ' + usage.dimensions[axis] + ' mm').join(' / ') || (usage.area_usage ? '木板 ' + usage.area_usage.board_length_mm + '×' + usage.area_usage.board_width_mm + ' mm：用料 ' + usage.area_usage.used_area_m2 + ' m²，' + (usage.area_usage.remnant === 'loss' ? '损耗 ' + usage.area_usage.loss_area_m2 + ' m²' : '余板回库') : ''),
+          usageRemark: usage.remark || '',
+        });
       }),
-      contents: (row.contents || []).map(content => Object.assign({}, content, { qtyText: view.quantity(content.base_qty), serialText: (content.serial_nos || []).join('、') })) });
+      contents: (row.contents || []).map(content => Object.assign({}, content, {
+        specText: buildSpecText(content),
+        qtyText: view.quantity(content.base_qty),
+        serialText: (content.serial_nos || []).join('、'),
+      })) });
   },
   load() {
     const sequence = this.sequence = (this.sequence || 0) + 1;
@@ -85,9 +106,9 @@ Page({
     }).catch(error => { if (sequence === this.sequence) this.setData({ loading: false, error: view.errorText(error) }); });
   },
   keywordInput(event) { this.setData({ keyword: event.detail.value }); },
+  clearKeyword() { this.setData({ keyword: '', page: 1 }); this.load(); },
   pickScope(event) { const scope = event.currentTarget.dataset.scope; if (scope === this.data.scope) return; this.setData({ scope, page: 1, rows: [] }); this.load(); },
   callPhone(event) { const phone = event.currentTarget.dataset.phone; if (phone) wx.makePhoneCall({ phoneNumber: String(phone) }); },
-  // 和生产任务页一样走秒：已结束的累计 + 正在计时的这段
   startClock() {
     this.stopClock();
     const my = this.data.operation && this.data.operation.my;
@@ -99,6 +120,7 @@ Page({
     if (started) this.timer = setInterval(tick, 1000);
   },
   stopClock() { if (this.timer) { clearInterval(this.timer); this.timer = null; } },
+  toggleMaterialsSection() { this.setData({ showMaterials: !this.data.showMaterials }); },
   refreshDetail() { if (this.data.operation.id) this.showOperation(this.data.operation.id); },
   toggleSerial(event) {
     const id = Number(event.currentTarget.dataset.id);
@@ -107,7 +129,6 @@ Page({
     const ids = this.data.operationSerialIds.includes(id) ? this.data.operationSerialIds.filter(x => x !== id) : this.data.operationSerialIds.concat([id]);
     this.setData({ operationSerialIds: ids, 'operation.serialResults': this.data.operation.serialResults.map(row => Object.assign({}, row, { selected: ids.includes(row.inventory_serial_id) })) });
   },
-  // 试水不合格转返修、车间返修合格后：有发货过账权限的人在这里点返回，设备回待发区重新试水
   openRepairReturn(event) {
     const lineId = Number(event.currentTarget.dataset.id);
     const serial = (this.data.operation.serial_results || []).find(row => row.shipment_line_id === lineId);
@@ -123,11 +144,11 @@ Page({
     const op = this.data.operation; const serial = this.data.repairReturnSerial;
     if (this.data.busy || !serial.shipment_line_id) return;
     if (!this.data.finishedLocator.location_id) return this.setData({ repairReturnError: '请选择成品仓库和库位' });
-    if (!String(this.data.repairReturnReason || '').trim()) return this.setData({ repairReturnError: '请写一句返修说明' });
+    if (!String(this.data.repairReturnReason || '').trim()) return this.setData({ repairReturnError: '请填写返修合格说明' });
     this.setData({ busy: true, repairReturnError: '' });
     return packing.repairReturn(op.shipment_id, serial.shipment_line_id, { expected_version: op.shipment_version,
       finished_location_id: this.data.finishedLocator.location_id, reason: String(this.data.repairReturnReason).trim() }).then(response => {
-      wx.showToast({ title: response.message || '已返回，重新试水', icon: 'none' });
+      wx.showToast({ title: response.message || '已返回待发区，请重新试水', icon: 'none' });
       this.setData({ repairReturnOpen: false });
       return Promise.all([this.load(), this.showOperation(op.id)]);
     }).catch(error => this.setData({ repairReturnError: view.errorText(error) })).finally(() => this.setData({ busy: false }));
@@ -165,7 +186,24 @@ Page({
     }).finally(() => this.setData({ busy: false }));
   },
   recover() { return this.execute('recover'); },
-  complete() { if (this.data.busy) return; const ids = this.actionSerials('complete'); if (ids === false) return; wx.showModal({ title: '完成发货作业', content: '确认本次选择的 ' + (ids ? ids.length + ' 台' : this.data.operation.qtyText) + ' 已完成本工序？', confirmColor: '#008b4b', success: result => { if (result.confirm) this.execute('complete', ids ? { inventory_serial_ids: ids, completed_base_qty: ids.length } : { completed_base_qty: this.data.operation.planned_base_qty }); } }); },
+  complete() {
+    if (this.data.busy) return;
+    const ids = this.actionSerials('complete');
+    if (ids === false) return;
+    const op = this.data.operation || {};
+    view.modal(this, {
+      title: '确认完成发货作业',
+      subtitle: '请核对本次完工设备数量与当前工序',
+      kvRows: [
+        { k: '当前工序', v: op.operation_name || '发货作业' },
+        { k: '完成数量', v: ids ? `${ids.length} 台` : (op.qtyText || ''), red: true },
+      ],
+      confirmText: '确认完工',
+      success: result => {
+        if (result.confirm) this.execute('complete', ids ? { inventory_serial_ids: ids, completed_base_qty: ids.length } : { completed_base_qty: op.planned_base_qty });
+      },
+    });
+  },
   openPeople() {
     if (this.data.busy || this.data.pending) return;
     this.peopleSelected = {};
@@ -177,11 +215,12 @@ Page({
     return packing.people(this.data.operation.id, { keyword: this.data.peopleKeyword, page: this.data.peoplePage, per_page: 10,
       department_id: this.data.departments[this.data.departmentIndex].id || undefined, include_departments: include ? 1 : undefined }).then(response => {
       if (sequence !== this.peopleSequence || !this.data.peopleOpen || operationId !== this.data.operation.id) return;
-      const paged = view.rows(response); this.setData({ peopleRows: paged.rows.map(row => Object.assign({}, row, { selected: Boolean(this.peopleSelected[row.legacy_id]) })), peoplePage: paged.page, peopleLast: paged.lastPage });
+      const paged = view.rows(response); this.setData({ peopleRows: paged.rows.map(row => Object.assign({}, row, { selected: Boolean(this.peopleSelected[row.legacy_id]), avatarText: String(row.nickname || row.username || '工')[0] })), peoplePage: paged.page, peopleLast: paged.lastPage });
       if (response.departments) this.setData({ departments: [{ id: 0, name: '全部部门' }].concat(response.departments) });
     }).catch(error => { if (sequence === this.peopleSequence && this.data.peopleOpen) wx.showToast({ title: view.errorText(error), icon: 'none' }); });
   },
   peopleInput(event) { this.setData({ peopleKeyword: event.detail.value }); },
+  clearPeopleKeyword() { this.setData({ peopleKeyword: '', peoplePage: 1 }); this.loadPeople(); },
   searchPeople() { this.setData({ peoplePage: 1 }); this.loadPeople(); },
   chooseDepartment(event) { this.setData({ departmentIndex: Number(event.detail.value), peoplePage: 1 }); this.loadPeople(); },
   turnPeople(event) { const page = this.data.peoplePage + Number(event.currentTarget.dataset.delta); if (page > 0 && page <= this.data.peopleLast) { this.setData({ peoplePage: page }); this.loadPeople(); } },
@@ -197,8 +236,8 @@ Page({
     this.setData({ shareRows: groups[0].rows, peopleError: '' });
   },
   peopleShareInput(event) { if (this.data.busy || this.data.pending) return; const id = Number(event.currentTarget.dataset.id); const rows = this.data.shareRows; const person = rows.find(row => Number(row.employee_legacy_id) === id); if (person) person.percent = event.detail.value; this.setData({ shareRows: rows, peopleError: '' }); },
-  equalPeopleShares() { if (this.data.busy || this.data.pending) return; const equal = personalShares.defaultShares(this.data.shareRows); this.data.shareRows.forEach(person => { person.percent = personalShares.ratioToPercent(equal.find(share => share.employee_legacy_id === Number(person.employee_legacy_id)).share_ratio); }); this.setData({ shareRows: this.data.shareRows, peopleError: '' }); },
-  savePeople() { if (this.data.pending) return this.execute('recover'); let shares; try { shares = personalShares.buildShares(this.data.shareRows); } catch (error) { return this.setData({ peopleError: error.message }); } return this.execute('collaborators', { employee_legacy_ids: Object.keys(this.peopleSelected).map(Number), shares }); },
+  equalPeopleShares() { if (this.data.busy || this.data.pending || !this.data.shareRows.length) return; const equal = personalShares.defaultShares(this.data.shareRows); this.data.shareRows.forEach(person => { person.percent = personalShares.ratioToPercent(equal.find(share => share.employee_legacy_id === Number(person.employee_legacy_id)).share_ratio); }); this.setData({ shareRows: this.data.shareRows, peopleError: '' }); },
+  savePeople() { if (this.data.busy || (!this.data.pending && !this.data.shareRows.length)) return; if (this.data.pending) return this.execute('recover'); let shares; try { shares = personalShares.buildShares(this.data.shareRows); } catch (error) { return this.setData({ peopleError: error.message }); } return this.execute('collaborators', { employee_legacy_ids: Object.keys(this.peopleSelected).map(Number), shares }); },
   closePeople() { if (!this.data.busy) { this.peopleSequence = (this.peopleSequence || 0) + 1; this.setData({ peopleOpen: false }); } },
   openMaterials() { if (this.data.busy || this.data.pending) return; this.materialSelected = {}; this.setData({ materialsOpen: true, materialRows: [], materialDrafts: [], materialError: '', materialKeyword: '', materialPage: 1, materialLast: 1, categoryIndex: 0 }); return this.loadMaterials(true); },
   loadMaterials(include) {
@@ -215,7 +254,6 @@ Page({
   chooseCategory(event) { this.setData({ categoryIndex: Number(event.detail.value), materialPage: 1 }); this.loadMaterials(); },
   turnMaterials(event) { const page = this.data.materialPage + Number(event.currentTarget.dataset.delta); if (page > 0 && page <= this.data.materialLast) { this.setData({ materialPage: page }); this.loadMaterials(); } },
   chooseMaterial(event) { const id = Number(event.currentTarget.dataset.id); const row = this.data.materialRows.find(row => Number(row.id) === id); if (!row || this.materialSelected[id]) return; const size = String(row.spec || '').match(/(\d+(?:\.\d+)?)\s*[*×xX]\s*(\d+(?:\.\d+)?)/); this.materialSelected[id] = Object.assign({}, clone(row), { base_qty: '', identities: [], usage_dimensions: { length_mm: '', width_mm: '', thickness_mm: '' }, usage_remark: '', area: { enabled: false, board_length_mm: size ? size[1] : '', board_width_mm: size ? size[2] : '', pieces_text: '', remnant: 'return', text: '' } }); this.updateDrafts(); },
-  // 木板按面积扣库存：开启后由裁切块自动算出耗用数量。
   areaToggle(event) { const id = Number(event.currentTarget.dataset.id); const row = this.materialSelected[id]; if (this.data.busy || this.data.pending || !row || row.physical) return; row.area.enabled = !row.area.enabled; this.applyArea(row); },
   areaInput(event) { const id = Number(event.currentTarget.dataset.id); const field = event.currentTarget.dataset.field; const row = this.materialSelected[id]; if (this.data.busy || this.data.pending || !row || !['board_length_mm', 'board_width_mm', 'pieces_text'].includes(field)) return; row.area[field] = event.detail.value; this.applyArea(row); },
   areaRemnant(event) { const id = Number(event.currentTarget.dataset.id); const row = this.materialSelected[id]; if (this.data.busy || this.data.pending || !row) return; row.area.remnant = event.currentTarget.dataset.value === 'loss' ? 'loss' : 'return'; this.applyArea(row); },
@@ -240,7 +278,7 @@ Page({
     const rows = this.data.operation.serial_results || [];
     if (!rows.length) return null;
     const ids = this.data.operationSerialIds;
-    if (!ids.length || ids.some(id => !rows.some(row => row.inventory_serial_id === id && row.allowed_actions && row.allowed_actions[action]))) { this.setData({ operationError: '请选择满足本次操作条件的设备' }); return false; }
+    if (!ids.length || ids.some(id => !rows.some(row => row.inventory_serial_id === id && row.allowed_actions && row.allowed_actions[action]))) { this.setData({ operationError: '请选择满足本次操作条件的设备序列号' }); return false; }
     return ids.slice();
   },
   needsReturnOperation() { return (this.data.operation.serial_results || []).some(row => this.data.operationSerialIds.includes(row.inventory_serial_id) && row.requires_return_operation); },
@@ -271,7 +309,7 @@ Page({
     if (ids) payload.inventory_serial_ids = ids;
     if (ids && payload.result === 'failed') {
       const needsReturn = this.needsReturnOperation();
-      if (!payload.reason || !this.data.repairLocator.location_id || needsReturn && !this.data.returnOperation) return this.setData({ inspectionError: needsReturn ? '请填写不合格原因，选择返修库位和返工工序' : '请填写不合格原因并选择返修库位' });
+      if (!payload.reason || !this.data.repairLocator.location_id || needsReturn && !this.data.returnOperation) return this.setData({ inspectionError: needsReturn ? '请填写不合格原因，并选择返修库位与返工工序' : '请填写不合格原因并选择返修库位' });
       payload.repair_location_id = this.data.repairLocator.location_id; if (needsReturn) payload.return_operation_id = this.data.returnOperation.id;
     }
     return this.execute('inspect', payload).then(result => { if (!result) this.setData({ inspectionError: this.data.operationError }); });

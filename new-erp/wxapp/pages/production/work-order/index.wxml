@@ -1,30 +1,124 @@
 <import src="../order-info.wxml" />
 <view class="mt-page">
   <view wx:if="{{error}}" class="mt-error">{{error}}</view>
-  <view wx:if="{{loading && !wo}}" class="mt-empty">正在读取工单</view>
+  <view wx:if="{{loading && !wo}}" class="mt-empty">正在读取工单详情…</view>
+
   <block wx:if="{{wo}}">
-    <view class="mt-head"><text class="mt-title mono">{{wo.work_order_no}}</text><text class="mt-muted">{{wo.status_label}}</text></view>
-    <view class="mt-card">
-      <view class="mt-op">{{wo.productText}} × {{wo.plannedText}}</view>
-      <view class="mt-muted mt-gap"><text wx:if="{{wo.sales_order_no}}">{{wo.sales_order_no}} · {{wo.customer_name}} · </text><text wx:else>备货 · </text>交期 {{wo.dueText || '-'}}</view>
-      <view wx:if="{{wo.sku_name}}" class="mt-muted">规格：{{wo.sku_name}}</view>
-      <view wx:if="{{wo.special_requirement}}" class="mt-note">{{wo.special_requirement}}</view>
+    <!-- 顶部极简三行红底 Hero 头 -->
+    <view class="wo-hero">
+      <view class="wo-hero-top">
+        <text class="wo-hero-title">{{wo.productText}} × {{wo.plannedText}} {{wo.unit_name || '台'}}</text>
+        <text class="wo-hero-pill">{{wo.is_sub_work_order ? '子工单 · ' : ''}}{{wo.status_label}}</text>
+      </view>
+      <view class="wo-hero-spec">规格型号：{{wo.specText || '标准规格'}}</view>
+      <view class="wo-hero-meta">
+        <text class="mono">{{wo.work_order_no}}<text wx:if="{{wo.item_code}}"> · {{wo.item_code}}</text><text wx:if="{{wo.sales_order_no}}"> · {{wo.sales_order_no}}</text><text wx:if="{{wo.customer_name}}"> · {{wo.customer_name}}</text></text>
+        <text>交期 {{wo.dueText || '-'}} · 已入库 {{wo.storedText}} / {{wo.plannedText}}</text>
+      </view>
     </view>
+
+    <view wx:if="{{wo.special_requirement}}" class="mt-note" style="margin-bottom: 18rpx;">工艺与特殊要求：{{wo.special_requirement}}</view>
+
+    <!-- 所属主工单（如果是子工单） -->
+    <view wx:if="{{wo.parent_work_order}}" class="mt-card wo-link-card" data-id="{{wo.parent_work_order.id}}" bindtap="openWorkOrder">
+      <view class="mt-card-title">
+        <view class="wo-link-head"><text class="mt-tag amber">所属主工单</text><text class="mono">{{wo.parent_work_order.work_order_no}}</text></view>
+        <text class="wo-link-go">查看主工单 ›</text>
+      </view>
+      <view class="wo-link-name">{{wo.parent_work_order.product_name || wo.parent_work_order.item_name}} × {{wo.parent_work_order.plannedText}} {{wo.parent_work_order.unit_name || '台'}}</view>
+      <view wx:if="{{wo.parent_work_order.specText}}" class="clean-item-spec">规格型号：{{wo.parent_work_order.specText}}</view>
+    </view>
+
+    <!-- 下挂子工单（如果是主工单：默认折叠，显示子工单数量及生产内容，点击展开） -->
+    <view wx:if="{{wo.child_work_orders && wo.child_work_orders.length}}" class="mt-card">
+      <view class="mt-card-title" bindtap="toggleChildren">
+        <text>下挂子工单 ({{wo.child_work_orders.length}} 个)</text>
+      </view>
+      <view class="wo-sub-summary-bar" bindtap="toggleChildren">
+        <text>子工单 {{wo.child_work_orders.length}} 个（生产：{{wo.childSummaryNames}}）</text>
+        <text class="wo-link-go">{{showChildren ? '收起 ▴' : '点击展开 ▾'}}</text>
+      </view>
+      <block wx:if="{{showChildren}}">
+        <view wx:for="{{wo.child_work_orders}}" wx:key="id" class="wo-child-box" data-id="{{item.id}}" bindtap="openWorkOrder">
+          <view class="mt-row">
+            <text class="wo-child-title">└ {{item.is_rework ? '返工子工单' : '子工单'}}：生产【{{item.item_name}}】 × {{item.plannedText}} {{item.unit_name || '件'}}</text>
+            <text class="mt-tag {{item.status === 'completed' ? 'green' : 'blue'}}">{{item.status_label}}</text>
+          </view>
+          <view class="wo-child-sub">
+            <text class="mono">{{item.work_order_no}}</text>
+            <text wx:if="{{item.specText}}"> · 规格型号：{{item.specText}}</text>
+            <text> · 已入库 {{item.storedText}} / {{item.plannedText}}</text>
+          </view>
+        </view>
+      </block>
+    </view>
+
     <view wx:for="{{wo.shipment_repairs}}" wx:key="id" wx:if="{{item.state !== 'returned'}}" class="mt-error">试水返修 {{item.serial_no}}：{{item.state_label}}<text wx:if="{{item.reason}}">。原因：{{item.reason}}</text>（{{item.shipment_no}}）</view>
-    <template is="orderInfo" data="{{info: wo.order_info}}" />
+
+    <!-- 工序进度 -->
     <view class="mt-card">
-      <view class="mt-card-title">工序进度</view>
-      <view wx:if="{{!ops.length}}" class="mt-muted">没有车间工序</view>
+      <view class="mt-card-title"><text>工序进度</text><text class="mt-muted">计划 {{wo.plannedText}} {{wo.unit_name || '台'}}</text></view>
+      <view wx:if="{{!ops.length}}" class="mt-muted">当前工单未配置车间生产工序</view>
       <view wx:for="{{ops}}" wx:key="id" class="wo-op">
-        <view class="mt-row"><text>{{item.operation_name}}<text wx:if="{{item.work_status_label}}" class="mt-muted"> {{item.work_status_label}}</text></text><text class="mt-muted">{{item.doneText}} / {{wo.plannedText}}<text wx:if="{{item.owner_name}}"> · {{item.owner_name}}</text><text wx:if="{{item.rework_qty}}" class="mt-red"> · 返工 {{item.rework_qty}}</text></text></view>
+        <view class="mt-row">
+          <view class="wo-op-left">
+            <text class="wo-op-name">{{item.operation_name}}</text>
+            <text wx:if="{{item.work_status_label}}" class="mt-tag gray">{{item.work_status_label}}</text>
+          </view>
+          <text class="mt-muted">{{item.doneText}} / {{wo.plannedText}}<text wx:if="{{item.owner_name}}"> · {{item.owner_name}}</text><text wx:if="{{item.rework_qty}}" class="mt-red"> · 返工 {{item.rework_qty}}</text></text>
+        </view>
         <view class="mt-bar"><view class="mt-bar-in" style="width: {{item.percent}}%"></view></view>
       </view>
     </view>
+
+    <!-- 订单与客户信息 -->
+    <template is="orderInfo" data="{{info: wo.order_info}}" />
+
+    <!-- 各工序用料及规格型号（默认折叠，显示需用几项、齐几项、缺几项） -->
+    <view wx:if="{{kittingOps.length}}" class="mt-card">
+      <view class="mt-card-title" bindtap="toggleMaterials">
+        <text>工序用料与规格型号</text>
+      </view>
+      <view class="tk-mat-summary-bar" bindtap="toggleMaterials">
+        <view class="tk-mat-summary-text">
+          <text>需用 <text class="tk-num-bold">{{materialSummary.total}}</text> 项物料</text>
+          <text> · 已齐 <text class="tk-num-green">{{materialSummary.ready}}</text> 项</text>
+          <text> · 缺 <text class="{{materialSummary.short > 0 ? 'tk-num-red' : 'tk-num-bold'}}">{{materialSummary.short}}</text> 项</text>
+        </view>
+        <text class="tk-mat-summary-toggle">{{showMaterials ? '收起 ▴' : '点击展开 ▾'}}</text>
+      </view>
+      <block wx:if="{{showMaterials}}">
+        <view wx:for="{{kittingOps}}" wx:for-item="kop" wx:key="operation_key" class="wo-kop-group" style="margin-top: 14rpx;">
+          <view class="mt-row wo-kop-head">
+            <text class="wo-kop-name">{{kop.operation_name}}</text>
+            <text class="mt-tag {{kop.status === 'ready' ? 'green' : (kop.status === 'short' ? 'red' : 'gray')}}">{{kop.status_label}}</text>
+          </view>
+          <view wx:for="{{kop.materials}}" wx:key="rowKey" class="clean-item-row">
+            <view class="clean-item-left">
+              <view class="clean-item-name">{{item.component_item_name}}<text wx:if="{{item.component_item_code}}" class="mt-muted mono"> · {{item.component_item_code}}</text></view>
+              <view class="clean-item-spec">规格型号：{{item.specText || '标准规格'}}</view>
+            </view>
+            <view class="clean-item-right">
+              <view class="clean-item-req">需 {{item.requiredText}} {{item.unit_name || ''}}</view>
+              <view class="clean-item-sub {{item.shortage_qty > 0 ? 'short' : ''}}">
+                已领 {{item.issuedText}} · 可用 {{item.availableText}}<text wx:if="{{item.shortage_qty > 0}}"> · 缺 {{item.shortageText}}</text>
+              </view>
+            </view>
+          </view>
+        </view>
+      </block>
+    </view>
+
+    <!-- 设备序列号状态追踪（替代原“每台设备在哪”） -->
     <view class="mt-card">
-      <view class="mt-card-title">{{!wo.unit_name || wo.unit_name === '台' ? '每台设备在哪' : '每' + wo.unit_name + '在哪'}}</view>
-      <view wx:if="{{!units.length}}" class="mt-muted">这张工单不逐台跟踪</view>
+      <view class="mt-card-title">
+        <text>{{!wo.unit_name || wo.unit_name === '台' ? '设备序列号状态追踪' : '单件工序状态追踪'}}</text>
+        <text wx:if="{{units.length}}" class="mt-muted">共 {{units.length}} {{wo.unit_name || '台'}}</text>
+      </view>
+      <view wx:if="{{!units.length}}" class="mt-muted">当前工单按数量汇总追踪，不生成单台序列号</view>
       <view wx:for="{{units}}" wx:key="id" class="mt-kv">
-        <text class="k mono">{{item.short}}</text><text class="mt-tag {{item.tag}}">{{item.text}}</text>
+        <text class="k mono" style="color: #1f2329; font-weight: 700;">{{item.serial_no || item.short}}</text>
+        <text class="mt-tag {{item.tag}}">{{item.text}}</text>
       </view>
     </view>
   </block>

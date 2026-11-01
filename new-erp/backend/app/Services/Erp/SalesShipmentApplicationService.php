@@ -76,6 +76,8 @@ class SalesShipmentApplicationService
                             });
                     })
                     ->where('reservation_status', 'active')
+                    // 完工直交只接本批入库预留；普通发货未指定时仍按原预留顺序分配。
+                    ->when(isset($row['inventory_reservation_id']), fn ($query) => $query->whereKey((int) $row['inventory_reservation_id']))
                     ->orderBy('reserved_at')->orderBy('id')->lockForUpdate()->get();
                 if ($parents->isEmpty()) {
                     throw ValidationException::withMessages(['lines.'.$index => '当前订单行没有可用于发货的有效库存预留。']);
@@ -99,7 +101,7 @@ class SalesShipmentApplicationService
                 }
                 // 直接汇总有效发货明细，避免旧 shipped_qty 缓存含待发运数量时被重复扣除。
                 $allocatedSalesQty = (float) SalesShipmentLine::query()->where('sales_order_line_id', $line->id)
-                    ->where('line_status', '!=', 'replaced')
+                    ->current()
                     ->whereHas('shipment', fn ($q) => $q->whereIn('shipment_status', ['draft', 'pending_outbound', 'prepared', 'partially_shipped', 'outbound_posted', 'shipped', 'completed']))->sum('sales_qty');
                 $remainingSalesQty = max(0, SalesOrderFulfillmentPolicy::effectiveQuantity((float) $line->order_qty, (float) $line->cancelled_qty)
                     - $allocatedSalesQty);
@@ -162,7 +164,7 @@ class SalesShipmentApplicationService
                             ->whereNotIn('serial_status', ['shipped', 'returned', 'production_consumed', 'packing_consumed', 'adjusted_out', 'sales_return_scrapped', 'sales_return_rejected'])
                             ->lockForUpdate()->get()->count();
                         $anonymousAllocated = SalesShipmentLine::query()->whereHas('reservation', fn ($q) => $q->where('inventory_balance_id', $sourceBalance->id)->where('reservation_status', 'converted_to_shipment'))
-                            ->where('line_status', '!=', 'replaced')->lockForUpdate()->get()->sum(fn ($allocated) => max(0, (float) $allocated->base_qty - count($allocated->serial_snapshot['inventory_serial_ids'] ?? [])));
+                            ->current()->lockForUpdate()->get()->sum(fn ($allocated) => max(0, (float) $allocated->base_qty - count($allocated->serial_snapshot['inventory_serial_ids'] ?? [])));
                         if ($quantityWithoutIdentity > max(0, (float) $sourceBalance->quantity_on_hand - $identified - $anonymousAllocated) + 0.00000001)
                             throw ValidationException::withMessages(['serial_ids' => '该来源已有真实设备编号，请选择对应设备；不能把有编号的设备作为无编号数量发货。']);
                     }
@@ -212,7 +214,7 @@ class SalesShipmentApplicationService
             $this->fundingGates->assertCanShip($shipment->sales_order_id);
             if ($shipment->shipment_status !== 'draft') throw ValidationException::withMessages(['shipment' => '只有草稿发货单可以确认。']);
             $shipment->update(['shipment_status' => 'pending_outbound', 'confirmed_at' => now(), 'confirmed_by' => $operator]);
-            $shipment->lines()->update(['line_status' => 'pending_outbound']);
+            $shipment->lines()->where('line_status', 'draft')->update(['line_status' => 'pending_outbound']);
             $this->log($shipment, 'confirm', 'draft', 'pending_outbound', $operator, '发货单已确认，等待移至待发区。');
         });
     }
@@ -223,7 +225,7 @@ class SalesShipmentApplicationService
             if ($shipment->shipment_status !== 'pending_outbound') throw ValidationException::withMessages(['shipment' => '当前发货单不处于待移位状态。']);
             $this->fundingGates->assertCanShip($shipment->sales_order_id);
             $target = $this->location((int) ($payload['staging_location_id'] ?? 0), 'shipping_staging');
-            foreach ($shipment->lines()->orderBy('id')->lockForUpdate()->get() as $line) {
+            foreach ($shipment->lines()->where('line_status', 'pending_outbound')->orderBy('id')->lockForUpdate()->get() as $line) {
                 $this->inventory->moveSalesShipmentLine($line, (int) $target->id, 'stage', $actor);
                 $line->update(['line_status' => 'prepared', 'prepared_at' => now()]);
                 $this->packing->resetSerialRound($line);
@@ -239,12 +241,12 @@ class SalesShipmentApplicationService
             if (! in_array($shipment->shipment_status, ['prepared', 'partially_shipped', 'outbound_posted'], true)) throw ValidationException::withMessages(['shipment' => '只有已移至待发区的发货单可以确认发运或提货。']);
             $this->fundingGates->assertCanShip($shipment->sales_order_id);
             $packageIds = array_values(array_unique(array_map('intval', $payload['package_ids'] ?? [])));
-            $packages = $shipment->packages()->whereIn('id', $packageIds)->where('package_status', '!=', 'shipped')->orderBy('id')->lockForUpdate()->get();
+            $packages = $shipment->packages()->whereIn('id', $packageIds)->whereNotIn('package_status', ['shipped', 'cancelled'])->orderBy('id')->lockForUpdate()->get();
             if ($packageIds === [] || $packages->count() !== count($packageIds)) throw ValidationException::withMessages(['package_ids' => '请选择本单尚未发运的真实包裹。']);
             $mode = $payload['delivery_mode'] ?? '';
             if (! in_array($mode, ['dispatch', 'pickup'], true)) throw ValidationException::withMessages(['delivery_mode' => '请选择发运或客户提货。']);
             $this->packing->assertReady($shipment, $packageIds);
-            $contents = $shipment->packingContents()->whereIn('package_id', $packageIds)->get();
+            $contents = $shipment->packingContents()->current()->whereIn('package_id', $packageIds)->get();
             $lineIds = $contents->pluck('shipment_line_id')->unique()->map('intval')->all();
             $lines = $shipment->lines()->whereIn('id', $lineIds)->orderBy('id')->lockForUpdate()->get();
             if ($lines->isEmpty()) throw ValidationException::withMessages(['package_ids' => '包裹没有可发运的产品明细。']);
@@ -281,6 +283,59 @@ class SalesShipmentApplicationService
         });
     }
 
+    /** 只同步未发货单的收货信息；调用方已锁订单并校验没有实发事实。 */
+    public function syncReceiverForOrderChange(SalesOrder $order, string $operator): void
+    {
+        foreach ($order->shipments()->whereIn('shipment_status', ['draft', 'pending_outbound', 'prepared'])->orderBy('id')->lockForUpdate()->get() as $shipment) {
+            $shipment->receiver_snapshot = $order->shipping_address_snapshot;
+            if (! $shipment->isDirty('receiver_snapshot')) continue;
+            $shipment->business_version = (int) $shipment->business_version + 1;
+            $shipment->save();
+            $this->log($shipment, 'order_receiver_changed', $shipment->shipment_status, $shipment->shipment_status, $operator, '订单收货信息变更，同步未发货单收货信息。');
+        }
+    }
+
+    /** 订单变更生效前撤销旧待发安排；调用方已锁订单，并与订单变更处于同一事务。 */
+    public function cancelForOrderChange(SalesOrder $order, string $operator, ?object $actor, ?array $lineIds = null): void
+    {
+        $shipments = $order->shipments()->whereIn('shipment_status', ['draft', 'pending_outbound', 'prepared'])
+            ->whereHas('lines', fn ($lines) => $lines->current()->when($lineIds !== null, fn ($query) => $query->whereIn('sales_order_line_id', $lineIds)))
+            ->orderBy('id')->lockForUpdate()->get();
+        if ($shipments->isEmpty()) return;
+        if (! $actor || ! ($actor->legacy_id ?? null)) throw ValidationException::withMessages(['operator' => '撤销旧发货安排需要有效的变更操作者。']);
+        foreach ($shipments as $shipment) {
+            $reason = '订单商品变更生效，撤销对应商品待发安排，需按新订单重新安排。';
+            $this->mutate('cancel_order_shipment_lines', $shipment, [
+                'expected_version' => (int) $shipment->business_version,
+                'client_command_id' => 'order-change-'.$order->id.'-'.$order->business_version.'-'.$shipment->id.'-'.$shipment->business_version,
+                'sales_order_line_ids' => $lineIds,
+            ], $actor, function ($locked) use ($lineIds, $reason, $operator, $actor): void {
+                $lines = $locked->lines()->current()->when($lineIds !== null, fn ($query) => $query->whereIn('sales_order_line_id', $lineIds))
+                    ->orderBy('id')->lockForUpdate()->get();
+                foreach ($lines as $line) {
+                    if ($line->line_status === 'repair') {
+                        $this->reservations->releaseShipmentReservation((int) $line->inventory_reservation_id, '订单商品变更，失败设备保留返修：'.$reason);
+                    } else {
+                        if ($line->prepared_at) $this->inventory->moveSalesShipmentLine($line, (int) data_get($line->preparation_snapshot, 'location_id'), 'return', $actor);
+                        $this->reservations->restoreShipmentReservationToOrder([(int) $line->inventory_reservation_id], $reason);
+                        InventorySerial::query()->whereIn('id', $line->serial_snapshot['inventory_serial_ids'] ?? [])->where('serial_status', '!=', 'repair')
+                            ->update(['serial_status' => 'available', 'reserved_at' => null]);
+                    }
+                    $line->update(['line_status' => 'cancelled']);
+                }
+                // 同一事务内只撤销涉及的作业；共享作业的冻结成员和已发生工时、耗料仍保留。
+                $this->packing->cancelOrderLines($locked, $lines->pluck('id')->map('intval')->all(), $actor);
+                $before = $locked->shipment_status;
+                if (! $locked->lines()->current()->exists()) {
+                    $locked->update(['shipment_status' => 'cancelled', 'cancelled_at' => now(), 'cancel_reason' => $reason]);
+                    $locked->packages()->where('package_status', '!=', 'shipped')->update(['package_status' => 'cancelled']);
+                }
+                $this->log($locked, 'cancel_order_lines', $before, $locked->shipment_status, $operator,
+                    $reason.'销售商品行：'.$lines->pluck('sales_order_line_id')->unique()->implode('、').'；发货明细：'.$lines->pluck('id')->implode('、'));
+            });
+        }
+    }
+
     public function cancel(SalesShipment $shipment, string $reason, string $operator, array $payload, object $actor): SalesShipment
     {
         return $this->mutate('cancel_shipment', $shipment, $payload, $actor, function ($shipment) use ($reason, $operator, $actor): void {
@@ -288,7 +343,7 @@ class SalesShipmentApplicationService
                 throw ValidationException::withMessages(['shipment' => '已经正式出库或部分发运的单据不能整单取消。']);
             }
             if ($shipment->packingOperations()->whereHas('laborSessions', fn ($q) => $q->where('status', 'ACTIVE'))->exists()) throw ValidationException::withMessages(['shipment' => '请参与人员先暂停本人工时，再取消待发准备。']);
-            foreach ($shipment->lines()->where('line_status', '!=', 'replaced')->orderBy('id')->lockForUpdate()->get() as $line) {
+            foreach ($shipment->lines()->current()->orderBy('id')->lockForUpdate()->get() as $line) {
                 if ($line->line_status === 'repair') {
                     $this->reservations->releaseShipmentReservation((int) $line->inventory_reservation_id, '取消发货，失败设备保留返修：'.$reason);
                     continue;
@@ -299,7 +354,8 @@ class SalesShipmentApplicationService
             }
             $before = $shipment->shipment_status;
             $shipment->update(['shipment_status' => 'cancelled', 'cancelled_at' => now(), 'cancel_reason' => $reason]);
-            $shipment->lines()->whereNotIn('line_status', ['repair', 'replaced'])->update(['line_status' => 'cancelled']);
+            $shipment->lines()->current()->where('line_status', '!=', 'repair')->update(['line_status' => 'cancelled']);
+            $shipment->packages()->where('package_status', '!=', 'shipped')->update(['package_status' => 'cancelled']);
             $shipment->packingOperations()->where('status', '!=', 'COMPLETED')->update(['status' => 'CANCELLED']);
             $this->log($shipment, 'cancel', $before, 'cancelled', $operator, $reason);
         });
@@ -368,6 +424,9 @@ class SalesShipmentApplicationService
             $shipment = SalesShipment::query()->with('lines')->lockForUpdate()->findOrFail($shipment->id);
             if ($shipment->shipment_status !== 'draft' || $shipment->confirmed_at !== null) {
                 throw ValidationException::withMessages(['shipment' => '只有从未确认、未出库的销售发货草稿可以删除。']);
+            }
+            if ($shipment->lines()->where('line_status', 'cancelled')->exists()) {
+                throw ValidationException::withMessages(['shipment' => '该草稿已有订单变更撤销记录，请取消发货单并保留追溯。']);
             }
             $this->packing->assertCanCancel($shipment);
             if (DB::table('erp_inventory_transactions')

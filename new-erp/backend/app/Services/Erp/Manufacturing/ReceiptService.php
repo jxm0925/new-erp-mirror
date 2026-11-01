@@ -20,9 +20,8 @@ use Illuminate\Support\Facades\DB;
 
 /**
  * 生产入库：最后一道合格（等入库）的设备入库。
- * - 半成品工单（下料组）：仓库确认入半成品仓，总装收料时再出库。
- * - 订单工单总装完、订单马上要发：自动记入“成品待发区”库位，直接走发货试水，不用仓库手工入库。
- * - 备货工单、延期发货的订单：仓库确认入成品仓。
+ * - 选择入库：保留在半成品或成品库位。
+ * - 选择直接交接：由完工服务在同一事务内调用入库及目标工序收料/待发记账。
  */
 final class ReceiptService
 {
@@ -106,33 +105,6 @@ final class ReceiptService
             $this->workOrders->refreshCompletion($wo, $actor);
             return $receipt->fresh();
         }, 5);
-    }
-
-    /**
-     * 总装最后一道合格后调用：订单马上要发货的，自动记入成品待发区；备货、延期、半成品工单不处理（仓库手工入库）。
-     * 没配置待发区库位时不处理，留给仓库手工入库，并在工单日志里提示。
-     */
-    public function autoStage(int $workOrderId, array $unitIds, object $actor): ?MfgReceipt
-    {
-        $wo = MfgWorkOrder::query()->lockForUpdate()->findOrFail($workOrderId);
-        if (! $unitIds || $this->workOrders->convertIfDemandGone($wo, $actor) || ! $this->shipsImmediately($wo)) return null;
-        $location = $this->stagingLocation($wo);
-        if (! $location) {
-            $this->workOrders->log($wo, 'staging_missing', $wo->status, $wo->status, '订单待发，但尚未维护启用的待发用途库位，请仓库维护库位用途后办理入库。', $actor);
-            return null;
-        }
-        return $this->receive($wo->id, $unitIds, (int) $location->warehouse_id, (int) $location->id, '总装完工，订单马上发货，自动记入成品待发区', $actor, true);
-    }
-
-    /** 订单工单、订单已确认、不是延期发货 = 做完马上发。 */
-    public function shipsImmediately(MfgWorkOrder $wo): bool
-    {
-        if ($wo->source_type !== 'sales_order' || ! $wo->sales_order_id) return false;
-        $order = SalesOrder::query()->find($wo->sales_order_id);
-        if (! $order || $order->order_status !== 'confirmed') return false;
-        $delayed = (bool) ($order->is_delay || $order->delay);
-        if ($delayed && $order->delay_date && $order->delay_date->lte(now()->startOfDay())) $delayed = false;
-        return ! $delayed;
     }
 
     public static function allowedLocationPurposes(MfgWorkOrder $wo): array

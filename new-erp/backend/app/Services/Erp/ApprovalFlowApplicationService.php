@@ -118,6 +118,11 @@ class ApprovalFlowApplicationService
             'trigger_modes' => [['value' => 'MANUAL_START', 'label' => '仅手动发起'], ['value' => 'EVENT_TRIGGER', 'label' => '仅业务动作触发'], ['value' => 'BOTH', 'label' => '手动与业务动作均可触发']],
             'execution_modes' => [['value' => 'BEFORE_ACTION', 'label' => '业务动作前阻断'], ['value' => 'AFTER_ACTION', 'label' => '业务动作后审核'], ['value' => 'OBSERVE_ONLY', 'label' => '仅观察不阻断']],
             'node_types' => [['value' => 'APPROVAL', 'label' => '审批节点'], ['value' => 'CONDITION', 'label' => '条件节点'], ['value' => 'CC', 'label' => '抄送节点'], ['value' => 'ACTION', 'label' => '动作节点']],
+            'approval_types' => [
+                ['value' => 'business', 'label' => '业务审核'],
+                ['value' => 'finance', 'label' => '财务审核'],
+                ['value' => 'fulfillment', 'label' => '库存交付审核'],
+            ],
         ];
     }
 
@@ -439,6 +444,7 @@ class ApprovalFlowApplicationService
         $nodes = array_values($definition['nodes'] ?? []);
         if (!$nodes) $errors[] = '至少配置一个审核节点。';
         $keys = [];
+        $hasPreviousApproval = false;
         foreach ($nodes as $index => $node) {
             $prefix = '第'.($index + 1).'个节点';
             $nodeType = strtoupper((string) ($node['node_type'] ?? 'APPROVAL'));
@@ -507,12 +513,20 @@ class ApprovalFlowApplicationService
                 elseif (!empty($action['object_code']) && isset($object) && $action['object_code'] !== ($object['code'] ?? null)) $errors[] = $prefix.'选择的节点动作不适用于当前业务对象。';
             }
             if ($nodeType === 'APPROVAL') {
+                if (!$hasPreviousApproval && ($node['reject_strategy'] ?? 'TERMINATE') === 'RETURN_PREVIOUS') $errors[] = $prefix.'没有上一审批节点，不能配置为退回上一节点。';
+                $hasPreviousApproval = true;
                 if (!array_key_exists('allow_reject', $node)) $errors[] = $prefix.'未配置是否允许驳回。';
                 if (!array_key_exists('allow_transfer', $node)) $errors[] = $prefix.'未配置是否允许转交。';
                 if (!empty($node['reminder_enabled']) && empty($node['sla_hours'])) $errors[] = $prefix.'启用催办时必须配置 SLA。';
             }
         }
         if (($definition['business_object_code'] ?? null) === 'SALES_ORDER_CHANGE') {
+            foreach ($nodes as $index => $node) {
+                if (strtoupper((string) ($node['node_type'] ?? 'APPROVAL')) === 'APPROVAL'
+                    && !in_array($node['approval_type'] ?? 'business', ['business', 'finance', 'fulfillment'], true)) {
+                    $errors[] = '第'.($index + 1).'个节点的销售订单变更审核类别无效。';
+                }
+            }
             $duplicates = collect($nodes)->filter(fn ($node) => strtoupper((string) ($node['node_type'] ?? 'APPROVAL')) === 'APPROVAL')
                 ->groupBy(fn ($node) => strtolower(trim((string) ($node['approval_type'] ?? 'business'))))
                 ->filter(fn ($rows, $type) => in_array($type, ['business', 'finance', 'fulfillment'], true) && $rows->count() > 1)

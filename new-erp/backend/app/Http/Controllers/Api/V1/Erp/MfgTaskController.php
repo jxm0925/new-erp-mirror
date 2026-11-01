@@ -151,24 +151,40 @@ class MfgTaskController extends Controller
 
     private function pass(Request $request, int $id, TaskService $tasks, object $user, string $lane): string
     {
-        $data = $request->validate(['unit_ids' => 'required|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1']);
-        $result = $tasks->pass($id, $data['unit_ids'], $user, $lane);
+        $data = $request->validate(['unit_ids' => 'required|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1'] + $this->completionRules());
+        $result = $tasks->pass($id, $data['unit_ids'], $user, $lane, $data);
         $word = $this->unitWord($id);
         $paused = ! empty($result['timing_paused']) ? '本道暂时没有可做的'.($lane === 'rework' ? '返工' : '').'，计时已自动暂停。' : '';
+        if (isset($result['completion_action'])) return $this->completionMessage($result, $word).$paused;
         if ($result['next_operation_name']) return $result['passed'].' '.$word.($lane === 'rework' ? '返工' : '').'合格，已交'.$result['next_operation_name'].'。'.$paused;
         if (($result['returned'] ?? 0) > 0) return $result['returned'].' '.$word.'返工合格，已解冻回仓库可用库存，总装那边重新收料就能用。'.$paused;
         if (($result['repaired'] ?? 0) > 0 && $result['repaired'] === $result['passed']) return $result['passed'].' 台设备返修合格，请仓库在发货单上把设备返回成品位后重新试水。'.$paused;
-        return $result['passed'].' '.$this->unitWord($id).'合格，生产完成，'.($result['staged_qty'] ? '已自动记入成品待发区（'.$result['staged_receipt_no'].'），等发货试水。' : '等入库。').$paused;
+        return $result['passed'].' '.$word.'合格。'.$paused;
     }
 
     /** 已备料：集中下料提前切好的料，不计时直接交下道。 */
     private function prepare(Request $request, int $id, TaskService $tasks, object $user): string
     {
         $data = $request->validate(['unit_ids' => 'required|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1', 'remark' => 'nullable|string|max:500',
-            'cutting_run_id' => 'nullable|integer|min:1']);
-        $result = $tasks->prepare($id, $data['unit_ids'], $data['remark'] ?? null, $user, isset($data['cutting_run_id']) ? (int) $data['cutting_run_id'] : null);
+            'cutting_run_id' => 'nullable|integer|min:1'] + $this->completionRules());
+        $result = $tasks->prepare($id, $data['unit_ids'], $data['remark'] ?? null, $user, isset($data['cutting_run_id']) ? (int) $data['cutting_run_id'] : null, $data);
+        if (isset($result['completion_action'])) return $this->completionMessage($result, $this->unitWord($id));
         if ($result['next_operation_name']) return $result['passed'].' '.$this->unitWord($id).'已备料，交'.$result['next_operation_name'].'。';
-        return $result['passed'].' '.$this->unitWord($id).'已备料，生产完成，'.($result['staged_qty'] ? '已自动记入成品待发区（'.$result['staged_receipt_no'].'）。' : '等入库。');
+        return $result['passed'].' '.$this->unitWord($id).'已备料，生产完成。';
+    }
+
+    private function completionRules(): array
+    {
+        return ['completion_action' => 'nullable|in:store,handoff', 'completion_location_id' => 'nullable|integer|min:1', 'handoff_operation_id' => 'nullable|integer|min:1'];
+    }
+
+    private function completionMessage(array $result, string $word): string
+    {
+        $message = $result['received_qty'].' '.$word.($result['completion_action'] === 'handoff'
+            ? '已交接给'.$result['handoff_operation_name'].(! empty($result['shipment_no']) ? '（'.$result['shipment_no'].'）' : '').'。'
+            : '已入库（'.$result['receipt_no'].'）。');
+        if (($result['repaired'] ?? 0) > 0) $message .= '另有 '.$result['repaired'].' 台原设备返修合格，请仓库在发货单上返回成品位后重新试水。';
+        return $message;
     }
 
     private function reject(Request $request, int $id, TaskService $tasks, object $user, string $lane): string
