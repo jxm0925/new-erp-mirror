@@ -4,6 +4,12 @@ namespace App\Services\Erp;
 
 use App\Models\Erp\SalesOrder;
 use App\Models\Erp\InventoryReservation;
+use App\Models\Erp\SalesCustomer;
+use App\Models\Erp\SalesCustomerAddress;
+use App\Models\Erp\SalesCustomerContact;
+use App\Models\Erp\SalesFundingPolicy;
+use App\Models\Erp\SalesOrderAttachment;
+use App\Models\Erp\Sku;
 use App\Models\Erp\SalesOrderChange;
 use App\Models\Erp\SalesOrderChangeCandidate;
 use App\Models\Erp\SalesOrderChangeCandidateApproval;
@@ -40,18 +46,33 @@ class SalesOrderEditImpactService
         'default_carrier_id', 'shipping_snapshot', 'logistics_snapshot',
         'customer_snapshot', 'payment_terms_snapshot', 'funding_policy_id',
         'funding_policy_snapshot', 'sales_channel_id', 'external_order_no', 'transaction_mode',
-        'platform_buyer_id',
+        'platform_buyer_id', 'payment_method_id', 'logistics_requirement', 'is_share', 'share_user',
         'pay_type', 'sales_user_legacy_id',
     ];
 
     /** Derived snapshots travel with a candidate but are represented by their editable business fields. */
     private const HIDDEN_HEADER_DIFF_FIELDS = [
         'shipping_snapshot', 'logistics_snapshot', 'customer_snapshot',
-        'funding_policy_snapshot',
+        'funding_policy_snapshot', 'payment_terms_snapshot', 'customer_phone', 'pay_type',
+    ];
+
+    /** 快照里允许销售编辑的子字段：只合并这些键，发运事实等其余键沿用正式订单。 */
+    private const SNAPSHOT_EDIT_FIELDS = [
+        'shipping_snapshot' => ['is_self_pickup' => '是否自提', 'customer_logistics_note' => null],
+        'logistics_snapshot' => [
+            'pcs' => '件数（PCS）', 'gw' => '毛重（KG）', 'vol' => '体积（CBM）',
+            'si_date' => '截单时间（SI）', 'cy_date' => '截关时间（CY）', 'cargo_ready_date' => '货好时间',
+        ],
+    ];
+
+    /** 订单行配置里真正影响生产的键；报价有效期等其他键只作信息记录。 */
+    private const PRODUCTION_CONFIG_KEYS = [
+        'need_pump', 'electric', 'is_customized', 'is_special_customized', 'special_custom_description', 'cut_requirements',
     ];
 
     private const LABELS = [
-        'origin_order_no' => '原始单号', 'remark' => '订单备注', 'customer_name' => '客户',
+        'origin_order_no' => '原始单号', 'remark' => '订单备注', 'customer_name' => '客户名称',
+        'customer_id' => '客户档案', 'customer_contact_id' => '联系人档案', 'customer_address_id' => '收货地址档案',
         'contact_name' => '收货联系人', 'contact_phone' => '联系电话', 'full_address' => '收货地址',
         'platform' => '成交平台', 'carrier_id' => '快递选择', 'default_carrier_id' => '默认承运方',
         'carrier_fee' => '预估快递费', 'freight_amount' => '运费', 'required_delivery_date' => '要求交期',
@@ -63,6 +84,12 @@ class SalesOrderEditImpactService
         'line_added' => '新增订单行', 'fulfillment_method' => '备货方式',
         'electric' => '电压', 'need_pump' => '原水泵控制', 'is_customized' => '普通定制',
         'is_special_customized' => '特殊定制', 'configuration_snapshot' => '生产关键配置',
+        'customer_kind' => '客户类型', 'platform_buyer_id' => '平台买家ID', 'payment_method_id' => '付款方式',
+        'logistics_requirement' => '客户物流备注', 'is_share' => '共享订单', 'share_user' => '共享人员',
+        'valid_days' => '报价有效期', 'trade_type' => '贸易类型',
+        'external_order_no' => '外部订单号', 'sales_channel_id' => '销售渠道', 'currency' => '币种',
+        'transaction_mode' => '交易方式', 'sales_user_legacy_id' => '销售人员', 'order_time' => '下单时间',
+        'platform2' => '子平台', 'order_source' => '订单来源',
     ];
 
     private const LINE_FIELDS = [
@@ -253,11 +280,25 @@ class SalesOrderEditImpactService
         $facts = $this->operationalFacts($order);
         foreach (self::HEADER_FIELDS as $field) {
             if (in_array($field, self::HIDDEN_HEADER_DIFF_FIELDS, true)) continue;
-            $before = $this->headerValue($field, $order->getAttribute($field));
+            $stored = $order->getAttribute($field);
+            // 旧订单的客户物流备注只存在发货快照里，按同一口径比较，避免未修改也出差异。
+            if ($field === 'logistics_requirement' && blank($stored)) $stored = data_get((array) $order->shipping_snapshot, 'customer_logistics_note');
+            $before = $this->headerValue($field, $stored);
             $after = $this->headerValue($field, array_key_exists($field, $candidate['header']) ? $candidate['header'][$field] : $order->getAttribute($field));
             if ($before === $after) continue;
             $impacts = $this->headerImpacts($field, $before, $after, $facts);
             $diffs[] = $this->diff('header', null, $field, $before, $after, $impacts);
+        }
+        foreach (self::SNAPSHOT_EDIT_FIELDS as $snapshotField => $keys) {
+            if (!array_key_exists($snapshotField, $candidate['header'])) continue;
+            foreach ($keys as $key => $label) {
+                if ($label === null) continue;
+                $before = $this->snapshotValue($key, data_get((array) $order->getAttribute($snapshotField), $key));
+                $after = $this->snapshotValue($key, data_get((array) $candidate['header'][$snapshotField], $key));
+                if ($before === $after) continue;
+                $impacts = $key === 'is_self_pickup' && $facts['has_fulfillment_facts'] ? ['FULFILLMENT'] : ['INFO'];
+                $diffs[] = array_replace($this->diff('header', null, $key, $before, $after, $impacts), ['label' => $label]);
+            }
         }
         $current = $order->lines->keyBy('id');
         $sentIds = [];
@@ -275,6 +316,14 @@ class SalesOrderEditImpactService
                 if ($field === 'configuration_snapshot') {
                     $beforeValue = $this->lines->configurationSnapshot(array_replace($old->attributesToArray(), ['configuration_snapshot' => $beforeValue]));
                     $afterValue = $this->lines->configurationSnapshot($line, $beforeValue);
+                    $validBefore = trim((string) ($beforeValue['valid_days'] ?? ''));
+                    $validAfter = trim((string) ($afterValue['valid_days'] ?? ''));
+                    if ($validBefore !== $validAfter) {
+                        $diffs[] = $this->diff('line', $old->id, 'valid_days', $validBefore, $validAfter, ['INFO'], $this->lineLabel($old, $index + 1));
+                    }
+                    // 只比较生产关键键；报价有效期等信息字段不能触发生产审核和备货重置。
+                    $beforeValue = Arr::only($beforeValue, self::PRODUCTION_CONFIG_KEYS);
+                    $afterValue = Arr::only($afterValue, self::PRODUCTION_CONFIG_KEYS);
                 }
                 $before = $this->lineValue($field, $beforeValue, $old);
                 $after = $this->lineValue($field, $afterValue, $line);
@@ -340,6 +389,9 @@ class SalesOrderEditImpactService
     {
         $order->load(['lines', 'shipments', 'salesReturns']);
         $this->assertChangeable($order);
+        // 审核期间可能新增了收款核销或附件被删，生效前按最新事实再校验一次。
+        if (array_key_exists('customer_id', $candidate['header'])) $this->assertCustomerChangeAllowed($order, $candidate['header']['customer_id']);
+        $this->assertSpecialCustomRequirements($order, $candidate);
         $candidate['header'] = $this->preserveAgreedDeposit($candidate['header'], $order);
         if (array_key_exists('remark', $candidate['header'])) $candidate['header']['order_remark'] = $candidate['header']['remark'];
         if (array_key_exists('is_urgent', $candidate['header'])) $candidate['header']['quickly'] = $candidate['header']['is_urgent'];
@@ -354,7 +406,7 @@ class SalesOrderEditImpactService
         // locked facts instead of replaying cost values from an old candidate.
         $order->update(app(SalesCostVisibilityService::class)->preserveStoredCosts($candidate['header'], $order->attributesToArray()));
         $changedHeaders = collect($impact['diffs'] ?? [])->where('scope', 'header')->pluck('semantic_key')->all();
-        if (array_intersect($changedHeaders, ['customer_id', 'customer_name', 'customer_contact_id', 'customer_address_id', 'contact_name', 'contact_phone', 'full_address', 'address'])) {
+        if (array_intersect($changedHeaders, ['customer_id', 'customer_name', 'customer_contact_id', 'customer_address_id', 'contact_name', 'contact_phone', 'full_address', 'address', 'customer_kind', 'platform_buyer_id'])) {
             $addressText = array_key_exists('full_address', $candidate['header']) ? $order->full_address
                 : (array_key_exists('address', $candidate['header']) ? $order->address : $order->full_address);
             $address = array_replace((array) $order->shipping_address_snapshot, [
@@ -370,11 +422,7 @@ class SalesOrderEditImpactService
                 'customer_name_snapshot' => $order->customer_name,
                 'contact_name_snapshot' => $order->contact_name, 'contact_phone_snapshot' => $order->contact_phone, 'customer_phone' => $order->contact_phone,
                 'shipping_address_snapshot' => $address,
-                'customer_snapshot' => array_replace((array) $order->customer_snapshot, [
-                    'id' => $order->customer_id, 'name' => $order->customer_name,
-                    'contact' => ['id' => $order->customer_contact_id, 'name' => $order->contact_name, 'phone' => $order->contact_phone],
-                    'address' => $address,
-                ]),
+                'customer_snapshot' => $this->customerSnapshot($order, $address, in_array('customer_id', $changedHeaders, true)),
             ]);
             app(SalesShipmentApplicationService::class)->syncReceiverForOrderChange($order, $operator);
         }
@@ -382,10 +430,18 @@ class SalesOrderEditImpactService
             $order->update(['default_carrier_name_snapshot' => DB::table('erp_sales_order_deliveries')
                 ->where('legacy_id', $order->default_carrier_id ?: $order->carrier_id)->value('name')]);
         }
-        if ($hasLineOperationalImpact) $this->lines->sync($order, $candidate['lines'], $candidate['deleted_line_ids'], null, $operator,
+        if ($hasLineOperationalImpact) $this->lines->sync($order, $candidate['lines'], $candidate['deleted_line_ids'], $candidate['draft_token'] ?? null, $operator,
             $order->lines->pluck('id')->map(fn ($id) => (int) $id)->diff($resetLineIds)->values()->all());
         else $this->saveCommercialLinesLocked($order, $candidate['lines']);
+        $this->saveLineInfoFields($order, $candidate['lines'], (array) ($impact['diffs'] ?? []));
         $this->amounts->refresh($order);
+        if (in_array('funding_policy_id', $changedHeaders, true)) {
+            // 换付款条件后按变更后的应收重新冻结，资金门禁以新条件计算。
+            $fresh = $order->fresh();
+            $receivable = (string) ($fresh->final_receivable_amount ?: $fresh->total_amount);
+            $snapshot = array_replace((array) $fresh->funding_policy_snapshot, ['receivable_amount' => $receivable, 'frozen_at' => now()->toISOString()]);
+            $order->update(['funding_policy_snapshot' => $snapshot, 'payment_terms_snapshot' => $snapshot]);
+        }
         if ($resetLineIds) {
             $this->reservations->releaseForSalesOrder($order, '订单商品变更，释放该行旧库存预留。', $resetLineIds);
             SalesOrderFulfillment::where('sales_order_id', $order->id)->whereIn('sales_order_line_id', $resetLineIds)
@@ -505,11 +561,218 @@ class SalesOrderEditImpactService
         if (array_diff($deletedIds, $currentIds) || array_intersect($deletedIds, $sentIds)) {
             throw ValidationException::withMessages(['deleted_line_ids' => '删除行与保留行冲突或不属于当前订单，请刷新后重新编辑。']);
         }
-        return [
-            'header' => $this->preserveAgreedDeposit(Arr::only($payload, self::HEADER_FIELDS), $order),
+        $candidate = [
+            'header' => $this->preserveAgreedDeposit($this->normalizeHeader(Arr::only($payload, self::HEADER_FIELDS), $order), $order),
             'lines' => $lines,
             'deleted_line_ids' => $deletedIds,
+            'draft_token' => $payload['draft_token'] ?? null,
         ];
+        $this->assertSpecialCustomRequirements($order, $candidate);
+        return $candidate;
+    }
+
+    /** 已有收款核销的订单不能直接换客户，否则收款单客户与订单客户不一致。 */
+    public function assertCustomerChangeAllowed(SalesOrder $order, mixed $customerId): void
+    {
+        if (blank($customerId) || (int) $customerId === (int) $order->customer_id) return;
+        $received = app(SalesFinanceSettlementService::class)->status($order)['received_amount'];
+        if (\App\Domain\Finance\Money::compare((string) $received, '0') > 0) {
+            throw ValidationException::withMessages(['customer_id' => '这个订单已有收款核销，不能直接换客户。请先由财务撤销该订单的收款核销（或退款）后再换。']);
+        }
+    }
+
+    /**
+     * 把页面提交的表头整理成正式口径：快照只合并允许编辑的键，付款方式和付款条件由服务端重新冻结，
+     * 客户快照按订单客户信息重建，避免旧页面带回的快照覆盖正式事实。
+     */
+    private function normalizeHeader(array $header, SalesOrder $order): array
+    {
+        unset($header['customer_snapshot'], $header['pay_type']);
+        $customerId = array_key_exists('customer_id', $header) && filled($header['customer_id']) ? (int) $header['customer_id'] : (int) $order->customer_id;
+        if (array_key_exists('customer_id', $header)) {
+            if (blank($header['customer_id'])) unset($header['customer_id']);
+            else $header['customer_id'] = $customerId;
+        }
+        if ($customerId !== (int) $order->customer_id) {
+            $this->assertCustomerChangeAllowed($order, $customerId);
+            $customer = SalesCustomer::query()->find($customerId);
+            if (!$customer || in_array($customer->status, ['disabled', 'blacklisted'], true)) {
+                throw ValidationException::withMessages(['customer_id' => '所选客户已停用或在黑名单，不能用于订单。']);
+            }
+            $header['customer_name'] = $customer->customer_name;
+        }
+        if (filled($header['customer_contact_id'] ?? null) && (int) $header['customer_contact_id'] !== (int) $order->customer_contact_id
+            && !SalesCustomerContact::query()->where('customer_id', $customerId)->whereKey($header['customer_contact_id'])->exists()) {
+            throw ValidationException::withMessages(['customer_contact_id' => '所选联系人不属于当前客户，请重新选择客户。']);
+        }
+        if (filled($header['customer_address_id'] ?? null) && (int) $header['customer_address_id'] !== (int) $order->customer_address_id
+            && !SalesCustomerAddress::query()->where('customer_id', $customerId)->whereKey($header['customer_address_id'])->exists()) {
+            throw ValidationException::withMessages(['customer_address_id' => '所选收货地址不属于当前客户，请重新选择客户。']);
+        }
+        // 页面“联系电话”绑定 customer_phone；两者是同一个电话，改了哪个就以哪个为准。
+        $customerPhone = array_key_exists('customer_phone', $header) ? trim((string) $header['customer_phone']) : null;
+        $contactPhone = array_key_exists('contact_phone', $header) ? trim((string) $header['contact_phone']) : null;
+        if ($customerPhone !== null && $customerPhone !== trim((string) $order->customer_phone)) $header['contact_phone'] = $customerPhone ?: null;
+        elseif ($contactPhone !== null && $contactPhone !== trim((string) $order->contact_phone)) $header['customer_phone'] = $contactPhone ?: null;
+        elseif ($customerPhone !== null || $contactPhone !== null) {
+            $header['customer_phone'] = $order->customer_phone;
+            $header['contact_phone'] = $order->contact_phone;
+        }
+
+        unset($header['funding_policy_snapshot'], $header['payment_terms_snapshot']);
+        if (array_key_exists('funding_policy_id', $header)) {
+            if (blank($header['funding_policy_id']) || (int) $header['funding_policy_id'] === (int) $order->funding_policy_id) {
+                unset($header['funding_policy_id']);
+            } else {
+                $policy = SalesFundingPolicy::query()->where('status', 'enabled')->find((int) $header['funding_policy_id']);
+                if (!$policy) throw ValidationException::withMessages(['funding_policy_id' => '所选付款条件已停用，请重新选择。']);
+                $snapshot = [
+                    'id' => $policy->id,
+                    'policy_code' => $policy->policy_code,
+                    'policy_name' => $policy->policy_name,
+                    'policy_type' => $policy->policy_type,
+                    'production_threshold_type' => $policy->production_threshold_type,
+                    'production_threshold_value' => (string) $policy->production_threshold_value,
+                    'shipment_requires_full_payment' => (bool) $policy->shipment_requires_full_payment,
+                    'receivable_amount' => (string) ($order->final_receivable_amount ?: $order->total_amount),
+                    'frozen_at' => now()->toISOString(),
+                ];
+                $header['funding_policy_id'] = $policy->id;
+                $header['funding_policy_snapshot'] = $snapshot;
+                $header['payment_terms_snapshot'] = $snapshot;
+            }
+        }
+
+        if (array_key_exists('payment_method_id', $header)) {
+            if (blank($header['payment_method_id']) || (int) $header['payment_method_id'] === (int) $order->payment_method_id) {
+                unset($header['payment_method_id']);
+            } else {
+                $paymentMethods = app(PaymentMethodApplicationService::class);
+                try {
+                    $method = $paymentMethods->resolveForSales((int) $header['payment_method_id']);
+                } catch (\Throwable) {
+                    throw ValidationException::withMessages(['payment_method_id' => '所选付款方式已停用或不可用于销售，请重新选择。']);
+                }
+                $header['payment_method_id'] = $method->id;
+                $header['payment_method_snapshot'] = $paymentMethods->snapshot($method);
+                $header['pay_type'] = $method->method_code;
+            }
+        }
+
+        if (array_key_exists('is_share', $header) || array_key_exists('share_user', $header)) {
+            $isShare = array_key_exists('is_share', $header) ? (bool) $header['is_share'] : (bool) $order->is_share;
+            $users = $header['share_user'] ?? $order->share_user;
+            $users = is_array($users) ? $users : explode(',', (string) $users);
+            $users = array_values(array_unique(array_filter(array_map(fn ($id) => trim((string) $id), $users), fn ($id) => $id !== '')));
+            $header['is_share'] = $isShare;
+            $header['share_user'] = $isShare && $users ? implode(',', $users) : null;
+        }
+
+        foreach (self::SNAPSHOT_EDIT_FIELDS as $snapshotField => $keys) {
+            if (!array_key_exists($snapshotField, $header)) continue;
+            $submitted = (array) $header[$snapshotField];
+            $merged = (array) $order->getAttribute($snapshotField);
+            foreach (array_keys($keys) as $key) {
+                if (array_key_exists($key, $submitted)) $merged[$key] = $submitted[$key];
+            }
+            $header[$snapshotField] = $merged;
+        }
+        if (array_key_exists('logistics_requirement', $header)) {
+            $note = trim((string) $header['logistics_requirement']);
+            $header['logistics_requirement'] = $note === '' ? null : $note;
+            $shipping = (array) ($header['shipping_snapshot'] ?? $order->shipping_snapshot);
+            $shipping['customer_logistics_note'] = $header['logistics_requirement'];
+            $header['shipping_snapshot'] = $shipping;
+        }
+        if (array_key_exists('carrier_id', $header) || array_key_exists('default_carrier_id', $header)) {
+            $carrierId = ($header['default_carrier_id'] ?? null) ?: ($header['carrier_id'] ?? null);
+            $shipping = (array) ($header['shipping_snapshot'] ?? $order->shipping_snapshot);
+            $shipping['default_carrier_id'] = $carrierId ?: null;
+            $shipping['default_carrier_name'] = $carrierId
+                ? DB::table('erp_sales_order_deliveries')->where('legacy_id', $carrierId)->value('name') : null;
+            $header['shipping_snapshot'] = $shipping;
+        }
+        return $header;
+    }
+
+    /** 特殊定制行（新增、换SKU或新开特殊定制）必须带技术协议和定制说明，与正式确认口径一致。 */
+    private function assertSpecialCustomRequirements(SalesOrder $order, array $candidate): void
+    {
+        $current = $order->lines->keyBy('id');
+        $draftToken = $candidate['draft_token'] ?? null;
+        foreach (array_values($candidate['lines'] ?? []) as $index => $line) {
+            $old = $current->get((int) ($line['id'] ?? 0));
+            $special = $line['is_special_customized'] ?? data_get($line, 'configuration_snapshot.is_special_customized') ?? $old?->is_special_customized;
+            if (!$special) continue;
+            $skuId = (int) ($line['sku_id'] ?? $old?->sku_id);
+            $sku = $skuId ? Sku::query()->find($skuId) : null;
+            if (!$sku) continue;
+            $number = $index + 1;
+            $newlySpecial = !$old || (int) $old->sku_id !== $skuId || !$old->is_special_customized;
+            $config = $this->lines->configurationSnapshot($line, $old ? (array) $old->configuration_snapshot : null);
+            $description = trim((string) ($config['special_custom_description'] ?? ''));
+            $descriptionChanged = !$old || $description !== trim((string) ($old->customization_description ?: data_get($old->configuration_snapshot, 'special_custom_description')));
+            if ($sku->special_custom_description_required && $description === '' && ($newlySpecial || $descriptionChanged)) {
+                throw ValidationException::withMessages(['lines' => "第 {$number} 行是特殊定制，请填写特殊定制说明。"]);
+            }
+            if (!$newlySpecial || !$sku->special_custom_agreement_required) continue;
+            $agreements = SalesOrderAttachment::query()->where('status', 'active')->where('attachment_type', 'technical_agreement');
+            $has = $old && (clone $agreements)->where('sales_order_line_id', $old->id)->exists();
+            if (!$has && $draftToken && filled($line['line_uuid'] ?? null)) {
+                $has = (clone $agreements)->whereNull('sales_order_line_id')
+                    ->where('draft_token', $draftToken)->where('line_uuid', $line['line_uuid'])->exists();
+            }
+            if (!$has) {
+                throw ValidationException::withMessages(['lines' => "第 {$number} 行是特殊定制，缺少技术协议。请先在该行附件里上传技术协议再保存。"]);
+            }
+        }
+    }
+
+    /** 报价有效期、行备注只是信息字段，任何保存路径都要落库，不能因其他行重排备货而丢失。 */
+    private function saveLineInfoFields(SalesOrder $order, array $rows, array $diffs): void
+    {
+        $changed = collect($diffs)->filter(fn ($diff) => ($diff['scope'] ?? null) === 'line' && !empty($diff['line_id'])
+            && in_array($diff['semantic_key'] ?? null, ['valid_days', 'remark'], true))->groupBy('line_id');
+        if ($changed->isEmpty()) return;
+        $rowsById = collect($rows)->keyBy(fn ($row) => (int) ($row['id'] ?? 0));
+        foreach ($changed as $lineId => $lineDiffs) {
+            $line = \App\Models\Erp\SalesOrderLine::query()->where('sales_order_id', $order->id)->find((int) $lineId);
+            $row = $rowsById->get((int) $lineId);
+            if (!$line || !$row) continue;
+            $updates = [];
+            if ($lineDiffs->contains('semantic_key', 'remark')) $updates['remark'] = $row['remark'] ?? null;
+            if ($lineDiffs->contains('semantic_key', 'valid_days')) {
+                $config = (array) $line->configuration_snapshot;
+                $value = trim((string) data_get($row, 'configuration_snapshot.valid_days', ''));
+                $config['valid_days'] = $value === '' ? null : $value;
+                $updates['configuration_snapshot'] = $config;
+            }
+            if ($updates) $line->update($updates);
+        }
+    }
+
+    /** 订单客户快照：保留页面专用键（客户备注等），换客户时按客户主档刷新编码和来源。 */
+    private function customerSnapshot(SalesOrder $order, array $address, bool $customerChanged): array
+    {
+        $snapshot = (array) $order->customer_snapshot;
+        if ($customerChanged && ($customer = SalesCustomer::query()->find($order->customer_id))) {
+            $snapshot = array_replace($snapshot, [
+                'customer_code' => $customer->customer_code,
+                'source_platform' => $customer->source_platform,
+            ]);
+        }
+        return array_replace($snapshot, [
+            'id' => $order->customer_id, 'name' => $order->customer_name,
+            'customer_kind' => $order->customer_kind, 'platform_buyer_id' => $order->platform_buyer_id,
+            'contact' => ['id' => $order->customer_contact_id, 'name' => $order->contact_name, 'phone' => $order->contact_phone],
+            'address' => $address,
+        ]);
+    }
+
+    private function snapshotValue(string $key, mixed $value): string
+    {
+        if ($key === 'is_self_pickup') return filter_var($value, FILTER_VALIDATE_BOOLEAN) ? '是' : '否';
+        return trim($this->scalar($value));
     }
     private function preserveAgreedDeposit(array $header, SalesOrder $order): array
     {
@@ -519,7 +782,8 @@ class SalesOrderEditImpactService
             $snapshot = (array) $header[$field];
             $current = (array) $order->getAttribute($field);
             unset($snapshot['agreed_deposit_amount']);
-            if (array_key_exists('agreed_deposit_amount', $current)) {
+            $policyType = $snapshot['policy_type'] ?? $current['policy_type'] ?? null;
+            if (array_key_exists('agreed_deposit_amount', $current) && SalesOrderFundingGateService::supportsAgreedDeposit($policyType)) {
                 $snapshot['agreed_deposit_amount'] = $current['agreed_deposit_amount'];
             }
             $header[$field] = $snapshot;
@@ -579,7 +843,7 @@ class SalesOrderEditImpactService
             in_array('FINANCIAL', $types, true) ? 'finance' : null,
             in_array('FULFILLMENT', $types, true) ? 'fulfillment' : null,
         ])));
-        $label = self::LABELS[$key] ?? $key;
+        $label = $scope === 'line' && $key === 'remark' ? '行备注' : (self::LABELS[$key] ?? $key);
         return ['scope' => $scope, 'line_id' => $lineId, 'semantic_key' => $key, 'label' => $lineLabel ? $lineLabel.' · '.$label : $label, 'before' => $before, 'after' => $after, 'impact_types' => $types, 'business_impact_text' => $this->impactText($types), 'approval_requirements' => $requirements];
     }
     private function impactText(array $types): string { return implode('、', array_map(fn ($t) => ['INFO'=>'无业务影响','COMMERCIAL'=>'商业信息影响','FINANCIAL'=>'财务结算影响','FULFILLMENT'=>'库存与交付影响','PRODUCTION'=>'生产需求影响'][$t], $types)); }
@@ -676,8 +940,33 @@ class SalesOrderEditImpactService
     private function headerValue(string $field, mixed $value): string
     {
         if ($field === 'trade_type' && ($value === null || $value === '')) return 'domestic';
-        if ($field === 'customer_kind' && ($value === null || $value === '')) return 'individual';
+        if ($field === 'customer_kind' && ($value === null || $value === '')) $value = 'individual';
+        if ($field === 'customer_kind') return $value === 'enterprise' ? '企业' : '个人';
+        if ($field === 'is_share') return filter_var($value, FILTER_VALIDATE_BOOLEAN) ? '是' : '否';
         if ($value === null || $value === '') return '';
+        if ($field === 'payment_method_id') {
+            return (string) (DB::table('erp_payment_methods')->where('id', (int) $value)->value('method_name') ?: $value);
+        }
+        if ($field === 'customer_id') {
+            $customer = DB::table('erp_sales_customers')->where('id', (int) $value)->first(['customer_name', 'customer_code']);
+            return $customer ? $customer->customer_name.'（'.$customer->customer_code.'）' : (string) $value;
+        }
+        if ($field === 'customer_contact_id') {
+            $contact = DB::table('erp_sales_customer_contacts')->where('id', (int) $value)->first(['contact_name', 'mobile', 'phone']);
+            return $contact ? trim($contact->contact_name.' '.($contact->mobile ?: $contact->phone)) : (string) $value;
+        }
+        if ($field === 'customer_address_id') {
+            return (string) (DB::table('erp_sales_customer_addresses')->where('id', (int) $value)->value('full_address') ?: $value);
+        }
+        if ($field === 'funding_policy_id') {
+            return (string) (DB::table('erp_sales_funding_policies')->where('id', (int) $value)->value('policy_name') ?: $value);
+        }
+        if ($field === 'share_user') {
+            $ids = array_values(array_filter(array_map('trim', is_array($value) ? array_map('strval', $value) : explode(',', (string) $value))));
+            sort($ids);
+            $names = DB::table('erp_sales_order_share_users')->whereIn('legacy_id', $ids)->pluck('nickname', 'legacy_id');
+            return implode('、', array_map(fn ($id) => (string) ($names[$id] ?? $id), $ids));
+        }
         if (in_array($field, ['freight_amount', 'carrier_fee'], true)) return $this->decimal($value);
         if (in_array($field, ['required_delivery_date', 'delay_date'], true)) {
             return $value instanceof \DateTimeInterface

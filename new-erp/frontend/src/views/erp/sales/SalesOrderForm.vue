@@ -486,10 +486,6 @@ Do not change layout without approval.
               <label>是否自提</label>
               <el-switch v-model="form.shipping_snapshot.is_self_pickup" />
             </div>
-            <div class="field">
-              <label>快递单号</label>
-              <el-input v-model="form.logistics_snapshot.express_no" size="small" placeholder="发货后填写" />
-            </div>
             <div class="field span-full">
               <label>客户物流备注</label>
               <el-input v-model="form.shipping_snapshot.customer_logistics_note" size="small" placeholder="客户指定承运方式、运输注意事项" />
@@ -505,24 +501,9 @@ Do not change layout without approval.
           </div>
         </section>
 
-        <section ref="提醒与共享" class="panel reminder-card">
-          <div class="panel-header"><h3>提醒与共享</h3></div>
+        <section ref="订单共享" class="panel reminder-card">
+          <div class="panel-header"><h3>订单共享</h3></div>
           <div class="field-grid compact">
-            <div class="field">
-              <label>到期提醒</label>
-              <el-switch v-model="remind.enabled" @change="handleRemindToggle" />
-            </div>
-            <div v-if="remind.enabled" class="field">
-              <label>提前天数</label>
-              <div class="input-addon">
-                <el-input-number v-model="remind.days" size="small" :min="0" :controls="false" />
-                <span class="addon">天</span>
-              </div>
-            </div>
-            <div v-if="remind.enabled" class="field span-full">
-              <label>提醒内容</label>
-              <el-input v-model="remind.content" type="textarea" :rows="2" maxlength="100" show-word-limit placeholder="提醒内容（选填）" />
-            </div>
             <div class="field">
               <label>共享订单</label>
               <el-switch v-model="form.is_share" @change="handleShareToggle" />
@@ -669,7 +650,6 @@ export default {
     expandedLineKeys: [],
     detailSections: [],
     fileCategory: '设计图纸',
-    remind: { enabled: false, days: 3, content: '' },
     customerRawText: '',
     shareDialogVisible: false,
     shareKeyword: '',
@@ -766,7 +746,8 @@ export default {
       return this.selectedLine ? (this.selectedLine.product_name || '请选择订单行') : '请选择订单行'
     },
     totalQty() {
-      return this.form.lines.reduce((sum, line) => sum + Number(line.order_qty || 0), 0)
+      // 扣减项、费用不是商品件数，不计入总数量
+      return this.form.lines.filter(line => !['deduction', 'fee'].includes(line.line_type)).reduce((sum, line) => sum + Number(line.order_qty || 0), 0)
     },
     totalAmount() {
       return this.form.lines.reduce((sum, line) => sum + this.lineAmount(line), 0)
@@ -1324,11 +1305,6 @@ export default {
         window.setTimeout(() => target.classList.remove('precheck-focus'), 8000)
       }
       this.$message.warning('请处理确认前检查中的首个阻塞项')
-    },
-    handleRemindToggle(value) {
-      if (!value) {
-        this.remind.content = ''
-      }
     },
     handleShareToggle(value) {
       if (!value) {

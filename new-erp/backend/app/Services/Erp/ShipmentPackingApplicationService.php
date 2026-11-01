@@ -775,10 +775,11 @@ class ShipmentPackingApplicationService
             $info = $brief->forSalesOrder((int) $shipment->sales_order_id, $lineId ? (int) $lineId : null);
         }
         if (! $info) return null;
+        // 发货单收货快照用 receiver_name / receiver_phone（取自订单收货地址快照）
         $receiver = (array) ($shipment->receiver_snapshot ?? []);
         return $info + ['shipment_no' => $shipment->shipment_no, 'carrier_name' => $shipment->carrier_name_snapshot,
             'shipment_remark' => trim((string) $shipment->remark) ?: null,
-            'receiver_text' => trim(implode(' ', array_filter([$receiver['name'] ?? $receiver['contact_name'] ?? null, $receiver['phone'] ?? $receiver['contact_phone'] ?? null,
+            'receiver_text' => trim(implode(' ', array_filter([$receiver['receiver_name'] ?? $receiver['name'] ?? $receiver['contact_name'] ?? null, $receiver['receiver_phone'] ?? $receiver['phone'] ?? $receiver['contact_phone'] ?? null,
                 $receiver['full_address'] ?? $receiver['address'] ?? null], fn ($v) => is_string($v) && trim($v) !== ''))) ?: null,
             'work_order_id' => $wo?->id, 'work_order_no' => $wo?->work_order_no];
     }

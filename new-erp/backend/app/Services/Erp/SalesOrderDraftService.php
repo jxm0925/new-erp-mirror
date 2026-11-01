@@ -78,6 +78,8 @@ class SalesOrderDraftService
             unset($header['reservation_token'], $header['creation_session_id']);
             $header = $this->normalize($header);
             unset($header['sales_order_no']);
+            // 草稿也可能已有预收核销，换客户同样要先由财务撤销核销。
+            app(SalesOrderEditImpactService::class)->assertCustomerChangeAllowed($order, $header['customer_id'] ?? null);
             $header = app(SalesCostVisibilityService::class)->preserveStoredCosts($header, $order->attributesToArray());
             $header['order_status'] = 'draft';
             $header['confirm_status'] = 'unconfirmed';

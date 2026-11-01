@@ -13,7 +13,7 @@
         </div>
       </div>
       <div class="head-actions">
-        <el-button size="small" icon="el-icon-refresh" class="btn-refresh" :loading="loading" @click="load">刷新</el-button>
+        <el-button size="small" icon="el-icon-refresh" class="btn-refresh" :loading="loading" @click="load(false)">刷新</el-button>
       </div>
     </header>
 
@@ -52,7 +52,7 @@
           </div>
         </div>
         <div class="filter-actions">
-          <el-button size="small" type="success" icon="el-icon-search" class="btn-theme-search" :disabled="loading" @click="load">查询</el-button>
+          <el-button size="small" type="success" icon="el-icon-search" class="btn-theme-search" :disabled="loading" @click="load(false)">查询</el-button>
         </div>
       </div>
     </section>

@@ -550,6 +550,8 @@ export default {
       this.query = blankQuery()
       const routeQuery = this.$route.query
       this.query.allocation_status = ['pending', 'settled'].includes(routeQuery.allocation_status) ? routeQuery.allocation_status : ''
+      // 从账户估值“查看”进入时按该账户筛选流水
+      if (positiveId(routeQuery.finance_account_id)) this.query.finance_account_id = positiveId(routeQuery.finance_account_id)
       this.partyFilter = {}
       if (['supplier', 'customer'].includes(routeQuery.party_type) && positiveId(routeQuery.party_id)) {
         this.partyFilter = { party_type: routeQuery.party_type, party_id: positiveId(routeQuery.party_id) }

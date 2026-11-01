@@ -683,7 +683,8 @@ export default {
       return (this.order.lines || []).length
     },
     totalOrderQty() {
-      const total = (this.order.lines || []).reduce((sum, line) => sum + Number(line.order_qty || 0), 0)
+      // 扣减项、费用不是商品件数，不计入总数量
+      const total = (this.order.lines || []).filter(line => !['deduction', 'fee'].includes(line.line_type)).reduce((sum, line) => sum + Number(line.order_qty || 0), 0)
       return this.numberText(total)
     },
     totalAttachmentsCount() {

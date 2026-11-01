@@ -376,10 +376,17 @@ class SalesOrderController extends Controller
         if (!empty($payload['sales_order_id'])) {
             $order = SalesOrder::with('lines')->findOrFail($payload['sales_order_id']);
             $this->abortUnlessOrderVisible($request, $order);
-            abort_if($order->order_status !== 'draft', 422, '只有草稿订单允许直接上传附件');
+            // 已确认订单允许补传附件（只新增、不替换不删除）；关闭或取消的订单不再接收附件。
+            abort_if(!in_array($order->order_status, ['draft', 'confirmed'], true), 422, '订单已关闭或取消，不能再上传附件');
+            abort_if($order->order_status !== 'draft' && !empty($payload['replaced_attachment_id']), 422, '已确认订单只能补传附件，不能替换原附件');
             if (!empty($payload['sales_order_line_id'])) {
                 abort_unless($order->lines->contains('id', (int) $payload['sales_order_line_id']), 422, '订单行不属于当前订单');
             }
+        }
+        if (!empty($payload['replaced_attachment_id'])) {
+            $replaced = SalesOrderAttachment::query()->findOrFail($payload['replaced_attachment_id']);
+            abort_if((int) $replaced->sales_order_id !== (int) ($payload['sales_order_id'] ?? 0)
+                || ($replaced->sales_order_id === null && $replaced->draft_token !== ($payload['draft_token'] ?? null)), 422, '被替换的附件不属于当前订单');
         }
 
         $file = $payload['file'];
@@ -390,6 +397,10 @@ class SalesOrderController extends Controller
             $payload,
             app(AuthContextService::class)->currentUser($request)
         );
+        if (isset($order) && $order->order_status !== 'draft') {
+            $this->log($order->id, $attachment->sales_order_line_id, 'attachment_added', $order->order_status, $order->order_status,
+                '已确认订单补传附件：'.$attachment->original_name.($attachment->uploaded_by ? '（上传人：'.$attachment->uploaded_by.'）' : ''), ['attachment_id' => $attachment->id, 'attachment_type' => $attachment->attachment_type]);
+        }
 
         return response()->json([
             'message' => '附件已上传',
@@ -1516,6 +1527,9 @@ class SalesOrderController extends Controller
         $superAdmin = $user && app(AuthContextService::class)->isSuperAdmin($user);
         $canView = in_array('sales_order.view_attachment', $codes, true) && (!$temporary || $owner || $superAdmin);
         $canDelete = in_array('sales_order.delete_attachment', $codes, true) && (!$temporary || $owner || $superAdmin);
+        // 删除只允许草稿订单；已确认订单补传的附件也不能删，避免页面显示删除按钮却被拒绝。
+        $orderId = $attachment->sales_order_id ?: optional($attachment->line)->sales_order_id;
+        if ($canDelete && $orderId) $canDelete = SalesOrder::query()->whereKey($orderId)->value('order_status') === 'draft';
 
         return [
             'id' => $attachment->id,
