@@ -44,12 +44,11 @@ final class TaskQueryService
         $canExecute = app(AuthContextService::class)->isSuperAdmin($actor) || in_array('production.task.execute', $permissions, true);
         $page = $this->taskQuery($me, $tab, $filters)->paginate(min(50, max(1, (int) ($filters['per_page'] ?? 10))));
         $page->getCollection()->transform(fn ($op) => $this->taskRow($op, $me, $canExecute));
-        $activeWorkOrders = $this->taskQuery($me, 'mine', [])->reorder()->select('op.work_order_id')
-            ->union($this->taskQuery($me, 'available', [])->reorder()->select('op.work_order_id'));
         return $page->toArray() + ['permissions' => ['execute' => $canExecute], 'counts' => [
             'mine' => $this->taskQuery($me, 'mine', [])->count(), 'available' => $this->taskQuery($me, 'available', [])->count(),
-            // 我的未完成任务与可接任务所属工单合并去重，沿用各任务查询的人员及状态范围。
-            'active_work_orders' => DB::query()->fromSub($activeWorkOrders, 'active_work_orders')->distinct()->count('work_order_id'),
+            // 工单数各自沿用任务范围并去重，避免把可接任务计入本人进行中的工单。
+            'active_work_orders' => $this->taskQuery($me, 'mine', [])->reorder()->distinct()->count('op.work_order_id'),
+            'available_work_orders' => $this->taskQuery($me, 'available', [])->reorder()->distinct()->count('op.work_order_id'),
         ]];
     }
 

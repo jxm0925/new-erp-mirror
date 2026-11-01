@@ -3,6 +3,7 @@ const view = require('../../../utils/warehouse-page.js');
 const production = require('../../../services/production.js');
 const warehouse = require('../../../services/warehouse.js');
 const packing = require('../../../services/packing.js');
+const auth = require('../../../services/erp-auth.js');
 
 function toNum(value, fallback = 0) {
   const num = Number(value);
@@ -17,15 +18,28 @@ function formatHours(value) {
 }
 
 function moduleState(result) {
+  if (result.status === 'fulfilled' && result.value === null) return { status: 'hidden', label: '', message: '' };
   if (result.status === 'fulfilled') return { status: 'ready', label: '', message: '' };
   const error = result.reason || {};
   if (error.statusCode === 403) return { status: 'forbidden', label: '无权查看', message: '当前账号没有查看权限' };
   return { status: 'error', label: '加载失败', message: view.errorText(error) };
 }
 
+function hubAccess() {
+  const can = view.permissions();
+  return {
+    workOrder: can('production.task.execute') || can('production.task.view'),
+    warehouse: ['inventory.post.view', 'sales_return.view', 'sales_order.shipment.view', 'purchase_return.view'].some(can),
+    shipment: can('sales_order.shipment.packing.execute') || can('sales_order.shipment.packing.quality'),
+    stats: can('production.board') || can('production.task.view'),
+    scan: can('production.serial.view')
+  };
+}
+
 Page({
   data: {
     hasToken: false,
+    access: { workOrder: false, warehouse: false, shipment: false, stats: false, scan: false },
     loading: false,
     moduleStates: {},
     loadErrors: [],
@@ -34,6 +48,7 @@ Page({
     userInitial: '生',
     statusSubtitle: '生产工单 · 仓储出入库 · 试水打包 · 实时看板',
     heroStats: {
+      availableOrders: '--',
       activeOrders: '--',
       warehouseTodoCount: '--',
       shipmentPendingCount: '--',
@@ -69,6 +84,7 @@ Page({
       inProgressUnits: '--',
       pendingReceiptUnits: '--',
       reworkUnits: '--',
+      availableOrders: '--',
       activeOrders: '--',
       todayHours: '--',
       warehouseTodoCount: '--',
@@ -83,9 +99,7 @@ Page({
 
   onLoad(options = {}) {
     this.options = options || {};
-    if (this.options.panel === 'stats') {
-      this.setData({ showStatsModal: true });
-    }
+    this._openStatsOnLoad = this.options.panel === 'stats';
   },
 
   onShow() {
@@ -96,25 +110,37 @@ Page({
   onUnload() {
     this._unloaded = true;
     this._requestId = (this._requestId || 0) + 1;
+    this._sessionRequestId = (this._sessionRequestId || 0) + 1;
   },
 
   onPullDownRefresh() {
     this.syncSessionAndLoad();
   },
 
-  syncSessionAndLoad() {
+  syncSessionAndLoad(refreshSession = true) {
     const token = wx.getStorageSync('erp_token');
     const erpUser = wx.getStorageSync('erp_user') || {};
     const hasToken = Boolean(token);
+    const permissionSnapshot = JSON.stringify(wx.getStorageSync('erp_permissions') || []);
     const displayName =
       erpUser.nickname || erpUser.display_name || erpUser.realname || erpUser.name || erpUser.username || '生产账号';
     const roleName = erpUser.role_name || erpUser.department_name || '生产与仓储';
     const initial = String(displayName).trim().slice(0, 1) || '生';
-    if (this._sessionToken !== token) {
+    if (this._sessionToken !== token || this._permissionSnapshot !== permissionSnapshot) {
+      if (this._sessionToken !== token || refreshSession) {
+        this._sessionRequestId = (this._sessionRequestId || 0) + 1;
+        this._sessionPromise = null;
+      }
       this._sessionToken = token;
+      this._permissionSnapshot = permissionSnapshot;
       this._requestId = (this._requestId || 0) + 1;
       this._loadPromise = null;
-      this.setData({ loading: false, serialScanResult: null });
+      this.setData({
+        loading: false,
+        access: hasToken ? hubAccess() : { workOrder: false, warehouse: false, shipment: false, stats: false, scan: false },
+        showStatsModal: false,
+        serialScanResult: null
+      });
       this.applyAggregatedData(null, null, null, null, {});
     }
 
@@ -124,13 +150,48 @@ Page({
       userRole: hasToken ? roleName : '未登录',
       userInitial: hasToken ? initial : '生'
     });
-
     if (!hasToken) {
       wx.stopPullDownRefresh();
       return;
     }
 
-    return this.loadHubData();
+    if (!refreshSession) {
+      if (this._openStatsOnLoad && this.data.access.stats) {
+        this._openStatsOnLoad = false;
+        this.setData({ showStatsModal: true });
+      }
+      return this.loadHubData();
+    }
+    if (this._sessionPromise) return this._sessionPromise;
+    const sessionRequestId = this._sessionRequestId = (this._sessionRequestId || 0) + 1;
+    this._requestId = (this._requestId || 0) + 1;
+    this._loadPromise = null;
+    this.setData({ loading: true, loadErrors: [] });
+    this._sessionPromise = auth.me({ silent: true })
+      .then(response => {
+        if (this._unloaded || sessionRequestId !== this._sessionRequestId) return;
+        if (wx.getStorageSync('erp_token') !== token) return this.syncSessionAndLoad();
+        wx.setStorageSync('erp_user', response.user || {});
+        wx.setStorageSync('erp_permissions', response.permissions || []);
+        // 权限可能已在后台调整；每次成功刷新都重新放行，让后续接口重新确认上次的403。
+        this.setData({ access: hubAccess() });
+        return this.syncSessionAndLoad(false);
+      })
+      .catch(error => {
+        if (this._unloaded || sessionRequestId !== this._sessionRequestId) return;
+        if (wx.getStorageSync('erp_token') !== token) return this.syncSessionAndLoad();
+        this.setData({
+          loading: false,
+          loadErrors: [{ key: 'session', name: '账号权限', message: view.errorText(error) }],
+          statusSubtitle: '账号权限未能更新，请重试'
+        });
+      })
+      .finally(() => {
+        if (this._unloaded || sessionRequestId !== this._sessionRequestId) return;
+        this._sessionPromise = null;
+        wx.stopPullDownRefresh();
+      });
+    return this._sessionPromise;
   },
 
   loadHubData() {
@@ -138,22 +199,28 @@ Page({
     if (!token || token !== this._sessionToken) return this.syncSessionAndLoad();
     if (this._loadPromise) return this._loadPromise;
     const requestId = this._requestId = (this._requestId || 0) + 1;
+    const permissionSnapshot = this._permissionSnapshot;
+    const access = this.data.access;
 
     this.setData({ loading: true });
     const loadingState = { status: 'loading', label: '同步中', message: '' };
+    const hiddenState = { status: 'hidden', label: '', message: '' };
     this.applyAggregatedData(null, null, null, null, {
-      workOrder: loadingState, warehouse: loadingState, shipment: loadingState, stats: loadingState
+      workOrder: access.workOrder ? loadingState : hiddenState,
+      warehouse: access.warehouse ? loadingState : hiddenState,
+      shipment: access.shipment ? loadingState : hiddenState,
+      stats: access.stats ? loadingState : hiddenState
     });
 
     this._loadPromise = Promise.allSettled([
-      production.tasks({ tab: 'mine', page: 1, per_page: 10 }),
-      warehouse.summary(),
-      packing.operations({ page: 1, per_page: 10, unfinished: 1, include_summary: 1 }),
-      production.board({})
+      access.workOrder ? production.tasks({ tab: 'mine', page: 1, per_page: 10 }) : null,
+      access.warehouse ? warehouse.summary() : null,
+      access.shipment ? packing.operations({ page: 1, per_page: 10, unfinished: 1, include_summary: 1 }) : null,
+      access.stats ? production.board({}) : null
     ])
       .then(([tasksRes, warehouseRes, packingRes, boardRes]) => {
         if (this._unloaded || requestId !== this._requestId) return;
-        if (wx.getStorageSync('erp_token') !== token) {
+        if (wx.getStorageSync('erp_token') !== token || JSON.stringify(wx.getStorageSync('erp_permissions') || []) !== permissionSnapshot) {
           this.syncSessionAndLoad();
           return;
         }
@@ -177,17 +244,21 @@ Page({
   },
 
   applyAggregatedData(taskRaw, warehouseRaw, packingRaw, boardRaw, moduleStates) {
-    const taskReady = Boolean(taskRaw);
-    const warehouseReady = Boolean(warehouseRaw);
-    const packingReady = Boolean(packingRaw);
-    const boardReady = Boolean(boardRaw);
+    const access = Object.assign({}, this.data.access);
+    Object.keys(moduleStates).forEach(key => {
+      if (moduleStates[key].status === 'forbidden') access[key] = false;
+    });
+    const taskReady = access.workOrder && Boolean(taskRaw);
+    const warehouseReady = access.warehouse && Boolean(warehouseRaw);
+    const packingReady = access.shipment && Boolean(packingRaw);
+    const boardReady = access.stats && Boolean(boardRaw);
     const labels = { workOrder: '工单', warehouse: '仓库', shipment: '发货', stats: '统计' };
-    const loadErrors = Object.keys(moduleStates).filter(key => ['error', 'forbidden'].includes(moduleStates[key].status))
+    const loadErrors = Object.keys(moduleStates).filter(key => moduleStates[key].status === 'error')
       .map(key => ({ key, name: labels[key], message: moduleStates[key].message }));
-    taskRaw = taskRaw || {};
-    warehouseRaw = warehouseRaw || {};
-    packingRaw = packingRaw || {};
-    boardRaw = boardRaw || {};
+    taskRaw = taskReady ? taskRaw : {};
+    warehouseRaw = warehouseReady ? warehouseRaw : {};
+    packingRaw = packingReady ? packingRaw : {};
+    boardRaw = boardReady ? boardRaw : {};
     // 1. 工单任务数据（TaskQueryService::tasks）
     const taskPaged = view.rows(taskRaw);
     const taskItems = Array.isArray(taskPaged.rows) ? taskPaged.rows : [];
@@ -221,6 +292,7 @@ Page({
     const inProgressUnits = toNum(boardStats.in_progress_units, 0);
     const pendingReceiptUnits = toNum(boardStats.waiting_receipt, 0);
     const reworkUnits = toNum(boardStats.rework_units, 0);
+    const availableOrders = toNum(taskCounts.available_work_orders);
     const activeOrders = toNum(taskCounts.active_work_orders);
     const displayHours = formatHours(boardStats.today_hours);
     const recentReports = Array.isArray(boardBody.recent_reports) ? boardBody.recent_reports.slice(0, 5) : [];
@@ -282,8 +354,10 @@ Page({
     });
 
     this.setData({
+      access,
       moduleStates,
       loadErrors,
+      showStatsModal: this.data.showStatsModal && access.stats,
       statusSubtitle:
         loadErrors.length > 0
           ? '部分数据未能加载，请查看提示后重试'
@@ -295,6 +369,7 @@ Page({
           ? `今日合格 ${completedUnitsToday} 台 · 待办出入库 ${whTodoCount} 单`
           : '生产工单 · 仓储出入库 · 试水打包 · 实时看板',
       heroStats: {
+        availableOrders: taskReady ? availableOrders : '--',
         activeOrders: taskReady ? activeOrders : '--',
         warehouseTodoCount: warehouseReady ? whTodoCount : '--',
         shipmentPendingCount: packingReady ? shipmentPendingCount : '--',
@@ -334,6 +409,7 @@ Page({
         inProgressUnits: boardReady ? inProgressUnits : '--',
         pendingReceiptUnits: boardReady ? pendingReceiptUnits : '--',
         reworkUnits: boardReady ? reworkUnits : '--',
+        availableOrders: taskReady ? availableOrders : '--',
         activeOrders: taskReady ? activeOrders : '--',
         todayHours: boardReady ? displayHours : '--',
         warehouseTodoCount: warehouseReady ? whTodoCount : '--',
@@ -348,13 +424,18 @@ Page({
 
   ensureLogin() {
     const token = wx.getStorageSync('erp_token');
-    if (this.data.hasToken && token && token === this._sessionToken) {
+    const permissionSnapshot = JSON.stringify(wx.getStorageSync('erp_permissions') || []);
+    if (this.data.hasToken && token && token === this._sessionToken && permissionSnapshot === this._permissionSnapshot) {
       return true;
     }
     this.syncSessionAndLoad();
     if (token) return false;
     util.BadgePopup('production');
     return false;
+  },
+
+  ensureAccess(moduleKey) {
+    return this.ensureLogin() && this.data.access[moduleKey] === true;
   },
 
   openLogin() {
@@ -369,13 +450,13 @@ Page({
 
   refreshAll() {
     if (!this.ensureLogin()) return;
-    return this.loadHubData();
+    return this.syncSessionAndLoad();
   },
 
   openModule(e) {
     if (!this.ensureLogin()) return;
     const moduleKey = e.currentTarget.dataset.module;
-    this.navigateByModuleKey(moduleKey);
+    this.navigateByModuleKey(moduleKey, e.currentTarget.dataset.tab);
   },
 
   openModuleFromSheet(e) {
@@ -385,12 +466,13 @@ Page({
       showStatsModal: false,
       serialScanResult: null
     });
-    this.navigateByModuleKey(moduleKey);
+    this.navigateByModuleKey(moduleKey, e.currentTarget.dataset.tab);
   },
 
-  navigateByModuleKey(moduleKey) {
+  navigateByModuleKey(moduleKey, tab) {
+    if (!this.ensureAccess(moduleKey)) return;
     if (moduleKey === 'workOrder') {
-      wx.navigateTo({ url: '/pages/production/tasks/index' });
+      wx.navigateTo({ url: `/pages/production/tasks/index?tab=${tab === 'available' ? 'available' : 'mine'}` });
       return;
     }
     if (moduleKey === 'warehouse') {
@@ -411,9 +493,8 @@ Page({
   },
 
   openWorkItem(e) {
-    if (!this.ensureLogin()) return;
     const item = e.currentTarget.dataset.item;
-    if (!item) return;
+    if (!item || !this.ensureAccess(item.type === 'task' ? 'workOrder' : item.type)) return;
 
     if (item.type === 'task' && item.targetId) {
       wx.navigateTo({
@@ -440,21 +521,25 @@ Page({
   },
 
   scanCode() {
-    if (!this.ensureLogin()) return;
+    if (!this.ensureAccess('scan')) return;
     const token = this._sessionToken;
+    const permissionSnapshot = this._permissionSnapshot;
     wx.scanCode({
       onlyFromCamera: false,
       success: res => {
+        if (this._unloaded || token !== this._sessionToken || permissionSnapshot !== this._permissionSnapshot || !this.ensureAccess('scan')) return;
         const raw = String((res && res.result) || '').trim();
         if (!raw) return;
 
         production
           .serialLookup({ serial_no: raw })
           .then(lookupRes => {
-            if (this._unloaded || wx.getStorageSync('erp_token') !== token) {
+            if (this._unloaded || token !== this._sessionToken || permissionSnapshot !== this._permissionSnapshot) return;
+            if (wx.getStorageSync('erp_token') !== token || JSON.stringify(wx.getStorageSync('erp_permissions') || []) !== permissionSnapshot) {
               if (!this._unloaded) this.syncSessionAndLoad();
               return;
             }
+            if (!this.data.access.scan) return;
             const detail = (lookupRes && lookupRes.data) || lookupRes || null;
             if (detail && detail.serial_no) {
               const wo = detail.work_order || {};
@@ -471,23 +556,23 @@ Page({
               });
               return;
             }
-            wx.navigateTo({
-              url: `/pages/production/tasks/index?keyword=${encodeURIComponent(raw)}`
-            });
+            this.openScannedTasks(raw);
           })
           .catch(error => {
-            if (this._unloaded) return;
-            if (wx.getStorageSync('erp_token') !== token) {
+            if (this._unloaded || token !== this._sessionToken || permissionSnapshot !== this._permissionSnapshot) return;
+            if (wx.getStorageSync('erp_token') !== token || JSON.stringify(wx.getStorageSync('erp_permissions') || []) !== permissionSnapshot) {
               this.syncSessionAndLoad();
+              return;
+            }
+            if (error.statusCode === 403) {
+              this.setData({ 'access.scan': false, serialScanResult: null });
               return;
             }
             if (error.statusCode !== 404) {
               wx.showToast({ title: view.errorText(error), icon: 'none' });
               return;
             }
-            wx.navigateTo({
-              url: `/pages/production/tasks/index?keyword=${encodeURIComponent(raw)}`
-            });
+            this.openScannedTasks(raw);
           });
       }
     });
@@ -497,8 +582,16 @@ Page({
     this.setData({ serialScanResult: null });
   },
 
+  openScannedTasks(keyword) {
+    if (!this.ensureAccess('workOrder')) {
+      wx.showToast({ title: '未找到对应设备', icon: 'none' });
+      return;
+    }
+    wx.navigateTo({ url: `/pages/production/tasks/index?keyword=${encodeURIComponent(keyword)}` });
+  },
+
   openScannedTask(e) {
-    if (!this.ensureLogin()) return;
+    if (!this.ensureAccess('scan') || !this.ensureAccess('workOrder')) return;
     const id = e.currentTarget.dataset.id;
     this.setData({ serialScanResult: null });
     if (id) {

@@ -16,26 +16,30 @@
         </view>
       </view>
 
-      <view class="scan-btn" bindtap="scanCode">
+      <view wx:if="{{access.scan}}" class="scan-btn" bindtap="scanCode">
         <van-icon name="scan" size="30rpx" color="#ffffff" />
         <text>扫码作业</text>
       </view>
     </view>
 
-    <view class="hero-metrics">
-      <view class="metric-item" data-module="workOrder" bindtap="openModule">
+    <view wx:if="{{access.workOrder || access.warehouse || access.shipment || access.stats}}" class="hero-metrics">
+      <view wx:if="{{access.workOrder}}" class="metric-item" data-module="workOrder" data-tab="available" bindtap="openModule">
+        <text class="metric-value">{{heroStats.availableOrders}}</text>
+        <text class="metric-label">可接工单</text>
+      </view>
+      <view wx:if="{{access.workOrder}}" class="metric-item" data-module="workOrder" data-tab="mine" bindtap="openModule">
         <text class="metric-value">{{heroStats.activeOrders}}</text>
         <text class="metric-label">进行中工单</text>
       </view>
-      <view class="metric-item" data-module="warehouse" bindtap="openModule">
+      <view wx:if="{{access.warehouse}}" class="metric-item" data-module="warehouse" bindtap="openModule">
         <text class="metric-value">{{heroStats.warehouseTodoCount}}</text>
         <text class="metric-label">待办出入库</text>
       </view>
-      <view class="metric-item" data-module="shipment" bindtap="openModule">
+      <view wx:if="{{access.shipment}}" class="metric-item" data-module="shipment" bindtap="openModule">
         <text class="metric-value">{{heroStats.shipmentPendingCount}}</text>
         <text class="metric-label">待办发货作业</text>
       </view>
-      <view class="metric-item" data-module="stats" bindtap="openModule">
+      <view wx:if="{{access.stats}}" class="metric-item" data-module="stats" bindtap="openModule">
         <text class="metric-value">{{heroStats.todayHours}}</text>
         <text class="metric-label">今日报工工时</text>
       </view>
@@ -45,17 +49,17 @@
   <!-- 主体内容区 -->
   <view class="hub-body">
     <!-- 四大核心板块 -->
-    <view class="section-head">
+    <view wx:if="{{access.workOrder || access.warehouse || access.shipment || access.stats}}" class="section-head">
       <view class="section-title-group">
         <view class="section-dot"></view>
-        <text class="section-title">四大业务中心</text>
+        <text class="section-title">业务中心</text>
       </view>
-      <text class="section-sub">工单 · 仓库 · 发货 · 统计</text>
+      <text class="section-sub">{{access.workOrder ? '工单 ' : ''}}{{access.warehouse ? '仓库 ' : ''}}{{access.shipment ? '发货 ' : ''}}{{access.stats ? '统计' : ''}}</text>
     </view>
 
-    <view class="module-grid">
+    <view wx:if="{{access.workOrder || access.warehouse || access.shipment || access.stats}}" class="module-grid">
       <!-- 1. 工单 -->
-      <view class="module-card module-card-red" data-module="workOrder" bindtap="openModule">
+      <view wx:if="{{access.workOrder}}" class="module-card module-card-red" data-module="workOrder" bindtap="openModule">
         <view class="module-top">
           <view class="module-icon-wrap icon-wrap-red">
             <van-icon name="notes-o" size="42rpx" color="#d81e06" />
@@ -79,7 +83,7 @@
       </view>
 
       <!-- 2. 仓库 -->
-      <view class="module-card module-card-orange" data-module="warehouse" bindtap="openModule">
+      <view wx:if="{{access.warehouse}}" class="module-card module-card-orange" data-module="warehouse" bindtap="openModule">
         <view class="module-top">
           <view class="module-icon-wrap icon-wrap-orange">
             <van-icon name="logistics" size="42rpx" color="#ea580c" />
@@ -103,7 +107,7 @@
       </view>
 
       <!-- 3. 发货 -->
-      <view class="module-card module-card-blue" data-module="shipment" bindtap="openModule">
+      <view wx:if="{{access.shipment}}" class="module-card module-card-blue" data-module="shipment" bindtap="openModule">
         <view class="module-top">
           <view class="module-icon-wrap icon-wrap-blue">
             <van-icon name="send-gift-o" size="42rpx" color="#0284c7" />
@@ -127,7 +131,7 @@
       </view>
 
       <!-- 4. 统计 -->
-      <view class="module-card module-card-amber" data-module="stats" bindtap="openModule">
+      <view wx:if="{{access.stats}}" class="module-card module-card-amber" data-module="stats" bindtap="openModule">
         <view class="module-top">
           <view class="module-icon-wrap icon-wrap-amber">
             <van-icon name="bar-chart-o" size="42rpx" color="#d97706" />
@@ -152,7 +156,7 @@
     </view>
 
     <!-- 我的当前作业（直达待办） -->
-    <view class="section-head section-head-recent">
+    <view wx:if="{{access.workOrder || access.warehouse || access.shipment}}" class="section-head section-head-recent">
       <view class="section-title-group">
         <view class="section-dot"></view>
         <text class="section-title">我的当前作业</text>
@@ -198,17 +202,17 @@
 
     <!-- 已登录但暂无待办 -->
     <view wx:elif="{{!loadErrors.length}}" class="empty-card">
-      <text class="empty-title">当前暂无紧急待办作业</text>
-      <text class="empty-desc">您可以点击上方【工单】【仓库】【发货】【统计】进入对应板块查看全部记录</text>
-      <view class="empty-actions">
-        <view class="ghost-red-btn" data-module="workOrder" bindtap="openModule">进入工单列表</view>
-        <view class="ghost-red-btn" data-module="warehouse" bindtap="openModule">进入仓库工作台</view>
+      <text class="empty-title">{{access.workOrder || access.warehouse || access.shipment || access.stats || access.scan ? '当前暂无紧急待办作业' : '当前账号暂无可用业务'}}</text>
+      <text class="empty-desc">{{access.workOrder || access.warehouse || access.shipment || access.stats ? '您可以点击上方已开放的业务板块查看全部记录' : (access.scan ? '点击上方【扫码作业】查看设备信息' : '请联系管理员开通所需业务权限')}}</text>
+      <view wx:if="{{access.workOrder || access.warehouse}}" class="empty-actions">
+        <view wx:if="{{access.workOrder}}" class="ghost-red-btn" data-module="workOrder" bindtap="openModule">进入工单列表</view>
+        <view wx:if="{{access.warehouse}}" class="ghost-red-btn" data-module="warehouse" bindtap="openModule">进入仓库工作台</view>
       </view>
     </view>
   </view>
 
   <!-- 统计看板弹窗面板 -->
-  <view wx:if="{{showStatsModal}}" class="modal-mask" bindtap="closeStatsModal">
+  <view wx:if="{{showStatsModal && access.stats}}" class="modal-mask" bindtap="closeStatsModal">
     <view class="stats-sheet" catchtap="noop">
       <view class="sheet-header">
         <view>
@@ -231,7 +235,7 @@
           <button class="ghost-red-btn" bindtap="refreshAll">重新加载</button>
         </view>
         <!-- 生产与工时指标 -->
-        <view class="sheet-block">
+        <view wx:if="{{access.stats}}" class="sheet-block">
           <view class="sheet-block-head">
             <text class="sheet-block-title">生产与工时概览</text>
             <text class="sheet-block-tag">实时同步</text>
@@ -253,7 +257,11 @@
               <text class="stats-kpi-val">{{statsDetail.todayHours}}</text>
               <text class="stats-kpi-lbl">今日报工工时</text>
             </view>
-            <view class="stats-kpi-box">
+            <view wx:if="{{access.workOrder}}" class="stats-kpi-box" data-module="workOrder" data-tab="available" bindtap="openModuleFromSheet">
+              <text class="stats-kpi-val">{{statsDetail.availableOrders}}</text>
+              <text class="stats-kpi-lbl">可接工单</text>
+            </view>
+            <view wx:if="{{access.workOrder}}" class="stats-kpi-box" data-module="workOrder" data-tab="mine" bindtap="openModuleFromSheet">
               <text class="stats-kpi-val">{{statsDetail.activeOrders}}</text>
               <text class="stats-kpi-lbl">进行中工单</text>
             </view>
@@ -265,25 +273,25 @@
         </view>
 
         <!-- 仓储与发货指标 -->
-        <view class="sheet-block">
+        <view wx:if="{{access.warehouse || access.shipment}}" class="sheet-block">
           <view class="sheet-block-head">
             <text class="sheet-block-title">仓储与发货执行</text>
             <text class="sheet-block-tag">今日动态</text>
           </view>
           <view class="stats-kpi-grid stats-kpi-grid-4">
-            <view class="stats-kpi-box">
+            <view wx:if="{{access.warehouse}}" class="stats-kpi-box">
               <text class="stats-kpi-val">{{statsDetail.warehouseTodoCount}}</text>
               <text class="stats-kpi-lbl">待办出入库</text>
             </view>
-            <view class="stats-kpi-box">
+            <view wx:if="{{access.warehouse}}" class="stats-kpi-box">
               <text class="stats-kpi-val">{{statsDetail.inboundToday}}</text>
               <text class="stats-kpi-lbl">今日入库单</text>
             </view>
-            <view class="stats-kpi-box">
+            <view wx:if="{{access.warehouse}}" class="stats-kpi-box">
               <text class="stats-kpi-val">{{statsDetail.outboundToday}}</text>
               <text class="stats-kpi-lbl">今日出库单</text>
             </view>
-            <view class="stats-kpi-box">
+            <view wx:if="{{access.shipment}}" class="stats-kpi-box">
               <text class="stats-kpi-val">{{statsDetail.shipmentPendingCount}}</text>
               <text class="stats-kpi-lbl">待办发货作业</text>
             </view>
@@ -291,10 +299,10 @@
         </view>
 
         <!-- 最近报工动态 -->
-        <view wx:if="{{statsDetail.recentReports.length}}" class="sheet-block">
+        <view wx:if="{{access.stats && statsDetail.recentReports.length}}" class="sheet-block">
           <view class="sheet-block-head">
             <text class="sheet-block-title">最新工序报工记录</text>
-            <text class="sheet-block-link" data-module="workOrder" bindtap="openModuleFromSheet">查看全部工单 ›</text>
+            <text wx:if="{{access.workOrder}}" class="sheet-block-link" data-module="workOrder" bindtap="openModuleFromSheet">查看全部工单 ›</text>
           </view>
           <view class="sheet-list">
             <view wx:for="{{statsDetail.recentReports}}" wx:key="id" class="sheet-list-row">
@@ -308,10 +316,10 @@
         </view>
 
         <!-- 最近成品入库动态 -->
-        <view wx:if="{{statsDetail.recentReceipts.length}}" class="sheet-block">
+        <view wx:if="{{access.stats && statsDetail.recentReceipts.length}}" class="sheet-block">
           <view class="sheet-block-head">
             <text class="sheet-block-title">最新完工入库记录</text>
-            <text class="sheet-block-link" data-module="warehouse" bindtap="openModuleFromSheet">进入仓库 ›</text>
+            <text wx:if="{{access.warehouse}}" class="sheet-block-link" data-module="warehouse" bindtap="openModuleFromSheet">进入仓库 ›</text>
           </view>
           <view class="sheet-list">
             <view wx:for="{{statsDetail.recentReceipts}}" wx:key="id" class="sheet-list-row">
@@ -325,16 +333,16 @@
         </view>
       </scroll-view>
 
-      <view class="sheet-footer">
-        <view class="sheet-action-btn sheet-btn-outline" data-module="workOrder" bindtap="openModuleFromSheet">工单作业</view>
-        <view class="sheet-action-btn sheet-btn-outline" data-module="warehouse" bindtap="openModuleFromSheet">仓库工作台</view>
-        <view class="sheet-action-btn sheet-btn-primary" data-module="shipment" bindtap="openModuleFromSheet">发货试水打包</view>
+      <view wx:if="{{access.workOrder || access.warehouse || access.shipment}}" class="sheet-footer">
+        <view wx:if="{{access.workOrder}}" class="sheet-action-btn sheet-btn-outline" data-module="workOrder" bindtap="openModuleFromSheet">工单作业</view>
+        <view wx:if="{{access.warehouse}}" class="sheet-action-btn sheet-btn-outline" data-module="warehouse" bindtap="openModuleFromSheet">仓库工作台</view>
+        <view wx:if="{{access.shipment}}" class="sheet-action-btn sheet-btn-primary" data-module="shipment" bindtap="openModuleFromSheet">发货试水打包</view>
       </view>
     </view>
   </view>
 
   <!-- 扫码结果弹窗 -->
-  <view wx:if="{{serialScanResult}}" class="modal-mask" bindtap="closeScanModal">
+  <view wx:if="{{serialScanResult && access.scan}}" class="modal-mask" bindtap="closeScanModal">
     <view class="scan-sheet" catchtap="noop">
       <view class="sheet-header">
         <view>
@@ -364,13 +372,13 @@
       <view class="sheet-footer">
         <view class="sheet-action-btn sheet-btn-outline" bindtap="closeScanModal">关闭</view>
         <view
-          wx:if="{{serialScanResult.current_task_id}}"
+          wx:if="{{serialScanResult.current_task_id && access.workOrder}}"
           class="sheet-action-btn sheet-btn-primary"
           data-id="{{serialScanResult.current_task_id}}"
           bindtap="openScannedTask"
         >进入当前工序</view>
         <view
-          wx:else
+          wx:elif="{{!serialScanResult.current_task_id && access.shipment}}"
           class="sheet-action-btn sheet-btn-primary"
           data-module="shipment"
           bindtap="openModuleFromSheet"
