@@ -5,9 +5,12 @@ namespace App\Http\Controllers\Api\V1\Erp;
 use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Http\Controllers\Controller;
 use App\Services\Erp\AuthContextService;
+use App\Services\Erp\Manufacturing\MaterialReturnService;
 use App\Services\Erp\Manufacturing\ReceiptService;
 use App\Services\Erp\Manufacturing\TaskQueryService;
 use App\Services\Erp\Manufacturing\TaskService;
+use App\Services\Erp\Manufacturing\WorkOrderService;
+use App\Models\Erp\MfgWorkOrderOperation;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -26,25 +29,52 @@ class MfgTaskController extends Controller
     public function show(Request $request, int $id, TaskQueryService $query)
     {
         [$user, $codes] = $this->user($request, ['production.task.execute', 'production.task.view']);
-        return response()->json(['data' => $query->task($id, $user, $codes)]);
+        $lane = $request->validate(['lane' => 'nullable|in:normal,rework'])['lane'] ?? null;
+        return response()->json(['data' => $query->task($id, $user, $codes, $lane)]);
     }
 
     public function action(Request $request, int $id, TaskService $tasks, TaskQueryService $query)
     {
-        $action = $request->validate(['action' => 'required|in:claim,start,pause,stop,pass,prepare,reject,collaborators,assign'])['action'];
+        $input = $request->validate(['action' => 'required|in:claim,start,pause,stop,pass,prepare,reject,collaborators,assign,semi_order',
+            'lane' => 'nullable|in:normal,rework']);
+        $action = $input['action'];
+        $lane = TaskService::lane($input['lane'] ?? null);
         [$user, $codes] = $this->user($request, [in_array($action, ['assign', 'stop'], true) ? 'production.task.assign' : 'production.task.execute']);
         $message = match ($action) {
-            'claim' => $this->run(fn () => $tasks->claim($id, $user), '接单成功。'),
-            'start' => $this->run(fn () => $tasks->start($id, $user), '开始计时。'),
+            'claim' => $this->run(fn () => $tasks->claim($id, $user, $lane), $lane === 'rework' ? '已接下返工。' : '接单成功。'),
+            'start' => $this->run(fn () => $tasks->start($id, $user, $lane), $lane === 'rework' ? '返工开始计时（返工工时单独记，不算提成）。' : '开始计时。'),
             'pause' => $this->run(fn () => $tasks->pause($id, $user), '已暂停计时。'),
             'stop' => $this->run(fn () => $tasks->stopTiming($id, (int) $request->validate(['employee_legacy_id' => 'required|integer|min:1'])['employee_legacy_id'], $user), '已停止这个人的计时。'),
-            'assign' => $this->run(fn () => $tasks->assign($id, (int) $request->validate(['employee_legacy_id' => 'required|integer|min:1'])['employee_legacy_id'], $user), '已派工。'),
-            'collaborators' => $this->collaborators($request, $id, $tasks, $user),
-            'pass' => $this->pass($request, $id, $tasks, $user),
+            'assign' => $this->run(fn () => $tasks->assign($id, (int) $request->validate(['employee_legacy_id' => 'required|integer|min:1'])['employee_legacy_id'], $user, $lane), '已派工。'),
+            'collaborators' => $this->collaborators($request, $id, $tasks, $user, $lane),
+            'pass' => $this->pass($request, $id, $tasks, $user, $lane),
             'prepare' => $this->prepare($request, $id, $tasks, $user),
-            'reject' => $this->reject($request, $id, $tasks, $user),
+            'reject' => $this->reject($request, $id, $tasks, $user, $lane),
+            'semi_order' => $this->semiOrder($request, $id, $user),
         };
-        return response()->json(['message' => $message, 'data' => $query->task($id, $user, $codes)]);
+        return response()->json(['message' => $message, 'data' => $query->task($id, $user, $codes, $lane)]);
+    }
+
+    /** 待我审核（小程序）：报废申请、不良处置。工单生产负责人审自己工单的，有报废确认权限的都能审。 */
+    public function reviews(Request $request, TaskQueryService $query)
+    {
+        [$user, $codes] = $this->user($request, ['production.task.execute', 'production.scrap.approve']);
+        return response()->json(['data' => $query->reviews($user, $this->canApprove($user, $codes))]);
+    }
+
+    /** 审核员工提交的不良处置（返工 / 报废 / 判定可用）。 */
+    public function reviewPlan(Request $request, int $id, MaterialReturnService $returns)
+    {
+        [$user, $codes] = $this->user($request, ['production.task.execute', 'production.scrap.approve']);
+        $data = $request->validate(['approve' => 'required|boolean', 'remark' => 'nullable|string|max:500']);
+        $return = $returns->reviewPlan($id, (bool) $data['approve'], $data['remark'] ?? null, $user, $this->canApprove($user, $codes));
+        $plan = $return->disposition_plan ?: [];
+        $text = ! $data['approve'] ? '已驳回，料还在原工序。' : match ($plan['action'] ?? '') {
+            'rework' => '已通过，返工工单 '.($plan['rework_work_order_no'] ?? '').' 已开，从'.($plan['start_operation_name'] ?? '').'开始返工。',
+            'scrap' => '已通过，不良件已报废。',
+            default => '已通过，不良件判定可用、回到仓库可用库存。',
+        };
+        return response()->json(['message' => $text]);
     }
 
     public function people(Request $request, int $id, TaskQueryService $query)
@@ -75,10 +105,10 @@ class MfgTaskController extends Controller
 
     public function reviewScrap(Request $request, int $id, TaskService $tasks)
     {
-        [$user] = $this->user($request, ['production.scrap.approve']);
+        [$user, $codes] = $this->user($request, ['production.scrap.approve', 'production.task.execute']);
         $data = $request->validate(['approve' => 'required|boolean', 'remark' => 'nullable|string|max:500']);
-        $tasks->reviewScrap($id, (bool) $data['approve'], $data['remark'] ?? null, $user);
-        return response()->json(['message' => $data['approve'] ? '已确认报废。' : '已驳回，这台设备继续返工。']);
+        $tasks->reviewScrap($id, (bool) $data['approve'], $data['remark'] ?? null, $user, $this->canApprove($user, $codes));
+        return response()->json(['message' => $data['approve'] ? '已确认报废。' : '已驳回，继续返工。']);
     }
 
     public function receive(Request $request, int $id, ReceiptService $receipts)
@@ -111,20 +141,22 @@ class MfgTaskController extends Controller
             : rtrim($request->getSchemeAndHttpHost(), '/').'/'.ltrim($url, '/');
     }
 
-    private function collaborators(Request $request, int $id, TaskService $tasks, object $user): string
+    private function collaborators(Request $request, int $id, TaskService $tasks, object $user, string $lane): string
     {
         $data = $request->validate(['collaborators' => 'present|array|max:20', 'collaborators.*.employee_legacy_id' => 'required|integer|min:1',
             'collaborators.*.share_percent' => 'nullable|numeric|min:0|max:100', 'owner_share_percent' => 'nullable|numeric|min:0|max:100']);
-        $tasks->collaborators($id, $data['collaborators'], isset($data['owner_share_percent']) ? (float) $data['owner_share_percent'] : null, $user);
+        $tasks->collaborators($id, $data['collaborators'], isset($data['owner_share_percent']) ? (float) $data['owner_share_percent'] : null, $user, $lane);
         return '协同人已保存。';
     }
 
-    private function pass(Request $request, int $id, TaskService $tasks, object $user): string
+    private function pass(Request $request, int $id, TaskService $tasks, object $user, string $lane): string
     {
         $data = $request->validate(['unit_ids' => 'required|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1']);
-        $result = $tasks->pass($id, $data['unit_ids'], $user);
-        $paused = ! empty($result['timing_paused']) ? '本道暂时没有可做的设备，计时已自动暂停。' : '';
-        if ($result['next_operation_name']) return $result['passed'].' '.$this->unitWord($id).'合格，已交'.$result['next_operation_name'].'。'.$paused;
+        $result = $tasks->pass($id, $data['unit_ids'], $user, $lane);
+        $word = $this->unitWord($id);
+        $paused = ! empty($result['timing_paused']) ? '本道暂时没有可做的'.($lane === 'rework' ? '返工' : '').'，计时已自动暂停。' : '';
+        if ($result['next_operation_name']) return $result['passed'].' '.$word.($lane === 'rework' ? '返工' : '').'合格，已交'.$result['next_operation_name'].'。'.$paused;
+        if (($result['returned'] ?? 0) > 0) return $result['returned'].' '.$word.'返工合格，已解冻回仓库可用库存，总装那边重新收料就能用。'.$paused;
         if (($result['repaired'] ?? 0) > 0 && $result['repaired'] === $result['passed']) return $result['passed'].' 台设备返修合格，请仓库在发货单上把设备返回成品位后重新试水。'.$paused;
         return $result['passed'].' '.$this->unitWord($id).'合格，生产完成，'.($result['staged_qty'] ? '已自动记入成品待发区（'.$result['staged_receipt_no'].'），等发货试水。' : '等入库。').$paused;
     }
@@ -139,14 +171,32 @@ class MfgTaskController extends Controller
         return $result['passed'].' '.$this->unitWord($id).'已备料，生产完成，'.($result['staged_qty'] ? '已自动记入成品待发区（'.$result['staged_receipt_no'].'）。' : '等入库。');
     }
 
-    private function reject(Request $request, int $id, TaskService $tasks, object $user): string
+    private function reject(Request $request, int $id, TaskService $tasks, object $user, string $lane): string
     {
         $data = $request->validate(['unit_ids' => 'required|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1', 'mode' => 'required|in:return,scrap',
             'return_operation_id' => 'required_if:mode,return|nullable|integer|min:1', 'reason_tags' => 'nullable|array|max:10', 'reason_tags.*' => 'string|max:30',
             'reason' => 'nullable|string|max:500', 'photos' => 'nullable|array|max:9', 'photos.*' => 'string|max:1000']);
-        $result = $tasks->reject($id, $data['unit_ids'], $data, $user);
-        $paused = ! empty($result['timing_paused']) ? '本道暂时没有可做的设备，计时已自动暂停。' : '';
-        return ($result['mode'] === 'scrap' ? $result['count'].' '.$this->unitWord($id).'已申请报废，等主管确认。' : $result['count'].' '.$this->unitWord($id).'已退回'.$result['return_operation_name'].'。').$paused;
+        $result = $tasks->reject($id, $data['unit_ids'], $data, $user, $lane);
+        $word = $this->unitWord($id);
+        $paused = ! empty($result['timing_paused']) ? '本道暂时没有可做的，计时已自动暂停。' : '';
+        if ($result['mode'] === 'scrap') return $result['count'].' '.$word.($result['immediate'] ? '已报废（无需审核，直接生效）。' : '已申请报废，等 '.$result['reviewers'].' 审核。').$paused;
+        return $result['count'].' '.$word.'已退回'.$result['return_operation_name'].'返工'.($result['rework_owner_name'] ? '，默认交给 '.$result['rework_owner_name'] : '，等人接返工').'。'.$paused;
+    }
+
+    /** 领子件那道：任何有报工权限的人都能按缺口给半成品下工单（不能超过缺口）。 */
+    private function semiOrder(Request $request, int $id, object $user): string
+    {
+        $data = $request->validate(['component_item_id' => 'required|integer|min:1', 'qty' => 'required|integer|min:1|max:100000']);
+        $woId = (int) MfgWorkOrderOperation::query()->whereKey($id)->value('work_order_id');
+        if (! $woId) throw new WorkOrderDomainException('not_found', '工序不存在。', 404);
+        $child = app(WorkOrderService::class)->createForParent($woId, (int) $data['component_item_id'], (float) $data['qty'], $user);
+        $text = $child->status === 'released' ? '已下达给下料组' : '资料不全，停在计划：'.$child->block_reason;
+        return "半成品工单 {$child->work_order_no}（{$child->item_name} ".(int) $data['qty'].($child->unit_name ?: '')."）已开，{$text}。";
+    }
+
+    private function canApprove(object $user, array $codes): bool
+    {
+        return app(AuthContextService::class)->isSuperAdmin($user) || in_array('production.scrap.approve', $codes, true);
     }
 
     /** 提示语里的量词：整机说“台设备”，电箱、架子等半成品按工单单位说（如“个”）。 */

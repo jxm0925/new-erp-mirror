@@ -15,12 +15,13 @@ use Illuminate\Support\Facades\DB;
  * - 现开的半成品工单同理，按半成品自己的路线工序统计；
  * - 期初、外购入库等没有生产记录的库存不计。
  * 订单商品全部发完货才算“可结算”，之前的数字都是预估。
+ * 返工工时（返工计时、总装退回不良开的返工工单）单独列出，不参与提成分配，也不算进正常工时。
  */
 final class PerformanceStatsService
 {
     private const SKIP_TYPES = ['service', 'no_delivery', 'fee', 'auxiliary', 'deduction'];
     private const MAX_DEPTH = 6;
-    private const SOURCE_LABELS = ['sales_order' => '订单工单', 'stock' => '备货工单', 'work_order' => '半成品工单'];
+    private const SOURCE_LABELS = ['sales_order' => '订单工单', 'stock' => '备货工单', 'work_order' => '半成品工单', 'rework' => '返工工单'];
 
     private array $woCache = [];
     private array $itemTypes = [];
@@ -47,7 +48,7 @@ final class PerformanceStatsService
             $rows[] = ['id' => $d['order']['id'], 'sales_order_no' => $d['order']['sales_order_no'], 'customer_name' => $d['order']['customer_name'],
                 'order_date' => $d['order']['order_date'], 'status' => $d['status'], 'status_label' => $d['status_label'],
                 'goods_amount' => $d['totals']['goods_amount'], 'performance_amount' => $d['totals']['performance_amount'],
-                'labor_minutes' => $d['totals']['labor_minutes'], 'employee_count' => count($d['employees']), 'issue_count' => count($d['issues'])];
+                'labor_minutes' => $d['totals']['labor_minutes'], 'rework_minutes' => $d['totals']['rework_minutes'], 'employee_count' => count($d['employees']), 'issue_count' => count($d['issues'])];
         }
         return ['data' => $rows, 'total' => $page->total(), 'current_page' => $page->currentPage(), 'per_page' => $page->perPage()];
     }
@@ -103,10 +104,13 @@ final class PerformanceStatsService
         usort($employeeRows, fn ($a, $b) => $b['labor_minutes'] <=> $a['labor_minutes']);
         $perfTotal = '0';
         $laborTotal = 0.0;
+        $reworkTotal = 0.0;
         foreach ($employeeRows as &$e) {
             $perfTotal = bcadd($perfTotal, $e['performance_amount'], 4);
             $laborTotal += $e['labor_minutes'];
+            $reworkTotal += $e['rework_minutes'];
             $e['labor_minutes'] = round($e['labor_minutes'], 1);
+            $e['rework_minutes'] = round($e['rework_minutes'], 1);
             $e['performance_amount'] = $amounts ? $this->calc->round($e['performance_amount']) : null;
         }
         unset($e);
@@ -119,7 +123,8 @@ final class PerformanceStatsService
             'rule' => '订单折后含税金额 × 工序提成比例 × 占比；用库存半成品/备货整机的，按库存批次找到当初的工单，用了多少取多少（工时 = 那批总工时 × 用量 ÷ 那批产出）。',
             'lines' => $out, 'employees' => $employeeRows,
             'totals' => ['goods_amount' => $amounts ? $this->calc->round($goodsAmount) : null,
-                'performance_amount' => $amounts ? $this->calc->round($perfTotal) : null, 'labor_minutes' => round($laborTotal, 1)],
+                'performance_amount' => $amounts ? $this->calc->round($perfTotal) : null, 'labor_minutes' => round($laborTotal, 1),
+                'rework_minutes' => round($reworkTotal, 1)],
             'issues' => array_values(array_unique($issues)), 'amount_visible' => $amounts,
         ];
     }
@@ -162,9 +167,11 @@ final class PerformanceStatsService
         $laborRatio = bccomp($base, '0', 8) > 0 ? min(1.0, (float) bcdiv($used, $base, 10)) : 0.0;
         $operations = [];
         $ops = DB::table('erp_mfg_work_order_operations')->where('work_order_id', $wo->id)->where('execution_context', 'production')->orderBy('sequence')->get();
-        $sessions = DB::table('erp_mfg_labor_sessions')->where('work_order_id', $wo->id)->where('status', '!=', 'active')
-            ->groupBy('work_order_operation_id', 'employee_legacy_id', 'employee_name')
+        $sessionsOf = fn (bool $rework) => DB::table('erp_mfg_labor_sessions')->where('work_order_id', $wo->id)->where('status', '!=', 'active')
+            ->where('is_rework', $rework)->groupBy('work_order_operation_id', 'employee_legacy_id', 'employee_name')
             ->selectRaw('work_order_operation_id, employee_legacy_id, employee_name, SUM(labor_minutes) AS m')->get()->groupBy('work_order_operation_id');
+        $sessions = $sessionsOf(false);
+        $reworkSessions = $sessionsOf(true);
         $participants = DB::table('erp_mfg_task_participants')->where('work_order_id', $wo->id)->where('is_active', true)->get()->groupBy('work_order_operation_id');
         $runAllocs = DB::table('erp_mfg_cutting_run_allocations as a')->join('erp_mfg_cutting_runs as r', 'r.id', '=', 'a.cutting_run_id')
             ->where('a.work_order_id', $wo->id)->where('r.status', 'finished')
@@ -191,7 +198,30 @@ final class PerformanceStatsService
                 }
                 $notes[] = "{$op->operation_name}用了集中开料 {$a->run_no} 的 ".(int) $a->n.' 件，按件数带过来 '.round((float) $a->m, 1).' 分钟开料工时。';
             }
-            $operations[] = $this->operationRow($op->operation_name, $op->status, $op->performance_rate, $people, $fraction, $laborRatio, $ctx);
+            $rework = [];
+            foreach ($reworkSessions->get($op->id, collect()) as $s) {
+                $rework[(int) $s->employee_legacy_id] ??= ['name' => $s->employee_name, 'minutes' => 0.0];
+                $rework[(int) $s->employee_legacy_id]['minutes'] += (float) $s->m;
+            }
+            $operations[] = $this->operationRow($op->operation_name, $op->status, $op->performance_rate, $people, $fraction, $laborRatio, $ctx, $rework);
+        }
+        // 总装退回不良件开的返工工单：工时记在这张工单名下，全部算返工，不算提成。
+        $reworkOrders = [];
+        $reworkWos = DB::table('erp_mfg_work_order_links as l')->join('erp_mfg_work_orders as c', 'c.id', '=', 'l.child_work_order_id')
+            ->where('l.parent_work_order_id', $wo->id)->whereNotNull('c.rework_of_work_order_id')->where('c.status', '!=', 'cancelled')
+            ->orderBy('c.id')->get(['c.id', 'c.work_order_no', 'c.item_name', 'c.planned_qty', 'c.unit_name', 'c.status']);
+        foreach ($reworkWos as $rw) {
+            $people = DB::table('erp_mfg_labor_sessions')->where('work_order_id', $rw->id)->where('status', '!=', 'active')
+                ->groupBy('employee_legacy_id', 'employee_name')->selectRaw('employee_legacy_id, employee_name, SUM(labor_minutes) AS m')->get();
+            $rows = [];
+            foreach ($people as $p) {
+                $minutes = (float) $p->m * $laborRatio;
+                $rows[] = ['employee_legacy_id' => (int) $p->employee_legacy_id, 'employee_name' => $p->employee_name, 'rework_minutes' => round($minutes, 1)];
+                $this->addRework($ctx, (int) $p->employee_legacy_id, $p->employee_name, $minutes);
+            }
+            $reworkOrders[] = ['work_order_id' => (int) $rw->id, 'work_order_no' => $rw->work_order_no, 'item_name' => $rw->item_name,
+                'qty' => (float) $rw->planned_qty, 'unit_name' => $rw->unit_name, 'status' => $rw->status,
+                'rework_minutes' => round((float) $people->sum('m') * $laborRatio, 1), 'employees' => $rows];
         }
         $children = [];
         if ((float) $scrapped > 0) $notes[] = "这批报废 {$scrapped} 件，报废那部分工时单独列出（见“工时去向”），不摊到订单。";
@@ -215,7 +245,13 @@ final class PerformanceStatsService
             'source_label' => self::SOURCE_LABELS[$wo->source_type] ?? $wo->source_type, 'sales_order_no' => $wo->sales_order_no,
             'item_name' => $wo->item_name, 'unit_name' => $wo->unit_name, 'status' => $wo->status,
             'output_qty' => $this->num($output), 'used_qty' => $this->num($used), 'labor_ratio' => round($laborRatio, 6), 'scrapped_qty' => (float) $scrapped,
-            'coverage' => round((float) $fraction, 6), 'operations' => $operations, 'children' => $children, 'notes' => $notes];
+            'coverage' => round((float) $fraction, 6), 'operations' => $operations, 'children' => $children, 'rework_orders' => $reworkOrders, 'notes' => $notes];
+    }
+
+    private function addRework(array &$ctx, int $id, string $name, float $minutes): void
+    {
+        $ctx['employees'][$id] ??= ['employee_legacy_id' => $id, 'employee_name' => $name, 'labor_minutes' => 0.0, 'rework_minutes' => 0.0, 'performance_amount' => '0', 'operations' => 0];
+        $ctx['employees'][$id]['rework_minutes'] += $minutes;
     }
 
     /** 发货包装作业：按这行商品在包裹里的数量占比取工时和提成。 */
@@ -248,8 +284,8 @@ final class PerformanceStatsService
         return $rows;
     }
 
-    /** 一道工序：提成池 = 金额 × 占比 × 比例，按固定份额或实际工时分到人；工时按用量占比取。 */
-    private function operationRow(string $name, ?string $status, $rate, array $people, string $fraction, float $laborRatio, array &$ctx): array
+    /** 一道工序：提成池 = 金额 × 占比 × 比例，按固定份额或实际工时分到人；工时按用量占比取。$rework 返工计时单独列，不分提成。 */
+    private function operationRow(string $name, ?string $status, $rate, array $people, string $fraction, float $laborRatio, array &$ctx, array $rework = []): array
     {
         $fixed = $people !== [] && collect($people)->every(fn ($p) => $p['fixed'] !== null) && abs(collect($people)->sum(fn ($p) => (float) $p['fixed']) - 100) < 0.01;
         $shares = [];
@@ -271,17 +307,26 @@ final class PerformanceStatsService
             $employees[] = ['employee_legacy_id' => $id, 'employee_name' => $p['name'], 'share_ratio' => (float) $share,
                 'share_mode' => $fixed ? 'fixed' : 'labor', 'labor_minutes_total' => round($p['minutes'], 1),
                 'labor_minutes' => round($minutes, 1), 'performance_amount' => $ctx['amount'] === null ? null : $this->calc->round($amount)];
-            $ctx['employees'][$id] ??= ['employee_legacy_id' => $id, 'employee_name' => $p['name'], 'labor_minutes' => 0.0, 'performance_amount' => '0', 'operations' => 0];
+            $ctx['employees'][$id] ??= ['employee_legacy_id' => $id, 'employee_name' => $p['name'], 'labor_minutes' => 0.0, 'rework_minutes' => 0.0, 'performance_amount' => '0', 'operations' => 0];
             $ctx['employees'][$id]['labor_minutes'] += $minutes;
             $ctx['employees'][$id]['performance_amount'] = bcadd($ctx['employees'][$id]['performance_amount'], $amount, 12);
             $ctx['employees'][$id]['operations']++;
+        }
+        $reworkRows = [];
+        $reworkTotal = 0.0;
+        foreach ($rework as $id => $p) {
+            $reworkTotal += $p['minutes'];
+            $reworkRows[] = ['employee_legacy_id' => $id, 'employee_name' => $p['name'], 'rework_minutes_total' => round($p['minutes'], 1),
+                'rework_minutes' => round($p['minutes'] * $laborRatio, 1)];
+            $this->addRework($ctx, $id, $p['name'], $p['minutes'] * $laborRatio);
         }
         $redact = ! isset($ctx['line']) || $ctx['amount'] === null;
         return ['operation_name' => $name, 'status' => $status, 'performance_rate' => $hasRate ? (float) $rate : null,
             'basis_amount' => $redact || ! $hasRate ? null : $this->calc->round(bcmul($ctx['amount'], $fraction, 12)),
             'performance_pool_amount' => $redact || ! $hasRate ? null : $this->calc->round($pool),
             'labor_minutes_total' => round($totalMinutes, 1), 'labor_minutes' => round($totalMinutes * $laborRatio, 1),
-            'share_mode' => $fixed ? 'fixed' : 'labor', 'employees' => $employees];
+            'share_mode' => $fixed ? 'fixed' : 'labor', 'employees' => $employees,
+            'rework_minutes_total' => round($reworkTotal, 1), 'rework_minutes' => round($reworkTotal * $laborRatio, 1), 'rework_employees' => $reworkRows];
     }
 
     /** 工单实际领用（扣掉退料）的物料，按物料、库存批次汇总。 */

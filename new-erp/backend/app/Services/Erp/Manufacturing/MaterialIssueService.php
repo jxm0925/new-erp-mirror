@@ -189,18 +189,24 @@ final class MaterialIssueService
         return $issue;
     }
 
-    /** 本工单下给下料组开的半成品工单，按半成品汇总还在做、还没入库的数量。 */
+    /**
+     * 本工单下给下料组开的半成品工单，按半成品汇总还在做、还没入库的数量：计划 − 已入库 − 已报废（报废生效的那几件不会再来，要算进缺口）。
+     * 返工工单不算（返工的件已经冻结在库存里，单独按冻结量算）。
+     */
     public static function openChildQty(int $parentId): array
     {
         $links = MfgWorkOrderLink::query()->where('parent_work_order_id', $parentId)->get();
         if ($links->isEmpty()) return [];
         $children = MfgWorkOrder::query()->whereIn('id', $links->pluck('child_work_order_id'))->whereIn('status', ['planned', 'released', 'in_progress', 'paused'])
-            ->get(['id', 'planned_qty', 'stored_qty'])->keyBy('id');
+            ->whereNull('rework_of_work_order_id')->get(['id', 'planned_qty', 'stored_qty'])->keyBy('id');
+        $scrapped = MfgWorkOrderUnit::query()->whereIn('work_order_id', $children->keys()->all() ?: [0])->where('status', 'scrapped')
+            ->selectRaw('work_order_id, COUNT(*) AS n')->groupBy('work_order_id')->pluck('n', 'work_order_id');
         $out = [];
         foreach ($links as $link) {
             $child = $children->get($link->child_work_order_id);
             if (! $child) continue;
-            $out[(int) $link->component_item_id] = round(($out[(int) $link->component_item_id] ?? 0) + max(0, (float) $child->planned_qty - (float) $child->stored_qty), 4);
+            $left = (float) $child->planned_qty - (float) $child->stored_qty - (float) ($scrapped[$child->id] ?? 0);
+            $out[(int) $link->component_item_id] = round(($out[(int) $link->component_item_id] ?? 0) + max(0, $left), 4);
         }
         return $out;
     }

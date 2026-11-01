@@ -13,12 +13,12 @@
       <view class="mt-card-title">工序进度</view>
       <view wx:if="{{!ops.length}}" class="mt-muted">没有车间工序</view>
       <view wx:for="{{ops}}" wx:key="id" class="wo-op">
-        <view class="mt-row"><text>{{item.operation_name}}</text><text class="mt-muted">{{item.doneText}} / {{wo.plannedText}}<text wx:if="{{item.owner_name}}"> · {{item.owner_name}}</text><text wx:if="{{item.rework_qty}}" class="mt-red"> · 返工 {{item.rework_qty}}</text></text></view>
+        <view class="mt-row"><text>{{item.operation_name}}<text wx:if="{{item.work_status_label}}" class="mt-muted"> {{item.work_status_label}}</text></text><text class="mt-muted">{{item.doneText}} / {{wo.plannedText}}<text wx:if="{{item.owner_name}}"> · {{item.owner_name}}</text><text wx:if="{{item.rework_qty}}" class="mt-red"> · 返工 {{item.rework_qty}}</text></text></view>
         <view class="mt-bar"><view class="mt-bar-in" style="width: {{item.percent}}%"></view></view>
       </view>
     </view>
     <view class="mt-card">
-      <view class="mt-card-title">每台设备在哪</view>
+      <view class="mt-card-title">{{!wo.unit_name || wo.unit_name === '台' ? '每台设备在哪' : '每' + wo.unit_name + '在哪'}}</view>
       <view wx:if="{{!units.length}}" class="mt-muted">这张工单不逐台跟踪</view>
       <view wx:for="{{units}}" wx:key="id" class="mt-kv">
         <text class="k mono">{{item.short}}</text><text class="mt-tag {{item.tag}}">{{item.text}}</text>

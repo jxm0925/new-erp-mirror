@@ -5,21 +5,40 @@
   </view>
   <view class="mt-tabs">
     <view wx:for="{{tabs}}" wx:key="key" class="mt-tab {{tab === item.key ? 'on' : ''}}" data-tab="{{item.key}}" bindtap="pickTab">
-      {{item.label}}<text wx:if="{{item.key !== 'done'}}"> {{counts[item.key] || 0}}</text>
+      {{item.label}}<text wx:if="{{item.key !== 'done'}}" class="{{item.key === 'review' ? 'mt-red' : ''}}"> {{counts[item.key] || 0}}</text>
     </view>
   </view>
-  <view class="mt-search">
+  <view wx:if="{{tab !== 'review'}}" class="mt-search">
     <input class="mt-input" value="{{keyword}}" bindinput="keywordInput" placeholder="搜工单号 / 产品 / 序列号" confirm-type="search" bindconfirm="search" />
     <button class="mt-btn mt-btn-mini" bindtap="search">查询</button>
   </view>
   <view wx:if="{{error}}" class="mt-error">{{error}}</view>
-  <view wx:if="{{loading && !rows.length}}" class="mt-empty">正在读取任务</view>
-  <view wx:elif="{{!rows.length}}" class="mt-empty">{{tab === 'mine' ? '没有正在做的任务，去“可接”看看' : (tab === 'available' ? '暂时没有可接的任务' : '还没有做完的任务')}}</view>
+  <view wx:if="{{loading && !rows.length && !reviews.length}}" class="mt-empty">正在读取任务</view>
+  <view wx:elif="{{tab === 'review' && !reviews.length}}" class="mt-empty">没有要你审核的报废和不良处置</view>
+  <view wx:elif="{{tab !== 'review' && !rows.length}}" class="mt-empty">{{tab === 'mine' ? '没有正在做的任务，去“可接”看看' : (tab === 'available' ? '暂时没有可接的任务' : '还没有做完的任务')}}</view>
 
-  <view wx:for="{{rows}}" wx:key="id" class="mt-card" data-id="{{item.id}}" bindtap="open">
+  <view wx:for="{{reviews}}" wx:key="key" class="mt-card">
     <view class="mt-row">
-      <text class="mt-op">{{item.operation_name}}</text>
+      <text class="mt-op {{item.kind === 'scrap' ? 'mt-rework' : ''}}">{{item.title}}</text>
+      <text class="mt-muted">{{item.who}}</text>
+    </view>
+    <view class="mt-product">{{item.product_name || item.item_name || ''}}</view>
+    <view class="mt-muted">{{item.line}}</view>
+    <view class="mt-note">{{item.reasonText}}</view>
+    <view wx:if="{{item.photos.length}}" class="mt-tags mt-gap">
+      <image wx:for="{{item.photos}}" wx:for-item="photo" wx:key="*this" src="{{photo}}" mode="aspectFill" style="width: 120rpx; height: 120rpx; margin-right: 12rpx; border-radius: 8rpx;" data-url="{{photo}}" data-urls="{{item.photos}}" bindtap="previewPhoto" />
+    </view>
+    <view class="mt-row mt-gap">
+      <button class="mt-btn ghost mt-btn-mini" data-key="{{item.key}}" data-approve="no" bindtap="review" disabled="{{busy}}">驳回</button>
+      <button class="mt-btn mt-btn-mini" data-key="{{item.key}}" data-approve="yes" bindtap="review" disabled="{{busy}}">{{item.kind === 'scrap' ? '确认报废' : '通过'}}</button>
+    </view>
+  </view>
+
+  <view wx:for="{{rows}}" wx:key="key" class="mt-card" data-id="{{item.id}}" data-lane="{{item.lane}}" bindtap="open">
+    <view class="mt-row">
+      <text class="mt-op {{item.lane === 'rework' ? 'mt-rework' : ''}}">{{item.title}}</text>
       <view class="mt-tags">
+        <text wx:if="{{item.is_rework_order}}" class="mt-tag red">返工工单</text>
         <text wx:if="{{item.paused}}" class="mt-tag gray">暂停</text>
         <text wx:if="{{item.priority === 1}}" class="mt-tag red">特急</text><text wx:elif="{{item.is_urgent}}" class="mt-tag red">加急</text><text wx:elif="{{item.priority === 4}}" class="mt-tag gray">可延后</text>
         <text wx:if="{{item.timing}}" class="mt-tag amber">计时中</text>
@@ -30,13 +49,14 @@
     <view class="mt-product">{{item.product_name}}<text wx:if="{{item.sku_name}}" class="mt-muted"> {{item.sku_name}}</text></view>
     <view class="mt-muted">{{item.work_order_no}}<text wx:if="{{item.assigned_by_name}}"> · {{item.assigned_by_name}}派给我</text><text wx:if="{{item.dueText}}"> · 交期 {{item.dueText}}</text></view>
     <view class="mt-row mt-gap">
-      <text class="mt-muted">我这道：做完 {{item.doneText}} / {{item.plannedText}} 台<text wx:if="{{item.here_qty}}"> · 待做 {{item.here_qty}} 台设备</text><text wx:if="{{!item.here_qty && item.upstream_qty}}"> · 前面还有 {{item.upstream_qty}} 台设备在做，可以先接单</text></text>
-      <text wx:if="{{item.rework_qty}}" class="mt-red">{{item.rework_qty}} 台返工</text>
+      <text class="mt-muted">本道 {{item.here_qty || 0}} {{item.unitShort}}<text wx:if="{{item.upstream_qty}}"> / 未交过来 {{item.upstream_qty}} {{item.unitShort}}</text> · 做完 {{item.doneText}} / {{item.plannedText}}</text>
+      <text wx:if="{{item.lane !== 'rework' && item.rework_qty}}" class="mt-red">{{item.rework_qty}} {{item.unitShort}}返工</text>
     </view>
+    <view wx:if="{{item.lane === 'rework' && item.rework_reason}}" class="mt-note">{{item.rework_reason}}</view>
     <view class="mt-bar"><view class="mt-bar-in" style="width: {{item.percent}}%"></view></view>
     <view wx:if="{{item.paused}}" class="mt-note">工单暂停{{item.pause_reason ? '：' + item.pause_reason : ''}}</view>
     <view wx:if="{{tab === 'available' && item.owner_name}}" class="mt-muted">已被 {{item.owner_name}} 接了</view>
-    <button class="mt-btn {{tab === 'done' ? 'ghost' : ''}}" data-id="{{item.id}}" catchtap="primary" disabled="{{busy || item.paused && tab === 'available'}}">{{item.buttonText}}</button>
+    <button class="mt-btn {{tab === 'done' ? 'ghost' : ''}}" data-id="{{item.id}}" data-key="{{item.key}}" data-lane="{{item.lane}}" catchtap="primary" disabled="{{busy || item.paused && tab === 'available'}}">{{item.buttonText}}</button>
   </view>
 
   <view wx:if="{{lastPage > 1}}" class="mt-pager">
@@ -44,5 +64,5 @@
     <text>{{page}} / {{lastPage}}</text>
     <button class="mt-btn ghost mt-btn-mini" disabled="{{page >= lastPage}}" data-delta="1" bindtap="turnPage">下一页</button>
   </view>
-  <view wx:if="{{tab === 'available' && canExecute}}" class="mt-foot">“可接”里是你能做、还没人接的工序，点“接单”就归你</view>
+  <view wx:if="{{tab === 'available' && canExecute}}" class="mt-foot">“可接”里是前道已经交过来、你能做、还没人接的工序，点“接单”就归你；返工单独计时，不算提成</view>
 </view>

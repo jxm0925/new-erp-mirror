@@ -13,13 +13,14 @@ function minutesText(m) {
 
 Page({
   data: {
-    id: 0, task: null, loading: true, busy: false, error: '', selected: {}, selectedCount: 0, clockText: '00:00:00',
+    id: 0, lane: '', task: null, loading: true, busy: false, error: '', selected: {}, selectedCount: 0, clockText: '00:00:00',
     shareText: '', isImage: {}, panel: '', rejectCurrent: false, cutQty: 1, prepQty: 1, runPick: 0,
     reject: { mode: 'return', returnId: 0, tags: {}, reason: '', photos: [] }, uploading: false,
     peopleKeyword: '', peopleRows: [], picked: [], shareMode: 'labor', ownerPercent: '', showMaterials: false,
-    returnForm: { types: [], type: 'surplus', rows: [], picked: {}, qty: {}, reason: '', hint: '' },
+    returnForm: { types: [], type: 'surplus', rows: [], picked: {}, qty: {}, reason: '', hint: '',
+      planActions: [], planNeedsReview: false, planReviewers: '', planAction: '', planMaterial: 0, planStart: 0, planPhotos: [], hasMade: false },
   },
-  onLoad(options) { this.setData({ id: Number(options.id || 0) }); this.load(); },
+  onLoad(options) { this.setData({ id: Number(options.id || 0), lane: options.lane === 'rework' ? 'rework' : (options.lane === 'normal' ? 'normal' : '') }); this.load(); },
   onShow() { if (this.data.task) this.load(true); },
   onHide() { this.stopClock(); },
   onUnload() { this.stopClock(); this.sequence = (this.sequence || 0) + 1; },
@@ -27,7 +28,7 @@ Page({
   load(keepSelection) {
     const sequence = this.sequence = (this.sequence || 0) + 1;
     this.setData({ loading: true, error: '' });
-    return production.task(this.data.id).then(response => {
+    return production.task(this.data.id, this.data.lane).then(response => {
       if (sequence === this.sequence) this.apply(response.data || response, keepSelection);
     }).catch(error => { if (sequence === this.sequence) this.setData({ loading: false, error: view.errorText(error) }); });
   },
@@ -43,9 +44,15 @@ Page({
       : '';
     const isImage = {};
     (task.drawings || []).forEach(d => { isImage[d.id] = /^image\//.test(d.mime_type || '') || /\.(png|jpe?g|webp|gif)$/i.test(d.url || ''); });
-    wx.setNavigationBarTitle({ title: task.operation_name || '报工' });
+    wx.setNavigationBarTitle({ title: task.title || task.operation_name || '报工' });
+    const unitShort = task.unit_short || '台';
+    const noun = task.unit_word === '台设备' || !task.unit_word ? '设备' : (task.work_order.item_name || '件');
     this.setData({
+      lane: task.lane || 'normal',
       task: Object.assign({}, task, {
+        unitShort, noun, isRework: task.lane === 'rework',
+        semiRows: (task.semi_components || []).map(r => Object.assign({}, r, { requiredText: view.quantity(r.required_qty), issuedText: view.quantity(r.issued_qty),
+          availableText: view.quantity(r.available_qty), openText: view.quantity(r.open_qty), heldText: view.quantity(r.held_qty), gapText: view.quantity(r.gap_qty) })),
         participants: (task.participants || []).map(p => Object.assign({}, p, { is_me: Number(p.employee_legacy_id) === me })),
         plannedText: view.quantity(task.progress.planned), doneText: view.quantity(task.progress.done),
         ownerName: owner ? owner.employee_name : '', collaboratorNames: others.map(p => p.employee_name).join('、'),
@@ -93,8 +100,8 @@ Page({
       success: result => {
         const code = String(result.result || '').trim();
         const unit = (this.data.task.units || []).find(u => u.serial_no && (code === u.serial_no || code.endsWith(u.serial_no) || code.indexOf(u.serial_no) >= 0));
-        if (!unit) { wx.showToast({ title: '这台设备不在本道', icon: 'none' }); return; }
-        if (!unit.selectable) { wx.showToast({ title: '这台设备在等报废确认', icon: 'none' }); return; }
+        if (!unit) { wx.showToast({ title: `这个编号不在本道${this.data.task.isRework ? '返工' : ''}`, icon: 'none' }); return; }
+        if (!unit.selectable) { wx.showToast({ title: '这个编号在等报废审核', icon: 'none' }); return; }
         const selected = Object.assign({}, this.data.selected, { [unit.id]: true });
         this.setData({ selected, selectedCount: Object.keys(selected).length });
         wx.showToast({ title: `已选 ${unit.serial_no}`, icon: 'none' });
@@ -106,7 +113,7 @@ Page({
   run(payload, okText) {
     if (this.data.busy) return Promise.resolve(false);
     this.setData({ busy: true });
-    return production.action(this.data.id, payload).then(response => {
+    return production.action(this.data.id, Object.assign({ lane: this.data.lane || 'normal' }, payload)).then(response => {
       wx.showToast({ title: response.message || okText || '已完成', icon: 'none', duration: 2500 });
       this.setData({ panel: '' });
       if (response.data) this.apply(response.data); else this.load();
@@ -169,7 +176,9 @@ Page({
     production.returnOptions(task.work_order.id, task.id).then(response => {
       const d = response.data || response;
       this.returnOptions = d.materials || [];
-      this.setData({ panel: 'return', returnForm: { types: d.types || [], type: 'surplus', rows: [], picked: {}, qty: {}, reason: '', hint: '' } });
+      this.setData({ panel: 'return', returnForm: { types: d.types || [], type: 'surplus', rows: [], picked: {}, qty: {}, reason: '', hint: '',
+        planActions: d.plan_actions || [], planNeedsReview: Boolean(d.plan_needs_review), planReviewers: d.plan_reviewers || '',
+        planAction: '', planMaterial: 0, planStart: 0, planPhotos: [], hasMade: false } });
       this.refreshReturnRows();
     }).catch(error => wx.showModal({ title: '读取可退物料失败', content: view.errorText(error), showCancel: false }));
   },
@@ -181,7 +190,37 @@ Page({
       const limitQty = m.by_qty ? Number((m.limits || {})[type] || 0) : 0;
       return Object.assign({}, m, { serials, limitQty, limit: view.quantity(limitQty), showSerials: serials.length > 0, showQty: limitQty > 0 });
     }).filter(m => m.showSerials || m.showQty);
-    this.setData({ 'returnForm.rows': rows, 'returnForm.picked': {}, 'returnForm.qty': {}, 'returnForm.hint': hints[type] || '' });
+    this.setData({ 'returnForm.rows': rows, 'returnForm.picked': {}, 'returnForm.qty': {}, 'returnForm.hint': hints[type] || '',
+      'returnForm.hasMade': type === 'defective' && rows.some(r => r.made), 'returnForm.planAction': '', 'returnForm.planMaterial': 0, 'returnForm.planStart': 0, 'returnForm.planPhotos': [] });
+  },
+  // 不良退回的自制半成品（电箱、架子）：员工当场选处置——返工（从哪道开始）、报废、判定可用；不选就交库管处置。
+  pickPlanAction(event) {
+    const action = event.currentTarget.dataset.action;
+    this.setData({ 'returnForm.planAction': this.data.returnForm.planAction === action ? '' : action, 'returnForm.planStart': 0, 'returnForm.planMaterial': 0 });
+  },
+  pickPlanStart(event) {
+    this.setData({ 'returnForm.planMaterial': Number(event.currentTarget.dataset.material), 'returnForm.planStart': Number(event.currentTarget.dataset.seq) });
+  },
+  addPlanPhoto() {
+    const left = 9 - this.data.returnForm.planPhotos.length;
+    if (left <= 0 || this.data.uploading) return;
+    wx.chooseMedia({ count: Math.min(left, 3), mediaType: ['image'], sourceType: ['camera', 'album'], sizeType: ['compressed'],
+      success: res => {
+        const files = (res.tempFiles || []).map(f => f.tempFilePath);
+        if (!files.length) return;
+        this.setData({ uploading: true });
+        wx.showLoading({ title: '上传照片…', mask: true });
+        files.reduce((chain, path) => chain.then(() => production.uploadPhoto(path).then(url => {
+          this.setData({ 'returnForm.planPhotos': this.data.returnForm.planPhotos.concat([{ path, url }]) });
+        })), Promise.resolve())
+          .catch(error => wx.showToast({ title: view.errorText(error), icon: 'none' }))
+          .finally(() => { wx.hideLoading(); this.setData({ uploading: false }); });
+      } });
+  },
+  removePlanPhoto(event) {
+    const photos = this.data.returnForm.planPhotos.slice();
+    photos.splice(Number(event.currentTarget.dataset.index), 1);
+    this.setData({ 'returnForm.planPhotos': photos });
   },
   pickReturnType(event) {
     this.setData({ 'returnForm.type': event.currentTarget.dataset.type });
@@ -207,9 +246,20 @@ Page({
     if (over) { wx.showToast({ title: `${over.component_item_name} 最多退 ${over.limit}`, icon: 'none' }); return; }
     if (!lines.length) { wx.showToast({ title: '选要退的编号或填数量', icon: 'none' }); return; }
     if (!String(f.reason || '').trim()) { wx.showToast({ title: '写一下退料原因', icon: 'none' }); return; }
+    let plan = null;
+    if (f.type === 'defective' && f.planAction) {
+      const notMade = lines.find(l => !(f.rows.find(r => r.material_id === l.material_id) || {}).made);
+      if (notMade) { wx.showToast({ title: '选了处置方式只能退自制半成品，外购件请分开提交', icon: 'none' }); return; }
+      if (f.planAction === 'rework') {
+        if (!f.planStart) { wx.showToast({ title: '选从哪道工序开始返工', icon: 'none' }); return; }
+        if (lines.length !== 1 || lines[0].material_id !== f.planMaterial) { wx.showToast({ title: '返工一次只退一种半成品，且要和选的工序对应', icon: 'none' }); return; }
+      }
+      if (f.planAction === 'scrap' && !f.planNeedsReview && !f.planPhotos.length) { wx.showToast({ title: '报废直接生效，请至少拍 1 张照片', icon: 'none' }); return; }
+      plan = { action: f.planAction, start_sequence: f.planAction === 'rework' ? f.planStart : null, photos: f.planPhotos.map(p => p.url) };
+    }
     if (this.data.busy) return;
     this.setData({ busy: true });
-    production.createReturn(task.work_order.id, task.id, { return_type: f.type, reason: f.reason.trim(), lines }).then(response => {
+    production.createReturn(task.work_order.id, task.id, Object.assign({ return_type: f.type, reason: f.reason.trim(), lines }, plan ? { disposition_plan: plan } : {})).then(response => {
       wx.showToast({ title: response.message || '已提交', icon: 'none', duration: 2500 });
       this.setData({ panel: '' });
       this.load(true);
@@ -217,6 +267,27 @@ Page({
       .finally(() => this.setData({ busy: false }));
   },
   claim() { this.run({ action: 'claim' }, '接单成功'); },
+  // 正常 / 返工 两张卡切换：返工单独计时，不算提成。
+  switchLane() {
+    const other = this.data.task && this.data.task.other_lane;
+    if (!other || !other.count) return;
+    this.setData({ lane: other.lane, selected: {}, selectedCount: 0, panel: '' });
+    this.load();
+  },
+  // 领子件那道：BOM 里的自制半成品不够，按缺口给下料组开半成品工单（不能超过缺口）。
+  semiOrder(event) {
+    const id = Number(event.currentTarget.dataset.id);
+    const row = (this.data.task.semiRows || []).find(r => r.component_item_id === id);
+    if (!row || !row.can_order || this.data.busy) return;
+    wx.showModal({ title: `下半成品工单 · ${row.component_item_name}`, editable: true, content: String(row.max_order_qty),
+      placeholderText: `开多少（最多 ${row.max_order_qty}）`, confirmText: '下工单', success: res => {
+        if (!res.confirm) return;
+        const qty = parseInt(String(res.content || '').trim(), 10);
+        if (!(qty > 0)) { wx.showToast({ title: '数量要大于 0', icon: 'none' }); return; }
+        if (qty > row.max_order_qty) { wx.showToast({ title: `现在缺 ${row.gapText}，最多开 ${row.max_order_qty}`, icon: 'none' }); return; }
+        this.run({ action: 'semi_order', component_item_id: id, qty }, '半成品工单已开');
+      } });
+  },
   start() { this.run({ action: 'start' }, '开始计时'); },
   pause() { this.run({ action: 'pause' }, '已暂停'); },
   stopTiming(event) {
@@ -225,18 +296,19 @@ Page({
   },
   pass() {
     const ids = this.selectedIds();
-    if (!ids.length) { wx.showToast({ title: '先勾选或扫码选设备', icon: 'none' }); return; }
-    const next = this.data.task.progress.next_operation_name;
-    wx.showModal({ title: '报合格', content: `${ids.length} 台合格，${next ? '交给' + next : '生产完成，等入库'}？`, confirmText: '确认',
+    if (!ids.length) { wx.showToast({ title: '先勾选或扫码选' + this.data.task.noun, icon: 'none' }); return; }
+    const task = this.data.task;
+    const next = task.progress.next_operation_name;
+    wx.showModal({ title: task.isRework ? '返工合格' : '报合格', content: `${ids.length} ${task.unitShort}${task.isRework ? '返工' : ''}合格，${next ? '交给' + next : (task.rework_of_work_order_no ? '返工完成，解冻回库存' : '生产完成，等入库')}？`, confirmText: '确认',
       success: res => { if (res.confirm) this.run({ action: 'pass', unit_ids: ids }); } });
   },
 
   // 已备料：集中下料提前切好的料，不计时直接交下道（料按 BOM 定额从库存扣）。
   prepare() {
     const ids = this.selectedIds();
-    if (!ids.length) { wx.showToast({ title: '先勾选或扫码选设备', icon: 'none' }); return; }
+    if (!ids.length) { wx.showToast({ title: '先勾选或扫码选' + this.data.task.noun, icon: 'none' }); return; }
     const next = this.data.task.progress.next_operation_name;
-    wx.showModal({ title: `${ids.length} 台已备料，${next ? '交给' + next : '生产完成'}？`, editable: true, placeholderText: '备注（可不填，如缺什么、用的哪批料）',
+    wx.showModal({ title: `${ids.length} ${this.data.task.unitShort}已备料，${next ? '交给' + next : '生产完成'}？`, editable: true, placeholderText: '备注（可不填，如缺什么、用的哪批料）',
       confirmText: '确认', success: res => { if (res.confirm) this.run(Object.assign({ action: 'prepare', unit_ids: ids, remark: String(res.content || '').trim() || null }, this.data.runPick ? { cutting_run_id: this.data.runPick } : {}), '已备料'); } });
   },
 
@@ -272,7 +344,7 @@ Page({
       success: res => { if (res.confirm) this.run({ action: 'pass', unit_ids: ids }, '已报完成'); } });
   },
   openReject() {
-    if (!this.selectedIds().length) { wx.showToast({ title: '先勾选不合格的设备', icon: 'none' }); return; }
+    if (!this.selectedIds().length) { wx.showToast({ title: '先勾选不合格的' + this.data.task.noun, icon: 'none' }); return; }
     // 开料工序不能退回重做（后端已从可选里去掉），没有可退的道时只能报废。
     const options = this.data.task.return_options || [];
     const current = options.find(o => o.is_current);
@@ -325,7 +397,12 @@ Page({
     const payload = { action: 'reject', unit_ids: ids, mode: r.mode, return_operation_id: r.mode === 'return' ? r.returnId : null,
       reason_tags: tags, reason: r.reason.trim() || null, photos: r.photos.map(p => p.url) };
     if (r.mode === 'scrap') {
-      wx.showModal({ title: '申请报废', content: `${ids.length} 台申请报废，主管确认后才算报废。确定？`, confirmText: '申请报废', confirmColor: '#c0261b',
+      const review = this.data.task.scrap_review || {};
+      const unit = this.data.task.unitShort;
+      if (!review.needs_review && !r.photos.length) { wx.showToast({ title: '报废直接生效，请至少拍 1 张照片', icon: 'none' }); return; }
+      wx.showModal({ title: review.needs_review ? '申请报废' : '报废', content: review.needs_review
+        ? `${ids.length} ${unit}申请报废，等 ${review.reviewers} 审核通过才算报废。确定？`
+        : `${ids.length} ${unit}报废，提交后直接生效（不用审核）。确定？`, confirmText: review.needs_review ? '申请报废' : '确认报废', confirmColor: '#c0261b',
         success: res => { if (res.confirm) this.run(payload); } });
       return;
     }
@@ -381,7 +458,7 @@ Page({
   assignTo(event) {
     const id = Number(event.currentTarget.dataset.id);
     const name = event.currentTarget.dataset.name;
-    wx.showModal({ title: '派工', content: `把「${this.data.task.operation_name}」派给 ${name}？`, success: res => { if (res.confirm) this.run({ action: 'assign', employee_legacy_id: id }, '已派工'); } });
+    wx.showModal({ title: '派工', content: `把「${this.data.task.title || this.data.task.operation_name}」派给 ${name}？`, success: res => { if (res.confirm) this.run({ action: 'assign', employee_legacy_id: id }, '已派工'); } });
   },
   personTap(event) { return this.data.panel === 'assign' ? this.assignTo(event) : this.togglePerson(event); },
   closePanel() { if (!this.data.busy) this.setData({ panel: '' }); },

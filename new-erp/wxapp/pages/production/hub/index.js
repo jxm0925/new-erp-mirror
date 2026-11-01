@@ -233,13 +233,14 @@ Page({
       const isTiming = Boolean(task.timing);
       const hereQty = toNum(task.here_qty, Math.max(0, toNum(task.planned_qty, 0) - toNum(task.done_qty, 0)));
       activeWorkList.push({
-        id: `task-${task.id}`,
+        id: `task-${task.key || task.id}`,
         type: 'task',
         targetId: task.id,
+        lane: task.lane || 'normal',
         tagText: isTiming ? '工单 · 计时中' : '工单 · 待报工',
         tagClass: 'tag-red',
-        code: `${task.work_order_no || '工单'} · ${task.operation_name || '工序'}`,
-        desc: `${task.product_name || '生产任务'}（当前可报 ${hereQty || toNum(task.planned_qty, 1)} 台）`,
+        code: `${task.work_order_no || '工单'} · ${task.title || task.operation_name || '工序'}`,
+        desc: `${task.product_name || '生产任务'}（本道 ${hereQty} ${task.unit_short || '台'}）`,
         btnText: isTiming ? '继续报工' : '去报工',
         btnClass: isTiming ? 'btn-solid-red' : 'btn-outline-red'
       });
@@ -417,7 +418,7 @@ Page({
 
     if (item.type === 'task' && item.targetId) {
       wx.navigateTo({
-        url: `/pages/production/task/index?id=${item.targetId}`
+        url: `/pages/production/task/index?id=${item.targetId}&lane=${item.lane || 'normal'}`
       });
       return;
     }

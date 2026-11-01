@@ -22,6 +22,7 @@ CREATE TABLE `erp_mfg_task_participants` (
   `employee_legacy_id` bigint(20) unsigned NOT NULL,
   `employee_name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `role` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'collaborator',
+  `lane` varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'normal',
   `is_active` tinyint(1) NOT NULL DEFAULT '1',
   `share_percent` decimal(7,4) DEFAULT NULL,
   `assigned_by_legacy_id` bigint(20) unsigned DEFAULT NULL,
@@ -30,7 +31,7 @@ CREATE TABLE `erp_mfg_task_participants` (
   `created_at` timestamp NULL DEFAULT NULL,
   `updated_at` timestamp NULL DEFAULT NULL,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `mfg_task_part_uq` (`work_order_operation_id`,`employee_legacy_id`),
+  UNIQUE KEY `mfg_task_part_uq` (`work_order_operation_id`,`employee_legacy_id`,`lane`),
   KEY `mfg_task_part_emp_idx` (`employee_legacy_id`,`is_active`),
   KEY `mfg_task_part_wo_idx` (`work_order_id`),
   CONSTRAINT `mfg_task_part_op_fk` FOREIGN KEY (`work_order_operation_id`) REFERENCES `erp_mfg_work_order_operations` (`id`) ON DELETE CASCADE

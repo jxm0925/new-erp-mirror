@@ -35,8 +35,8 @@ class MfgMaterialReturnController extends Controller
     /** 退料弹窗：本道可退的料、可退数量和编号。 */
     public function options(Request $request, int $id, int $operationId, MaterialReturnService $returns)
     {
-        [, , $approver] = $this->user($request, [self::REQUEST, self::APPROVE]);
-        return response()->json(['data' => $returns->options($id, $operationId) + ['can_approve' => $approver]]);
+        [$user, , $approver] = $this->user($request, [self::REQUEST, self::APPROVE]);
+        return response()->json(['data' => $returns->options($id, $operationId, (int) ($user->legacy_id ?? $user->id ?? 0)) + ['can_approve' => $approver]]);
     }
 
     /** 提交退料申请；direct=true 为库管直接退（建单即审核入库）。 */
@@ -46,11 +46,21 @@ class MfgMaterialReturnController extends Controller
         $data = $request->validate(['return_type' => 'required|in:surplus,defective,scrapped', 'reason' => 'required|string|max:500',
             'lines' => 'required|array|min:1|max:50', 'lines.*.material_id' => 'required|integer|min:1', 'lines.*.qty' => 'nullable|numeric|min:0|max:1000000',
             'lines.*.serial_ids' => 'nullable|array|max:1000', 'lines.*.serial_ids.*' => 'integer|min:1',
-            'direct' => 'nullable|boolean', 'location_id' => 'nullable|integer|min:1', 'with_detail' => 'nullable|boolean']);
+            'direct' => 'nullable|boolean', 'location_id' => 'nullable|integer|min:1', 'with_detail' => 'nullable|boolean',
+            'disposition_plan' => 'nullable|array', 'disposition_plan.action' => 'required_with:disposition_plan|in:rework,scrap,release',
+            'disposition_plan.start_sequence' => 'nullable|integer|min:1', 'disposition_plan.photos' => 'nullable|array|max:9', 'disposition_plan.photos.*' => 'string|max:1000']);
         $direct = ! empty($data['direct']);
         if ($direct && ! $approver) $this->deny('直接退料需要“审核生产退料”权限，请提交申请等库管审核。');
-        $return = $returns->request($id, $operationId, $data['return_type'], $data['lines'], $data['reason'], $user, $direct, isset($data['location_id']) ? (int) $data['location_id'] : null);
+        $plan = $data['disposition_plan'] ?? null;
+        $return = $returns->request($id, $operationId, $data['return_type'], $data['lines'], $data['reason'], $user, $direct && ! $plan, isset($data['location_id']) ? (int) $data['location_id'] : null, $plan);
         $message = $direct ? "已退料入库（{$return->return_no}）。" : "退料申请已提交（{$return->return_no}），等库管审核后入库。";
+        if ($plan = $return->disposition_plan) {
+            $message = ! empty($plan['needs_review']) ? "不良退回已提交（{$return->return_no}），等 {$plan['reviewers']} 审核处置。" : match ($plan['action']) {
+                'rework' => "不良退回已生效（{$return->return_no}），返工工单 ".($plan['rework_work_order_no'] ?? '').' 已开，从'.($plan['start_operation_name'] ?? '').'开始返工。',
+                'scrap' => "不良退回已生效（{$return->return_no}），已报废。",
+                default => "不良退回已生效（{$return->return_no}），判定可用，回到仓库可用库存。",
+            };
+        }
         return response()->json(['message' => $message, 'data' => ! empty($data['with_detail']) ? $query->detail($id, $amounts) : $returns->row($return, $amounts)]);
     }
 

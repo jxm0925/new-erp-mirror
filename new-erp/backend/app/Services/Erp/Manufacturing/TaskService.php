@@ -19,7 +19,9 @@ use Illuminate\Support\Facades\DB;
 
 /**
  * 车间报工：接单、派工、协同人、开始/暂停计时、按设备报合格/不合格、报废确认。
- * 不合格由工人直接退回到本道或之前某道；只有报废要主管确认。
+ * 不合格由工人直接退回到本道或之前某道；报废按审核人规则（ProductionReviewers）确认或直接生效。
+ * 每道工序分两条线（lane）：normal 正常生产、rework 返工；返工单独接单、单独计时，返工工时不算提成。
+ * 工序状态 work_status：pending 未到 / ready 可接 / in_progress 进行中 / done 完成，前道交过来才轮到下道。
  */
 final class TaskService
 {
@@ -27,6 +29,8 @@ final class TaskService
 
     public const REASON_TAGS = ['焊缝渗漏', '尺寸不对', '外观划伤', '零件装错', '其他'];
     public const SELECTABLE = ['waiting', 'in_progress', 'rework'];
+    public const LANES = ['normal', 'rework'];
+    public const WORK_STATUS_LABELS = ['pending' => '未到', 'ready' => '可接', 'in_progress' => '进行中', 'done' => '完成'];
     public const AUTO_STOP_HOURS = 4;
 
     public function __construct(
@@ -36,23 +40,34 @@ final class TaskService
         private readonly ReceiptService $receipts,
     ) {}
 
-    public function claim(int $opId, object $actor): void
+    public static function laneStatuses(?string $lane): array
     {
-        DB::transaction(function () use ($opId, $actor) {
+        return match ($lane) { 'normal' => ['waiting', 'in_progress'], 'rework' => ['rework'], default => self::SELECTABLE };
+    }
+
+    public static function lane(?string $lane): string { return $lane === 'rework' ? 'rework' : 'normal'; }
+
+    public static function laneTitle(string $name, string $lane): string { return $lane === 'rework' ? $name.'（返工）' : $name; }
+
+    public function claim(int $opId, object $actor, string $lane = 'normal'): void
+    {
+        DB::transaction(function () use ($opId, $actor, $lane) {
             [$wo, $op] = $this->lockTask($opId);
             $this->assertRunnable($wo, $op);
             $me = (int) $this->actorId($actor);
-            if ($this->owner($op)) $this->fail('claimed', '这道工序已经有人接了。');
+            if ($this->owner($op, $lane)) $this->fail('claimed', '这道工序'.($lane === 'rework' ? '的返工' : '').'已经有人接了。');
+            if ($this->selectableUnits($op, $lane)->isEmpty())
+                $this->fail('not_ready', $lane === 'rework' ? '这道工序现在没有要返工的'.$this->unitNoun($wo).'。' : '这道工序还没轮到：前道还没交过来，交过来后再接。');
             if (! $this->canDo($op, $me)) $this->fail('not_worker', '你不在这道工序“能做的人”里，请找主管派工。');
-            $this->setParticipant($op, $me, $this->actorName($actor), 'owner', $actor);
-            $this->workOrders->log($wo, 'task_claimed', null, null, $this->actorName($actor).' 接了'.$op->operation_name, $actor);
+            $this->setParticipant($op, $me, $this->actorName($actor), 'owner', $actor, null, $lane);
+            $this->workOrders->log($wo, 'task_claimed', null, null, $this->actorName($actor).' 接了'.self::laneTitle($op->operation_name, $lane), $actor, ['lane' => $lane]);
         }, 5);
     }
 
     /** 主管派工或换人：原接单人正在计时则不能换。 */
-    public function assign(int $opId, int $employeeId, object $actor): void
+    public function assign(int $opId, int $employeeId, object $actor, string $lane = 'normal'): void
     {
-        DB::transaction(function () use ($opId, $employeeId, $actor) {
+        DB::transaction(function () use ($opId, $employeeId, $actor, $lane) {
             [$wo, $op] = $this->lockTask($opId);
             $this->assertRunnable($wo, $op);
             $user = $this->activeUser($employeeId);
@@ -60,18 +75,19 @@ final class TaskService
             $this->assertExecutor($user);
             $this->assertWorkerStaff($user);
             if (! $this->canDo($op, $employeeId)) $this->fail('not_worker', '这个人不在这道工序“能做的人”里，请先在工序管理里加上。');
-            $old = $this->owner($op);
+            $old = $this->owner($op, $lane);
             if ($old && (int) $old->employee_legacy_id === $employeeId) $this->fail('no_change', '这道工序已经是他在做。');
-            if (MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('is_active', true)->whereNotNull('share_percent')->lockForUpdate()->first(['id']))
+            if (MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('lane', $lane)->where('is_active', true)->whereNotNull('share_percent')->lockForUpdate()->first(['id']))
                 $this->fail('share_confirmation_required', '这道工序已约定固定份额，请先由接单人在协同设置中改为按实际工时分配，再改派并重新确认份额。');
             if ($old) {
-                if ($this->activeSession($op, (int) $old->employee_legacy_id)) $this->fail('owner_timing', '原接单人 '.$old->employee_name.' 正在计时，请先让他暂停再换人。');
+                if ($this->activeSession($op, (int) $old->employee_legacy_id, $lane)) $this->fail('owner_timing', '原接单人 '.$old->employee_name.' 正在计时，请先让他暂停再换人。');
                 $old->update(['is_active' => false, 'share_percent' => null]);
             }
             $name = $this->userName($user);
-            $this->setParticipant($op, $employeeId, $name, 'owner', $actor);
-            $text = $old ? "{$op->operation_name} 由 {$old->employee_name} 改派给 {$name}" : "{$op->operation_name} 派给 {$name}";
-            $this->workOrders->log($wo, 'task_assigned', null, null, $text, $actor);
+            $this->setParticipant($op, $employeeId, $name, 'owner', $actor, null, $lane);
+            $title = self::laneTitle($op->operation_name, $lane);
+            $text = $old ? "{$title} 由 {$old->employee_name} 改派给 {$name}" : "{$title} 派给 {$name}";
+            $this->workOrders->log($wo, 'task_assigned', null, null, $text, $actor, ['lane' => $lane]);
         }, 5);
     }
 
@@ -79,13 +95,13 @@ final class TaskService
      * 接单人设协同人。份额全不填 = 按实际工时分；填了就要连接单人一起合计 100%。
      * @param array<int, array{employee_legacy_id:int, share_percent:?float}> $rows
      */
-    public function collaborators(int $opId, array $rows, ?float $ownerShare, object $actor): void
+    public function collaborators(int $opId, array $rows, ?float $ownerShare, object $actor, string $lane = 'normal'): void
     {
-        DB::transaction(function () use ($opId, $rows, $ownerShare, $actor) {
+        DB::transaction(function () use ($opId, $rows, $ownerShare, $actor, $lane) {
             [$wo, $op] = $this->lockTask($opId);
             $this->assertRunnable($wo, $op);
             $me = (int) $this->actorId($actor);
-            $owner = $this->owner($op);
+            $owner = $this->owner($op, $lane);
             if (! $owner || (int) $owner->employee_legacy_id !== $me) $this->fail('not_owner', '只有接单人可以设置协同人。');
             $shares = [];
             foreach ($rows as $row) {
@@ -98,64 +114,68 @@ final class TaskService
             if ($users->count() !== count($ids)) $this->fail('user_invalid', '协同人必须是在职的账号。');
             foreach ($users as $user) $this->assertExecutor($user);
             // 已在本工序协同的人保留；新增协同人须是有效的生产工人档案。
-            $current = MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('is_active', true)->pluck('employee_legacy_id')->map(fn ($v) => (int) $v)->all();
+            $current = MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('lane', $lane)->where('is_active', true)->pluck('employee_legacy_id')->map(fn ($v) => (int) $v)->all();
             foreach ($users as $user) if (! in_array((int) $user->legacy_id, $current, true)) $this->assertWorkerStaff($user);
             $fixed = $ownerShare !== null || in_array(true, array_map(fn ($v) => $v !== null, $shares), true);
             if ($fixed) {
                 if ($ownerShare === null || in_array(null, $shares, true)) $this->fail('share_invalid', '要固定份额就每个人都填，不填就按实际工时分。');
                 if (abs($ownerShare + array_sum($shares) - 100) > 0.01) $this->fail('share_invalid', '所有人的份额加起来要等于 100%。');
             }
-            $removed = MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('role', 'collaborator')->where('is_active', true)
+            $removed = MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('lane', $lane)->where('role', 'collaborator')->where('is_active', true)
                 ->whereNotIn('employee_legacy_id', $ids ?: [0])->lockForUpdate()->get();
             foreach ($removed as $row) {
-                if ($this->activeSession($op, (int) $row->employee_legacy_id)) $this->fail('collaborator_timing', $row->employee_name.' 还在计时，请他先暂停再移出。');
+                if ($this->activeSession($op, (int) $row->employee_legacy_id, $lane)) $this->fail('collaborator_timing', $row->employee_name.' 还在计时，请他先暂停再移出。');
                 $row->update(['is_active' => false]);
             }
             foreach ($users as $user) {
-                $this->setParticipant($op, (int) $user->legacy_id, $this->userName($user), 'collaborator', $actor, $fixed ? $shares[(int) $user->legacy_id] : null);
+                $this->setParticipant($op, (int) $user->legacy_id, $this->userName($user), 'collaborator', $actor, $fixed ? $shares[(int) $user->legacy_id] : null, $lane);
             }
             $owner->update(['share_percent' => $fixed ? $ownerShare : null]);
             $names = $users->map(fn ($u) => $this->userName($u))->implode('、');
-            $this->workOrders->log($wo, 'task_collaborators', null, null, $op->operation_name.' 协同人：'.($names ?: '无').($fixed ? '（固定份额）' : '（按工时分）'), $actor);
+            $this->workOrders->log($wo, 'task_collaborators', null, null, self::laneTitle($op->operation_name, $lane).' 协同人：'.($names ?: '无').($fixed ? '（固定份额）' : '（按工时分）'), $actor);
         }, 5);
     }
 
-    public function start(int $opId, object $actor): void
+    public function start(int $opId, object $actor, string $lane = 'normal'): void
     {
         $this->closeOverdueSessions();
-        DB::transaction(function () use ($opId, $actor) {
+        DB::transaction(function () use ($opId, $actor, $lane) {
             [$wo, $op] = $this->lockTask($opId);
             $this->assertRunnable($wo, $op);
             if ($op->status === 'done') $this->fail('operation_done', '这道工序已经做完。');
             $me = (int) $this->actorId($actor);
             // 人员维护同样先锁账号再锁资格行，不能反向持锁后互相等待。
             DB::table('erp_legacy_admin_users')->where('legacy_id', $me)->lockForUpdate()->first();
-            $owner = $this->owner($op);
+            $units = $this->selectableUnits($op, $lane);
+            if ($units->isEmpty()) $this->fail('no_unit', $lane === 'rework' ? '这道工序现在没有要返工的'.$this->unitNoun($wo).'。'
+                : '这道工序现在没有要做的'.$this->unitNoun($wo).'，等前道交过来再开始。');
+            $owner = $this->owner($op, $lane);
             if (! $owner) {
                 // 没人接时直接点开始 = 自己接单。
                 if (! $this->canDo($op, $me)) $this->fail('not_worker', '你不在这道工序“能做的人”里，请找主管派工。');
-                $this->setParticipant($op, $me, $this->actorName($actor), 'owner', $actor);
-                $owner = $this->owner($op);
+                $this->setParticipant($op, $me, $this->actorName($actor), 'owner', $actor, null, $lane);
+                $owner = $this->owner($op, $lane);
             }
-            if (! $this->participant($op, $me)) $this->fail('not_participant', '你不是这道工序的接单人或协同人。');
-            if ((int) $owner->employee_legacy_id !== $me && $op->status !== 'in_progress') $this->fail('owner_first', '接单人还没开始，协同人不能先计时。');
+            if (! $this->participant($op, $me, $lane)) $this->fail('not_participant', '你不是这道工序'.($lane === 'rework' ? '返工' : '').'的接单人或协同人。');
+            if ((int) $owner->employee_legacy_id !== $me
+                && ! MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('lane', $lane)->where('employee_legacy_id', $owner->employee_legacy_id)->exists())
+                $this->fail('owner_first', '接单人还没开始，协同人不能先计时。');
             $this->assertFunds($wo);
             if (MfgLaborSession::query()->where('employee_legacy_id', $me)->where('status', 'active')->lockForUpdate()->first())
                 $this->fail('already_timing', '你还有别的工序在计时，请先暂停那一道。');
             if (ShipmentPackingLaborSession::query()->where('employee_legacy_id', $me)->where('status', 'ACTIVE')->lockForUpdate()->first(['id']))
                 $this->fail('already_timing', '你有打包作业正在计时，请先暂停。');
             if ($no = CuttingRunService::activeFor($me)) $this->fail('already_timing', "你在集中开料 {$no} 还在计时，请先暂停那一批。");
-            $units = $this->selectableUnits($op);
-            if ($units->isEmpty()) $this->fail('no_unit', '这道工序现在没有要做的设备，等前道交过来再开始。');
-            // 本道的料（总装的半成品、外购件）收到才能开工；板材／管材在本道开工后开料，报合格时再查。
-            $this->materials->assertReceivedForStart($wo, $op, $units);
+            // 本道的料（总装的半成品、外购件）收到才能开工；板材／管材在本道开工后开料，报合格时再查。返工用原来的料，不再查。
+            if ($lane === 'normal') $this->materials->assertReceivedForStart($wo, $op, $units);
             $this->markStarted($wo, $op, $actor);
             if ($op->status !== 'in_progress') $op->update(['status' => 'in_progress']);
             MfgWorkOrderUnit::query()->whereIn('id', $units->pluck('id'))->where('status', 'waiting')->update(['status' => 'in_progress', 'started_at' => now()]);
             MfgLaborSession::create([
                 'work_order_id' => $wo->id, 'work_order_operation_id' => $op->id, 'employee_legacy_id' => $me, 'employee_name' => $this->actorName($actor),
-                'is_rework' => $units->every(fn ($u) => $u->status === 'rework'), 'status' => 'active', 'started_at' => now(),
+                'is_rework' => $lane === 'rework', 'lane' => $lane, 'status' => 'active', 'started_at' => now(),
             ]);
+            self::syncWorkStatus([(int) $wo->id]);
         }, 5);
     }
 
@@ -208,31 +228,39 @@ final class TaskService
     private function pauseIfIdle(MfgWorkOrder $wo, MfgWorkOrderOperation $op, object $actor): bool
     {
         $op->refresh();
-        if ($op->status === 'done' || $this->selectableUnits($op)->isNotEmpty()) return false;
-        $sessions = MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('status', 'active')->lockForUpdate()->get();
-        if ($sessions->isEmpty()) return false;
-        foreach ($sessions as $session) self::closeSession($session, 'paused');
-        $this->workOrders->log($wo, 'timing_auto_paused', null, null, $op->operation_name.'暂时没有可做的设备，已自动暂停 '
-            .$sessions->pluck('employee_name')->implode('、').' 的计时；前道交过来后再点开始', $actor);
-        return true;
+        $paused = false;
+        foreach (self::LANES as $lane) {
+            if ($op->status !== 'done' && $this->selectableUnits($op, $lane)->isNotEmpty()) continue;
+            $sessions = MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('lane', $lane)->where('status', 'active')->lockForUpdate()->get();
+            if ($sessions->isEmpty()) continue;
+            foreach ($sessions as $session) self::closeSession($session, 'paused');
+            $this->workOrders->log($wo, 'timing_auto_paused', null, null, self::laneTitle($op->operation_name, $lane).'暂时没有可做的'.$this->unitNoun($wo).'，已自动暂停 '
+                .$sessions->pluck('employee_name')->implode('、').' 的计时'.($lane === 'rework' ? '' : '；前道交过来后再点开始'), $actor);
+            $paused = true;
+        }
+        return $paused;
     }
 
     /** 选中的设备本道合格：交下道；最后一道合格就“等入库”。 */
-    public function pass(int $opId, array $unitIds, object $actor): array
+    public function pass(int $opId, array $unitIds, object $actor, string $lane = 'normal'): array
     {
-        return DB::transaction(function () use ($opId, $unitIds, $actor) {
+        return DB::transaction(function () use ($opId, $unitIds, $actor, $lane) {
             [$wo, $op] = $this->lockTask($opId);
             $this->assertRunnable($wo, $op);
-            $this->assertReporter($op, $actor);
-            $sessions = MfgLaborSession::query()->where('work_order_operation_id', $op->id)->lockForUpdate()->get();
-            if ($sessions->isEmpty()) $this->fail('no_labor', '这道工序还没有计时记录，请先点“开始”。');
-            $units = $this->pickUnits($op, $unitIds);
-            $this->materials->assertReceivedForStart($wo, $op, $units);
-            // 下料按套数报：本次首次完成的套数加上已完成的，不能超过开料已登记的套数。
-            $firstTime = $units->filter(fn ($u) => ! MfgUnitReport::query()->where('unit_id', $u->id)->where('work_order_operation_id', $op->id)->where('result', 'passed')->exists())->count();
-            $this->materials->assertCutForPass($wo, $op, $firstTime);
+            $this->assertReporter($op, $actor, $lane);
+            $sessions = MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('lane', $lane)->lockForUpdate()->get();
+            if ($sessions->isEmpty()) $this->fail('no_labor', '这道工序'.($lane === 'rework' ? '返工' : '').'还没有计时记录，请先点“开始”。');
+            $units = $this->pickUnits($op, $unitIds, $lane);
+            if ($lane === 'normal') {
+                $this->materials->assertReceivedForStart($wo, $op, $units);
+                // 下料按套数报：本次首次完成的套数加上已完成的，不能超过开料已登记的套数。
+                $firstTime = $units->filter(fn ($u) => ! MfgUnitReport::query()->where('unit_id', $u->id)->where('work_order_operation_id', $op->id)->where('result', 'passed')->exists())->count();
+                $this->materials->assertCutForPass($wo, $op, $firstTime);
+            }
             $reportedAt = now();
-            return $this->advance($wo, $op, $units, $this->participantsSnapshot($op, $sessions, $reportedAt), $reportedAt, [], $actor);
+            $result = $this->advance($wo, $op, $units, $this->participantsSnapshot($op, $sessions, $reportedAt, $lane), $reportedAt, [], $actor);
+            self::syncWorkStatus([(int) $wo->id]);
+            return $result;
         }, 5);
     }
 
@@ -257,7 +285,7 @@ final class TaskService
                 $this->setParticipant($op, $me, $this->actorName($actor), 'owner', $actor);
             }
             $this->assertFunds($wo);
-            $units = $this->pickUnits($op, $unitIds);
+            $units = $this->pickUnits($op, $unitIds, 'normal');
             $remark = trim((string) $remark) ?: null;
             // 只为这次第一次过本道的设备收料；返工回来的设备料已经收过。
             $firstTime = $units->filter(fn ($u) => ! MfgUnitReport::query()->where('unit_id', $u->id)->where('work_order_operation_id', $op->id)->where('result', 'passed')->exists())->count();
@@ -272,22 +300,25 @@ final class TaskService
             $this->markStarted($wo, $op, $actor);
             if ($op->status !== 'in_progress') $op->update(['status' => 'in_progress']);
             $reportedAt = now();
-            $sessions = MfgLaborSession::query()->where('work_order_operation_id', $op->id)->lockForUpdate()->get();
-            return $this->advance($wo, $op, $units, $this->participantsSnapshot($op, $sessions, $reportedAt), $reportedAt,
+            $sessions = MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('lane', 'normal')->lockForUpdate()->get();
+            $result = $this->advance($wo, $op, $units, $this->participantsSnapshot($op, $sessions, $reportedAt, 'normal'), $reportedAt,
                 ['pass_mode' => 'prepared', 'reason' => $remark ? mb_substr($remark, 0, 500) : null], $actor);
+            self::syncWorkStatus([(int) $wo->id]);
+            return $result;
         }, 5);
     }
 
     /**
-     * 不合格：退回本道或之前某道重做（直接生效，开料工序除外）；或申请报废（主管确认前设备停在本道、不能再报）。
+     * 不合格：退回本道或之前某道重做（直接生效，开料工序除外），退回的进那道工序的「返工」；
+     * 或报废：有审核人（工单生产负责人／业务员档案里的生产负责人）时等审核，审核前设备停在本道、不能再报；没有审核人或审核人自己报的直接生效。
      * @param array{mode:string, return_operation_id:?int, reason_tags:array, reason:?string, photos:array} $data
      */
-    public function reject(int $opId, array $unitIds, array $data, object $actor): array
+    public function reject(int $opId, array $unitIds, array $data, object $actor, string $lane = 'normal'): array
     {
-        return DB::transaction(function () use ($opId, $unitIds, $data, $actor) {
+        return DB::transaction(function () use ($opId, $unitIds, $data, $actor, $lane) {
             [$wo, $op] = $this->lockTask($opId);
             $this->assertRunnable($wo, $op);
-            $this->assertReporter($op, $actor);
+            $this->assertReporter($op, $actor, $lane);
             // 下料切坏的在开料登记里按实际合格套数登记、废料计入损耗，不逐台报不合格。
             if (in_array((int) $op->id, MaterialIssueService::cuttingOperationIds((int) $wo->id), true))
                 $this->fail('reject_invalid', $op->operation_name.'按套数报完成，切坏的请在「开料」登记里按实际合格套数登记，不用报不合格。');
@@ -296,17 +327,25 @@ final class TaskService
             if (! $tags && $reason === '') $this->fail('reason_required', '请选不合格原因或写一句说明。');
             $photos = array_values(array_slice(array_filter((array) ($data['photos'] ?? []), fn ($p) => is_string($p) && $p !== ''), 0, 9));
             $why = implode('、', array_filter([$tags ? implode('/', $tags) : null, $reason ?: null]));
-            $units = $this->pickUnits($op, $unitIds);
+            $units = $this->pickUnits($op, $unitIds, $lane);
             $extra = ['reason_tags' => $tags ?: null, 'reason' => $reason ?: null, 'photos' => $photos ?: null];
             if (($data['mode'] ?? 'return') === 'scrap') {
                 if (\App\Models\Erp\ShipmentRework::query()->whereIn('unit_id', $units->pluck('id'))->where('status', 'in_progress')->exists())
                     $this->fail('stored_serial_scrap', '发货返修设备已经入库，须使用正式库存报废处理，不能只从制造产量删除。');
+                $review = ProductionReviewers::needsReview($wo, $this->actorId($actor));
+                // 不经审核直接生效的报废，必须写原因、拍照留痕。
+                if (! $review && ! $photos) $this->fail('photo_required', '报废提交后直接生效，请至少拍 1 张照片。');
+                $reports = [];
                 foreach ($units as $unit) {
-                    $this->report($wo, $op, $unit, 'scrap', $actor, $extra + ['is_rework' => $unit->status === 'rework', 'review_status' => 'pending']);
+                    $reports[] = $this->report($wo, $op, $unit, 'scrap', $actor, $extra + ['is_rework' => $unit->status === 'rework', 'review_status' => 'pending']);
                     $unit->update(['status' => 'rework']);
-                    $this->workOrders->log($wo, 'unit_scrap_requested', null, 'rework', "{$unit->serial_no} 在{$op->operation_name}申请报废：{$why}，等主管确认", $actor, [], $unit->id);
+                    $this->workOrders->log($wo, 'unit_scrap_requested', null, 'rework', "{$unit->serial_no} 在{$op->operation_name}".($review ? '申请报废' : '报废')."：{$why}"
+                        .($review ? '，等 '.ProductionReviewers::names($wo).' 审核' : ''), $actor, [], $unit->id);
                 }
-                return ['mode' => 'scrap', 'count' => $units->count(), 'timing_paused' => $this->pauseIfIdle($wo, $op, $actor)];
+                if (! $review) foreach ($reports as $report) $this->approveScrap($wo, $report, '无需审核，提交即生效', $actor);
+                $paused = $this->pauseIfIdle($wo, $op, $actor);
+                self::syncWorkStatus([(int) $wo->id]);
+                return ['mode' => 'scrap', 'count' => $units->count(), 'immediate' => ! $review, 'reviewers' => $review ? ProductionReviewers::names($wo) : '', 'timing_paused' => $paused];
             }
             $ops = $this->productionOps($wo);
             $pos = $ops->pluck('id')->flip();
@@ -319,51 +358,90 @@ final class TaskService
                 $this->report($wo, $op, $unit, 'failed', $actor, $extra + ['is_rework' => $unit->status === 'rework',
                     'return_operation_id' => $target->id, 'return_operation_name' => $target->operation_name]);
                 $unit->update(['status' => 'rework', 'rework_count' => (int) $unit->rework_count + 1, 'current_operation_id' => $target->id]);
-                $where = $target->id === $op->id ? '本道重做' : '退回'.$target->operation_name;
-                $this->workOrders->log($wo, 'unit_failed', null, 'rework', "{$unit->serial_no} {$op->operation_name}不合格，{$where}：{$why}", $actor, ['operation_id' => $op->id, 'return_operation_id' => $target->id], $unit->id);
+                $where = $target->id === $op->id ? '本道返工' : '退回'.$target->operation_name.'返工';
+                $this->workOrders->log($wo, 'unit_failed', null, 'rework', "{$unit->serial_no} {$op->operation_name}不合格，{$where}：{$why}", $actor,
+                    ['operation_id' => $op->id, 'return_operation_id' => $target->id, 'lane' => $lane], $unit->id);
             }
             if ($target->id !== $op->id && $target->status === 'done') $target->update(['status' => 'in_progress']);
+            $assigned = $this->ensureReworkOwner($wo, $target, $actor);
             $this->refreshOperation($wo, $op);
-            return ['mode' => 'return', 'count' => $units->count(), 'return_operation_name' => $target->operation_name,
-                'timing_paused' => $this->pauseIfIdle($wo, $op, $actor)];
+            $paused = $this->pauseIfIdle($wo, $op, $actor);
+            self::syncWorkStatus([(int) $wo->id]);
+            return ['mode' => 'return', 'count' => $units->count(), 'return_operation_name' => $target->operation_name, 'rework_owner_name' => $assigned,
+                'timing_paused' => $paused];
         }, 5);
     }
 
-    /** 主管确认报废：通过 = 这台设备报废；驳回 = 继续在本道返工。 */
-    public function reviewScrap(int $reportId, bool $approve, ?string $remark, object $actor): void
+    /**
+     * 退回到某道返工：那道的「返工」还没人接时，默认交给这道正常生产的接单人（他不在了就留给大家接）。返回接手人姓名。
+     */
+    private function ensureReworkOwner(MfgWorkOrder $wo, MfgWorkOrderOperation $target, object $actor): ?string
     {
-        DB::transaction(function () use ($reportId, $approve, $remark, $actor) {
+        if ($existing = $this->owner($target, 'rework')) return $existing->employee_name;
+        $normal = $this->owner($target, 'normal');
+        if (! $normal || ! $this->activeUser((int) $normal->employee_legacy_id)) return null;
+        $this->setParticipant($target, (int) $normal->employee_legacy_id, $normal->employee_name, 'owner', $actor, null, 'rework');
+        $this->workOrders->log($wo, 'task_assigned', null, null, self::laneTitle($target->operation_name, 'rework').' 默认交给本道接单人 '.$normal->employee_name, $actor, ['lane' => 'rework']);
+        return $normal->employee_name;
+    }
+
+    /**
+     * 审核报废：通过 = 这台设备报废；驳回 = 继续在本道返工。
+     * 审核人：工单生产负责人，没填就是业务员档案里任一启用的生产负责人；$hasApprovePermission（报废确认权限）也可以审。
+     */
+    public function reviewScrap(int $reportId, bool $approve, ?string $remark, object $actor, bool $hasApprovePermission = false): void
+    {
+        DB::transaction(function () use ($reportId, $approve, $remark, $actor, $hasApprovePermission) {
             $woId = MfgUnitReport::query()->whereKey($reportId)->value('work_order_id');
             if (! $woId) $this->fail('not_found', '报废申请不存在。', 404);
+            $orderId = MfgWorkOrder::query()->whereKey($woId)->value('sales_order_id');
+            if ($orderId) SalesOrder::query()->whereKey($orderId)->lockForUpdate()->first();
             $wo = MfgWorkOrder::query()->lockForUpdate()->findOrFail($woId);
+            $ids = ProductionReviewers::for($wo);
+            if (! $hasApprovePermission && ! in_array((int) $this->actorId($actor), $ids, true))
+                $this->fail('permission_denied', '只有这张工单的生产负责人'.($ids ? '（'.ProductionReviewers::names($wo).'）' : '').'可以审核报废。', 403);
             $report = MfgUnitReport::query()->lockForUpdate()->findOrFail($reportId);
             if ($report->result !== 'scrap' || $report->review_status !== 'pending') $this->fail('status_invalid', '这条报废申请已经处理过了。');
-            $unit = MfgWorkOrderUnit::query()->lockForUpdate()->findOrFail($report->unit_id);
-            $op = MfgWorkOrderOperation::query()->lockForUpdate()->findOrFail($report->work_order_operation_id);
-            $report->update(['review_status' => $approve ? 'approved' : 'rejected', 'reviewed_by_legacy_id' => $this->actorId($actor),
-                'reviewed_by_name' => $this->actorName($actor), 'reviewed_at' => now(), 'review_remark' => $remark ?: null]);
             if (! $approve) {
+                $unit = MfgWorkOrderUnit::query()->lockForUpdate()->findOrFail($report->unit_id);
+                $op = MfgWorkOrderOperation::query()->lockForUpdate()->findOrFail($report->work_order_operation_id);
+                $report->update(['review_status' => 'rejected', 'reviewed_by_legacy_id' => $this->actorId($actor),
+                    'reviewed_by_name' => $this->actorName($actor), 'reviewed_at' => now(), 'review_remark' => $remark ?: null]);
                 $this->workOrders->log($wo, 'unit_scrap_rejected', 'rework', 'rework', "{$unit->serial_no} 报废申请被驳回，继续在{$op->operation_name}返工".($remark ? '：'.$remark : ''), $actor, [], $unit->id);
+                $this->ensureReworkOwner($wo, $op, $actor);
+                self::syncWorkStatus([(int) $wo->id]);
                 return;
             }
-            $before = $unit->status;
-            $unit->update(['status' => 'scrapped', 'current_operation_id' => null]);
-            $this->workOrders->log($wo, 'unit_scrapped', $before, 'scrapped', "{$unit->serial_no} 确认报废（{$op->operation_name}）".($remark ? '：'.$remark : ''), $actor, [], $unit->id);
-            // 上游最后一台报废后，下游可能已无设备可做，必须一并结束这些工序的计时。
-            $ops = $this->productionOps($wo);
-            foreach ($ops->slice($ops->pluck('id')->search($op->id)) as $affected) {
-                $this->refreshOperation($wo, $affected);
-                $this->pauseIfIdle($wo, $affected, $actor);
-            }
-            $this->workOrders->refreshCompletion($wo, $actor);
-            // 订单工单报废后订单就少了设备：自动补一张工单；补单失败不影响报废确认，留日志让主管手工处理。
-            try {
-                DB::transaction(fn () => $this->workOrders->createScrapReplacement($wo, $actor));
-            } catch (\App\Exceptions\Erp\WorkOrderDomainException|\Illuminate\Validation\ValidationException|\RuntimeException $e) {
-                $message = $e instanceof \Illuminate\Validation\ValidationException ? collect($e->errors())->flatten()->first() : $e->getMessage();
-                $this->workOrders->log($wo, 'scrap_replace_failed', $wo->status, $wo->status, '设备报废后自动补做工单没开成：'.$message.'，请生产主管手工补单', $actor);
-            }
+            $this->approveScrap($wo, $report, $remark, $actor);
+            self::syncWorkStatus([(int) $wo->id]);
         }, 5);
+    }
+
+    /** 报废生效：设备报废、结束下游空转的计时、订单工单自动补做；返工工单报废的那件，冻结的不良库存一起报废出库。调用方须已锁定工单。 */
+    private function approveScrap(MfgWorkOrder $wo, MfgUnitReport $report, ?string $remark, object $actor): void
+    {
+        $unit = MfgWorkOrderUnit::query()->lockForUpdate()->findOrFail($report->unit_id);
+        $op = MfgWorkOrderOperation::query()->lockForUpdate()->findOrFail($report->work_order_operation_id);
+        $report->update(['review_status' => 'approved', 'reviewed_by_legacy_id' => $this->actorId($actor),
+            'reviewed_by_name' => $this->actorName($actor), 'reviewed_at' => now(), 'review_remark' => $remark ?: null]);
+        $before = $unit->status;
+        $unit->update(['status' => 'scrapped', 'current_operation_id' => null]);
+        $this->workOrders->log($wo, 'unit_scrapped', $before, 'scrapped', "{$unit->serial_no} 报废生效（{$op->operation_name}）".($remark ? '：'.$remark : ''), $actor, [], $unit->id);
+        if ($wo->rework_of_work_order_id) app(MaterialReturnService::class)->settleReworkUnit($wo, $unit, 'scrap', $actor);
+        // 上游最后一台报废后，下游可能已无设备可做，必须一并结束这些工序的计时。
+        $ops = $this->productionOps($wo);
+        foreach ($ops->slice($ops->pluck('id')->search($op->id)) as $affected) {
+            $this->refreshOperation($wo, $affected);
+            $this->pauseIfIdle($wo, $affected, $actor);
+        }
+        $this->workOrders->refreshCompletion($wo, $actor);
+        // 订单工单报废后订单就少了设备：自动补一张工单；补单失败不影响报废确认，留日志让主管手工处理。
+        try {
+            DB::transaction(fn () => $this->workOrders->createScrapReplacement($wo, $actor));
+        } catch (\App\Exceptions\Erp\WorkOrderDomainException|\Illuminate\Validation\ValidationException|\RuntimeException $e) {
+            $message = $e instanceof \Illuminate\Validation\ValidationException ? collect($e->errors())->flatten()->first() : $e->getMessage();
+            $this->workOrders->log($wo, 'scrap_replace_failed', $wo->status, $wo->status, '设备报废后自动补做工单没开成：'.$message.'，请生产主管手工补单', $actor);
+        }
     }
 
     /** 工序管理里设置“能做的人”；不设 = 有报工权限的人都能做。 */
@@ -392,11 +470,8 @@ final class TaskService
     public static function closeSession(MfgLaborSession $session, string $status, ?CarbonInterface $endedAt = null): void
     {
         $ended = $endedAt ?? now();
-        // 这段计时里报的设备全是返工才算返工工时；有一台是正常做的就算正常工时。没报设备时沿用开始时的判断。
-        $flags = MfgUnitReport::query()->where('work_order_operation_id', $session->work_order_operation_id)
-            ->whereBetween('created_at', [$session->started_at, $ended])->pluck('is_rework');
-        $rework = $flags->isEmpty() ? (bool) $session->is_rework : $flags->every(fn ($v) => (bool) $v);
-        $session->update(['status' => $status, 'ended_at' => $ended, 'is_rework' => $rework,
+        // 返工单独计时：在「返工」任务里计的就是返工工时（不算提成）。
+        $session->update(['status' => $status, 'ended_at' => $ended, 'is_rework' => ($session->lane ?: 'normal') === 'rework',
             'labor_minutes' => round(max(0, $session->started_at->diffInSeconds($ended, false)) / 60, 2)]);
     }
 
@@ -409,11 +484,11 @@ final class TaskService
         return $workers->isEmpty() || $workers->contains($employeeId);
     }
 
-    /** 本道现在能报的设备：停在本道、没在等报废确认。 */
-    public function selectableUnits(MfgWorkOrderOperation $op): Collection
+    /** 本道现在能报的设备：停在本道、没在等报废确认；$lane = normal 正常生产的、rework 返工的、null 全部。 */
+    public function selectableUnits(MfgWorkOrderOperation $op, ?string $lane = null): Collection
     {
         $query = MfgWorkOrderUnit::query()->where('work_order_id', $op->work_order_id)->where('current_operation_id', $op->id)
-            ->whereIn('status', self::SELECTABLE)->orderBy('unit_no');
+            ->whereIn('status', self::laneStatuses($lane))->orderBy('unit_no');
         if (DB::transactionLevel() > 0) {
             // 待报废和台状态都要读当前值，不能混用等待工单锁前建立的旧视图。
             $pending = MfgUnitReport::query()->where('work_order_id', $op->work_order_id)->where('review_status', 'pending')->lockForUpdate()->pluck('unit_id');
@@ -446,6 +521,10 @@ final class TaskService
     private function advance(MfgWorkOrder $wo, MfgWorkOrderOperation $op, Collection $units, array $snapshot, CarbonInterface $reportedAt, array $extra, object $actor): array
     {
         $prepared = ($extra['pass_mode'] ?? null) === 'prepared';
+        // 返工工单（总装退回的不良半成品）：每道都是返工，最后一道合格就回到原来的库存（解冻），不再生产入库。
+        $reworkOrder = (bool) $wo->rework_of_work_order_id;
+        $reworkNext = false;
+        $returned = 0;
         $ops = $this->productionOps($wo);
         $pos = $ops->pluck('id')->flip();
         $next = $ops->get($pos[$op->id] + 1);
@@ -464,11 +543,18 @@ final class TaskService
                 $stillRework = $failedAt && isset($pos[$failedAt]) && $pos[$failedAt] > $pos[$op->id];
             }
             if ($next) {
-                $unit->update(['status' => $stillRework || $shipmentRepair ? 'rework' : 'in_progress', 'current_operation_id' => $next->id]);
+                $toRework = $stillRework || $shipmentRepair || $reworkOrder;
+                if ($toRework) $reworkNext = true;
+                $unit->update(['status' => $toRework ? 'rework' : 'in_progress', 'current_operation_id' => $next->id]);
                 if ($next->status === 'done') $next->update(['status' => 'in_progress']);
-                $text = ($prepared ? "{$op->operation_name}已备料" : "{$op->operation_name}合格")."，交{$next->operation_name}";
+                $text = ($prepared ? "{$op->operation_name}已备料" : "{$op->operation_name}合格")."，交{$next->operation_name}".($toRework ? '返工' : '');
             } else {
-                if ($shipmentRepair) {
+                if ($reworkOrder) {
+                    $unit->update(['status' => 'stored', 'current_operation_id' => null, 'completed_at' => $reportedAt]);
+                    app(MaterialReturnService::class)->settleReworkUnit($wo, $unit, 'release', $actor);
+                    $returned++;
+                    $text = "{$op->operation_name}返工合格，退回的不良件已解冻回库存，可以重新收料";
+                } elseif ($shipmentRepair) {
                     // 已在库原机返工只完成本轮维修，不增加首次制造成果，也不再入库一台。
                     $unit->update(['status' => 'stored', 'current_operation_id' => null]);
                     $shipmentRepair->update(['status' => 'completed', 'completed_at' => $reportedAt]);
@@ -481,13 +567,15 @@ final class TaskService
                     $text = ($prepared ? "{$op->operation_name}已备料" : "{$op->operation_name}合格").'，生产完成，等入库';
                 }
             }
-            $this->workOrders->log($wo, 'unit_passed', $wasRework ? 'rework' : 'in_progress', $next ? null : ($shipmentRepair ? 'stored' : 'completed'),
+            $this->workOrders->log($wo, 'unit_passed', $wasRework ? 'rework' : 'in_progress', $next ? null : ($shipmentRepair || $reworkOrder ? 'stored' : 'completed'),
                 $unit->serial_no.' '.$text.($wasRework ? '（返工）' : ''), $actor, ['operation_id' => $op->id], $unit->id);
         }
         if ($firstPass) $op->update(['completed_qty' => (float) $op->completed_qty + $firstPass]);
-        if ($finished) $wo->update(['completed_qty' => (float) $wo->completed_qty + $finished]);
+        if ($finished || $returned) $wo->update(['completed_qty' => (float) $wo->completed_qty + $finished + $returned]);
+        if ($next && $reworkNext && ! $reworkOrder) $this->ensureReworkOwner($wo, $next, $actor);
         $this->refreshOperation($wo, $op, $reportedAt);
         $timingPaused = $this->pauseIfIdle($wo, $op, $actor);
+        if ($returned) $this->workOrders->refreshCompletion($wo, $actor);
         // 总装做完、订单马上要发：自动记入成品待发区，直接去发货试水。
         $staged = null;
         if ($finished) {
@@ -499,7 +587,7 @@ final class TaskService
                 $this->workOrders->log($wo, 'staging_failed', $wo->status, $wo->status, '自动记入成品待发区没成功：'.$message.'，请仓库手工入库', $actor);
             }
         }
-        return ['passed' => $units->count(), 'finished' => $finished, 'repaired' => $repaired, 'next_operation_name' => $next?->operation_name,
+        return ['passed' => $units->count(), 'finished' => $finished, 'repaired' => $repaired, 'returned' => $returned, 'next_operation_name' => $next?->operation_name,
             'staged_qty' => $staged ? (int) $staged->qty : 0, 'staged_receipt_no' => $staged?->receipt_no, 'timing_paused' => $timingPaused];
     }
 
@@ -527,19 +615,20 @@ final class TaskService
             && \App\Models\Erp\ShipmentRework::query()->where('work_order_id', $wo->id)->where('status', 'in_progress')->exists());
     }
 
-    private function assertReporter(MfgWorkOrderOperation $op, object $actor): void
+    private function assertReporter(MfgWorkOrderOperation $op, object $actor, string $lane = 'normal'): void
     {
-        if (! $this->participant($op, (int) $this->actorId($actor))) $this->fail('not_participant', '只有这道工序的接单人和协同人可以报工。');
+        if (! $this->participant($op, (int) $this->actorId($actor), $lane))
+            $this->fail('not_participant', '只有这道工序'.($lane === 'rework' ? '返工' : '').'的接单人和协同人可以报工。');
     }
 
-    private function pickUnits(MfgWorkOrderOperation $op, array $unitIds): Collection
+    private function pickUnits(MfgWorkOrderOperation $op, array $unitIds, string $lane = 'normal'): Collection
     {
         $ids = array_values(array_unique(array_filter(array_map('intval', $unitIds))));
         if (! $ids) $this->fail('unit_required', '请选择这次做完的设备。');
         $units = MfgWorkOrderUnit::query()->where('work_order_id', $op->work_order_id)->whereIn('id', $ids)->orderBy('unit_no')->lockForUpdate()->get();
-        $selectable = $this->selectableUnits($op)->pluck('id')->all();
+        $selectable = $this->selectableUnits($op, $lane)->pluck('id')->all();
         if ($units->count() !== count($ids) || $units->contains(fn ($u) => ! in_array($u->id, $selectable, true)))
-            $this->fail('unit_invalid', '选的设备不在这道工序上或正在等报废确认，请刷新后重选。');
+            $this->fail('unit_invalid', '选的不在这道工序'.($lane === 'rework' ? '的返工' : '').'里或正在等报废审核，请刷新后重选。');
         return $units;
     }
 
@@ -565,17 +654,17 @@ final class TaskService
         }
     }
 
-    private function report(MfgWorkOrder $wo, MfgWorkOrderOperation $op, MfgWorkOrderUnit $unit, string $result, object $actor, array $extra): void
+    private function report(MfgWorkOrder $wo, MfgWorkOrderOperation $op, MfgWorkOrderUnit $unit, string $result, object $actor, array $extra): MfgUnitReport
     {
-        MfgUnitReport::create($extra + [
+        return MfgUnitReport::create($extra + [
             'work_order_id' => $wo->id, 'work_order_operation_id' => $op->id, 'unit_id' => $unit->id, 'serial_no' => $unit->serial_no,
             'result' => $result, 'reporter_legacy_id' => $this->actorId($actor), 'reporter_name' => $this->actorName($actor),
         ]);
     }
 
-    private function participantsSnapshot(MfgWorkOrderOperation $op, Collection $sessions, CarbonInterface $reportedAt): array
+    private function participantsSnapshot(MfgWorkOrderOperation $op, Collection $sessions, CarbonInterface $reportedAt, string $lane = 'normal'): array
     {
-        $participants = MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('is_active', true)->orderByRaw("FIELD(role, 'owner', 'collaborator')")->lockForUpdate()->get();
+        $participants = MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('lane', $lane)->where('is_active', true)->orderByRaw("FIELD(role, 'owner', 'collaborator')")->lockForUpdate()->get();
         if ($participants->contains(fn ($p) => $p->share_percent !== null)
             && ($participants->contains(fn ($p) => $p->share_percent === null) || abs($participants->sum('share_percent') - 100) > 0.01))
             $this->fail('share_confirmation_required', '固定份额必须每个人都填写且合计为 100%，请由接单人在协同设置中重新确认。');
@@ -588,24 +677,25 @@ final class TaskService
             ->values()->all();
     }
 
-    private function owner(MfgWorkOrderOperation $op): ?MfgTaskParticipant
+    private function owner(MfgWorkOrderOperation $op, string $lane = 'normal'): ?MfgTaskParticipant
     {
-        return MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('role', 'owner')->where('is_active', true)->lockForUpdate()->first();
+        return MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('lane', $lane)->where('role', 'owner')->where('is_active', true)->lockForUpdate()->first();
     }
 
-    private function participant(MfgWorkOrderOperation $op, int $employeeId): ?MfgTaskParticipant
+    private function participant(MfgWorkOrderOperation $op, int $employeeId, string $lane = 'normal'): ?MfgTaskParticipant
     {
-        return MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('employee_legacy_id', $employeeId)->where('is_active', true)->lockForUpdate()->first();
+        return MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('lane', $lane)->where('employee_legacy_id', $employeeId)->where('is_active', true)->lockForUpdate()->first();
     }
 
-    private function activeSession(MfgWorkOrderOperation $op, int $employeeId): ?MfgLaborSession
+    private function activeSession(MfgWorkOrderOperation $op, int $employeeId, ?string $lane = null): ?MfgLaborSession
     {
-        return MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('employee_legacy_id', $employeeId)->where('status', 'active')->lockForUpdate()->first();
+        return MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('employee_legacy_id', $employeeId)->when($lane, fn ($q, $v) => $q->where('lane', $v))
+            ->where('status', 'active')->lockForUpdate()->first();
     }
 
-    private function setParticipant(MfgWorkOrderOperation $op, int $employeeId, string $name, string $role, object $actor, ?float $share = null): void
+    private function setParticipant(MfgWorkOrderOperation $op, int $employeeId, string $name, string $role, object $actor, ?float $share = null, string $lane = 'normal'): void
     {
-        MfgTaskParticipant::query()->lockForUpdate()->updateOrCreate(['work_order_operation_id' => $op->id, 'employee_legacy_id' => $employeeId], [
+        MfgTaskParticipant::query()->lockForUpdate()->updateOrCreate(['work_order_operation_id' => $op->id, 'employee_legacy_id' => $employeeId, 'lane' => $lane], [
             'work_order_id' => $op->work_order_id, 'employee_name' => $name, 'role' => $role, 'is_active' => true, 'share_percent' => $share,
             'assigned_by_legacy_id' => $this->actorId($actor), 'assigned_by_name' => $this->actorName($actor), 'joined_at' => now(),
         ]);
@@ -628,6 +718,53 @@ final class TaskService
     {
         if (! app(\App\Services\Erp\BusinessStaffService::class)->isActive((int) $user->legacy_id, 'production_worker'))
             $this->fail('user_invalid', $this->userName($user).' 不是有效的生产工人，请先在“系统管理 / 业务员档案”登记并启用。');
+    }
+
+    /** 提示语量词：整机说“台设备”，半成品按工单单位（如“个”）。 */
+    public function unitWord(MfgWorkOrder $wo): string
+    {
+        $type = DB::table('erp_items')->where('id', $wo->item_id)->value('item_type');
+        if ($type === 'finished_product' || ! $type) return '台设备';
+        return trim((string) $wo->unit_name) ?: '件';
+    }
+
+    /** 返工工单：每道的返工默认交给原半成品工单同一道的接单人（他不在了就留给大家接）。调用方须在事务内。 */
+    public function defaultReworkOwners(MfgWorkOrder $reworkWo, MfgWorkOrder $source, object $actor): void
+    {
+        $sourceOps = MfgWorkOrderOperation::query()->where('work_order_id', $source->id)->get();
+        foreach (MfgWorkOrderOperation::query()->where('work_order_id', $reworkWo->id)->where('execution_context', 'production')->get() as $op) {
+            $from = $sourceOps->first(fn ($o) => (int) $o->sequence === (int) $op->sequence && $o->operation_name === $op->operation_name)
+                ?? $sourceOps->firstWhere('operation_name', $op->operation_name);
+            $normal = $from ? $this->owner($from, 'normal') : null;
+            if (! $normal || ! $this->activeUser((int) $normal->employee_legacy_id)) continue;
+            $this->setParticipant($op, (int) $normal->employee_legacy_id, $normal->employee_name, 'owner', $actor, null, 'rework');
+        }
+    }
+
+    /** 提示语名词：整机说“设备”，半成品说物料名（如“设备架子”）。 */
+    public function unitNoun(MfgWorkOrder $wo): string
+    {
+        $type = DB::table('erp_items')->where('id', $wo->item_id)->value('item_type');
+        if ($type === 'finished_product' || ! $type) return '设备';
+        return trim((string) $wo->item_name) ?: '件';
+    }
+
+    /**
+     * 同步工序状态 work_status：done 完成；本道有设备（正常或返工）= 有人开始过就是进行中，否则可接；
+     * 本道没设备 = 做过（开始过或报过合格）就是进行中（等前道再交），一台都没交过来就是未到。$woIds 为空同步全部未结束的工单。
+     */
+    public static function syncWorkStatus(?array $woIds = null): void
+    {
+        if ($woIds !== null && ! $woIds) return;
+        $here = "SELECT current_operation_id AS oid FROM erp_mfg_work_order_units WHERE status IN ('waiting', 'in_progress', 'rework') AND current_operation_id IS NOT NULL"
+            .($woIds !== null ? ' AND work_order_id IN ('.implode(',', array_map('intval', $woIds)).')' : '').' GROUP BY current_operation_id';
+        $sql = "UPDATE erp_mfg_work_order_operations op JOIN erp_mfg_work_orders wo ON wo.id = op.work_order_id LEFT JOIN ({$here}) u ON u.oid = op.id
+            SET op.work_status = CASE WHEN op.status = 'done' THEN 'done'
+                WHEN u.oid IS NOT NULL THEN IF(op.status = 'in_progress', 'in_progress', 'ready')
+                WHEN op.status = 'in_progress' OR op.completed_qty > 0 THEN 'in_progress' ELSE 'pending' END
+            WHERE op.execution_context = 'production'"
+            .($woIds !== null ? ' AND op.work_order_id IN ('.implode(',', array_map('intval', $woIds)).')' : " AND wo.status IN ('planned', 'released', 'in_progress', 'paused', 'completed')");
+        DB::update($sql);
     }
 
     private function userName(object $user): string { return (string) (($user->nickname ?? null) ?: ($user->username ?? null) ?: ('#'.$user->legacy_id)); }

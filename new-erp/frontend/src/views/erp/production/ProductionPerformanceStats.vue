@@ -120,6 +120,11 @@
                 <div class="formula-val">{{ hours(monthData.totals.closing) }} <small>小时</small></div>
                 <div class="formula-sub">留待后续出库月份结算</div>
               </div>
+              <div v-if="monthData.totals.rework" class="formula-card is-danger">
+                <div class="formula-label">本月返工（单独列）</div>
+                <div class="formula-val">{{ hours(monthData.totals.rework) }} <small>小时</small></div>
+                <div class="formula-sub">返工工时不算提成</div>
+              </div>
               <div class="formula-card is-money">
                 <div class="formula-label">本月结算提成合计</div>
                 <div class="formula-val">{{ moneySymbol(monthData.totals.commission) }}</div>
@@ -270,6 +275,11 @@
                   <b :class="row.closing > 0 ? 'warn-text' : 'muted'">{{ hours(row.closing) }}</b>
                 </template>
               </el-table-column>
+              <el-table-column label="返工工时（小时）" min-width="135" align="right">
+                <template slot-scope="{ row }">
+                  <span :class="row.rework > 0 ? 'bad-text' : 'muted'">{{ row.rework ? hours(row.rework) : '—' }}</span>
+                </template>
+              </el-table-column>
               <el-table-column label="本月结算提成" min-width="135" align="right">
                 <template slot-scope="{ row }">
                   <b :class="Number(row.commission) < 0 ? 'bad-text' : 'ok-text'">{{ moneySymbol(row.commission) }}</b>
@@ -382,13 +392,14 @@
                       <span class="sub-detail-meta">本人每台工时 = 本人累计工时 ÷ 工单投入台数；工单每台工时 = 全部人累计工时 ÷ 投入台数</span>
                     </div>
                     <el-table :data="row.rows" size="mini" border class="inner-sub-table">
-                      <el-table-column label="类型" width="95" align="center">
+                      <el-table-column label="类型" width="115" align="center">
                         <template slot-scope="{ row: r }">
                           <el-tag
                             size="mini"
                             :type="r.class === 'finished' ? 'success' : (r.class === 'packing' ? 'info' : 'warning')"
                             effect="plain"
                           >{{ r.class_label }}</el-tag>
+                          <el-tag v-if="r.is_rework" size="mini" type="danger" effect="plain" class="tag">返工</el-tag>
                         </template>
                       </el-table-column>
                       <el-table-column label="工单 / 批次与参与工序" min-width="220">
@@ -403,7 +414,8 @@
                       </el-table-column>
                       <el-table-column label="本月完工 / 工单数量" width="145" align="right">
                         <template slot-scope="{ row: r }">
-                          <template v-if="r.running"><span class="warn-text">开料进行中</span></template>
+                          <template v-if="r.is_rework"><span class="muted">返工不算台数</span></template>
+                          <template v-else-if="r.running"><span class="warn-text">开料进行中</span></template>
                           <template v-else><b>{{ qty(r.completed_in_month) }}</b> / {{ qty(r.base_qty) }} {{ r.unit_name }}</template>
                         </template>
                       </el-table-column>
@@ -421,7 +433,8 @@
                       </el-table-column>
                       <el-table-column label="当前进度说明" min-width="165">
                         <template slot-scope="{ row: r }">
-                          <span v-if="r.running" class="warn-text">开料还没结束，件数结束后计入</span>
+                          <span v-if="r.is_rework" class="bad-text">返工工时单列，不进本月工时</span>
+                          <span v-else-if="r.running" class="warn-text">开料还没结束，件数结束后计入</span>
                           <span v-else-if="r.finished" class="ok-text">已全部做完</span>
                           <span v-else class="warn-text">已完工 {{ qty(r.completed_total) }}，每台工时还会变</span>
                         </template>
@@ -453,6 +466,9 @@
               </el-table-column>
               <el-table-column label="本月工时（小时）" min-width="135" align="right">
                 <template slot-scope="{ row }"><b class="ok-text">{{ hours(row.month_minutes) }}</b></template>
+              </el-table-column>
+              <el-table-column label="返工工时（小时）" min-width="135" align="right">
+                <template slot-scope="{ row }"><span :class="row.month_rework_minutes > 0 ? 'bad-text' : 'muted'">{{ row.month_rework_minutes ? hours(row.month_rework_minutes) : '—' }}</span></template>
               </el-table-column>
               <el-table-column prop="work_order_count" label="参与工单数" width="110" align="right" />
               <el-table-column label="操作" width="110" align="center">
@@ -676,6 +692,9 @@
             <el-table-column label="工时（小时）" width="115" align="right">
               <template slot-scope="{ row }">{{ hours(row.labor_minutes) }}</template>
             </el-table-column>
+            <el-table-column label="返工工时" width="95" align="right">
+              <template slot-scope="{ row }"><span :class="row.rework_minutes > 0 ? 'bad-text' : 'muted'">{{ row.rework_minutes ? hours(row.rework_minutes) : '—' }}</span></template>
+            </el-table-column>
             <el-table-column prop="employee_count" label="参与人数" width="90" align="right">
               <template slot-scope="{ row }">{{ row.employee_count }} 人</template>
             </el-table-column>
@@ -875,6 +894,11 @@
               <div class="d-kpi-val">{{ hours(detail.totals.labor_minutes) }} 小时</div>
               <div class="d-kpi-sub">共 {{ (detail.employees || []).length }} 名员工参与</div>
             </div>
+            <div v-if="detail.totals.rework_minutes" class="dialog-kpi-item">
+              <div class="d-kpi-label">返工工时（单独列）</div>
+              <div class="d-kpi-val bad-text">{{ hours(detail.totals.rework_minutes) }} 小时</div>
+              <div class="d-kpi-sub">返工工时不算提成</div>
+            </div>
           </div>
 
           <el-alert
@@ -901,6 +925,9 @@
             </el-table-column>
             <el-table-column label="应得提成" width="150" align="right">
               <template slot-scope="{ row }"><b class="ok-text">{{ moneySymbol(row.performance_amount) }}</b></template>
+            </el-table-column>
+            <el-table-column label="返工工时（小时）" width="140" align="right">
+              <template slot-scope="{ row }"><span :class="row.rework_minutes > 0 ? 'bad-text' : 'muted'">{{ row.rework_minutes ? hours(row.rework_minutes) : '—' }}</span></template>
             </el-table-column>
           </el-table>
 
@@ -973,6 +1000,9 @@
                     <el-tag v-if="row.employees.length" size="mini" effect="plain" class="tag">
                       {{ row.share_mode === 'fixed' ? '固定份额' : '按工时分' }}
                     </el-tag>
+                    <div v-if="row.rework_employees && row.rework_employees.length" class="bad-text">
+                      返工（不算提成）：<span v-for="e in row.rework_employees" :key="'r' + e.employee_legacy_id" class="emp">{{ e.employee_name }} {{ hours(e.rework_minutes) }}h</span>
+                    </div>
                   </span>
                 </template>
               </el-table-column>
@@ -1347,6 +1377,11 @@ export default {
         if (node.note) rows.push({ kind: 'note', level, text: node.note })
         ;(node.operations || []).forEach(op => rows.push(Object.assign({}, op, { kind: 'op', level })))
         ;(node.notes || []).forEach(text => rows.push({ kind: 'note', level, text }))
+        ;(node.rework_orders || []).forEach(r => {
+          rows.push({ kind: 'wo', level: level + 1, work_order_id: r.work_order_id, work_order_no: r.work_order_no, source_label: '返工工单', item_name: r.item_name })
+          const who = (r.employees || []).map(e => `${e.employee_name} ${this.hours(e.rework_minutes)}h`).join('、')
+          rows.push({ kind: 'note', level: level + 1, text: `返工工时 ${this.hours(r.rework_minutes)} 小时（单独列，不算提成）${who ? '：' + who : ''}` })
+        })
         ;(node.children || []).forEach(c => walk(c, level + 1))
       }
       ;(line.sources || []).forEach(s => walk(s, 0))

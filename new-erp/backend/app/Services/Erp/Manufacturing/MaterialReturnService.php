@@ -42,6 +42,8 @@ final class MaterialReturnService
     public const TYPES = ['surplus' => '余料/错料退回', 'defective' => '不良退回', 'scrapped' => '报废设备拆回'];
     public const STATUS_LABELS = ['pending' => '待审核', 'approved' => '已入库', 'rejected' => '已驳回', 'cancelled' => '已撤回'];
     public const DISPOSITIONS = ['release' => '判定可用', 'scrap' => '报废', 'supplier_return' => '退供应商'];
+    /** 自制半成品不良退回时员工当场选的处置：返工（开返工工单）/ 报废 / 判定可用；按审核人规则审核或直接生效。 */
+    public const PLAN_ACTIONS = ['rework' => '返工', 'scrap' => '报废', 'release' => '判定可用'];
     private const OPEN_WO = ['released', 'in_progress', 'paused'];
     private const ACTIVE_UNIT = ['waiting', 'in_progress', 'rework', 'completed'];
 
@@ -52,8 +54,8 @@ final class MaterialReturnService
         private readonly MaterialIssueService $issues,
     ) {}
 
-    /** 退料弹窗：本道每种料的可退数量（按三种退料类型）和可退编号。 */
-    public function options(int $workOrderId, int $operationId): array
+    /** 退料弹窗：本道每种料的可退数量（按三种退料类型）和可退编号；自制半成品附不良处置可选的返工起点。 */
+    public function options(int $workOrderId, int $operationId, ?int $actorId = null): array
     {
         [$wo, $op] = $this->context($workOrderId, $operationId, false);
         $rows = [];
@@ -64,7 +66,8 @@ final class MaterialReturnService
             // 可选编号的料：有编号领出的按编号退，无编号领出的按数量退，两部分分开算。
             $row = ['material_id' => (int) $m->id, 'component_item_id' => (int) $m->component_item_id, 'component_item_name' => $m->component_item_name,
                 'component_item_code' => $m->component_item_code, 'unit_name' => $m->unit_name, 'required_qty' => (float) $m->required_qty,
-                'issued_qty' => (float) $m->issued_qty, 'serial_mode' => $mode, 'by_number' => $mode !== 'none', 'by_qty' => $mode !== 'required', 'limits' => [], 'serials' => []];
+                'issued_qty' => (float) $m->issued_qty, 'serial_mode' => $mode, 'by_number' => $mode !== 'none', 'by_qty' => $mode !== 'required', 'limits' => [], 'serials' => [],
+                'made' => $item && $this->isMade($item), 'rework_operations' => $item && $this->isMade($item) ? $this->reworkStarts($wo, $m)['operations'] : []];
             if ($mode !== 'none') {
                 $row['serials'] = array_map(fn ($s) => array_intersect_key($s, array_flip(['id', 'serial_no', 'batch_no', 'unit_serial_no', 'unit_status', 'kind'])),
                     array_values($this->serialCandidates($wo, $op, $m)));
@@ -76,28 +79,37 @@ final class MaterialReturnService
             $rows[] = $row;
         }
         return ['work_order_id' => (int) $wo->id, 'operation_id' => (int) $op->id, 'operation_name' => $op->operation_name,
-            'types' => collect(self::TYPES)->map(fn ($label, $value) => ['value' => $value, 'label' => $label])->values()->all(), 'materials' => $rows];
+            'types' => collect(self::TYPES)->map(fn ($label, $value) => ['value' => $value, 'label' => $label])->values()->all(), 'materials' => $rows,
+            'plan_actions' => collect(self::PLAN_ACTIONS)->map(fn ($label, $value) => ['value' => $value, 'label' => $label])->values()->all(),
+            'plan_needs_review' => ProductionReviewers::needsReview($wo, $actorId), 'plan_reviewers' => ProductionReviewers::names($wo)];
     }
 
     /**
      * 提交退料申请。$lines：[{material_id, qty}]（按数量）或 [{material_id, serial_ids: []}]（按编号）。
      * $direct 为库管直接退：建单后立即审核入库，$locationId 为退入库位（空则退回原库位）。
      */
-    public function request(int $workOrderId, int $operationId, string $type, array $lines, string $reason, object $actor, bool $direct = false, ?int $locationId = null): MfgMaterialReturn
+    public function request(int $workOrderId, int $operationId, string $type, array $lines, string $reason, object $actor, bool $direct = false, ?int $locationId = null, ?array $plan = null): MfgMaterialReturn
     {
-        return DB::transaction(function () use ($workOrderId, $operationId, $type, $lines, $reason, $actor, $direct, $locationId) {
+        return DB::transaction(function () use ($workOrderId, $operationId, $type, $lines, $reason, $actor, $direct, $locationId, $plan) {
             if (! isset(self::TYPES[$type])) $this->fail('return_type_invalid', '请选择退料类型。');
             [$wo, $op] = $this->context($workOrderId, $operationId, true);
             $rows = $this->buildLines($wo, $op, $type, $lines, null);
+            $plan = $plan ? $this->buildPlan($wo, $type, $rows, $plan, $actor) : null;
             $return = MfgMaterialReturn::create([
                 'return_no' => $this->numbers->next('material_return', 'MRT'), 'work_order_id' => $wo->id, 'work_order_operation_id' => $op->id,
-                'return_type' => $type, 'status' => 'pending', 'reason' => mb_substr(trim($reason), 0, 500),
+                'return_type' => $type, 'status' => 'pending', 'reason' => mb_substr(trim($reason), 0, 500), 'disposition_plan' => $plan,
                 'requested_by_legacy_id' => $this->actorId($actor), 'requested_by_name' => $this->actorName($actor), 'requested_at' => now(),
             ]);
             foreach ($rows as $row) MfgMaterialReturnLine::create($row + ['return_id' => $return->id, 'work_order_id' => $wo->id]);
+            $planText = $plan ? '，处置：'.self::PLAN_ACTIONS[$plan['action']].($plan['action'] === 'rework' ? '（从'.$plan['start_operation_name'].'开始）' : '')
+                .($plan['needs_review'] ? '，等 '.$plan['reviewers'].' 审核' : '，无需审核直接生效') : '';
             $this->workOrders->log($wo, 'material_return_requested', $wo->status, $wo->status,
-                "{$op->operation_name}申请退料（{$return->return_no}，".self::TYPES[$type].'）：'.$this->summary($rows).'；原因：'.$return->reason, $actor, ['return_id' => $return->id]);
-            if ($direct) {
+                "{$op->operation_name}申请退料（{$return->return_no}，".self::TYPES[$type].'）：'.$this->summary($rows).'；原因：'.$return->reason.$planText, $actor, ['return_id' => $return->id]);
+            if ($plan && ! $plan['needs_review']) {
+                $this->doApprove($return, $wo, $op, null, '不良处置无需审核，提交即生效', $actor);
+                $this->executePlan($return->fresh(), $wo, $actor);
+                $this->workOrders->refreshCompletion($wo, $actor);
+            } elseif ($direct) {
                 $this->doApprove($return, $wo, $op, $locationId, '库管直接退料', $actor);
                 $this->workOrders->refreshCompletion($wo, $actor);
             }
@@ -141,6 +153,8 @@ final class MaterialReturnService
     {
         return DB::transaction(function () use ($id, $locationId, $remark, $actor) {
             $return = $this->lockedPending($id);
+            if ($return->disposition_plan) $this->fail('plan_review_required', '这张是生产不良处置（'.(self::PLAN_ACTIONS[$return->disposition_plan['action'] ?? ''] ?? '').'），由生产负责人'
+                .(($return->disposition_plan['reviewers'] ?? '') ? ' '.$return->disposition_plan['reviewers'] : '').' 在小程序「生产任务 → 待我审核」里审核。');
             [$wo, $op] = $this->context((int) $return->work_order_id, (int) $return->work_order_operation_id, true);
             $this->doApprove($return, $wo, $op, $locationId, $remark, $actor);
             // 待审退料会挡住完工，审完再判断一次。
@@ -256,6 +270,9 @@ final class MaterialReturnService
             $return = MfgMaterialReturn::query()->lockForUpdate()->findOrFail($returnId);
             if ($return->return_type !== 'defective' || $return->status !== 'approved') $this->fail('status_invalid', '只有已入库的不良退料需要处置。');
             if (! $lines) $this->fail('disposition_empty', '请选择要处置的明细。');
+            if (($return->disposition_plan['action'] ?? null) === 'rework' && ($reworkId = $return->disposition_plan['rework_work_order_id'] ?? null)
+                && MfgWorkOrder::query()->whereKey($reworkId)->whereIn('status', self::OPEN_WO)->exists())
+                $this->fail('rework_in_progress', '这张不良退料正在返工（返工工单 '.($return->disposition_plan['rework_work_order_no'] ?? '').'），返工合格自动解冻、报废自动出库，不用在这里处置。');
             $wo = MfgWorkOrder::query()->findOrFail($return->work_order_id);
             $rows = MfgMaterialReturnLine::query()->where('return_id', $return->id)->lockForUpdate()->get()->keyBy('id');
             $texts = [];
@@ -268,14 +285,8 @@ final class MaterialReturnService
                 $qty = $line->inventory_serial_id ? 1.0 : round((float) ($input['qty'] ?? $held), 4);
                 if ($qty <= self::EPS || $qty > $held + self::EPS)
                     $this->fail('disposition_qty_invalid', $line->component_item_name.($line->serial_no ? ' '.$line->serial_no : '').' 待处置 '.$this->num(max(0, $held)).($line->unit_name ?: '').'，处置数量不对。');
-                $disposition = MfgMaterialReturnDisposition::create([
-                    'return_id' => $return->id, 'return_line_id' => $line->id, 'work_order_id' => $wo->id, 'item_id' => $line->component_item_id,
-                    'action' => $action, 'qty' => $qty, 'inventory_serial_id' => $line->inventory_serial_id, 'document_type' => 'mfg_material_return',
-                    'document_id' => $return->id, 'document_no' => $return->return_no, 'remark' => $remark ? mb_substr(trim($remark), 0, 500) : null,
-                    'created_by_legacy_id' => $this->actorId($actor), 'created_by_name' => $this->actorName($actor),
-                ]);
                 // 退供应商先解冻回可用，再由库存质量事件冻结为待退供应商。
-                $this->inventory->postProductionDefectDisposition($disposition, $line, $wo, $action === 'scrap' ? 'scrap' : 'release', $this->actorId($actor));
+                $disposition = $this->disposeLine($return, $wo, $line, $action, $qty, $remark, $actor);
                 if ($action === 'supplier_return') {
                     $balance = \App\Models\Erp\InventoryBalance::query()->where('item_id', $line->component_item_id)->where('warehouse_id', $line->warehouse_id)
                         ->where('location_id', $line->location_id)->where('batch_no', $line->batch_no)->firstOrFail();
@@ -294,6 +305,148 @@ final class MaterialReturnService
             $this->workOrders->log($wo, 'material_defect_disposed', $wo->status, $wo->status, "不良退料 {$return->return_no} 处置：".implode('、', $texts).($remark ? '；'.$remark : ''), $actor, ['return_id' => $return->id]);
             return $return->fresh(['lines']);
         }, 5);
+    }
+
+    /**
+     * 生产负责人审核员工提交的不良处置（返工 / 报废 / 判定可用）：通过 = 入库冻结并执行处置；驳回 = 退料单驳回，料还在本道。
+     */
+    public function reviewPlan(int $id, bool $approve, ?string $remark, object $actor, bool $hasApprovePermission = false): MfgMaterialReturn
+    {
+        return DB::transaction(function () use ($id, $approve, $remark, $actor, $hasApprovePermission) {
+            $return = $this->lockedPending($id);
+            if (! $return->disposition_plan) $this->fail('status_invalid', '这张退料单没有不良处置，请库管在电脑端审核。');
+            [$wo, $op] = $this->context((int) $return->work_order_id, (int) $return->work_order_operation_id, true);
+            $ids = ProductionReviewers::for($wo);
+            if (! $hasApprovePermission && ! in_array((int) $this->actorId($actor), $ids, true))
+                $this->fail('permission_denied', '只有这张工单的生产负责人'.($ids ? '（'.ProductionReviewers::names($wo).'）' : '').'可以审核不良处置。', 403);
+            if (! $approve) {
+                $return->update(['status' => 'rejected', 'reviewed_by_legacy_id' => $this->actorId($actor), 'reviewed_by_name' => $this->actorName($actor),
+                    'reviewed_at' => now(), 'review_remark' => mb_substr(trim((string) $remark), 0, 500) ?: null]);
+                $this->workOrders->log($wo, 'material_return_rejected', $wo->status, $wo->status, "不良处置 {$return->return_no} 被驳回".($remark ? '：'.$remark : '').'，料还在'.$op->operation_name, $actor, ['return_id' => $return->id]);
+            } else {
+                $this->doApprove($return, $wo, $op, null, $remark ?: '生产负责人审核通过', $actor);
+                $this->executePlan($return->fresh(), $wo, $actor);
+            }
+            $this->workOrders->refreshCompletion($wo, $actor);
+            return $return->fresh(['lines']);
+        }, 5);
+    }
+
+    /** 待我审核的不良处置（小程序）：我是审核人的工单，或我有报废确认权限。 */
+    public function pendingPlans(?int $actorId, bool $hasApprovePermission): array
+    {
+        return MfgMaterialReturn::query()->with(['lines', 'workOrder', 'operation:id,operation_name'])->where('status', 'pending')->whereNotNull('disposition_plan')
+            ->orderBy('id')->limit(50)->get()
+            ->filter(fn ($r) => $r->workOrder && ($hasApprovePermission || in_array((int) $actorId, ProductionReviewers::for($r->workOrder), true)))
+            ->map(fn ($r) => $this->row($r, false) + ['plan' => $r->disposition_plan, 'plan_label' => self::PLAN_ACTIONS[$r->disposition_plan['action'] ?? ''] ?? ''])->values()->all();
+    }
+
+    /**
+     * 返工工单的一件处理完：最后一道合格（release）= 冻结的不良件解冻回可用库存；报废（scrap）= 冻结的不良件报废出库，总装出现缺口可以补单。
+     * 调用方须在事务内并已锁定返工工单。
+     */
+    public function settleReworkUnit(MfgWorkOrder $reworkWo, MfgWorkOrderUnit $unit, string $mode, object $actor): void
+    {
+        $return = MfgMaterialReturn::query()->where('disposition_plan->rework_work_order_id', (int) $reworkWo->id)->lockForUpdate()->first();
+        if (! $return) return;
+        $lineId = (int) (($return->disposition_plan['units'] ?? [])[(string) $unit->id] ?? 0);
+        $lines = MfgMaterialReturnLine::query()->where('return_id', $return->id)->orderBy('id')->lockForUpdate()->get();
+        $held = fn ($l) => round((float) $l->qty - (float) MfgMaterialReturnDisposition::query()->where('return_line_id', $l->id)->sum('qty'), 4);
+        $line = $lines->firstWhere('id', $lineId);
+        if (! $line || $held($line) < 1 - self::EPS) $line = $lines->first(fn ($l) => $held($l) >= 1 - self::EPS);
+        if (! $line) return;
+        $parent = MfgWorkOrder::query()->findOrFail($return->work_order_id);
+        $text = $mode === 'scrap' ? "返工工单 {$reworkWo->work_order_no} 的 {$unit->serial_no} 报废" : "返工工单 {$reworkWo->work_order_no} 的 {$unit->serial_no} 返工合格";
+        $this->disposeLine($return, $parent, $line, $mode, 1.0, $text, $actor, ['type' => 'mfg_work_order', 'id' => $reworkWo->id, 'no' => $reworkWo->work_order_no]);
+        $this->workOrders->log($parent, 'material_defect_disposed', $parent->status, $parent->status, $text.'，不良退料 '.$return->return_no.' 的 '
+            .$line->component_item_name.($line->serial_no ? ' '.$line->serial_no : ' 1'.($line->unit_name ?: '')).($mode === 'scrap' ? ' 报废出库，缺口出来了可以补开半成品工单' : ' 已解冻回库存，请重新收料'), $actor, ['return_id' => $return->id]);
+    }
+
+    /** 本工单已入库冻结、还没处置完的不良退料数量（含返工中的），按物料汇总：这部分不算缺口，防止重复补单。 */
+    public static function heldDefectiveQty(int $workOrderId): array
+    {
+        return DB::table('erp_mfg_material_return_lines as l')->join('erp_mfg_material_returns as r', 'r.id', '=', 'l.return_id')
+            ->where('r.work_order_id', $workOrderId)->where('r.return_type', 'defective')->where('r.status', 'approved')
+            ->selectRaw('l.component_item_id, SUM(l.qty - COALESCE((SELECT SUM(d.qty) FROM erp_mfg_material_return_dispositions d WHERE d.return_line_id = l.id), 0)) AS q')
+            ->groupBy('l.component_item_id')->pluck('q', 'component_item_id')->map(fn ($v) => max(0, round((float) $v, 4)))->filter(fn ($v) => $v > self::EPS)->all();
+    }
+
+    /** 校验员工选的不良处置。返工只用于本厂工单做的自制半成品，起点从原半成品工单的车间工序里选（开料、下料除外）。 */
+    private function buildPlan(MfgWorkOrder $wo, string $type, array $rows, array $input, object $actor): array
+    {
+        if ($type !== 'defective') $this->fail('plan_invalid', '只有不良退回可以选处置方式。');
+        $action = (string) ($input['action'] ?? '');
+        if (! isset(self::PLAN_ACTIONS[$action])) $this->fail('plan_invalid', '请选择处置方式：返工、报废或判定可用。');
+        $needsReview = ProductionReviewers::needsReview($wo, $this->actorId($actor));
+        $photos = array_values(array_slice(array_filter((array) ($input['photos'] ?? []), fn ($p) => is_string($p) && $p !== ''), 0, 9));
+        if ($action === 'scrap' && ! $needsReview && ! $photos) $this->fail('photo_required', '报废提交后直接生效，请至少拍 1 张照片。');
+        $plan = ['action' => $action, 'photos' => $photos, 'needs_review' => $needsReview, 'reviewers' => ProductionReviewers::names($wo)];
+        $materials = collect($rows)->pluck('material_id')->unique();
+        foreach ($materials as $materialId) {
+            $item = Item::query()->find(collect($rows)->firstWhere('material_id', $materialId)['component_item_id']);
+            if (! $item || ! $this->isMade($item)) $this->fail('plan_invalid', ($item?->item_name ?: '这种料').' 不是自制半成品，不能在这里选处置，请提交后由库管处置（判定可用、报废或退供应商）。');
+        }
+        if ($action !== 'rework') return $plan;
+        if ($materials->count() !== 1) $this->fail('plan_invalid', '返工一次只能退一种半成品，请分开提交。');
+        $qty = collect($rows)->sum(fn ($r) => (float) $r['qty']);
+        if (abs($qty - round($qty)) > self::EPS || $qty < 1) $this->fail('plan_invalid', '返工按件数做，退回数量要是整数。');
+        $m = MfgWorkOrderMaterial::query()->findOrFail($materials->first());
+        $starts = $this->reworkStarts($wo, $m);
+        if (! $starts['source']) $this->fail('plan_invalid', $m->component_item_name.' 不是本厂工单做的（期初或外购库存），不能返工，请选报废或判定可用。');
+        $start = collect($starts['operations'])->firstWhere('sequence', (int) ($input['start_sequence'] ?? 0));
+        if (! $start) $this->fail('plan_invalid', '请选从哪道工序开始返工（开料、下料不能返工）。');
+        return $plan + ['source_work_order_id' => $starts['source']->id, 'source_work_order_no' => $starts['source']->work_order_no,
+            'start_sequence' => (int) $start['sequence'], 'start_operation_name' => $start['operation_name']];
+    }
+
+    /** 执行不良处置（退料已入库冻结）：判定可用 / 报废 直接处置；返工开返工工单，冻结的件等返工完再解冻或报废。 */
+    private function executePlan(MfgMaterialReturn $return, MfgWorkOrder $wo, object $actor): void
+    {
+        $plan = $return->disposition_plan;
+        $lines = MfgMaterialReturnLine::query()->where('return_id', $return->id)->orderBy('id')->lockForUpdate()->get();
+        if ($plan['action'] !== 'rework') {
+            foreach ($lines as $line) $this->disposeLine($return, $wo, $line, $plan['action'], (float) $line->qty, '不良处置：'.self::PLAN_ACTIONS[$plan['action']], $actor);
+            $this->workOrders->log($wo, 'material_defect_disposed', $wo->status, $wo->status, "不良退料 {$return->return_no} ".self::PLAN_ACTIONS[$plan['action']].'：'
+                .$this->summary($lines->map(fn ($l) => $l->toArray())->all()).($plan['action'] === 'scrap' ? '，已报废出库，缺口出来了可以补开半成品工单' : '，已解冻回库存，请重新收料'), $actor, ['return_id' => $return->id]);
+            return;
+        }
+        [$child, $map] = $this->workOrders->createRework($wo, $return, $plan, $lines, $actor);
+        $return->update(['disposition_plan' => $plan + ['rework_work_order_id' => (int) $child->id, 'rework_work_order_no' => $child->work_order_no, 'units' => $map]]);
+    }
+
+    /** 处置一行冻结的不良退料：release 解冻回可用，scrap 报废出库，supplier_return 转退供应商。 */
+    private function disposeLine(MfgMaterialReturn $return, MfgWorkOrder $wo, MfgMaterialReturnLine $line, string $action, float $qty, ?string $remark, object $actor, ?array $document = null): MfgMaterialReturnDisposition
+    {
+        $disposition = MfgMaterialReturnDisposition::create([
+            'return_id' => $return->id, 'return_line_id' => $line->id, 'work_order_id' => $wo->id, 'item_id' => $line->component_item_id,
+            'action' => $action, 'qty' => $qty, 'inventory_serial_id' => $line->inventory_serial_id, 'document_type' => $document['type'] ?? 'mfg_material_return',
+            'document_id' => $document['id'] ?? $return->id, 'document_no' => $document['no'] ?? $return->return_no, 'remark' => $remark ? mb_substr(trim($remark), 0, 500) : null,
+            'created_by_legacy_id' => $this->actorId($actor), 'created_by_name' => $this->actorName($actor),
+        ]);
+        $this->inventory->postProductionDefectDisposition($disposition, $line, $wo, $action === 'scrap' ? 'scrap' : 'release', $this->actorId($actor));
+        return $disposition;
+    }
+
+    /** 不良半成品可以从哪道开始返工：按退料来源批次找到原半成品工单，列它的车间工序（开料、下料要重新耗原料，除外）。 */
+    private function reworkStarts(MfgWorkOrder $wo, MfgWorkOrderMaterial $m): array
+    {
+        $batches = $this->sources($wo, $m)->map(fn ($s) => (string) $s['item']->batch_no)->filter()->unique()->values();
+        if ($batches->isEmpty()) $batches = InventoryTransactionItem::query()->where('source_type', 'mfg_material_issue')
+            ->whereIn('source_id', MfgMaterialIssue::query()->where('work_order_id', $wo->id)->select('id'))->where('source_item_id', $m->id)
+            ->where('change_qty', '<', 0)->orderByDesc('id')->pluck('batch_no')->filter()->unique()->values();
+        $source = $batches->isEmpty() ? null : MfgWorkOrder::query()->where('item_id', $m->component_item_id)->whereIn('work_order_no', $batches)
+            ->whereNull('rework_of_work_order_id')->where('status', '!=', 'cancelled')->orderByDesc('id')->first();
+        if (! $source) return ['source' => null, 'operations' => []];
+        $skip = array_merge(MaterialIssueService::cuttingOperationIds((int) $source->id), MaterialIssueService::prepOperationIds((int) $source->id));
+        $ops = MfgWorkOrderOperation::query()->where('work_order_id', $source->id)->where('execution_context', 'production')->orderBy('sequence')->orderBy('id')->get()
+            ->reject(fn ($o) => in_array((int) $o->id, $skip, true))
+            ->map(fn ($o) => ['sequence' => (int) $o->sequence, 'operation_name' => $o->operation_name])->unique('sequence')->values()->all();
+        return ['source' => $source, 'operations' => $ops];
+    }
+
+    private function isMade(Item $item): bool
+    {
+        return in_array($item->item_type, ['semi_finished', 'finished_product'], true) && ! $item->isPurchaseFulfilledItem();
     }
 
     /** 还有冻结待处置数量的不良退料单。 */

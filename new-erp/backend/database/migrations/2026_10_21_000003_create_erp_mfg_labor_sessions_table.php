@@ -22,6 +22,7 @@ CREATE TABLE `erp_mfg_labor_sessions` (
   `employee_legacy_id` bigint(20) unsigned NOT NULL,
   `employee_name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `is_rework` tinyint(1) NOT NULL DEFAULT '0',
+  `lane` varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'normal',
   `status` varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'active',
   `started_at` timestamp NULL DEFAULT NULL,
   `ended_at` timestamp NULL DEFAULT NULL,

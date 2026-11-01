@@ -190,15 +190,26 @@ final class WorkOrderQueryService
     {
         $here = $wo->units->whereIn('status', ['waiting', 'in_progress', 'rework'])->groupBy('current_operation_id')->map->count();
         $rework = $wo->units->where('status', 'rework')->groupBy('current_operation_id')->map->count();
-        $owners = MfgTaskParticipant::query()->where('work_order_id', $wo->id)->where('role', 'owner')->where('is_active', true)->pluck('employee_name', 'work_order_operation_id');
+        $owners = MfgTaskParticipant::query()->where('work_order_id', $wo->id)->where('role', 'owner')->where('is_active', true)->get()->groupBy('work_order_operation_id');
         $timing = MfgLaborSession::query()->where('work_order_id', $wo->id)->where('status', 'active')->get()->groupBy('work_order_operation_id');
-        $minutes = MfgLaborSession::query()->where('work_order_id', $wo->id)->selectRaw('work_order_operation_id, SUM(labor_minutes) AS m')->groupBy('work_order_operation_id')->pluck('m', 'work_order_operation_id');
-        $status = $wo->operations->pluck('status', 'id');
-        return array_map(fn ($op) => $op + [
-            'status' => $status[$op['id']] ?? 'pending', 'here_qty' => (int) ($here[$op['id']] ?? 0), 'rework_qty' => (int) ($rework[$op['id']] ?? 0),
-            'owner_name' => $owners[$op['id']] ?? null, 'timing_names' => ($timing->get($op['id']) ?? collect())->pluck('employee_name')->values()->all(),
-            'labor_minutes' => round((float) ($minutes[$op['id']] ?? 0), 1),
-        ], $operations);
+        // 正常 / 返工工时分开：返工单独计时、不算提成；返工工单整张都是返工工时。
+        $minutes = MfgLaborSession::query()->where('work_order_id', $wo->id)->selectRaw('work_order_operation_id, is_rework, SUM(labor_minutes) AS m')
+            ->groupBy('work_order_operation_id', 'is_rework')->get()->groupBy('work_order_operation_id');
+        $ops = $wo->operations->keyBy('id');
+        return array_map(function ($op) use ($ops, $here, $rework, $owners, $timing, $minutes) {
+            $m = $minutes->get($op['id']) ?? collect();
+            $normal = (float) $m->where('is_rework', false)->sum('m');
+            $redo = (float) $m->where('is_rework', true)->sum('m');
+            $o = $owners->get($op['id']) ?? collect();
+            $workStatus = $ops->get($op['id'])?->work_status ?: 'pending';
+            return $op + [
+                'status' => $ops->get($op['id'])?->status ?? 'pending', 'work_status' => $workStatus, 'work_status_label' => TaskService::WORK_STATUS_LABELS[$workStatus] ?? $workStatus,
+                'here_qty' => (int) ($here[$op['id']] ?? 0), 'rework_qty' => (int) ($rework[$op['id']] ?? 0),
+                'owner_name' => $o->firstWhere('lane', 'normal')?->employee_name, 'rework_owner_name' => $o->firstWhere('lane', 'rework')?->employee_name,
+                'timing_names' => ($timing->get($op['id']) ?? collect())->map(fn ($s) => $s->employee_name.($s->lane === 'rework' ? '（返工）' : ''))->values()->all(),
+                'labor_minutes' => round($normal + $redo, 1), 'normal_minutes' => round($normal, 1), 'rework_minutes' => round($redo, 1),
+            ];
+        }, $operations);
     }
 
     private function techSummary(MfgWorkOrder $wo): ?array
@@ -350,7 +361,9 @@ final class WorkOrderQueryService
         $production = $wo->operations->where('execution_context', 'production')->values();
         return [
             'id' => $wo->id, 'work_order_no' => $wo->work_order_no, 'source_type' => $wo->source_type,
-            'source_label' => match ($wo->source_type) { 'stock' => '备货', 'work_order' => '半成品补做', default => '销售订单' },
+            'source_label' => $wo->rework_of_work_order_id ? '返工工单' : match ($wo->source_type) { 'stock' => '备货', 'work_order' => '半成品补做', default => '销售订单' },
+            'rework_of_work_order_id' => $wo->rework_of_work_order_id,
+            'rework_of_work_order_no' => $wo->rework_of_work_order_id ? MfgWorkOrder::query()->whereKey($wo->rework_of_work_order_id)->value('work_order_no') : null,
             'stock_reason' => $wo->stock_reason, 'stock_reason_label' => self::STOCK_REASONS[$wo->stock_reason] ?? null,
             'sales_order_id' => $wo->sales_order_id, 'sales_order_no' => $wo->sales_order_no, 'sales_order_line_no' => $wo->sales_order_line_no,
             'customer_name' => $wo->customer_name, 'product_name' => $wo->product_name, 'sku_code' => $wo->sku_code, 'sku_name' => $wo->sku_name,
@@ -439,6 +452,7 @@ final class WorkOrderQueryService
         $ids = collect($kitting)->flatMap(fn ($op) => collect($op['materials'])->pluck('component_item_id'))->unique()->values();
         $items = Item::query()->whereIn('id', $ids)->get()->keyBy('id');
         $open = $wo->id ? MaterialIssueService::openChildQty((int) $wo->id) : [];
+        $held = $wo->id ? MaterialReturnService::heldDefectiveQty((int) $wo->id) : [];
         $shortByItem = collect($kitting)->flatMap(fn ($op) => $op['materials'])->groupBy('component_item_id')->map(fn ($rows) => $rows->sum('shortage_qty'));
         $openWo = in_array($wo->status, ['planned', 'released', 'in_progress', 'paused'], true);
         foreach ($kitting as &$op) {
@@ -448,8 +462,10 @@ final class WorkOrderQueryService
                 $item = $items->get($m['component_item_id']);
                 $m['can_make'] = $openWo && $item && in_array($item->item_type, ['semi_finished', 'finished_product'], true) && ! $item->isPurchaseFulfilledItem();
                 $m['in_production_qty'] = (float) ($open[$m['component_item_id']] ?? 0);
+                // 退回冻结、返工中的不良件：不算缺口，防止重复补单。
+                $m['held_qty'] = (float) ($held[$m['component_item_id']] ?? 0);
                 $m['purchasable'] = $item && ShortageService::purchasable($item);
-                $m['make_qty'] = $m['can_make'] ? max(0, ceil(round((float) ($shortByItem[$m['component_item_id']] ?? 0) - $m['in_production_qty'], 4))) : 0;
+                $m['make_qty'] = $m['can_make'] ? max(0, ceil(round((float) ($shortByItem[$m['component_item_id']] ?? 0) - $m['in_production_qty'] - $m['held_qty'], 4))) : 0;
                 if ($m['participates_in_kitting'] && ($m['issue_mode'] ?? 'receive') === 'receive' && (float) $m['issued_qty'] + (float) ($prepared[$m['id'] ?? 0] ?? 0) + 0.00001 < (float) $m['required_qty']) $pending = true;
             }
             unset($m);
@@ -464,7 +480,8 @@ final class WorkOrderQueryService
     {
         $brief = fn (?MfgWorkOrder $w) => $w ? ['id' => $w->id, 'work_order_no' => $w->work_order_no, 'item_name' => $w->item_name, 'product_name' => $w->product_name,
             'status' => $w->status, 'status_label' => self::STATUS_LABELS[$w->status] ?? $w->status, 'planned_qty' => (float) $w->planned_qty,
-            'stored_qty' => (float) $w->stored_qty, 'unit_name' => $w->unit_name, 'planned_finish_date' => $w->planned_finish_date?->toDateString()] : null;
+            'stored_qty' => (float) $w->stored_qty, 'completed_qty' => (float) $w->completed_qty, 'unit_name' => $w->unit_name,
+            'planned_finish_date' => $w->planned_finish_date?->toDateString(), 'is_rework' => (bool) $w->rework_of_work_order_id] : null;
         $up = MfgWorkOrderLink::query()->where('child_work_order_id', $wo->id)->first();
         $parent = $up ? $brief(MfgWorkOrder::query()->find($up->parent_work_order_id)) : null;
         $childIds = MfgWorkOrderLink::query()->where('parent_work_order_id', $wo->id)->orderBy('id')->pluck('child_work_order_id');
