@@ -2,9 +2,6 @@
 backend/.env
 backend/vendor/
 backend/node_modules/
-backend/storage/logs/
-backend/storage/framework/
-backend/bootstrap/cache/
 backend/public/build/
 backend/public/hot
 backend/.phpunit.result.cache
