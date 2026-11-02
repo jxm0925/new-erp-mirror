@@ -98,7 +98,7 @@ Design status: 按“基础档案”页面风格重做（页头卡片 / 提示�
             </template>
           </el-table-column>
           <el-table-column label="生产确认" width="92">
-            <template slot-scope="{row}"><span v-if="row.order_status === 'draft'" class="muted">-</span><el-tag v-else size="mini" :type="productionTag(row.production_confirm_status)">{{ productionText(row.production_confirm_status) }}</el-tag></template>
+            <template slot-scope="{row}"><span v-if="['draft','cancelled'].includes(row.order_status)" class="muted">-</span><el-tag v-else size="mini" :type="productionTag(row.production_confirm_status)">{{ productionText(row.production_confirm_status) }}</el-tag></template>
           </el-table-column>
           <el-table-column label="资金" width="92">
             <template slot-scope="{row}">
@@ -112,8 +112,9 @@ Design status: 按“基础档案”页面风格重做（页头卡片 / 提示�
           <el-table-column label="交付状态" width="112">
             <template slot-scope="{row}">
               <el-tag size="mini" :type="fulfillmentStatusTag(row.fulfillment_status)">{{ fulfillmentStatusText(row.fulfillment_status) }}</el-tag>
-              <small class="muted">发货：{{ shipmentStatusText(row.shipment_status) }}</small>
-              <small v-if="row.fulfillment_composition_label" class="muted">{{ row.fulfillment_composition_label }}</small>
+              <small class="muted">发货：{{ row.order_status === 'cancelled' ? '-' : shipmentStatusText(row.shipment_status) }}</small>
+              <el-button v-if="row.cancellation && row.cancellation.production_pending" type="text" size="mini" @click.stop="$router.push('/sales/orders/' + row.id + '/detail')">{{ row.cancellation.production_pending }}张工单待生产处理</el-button>
+              <small v-if="row.order_status !== 'cancelled' && row.fulfillment_composition_label" class="muted">{{ row.fulfillment_composition_label }}</small>
             </template>
           </el-table-column>
           <el-table-column label="标记" width="96">
@@ -168,10 +169,10 @@ Design status: 按“基础档案”页面风格重做（页头卡片 / 提示�
           <dt>交付状态</dt>
           <dd>
             <el-tag size="mini" :type="fulfillmentStatusTag(selected.fulfillment_status)">{{ fulfillmentStatusText(selected.fulfillment_status) }}</el-tag>
-            <small v-if="selected.fulfillment_composition_label" class="muted">{{ selected.fulfillment_composition_label }}</small>
+            <small v-if="selected.order_status !== 'cancelled' && selected.fulfillment_composition_label" class="muted">{{ selected.fulfillment_composition_label }}</small>
           </dd>
-          <dt>发货状态</dt><dd><el-tag size="mini" :type="statusTag(selected.shipment_status)">{{ shipmentStatusText(selected.shipment_status) }}</el-tag></dd>
-          <dt>生产确认</dt><dd>{{ productionText(selected.production_confirm_status) }}</dd>
+          <dt>发货状态</dt><dd><el-tag size="mini" :type="statusTag(selected.shipment_status)">{{ selected.order_status === 'cancelled' ? '-' : shipmentStatusText(selected.shipment_status) }}</el-tag></dd>
+          <dt>生产确认</dt><dd>{{ selected.order_status === 'cancelled' ? '-' : productionText(selected.production_confirm_status) }}</dd>
         </dl>
       </div>
       <span slot="footer" class="dialog-footer">
@@ -280,7 +281,7 @@ export default {
     stageOf(row) {
       const actions = row.allowed_actions || {}
       if (row.order_status === 'draft') return { label: '草稿', type: 'info', hint: '可随意修改' }
-      if (row.order_status === 'cancelled') return { label: '已取消', type: 'danger', hint: '' }
+      if (row.order_status === 'cancelled') return { label: '已取消', type: 'danger', hint: row.cancellation?.finance_status === 'pending' ? '资金待处理' : '资金已结清' }
       if (row.order_status === 'closed') return { label: '已完成', type: 'success', hint: '已收齐款并全部发出' }
       if (row.order_status !== 'confirmed') return { label: statusText(row.order_status), type: 'info', hint: '' }
       if (row.short_closed_at) return { label: '已短交', type: 'warning', hint: '剩余未发已关闭，待收款/退款后完成' }
@@ -292,6 +293,7 @@ export default {
     nextStep(row) {
       const actions = row.allowed_actions || {}
       if (row.order_status === 'draft') return '请核对订单信息，无误后点击“确认订单”。草稿可随意修改。'
+      if (row.order_status === 'cancelled') return [row.cancellation?.production_pending ? `${row.cancellation.production_pending}张工单待生产主管处置` : '生产处置已办结', row.cancellation?.finance_status === 'pending' ? '资金待财务处理' : '资金已结清'].join('；') + '。'
       if (row.order_status !== 'confirmed') return '该订单已结束，无需处理。'
       if (row.short_closed_at) return '订单已短交关闭，剩余未发不再发货；应收已按实发金额调整，收齐款或办完退款后自动完成。'
       if (actions.production_released) return '生产已开工或已安排发货；修改时先核对影响，需要审核的内容经相关负责人审核通过后生效。'

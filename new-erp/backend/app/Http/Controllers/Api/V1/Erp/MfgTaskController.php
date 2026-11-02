@@ -99,7 +99,7 @@ class MfgTaskController extends Controller
         $auth = app(AuthContextService::class);
         $user = $auth->currentUser($request);
         if (! $user || ! empty($user->deleted_at)) throw new WorkOrderDomainException('unauthenticated', '请先登录 ERP。', 401);
-        $allowed = $auth->isSuperAdmin($user) || array_intersect(['production.task.execute', 'sales_order.shipment.packing.execute',
+        $allowed = $auth->isSuperAdmin($user) || array_intersect(['production.scrap.approve', 'production.task.execute', 'sales_order.shipment.packing.execute',
             'sales_order.shipment.packing.quality'], $auth->permissionCodes($user));
         if (! $allowed && Schema::hasTable(BusinessStaffService::TABLE)) {
             // 业务身份独立于报工权限；只读识别，不能用会自动补档或缺表放行的 isActive。

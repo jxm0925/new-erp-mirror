@@ -106,13 +106,14 @@
           bind:resolved="scanSource"
           disabled="{{saving}}"
         />
-        <button class="warehouse-secondary" data-side="source" bindtap="openLocator" disabled="{{saving || physicalMode}}">选择</button>
+        <button class="warehouse-secondary" data-side="source" bindtap="openLocator" disabled="{{saving}}">选择仓库</button>
       </view>
       <view wx:if="{{source.warehouse_id}}" class="phase-audit">{{source.warehouse_name}} / {{source.location_code}}</view>
       <view wx:if="{{physical}}" class="warehouse-note">{{physical.physical_no}} · {{physical.item_name}} · 可调出</view>
+      <button wx:if="{{physicalMode}}" class="warehouse-secondary trf-choose-bal-btn" bindtap="openPhysicalSelection" disabled="{{saving}}">手动选择物料 / 实物</button>
 
       <block wx:if="{{!physicalMode}}">
-        <button class="warehouse-secondary trf-choose-bal-btn" bindtap="openBalances" disabled="{{saving || !source.warehouse_id}}">选择可用库存批次</button>
+        <button class="warehouse-secondary trf-choose-bal-btn" bindtap="openBalances" disabled="{{saving || !source.warehouse_id}}">手动选择物料 / 批次</button>
         <view wx:if="{{selectedBalance}}" class="phase-line">
           <view class="phase-line-title">{{selectedBalance.item_name}}</view>
           <view class="phase-audit">批次 {{selectedBalance.batch_no}} · 可用 {{selectedBalance.quantity_available}} {{selectedBalance.unit_name}}</view>
@@ -137,6 +138,7 @@
             disabled="{{saving}}"
           />
           <view wx:for="{{serials}}" wx:key="id" class="phase-audit">✓ {{item.serial_no}} · 已核对</view>
+          <button wx:if="{{selectedBalance.serial_tracking_mode !== 'none'}}" class="warehouse-secondary" bindtap="openSerialSelection" disabled="{{saving}}">手动选择序列号（已选 {{serials.length}}）</button>
           <button class="warehouse-secondary trf-add-line-btn" bindtap="addLine" disabled="{{saving}}">＋ 添加本项</button>
         </view>
         <view wx:for="{{lines}}" wx:key="inventory_balance_id" class="phase-line">
@@ -207,16 +209,20 @@
         />
         <button bindtap="searchBalances">查询</button>
       </view>
+      <picker range="{{balanceCategories}}" range-key="name" value="{{balanceCategory}}" bindchange="balanceCategoryChanged" disabled="{{balanceLoading}}"><view class="phase-audit">分类：{{balanceCategories[balanceCategory].name}} ▾</view></picker>
+      <view wx:if="{{balanceLoading}}" class="warehouse-empty">正在加载…</view>
       <view wx:for="{{balanceRows}}" wx:key="id" class="phase-line" data-id="{{item.id}}" bindtap="chooseBalance">
         <view class="phase-line-title">
           <text>{{item.item_name}}</text>
           <text>{{item.quantity_available}} {{item.unit_name}}</text>
         </view>
         <view class="phase-audit">
-          {{item.item_code}} · {{item.spec}}
+          {{item.item_code}} · {{item.spec}} · {{item.model}} · {{item.material_grade}} · {{item.category_name}}
           <view>{{item.location_code}} · {{item.batch_no}}</view>
         </view>
       </view>
+      <view wx:if="{{!balanceLoading && !balanceRows.length}}" class="warehouse-empty">没有可用库存</view>
+      <view wx:if="{{formError}}" class="warehouse-error">{{formError}}</view>
       <view class="warehouse-pager">
         <text>共 {{balanceTotal}} 条</text>
         <button disabled="{{balancePage <= 1}}" data-delta="-1" bindtap="turnBalance">上一页</button>
@@ -226,3 +232,4 @@
     </view>
   </view>
 </view>
+<warehouse-select open="{{selectionOpen}}" title="{{selectionMode === 'serial' ? '选择可用序列号' : '选择可调拨实物'}}" mode="{{selectionMode}}" context="{{selectionContext}}" selected="{{selectionValue}}" multiple="{{selectionMode === 'serial'}}" maximum="{{selectionMode === 'serial' ? serialMaximum : 1}}" locked="{{saving}}" bind:confirm="chooseSelection" bind:cancel="closeSelection" />

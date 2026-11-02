@@ -53,6 +53,10 @@ final class SalesOrderFundingGateService
             && Money::compare($net, $receivable) >= 0;
         $productionReason = $productionPassed ? null : ($policy['production_block_reason'] ?: 'production_funds_insufficient');
         $shipmentReason = $shipmentPassed ? null : ($policy['shipment_block_reason'] ?: 'shipment_funds_insufficient');
+        if ($order->order_status === 'cancelled') {
+            $productionPassed = $shipmentPassed = false;
+            $productionReason = $shipmentReason = 'order_cancelled';
+        }
         // 未收金额拆成“还差定金”和“定金之后的尾款”，避免把含定金的全部未收款显示成尾款。
         $depositOutstanding = Money::maxZero(Money::sub($policy['production_required_amount'], $net));
         $balanceOutstanding = Money::maxZero(Money::sub($settlement['outstanding_amount'], $depositOutstanding));
@@ -203,6 +207,7 @@ final class SalesOrderFundingGateService
     {
         return match ($reason) {
             null => null,
+            'order_cancelled' => '销售订单已取消，不能按原订单开工或发货。',
             'funding_policy_missing' => '订单未冻结明确的付款资金策略，生产与发货均被阻断。',
             'funding_policy_invalid' => '订单冻结的付款资金策略无效，生产与发货均被阻断。',
             'credit_policy_not_enabled' => '当前系统未启用授信发货，必须全额收款后才能发货。',

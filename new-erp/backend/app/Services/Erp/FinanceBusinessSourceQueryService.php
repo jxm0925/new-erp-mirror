@@ -22,8 +22,8 @@ class FinanceBusinessSourceQueryService
     public function paginate(string $type, array $filters, int $perPage): LengthAwarePaginator
     {
         $query = match ($type) {
-            FinanceConstants::SOURCE_SALES_ORDER,
-            FinanceConstants::SOURCE_SALES_ORDER_REFUND => SalesOrder::query()->whereNotIn('order_status', ['draft', 'cancelled']),
+            FinanceConstants::SOURCE_SALES_ORDER => SalesOrder::query()->whereNotIn('order_status', ['draft', 'cancelled']),
+            FinanceConstants::SOURCE_SALES_ORDER_REFUND => SalesOrder::query()->where('order_status', '!=', 'draft'),
             FinanceConstants::SOURCE_PURCHASE_RECEIPT => PurchaseReceipt::query()->with('supplier')->where('confirm_status', 'confirmed')->where('settlement_mode', '<>', 'replacement_no_charge'),
             FinanceConstants::SOURCE_PURCHASE_SETTLEMENT_SOURCE => PurchaseSettlementSource::query()
                 ->whereIn('status', ['open', 'partially_paid']),
@@ -33,6 +33,11 @@ class FinanceBusinessSourceQueryService
                 ->whereNotIn('return_status', ['draft', 'submitted', 'cancelled']),
             default => throw ValidationException::withMessages(['type' => '该业务来源不支持列表选择。']),
         };
+        if ($type === FinanceConstants::SOURCE_SALES_ORDER_REFUND) {
+            $sum = fn ($source, $direction) => "COALESCE((SELECT SUM(a.allocated_amount) FROM erp_finance_allocations a JOIN erp_finance_cash_documents c ON c.id=a.cash_document_id WHERE a.source_document_id=erp_sales_orders.id AND a.source_business_type='{$source}' AND a.status='active' AND c.status='confirmed' AND c.direction='{$direction}'),0)";
+            $query->whereRaw($sum('sales_order', 'receipt').' - '.$sum('sales_order_refund', 'payment')." - IF(order_status='cancelled',COALESCE((SELECT retained_amount FROM erp_sales_cancellations sc WHERE sc.sales_order_id=erp_sales_orders.id),0),0) > 0")
+                ->where(fn ($q) => $q->where('order_status', '!=', 'cancelled')->orWhereExists(fn ($q) => $q->selectRaw('1')->from('erp_sales_cancellations as sc')->whereColumn('sc.sales_order_id', 'erp_sales_orders.id')->whereNotNull('sc.finance_confirmed_at')));
+        }
         $this->applyParty($query, $type, $filters);
         if (! empty($filters['currency'])) {
             $field = in_array($type, [FinanceConstants::SOURCE_PURCHASE_RECEIPT, FinanceConstants::SOURCE_PURCHASE_RETURN_SUPPLIER_REFUND], true)
@@ -73,6 +78,7 @@ class FinanceBusinessSourceQueryService
         $isSales = in_array($type, [FinanceConstants::SOURCE_SALES_ORDER, FinanceConstants::SOURCE_SALES_ORDER_REFUND], true);
         if ($type === FinanceConstants::SOURCE_SALES_ORDER_REFUND) {
             $amount = $this->allocated(FinanceConstants::SOURCE_SALES_ORDER, (int) $row->id);
+            if ($row->order_status === 'cancelled') $amount = Money::maxZero(Money::sub($amount, (string) (\App\Models\Erp\SalesCancellation::where('sales_order_id', $row->id)->value('retained_amount') ?? 0)));
         } elseif ($type === FinanceConstants::SOURCE_PURCHASE_SETTLEMENT_SOURCE) {
             $amount = Money::maxZero(Money::sub((string) $row->eligible_amount, (string) $row->ap_offset_amount));
         } elseif ($type === FinanceConstants::SOURCE_PURCHASE_RECEIPT) {
@@ -99,6 +105,12 @@ class FinanceBusinessSourceQueryService
     public function withBalances(array $source): array
     {
         $allocated = $this->allocated($source['type'], (int) $source['id']);
+        if ($source['type'] === FinanceConstants::SOURCE_SALES_ORDER_REFUND && SalesOrder::whereKey($source['id'])->where('order_status', 'cancelled')->exists()) {
+            $reserved = app(SalesCancellationService::class)->reservedRefunds((int) $source['id']);
+            return [...$source, 'allocatedAmount' => $allocated, 'reservedAmount' => $reserved,
+                'remainingAmount' => Money::maxZero(Money::sub($source['amount'], $allocated)),
+                'availableRefundAmount' => Money::maxZero(Money::sub(Money::sub($source['amount'], $allocated), $reserved))];
+        }
         return [...$source, 'allocatedAmount' => $allocated,
             'remainingAmount' => Money::maxZero(Money::sub($source['amount'], $allocated))];
     }

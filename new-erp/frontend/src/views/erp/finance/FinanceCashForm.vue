@@ -730,12 +730,13 @@ export default {
         if (revision !== this.initRevision) return
         const source = response.data.data
         if (!sourceOptionsFor(this.direction, source.partyType).some(option => option.value === source.type)) throw new Error('业务来源与当前收付款方向不一致')
-        if (!(amountUnits(source.remainingAmount) > 0)) throw new Error('该业务来源已无可核销余额，请返回列表重新核对')
+        const initialAmount = source.availableRefundAmount ?? source.remainingAmount
+        if (!(amountUnits(initialAmount) > 0)) throw new Error('该业务来源已无可核销余额（可能已有退款草稿占用），请返回列表重新核对')
         this.doc.party_type = source.partyType
         this.doc.party_id = Number(source.partyId)
         this.doc.party_name_snapshot = source.partyName
         this.doc.currency = source.currency
-        this.doc.amount = trimMoney(source.remainingAmount)
+        this.doc.amount = trimMoney(initialAmount)
         this.sourceContext = { type: source.type, id: source.id }
         this.ensureParty()
         this.pending = [pendingFromSource(source, this.doc.amount)]

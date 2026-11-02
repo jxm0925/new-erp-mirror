@@ -4,7 +4,8 @@ const LABELS = { confirm: '确认入库', reject: '驳回', cancel: '撤回申�
 const TITLES = { mfg_receipt: '生产入库确认', cutting_remnant: '余料入库确认', inventory_transfer: '调拨入库确认', material_physical_transfer: '实物调拨接收' };
 Page({
   data: { kind: 'mfg_receipt', id: 0, loading: true, saving: false, error: '', formError: '', header: { serial_nos: [], allowed_location_purposes: [] }, lines: [], actions: {},
-    page: 1, lastPage: 1, total: 0, checked: {}, checkedCount: 0, checkedPhysicals: {}, drafts: {}, resubmitting: false, locatorTarget: '', locator: {}, locatorOpen: false, remark: '', dialog: null, pendingActions: [], canViewAmount: false, isRemnant: false, isTransfer: false, isPhysical: false, confirmReady: false },
+    page: 1, lastPage: 1, total: 0, checked: {}, checkedCount: 0, checkedPhysicals: {}, drafts: {}, resubmitting: false, locatorTarget: '', locator: {}, locatorOpen: false, remark: '', dialog: null, pendingActions: [], canViewAmount: false, isRemnant: false, isTransfer: false, isPhysical: false, confirmReady: false,
+    manualOpen: false, manualRows: [], manualSelected: [], manualScope: '' },
   onLoad(options) { const kind = Object.keys(TITLES).includes(options.kind) ? options.kind : 'mfg_receipt'; this.setData({ id: Number(options.id), kind, isRemnant: kind === 'cutting_remnant', isTransfer: ['inventory_transfer', 'material_physical_transfer'].includes(kind), isPhysical: kind === 'material_physical_transfer' }); },
   onShow() { if (!page.resumingScan(this)) this.load(); },
   onUnload() { this.sequence = (this.sequence || 0) + 1; },
@@ -12,7 +13,7 @@ Page({
   load() {
     if (!this.data.id) { this.setData({ loading: false, error: '入库单不存在' }); return Promise.resolve(); }
     const sequence = this.sequence = (this.sequence || 0) + 1;
-    this.setData({ loading: true, error: '' });
+    this.setData({ loading: true, error: '', manualOpen: false });
     return warehouse.document(this.data.kind, this.data.id, { page: this.data.page, per_page: 10 }).then(response => {
       if (sequence !== this.sequence) return;
       const body = response.data || response; const header = body.header || {}; const result = page.rows(body.lines);
@@ -44,6 +45,24 @@ Page({
     this.setData({ page: target }); this.load();
   },
   input(event) { this.setData({ remark: event.detail.value }); },
+  openManual() {
+    if (this.data.loading || this.data.saving || this.data.pendingActions.length || !this.data.actions.confirm) return;
+    const rows = (this.data.header.serial_nos || []).map(no => ({ id: 'serial:' + no, title: no, subtitle: this.data.header.item_name || '', detail: '本次入库申请编号', serial_no: no, kind: 'serial' }));
+    if (this.data.isPhysical) (this.data.header.confirmation_lines || []).forEach(row => rows.push({ id: 'physical:' + row.physical_material_id, title: row.item_name || (row.item || {}).item_name || row.physical_no, physical_no: row.physical_no, detail: row.physical_no, dimensions: row.dimensions, physical_id: row.physical_material_id, kind: 'physical' }));
+    this.setData({ manualRows: rows, manualSelected: rows.filter(row => row.kind === 'serial' ? this.data.checked[row.serial_no] : this.data.checkedPhysicals[row.physical_id]), manualOpen: true, manualScope: [this.data.kind, this.data.id, this.data.header.business_version].join(':') });
+  },
+  closeManual() { this.setData({ manualOpen: false }); },
+  confirmManual(event) {
+    if (!this.data.manualOpen || this.data.loading || this.data.saving || this.data.pendingActions.length || !this.data.actions.confirm) return;
+    if (this.data.manualScope !== [this.data.kind, this.data.id, this.data.header.business_version].join(':')) return this.setData({ manualOpen: false, formError: '单据已变化，请重新核对' });
+    const checked = {}; const checkedPhysicals = {};
+    for (const row of event.detail.rows) {
+      if (row.kind === 'serial' && (this.data.header.serial_nos || []).includes(row.serial_no)) checked[row.serial_no] = true;
+      else if (row.kind === 'physical' && (this.data.header.physical_ids || []).some(id => Number(id) === Number(row.physical_id))) checkedPhysicals[row.physical_id] = true;
+      else return this.setData({ formError: '所选编号不属于本单，请重新核对', manualOpen: false });
+    }
+    this.setData({ checked, checkedCount: Object.keys(checked).length, checkedPhysicals, manualOpen: false, formError: '' }); this.updateReady();
+  },
   scanSerial(event) {
     if (this.data.saving || this.data.pendingActions.length || !this.data.actions.confirm) return;
     const code = String(event.detail.code || '').trim().replace(/^ERP:SN:/i, '');

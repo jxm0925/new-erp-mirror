@@ -90,6 +90,7 @@ final class CuttingService
     {
         return DB::transaction(function () use ($workOrderId, $data, $actor, $amounts) {
             $wo = $this->lockedWorkOrder($workOrderId);
+            CancellationProductionService::assertProductionAllowed((int) $wo->id);
             $hash = $this->hash($data);
             $old = MfgCuttingBatch::query()->where('idempotency_key', $data['idempotency_key'])->lockForUpdate()->first();
             if ($old) {

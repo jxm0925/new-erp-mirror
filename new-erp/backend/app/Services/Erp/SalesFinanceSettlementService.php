@@ -20,8 +20,11 @@ class SalesFinanceSettlementService
         // 退货退款按已认可退货数量冲减应收；合同金额保持原值，未收/应退均按净应收计算。
         $returnCredit = SalesReturnSettlementService::orderCreditAmount((int) $order->id);
         $netReceivable = Money::maxZero(Money::sub($contract, $returnCredit));
+        $cancelled = $order->order_status === 'cancelled';
+        if ($cancelled) $netReceivable = '0.0000';
         $outstanding = Money::maxZero(Money::sub($netReceivable, $net));
         $prepayment = Money::maxZero(Money::sub($net, $netReceivable));
+        if ($cancelled) $prepayment = app(SalesCancellationService::class)->amounts($order)['remaining'];
         $ratio = Money::ratio($net, $netReceivable);
         return [
             'contract_amount' => $contract,
@@ -35,8 +38,8 @@ class SalesFinanceSettlementService
             'allocated_amount' => $received,
             'unallocated_amount' => $outstanding,
             'receipt_ratio' => $ratio,
-            'production_funds_satisfied' => Money::compare($net, '0') > 0,
-            'shipment_funds_satisfied' => Money::compare($net, $netReceivable) >= 0,
+            'production_funds_satisfied' => !$cancelled && Money::compare($net, '0') > 0,
+            'shipment_funds_satisfied' => !$cancelled && Money::compare($net, $netReceivable) >= 0,
         ];
     }
 

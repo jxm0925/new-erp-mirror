@@ -1,5 +1,6 @@
 <template>
   <div class="cash-list-container">
+    <cancelled-order-funds v-if="direction === 'payment' && $can('finance.payment.view')" />
     <!-- 页面全局头部：图标、标题、统计标签与主要操作 (完全对齐主数据中心规范) -->
     <header class="page-head">
       <div class="head-left">
@@ -484,12 +485,13 @@
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import { listCashDocuments, confirmCashDocument, voidCashDocument, listFinanceAccounts, resolveFinanceSource, getCashDocument } from '../../../api/erp/finance'
 import FinanceAllocation from './FinanceAllocation.vue'
+import CancelledOrderFunds from '@/components/finance/CancelledOrderFunds.vue'
 
 const blankQuery = () => ({ keyword: '', party_keyword: '', finance_account_id: '', status: '', allocation_status: '', date_range: [] })
 const positiveId = value => /^\d+$/.test(String(value || '')) && Number(value) > 0 ? Number(value) : null
 
 export default {
-  components: { PagedRecordSelect, FinanceAllocation, PurchasePaymentLinkDialog: () => import('../../../components/finance/PurchasePaymentLinkDialog.vue') },
+  components: { CancelledOrderFunds, PagedRecordSelect, FinanceAllocation, PurchasePaymentLinkDialog: () => import('../../../components/finance/PurchasePaymentLinkDialog.vue') },
   props: { direction: { type: String, required: true } },
   data: () => ({
     loading: false, rows: [], accounts: [], page: 1, perPage: 10, total: 0,

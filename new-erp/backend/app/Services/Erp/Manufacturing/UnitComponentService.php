@@ -96,6 +96,7 @@ final class UnitComponentService
     {
         DB::transaction(function () use ($workOrderId, $serialId, $unitId, $actor) {
             $wo = MfgWorkOrder::query()->lockForUpdate()->findOrFail($workOrderId);
+            CancellationProductionService::assertProductionAllowed((int) $wo->id);
             if (! in_array($wo->status, ['released', 'in_progress', 'paused'], true)) $this->fail('status_invalid', '工单不在生产中，不能登记部件编号。');
             $row = collect($this->unbound($wo))->firstWhere('serial_id', $serialId);
             if (! $row) $this->fail('component_invalid', '这个编号不是本工单待登记的编号（可能已登记或已退料），请刷新。');
@@ -145,6 +146,7 @@ final class UnitComponentService
     {
         DB::transaction(function () use ($workOrderId, $firstId, $secondId, $actor) {
             $wo = MfgWorkOrder::query()->lockForUpdate()->findOrFail($workOrderId);
+            CancellationProductionService::assertProductionAllowed((int) $wo->id);
             if (! in_array($wo->status, ['released', 'in_progress', 'paused'], true)) $this->fail('status_invalid', '工单不在生产中，不能调整部件编号。');
             $rows = MfgUnitComponent::query()->installed()->where('work_order_id', $wo->id)->whereIn('id', [$firstId, $secondId])->lockForUpdate()->get()->keyBy('id');
             if ($firstId === $secondId || $rows->count() !== 2) $this->fail('component_invalid', '请选择本工单两台设备上当前装着的部件，请刷新后重试。');

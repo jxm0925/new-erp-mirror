@@ -32,6 +32,7 @@ class FinanceAllocationApplicationService
                 $salesOrderIds = $this->lockSources($rows);
                 $document = FinanceCashDocument::query()->lockForUpdate()->findOrFail($cashDocumentId);
                 if ($document->status !== FinanceConstants::STATUS_CONFIRMED) throw ValidationException::withMessages(['status' => '只有已确认资金单可以核销。']);
+                app(SalesCancellationService::class)->assertRefundIntents($document, $rows);
                 $allocatedBefore = $this->activeTotalForDocument($document->id);
                 $remainingFunds = Money::sub((string) $document->amount, $allocatedBefore);
                 $created = [];
@@ -110,6 +111,7 @@ class FinanceAllocationApplicationService
                 $this->purchaseSettlementSources->refresh((int) $allocation->source_document_id, $operatorId, $operatorName);
             }
             foreach ($salesOrderIds as $salesOrderId) {
+                app(SalesCancellationService::class)->assertCovered($salesOrderId);
                 $this->orderStates->handle(SalesOrderStateCoordinator::PAYMENT_CHANGED, $salesOrderId);
             }
             $this->purchasePurposes->assertNetAvailableForCash((int) $allocation->cash_document_id);

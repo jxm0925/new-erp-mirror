@@ -530,6 +530,7 @@ class SalesOrderController extends Controller
             $order->setAttribute('allowed_actions', $this->orderAllowedActions($request, $order));
             $order->setAttribute('priority_label', SalesOrderPriorityService::label((int) $order->priority));
             $this->decorateFulfillmentComposition($order);
+            $this->decorateCancellation($request, $order);
             return $order;
         });
         $payload = $page->toArray();
@@ -694,6 +695,7 @@ class SalesOrderController extends Controller
             $line->setAttribute('is_purchase_fulfilled', SalesOrderFulfillmentPolicy::isPurchaseLine($line));
         });
         $this->decorateFulfillmentComposition($order);
+        $this->decorateCancellation($request, $order);
         $changeEligibility = app(SalesOrderEditImpactService::class)->eligibility($order);
         $allowedActions = $this->orderAllowedActions($request, $order, $changeEligibility);
         $order->setAttribute('allowed_actions', $allowedActions);
@@ -895,20 +897,24 @@ class SalesOrderController extends Controller
     public function cancelWithReason(Request $request, int $id)
     {
         $this->abortUnlessPermission($request, 'sales_order.cancel');
-        $payload = $request->validate(['reason' => 'required|string|max:500']);
+        $payload = $request->validate(['reason' => 'required|string|max:500', 'funds_method' => 'nullable|in:refund,partial',
+            'retained_amount' => 'nullable|numeric|min:0|decimal:0,4', 'expected_version' => 'nullable|integer|min:1']);
 
         return DB::transaction(function () use ($request, $id, $payload) {
             $order = SalesOrder::with(['lines', 'fulfillments'])->lockForUpdate()->findOrFail($id);
             $this->abortUnlessOrderVisible($request, $order);
             abort_if($order->order_status === 'cancelled', 422, '订单已经取消，不能重复取消');
+            abort_if(isset($payload['expected_version']) && (int) $payload['expected_version'] !== (int) $order->business_version, 409, '订单已变化，请刷新后取消。');
             abort_if(! in_array($order->shipment_status, ['not_shipped', 'not_required'], true) || $order->lines->sum('shipped_qty') > 0
                 || $order->shipments()->where('shipment_status', '<>', 'cancelled')->exists(), 422, '已有有效发货单或发货事实，不能直接取消，请先处理发货逆向流程');
             $actor = app(AuthContextService::class)->currentUser($request);
             abort_unless($actor, 401, '请先登录 ERP');
 
             $beforeStatus = $order->order_status;
+            app(\App\Services\Erp\SalesCancellationService::class)->request($order, $payload, $this->operatorName($request));
             $order->update([
                 'order_status' => 'cancelled',
+                'fulfillment_status' => 'cancelled',
                 'cancel_reason' => $payload['reason'],
                 'cancelled_at' => now(),
                 'cancelled_by' => $this->operatorName($request),
@@ -924,13 +930,30 @@ class SalesOrderController extends Controller
             $workOrders = app(\App\Services\Erp\Manufacturing\WorkOrderService::class)->cancelForSalesOrder($order, '订单取消：'.$payload['reason'], $actor);
             $this->log($order->id, null, 'cancel', $beforeStatus, 'cancelled', '取消销售订单：'.$payload['reason']
                 .($workOrders['cancelled'] ? '；已取消工单 '.implode('、', $workOrders['cancelled']) : '')
-                .($workOrders['kept'] ? '；已开工工单 '.implode('、', $workOrders['kept']).' 已转为备货工单，做完的设备进公共库存' : ''));
+                .($workOrders['kept'] ? '；工单 '.implode('、', $workOrders['kept']).' 已暂停，待生产主管处置' : ''));
 
             return response()->json(['message' => '订单已取消', 'data' => $order->fresh(['lines', 'fulfillments'])]);
         });
     }
 
     /** 短交关闭预览：只读，无金额权限时隐藏金额字段。 */
+    private function decorateCancellation(Request $request, SalesOrder $order): void
+    {
+        if ($order->order_status !== 'cancelled') return;
+        $order->setAttribute('fulfillment_status', 'cancelled');
+        $auth = app(AuthContextService::class); $user = $auth->currentUser($request);
+        $amounts = $user && ($auth->isSuperAdmin($user) || in_array('sales_order.amount.view', $auth->permissionCodes($user), true));
+        $order->setAttribute('cancellation', app(\App\Services\Erp\SalesCancellationService::class)->present($order, $amounts));
+    }
+
+    public function cancellationPreview(Request $request, int $id)
+    {
+        $this->abortUnlessPermission($request, 'sales_order.cancel');
+        $order = SalesOrder::findOrFail($id);
+        $this->abortUnlessOrderVisible($request, $order);
+        return response()->json(['data' => app(\App\Services\Erp\SalesCancellationService::class)->amounts($order), 'business_version' => $order->business_version]);
+    }
+
     public function shortClosePreview(Request $request, int $id, \App\Services\Erp\SalesOrderShortCloseService $service)
     {
         $this->abortUnlessPermission($request, 'sales_order.short_close');

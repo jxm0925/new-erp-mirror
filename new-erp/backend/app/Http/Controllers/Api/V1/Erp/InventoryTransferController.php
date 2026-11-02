@@ -79,11 +79,19 @@ class InventoryTransferController extends Controller
             'page' => 'sometimes|integer|min:1', 'per_page' => 'sometimes|integer|min:1|max:100',
         ]);
         InventoryTransferService::assertWarehouseScope((int) $data['warehouse_id'], $user);
-        $query = InventoryBalance::query()->with(['item:id,item_code,item_name,spec,item_type,material_management_mode,serial_tracking_mode,is_serial_managed',
+        $eligible = $service->transferableBalances()->whereNotExists(fn ($q) => $q->selectRaw('1')->from('erp_inventory_stocktakes as st')
+            ->where('st.stocktake_status', 'counting')->whereColumn('st.warehouse_id', 'erp_inventory_balances.warehouse_id')
+            ->where(fn ($q) => $q->whereNull('st.location_id')->orWhereColumn('st.location_id', 'erp_inventory_balances.location_id')));
+        $categoryQuery = InventoryBalance::query()->where('warehouse_id', $data['warehouse_id'])
+            ->when($data['location_id'] ?? null, fn ($q, $id) => $q->where('location_id', $id))
+            ->whereIn('id', (clone $eligible)->select('erp_inventory_balances.id'));
+        $categories = \App\Models\Erp\ItemCategory::whereIn('id', \App\Models\Erp\Item::whereIn('id', $categoryQuery->select('item_id'))->select('category_id'))
+            ->orderBy('id')->get(['id', 'category_name as name']);
+        $query = InventoryBalance::query()->with(['item:id,item_code,item_name,spec,model,material_grade,category_id,item_type,material_management_mode,serial_tracking_mode,is_serial_managed', 'item.category:id,category_name',
             'location:id,location_code,location_name', 'unit:id,unit_name'])
             ->withCount(['serials as available_serials_count' => fn ($q) => $q->where('serial_status', 'available')])
             ->where('warehouse_id', (int) $data['warehouse_id'])
-            ->whereIn('id', $service->transferableBalances()->select('erp_inventory_balances.id'))
+            ->whereIn('id', (clone $eligible)->select('erp_inventory_balances.id'))
             ->whereHas('item', fn ($item) => $item->where(fn ($mode) => $mode
                 ->whereIn('material_management_mode', ['quantity', ''])->orWhereNull('material_management_mode')))
             ->when($data['location_id'] ?? null, fn ($q, $id) => $q->where('location_id', (int) $id))
@@ -91,21 +99,21 @@ class InventoryTransferController extends Controller
             ->when($data['ids'] ?? null, fn ($q, $ids) => $q->whereIn('id', $ids))
             ->when($data['keyword'] ?? null, fn ($q, $keyword) => $q->where(fn ($w) => $w->where('batch_no', 'like', "%{$keyword}%")
                 ->orWhereHas('item', fn ($item) => $item->where('item_code', 'like', "%{$keyword}%")
-                    ->orWhere('item_name', 'like', "%{$keyword}%")->orWhere('spec', 'like', "%{$keyword}%"))
+                    ->orWhere('item_name', 'like', "%{$keyword}%")->orWhere('spec', 'like', "%{$keyword}%")->orWhere('model', 'like', "%{$keyword}%")->orWhere('material_grade', 'like', "%{$keyword}%"))
                 ->orWhereHas('location', fn ($location) => $location->where('location_code', 'like', "%{$keyword}%")
                     ->orWhere('location_name', 'like', "%{$keyword}%"))))
             ->orderBy('item_id')->orderBy('id');
         $paginator = $query->paginate(isset($data['ids']) ? count($data['ids']) : ($data['per_page'] ?? 10));
         $paginator->getCollection()->transform(fn ($row) => [
             'id' => $row->id, 'item_id' => $row->item_id, 'item_code' => $row->item?->item_code, 'item_name' => $row->item?->item_name,
-            'spec' => $row->item?->spec, 'location_id' => $row->location_id, 'location_name' => $row->location?->location_name,
+            'spec' => $row->item?->spec, 'model' => $row->item?->model, 'material_grade' => $row->item?->material_grade, 'category_name' => $row->item?->category?->category_name, 'location_id' => $row->location_id, 'location_name' => $row->location?->location_name,
             'location_code' => $row->location?->location_code, 'batch_no' => $row->batch_no, 'unit_name' => $row->unit?->unit_name,
             'quantity_available' => $available = $availability->availableForOutbound($row),
             'available_serials_count' => (int) $row->available_serials_count,
             'unnumbered_available' => max(0, $available - (int) $row->available_serials_count),
             'serial_tracking_mode' => $row->item?->serialTrackingMode() ?? 'none',
         ]);
-        return response()->json($paginator);
+        return response()->json([...$paginator->toArray(), 'categories' => $categories]);
     }
 
     public function show(Request $request, int $id)

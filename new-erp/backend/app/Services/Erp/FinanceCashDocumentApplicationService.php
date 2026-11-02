@@ -246,6 +246,7 @@ class FinanceCashDocumentApplicationService
 
     private function validateDraftSources(FinanceCashDocument $document, array $items): void
     {
+        app(SalesCancellationService::class)->assertRefundIntents($document, $items);
         // Draft rows are intent only: validate identity and source eligibility,
         // but reserve no balance. Allocation rechecks amounts under its locks
         // when the caller explicitly supplies items to confirmation.

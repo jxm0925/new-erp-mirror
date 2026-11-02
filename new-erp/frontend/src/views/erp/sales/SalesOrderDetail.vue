@@ -4,6 +4,9 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
 -->
 <template>
   <section class="sales-detail-page">
+    <sales-order-cancellation-dialog :visible.sync="cancelDialogVisible" :order-id="order.id" @changed="load" />
+    <el-alert v-if="order.order_status === 'cancelled' && order.cancellation" :title="'订单已取消 · ' + (order.cancellation.finance_status === 'settled' ? '资金已结清' : '资金待处理') + (order.cancellation.production_pending ? ' · ' + order.cancellation.production_pending + '张工单待生产处理' : '')" type="warning" :closable="false" show-icon />
+    <cancellation-dispositions v-if="order.order_status === 'cancelled' && order.cancellation && order.cancellation.production_pending && $can('production.work_order.view')" :sales-order-id="order.id" @changed="load" />
     <!-- 顶部主控导航与操作栏 -->
     <div class="detail-header-card">
       <div class="header-main">
@@ -15,12 +18,12 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
             <el-tag size="small" :type="fulfillmentStatusTag(order.fulfillment_status)" effect="plain">
               {{ fulfillmentStatusText(order.fulfillment_status) }}
             </el-tag>
-            <el-tag size="small" :type="statusTag(order.shipment_status)" effect="plain">发货：{{ shipmentStatusText(order.shipment_status) }}</el-tag>
-            <span v-if="order.fulfillment_composition_label" class="header-pill header-pill--composition">
+            <el-tag size="small" :type="statusTag(order.shipment_status)" effect="plain">发货：{{ order.order_status === 'cancelled' ? '-' : shipmentStatusText(order.shipment_status) }}</el-tag>
+            <span v-if="order.order_status !== 'cancelled' && order.fulfillment_composition_label" class="header-pill header-pill--composition">
               {{ order.fulfillment_composition_label }}
             </span>
             <el-tag size="small" :type="statusTag(order.production_confirm_status)" effect="plain">
-              生产确认: {{ statusText(order.production_confirm_status) }}
+              生产确认: {{ order.order_status === 'cancelled' ? '-' : statusText(order.production_confirm_status) }}
             </el-tag>
             <el-tag v-if="order.priority && order.priority !== 3" size="small" :type="priorityTagType(order.priority)" effect="dark">{{ order.priority_label }}</el-tag>
             <span class="header-pill header-pill--version">V{{ currentVersion }}</span>
@@ -193,7 +196,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
           </div>
           <div class="kv-item">
             <span class="kv-label">生产确认状态</span>
-            <span class="kv-value"><el-tag size="mini" :type="statusTag(order.production_confirm_status)">{{ statusText(order.production_confirm_status) }}</el-tag></span>
+            <span class="kv-value"><el-tag size="mini" :type="statusTag(order.production_confirm_status)">{{ order.order_status === 'cancelled' ? '-' : statusText(order.production_confirm_status) }}</el-tag></span>
           </div>
           <div class="kv-item">
             <span class="kv-label">付款方式</span>
@@ -223,7 +226,7 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
               <span v-else class="text-muted">未开启共享</span>
             </span>
           </div>
-          <div v-if="order.funding_status && order.funding_status.agreed_deposit_supported" class="kv-item">
+          <div v-if="order.order_status !== 'cancelled' && order.funding_status && order.funding_status.agreed_deposit_supported" class="kv-item">
             <span class="kv-label">开工定金</span>
             <span class="kv-value">
               <template v-if="order.funding_status.production_required_amount !== undefined">
@@ -236,7 +239,8 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
           </div>
           <div v-if="order.funding_status" class="kv-item">
             <span class="kv-label">资金状态</span>
-            <span class="kv-value">
+            <span v-if="order.order_status === 'cancelled'" class="kv-value">-</span>
+            <span v-else class="kv-value">
               <el-tag size="mini" :type="order.funding_status.production_funds_satisfied ? 'success' : 'warning'">{{ order.funding_status.production_funds_satisfied ? '可开工' : '定金未到' }}</el-tag>
               <el-tag size="mini" :type="order.funding_status.shipment_funds_satisfied ? 'success' : 'warning'">{{ order.funding_status.shipment_funds_satisfied ? '可发货' : (order.funding_status.outstanding_amount !== undefined ? `未收 ¥${Number(order.funding_status.outstanding_amount || 0).toLocaleString('zh-CN')}` : '尾款未齐') }}</el-tag>
             </span>
@@ -814,7 +818,9 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
 <script>
 import { erpDateTime } from '../../../utils/dateTime'
 import cachedPageRoute from '@/utils/cachedPageRoute'
-import { confirmSalesOrder, formalConfirmSalesOrder, cancelSalesOrder, previewShortCloseSalesOrder, shortCloseSalesOrder, deleteSalesOrderAttachment, deleteSalesOrderDraft, downloadSalesOrderAttachment, getSalesOrder, listSalesOrderChanges, lockSalesOrderInventory, adjustSalesOrderPriority } from '@/api/erp/sales'
+import { confirmSalesOrder, formalConfirmSalesOrder, previewShortCloseSalesOrder, shortCloseSalesOrder, deleteSalesOrderAttachment, deleteSalesOrderDraft, downloadSalesOrderAttachment, getSalesOrder, listSalesOrderChanges, lockSalesOrderInventory, adjustSalesOrderPriority } from '@/api/erp/sales'
+import SalesOrderCancellationDialog from '@/components/sales/SalesOrderCancellationDialog.vue'
+import CancellationDispositions from '@/components/production/CancellationDispositions.vue'
 import SalesOrderAttachmentPreviewDialog from '@/components/sales/SalesOrderAttachmentPreviewDialog.vue'
 import SalesOrderFinancePanel from '@/components/sales/SalesOrderFinancePanel.vue'
 import SalesOrderInvoicePanel from '@/components/sales/SalesOrderInvoicePanel.vue'
@@ -825,8 +831,9 @@ import { listSalesOrderWorkOrders } from '@/api/erp/production'
 
 export default {
   mixins: [cachedPageRoute],
-  components: { SalesOrderAttachmentPreviewDialog, SalesOrderFinancePanel, SalesOrderInvoicePanel, OrderProgress },
+  components: { SalesOrderCancellationDialog, CancellationDispositions, SalesOrderAttachmentPreviewDialog, SalesOrderFinancePanel, SalesOrderInvoicePanel, OrderProgress },
   data: () => ({
+    cancelDialogVisible: false,
     invoicePendingCount: 0,
     activeTab: 'info',
     order: {},
@@ -1130,25 +1137,7 @@ export default {
       } finally { this.depositSaving = false }
     },
     async cancelOrder() {
-      if (this.cancelling || !this.order.allowed_actions?.cancel) return
-      const orderId = this.order.id
-      let cancelled = false
-      this.cancelling = true
-      try {
-        const result = await this.$prompt('取消后，本销售订单及尚未发布的关联工单将取消，历史记录保留。请填写取消原因（最多500字）。', '取消订单', {
-          type: 'warning', inputType: 'textarea', confirmButtonText: '确认取消订单', cancelButtonText: '返回',
-          inputValidator: value => { const reason = String(value || '').trim(); if (!reason) return '请填写取消原因'; return reason.length <= 500 || '取消原因不能超过500字' }
-        })
-        if (!this.isPageRouteActive || String(this.pageRoute.params.id) !== String(orderId)) return
-        await cancelSalesOrder(orderId, { reason: result.value.trim() })
-        cancelled = true
-        if (this.isPageRouteActive && String(this.pageRoute.params.id) === String(orderId)) {
-          this.$message.success('销售订单已取消，历史记录已保留')
-          await this.load()
-        }
-      } catch (error) {
-        if (!['cancel', 'close'].includes(error)) this.$message.error(cancelled ? '销售订单已取消，详情刷新失败，请重新打开本单核对' : (error.userMessage || '取消订单失败'))
-      } finally { this.cancelling = false }
+      if (this.order.allowed_actions?.cancel) this.cancelDialogVisible = true
     },
     async openShortClose() {
       if (this.shortClose.loading) return

@@ -227,7 +227,9 @@
     "failed_jobs": "2026_10_12_000442_create_failed_jobs_table",
     "job_batches": "2026_10_12_000443_create_job_batches_table",
     "jobs": "2026_10_12_000444_create_jobs_table",
-    "sessions": "2026_10_12_000445_create_sessions_table"
+    "sessions": "2026_10_12_000445_create_sessions_table",
+    "erp_sales_cancellations": "2026_11_05_000001_create_erp_sales_cancellations_table",
+    "erp_cancellation_production_dispositions": "2026_11_05_000002_create_erp_cancellation_production_dispositions_table"
   },
   "legacy_migrations": {
     "2026_07_09_000002_remove_legacy_scan_questions_table": "89a9fd386c9acd658007b681a9b8e13c5c1e346f97577c63ab78d34e1fe1cb04",

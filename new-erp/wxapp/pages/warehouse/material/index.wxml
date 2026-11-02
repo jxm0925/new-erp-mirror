@@ -123,6 +123,7 @@
               <text class="warehouse-value">{{pick.serialText}}</text>
             </view>
             <block wx:if="{{actions.prepare || actions.dispatch || (actions.recall && canConfirmInbound)}}">
+              <button class="warehouse-secondary" data-line="{{item.id}}" data-pick="{{pickIndex}}" bindtap="openManual" disabled="{{saving || loading || pendingActions.length}}">手动核对物料 / 库位 / 编号</button>
               <scan-input
                 wx:if="{{actions.prepare || actions.dispatch}}"
                 compact
@@ -173,7 +174,8 @@
             <text class="warehouse-value">{{item.location}}</text>
           </view>
           <block wx:if="{{actions.approve}}">
-            <view class="warehouse-title">扫码核对</view>
+            <view class="warehouse-title">物料核对</view>
+            <button class="warehouse-secondary" data-line="{{item.id}}" bindtap="openManual" disabled="{{saving || loading || pendingActions.length}}">手动选择并核对本项</button>
             <scan-input
               class="material-scan"
               compact
@@ -334,6 +336,7 @@
 </view>
 
 <warehouse-locator open="{{locatorOpen}}" value="{{locator}}" bind:confirm="chooseLocator" bind:cancel="closeLocator" />
+<warehouse-select open="{{manualOpen}}" title="{{manualTitle}}" rows="{{manualRows}}" selected="{{manualSelected}}" scope-key="{{manualScope}}" multiple maximum="{{manualRows.length}}" locked="{{saving || loading || pendingActions.length > 0}}" bind:confirm="confirmManual" bind:cancel="closeManual" />
 
 <view wx:if="{{dialog}}" class="warehouse-overlay" catchtouchmove="stop">
   <view class="warehouse-dialog">

@@ -1,0 +1,9 @@
+@import "../../pages/warehouse/shared.wxss";
+.selection-overlay { z-index: 1200; }
+.selection-dialog { max-height: 88vh; }
+.selection-row { border: 1rpx solid #e2e8f0; border-radius: 16rpx; padding: 20rpx; margin: 12rpx 0; }
+.selection-chosen { border-color: #d81e06; background: #fff8f7; }
+.selection-category { padding: 16rpx 0; color: #475569; }
+.selection-summary { border-top: 1rpx solid #e2e8f0; padding-top: 16rpx; }
+.selection-summary .phase-audit { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; }
+.selection-summary button { flex-shrink: 0; margin: 6rpx 0; }

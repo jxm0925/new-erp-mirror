@@ -3,10 +3,11 @@ const page = require('../../../utils/warehouse-page');
 Page({
   data: { loading: true, saving: false, error: '', formError: '', physicalMode: false, status: 'in_transit', keyword: '', rows: [], page: 1, lastPage: 1, total: 0,
     canCreate: false, canPhysical: false, canPost: false, canReadQuantity: false, canReadPhysical: false, formOpen: false, source: {}, target: {}, physical: null, lines: [], quantity: '', selectedBalance: null, serials: [], reason: '', targetBatch: '',
-    locatorOpen: false, locatorSide: 'source', locatorValue: {}, balanceOpen: false, balanceKeyword: '', balanceRows: [], balancePage: 1, balanceLast: 1, balanceTotal: 0, pendingJobs: [] },
+    locatorOpen: false, locatorSide: 'source', locatorValue: {}, balanceOpen: false, balanceKeyword: '', balanceRows: [], balancePage: 1, balanceLast: 1, balanceTotal: 0, balanceLoading: false,
+    balanceCategories: [{ id: 0, name: '全部分类' }], balanceCategory: 0, selectionOpen: false, selectionMode: 'physical', selectionContext: {}, selectionValue: [], serialMaximum: 500, pendingJobs: [] },
   onLoad() { const can = page.permissions(); const canReadQuantity = can('inventory.transfer.view') || can('inventory.inbound.confirm'); const canReadPhysical = canReadQuantity || can('inventory.physical.manage'); this.setData({ canCreate: can('inventory.transfer.create'), canPhysical: can('inventory.physical.manage'), canPost: can('inventory.transfer.post'), canReadQuantity, canReadPhysical, physicalMode: !canReadQuantity && !can('inventory.transfer.create') && canReadPhysical }); },
   onShow() { if (!page.resumingScan(this)) this.load(); },
-  onUnload() { this.sequence = (this.sequence || 0) + 1; },
+  onUnload() { this.sequence = (this.sequence || 0) + 1; this.balanceSequence = (this.balanceSequence || 0) + 1; },
   onPullDownRefresh() { this.load().finally(() => wx.stopPullDownRefresh()); },
   load() {
     const sequence = this.sequence = (this.sequence || 0) + 1; this.setData({ loading: true, error: '', pendingJobs: ['inventory_transfer.create', 'inventory_transfer.post', 'material_physical_transfer.dispatch'].flatMap(warehouse.pendingJobs) });
@@ -24,8 +25,8 @@ Page({
   switchStatus(event) { this.setData({ status: event.currentTarget.dataset.status, page: 1 }); this.load(); },
   turn(event) { const target = this.data.page + Number(event.currentTarget.dataset.delta); if (target > 0 && target <= this.data.lastPage && !this.data.loading) { this.setData({ page: target }); this.load(); } },
   open(event) { const row = this.data.rows.find(row => Number(row.id) === Number(event.currentTarget.dataset.id)); if (row) page.openDocument({ kind: this.data.physicalMode ? 'material_physical_transfer' : 'inventory_transfer', id: row.id }); },
-  newTransfer() { if (this.data.saving) return; this.setData({ formOpen: true, source: {}, target: {}, physical: null, lines: [], selectedBalance: null, serials: [], quantity: '', reason: '', targetBatch: '', formError: '' }); },
-  closeForm() { if (!this.data.saving) this.setData({ formOpen: false }); },
+  newTransfer() { if (this.data.saving) return; this.setData({ formOpen: true, source: {}, target: {}, physical: null, lines: [], selectedBalance: null, serials: [], quantity: '', reason: '', targetBatch: '', formError: '', selectionOpen: false, balanceOpen: false }); },
+  closeForm() { if (!this.data.saving) this.setData({ formOpen: false, selectionOpen: false, balanceOpen: false }); },
   openLocator(event) { const side = event.currentTarget.dataset.side; this.setData({ locatorOpen: true, locatorSide: side, locatorValue: this.data[side] }); },
   closeLocator() { this.setData({ locatorOpen: false }); },
   chooseLocator(event) {
@@ -34,11 +35,13 @@ Page({
     this.setData({ [side]: value, locatorOpen: false });
   },
   async scanSource(event) {
-    const result = event.detail.result;
-    if (this.data.physicalMode && result.type !== 'physical') return this.setData({ formError: '请扫描可用的板材或管材实物编号' });
+    return this.acceptSource(event.detail.result);
+  },
+  acceptSource(result) {
+    if (this.data.physicalMode && result.type !== 'physical') return this.setData({ formError: '请扫码或手动选择可用的板材、管材实物' });
     if (result.type === 'location') { this.balanceSequence = (this.balanceSequence || 0) + 1; this.setData({ source: result, lines: [], selectedBalance: null, serials: [], physical: null, balanceOpen: false }); return; }
     if (result.type === 'physical') {
-      if (!this.data.physicalMode || result.status !== 'AVAILABLE' || !result.warehouse_id) return this.setData({ formError: '请选择实物调拨，并扫描可用的仓内实物' });
+      if (!this.data.physicalMode || result.status !== 'AVAILABLE' || !result.warehouse_id) return this.setData({ formError: '请选择实物调拨，并选择可用的仓内实物' });
       this.setData({ physical: result, source: { warehouse_id: result.warehouse_id, warehouse_name: result.warehouse_name, location_id: result.location_id, location_code: result.location_code }, targetBatch: result.batch_no || '', formError: '' }); return;
     }
     if (this.data.physicalMode) return this.setData({ formError: '请扫描板材或管材实物编号' });
@@ -46,17 +49,39 @@ Page({
     this.setData({ balanceKeyword: result.item_code || result.code || '', balancePage: 1, balanceOpen: true }); this.loadBalances();
   },
   scanTarget(event) { const result = event.detail.result; this.setData({ target: { warehouse_id: result.warehouse_id, warehouse_name: result.warehouse_name, location_id: result.location_id, location_code: result.location_code, location_name: result.location_name } }); },
-  openBalances() { if (!this.data.source.warehouse_id) return this.setData({ formError: '请先选择调出仓库与库位' }); this.setData({ balanceOpen: true, balancePage: 1 }); this.loadBalances(); },
+  openBalances() { if (!this.data.source.warehouse_id) return this.setData({ formError: '请先选择调出仓库与库位' }); this.setData({ balanceOpen: true, balancePage: 1, balanceCategory: 0, balanceKeyword: '' }); this.loadBalances(); },
   closeBalances() { this.setData({ balanceOpen: false }); },
-  loadBalances() { const sequence = this.balanceSequence = (this.balanceSequence || 0) + 1; const source = JSON.stringify(this.data.source); return warehouse.transferBalances({ warehouse_id: this.data.source.warehouse_id, location_id: this.data.source.location_id || undefined, keyword: this.data.balanceKeyword, page: this.data.balancePage, per_page: 10 }).then(response => { if (sequence !== this.balanceSequence || source !== JSON.stringify(this.data.source) || !this.data.balanceOpen) return; const result = page.rows(response); this.setData({ balanceRows: result.rows, balanceLast: result.lastPage, balanceTotal: result.total }); }).catch(error => { if (sequence === this.balanceSequence) this.setData({ formError: page.errorText(error) }); }); },
+  loadBalances() { const sequence = this.balanceSequence = (this.balanceSequence || 0) + 1; const source = JSON.stringify(this.data.source); this.setData({ balanceLoading: true, formError: '' }); return warehouse.transferBalances({ warehouse_id: this.data.source.warehouse_id, location_id: this.data.source.location_id || undefined, keyword: this.data.balanceKeyword, category_id: (this.data.balanceCategories[this.data.balanceCategory] || {}).id || undefined, page: this.data.balancePage, per_page: 10 }).then(response => { if (sequence !== this.balanceSequence || source !== JSON.stringify(this.data.source) || !this.data.balanceOpen) return; const result = page.rows(response); this.setData({ balanceRows: result.rows, balanceLast: result.lastPage, balanceTotal: result.total, balanceCategories: [{ id: 0, name: '全部分类' }].concat(response.categories || []) }); }).catch(error => { if (sequence === this.balanceSequence) this.setData({ balanceRows: [], formError: page.errorText(error) }); }).finally(() => { if (sequence === this.balanceSequence) this.setData({ balanceLoading: false }); }); },
+  balanceCategoryChanged(event) { this.setData({ balanceCategory: Number(event.detail.value), balancePage: 1 }); this.loadBalances(); },
   searchBalances() { this.setData({ balancePage: 1 }); this.loadBalances(); },
   turnBalance(event) { const target = this.data.balancePage + Number(event.currentTarget.dataset.delta); if (target > 0 && target <= this.data.balanceLast) { this.setData({ balancePage: target }); this.loadBalances(); } },
-  chooseBalance(event) { const row = this.data.balanceRows.find(row => Number(row.id) === Number(event.currentTarget.dataset.id)); if (row) this.setData({ selectedBalance: row, serials: [], quantity: '', balanceOpen: false, formError: '' }); },
+  chooseBalance(event) { if (this.data.balanceLoading || this.data.saving) return; const row = this.data.balanceRows.find(row => Number(row.id) === Number(event.currentTarget.dataset.id)); if (row) this.setData({ selectedBalance: row, serials: [], quantity: '', balanceOpen: false, formError: '' }); },
+  openPhysicalSelection() { if (!this.data.saving) this.setData({ selectionOpen: true, selectionMode: 'physical', selectionContext: Object.assign({}, this.data.source), selectionValue: this.data.physical ? [this.data.physical] : [] }); },
+  openSerialSelection() { const b = this.data.selectedBalance; if (!b || this.data.saving) return; const maximum = b.serial_tracking_mode === 'required' ? Number(b.quantity_available) : Number(this.data.quantity) || Number(b.quantity_available); this.setData({ selectionOpen: true, selectionMode: 'serial', selectionContext: { balance_id: b.id, warehouse_id: this.data.source.warehouse_id }, selectionValue: this.data.serials, serialMaximum: Math.min(500, Math.floor(maximum)) }); },
+  closeSelection() { this.setData({ selectionOpen: false }); },
+  async chooseSelection(event) {
+    if (this.data.saving || !this.data.formOpen || !this.data.selectionOpen) return;
+    const rows = event.detail.rows;
+    if (this.data.selectionMode === 'serial') {
+      const b = this.data.selectedBalance;
+      if (!b || Number(b.id) !== Number(this.data.selectionContext.balance_id) || rows.some(row => Number(row.inventory_balance_id) !== Number(b.id))) return this.setData({ formError: '库存批次已变化，请重新选择编号', selectionOpen: false });
+      this.setData({ serials: rows.map(row => ({ id: row.id, serial_no: row.serial_no })), ...(b.serial_tracking_mode === 'required' ? { quantity: String(rows.length) } : {}), selectionOpen: false, formError: '' }); return;
+    }
+    const source = JSON.stringify(this.data.source); const token = wx.getStorageSync('erp_token'); const row = rows[0]; this.setData({ saving: true });
+    try {
+      const response = await warehouse.resolveScan('ERP:PHY:' + row.id); const result = response.data || response;
+      if (token !== wx.getStorageSync('erp_token') || source !== JSON.stringify(this.data.source) || !this.data.formOpen) return;
+      if ((this.data.source.warehouse_id && Number(result.warehouse_id) !== Number(this.data.source.warehouse_id)) || (this.data.source.location_id && Number(result.location_id) !== Number(this.data.source.location_id))) throw new Error('该实物已离开所选来源仓库或库位，请重新选择');
+      this.acceptSource(result); this.setData({ selectionOpen: false });
+    } catch (error) { this.setData({ selectionOpen: false, formError: page.errorText(error) }); }
+    finally { this.setData({ saving: false }); }
+  },
   scanSerial(event) {
     const result = event.detail.result; const balance = this.data.selectedBalance;
     if (!balance || Number(result.inventory_balance_id) !== Number(balance.id) || result.status !== 'available') return this.setData({ formError: '该序列号不属于所选可用库存批次' });
     if (this.data.serials.some(row => row.id === result.inventory_serial_id)) return this.setData({ formError: '该序列号已核对' });
-    this.setData({ serials: this.data.serials.concat({ id: result.inventory_serial_id, serial_no: result.serial_no }), formError: '' });
+    const serials = this.data.serials.concat({ id: result.inventory_serial_id, serial_no: result.serial_no });
+    this.setData({ serials, ...(balance.serial_tracking_mode === 'required' ? { quantity: String(serials.length) } : {}), formError: '' });
   },
   addLine() {
     const balance = this.data.selectedBalance; const qty = Number(this.data.quantity);

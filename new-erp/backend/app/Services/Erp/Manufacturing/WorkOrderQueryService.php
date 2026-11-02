@@ -390,6 +390,7 @@ final class WorkOrderQueryService
         $specInfo = self::itemSpecInfo($wo->relationLoaded('item') ? $wo->item : null, $wo);
         return [
             'id' => $wo->id, 'work_order_no' => $wo->work_order_no, 'source_type' => $wo->source_type,
+            'cancellation_disposition' => CancellationProductionService::pending((int) $wo->id)?->toArray(),
             'source_label' => $wo->rework_of_work_order_id ? '返工工单' : match ($wo->source_type) { 'stock' => '备货', 'work_order' => '半成品补做', default => '销售订单' },
             'rework_of_work_order_id' => $wo->rework_of_work_order_id,
             'rework_of_work_order_no' => $wo->rework_of_work_order_id ? MfgWorkOrder::query()->whereKey($wo->rework_of_work_order_id)->value('work_order_no') : null,

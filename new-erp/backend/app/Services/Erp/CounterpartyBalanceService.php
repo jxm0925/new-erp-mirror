@@ -17,7 +17,19 @@ class CounterpartyBalanceService
         $received = $this->allocated(FinanceConstants::PARTY_CUSTOMER, $customerId, FinanceConstants::DIRECTION_RECEIPT);
         $refunded = $this->allocated(FinanceConstants::PARTY_CUSTOMER, $customerId, FinanceConstants::DIRECTION_PAYMENT);
         $net = Money::maxZero(Money::sub($received, $refunded));
-        return ['receivable_amount' => $receivable, 'received_amount' => $received, 'outstanding_amount' => Money::maxZero(Money::sub($receivable, $net)), 'prepayment_amount' => Money::maxZero(Money::sub($net, $receivable)), 'refunded_amount' => $refunded];
+        $cancelledNet = $pending = $retained = '0.0000';
+        foreach (SalesOrder::where('customer_id', $customerId)->where('order_status', 'cancelled')->get() as $order) {
+            $amounts = app(SalesCancellationService::class)->amounts($order);
+            $cancelledNet = Money::add($cancelledNet, Money::sub($amounts['received'], $amounts['refunded']));
+            $pending = Money::add($pending, $amounts['remaining']);
+            $retained = Money::add($retained, $amounts['retained']);
+        }
+        // Cancelled-contract funds remain a separate liability until refunded or retained by finance.
+        $activeNet = Money::maxZero(Money::sub($net, $cancelledNet));
+        return ['receivable_amount' => $receivable, 'received_amount' => $received,
+            'outstanding_amount' => Money::maxZero(Money::sub($receivable, $activeNet)),
+            'prepayment_amount' => Money::maxZero(Money::sub($activeNet, $receivable)), 'refunded_amount' => $refunded,
+            'cancellation_pending_amount' => $pending, 'cancellation_retained_amount' => $retained];
     }
 
     public function supplier(int $supplierId): array

@@ -230,6 +230,7 @@ final class CuttingRunService
      */
     public function allocate(MfgWorkOrder $wo, MfgWorkOrderOperation $op, int $units, float $upTo, object $actor, ?int $preferRunId = null): array
     {
+        CancellationProductionService::assertProductionAllowed((int) $wo->id);
         if ($units <= 0) return [];
         $materials = MfgWorkOrderMaterial::query()->where('work_order_operation_id', $op->id)->whereIn('cutting_mode', ['sheet', 'length'])
             ->where('required_qty', '>', 0)->orderBy('id')->lockForUpdate()->get();

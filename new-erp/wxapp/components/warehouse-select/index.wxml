@@ -1,0 +1,22 @@
+<view wx:if="{{open}}" class="warehouse-overlay selection-overlay" catchtouchmove="stop">
+  <view class="warehouse-dialog selection-dialog">
+    <view class="warehouse-dialog-header"><text>{{title}}</text><button class="warehouse-close" bindtap="cancel" disabled="{{locked || loading}}"><van-icon name="cross" /></button></view>
+    <view class="warehouse-dialog-body">
+      <view class="warehouse-note">请对照实物选择，确认后仍按当前单据校验。</view>
+      <view class="warehouse-search"><van-icon name="search" /><input value="{{keyword}}" placeholder="名称 / 编码 / 规格 / 批次 / 编号" bindinput="input" bindconfirm="search" disabled="{{locked || loading}}" /><button bindtap="search" disabled="{{locked || loading}}">搜索</button></view>
+      <picker wx:if="{{categories.length > 1}}" range="{{categories}}" range-key="name" value="{{categoryIndex}}" bindchange="category" disabled="{{locked || loading}}"><view class="selection-category">分类：{{categories[categoryIndex].name}} ▾</view></picker>
+      <view wx:if="{{loading}}" class="warehouse-empty"><van-loading color="#d81e06" /></view>
+      <view wx:elif="{{!visibleRows.length}}" class="warehouse-empty">没有符合条件的可选明细</view>
+      <view wx:for="{{visibleRows}}" wx:key="id" class="selection-row {{item.chosen ? 'selection-chosen' : ''}}" data-id="{{item.id}}" bindtap="choose">
+        <view class="phase-line-title"><text>{{item.title}}</text><text>{{item.chosen ? '✓ 已选' : '选择'}}</text></view>
+        <view wx:if="{{item.subtitle}}" class="phase-audit">{{item.subtitle}}</view>
+        <view wx:if="{{item.detail}}" class="phase-audit">{{item.detail}}</view>
+        <view wx:if="{{item.measure}}" class="phase-audit">{{item.measure}}</view>
+      </view>
+      <view class="warehouse-pager"><text>共 {{total}} 条</text><button data-delta="-1" bindtap="turn" disabled="{{page <= 1 || loading}}">上一页</button><text>{{page}} / {{lastPage}}</text><button data-delta="1" bindtap="turn" disabled="{{page >= lastPage || loading}}">下一页</button></view>
+      <view wx:if="{{chosen.length}}" class="selection-summary"><text>已选 {{chosen.length}} 项</text><view wx:for="{{chosen}}" wx:key="id" class="phase-audit"><text>{{item.title}} {{item.physical_no || item.serial_no}}</text><button class="warehouse-secondary" data-id="{{item.id}}" bindtap="remove" disabled="{{locked || loading}}">移除</button></view></view>
+      <view wx:if="{{error}}" class="warehouse-error">{{error}}</view>
+    </view>
+    <view class="warehouse-dialog-footer"><button class="warehouse-secondary" bindtap="cancel" disabled="{{locked || loading}}">返回</button><button class="warehouse-primary" bindtap="confirm" loading="{{loading}}" disabled="{{locked || loading || (!chosen.length && !(multiple && selected.length))}}">确认选择（{{chosen.length}}）</button></view>
+  </view>
+</view>

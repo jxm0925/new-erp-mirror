@@ -40,8 +40,9 @@ class FinanceBusinessSourceResolver
         if (!$order->customer_id) throw ValidationException::withMessages(['source_document_id' => '销售订单尚未绑定客户。']);
         $amount = $this->salesSettlements->receivableAmount($order);
         if ($type === FinanceConstants::SOURCE_SALES_ORDER_REFUND) {
-            $amount = $this->balances->forSource(FinanceConstants::SOURCE_SALES_ORDER, $order->id);
+            $amount = app(SalesCancellationService::class)->refundCeiling($order);
         }
+        elseif ($order->order_status === 'cancelled') throw ValidationException::withMessages(['source_document_id' => '已取消订单不能新增收款核销。']);
         return $this->fact($type, $order->id, $order->sales_order_no, FinanceConstants::PARTY_CUSTOMER,
             (int) $order->customer_id, (string) ($order->customer_name_snapshot ?: $order->customer_name),
             (string) ($order->currency ?: 'CNY'), $amount);

@@ -1,5 +1,6 @@
 <template>
   <div class="work-order-page" v-loading="loading">
+    <cancellation-dispositions v-if="$can('production.work_order.view')" @changed="load" />
     <!-- 页面全局头部卡片 (100% 对齐主数据中心 / SkuList.vue 风格) -->
     <header class="page-head">
       <div class="head-left">
@@ -420,12 +421,14 @@
 
 <script>
 import { listWorkOrders } from '../../../api/erp/production'
+import CancellationDispositions from '@/components/production/CancellationDispositions.vue'
 import { STATUS_CHIP, STATUS_TABS, qty, shortDate, errorText, searchProductionUsers } from './mfg-helpers'
 
 const emptyFilters = () => ({ keyword: '', status: '', owner_legacy_id: '', source_type: '', stuck_only: false, flat: false })
 
 export default {
   name: 'WorkOrderList',
+  components: { CancellationDispositions },
   data: () => ({
     loading: false,
     rows: [],

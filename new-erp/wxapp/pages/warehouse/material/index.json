@@ -4,6 +4,7 @@
   "navigationBarTextStyle": "white",
   "enablePullDownRefresh": true,
   "usingComponents": {
+    "warehouse-select": "/components/warehouse-select/index",
     "scan-input": "/components/scan-input/index",
     "warehouse-locator": "/components/warehouse-locator/index",
     "warehouse-context": "/components/warehouse-context/index",

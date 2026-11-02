@@ -116,6 +116,7 @@ final class MaterialIssueService
     {
         return DB::transaction(function () use ($workOrderId, $operationId, $units, $remark, $actor, $selections) {
             $wo = MfgWorkOrder::query()->lockForUpdate()->findOrFail($workOrderId);
+            CancellationProductionService::assertProductionAllowed((int) $wo->id);
             if (! in_array($wo->status, ['released', 'in_progress', 'paused'], true)) $this->fail('status_invalid', '工单不在生产中，不能收料。');
             $op = MfgWorkOrderOperation::query()->where('work_order_id', $wo->id)->lockForUpdate()->find($operationId);
             if (! $op || $op->execution_context !== 'production') $this->fail('operation_invalid', '这道不是本工单的车间工序。');
@@ -198,6 +199,7 @@ final class MaterialIssueService
         $links = MfgWorkOrderLink::query()->where('parent_work_order_id', $parentId)->get();
         if ($links->isEmpty()) return [];
         $children = MfgWorkOrder::query()->whereIn('id', $links->pluck('child_work_order_id'))->whereIn('status', ['planned', 'released', 'in_progress', 'paused'])
+            ->where('source_type', 'work_order')
             ->whereNull('rework_of_work_order_id')->get(['id', 'planned_qty', 'stored_qty'])->keyBy('id');
         $scrapped = MfgWorkOrderUnit::query()->whereIn('work_order_id', $children->keys()->all() ?: [0])->where('status', 'scrapped')
             ->selectRaw('work_order_id, COUNT(*) AS n')->groupBy('work_order_id')->pluck('n', 'work_order_id');

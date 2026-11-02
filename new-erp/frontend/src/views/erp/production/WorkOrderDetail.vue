@@ -1,6 +1,7 @@
 <template>
   <div class="work-order-detail-page" v-loading="loading">
     <template v-if="wo">
+      <cancellation-dispositions v-if="$can('production.work_order.view')" :work-order-id="wo.id" @changed="load" />
       <!-- 页面全局头部卡片 -->
       <header class="page-head">
         <div class="head-left">
@@ -1101,6 +1102,7 @@
 import { getWorkOrder, getWorkOrderOptions, updateWorkOrder, releaseWorkOrder, pauseWorkOrder, resumeWorkOrder, cancelWorkOrder, createSemiWorkOrder, receiveOperationMaterials, getOperationSerialOptions, swapUnitComponents, assignUnitComponent, settleWorkOrderScrap, cancelMaterialReturn, materialDeliveryAction, taskAction, listTaskPeople } from '../../../api/erp/production'
 import { HERO_PILL, qty, money, shortDate, bomLabel, errorText, isCancel, searchProductionUsers } from './mfg-helpers'
 import WorkOrderCuttingPanel from './WorkOrderCuttingPanel.vue'
+import CancellationDispositions from '@/components/production/CancellationDispositions.vue'
 import MaterialReturnDialog from './MaterialReturnDialog.vue'
 import ShortagePurchaseDialog from '../purchase/ShortagePurchaseDialog.vue'
 import unitOptionsMixin from './unit-options-mixin'
@@ -1115,7 +1117,7 @@ const STEPS = [
 
 export default {
   name: 'WorkOrderDetail',
-  components: { WorkOrderCuttingPanel, MaterialReturnDialog, ShortagePurchaseDialog },
+  components: { CancellationDispositions, WorkOrderCuttingPanel, MaterialReturnDialog, ShortagePurchaseDialog },
   mixins: [unitOptionsMixin],
   data: () => ({
     loading: false,

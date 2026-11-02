@@ -404,6 +404,24 @@ final class TaskService
      * 审核报废：通过 = 这台设备报废；驳回 = 继续在本道返工。
      * 审核人：工单生产负责人，没填就是业务员档案里任一启用的生产负责人；$hasApprovePermission（报废确认权限）也可以审。
      */
+    public function scrapForCancellation(MfgWorkOrder $wo, array $unitIds, string $reason, array $evidence, object $actor): int
+    {
+        $media = app(ProductionMediaService::class)->normalize($evidence, $actor, 'reject');
+        abort_unless(collect($media)->contains('type', 'image'), 422, '报废须上传现场照片。');
+        $units = MfgWorkOrderUnit::where('work_order_id', $wo->id)->whereIn('id', $unitIds)->lockForUpdate()->get();
+        abort_unless($units->count() === count(array_unique($unitIds)) && $units->isNotEmpty(), 422, '请选择本工单的在制设备。');
+        foreach ($units as $unit) {
+            abort_if(in_array($unit->status, ['scrapped', 'cancelled', 'stored', 'pending_receipt'], true), 422, '设备已报废、已入库或有入库申请，不能重复报废。');
+            abort_if(MfgUnitReport::where('unit_id', $unit->id)->where('review_status', 'pending')->exists(), 422, '设备尚有待审核的报废申请。');
+            $op = MfgWorkOrderOperation::where('work_order_id', $wo->id)->where('execution_context', 'production')
+                ->when($unit->current_operation_id, fn ($q) => $q->whereKey($unit->current_operation_id))->orderBy('sequence')->firstOrFail();
+            $report = $this->report($wo, $op, $unit, 'scrap', $actor, ['reason' => $reason, 'media' => $media,
+                'submission_key' => (string) Str::uuid(), 'review_status' => 'pending', 'is_rework' => false]);
+            $this->approveScrap($wo, $report, '订单取消，生产主管确认报废：'.$reason, $actor);
+        }
+        return $units->count();
+    }
+
     public function reviewScrap(int $reportId, bool $approve, ?string $remark, object $actor, bool $hasApprovePermission = false): void
     {
         DB::transaction(function () use ($reportId, $approve, $remark, $actor, $hasApprovePermission) {
@@ -616,6 +634,7 @@ final class TaskService
 
     private function assertRunnable(MfgWorkOrder $wo, MfgWorkOrderOperation $op): void
     {
+        CancellationProductionService::assertProductionAllowed((int) $wo->id);
         if ($wo->status === 'paused') $this->fail('paused', '工单已暂停（'.($wo->pause_reason ?: '未写原因').'），暂时不能报工。');
         if (! $this->isRunnable($wo)) $this->fail('status_invalid', '工单不在生产中，也没有本机发货返工任务，不能报工。');
     }

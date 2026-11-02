@@ -9,6 +9,7 @@ Page({
   data: { kind: '', id: 0, parent: 0, loading: true, saving: false, error: '', formError: '', header: {}, lines: [], preview: null,
     actions: {}, page: 1, lastPage: 1, total: 0, units: '', remark: '', locator: {}, locatorOpen: false, dialog: null,
     checks: {}, checkedLocations: {}, checkedSerials: {}, dispositionDrafts: {}, pendingActions: [], planReviewRequired: false, canConfirmInbound: false, recallConfirmInbound: false,
+    manualOpen: false, manualRows: [], manualSelected: [], manualScope: '', manualTitle: '',
     dispositionOptions: [{ value: 'release', label: '判定可用' }, { value: 'scrap', label: '报废' }, { value: 'supplier_return', label: '退供应商' }] },
   onLoad(options) {
     const kind = ['material_preparation', 'material_delivery', 'material_return'].includes(options.kind) ? options.kind : '';
@@ -19,7 +20,7 @@ Page({
   onPullDownRefresh() { this.load().finally(() => wx.stopPullDownRefresh()); },
   load() {
     if (!this.data.kind || !this.data.id) { this.setData({ loading: false, error: '单据参数不完整' }); return Promise.resolve(); }
-    const sequence = this.sequence = (this.sequence || 0) + 1; this.setData({ loading: true, error: '' });
+    const sequence = this.sequence = (this.sequence || 0) + 1; this.setData({ loading: true, error: '', manualOpen: false });
     return warehouse.document(this.data.kind, this.data.id, { page: this.data.page, per_page: 10, units: this.data.units || undefined }).then(response => {
       if (sequence !== this.sequence) return;
       const body = response.data || response; const result = page.rows(body.lines); const actions = {};
@@ -84,6 +85,45 @@ Page({
     const checks = this.data.checks[line.id] || {};
     if (checks.item && (!line.serial_no || checks.serial)) this.setData({ ['checks.' + line.id + '.complete']: true });
   },
+  openManual(event) {
+    if (this.data.saving || this.data.loading || this.data.pendingActions.length) return;
+    const line = this.data.lines.find(row => String(row.id) === String(event.currentTarget.dataset.line)); if (!line) return;
+    const rows = []; const selected = []; const isReturn = this.data.kind === 'material_return';
+    const pickIndex = Number(event.currentTarget.dataset.pick || 0); const pick = isReturn ? null : (line.picks || [])[pickIndex];
+    if (isReturn) {
+      if (!this.data.actions.approve) return;
+      const checks = this.data.checks[line.id] || {};
+      rows.push({ id: 'item', title: line.component_item_name, subtitle: [line.component_item_code, line.spec].filter(Boolean).join(' · '), detail: '物料与实际退回物品一致', kind: 'item' });
+      if (checks.item) selected.push(rows[0]);
+      if (line.serial_no) { rows.push({ id: 'serial:' + line.serial_no, title: line.serial_no, detail: '本单退回编号', serial_no: line.serial_no, kind: 'serial' }); if (checks.serial) selected.push(rows[rows.length - 1]); }
+    } else {
+      if (!pick || !(this.data.actions.prepare || this.data.actions.dispatch || (this.data.actions.recall && this.data.canConfirmInbound))) return;
+      rows.push({ id: 'location', title: pick.location_code, subtitle: line.component_item_name || line.item_name, detail: [pick.warehouse_name, pick.batch_no, pick.qtyText + ' ' + (line.unit_name || '')].filter(Boolean).join(' · '), kind: 'location' });
+      if (this.data.checkedLocations[String(line.id) + '_' + pickIndex]) selected.push(rows[0]);
+      (pick.serial_nos || []).forEach(no => { const row = { id: 'serial:' + no, title: no, subtitle: line.component_item_name || line.item_name, detail: '本次拣货来源编号', serial_no: no, kind: 'serial' }; rows.push(row); if (Object.values(this.data.checkedSerials).includes(no)) selected.push(row); });
+    }
+    this.manualTarget = { lineId: line.id, pickIndex, fingerprint: JSON.stringify(isReturn ? [line.component_item_id, line.serial_no] : pick) };
+    this.setData({ manualOpen: true, manualRows: rows, manualSelected: selected, manualTitle: isReturn ? '手动核对退料物品' : '手动核对配料来源', manualScope: [this.data.kind, this.data.id, this.data.header.business_version, this.sourceRevision, line.id, pickIndex].join(':') });
+  },
+  closeManual() { this.setData({ manualOpen: false }); },
+  confirmManual(event) {
+    if (!this.data.manualOpen || this.data.saving || this.data.loading || this.data.pendingActions.length) return;
+    const target = this.manualTarget; const line = this.data.lines.find(row => String(row.id) === String(target.lineId));
+    const isReturn = this.data.kind === 'material_return'; const pick = line && (line.picks || [])[target.pickIndex];
+    if (!line || JSON.stringify(isReturn ? [line.component_item_id, line.serial_no] : pick) !== target.fingerprint) return this.setData({ manualOpen: false, formError: '单据明细已变化，请重新核对' });
+    const chosen = event.detail.rows; const ids = new Set(chosen.map(row => row.id));
+    if (chosen.some(row => !this.data.manualRows.some(candidate => candidate.id === row.id))) return;
+    if (isReturn) {
+      const item = ids.has('item'); const serial = !!line.serial_no && ids.has('serial:' + line.serial_no);
+      this.setData({ ['checks.' + line.id]: { item, serial, complete: item && (!line.serial_no || serial) } });
+    } else {
+      const checkedSerials = Object.assign({}, this.data.checkedSerials);
+      Object.keys(checkedSerials).forEach(key => { if ((pick.serial_nos || []).includes(checkedSerials[key])) delete checkedSerials[key]; });
+      chosen.filter(row => row.kind === 'serial').forEach(row => { checkedSerials[row.id] = row.serial_no; });
+      this.setData({ checkedSerials, ['checkedLocations.' + line.id + '_' + target.pickIndex]: ids.has('location') }); this.updatePickChecks();
+    }
+    this.setData({ manualOpen: false, formError: '' });
+  },
   openLocator() { this.setData({ locatorOpen: true }); }, closeLocator() { this.setData({ locatorOpen: false }); },
   chooseLocator(event) { this.setData({ locator: event.detail, locatorOpen: false, formError: '' }); },
   async scanLocator(event) {
@@ -119,7 +159,7 @@ Page({
       payload = { expected_source_revision: this.data.header.source_revision };
     } else if (action === 'material_return.approve') {
       if (!this.data.locator.location_id) return this.setData({ formError: '请扫描或选择入库库位' });
-      if (Object.values(this.data.checks).filter(row => row.complete).length < this.data.total) return this.setData({ formError: '请逐项扫描物料和序列号，核对全部退料明细' });
+      if (Object.values(this.data.checks).filter(row => row.complete).length < this.data.total) return this.setData({ formError: '请扫码或手动核对全部退料物料和序列号' });
       const serials = (this.data.header.serial_nos || []).filter(no => Object.values(this.pickLines || {}).some(row => row.serial_no === no && (this.data.checks[row.id] || {}).serial));
       if (serials.length !== (this.data.header.serial_nos || []).length) return this.setData({ formError: '请逐个核对全部退料序列号' });
       payload = { location_id: this.data.locator.location_id, remark: this.data.remark, serial_nos: serials };
@@ -149,7 +189,7 @@ Page({
     const serials = Object.values(this.data.checkedSerials);
     for (const line of lines) for (let index = 0; index < (line.picks || []).length; index++) {
       const pick = line.picks[index]; const key = String(line.id || line.material_id) + '_' + index;
-      if (!this.data.checkedLocations[key] || !(pick.serial_nos || []).every(no => serials.includes(no))) { this.setData({ formError: '请扫描全部来源库位并逐个核对配料序列号' }); return false; }
+      if (!this.data.checkedLocations[key] || !(pick.serial_nos || []).every(no => serials.includes(no))) { this.setData({ formError: '请扫码或手动核对全部来源库位和配料序列号' }); return false; }
     }
     return true;
   },

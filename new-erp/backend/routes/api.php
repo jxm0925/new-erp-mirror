@@ -233,6 +233,8 @@ Route::prefix('v1/erp/finance')->group(function () {
     Route::delete('transfers/{id}', [FinanceController::class, 'deleteTransferDraft'])->whereNumber('id');
     Route::post('transfers/{id}/attachments', [FinanceController::class, 'uploadTransferAttachment'])->whereNumber('id');
     Route::get('cash-documents/{direction}', [FinanceController::class, 'cashDocuments'])->whereIn('direction', ['receipt', 'payment']);
+    Route::get('cancelled-orders', [\App\Http\Controllers\Api\V1\Erp\SalesCancellationController::class, 'finance']);
+    Route::post('cancelled-orders/{id}/confirm', [\App\Http\Controllers\Api\V1\Erp\SalesCancellationController::class, 'approve'])->whereNumber('id');
     Route::post('cash-documents/{direction}', [FinanceController::class, 'storeCashDocument'])->whereIn('direction', ['receipt', 'payment']);
     Route::get('cash-documents/show/{id}', [FinanceController::class, 'showCashDocument'])->whereNumber('id');
     Route::put('cash-documents/{id}', [FinanceController::class, 'updateCashDocument'])->whereNumber('id');
@@ -345,6 +347,7 @@ Route::prefix('v1/erp/inventory')->group(function () {
     Route::post('transfers/{id}/post', [InventoryTransferController::class, 'post'])->whereNumber('id');
     Route::post('transfers/{id}/cancel', [InventoryTransferController::class, 'cancel'])->whereNumber('id');
     Route::delete('transfers/{id}', [InventoryTransferController::class, 'destroy'])->whereNumber('id');
+    Route::get('material-physicals/transfer-candidates', [PhysicalInventoryController::class, 'candidates']);
     Route::post('material-physicals/{id}/transfer', [PhysicalInventoryController::class, 'transfer'])->whereNumber('id');
     Route::post('material-physicals/{id}/dispose', [PhysicalInventoryController::class, 'dispose'])->whereNumber('id');
     Route::get('balances/items/{itemId}/physicals', [InventoryMeasureController::class, 'physicals'])->whereNumber('itemId');
@@ -406,6 +409,7 @@ Route::prefix('v1/erp/sales')->group(function () {
     Route::get('orders/{id}/production-confirmation-preview', [SalesOrderController::class, 'productionConfirmationPreview'])->whereNumber('id');
     Route::post('orders/{id}/production-confirmation', [SalesOrderController::class, 'confirmProduction'])->whereNumber('id');
     Route::post('orders/{id}/cancel', [SalesOrderController::class, 'cancelWithReason'])->whereNumber('id');
+    Route::get('orders/{id}/cancellation-preview', [SalesOrderController::class, 'cancellationPreview'])->whereNumber('id');
     Route::get('orders/{id}/short-close-preview', [SalesOrderController::class, 'shortClosePreview'])->whereNumber('id');
     Route::post('orders/{id}/short-close', [SalesOrderController::class, 'shortClose'])->whereNumber('id');
     Route::put('orders/{id}/agreed-deposit', [SalesOrderController::class, 'updateAgreedDeposit'])->whereNumber('id');
@@ -489,6 +493,8 @@ Route::prefix('v1/erp/production')->group(function () {
     Route::post('performance/templates/{id}/set-default', [ProductionPerformanceTemplateController::class, 'setDefault'])->whereNumber('id');
     // 新生产工单（第 1 阶段）
     Route::get('work-orders', [MfgWorkOrderController::class, 'index']);
+    Route::get('cancellation-dispositions', [\App\Http\Controllers\Api\V1\Erp\SalesCancellationController::class, 'production']);
+    Route::post('cancellation-dispositions/{id}/decision', [\App\Http\Controllers\Api\V1\Erp\SalesCancellationController::class, 'decide'])->whereNumber('id');
     Route::post('work-orders', [MfgWorkOrderController::class, 'store']);
     Route::get('work-orders/preview', [MfgWorkOrderController::class, 'preview']);
     Route::get('work-orders/{id}', [MfgWorkOrderController::class, 'show'])->whereNumber('id');

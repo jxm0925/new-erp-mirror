@@ -49,6 +49,10 @@ final class SalesOrderStateCoordinator
         $orderId = $order instanceof SalesOrder ? (int) $order->id : (int) $order;
         $locked = SalesOrder::query()->lockForUpdate()->find($orderId);
         if (! $locked) return null;
+        if ($locked->order_status === 'cancelled') {
+            if ($locked->fulfillment_status !== 'cancelled') $locked->update(['fulfillment_status' => 'cancelled']);
+            return null;
+        }
         $funding = null;
         foreach (self::STEP_ORDER as $step) {
             if (! in_array($step, $steps, true)) continue;

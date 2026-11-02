@@ -124,6 +124,7 @@ final class WorkOrderService
     {
         return DB::transaction(function () use ($parentId, $componentItemId, $qty, $actor) {
             $parent = MfgWorkOrder::query()->with(['operations', 'materials'])->lockForUpdate()->findOrFail($parentId);
+            CancellationProductionService::assertProductionAllowed((int) $parent->id);
             if (! in_array($parent->status, ['planned', 'released', 'in_progress', 'paused'], true)) $this->fail('status_invalid', '工单已结束，不能再开半成品工单。');
             if ($parent->materials->where('component_item_id', $componentItemId)->isEmpty()) $this->fail('component_invalid', '这个物料不在本工单的用料里。');
             $item = Item::query()->with('unit')->where('status', 'enabled')->find($componentItemId);
@@ -289,6 +290,7 @@ final class WorkOrderService
     {
         return DB::transaction(function () use ($id, $data, $actor) {
             $wo = $this->locked($id, (int) $data['expected_version']);
+            CancellationProductionService::assertProductionAllowed((int) $wo->id);
             if (in_array($wo->status, ['completed', 'closed', 'cancelled'], true)) $this->fail('status_invalid', '工单已结束，不能再调整。');
             $changes = [];
             // 只传负责人账号时按账号回填姓名；清空账号且未传姓名时一并清空。
@@ -381,6 +383,7 @@ final class WorkOrderService
         return DB::transaction(function () use ($id, $expectedVersion, $actor) {
             $wo = $this->locked($id, $expectedVersion);
             if ($wo->status !== 'paused') $this->fail('status_invalid', '只有暂停的工单可以恢复。');
+            CancellationProductionService::assertProductionAllowed((int) $wo->id);
             $after = $wo->started_at ? 'in_progress' : 'released';
             $wo->update(['status' => $after, 'pause_reason' => null, 'paused_at' => null, 'business_version' => (int) $wo->business_version + 1, 'updated_by_legacy_id' => $this->actorId($actor)]);
             $this->log($wo, 'resumed', 'paused', $after, '恢复工单', $actor);
@@ -402,6 +405,7 @@ final class WorkOrderService
     /** 订单取消或变更时：未开工的工单一起取消；已开工的留给生产主管处理并记一笔。 */
     public function cancelForSalesOrder(SalesOrder $order, string $reason, ?object $actor, ?array $lineIds = null): array
     {
+        if ($order->order_status === 'cancelled') return app(CancellationProductionService::class)->begin($order, $reason, $actor);
         $result = ['cancelled' => [], 'kept' => []];
         $orders = MfgWorkOrder::query()->where('sales_order_id', $order->id)
             ->when($lineIds !== null, fn ($query) => $query->whereIn('sales_order_line_id', $lineIds))
@@ -422,17 +426,20 @@ final class WorkOrderService
     /** 订单工单转备货：断开与订单、生产需求的关联，保留原订单号便于追溯。调用方须已锁工单。 */
     public function convertToStock(MfgWorkOrder $wo, string $reason, ?object $actor): void
     {
-        if ($wo->source_type !== 'sales_order') return;
+        if (!in_array($wo->source_type, ['sales_order', 'work_order'], true)) return;
         $orderNo = $wo->sales_order_no;
         $wo->update(['source_type' => 'stock', 'stock_reason' => 'order_released', 'sales_order_id' => null, 'sales_order_line_id' => null,
             'sales_fulfillment_id' => null, 'business_version' => (int) $wo->business_version + 1, 'updated_by_legacy_id' => $actor ? $this->actorId($actor) : null]);
-        $this->log($wo, 'converted_to_stock', $wo->status, $wo->status, $reason.'；工单已开工，自动转为备货工单，做完的设备进公共库存（原订单 '.$orderNo.'）', $actor, ['sales_order_no' => $orderNo]);
+        $this->log($wo, 'converted_to_stock', $wo->status, $wo->status, $reason.'；转为备货工单，产出进入公共库存（原订单 '.$orderNo.'）', $actor, ['sales_order_no' => $orderNo]);
     }
 
     /** 订单工单的生产需求已作废（订单取消、短交或变更）却还没转备货的，入库前补转；返回是否转了。调用方须已锁工单。 */
     public function convertIfDemandGone(MfgWorkOrder $wo, ?object $actor): bool
     {
         if ($wo->source_type !== 'sales_order') return false;
+        CancellationProductionService::assertProductionAllowed((int) $wo->id);
+        if ($wo->sales_order_id && SalesOrder::whereKey($wo->sales_order_id)->where('order_status', 'cancelled')->exists())
+            $this->fail('cancellation_pending', '原订单已取消，请生产主管明确转备货后再入库。');
         $alive = $wo->sales_fulfillment_id && $wo->sales_order_id
             && SalesOrderFulfillment::query()->whereKey($wo->sales_fulfillment_id)->where('demand_status', 'confirmed')->exists()
             && SalesOrder::query()->whereKey($wo->sales_order_id)->where('order_status', 'confirmed')->whereNull('short_closed_at')->exists();
@@ -513,6 +520,7 @@ final class WorkOrderService
      */
     public function refreshCompletion(MfgWorkOrder $wo, ?object $actor): void
     {
+        if (CancellationProductionService::pending((int) $wo->id)) return;
         if (! in_array($wo->status, ['released', 'in_progress', 'paused'], true)) return;
         if (MfgCuttingBatch::query()->where('work_order_id', $wo->id)->whereIn('status', ['issued', 'awaiting_confirm'])->lockForUpdate()->first(['id'])) return;
         $units = MfgWorkOrderUnit::query()->where('work_order_id', $wo->id)->lockForUpdate()->pluck('status')->countBy();

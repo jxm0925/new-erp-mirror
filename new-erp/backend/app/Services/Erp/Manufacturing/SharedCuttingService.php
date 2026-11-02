@@ -224,6 +224,7 @@ final class SharedCuttingService
      */
     public function allocate(MfgWorkOrder $wo, MfgWorkOrderOperation $op, float $upTo, int $unitQty, object $actor): array
     {
+        CancellationProductionService::assertProductionAllowed((int) $wo->id);
         $materials = MfgWorkOrderMaterial::query()->where('work_order_operation_id', $op->id)->where('cutting_mode', 'sheet')
             ->where('required_qty', '>', 0)->orderBy('id')->lockForUpdate()->get()->filter(fn ($m) => MaterialIssueService::isCutting($m));
         if ($materials->isEmpty()) return [];

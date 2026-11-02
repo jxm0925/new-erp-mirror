@@ -40,6 +40,7 @@ final class ReceiptService
         $this->assertPermission($actor, ['production.receipt.execute', 'production.task.execute']);
         return DB::transaction(function () use ($workOrderId, $unitIds, $warehouseId, $locationId, $remark, $actor) {
             $wo = $this->lockWorkOrder($workOrderId, $actor);
+            CancellationProductionService::assertProductionAllowed((int) $wo->id);
             $units = $this->completedUnits($wo, $unitIds);
             $this->receiptLocation($wo, $warehouseId, $locationId);
             $receipt = $this->createReceipt($wo, $units, $warehouseId, $locationId, $remark, $actor, 'manual');
@@ -60,6 +61,7 @@ final class ReceiptService
         $this->assertPermission($actor, ['production.task.execute']);
         return DB::transaction(function () use ($workOrderId, $operationId, $unitIds, $targetOperationId, $actor) {
             $wo = $this->lockWorkOrder($workOrderId, $actor);
+            CancellationProductionService::assertProductionAllowed((int) $wo->id);
             $units = $this->completedUnits($wo, $unitIds);
             $op = MfgWorkOrderOperation::query()->where('work_order_id', $wo->id)->lockForUpdate()->findOrFail($operationId);
             // 自动入库只接受该冻结末道已报合格的设备，不能借手填工序把普通待入库伪装为交接。
@@ -85,6 +87,7 @@ final class ReceiptService
         $this->assertPermission($actor, ['inventory.inbound.confirm']);
         return DB::transaction(function () use ($id, $data, $actor) {
             [$receipt, $wo, $units] = $this->pendingReceipt($id, $data, $actor);
+            CancellationProductionService::assertProductionAllowed((int) $wo->id);
             $location = Location::query()->lockForUpdate()->find((int) ($data['location_id'] ?? 0));
             $warehouseId = (int) ($data['warehouse_id'] ?? $location?->warehouse_id ?? 0);
             $this->receiptLocation($wo, $warehouseId, (int) $location?->id);
@@ -249,7 +252,7 @@ final class ReceiptService
         $where = $staging ? '自动记入成品待发区 '.$location->location_code.'，等发货试水' : ($semi ? '半成品入库' : '成品入库');
         $this->workOrders->log($wo, 'received', $wo->status, $wo->status, "{$where} {$qty} 台（{$receipt->receipt_no}）", $actor,
             ['receipt_id' => $receipt->id, 'staging' => $staging, 'confirmation_source' => $receipt->confirmation_source]);
-        if ($link = MfgWorkOrderLink::query()->where('child_work_order_id', $wo->id)->first()) {
+        if ($wo->source_type === 'work_order' && ($link = MfgWorkOrderLink::query()->where('child_work_order_id', $wo->id)->first())) {
             $parent = MfgWorkOrder::query()->find($link->parent_work_order_id);
             if ($parent) $this->workOrders->log($parent, 'semi_stored', $parent->status, $parent->status,
                 "半成品工单 {$wo->work_order_no} 入库 {$wo->item_name} {$qty}".($wo->unit_name ?: '').'，可以收料了', $actor, ['child_work_order_id' => $wo->id]);

@@ -173,6 +173,7 @@
         bind:resolved="scanSerial"
         disabled="{{saving || pendingActions.length}}"
       />
+      <button wx:if="{{actions.confirm && (header.requires_serial_check || isPhysical)}}" class="warehouse-secondary" bindtap="openManual" disabled="{{saving || loading || pendingActions.length}}">手动选择本单编号 / 实物</button>
       <scan-input
         wx:if="{{(actions.confirm || resubmitting) && isPhysical}}"
         compact
@@ -286,6 +287,7 @@
     </view>
   </block>
 </view>
+<warehouse-select open="{{manualOpen}}" title="核对本单入库实物" rows="{{manualRows}}" selected="{{manualSelected}}" scope-key="{{manualScope}}" multiple maximum="{{manualRows.length}}" locked="{{saving || loading || pendingActions.length > 0}}" bind:confirm="confirmManual" bind:cancel="closeManual" />
 
 <warehouse-locator
   open="{{locatorOpen}}"

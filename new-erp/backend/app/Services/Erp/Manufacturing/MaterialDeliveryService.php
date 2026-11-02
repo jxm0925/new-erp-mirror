@@ -169,6 +169,7 @@ final class MaterialDeliveryService
     {
         return DB::transaction(function () use ($workOrderId, $operationId, $units, $remark, $actor, $expectedSourceRevision) {
             [$wo, $op] = $this->context($workOrderId, $operationId, true);
+            CancellationProductionService::assertProductionAllowed((int) $wo->id);
             [$lines, $short, $done, $target] = $this->buildPlan($wo, $op, $units, true);
             if ($expectedSourceRevision !== null && ! hash_equals($expectedSourceRevision, self::sourceRevision($lines)))
                 $this->fail('delivery_source_changed', '配料来源已变化，请重新加载并核对库位、数量和序列号。', 409);
@@ -225,6 +226,7 @@ final class MaterialDeliveryService
             if ($expectedSourceRevision !== null && ! hash_equals($expectedSourceRevision, self::sourceRevision((array) $delivery->lines)))
                 $this->fail('delivery_source_changed', '拣货来源已变化，请重新加载并核对库位、数量和序列号后发出。', 409);
             [$wo, $op] = $this->context((int) $delivery->work_order_id, (int) $delivery->work_order_operation_id, true);
+            CancellationProductionService::assertProductionAllowed((int) $wo->id);
             $materials = MfgWorkOrderMaterial::query()->whereIn('id', collect($delivery->lines)->pluck('material_id')->all() ?: [0])->orderBy('id')->lockForUpdate()->get()->keyBy('id');
             $this->issues->lockItems($materials->pluck('component_item_id'));
             $plan = [];
