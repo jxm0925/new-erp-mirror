@@ -13,10 +13,12 @@ use App\Models\Erp\ProductionOperationWorker;
 use App\Models\Erp\SalesOrder;
 use App\Models\Erp\ShipmentPackingLaborSession;
 use App\Services\Erp\AuthContextService;
+use App\Services\Erp\ProductionMediaService;
 use App\Services\Erp\SalesOrderFundingGateService;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 /**
  * 车间报工：接单、派工、协同人、开始/暂停计时、按设备报合格/不合格、报废确认。
@@ -244,7 +246,8 @@ final class TaskService
     /** 选中的设备本道合格：交下道；本工单末道按所选去向入库或直交。 */
     public function pass(int $opId, array $unitIds, object $actor, string $lane = 'normal', array $completion = []): array
     {
-        return DB::transaction(function () use ($opId, $unitIds, $actor, $lane, $completion) {
+        $submissionKey = (string) Str::uuid();
+        return DB::transaction(function () use ($opId, $unitIds, $actor, $lane, $completion, $submissionKey) {
             [$wo, $op] = $this->lockTask($opId);
             $this->assertRunnable($wo, $op);
             $this->assertReporter($op, $actor, $lane);
@@ -258,7 +261,9 @@ final class TaskService
                 $this->materials->assertCutForPass($wo, $op, $firstTime);
             }
             $reportedAt = now();
-            $result = $this->advance($wo, $op, $units, $this->participantsSnapshot($op, $sessions, $reportedAt, $lane), $reportedAt, [], $actor, $completion);
+            $media = app(ProductionMediaService::class)->normalize($completion['media'] ?? [], $actor, 'complete');
+            $result = $this->advance($wo, $op, $units, $this->participantsSnapshot($op, $sessions, $reportedAt, $lane), $reportedAt,
+                ['media' => $media ?: null, 'submission_key' => $submissionKey], $actor, $completion);
             self::syncWorkStatus([(int) $wo->id]);
             return $result;
         }, 5);
@@ -271,7 +276,8 @@ final class TaskService
     public function prepare(int $opId, array $unitIds, ?string $remark, object $actor, ?int $cuttingRunId = null, array $completion = []): array
     {
         $this->closeOverdueSessions();
-        return DB::transaction(function () use ($opId, $unitIds, $remark, $actor, $cuttingRunId, $completion) {
+        $submissionKey = (string) Str::uuid();
+        return DB::transaction(function () use ($opId, $unitIds, $remark, $actor, $cuttingRunId, $completion, $submissionKey) {
             [$wo, $op] = $this->lockTask($opId);
             $this->assertRunnable($wo, $op);
             $sheet = in_array((int) $op->id, MaterialIssueService::cuttingOperationIds((int) $wo->id), true);
@@ -302,8 +308,10 @@ final class TaskService
             if ($op->status !== 'in_progress') $op->update(['status' => 'in_progress']);
             $reportedAt = now();
             $sessions = MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('lane', 'normal')->lockForUpdate()->get();
+            $media = app(ProductionMediaService::class)->normalize($completion['media'] ?? [], $actor, 'complete');
             $result = $this->advance($wo, $op, $units, $this->participantsSnapshot($op, $sessions, $reportedAt, 'normal'), $reportedAt,
-                ['pass_mode' => 'prepared', 'reason' => $remark ? mb_substr($remark, 0, 500) : null], $actor, $completion);
+                ['pass_mode' => 'prepared', 'reason' => $remark ? mb_substr($remark, 0, 500) : null,
+                    'media' => $media ?: null, 'submission_key' => $submissionKey], $actor, $completion);
             self::syncWorkStatus([(int) $wo->id]);
             return $result;
         }, 5);
@@ -316,7 +324,8 @@ final class TaskService
      */
     public function reject(int $opId, array $unitIds, array $data, object $actor, string $lane = 'normal'): array
     {
-        return DB::transaction(function () use ($opId, $unitIds, $data, $actor, $lane) {
+        $submissionKey = (string) Str::uuid();
+        return DB::transaction(function () use ($opId, $unitIds, $data, $actor, $lane, $submissionKey) {
             [$wo, $op] = $this->lockTask($opId);
             $this->assertRunnable($wo, $op);
             $this->assertReporter($op, $actor, $lane);
@@ -329,13 +338,18 @@ final class TaskService
             $photos = array_values(array_slice(array_filter((array) ($data['photos'] ?? []), fn ($p) => is_string($p) && $p !== ''), 0, 9));
             $why = implode('、', array_filter([$tags ? implode('/', $tags) : null, $reason ?: null]));
             $units = $this->pickUnits($op, $unitIds, $lane);
-            $extra = ['reason_tags' => $tags ?: null, 'reason' => $reason ?: null, 'photos' => $photos ?: null];
+            $media = app(ProductionMediaService::class)->normalize($data['media'] ?? [], $actor, 'reject');
+            $reportedAt = now();
+            $sessions = MfgLaborSession::query()->where('work_order_operation_id', $op->id)->where('lane', $lane)->lockForUpdate()->get();
+            $extra = ['reason_tags' => $tags ?: null, 'reason' => $reason ?: null, 'photos' => $photos ?: null,
+                'media' => $media ?: null, 'submission_key' => $submissionKey, 'created_at' => $reportedAt,
+                'participants_snapshot' => $this->participantsSnapshot($op, $sessions, $reportedAt, $lane, false)];
             if (($data['mode'] ?? 'return') === 'scrap') {
                 if (\App\Models\Erp\ShipmentRework::query()->whereIn('unit_id', $units->pluck('id'))->where('status', 'in_progress')->exists())
                     $this->fail('stored_serial_scrap', '发货返修设备已经入库，须使用正式库存报废处理，不能只从制造产量删除。');
                 $review = ProductionReviewers::needsReview($wo, $this->actorId($actor));
                 // 不经审核直接生效的报废，必须写原因、拍照留痕。
-                if (! $review && ! $photos) $this->fail('photo_required', '报废提交后直接生效，请至少拍 1 张照片。');
+                if (! $review && ! $photos && ! collect($media)->contains('type', 'image')) $this->fail('photo_required', '报废提交后直接生效，请至少拍 1 张照片。');
                 $reports = [];
                 foreach ($units as $unit) {
                     $reports[] = $this->report($wo, $op, $unit, 'scrap', $actor, $extra + ['is_rework' => $unit->status === 'rework', 'review_status' => 'pending']);
@@ -659,19 +673,23 @@ final class TaskService
         ]);
     }
 
-    private function participantsSnapshot(MfgWorkOrderOperation $op, Collection $sessions, CarbonInterface $reportedAt, string $lane = 'normal'): array
+    private function participantsSnapshot(MfgWorkOrderOperation $op, Collection $sessions, CarbonInterface $reportedAt, string $lane = 'normal', bool $validateShares = true): array
     {
         $participants = MfgTaskParticipant::query()->where('work_order_operation_id', $op->id)->where('lane', $lane)->where('is_active', true)->orderByRaw("FIELD(role, 'owner', 'collaborator')")->lockForUpdate()->get();
-        if ($participants->contains(fn ($p) => $p->share_percent !== null)
+        if ($validateShares && $participants->contains(fn ($p) => $p->share_percent !== null)
             && ($participants->contains(fn ($p) => $p->share_percent === null) || abs($participants->sum('share_percent') - 100) > 0.01))
             $this->fail('share_confirmation_required', '固定份额必须每个人都填写且合计为 100%，请由接单人在协同设置中重新确认。');
         // 同批报工和完成计时共用这一时刻，快照包含尚未结束的真实工时段。
         $minutes = $sessions->groupBy('employee_legacy_id')->map(fn ($rows) => $rows->sum(fn ($s) => $s->status === 'active'
             ? round(max(0, $s->started_at->diffInSeconds($reportedAt, false)) / 60, 2) : (float) $s->labor_minutes));
-        return $participants
-            ->map(fn ($p) => ['employee_legacy_id' => (int) $p->employee_legacy_id, 'employee_name' => $p->employee_name, 'role' => $p->role,
-                'share_percent' => $p->share_percent === null ? null : (float) $p->share_percent, 'labor_minutes' => round((float) ($minutes[$p->employee_legacy_id] ?? 0), 2)])
-            ->values()->all();
+        return $participants->map(function ($p) use ($sessions, $reportedAt, $minutes) {
+            $started = $p->joined_at ? $sessions->filter(fn ($s) => (int) $s->employee_legacy_id === (int) $p->employee_legacy_id
+                && $s->started_at->gte($p->joined_at) && $s->started_at->lte($reportedAt))->sortBy('started_at')->first()?->started_at : null;
+            return ['employee_legacy_id' => (int) $p->employee_legacy_id, 'employee_name' => $p->employee_name, 'role' => $p->role,
+                'joined_at' => $p->joined_at?->toDateTimeString(), 'started_at' => $started?->toDateTimeString(),
+                'share_percent' => $p->share_percent === null ? null : (float) $p->share_percent,
+                'labor_minutes' => round((float) ($minutes[$p->employee_legacy_id] ?? 0), 2)];
+        })->values()->all();
     }
 
     private function owner(MfgWorkOrderOperation $op, string $lane = 'normal'): ?MfgTaskParticipant

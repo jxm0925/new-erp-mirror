@@ -1,0 +1,17 @@
+<view class="pm-wrap">
+  <view wx:if="{{label}}" class="pm-label">{{label}}</view>
+  <view class="pm-items">
+    <view wx:for="{{value}}" wx:key="url" class="pm-item">
+      <view class="pm-preview" data-index="{{index}}" bindtap="preview">
+        <image wx:if="{{item.type !== 'video' || item.poster_url}}" src="{{item.type === 'video' ? item.poster_url : item.url}}" mode="aspectFill" />
+        <view wx:if="{{item.type === 'video'}}" class="pm-play"><van-icon name="play-circle-o" size="26" /><text>{{item.duration || 0}}秒</text></view>
+      </view>
+      <view wx:if="{{!readonly}}" class="pm-remove" data-index="{{index}}" catchtap="remove"><van-icon name="cross" size="12" /></view>
+    </view>
+    <view wx:if="{{!readonly && value.length < 9}}" class="pm-item pm-add" bindtap="add"><van-icon name="plus" size="24" /><text>{{uploading ? '上传中…' : '图片 / 视频'}}</text></view>
+  </view>
+  <view wx:if="{{video}}" class="pm-video-mask">
+    <video id="mediaVideo" src="{{video.url}}" poster="{{video.poster_url}}" controls autoplay show-fullscreen-btn bindfullscreenchange="fullScreen" binderror="closeVideo" />
+    <button bindtap="closeVideo">关闭视频</button>
+  </view>
+</view>

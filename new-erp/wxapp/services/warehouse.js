@@ -63,8 +63,23 @@ function submit(action, id, payload) {
 
 module.exports = {
   get, submit, pending,
+  resolveScan: code => get('inventory/scan/resolve', { code: String(code || '').trim() }),
   summary: () => get('inventory/warehouse-workspace/summary'),
   queue: query => get('inventory/warehouse-workspace', query),
   locators: query => get('inventory/warehouse-workspace/locators', query),
   document: (kind, id, query) => get(`inventory/warehouse-workspace/documents/${kind}/${id}`, query),
+  balances: query => get('inventory/balances', query),
+  itemBatches: (itemId, query) => get(`inventory/balances/items/${Number(itemId)}/batches`, query),
+  batchContext: (itemId, query) => get(`inventory/balances/items/${Number(itemId)}/batch-context`, query),
+  balanceSerials: (balanceId, query) => get(`inventory/balances/${Number(balanceId)}/serials`, query),
+  itemPhysicals: (itemId, query) => get(`inventory/balances/items/${Number(itemId)}/physicals`, query),
+  pendingDeliveries: query => get('production/material-deliveries/pending', query),
+  deliveries: query => get('production/material-deliveries', query),
+  deliveryPreview: (workOrderId, operationId, query) => get(`production/work-orders/${Number(workOrderId)}/operations/${Number(operationId)}/delivery-preview`, query),
+  materialReturns: query => get('production/material-returns', query),
+  materialReturn: id => get(`production/material-returns/${Number(id)}`),
+  stocktakes: query => get('inventory/stocktakes', query),
+  stocktakeOptions: () => get('inventory/stocktakes/options'),
+  stocktake: (id, query) => get(`inventory/stocktakes/${Number(id)}`, query),
+  stocktakeEntries: (id, lineId, query) => get(`inventory/stocktakes/${Number(id)}/lines/${Number(lineId)}/entries`, query),
 };

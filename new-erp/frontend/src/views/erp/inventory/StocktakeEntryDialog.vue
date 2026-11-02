@@ -24,8 +24,8 @@
             <el-tag v-if="row.is_locked" size="mini" type="info">已被业务占用，不参与盘点</el-tag>
           </template>
         </el-table-column>
-        <el-table-column v-if="!isSerial" label="成本" width="110">
-          <template slot-scope="{ row }">{{ row.total_cost === null ? '—' : num(row.total_cost) }}</template>
+        <el-table-column v-if="!isSerial && $can('inventory.amount.view')" label="成本" width="110">
+          <template slot-scope="{ row }">{{ row.total_cost == null ? '—' : num(row.total_cost) }}</template>
         </el-table-column>
         <el-table-column label="盘点结果" width="190">
           <template slot-scope="{ row }">
@@ -50,7 +50,7 @@
           <el-input ref="serialInput" v-model.trim="serialNo" size="small" placeholder="补录盘到的账外编号，扫码或输入后回车" @keyup.enter.native="addSerial" />
           <el-button size="small" @click="addSerial">补录编号</el-button>
         </div>
-        <div v-else class="entry-add">
+        <div v-else-if="$can('inventory.amount.view')" class="entry-add">
           <el-input v-model.trim="physical.length_mm" size="small" placeholder="长 mm" />
           <el-input v-model.trim="physical.width_mm" size="small" placeholder="宽 mm" />
           <el-input v-model.trim="physical.thickness_mm" size="small" placeholder="厚 mm" />
@@ -150,6 +150,7 @@ export default {
       this.$nextTick(() => this.$refs.serialInput && this.$refs.serialInput.focus())
     },
     addPhysical() {
+      if (!this.$can('inventory.amount.view')) return
       const p = this.physical
       const size = /^\d{1,10}(\.\d{1,2})?$/
       if (![p.length_mm, p.width_mm, p.thickness_mm].every(v => size.test(v) && Number(v) > 0)) return this.$message.warning('请填写大于 0 的长、宽、厚（最多两位小数）')
@@ -157,7 +158,7 @@ export default {
       this.pendingNew.push({ dimensions: { length_mm: p.length_mm, width_mm: p.width_mm, thickness_mm: p.thickness_mm }, total_cost: p.total_cost })
       this.physical = { length_mm: '', width_mm: '', thickness_mm: '', total_cost: '' }
     },
-    entryLabel(entry) { return `${entry.dimensions.length_mm}×${entry.dimensions.width_mm}×${entry.dimensions.thickness_mm}mm / ${entry.total_cost} 元` },
+    entryLabel(entry) { return `${entry.dimensions.length_mm}×${entry.dimensions.width_mm}×${entry.dimensions.thickness_mm}mm${this.$can('inventory.amount.view') ? ` / ${entry.total_cost} 元` : ''}` },
     async close(done) {
       if (this.saving) return
       if (this.dirty) {

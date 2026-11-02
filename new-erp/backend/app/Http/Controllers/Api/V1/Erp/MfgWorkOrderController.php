@@ -178,9 +178,17 @@ class MfgWorkOrderController extends Controller
         if (! $user) throw new WorkOrderDomainException('unauthenticated', '请先登录 ERP。', 401);
         $codes = $auth->permissionCodes($user);
         $super = $auth->isSuperAdmin($user);
-        if (! $super && ! array_intersect(['sales_order.view', 'production.work_order.view'], $codes))
+        if (! $super && ! in_array('sales_order.view', $codes, true))
             throw new WorkOrderDomainException('permission_denied', '没有查看订单生产进度的权限。', 403);
-        return response()->json(['data' => $query->forSalesOrder($orderId, $super || in_array('sales_order.amount.view', $codes, true))]);
+        $orders = \App\Models\Erp\SalesOrder::query();
+        $groups = json_decode($user->auth_group_names ?: '[]', true) ?: [];
+        if (! $super && ! array_intersect(['Admin group', '销售负责人'], $groups))
+            app(\App\Services\Erp\SalesOrderVisibilityService::class)->apply($orders, $user, true);
+        $orders->findOrFail($orderId);
+        $links = $super || in_array('production.work_order.view', $codes, true);
+        $rows = $query->forSalesOrder($orderId, true);
+        if (! $links) $rows = array_map(fn ($row) => array_diff_key($row, array_flip(['work_order_no', 'rework_of_work_order_no'])), $rows);
+        return response()->json(['data' => $rows, 'permissions' => ['work_order_links' => $links]]);
     }
 
     private function version(Request $request): int

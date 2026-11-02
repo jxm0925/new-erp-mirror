@@ -25,7 +25,7 @@ class SalesReturnController extends Controller
             ->with(['order', 'customer', 'items.item', 'items.baseUnit',
                 $this->canViewAmounts($request) ? 'terms' : 'terms:id,sales_return_id,return_type'])
             ->latest('updated_at');
-        $this->applyOrderVisibility($query, $request);
+        $this->applyOrderVisibility($query, $request, true);
 
         if ($request->filled('keyword')) {
             $keyword = trim((string) $request->input('keyword'));
@@ -155,7 +155,7 @@ class SalesReturnController extends Controller
             'dispositions',
             'logs',
         ])->whereKey($id);
-        $this->applyOrderVisibility($query, $request);
+        $this->applyOrderVisibility($query, $request, true);
         $return = $query->firstOrFail();
         $data = $return->toArray();
         // 前端据此决定收货/处置时是否必须逐件选择序列号。
@@ -176,7 +176,7 @@ class SalesReturnController extends Controller
     {
         $this->authorizePermission($request, 'sales_return.view');
         $orderQuery = SalesOrder::query()->whereKey($orderId);
-        $this->applySalesOrderVisibility($orderQuery, $request);
+        $this->applySalesOrderVisibility($orderQuery, $request, true);
         abort_unless($orderQuery->exists(), 403, '无权查看该订单的退货记录。');
 
         return $this->costSafeJson(
@@ -285,7 +285,7 @@ class SalesReturnController extends Controller
     public function receiptSerials(Request $request, int $id, int $receiptId, SalesReturnIdentityService $identities)
     {
         $this->authorizePermission($request, 'sales_return.view');
-        $this->assertReturnVisible($request, $id);
+        $this->assertReturnVisible($request, $id, true);
         SalesReturnReceipt::query()->where('sales_return_id', $id)->findOrFail($receiptId);
         $filters = $request->validate(['line_id' => 'nullable|integer|min:1', 'disposition' => 'nullable|in:restock,pending,scrap,rejected',
             'ids' => 'sometimes|required|array|min:1|max:1000', 'ids.*' => 'required|integer|min:1|distinct',
@@ -345,20 +345,21 @@ class SalesReturnController extends Controller
         return $this->costSafeJson($request, ['message' => '销售退货草稿已删除。']);
     }
 
-    /** 所有响应先隐藏内部成本，再按同一金额权限过滤读取和操作结果。 */
+    /** 库存成本与客户交易金额分别授权，读取和操作结果使用同一投影。 */
     private function costSafeJson(Request $request, mixed $payload, int $status = 200): \Illuminate\Http\JsonResponse
     {
-        $payload = app(SalesCostVisibilityService::class)->redact($payload);
+        $inventoryAmounts = app(\App\Services\Erp\InventoryAmountVisibilityService::class);
+        $payload = $inventoryAmounts->forResponse($payload, $request);
         if (! $this->canViewAmounts($request)) {
-            $payload = app(SalesAmountVisibilityService::class)->redact($payload);
+            $payload = app(SalesAmountVisibilityService::class)->redact($payload, $inventoryAmounts->canView($request));
         }
         return response()->json($payload, $status);
     }
 
-    private function assertReturnVisible(Request $request, int $id): void
+    private function assertReturnVisible(Request $request, int $id, bool $includeShared = false): void
     {
         $query = SalesReturn::query()->whereKey($id);
-        $this->applyOrderVisibility($query, $request);
+        $this->applyOrderVisibility($query, $request, $includeShared);
         abort_unless($query->exists(), 403, '当前退货单不在可操作的数据范围内。');
     }
 
@@ -389,19 +390,19 @@ class SalesReturnController extends Controller
         return $user;
     }
 
-    private function applyOrderVisibility(Builder $query, Request $request): void
+    private function applyOrderVisibility(Builder $query, Request $request, bool $includeShared = false): void
     {
-        $query->whereHas('order', function (Builder $orders) use ($request): void {
-            $this->applySalesOrderVisibility($orders, $request);
+        $query->whereHas('order', function (Builder $orders) use ($request, $includeShared): void {
+            $this->applySalesOrderVisibility($orders, $request, $includeShared);
         });
     }
 
-    private function applySalesOrderVisibility(Builder $query, Request $request): void
+    private function applySalesOrderVisibility(Builder $query, Request $request, bool $includeShared = false): void
     {
         $auth = app(AuthContextService::class);
         $user = $auth->currentUser($request);
         abort_unless($user, 401, '未登录或登录已过期。');
-        app(\App\Services\Erp\SalesOrderVisibilityService::class)->apply($query, $user);
+        app(\App\Services\Erp\SalesOrderVisibilityService::class)->apply($query, $user, $includeShared);
     }
 
     private function perPage(Request $request): int

@@ -11,6 +11,7 @@ use App\Services\Erp\InventoryAvailabilityService;
 use App\Services\Erp\ItemManagementScopeService;
 use App\Services\Erp\SalesOrderVisibilityService;
 use App\Services\Erp\ShipmentPackingApplicationService;
+use App\Services\Erp\ProductionMediaService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -28,7 +29,7 @@ class ShipmentPackingController extends Controller
     public function show(Request $request, int $id, ShipmentPackingApplicationService $service)
     {
         $actor = $this->authorize($request, 'sales_order.shipment.packing.view');
-        $shipment = $this->visibleShipment($id, $actor);
+        $shipment = $this->visibleShipment($id, $actor, true);
         $laborFilters = $this->laborFilters($request);
         $operations = $shipment->packingOperations()->orderBy('package_id')->orderBy('sequence')->paginate($this->pageSize($request));
         $operations->setCollection($operations->getCollection()->map(fn ($op) => $service->projection($op, (int) $actor->legacy_id,
@@ -168,7 +169,7 @@ class ShipmentPackingController extends Controller
             'materials.*.area_usage.pieces.*.length_mm' => 'required|numeric|min:1|max:999999',
             'materials.*.area_usage.pieces.*.width_mm' => 'required|numeric|min:1|max:999999',
             'materials.*.area_usage.pieces.*.qty' => 'required|integer|min:1|max:10000',
-            'materials.*.physical_material_ids' => 'nullable|array', 'materials.*.physical_material_ids.*' => 'integer|distinct']);
+            'materials.*.physical_material_ids' => 'nullable|array', 'materials.*.physical_material_ids.*' => 'integer|distinct'] + ProductionMediaService::rules());
         if ($data['action'] === 'inspect') $data += $request->validate(['result' => 'required|in:passed,failed', 'reason' => 'nullable|string|max:500']);
         return response()->json(['message' => '包装工序已更新', 'data' => $service->action($id, $data['action'], $data, $actor)]);
     }
@@ -255,9 +256,9 @@ class ShipmentPackingController extends Controller
         return response()->json(['data' => $query->orderBy('id')->paginate($this->pageSize($request), ['id', 'serial_no'])]);
     }
 
-    private function visibleShipment(int $id, object $actor): SalesShipment
+    private function visibleShipment(int $id, object $actor, bool $includeShared = false): SalesShipment
     {
-        return SalesShipment::query()->whereHas('order', fn ($q) => app(SalesOrderVisibilityService::class)->apply($q, $actor))->findOrFail($id);
+        return SalesShipment::query()->whereHas('order', fn ($q) => app(SalesOrderVisibilityService::class)->apply($q, $actor, $includeShared))->findOrFail($id);
     }
 
     private function visibleOperation(int $id, object $actor): ShipmentPackingOperation

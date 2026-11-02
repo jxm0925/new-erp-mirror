@@ -284,8 +284,16 @@ class SalesOrderEditImpactService
             // 旧订单的客户物流备注只存在发货快照里，按同一口径比较，避免未修改也出差异。
             if ($field === 'logistics_requirement' && blank($stored)) $stored = data_get((array) $order->shipping_snapshot, 'customer_logistics_note');
             $before = $this->headerValue($field, $stored);
-            $after = $this->headerValue($field, array_key_exists($field, $candidate['header']) ? $candidate['header'][$field] : $order->getAttribute($field));
-            if ($before === $after) continue;
+            $submitted = array_key_exists($field, $candidate['header']) ? $candidate['header'][$field] : $order->getAttribute($field);
+            $after = $this->headerValue($field, $submitted);
+            if ($field === 'share_user') {
+                // 授权按员工身份比较，同名员工替换也必须形成变更。
+                $beforeIds = array_values(array_unique(array_filter(array_map('intval', explode(',', (string) $stored)))));
+                $afterIds = array_values(array_unique(array_filter(array_map('intval', explode(',', (string) $submitted)))));
+                sort($beforeIds);
+                sort($afterIds);
+                if ($beforeIds === $afterIds) continue;
+            } elseif ($before === $after) continue;
             $impacts = $this->headerImpacts($field, $before, $after, $facts);
             $diffs[] = $this->diff('header', null, $field, $before, $after, $impacts);
         }
@@ -392,6 +400,9 @@ class SalesOrderEditImpactService
         // 审核期间可能新增了收款核销或附件被删，生效前按最新事实再校验一次。
         if (array_key_exists('customer_id', $candidate['header'])) $this->assertCustomerChangeAllowed($order, $candidate['header']['customer_id']);
         $this->assertSpecialCustomRequirements($order, $candidate);
+        if (!empty($candidate['header']['is_share'])) {
+            $candidate['header']['share_user'] = app(SalesOrderVisibilityService::class)->normalizeShareUsers($candidate['header']['share_user'] ?? null);
+        }
         $candidate['header'] = $this->preserveAgreedDeposit($candidate['header'], $order);
         if (array_key_exists('remark', $candidate['header'])) $candidate['header']['order_remark'] = $candidate['header']['remark'];
         if (array_key_exists('is_urgent', $candidate['header'])) $candidate['header']['quickly'] = $candidate['header']['is_urgent'];
@@ -577,7 +588,7 @@ class SalesOrderEditImpactService
         if (blank($customerId) || (int) $customerId === (int) $order->customer_id) return;
         $received = app(SalesFinanceSettlementService::class)->status($order)['received_amount'];
         if (\App\Domain\Finance\Money::compare((string) $received, '0') > 0) {
-            throw ValidationException::withMessages(['customer_id' => '这个订单已有收款核销，不能直接换客户。请先由财务撤销该订单的收款核销（或退款）后再换。']);
+            throw ValidationException::withMessages(['customer_id' => '这个订单已有收款核销，不能直接换客户。请先由财务撤销该订单的收款核销后再换。']);
         }
     }
 
@@ -661,11 +672,9 @@ class SalesOrderEditImpactService
 
         if (array_key_exists('is_share', $header) || array_key_exists('share_user', $header)) {
             $isShare = array_key_exists('is_share', $header) ? (bool) $header['is_share'] : (bool) $order->is_share;
-            $users = $header['share_user'] ?? $order->share_user;
-            $users = is_array($users) ? $users : explode(',', (string) $users);
-            $users = array_values(array_unique(array_filter(array_map(fn ($id) => trim((string) $id), $users), fn ($id) => $id !== '')));
             $header['is_share'] = $isShare;
-            $header['share_user'] = $isShare && $users ? implode(',', $users) : null;
+            $header['share_user'] = $isShare
+                ? app(SalesOrderVisibilityService::class)->normalizeShareUsers($header['share_user'] ?? $order->share_user) : null;
         }
 
         foreach (self::SNAPSHOT_EDIT_FIELDS as $snapshotField => $keys) {
@@ -964,8 +973,11 @@ class SalesOrderEditImpactService
         if ($field === 'share_user') {
             $ids = array_values(array_filter(array_map('trim', is_array($value) ? array_map('strval', $value) : explode(',', (string) $value))));
             sort($ids);
-            $names = DB::table('erp_sales_order_share_users')->whereIn('legacy_id', $ids)->pluck('nickname', 'legacy_id');
-            return implode('、', array_map(fn ($id) => (string) ($names[$id] ?? $id), $ids));
+            $users = DB::table('erp_legacy_admin_users')->whereIn('legacy_id', $ids)->get(['legacy_id', 'nickname', 'username'])->keyBy('legacy_id');
+            return implode('、', array_map(function ($id) use ($users): string {
+                $user = $users->get($id);
+                return $user ? ($user->nickname ?: $user->username).'（'.($user->username ?: $id).'）' : (string) $id;
+            }, $ids));
         }
         if (in_array($field, ['freight_amount', 'carrier_fee'], true)) return $this->decimal($value);
         if (in_array($field, ['required_delivery_date', 'delay_date'], true)) {

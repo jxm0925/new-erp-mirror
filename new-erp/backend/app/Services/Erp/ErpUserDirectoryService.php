@@ -17,7 +17,8 @@ class ErpUserDirectoryService
 
         $warehouseScope = ($filters['scope'] ?? null) === 'warehouse';
         $salesScope = ($filters['scope'] ?? null) === 'sales';
-        if ($warehouseScope || $salesScope) {
+        $shareScope = ($filters['scope'] ?? null) === 'sales_share';
+        if ($warehouseScope || $salesScope || $shareScope) {
             $query->whereIn(DB::raw('LOWER(TRIM(status))'), ['normal', 'active']);
         } elseif (($filters['status'] ?? 'normal') !== 'all') {
             $status = $filters['status'] ?? 'normal';
@@ -120,8 +121,8 @@ class ErpUserDirectoryService
         $columns = $productionScope
             ? ['legacy_id as user_id', 'nickname as display_name', 'department_names as department_name', 'status']
             : ['legacy_id as id', 'username', 'nickname', 'status', 'department_names', 'mobile', 'email', 'is_sales', 'sort', 'business_version', 'created_at', 'updated_at'];
-        if ($warehouseScope || $salesScope) $columns = ['legacy_id as id', 'username', 'nickname', 'status', 'department_names'];
-        if (($filters['scope'] ?? 'system') === 'system' || $warehouseScope || !empty($filters['per_page']) || !empty($filters['page'])) {
+        if ($warehouseScope || $salesScope || $shareScope) $columns = ['legacy_id as id', 'username', 'nickname', 'status', 'department_names'];
+        if (($filters['scope'] ?? 'system') === 'system' || $warehouseScope || $shareScope || !empty($filters['per_page']) || !empty($filters['page'])) {
             $paginator = $query->paginate(isset($filters['ids']) ? max(1, count($filters['ids'])) : max(1, min(100, (int) ($filters['per_page'] ?? 10))), $columns);
             if (! $productionScope && ($filters['scope'] ?? 'system') === 'system') {
                 $paginator->setCollection($this->attachRbacRoles($paginator->getCollection()));

@@ -231,6 +231,12 @@ function buildGroups(rows, expandedMap) {
   return list;
 }
 
+function reviewMedia(media, photos) {
+  const items = (media || []).slice();
+  (photos || []).forEach(url => { if (!items.some(item => item.url === url)) items.push({ type: 'image', url }); });
+  return items;
+}
+
 function decorateReview(row, kind) {
   if (kind === 'scrap') {
     return Object.assign({}, row, {
@@ -240,7 +246,7 @@ function decorateReview(row, kind) {
       line: `${row.serial_no || ''} · ${row.work_order_no || ''}`,
       reasonText: [(row.reason_tags || []).join('、'), row.reason].filter(Boolean).join('：'),
       who: row.reporter_name,
-      photos: row.photos || [],
+      media: reviewMedia(row.media, row.photos),
     });
   }
   const plan = row.plan || {};
@@ -252,7 +258,7 @@ function decorateReview(row, kind) {
     line: `${row.return_no || ''} · ${row.work_order_no || ''} · ${row.operation_name || ''}`,
     reasonText: `${row.summary || lines}；${row.reason || ''}`,
     who: row.requested_by_name,
-    photos: plan.photos || [],
+    media: reviewMedia(plan.media, plan.photos),
   });
 }
 
@@ -288,7 +294,9 @@ Page({
       userName: user.nickname || user.display_name || user.username || '',
     });
   },
-  onShow() { this.load(); },
+  onShow() { if (this.mediaReturning) { this.mediaReturning = false; return; } this.load(); },
+  onHide() { if (this.mediaActive) this.mediaReturning = true; },
+  mediaActivity(event) { this.mediaActive = event.detail.active; },
   onPullDownRefresh() { this.load().finally(() => wx.stopPullDownRefresh()); },
   load() {
     const sequence = this.sequence = (this.sequence || 0) + 1;

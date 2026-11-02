@@ -119,7 +119,7 @@
               </div>
               <div v-if="s.row.reviewed_by_name" class="sub">审核：{{ s.row.reviewed_by_name }} {{ s.row.reviewed_at }}</div>
               <div v-if="s.row.review_remark" class="sub">备注：{{ s.row.review_remark }}</div>
-              <div v-if="s.row.cost_amount !== null" class="sub cost-sub">冲回成本：<b>{{ money(s.row.cost_amount) }}</b></div>
+              <div v-if="$can('inventory.amount.view') && s.row.cost_amount != null" class="sub cost-sub">冲回成本：<b>{{ money(s.row.cost_amount) }}</b></div>
             </template>
           </el-table-column>
           <el-table-column label="操作" width="185" fixed="right">
@@ -178,6 +178,12 @@
           <span>工序：<b>{{ approve.row.operation_name }}</b></span>
           <span>类型：<b>{{ approve.row.return_type_label }}</b></span>
           <span>退料原因：<b>{{ approve.row.reason || '-' }}</b></span>
+        </div>
+        <div v-if="approveMedia.length" class="return-media">
+          <template v-for="(media, index) in approveMedia">
+            <el-image v-if="media.type === 'image'" :key="`image-${index}`" :src="media.url" :preview-src-list="approveMedia.filter(item => item.type === 'image').map(item => item.url)" fit="cover" />
+            <button v-else-if="media.type === 'video'" :key="`video-${index}`" type="button" class="return-video" aria-label="播放不良处置影像" @click="videoMedia = media; videoVisible = true"><img v-if="media.poster_url" :src="media.poster_url" alt="视频封面"><video v-else :src="media.url" preload="metadata" muted /><i class="el-icon-video-play" /><small>{{ mediaDuration(media.duration) }}</small></button>
+          </template>
         </div>
         <el-table :data="approve.row.lines" border size="mini" class="line-table">
           <el-table-column label="物料名称" min-width="145" prop="component_item_name" />
@@ -252,6 +258,7 @@
         >确认处置</el-button>
       </span>
     </el-dialog>
+    <el-dialog title="不良处置影像" :visible.sync="videoVisible" width="min(960px, calc(100vw - 48px))" top="6vh" append-to-body destroy-on-close @closed="videoMedia = null"><div v-if="videoMedia" class="return-video-preview"><video :src="videoMedia.url" :poster="videoMedia.poster_url || undefined" controls autoplay /></div></el-dialog>
     <system-record-picker :visible.sync="picker.visible" :type="picker.type" :multiple="false" :value="[]" :warehouse-id="Number(approve.warehouse_id || 0)" :location-purposes="['general']" management-scope="factory" @confirm="pick" />
   </section>
 </template>
@@ -274,6 +281,8 @@ export default {
     page: 1,
     summary: {},
     canApprove: false,
+    videoVisible: false,
+    videoMedia: null,
     filters: { status: 'pending', keyword: '' },
     tabs: [
       { value: 'pending', label: '待审核' },
@@ -288,6 +297,12 @@ export default {
     picker: { visible: false, type: 'warehouses' }
   }),
   computed: {
+    approveMedia() {
+      const row = this.approve.row || {}
+      return Array.from(new Map([
+        ...(row.media || []), ...(row.photos || []).map(photo => typeof photo === 'string' ? { type: 'image', url: photo } : { ...photo, type: 'image' })
+      ].filter(item => item.url).map(item => [`${item.type}:${item.url}`, item])).values())
+    },
     isDefect() { return !!(this.approve.row && this.approve.row.return_type === 'defective' && this.approve.row.status === 'approved') },
     disposeLines() {
       const d = this.approve.dispose
@@ -302,6 +317,9 @@ export default {
   methods: {
     qty,
     money,
+    mediaDuration(seconds) {
+      return seconds == null ? '视频' : `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`
+    },
     chip(status) { return CHIP[status] || 'c-n' },
     async load() {
       this.loading = true
@@ -455,6 +473,58 @@ export default {
 .picker-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
 .approve-form { margin-top: 12px; }
 .line-table { width: 100%; }
+.return-media {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.return-media .el-image,
+.return-video {
+  width: 72px;
+  height: 56px;
+  border-radius: 4px;
+}
+.return-video {
+  position: relative;
+  overflow: hidden;
+  border: 0;
+  padding: 0;
+  background: #f1f5f9;
+  cursor: pointer;
+}
+.return-video img,
+.return-video video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.return-video > i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  color: white;
+  font-size: 28px;
+  text-shadow: 0 1px 3px #64748b;
+}
+.return-video small {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  color: white;
+  background: rgba(0, 0, 0, .65);
+  padding: 1px 2px;
+  font-size: 9px;
+}
+.return-video-preview {
+  display: flex;
+  justify-content: center;
+}
+.return-video-preview video {
+  max-width: 100%;
+  max-height: 68vh;
+}
 .disp-sel { width: 130px; margin-right: 6px; }
 .disp-qty { width: 110px; }
 .pg { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; padding-top: 10px; border-top: 1px solid #eef2f6; color: #6b7280; font-size: 12px; flex-wrap: wrap; gap: 8px; }

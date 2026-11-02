@@ -10,15 +10,6 @@ use Throwable;
 
 final class SalesOrderFundingGateService
 {
-    private const AMOUNT_KEYS = [
-        'contract_amount', 'received_amount', 'outstanding_amount',
-        'available_prepayment_amount', 'refunded_amount', 'net_received_amount',
-        'allocated_amount', 'unallocated_amount', 'receipt_ratio',
-        'production_required_amount', 'policy_deposit_amount', 'agreed_deposit_amount',
-        'deposit_outstanding_amount', 'balance_outstanding_amount',
-        'return_credit_amount', 'net_receivable_amount',
-    ];
-
     /** 只有“定金开工”类付款条件允许销售按与客户的约定逐单填写定金；全额预付仍须收满才开工。 */
     public const AGREED_DEPOSIT_POLICY_TYPES = ['deposit_production', 'installment_contract', 'custom_threshold'];
 
@@ -91,12 +82,10 @@ final class SalesOrderFundingGateService
         ]);
     }
 
-    /** Return decisions without leaking contract, receipt, refund or threshold amounts. */
+    /** 能查看订单的人都可查看销售金额，调用方仍负责订单范围和操作权限。 */
     public function statusForPermissions(SalesOrder|int $order, array $permissions, bool $superAdmin = false): array
     {
-        $status = $this->status($order);
-        if ($superAdmin || in_array('sales_order.amount.view', $permissions, true)) return $status;
-        return collect($status)->except(self::AMOUNT_KEYS)->all();
+        return $this->status($order);
     }
 
     public function assertCanStartProduction(SalesOrder|int $order): void

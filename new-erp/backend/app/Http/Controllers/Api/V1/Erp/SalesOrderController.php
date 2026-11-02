@@ -38,6 +38,7 @@ use App\Services\Erp\SalesOrderEditImpactService;
 use App\Services\Erp\SalesOrderInventoryLockService;
 use App\Services\Erp\SalesOrderFulfillmentPolicy;
 use App\Services\Erp\SalesOrderVisibilityService;
+use App\Services\Erp\Sales\SalesOrderProgressQueryService;
 use App\Services\Erp\ErpUserProjectionService;
 use App\Services\Erp\SalesCostVisibilityService;
 use App\Services\Erp\SkuItemMatcher;
@@ -59,7 +60,7 @@ class SalesOrderController extends Controller
     {
         $response = $this->{$method}(...array_values($parameters));
         if ($response instanceof JsonResponse) {
-            $response->setData(app(SalesCostVisibilityService::class)->redact($response->getData(true)));
+            $response->setData(app(\App\Services\Erp\InventoryAmountVisibilityService::class)->forResponse($response->getData()));
         }
         return $response;
     }
@@ -211,7 +212,7 @@ class SalesOrderController extends Controller
     {
         $this->abortUnlessPermission($request, 'sales_order.view');
         $order = SalesOrder::findOrFail($id);
-        $this->abortUnlessOrderVisible($request, $order);
+        $this->abortUnlessOrderVisible($request, $order, true);
         $perPage = min(max((int) $request->input('per_page', 10), 1), 50);
         return response()->json(SalesOrderChangeCandidate::query()->with('approvals')
             ->where('sales_order_id', $order->id)->latest('id')->paginate($perPage));
@@ -456,7 +457,7 @@ class SalesOrderController extends Controller
         $orderId = $attachment->sales_order_id ?: optional($attachment->line)->sales_order_id;
         if ($orderId) {
             $order = SalesOrder::findOrFail($orderId);
-            $this->abortUnlessOrderVisible($request, $order);
+            $this->abortUnlessOrderVisible($request, $order, true);
         } else {
             $user = app(AuthContextService::class)->currentUser($request);
             abort_unless(
@@ -498,7 +499,7 @@ class SalesOrderController extends Controller
                 ->whereIn('fulfillment_type', SalesOrderFulfillmentPolicy::TYPES),
         ])
             ->latest('created_at')->orderByDesc('id');
-        $this->applySalesOrderVisibility($query, $request);
+        $this->applySalesOrderVisibility($query, $request, true);
 
         $keyword = trim((string) $request->input('keyword'));
         if ($keyword !== '') {
@@ -525,12 +526,10 @@ class SalesOrderController extends Controller
 
         $page = $query->paginate($this->perPage($request));
         app(\App\Services\Erp\SalesTradePlatformService::class)->decorate($page->getCollection());
-        $canViewAmounts = $this->canViewAmounts($request);
-        $page->getCollection()->transform(function (SalesOrder $order) use ($request, $canViewAmounts) {
+        $page->getCollection()->transform(function (SalesOrder $order) use ($request) {
             $order->setAttribute('allowed_actions', $this->orderAllowedActions($request, $order));
             $order->setAttribute('priority_label', SalesOrderPriorityService::label((int) $order->priority));
             $this->decorateFulfillmentComposition($order);
-            if (! $canViewAmounts) $this->hideOrderAmounts($order);
             return $order;
         });
         $payload = $page->toArray();
@@ -543,7 +542,7 @@ class SalesOrderController extends Controller
     {
         $base = function () use ($request): Builder {
             $query = SalesOrder::query();
-            $this->applySalesOrderVisibility($query, $request);
+            $this->applySalesOrderVisibility($query, $request, true);
             return $query;
         };
         return [
@@ -579,13 +578,6 @@ class SalesOrderController extends Controller
                 ->orderBy('sort')
                 ->orderBy('legacy_id')
                 ->get(['legacy_id as id', 'name', 'code', 'trade_type']) : [],
-            'share_users' => DB::table('erp_sales_order_share_users')
-                ->where(function ($query) {
-                    $query->whereNull('status')->orWhere('status', 'normal');
-                })
-                ->orderBy('sort')
-                ->orderBy('legacy_id')
-                ->get(['legacy_id as id', 'username', 'nickname', 'mobile']),
             'sales_channels' => SalesChannel::query()
                 ->where('status', 'enabled')
                 ->orderBy('sort')->orderBy('id')
@@ -631,6 +623,44 @@ class SalesOrderController extends Controller
         });
     }
 
+    public function progressTree(Request $request, int $id, SalesOrderProgressQueryService $progress)
+    {
+        [$order, $links] = $this->progressOrder($request, $id);
+        return response()->json($progress->tree($order, $links));
+    }
+
+    public function progressUnits(Request $request, int $id, int $lineId, SalesOrderProgressQueryService $progress)
+    {
+        [$order, $links] = $this->progressOrder($request, $id);
+        $filters = $request->validate(['keyword' => 'nullable|string|max:120', 'page' => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:1|max:100', 'work_order_id' => 'nullable|integer|min:1']);
+        return response()->json($progress->units($order, $lineId, $filters, $links));
+    }
+
+    public function progressUnit(Request $request, int $id, int $lineId, string $unitId, SalesOrderProgressQueryService $progress)
+    {
+        [$order, $links] = $this->progressOrder($request, $id);
+        return response()->json(['data' => $progress->unit($order, $lineId, $unitId, $links)]);
+    }
+
+    public function progressWorkOrder(Request $request, int $id, int $woId, SalesOrderProgressQueryService $progress)
+    {
+        [$order, $links] = $this->progressOrder($request, $id);
+        $data = $request->validate(['unit_id' => ['nullable', 'string', 'regex:/^(?:unit:)?[1-9][0-9]*$/']]);
+        return response()->json(['data' => $progress->workOrderView($order, $woId, $data['unit_id'] ?? null, $links)]);
+    }
+
+    private function progressOrder(Request $request, int $id): array
+    {
+        $this->abortUnlessPermission($request, 'sales_order.view');
+        $query = SalesOrder::query();
+        $this->applySalesOrderVisibility($query, $request, true);
+        $order = $query->findOrFail($id);
+        $auth = app(AuthContextService::class);
+        $user = $auth->currentUser($request);
+        return [$order, $auth->isSuperAdmin($user) || in_array('production.work_order.view', $auth->permissionCodes($user), true)];
+    }
+
     public function show(Request $request, int $id)
     {
         $this->abortUnlessPermission($request, 'sales_order.view');
@@ -650,9 +680,10 @@ class SalesOrderController extends Controller
             'shipments.packages',
             'salesReturns',
         ]);
-        $this->applySalesOrderVisibility($query, $request);
+        $this->applySalesOrderVisibility($query, $request, true);
         $order = $query->findOrFail($id);
         $order->setAttribute('sales_user', app(ErpUserProjectionService::class)->one($order->sales_user_legacy_id));
+        $order->setAttribute('share_users', array_values(app(ErpUserProjectionService::class)->many(explode(',', (string) $order->share_user))));
         app(\App\Services\Erp\SalesTradePlatformService::class)->decorate([$order]);
         $order->lines->each(function ($line): void {
             $line->setAttribute('system_item', $this->orderLineItemProjection($line));
@@ -688,9 +719,6 @@ class SalesOrderController extends Controller
             ->statusForPermissions($order, $permissions, $superAdmin));
         $order->setAttribute('fulfillment_quantities', app(SalesOrderInventoryLockService::class)->projection($order));
         $payload = $order->toArray();
-        if (! $superAdmin && ! in_array('sales_order.amount.view', $permissions, true)) {
-            $payload = $this->redactSensitiveAmounts($payload);
-        }
         return response()->json($payload);
     }
 
@@ -785,7 +813,7 @@ class SalesOrderController extends Controller
         $preview = app(\App\Services\Erp\SalesOrderFulfillmentApplicationService::class)->preview($order->id);
         $auth = app(AuthContextService::class);
         $user = $auth->currentUser($request);
-        // 确认页顶部显示“开工够不够 / 发货还差多少”；没有金额权限的只显示结论。
+        // 确认页顶部显示“开工够不够 / 发货还差多少”。
         try {
             $preview['funding_status'] = $user ? app(SalesOrderFundingGateService::class)->statusForPermissions($order, $auth->permissionCodes($user), $auth->isSuperAdmin($user)) : null;
         } catch (\Throwable) {
@@ -933,10 +961,10 @@ class SalesOrderController extends Controller
                 'short_closed_amount' => $result['short_closed_amount'], 'overpaid_amount' => $result['overpaid_amount'],
                 'lines' => collect($result['lines'])->map(fn ($line) => ['id' => $line['id'], 'close_qty' => $line['close_qty']])->values()->all(),
             ]);
-            $message = \App\Domain\Finance\Money::compare($result['overpaid_amount'], '0') > 0 && $this->canViewAmounts($request)
+            $message = \App\Domain\Finance\Money::compare($result['overpaid_amount'], '0') > 0
                 ? '订单已短交关闭，客户多付 '.$result['overpaid_amount'].'，需财务办理退款后订单才会完成'
                 : '订单已短交关闭';
-            // 只回状态字段，详情由前端按金额权限重新加载，避免绕过金额脱敏。
+            // 只回状态字段，详情由前端重新加载。
             return response()->json(['message' => $message, 'data' => [
                 'id' => $order->id, 'order_status' => $order->order_status, 'short_closed_at' => $order->short_closed_at,
             ]]);
@@ -946,10 +974,7 @@ class SalesOrderController extends Controller
     private function shortCloseView(Request $request, array $preview): array
     {
         $preview['can_close'] = $preview['blockers'] === [];
-        if ($this->canViewAmounts($request)) return $preview;
-        $preview['lines'] = array_map(fn ($line) => array_diff_key($line, array_flip(['amount', 'shipped_amount'])), $preview['lines']);
-        return array_diff_key($preview, array_flip(['contract_amount', 'receivable_before', 'receivable_after', 'short_closed_amount',
-            'return_credit_amount', 'net_received_amount', 'overpaid_amount'])) + ['has_overpaid' => \App\Domain\Finance\Money::compare($preview['overpaid_amount'], '0') > 0];
+        return $preview;
     }
 
     public function cancel(Request $request, int $id)
@@ -962,7 +987,7 @@ class SalesOrderController extends Controller
     {
         $this->abortUnlessPermission($request, 'sales_order.view');
         $order = SalesOrder::findOrFail($id);
-        $this->abortUnlessOrderVisible($request, $order);
+        $this->abortUnlessOrderVisible($request, $order, true);
         return response()->json(SalesOrderLog::where('sales_order_id', $id)->latest('id')->paginate($this->perPage($request)));
     }
 
@@ -970,7 +995,7 @@ class SalesOrderController extends Controller
     {
         $this->abortUnlessPermission($request, 'sales_order.view');
         $order = SalesOrder::findOrFail($id);
-        $this->abortUnlessOrderVisible($request, $order);
+        $this->abortUnlessOrderVisible($request, $order, true);
         return response()->json(SalesOrderVersion::where('sales_order_id', $id)->latest('version_no')->paginate($this->perPage($request)));
     }
 
@@ -978,7 +1003,7 @@ class SalesOrderController extends Controller
     {
         $this->abortUnlessPermission($request, 'sales_order.view');
         $order = SalesOrder::findOrFail($id);
-        $this->abortUnlessOrderVisible($request, $order);
+        $this->abortUnlessOrderVisible($request, $order, true);
 
         return response()->json(
             SalesOrderChange::query()
@@ -1254,12 +1279,8 @@ class SalesOrderController extends Controller
         foreach (['is_urgent', 'is_customized', 'is_special_customized', 'is_delay', 'need_pump', 'is_share'] as $field) {
             $payload[$field] = (bool) ($payload[$field] ?? false);
         }
-        if (isset($payload['share_user']) && is_array($payload['share_user'])) {
-            $payload['share_user'] = implode(',', array_values(array_filter($payload['share_user'], fn ($value) => $value !== null && $value !== '')));
-        }
-        if (!$payload['is_share']) {
-            $payload['share_user'] = null;
-        }
+        $payload['share_user'] = $payload['is_share']
+            ? app(SalesOrderVisibilityService::class)->normalizeShareUsers($payload['share_user'] ?? null) : null;
         $payload['order_source'] = $payload['order_source'] ?? 'manual';
         $payload['currency'] = $payload['currency'] ?? 'CNY';
         $payload['freight_amount'] = $payload['freight_amount'] ?? 0;
@@ -1432,10 +1453,11 @@ class SalesOrderController extends Controller
         ];
     }
 
-    private function applySalesOrderVisibility(Builder $query, Request $request): void
+    private function applySalesOrderVisibility(Builder $query, Request $request, bool $includeShared = false): void
     {
         $legacyAdminId = $this->currentLegacyAdminId($request);
         if (!$legacyAdminId) {
+            $query->whereRaw('1 = 0');
             return;
         }
 
@@ -1455,18 +1477,7 @@ class SalesOrderController extends Controller
         if ($isPrivileged) {
             return;
         }
-        if ($auth->dataScope($user) === 'department') {
-            $query->whereIn('sales_user_legacy_id', $auth->departmentUserIds($user));
-            return;
-        }
-
-        $query->where(function (Builder $q) use ($legacyAdminId) {
-            $q->where('sales_user_legacy_id', $legacyAdminId)
-                ->orWhere(function (Builder $fallback) use ($legacyAdminId) {
-                    $fallback->whereNull('sales_user_legacy_id')
-                        ->where('created_by_legacy_id', $legacyAdminId);
-                });
-        });
+        app(SalesOrderVisibilityService::class)->apply($query, $user, $includeShared);
     }
 
     private function currentLegacyAdminId(Request $request): ?int
@@ -1486,7 +1497,7 @@ class SalesOrderController extends Controller
         $canChange = in_array('sales_order.change', $codes, true) || in_array('sales_order.change.submit', $codes, true);
         $released = $order->order_status === 'confirmed'
             && app(SalesOrderEditImpactService::class)->productionReleased($order);
-        return [
+        $actions = [
             'edit_draft' => $draft && in_array('sales_order.edit_draft', $codes, true),
             'delete_draft' => $draft && in_array('sales_order.delete_draft', $codes, true),
             'submit_confirmation' => $draft && $canConfirm,
@@ -1516,6 +1527,15 @@ class SalesOrderController extends Controller
             'adjust_priority' => ! in_array($order->order_status, ['cancelled', 'closed'], true)
                 && in_array('sales_order.priority', $codes, true),
         ];
+        $writable = SalesOrder::query()->whereKey($order->id);
+        $this->applySalesOrderVisibility($writable, $request);
+        $order->setAttribute('read_only', !$writable->exists());
+        if ($order->read_only) {
+            foreach ($actions as $key => $value) {
+                if (!in_array($key, ['view_attachment', 'production_released'], true)) $actions[$key] = false;
+            }
+        }
+        return $actions;
     }
 
     private function attachmentPayload(Request $request, SalesOrderAttachment $attachment): array
@@ -1665,36 +1685,15 @@ class SalesOrderController extends Controller
         abort_unless(!empty($allowed), 403, '无按钮权限：'.implode(',', $permissionCodes));
     }
 
-    private function abortUnlessOrderVisible(Request $request, SalesOrder $order): void
+    private function abortUnlessOrderVisible(Request $request, SalesOrder $order, bool $includeShared = false): void
     {
         if (!$this->currentLegacyAdminId($request)) {
             abort(401, '未登录或登录已过期');
         }
 
         $query = SalesOrder::query()->whereKey($order->id);
-        $this->applySalesOrderVisibility($query, $request);
+        $this->applySalesOrderVisibility($query, $request, $includeShared);
         abort_unless($query->exists(), 403, '无权访问该销售订单');
-    }
-
-    private function canViewAmounts(Request $request): bool
-    {
-        $auth = app(AuthContextService::class);
-        $user = $auth->currentUser($request);
-        return (bool) $user && ($auth->isSuperAdmin($user)
-            || in_array('sales_order.amount.view', $auth->permissionCodes($user), true));
-    }
-
-    private function hideOrderAmounts(SalesOrder $order): void
-    {
-        $order->makeHidden([
-            'total_amount', 'final_receivable_amount', 'cost_amount', 'short_closed_amount', 'receivable_before_short_close',
-            'actual_sales_cost_amount', 'freight_amount', 'carrier_fee',
-        ]);
-    }
-
-    private function redactSensitiveAmounts(array $payload): array
-    {
-        return app(\App\Services\Erp\SalesAmountVisibilityService::class)->redact($payload);
     }
 
     private function attachCurrentOperator(array $payload, Request $request): array

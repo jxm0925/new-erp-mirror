@@ -209,6 +209,9 @@ class InventoryStocktakeEntryService
 
     private function addPhysical(InventoryStocktakeLine $line, array $new, ?int $operatorId): void
     {
+        if (! app(\App\Services\Erp\InventoryAmountVisibilityService::class)->canView()) {
+            throw ValidationException::withMessages(['new_entries' => '补录盘盈实物需要查看库存金额与成本权限，请由有权限的人员核对成本。']);
+        }
         $dimensions = $new['dimensions'] ?? null;
         if (! is_array($dimensions) || ! isset($dimensions['length_mm'], $dimensions['width_mm'], $dimensions['thickness_mm'])) {
             throw ValidationException::withMessages(['new_entries' => '补录实物必须填写实际长、宽、厚。']);

@@ -35,9 +35,7 @@
     <view class="mt-product">{{item.product_name || item.item_name || ''}}</view>
     <view class="mt-muted">{{item.line}}</view>
     <view class="mt-note">{{item.reasonText}}</view>
-    <view wx:if="{{item.photos.length}}" class="mt-tags mt-gap">
-      <image wx:for="{{item.photos}}" wx:for-item="photo" wx:key="*this" src="{{photo}}" mode="aspectFill" style="width: 120rpx; height: 120rpx; margin-right: 12rpx; border-radius: 12rpx;" data-url="{{photo}}" data-urls="{{item.photos}}" bindtap="previewPhoto" />
-    </view>
+    <production-media wx:if="{{item.media.length}}" value="{{item.media}}" readonly="{{true}}" label="" bind:activity="mediaActivity" />
     <view class="mt-row mt-gap">
       <button class="mt-btn ghost mt-btn-mini" data-key="{{item.key}}" data-approve="no" bindtap="review" disabled="{{busy}}">驳回</button>
       <button class="mt-btn mt-btn-mini" data-key="{{item.key}}" data-approve="yes" bindtap="review" disabled="{{busy}}">{{item.kind === 'scrap' ? '确认报废' : '审核通过'}}</button>

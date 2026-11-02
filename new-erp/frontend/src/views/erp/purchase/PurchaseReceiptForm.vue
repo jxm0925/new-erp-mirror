@@ -69,7 +69,7 @@
                     <label class="compact-field"><span>实际基本数量</span><el-input v-model.number="row.actual_base_qty" type="number" size="small" min="0" :disabled="!actualConversionAllowed(row)" /></label>
                     <label class="compact-field"><span>差异数量</span><el-input :value="differenceQty(row)" size="small" disabled /></label>
                     <label class="compact-field"><span>差异原因</span><el-select v-model="row.difference_reason" size="small" :disabled="!hasDifference(row)" placeholder="无差异"><el-option label="包装重量偏差" value="包装重量偏差" /><el-option label="计量差异" value="计量差异" /><el-option label="验收修正" value="验收修正" /><el-option label="其他" value="其他" /></el-select></label>
-                    <label class="compact-field required"><span>{{ isReplacement ? '库存成本单价' : taxMode === 'tax_included' ? '单价（含税）' : '单价（未税）' }}</span><el-input v-model.number="row.unit_price" type="number" size="small" min="0" :disabled="isReplacement"><template slot="append">CNY</template></el-input></label>
+                    <label v-if="!isReplacement || $can('inventory.amount.view')" class="compact-field required"><span>{{ isReplacement ? '库存成本单价' : taxMode === 'tax_included' ? '单价（含税）' : '单价（未税）' }}</span><el-input v-model.number="row.unit_price" type="number" size="small" min="0" :disabled="isReplacement"><template slot="append">CNY</template></el-input></label>
                   </section>
 
                   <section class="editor-group">
@@ -131,7 +131,7 @@
           <el-table-column label="实物 / 编号" width="118">
             <template slot-scope="{row}"><span v-if="isPhysicalManaged(row)">{{ physicalEntryCount(row) }} / {{ number(qualifiedBaseQty(row)) }} 张</span><span v-else-if="isPipeLine(row)" class="pipe-length-cell">每根 {{ pipeLength(row) ? pipeLength(row) + ' mm' : '未填' }}</span><div v-else-if="isStockManaged(row)" class="serial-progress"><span>{{ serialNumberList(row).length }} / {{ serialRequiredCount(row) }}</span><i><b :style="{width:serialProgress(row)+'%'}" /></i></div><span v-else>无需编号</span></template>
           </el-table-column>
-          <el-table-column :label="isReplacement ? '库存成本金额' : taxMode === 'tax_included' ? '金额（含税）' : '金额（未税）'" width="116" align="right"><template slot-scope="{row}">¥{{ money(lineAmount(row)) }}</template></el-table-column>
+          <el-table-column v-if="!isReplacement || $can('inventory.amount.view')" :label="isReplacement ? '库存成本金额' : taxMode === 'tax_included' ? '金额（含税）' : '金额（未税）'" width="116" align="right"><template slot-scope="{row}">¥{{ money(lineAmount(row)) }}</template></el-table-column>
           <el-table-column label="操作" width="150">
             <template slot-scope="{row,$index}"><el-button class="expand-line-button" type="text" size="mini" @click.stop="selectLine(row)">{{ row === activeLine ? '收起' : '展开' }}</el-button><el-button type="text" size="mini" :disabled="isReplacement" @click.stop="openItemPicker(row)">{{ isReplacement ? '来源锁定' : (row.item_id ? '更换' : '选择') }}</el-button><el-button v-if="!isReplacement" class="danger-link" type="text" size="mini" @click.stop="removeLine($index)">删除</el-button></template>
           </el-table-column>
@@ -143,8 +143,8 @@
 
       <aside class="document-summary">
         <div>
-        <h3>{{ isReplacement ? '换货结算与库存成本' : '单据金额汇总' }}</h3>
-        <dl v-if="isReplacement"><dt>数量汇总</dt><dd>{{ quantitySummary }}</dd><dt>入库成本金额</dt><dd>¥{{ money(untaxedAmount) }}</dd><dt>本次新增应付</dt><dd class="no-payable">¥0.00</dd><dt>原采购合同金额</dt><dd>不变</dd></dl>
+        <h3>{{ isReplacement ? ($can('inventory.amount.view') ? '换货结算与库存成本' : '换货结算') : '单据金额汇总' }}</h3>
+        <dl v-if="isReplacement"><dt>数量汇总</dt><dd>{{ quantitySummary }}</dd><template v-if="$can('inventory.amount.view')"><dt>入库成本金额</dt><dd>¥{{ money(untaxedAmount) }}</dd></template><dt>本次新增应付</dt><dd class="no-payable">¥0.00</dd><dt>原采购合同金额</dt><dd>不变</dd></dl>
         <dl v-else><dt>数量汇总</dt><dd>{{ quantitySummary }}</dd><dt>未税金额</dt><dd>¥{{ money(untaxedAmount) }}</dd><dt>税额</dt><dd>¥{{ money(taxAmount) }}</dd><dt>含税金额</dt><dd>¥{{ money(totalAmount) }}</dd></dl>
         </div>
         <div v-if="isEdit">
@@ -238,9 +238,9 @@ export default {
       return groups.size ? [...groups.entries()].map(([unit, qty]) => `${this.number(qty)} ${unit}`).join('；') : '0'
     },
     taxMode() { return this.form.order?.tax_mode || this.form.tax_mode_snapshot || 'tax_included' },
-    untaxedAmount() { return this.form.items.reduce((sum, line) => { const amount = this.lineAmount(line); const rate = Number(line.tax_rate || 0); return sum + (this.taxMode === 'tax_included' && rate > 0 ? amount * 100 / (100 + rate) : amount) }, 0) },
-    taxAmount() { return this.form.items.reduce((sum, line) => { const amount = this.lineAmount(line); const rate = Number(line.tax_rate || 0); return sum + (this.taxMode === 'tax_included' && rate > 0 ? amount - amount * 100 / (100 + rate) : amount * rate / 100) }, 0) },
-    totalAmount() { return this.taxMode === 'tax_included' ? this.form.items.reduce((sum, line) => sum + this.lineAmount(line), 0) : this.untaxedAmount + this.taxAmount },
+    untaxedAmount() { if (this.form.items.some(line => line.unit_price == null)) return null; return this.form.items.reduce((sum, line) => { const amount = this.lineAmount(line); const rate = Number(line.tax_rate || 0); return sum + (this.taxMode === 'tax_included' && rate > 0 ? amount * 100 / (100 + rate) : amount) }, 0) },
+    taxAmount() { if (this.form.items.some(line => line.unit_price == null)) return null; return this.form.items.reduce((sum, line) => { const amount = this.lineAmount(line); const rate = Number(line.tax_rate || 0); return sum + (this.taxMode === 'tax_included' && rate > 0 ? amount - amount * 100 / (100 + rate) : amount * rate / 100) }, 0) },
+    totalAmount() { if (this.untaxedAmount === null) return null; return this.taxMode === 'tax_included' ? this.form.items.reduce((sum, line) => sum + this.lineAmount(line), 0) : this.untaxedAmount + this.taxAmount },
     activeLineValid() {
       const line = this.activeLine
       if (!line || !line.item_id || !line.purchase_unit_id || !Number(line.qty) || !this.lineAllocationValid(line) || !this.physicalEntriesValid(line)) return false
@@ -340,7 +340,7 @@ export default {
     normalizeLine(line) {
       const entries = Array.isArray(line.serial_entries) && line.serial_entries.length ? line.serial_entries : String(line.serial_text || '').split(/\r?\n|,|，/).map(value => value.trim()).filter(Boolean).map(serial_no => ({ serial_no, source: line.serial_number_source || 'supplier' }))
       const allocations = (line.allocations || []).map(row => ({ warehouse_id: row.warehouse_id, location_id: row.location_id, base_qty: Number(row.base_qty || 0), serial_nos: [...(row.serial_nos || [])], physical_entries: (row.physical_entries || []).map(entry => ({ dimensions: { ...entry.dimensions } })) }))
-      return { ...line, qty: Number(line.receipt_qty || line.qty || 0), qualified_qty: Number(line.qualified_qty || 0), unqualified_qty: Number(line.unqualified_qty || 0), unit_price: Number(line.unit_price || 0), tax_rate: Number(line.tax_rate == null ? 13 : line.tax_rate), actual_base_qty: line.actual_base_qty == null ? null : Number(line.actual_base_qty), _conversionOptions: [], _serialEntries: entries, _allocations: allocations, _scanInput: '', _serialError: '' }
+      return { ...line, qty: Number(line.receipt_qty || line.qty || 0), qualified_qty: Number(line.qualified_qty || 0), unqualified_qty: Number(line.unqualified_qty || 0), unit_price: line.unit_price == null ? undefined : Number(line.unit_price), tax_rate: Number(line.tax_rate == null ? 13 : line.tax_rate), actual_base_qty: line.actual_base_qty == null ? null : Number(line.actual_base_qty), _conversionOptions: [], _serialEntries: entries, _allocations: allocations, _scanInput: '', _serialError: '' }
     },
     addLine() { this.form.items.push(this.blankLine()); this.activeIndex = this.form.items.length - 1 },
     removeActiveLine() { if (this.activeLine) this.removeLine(this.activeIndex) },
@@ -563,8 +563,8 @@ export default {
 </style></head><body>${labels}</body></html>`)
       popup.document.close(); popup.focus(); window.setTimeout(() => popup.print(), 250)
     },
-    lineAmount(line) { return Number(line.qty || 0) * Number(line.unit_price || 0) },
-    payload() { return { ...this.form, attachment_draft_token: this.attachmentDraftToken, reservation_token: this.reservation?.reservation_token, creation_session_id: this.reservation?.creation_session_id, items: this.form.items.map(line => { const stock = this.isStockManaged(line); return { ...line, receipt_qty: line.qty, warehouse_id: stock ? line.warehouse_id : null, location_id: stock ? line.location_id : null, batch_no: stock ? line.batch_no : null, stock_length_mm: this.isPipeLine(line) && line.stock_length_mm !== '' && line.stock_length_mm !== null && line.stock_length_mm !== undefined ? line.stock_length_mm : null, serial_text: stock ? line.serial_text : null, serial_entries: stock ? this.serialNumberList(line).map(entry => ({ serial_no: entry.serial_no, source: entry.source })) : [], allocations: stock ? (this.allocations(line).length ? this.allocations(line) : (line.warehouse_id && line.location_id ? [{ warehouse_id: line.warehouse_id, location_id: line.location_id, base_qty: this.qualifiedBaseQty(line), serial_nos: this.serialNumberList(line).map(entry => entry.serial_no), physical_entries: line._physicalEntries || [] }] : [])) : [] } }) } },
+    lineAmount(line) { return line.unit_price == null ? null : Number(line.qty || 0) * Number(line.unit_price) },
+    payload() { return { ...this.form, attachment_draft_token: this.attachmentDraftToken, reservation_token: this.reservation?.reservation_token, creation_session_id: this.reservation?.creation_session_id, items: this.form.items.map(line => { const stock = this.isStockManaged(line); return { ...line, unit_price: this.isReplacement && !this.$can('inventory.amount.view') ? undefined : line.unit_price, receipt_qty: line.qty, warehouse_id: stock ? line.warehouse_id : null, location_id: stock ? line.location_id : null, batch_no: stock ? line.batch_no : null, stock_length_mm: this.isPipeLine(line) && line.stock_length_mm !== '' && line.stock_length_mm !== null && line.stock_length_mm !== undefined ? line.stock_length_mm : null, serial_text: stock ? line.serial_text : null, serial_entries: stock ? this.serialNumberList(line).map(entry => ({ serial_no: entry.serial_no, source: entry.source })) : [], allocations: stock ? (this.allocations(line).length ? this.allocations(line) : (line.warehouse_id && line.location_id ? [{ warehouse_id: line.warehouse_id, location_id: line.location_id, base_qty: this.qualifiedBaseQty(line), serial_nos: this.serialNumberList(line).map(entry => entry.serial_no), physical_entries: line._physicalEntries || [] }] : [])) : [] } }) } },
     newDraftToken() { return window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : `purchase-${Date.now()}-${Math.random().toString(16).slice(2)}` },
     validate(strict) {
       if (!this.form.supplier_id) return '供应商不能为空'
@@ -593,7 +593,7 @@ export default {
     },
     goBack() { this.$router.push('/purchase/receipts') },
     number(value) { return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 6 }) },
-    money(value) { return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }
+    money(value) { return value == null || value === '' ? '—' : Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }
   }
 }
 </script>

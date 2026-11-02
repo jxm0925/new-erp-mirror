@@ -9,25 +9,31 @@ use JsonSerializable;
 /** Worker execution DTOs never disclose commercial amounts or performance rates. */
 final class ProductionFinancialProjectionService
 {
-    public function redact(mixed $payload): mixed
+    public function redact(mixed $payload, bool $inventoryAmounts = false, bool $commercialAmounts = false): mixed
     {
         if ($payload instanceof DateTimeInterface) return $payload->format('Y-m-d H:i:s');
         if ($payload instanceof Arrayable) $payload = $payload->toArray();
         elseif ($payload instanceof JsonSerializable) $payload = $payload->jsonSerialize();
-        elseif (is_object($payload)) $payload = get_object_vars($payload);
+        $object = $payload instanceof \stdClass;
+        if ($object) $payload = get_object_vars($payload);
         if (! is_array($payload)) return $payload;
 
         $result = [];
         foreach ($payload as $key => $value) {
-            if (is_string($key) && $this->sensitive($key)) continue;
+            if (is_string($key) && $this->sensitive($key)
+                && ! ($inventoryAmounts && app(InventoryAmountVisibilityService::class)->isCostField($key))
+                && ! ($commercialAmounts && in_array($key, ['unit_price', 'unit_price_snapshot', 'amount', 'amount_snapshot',
+                    'amount_excl_tax', 'amount_incl_tax', 'tax_amount', 'tax_amount_snapshot', 'freight_amount', 'total_amount',
+                    'payable_amount', 'settlement_amount', 'line_amount', 'discount_amount', 'discount_rate', 'tax_rate',
+                    'receivable_amount', 'final_receivable_amount'], true))) continue;
             // Frozen snapshots and command replay responses may contain JSON strings;
             // filtering only the outer DTO would leave their monetary facts readable.
-            $decoded = is_string($value) ? json_decode($value, true) : null;
-            $result[$key] = is_array($decoded)
-                ? json_encode($this->redact($decoded), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)
-                : $this->redact($value);
+            $decoded = is_string($value) ? json_decode($value) : null;
+            $result[$key] = is_array($decoded) || $decoded instanceof \stdClass
+                ? json_encode($this->redact($decoded, $inventoryAmounts, $commercialAmounts), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR)
+                : $this->redact($value, $inventoryAmounts, $commercialAmounts);
         }
-        return $result;
+        return $object ? (object) $result : $result;
     }
 
     /** Compatibility name for explicitly projected worker arrays; permissions do not bypass this boundary. */

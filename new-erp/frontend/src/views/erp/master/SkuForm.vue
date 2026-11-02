@@ -585,6 +585,7 @@ export default {
         const stageBeforeEnable = status === 'enabled' && (!this.editing || relationChanged)
         const firstStatus = stageBeforeEnable ? 'draft' : status
         const payload = { ...this.form, status: firstStatus }
+        if (!this.$can('inventory.amount.view')) delete payload.reference_cost
         if (!this.editing && this.reservation) {
           payload.reservation_token = this.reservation.reservation_token
           payload.creation_session_id = this.reservation.creation_session_id
@@ -601,7 +602,9 @@ export default {
           })
         }
         if (stageBeforeEnable) {
-          await saveEntity('skus', { ...sku, ...this.form, id: sku.id, status: 'enabled' })
+          const enabledPayload = { ...sku, ...this.form, id: sku.id, status: 'enabled' }
+          if (!this.$can('inventory.amount.view')) delete enabledPayload.reference_cost
+          await saveEntity('skus', enabledPayload)
         }
         this.$message.success(status === 'enabled' ? 'SKU 已成功启用' : status === 'disabled' ? 'SKU 已停用' : '草稿保存成功')
         this.$router.push('/master/skus')

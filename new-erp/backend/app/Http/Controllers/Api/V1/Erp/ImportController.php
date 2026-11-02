@@ -113,12 +113,18 @@ class ImportController extends Controller
         $this->authorizePermission($request, 'master.import.upload');
         $batch = ImportBatch::findOrFail($id);
         $this->assertBatchContext($request, $batch);
-        return response()->streamDownload(function () use ($batch) {
+        $inventoryAmounts = app(\App\Services\Erp\InventoryAmountVisibilityService::class);
+        $showCosts = $inventoryAmounts->canView($request);
+        return response()->streamDownload(function () use ($batch, $inventoryAmounts, $showCosts) {
             $out = fopen('php://output', 'w');
             fwrite($out, "\xEF\xBB\xBF");
             fputcsv($out, ['行号', '字段', '错误类型', '错误原因', '原始值', '建议处理方式']);
             ImportRow::where('batch_id', $batch->id)->where('validation_status', 'error')->orderBy('row_no')
-                ->each(fn ($row) => fputcsv($out, [$row->row_no, $row->error_field, $row->error_type, $row->error_reason, json_encode($row->raw_data, JSON_UNESCAPED_UNICODE), $row->suggestion]));
+                ->each(function ($row) use ($out, $inventoryAmounts, $showCosts) {
+                    if (! $showCosts && $inventoryAmounts->isCostField((string) $row->error_field)) return;
+                    $raw = $showCosts ? $row->raw_data : $inventoryAmounts->redact($row->raw_data);
+                    fputcsv($out, [$row->row_no, $row->error_field, $row->error_type, $row->error_reason, json_encode($raw, JSON_UNESCAPED_UNICODE), $row->suggestion]);
+                });
             fclose($out);
         }, $batch->batch_no.'-errors.csv', ['Content-Type' => 'text/csv; charset=UTF-8']);
     }

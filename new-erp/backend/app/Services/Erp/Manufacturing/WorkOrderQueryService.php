@@ -145,11 +145,12 @@ final class WorkOrderQueryService
         $row['allowed_location_purposes'] = ReceiptService::allowedLocationPurposes($wo);
         $row['warehouse_name'] = $wo->warehouse_id ? Warehouse::query()->whereKey($wo->warehouse_id)->value('warehouse_name') : null;
         $row['standard_minutes_per_unit'] = round(collect($operations)->where('execution_context', 'production')->sum('unit_standard_minutes'), 1);
-        $row['estimated_material_cost_per_unit'] = $amounts ? $this->plans->estimateMaterialCost($materials, (float) $wo->planned_qty) : null;
+        $inventoryAmounts = app(\App\Services\Erp\InventoryAmountVisibilityService::class)->canView();
+        $row['estimated_material_cost_per_unit'] = $inventoryAmounts ? $this->plans->estimateMaterialCost($materials, (float) $wo->planned_qty) : null;
         $row['actual_material_cost_amount'] = null;
         $row['actual_material_cost_per_unit'] = null;
         $row['material_cost_collection_complete'] = false;
-        if ($amounts) {
+        if ($inventoryAmounts) {
             $issued = MfgMaterialIssue::query()->where('work_order_id', $wo->id)
                 ->selectRaw('COUNT(*) AS fact_count, COALESCE(SUM(cost_amount), 0) AS total_cost')->first();
             $cut = MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('status', 'settled')
@@ -169,7 +170,7 @@ final class WorkOrderQueryService
                     && ! MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('status', 'issued')->exists();
             }
         }
-        $row['material_returns'] = app(MaterialReturnService::class)->forWorkOrder((int) $wo->id, $amounts);
+        $row['material_returns'] = app(MaterialReturnService::class)->forWorkOrder((int) $wo->id, $inventoryAmounts);
         $row['purchase_demands'] = app(ShortageService::class)->forWorkOrder((int) $wo->id);
         // 外购件按全厂排队（加急→开工日→工单号）后本单的缺口；齐套看板只看本单能否用当前库存，两者可能不同。
         $queue = in_array($wo->status, ShortageService::WORK_ORDER_STATUSES, true) ? app(ShortageService::class)->forWorkOrderQueue((int) $wo->id) : [];
@@ -259,7 +260,8 @@ final class WorkOrderQueryService
                 'routing_name' => $plan['routing']['routing_name'], 'version' => $plan['routing']['version'], 'is_default' => $plan['routing']['is_default'] ?? false] : null,
             'operations' => $operations, 'kitting' => $kitting, 'block_reasons' => $plan['block_reasons'],
             'standard_minutes_per_unit' => round(collect($operations)->where('execution_context', 'production')->sum('unit_standard_minutes'), 1),
-            'estimated_material_cost_per_unit' => $amounts ? $this->plans->estimateMaterialCost($plan['materials'], max($qty, 0.0001)) : null,
+            'estimated_material_cost_per_unit' => app(\App\Services\Erp\InventoryAmountVisibilityService::class)->canView()
+                ? $this->plans->estimateMaterialCost($plan['materials'], max($qty, 0.0001)) : null,
             'bom_options' => $this->bomOptions($item->id), 'routing_options' => $this->routingOptions($item->id),
         ];
     }

@@ -1314,6 +1314,10 @@ export default {
         try {
           const itemPayload = { ...this.form }
           delete itemPayload.base_unit_locked
+          if (!this.$can('inventory.amount.view')) {
+            delete itemPayload.standard_cost
+            delete itemPayload.last_purchase_price
+          }
           const payload = {
             item: {
               ...itemPayload,

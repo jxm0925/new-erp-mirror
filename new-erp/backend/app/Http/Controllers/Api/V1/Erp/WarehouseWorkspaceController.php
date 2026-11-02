@@ -17,12 +17,12 @@ final class WarehouseWorkspaceController extends Controller
             'keyword' => 'nullable|string|max:120', 'date_from' => 'nullable|date',
             'date_to' => 'nullable|date'.($request->filled('date_from') ? '|after_or_equal:date_from' : ''),
             'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
-        return response()->json(app(\App\Services\Erp\ProductionFinancialProjectionService::class)->redact($service->paginate($filters, ...$this->context($request))));
+        return response()->json($this->project($service->paginate($filters, ...$this->context($request)), $request));
     }
 
     public function summary(Request $request, WarehouseWorkspaceService $service)
     {
-        $summary = app(\App\Services\Erp\ProductionFinancialProjectionService::class)->redact($service->summary(...$this->context($request)));
+        $summary = $this->project($service->summary(...$this->context($request)), $request);
         // 盘点中提示与网页端同源，仓库人员在小程序上也能看到哪些范围暂停出入库。
         $summary['stocktake_freezes'] = app(\App\Services\Erp\Inventory\StocktakeFreezeQuery::class)->paginate();
         return response()->json(['data' => $summary]);
@@ -32,7 +32,7 @@ final class WarehouseWorkspaceController extends Controller
     {
         $filters = $request->validate(['stage' => 'nullable|in:post,receive', 'receipt_id' => 'nullable|integer|min:1',
             'page' => 'nullable|integer|min:1', 'packages_page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
-        return response()->json(['data' => app(\App\Services\Erp\ProductionFinancialProjectionService::class)->redact($service->show($kind, $id, $filters, ...$this->context($request)))]);
+        return response()->json(['data' => $this->project($service->show($kind, $id, $filters, ...$this->context($request)), $request)]);
     }
 
     public function salesReturnSerials(Request $request, \App\Services\Erp\SalesReturnIdentityService $service)
@@ -54,13 +54,13 @@ final class WarehouseWorkspaceController extends Controller
     {
         $data = $request->validate(['action' => 'required|string|max:60', 'aggregate_id' => 'required|integer|min:1',
             'client_command_id' => 'required|string|max:120', 'payload' => 'present|array']);
-        return response()->json(['data' => app(\App\Services\Erp\ProductionFinancialProjectionService::class)->redact($service->run($data['action'], $data['aggregate_id'], $data['client_command_id'], $data['payload'], ...$this->context($request)))]);
+        return response()->json(['data' => $this->project($service->run($data['action'], $data['aggregate_id'], $data['client_command_id'], $data['payload'], ...$this->context($request)), $request)]);
     }
 
     public function commandResult(Request $request, \App\Services\Erp\WarehouseCommandService $service)
     {
         $data = $request->validate(['client_command_id' => 'required|string|max:120']);
-        return response()->json(['data' => app(\App\Services\Erp\ProductionFinancialProjectionService::class)->redact($service->result($data['client_command_id'], ...$this->context($request)))]);
+        return response()->json(['data' => $this->project($service->result($data['client_command_id'], ...$this->context($request)), $request)]);
     }
 
     public function locators(Request $request)
@@ -85,6 +85,13 @@ final class WarehouseWorkspaceController extends Controller
         $query->select('id', $mode.'_code as code', $mode.'_name as name', 'status');
         if ($mode === 'location') $query->addSelect('warehouse_id', 'area', 'location_purpose');
         return response()->json($query->orderBy('id')->paginate($filters['per_page'] ?? 10));
+    }
+
+    private function project(mixed $payload, Request $request): mixed
+    {
+        $inventoryAmounts = app(\App\Services\Erp\InventoryAmountVisibilityService::class);
+        return app(\App\Services\Erp\ProductionFinancialProjectionService::class)->redact(
+            $inventoryAmounts->forResponse($payload, $request), $inventoryAmounts->canView($request), true);
     }
 
     private function context(Request $request): array

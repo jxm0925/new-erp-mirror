@@ -41,10 +41,10 @@ final class SharedCuttingService
             ->join('erp_items as i', 'i.id', '=', 'm.component_item_id')
             ->leftJoin('erp_mfg_work_order_operations as o', 'o.id', '=', 'm.work_order_operation_id')
             ->whereIn('w.status', self::OPEN_WO)->where('i.material_management_mode', 'physical')->where('m.cutting_mode', 'sheet')
-            ->where('m.required_qty', '>', 0)->whereColumn('m.issued_qty', '<', 'm.required_qty')->whereNotNull('m.work_order_operation_id')
+            ->where('m.required_qty', '>', 0)->whereNotNull('m.work_order_operation_id')
             ->when(! empty($filters['item_id']), fn ($q) => $q->where('m.component_item_id', (int) $filters['item_id']))
             ->select(['m.id', 'm.work_order_id', 'm.work_order_operation_id', 'm.component_item_id', 'm.component_item_code', 'm.component_item_name',
-                'm.unit_name', 'm.required_qty', 'm.issued_qty', 'm.bom_item_id', 'm.qty_ratio', 'w.work_order_no', 'w.planned_qty', 'w.product_name',
+                'm.unit_name', 'm.required_qty', 'm.issued_qty', 'm.bom_item_id', 'm.qty_ratio', 'm.loss_rate', 'm.fixed_qty', 'w.work_order_no', 'w.planned_qty', 'w.product_name',
                 'w.item_name as wo_item_name', 'w.customer_name', 'w.is_urgent', 'w.priority', 'w.planned_start_date', 'w.planned_finish_date', 'w.status as wo_status',
                 'o.operation_name', 'i.spec', 'i.model', 'i.material_grade'])
             ->orderByDesc('w.is_urgent')->orderBy('w.priority')->orderBy('w.planned_start_date')->orderBy('w.id')->orderBy('m.id')->get();
@@ -53,14 +53,26 @@ final class SharedCuttingService
         $pool = $this->poolAvailable($rows->pluck('component_item_id')->unique()->all());
         $open = MfgCuttingBatch::query()->where('batch_scope', 'shared')->where('status', 'issued')
             ->selectRaw('item_id, COUNT(*) AS n')->groupBy('item_id')->pluck('n', 'item_id');
+        $direct = MfgCuttingBatch::query()->whereIn('work_order_id', $rows->pluck('work_order_id')->unique())
+            ->whereIn('work_order_operation_id', $rows->pluck('work_order_operation_id')->unique())->where('batch_scope', 'work_order')->where('status', 'settled')
+            ->selectRaw('work_order_operation_id, SUM(completed_unit_qty) AS units')->groupBy('work_order_operation_id')->pluck('units', 'work_order_operation_id');
+        $allocated = MfgCuttingAllocation::query()->whereIn('work_order_material_id', $rows->pluck('id'))
+            ->selectRaw('work_order_material_id, SUM(measure) AS measure')->groupBy('work_order_material_id')->pluck('measure', 'work_order_material_id');
         $items = [];
         foreach ($rows as $row) {
             $line = $snapshots[$row->work_order_id]->get($row->bom_item_id) ?? [];
             $snapshot = $line['cutting_quantity_snapshot'] ?? [];
             $dim = $snapshot['dimensions'] ?? [];
             $left = bcsub((string) $row->required_qty, (string) $row->issued_qty, 4);
-            $factor = $this->factor($snapshot);
+            if (bccomp($left, '0', 4) < 0) $left = '0.0000';
             $planned = (float) $row->planned_qty;
+            $covered = (string) max(0, $planned - (int) ($direct[$row->work_order_operation_id] ?? 0));
+            $measure = $this->cumulativeMeasure($row, $snapshot, (string) $row->planned_qty, $covered);
+            if ($measure !== null) {
+                $measure = bcsub($measure, (string) ($allocated[$row->id] ?? '0'), 8);
+                if (bccomp($measure, '0', 8) < 0) $measure = '0.00000000';
+            }
+            if (bccomp($left, '0', 4) <= 0 && ($measure === null || bccomp($measure, '0', 8) <= 0)) continue;
             $doneUnits = (float) $row->required_qty > 0 ? (int) floor((float) $row->issued_qty * $planned / (float) $row->required_qty + 1e-6) : 0;
             $leftUnits = max(0, (int) $planned - $doneUnits);
             $perUnitPieces = (int) ($dim['piece_qty'] ?? 0) * (float) $row->qty_ratio;
@@ -70,14 +82,14 @@ final class SharedCuttingService
                 'measure_unit' => 'm2', 'need_qty' => '0.0000', 'need_measure' => '0.00000000', 'pool_measure' => $pool[$key] ?? '0.00000000',
                 'open_batches' => (int) ($open[$key] ?? 0), 'piece_count' => 0, 'lines' => []];
             $items[$key]['need_qty'] = bcadd($items[$key]['need_qty'], $left, 4);
-            if ($factor) $items[$key]['need_measure'] = bcadd($items[$key]['need_measure'], bcmul($left, $factor, 8), 8);
+            if ($measure !== null) $items[$key]['need_measure'] = bcadd($items[$key]['need_measure'], $measure, 8);
             $pieces = (int) round($perUnitPieces * $leftUnits);
             $items[$key]['piece_count'] += $pieces;
             $items[$key]['lines'][] = ['material_id' => (int) $row->id, 'work_order_id' => (int) $row->work_order_id, 'work_order_no' => $row->work_order_no,
                 'operation_id' => (int) $row->work_order_operation_id, 'operation_name' => $row->operation_name,
                 'product_name' => $row->product_name ?: $row->wo_item_name, 'customer_name' => $row->customer_name, 'is_urgent' => (bool) $row->is_urgent,
                 'planned_start_date' => $row->planned_start_date, 'planned_finish_date' => $row->planned_finish_date,
-                'planned_qty' => $planned, 'left_units' => $leftUnits, 'left_qty' => $left, 'left_measure' => $factor ? bcmul($left, $factor, 8) : null,
+                'planned_qty' => $planned, 'left_units' => $leftUnits, 'left_qty' => $left, 'left_measure' => $measure,
                 'part_name' => ($line['remark'] ?? null) ?: '板件 '.($line['line_no'] ?? ''), 'length_mm' => $dim['length_mm'] ?? null,
                 'width_mm' => $dim['width_mm'] ?? null, 'thickness_mm' => $dim['thickness_mm'] ?? null, 'allow_rotation' => (bool) ($dim['allow_rotation'] ?? false),
                 'pieces_per_unit' => $perUnitPieces, 'left_pieces' => $pieces];
@@ -251,18 +263,30 @@ final class SharedCuttingService
         if (MfgCuttingBatch::query()->where('work_order_operation_id', $op->id)->where('status', 'issued')->lockForUpdate()->first(['id']))
             $this->fail('cutting_not_settled', $op->operation_name.'还有随单开料批次没登记产出和余料，请先登记完再备料。');
         $lines = collect(data_get($wo->bom_snapshot, 'items', []))->keyBy('id');
+        $directUnits = (int) MfgCuttingBatch::query()->where('work_order_id', $wo->id)->where('work_order_operation_id', $op->id)
+            ->where('batch_scope', 'work_order')->where('status', 'settled')->lockForUpdate()->get(['completed_unit_qty'])->sum('completed_unit_qty');
+        $allocated = MfgCuttingAllocation::query()->whereIn('work_order_material_id', $materials->pluck('id'))
+            ->orderBy('id')->lockForUpdate()->get()->groupBy('work_order_material_id');
+        $covered = (string) max(0, min($upTo, (float) $wo->planned_qty) - $directUnits);
+        $totalCovered = (string) max(0, (float) $wo->planned_qty - $directUnits);
         $out = [];
         foreach ($materials as $m) {
             $need = bcsub(sprintf('%.4F', $this->materials->neededFor($m, $wo, $upTo)), (string) $m->issued_qty, 4);
-            if (bccomp($need, '0', 4) <= 0) continue;
-            $factor = $this->factor($lines->get($m->bom_item_id)['cutting_quantity_snapshot'] ?? []);
-            if (! $factor) $this->fail('cutting_snapshot_missing', $m->component_item_name.' 缺少冻结的标准板尺寸，不能按定额折算面积。');
-            $measure = bcmul($need, $factor, 8);
+            if (bccomp($need, '0', 4) < 0) $need = '0.0000';
+            $snapshot = $lines->get($m->bom_item_id)['cutting_quantity_snapshot'] ?? [];
+            $target = $this->cumulativeMeasure($m, $snapshot, (string) $wo->planned_qty, $covered);
+            if ($target === null) $this->fail('cutting_snapshot_missing', $m->component_item_name.' 缺少冻结的板件或标准板尺寸，不能按定额计算面积。');
+            $totalTarget = $this->cumulativeMeasure($m, $snapshot, (string) $wo->planned_qty, $totalCovered);
+            $already = ($allocated->get($m->id) ?? collect())->reduce(fn ($sum, $row) => bcadd($sum, (string) $row->measure, 8), '0.00000000');
+            $measure = bcsub($target, $already, 8);
+            if (bccomp($already, $totalTarget, 8) > 0 || (bccomp($measure, '0', 8) <= 0 && bccomp($need, '0', 4) > 0))
+                $this->fail('cutting_measure_conflict', $m->component_item_name.' 已收数量与既有开料面积不一致，请先核对历史开料及分配记录。', 409);
+            if (bccomp($measure, '0', 8) <= 0) continue;
             $batches = MfgCuttingBatch::query()->where('batch_scope', 'shared')->where('item_id', $m->component_item_id)->where('status', 'settled')
                 ->whereColumn('allocated_measure', '<', 'pool_measure')->orderBy('settled_at')->orderBy('id')->lockForUpdate()->get();
             $available = '0.00000000';
             foreach ($batches as $b) $available = bcadd($available, bcsub((string) $b->pool_measure, (string) $b->allocated_measure, 8), 8);
-            if (bccomp($available, $measure, 6) < 0)
+            if (bccomp($available, $measure, 8) < 0)
                 $this->fail('cutting_pool_short', $m->component_item_name.' 集中开料只登记了够用 '.$this->num($available).' m²，这次备料按定额要 '.$this->num($measure).' m²（'.$this->num($need).' '.$m->unit_name.'）。请先在「集中开料」里把切这种板的批次登记完。');
             $left = $measure; $qtyLeft = $need;
             foreach ($batches as $b) {
@@ -272,7 +296,7 @@ final class SharedCuttingService
                 // 一批被扣完时把剩下的成本全部带走，避免四舍五入留尾差。
                 $cost = bccomp($take, $room, 8) === 0 ? bcsub((string) $b->net_cost_amount, (string) $b->allocated_cost_amount, 4)
                     : CuttingDecimal::share(bcsub((string) $b->net_cost_amount, (string) $b->allocated_cost_amount, 4), $room, $take);
-                $qty = bccomp($take, $left, 8) === 0 ? $qtyLeft : bcdiv($take, $factor, 4);
+                $qty = CuttingDecimal::share($qtyLeft, $left, $take);
                 MfgCuttingAllocation::create(['cutting_batch_id' => $b->id, 'item_id' => $m->component_item_id, 'work_order_id' => $wo->id,
                     'work_order_operation_id' => $op->id, 'work_order_material_id' => $m->id, 'unit_qty' => $unitQty, 'qty' => $qty,
                     'measure' => $take, 'measure_unit' => 'm2', 'cost_amount' => $cost,
@@ -281,7 +305,8 @@ final class SharedCuttingService
                 $left = bcsub($left, $take, 8); $qtyLeft = bcsub($qtyLeft, $qty, 4);
                 $out[] = ['material_id' => (int) $m->id, 'batch_no' => $b->batch_no, 'qty' => $qty, 'measure' => $take];
             }
-            $m->update(['issued_qty' => bcadd((string) $m->issued_qty, $need, 4)]);
+            if (bccomp($left, '0', 8) !== 0) $this->fail('cutting_pool_short', '集中开料剩余面积不足，请刷新后重试。');
+            if (bccomp($need, '0', 4) > 0) $m->update(['issued_qty' => bcadd((string) $m->issued_qty, $need, 4)]);
         }
         return $out;
     }
@@ -305,6 +330,25 @@ final class SharedCuttingService
                 ? bcdiv(bcmul((string) $stock['length_mm'], (string) $stock['width_mm'], 8), '1000000', 8) : null,
             default => null,
         };
+    }
+
+    /** 面积用冻结几何计算，不能从已四舍五入的四位张数反算。 */
+    private function cumulativeMeasure(object $material, array $snapshot, string $planned, string $covered): ?string
+    {
+        $factor = $this->factor($snapshot);
+        if ($factor === null || bccomp($planned, '0', 8) <= 0) return null;
+        $dimensions = $snapshot['dimensions'] ?? [];
+        if (isset($dimensions['length_mm'], $dimensions['width_mm'], $dimensions['piece_qty'])
+            && (float) $dimensions['length_mm'] > 0 && (float) $dimensions['width_mm'] > 0 && (int) $dimensions['piece_qty'] > 0) {
+            $perUnit = bcdiv(bcmul(bcmul((string) $dimensions['length_mm'], (string) $dimensions['width_mm'], 12), (string) $dimensions['piece_qty'], 12), '1000000', 12);
+        } elseif (isset($snapshot['theoretical_qty'])) {
+            // 历史快照缺几何时仅用冻结高精度理论量，不回读四位库存量。
+            $perUnit = bcmul((string) $snapshot['theoretical_qty'], $factor, 12);
+        } else return null;
+        $loss = bcadd('1', bcdiv((string) ($material->loss_rate ?? 0), '100', 12), 12);
+        $total = bcadd(bcmul(bcmul($perUnit, $planned, 12), $loss, 12), bcmul((string) ($material->fixed_qty ?? 0), $factor, 12), 12);
+        $total = bcmul($total, (string) $material->qty_ratio, 12);
+        return bccomp($covered, $planned, 8) >= 0 ? bcadd($total, '0', 8) : bcdiv(bcmul($total, $covered, 12), $planned, 8);
     }
 
     private function sharedItem(int $itemId, bool $lock = false): Item

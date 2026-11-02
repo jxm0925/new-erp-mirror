@@ -282,10 +282,8 @@ class SalesOrderDraftService
         foreach (['is_urgent', 'quickly', 'is_customized', 'is_special_customized', 'is_delay', 'delay', 'need_pump', 'is_share'] as $field) {
             $payload[$field] = (bool) ($payload[$field] ?? false);
         }
-        if (isset($payload['share_user']) && is_array($payload['share_user'])) {
-            $payload['share_user'] = implode(',', array_values(array_filter($payload['share_user'], fn ($value) => filled($value))));
-        }
-        if (!$payload['is_share']) $payload['share_user'] = null;
+        $payload['share_user'] = $payload['is_share']
+            ? app(SalesOrderVisibilityService::class)->normalizeShareUsers($payload['share_user'] ?? null) : null;
         $payload['order_source'] = $payload['order_source'] ?? 'manual';
         $payload['currency'] = $payload['currency'] ?? 'CNY';
         $payload['freight_amount'] = round((float) ($payload['freight_amount'] ?? 0), 2);

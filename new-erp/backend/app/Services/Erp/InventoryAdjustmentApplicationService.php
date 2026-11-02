@@ -28,15 +28,16 @@ class InventoryAdjustmentApplicationService
 
     public function __construct(private readonly MaterialPhysicalService $physicalMaterials) {}
 
-    public function save(array $payload, ?int $id = null, ?int $operatorId = null): InventoryAdjustment
+    public function save(array $payload, ?int $id = null, ?int $operatorId = null, bool $allowCostEdits = true): InventoryAdjustment
     {
-        return DB::transaction(function () use ($payload, $id, $operatorId): InventoryAdjustment {
+        return DB::transaction(function () use ($payload, $id, $operatorId, $allowCostEdits): InventoryAdjustment {
             $adjustment = $id
                 ? InventoryAdjustment::query()->lockForUpdate()->findOrFail($id)
                 : null;
             if ($adjustment && $adjustment->adjustment_status !== 'draft') {
                 throw ValidationException::withMessages(['status' => '只有草稿调整单可以编辑。']);
             }
+            if (! $allowCostEdits) $this->preservePhysicalCosts($payload, $adjustment);
 
             if (!$adjustment) {
                 $adjustment = InventoryAdjustment::create([
@@ -103,6 +104,49 @@ class InventoryAdjustmentApplicationService
 
             return $adjustment->fresh(['items.item.unit', 'items.warehouse', 'items.location', 'items.serials', 'items.physicalEntries']);
         }, 5);
+    }
+
+    private function preservePhysicalCosts(array &$payload, ?InventoryAdjustment $adjustment): void
+    {
+        $keyOf = function (array $line, array $dimensions): string {
+            $clean = [];
+            foreach (['length_mm', 'width_mm', 'thickness_mm', 'nominal_thickness_mm'] as $key) {
+                if (isset($dimensions[$key]) && $dimensions[$key] !== '') $clean[$key] = bcadd((string) $dimensions[$key], '0', 2);
+            }
+            return json_encode([(int) $line['item_id'], (int) $line['warehouse_id'], (int) $line['location_id'],
+                (string) $line['batch_no'], $clean], JSON_THROW_ON_ERROR);
+        };
+        $stored = []; $entryKeys = []; $usedIds = [];
+        if ($adjustment) {
+            foreach ($adjustment->items()->orderBy('id')->lockForUpdate()->get() as $line) {
+                if ((float) $line->change_qty <= 0) continue;
+                foreach ($line->physicalEntries()->orderBy('id')->lockForUpdate()->get() as $entry) {
+                    $key = $keyOf($line->toArray(), $entry->dimensions ?? []);
+                    $stored[$key][(int) $entry->id] = (string) $entry->total_cost;
+                    $entryKeys[(int) $entry->id] = $key;
+                }
+            }
+        }
+        foreach ($payload['items'] as &$line) {
+            if ((float) $line['change_qty'] <= 0) continue;
+            foreach ($line['physical_entries'] ?? [] as $index => $entry) {
+                $key = $keyOf($line, $entry['dimensions'] ?? []);
+                $costs = $stored[$key] ?? [];
+                // Hidden costs may be reused only for the same source and dimensions, never moved by a client array index.
+                $entryId = (int) ($entry['id'] ?? 0);
+                if ($entryId && (($entryKeys[$entryId] ?? null) !== $key || isset($usedIds[$entryId]))) {
+                    throw ValidationException::withMessages(['physical_entries' => '盘盈实物明细与原调整单不一致，请刷新后重新核对。']);
+                }
+                if (! $entryId && ($costs === [] || count(array_unique($costs)) !== 1)) {
+                    throw ValidationException::withMessages(['physical_entries' => '新增或变更盘盈实物需要查看库存金额与成本权限；请由有权限的人员核对成本。']);
+                }
+                $entryId = $entryId ?: array_key_first($costs);
+                $line['physical_entries'][$index]['total_cost'] = $stored[$key][$entryId];
+                $usedIds[$entryId] = true;
+                unset($stored[$key][$entryId]);
+            }
+        }
+        unset($line);
     }
 
     public function submit(int $id, ?int $operatorId = null): InventoryAdjustment

@@ -13,10 +13,11 @@ class RbacBootstrapService
             $this->syncDepartments(true);
         }
         $created = $this->seedPermissions($force);
+        $grantableCreated = array_values(array_diff($created, ['inventory.amount.view']));
         // 全新安装（种子只建目录、整库还没有任何授权）时内置角色按默认矩阵初始化一次；已有授权的库绝不重置。
         $freshInstall = Schema::hasTable('erp_rbac_role_permissions') && ! DB::table('erp_rbac_role_permissions')->exists();
-        $this->seedRoles($force, $created !== []);
-        if ($created) $this->grantNewPermissionDefaults($created);
+        $this->seedRoles($force, $grantableCreated !== []);
+        if ($grantableCreated) $this->grantNewPermissionDefaults($grantableCreated);
         if ($freshInstall) $this->initializeBuiltinRoleDefaults();
         // 升级到业务员档案后，按原销售标记一次性登记销售员，保证订单业务员候选不丢。
         app(BusinessStaffService::class)->ensureBackfilled();
@@ -61,14 +62,14 @@ class RbacBootstrapService
     {
         $adminRoleId = DB::table('erp_rbac_roles')->where('code', 'admin')->value('id');
         if ($adminRoleId) {
-            DB::table('erp_rbac_role_permissions')->insertOrIgnore(DB::table('erp_rbac_permissions')->pluck('id')
+            DB::table('erp_rbac_role_permissions')->insertOrIgnore(DB::table('erp_rbac_permissions')->where('code', '<>', 'inventory.amount.view')->pluck('id')
                 ->map(fn ($id) => ['role_id' => $adminRoleId, 'permission_id' => $id])->all());
         }
         $this->ensureProductionRolePermissions();
         $this->ensureSalesInventoryLockPermission();
         $this->ensureSalesAttachmentPermissions();
         $this->ensureWarehouseRolePermissions();
-        $permissions = DB::table('erp_rbac_permissions')->get(['id', 'code', 'parent_id']);
+        $permissions = DB::table('erp_rbac_permissions')->where('code', '<>', 'inventory.amount.view')->get(['id', 'code', 'parent_id']);
         $byCode = $permissions->keyBy('code');
         $byId = $permissions->keyBy('id');
         foreach (self::BUILTIN_ROLE_DEFAULTS as $roleCode => $patterns) {
@@ -370,6 +371,7 @@ class RbacBootstrapService
             ['inventory.transfer', '库存调拨', 'menu', 'inventory', '/inventory/transfers', 'InventoryTransferList', 'el-icon-sort', 309],
 
             // 库存管理 按钮
+            ['inventory.amount.view', '查看库存金额与成本', 'button', 'inventory', null, null, 'el-icon-mouse', 1],
             ['inventory.post.view', '查看待过账单据', 'button', 'inventory.posting', null, null, 'el-icon-mouse', 1],
             ['inventory.post.execute', '执行库存过账', 'button', 'inventory.posting', null, null, 'el-icon-mouse', 2],
             ['inventory.post.repair', '补充到货入库分配', 'button', 'inventory.posting', null, null, 'el-icon-mouse', 3],
@@ -724,7 +726,8 @@ class RbacBootstrapService
 
         $adminRoleId = DB::table('erp_rbac_roles')->where('code', 'admin')->value('id');
         if ($adminRoleId && ($rebuildAdminPermissions || $permissionsChanged)) {
-            $permissionIds = DB::table('erp_rbac_permissions')->pluck('id')->all();
+            // Inventory amounts are explicitly assigned in role management, including existing admin roles.
+            $permissionIds = DB::table('erp_rbac_permissions')->where('code', '<>', 'inventory.amount.view')->pluck('id')->all();
             $records = array_map(fn ($id) => [
                 'role_id' => $adminRoleId,
                 'permission_id' => $id,

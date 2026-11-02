@@ -1,4 +1,4 @@
-const { quantity } = require('./warehouse-page');
+const { quantity, money } = require('./warehouse-page');
 const labels = { pending: '待入库', posted: '已入库', not_required: '无须库存入库', draft: '草稿', confirmed: '已确认', pending_outbound: '已确认 · 待出库',
   outbound_posted: '已出库待发运', prepared: '待发作业', partially_shipped: '部分已发运', shipped: '已发运', completed: '已完成', pending_receipt: '退货已确认', partial_received: '部分收货', received: '已收货',
   SUBMITTED: '待接收', WAIT_QUALITY: '待检验', RECEIVED: '已接收', COMPLETED: '已完成', WAIT_WAREHOUSE: '待入库', PART_WAREHOUSED: '部分入库', WAREHOUSED: '已入库', CREATED: '待办理' };
@@ -7,7 +7,7 @@ const actionLabels = { 'purchase.post': '确认入库',
   'sales_return.receive': '确认收货', 'sales_return.post': '确认入库', 'sales_shipment.post': '移至待发区', 'sales_shipment.dispatch': '确认发运 / 提货并出库', 'purchase_return.post': '确认退货出库' };
 const fields = entries => entries.filter(entry => entry[1] !== null && entry[1] !== undefined && entry[1] !== '').map(([label, value]) => ({ label, value: String(value) }));
 function dimensions(d) { return ['length_mm', 'width_mm', 'thickness_mm'].map(k => d && d[k]).filter(v => v !== undefined && v !== null && v !== '').map(quantity).join(' × '); }
-function line(row) {
+function line(row, canViewAmount = false) {
   const item = row.item || (row.order_line && row.order_line.item) || {};
   const balance = (row.reservation && row.reservation.balance) || {};
   const costs = row.cost_allocations || (row.sales_return_item && row.sales_return_item.cost_allocations) || [];
@@ -21,10 +21,12 @@ function line(row) {
     serialNos: (row.serial_nos || (Array.isArray(serials) ? serials : serials.serial_nos || [])).map(s => typeof s === 'object' ? s.serial_no : s).filter(Boolean).join('、'),
     sourceShipments: (row.source_shipments || Array.from(new Set(costs.map(c => c.shipment && c.shipment.shipment_no).filter(Boolean)))).join('、'),
     sourceBatch: sourceBatches.length === 1 ? sourceBatches[0] : '',
+    costFields: canViewAmount ? fields([['库存成本单价', money(row.unit_cost_snapshot)], ['库存成本金额', money(row.inventory_cost_amount == null ? row.cost_amount_snapshot : row.inventory_cost_amount)]]) : [],
+    sourceCosts: canViewAmount ? costs.map((cost, index) => ({ key: cost.id || index, batch_no: cost.shipment_line && cost.shipment_line.batch_no, unitCost: money(cost.unit_cost_snapshot), amount: money(cost.cost_amount_snapshot) })).filter(cost => cost.unitCost || cost.amount) : [],
     allocations: (row.allocations || []).map(a => Object.assign({}, a, { physical_entries: (a.physical_entries || []).map(p => Object.assign({}, p, { dimensionText: dimensions(p.dimensions) })) })),
-    physicals: (row.physicals || []).map(p => Object.assign({}, p, { dimensionText: dimensions(p.dimensions) })) });
+    physicals: (row.physicals || []).map(p => Object.assign({}, p, { dimensionText: dimensions(p.dimensions), costText: canViewAmount ? money(p.total_cost) : '' })) });
 }
-function header(kind, h, stage) {
+function header(kind, h, stage, canViewAmount = false) {
   const order = h.order || (h.sales_return && h.sales_return.order) || {};
   const ret = h.sales_return || h;
   const state = kind === 'sales_return' ? (stage === 'receive' ? h.return_status : h.stock_post_status)
@@ -36,7 +38,7 @@ function header(kind, h, stage) {
     sales_shipment: [['出库单号', h.shipment_no], ['单据状态', status], ['销售订单', order.sales_order_no], ['客户名称', order.customer_name], ['备注', h.remark]],
     purchase_return: [['退货出库单号', h.return_no], ['单据状态', status], ['供应商', h.supplier && h.supplier.supplier_name], ['原入库单号', h.receipt && h.receipt.receipt_no], ['退货原因', h.return_reason], ['备注', h.remark]],
   };
-  return fields(map[kind] || []);
+  return fields(map[kind] || []).concat(canViewAmount ? fields([['库存成本金额', money(h.inventory_cost_amount)], ['已出库成本金额', money(h.actual_cost_amount)]]) : []);
 }
 const returnDispositions = ['restock', 'pending', 'scrap', 'rejected'];
 function returnSerialSelection(rowsByDisposition, maximum) {

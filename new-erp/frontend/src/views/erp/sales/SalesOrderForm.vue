@@ -538,21 +538,7 @@ Do not change layout without approval.
       </div>
     </div>
 
-    <el-dialog title="选择共享人" :visible.sync="shareDialogVisible" width="520px" append-to-body>
-      <div class="share-dialog-body">
-        <el-input v-model="shareKeyword" size="small" prefix-icon="el-icon-search" placeholder="搜索管理员 / 销售人员" clearable />
-        <el-checkbox-group v-model="form.share_user" class="share-user-list">
-          <el-checkbox v-for="item in filteredShareUserOptions" :key="item.id" :label="String(item.id)">
-            <span>{{ item.nickname }}</span>
-            <small>{{ item.department_name || item.role_name || '管理员' }}</small>
-          </el-checkbox>
-        </el-checkbox-group>
-      </div>
-      <span slot="footer">
-        <el-button size="small" @click="shareDialogVisible=false">取消</el-button>
-        <el-button size="small" type="success" @click="shareDialogVisible=false">确定</el-button>
-      </span>
-    </el-dialog>
+    <system-record-picker :visible.sync="shareDialogVisible" :request="loadShareUsers" :value="selectedShareUsers" :categories="shareDepartmentTree" :config="{ title: '选择共享人员', placeholder: '员工姓名 / 账号' }" :columns="[{ prop: 'nickname', label: '员工姓名' }, { prop: 'username', label: '账号' }]" @confirm="selectShareUsers" />
 
     <el-dialog title="合同附件清单" :visible.sync="contractDialogVisible" width="640px" append-to-body>
       <el-table :data="contractFiles" border size="mini" empty-text="暂无合同附件">
@@ -591,6 +577,8 @@ import { legacyMediaUrl } from '@/utils/legacyMedia'
 import CustomerPicker from '@/components/sales/CustomerPicker.vue'
 import WarehouseManagerPicker from '@/components/master/WarehouseManagerPicker.vue'
 import SalesCarrierPicker from '@/components/sales/SalesCarrierPicker.vue'
+import SystemRecordPicker from '@/components/system/SystemRecordPicker.vue'
+import { listUsers } from '@/api/erp/rbac'
 import { getSalesOrder, saveSalesOrder, confirmSalesOrder, getSalesOrderOptions, uploadSalesOrderAttachment, deleteSalesOrderAttachment, downloadSalesOrderAttachment, previewSalesOrderEditImpact, submitSalesOrderEditImpact, updateSalesOrderAgreedDeposit } from '@/api/erp/sales'
 import { reserveForCreatePage, clearCreatePageReservation } from '@/utils/documentNumberReservation'
 
@@ -640,7 +628,7 @@ const emptyLine = () => ({
 
 export default {
   mixins: [cachedPageRoute],
-  components: { ProductSkuPicker, CustomerPicker, WarehouseManagerPicker, SalesCarrierPicker, SalesOrderAttachmentPreviewDialog, OrderEditImpactDialog },
+  components: { ProductSkuPicker, CustomerPicker, WarehouseManagerPicker, SalesCarrierPicker, SystemRecordPicker, SalesOrderAttachmentPreviewDialog, OrderEditImpactDialog },
   data: () => ({
     selectedLine: null,
     salesUserPickerVisible: false,
@@ -652,7 +640,7 @@ export default {
     fileCategory: '设计图纸',
     customerRawText: '',
     shareDialogVisible: false,
-    shareKeyword: '',
+    shareDepartments: [],
     contractDialogVisible: false,
     previewVisible: false,
     previewFile: null,
@@ -821,13 +809,19 @@ export default {
       const lineOk = !this.form.lines.some(line => this.lineAttributeMessage(line) || this.lineCustomizationMessage(line))
       return { requiredOk, lineOk }
     },
-    filteredShareUserOptions() {
-      const keyword = String(this.shareKeyword || '').trim().toLowerCase()
-      if (!keyword) return this.shareUserOptions
-      return this.shareUserOptions.filter(item => {
-        return [item.nickname, item.username, item.department_name, item.role_name]
-          .some(value => String(value || '').toLowerCase().includes(keyword))
+    selectedShareUsers() {
+      return this.form.share_user.map(id => this.shareUserOptions.find(user => String(user.id) === String(id)) || { id, nickname: String(id) })
+    },
+    shareDepartmentTree() {
+      const nodes = this.shareDepartments.map(department => ({ ...department, category_name: department.name, children: [] }))
+      const byId = new Map(nodes.map(department => [Number(department.id), department]))
+      const roots = []
+      nodes.forEach(department => {
+        const parent = byId.get(Number(department.parent_id))
+        if (parent && parent !== department) parent.children.push(department)
+        else roots.push(department)
       })
+      return roots
     },
     contractFiles() {
       return (this.form.contract_attachment_snapshot && this.form.contract_attachment_snapshot.files) || []
@@ -932,7 +926,6 @@ export default {
         this.fundingPolicyOptions = data.funding_policies || []
         this.salesChannelOptions = data.sales_channels || []
         this.platformRawOptions = data.platforms || []
-        this.shareUserOptions = data.share_users || []
       } catch (error) {
         this.$message.warning('销售订单基础选项加载失败，请检查新系统基础数据配置')
       }
@@ -942,6 +935,12 @@ export default {
       const { data: responseOrder } = await getSalesOrder(this.pageRoute.params.id)
       const data = withoutInternalFreight(responseOrder)
       this.editOrderMeta = data
+      if (data.read_only) {
+        this.$message.warning('当前订单仅可查看')
+        this.$router.replace(`/sales/orders/${data.id}/detail`)
+        return false
+      }
+      this.shareUserOptions = (data.share_users || []).map(user => ({ id: String(user.user_id), nickname: user.display_name }))
       this.form = {
         ...withoutInternalFreight(this.form),
         ...data,
@@ -1313,6 +1312,16 @@ export default {
     },
     openShareDialog() {
       this.shareDialogVisible = true
+    },
+    async loadShareUsers(params) {
+      const { category_id: departmentId, ...filters } = params
+      const response = await listUsers({ ...filters, scope: 'sales_share', department_id: departmentId || undefined, include_departments: this.shareDepartments.length ? undefined : 1 })
+      if (response.data.departments) this.shareDepartments = response.data.departments
+      return response
+    },
+    selectShareUsers(users) {
+      this.shareUserOptions = users
+      this.form.share_user = users.map(user => String(user.id))
     },
     removeShareUser(id) {
       this.form.share_user = this.form.share_user.filter(item => String(item) !== String(id))

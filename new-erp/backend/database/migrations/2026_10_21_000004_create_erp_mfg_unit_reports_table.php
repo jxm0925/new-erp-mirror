@@ -29,6 +29,8 @@ CREATE TABLE `erp_mfg_unit_reports` (
   `reason_tags` json DEFAULT NULL,
   `reason` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `photos` json DEFAULT NULL,
+  `media` json DEFAULT NULL,
+  `submission_key` varchar(40) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `participants_snapshot` json DEFAULT NULL,
   `reporter_legacy_id` bigint(20) unsigned DEFAULT NULL,
   `reporter_name` varchar(120) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
@@ -45,6 +47,7 @@ CREATE TABLE `erp_mfg_unit_reports` (
   KEY `mfg_report_wo_idx` (`work_order_id`,`id`),
   KEY `mfg_report_review_idx` (`review_status`),
   KEY `mfg_report_created_idx` (`created_at`),
+  KEY `idx_mfg_unit_reports_submission_key` (`submission_key`),
   CONSTRAINT `mfg_report_unit_fk` FOREIGN KEY (`unit_id`) REFERENCES `erp_mfg_work_order_units` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 SQL;

@@ -3,21 +3,21 @@ const request = require('../utils/erp-request');
 const base = 'production';
 const get = (path, query) => request.request({ path: `${base}/${path}`, query: query || {}, loading: false });
 
-function uploadPhoto(filePath) {
+function uploadPhoto(filePath, media = false) {
   const token = wx.getStorageSync(request.ERP_TOKEN_KEY);
   return new Promise((resolve, reject) => {
     wx.uploadFile({
-      url: request.buildUrl(`${base}/tasks/photos`),
+      url: request.buildUrl(`${base}/tasks/${media ? "media" : "photos"}`),
       filePath,
       name: 'file',
       header: Object.assign({ Accept: 'application/json' }, token ? { Authorization: `Bearer ${token}` } : {}),
       success(response) {
         let body = {};
         try { body = typeof response.data === 'string' ? JSON.parse(response.data) : (response.data || {}); } catch (_) { body = {}; }
-        if (response.statusCode >= 200 && response.statusCode < 300 && body.data && body.data.url) resolve(body.data.url);
-        else reject(new Error(body.message || '照片上传失败，请重试'));
+        if (response.statusCode >= 200 && response.statusCode < 300 && body.data && body.data.url) resolve(media ? body.data : body.data.url);
+        else reject(new Error(body.message || '影像上传失败，请重试'));
       },
-      fail(error) { reject(new Error(error.errMsg || '网络连接失败，照片没传上去')); },
+      fail(error) { reject(new Error(error.errMsg || '网络连接失败，影像没传上去')); },
     });
   });
 }
@@ -58,4 +58,5 @@ module.exports = {
   cuttingRunAction: (id, payload) => request.write(`${base}/cutting-runs/${Number(id)}/actions`, payload, { loading: true, commandPrefix: 'run' }),
   deliveryAction: (id, action, payload) => request.write(`${base}/material-deliveries/${Number(id)}/${action}`, payload || {}, { loading: true, commandPrefix: 'delivery' }),
   uploadPhoto,
+  uploadMedia: filePath => uploadPhoto(filePath, true),
 };

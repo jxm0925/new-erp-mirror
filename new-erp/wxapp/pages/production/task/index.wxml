@@ -300,14 +300,7 @@
         <text wx:for="{{task.reason_tags}}" wx:key="*this" class="tk-chip {{reject.tags[item] ? 'on' : ''}}" data-tag="{{item}}" bindtap="toggleTag">{{item}}</text>
       </view>
       <textarea class="tk-textarea" value="{{reject.reason}}" maxlength="500" placeholder="填写不良情况说明（选填）" bindinput="reasonInput" />
-      <view class="mt-card-title mt-gap"><text>现场照片 <text class="mt-muted">{{reject.mode === 'scrap' && !task.scrap_review.needs_review ? '（报废直接生效，至少上传 1 张）' : '（选填）'}}</text></text></view>
-      <view class="tk-photos">
-        <view wx:for="{{reject.photos}}" wx:key="url" class="tk-photo">
-          <image src="{{item.path}}" mode="aspectFill" data-index="{{index}}" bindtap="previewPhoto" />
-          <text class="tk-photo-x" data-index="{{index}}" catchtap="removePhoto">×</text>
-        </view>
-        <view wx:if="{{reject.photos.length < 9}}" class="tk-photo add" bindtap="addPhoto">{{uploading ? '…' : '+'}}</view>
-      </view>
+      <production-media value="{{reject.media}}" label="{{reject.mode === 'scrap' && !task.scrap_review.needs_review ? '现场影像（至少 1 张照片，可附视频）' : '现场图片 / 视频（选填）'}}" bind:change="rejectMediaChanged" bind:busy="mediaBusy" bind:activity="mediaActivity" />
       <view class="mt-muted mt-gap">{{reject.mode === 'scrap' ? (task.scrap_review.needs_review ? '提交后由 ' + task.scrap_review.reviewers + ' 在「待审核」中审批；审批通过前单件保留在本工序。' : '当前无需审批（或您具备审批权限），提交后直接生效报废。') : '退回目标工序后将生成返工任务并默认指派给原工序接单人；返工独立统计工时，不计入计件提成。'}}</view>
     </scroll-view>
     <view class="tk-sheet-foot">
@@ -474,15 +467,9 @@
             </block>
           </block>
         </block>
-        <block wx:if="{{returnForm.planAction === 'scrap'}}">
-          <view class="mt-card-title mt-gap"><text>现场照片 <text class="mt-muted">{{returnForm.planNeedsReview ? '（选填）' : '（直接生效，至少上传 1 张）'}}</text></text></view>
-          <view class="tk-photos">
-            <view wx:for="{{returnForm.planPhotos}}" wx:key="url" class="tk-photo">
-              <image src="{{item.path}}" mode="aspectFill" />
-              <text class="tk-photo-x" data-index="{{index}}" catchtap="removePlanPhoto">×</text>
-            </view>
-            <view wx:if="{{returnForm.planPhotos.length < 9}}" class="tk-photo add" bindtap="addPlanPhoto">{{uploading ? '…' : '+'}}</view>
-          </view>
+        <block wx:if="{{returnForm.planAction}}">
+          <view wx:if="{{returnForm.planAction === 'scrap' && !returnForm.planNeedsReview}}" class="mt-muted mt-gap">报废直接生效，至少上传 1 张照片</view>
+          <production-media value="{{returnForm.planMedia}}" label="处置图片 / 视频（选填）" bind:change="planMediaChanged" bind:busy="mediaBusy" bind:activity="mediaActivity" />
         </block>
         <view wx:if="{{returnForm.planAction}}" class="mt-muted mt-gap">{{returnForm.planNeedsReview ? '提交后由 ' + returnForm.planReviewers + ' 在小程序「待审核」中审批。' : '当前无需审批（或您具备审批权限），提交后直接生效。'}}</view>
       </block>
@@ -496,4 +483,4 @@
     </view>
   </view>
 </view>
-<production-dialog id="prodDialog" />
+<production-dialog id="prodDialog" bind:activity="mediaActivity" />

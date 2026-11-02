@@ -34,7 +34,7 @@ final class WarehouseDocumentService
             if ($document->return_status === 'pending_outbound' && $document->audit_status === 'approved' && $document->stock_post_status === 'pending') $actions = ['purchase_return.post'];
             $receipt = $this->transaction('purchase_return', $id);
         } elseif ($kind === 'sales_shipment' || $kind === 'sales_return') {
-            $orders = SalesOrder::query()->select('id'); app(SalesOrderVisibilityService::class)->apply($orders, $user);
+            $orders = SalesOrder::query()->select('id'); app(SalesOrderVisibilityService::class)->apply($orders, $user, true);
             if ($kind === 'sales_shipment') {
                 $document = SalesShipment::with(['order'])->whereIn('sales_order_id', $orders)->findOrFail($id);
                 $lines = $document->lines()->with(['orderLine.item.unit', 'reservation.balance.warehouse', 'reservation.balance.location']);
@@ -66,6 +66,13 @@ final class WarehouseDocumentService
                 $receipt = $this->transaction('sales_return_receipt', $id);
             }
         }
+        if ($actions && str_starts_with($kind, 'sales_')) {
+            $orderId = $kind === 'sales_return' && ($filters['stage'] ?? 'post') !== 'receive'
+                ? $document->salesReturn->sales_order_id : $document->sales_order_id;
+            $writable = SalesOrder::query()->whereKey($orderId);
+            app(SalesOrderVisibilityService::class)->apply($writable, $user);
+            if (! $writable->exists()) $actions = [];
+        }
         $header = $document->toArray(); unset($header['items'], $header['lines'], $header['packages']);
         $linePage = $lines->orderBy('id')->paginate($size, ['*'], 'page', $page);
         $linePage->getCollection()->transform(function ($line) use ($kind, $filters) {
@@ -92,10 +99,10 @@ final class WarehouseDocumentService
         $response = ['kind' => $kind, 'header' => $header, 'lines' => $linePage->toArray(),
             'actions' => $this->allowed($actions, $permissions), 'receipt' => $receipt] + $extra;
         if (str_starts_with($kind, 'sales_')) {
-            // Sales amount permission authorizes customer prices, never internal costs.
-            $response = app(SalesCostVisibilityService::class)->redact($response);
+            $inventoryAmounts = in_array('inventory.amount.view', $permissions, true);
+            if (! $inventoryAmounts) $response = app(InventoryAmountVisibilityService::class)->redact($response, false, false, false, false, true);
             if (! $super && ! in_array('sales_order.amount.view', $permissions, true)) {
-                $response = app(SalesAmountVisibilityService::class)->redact($response);
+                $response = app(SalesAmountVisibilityService::class)->redact($response, $inventoryAmounts);
             }
         }
         return $response;

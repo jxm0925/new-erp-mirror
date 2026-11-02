@@ -1,6 +1,6 @@
 Component({
   data: {
-    open: false,
+    open: false, mediaEnabled: false, media: [], mediaBusy: false,
     mode: 'confirm', // 'confirm' | 'completion' | 'stepper' | 'input'
     theme: 'default', // 'default' | 'warn' | 'danger'
     title: '',
@@ -53,7 +53,7 @@ Component({
       const mode = options.mode || (options.editable ? 'input' : 'confirm');
       const handoffAvailable = options.handoffAvailable !== false;
       this.setData({
-        open: true,
+        open: true, mediaEnabled: Boolean(options.mediaEnabled), media: options.media || [], mediaBusy: false,
         mode,
         theme,
         title: options.title || '提示',
@@ -122,13 +122,17 @@ Component({
     onMaskTap() {
       if (this.data.showCancel) this.cancel();
     },
+    mediaChanged(event) { this.setData({ media: event.detail.value }); },
+    mediaBusy(event) { this.setData({ mediaBusy: event.detail.busy }); },
     cancel() {
+      if (this.data.mediaBusy) return;
       const cb = this._callbacks && this._callbacks.success;
       this._callbacks = null;
       this.setData({ open: false });
       if (cb) cb({ confirm: false, cancel: true, content: '' });
     },
     confirm() {
+      if (this.data.mediaBusy) return;
       if (this.data.mode === 'stepper') {
         const qty = parseInt(String(this.data.qty || '').trim(), 10);
         if (!(qty >= this.data.minQty)) {
@@ -142,7 +146,7 @@ Component({
         const cb = this._callbacks && this._callbacks.success;
         this._callbacks = null;
         this.setData({ open: false });
-        if (cb) cb({ confirm: true, cancel: false, qty, content: String(qty) });
+        if (cb) cb({ confirm: true, cancel: false, media: this.data.media, qty, content: String(qty) });
         return;
       }
       if (this.data.mode === 'input') {
@@ -154,7 +158,7 @@ Component({
         const cb = this._callbacks && this._callbacks.success;
         this._callbacks = null;
         this.setData({ open: false });
-        if (cb) cb({ confirm: true, cancel: false, content: text });
+        if (cb) cb({ confirm: true, cancel: false, media: this.data.media, content: text });
         return;
       }
       if (this.data.mode === 'completion') {
@@ -166,13 +170,13 @@ Component({
         const cb = this._callbacks && this._callbacks.success;
         this._callbacks = null;
         this.setData({ open: false });
-        if (cb) cb({ confirm: true, cancel: false, choice });
+        if (cb) cb({ confirm: true, cancel: false, media: this.data.media, choice });
         return;
       }
       const cb = this._callbacks && this._callbacks.success;
       this._callbacks = null;
       this.setData({ open: false });
-      if (cb) cb({ confirm: true, cancel: false, content: '' });
+      if (cb) cb({ confirm: true, cancel: false, media: this.data.media, content: '' });
     },
     stop() {},
   },

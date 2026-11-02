@@ -25,6 +25,7 @@ CREATE TABLE `erp_shipment_serial_results` (
   `inspected_by_legacy_id` bigint unsigned DEFAULT NULL,
   `inspected_at` timestamp NULL DEFAULT NULL,
   `reason` varchar(500) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `media` json DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT NULL,
   `updated_at` timestamp NULL DEFAULT NULL,
   PRIMARY KEY (`id`),

@@ -1,6 +1,6 @@
 <!--
 Design reference: D:\codex-introduce\new_erp\docs\ui-reference\phase6\phase6-order-detail-one-page-design.png
-Design status: 新增“订单阶段提示条”（基础档案风格），其余布局保持，待用户确认。
+Progress design: 用户确认的订单产品树、单台整链路与工单聚合视图。
 -->
 <template>
   <section class="sales-detail-page">
@@ -40,17 +40,6 @@ Design status: 新增“订单阶段提示条”（基础档案风格），其�
         <el-button v-if="order.allowed_actions && order.allowed_actions.delete_draft" size="small" type="danger" plain icon="el-icon-delete" @click="deleteDraft">删除草稿</el-button>
       </div>
     </div>
-
-    <!-- 订单阶段提示：让销售知道现在能不能直接修改，以及下一步该做什么 -->
-    <div v-if="stageTip" :class="['erp-page-tip', `tip-${stageTip.type}`]">
-      <i :class="stageTip.icon" />
-      <span>{{ stageTip.text }}</span>
-    </div>
-
-    <!-- 状态与预警提示 -->
-    <el-alert v-if="order.order_status === 'confirmed' && order.change_eligibility && !order.change_eligibility.allowed" class="change-block-alert" type="warning" :closable="false" show-icon :title="`当前订单不能原地变更：${order.change_eligibility.reason}`" />
-    <el-alert v-if="$route.query.changed" class="change-success-alert" type="success" :closable="false" show-icon title="订单已变更，请重新安排备货或进行订单生产确认。" />
-    <el-alert v-if="order.pending_change_candidate" class="change-success-alert" type="warning" :closable="false" show-icon :title="`存在待审核 Candidate V${order.pending_change_candidate.candidate_version}：正式订单、库存预留以及生产和交付安排尚未变化。`" />
 
     <!-- 调整优先级 -->
     <el-dialog title="调整订单优先级" :visible.sync="priority.visible" width="min(460px, calc(100vw - 32px))" :close-on-click-modal="false">
@@ -119,6 +108,21 @@ Design status: 新增“订单阶段提示条”（基础档案风格），其�
         <el-button type="warning" :disabled="!shortClose.preview || !shortClose.preview.can_close" :loading="shortClose.saving" @click="confirmShortClose">确认短交关闭</el-button>
       </span>
     </el-dialog>
+
+    <div ref="tabSection" class="detail-card tracking-console-card" :class="{ 'tracking-console-card--production': activeTab === 'production' }">
+      <el-tabs v-model="activeTab" class="tracking-tabs">
+        <el-tab-pane name="info">
+          <span slot="label"><i class="el-icon-document" /> 订单信息</span>
+    <!-- 订单阶段提示：让销售知道现在能不能直接修改，以及下一步该做什么 -->
+    <div v-if="stageTip" :class="['erp-page-tip', `tip-${stageTip.type}`]">
+      <i :class="stageTip.icon" />
+      <span>{{ stageTip.text }}</span>
+    </div>
+
+    <!-- 状态与预警提示 -->
+    <el-alert v-if="order.order_status === 'confirmed' && order.change_eligibility && !order.change_eligibility.allowed" class="change-block-alert" type="warning" :closable="false" show-icon :title="`当前订单不能原地变更：${order.change_eligibility.reason}`" />
+    <el-alert v-if="$route.query.changed" class="change-success-alert" type="success" :closable="false" show-icon title="订单已变更，请重新安排备货或进行订单生产确认。" />
+    <el-alert v-if="order.pending_change_candidate" class="change-success-alert" type="warning" :closable="false" show-icon :title="`存在待审核 Candidate V${order.pending_change_candidate.candidate_version}：正式订单、库存预留以及生产和交付安排尚未变化。`" />
 
     <!-- 核心业务指标看板 (KPI Strip) -->
     <div class="kpi-metric-strip">
@@ -386,14 +390,13 @@ Design status: 新增“订单阶段提示条”（基础档案风格），其�
       </div>
     </section>
 
-    <!-- 下方业务追踪与审计中心 (Tab 控制台整合散落与空态卡片) -->
-    <div ref="tabSection" class="detail-card tracking-console-card">
-      <el-tabs v-model="activeTab" class="tracking-tabs">
-        <el-tab-pane v-if="order.production_confirm_status === 'confirmed'" name="production">
-          <span slot="label"><i class="el-icon-s-order" /> 生产进度 <span v-if="workOrders.length" class="tab-badge-num">{{ workOrders.length }}</span></span>
-          <div class="tab-pane-content">
+        </el-tab-pane>
+        <el-tab-pane v-if="$can('sales_order.view')" name="production">
+          <span slot="label"><i class="el-icon-s-order" /> 生产与发货进度</span>
+          <order-progress v-if="activeTab === 'production' && order.id" ref="orderProgress" :order-id="order.id" @show-work-orders="loadWorkOrders(loadSequence)">
+            <template slot="work-orders">
             <el-table v-loading="workOrderLoading" :data="workOrders" size="small" border empty-text="这张订单没有生产工单（全部用库存、外购或服务）">
-              <el-table-column label="工单号" min-width="150"><template slot-scope="{ row }"><el-button type="text" class="font-mono" :disabled="!$can('production.work_order.view')" @click="$router.push(`/production/work-orders/${row.id}`)">{{ row.work_order_no }}</el-button></template></el-table-column>
+              <el-table-column v-if="$can('production.work_order.view')" label="工单号" min-width="150"><template slot-scope="{ row }"><el-button type="text" class="font-mono" :disabled="!$can('production.work_order.view')" @click="$router.push(`/production/work-orders/${row.id}`)">{{ row.work_order_no }}</el-button></template></el-table-column>
               <el-table-column label="行号" width="56" align="center"><template slot-scope="{ row }">{{ row.sales_order_line_no || '-' }}</template></el-table-column>
               <el-table-column label="产品" min-width="160"><template slot-scope="{ row }">{{ row.product_name || row.item_name }} × {{ Number(row.planned_qty) }} {{ row.unit_name || '' }}</template></el-table-column>
               <el-table-column label="状态" width="90"><template slot-scope="{ row }"><el-tag size="mini" :type="row.status === 'cancelled' ? 'info' : (row.status === 'paused' ? 'warning' : 'success')">{{ row.status_label }}</el-tag></template></el-table-column>
@@ -401,13 +404,14 @@ Design status: 新增“订单阶段提示条”（基础档案风格），其�
               <el-table-column label="计划完工" width="100"><template slot-scope="{ row }">{{ row.planned_finish_date || '-' }}</template></el-table-column>
               <el-table-column label="卡点" min-width="150"><template slot-scope="{ row }"><span :class="row.stuck_reason ? 'wo-stuck' : ''">{{ row.stuck_reason || '正常' }}</span></template></el-table-column>
             </el-table>
-          </div>
+            </template>
+          </order-progress>
         </el-tab-pane>
         <el-tab-pane v-if="canViewInvoice" name="invoice">
           <span slot="label"><i class="el-icon-tickets" /> 开票 <span v-if="invoicePendingCount" class="tab-badge-num">{{ invoicePendingCount }}</span></span>
           <div class="tab-pane-content"><sales-order-invoice-panel v-if="order.id" ref="invoicePanel" :order-id="order.id" @loaded="onInvoiceLoaded" /></div>
         </el-tab-pane>
-        <el-tab-pane v-if="$can('sales_order.view') && $can('sales_order.amount.view') && $can('finance.view')" label="采购关联" name="finance">
+        <el-tab-pane v-if="$can('sales_order.view') && $can('finance.view')" label="采购关联" name="finance">
           <div class="tab-pane-content"><sales-order-finance-panel v-if="activeTab === 'finance' && order.id" :order-id="order.id" /></div>
         </el-tab-pane>
         <!-- Tab 2: 合同附件与图纸技术资料 -->
@@ -623,16 +627,17 @@ import { confirmSalesOrder, formalConfirmSalesOrder, cancelSalesOrder, previewSh
 import SalesOrderAttachmentPreviewDialog from '@/components/sales/SalesOrderAttachmentPreviewDialog.vue'
 import SalesOrderFinancePanel from '@/components/sales/SalesOrderFinancePanel.vue'
 import SalesOrderInvoicePanel from '@/components/sales/SalesOrderInvoicePanel.vue'
+import OrderProgress from './components/OrderProgress.vue'
 import { promptAgreedDeposit } from '@/utils/salesAgreedDeposit'
 import { statusTag, statusText, shipmentStatusText, orderStatusText, orderStatusTag } from '@/utils/erpStatus'
 import { listSalesOrderWorkOrders } from '@/api/erp/production'
 
 export default {
   mixins: [cachedPageRoute],
-  components: { SalesOrderAttachmentPreviewDialog, SalesOrderFinancePanel, SalesOrderInvoicePanel },
+  components: { SalesOrderAttachmentPreviewDialog, SalesOrderFinancePanel, SalesOrderInvoicePanel, OrderProgress },
   data: () => ({
     invoicePendingCount: 0,
-    activeTab: 'attachments',
+    activeTab: 'info',
     order: {},
     workOrders: [],
     workOrderLoading: false,
@@ -656,7 +661,7 @@ export default {
     loadSequence: 0
   }),
   computed: {
-    canViewInvoice() { return this.$can('sales_order.view') && this.$can('sales_order.amount.view') },
+    canViewInvoice() { return this.$can('sales_order.view') },
     canRequestInvoice() { return this.canViewInvoice && this.$can('sales_order.invoice_request') && ['confirmed', 'closed'].includes(this.order.order_status) && !!this.order.customer_id },
     canShortClose() {
       if (this.order.order_status !== 'confirmed' || this.order.short_closed_at || !this.$can('sales_order.short_close')) return false
@@ -754,12 +759,13 @@ export default {
       const { data } = await getSalesOrder(id)
       if (sequence !== this.loadSequence) return
       this.order = data
+      const progress = this.$refs.orderProgress
+      if (progress && progress.orderId === data.id) progress.loadTree()
       let actor = 0
       try { actor = JSON.parse(localStorage.getItem('erp_user') || '{}').legacy_id || 0 } catch (_) { /* Local profile unavailable. */ }
       this.inventoryLockStorageKey = `erp_pending_sales_inventory_lock_${actor}_${id}`
       try { this.inventoryLockPending = JSON.parse(localStorage.getItem(this.inventoryLockStorageKey) || 'null') } catch (_) { this.inventoryLockPending = null }
       await this.loadChanges(1)
-      this.loadWorkOrders(sequence)
       if (this.$route.query.tab === 'production') {
         this.activeTab = 'production'
       } else if (this.$route.query.tab === 'logs') {
@@ -772,7 +778,7 @@ export default {
     },
     async loadWorkOrders(sequence) {
       this.workOrders = []
-      if (this.order.production_confirm_status !== 'confirmed' || !(this.$can('sales_order.view') || this.$can('production.work_order.view'))) return
+      if (!this.$can('sales_order.view')) return
       this.workOrderLoading = true
       try {
         const { data } = await listSalesOrderWorkOrders(this.order.id)
@@ -1628,6 +1634,20 @@ export default {
 .tracking-console-card {
   padding: 6px 16px 16px;
   scroll-margin-top: 12px;
+}
+
+.tracking-console-card--production {
+  background: transparent;
+  padding: 0;
+  border: 0;
+  box-shadow: none;
+}
+
+.tracking-console-card--production > .tracking-tabs > :deep(.el-tabs__header) {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 5px;
+  padding: 0 16px;
 }
 
 .tracking-tabs :deep(.el-tabs__header) {

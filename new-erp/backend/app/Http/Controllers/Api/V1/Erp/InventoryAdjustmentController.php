@@ -48,7 +48,8 @@ class InventoryAdjustmentController extends Controller
     {
         $user = $this->authorizePermission($request, 'inventory.adjustment.create');
         $payload = $this->validatePayload($request);
-        return response()->json(['message' => '调整单已保存', 'data' => $service->save($payload, null, (int) $user->legacy_id)], 201);
+        return response()->json(['message' => '调整单已保存', 'data' => $service->save($payload, null, (int) $user->legacy_id,
+            app(\App\Services\Erp\InventoryAmountVisibilityService::class)->canView($request))], 201);
     }
 
     public function generateSerials(Request $request, InventorySerialApplicationService $serials)
@@ -74,7 +75,8 @@ class InventoryAdjustmentController extends Controller
     {
         $user = $this->authorizePermission($request, 'inventory.adjustment.create');
         $payload = $this->validatePayload($request);
-        return response()->json(['message' => '调整单已更新', 'data' => $service->save($payload, $id, (int) $user->legacy_id)]);
+        return response()->json(['message' => '调整单已更新', 'data' => $service->save($payload, $id, (int) $user->legacy_id,
+            app(\App\Services\Erp\InventoryAmountVisibilityService::class)->canView($request))]);
     }
 
     public function submit(Request $request, int $id, InventoryAdjustmentApplicationService $service)
@@ -123,6 +125,7 @@ class InventoryAdjustmentController extends Controller
             'items.*.serial_entries.*.serial_no' => 'required|string|max:120',
             'items.*.serial_entries.*.source' => 'nullable|in:manual,system,supplier',
             'items.*.physical_entries' => 'nullable|array|max:500',
+            'items.*.physical_entries.*.id' => 'nullable|integer|min:1|distinct',
             'items.*.physical_entries.*.physical_material_id' => 'nullable|integer|distinct|exists:erp_material_physicals,id',
             'items.*.physical_entries.*.dimensions' => 'nullable|array',
             'items.*.physical_entries.*.dimensions.length_mm' => ['nullable', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],

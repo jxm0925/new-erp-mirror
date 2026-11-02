@@ -41,6 +41,7 @@ CREATE TABLE `erp_shipment_packing_operations` (
   `inspected_by_legacy_id` bigint(20) unsigned DEFAULT NULL,
   `inspected_at` timestamp NULL DEFAULT NULL,
   `inspection_remark` varchar(500) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `media` json DEFAULT NULL,
   `status` varchar(30) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'WAITING',
   `owner_legacy_id` bigint(20) unsigned DEFAULT NULL,
   `claimed_at` timestamp NULL DEFAULT NULL,

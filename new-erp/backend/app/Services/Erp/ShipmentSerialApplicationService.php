@@ -4,6 +4,7 @@ namespace App\Services\Erp;
 
 use App\Services\Erp\Inventory\SalesInventoryPosting;
 use App\Models\Erp\{InventoryBalance, InventorySerial, InventorySerialEvent, Location, MfgWorkOrder, MfgWorkOrderOperation, MfgWorkOrderUnit, SalesShipment, SalesShipmentLine, ShipmentPackingOperation, ShipmentRework};
+use App\Models\Erp\ShipmentSerialResult;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -36,7 +37,7 @@ final class ShipmentSerialApplicationService
         return $page->toArray();
     }
 
-    public function failSerial(SalesShipmentLine $line, array $payload, object $actor): void
+    public function failSerial(SalesShipmentLine $line, array $payload, object $actor, ShipmentSerialResult $result, array $media): void
     {
         $ids = $line->serial_snapshot['inventory_serial_ids'] ?? [];
         if (count($ids) !== 1 || bccomp((string) $line->base_qty, '1', 8) !== 0 || $line->line_status !== 'prepared') $this->fail('只有本次待发的一台设备可以转返修。');
@@ -66,6 +67,7 @@ final class ShipmentSerialApplicationService
             'shipment_line_id' => $line->id, 'inventory_serial_id' => $ids[0], 'work_order_id' => $unit?->work_order_id,
             'unit_id' => $unit?->id, 'return_operation_id' => $target?->id, 'round' => (int) $line->quality_round,
             'reason' => $reason, 'status' => 'in_progress', 'created_by_legacy_id' => (int) $actor->legacy_id]);
+        $result->update(['media' => array_merge($result->media ?? [], $media)]);
     }
 
     public function repairReturn(SalesShipment $shipment, int $lineId, array $payload, object $actor): array

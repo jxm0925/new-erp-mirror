@@ -1,3 +1,6 @@
 {
-  "component": true
+  "component": true,
+  "usingComponents": {
+    "production-media": "/components/production-media/index"
+  }
 }

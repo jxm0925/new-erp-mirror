@@ -21,6 +21,7 @@ use App\Models\Erp\MfgWorkOrderOperation;
 use App\Models\Erp\MfgWorkOrderUnit;
 use App\Models\Erp\Warehouse;
 use App\Services\Erp\DocumentNumberService;
+use App\Services\Erp\ProductionMediaService;
 use App\Services\Erp\Inventory\ProductionInventoryPosting;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -242,6 +243,9 @@ final class MaterialReturnService
             'work_order_no' => $r->workOrder?->work_order_no, 'item_name' => $r->workOrder?->item_name, 'product_name' => $r->workOrder?->product_name,
             'operation_name' => $r->operation?->operation_name, 'return_type' => $r->return_type, 'return_type_label' => self::TYPES[$r->return_type] ?? $r->return_type,
             'status' => $r->status, 'status_label' => self::STATUS_LABELS[$r->status] ?? $r->status, 'reason' => $r->reason,
+            'disposition_plan' => $r->disposition_plan,
+            'media' => ProductionMediaService::forRead($r->disposition_plan['media'] ?? [], $r->disposition_plan['photos'] ?? []),
+            'plan_label' => self::PLAN_ACTIONS[$r->disposition_plan['action'] ?? ''] ?? '',
             'summary' => $groups->map(fn ($g) => $g['component_item_name'].' '.$this->num($g['qty']).($g['unit_name'] ?: '').($g['serial_nos'] ? '（'.implode('、', $g['serial_nos']).'）' : ''))->implode('；'),
             'target_location' => $r->target_location_id ? $place($r->target_location_id) : null,
             'cost_amount' => $amounts && $r->status === 'approved' ? (string) $r->cost_amount : null,
@@ -381,8 +385,9 @@ final class MaterialReturnService
         if (! isset(self::PLAN_ACTIONS[$action])) $this->fail('plan_invalid', '请选择处置方式：返工、报废或判定可用。');
         $needsReview = ProductionReviewers::needsReview($wo, $this->actorId($actor));
         $photos = array_values(array_slice(array_filter((array) ($input['photos'] ?? []), fn ($p) => is_string($p) && $p !== ''), 0, 9));
-        if ($action === 'scrap' && ! $needsReview && ! $photos) $this->fail('photo_required', '报废提交后直接生效，请至少拍 1 张照片。');
-        $plan = ['action' => $action, 'photos' => $photos, 'needs_review' => $needsReview, 'reviewers' => ProductionReviewers::names($wo)];
+        $media = app(ProductionMediaService::class)->normalize($input['media'] ?? [], $actor, 'disposition');
+        if ($action === 'scrap' && ! $needsReview && ! $photos && ! collect($media)->contains('type', 'image')) $this->fail('photo_required', '报废提交后直接生效，请至少拍 1 张照片。');
+        $plan = ['action' => $action, 'photos' => $photos, 'media' => $media, 'needs_review' => $needsReview, 'reviewers' => ProductionReviewers::names($wo)];
         $materials = collect($rows)->pluck('material_id')->unique();
         foreach ($materials as $materialId) {
             $item = Item::query()->find(collect($rows)->firstWhere('material_id', $materialId)['component_item_id']);

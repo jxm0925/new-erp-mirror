@@ -398,8 +398,11 @@ class ShipmentPackingApplicationService
             } elseif ($action === 'complete') {
                 $this->assertOwner($op, $actorId);
                 if ($op->status !== 'IN_PROGRESS') $this->fail('只有加工中的包装工序可以完成。');
+                $media = app(ProductionMediaService::class)->normalize($payload['media'] ?? [], $actor, 'complete');
+                $payload['media'] = $media;
+                $op->media = array_merge($op->media ?? [], $media);
                 if ($this->serialLines($op)->isNotEmpty()) {
-                    $this->completeSerials($op, $payload, $actor);
+                    $this->completeSerials($op, $payload, $actor, $media);
                 } else {
                 $currentQuantity = (string) $op->contents()->current()->sum('base_qty');
                 if (bccomp(CuttingDecimal::value($payload['completed_base_qty'] ?? '', 8, true), $currentQuantity, 8) !== 0) $this->fail('完成数量必须等于本工序仍有效的包裹产品数量；不足的产品不能随包裹发运。');
@@ -416,8 +419,11 @@ class ShipmentPackingApplicationService
                     'completed_base_qty' => $currentQuantity, 'completed_at' => $qualityRequired ? null : now()]);
                 }
             } elseif ($action === 'inspect') {
+                $media = app(ProductionMediaService::class)->normalize($payload['media'] ?? [], $actor, 'inspect');
+                $payload['media'] = $media;
+                $op->media = array_merge($op->media ?? [], $media);
                 if ($this->serialLines($op)->isNotEmpty()) {
-                    $this->inspectSerials($op, $payload, $actor);
+                    $this->inspectSerials($op, $payload, $actor, $media);
                 } else {
                 if ($op->status !== 'WAIT_QUALITY') $this->fail('该包装工序当前不处于待质检状态。');
                 $auth = app(AuthContextService::class);
@@ -570,7 +576,7 @@ class ShipmentPackingApplicationService
             'package_no' => $op->package?->package_no, 'operation_name' => $op->operation_name_snapshot,
             'is_public_snapshot' => (bool) $op->is_public_snapshot,
             'stage_name' => $op->stage_name_snapshot, 'sequence' => (int) $op->sequence, 'status' => $op->status,
-            'quality_result' => $op->quality_result,
+            'quality_result' => $op->quality_result, 'media' => $op->media ?? [],
             'shipment_operation_type' => $op->shipment_operation_type_snapshot,
             'serial_results' => $serialResults,
             'owner_legacy_id' => $op->owner_legacy_id ? (int) $op->owner_legacy_id : null,
@@ -653,7 +659,7 @@ class ShipmentPackingApplicationService
         return $lines;
     }
 
-    private function completeSerials(ShipmentPackingOperation $op, array $payload, object $actor): void
+    private function completeSerials(ShipmentPackingOperation $op, array $payload, object $actor, array $media): void
     {
         $lines = $this->selectedSerialLines($op, $payload);
         if (bccomp((string) ($payload['completed_base_qty'] ?? 0), (string) $lines->count(), 8) !== 0) $this->fail('本次完成数量必须等于所选设备数量。');
@@ -667,13 +673,14 @@ class ShipmentPackingApplicationService
             $result = ShipmentSerialResult::query()->where('operation_id', $op->id)->where('shipment_line_id', $line->id)->where('round', $line->quality_round)->lockForUpdate()->firstOrFail();
             if ($result->status !== 'waiting') $this->fail('所选设备已经登记过本轮成果，不能重复完成。');
             $quality = $op->shipment_operation_type_snapshot === 'water_test' || $op->quality_mode_snapshot !== 'none';
-            $result->update(['status' => $quality ? 'wait_quality' : 'completed', 'completed_by_legacy_id' => (int) $actor->legacy_id, 'completed_at' => now()]);
+            $result->update(['status' => $quality ? 'wait_quality' : 'completed', 'completed_by_legacy_id' => (int) $actor->legacy_id,
+                'completed_at' => now(), 'media' => array_merge($result->media ?? [], $media)]);
         }
         foreach ($op->laborSessions()->where('status', 'ACTIVE')->lockForUpdate()->get() as $session) $this->closeSession($session, 'COMPLETED');
         $op->fill(['status' => 'IN_PROGRESS']);
     }
 
-    private function inspectSerials(ShipmentPackingOperation $op, array $payload, object $actor): void
+    private function inspectSerials(ShipmentPackingOperation $op, array $payload, object $actor, array $media): void
     {
         $auth = app(AuthContextService::class);
         if (! $auth->isSuperAdmin($actor) && ! in_array('sales_order.shipment.packing.quality', $auth->permissionCodes($actor), true)) $this->fail('没有发货质检权限。');
@@ -681,7 +688,8 @@ class ShipmentPackingApplicationService
         foreach ($this->selectedSerialLines($op, $payload) as $line) {
             $result = ShipmentSerialResult::query()->where('operation_id', $op->id)->where('shipment_line_id', $line->id)->where('round', $line->quality_round)->lockForUpdate()->firstOrFail();
             if ($result->status !== 'wait_quality') $this->fail('所选设备尚未完成本轮作业或已质检，不能重复判定。');
-            if ($payload['result'] === 'failed') app(ShipmentSerialApplicationService::class)->failSerial($line, $payload, $actor);
+            if ($payload['result'] === 'failed') app(ShipmentSerialApplicationService::class)->failSerial($line, $payload, $actor, $result, $media);
+            else $result->media = array_merge($result->media ?? [], $media);
             $result->update(['status' => $payload['result'] === 'passed' ? 'completed' : 'failed', 'quality_result' => $payload['result'],
                 'inspected_by_legacy_id' => (int) $actor->legacy_id, 'inspected_at' => now(), 'reason' => $payload['reason'] ?? null]);
         }
@@ -735,7 +743,7 @@ class ShipmentPackingApplicationService
                     // 返修合格：有发货过账权限的人在这里点「返修合格返回」，设备回待发区重新试水
                     'can_repair_return' => $repair && $repair['state'] === 'wait_return' && $canReturn,
                     'round' => (int) $line->quality_round, 'status' => $row?->status === 'waiting' && $ready ? 'ready' : ($row?->status ?? 'waiting'),
-                    'quality_result' => $row?->quality_result,
+                    'quality_result' => $row?->quality_result, 'media' => $row?->media ?? [],
                     'requires_return_operation' => \App\Models\Erp\MfgWorkOrderUnit::query()->where('inventory_serial_id', $serial->id)->exists(),
                     'allowed_actions' => ['complete' => $ready && $row?->status === 'waiting' && (int) $op->owner_legacy_id === $actorId && $op->status === 'IN_PROGRESS',
                         'inspect' => $ready && $row?->status === 'wait_quality' && $quality]] + app(ShipmentSerialApplicationService::class)->stockLocationProjection($serial);

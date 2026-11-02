@@ -15,6 +15,13 @@ class ItemImportApplicationService
     public function create(array $row, ?string $batchScope = null, ?int $operatorId = null): Item
     {
         return DB::transaction(function () use ($row, $batchScope, $operatorId) {
+            if (! app(InventoryAmountVisibilityService::class)->canView()) {
+                foreach (['standard_cost', '标准成本', 'last_purchase_price', '最近采购价'] as $field) {
+                    if (isset($row[$field]) && $row[$field] !== '') {
+                        throw ValidationException::withMessages([$field => '导入库存成本需要查看库存金额与成本权限。']);
+                    }
+                }
+            }
             $scope = $this->validateScopeRow($row, $batchScope);
             $unit = $this->resolveUnit($row);
             $category = $this->resolveCategory($row, $scope);

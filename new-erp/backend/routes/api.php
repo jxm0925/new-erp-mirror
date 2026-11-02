@@ -381,6 +381,10 @@ Route::prefix('v1/erp/sales')->group(function () {
     Route::get('orders/attachments/{id}/download', [SalesOrderController::class, 'downloadAttachment'])->whereNumber('id');
     Route::delete('orders/attachments/{id}', [SalesOrderController::class, 'deleteDraftAttachment'])->whereNumber('id');
     Route::get('orders/{id}', [SalesOrderController::class, 'show'])->whereNumber('id');
+    Route::get('orders/{id}/progress/tree', [SalesOrderController::class, 'progressTree'])->whereNumber('id');
+    Route::get('orders/{id}/progress/lines/{lineId}/units', [SalesOrderController::class, 'progressUnits'])->whereNumber(['id', 'lineId']);
+    Route::get('orders/{id}/progress/lines/{lineId}/units/{unitId}', [SalesOrderController::class, 'progressUnit'])->whereNumber(['id', 'lineId'])->where('unitId', '(unit:[1-9][0-9]*|serial:[1-9][0-9]*|quantity)');
+    Route::get('orders/{id}/progress/work-orders/{woId}', [SalesOrderController::class, 'progressWorkOrder'])->whereNumber(['id', 'woId']);
     Route::put('orders/{id}', [SalesOrderController::class, 'updateDraft'])->whereNumber('id');
     Route::post('orders/{id}/edit-impact/preview', [SalesOrderController::class, 'previewEditImpact'])->whereNumber('id');
     Route::post('orders/{id}/edit-impact/submit', [SalesOrderController::class, 'submitEditImpact'])->whereNumber('id');
@@ -531,6 +535,7 @@ Route::prefix('v1/erp/production')->group(function () {
     // 车间报工、作业看板、成品入库、定制技术（第 2 阶段）
     Route::get('tasks', [MfgTaskController::class, 'index']);
     Route::post('tasks/photos', [MfgTaskController::class, 'photo']);
+    Route::post('tasks/media', [MfgTaskController::class, 'media']);
     Route::get('tasks/{id}', [MfgTaskController::class, 'show'])->whereNumber('id');
     Route::post('tasks/{id}/actions', [MfgTaskController::class, 'action'])->whereNumber('id');
     Route::get('tasks/{id}/people', [MfgTaskController::class, 'people'])->whereNumber('id');

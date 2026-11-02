@@ -20,9 +20,11 @@ class SalesInvoiceRequestController extends Controller
 
     public function orderIndex(Request $request, int $id)
     {
-        $user = $this->authorizeAll($request, ['sales_order.view', 'sales_order.amount.view']);
-        $data = $this->service->forOrder($this->visibleOrder($user, $id));
-        $data['can_create'] = $this->has($user, 'sales_order.invoice_request');
+        $user = $this->authorizeAll($request, ['sales_order.view']);
+        $data = $this->service->forOrder($this->visibleOrder($user, $id, true));
+        $writable = SalesOrder::query()->whereKey($id);
+        app(SalesOrderVisibilityService::class)->apply($writable, $user);
+        $data['can_create'] = $this->has($user, 'sales_order.invoice_request') && $writable->exists();
         return response()->json(['data' => $data]);
     }
 
@@ -60,8 +62,8 @@ class SalesInvoiceRequestController extends Controller
         $user = $this->currentUser($request);
         $row = SalesInvoiceRequest::query()->findOrFail($id);
         if (!$this->has($user, 'finance.invoice_request.view')) {
-            abort_unless($this->has($user, 'sales_order.view') && $this->has($user, 'sales_order.amount.view'), 403, '无权查看发票文件');
-            $this->visibleOrder($user, (int) $row->sales_order_id);
+            abort_unless($this->has($user, 'sales_order.view'), 403, '无权查看发票文件');
+            $this->visibleOrder($user, (int) $row->sales_order_id, true);
         }
         $file = FinanceAttachment::query()->where('document_type', 'finance_invoice')->where('document_id', $row->finance_invoice_id)
             ->where('status', 'active')->findOrFail($attachmentId);
@@ -111,10 +113,10 @@ class SalesInvoiceRequestController extends Controller
         return response()->json(['message' => '开票申请已驳回', 'data' => $this->service->payload($row)]);
     }
 
-    private function visibleOrder(object $user, int $id): SalesOrder
+    private function visibleOrder(object $user, int $id, bool $includeShared = false): SalesOrder
     {
         $query = SalesOrder::query();
-        app(SalesOrderVisibilityService::class)->apply($query, $user);
+        app(SalesOrderVisibilityService::class)->apply($query, $user, $includeShared);
         return $query->findOrFail($id);
     }
 

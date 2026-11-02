@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api\V1\Erp;
 use App\Exceptions\Erp\WorkOrderDomainException;
 use App\Http\Controllers\Controller;
 use App\Services\Erp\AuthContextService;
+use App\Services\Erp\BusinessStaffService;
+use App\Services\Erp\ProductionMediaService;
 use App\Services\Erp\Manufacturing\MaterialReturnService;
 use App\Services\Erp\Manufacturing\ReceiptService;
 use App\Services\Erp\Manufacturing\TaskQueryService;
@@ -13,6 +15,8 @@ use App\Services\Erp\Manufacturing\WorkOrderService;
 use App\Models\Erp\MfgWorkOrderOperation;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 /** 车间报工（小程序）、生产作业看板、报废确认、成品入库、工序“能做的人”。 */
@@ -90,6 +94,24 @@ class MfgTaskController extends Controller
         $file = $request->file('file');
         $path = $file->storeAs('erp/production/photos/'.date('Ymd'), Str::uuid().'.'.strtolower($file->getClientOriginalExtension() ?: 'jpg'), 'public');
         return response()->json(['data' => ['url' => self::publicUrl($request, $path), 'path' => $path]]);
+    }
+
+    public function media(Request $request, ProductionMediaService $media)
+    {
+        $auth = app(AuthContextService::class);
+        $user = $auth->currentUser($request);
+        if (! $user || ! empty($user->deleted_at)) throw new WorkOrderDomainException('unauthenticated', '请先登录 ERP。', 401);
+        $allowed = $auth->isSuperAdmin($user) || array_intersect(['production.task.execute', 'sales_order.shipment.packing.execute',
+            'sales_order.shipment.packing.quality'], $auth->permissionCodes($user));
+        if (! $allowed && Schema::hasTable(BusinessStaffService::TABLE)) {
+            // 业务身份独立于报工权限；只读识别，不能用会自动补档或缺表放行的 isActive。
+            $workers = DB::table('erp_legacy_admin_users')->where('legacy_id', $user->legacy_id)->whereNull('deleted_at');
+            app(BusinessStaffService::class)->applyActive($workers, 'production_worker');
+            $allowed = $workers->exists();
+        }
+        if (! $allowed) throw new WorkOrderDomainException('permission_denied', '仅生产工人或有生产、发货作业权限的员工可以上传影像。', 403);
+        $request->validate(['file' => 'required|file|max:102400']);
+        return response()->json(['data' => $media->upload($request->file('file'), $user)]);
     }
 
     public function board(Request $request, TaskQueryService $query)
@@ -175,7 +197,8 @@ class MfgTaskController extends Controller
 
     private function completionRules(): array
     {
-        return ['completion_action' => 'nullable|in:store,handoff', 'completion_location_id' => 'nullable|integer|min:1', 'handoff_operation_id' => 'nullable|integer|min:1'];
+        return ['completion_action' => 'nullable|in:store,handoff', 'completion_location_id' => 'nullable|integer|min:1', 'handoff_operation_id' => 'nullable|integer|min:1']
+            + ProductionMediaService::rules();
     }
 
     private function completionMessage(array $result, string $word): string
@@ -191,7 +214,7 @@ class MfgTaskController extends Controller
     {
         $data = $request->validate(['unit_ids' => 'required|array|min:1|max:1000', 'unit_ids.*' => 'integer|min:1', 'mode' => 'required|in:return,scrap',
             'return_operation_id' => 'required_if:mode,return|nullable|integer|min:1', 'reason_tags' => 'nullable|array|max:10', 'reason_tags.*' => 'string|max:30',
-            'reason' => 'nullable|string|max:500', 'photos' => 'nullable|array|max:9', 'photos.*' => 'string|max:1000']);
+            'reason' => 'nullable|string|max:500', 'photos' => 'nullable|array|max:9', 'photos.*' => 'string|max:1000'] + ProductionMediaService::rules());
         $result = $tasks->reject($id, $data['unit_ids'], $data, $user, $lane);
         $word = $this->unitWord($id);
         $paused = ! empty($result['timing_paused']) ? '本道暂时没有可做的，计时已自动暂停。' : '';

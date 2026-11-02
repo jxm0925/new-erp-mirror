@@ -23,15 +23,19 @@ Page({
   data: {
     id: 0, lane: '', task: null, loading: true, busy: false, error: '', selected: {}, selectedCount: 0, selectedCompletionCount: 0, clockText: '00:00:00',
     shareText: '', isImage: {}, panel: '', rejectCurrent: false, cutQty: 1, prepQty: 1, runPick: 0,
-    reject: { mode: 'return', returnId: 0, tags: {}, reason: '', photos: [] }, uploading: false,
+    reject: { mode: 'return', returnId: 0, tags: {}, reason: '', media: [] }, uploading: false,
     peopleKeyword: '', peopleRows: [], picked: [], shareMode: 'labor', ownerPercent: '', showMaterials: false, showSemiMaterials: false,
     completionLocatorOpen: false,
     returnForm: { types: [], type: 'surplus', rows: [], picked: {}, qty: {}, reason: '', hint: '',
-      planActions: [], planNeedsReview: false, planReviewers: '', planAction: '', planMaterial: 0, planStart: 0, planPhotos: [], hasMade: false },
+      planActions: [], planNeedsReview: false, planReviewers: '', planAction: '', planMaterial: 0, planStart: 0, planMedia: [], hasMade: false },
   },
   onLoad(options) { this.setData({ id: Number(options.id || 0), lane: options.lane === 'rework' ? 'rework' : (options.lane === 'normal' ? 'normal' : '') }); this.load(); },
-  onShow() { this.hidden = false; if (this.data.task) this.load(true); },
-  onHide() { this.hidden = true; this.stopClock(); this.closeCompletionLocator(); },
+  onShow() { this.hidden = false; if (this.mediaReturning) { this.mediaReturning = false; this.startClock(); return; } if (this.data.task) this.load(true); },
+  onHide() { this.hidden = true; this.stopClock(); if (this.mediaActive) this.mediaReturning = true; else this.closeCompletionLocator(); },
+  mediaActivity(event) { this.mediaActive = event.detail.active; },
+  mediaBusy(event) { this.setData({ uploading: event.detail.busy }); },
+  rejectMediaChanged(event) { this.setData({ 'reject.media': event.detail.value }); },
+  planMediaChanged(event) { this.setData({ 'returnForm.planMedia': event.detail.value }); },
   onUnload() { this.completionJob = null; this.stopClock(); this.sequence = (this.sequence || 0) + 1; },
   onPullDownRefresh() { this.load().finally(() => wx.stopPullDownRefresh()); },
   load(keepSelection) {
@@ -291,7 +295,7 @@ Page({
       this.returnOptions = d.materials || [];
       this.setData({ panel: 'return', returnForm: { types: d.types || [], type: 'surplus', rows: [], picked: {}, qty: {}, reason: '', hint: '',
         planActions: d.plan_actions || [], planNeedsReview: Boolean(d.plan_needs_review), planReviewers: d.plan_reviewers || '',
-        planAction: '', planMaterial: 0, planStart: 0, planPhotos: [], hasMade: false } });
+        planAction: '', planMaterial: 0, planStart: 0, planMedia: [], hasMade: false } });
       this.refreshReturnRows();
     }).catch(error => view.modal(this, { theme: 'warn', title: '读取可退物料失败', content: view.errorText(error), showCancel: false }));
   },
@@ -304,37 +308,18 @@ Page({
       return Object.assign({}, m, { specText: buildSpecText(m), serials, limitQty, limit: view.quantity(limitQty), showSerials: serials.length > 0, showQty: limitQty > 0 });
     }).filter(m => m.showSerials || m.showQty);
     this.setData({ 'returnForm.rows': rows, 'returnForm.picked': {}, 'returnForm.qty': {}, 'returnForm.hint': hints[type] || '',
-      'returnForm.hasMade': type === 'defective' && rows.some(r => r.made), 'returnForm.planAction': '', 'returnForm.planMaterial': 0, 'returnForm.planStart': 0, 'returnForm.planPhotos': [] });
+      'returnForm.hasMade': type === 'defective' && rows.some(r => r.made), 'returnForm.planAction': '', 'returnForm.planMaterial': 0, 'returnForm.planStart': 0, 'returnForm.planMedia': [] });
   },
   pickPlanAction(event) {
+    if (this.data.busy || this.data.uploading) return;
     const action = event.currentTarget.dataset.action;
     this.setData({ 'returnForm.planAction': this.data.returnForm.planAction === action ? '' : action, 'returnForm.planStart': 0, 'returnForm.planMaterial': 0 });
   },
   pickPlanStart(event) {
     this.setData({ 'returnForm.planMaterial': Number(event.currentTarget.dataset.material), 'returnForm.planStart': Number(event.currentTarget.dataset.seq) });
   },
-  addPlanPhoto() {
-    const left = 9 - this.data.returnForm.planPhotos.length;
-    if (left <= 0 || this.data.uploading) return;
-    wx.chooseMedia({ count: Math.min(left, 3), mediaType: ['image'], sourceType: ['camera', 'album'], sizeType: ['compressed'],
-      success: res => {
-        const files = (res.tempFiles || []).map(f => f.tempFilePath);
-        if (!files.length) return;
-        this.setData({ uploading: true });
-        wx.showLoading({ title: '上传照片…', mask: true });
-        files.reduce((chain, path) => chain.then(() => production.uploadPhoto(path).then(url => {
-          this.setData({ 'returnForm.planPhotos': this.data.returnForm.planPhotos.concat([{ path, url }]) });
-        })), Promise.resolve())
-          .catch(error => wx.showToast({ title: view.errorText(error), icon: 'none' }))
-          .finally(() => { wx.hideLoading(); this.setData({ uploading: false }); });
-      } });
-  },
-  removePlanPhoto(event) {
-    const photos = this.data.returnForm.planPhotos.slice();
-    photos.splice(Number(event.currentTarget.dataset.index), 1);
-    this.setData({ 'returnForm.planPhotos': photos });
-  },
   pickReturnType(event) {
+    if (this.data.busy || this.data.uploading) return;
     this.setData({ 'returnForm.type': event.currentTarget.dataset.type });
     this.refreshReturnRows();
   },
@@ -366,8 +351,8 @@ Page({
         if (!f.planStart) { wx.showToast({ title: '请选择返工起始工序', icon: 'none' }); return; }
         if (lines.length !== 1 || lines[0].material_id !== f.planMaterial) { wx.showToast({ title: '返工处置单次仅限退回一种半成品并与所选工序一致', icon: 'none' }); return; }
       }
-      if (f.planAction === 'scrap' && !f.planNeedsReview && !f.planPhotos.length) { wx.showToast({ title: '报废直接生效需至少上传 1 张现场照片', icon: 'none' }); return; }
-      plan = { action: f.planAction, start_sequence: f.planAction === 'rework' ? f.planStart : null, photos: f.planPhotos.map(p => p.url) };
+      if (f.planAction === 'scrap' && !f.planNeedsReview && !f.planMedia.some(item => item.type === 'image')) { wx.showToast({ title: '报废直接生效需至少上传 1 张现场照片', icon: 'none' }); return; }
+      plan = { action: f.planAction, start_sequence: f.planAction === 'rework' ? f.planStart : null, media: f.planMedia };
     }
     if (this.data.busy) return;
     this.setData({ busy: true });
@@ -435,6 +420,7 @@ Page({
     const next = task.completion ? null : task.progress.next_operation_name;
     const done = task.rework_of_work_order_no ? '返工完成并解冻回可用库存' : (task.shipment_repair ? '返修完成，待仓管返回成品位重新试水' : '工序完工待入库');
     view.modal(this, {
+      mediaEnabled: true,
       title: task.isRework ? '确认返工合格' : '确认完工报工',
       subtitle: '请核对本次完工设备数量与流转去向',
       kvRows: [
@@ -444,7 +430,7 @@ Page({
       ],
       cancelText: '返回核对',
       confirmText: '确认提交',
-      success: res => { if (res.confirm && !this.hidden && !this.data.loading && task === this.data.task) this.run({ action: 'pass', unit_ids: ids }); },
+      success: res => { if (res.confirm && !this.hidden && !this.data.loading && task === this.data.task) this.run({ action: 'pass', unit_ids: ids, media: res.media || [] }); },
     });
   },
 
@@ -456,6 +442,7 @@ Page({
     const next = task.progress.next_operation_name;
     view.modal(this, {
       mode: 'input',
+      mediaEnabled: true,
       title: '确认备料交接',
       infoMain: `本次备料：${ids.length} ${task.unitShort}`,
       infoSub: `流转去向：${task.completion ? '下一步选择完工流转去向' : (next ? '交接至' + next + '工序' : '完成本工序')}`,
@@ -463,7 +450,7 @@ Page({
       quickTags: ['批次齐套', '板材余料切出', '按单正常备料'],
       placeholderText: '备料备注（选填，如批次说明）',
       confirmText: '确认备料',
-      success: res => { if (res.confirm && !this.hidden && !this.data.loading && task === this.data.task) this.chooseCompletion(Object.assign({ action: 'prepare', unit_ids: ids, remark: String(res.content || '').trim() || null }, runPick ? { cutting_run_id: runPick } : {}), '已完成备料交接'); },
+      success: res => { if (res.confirm && !this.hidden && !this.data.loading && task === this.data.task) this.chooseCompletion(Object.assign({ action: 'prepare', unit_ids: ids, media: res.media || [], remark: String(res.content || '').trim() || null }, runPick ? { cutting_run_id: runPick } : {}), '已完成备料交接'); },
     });
   },
 
@@ -485,6 +472,7 @@ Page({
     const runPick = this.data.runPick;
     view.modal(this, {
       mode: 'input',
+      mediaEnabled: true,
       title: '确认备料交接',
       infoMain: `本次备料：${qty} 套`,
       infoSub: `流转去向：${task.completion ? '下一步选择完工流转去向' : (next ? '交接至' + next + '工序' : '完成本工序')}`,
@@ -492,7 +480,7 @@ Page({
       quickTags: ['板材批次齐套', '集中开料领入', '按单正常备料'],
       placeholderText: '备料备注（选填，如板材批次）',
       confirmText: '确认备料',
-      success: res => { if (res.confirm && !this.hidden && !this.data.loading && task === this.data.task) this.chooseCompletion(Object.assign({ action: 'prepare', unit_ids: ids, remark: String(res.content || '').trim() || null }, runPick ? { cutting_run_id: runPick } : {}), '已完成备料交接'); },
+      success: res => { if (res.confirm && !this.hidden && !this.data.loading && task === this.data.task) this.chooseCompletion(Object.assign({ action: 'prepare', unit_ids: ids, media: res.media || [], remark: String(res.content || '').trim() || null }, runPick ? { cutting_run_id: runPick } : {}), '已完成备料交接'); },
     });
   },
   openSharedCutting() { wx.navigateTo({ url: '/pages/production/cutting-run/index' }); },
@@ -505,6 +493,7 @@ Page({
     if (task.completion) return this.chooseCompletion({ action: 'pass', unit_ids: ids });
     const next = task.progress.next_operation_name;
     view.modal(this, {
+      mediaEnabled: true,
       title: '确认下料完工',
       subtitle: '请核对本次下料完工套数与流转去向',
       kvRows: [
@@ -514,7 +503,7 @@ Page({
       ],
       cancelText: '返回核对',
       confirmText: '确认提交',
-      success: res => { if (res.confirm && !this.hidden && !this.data.loading && task === this.data.task) this.run({ action: 'pass', unit_ids: ids }, '已完成下料报工'); },
+      success: res => { if (res.confirm && !this.hidden && !this.data.loading && task === this.data.task) this.run({ action: 'pass', unit_ids: ids, media: res.media || [] }, '已完成下料报工'); },
     });
   },
   chooseCompletion(payload, okText) {
@@ -535,7 +524,8 @@ Page({
     const overText = over ? `${target} 还需 ${view.quantity(remaining)} ${task.unitShort}，本次选了 ${count} ${task.unitShort}，超出的不能交接。请返回只选 ${view.quantity(remaining)} ${task.unitShort}交接，或全部入库。` : '';
     // 路线设为「直接交接」：有接收方就直接交，不用选；交不了（没有接收方、超出缺口）才入库
     if (completion.output_mode === 'flow_only') {
-      wx.showModal({
+      view.modal(this, {
+        mediaEnabled: true, media: payload.media || [],
         title: canHandoff ? '交接给下一道' : '本次入库',
         content: canHandoff ? `本次完工 ${count} ${task.unitShort}${job.repairText}，直接交接至 ${target}（系统自动记账）。` : (overText || completion.blocked_reason || '没有可交接的下一道，请入库。'),
         cancelText: '返回',
@@ -543,6 +533,7 @@ Page({
         success: res => {
           if (!this.completionIsCurrent(job)) return;
           if (!res.confirm) return this.closeCompletionLocator();
+          payload.media = res.media || [];
           if (!canHandoff) return this.setData({ completionLocatorOpen: true });
           this.run(Object.assign({}, payload, { completion_action: 'handoff', handoff_operation_id: completion.next_operation_id }), okText);
         },
@@ -550,7 +541,7 @@ Page({
       return;
     }
     view.modal(this, {
-      mode: 'completion',
+      mode: 'completion', mediaEnabled: true, media: payload.media || [],
       title: '选择完工流转去向',
       infoMain: `本次完工：${count} ${task.unitShort}${job.repairText}`,
       infoSub: `工单：${wo.work_order_no || ''} · ${wo.product_name || wo.item_name || ''}`,
@@ -569,6 +560,7 @@ Page({
           this.closeCompletionLocator();
           return;
         }
+        payload.media = result.media || [];
         if (result.choice === 'store') {
           this.setData({ completionLocatorOpen: true });
           return;
@@ -585,6 +577,7 @@ Page({
     this.setData({ completionLocatorOpen: false });
     if (!location.location_id) return this.closeCompletionLocator();
     view.modal(this, {
+      mediaEnabled: true, media: job.payload.media || [],
       title: '确认完工入库',
       subtitle: '请核对完工入库数量与目标库位',
       kvRows: [
@@ -595,7 +588,7 @@ Page({
       confirmText: '确认入库',
       success: res => {
         if (!this.completionIsCurrent(job)) return;
-        if (res.confirm) this.run(Object.assign({}, job.payload, { completion_action: 'store', completion_location_id: location.location_id }), job.okText);
+        if (res.confirm) this.run(Object.assign({}, job.payload, { completion_action: 'store', completion_location_id: location.location_id, media: res.media || [] }), job.okText);
         else this.closeCompletionLocator();
       },
     });
@@ -606,7 +599,7 @@ Page({
     const options = this.data.task.return_options || [];
     const current = options.find(o => o.is_current);
     this.setData({ panel: 'reject', rejectCurrent: Boolean(current && current.is_current),
-      reject: { mode: current ? 'return' : 'scrap', returnId: current ? current.id : 0, tags: {}, reason: '', photos: [] } });
+      reject: { mode: current ? 'return' : 'scrap', returnId: current ? current.id : 0, tags: {}, reason: '', media: [] } });
   },
   pickReturn(event) {
     const id = Number(event.currentTarget.dataset.id);
@@ -620,31 +613,6 @@ Page({
     this.setData({ 'reject.tags': tags });
   },
   reasonInput(event) { this.setData({ 'reject.reason': event.detail.value }); },
-  addPhoto() {
-    const left = 9 - this.data.reject.photos.length;
-    if (left <= 0 || this.data.uploading) return;
-    wx.chooseMedia({ count: Math.min(left, 3), mediaType: ['image'], sourceType: ['camera', 'album'], sizeType: ['compressed'],
-      success: res => {
-        const files = (res.tempFiles || []).map(f => f.tempFilePath);
-        if (!files.length) return;
-        this.setData({ uploading: true });
-        wx.showLoading({ title: '上传照片…', mask: true });
-        files.reduce((chain, path) => chain.then(() => production.uploadPhoto(path).then(url => {
-          this.setData({ 'reject.photos': this.data.reject.photos.concat([{ path, url }]) });
-        })), Promise.resolve())
-          .catch(error => wx.showToast({ title: view.errorText(error), icon: 'none' }))
-          .finally(() => { wx.hideLoading(); this.setData({ uploading: false }); });
-      } });
-  },
-  removePhoto(event) {
-    const photos = this.data.reject.photos.slice();
-    photos.splice(Number(event.currentTarget.dataset.index), 1);
-    this.setData({ 'reject.photos': photos });
-  },
-  previewPhoto(event) {
-    const urls = this.data.reject.photos.map(p => p.path);
-    wx.previewImage({ urls, current: urls[Number(event.currentTarget.dataset.index)] });
-  },
   submitReject() {
     const r = this.data.reject;
     const ids = this.selectedIds();
@@ -652,11 +620,11 @@ Page({
     const tags = Object.keys(r.tags);
     if (!tags.length && !r.reason.trim()) { wx.showToast({ title: '请选择不良原因标签或填写说明', icon: 'none' }); return; }
     const payload = { action: 'reject', unit_ids: ids, mode: r.mode, return_operation_id: r.mode === 'return' ? r.returnId : null,
-      reason_tags: tags, reason: r.reason.trim() || null, photos: r.photos.map(p => p.url) };
+      reason_tags: tags, reason: r.reason.trim() || null, media: r.media };
     if (r.mode === 'scrap') {
       const review = this.data.task.scrap_review || {};
       const unit = this.data.task.unitShort;
-      if (!review.needs_review && !r.photos.length) { wx.showToast({ title: '报废直接生效需至少上传 1 张照片', icon: 'none' }); return; }
+      if (!review.needs_review && !r.media.some(item => item.type === 'image')) { wx.showToast({ title: '报废直接生效需至少上传 1 张照片', icon: 'none' }); return; }
       view.modal(this, {
         theme: 'danger',
         title: review.needs_review ? '提交报废申请' : '确认报废',
@@ -751,7 +719,7 @@ Page({
     });
   },
   personTap(event) { return this.data.panel === 'assign' ? this.assignTo(event) : this.togglePerson(event); },
-  closePanel() { if (!this.data.busy) this.setData({ panel: '' }); },
+  closePanel() { if (!this.data.busy && !this.data.uploading) this.setData({ panel: '' }); },
   stop() {},
 
   openDrawing(event) {

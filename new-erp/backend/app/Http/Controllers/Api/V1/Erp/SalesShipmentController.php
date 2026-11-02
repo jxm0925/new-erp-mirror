@@ -75,7 +75,7 @@ class SalesShipmentController extends Controller
                     ->orWhereHas('packages', fn ($p) => $p->where('tracking_no', 'like', "%{$keyword}%")));
             })
             ->orderByDesc('id');
-        $this->applySalesOrderVisibility($query, $request);
+        $this->applySalesOrderVisibility($query, $request, true);
 
         return $this->costSafeJson(['data' => $query->paginate(min(max($request->integer('per_page', 10), 1), 100))]);
     }
@@ -86,7 +86,7 @@ class SalesShipmentController extends Controller
         $query = SalesShipment::query()->with([
             'order.lines', 'lines.orderLine.item', 'lines.reservation', 'packages', 'logs', 'dispatches',
         ])->whereKey($id);
-        $this->applySalesOrderVisibility($query, $request);
+        $this->applySalesOrderVisibility($query, $request, true);
         $shipment = $query->firstOrFail();
         $shipment->setAttribute('serial_results', app(\App\Services\Erp\ShipmentSerialApplicationService::class)->projection($shipment));
         $shipment->setAttribute('dispatchable_packages', app(\App\Services\Erp\ShipmentPackingApplicationService::class)->dispatchablePackages($shipment));
@@ -153,7 +153,7 @@ class SalesShipmentController extends Controller
     /** Shipment reads and action results share the sales cost boundary. */
     private function costSafeJson(mixed $payload, int $status = 200): \Illuminate\Http\JsonResponse
     {
-        return response()->json(app(SalesCostVisibilityService::class)->redact($payload), $status);
+        return response()->json(app(\App\Services\Erp\InventoryAmountVisibilityService::class)->forResponse($payload), $status);
     }
 
     private function validateShipment(Request $request): array
@@ -247,12 +247,12 @@ class SalesShipmentController extends Controller
      * sales returns. Button permission alone must never expose other salespeople's
      * shipment or inventory-outbound facts.
      */
-    private function applySalesOrderVisibility(Builder $query, Request $request): void
+    private function applySalesOrderVisibility(Builder $query, Request $request, bool $includeShared = false): void
     {
         $auth = app(AuthContextService::class);
         $user = $auth->currentUser($request);
         abort_unless($user, 401, '未登录或登录已过期。');
-        $query->whereHas('order', fn (Builder $orders) => app(\App\Services\Erp\SalesOrderVisibilityService::class)->apply($orders, $user));
+        $query->whereHas('order', fn (Builder $orders) => app(\App\Services\Erp\SalesOrderVisibilityService::class)->apply($orders, $user, $includeShared));
     }
 
     private function authorizePermission(Request $request, string $permission): object

@@ -4,6 +4,7 @@
   "navigationBarTextStyle": "white",
   "enablePullDownRefresh": true,
   "usingComponents": {
-    "production-dialog": "/components/production-dialog/index"
+    "production-dialog": "/components/production-dialog/index",
+    "production-media": "/components/production-media/index"
   }
 }

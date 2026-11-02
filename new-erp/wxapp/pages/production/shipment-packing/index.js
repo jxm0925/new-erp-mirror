@@ -37,7 +37,7 @@ Page({
     materialsOpen: false, materialRows: [], materialDrafts: [], materialKeyword: '', materialPage: 1, materialLast: 1, materialError: '',
     categories: [{ id: 0, category_name: '全部分类' }], categoryIndex: 0,
     identityOpen: false, identityRows: [], selectedIdentities: [], identityMaterial: {}, identityPage: 1, identityLast: 1, identityKeyword: '',
-    operationSerialIds: [], inspectionOpen: false, inspectionResult: 'passed', inspectionReason: '', inspectionError: '', inspectionNeedsReturn: false,
+    operationSerialIds: [], inspectionOpen: false, inspectionResult: 'passed', inspectionReason: '', inspectionMedia: [], mediaBusy: false, inspectionError: '', inspectionNeedsReturn: false,
     repairLocatorOpen: false, repairLocator: {}, reworkOpen: false, reworkRows: [], reworkPage: 1, reworkLast: 1, reworkKeyword: '', reworkError: '', returnOperation: null },
   onLoad(options = {}) { this.peopleSelected = {}; this.materialSelected = {}; this.identitySelected = {}; const user = wx.getStorageSync('erp_user') || {};
     this.fromOutside = Boolean(options.operation_id);
@@ -192,6 +192,7 @@ Page({
     if (ids === false) return;
     const op = this.data.operation || {};
     view.modal(this, {
+      mediaEnabled: true,
       title: '确认完成发货作业',
       subtitle: '请核对本次完工设备数量与当前工序',
       kvRows: [
@@ -200,7 +201,7 @@ Page({
       ],
       confirmText: '确认完工',
       success: result => {
-        if (result.confirm) this.execute('complete', ids ? { inventory_serial_ids: ids, completed_base_qty: ids.length } : { completed_base_qty: op.planned_base_qty });
+        if (result.confirm && op.id === this.data.operation.id) this.execute('complete', Object.assign({ media: result.media || [] }, ids ? { inventory_serial_ids: ids, completed_base_qty: ids.length } : { completed_base_qty: op.planned_base_qty }));
       },
     });
   },
@@ -282,7 +283,9 @@ Page({
     return ids.slice();
   },
   needsReturnOperation() { return (this.data.operation.serial_results || []).some(row => this.data.operationSerialIds.includes(row.inventory_serial_id) && row.requires_return_operation); },
-  openInspection(event) { if (this.actionSerials('inspect') === false) return; const result = event && event.currentTarget && event.currentTarget.dataset.result === 'failed' ? 'failed' : 'passed'; this.setData({ inspectionOpen: true, inspectionResult: result, inspectionReason: '', inspectionError: '', repairLocator: {}, returnOperation: null, inspectionNeedsReturn: this.needsReturnOperation() }); },
+  openInspection(event) { if (this.actionSerials('inspect') === false) return; const result = event && event.currentTarget && event.currentTarget.dataset.result === 'failed' ? 'failed' : 'passed'; this.setData({ inspectionOpen: true, inspectionResult: result, inspectionReason: '', inspectionMedia: [], mediaBusy: false, inspectionError: '', repairLocator: {}, returnOperation: null, inspectionNeedsReturn: this.needsReturnOperation() }); },
+  inspectionMediaChanged(event) { this.setData({ inspectionMedia: event.detail.value }); },
+  mediaBusy(event) { this.setData({ mediaBusy: event.detail.busy }); },
   inspectionChange(event) { this.setData({ inspectionResult: event.detail.value }); },
   inspectionInput(event) { this.setData({ inspectionReason: event.detail.value }); },
   openRepairLocator() { if (!this.data.busy) this.setData({ repairLocatorOpen: true }); },
@@ -304,8 +307,9 @@ Page({
   chooseReworkOperation(event) { const row = this.data.reworkRows.find(row => Number(row.id) === Number(event.currentTarget.dataset.id)); if (row) this.setData({ returnOperation: row, reworkOpen: false }); },
   closeReworkOperations() { this.reworkSequence = (this.reworkSequence || 0) + 1; this.setData({ reworkOpen: false }); },
   saveInspection() {
+    if (this.data.mediaBusy) return;
     const ids = this.actionSerials('inspect'); if (ids === false) return;
-    const payload = { result: this.data.inspectionResult, reason: this.data.inspectionReason };
+    const payload = { result: this.data.inspectionResult, reason: this.data.inspectionReason, media: this.data.inspectionMedia };
     if (ids) payload.inventory_serial_ids = ids;
     if (ids && payload.result === 'failed') {
       const needsReturn = this.needsReturnOperation();
@@ -314,7 +318,7 @@ Page({
     }
     return this.execute('inspect', payload).then(result => { if (!result) this.setData({ inspectionError: this.data.operationError }); });
   },
-  closeInspection() { if (!this.data.busy) this.setData({ inspectionOpen: false }); },
+  closeInspection() { if (!this.data.busy && !this.data.mediaBusy) this.setData({ inspectionOpen: false }); },
   back: view.back,
   stop() {},
 });

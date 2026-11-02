@@ -274,7 +274,7 @@
               <small class="unit-lbl">{{ row.unit && row.unit.unit_name }}</small>
             </template>
           </el-table-column>
-          <el-table-column label="结转成本" width="115" align="right">
+          <el-table-column v-if="$can('inventory.amount.view')" label="结转成本" width="115" align="right">
             <template slot-scope="{ row }">
               <span class="font-tabular">{{ row.cost_amount === null || row.cost_amount === undefined ? '—' : `¥${money(row.cost_amount)}` }}</span>
             </template>

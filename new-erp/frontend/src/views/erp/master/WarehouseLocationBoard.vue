@@ -380,7 +380,7 @@
                     <span class="spec-k">在库实物总量</span>
                     <span class="spec-v font-tabular font-bold text-success">{{ inventoryStats.total_qty || 0 }}</span>
                   </div>
-                  <div class="spec-row">
+                  <div v-if="$can('inventory.amount.view')" class="spec-row">
                     <span class="spec-k">账面库存估值</span>
                     <span class="spec-v font-tabular font-bold text-dark">¥{{ formatCurrency(inventoryStats.inventory_value) }}</span>
                   </div>
@@ -984,7 +984,7 @@ export default {
           item_count: stats.item_count || 0,
           balance_line_count: stats.balance_line_count || 0,
           total_qty: quantities.length ? quantities.map(row => `${String(row.quantity).replace(/(\.\d*?[1-9])0+$|\.0+$/, '$1')} ${row.unit_name}`).join(' / ') : 0,
-          inventory_value: Number(stats.inventory_value || 0)
+          inventory_value: stats.inventory_value == null ? null : Number(stats.inventory_value)
         }
       } catch (e) {
         if (sequence !== this.inventorySequence) return
@@ -1225,6 +1225,7 @@ export default {
       return v ? erpDateTime(v, 16) : '-'
     },
     formatCurrency (val) {
+      if (val === null || val === undefined || val === '') return '—'
       const num = Number(val || 0)
       return num.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     }

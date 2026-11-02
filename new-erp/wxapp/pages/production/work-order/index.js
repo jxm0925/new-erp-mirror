@@ -72,6 +72,11 @@ Page({
         .filter(Boolean)
         .filter((v, i, a) => a.indexOf(v) === i)
         .join('、');
+      const costFields = view.permissions()('inventory.amount.view') ? [
+        ['工单已归集材料成本', wo.actual_material_cost_amount],
+        ['每台已归集材料成本', wo.actual_material_cost_per_unit],
+        ['每台材料暂估成本', wo.actual_material_cost_amount == null ? wo.estimated_material_cost_per_unit : null],
+      ].map(([label, value]) => ({ label, value: view.money(value) })).filter(field => field.value) : [];
       wx.setNavigationBarTitle({ title: wo.work_order_no || '工单详情' });
       this.setData({
         wo: Object.assign({}, wo, {
@@ -83,6 +88,7 @@ Page({
           parent_work_order: parentWo,
           child_work_orders: childWos,
           childSummaryNames,
+          costFields,
         }),
         ops,
         kittingOps,

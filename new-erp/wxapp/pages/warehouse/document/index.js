@@ -24,10 +24,11 @@ Page({
     return warehouse.document(this.data.kind, this.data.id, { stage: this.data.stage, receipt_id: this.data.receiptId || undefined, page: this.data.page, packages_page: this.data.packagesPage, per_page: 10 }).then(response => {
       if (sequence !== this.sequence) return;
       const result = response.data || response; const header = result.header; const paged = page.rows(result.lines);
+      const canViewAmount = page.permissions()('inventory.amount.view');
       const actions = result.actions || []; const choices = actions.filter(a => a !== 'purchase.allocate');
       const mainAction = choices.includes(this.data.chosenAction) ? this.data.chosenAction : choices[0] || '';
       const lines = paged.rows.map(raw => {
-        const row = view.line(raw);
+        const row = view.line(raw, canViewAmount);
         if (this.data.kind === 'sales_return' && this.data.stage === 'receive') {
           if (!this.returnLineCache) this.returnLineCache = {};
           this.returnLineCache[row.id] = row;
@@ -42,7 +43,7 @@ Page({
       const known = ({ purchase_receipt: ['purchase.allocate', 'purchase.post'], sales_return: [this.data.stage === 'receive' ? 'sales_return.receive' : 'sales_return.post'],
         sales_shipment: ['sales_shipment.post', 'sales_shipment.dispatch'], purchase_return: ['purchase_return.post'] })[this.data.kind] || [];
       const pendingAction = known.find(action => warehouse.pending(action, this.data.id)) || '';
-      this.setData({ header, headerFields: view.header(this.data.kind, header, this.data.stage), lines, total: paged.total, page: paged.page, lastPage: paged.lastPage,
+      this.setData({ header, headerFields: view.header(this.data.kind, header, this.data.stage, canViewAmount), lines, total: paged.total, page: paged.page, lastPage: paged.lastPage,
         canPacking: this.data.kind === 'sales_shipment' && (page.permissions()('sales_order.shipment.packing.execute') || page.permissions()('sales_order.shipment.packing.quality')),
 actions, mainAction, mainLabel: view.actionLabels[mainAction] || '', canAllocate: actions.includes('purchase.allocate'),
         loading: false, pendingAction, receipt: result.receipt, readonly: !actions.length, item: header.item || {},

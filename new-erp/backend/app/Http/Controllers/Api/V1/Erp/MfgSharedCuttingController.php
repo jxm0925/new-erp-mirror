@@ -76,6 +76,6 @@ class MfgSharedCuttingController extends Controller
         $super = $auth->isSuperAdmin($user);
         $permissions = $write ? ['production.work_order.edit', 'production.task.execute'] : ['production.work_order.view', 'production.work_order.edit', 'production.task.view', 'production.task.execute'];
         if (! $super && ! array_intersect($permissions, $codes)) throw new WorkOrderDomainException('permission_denied', '当前账号没有集中开料权限。', 403);
-        return [$user, $super || array_intersect(['sales_order.amount.view', 'production.performance.manage'], $codes) !== []];
+        return [$user, app(\App\Services\Erp\InventoryAmountVisibilityService::class)->canView($request)];
     }
 }

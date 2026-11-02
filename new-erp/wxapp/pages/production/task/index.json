@@ -9,6 +9,7 @@
     "van-empty": "@vant/weapp/empty/index",
     "warehouse-locator": "/components/warehouse-locator/index",
     "production-dialog": "/components/production-dialog/index",
-    "production-select": "/components/production-select/index"
+    "production-select": "/components/production-select/index",
+    "production-media": "/components/production-media/index"
   }
 }

@@ -93,7 +93,7 @@ final class WarehouseWorkspaceService
             return [$this->row($q, $kind, $done, ['number' => 'd.return_no', 'party' => 'supplier.supplier_name', 'completed_at' => 'd.posted_at'], $f,
                 ['erp_purchase_return_items', 'return_id', 'item_id', $done ? 'posted_base_qty' : 'approved_base_qty - l.posted_base_qty'])];
         }
-        $salesOrders = SalesOrder::query()->select('id'); $this->salesScope->apply($salesOrders, $user);
+        $salesOrders = SalesOrder::query()->select('id'); $this->salesScope->apply($salesOrders, $user, true);
         if ($kind === 'sales_shipment') {
             $q = DB::table('erp_sales_shipments as d')->join('erp_sales_orders as so', 'so.id', '=', 'd.sales_order_id')->whereIn('d.sales_order_id', $salesOrders);
             $done ? $q->whereIn('d.shipment_status', ['shipped', 'completed']) : $q->whereIn('d.shipment_status', ['pending_outbound', 'prepared', 'partially_shipped', 'outbound_posted']);

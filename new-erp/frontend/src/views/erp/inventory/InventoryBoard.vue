@@ -172,7 +172,7 @@
       <div class="metric-grid four">
         <article class="clickable-card" :class="{ 'active-metric': !balanceQuery.status }" @click="filterBalanceByStatus('')"><i class="el-icon-box green" /><span>物料总数 <i class="el-icon-info" /></span><strong>{{ quantityNumber(balanceStats.item_count) }} <small class="unit-text">个</small></strong></article>
         <article class="clickable-card" :class="{ 'active-metric': balanceQuery.status === 'has_stock' }" @click="filterBalanceByStatus('has_stock')"><i class="el-icon-coin green" /><span>有库存物料 <i class="el-icon-info" /></span><strong>{{ quantityNumber(balanceStats.stock_item_count) }} <small class="unit-text">个</small></strong></article>
-        <article class="clickable-card" @click="filterBalanceByStatus('')"><i class="el-icon-location-outline green" /><span>批次 / 库存总价值</span><strong>{{ quantityNumber(balanceStats.batch_count) }} <small class="unit-text">批 · ¥{{ money(balanceStats.inventory_value) }}</small></strong></article>
+        <article class="clickable-card" @click="filterBalanceByStatus('')"><i class="el-icon-location-outline green" /><span>批次<template v-if="$can('inventory.amount.view')"> / 库存总价值</template></span><strong>{{ quantityNumber(balanceStats.batch_count) }} <small class="unit-text">批<template v-if="$can('inventory.amount.view')"> · ¥{{ money(balanceStats.inventory_value) }}</template></small></strong></article>
         <article class="clickable-card" :class="{ 'active-metric': balanceQuery.status === 'has_quality' }" @click="filterBalanceByStatus('has_quality')"><i class="el-icon-warning orange" /><span>不合格/待处理物料 <i class="el-icon-info" /></span><strong>{{ quantityNumber(balanceStats.quality_item_count) }} <small class="unit-text">个</small></strong></article>
       </div>
 
@@ -247,7 +247,7 @@
             <el-table-column prop="quantity_locked" label="锁定/预留" width="75" align="right" />
             <el-table-column prop="quantity_defective" label="不合格" width="65" align="right" />
             <el-table-column prop="quantity_pending" label="待处理" width="65" align="right" />
-            <el-table-column label="库存金额" min-width="105" align="right"><template slot-scope="{ row }">¥{{ money(row.inventory_value) }}</template></el-table-column>
+            <el-table-column v-if="$can('inventory.amount.view')" label="库存金额" min-width="105" align="right"><template slot-scope="{ row }">¥{{ money(row.inventory_value) }}</template></el-table-column>
             <el-table-column label="最近变动时间" min-width="135">
               <template slot-scope="{ row }">{{ dateTime(row.last_transaction_at) }}</template>
             </el-table-column>
@@ -549,7 +549,7 @@
           <div><span>可用库存</span><strong>{{ quantityNumber(selectedBalance.quantity_available) }}</strong></div>
           <div><span>锁定数量</span><strong>{{ quantityNumber(selectedBalance.quantity_locked) }}</strong></div>
           <div><span>待处理数量</span><strong>{{ quantityNumber(selectedBalance.quantity_pending) }}</strong></div>
-          <div><span>库存价值</span><strong>¥{{ money(selectedBalance.inventory_value) }}</strong></div>
+          <div v-if="$can('inventory.amount.view')"><span>库存价值</span><strong>¥{{ money(selectedBalance.inventory_value) }}</strong></div>
         </div>
 
         <div class="batch-dialog-grid">
@@ -771,7 +771,7 @@
               <template slot-scope="{ row }">{{ row.balance_qty }}<div v-if="row.balance_after_length_m !== null" class="measure-strong">{{ meters(row.balance_after_length_m) }}</div></template>
             </el-table-column>
             <el-table-column prop="unit" label="单位" width="60" align="center" />
-            <el-table-column label="金额" min-width="100" align="right"><template slot-scope="{ row }">¥{{ money(row.cost_amount) }}</template></el-table-column>
+            <el-table-column v-if="$can('inventory.amount.view')" label="金额" min-width="100" align="right"><template slot-scope="{ row }">¥{{ money(row.cost_amount) }}</template></el-table-column>
             <el-table-column prop="posted_by_name" label="经办人" width="96" show-overflow-tooltip />
             <el-table-column label="状态" width="86" fixed="right"><template slot-scope="{ row }"><el-tag size="mini" type="success">{{ row.posting_status_text }}</el-tag></template></el-table-column>
             <el-table-column prop="posted_at" label="过账时间" min-width="132" show-overflow-tooltip />
@@ -1460,7 +1460,7 @@ export default {
           quantity_available: Number(row.quantity_available || 0),
           quantity_locked: Number(row.quantity_locked || 0),
           quantity_pending: Number(row.quantity_pending || 0),
-          inventory_value: Number(row.inventory_value || 0),
+          inventory_value: row.inventory_value == null ? null : Number(row.inventory_value),
           warehouse_count: Number(row.warehouse_count || 0),
           location_count: Number(row.location_count || 0)
         }))
@@ -1763,8 +1763,8 @@ export default {
         quantity_locked: Number(row.quantity_locked || 0),
         quantity_defective: Number(row.quantity_defective || 0),
         quantity_pending: Number(row.quantity_pending || 0),
-        inventory_value: Number(row.inventory_value || 0),
-        average_unit_cost: Number(row.average_unit_cost || 0),
+        inventory_value: row.inventory_value == null ? null : Number(row.inventory_value),
+        average_unit_cost: row.average_unit_cost == null ? null : Number(row.average_unit_cost),
         last_transaction_at: row.last_transaction_at || '',
         batch_count: Number(row.batch_count || 0),
         balance_count: Number(row.balance_count || 0),
@@ -2047,6 +2047,7 @@ export default {
       return Number(value || 0).toLocaleString('zh-CN', { maximumFractionDigits: 8 })
     },
     money(value) {
+      if (value === null || value === undefined || value === '') return '—'
       return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     },
     dateTime(value) {
@@ -2097,7 +2098,7 @@ export default {
         posting_status_text: this.postingStatusText(row.posting_status),
         posted_by: row.posted_by || '系统',
         posted_by_name: line.posted_by_name || '未记录',
-        cost_amount: Number(line.cost_amount || 0),
+        cost_amount: line.cost_amount == null ? null : Number(line.cost_amount),
         posted_at: this.dateTime(row.posted_at || row.created_at)
       }
     },

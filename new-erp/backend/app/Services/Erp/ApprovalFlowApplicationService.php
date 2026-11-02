@@ -178,10 +178,21 @@ class ApprovalFlowApplicationService
         $registered = $this->objects->find((string) ($definition['business_object_code'] ?? ''));
         $primaryKey = (string) $registered->primary_key;
         $fields = collect($object['fields'] ?? []);
+        $numberField = $object['number_field'] ?? $primaryKey;
+        $statusFields = collect($object['status_fields'] ?? [])->pluck('value');
         $searchFields = collect($object['search_fields'] ?? [])->filter()->values();
-        if ($searchFields->isEmpty()) $searchFields = collect([$object['number_field'] ?? $primaryKey]);
-        $columns = collect([$primaryKey, $object['number_field'] ?? $primaryKey, 'created_at'])
-            ->merge($searchFields)->merge(collect($object['status_fields'] ?? [])->pluck('value'))->unique()
+        if (! in_array('inventory.amount.view', $permissionCodes, true)) {
+            $visibility = app(InventoryAmountVisibilityService::class);
+            $inventory = (bool) preg_match('/^erp_(inventory_|material_(physical|holding|lot|movement))/', $object['table']);
+            $visible = fn ($field) => $field === $primaryKey || (! $visibility->isSensitiveField((string) $field, $inventory)
+                && ! $visibility->isCostField((string) data_get($fields->firstWhere('value', $field), 'label', '')));
+            $searchFields = $searchFields->filter($visible)->values();
+            $statusFields = $statusFields->filter($visible)->values();
+            if (! $visible($numberField)) $numberField = $primaryKey;
+        }
+        if ($searchFields->isEmpty()) $searchFields = collect([$numberField]);
+        $columns = collect([$primaryKey, $numberField, 'created_at'])
+            ->merge($searchFields)->merge($statusFields)->unique()
             ->filter(fn ($column) => $fields->contains('value', $column))->values()->all();
         if (!in_array($primaryKey, $columns, true)) $columns[] = $primaryKey;
         $query = DB::table($object['table'])->select($columns);
@@ -194,11 +205,11 @@ class ApprovalFlowApplicationService
             });
         }
         $page = $query->orderByDesc($primaryKey)->paginate(min(max((int) ($filters['per_page'] ?? 10), 1), 50));
-        $page->getCollection()->transform(function ($row) use ($object, $fields, $searchFields, $primaryKey) {
+        $page->getCollection()->transform(function ($row) use ($numberField, $statusFields, $fields, $searchFields, $primaryKey) {
             $raw = (array) $row;
-            $number = $raw[$object['number_field']] ?? $raw[$primaryKey];
+            $number = $raw[$numberField] ?? $raw[$primaryKey];
             $nameField = $searchFields->first(fn ($field) => str_ends_with((string) $field, '_name'));
-            $statusField = collect($object['status_fields'] ?? [])->pluck('value')->first();
+            $statusField = $statusFields->first();
             return [
                 'id' => (int) $raw[$primaryKey],
                 'business_no' => (string) $number,

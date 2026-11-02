@@ -88,6 +88,6 @@ class MfgCuttingController extends Controller
             && ! MfgTaskParticipant::query()->where('work_order_operation_id', $operationId)->where('employee_legacy_id', $user->legacy_id ?? $user->id)->where('is_active', true)->exists()) {
             throw new WorkOrderDomainException('permission_denied', '只能办理本人已接单或参与工序的开料。', 403);
         }
-        return [$user, $super || array_intersect(['sales_order.amount.view', 'production.performance.manage'], $codes) !== []];
+        return [$user, app(\App\Services\Erp\InventoryAmountVisibilityService::class)->canView($request)];
     }
 }

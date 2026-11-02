@@ -85,6 +85,7 @@ final class TaskQueryService
         return ['scraps' => $reports->map(fn ($r) => ['id' => $r->id, 'serial_no' => $r->serial_no, 'work_order_id' => $r->work_order_id,
                 'work_order_no' => $wos->get($r->work_order_id)?->work_order_no, 'product_name' => ($w = $wos->get($r->work_order_id)) ? ($w->product_name ?: $w->item_name) : null,
                 'operation_name' => $opNames[$r->work_order_operation_id] ?? null, 'reason_tags' => $r->reason_tags ?: [], 'reason' => $r->reason, 'photos' => $r->photos ?: [],
+                'media' => \App\Services\Erp\ProductionMediaService::forRead($r->media ?: [], $r->photos ?: []),
                 'reporter_name' => $r->reporter_name, 'created_at' => $r->created_at?->toDateTimeString()])->values()->all(),
             'plans' => $plans];
     }
@@ -442,7 +443,8 @@ final class TaskQueryService
         return $rows->map(fn ($r) => ['id' => $r->id, 'serial_no' => $r->serial_no, 'work_order_id' => $r->work_order_id,
             'work_order_no' => $wos->get($r->work_order_id)?->work_order_no, 'product_name' => ($w = $wos->get($r->work_order_id)) ? ($w->product_name ?: $w->item_name) : null,
             'operation_name' => $opNames[$r->work_order_operation_id] ?? MfgWorkOrderOperation::query()->whereKey($r->work_order_operation_id)->value('operation_name'),
-            'reason_tags' => $r->reason_tags ?: [], 'reason' => $r->reason, 'photos' => $r->photos ?: [], 'reporter_name' => $r->reporter_name,
+            'reason_tags' => $r->reason_tags ?: [], 'reason' => $r->reason, 'photos' => $r->photos ?: [],
+            'media' => \App\Services\Erp\ProductionMediaService::forRead($r->media ?: [], $r->photos ?: []), 'reporter_name' => $r->reporter_name,
             'created_at' => $r->created_at?->toDateTimeString()])->values()->all();
     }
 

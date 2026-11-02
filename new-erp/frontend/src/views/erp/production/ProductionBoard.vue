@@ -252,8 +252,11 @@
               <div class="scrap-reason">
                 {{ s.product_name }} · {{ [s.reason_tags.join('/'), s.reason].filter(Boolean).join('：') }}
               </div>
-              <div v-if="s.photos.length" class="scrap-photos">
-                <el-image v-for="p in s.photos" :key="p" :src="p" :preview-src-list="s.photos" fit="cover" />
+              <div v-if="s.media.length" class="scrap-photos">
+                <template v-for="(media, index) in s.media">
+                  <el-image v-if="media.type === 'image'" :key="`image-${index}`" :src="media.url" :preview-src-list="s.media.filter(item => item.type === 'image').map(item => item.url)" fit="cover" />
+                  <button v-else-if="media.type === 'video'" :key="`video-${index}`" type="button" class="scrap-video" aria-label="播放报废影像" @click="videoMedia = media; videoVisible = true"><img v-if="media.poster_url" :src="media.poster_url" alt="视频封面"><video v-else :src="media.url" preload="metadata" muted /><i class="el-icon-video-play" /><small>{{ mediaDuration(media.duration) }}</small></button>
+                </template>
               </div>
               <div v-if="board.permissions.scrap" class="scrap-actions">
                 <el-button size="mini" type="danger" plain @click="review(s, true)">确认报废</el-button>
@@ -398,6 +401,8 @@
       </span>
     </el-dialog>
 
+    <el-dialog title="报废影像" :visible.sync="videoVisible" width="min(960px, calc(100vw - 48px))" top="6vh" append-to-body destroy-on-close @closed="videoMedia = null"><div v-if="videoMedia" class="scrap-video-preview"><video :src="videoMedia.url" :poster="videoMedia.poster_url || undefined" controls autoplay /></div></el-dialog>
+
     <system-record-picker
       :visible.sync="receiptPicker.visible"
       :type="receiptPicker.type"
@@ -426,6 +431,8 @@ export default {
     board: null,
     timer: null,
     people: [],
+    videoVisible: false,
+    videoMedia: null,
     filters: { keyword: '', owner_legacy_id: null, urgent_only: false, custom_only: false },
     assign: { visible: false, op: null, title: '', employee: null },
     receipt: {
@@ -465,6 +472,9 @@ export default {
   methods: {
     shortDate,
     qtyText: qty,
+    mediaDuration(seconds) {
+      return seconds == null ? '视频' : `${Math.floor(seconds / 60).toString().padStart(2, '0')}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`
+    },
     minutesText(m) {
       const total = Math.round(Number(m || 0))
       const h = Math.floor(total / 60)
@@ -486,6 +496,9 @@ export default {
         }
         const { data } = await getProductionBoard(params)
         this.board = data.data
+        this.board.pending_scraps = (this.board.pending_scraps || []).map(row => ({ ...row, media: Array.from(new Map([
+          ...(row.media || []), ...(row.photos || []).map(photo => typeof photo === 'string' ? { type: 'image', url: photo } : { ...photo, type: 'image' })
+        ].filter(item => item.url).map(item => [`${item.type}:${item.url}`, item])).values()) }))
       } catch (e) {
         if (!silent) this.$message.error(errorText(e, '看板数据加载失败'))
       } finally {
@@ -1076,6 +1089,7 @@ export default {
 }
 .scrap-photos {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   margin-top: 4px;
 }
@@ -1083,6 +1097,49 @@ export default {
   width: 50px;
   height: 50px;
   border-radius: 4px;
+}
+.scrap-video {
+  position: relative;
+  width: 50px;
+  height: 50px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #f1f5f9;
+  cursor: pointer;
+}
+.scrap-video img,
+.scrap-video video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.scrap-video > i {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: white;
+  font-size: 26px;
+  text-shadow: 0 1px 3px #64748b;
+}
+.scrap-video small {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  padding: 1px 2px;
+  color: white;
+  background: rgba(0, 0, 0, .65);
+  font-size: 9px;
+}
+.scrap-video-preview {
+  display: flex;
+  justify-content: center;
+}
+.scrap-video-preview video {
+  max-width: 100%;
+  max-height: 68vh;
 }
 .scrap-actions {
   display: flex;

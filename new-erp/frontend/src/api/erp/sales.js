@@ -61,3 +61,8 @@ export const getSalesOrderInvoiceRequests = id => api.get(`/v1/erp/sales/orders/
 export const createSalesOrderInvoiceRequest = (id, data) => api.post(`/v1/erp/sales/orders/${id}/invoice-requests`, data)
 export const withdrawSalesInvoiceRequest = id => api.post(`/v1/erp/sales/invoice-requests/${id}/withdraw`)
 export const downloadSalesInvoiceFile = (id, attachmentId) => api.get(`/v1/erp/sales/invoice-requests/${id}/attachments/${attachmentId}`, { responseType: 'blob' })
+
+export const getSalesOrderProgressTree = id => api.get(`/v1/erp/sales/orders/${id}/progress/tree`)
+export const listSalesOrderProgressUnits = (id, lineId, params) => api.get(`/v1/erp/sales/orders/${id}/progress/lines/${lineId}/units`, { params })
+export const getSalesOrderLineProgress = (id, lineId, unitId) => api.get(`/v1/erp/sales/orders/${id}/progress/lines/${lineId}/units/${encodeURIComponent(unitId)}`)
+export const getSalesOrderWorkOrderProgress = (id, workOrderId, params) => api.get(`/v1/erp/sales/orders/${id}/progress/work-orders/${workOrderId}`, { params })

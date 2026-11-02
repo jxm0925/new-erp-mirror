@@ -22,6 +22,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->append(HandleCors::class);
         $middleware->appendToGroup('api', \App\Http\Middleware\EnsureErpAuthenticated::class);
+        $middleware->appendToGroup('api', \App\Http\Middleware\FilterInventoryAmounts::class);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         // 各 Controller 的按钮权限校验统一抛出“无按钮权限：<权限码>”，这里把权限码换成权限名称，

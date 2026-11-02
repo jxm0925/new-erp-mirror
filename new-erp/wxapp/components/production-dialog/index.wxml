@@ -109,6 +109,7 @@
         <view wx:if="{{inputLabel}}" class="pd-tags-label">{{inputLabel}}</view>
         <textarea class="pd-textarea" value="{{inputValue}}" placeholder="{{placeholderText || '请输入内容'}}" maxlength="300" fixed="{{true}}" disable-default-padding="{{true}}" cursor-spacing="80" bindinput="onTextInput" />
       </block>
+      <production-media wx:if="{{mediaEnabled}}" value="{{media}}" bind:change="mediaChanged" bind:busy="mediaBusy" />
     </view>
 
     <view class="pd-foot">
@@ -116,7 +117,7 @@
         <text>{{cancelText || '取消'}}</text>
       </view>
       <view class="pd-btn-confirm {{theme}}" hover-class="pd-btn-hover" bindtap="confirm">
-        <text>{{mode === 'completion' ? (choice === 'handoff' ? handoffConfirmText : storeConfirmText) : (confirmText || '确认')}}</text>
+        <text>{{mode === 'completion' ? (choice === 'handoff' ? handoffConfirmText : storeConfirmText) : (mediaBusy ? '影像上传中…' : (confirmText || '确认'))}}</text>
       </view>
     </view>
   </view>

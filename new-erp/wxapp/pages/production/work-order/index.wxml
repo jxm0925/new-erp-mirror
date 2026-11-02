@@ -73,6 +73,10 @@
 
     <!-- 订单与客户信息 -->
     <template is="orderInfo" data="{{info: wo.order_info}}" />
+    <view wx:if="{{wo.costFields.length}}" class="mt-card">
+      <view class="mt-card-title"><text>材料成本</text></view>
+      <view wx:for="{{wo.costFields}}" wx:key="label" class="mt-kv"><text class="k">{{item.label}}</text><text class="v">{{item.value}}</text></view>
+    </view>
 
     <!-- 各工序用料及规格型号（默认折叠，显示需用几项、齐几项、缺几项） -->
     <view wx:if="{{kittingOps.length}}" class="mt-card">

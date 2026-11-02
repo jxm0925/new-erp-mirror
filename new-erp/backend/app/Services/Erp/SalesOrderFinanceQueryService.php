@@ -9,10 +9,10 @@ use Illuminate\Support\Arr;
 
 class SalesOrderFinanceQueryService
 {
-    public function visibleOrders(object $user): Builder
+    public function visibleOrders(object $user, bool $includeShared = false): Builder
     {
         $query = SalesOrder::query();
-        app(SalesOrderVisibilityService::class)->apply($query, $user);
+        app(SalesOrderVisibilityService::class)->apply($query, $user, $includeShared);
         return $query;
     }
 
@@ -134,7 +134,7 @@ class SalesOrderFinanceQueryService
 
     public function statistics(object $user, array $filters): array
     {
-        $orders = $this->visibleOrders($user);
+        $orders = $this->visibleOrders($user, true);
         if ($keyword = trim($filters['keyword'] ?? '')) $orders->where(fn ($q) => $q->where('sales_order_no', 'like', '%'.$keyword.'%')->orWhere('customer_name', 'like', '%'.$keyword.'%'));
         if (!empty($filters['currency'])) $orders->where('currency', $filters['currency']);
         if (!empty($filters['order_status'])) $orders->where('order_status', $filters['order_status']);

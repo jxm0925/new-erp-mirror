@@ -274,6 +274,7 @@ class MasterDataController extends Controller
         $this->prepareSkuCanonicalInput($request);
         $this->prepareSkuOrderLineType($request);
         $data = $request->validate($this->rules($request));
+        $this->protectHiddenCosts($request, $data);
         if ($request->route('entity') === 'units' && empty($data['allow_decimal'])) $data['decimal_places'] = 0;
         if ($request->route('entity') === 'units') $data += ['is_legacy' => false, 'standard_unit_id' => null];
         if ($request->route('entity') === 'categories' && ($data['category_type'] ?? null) === 'item') {
@@ -320,6 +321,7 @@ class MasterDataController extends Controller
         $this->prepareSkuCanonicalInput($request);
         $this->prepareSkuOrderLineType($request);
         $data = $request->validate($this->rules($request, $id));
+        $this->protectHiddenCosts($request, $data);
         if ($request->route('entity') === 'units' && empty($data['allow_decimal'])) $data['decimal_places'] = 0;
         if ($request->route('entity') === 'categories' && ($data['category_type'] ?? null) === 'item') {
             abort(422, 'Item 类目请使用专用 Item 类目接口维护。');
@@ -357,6 +359,13 @@ class MasterDataController extends Controller
             $record instanceof Item ? app(ItemManagementScopeService::class)->requestScope($request) : null
         );
         return response()->json(['message' => '保存成功', 'data' => $record]);
+    }
+
+    private function protectHiddenCosts(Request $request, array &$data): void
+    {
+        if (app(\App\Services\Erp\InventoryAmountVisibilityService::class)->canView($request)) return;
+        if ($request->route('entity') === 'items') unset($data['standard_cost'], $data['last_purchase_price']);
+        if ($request->route('entity') === 'skus') unset($data['reference_cost']);
     }
 
     public function storeSkuMatrix(Request $request, int $id, ProductMatrixApplicationService $service)

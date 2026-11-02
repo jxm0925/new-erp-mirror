@@ -252,7 +252,7 @@
             <span>盘盈 / 盘亏数量</span>
             <strong class="font-tabular"><em class="diff-gain">+{{ num(detail.summary.gain_qty) }}</em> / <em class="diff-loss">-{{ num(detail.summary.loss_qty) }}</em></strong>
           </div>
-          <div class="kpi-box">
+          <div v-if="$can('inventory.amount.view')" class="kpi-box">
             <span>差异金额合计</span>
             <strong class="font-tabular">¥{{ money(detail.summary.difference_amount) }}</strong>
           </div>
@@ -434,6 +434,7 @@ export default {
       return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(4)))
     },
     money(value) {
+      if (value === null || value === undefined || value === '') return '—'
       return Number(value || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
     },
     countedLines(row) {

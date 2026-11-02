@@ -870,7 +870,7 @@
               <el-tag size="mini" type="info" effect="plain">{{ hasActualMaterialCost ? (wo.material_cost_collection_complete ? '实际归集 · 未结算' : '部分归集 · 未结算') : '暂估预算 · 未结算' }}</el-tag>
             </div>
 
-            <template v-if="materialCostPerUnit !== null && materialCostPerUnit !== undefined">
+            <template v-if="$can('inventory.amount.view') && materialCostPerUnit !== null && materialCostPerUnit !== undefined">
               <div class="cost-stat-box">
                 <span class="cost-lbl">{{ hasActualMaterialCost ? '每台已归集材料成本' : '每台材料暂估成本' }}</span>
                 <div class="cost-num font-mono text-success">{{ money(materialCostPerUnit) }}</div>
