@@ -122,30 +122,7 @@ class InventoryStocktakeController extends Controller
     public function saveCounts(Request $request, int $id, InventoryStocktakeService $service)
     {
         $user = $this->authorizePermission($request, 'inventory.stocktake.create');
-        $data = $request->validate([
-            'lines' => 'required|array|min:1',
-            'lines.*.id' => 'required|integer',
-            'expected_version' => 'required|integer|min:1',
-            'lines.*.counted_qty' => 'nullable|numeric|min:0',
-            'lines.*.remark' => 'nullable|string|max:500',
-            // 序列号/实物逐件行：在/不在、全部在/全部不在、补录新件、删除补录件、无编号实盘数。
-            'lines.*.mark_all_present' => 'nullable|boolean',
-            'lines.*.entries' => 'nullable|array|max:500',
-            'lines.*.entries.*.id' => 'required|integer',
-            'lines.*.entries.*.counted_present' => 'nullable|boolean',
-            'lines.*.delete_entry_ids' => 'nullable|array|max:500',
-            'lines.*.delete_entry_ids.*' => 'integer',
-            'lines.*.unnumbered_counted_qty' => 'nullable|numeric|min:0',
-            'lines.*.new_entries' => 'nullable|array|max:500',
-            'lines.*.new_entries.*.serial_no' => 'nullable|string|max:120',
-            'lines.*.new_entries.*.physical_label' => 'nullable|string|max:120',
-            'lines.*.new_entries.*.dimensions' => 'nullable|array',
-            'lines.*.new_entries.*.dimensions.length_mm' => ['nullable', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],
-            'lines.*.new_entries.*.dimensions.width_mm' => ['nullable', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],
-            'lines.*.new_entries.*.dimensions.thickness_mm' => ['nullable', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],
-            'lines.*.new_entries.*.dimensions.nominal_thickness_mm' => ['nullable', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],
-            'lines.*.new_entries.*.total_cost' => ['nullable', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/'],
-        ]);
+        $data = $request->validate(InventoryStocktakeService::COUNT_RULES);
         return response()->json(['message' => '实盘数已保存', 'data' => $service->saveCounts($id, $data['lines'], (int) $user->legacy_id, $data['expected_version'])]);
     }
 
@@ -165,7 +142,7 @@ class InventoryStocktakeController extends Controller
             ->when($filter === 'new', fn ($q) => $q->where('is_new', true))
             ->when($filter === 'locked', fn ($q) => $q->where('is_locked', true))
             ->orderBy('is_new')->orderBy('is_locked')->orderBy('id')
-            ->paginate($data['per_page'] ?? 10, ['id', 'entry_type', 'serial_no', 'physical_label', 'book_present', 'counted_present',
+            ->paginate($data['per_page'] ?? 10, ['id', 'entry_type', 'serial_no', 'material_physical_id', 'physical_label', 'book_present', 'counted_present',
                 'is_new', 'is_locked', 'book_status', 'dimensions', 'total_cost', 'counted_at']);
         return response()->json($paginator);
     }

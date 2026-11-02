@@ -196,8 +196,32 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
             <span class="kv-value"><el-tag size="mini" :type="statusTag(order.production_confirm_status)">{{ statusText(order.production_confirm_status) }}</el-tag></span>
           </div>
           <div class="kv-item">
+            <span class="kv-label">付款方式</span>
+            <span class="kv-value font-medium">{{ order.payment_method_name || (order.payment_method_snapshot && order.payment_method_snapshot.method_name) || order.pay_type || '-' }}</span>
+          </div>
+          <div class="kv-item">
             <span class="kv-label">付款条件</span>
             <span class="kv-value">{{ (order.funding_status && order.funding_status.policy_name) || '未配置' }}</span>
+          </div>
+          <div class="kv-item">
+            <span class="kv-label">加急 / 延期</span>
+            <span class="kv-value">
+              <el-tag v-if="order.is_urgent" size="mini" type="danger">加急订单</el-tag>
+              <el-tag v-if="order.is_delay" size="mini" type="warning">延期发货：{{ dateOnly(order.delay_date) }}</el-tag>
+              <span v-if="!order.is_urgent && !order.is_delay" class="text-muted">正常</span>
+            </span>
+          </div>
+          <div class="kv-item">
+            <span class="kv-label">订单共享</span>
+            <span class="kv-value">
+              <template v-if="order.is_share">
+                <span v-if="(order.share_users || []).length" class="share-users-tags">
+                  <el-tag v-for="user in (order.share_users || [])" :key="user.user_id" size="mini" type="info">{{ user.display_name }}</el-tag>
+                </span>
+                <span v-else class="text-muted">已开启共享</span>
+              </template>
+              <span v-else class="text-muted">未开启共享</span>
+            </span>
           </div>
           <div v-if="order.funding_status && order.funding_status.agreed_deposit_supported" class="kv-item">
             <span class="kv-label">开工定金</span>
@@ -217,10 +241,14 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
               <el-tag size="mini" :type="order.funding_status.shipment_funds_satisfied ? 'success' : 'warning'">{{ order.funding_status.shipment_funds_satisfied ? '可发货' : (order.funding_status.outstanding_amount !== undefined ? `未收 ¥${Number(order.funding_status.outstanding_amount || 0).toLocaleString('zh-CN')}` : '尾款未齐') }}</el-tag>
             </span>
           </div>
+          <div class="kv-item">
+            <span class="kv-label">订单备注</span>
+            <span class="kv-value" :class="{ 'text-muted': !order.remark }">{{ order.remark || '无备注' }}</span>
+          </div>
         </div>
         <!-- 订单长备注独立块 -->
         <div v-if="order.remark" class="order-remark-box">
-          <div class="remark-title"><i class="el-icon-chat-dot-round" /> 订单备注</div>
+          <div class="remark-title"><i class="el-icon-chat-dot-round" /> 订单详细备注</div>
           <div class="remark-content">{{ order.remark }}</div>
         </div>
       </section>
@@ -236,8 +264,28 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
             <span class="kv-value font-semibold">{{ order.customer_name || '-' }}</span>
           </div>
           <div class="kv-item">
+            <span class="kv-label">客户类型</span>
+            <span class="kv-value">{{ order.customer_kind === 'enterprise' ? '企业客户' : '个人客户' }}</span>
+          </div>
+          <div class="kv-item">
+            <span class="kv-label">联系人</span>
+            <span class="kv-value">{{ order.contact_name || (order.customer_snapshot && order.customer_snapshot.contact && order.customer_snapshot.contact.name) || '-' }}</span>
+          </div>
+          <div class="kv-item">
             <span class="kv-label">联系电话</span>
             <span class="kv-value font-mono">{{ order.customer_phone || order.contact_phone || '-' }}</span>
+          </div>
+          <div class="kv-item">
+            <span class="kv-label">平台买家 ID</span>
+            <span class="kv-value font-mono">{{ order.platform_buyer_id || (order.customer_snapshot && order.customer_snapshot.platform_buyer_id) || '-' }}</span>
+          </div>
+          <div class="kv-item">
+            <span class="kv-label">配送方式</span>
+            <span class="kv-value">
+              <el-tag size="mini" :type="(order.shipping_snapshot && order.shipping_snapshot.is_self_pickup) ? 'warning' : 'info'">
+                {{ (order.shipping_snapshot && order.shipping_snapshot.is_self_pickup) ? '客户自提' : '快递/物流承运' }}
+              </el-tag>
+            </span>
           </div>
           <div class="kv-item">
             <span class="kv-label">承运物流</span>
@@ -250,6 +298,10 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
           <div v-if="order.customer_snapshot && order.customer_snapshot.name && order.customer_snapshot.name !== order.customer_name" class="kv-item">
             <span class="kv-label">客户历史快照</span>
             <span class="kv-value text-muted">{{ order.customer_snapshot.name }}</span>
+          </div>
+          <div v-if="order.shipping_snapshot && order.shipping_snapshot.customer_logistics_note" class="kv-item kv-item--full">
+            <span class="kv-label">客户物流备注</span>
+            <span class="kv-value text-muted">{{ order.shipping_snapshot.customer_logistics_note }}</span>
           </div>
           <!-- 详细收货地址 (全宽卡片) -->
           <div class="kv-item kv-item--full address-box">
@@ -285,9 +337,163 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
         <div class="card-title">
           <i class="el-icon-goods" /> 订单商品明细
           <span class="title-sub-count">共 {{ (order.lines || []).length }} 项商品</span>
+          <span v-if="totalLineFilesCount" class="title-sub-count title-sub-count--blue">图纸资料 {{ totalLineFilesCount }} 份</span>
         </div>
+        <el-button
+          v-if="linesWithFilesCount"
+          type="text"
+          size="mini"
+          @click="toggleAllLineDrawings"
+        >
+          {{ allFileLinesExpanded ? '收起图纸明细' : `展开有图纸行 (${linesWithFilesCount})` }}
+        </el-button>
       </div>
-      <el-table :data="order.lines || []" border size="mini" class="clean-order-table" highlight-current-row>
+      <el-table
+        ref="orderLinesTable"
+        :data="order.lines || []"
+        row-key="id"
+        :expand-row-keys="expandedLineRowKeys"
+        border
+        size="mini"
+        class="clean-order-table"
+        highlight-current-row
+        @expand-change="onLineExpandChange"
+      >
+        <el-table-column type="expand" width="42">
+          <template slot-scope="{row, $index}">
+            <div class="line-expand-box">
+              <div class="line-expand-head">
+                <span class="line-badge">行 {{ row.line_no || ($index + 1) }}</span>
+                <span class="line-prod">{{ row.product_name }}</span>
+                <span class="line-sku text-muted">/ {{ row.sku_name }}</span>
+                <span class="line-expand-sub">订单行详细扩展信息</span>
+              </div>
+
+              <!-- 订单行结构化详情卡片组 -->
+              <div class="line-expand-grid">
+                <!-- 规格与单位换算 -->
+                <div class="expand-info-card">
+                  <div class="expand-card-title"><i class="el-icon-refresh" /> 规格与单位换算</div>
+                  <div class="expand-kv-list">
+                    <div class="expand-kv">
+                      <span class="lbl">销售单位：</span>
+                      <span class="val font-medium">{{ row.unit_name_snapshot || '台' }}</span>
+                    </div>
+                    <div class="expand-kv">
+                      <span class="lbl">库存物料：</span>
+                      <span class="val">{{ lineItem(row).item_name || '-' }} <small v-if="lineItem(row).item_code" class="text-muted font-mono">({{ lineItem(row).item_code }})</small></span>
+                    </div>
+                    <div class="expand-kv">
+                      <span class="lbl">基本单位：</span>
+                      <span class="val">{{ row.item_base_unit_name_snapshot || (row.item_snapshot && row.item_snapshot.base_unit_name) || '-' }}</span>
+                    </div>
+                    <div class="expand-kv">
+                      <span class="lbl">换算比例：</span>
+                      <span class="val font-mono">1 {{ row.unit_name_snapshot || '销售单位' }} = {{ row.fulfillment_factor_snapshot || 1 }} {{ row.item_base_unit_name_snapshot || '基本单位' }}</span>
+                    </div>
+                    <div class="expand-kv">
+                      <span class="lbl">基本需求量：</span>
+                      <span class="val font-mono font-semibold">{{ row.item_base_required_qty != null ? row.item_base_required_qty : row.order_qty }} {{ row.item_base_unit_name_snapshot || '' }}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 定制与配置说明 -->
+                <div class="expand-info-card">
+                  <div class="expand-card-title"><i class="el-icon-setting" /> 定制与配置说明</div>
+                  <div class="expand-kv-list">
+                    <div class="expand-kv">
+                      <span class="lbl">定制类型：</span>
+                      <span class="val">
+                        <el-tag v-if="row.is_special_customized" size="mini" type="danger">特殊定制</el-tag>
+                        <el-tag v-else-if="row.is_customized" size="mini">普通定制</el-tag>
+                        <span v-else class="text-muted">标准配置</span>
+                      </span>
+                    </div>
+                    <div class="expand-kv">
+                      <span class="lbl">工作电压：</span>
+                      <span class="val font-medium">{{ row.electric || '标准电压 / 未选' }}</span>
+                    </div>
+                    <div class="expand-kv">
+                      <span class="lbl">原水泵控制：</span>
+                      <span class="val">{{ row.need_pump === true ? '需要原水泵' : (row.need_pump === false ? '不需要原水泵' : '未配置') }}</span>
+                    </div>
+                    <div class="expand-kv">
+                      <span class="lbl">报价有效期：</span>
+                      <span class="val">{{ (row.configuration_snapshot && row.configuration_snapshot.valid_days) ? `${row.configuration_snapshot.valid_days} 天` : '未设定有效期' }}</span>
+                    </div>
+                    <div class="expand-kv expand-kv--full">
+                      <span class="lbl">特殊定制说明：</span>
+                      <span class="val" :class="{ 'text-muted': !((row.configuration_snapshot && row.configuration_snapshot.special_custom_description) || row.customization_description) }">
+                        {{ ((row.configuration_snapshot && row.configuration_snapshot.special_custom_description) || row.customization_description) || '无特殊说明' }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 备货与进度跟踪 -->
+                <div class="expand-info-card">
+                  <div class="expand-card-title"><i class="el-icon-s-operation" /> 备货与执行进度</div>
+                  <div class="expand-kv-list">
+                    <div class="expand-kv">
+                      <span class="lbl">已锁库存：</span>
+                      <span class="val font-mono">{{ lineLockQuantities(row).locked_inventory_qty != null ? lineLockQuantities(row).locked_inventory_qty : '-' }}</span>
+                    </div>
+                    <div class="expand-kv">
+                      <span class="lbl">生产缺口：</span>
+                      <span class="val font-mono">{{ lineLockQuantities(row).pending_production_qty != null ? lineLockQuantities(row).pending_production_qty : '-' }}</span>
+                    </div>
+                    <div class="expand-kv">
+                      <span class="lbl">外购缺口：</span>
+                      <span class="val font-mono">{{ lineLockQuantities(row).pending_purchase_qty != null ? lineLockQuantities(row).pending_purchase_qty : '-' }}</span>
+                    </div>
+                    <div class="expand-kv">
+                      <span class="lbl">已发货数量：</span>
+                      <span class="val font-mono">{{ lineLockQuantities(row).shipped_qty != null ? lineLockQuantities(row).shipped_qty : (row.shipped_qty || 0) }}</span>
+                    </div>
+                    <div class="expand-kv expand-kv--full">
+                      <span class="lbl">订单行备注：</span>
+                      <span class="val font-medium" :class="{ 'text-muted': !row.remark }">{{ row.remark || '无行备注' }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 本行图纸与技术附件表格 -->
+              <div class="line-expand-drawing-section">
+                <div class="drawing-section-title">
+                  <i class="el-icon-paperclip" /> 本行设计图纸与技术附件
+                  <span class="title-sub-count">共 {{ lineFiles(row).length }} 份</span>
+                </div>
+                <el-table :data="lineFiles(row)" border size="mini" empty-text="暂无图纸或技术附件" class="line-inline-file-table">
+                  <el-table-column prop="file_name" label="文件名称" min-width="180" show-overflow-tooltip>
+                    <template slot-scope="scope">
+                      <i class="el-icon-document text-muted" /> {{ scope.row.file_name }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="版本" width="68" align="center"><template slot-scope="scope">V{{ scope.row.version_no || 1 }}</template></el-table-column>
+                  <el-table-column label="说明" min-width="130" show-overflow-tooltip>
+                    <template slot-scope="scope">{{ scope.row.remark || statusText(scope.row.file_type) }}</template>
+                  </el-table-column>
+                  <el-table-column label="文件大小" width="92" align="right">
+                    <template slot-scope="scope"><span class="font-mono text-muted">{{ fileSize(scope.row.file_size) }}</span></template>
+                  </el-table-column>
+                  <el-table-column label="上传信息" min-width="150" show-overflow-tooltip>
+                    <template slot-scope="scope">{{ scope.row.uploaded_by || '-' }} / {{ date(scope.row.uploaded_at) }}</template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="136" align="center">
+                    <template slot-scope="scope">
+                      <el-button v-if="scope.row.attachment_id && previewable(scope.row)" type="text" size="mini" @click="previewAttachment(scope.row)">预览</el-button>
+                      <el-button v-if="scope.row.attachment_id && scope.row.can_download !== false" type="text" size="mini" @click="downloadAttachment(scope.row)">下载</el-button>
+                      <el-button v-if="canDeleteAttachment(scope.row)" type="text" size="mini" class="danger-link" @click="deleteAttachment(scope.row)">删除</el-button>
+                      <span v-if="!scope.row.attachment_id" class="text-muted">-</span>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </div>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column label="行号" width="55" align="center">
           <template slot-scope="{$index}"><span class="line-index">{{ $index + 1 }}</span></template>
         </el-table-column>
@@ -339,20 +545,33 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
               <el-tag v-if="row.need_pump === true" size="mini" type="success" effect="plain">原水泵: 需要</el-tag>
               <el-tag v-else-if="row.need_pump === false" size="mini" type="info" effect="plain">原水泵: 不需要</el-tag>
               <el-tag v-for="(cut,index) in ((row.configuration_snapshot || {}).cut_requirements || [])" :key="`${cut.component_item_id}-${index}`" size="mini" type="warning" effect="plain">{{ cut.component_item_name }} {{ Number(cut.cut_length_mm).toLocaleString('zh-CN') }}mm × {{ Number(cut.piece_qty).toLocaleString('zh-CN') }}段</el-tag>
-              <span v-if="!row.is_customized && !row.is_special_customized && !row.electric && row.need_pump === null && !((row.configuration_snapshot || {}).cut_requirements || []).length" class="text-muted">标准配置</span>
+              <span v-if="!row.is_customized && !row.is_special_customized && !row.electric && !row.need_pump && row.need_pump !== false && !((row.configuration_snapshot || {}).cut_requirements || []).length" class="text-muted">标准配置</span>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="图纸数" width="70" align="center">
+        <el-table-column label="图纸附件" width="84" align="center">
           <template slot-scope="{row}">
-            <span class="drawing-count-badge" :class="{ 'has-files': lineFiles(row).length > 0 }">
+            <button
+              type="button"
+              class="drawing-count-badge is-clickable"
+              :class="{ 'has-files': lineFiles(row).length > 0 }"
+              title="点击展开/收起本行图纸与技术附件"
+              @click.stop="toggleLineDrawingExpand(row)"
+            >
+              <i v-if="lineFiles(row).length > 0" class="el-icon-paperclip" />
               {{ lineFiles(row).length }}
-            </span>
+              <i :class="isLineDrawingExpanded(row) ? 'el-icon-arrow-up' : 'el-icon-arrow-down'" class="drawing-badge-arrow" />
+            </button>
           </template>
         </el-table-column>
         <el-table-column label="备货方式" width="92" align="center">
           <template slot-scope="{row}">
             <el-tag size="mini" :type="statusTag(row.fulfillment_type)">{{ row.is_purchase_fulfilled && row.fulfillment_type === 'mixed' ? '库存+外购' : statusText(row.fulfillment_type) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="remark" label="行备注" min-width="110" show-overflow-tooltip>
+          <template slot-scope="{row}">
+            <span :class="{ 'text-muted': !row.remark }">{{ row.remark || '-' }}</span>
           </template>
         </el-table-column>
         <el-table-column label="处理状态" width="100" align="center">
@@ -361,6 +580,44 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
           </template>
         </el-table-column>
       </el-table>
+    </section>
+
+    <!-- 合同附件（公共整单附件，合入订单信息） -->
+    <section ref="contractAttachmentSection" class="detail-card contract-attachments-card">
+      <div class="card-head">
+        <div class="card-title">
+          <i class="el-icon-paperclip" /> 合同附件
+          <span class="title-sub-count">共 {{ contractFiles.length }} 个文件</span>
+        </div>
+      </div>
+      <div v-if="contractFiles.length" class="compact-file-list">
+        <div v-for="file in contractFiles" :key="file.attachment_id || file.file_hash || file.file_name" class="compact-file-row">
+          <div class="compact-file-main">
+            <b :title="file.file_name"><i class="el-icon-document" /> {{ file.file_name }}</b>
+            <span>{{ statusText(file.file_type || 'other') }} · V{{ file.version_no || 1 }} · {{ fileSize(file.file_size) }} · {{ file.uploaded_by || '-' }} · {{ date(file.uploaded_at) }} · {{ statusText(file.status || 'active') }}</span>
+          </div>
+          <div class="compact-file-actions">
+            <el-button v-if="file.attachment_id && previewable(file)" type="text" size="mini" @click="previewAttachment(file)">预览</el-button>
+            <el-button v-if="file.attachment_id && file.can_download !== false" type="text" size="mini" @click="downloadAttachment(file)">下载</el-button>
+            <el-button v-if="canDeleteAttachment(file)" type="text" size="mini" class="danger-link" @click="deleteAttachment(file)">删除</el-button>
+            <span v-if="!file.attachment_id" class="text-muted">历史记录</span>
+          </div>
+        </div>
+      </div>
+      <div v-else class="contract-empty-inline text-muted">
+        <i class="el-icon-folder-opened" /> 暂无合同附件
+      </div>
+    </section>
+
+    <!-- 开票信息（合入订单信息） -->
+    <section v-if="canViewInvoice" ref="invoiceSection" class="detail-card order-invoice-card">
+      <div class="card-head">
+        <div class="card-title">
+          <i class="el-icon-tickets" /> 开票信息
+          <span v-if="invoicePendingCount" class="title-sub-count title-sub-count--orange">{{ invoicePendingCount }} 笔待开票</span>
+        </div>
+      </div>
+      <sales-order-invoice-panel v-if="order.id" ref="invoicePanel" :order-id="order.id" @loaded="onInvoiceLoaded" />
     </section>
 
     <!-- 审核进度条 (存在审核任务时展开) -->
@@ -407,74 +664,8 @@ Progress design: 用户确认的订单产品树、单台整链路与工单聚合
             </template>
           </order-progress>
         </el-tab-pane>
-        <el-tab-pane v-if="canViewInvoice" name="invoice">
-          <span slot="label"><i class="el-icon-tickets" /> 开票 <span v-if="invoicePendingCount" class="tab-badge-num">{{ invoicePendingCount }}</span></span>
-          <div class="tab-pane-content"><sales-order-invoice-panel v-if="order.id" ref="invoicePanel" :order-id="order.id" @loaded="onInvoiceLoaded" /></div>
-        </el-tab-pane>
         <el-tab-pane v-if="$can('sales_order.view') && $can('finance.view')" label="采购关联" name="finance">
           <div class="tab-pane-content"><sales-order-finance-panel v-if="activeTab === 'finance' && order.id" :order-id="order.id" /></div>
-        </el-tab-pane>
-        <!-- Tab 2: 合同附件与图纸技术资料 -->
-        <el-tab-pane name="attachments">
-          <span slot="label">
-            <i class="el-icon-paperclip" /> 附件与资料
-            <span v-if="totalAttachmentsCount" class="tab-badge-num">{{ totalAttachmentsCount }}</span>
-          </span>
-          <div class="tab-pane-content attachments-tab-body">
-            <!-- 合同附件子区 -->
-            <div class="sub-section">
-              <div class="sub-section-title">
-                <h4><i class="el-icon-document-checked" /> 合同附件 <small class="text-muted">（共 {{ contractFiles.length }} 个文件）</small></h4>
-              </div>
-              <div v-if="contractFiles.length" class="compact-file-list">
-                <div v-for="file in contractFiles" :key="file.attachment_id || file.file_hash || file.file_name" class="compact-file-row">
-                  <div class="compact-file-main">
-                    <b :title="file.file_name"><i class="el-icon-document" /> {{ file.file_name }}</b>
-                    <span>{{ statusText(file.file_type || 'other') }} · V{{ file.version_no || 1 }} · {{ fileSize(file.file_size) }} · {{ file.uploaded_by || '-' }} · {{ date(file.uploaded_at) }} · {{ statusText(file.status || 'active') }}</span>
-                  </div>
-                  <div class="compact-file-actions">
-                    <el-button v-if="file.attachment_id && previewable(file)" type="text" size="mini" @click="previewAttachment(file)">预览</el-button>
-                    <el-button v-if="file.attachment_id && file.can_download !== false" type="text" size="mini" @click="downloadAttachment(file)">下载</el-button>
-                    <el-button v-if="canDeleteAttachment(file)" type="text" size="mini" class="danger-link" @click="deleteAttachment(file)">删除</el-button>
-                    <span v-if="!file.attachment_id" class="text-muted">历史记录</span>
-                  </div>
-                </div>
-              </div>
-              <el-empty v-else :image-size="40" description="暂无合同附件" />
-            </div>
-
-            <!-- 设计图纸与技术资料子区 -->
-            <div class="sub-section drawing-sub-section">
-              <div class="sub-section-title">
-                <h4><i class="el-icon-picture-outline" /> 订单行设计图纸与技术附件</h4>
-              </div>
-              <div v-for="line in order.lines || []" :key="line.id" class="line-file-block">
-                <div class="line-file-title">
-                  <span class="line-badge">行 {{ line.line_no }}</span>
-                  <span class="line-prod">{{ line.product_name }}</span>
-                  <span class="line-sku text-muted">/ {{ line.sku_name }}</span>
-                </div>
-                <el-table :data="lineFiles(line)" border size="mini" empty-text="暂无图纸或技术附件">
-                  <el-table-column prop="file_name" label="文件名称" min-width="140" show-overflow-tooltip />
-                  <el-table-column label="版本" width="60" align="center"><template slot-scope="{row}">V{{ row.version_no || 1 }}</template></el-table-column>
-                  <el-table-column label="说明" min-width="120" show-overflow-tooltip>
-                    <template slot-scope="{row}">{{ row.remark || statusText(row.file_type) }}</template>
-                  </el-table-column>
-                  <el-table-column label="上传信息" min-width="130" show-overflow-tooltip>
-                    <template slot-scope="{row}">{{ row.uploaded_by || '-' }} / {{ date(row.uploaded_at) }}</template>
-                  </el-table-column>
-                  <el-table-column label="操作" width="130" align="center">
-                    <template slot-scope="{row}">
-                      <el-button v-if="row.attachment_id && previewable(row)" type="text" size="mini" @click="previewAttachment(row)">预览</el-button>
-                      <el-button v-if="row.attachment_id && row.can_download !== false" type="text" size="mini" @click="downloadAttachment(row)">下载</el-button>
-                      <el-button v-if="canDeleteAttachment(row)" type="text" size="mini" class="danger-link" @click="deleteAttachment(row)">删除</el-button>
-                      <span v-if="!row.attachment_id" class="text-muted">-</span>
-                    </template>
-                  </el-table-column>
-                </el-table>
-              </div>
-            </div>
-          </div>
         </el-tab-pane>
 
         <!-- Tab 3: 操作日志与版本记录 -->
@@ -656,6 +847,7 @@ export default {
     depositSaving: false,
     priority: { visible: false, saving: false, value: 3, reason: '' },
     priorityOptions: [{ value: 1, label: '特急' }, { value: 2, label: '加急' }, { value: 3, label: '普通' }, { value: 4, label: '可延后' }],
+    expandedLineRowKeys: [],
     inventoryLockPending: null,
     inventoryLockStorageKey: '',
     loadSequence: 0
@@ -699,6 +891,19 @@ export default {
       })
       return count
     },
+    totalLineFilesCount() {
+      return (this.order.lines || []).reduce((sum, line) => sum + this.lineFiles(line).length, 0)
+    },
+    linesWithFilesCount() {
+      return (this.order.lines || []).filter(line => this.lineFiles(line).length > 0).length
+    },
+    allFileLinesExpanded() {
+      const fileLineKeys = (this.order.lines || [])
+        .filter(line => this.lineFiles(line).length > 0 && line.id != null)
+        .map(line => line.id)
+      if (!fileLineKeys.length) return false
+      return fileLineKeys.every(id => this.expandedLineRowKeys.some(key => String(key) === String(id)))
+    },
     contractFiles() {
       return this.mergeAttachmentFiles(
         this.parseContractAttachments(this.order.contract_attachments),
@@ -731,12 +936,42 @@ export default {
   methods: {
     onInvoiceLoaded(info) { this.invoicePendingCount = ((info && info.requests) || []).filter(row => row.status === 'pending').length },
     openInvoiceRequest() {
-      this.activeTab = 'invoice'
+      this.activeTab = 'info'
       this.$nextTick(() => {
         const panel = this.$refs.invoicePanel
         if (panel) panel.openCreate()
-        if (this.$refs.tabSection && this.$refs.tabSection.scrollIntoView) this.$refs.tabSection.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        const target = this.$refs.invoiceSection || this.$refs.tabSection
+        if (target && target.scrollIntoView) target.scrollIntoView({ behavior: 'smooth', block: 'start' })
       })
+    },
+    isLineDrawingExpanded(row) {
+      if (!row || row.id == null) return false
+      return this.expandedLineRowKeys.some(key => String(key) === String(row.id))
+    },
+    lineLockQuantities(row) {
+      if (!row || !row.id) return {}
+      return (this.lockLines || []).find(item => item.sales_order_line_id === row.id) || {}
+    },
+    toggleLineDrawingExpand(row) {
+      if (!row || row.id == null) return
+      const exists = this.isLineDrawingExpanded(row)
+      if (exists) {
+        this.expandedLineRowKeys = this.expandedLineRowKeys.filter(key => String(key) !== String(row.id))
+      } else {
+        this.expandedLineRowKeys = [...this.expandedLineRowKeys, row.id]
+      }
+    },
+    onLineExpandChange(row, expandedRows) {
+      this.expandedLineRowKeys = (expandedRows || []).map(item => item.id).filter(id => id != null)
+    },
+    toggleAllLineDrawings() {
+      if (this.allFileLinesExpanded) {
+        this.expandedLineRowKeys = []
+      } else {
+        this.expandedLineRowKeys = (this.order.lines || [])
+          .filter(line => this.lineFiles(line).length > 0 && line.id != null)
+          .map(line => line.id)
+      }
     },
     processingStatusText(row) {
       const original = statusText(row.line_status)
@@ -759,6 +994,9 @@ export default {
       const { data } = await getSalesOrder(id)
       if (sequence !== this.loadSequence) return
       this.order = data
+      this.expandedLineRowKeys = (data.lines || [])
+        .filter(line => this.lineFiles(line).length > 0 && line.id != null)
+        .map(line => line.id)
       const progress = this.$refs.orderProgress
       if (progress && progress.orderId === data.id) progress.loadTree()
       let actor = 0
@@ -1504,18 +1742,178 @@ export default {
 }
 
 .drawing-count-badge {
-  display: inline-block;
-  padding: 1px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 8px;
   border-radius: 10px;
   font-size: 11px;
-  color: #94a3b8;
+  color: #64748b;
   background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+}
+
+.drawing-count-badge.is-clickable {
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.drawing-count-badge.is-clickable:hover {
+  border-color: #94a3b8;
+  background: #e2e8f0;
 }
 
 .drawing-count-badge.has-files {
   color: #0284c7;
   background: #e0f2fe;
+  border-color: #bae6fd;
   font-weight: 600;
+}
+
+.drawing-count-badge.has-files.is-clickable:hover {
+  background: #bae6fd;
+  border-color: #38bdf8;
+}
+
+.drawing-badge-arrow {
+  font-size: 10px;
+  margin-left: 1px;
+}
+
+.title-sub-count--blue {
+  background: #e0f2fe;
+  color: #0284c7;
+}
+
+.title-sub-count--orange {
+  background: #ffedd5;
+  color: #ea580c;
+}
+
+.line-expand-box {
+  margin: 8px 12px 10px 40px;
+  padding: 12px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-left: 3px solid #008b4b;
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+}
+
+.line-expand-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed #e2e8f0;
+  font-size: 13px;
+}
+
+.line-expand-sub {
+  margin-left: auto;
+  font-size: 12px;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.line-expand-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.expand-info-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.expand-card-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1e293b;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.expand-card-title i {
+  color: #008b4b;
+}
+
+.expand-kv-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.expand-kv {
+  display: flex;
+  align-items: flex-start;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.expand-kv .lbl {
+  color: #64748b;
+  width: 76px;
+  flex-shrink: 0;
+}
+
+.expand-kv .val {
+  color: #334155;
+  word-break: break-all;
+  flex: 1;
+}
+
+.expand-kv--full {
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: 1px dashed #f1f5f9;
+}
+
+.line-expand-drawing-section {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.drawing-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #1e293b;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.drawing-section-title i {
+  color: #0284c7;
+}
+
+.share-users-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.contract-empty-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 6px;
+  font-size: 12px;
 }
 
 /* 审核进度条卡片 */

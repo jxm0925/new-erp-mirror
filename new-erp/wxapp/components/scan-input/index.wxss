@@ -1,0 +1,65 @@
+.scan-input {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 8rpx;
+  border: 1rpx solid #cfd6e2;
+  border-radius: 18rpx;
+  background: #ffffff;
+}
+.scan-input-icon {
+  flex-shrink: 0;
+  margin-left: 14rpx;
+  color: #d81e06;
+}
+.scan-input-field {
+  flex: 1;
+  min-width: 0;
+  height: 74rpx;
+  font-size: 29rpx;
+  color: #1e293b;
+}
+.scan-input-button {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 10rpx;
+  min-width: 144rpx;
+  margin: 0;
+  padding: 16rpx 18rpx;
+  border-radius: 15rpx;
+  background: #df1b07;
+  color: #ffffff;
+  font-size: 29rpx;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.scan-input-button::after {
+  border: 0;
+}
+.scan-input-button[disabled] {
+  background: #f1a79f;
+  color: #ffffff;
+}
+.compact {
+  gap: 8rpx;
+  padding: 4rpx;
+  border-radius: 12rpx;
+}
+.compact .scan-input-icon {
+  display: none;
+}
+.compact .scan-input-field {
+  height: 58rpx;
+  padding-left: 10rpx;
+  font-size: 26rpx;
+}
+.compact .scan-input-button {
+  min-width: 62rpx;
+  padding: 8rpx;
+  border-radius: 9rpx;
+}

@@ -25,7 +25,7 @@ final class ProductionFinancialProjectionService
                 && ! ($commercialAmounts && in_array($key, ['unit_price', 'unit_price_snapshot', 'amount', 'amount_snapshot',
                     'amount_excl_tax', 'amount_incl_tax', 'tax_amount', 'tax_amount_snapshot', 'freight_amount', 'total_amount',
                     'payable_amount', 'settlement_amount', 'line_amount', 'discount_amount', 'discount_rate', 'tax_rate',
-                    'receivable_amount', 'final_receivable_amount'], true))) continue;
+                    'receivable_amount', 'final_receivable_amount', 'difference_amount'], true))) continue;
             // Frozen snapshots and command replay responses may contain JSON strings;
             // filtering only the outer DTO would leave their monetary facts readable.
             $decoded = is_string($value) ? json_decode($value) : null;

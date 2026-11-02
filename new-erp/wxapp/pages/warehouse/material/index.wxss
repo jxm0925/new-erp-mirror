@@ -1,0 +1,2 @@
+@import "../shared.wxss";
+.material-unit { width: 150rpx; text-align: center; }.material-section { margin-top: 26rpx; }.material-choice { display: flex; gap: 12rpx; margin-bottom: 20rpx; }.material-choice > view { flex: 1; padding: 20rpx 8rpx; text-align: center; border: 1rpx solid #e4eaf2; border-radius: 10rpx; color: #65738e; background: #f4f7fa; }.material-choice > .chosen { border-color: #ee1708; color: #e51b0d; background: #fff0ee; }.material-scan { margin: 12rpx 0; }

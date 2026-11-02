@@ -1,0 +1,1 @@
+<view class="warehouse-context"><text>{{actorName}} · 仓库</text><text>{{today}}</text></view>

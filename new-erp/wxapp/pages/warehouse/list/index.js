@@ -5,10 +5,10 @@ Page({
     loading: false, error: '', filterOpen: false, dateFrom: '', dateTo: '', draftFrom: '', draftTo: '' },
   onLoad(options) {
     const direction = ['inbound', 'outbound', 'all'].includes(options.direction) ? options.direction : 'inbound';
-    this.setData({ direction });
-    wx.setNavigationBarTitle({ title: direction === 'inbound' ? '入库办理' : direction === 'outbound' ? '出库办理' : '仓库待办' });
+    this.setData({ direction, kind: options.kind || '' });
+    wx.setNavigationBarTitle({ title: options.kind === 'material_return' ? '退料接收' : direction === 'inbound' ? '入库办理' : direction === 'outbound' ? '出库办理' : '仓库待办' });
   },
-  onShow() { this.load(); },
+  onShow() { if (!page.resumingScan(this)) this.load(); },
   onUnload() { this.sequence = (this.sequence || 0) + 1; },
   onPullDownRefresh() { this.load().finally(() => wx.stopPullDownRefresh()); },
   load() {

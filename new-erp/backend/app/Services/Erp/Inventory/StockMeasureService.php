@@ -108,27 +108,36 @@ class StockMeasureService
     /** 某物料在仓库里的实物（板材逐张）。 */
     public function physicals(int $itemId, array $filters = []): array
     {
-        $rows = DB::table('erp_material_physicals as p')
+        $query = DB::table('erp_material_physicals as p')
             ->join('erp_material_holdings as h', 'h.id', '=', 'p.current_holding_id')
             ->join('erp_inventory_balances as b', 'b.id', '=', 'h.inventory_balance_id')
             ->join('erp_warehouses as w', 'w.id', '=', 'b.warehouse_id')
             ->join('erp_locations as l', 'l.id', '=', 'b.location_id')
             ->leftJoin('erp_material_lots as lot', 'lot.id', '=', 'p.material_lot_id')
             ->where('p.item_id', $itemId)->where('h.position_type', 'WAREHOUSE')->where('p.status', 'AVAILABLE')
+            ->when(trim((string) ($filters['keyword'] ?? '')) !== '', fn ($q) => $q->where('p.physical_no', 'like', '%'.trim((string) $filters['keyword']).'%'))
+            ->when($filters['physical_id'] ?? null, fn ($q, $id) => $q->where('p.id', (int) $id))
             ->when($filters['batch_no'] ?? null, fn ($q, $batch) => $q->where('b.batch_no', $batch))
             ->when($filters['warehouse_id'] ?? null, fn ($q, $id) => $q->where('b.warehouse_id', $id))
-            ->orderBy('b.batch_no')->orderBy('p.id')->limit(500)
-            ->get(['p.id', 'p.physical_no', 'p.shape', 'p.dimensions', 'p.status', 'p.first_cut_at', 'p.business_version', 'p.total_cost',
-                'lot.material_form', 'b.batch_no', 'b.warehouse_id', 'w.warehouse_name', 'b.location_id', 'l.location_name']);
-        return $rows->map(function ($row) {
+            ->when($filters['location_id'] ?? null, fn ($q, $id) => $q->where('b.location_id', $id))
+            ->orderBy('b.batch_no')->orderBy('p.id');
+        $columns = ['p.id', 'p.physical_no', 'p.shape', 'p.dimensions', 'p.status', 'p.first_cut_at', 'p.business_version', 'p.total_cost',
+            'lot.material_form', 'b.batch_no', 'b.warehouse_id', 'w.warehouse_name', 'b.location_id', 'l.location_code', 'l.location_name'];
+        $present = function ($row) {
             $d = json_decode((string) $row->dimensions, true) ?: [];
-            return ['id' => (int) $row->id, 'physical_no' => $row->physical_no, 'shape' => $row->shape, 'dimensions' => $d,
+            return ['id' => (int) $row->id, 'physical_no' => $row->physical_no, 'shape' => $row->shape, 'dimensions' => $d, 'status' => $row->status,
                 'area_m2' => round($this->area($row->shape, $d), 4), 'material_form' => $row->material_form, 'batch_no' => $row->batch_no,
                 'warehouse_id' => (int) $row->warehouse_id, 'warehouse_name' => $row->warehouse_name,
-                'location_id' => (int) $row->location_id, 'location_name' => $row->location_name,
+                'location_id' => (int) $row->location_id, 'location_code' => $row->location_code, 'location_name' => $row->location_name,
                 'business_version' => (int) $row->business_version, 'total_cost' => (string) $row->total_cost,
                 'editable' => $row->first_cut_at === null];
-        })->all();
+        };
+        if (! empty($filters['pagination'])) {
+            $page = $query->paginate($filters['per_page'] ?? 10, $columns, 'page', $filters['page'] ?? 1);
+            $page->setCollection($page->getCollection()->map($present));
+            return $page->toArray();
+        }
+        return $query->limit(500)->get($columns)->map($present)->all();
     }
 
     /** 修改一张板（实物）的长宽厚：只能改还在仓库、没切过、没被未完成单据占用的。 */

@@ -13,7 +13,7 @@ final class WarehouseWorkspaceController extends Controller
     public function index(Request $request, WarehouseWorkspaceService $service)
     {
         $filters = $request->validate(['direction' => 'nullable|in:all,inbound,outbound', 'status_group' => 'nullable|in:pending,completed',
-            'kind' => 'nullable|in:purchase_receipt,sales_return,sales_shipment,purchase_return',
+            'kind' => 'nullable|in:purchase_receipt,sales_return,sales_shipment,purchase_return,material_preparation,material_delivery,material_return,stocktake',
             'keyword' => 'nullable|string|max:120', 'date_from' => 'nullable|date',
             'date_to' => 'nullable|date'.($request->filled('date_from') ? '|after_or_equal:date_from' : ''),
             'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
@@ -30,7 +30,9 @@ final class WarehouseWorkspaceController extends Controller
 
     public function document(Request $request, string $kind, int $id, \App\Services\Erp\WarehouseDocumentService $service)
     {
-        $filters = $request->validate(['stage' => 'nullable|in:post,receive', 'receipt_id' => 'nullable|integer|min:1',
+        $filters = $request->validate(['stage' => 'nullable|in:post,receive,prepare,deliver,count', 'receipt_id' => 'nullable|integer|min:1',
+            'units' => 'nullable|integer|min:1|max:100000', 'keyword' => 'nullable|string|max:120',
+            'location_id' => 'nullable|integer|min:1', 'line_status' => 'nullable|in:uncounted,diff',
             'page' => 'nullable|integer|min:1', 'packages_page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
         return response()->json(['data' => $this->project($service->show($kind, $id, $filters, ...$this->context($request)), $request)]);
     }
@@ -67,17 +69,22 @@ final class WarehouseWorkspaceController extends Controller
     {
         [, $permissions] = $this->context($request);
         // production.task.execute：车间开料登记余料回库位置，只能选工厂仓。
-        $allowed = ['inventory.post.repair', 'sales_return.receive', 'sales_order.shipment.post', 'sales_order.shipment.packing.execute', 'sales_order.shipment.packing.quality', 'production.task.execute'];
+        $allowed = ['inventory.post.repair', 'sales_return.receive', 'sales_order.shipment.post', 'sales_order.shipment.packing.execute',
+            'sales_order.shipment.packing.quality', 'production.task.execute', 'inventory.balance.view', 'inventory.stocktake.view',
+            'production.material_delivery.manage', 'production.material_return.approve'];
         if (! array_intersect($allowed, $permissions)) throw new WorkOrderDomainException('permission_denied', '没有选择入出库位置的权限。', 403);
         $filters = $request->validate(['mode' => 'required|in:warehouse,location', 'warehouse_id' => 'required_if:mode,location|integer|min:1',
             'keyword' => 'nullable|string|max:100', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100',
+            'id' => 'nullable|integer|min:1',
             'location_purpose' => 'nullable|in:general,finished,shipping_staging,repair']);
         $mode = $filters['mode'];
         $query = DB::table($mode === 'warehouse' ? 'erp_warehouses' : 'erp_locations')->where('status', 'enabled');
         if ($mode === 'location') $query->where('warehouse_id', $filters['warehouse_id']);
+        if (! empty($filters['id'])) $query->where('id', $filters['id']);
         if ($mode === 'location' && ! empty($filters['location_purpose'])) $query->where('location_purpose', $filters['location_purpose']);
         if (array_intersect(['sales_order.shipment.post', 'sales_order.shipment.packing.execute', 'sales_order.shipment.packing.quality', 'production.task.execute'], $permissions)
-            && ! array_intersect(['inventory.post.repair', 'sales_return.receive'], $permissions)) {
+            && ! array_intersect(['inventory.post.repair', 'sales_return.receive', 'inventory.balance.view', 'inventory.stocktake.view',
+                'production.material_return.approve'], $permissions)) {
             if ($mode === 'warehouse') $query->where('management_scope', 'factory');
             else $query->whereIn('warehouse_id', DB::table('erp_warehouses')->where('management_scope', 'factory')->where('status', 'enabled')->select('id'));
         }

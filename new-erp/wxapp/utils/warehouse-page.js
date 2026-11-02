@@ -21,14 +21,23 @@ function decorate(row) {
     buttonText: row.status_group === 'completed' ? '查看记录' : '查看并办理' });
 }
 function openDocument(row) {
+  if (row.kind === 'stocktake') return wx.navigateTo({ url: `/pages/warehouse/stocktake/index?id=${Number(row.id)}` });
+  if (['material_preparation', 'material_delivery', 'material_return'].includes(row.kind)) {
+    return wx.navigateTo({ url: `/pages/warehouse/material/index?kind=${row.kind}&id=${Number(row.id)}&parent=${Number(row.parent_id || row.work_order_id || 0)}` });
+  }
   const common = `id=${Number(row.id)}&parent=${Number(row.parent_id)}&kind=${row.kind}&stage=${row.stage}&completed=${row.status_group === 'completed' ? '1' : '0'}`;
   return wx.navigateTo({ url: `/pages/warehouse/document/index?${common}` });
 }
 function errorText(error) { return error && error.message ? error.message : '加载失败，请稍后重试'; }
+function resumingScan(host) {
+  const returning = !!(host._warehouseScanReturning || host._warehouseScanActive);
+  if (returning) host._warehouseScanReturning = false;
+  return returning;
+}
 function back() { if (getCurrentPages().length > 1) wx.navigateBack(); else wx.redirectTo({ url: '/pages/production/hub/index' }); }
 function modal(page, options) {
   const dlg = page && typeof page.selectComponent === 'function' ? page.selectComponent('#prodDialog') : null;
   if (dlg && typeof dlg.show === 'function') return dlg.show(options);
   return wx.showModal(options);
 }
-module.exports = { permissions, quantity, money, rows, decorate, openDocument, errorText, back, modal };
+module.exports = { permissions, quantity, money, rows, decorate, openDocument, errorText, resumingScan, back, modal };

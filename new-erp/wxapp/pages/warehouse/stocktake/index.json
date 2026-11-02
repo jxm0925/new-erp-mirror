@@ -1,0 +1,11 @@
+{
+  "navigationBarTitleText": "我的盘点",
+  "navigationBarBackgroundColor": "#ec1808",
+  "navigationBarTextStyle": "white",
+  "enablePullDownRefresh": true,
+  "usingComponents": {
+    "scan-input": "/components/scan-input/index",
+    "warehouse-locator": "/components/warehouse-locator/index",
+    "warehouse-context": "/components/warehouse-context/index"
+  }
+}

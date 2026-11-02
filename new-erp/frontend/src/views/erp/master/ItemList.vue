@@ -13,6 +13,7 @@
       </div>
       <div class="head-actions">
         <el-button v-if="canViewItems" size="small" icon="el-icon-refresh" class="btn-refresh" @click="load">刷新</el-button>
+        <el-button v-if="canViewItems" size="small" icon="el-icon-printer" :disabled="!selectedLabelRows.length" @click="openLabelPrint">打印标签</el-button>
         <el-button v-if="canViewCategories" size="small" icon="el-icon-folder-opened" @click="openCategories">管理分类</el-button>
         <el-button v-if="canViewItems" size="small" icon="el-icon-upload2" class="btn-import" @click="openImport">导入物料</el-button>
         <el-button v-if="canViewItems" size="small" type="success" icon="el-icon-plus" class="btn-theme-create" @click="openCreate">新增物料</el-button>
@@ -153,14 +154,18 @@
       <!-- 物料主数据列表 -->
       <div class="main-table-wrap">
         <el-table
+          ref="itemLabelTable"
           v-loading="loading"
           :data="rows"
+          row-key="id"
           border
           size="small"
-          class="custom-item-table"
+          class="custom-item-table warehouse-label-source"
           :row-class-name="rowClass"
           empty-text="暂无物料档案，请点击右上角“新增物料”录入或“导入物料”。"
+          @selection-change="selectedLabelRows = $event"
         >
+          <el-table-column type="selection" width="45" :reserve-selection="true" />
           <el-table-column prop="item_code" label="物料编码" min-width="200">
             <template slot-scope="{ row }">
               <span class="item-code-link" :title="row.item_code" @click="openDetail(row)">
@@ -276,6 +281,8 @@
         />
       </div>
     </section>
+
+    <warehouse-label-print-dialog :visible.sync="labelPrintVisible" :labels="printLabels" />
 
     <item-category-manager-dialog
       v-model="categoryDialogVisible"
@@ -522,6 +529,8 @@
 
 <script>
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
+import WarehouseLabelPrintDialog from '@/components/common/WarehouseLabelPrintDialog.vue'
+import { createWarehouseLabel } from '@/utils/warehouseLabels'
 import { erpDateTime } from '../../../utils/dateTime'
 import { minimalValidPurchaseQuantity } from '../../../utils/unitConversion'
 import cachedPageRoute from '../../../utils/cachedPageRoute'
@@ -559,7 +568,7 @@ const scopeCountsCache = {
 export default {
   mixins: [cachedPageRoute],
   name: 'ItemList',
-  components: { PagedRecordSelect,
+  components: { PagedRecordSelect, WarehouseLabelPrintDialog,
     ItemCategoryManagerDialog: () => import('../../../components/master/ItemCategoryManagerDialog.vue')
   },
   data () {
@@ -576,6 +585,9 @@ export default {
       categoriesDirty: false,
       conversionDialogVisible: false,
       rows: [],
+      selectedLabelRows: [],
+      labelPrintVisible: false,
+      printLabels: [],
       total: 0,
       stats: {},
       selectedId: null,
@@ -699,6 +711,12 @@ export default {
     }
   },
   methods: {
+    openLabelPrint () {
+      try {
+        this.printLabels = this.selectedLabelRows.map(row => createWarehouseLabel('item', row))
+        this.labelPrintVisible = true
+      } catch (error) { this.$message.error(error.message || '标签数据不完整，请刷新后重试。') }
+    },
     async load () {
       if (!this.canViewItems) return
       const version = ++this.loadVersion
@@ -797,6 +815,8 @@ export default {
       this.changeScope()
     },
     changeScope () {
+      this.selectedLabelRows = []
+      if (this.$refs.itemLabelTable) this.$refs.itemLabelTable.clearSelection()
       this.detailVersion++
       this.query.category_id = ''
       this.query.item_type = ''

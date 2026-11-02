@@ -19,7 +19,9 @@ class InventoryMeasureController extends Controller
         $this->erpAuthorize($request, 'inventory.balance.view');
         $item = Item::query()->with('unit')->findOrFail($itemId);
         app(ItemManagementScopeService::class)->assertContext($item, app(ItemManagementScopeService::class)->requestScope($request));
-        $data = $request->validate(['batch_no' => 'nullable|string|max:80', 'warehouse_id' => 'nullable|integer|min:1']);
+        $data = $request->validate(['batch_no' => 'nullable|string|max:80', 'keyword' => 'nullable|string|max:120', 'warehouse_id' => 'nullable|integer|min:1',
+            'physical_id' => 'nullable|integer|min:1', 'location_id' => 'nullable|integer|min:1', 'pagination' => 'sometimes|boolean',
+            'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:1|max:100']);
         return response()->json(['data' => $service->physicals($itemId, $data), 'profile' => $service->profile($item)]);
     }
 

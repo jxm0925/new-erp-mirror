@@ -35,6 +35,7 @@ Page({
     if (options.tab === 'batches') this.setData({ tab: 'batches' });
   },
   onShow() {
+    if (view.resumingScan(this)) return;
     this.load().then(() => {
       if (!this.autoItem) return;
       const index = this.data.items.findIndex(i => Number(i.item_id) === this.autoItem);

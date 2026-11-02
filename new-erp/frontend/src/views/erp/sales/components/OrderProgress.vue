@@ -258,6 +258,59 @@
             </div>
           </div>
 
+          <!-- 工单备料与领料情况（原树形物料转移至此处，集中展示） -->
+          <div v-if="materials.length" class="materials-overview-bar">
+            <div class="materials-bar-header" @click="materialsExpanded = !materialsExpanded">
+              <div class="materials-title">
+                <i class="el-icon-receiving" />
+                <b>工单用料与领料明细</b>
+                <span class="materials-badge count-all">共 {{ materials.length }} 项用料</span>
+                <span v-if="materialsCompletedCount" class="materials-badge count-done">已领齐 {{ materialsCompletedCount }} 项</span>
+                <span v-if="materialsPendingCount" class="materials-badge count-pending">待领 {{ materialsPendingCount }} 项</span>
+              </div>
+              <button type="button" class="materials-toggle-btn">
+                {{ materialsExpanded ? '收起明细' : '展开明细' }}
+                <i :class="materialsExpanded ? 'el-icon-arrow-up' : 'el-icon-arrow-down'" />
+              </button>
+            </div>
+            <el-collapse-transition>
+              <div v-show="materialsExpanded" class="materials-table-wrapper">
+                <el-table :data="materials" size="mini" border class="materials-compact-table">
+                  <el-table-column prop="component_item_name" label="物料名称" min-width="140" show-overflow-tooltip>
+                    <template slot-scope="{row}">
+                      <b class="mat-name">{{ row.component_item_name }}</b>
+                      <small v-if="row.component_item_code" class="text-muted font-mono"> ({{ row.component_item_code }})</small>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="specification" label="规格 / 下料尺寸" min-width="160" show-overflow-tooltip>
+                    <template slot-scope="{row}">
+                      <span>{{ row.specification || '-' }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="计划需求" width="110" align="right">
+                    <template slot-scope="{row}">
+                      <span class="font-mono">{{ number(row.required_qty) }} {{ row.unit_name }}</span>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="实际已领" width="110" align="right">
+                    <template slot-scope="{row}">
+                      <b class="font-mono" :style="{ color: row.status === 'completed' ? '#008b4b' : (row.issued_qty > 0 ? '#d97706' : '#94a3b8') }">
+                        {{ number(row.issued_qty) }} {{ row.unit_name }}
+                      </b>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="领料状态" width="90" align="center">
+                    <template slot-scope="{row}">
+                      <el-tag size="mini" :type="row.status === 'completed' ? 'success' : (row.status === 'partial' ? 'warning' : 'info')">
+                        {{ row.status_label }}
+                      </el-tag>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </div>
+            </el-collapse-transition>
+          </div>
+
           <div
             class="progress-sections"
             :class="{
@@ -542,14 +595,25 @@ export default {
     treeSequence: 0,
     detailSequence: 0,
     unitsSequence: 0,
+    materialsExpanded: false,
     videoVisible: false,
     videoMedia: null
   }),
   computed: {
+    materials() {
+      return (this.detail && this.detail.materials) || []
+    },
+    materialsCompletedCount() {
+      return this.materials.filter((m) => m.status === 'completed').length
+    },
+    materialsPendingCount() {
+      return this.materials.filter((m) => m.status !== 'completed').length
+    },
     flatNodes() {
       const rows = []
       const visit = (nodes, depth) =>
         nodes.forEach((node) => {
+          if (node.type === 'material') return
           rows.push({ node, depth })
           visit(node.children || [], depth + 1)
         })
@@ -1115,112 +1179,232 @@ export default {
   height: auto;
   border-top: 1px solid #edf0f4;
 }
+/* 工单备料与领料概览卡片 */
+.materials-overview-bar {
+  margin: 12px 0 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.02);
+}
+.materials-bar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 9px 14px;
+  cursor: pointer;
+  user-select: none;
+  background: #f1f5f9;
+  border-bottom: 1px solid #e2e8f0;
+  transition: background 0.15s ease;
+}
+.materials-bar-header:hover {
+  background: #e2e8f0;
+}
+.materials-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #1e293b;
+}
+.materials-title i {
+  color: #008b4b;
+  font-size: 15px;
+}
+.materials-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 500;
+}
+.materials-badge.count-all {
+  background: #e2e8f0;
+  color: #475569;
+}
+.materials-badge.count-done {
+  background: #dcfce7;
+  color: #15803d;
+}
+.materials-badge.count-pending {
+  background: #ffedd5;
+  color: #c2410c;
+}
+.materials-toggle-btn {
+  background: transparent;
+  border: none;
+  color: #0284c7;
+  font-size: 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.materials-table-wrapper {
+  padding: 10px 12px;
+  background: #ffffff;
+}
+.materials-compact-table {
+  border-radius: 4px;
+  overflow: hidden;
+}
+.materials-compact-table :deep(th) {
+  background: #f8fafc !important;
+  color: #475569;
+  font-size: 11px;
+}
+.mat-name {
+  color: #0f172a;
+}
+
 .progress-sections {
   display: flex;
-  gap: 0;
-  margin: 14px 0 0;
+  gap: 12px;
+  margin: 12px 0 0;
   padding: 0 0 16px;
   border-bottom: 1px solid #edf0f4;
 }
 .route-progress {
   flex: 1;
-  padding: 0 10px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
 }
 .route-progress--shipment {
-  border-left: 1px dashed #d6dee8;
+  border-left: 1px solid #e2e8f0;
 }
 .route-label {
-  width: fit-content;
-  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 4px;
   padding: 2px 8px;
-  margin: 0 0 5px;
+  margin: 0 0 10px;
   color: #008b4b;
-  background: #edf9f2;
+  background: #eaf7ef;
   font-size: 11px;
+  font-weight: 600;
 }
 .route-steps {
   display: flex;
   align-items: stretch;
   gap: 0;
+  position: relative;
 }
 .route-step {
   flex: 1;
   position: relative;
   text-align: center;
-  padding-top: 0;
-  line-height: 1.6;
+  line-height: 1.5;
 }
 .route-step:not(:last-child)::after {
   content: '';
   position: absolute;
-  top: 11px;
-  left: calc(50% + 12px);
-  width: calc(100% - 24px);
+  top: 12px;
+  left: calc(50% + 14px);
+  width: calc(100% - 28px);
   height: 2px;
-  background: #cbd3de;
+  background: #cbd5e1;
+  z-index: 1;
 }
 .route-step.completed:not(:last-child)::after {
-  background: #12a459;
+  background: #10a65e;
+}
+.route-step.in_progress:not(:last-child)::after {
+  background: linear-gradient(90deg, #10a65e 0%, #cbd5e1 100%);
 }
 .route-dot {
+  position: relative;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: center;
   width: 24px;
   height: 24px;
-  margin: 0 auto 5px;
-  border: 4px solid #cbd2dc;
+  margin: 0 auto 6px;
+  border: 2px solid #cbd5e1;
   border-radius: 50%;
-  background: #fff;
-  color: white;
+  background: #ffffff;
+  color: #ffffff;
+  font-size: 11px;
+  box-shadow: 0 0 0 2px #f8fafc;
+  transition: all 0.2s ease;
 }
 .route-step.completed .route-dot {
-  background: #12a459;
-  border-color: #12a459;
+  background: #10a65e;
+  border-color: #10a65e;
 }
 .route-step.in_progress .route-dot,
 .route-step.rework .route-dot {
-  border-color: #f18700;
+  border-color: #f59e0b;
+  background: #fef3c7;
+  color: #d97706;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
 }
 .route-step b {
   display: block;
   padding: 0 3px;
   font-size: 12px;
+  color: #334155;
 }
 .route-step small {
   display: block;
-  color: #8290a3;
+  color: #64748b;
   font-size: 10px;
   padding: 0 3px;
 }
 .route-step.in_progress b,
 .route-step.in_progress small,
 .route-step.rework b {
-  color: #f18700;
+  color: #d97706;
 }
 .record-sections {
-  padding-top: 8px;
+  padding-top: 14px;
+  position: relative;
 }
 .record-section h3 {
   display: flex;
   align-items: center;
-  margin: 10px 0;
-  color: #8190a4;
-  font-size: 11px;
-  font-weight: normal;
+  margin: 14px 0 16px;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
 }
 .record-section h3::after {
   content: '';
   height: 1px;
-  background: #edf0f4;
+  background: #e2e8f0;
   flex: 1;
-  margin-left: 8px;
+  margin-left: 10px;
 }
 .record-node {
+  position: relative;
   display: grid;
-  grid-template-columns: 90px minmax(0, 1fr);
-  gap: 8px;
-  margin-bottom: 10px;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 14px;
+  margin-bottom: 14px;
+}
+/* 贯穿垂直时间轴线 */
+.record-node:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 9px;
+  top: 22px;
+  bottom: -14px;
+  width: 2px;
+  background: #e2e8f0;
+  z-index: 1;
+}
+.record-node.completed:not(:last-child)::before {
+  background: #10a65e;
+}
+.record-node.in_progress:not(:last-child)::before,
+.record-node.rework:not(:last-child)::before {
+  background: #f59e0b;
 }
 .record-node-label {
   position: relative;
@@ -1230,57 +1414,81 @@ export default {
 .record-node-label b {
   display: block;
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.4;
+  color: #0f172a;
 }
 .record-node-label small {
   display: block;
-  margin-top: 2px;
-  color: #7d8c9f;
+  margin-top: 3px;
+  color: #64748b;
   font-size: 11px;
 }
 .record-node.completed .record-node-label small {
-  color: #08a35a;
+  color: #10a65e;
 }
 .record-node.in_progress .record-node-label small,
 .record-node.rework .record-node-label small {
-  color: #ef8500;
+  color: #d97706;
 }
 .record-dot {
   position: absolute;
   left: 0;
-  top: 1px;
+  top: 2px;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: center;
   width: 20px;
   height: 20px;
-  border: 4px solid #cbd2dc;
+  border: 2px solid #cbd5e1;
   border-radius: 50%;
-  color: white;
+  background: #ffffff;
+  color: #ffffff;
+  font-size: 10px;
+  box-shadow: 0 0 0 2px #fff;
+  transition: all 0.2s ease;
 }
 .record-node.completed .record-dot {
-  border-color: #12a459;
-  background: #12a459;
-  border-width: 3px;
+  border-color: #10a65e;
+  background: #10a65e;
 }
 .record-node.in_progress .record-dot,
 .record-node.rework .record-dot {
-  border-color: #f18700;
+  border-color: #f59e0b;
+  background: #fef3c7;
+  color: #d97706;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
+}
+.record-node.failed .record-dot {
+  border-color: #ef4444;
+  background: #fee2e2;
+  color: #dc2626;
+}
+.record-node.cancelled .record-dot {
+  border-color: #94a3b8;
+  background: #f1f5f9;
+  color: #94a3b8;
 }
 .record-node-body {
-  border: 1px solid #e7ecf3;
-  border-radius: 5px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
   overflow: hidden;
 }
 .record-card {
   display: flex;
   gap: 12px;
-  padding: 9px 12px;
-  min-height: 60px;
-  align-items: center;
+  padding: 10px 14px;
+  min-height: 56px;
+  align-items: flex-start;
+  transition: background 0.15s ease;
+}
+.record-card:hover {
+  background: #f8fafc;
 }
 .record-card + .record-card {
-  border-top: 1px solid #edf0f4;
+  border-top: 1px solid #f1f5f9;
 }
 .record-card--cancelled {
   opacity: 0.58;

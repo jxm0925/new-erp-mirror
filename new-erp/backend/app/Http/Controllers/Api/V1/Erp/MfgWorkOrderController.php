@@ -181,9 +181,7 @@ class MfgWorkOrderController extends Controller
         if (! $super && ! in_array('sales_order.view', $codes, true))
             throw new WorkOrderDomainException('permission_denied', '没有查看订单生产进度的权限。', 403);
         $orders = \App\Models\Erp\SalesOrder::query();
-        $groups = json_decode($user->auth_group_names ?: '[]', true) ?: [];
-        if (! $super && ! array_intersect(['Admin group', '销售负责人'], $groups))
-            app(\App\Services\Erp\SalesOrderVisibilityService::class)->apply($orders, $user, true);
+        app(\App\Services\Erp\SalesOrderVisibilityService::class)->apply($orders, $user, true);
         $orders->findOrFail($orderId);
         $links = $super || in_array('production.work_order.view', $codes, true);
         $rows = $query->forSalesOrder($orderId, true);

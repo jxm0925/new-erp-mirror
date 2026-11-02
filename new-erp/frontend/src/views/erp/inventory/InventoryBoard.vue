@@ -615,14 +615,16 @@
             </div>
 
             <div v-if="batchProfile && batchProfile.mode === 'sheet'" class="batch-context-section" v-loading="physicalLoading">
-              <h4>板材实物（当前批次，逐张）</h4>
-              <el-table :data="batchPhysicals" size="mini" border empty-text="当前批次没有在库的板材实物">
+              <div class="inventory-label-toolbar"><h4>板材实物（当前批次，逐张）</h4><el-button size="small" icon="el-icon-printer" :disabled="!selectedLabelPhysicals.length" @click="openInventoryLabelPrint('physical')">打印标签</el-button></div>
+              <el-table ref="physicalLabelTable" :data="batchPhysicals" row-key="id" size="mini" border class="warehouse-label-source" empty-text="当前批次没有在库的板材实物" @selection-change="selectedLabelPhysicals = $event">
+                <el-table-column type="selection" width="45" :reserve-selection="true" />
                 <el-table-column prop="physical_no" label="实物编号" min-width="130" />
                 <el-table-column label="长 × 宽 × 厚（mm）" min-width="150"><template slot-scope="{row}"><span class="measure-strong">{{ physicalSize(row) }}</span><div v-if="row.material_form === 'REMNANT'" class="measure-sub">余料</div></template></el-table-column>
                 <el-table-column label="面积" width="96" align="right"><template slot-scope="{row}">{{ quantityNumber(row.area_m2) }} m²</template></el-table-column>
                 <el-table-column label="位置" min-width="120"><template slot-scope="{row}">{{ row.warehouse_name }} / {{ row.location_name }}</template></el-table-column>
                 <el-table-column label="操作" width="80"><template slot-scope="{row}"><el-button v-if="row.editable && $can('inventory.physical.manage')" size="mini" type="text" @click="openPhysicalEdit(row)">改尺寸</el-button></template></el-table-column>
               </el-table>
+              <el-pagination class="serial-pagination" small layout="total, sizes, prev, pager, next" :page-sizes="[10,20,50,100]" :current-page.sync="physicalPagination.page" :page-size.sync="physicalPagination.per_page" :total="physicalPagination.total" @current-change="loadBatchPhysicals" @size-change="handlePhysicalSizeChange" />
             </div>
 
             <div class="batch-context-section quality-history-section">
@@ -662,6 +664,7 @@
       width="min(760px, 92vw)"
       append-to-body
       custom-class="inventory-serial-dialog"
+      @close="clearSerialLabelContext"
     >
       <div v-if="serialDialogBalance" class="inventory-serial-dialog-body">
         <div class="serial-locator-summary">
@@ -670,8 +673,9 @@
           <div><span>仓库</span><strong>{{ serialDialogBalance.warehouse_name || '-' }}</strong></div>
           <div><span>库位</span><strong>{{ serialDialogBalance.location_name || '-' }}</strong></div>
         </div>
-        <el-input v-model="serialKeyword" size="small" clearable prefix-icon="el-icon-search" placeholder="输入设备编号 / 序列号查询" @keyup.enter.native="searchBalanceSerials" @clear="searchBalanceSerials" />
-        <el-table v-loading="serialDialogLoading" :data="serialRows" size="mini" border max-height="430" empty-text="当前库位没有匹配编号">
+        <div class="inventory-label-toolbar"><el-input v-model="serialKeyword" size="small" clearable prefix-icon="el-icon-search" placeholder="输入设备编号 / 序列号查询" @keyup.enter.native="searchBalanceSerials" @clear="searchBalanceSerials" /><el-button size="small" icon="el-icon-printer" :disabled="!selectedLabelSerials.length" @click="openInventoryLabelPrint('serial')">打印标签</el-button></div>
+        <el-table ref="serialLabelTable" v-loading="serialDialogLoading" :data="serialRows" row-key="id" size="mini" border max-height="430" class="warehouse-label-source" empty-text="当前库位没有匹配编号" @selection-change="selectedLabelSerials = $event">
+          <el-table-column type="selection" width="45" :reserve-selection="true" />
           <el-table-column type="index" label="#" width="48" />
           <el-table-column prop="serial_no" label="设备编号 / 序列号" min-width="210" />
           <el-table-column label="状态" width="96"><template slot-scope="{row}">{{ serialStatusText(row.serial_status) }}</template></el-table-column>
@@ -1148,6 +1152,7 @@
         <el-pagination small layout="total, sizes, prev, pager, next" :page-sizes="[10, 20, 50, 100]" :current-page.sync="balancePickerPagination.page" :page-size.sync="balancePickerPagination.per_page" :total="balancePickerPagination.total" @current-change="loadBalancePickerRows" @size-change="handleBalancePickerSizeChange" />
       </div>
     </el-dialog>
+    <warehouse-label-print-dialog :visible.sync="labelPrintVisible" :labels="printLabels" />
   </div>
 </template>
 
@@ -1157,12 +1162,14 @@ import cachedPageRoute from '@/utils/cachedPageRoute'
 import PopupManager from 'element-ui/lib/utils/popup/popup-manager'
 import PagedRecordSelect from '@/components/common/PagedRecordSelect.vue'
 import StocktakeFreezeAlert from '@/components/common/StocktakeFreezeAlert.vue'
+import WarehouseLabelPrintDialog from '@/components/common/WarehouseLabelPrintDialog.vue'
+import { createWarehouseLabel } from '@/utils/warehouseLabels'
 import { listPendingReceipts, repairPostingReceiptAllocations, postPostingReceipt, listInventoryBalances, listInventoryItemBatches, getInventoryBatchContext, listInventoryBalanceSerials, listInventoryTransactions, listInventoryAdjustments, listInventoryAdjustmentReasons, generateInventoryAdjustmentSerials, saveInventoryAdjustment, submitInventoryAdjustment, postInventoryAdjustment, cancelInventoryAdjustment, deleteInventoryAdjustment, getInventoryQualityContext, createInventoryQualityEvent, getInventoryAlertPolicy, activateInventoryAlertPolicy, disableInventoryAlertPolicy, listInventoryItemPhysicals, updatePhysicalDimensions, updateMaterialLotLength } from '@/api/erp/inventory'
 
 export default {
   mixins: [cachedPageRoute],
   name: 'InventoryBoard',
-  components: { PagedRecordSelect, StocktakeFreezeAlert },
+  components: { PagedRecordSelect, StocktakeFreezeAlert, WarehouseLabelPrintDialog },
   data() {
     return {
       stocktakeFreezes: { data: [], total: 0, current_page: 1, overdue: false },
@@ -1199,6 +1206,12 @@ export default {
       batchContext: { balances: [], source: {}, quality_events: [] },
       batchProfile: null,
       batchPhysicals: [],
+      physicalPagination: { page: 1, per_page: 10, total: 0 },
+      physicalRequestVersion: 0,
+      selectedLabelPhysicals: [],
+      selectedLabelSerials: [],
+      labelPrintVisible: false,
+      printLabels: [],
       physicalLoading: false,
       measureEditVisible: false,
       measureEditSaving: false,
@@ -1207,6 +1220,7 @@ export default {
       serialDialogBalance: null,
       serialKeyword: '',
       serialDialogLoading: false,
+      serialRequestVersion: 0,
       serialRows: [],
       serialPagination: { page: 1, per_page: 10, total: 0 },
       qualityDrawerVisible: false,
@@ -1380,6 +1394,10 @@ export default {
     this.loadAdjustmentReasons()
     this.loadCurrentView()
   },
+  beforeDestroy() {
+    ++this.physicalRequestVersion
+    ++this.serialRequestVersion
+  },
   methods: {
     applyConsoleTarget() {
       const query = this.pageRoute.query || {}
@@ -1477,18 +1495,21 @@ export default {
         this.batchContext = { balances: [], source: {}, quality_events: [] }
         return
       }
+      const balance = this.selectedBalance
+      const batch = this.selectedBatch
       this.batchContextLoading = true
       try {
-        const res = await getInventoryBatchContext(this.selectedBalance.item_id, { batch_no: this.selectedBatch.batch_no })
+        const res = await getInventoryBatchContext(balance.item_id, { batch_no: batch.batch_no })
+        if (this.selectedBalance !== balance || this.selectedBatch !== batch) return
         this.batchContext = {
           source: res.data.source || {},
           quality_events: res.data.quality_events || [],
           balances: (res.data.balances || []).map(row => ({
             ...row,
-            item_code: this.selectedBalance.item_code,
-            item_name: this.selectedBalance.item_name,
-            spec: this.selectedBalance.spec || '',
-            unit: this.selectedBalance.unit,
+            item_code: balance.item_code,
+            item_name: balance.item_name,
+            spec: balance.spec || '',
+            unit: balance.unit,
             warehouse_name: row.warehouse?.warehouse_name || '',
             location_name: row.location?.location_name || '',
             quantity_on_hand: Number(row.quantity_on_hand || 0),
@@ -1498,7 +1519,7 @@ export default {
           }))
         }
       } finally {
-        this.batchContextLoading = false
+        if (this.selectedBalance === balance && this.selectedBatch === batch) this.batchContextLoading = false
       }
     },
     async loadTransactions() {
@@ -1891,7 +1912,7 @@ export default {
       if (!row) return
       this.selectedBalance = row
       this.batchPagination.page = 1
-      this.selectedBatch = null
+      await this.selectBatch(null)
       this.batchRows = []
       this.batchContext = { balances: [], source: {}, quality_events: [] }
       this.batchDialogVisible = true
@@ -1909,7 +1930,15 @@ export default {
       this.$message.info('该物料有多个批次或库位，请在批次中选择实际仓库与库位后，再执行库存调整。')
     },
     async selectBatch(row) {
+      this.selectedLabelPhysicals = []
+      if (this.$refs.physicalLabelTable) this.$refs.physicalLabelTable.clearSelection()
+      this.physicalPagination.page = 1
+      this.physicalPagination.total = 0
       if (!row) {
+        ++this.physicalRequestVersion
+        this.physicalLoading = false
+        this.batchPhysicals = []
+        this.batchContextLoading = false
         this.selectedBatch = null
         this.batchContext = { balances: [], source: {}, quality_events: [] }
         return
@@ -1918,15 +1947,36 @@ export default {
       await Promise.all([this.loadBatchContext(), this.loadBatchPhysicals()])
     },
     async loadBatchPhysicals() {
+      const version = ++this.physicalRequestVersion
       this.batchPhysicals = []
-      if (!this.batchProfile || this.batchProfile.mode !== 'sheet' || !this.selectedBatch || !this.selectedBalance) return
+      if (!this.batchProfile || this.batchProfile.mode !== 'sheet' || !this.selectedBatch || !this.selectedBalance) { this.physicalLoading = false; return }
       this.physicalLoading = true
       try {
-        const res = await listInventoryItemPhysicals(this.selectedBalance.item_id, { batch_no: this.selectedBatch.batch_no, management_scope: this.balanceQuery.management_scope || undefined })
-        this.batchPhysicals = res.data.data || []
+        const res = await listInventoryItemPhysicals(this.selectedBalance.item_id, { batch_no: this.selectedBatch.batch_no, management_scope: this.balanceQuery.management_scope || undefined, pagination: 1, page: this.physicalPagination.page, per_page: this.physicalPagination.per_page })
+        if (version !== this.physicalRequestVersion) return
+        const page = res.data.data || {}
+        if (!Array.isArray(page.data)) throw new Error('实物列表读取失败，请刷新后重试。')
+        this.batchPhysicals = page.data
+        this.physicalPagination.total = Number(page.total || 0)
+        this.physicalPagination.page = Number(page.current_page || 1)
+      } catch (error) {
+        if (version === this.physicalRequestVersion) this.$message.error(error.userMessage || error.message || '实物列表读取失败')
       } finally {
-        this.physicalLoading = false
+        if (version === this.physicalRequestVersion) this.physicalLoading = false
       }
+    },
+    handlePhysicalSizeChange(size) {
+      this.physicalPagination.per_page = size
+      this.physicalPagination.page = 1
+      this.loadBatchPhysicals()
+    },
+    openInventoryLabelPrint(type) {
+      const rows = type === 'physical' ? this.selectedLabelPhysicals : this.selectedLabelSerials
+      const item = (type === 'serial' ? this.serialDialogBalance : this.selectedBalance) || {}
+      try {
+        this.printLabels = rows.map(row => createWarehouseLabel(type, row, { item_code: item.item_code, item_name: item.item_name, spec: item.spec }))
+        this.labelPrintVisible = true
+      } catch (error) { this.$message.error(error.message || '标签数据不完整，请刷新后重试。') }
     },
     meters(value) {
       return `${Number(Number(value || 0).toFixed(3)).toLocaleString('zh-CN', { maximumFractionDigits: 3 })} 米`
@@ -1981,6 +2031,12 @@ export default {
       this.loadBatchRows()
     },
     resetBatchDialog() {
+      ++this.physicalRequestVersion
+      this.physicalLoading = false
+      this.physicalPagination.page = 1
+      this.physicalPagination.total = 0
+      this.selectedLabelPhysicals = []
+      if (this.$refs.physicalLabelTable) this.$refs.physicalLabelTable.clearSelection()
       this.batchRows = []
       this.selectedBatch = null
       this.batchContext = { balances: [], source: {}, quality_events: [] }
@@ -1996,7 +2052,8 @@ export default {
       this.$router.push({ path: '/inventory/transactions', query: { item_id: row.item_id, item_code: row.item_code } })
     },
     async openBalanceSerials(row) {
-      this.serialDialogBalance = row
+      this.clearSerialLabelContext()
+      this.serialDialogBalance = { ...row }
       this.serialKeyword = ''
       this.serialRows = []
       this.serialPagination.page = 1
@@ -2005,21 +2062,34 @@ export default {
       await this.loadBalanceSerials()
     },
     async loadBalanceSerials() {
-      if (!this.serialDialogBalance) return
+      const version = ++this.serialRequestVersion
+      const balance = this.serialDialogBalance
+      if (!balance || !this.serialDialogVisible) return
       this.serialDialogLoading = true
       try {
-        const response = await listInventoryBalanceSerials(this.serialDialogBalance.id, {
+        const response = await listInventoryBalanceSerials(balance.id, {
           keyword: String(this.serialKeyword || '').trim(),
           page: this.serialPagination.page,
           per_page: this.serialPagination.per_page
         })
+        if (version !== this.serialRequestVersion || this.serialDialogBalance !== balance || !this.serialDialogVisible) return
         const page = response.data || {}
         this.serialRows = page.data || []
         this.serialPagination.total = Number(page.total || 0)
         this.serialPagination.page = Number(page.current_page || 1)
+      } catch (error) {
+        if (version === this.serialRequestVersion) this.$message.error(error.userMessage || '序列号列表读取失败，请刷新后重试。')
       } finally {
-        this.serialDialogLoading = false
+        if (version === this.serialRequestVersion) this.serialDialogLoading = false
       }
+    },
+    clearSerialLabelContext() {
+      ++this.serialRequestVersion
+      this.serialDialogLoading = false
+      this.serialDialogBalance = null
+      this.serialRows = []
+      this.selectedLabelSerials = []
+      if (this.$refs.serialLabelTable) this.$refs.serialLabelTable.clearSelection()
     },
     searchBalanceSerials() {
       this.serialPagination.page = 1
@@ -2656,6 +2726,10 @@ export default {
 </script>
 
 <style scoped>
+.inventory-label-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; margin-bottom: 10px; }
+.inventory-label-toolbar h4 { margin: 0; min-width: 0; }
+.inventory-label-toolbar > .el-input { flex: 1; min-width: 0; }
+.inventory-label-toolbar > .el-button { flex: none; }
 .inventory-page { padding: 16px 20px 24px; color: #1f2937; background: #f6f8fa; min-height: calc(100vh - 58px); font-size: 13px; }
 .inventory-tabs { display: flex; gap: 0; border: 1px solid #e5e7eb; background: #fff; margin-bottom: 14px; }
 .inventory-tabs a { padding: 12px 24px; color: #374151; text-decoration: none; border-right: 1px solid #e5e7eb; font-weight: 600; }

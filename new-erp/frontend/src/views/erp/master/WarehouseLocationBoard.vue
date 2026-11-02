@@ -466,6 +466,7 @@
               </div>
             </div>
             <div class="filter-actions">
+              <el-button size="small" icon="el-icon-printer" :disabled="!selectedLabelLocations.length" @click="openLocationLabelPrint">打印标签</el-button>
               <el-button size="small" icon="el-icon-refresh-left" class="btn-theme-reset" @click="reset">重置</el-button>
             </div>
           </div>
@@ -478,15 +479,19 @@
 
           <div v-else class="table-wrap">
             <el-table
+              ref="locationLabelTable"
               v-loading="loading"
               :data="filteredLocations"
+              row-key="id"
               v-paged-scroll="loadMoreLocations"
               size="small"
               border
               empty-text="当前仓库下暂无库位档案，请点击上方「新增库位」录入。"
-              class="enterprise-table"
-              @row-click="editLocation"
+              class="enterprise-table warehouse-label-source"
+              @row-click="handleLocationRowClick"
+              @selection-change="selectedLabelLocations = $event"
             >
+              <el-table-column type="selection" width="45" :reserve-selection="true" />
               <el-table-column prop="location_code" label="库位编码" width="130">
                 <template slot-scope="{ row }">
                   <span class="font-tabular code-chip" @click.stop="editLocation(row)">{{ row.location_code }}</span>
@@ -730,6 +735,7 @@
         </el-button>
       </div>
     </el-dialog>
+    <warehouse-label-print-dialog :visible.sync="labelPrintVisible" :labels="printLabels" />
   </section>
 </template>
 
@@ -741,6 +747,8 @@ import { clearCreatePageReservation, reserveForCreatePage } from '../../../utils
 import { deleteEntity, disableEntity, enableEntity, getEntity, listEntity, saveEntity } from '../../../api/erp/master'
 import { listInventoryBalances } from '../../../api/erp/inventory'
 import WarehouseManagerPicker from '../../../components/master/WarehouseManagerPicker.vue'
+import WarehouseLabelPrintDialog from '@/components/common/WarehouseLabelPrintDialog.vue'
+import { createWarehouseLabel } from '@/utils/warehouseLabels'
 
 const emptyWh = () => ({
   id: null,
@@ -775,7 +783,7 @@ const emptyLoc = () => ({
 export default {
   name: 'WarehouseLocationBoard',
   directives: { pagedScroll },
-  components: { WarehouseManagerPicker },
+  components: { WarehouseManagerPicker, WarehouseLabelPrintDialog },
   data () {
     return {
       loading: false,
@@ -795,6 +803,9 @@ export default {
       warehouseSearchTimer: null,
       locationSearchTimer: null,
       locations: [],
+      selectedLabelLocations: [],
+      labelPrintVisible: false,
+      printLabels: [],
       selectedWarehouse: {},
       warehouseForm: emptyWh(),
       warehouseOriginalScope: null,
@@ -903,8 +914,23 @@ export default {
     this.fetchAll()
   },
   methods: {
+    handleLocationRowClick (row, column) {
+      if (column && column.type === 'selection') return
+      this.editLocation(row)
+    },
+    clearLocationLabelSelection () {
+      this.selectedLabelLocations = []
+      if (this.$refs.locationLabelTable) this.$refs.locationLabelTable.clearSelection()
+    },
+    openLocationLabelPrint () {
+      try {
+        this.printLabels = this.selectedLabelLocations.map(row => createWarehouseLabel('location', row, { warehouse_name: this.selectedWarehouse.warehouse_name }))
+        this.labelPrintVisible = true
+      } catch (error) { this.$message.error(error.message || '标签数据不完整，请刷新后重试。') }
+    },
     scopeText (scope) { return scope === 'office' ? '办公用品仓' : scope === 'factory' ? '工厂物料仓' : '待明确范围' },
     async changeWarehouseScope () {
+      this.clearLocationLabelSelection()
       const sequence = ++this.warehouseScopeSequence
       clearTimeout(this.warehouseSearchTimer)
       this.warehousePage = createPageState(10)
@@ -1000,6 +1026,7 @@ export default {
       const changed = Number(row.id) !== Number(this.selectedWarehouse.id)
       this.selectedWarehouse = { ...row }
       if (changed) {
+        this.clearLocationLabelSelection()
         this.filters.area = ''
         this.locationPage = createPageState(10)
         this.locations = []

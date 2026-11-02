@@ -1,0 +1,2 @@
+@import "../shared.wxss";
+.phase-line-title { padding: 22rpx 8rpx; border-bottom: 1rpx solid #edf1f5; }

@@ -21,6 +21,21 @@ use Illuminate\Validation\ValidationException;
 class InventoryStocktakeService
 {
     public const STATUSES = ['counting' => '盘点中', 'completed' => '已完成', 'cancelled' => '已取消'];
+    public const COUNT_RULES = [
+        'lines' => 'required|array|min:1', 'lines.*.id' => 'required|integer', 'expected_version' => 'required|integer|min:1',
+        'lines.*.counted_qty' => 'nullable|numeric|min:0', 'lines.*.remark' => 'nullable|string|max:500',
+        'lines.*.mark_all_present' => 'nullable|boolean', 'lines.*.entries' => 'nullable|array|max:500',
+        'lines.*.entries.*.id' => 'required|integer', 'lines.*.entries.*.counted_present' => 'nullable|boolean',
+        'lines.*.delete_entry_ids' => 'nullable|array|max:500', 'lines.*.delete_entry_ids.*' => 'integer',
+        'lines.*.unnumbered_counted_qty' => 'nullable|numeric|min:0', 'lines.*.new_entries' => 'nullable|array|max:500',
+        'lines.*.new_entries.*.serial_no' => 'nullable|string|max:120', 'lines.*.new_entries.*.physical_label' => 'nullable|string|max:120',
+        'lines.*.new_entries.*.dimensions' => 'nullable|array',
+        'lines.*.new_entries.*.dimensions.length_mm' => ['nullable', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],
+        'lines.*.new_entries.*.dimensions.width_mm' => ['nullable', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],
+        'lines.*.new_entries.*.dimensions.thickness_mm' => ['nullable', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],
+        'lines.*.new_entries.*.dimensions.nominal_thickness_mm' => ['nullable', 'regex:/^\d{1,10}(?:\.\d{1,2})?$/'],
+        'lines.*.new_entries.*.total_cost' => ['nullable', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/'],
+    ];
 
     public function __construct(
         private readonly InventoryAdjustmentApplicationService $adjustments,

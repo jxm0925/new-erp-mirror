@@ -1,0 +1,9 @@
+{
+  "navigationBarTitleText": "生产配料",
+  "navigationBarBackgroundColor": "#ec1808",
+  "navigationBarTextStyle": "white",
+  "enablePullDownRefresh": true,
+  "usingComponents": {
+    "warehouse-context": "/components/warehouse-context/index"
+  }
+}

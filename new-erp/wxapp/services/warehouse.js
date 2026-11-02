@@ -50,6 +50,7 @@ function submit(action, id, payload) {
     const response = await request.request({ path: 'inventory/warehouse-commands', method: 'POST', data: clone(job), loading: false });
     return finish(response.data || response);
   }).catch(error => {
+    error.errors = Object.assign({}, error.errors || {}, (error.details || {}).errors || {});
     // A failed status query cannot prove that the original write failed. Retain the job.
     // A first, definite business rejection has no ambiguous earlier attempt to recover.
     if (!old && posting && [422, 409].includes(error.statusCode)

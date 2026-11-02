@@ -2,7 +2,7 @@
 
 namespace App\Services\Erp\Sales;
 
-use App\Models\Erp\{InventorySerial, Item, MfgCuttingRun, MfgCuttingRunAllocation, MfgMaterialIssue, MfgReceipt, MfgTaskParticipant, MfgUnitComponent, MfgUnitReport, MfgWorkOrder, MfgWorkOrderLog, MfgWorkOrderMaterial, MfgWorkOrderOperation, MfgWorkOrderUnit, SalesOrder, SalesOrderLine, SalesShipmentLine, ShipmentDispatch, ShipmentPackingContent, ShipmentPackingOperation, ShipmentRework, ShipmentSerialResult};
+use App\Models\Erp\{InventorySerial, Item, MfgCuttingRun, MfgCuttingRunAllocation, MfgMaterialIssue, MfgReceipt, MfgTaskParticipant, MfgUnitComponent, MfgUnitReport, MfgWorkOrder, MfgWorkOrderLog, MfgWorkOrderOperation, MfgWorkOrderUnit, SalesOrder, SalesOrderLine, SalesShipmentLine, ShipmentDispatch, ShipmentPackingContent, ShipmentPackingOperation, ShipmentRework, ShipmentSerialResult};
 use App\Services\Erp\Manufacturing\TaskCompletionService;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Collection;
@@ -16,7 +16,6 @@ final class SalesOrderProgressQueryService
         $lines = SalesOrderLine::query()->where('sales_order_id', $order->id)->orderBy('line_no')->orderBy('id')->get();
         $graph = $this->graph($order);
         $orders = $graph['orders'];
-        $materials = MfgWorkOrderMaterial::query()->whereIn('work_order_id', $orders->keys())->orderBy('id')->get()->groupBy('work_order_id');
         $operations = MfgWorkOrderOperation::query()->whereIn('work_order_id', $orders->keys())->where('execution_context', 'production')->orderBy('sequence')->orderBy('id')->get()->groupBy('work_order_id');
         $installed = MfgUnitComponent::query()->installed()->whereIn('work_order_id', $orders->keys())
             ->selectRaw('work_order_id, component_item_id, COUNT(DISTINCT unit_id) AS installed_qty')->groupBy('work_order_id', 'component_item_id')->get()
@@ -27,23 +26,13 @@ final class SalesOrderProgressQueryService
             ->where('line_status', 'shipped')->selectRaw('sales_order_line_id, SUM(sales_qty) AS qty')->groupBy('sales_order_line_id')->pluck('qty', 'sales_order_line_id');
         $shippingStates = $this->treeShippingStates($order, $lines);
         $children = $graph['links']->groupBy('parent_work_order_id');
-        $build = function (MfgWorkOrder $wo, int $lineId, array $path = [], bool $historical = false) use (&$build, $graph, $orders, $children, $materials, $operations, $installed, $workOrderLinks): array {
+        $build = function (MfgWorkOrder $wo, int $lineId, array $path = [], bool $historical = false) use (&$build, $graph, $orders, $children, $operations, $installed, $workOrderLinks): array {
             $path[] = (int) $wo->id;
             $links = $children->get($wo->id, collect());
-            $childItems = $links->pluck('component_item_id');
             $nested = [];
             foreach ($links as $link) {
                 $child = $orders->get($link->child_work_order_id);
                 if ($child && ! in_array((int) $child->id, $path, true)) $nested[] = $build($child, $lineId, $path, $historical);
-            }
-            foreach ($materials->get($wo->id, collect()) as $material) {
-                if ($childItems->contains($material->component_item_id)) continue;
-                $done = (float) $material->issued_qty;
-                $planned = (float) $material->required_qty;
-                $nested[] = ['key' => 'material:'.$material->id, 'id' => (int) $material->id, 'type' => 'material', 'line_id' => $lineId,
-                    'work_order_id' => (int) $wo->id, 'name' => $material->component_item_name, 'subtitle' => '无工单 · 已领 '.$this->number($done).'/'.$this->number($planned),
-                    'document_no' => null, 'quantity' => $planned, 'completed_qty' => $done, 'planned_qty' => $planned, 'unit_name' => $material->unit_name,
-                    'status' => $wo->status === 'cancelled' || $historical ? 'cancelled' : $this->quantityStatus($done, $planned), 'status_label' => $wo->status === 'cancelled' || $historical ? '历史用料' : ($done + 0.00001 >= $planned ? '已领齐' : '待领用'), 'children' => []];
             }
             $pending = $operations->get($wo->id, collect())->first(fn ($op) => (float) $op->completed_qty + 0.00001 < (float) $wo->planned_qty);
             $status = $wo->status === 'cancelled' || $historical ? 'cancelled' : ((float) $wo->stored_qty + 0.00001 >= (float) $wo->planned_qty ? 'completed' : ($wo->started_at ? 'in_progress' : 'pending'));
@@ -152,11 +141,12 @@ final class SalesOrderProgressQueryService
         if (! $unit && ! $wo) {
             $direct = MfgWorkOrder::query()->where('sales_order_id', $order->id)->where('sales_order_line_id', $line->id)->where('status', '!=', 'cancelled')->orderBy('id')->get();
             if ($direct->isNotEmpty()) {
-                $production = ['nodes' => [], 'records' => [], 'destination_label' => null];
+                $production = ['nodes' => [], 'records' => [], 'destination_label' => null, 'materials' => []];
                 foreach ($direct as $item) {
                     $part = $this->production($item, null, $workOrderLinks);
                     $production['nodes'] = array_merge($production['nodes'], $part['nodes']);
                     $production['records'] = array_merge($production['records'], $part['records']);
+                    $production['materials'] = array_merge($production['materials'], $part['materials'] ?? []);
                     $production['destination_label'] = collect([$production['destination_label'], $part['destination_label']])->filter()->unique()->implode(' / ');
                 }
                 $wo = $direct->first();
@@ -174,6 +164,7 @@ final class SalesOrderProgressQueryService
         return ['view' => 'line', 'subject' => $this->subject($order, $line, $wo, $workOrderLinks, $production['destination_label'] ?? null) + ['shipment_no' => $shipment['shipment_no']], 'units_mode' => $unit ? 'unit' : 'quantity',
             'selected_unit' => $unit ? $this->deviceRows($order, $line, collect([$unit]), $workOrderLinks)[0] : null, 'unit_options' => $options, 'unit_total' => $total,
             'production_nodes' => $production['nodes'], 'shipment_nodes' => $shipment['nodes'], 'production_records' => $production['records'], 'shipment_records' => $shipment['records'],
+            'materials' => $production['materials'] ?? [],
             'notice' => $anonymous ? '发货按订单行整体数量显示，不能对应到某一台设备。' : null, 'permissions' => ['work_order_links' => $workOrderLinks]];
     }
 
@@ -191,6 +182,7 @@ final class SalesOrderProgressQueryService
             'selected_unit' => $selected ? $this->deviceRows($order, $line, collect([$selected]), $workOrderLinks, $historical)[0] : null,
             'unit_options' => $total <= 8 ? $this->deviceRows($order, $line, (clone $query)->orderBy('device.serial_no')->get(), $workOrderLinks, $historical) : [], 'unit_total' => $total,
             'production_nodes' => $production['nodes'], 'shipment_nodes' => [], 'production_records' => $production['records'], 'shipment_records' => [],
+            'materials' => $production['materials'] ?? [],
             'notice' => $total ? null : '本工单没有逐台设备记录，按工序数量显示。', 'permissions' => ['work_order_links' => $workOrderLinks]];
     }
 
@@ -369,7 +361,34 @@ final class SalesOrderProgressQueryService
             $nodes = array_merge($nodes, $destination['nodes']);
             $records = array_merge($records, $destination['records']);
         }
-        return ['nodes' => $nodes, 'records' => $records, 'destination_label' => $completion['destination_label']];
+        $materials = $wo->materials()->orderBy('id')->get();
+        $matItemIds = $materials->pluck('component_item_id')->unique()->filter();
+        $matItems = Item::query()->whereIn('id', $matItemIds)->get(['id', 'spec', 'model', 'material_grade'])->keyBy('id');
+        $bomItems = is_array($wo->bom_snapshot) ? collect(data_get($wo->bom_snapshot, 'items', []))->keyBy('id') : collect();
+        $materialList = $materials->map(function ($m) use ($wo, $matItems, $bomItems) {
+            $item = $matItems->get($m->component_item_id);
+            $bomLine = $bomItems->get($m->bom_item_id);
+            $specInfo = \App\Services\Erp\Manufacturing\WorkOrderQueryService::materialSpecInfo($item, $bomLine);
+            $req = (float) $m->required_qty;
+            $iss = (float) $m->issued_qty;
+            $isComplete = $iss + 0.00001 >= $req;
+            return [
+                'id' => (int) $m->id,
+                'component_item_id' => (int) $m->component_item_id,
+                'component_item_code' => $m->component_item_code,
+                'component_item_name' => $m->component_item_name,
+                'specification' => $specInfo['specification'] ?: ($item?->spec ?: '-'),
+                'cut_spec' => $specInfo['cut_spec'] ?? null,
+                'unit_name' => $m->unit_name ?: '件',
+                'required_qty' => $req,
+                'issued_qty' => $iss,
+                'status' => $isComplete ? 'completed' : ($iss > 0 ? 'partial' : 'pending'),
+                'status_label' => $isComplete ? '已领齐' : ($iss > 0 ? '部分领料' : '待领料'),
+                'work_order_no' => $wo->work_order_no,
+                'work_order_id' => (int) $wo->id,
+            ];
+        })->values()->all();
+        return ['nodes' => $nodes, 'records' => $records, 'destination_label' => $completion['destination_label'], 'materials' => $materialList];
     }
 
     /** receipt 是库存记账事实；是否直交只由同 receipt_id 的正式交接日志证明。 */

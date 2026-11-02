@@ -271,6 +271,7 @@ Route::prefix('v1/erp/finance')->group(function () {
 });
 
 Route::prefix('v1/erp/inventory')->group(function () {
+    Route::get('scan/resolve', [\App\Http\Controllers\Api\V1\Erp\InventoryScanController::class, 'resolve']);
     Route::get('warehouse-workspace', [\App\Http\Controllers\Api\V1\Erp\WarehouseWorkspaceController::class, 'index']);
     Route::get('warehouse-workspace/summary', [\App\Http\Controllers\Api\V1\Erp\WarehouseWorkspaceController::class, 'summary']);
     Route::get('warehouse-workspace/locators', [\App\Http\Controllers\Api\V1\Erp\WarehouseWorkspaceController::class, 'locators']);

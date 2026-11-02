@@ -62,6 +62,29 @@ Component({
     },
     keywordInput(event) { this.setData({ keyword: event.detail.value }); },
     search() { if (this.properties.locked || this.data.checking) return; this.setData({ page: 1 }); return this.load(); },
+    async scanSerial(event) {
+      const resolved = event.detail.result;
+      if (!this.properties.open || this.properties.locked || this.data.checking) return;
+      if (resolved.type !== 'serial' || resolved.resource !== 'inventory_serial' || !resolved.inventory_serial_id) {
+        this.setData({ error: '请扫描原发货库存序列号' }); return;
+      }
+      const sequence = this.sequence = (this.sequence || 0) + 1;
+      this.setData({ loading: true, error: '' });
+      try {
+        const response = await warehouse.get('inventory/warehouse-workspace/sales-return-serials', this.query({
+          keyword: '', page: 1, per_page: 10, 'ids[0]': resolved.inventory_serial_id,
+        }));
+        if (sequence !== this.sequence || !this.properties.open) return;
+        const result = ui.rows(response);
+        if (!result.rows.some(row => Number(row.id) === Number(resolved.inventory_serial_id))) throw new Error('该序列号不在本次退货可接收范围内');
+        this.setData({ keyword: resolved.code, rows: result.rows, page: result.page, lastPage: result.lastPage, total: result.total });
+        this.sync();
+      } catch (error) {
+        if (sequence === this.sequence && this.properties.open) this.setData({ error: ui.errorText(error) });
+      } finally {
+        if (sequence === this.sequence) this.setData({ loading: false });
+      }
+    },
     turnPage(event) {
       const page = this.data.page + Number(event.currentTarget.dataset.delta);
       if (!this.properties.locked && !this.data.loading && !this.data.checking && page > 0 && page <= this.data.lastPage) { this.setData({ page }); return this.load(); }

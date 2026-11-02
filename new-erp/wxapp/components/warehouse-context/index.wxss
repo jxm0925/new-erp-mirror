@@ -1,0 +1,1 @@
+.warehouse-context { box-sizing: border-box; background: #ec1808; color: #fff; display: flex; justify-content: space-between; gap: 16rpx; padding: 8rpx 26rpx 22rpx; font-size: 25rpx; }

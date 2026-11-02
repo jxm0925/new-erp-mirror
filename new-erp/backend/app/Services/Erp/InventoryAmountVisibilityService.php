@@ -117,6 +117,7 @@ final class InventoryAmountVisibilityService
 
     private function inventoryRecord(array $row): bool
     {
+        if (isset($row['kind']) && in_array($row['kind'], ['stocktake', 'inventory_stocktake', 'inventory_transfer', 'inventory_adjustment'], true)) return true;
         if (array_key_exists('quantity_on_hand', $row) || array_key_exists('average_unit_cost', $row)) return true;
         foreach (['business_type', 'document_type', 'source_type', 'target_type', 'object_code'] as $field) {
             if (isset($row[$field]) && is_string($row[$field]) && preg_match('/^(erp_)?(inventory_|material_(physical|holding|lot|movement))/', $row[$field])) return true;

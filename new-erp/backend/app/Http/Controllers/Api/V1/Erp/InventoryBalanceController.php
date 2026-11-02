@@ -20,6 +20,7 @@ class InventoryBalanceController extends Controller
     public function index(Request $request)
     {
         $this->erpAuthorize($request, 'inventory.balance.view');
+        $request->validate(['item_id' => 'nullable|integer|min:1', 'exact_batch' => 'nullable|boolean']);
         if ($request->input('view') === 'item') {
             return $this->itemSummary($request);
         }
@@ -36,13 +37,16 @@ class InventoryBalanceController extends Controller
 
         if ($request->filled('keyword')) {
             $keyword = $request->input('keyword');
-            $query->whereHas('item', fn ($q) => $q->where('item_code', 'like', "%{$keyword}%")->orWhere('item_name', 'like', "%{$keyword}%"));
+            $query->whereHas('item', fn ($q) => $q->where('item_code', 'like', "%{$keyword}%")->orWhere('item_name', 'like', "%{$keyword}%")
+                ->orWhere('spec', 'like', "%{$keyword}%")->orWhere('model', 'like', "%{$keyword}%"));
         }
+        if ($request->filled('item_id')) $query->where('item_id', $request->integer('item_id'));
         if ($request->filled('item_code')) $query->whereHas('item', fn ($q) => $q->where('item_code', 'like', '%' . $request->input('item_code') . '%'));
         if ($request->filled('item_name')) $query->whereHas('item', fn ($q) => $q->where('item_name', 'like', '%' . $request->input('item_name') . '%'));
         if ($request->filled('warehouse_id')) $query->where('warehouse_id', $request->input('warehouse_id'));
         if ($request->filled('location_id')) $query->where('location_id', $request->input('location_id'));
-        if ($request->filled('batch_no')) $query->where('batch_no', 'like', '%' . $request->input('batch_no') . '%');
+        if ($request->filled('batch_no')) $query->where('batch_no', $request->boolean('exact_batch') ? '=' : 'like',
+            $request->boolean('exact_batch') ? $request->input('batch_no') : '%' . $request->input('batch_no') . '%');
         if ($request->filled('inventory_status')) {
             if ($request->input('inventory_status') === 'has_stock') $query->where('quantity_on_hand', '>', 0);
             if ($request->input('inventory_status') === 'has_quality') $query->where(fn ($q) => $q->where('quantity_defective', '>', 0)->orWhere('quantity_pending', '>', 0));
@@ -185,7 +189,8 @@ class InventoryBalanceController extends Controller
         $base = $this->activeBalanceQuery($request);
         if ($request->filled('keyword')) {
             $keyword = trim((string) $request->input('keyword'));
-            $base->whereHas('item', fn ($q) => $q->where('item_code', 'like', "%{$keyword}%")->orWhere('item_name', 'like', "%{$keyword}%"));
+            $base->whereHas('item', fn ($q) => $q->where('item_code', 'like', "%{$keyword}%")->orWhere('item_name', 'like', "%{$keyword}%")
+                ->orWhere('spec', 'like', "%{$keyword}%")->orWhere('model', 'like', "%{$keyword}%"));
         }
         $statsQuery = clone $base;
         $stats = [
@@ -271,9 +276,11 @@ class InventoryBalanceController extends Controller
         $query = InventoryBalance::query()->where(fn ($q) => $q->where('quantity_on_hand', '<>', 0)
             ->orWhere('quantity_locked', '<>', 0)->orWhere('quantity_defective', '<>', 0)->orWhere('quantity_pending', '<>', 0));
         $this->applyManagementScope($query, $request);
+        if ($request->filled('item_id')) $query->where('item_id', $request->integer('item_id'));
         if ($request->filled('warehouse_id')) $query->where('warehouse_id', $request->input('warehouse_id'));
         if ($request->filled('location_id')) $query->where('location_id', $request->input('location_id'));
-        if ($request->filled('batch_no')) $query->where('batch_no', 'like', '%' . $request->input('batch_no') . '%');
+        if ($request->filled('batch_no')) $query->where('batch_no', $request->boolean('exact_batch') ? '=' : 'like',
+            $request->boolean('exact_batch') ? $request->input('batch_no') : '%' . $request->input('batch_no') . '%');
         if ($request->filled('inventory_status')) {
             if ($request->input('inventory_status') === 'has_stock') $query->where('quantity_on_hand', '>', 0);
             if ($request->input('inventory_status') === 'has_quality') $query->where(fn ($q) => $q->where('quantity_defective', '>', 0)->orWhere('quantity_pending', '>', 0));

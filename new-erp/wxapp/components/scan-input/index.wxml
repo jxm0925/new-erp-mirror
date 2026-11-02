@@ -1,0 +1,5 @@
+<view class="scan-input {{compact ? 'compact' : ''}}">
+  <van-icon class="scan-input-icon" name="scan" size="40rpx" />
+  <input class="scan-input-field" value="{{inputValue}}" placeholder="{{placeholder}}" disabled="{{disabled || resolving}}" focus="{{inputFocused}}" confirm-type="search" bindinput="input" bindconfirm="confirm" />
+  <button class="scan-input-button" disabled="{{disabled || resolving || scanning}}" loading="{{resolving || scanning}}" bindtap="scan"><van-icon wx:if="{{!resolving && !scanning}}" name="photograph" size="36rpx" /><text wx:if="{{!compact}}">扫码</text></button>
+</view>

@@ -1,1 +1,1 @@
-{"component":true,"usingComponents":{"van-icon":"@vant/weapp/icon/index"}}
+{"component":true,"usingComponents":{"van-icon":"@vant/weapp/icon/index","scan-input":"/components/scan-input/index"}}

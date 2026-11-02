@@ -86,6 +86,15 @@ final class MaterialDeliveryService
     /** 待配料：已下达未结束工单的车间工序，还有专单配送的料没领、也没在配。车间已有设备在等的排前面。 */
     public function pending(array $filters): array
     {
+        $rows = $this->pendingRows($filters);
+        $perPage = min(100, max(1, (int) ($filters['per_page'] ?? 10)));
+        $page = max(1, (int) ($filters['page'] ?? 1));
+        return ['data' => array_slice($rows, ($page - 1) * $perPage, $perPage), 'total' => count($rows), 'current_page' => $page, 'per_page' => $perPage];
+    }
+
+    /** Workbench discovery reuses the exact pending-material calculation used by the PC list. */
+    public function pendingRows(array $filters = []): array
+    {
         $opIds = DB::table('erp_mfg_work_order_materials as m')->join('erp_mfg_work_orders as w', 'w.id', '=', 'm.work_order_id')
             ->join('erp_mfg_work_order_operations as o', 'o.id', '=', 'm.work_order_operation_id')
             ->whereIn('w.status', self::OPEN_WO)->where('o.execution_context', 'production')->where('m.participates_in_kitting', true)
@@ -125,9 +134,7 @@ final class MaterialDeliveryService
             || str_contains($r['operation_name'], $keyword) || str_contains($r['summary'], $keyword)));
         usort($rows, fn ($a, $b) => [$b['waiting_units'] > 0 ? 1 : 0, $a['priority'], $a['work_order_id'], $a['sequence']]
             <=> [$a['waiting_units'] > 0 ? 1 : 0, $b['priority'], $b['work_order_id'], $b['sequence']]);
-        $perPage = min(100, max(1, (int) ($filters['per_page'] ?? 10)));
-        $page = max(1, (int) ($filters['page'] ?? 1));
-        return ['data' => array_slice($rows, ($page - 1) * $perPage, $perPage), 'total' => count($rows), 'current_page' => $page, 'per_page' => $perPage];
+        return $rows;
     }
 
     /** 配料预览：这次配到第几台、每种料从哪个库位拿多少（不扣库存）。 */
@@ -139,12 +146,30 @@ final class MaterialDeliveryService
             'covered_units' => $done, 'target_units' => $target, 'lines' => $lines, 'short' => $short];
     }
 
-    /** 生成配料单（待发出）。库存不够就整单不配，提示缺多少。 */
-    public function prepare(int $workOrderId, int $operationId, ?int $units, ?string $remark, object $actor): MfgMaterialDelivery
+    /** Only immutable picking identities and quantities participate; display names and array order do not. */
+    public static function sourceRevision(array $lines): string
     {
-        return DB::transaction(function () use ($workOrderId, $operationId, $units, $remark, $actor) {
+        $sources = array_map(function ($line) {
+            $picks = array_map(function ($pick) {
+                $serials = array_map('intval', (array) ($pick['serial_ids'] ?? []));
+                sort($serials, SORT_NUMERIC);
+                return ['balance_id' => (int) $pick['balance_id'], 'qty' => number_format((float) $pick['qty'], 4, '.', ''), 'serial_ids' => $serials];
+            }, (array) ($line['picks'] ?? []));
+            usort($picks, fn ($a, $b) => [$a['balance_id'], $a['qty'], $a['serial_ids']] <=> [$b['balance_id'], $b['qty'], $b['serial_ids']]);
+            return ['material_id' => (int) $line['material_id'], 'qty' => number_format((float) $line['qty'], 4, '.', ''), 'picks' => $picks];
+        }, $lines);
+        usort($sources, fn ($a, $b) => $a['material_id'] <=> $b['material_id']);
+        return hash('sha256', json_encode($sources, JSON_THROW_ON_ERROR));
+    }
+
+    /** 生成配料单（待发出）。库存不够就整单不配，提示缺多少。 */
+    public function prepare(int $workOrderId, int $operationId, ?int $units, ?string $remark, object $actor, ?string $expectedSourceRevision = null): MfgMaterialDelivery
+    {
+        return DB::transaction(function () use ($workOrderId, $operationId, $units, $remark, $actor, $expectedSourceRevision) {
             [$wo, $op] = $this->context($workOrderId, $operationId, true);
             [$lines, $short, $done, $target] = $this->buildPlan($wo, $op, $units, true);
+            if ($expectedSourceRevision !== null && ! hash_equals($expectedSourceRevision, self::sourceRevision($lines)))
+                $this->fail('delivery_source_changed', '配料来源已变化，请重新加载并核对库位、数量和序列号。', 409);
             if ($short) $this->fail('stock_short', '库存不够，这次配不了：'.implode('、', $short).'。可以少配几台，或找采购。');
             if (! $lines) $this->fail('nothing_to_deliver', $op->operation_name.'这些设备的料已经收齐或正在配送。');
             $delivery = MfgMaterialDelivery::create([
@@ -191,10 +216,12 @@ final class MaterialDeliveryService
     }
 
     /** 发出：严格按拣货单的库位、批次、编号扣库存、记已领、编号登记到设备；来源失效时拒绝发出，提示重新拣货。 */
-    public function dispatch(int $id, object $actor): MfgMaterialDelivery
+    public function dispatch(int $id, object $actor, ?string $expectedSourceRevision = null): MfgMaterialDelivery
     {
-        return DB::transaction(function () use ($id, $actor) {
+        return DB::transaction(function () use ($id, $actor, $expectedSourceRevision) {
             $delivery = $this->locked($id, ['prepared']);
+            if ($expectedSourceRevision !== null && ! hash_equals($expectedSourceRevision, self::sourceRevision((array) $delivery->lines)))
+                $this->fail('delivery_source_changed', '拣货来源已变化，请重新加载并核对库位、数量和序列号后发出。', 409);
             [$wo, $op] = $this->context((int) $delivery->work_order_id, (int) $delivery->work_order_operation_id, true);
             $materials = MfgWorkOrderMaterial::query()->whereIn('id', collect($delivery->lines)->pluck('material_id')->all() ?: [0])->orderBy('id')->lockForUpdate()->get()->keyBy('id');
             $this->issues->lockItems($materials->pluck('component_item_id'));
@@ -382,6 +409,7 @@ final class MaterialDeliveryService
                 $b = $balances->get($p['balance_id']);
                 return ['balance_id' => (int) $p['balance_id'], 'qty' => (float) $p['qty'], 'serial_ids' => array_map('intval', $p['serial_ids'] ?? []),
                     'serial_nos' => array_values(array_filter(array_map(fn ($sid) => $serialNos[$sid] ?? null, $p['serial_ids'] ?? []))),
+                    'warehouse_id' => $b?->warehouse_id, 'location_id' => $b?->location_id,
                     'warehouse_name' => $b?->warehouse?->warehouse_name, 'location_code' => $b?->location?->location_code,
                     'location_name' => $b?->location?->location_name, 'batch_no' => $b?->batch_no];
             }, $picks)];

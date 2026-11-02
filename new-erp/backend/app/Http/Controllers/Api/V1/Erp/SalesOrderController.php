@@ -684,6 +684,10 @@ class SalesOrderController extends Controller
         $order = $query->findOrFail($id);
         $order->setAttribute('sales_user', app(ErpUserProjectionService::class)->one($order->sales_user_legacy_id));
         $order->setAttribute('share_users', array_values(app(ErpUserProjectionService::class)->many(explode(',', (string) $order->share_user))));
+        $paymentMethodName = data_get($order->payment_method_snapshot, 'method_name')
+            ?: ($order->payment_method_id ? PaymentMethod::query()->whereKey($order->payment_method_id)->value('method_name') : null)
+            ?: $order->pay_type;
+        $order->setAttribute('payment_method_name', $paymentMethodName);
         app(\App\Services\Erp\SalesTradePlatformService::class)->decorate([$order]);
         $order->lines->each(function ($line): void {
             $line->setAttribute('system_item', $this->orderLineItemProjection($line));
@@ -1467,16 +1471,6 @@ class SalesOrderController extends Controller
             return;
         }
 
-        $auth = app(AuthContextService::class);
-        $groupNames = json_decode($user->auth_group_names ?: '[]', true) ?: [];
-        $isPrivileged = ($user->username === 'admin')
-            || in_array('Admin group', $groupNames, true)
-            || in_array('销售负责人', $groupNames, true)
-            || $auth->dataScope($user) === 'all';
-
-        if ($isPrivileged) {
-            return;
-        }
         app(SalesOrderVisibilityService::class)->apply($query, $user, $includeShared);
     }
 
